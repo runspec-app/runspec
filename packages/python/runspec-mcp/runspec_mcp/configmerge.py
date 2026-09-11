@@ -35,6 +35,7 @@ from typing import Any
 # Machine-local keys protected out of the box; merged with the user's list.
 DEFAULT_PRESERVE: tuple[str, ...] = (
     "config.toml:mailbox.folder",
+    "config.toml:mailbox.folders",
     "runspec_hosts.toml:*.room_user",
 )
 
@@ -137,6 +138,7 @@ COLLECTION_FILES: dict[str, tuple[str, str]] = {
     "runspec_credentials.toml": ("credential", "id"),
     "runspec_runbooks.toml": ("runbook", "id"),
     "runspec_saved_runs.toml": ("saved_run", "id"),
+    "runspec_sounds.toml": ("sound", "id"),
     "runspec_repos.toml": ("repo", "name"),
     "runspec_self_service.toml": ("self_service", "name"),
 }

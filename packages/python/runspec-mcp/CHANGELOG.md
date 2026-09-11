@@ -2,6 +2,20 @@
 
 All notable changes to `runspec-mcp` are documented here.
 
+## [0.1.1]
+
+Sync the vendored `configmerge` copy with runspec-console, fixing the
+`test_configmerge_parity` drift:
+
+- Add `runspec_sounds.toml` (`("sound", "id")`) to `COLLECTION_FILES` so the
+  named-sound registry (runspec-console 0.243.0) merges by identity like the
+  other synced collection files instead of being deep-overlaid.
+- Add `config.toml:mailbox.folders` to `DEFAULT_PRESERVE` so that machine-local
+  key is pinned to the local value on a config pull, matching console.
+
+No API change; this only re-aligns the vendored pure helpers with their source
+of truth.
+
 ## [0.1.0]
 
 Initial release. A local MCP **gateway** that connects Claude Code to local and
