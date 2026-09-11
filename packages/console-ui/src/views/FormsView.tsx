@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { Button, ColorPicker, Collapse, DatePicker, Input, InputNumber, Modal, Select, Slider, Switch, Tag, TimePicker, Tooltip, Typography, message } from 'antd'
-import { SearchOutlined, RightOutlined, ArrowLeftOutlined, AppstoreOutlined } from '@ant-design/icons'
+import { SearchOutlined, RightOutlined, ArrowLeftOutlined, AppstoreOutlined, InfoCircleOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import type { ArgDef, Host, Runnable, Runbook, SavedRun } from '../bridge'
 import { bridge } from '../bridge'
@@ -125,40 +125,32 @@ function AutonomyTag({ level }: { level?: string }) {
   )
 }
 
-// A single-line, ellipsised text that reveals its full content in a tooltip
-// *only* when it actually overflows its container — so short descriptions stay
-// tooltip-free and long ones become hover-readable (used for arg + subcommand
-// descriptions, which used to wrap and blow up the row height). Colour comes from
-// the theme-aware --rs-text-secondary var so it works in dark and light.
-// The tooltip triggers on hover *and* click (a click-to-see-more affordance),
-// and the cursor turns to `help` when truncated so it's discoverable. NB: for
-// truncation to actually happen the ancestor grid/flex cells must allow shrinking
-// (`min-width: 0`) — otherwise the nowrap text blows the track out and never
-// clips, so no ellipsis and no tooltip ever appear.
+// A single-line, ellipsised text that reveals its FULL content on hover *and*
+// click, with an always-visible info icon so the affordance is discoverable —
+// used for arg + subcommand descriptions, which used to wrap and blow up the row
+// height. The tooltip and icon are unconditional: an earlier version attached the
+// tooltip *only* when a runtime scrollWidth/clientWidth measurement judged the
+// text overflowed, but that measurement runs while the run dialog is still
+// animating open (and reads 0/0 for args inside the collapsed "Default arguments"
+// section), so it frequently decided "not overflowing" and left a clipped
+// description with no tooltip, no `help` cursor and no icon — the reported
+// "truncated, mouse-over does nothing, no ⓘ" bug. Now hover or click the row (or
+// the ⓘ) always shows the full text; the measurement gate is gone. The text still
+// clips to one line via CSS ellipsis for a compact preview, and the ancestor
+// grid/flex cells must still allow shrinking (`min-width: 0`) for that clip.
+// Colour comes from the theme-aware --rs-text-secondary var so it works in both
+// dark and light.
 export function TruncatedText({ text, style }: { text: string; style?: CSSProperties }) {
-  const ref = useRef<HTMLSpanElement>(null)
-  const [overflow, setOverflow] = useState(false)
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-    const measure = () => setOverflow(el.scrollWidth > el.clientWidth + 1)
-    // Measure after layout settles (the modal opens with an animation, so the
-    // first synchronous read can see a pre-layout width), and whenever the
-    // element resizes.
-    const raf = requestAnimationFrame(measure)
-    const ro = new ResizeObserver(measure)
-    ro.observe(el)
-    return () => { cancelAnimationFrame(raf); ro.disconnect() }
-  }, [text])
-  const span = (
-    <span
-      ref={ref}
-      style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, cursor: overflow ? 'help' : undefined, ...style }}
-    >
-      {text}
-    </span>
+  return (
+    <Tooltip title={text} trigger={['hover', 'click']}>
+      <span style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, cursor: 'help', ...style }}>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
+          {text}
+        </span>
+        <InfoCircleOutlined style={{ flexShrink: 0, fontSize: 11, opacity: 0.55 }} />
+      </span>
+    </Tooltip>
   )
-  return overflow ? <Tooltip title={text} trigger={['hover', 'click']}>{span}</Tooltip> : span
 }
 
 // Responsive multi-column layout for a group of arg rows: fills as many ~260px

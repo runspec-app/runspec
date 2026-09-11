@@ -63,6 +63,21 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   (`SchedulesView.tsx`.)
 
 
+### Fixed (Forms tab)
+- **Arg/subcommand descriptions can now always be read in full.** The Forms run
+  dialog shows each arg (and subcommand) description as a one-line, ellipsised
+  preview; the full text was meant to appear on hover/click. But the hover
+  tooltip and its `help` cursor were gated on a runtime `scrollWidth >
+  clientWidth` overflow measurement that runs while the dialog is still animating
+  open — and reads `0/0` for args inside the collapsed *Default arguments*
+  section — so it frequently decided the text "did not overflow" and left a
+  clipped description with no tooltip, no `help` cursor and no icon (the reported
+  "truncated, mouse-over does nothing, no ⓘ" behaviour). `TruncatedText` now
+  attaches the tooltip and an always-visible info icon (ⓘ) unconditionally: hover
+  *or* click the description row (or the icon) always reveals the full text — no
+  measurement gate. The one-line CSS ellipsis preview is unchanged.
+  (`FormsView.tsx`.)
+
 ## [0.245.1] — 2026-09-11
 
 ### Fixed
