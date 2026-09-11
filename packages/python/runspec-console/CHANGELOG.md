@@ -8,6 +8,82 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.246.0] — 2026-09-11
+
+### Added
+- **Evals now grade the subcommand *and* prove the autonomy gate.** Two gaps in
+  the 0.245.0 harness: a subcommand runnable's chosen verb wasn't scored, and the
+  level a call *would* gate at was never checked.
+  - **`expect_command`** — a runnable with subcommands rides its chosen verb in a
+    top-level `command` field (a string enum, or an array for a nested path),
+    *not* inside `args`. In `tool_mode = "search"` that field is a sibling of
+    `args` on `run_runnable`, so it was invisible to the old arg-only scorer. A
+    case can now assert e.g. `expect_command = "add"` (nested paths compare
+    space-joined, `"remote add"`); the verb is dropped from the arg-subset check
+    and surfaced on the result (`CaseResult.command`) and in a new **Verb** column
+    + `runspec.eval.observed_command` span attribute. New verdict `wrong_command`.
+  - **`expect_autonomy`** — proves, *without executing*, the level the chosen call
+    would gate at, via the **same** resolver the live gate uses
+    (`_effective_tool_autonomy`, which already reads the chosen subcommand leaf's
+    own autonomy and escalates by any per-arg autonomy — most restrictive wins).
+    So a case can assert `expect_autonomy = "confirm"` (a confirm **would** be
+    raised) or `"manual"` (the agent **would** be refused) deterministically — no
+    model stochasticity. Recorded on every real run (`CaseResult.autonomy`, new
+    **Autonomy** column + `runspec.eval.observed_autonomy`); a bare harness with no
+    resolver records `""` and never fails on it. New verdict `wrong_autonomy`.
+  - Pure harness: `evals.EvalCase.expect_command`/`expect_autonomy`,
+    `default_resolve_command`, `ResolveCommand`/`ResolveAutonomy`, `score`'s
+    `resolve_command`/`resolve_autonomy` hooks; console wiring in
+    `bridge_evals._eval_injections` (`resolve_command` reads the top-level
+    `command` in every tool mode; `resolve_autonomy` binds to
+    `_effective_tool_autonomy`, fail-safe → `"confirm"`). The keyless CI grounding
+    (`record_evals.py`) is unchanged — it flattens subcommands into leaf tool
+    names via `runspec serve`'s `_expand_tools` and doesn't resolve autonomy, so
+    both new fields are console-runtime features.
+
+### Fixed (Evals tab)
+- **A typed fixture name looked like it saved as `name(1)`.** The "open a saved
+  fixture" dropdown was bound to the same state as the name field and rendered
+  the option's `name (case count)` label as the selected value — so after saving,
+  the box showed `name (1)` and read like the id got mangled. The dropdown is now
+  a **pure loader** (resets to its placeholder after each pick, searchable), the
+  count label reads `name — N cases`, and the name field is the single source of
+  the id. (`EvalsView.tsx`.)
+- **Run options weren't remembered.** *Samples per case*, *Validate args* and
+  *Emit telemetry* reset every time the tab remounted. They now persist per
+  viewer in `localStorage` (try/catch-guarded). (`EvalsView.tsx`.)
+- **The per-case report showed the chosen runnable but not its args.** Each case
+  row is now **expandable** to reveal the exact captured call — tool + host +
+  subcommand + args, pretty-printed (never executed). (`EvalsView.tsx`.)
+
+### Fixed (Schedules tab)
+- **The New-schedule modal's action chooser overflowed on the right.** The
+  "When it fires, it will…" control was a horizontal `Segmented` with six (and
+  growing) actions that ran past the modal edge; it's now a dropdown `Select`.
+  (`SchedulesView.tsx`.)
+
+
+## [0.245.1] — 2026-09-11
+
+### Fixed
+- **Evals in `tool_mode = "search"` scored every case as the wrong tool.** The
+  search-mode `run_runnable` tool carries the runnable in its **`id`** field
+  (`bridge_search._search_mode_tools`), but the eval target resolver read
+  `name`/`runnable`/`tool` and fell back to the wrapper name — so the "chose"
+  column was always `run_runnable` and every case failed as `wrong_tool`.
+  `resolve_target` now reads `id` for `run_runnable` (and `name` for `use_tool`),
+  in both the console injections (`bridge_evals`) and the pure default
+  (`evals.default_resolve_target`). Regression test added
+  (`test_search_mode_resolves_run_runnable_id_not_the_wrapper`).
+- **Saving a fixture could silently do nothing.** The Evals tab's Save/Delete
+  had no error handling, so a rejected bridge call surfaced no message; and the
+  fixture-name field was an unlabelled narrow box, so clicking Save without a
+  name hit a warning that was easy to miss. `saveFixture`/`deleteFixture` now
+  wrap the call in try/catch (and report success/failure), the name field reads
+  "Fixture name (required to save)" with a one-line hint and Enter-to-save, and
+  saving an empty fixture is guarded with a clear message. (`EvalsView.tsx`.)
+
+
 ## [0.245.0] — 2026-09-11
 
 ### Added

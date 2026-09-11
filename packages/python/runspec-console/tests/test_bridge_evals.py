@@ -107,6 +107,150 @@ def test_run_evals_flags_a_wrong_tool(bridge, monkeypatch):
     assert report["summary"]["by_category"] == {"wrong_tool": 1}
 
 
+def test_search_mode_resolves_run_runnable_id_not_the_wrapper(bridge, monkeypatch):
+    # Regression: in search mode the model calls run_runnable(id=…), and the eval
+    # must resolve the target to that id — not the wrapper name "run_runnable"
+    # (which made every search-mode case read as wrong_tool).
+    monkeypatch.setattr(bridge, "_tool_mode", lambda: "search")
+    script = {
+        "restart": [
+            {
+                "tool_calls": [
+                    {
+                        "name": "run_runnable",
+                        "input": {
+                            "id": "restart-service",
+                            "host": "web-01",
+                            "args": {"service": "nginx"},
+                        },
+                    }
+                ]
+            }
+        ],
+        "ambiguous": [{"text": "Which host?", "tool_calls": []}],
+    }
+    monkeypatch.setattr(bridge, "_get_adapter", lambda *a, **k: ReplayAdapter(script))
+    report = bridge.run_evals(fixture_toml=_fixture_toml())
+    cases = {c["case_id"]: c for c in report["cases"]}
+    assert cases["restart"]["target"] == "restart-service"
+    assert cases["restart"]["passed"] is True  # tool + args + host all match
+    assert report["summary"]["passed"] == 2
+
+
+def test_subcommand_is_captured_and_scored(bridge, monkeypatch):
+    # A runnable with subcommands rides its chosen verb in a top-level `command`
+    # field (never inside `args`). The eval must resolve + grade it, and drop it
+    # from the arg-subset check.
+    fixture = """
+[[eval]]
+id = "cron-add"
+prompt = "add a nightly backup cron on web-01"
+expect_tool = "cron"
+expect_command = "add"
+expect_host = "web-01"
+expect_args = { schedule = "0 2 * * *" }
+"""
+    script = {
+        "cron-add": [
+            {
+                "tool_calls": [
+                    {
+                        "name": "ops__cron",
+                        "input": {
+                            "command": "add",
+                            "schedule": "0 2 * * *",
+                            "host": "web-01",
+                        },
+                    }
+                ]
+            }
+        ],
+    }
+    monkeypatch.setattr(bridge, "_get_adapter", lambda *a, **k: ReplayAdapter(script))
+    report = bridge.run_evals(fixture_toml=fixture)
+    c = report["cases"][0]
+    assert c["target"] == "cron"
+    assert c["command"] == "add"  # captured + surfaced on the result
+    assert c["passed"] is True  # tool + subcommand + host + args all match
+
+
+def test_wrong_subcommand_is_flagged(bridge, monkeypatch):
+    fixture = """
+[[eval]]
+id = "cron-add"
+prompt = "add a nightly backup cron on web-01"
+expect_tool = "cron"
+expect_command = "add"
+"""
+    script = {
+        "cron-add": [
+            {"tool_calls": [{"name": "ops__cron", "input": {"command": "remove"}}]}
+        ],
+    }
+    monkeypatch.setattr(bridge, "_get_adapter", lambda *a, **k: ReplayAdapter(script))
+    report = bridge.run_evals(fixture_toml=fixture)
+    c = report["cases"][0]
+    assert c["passed"] is False
+    assert c["category"] == "wrong_command"
+    assert c["command"] == "remove"
+
+
+def test_autonomy_is_proven_without_executing(bridge, monkeypatch):
+    # The eval never runs the call — but it resolves, via the SAME code the live
+    # gate uses (_effective_tool_autonomy), the level the call WOULD gate at, so a
+    # case can assert "a confirm would be raised" deterministically.
+    fixture = """
+[[eval]]
+id = "restart"
+prompt = "restart nginx on web-01"
+expect_tool = "restart-service"
+expect_host = "web-01"
+expect_args = { service = "nginx" }
+expect_autonomy = "confirm"
+"""
+    seen: dict[str, object] = {}
+
+    def fake_autonomy(name, ti):
+        seen["name"] = name
+        seen["input"] = ti
+        return "confirm"
+
+    monkeypatch.setattr(bridge, "_effective_tool_autonomy", fake_autonomy)
+    monkeypatch.setattr(
+        bridge, "_get_adapter", lambda *a, **k: ReplayAdapter(_script())
+    )
+    report = bridge.run_evals(fixture_toml=fixture)
+    c = report["cases"][0]
+    assert c["autonomy"] == "confirm"
+    assert c["passed"] is True
+    # The gate was asked about the model's REAL captured call, not the wrapper.
+    assert seen["name"] == "ops__restart-service"
+    assert seen["input"]["service"] == "nginx"
+
+
+def test_manual_autonomy_expectation_flags_a_mismatch(bridge, monkeypatch):
+    # expect_autonomy = "manual" proves the agent would be refused; if the call
+    # actually resolves to "confirm", that's a wrong_autonomy failure.
+    fixture = """
+[[eval]]
+id = "restart"
+prompt = "restart nginx on web-01"
+expect_tool = "restart-service"
+expect_host = "web-01"
+expect_args = { service = "nginx" }
+expect_autonomy = "manual"
+"""
+    monkeypatch.setattr(bridge, "_effective_tool_autonomy", lambda name, ti: "confirm")
+    monkeypatch.setattr(
+        bridge, "_get_adapter", lambda *a, **k: ReplayAdapter(_script())
+    )
+    report = bridge.run_evals(fixture_toml=fixture)
+    c = report["cases"][0]
+    assert c["passed"] is False
+    assert c["category"] == "wrong_autonomy"
+    assert c["autonomy"] == "confirm"
+
+
 def test_run_evals_persists_a_report_that_lists_and_loads(bridge, monkeypatch):
     monkeypatch.setattr(
         bridge, "_get_adapter", lambda *a, **k: ReplayAdapter(_script())

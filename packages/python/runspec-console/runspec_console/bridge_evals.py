@@ -71,23 +71,52 @@ class EvalsMixin:
             )
 
         def resolve_target(inv: evals.ToolInvocation) -> str:
-            if inv.name in ("run_runnable", "use_tool"):
+            # search mode: run_runnable carries the runnable in `id` (its schema's
+            # required key — bridge_search._search_mode_tools), use_tool the inner
+            # tool in `name`. Reading the wrong key made every search-mode case
+            # resolve to the wrapper name "run_runnable".
+            if inv.name == "run_runnable":
                 return str(
-                    inv.input.get("name")
+                    inv.input.get("id")
                     or inv.input.get("runnable")
-                    or inv.input.get("tool")
+                    or inv.input.get("name")
                     or inv.name
                 )
+            if inv.name == "use_tool":
+                return str(inv.input.get("name") or inv.input.get("tool") or inv.name)
             return inv.name.rsplit("__", 1)[-1]
+
+        def resolve_command(inv: evals.ToolInvocation) -> str:
+            # The chosen subcommand rides a top-level `command` field in EVERY
+            # mode (a sibling of `args` on run_runnable; a top-level key on a
+            # direct dedup/per_host tool) — never inside `args`. String enum for a
+            # flat runnable, array for a nested path; space-join the latter so a
+            # case can assert e.g. "remote add".
+            return evals._command_str(inv.input.get("command"))
 
         def resolve_args(inv: evals.ToolInvocation) -> dict[str, Any]:
             if inv.name in ("run_runnable", "use_tool"):
                 args = inv.input.get("args")
                 return dict(args) if isinstance(args, dict) else {}
             # Direct tool: the runnable's own args are top-level; `host` is the
-            # console's injected enum, not a runnable arg — drop it so a subset /
-            # preflight check doesn't treat it as unknown.
-            return {k: v for k, v in inv.input.items() if k != "host"}
+            # console's injected enum and `command` is scored separately — drop
+            # both so a subset / preflight check doesn't treat them as unknown args.
+            return {k: v for k, v in inv.input.items() if k not in ("host", "command")}
+
+        def resolve_autonomy(inv: evals.ToolInvocation) -> str:
+            # Prove — without executing — the level this exact call would gate at,
+            # via the SAME resolver the live gate uses. `_effective_tool_autonomy`
+            # already reads the chosen subcommand leaf's own autonomy and escalates
+            # by any per-arg autonomy (most restrictive wins), so a `confirm` here
+            # means the operator prompt WOULD be raised and a `manual` means the
+            # agent WOULD be refused. Fail-safe: any hiccup → "confirm" (the gate's
+            # own unknown-call default), never a crash.
+            try:
+                return str(
+                    self._effective_tool_autonomy(inv.name, dict(inv.input))  # type: ignore[attr-defined]
+                )
+            except Exception:  # noqa: BLE001
+                return "confirm"
 
         def resolve_readonly(name: str, tool_input: dict[str, Any]) -> str:
             if name in _EVAL_DISCOVERY_TOOLS:
@@ -101,7 +130,9 @@ class EvalsMixin:
             "is_terminal": is_terminal,
             "resolve_readonly": resolve_readonly,
             "resolve_target": resolve_target,
+            "resolve_command": resolve_command,
             "resolve_args": resolve_args,
+            "resolve_autonomy": resolve_autonomy,
             "mode": mode,
         }
 

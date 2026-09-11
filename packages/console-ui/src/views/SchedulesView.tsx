@@ -455,7 +455,9 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
     >
       <Form form={form} layout="vertical" initialValues={{ host: defaultHost, fields: [] }}>
         <Form.Item label="When it fires, it will…">
-          <Segmented
+          {/* A dropdown, not a Segmented: six actions (and growing) overflow the
+              modal width as a horizontal segmented control. */}
+          <Select
             value={action}
             onChange={v => setAction(v as Action)}
             options={[

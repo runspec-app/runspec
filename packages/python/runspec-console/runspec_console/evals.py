@@ -59,8 +59,10 @@ CAT_PASS = "pass"
 CAT_NO_RUN = "no_run"  # expected a runnable call, model produced none
 CAT_UNEXPECTED_RUN = "unexpected_run"  # expected no run, model ran one
 CAT_WRONG_TOOL = "wrong_tool"
+CAT_WRONG_COMMAND = "wrong_command"  # right runnable, wrong subcommand/verb
 CAT_WRONG_HOST = "wrong_host"
 CAT_WRONG_ARGS = "wrong_args"  # expected arg missing / value mismatch
+CAT_WRONG_AUTONOMY = "wrong_autonomy"  # would gate at a different level than expected
 CAT_FORBIDDEN_TOOL = "forbidden_tool"
 
 
@@ -99,8 +101,19 @@ class EvalCase:
     id: str
     prompt: str
     expect_tool: str | None = None
+    # The subcommand/verb the model must pick (a runnable with subcommands rides
+    # its chosen verb in a top-level ``command`` field, not in ``args``). A nested
+    # path compares space-joined (e.g. ``"remote add"``). ``None`` = don't assert.
+    expect_command: str | None = None
     expect_args: dict[str, Any] = field(default_factory=dict)
     expect_host: str | None = None
+    # The autonomy level the chosen call must resolve to — ``"autonomous"`` /
+    # ``"confirm"`` (a confirm *would* be raised) / ``"manual"`` (the gate *would*
+    # refuse the agent). Resolved deterministically from the same code the live
+    # gate uses, without executing. ``None`` = don't assert. Requires the
+    # ``resolve_autonomy`` injectable (the bridge binds it to
+    # ``_effective_tool_autonomy``); a bare harness with no resolver can't grade it.
+    expect_autonomy: str | None = None
     expect_no_run: bool = False
     forbid_tools: list[str] = field(default_factory=list)
     system: str | None = None  # per-case system-prompt override (optional)
@@ -112,8 +125,10 @@ class EvalCase:
             id=str(data.get("id") or data.get("prompt") or ""),
             prompt=str(data.get("prompt") or ""),
             expect_tool=data.get("expect_tool"),
+            expect_command=data.get("expect_command"),
             expect_args=dict(data.get("expect_args") or {}),
             expect_host=data.get("expect_host"),
+            expect_autonomy=data.get("expect_autonomy"),
             expect_no_run=bool(data.get("expect_no_run", False)),
             forbid_tools=list(data.get("forbid_tools") or []),
             system=data.get("system"),
@@ -131,6 +146,12 @@ class CaseResult:
     # The runnable identity the terminal call resolved to (``resolve_target`` of
     # the terminal), e.g. ``run_runnable``'s ``input['name']`` — "" when no run.
     target: str = ""
+    # The subcommand/verb the terminal call chose (space-joined for a nested
+    # path), "" when the runnable has no subcommand or none was chosen.
+    command: str = ""
+    # The autonomy the terminal call would gate at ("autonomous"/"confirm"/
+    # "manual"), "" when no run or no resolver was supplied.
+    autonomy: str = ""
     discovery: list[ToolInvocation] = field(default_factory=list)
     final_text: str = ""
     # Populated by the sampled runner: how many of ``samples`` runs passed.
@@ -149,6 +170,8 @@ class CaseResult:
             "reason": self.reason,
             "terminal": self.terminal.to_dict() if self.terminal else None,
             "target": self.target,
+            "command": self.command,
+            "autonomy": self.autonomy,
             "discovery": [d.to_dict() for d in self.discovery],
             "final_text": self.final_text,
             "samples": self.samples,
@@ -174,31 +197,54 @@ def default_resolve_readonly(name: str, tool_input: dict[str, Any]) -> str:
 
 
 def default_resolve_target(inv: ToolInvocation) -> str:
-    """The runnable identity a terminal call invokes. ``run_runnable`` / ``use_tool``
-    carry it in the input; a direct tool call *is* the runnable."""
-    if inv.name in ("run_runnable", "use_tool"):
+    """The runnable identity a terminal call invokes. ``run_runnable`` carries it
+    in ``id`` (the search-mode tool's required key), ``use_tool`` the inner tool in
+    ``name``; a direct tool call *is* the runnable."""
+    if inv.name == "run_runnable":
         return str(
-            inv.input.get("name")
+            inv.input.get("id")
             or inv.input.get("runnable")
-            or inv.input.get("tool")
+            or inv.input.get("name")
             or inv.name
         )
+    if inv.name == "use_tool":
+        return str(inv.input.get("name") or inv.input.get("tool") or inv.name)
     return inv.name
+
+
+def _command_str(chosen: Any) -> str:
+    """Normalise a chosen subcommand to a comparable string: a list (a nested
+    path) → space-joined, a plain string → itself, anything else → "". Mirrors
+    ``bridge_autonomy._command_path`` (which yields the list form)."""
+    if isinstance(chosen, list):
+        return " ".join(str(c) for c in chosen if str(c))
+    return str(chosen) if isinstance(chosen, str) else ""
+
+
+def default_resolve_command(inv: ToolInvocation) -> str:
+    """The subcommand/verb a terminal call chose. In *every* tool mode the verb
+    rides a top-level ``command`` field (a sibling of ``args`` on ``run_runnable``;
+    a top-level key on a direct dedup/per_host tool) — never inside ``args`` — so
+    read it from ``inv.input`` directly. "" when there is no subcommand."""
+    return _command_str(inv.input.get("command"))
 
 
 def default_resolve_args(inv: ToolInvocation) -> dict[str, Any]:
     """The runnable args a terminal call carries. ``run_runnable`` / ``use_tool``
-    nest them under ``input['args']``; a direct tool passes them at top level."""
+    nest them under ``input['args']``; a direct tool passes them at top level.
+    ``command`` is scored separately (``resolve_command``), so it's dropped here."""
     if inv.name in ("run_runnable", "use_tool"):
         args = inv.input.get("args")
         return dict(args) if isinstance(args, dict) else {}
-    return dict(inv.input)
+    return {k: v for k, v in inv.input.items() if k != "command"}
 
 
 IsTerminal = Callable[[str], bool]
 ResolveReadonly = Callable[[str, dict[str, Any]], str]
 ResolveTarget = Callable[[ToolInvocation], str]
+ResolveCommand = Callable[[ToolInvocation], str]
 ResolveArgs = Callable[[ToolInvocation], dict[str, Any]]
+ResolveAutonomy = Callable[[ToolInvocation], str]
 Validate = Callable[[str, dict[str, Any]], "str | None"]
 
 
@@ -284,17 +330,34 @@ def score(
     traj: Trajectory,
     *,
     resolve_target: ResolveTarget = default_resolve_target,
+    resolve_command: ResolveCommand = default_resolve_command,
     resolve_args: ResolveArgs = default_resolve_args,
+    resolve_autonomy: ResolveAutonomy | None = None,
     validate: Validate | None = None,
 ) -> CaseResult:
     """Grade a captured trajectory against the case's expectation. Assertions run
-    cheapest-first: no-run → tool name → forbidden → host → arg subset →
-    (optional) preflight validation. A validation failure is bucketed via
-    ``improve.classify_bounce`` so it matches the production taxonomy."""
+    cheapest-first: no-run → tool name → forbidden → subcommand → host → arg
+    subset → autonomy → (optional) preflight validation. A validation failure is
+    bucketed via ``improve.classify_bounce`` so it matches the production taxonomy.
 
-    # Resolve the runnable identity once (empty when the model ran nothing), and
-    # stamp it on every result so reports / telemetry can show observed_tool.
+    ``expect_command`` / ``expect_autonomy`` are only checked when the case sets
+    them; ``expect_autonomy`` additionally needs ``resolve_autonomy`` (the bridge
+    binds it to ``_effective_tool_autonomy``) — with no resolver, autonomy is
+    recorded as "" and never fails a case."""
+
+    # Resolve the runnable identity, chosen subcommand, and would-be autonomy once
+    # (all empty when the model ran nothing), and stamp them on every result so
+    # reports / telemetry can show the observed tool + verb + gate level.
     resolved = resolve_target(traj.terminal) if traj.terminal is not None else ""
+    resolved_command = (
+        resolve_command(traj.terminal) if traj.terminal is not None else ""
+    )
+    resolved_autonomy = ""
+    if traj.terminal is not None and resolve_autonomy is not None:
+        try:
+            resolved_autonomy = resolve_autonomy(traj.terminal) or ""
+        except Exception:  # noqa: BLE001 — autonomy resolution is best-effort
+            resolved_autonomy = ""
 
     def result(passed: bool, category: str, reason: str) -> CaseResult:
         return CaseResult(
@@ -304,6 +367,8 @@ def score(
             reason=reason,
             terminal=traj.terminal,
             target=resolved,
+            command=resolved_command,
+            autonomy=resolved_autonomy,
             discovery=traj.discovery,
             final_text=traj.final_text,
         )
@@ -336,6 +401,15 @@ def score(
             f"expected tool {case.expect_tool!r}, got {target!r}",
         )
 
+    if case.expect_command is not None:
+        want = _command_str(case.expect_command)
+        if resolved_command.strip().lower() != want.strip().lower():
+            return result(
+                False,
+                CAT_WRONG_COMMAND,
+                f"expected subcommand {want!r}, got {resolved_command!r}",
+            )
+
     if case.expect_host is not None:
         got_host = traj.terminal.input.get("host")
         if got_host != case.expect_host:
@@ -355,6 +429,19 @@ def score(
     if problems:
         return result(False, CAT_WRONG_ARGS, "; ".join(problems))
 
+    # Autonomy: prove the call would gate at the expected level — a "confirm"
+    # would raise the operator prompt, a "manual" would be refused to the agent.
+    # Resolved deterministically (no execution); only asserted when the case sets
+    # it AND a resolver was supplied.
+    if case.expect_autonomy is not None and resolve_autonomy is not None:
+        want = case.expect_autonomy.strip().lower()
+        if resolved_autonomy.strip().lower() != want:
+            return result(
+                False,
+                CAT_WRONG_AUTONOMY,
+                f"expected autonomy {want!r}, got {resolved_autonomy!r}",
+            )
+
     # Optional: assert the model's args would not bounce from the validator.
     if validate is not None:
         err = validate(target, got_args)
@@ -362,6 +449,10 @@ def score(
             return result(False, classify_bounce(err), err)
 
     detail = "tool + args as expected"
+    if case.expect_command is not None:
+        detail = "tool + subcommand + args as expected"
+    if case.expect_autonomy is not None and resolve_autonomy is not None:
+        detail += f"; would gate at {resolved_autonomy!r}"
     if validate is not None:
         detail += " and validate-clean"
     return result(True, CAT_PASS, detail)
@@ -375,7 +466,9 @@ async def evaluate_case_async(
     is_terminal: IsTerminal = default_is_terminal,
     resolve_readonly: ResolveReadonly = default_resolve_readonly,
     resolve_target: ResolveTarget = default_resolve_target,
+    resolve_command: ResolveCommand = default_resolve_command,
     resolve_args: ResolveArgs = default_resolve_args,
+    resolve_autonomy: ResolveAutonomy | None = None,
     validate: Validate | None = None,
     max_steps: int = 6,
     samples: int = 1,
@@ -400,7 +493,9 @@ async def evaluate_case_async(
             case,
             traj,
             resolve_target=resolve_target,
+            resolve_command=resolve_command,
             resolve_args=resolve_args,
+            resolve_autonomy=resolve_autonomy,
             validate=validate,
         )
         last = res

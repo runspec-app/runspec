@@ -14,6 +14,11 @@ describe('evalCatMeta', () => {
     }
   })
 
+  it('covers the subcommand + autonomy verdicts', () => {
+    expect(evalCatMeta('wrong_command')).toEqual({ color: 'red', label: 'Wrong subcommand' })
+    expect(evalCatMeta('wrong_autonomy')).toEqual({ color: 'purple', label: 'Wrong autonomy' })
+  })
+
   it('falls back to the raw category for an unknown bucket', () => {
     expect(evalCatMeta('something_new')).toEqual({ color: 'default', label: 'something_new' })
   })

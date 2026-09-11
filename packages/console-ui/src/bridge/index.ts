@@ -657,6 +657,8 @@ export interface EvalCaseResult {
   reason: string
   terminal: EvalToolInvocation | null
   target: string
+  command: string    // observed subcommand/verb (space-joined for a nested path)
+  autonomy: string   // level the call would gate at: autonomous / confirm / manual
   final_text: string
   samples: number
   pass_count: number

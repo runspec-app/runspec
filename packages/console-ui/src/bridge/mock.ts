@@ -1267,14 +1267,14 @@ export const mockApi: BridgeApi = {
     model: 'claude-sonnet-4-6',
     tool_mode: 'dedup',
     samples: 1,
-    summary: { total: 2, passed: 1, failed: 1, pass_rate: 0.5, by_category: { wrong_tool: 1 } },
+    summary: { total: 2, passed: 1, failed: 1, pass_rate: 0.5, by_category: { wrong_command: 1 } },
     cases: [
-      { case_id: 'restart-nginx', passed: true, category: 'pass', reason: 'tool + args as expected', terminal: { name: 'restart-service', input: { service: 'nginx' } }, target: 'restart-service', final_text: '', samples: 1, pass_count: 1, pass_rate: 1 },
-      { case_id: 'disk-usage', passed: false, category: 'wrong_tool', reason: "expected tool 'disk-usage', got 'df-check'", terminal: { name: 'df-check', input: {} }, target: 'df-check', final_text: '', samples: 1, pass_count: 0, pass_rate: 0 },
+      { case_id: 'restart-nginx', passed: true, category: 'pass', reason: "tool + args as expected; would gate at 'confirm'", terminal: { name: 'restart-service', input: { service: 'nginx' } }, target: 'restart-service', command: '', autonomy: 'confirm', final_text: '', samples: 1, pass_count: 1, pass_rate: 1 },
+      { case_id: 'cron-add', passed: false, category: 'wrong_command', reason: "expected subcommand 'add', got 'remove'", terminal: { name: 'cron', input: { command: 'remove' } }, target: 'cron', command: 'remove', autonomy: 'confirm', final_text: '', samples: 1, pass_count: 0, pass_rate: 0 },
     ],
   }),
   list_eval_reports: async () => [
-    { id: 'mock-eval-1', generated_at: '2026-09-11T09:00:00', model: 'claude-sonnet-4-6', tool_mode: 'dedup', summary: { total: 2, passed: 1, failed: 1, pass_rate: 0.5, by_category: { wrong_tool: 1 } } },
+    { id: 'mock-eval-1', generated_at: '2026-09-11T09:00:00', model: 'claude-sonnet-4-6', tool_mode: 'dedup', summary: { total: 2, passed: 1, failed: 1, pass_rate: 0.5, by_category: { wrong_command: 1 } } },
   ],
   load_eval_report: async (_id: string) => null,
   delete_eval_report: async (_id: string) => true,

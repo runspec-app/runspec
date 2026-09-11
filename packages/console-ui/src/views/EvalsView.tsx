@@ -10,10 +10,23 @@ import {
 import type { ColumnType } from 'antd/es/table'
 import {
   bridge, type EvalReport, type EvalReportMeta, type EvalCaseResult,
-  type EvalFixtureMeta,
+  type EvalFixtureMeta, type EvalToolInvocation,
 } from '../bridge'
+import { useIsDark, textColor, textSecondary } from '../ThemeContext'
 
 const { Text, Paragraph, Title } = Typography
+
+// The run options (samples / validate / telemetry) are a per-viewer convenience,
+// so they persist in localStorage — machine-local, never a fixture concern. Wrapped
+// in try/catch: site data can be blocked/cleared and the accessor can throw.
+const LS = {
+  read(key: string, fallback: string): string {
+    try { return localStorage.getItem(key) ?? fallback } catch { return fallback }
+  },
+  write(key: string, value: string): void {
+    try { localStorage.setItem(key, value) } catch { /* private window / blocked */ }
+  },
+}
 
 // Verdict category → colour + label. Keys mirror evals.py CAT_* plus the
 // improve.classify_bounce arg-bounce buckets (missing_required / unknown_arg /
@@ -22,8 +35,10 @@ const { Text, Paragraph, Title } = Typography
 export const EVAL_CAT_META: Record<string, { color: string; label: string }> = {
   pass: { color: 'green', label: 'Pass' },
   wrong_tool: { color: 'red', label: 'Wrong tool' },
+  wrong_command: { color: 'red', label: 'Wrong subcommand' },
   wrong_host: { color: 'volcano', label: 'Wrong host' },
   wrong_args: { color: 'orange', label: 'Wrong args' },
+  wrong_autonomy: { color: 'purple', label: 'Wrong autonomy' },
   no_run: { color: 'gold', label: 'No run' },
   unexpected_run: { color: 'magenta', label: 'Unexpected run' },
   forbidden_tool: { color: 'red', label: 'Forbidden tool' },
@@ -50,6 +65,14 @@ expect_host = "web-01"
 expect_args = { service = "nginx" }
 
 [[eval]]
+id = "example-subcommand"
+prompt = "add a nightly backup cron on web-01"
+expect_tool = "cron"
+expect_command = "add"          # the verb the agent must pick (nested: "remote add")
+expect_host = "web-01"
+expect_autonomy = "confirm"     # prove a confirm WOULD be raised (or "manual" = refused)
+
+[[eval]]
 id = "example-ambiguous"
 prompt = "delete it"
 expect_no_run = true   # ambiguous → the agent should ask, not guess
@@ -63,9 +86,9 @@ export function EvalsView({ active }: EvalsViewProps) {
   const [fixtures, setFixtures] = useState<EvalFixtureMeta[]>([])
   const [fixtureId, setFixtureId] = useState('')
   const [fixtureText, setFixtureText] = useState('')
-  const [samples, setSamples] = useState(1)
-  const [validate, setValidate] = useState(false)
-  const [telemetry, setTelemetry] = useState(false)
+  const [samples, setSamples] = useState(() => Number(LS.read('runspec.evals.samples', '1')) || 1)
+  const [validate, setValidate] = useState(() => LS.read('runspec.evals.validate', '0') === '1')
+  const [telemetry, setTelemetry] = useState(() => LS.read('runspec.evals.telemetry', '0') === '1')
   const [running, setRunning] = useState(false)
   const [reports, setReports] = useState<EvalReportMeta[]>([])
   const [report, setReport] = useState<EvalReport | null>(null)
@@ -107,24 +130,37 @@ export function EvalsView({ active }: EvalsViewProps) {
   async function saveFixture() {
     const id = fixtureId.trim()
     if (!id) {
-      message.warning('Name the fixture first')
+      message.warning('Enter a fixture name in the "Fixture name" box before saving.')
       return
     }
-    const res = await bridge.save_eval_fixture(id, fixtureText)
-    if (res.ok) {
-      message.success(`Saved ${id} (${res.cases} case${res.cases === 1 ? '' : 's'})`)
-      await refresh()
-    } else {
-      message.error(res.reason || 'Could not save fixture')
+    if (!fixtureText.trim()) {
+      message.warning('The fixture is empty — write at least one [[eval]] case first.')
+      return
+    }
+    try {
+      const res = await bridge.save_eval_fixture(id, fixtureText)
+      if (res.ok) {
+        message.success(`Saved "${id}" (${res.cases} case${res.cases === 1 ? '' : 's'})`)
+        await refresh()
+      } else {
+        message.error(res.reason || 'Could not save fixture')
+      }
+    } catch (e) {
+      message.error(`Could not save fixture: ${e}`)
     }
   }
 
   async function deleteFixture() {
     if (!fixtureId) return
-    await bridge.delete_eval_fixture(fixtureId)
-    setFixtureId('')
-    setFixtureText('')
-    await refresh()
+    try {
+      await bridge.delete_eval_fixture(fixtureId)
+      message.success(`Deleted "${fixtureId}"`)
+      setFixtureId('')
+      setFixtureText('')
+      await refresh()
+    } catch (e) {
+      message.error(`Could not delete fixture: ${e}`)
+    }
   }
 
   async function run() {
@@ -196,23 +232,34 @@ export function EvalsView({ active }: EvalsViewProps) {
               </Space>
             }
           >
-            <Space.Compact block style={{ marginBottom: 8 }}>
+            <Space.Compact block>
+              {/* A pure loader: it resets to its placeholder after each pick (value
+                  is always undefined) so its count-suffixed label never leaks into
+                  the name box — the Input below is the single source of the name. */}
               <Select
-                style={{ width: '55%' }}
-                placeholder="Saved fixtures"
-                value={fixtureId || undefined}
+                style={{ width: '50%' }}
+                placeholder="Open a saved fixture…"
+                value={undefined}
                 onChange={selectFixture}
-                options={fixtures.map(f => ({ value: f.id, label: `${f.id} (${f.cases})` }))}
-                allowClear
-                onClear={() => { setFixtureId(''); setFixtureText('') }}
+                options={fixtures.map(f => ({
+                  value: f.id,
+                  label: `${f.id} — ${f.cases} case${f.cases === 1 ? '' : 's'}`,
+                }))}
+                showSearch
+                optionFilterProp="label"
               />
               <Input
-                style={{ width: '45%' }}
-                placeholder="id"
+                style={{ width: '50%' }}
+                placeholder="Fixture name (required to save)"
                 value={fixtureId}
                 onChange={e => setFixtureId(e.target.value)}
+                onPressEnter={saveFixture}
               />
             </Space.Compact>
+            <Text type="secondary" style={{ display: 'block', fontSize: 12, margin: '4px 0 8px' }}>
+              Open an existing suite on the left, or type a name on the right and
+              <b> Save</b> to store a new one.
+            </Text>
             <Input.TextArea
               value={fixtureText}
               onChange={e => setFixtureText(e.target.value)}
@@ -241,17 +288,29 @@ export function EvalsView({ active }: EvalsViewProps) {
                   min={1}
                   max={20}
                   value={samples}
-                  onChange={v => setSamples(Number(v) || 1)}
+                  onChange={v => {
+                    const n = Number(v) || 1
+                    setSamples(n)
+                    LS.write('runspec.evals.samples', String(n))
+                  }}
                 />
               </Space>
               <Space>
-                <Switch checked={validate} onChange={setValidate} size="small" />
+                <Switch
+                  checked={validate}
+                  onChange={v => { setValidate(v); LS.write('runspec.evals.validate', v ? '1' : '0') }}
+                  size="small"
+                />
                 <Tooltip title="Also assert the model's args wouldn't bounce (preflight validation)">
                   <Text>Validate args</Text>
                 </Tooltip>
               </Space>
               <Space>
-                <Switch checked={telemetry} onChange={setTelemetry} size="small" />
+                <Switch
+                  checked={telemetry}
+                  onChange={v => { setTelemetry(v); LS.write('runspec.evals.telemetry', v ? '1' : '0') }}
+                  size="small"
+                />
                 <Tooltip title="Emit one turn→llm→tool OTLP trace per case (needs [telemetry] enabled)">
                   <Text>Emit telemetry</Text>
                 </Tooltip>
@@ -330,6 +389,11 @@ export function EvalsView({ active }: EvalsViewProps) {
 function EvalReportPanel({ report }: { report: EvalReport }) {
   const s = report.summary
   const multiSample = report.samples > 1
+  // Only surface the subcommand / autonomy columns when a case actually carries
+  // them (autonomy is always resolved for a real run; command only for a
+  // subcommand runnable), so a plain suite's table stays uncluttered.
+  const anyCommand = report.cases.some(c => c.command)
+  const anyAutonomy = report.cases.some(c => c.autonomy)
 
   const cols: ColumnType<EvalCaseResult>[] = [
     {
@@ -364,11 +428,32 @@ function EvalReportPanel({ report }: { report: EvalReport }) {
     {
       title: 'Chose',
       dataIndex: 'target',
-      width: 160,
+      width: 150,
       render: (t: string) => (
         <Text style={{ fontFamily: 'monospace', fontSize: 12 }}>{t || '— (no run)'}</Text>
       ),
     },
+    ...(anyCommand
+      ? [{
+          title: 'Verb',
+          dataIndex: 'command',
+          width: 110,
+          render: (cmd: string) => (
+            <Text style={{ fontFamily: 'monospace', fontSize: 12 }}>{cmd || '—'}</Text>
+          ),
+        } as ColumnType<EvalCaseResult>]
+      : []),
+    ...(anyAutonomy
+      ? [{
+          title: 'Autonomy',
+          dataIndex: 'autonomy',
+          width: 110,
+          render: (a: string) =>
+            a
+              ? <Tag color={a === 'manual' ? 'red' : a === 'confirm' ? 'gold' : 'green'}>{a}</Tag>
+              : <Text type="secondary" style={{ fontSize: 12 }}>—</Text>,
+        } as ColumnType<EvalCaseResult>]
+      : []),
     {
       title: 'Detail',
       dataIndex: 'reason',
@@ -415,9 +500,47 @@ function EvalReportPanel({ report }: { report: EvalReport }) {
           rowKey="case_id"
           dataSource={report.cases}
           columns={cols}
+          expandable={{
+            rowExpandable: r => r.terminal != null,
+            expandedRowRender: r => <CapturedCall terminal={r.terminal!} />,
+          }}
           pagination={{ pageSize: 15, hideOnSinglePage: true }}
         />
       </Card>
     </>
+  )
+}
+
+// Expand a case to see the exact call the model produced — the tool + host +
+// subcommand + args it chose. This is the "what args did it pass" detail the
+// per-case table can't fit inline; it's the captured input, never executed.
+function CapturedCall({ terminal }: { terminal: EvalToolInvocation }) {
+  const isDark = useIsDark()
+  const input = terminal.input ?? {}
+  // run_runnable nests the runnable args under `args`; a direct tool passes them
+  // at top level. Show the whole captured input either way — it carries id/name,
+  // host, command and args — so nothing is hidden.
+  const pretty = JSON.stringify(input, null, 2)
+  return (
+    <div style={{ fontSize: 12 }}>
+      <Text style={{ color: textSecondary(isDark) }}>
+        Captured call — <span style={{ fontFamily: 'monospace' }}>{terminal.name}</span> (not executed):
+      </Text>
+      <pre
+        style={{
+          margin: '4px 0 0',
+          padding: 8,
+          fontFamily: 'monospace',
+          fontSize: 12,
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word',
+          color: textColor(isDark),
+          background: 'var(--rs-hover)',
+          borderRadius: 4,
+        }}
+      >
+        {pretty}
+      </pre>
+    </div>
   )
 }

@@ -61,8 +61,16 @@ def eval_attributes(case: EvalCase, result: CaseResult) -> dict[str, Any]:
         attrs["runspec.eval.expected_tool"] = case.expect_tool
     if result.target:
         attrs["runspec.eval.observed_tool"] = result.target
+    if case.expect_command is not None:
+        attrs["runspec.eval.expected_command"] = case.expect_command
+    if result.command:
+        attrs["runspec.eval.observed_command"] = result.command
     if case.expect_host is not None:
         attrs["runspec.eval.expected_host"] = case.expect_host
+    if case.expect_autonomy is not None:
+        attrs["runspec.eval.expected_autonomy"] = case.expect_autonomy
+    if result.autonomy:
+        attrs["runspec.eval.observed_autonomy"] = result.autonomy
     return attrs
 
 

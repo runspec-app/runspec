@@ -75,6 +75,82 @@ def test_wrong_tool_fails_with_category():
     assert "restart-service" in res.reason and "stop-service" in res.reason
 
 
+def test_expect_command_passes_and_is_dropped_from_args():
+    # A subcommand rides a top-level `command` field (sibling of `args`); it is
+    # graded by expect_command and NOT treated as an unknown runnable arg.
+    script = {
+        "c1": [
+            {
+                "tool_calls": [
+                    _run_call(
+                        "cron", {"schedule": "@daily"}, host="web-01", command="add"
+                    )
+                ]
+            }
+        ]
+    }
+    case = evals.EvalCase(
+        id="c1",
+        prompt="add a daily cron on web-01",
+        expect_tool="cron",
+        expect_command="add",
+        expect_host="web-01",
+        expect_args={"schedule": "@daily"},
+    )
+    res = evals.evaluate_case(ReplayAdapter(script), TOOLS, case)
+    assert res.passed
+    assert res.command == "add"
+
+
+def test_wrong_command_fails_with_category():
+    script = {"c1": [{"tool_calls": [_run_call("cron", command="remove")]}]}
+    case = evals.EvalCase(
+        id="c1", prompt="add a cron", expect_tool="cron", expect_command="add"
+    )
+    res = evals.evaluate_case(ReplayAdapter(script), TOOLS, case)
+    assert not res.passed
+    assert res.category == evals.CAT_WRONG_COMMAND
+    assert res.command == "remove"
+
+
+def test_nested_command_path_compares_space_joined():
+    # A nested subcommand path arrives as a list; it compares space-joined.
+    script = {"c1": [{"tool_calls": [_run_call("git", command=["remote", "add"])]}]}
+    case = evals.EvalCase(
+        id="c1",
+        prompt="add a git remote",
+        expect_tool="git",
+        expect_command="remote add",
+    )
+    res = evals.evaluate_case(ReplayAdapter(script), TOOLS, case)
+    assert res.passed
+    assert res.command == "remote add"
+
+
+def test_expect_autonomy_needs_a_resolver_then_grades():
+    script = {"c1": [{"tool_calls": [_run_call("restart-service", {"name": "nginx"})]}]}
+    case = evals.EvalCase(
+        id="c1",
+        prompt="restart nginx",
+        expect_tool="restart-service",
+        expect_autonomy="confirm",
+    )
+    # No resolver: autonomy can't be proven, so it is recorded as "" and never
+    # fails the case (a bare harness has no gate to consult).
+    res = evals.evaluate_case(ReplayAdapter(script), TOOLS, case)
+    assert res.passed and res.autonomy == ""
+    # With a resolver returning the expected level: graded and stamped.
+    res2 = evals.evaluate_case(
+        ReplayAdapter(script), TOOLS, case, resolve_autonomy=lambda inv: "confirm"
+    )
+    assert res2.passed and res2.autonomy == "confirm"
+    # A mismatch is a wrong_autonomy failure.
+    res3 = evals.evaluate_case(
+        ReplayAdapter(script), TOOLS, case, resolve_autonomy=lambda inv: "autonomous"
+    )
+    assert not res3.passed and res3.category == evals.CAT_WRONG_AUTONOMY
+
+
 def test_wrong_host_fails():
     script = {
         "c1": [
