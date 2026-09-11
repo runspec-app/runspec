@@ -255,10 +255,18 @@ class EvalsMixin:
                 try:
                     from . import observability
 
-                    observability.flush()  # so Phoenix has the spans to annotate
+                    # Force-flush so the just-emitted eval spans land immediately
+                    # (and Phoenix has them to annotate) — but do NOT shut the
+                    # provider down. The console's tracer is a single app-wide
+                    # provider created once at startup and shared by chat, triggers
+                    # and evals; shutting it down here silently killed tracing for
+                    # the rest of the session (enabled() stayed True, so nothing
+                    # re-inited and every later span was dropped by the dead batch
+                    # processor). The provider's lifecycle belongs to app.py
+                    # (started at boot, shut down at exit) — mirrors send_test_trace.
+                    observability.flush()
                     if want_annotations and to_annotate:
                         self._export_eval_annotations(tcfg, to_annotate)
-                    observability.shutdown()
                 except Exception:  # noqa: BLE001
                     pass
 

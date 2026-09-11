@@ -282,6 +282,44 @@ def test_search_mode_strips_group_host_prefix_from_run_runnable_id(bridge, monke
     assert report["summary"]["passed"] == 2
 
 
+def test_eval_telemetry_run_does_not_kill_the_shared_tracer(bridge, monkeypatch):
+    # Regression: run_evals(telemetry=True) used to call observability.shutdown()
+    # in its finally, tearing down the single app-wide tracer provider (shared by
+    # chat/triggers/evals) — but leaving enabled()==True, so nothing re-inited and
+    # every later span was silently dropped. It must flush, not shut down.
+    from runspec_console import observability as obs
+
+    ok, _ = obs.available()
+    if not ok:
+        import pytest
+
+        pytest.skip("opentelemetry SDK not installed")
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+        InMemorySpanExporter,
+    )
+
+    exporter = InMemorySpanExporter()
+    obs.init_tracing_for_test(exporter)
+    try:
+        monkeypatch.setattr(config_mod, "read_telemetry", lambda: {"enabled": True})
+        monkeypatch.setattr(
+            bridge, "_get_adapter", lambda *a, **k: ReplayAdapter(_script())
+        )
+        report = bridge.run_evals(fixture_toml=_fixture_toml(), telemetry=True)
+        assert report["ok"] is True
+        # The provider is still alive after the eval run.
+        assert obs.enabled() is True
+        # A span emitted *after* the eval run still reaches the exporter — proof
+        # the shared provider wasn't shut down under chat/trigger tracing.
+        exporter.clear()
+        with obs.tool_span("after-eval", "case", decision="test"):
+            pass
+        obs.flush()
+        assert any("after-eval" in s.name for s in exporter.get_finished_spans())
+    finally:
+        obs.reset_for_test()
+
+
 def test_run_evals_persists_a_report_that_lists_and_loads(bridge, monkeypatch):
     monkeypatch.setattr(
         bridge, "_get_adapter", lambda *a, **k: ReplayAdapter(_script())

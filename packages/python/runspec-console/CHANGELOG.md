@@ -8,6 +8,25 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.246.2] — 2026-09-11
+
+### Fixed
+- **An eval run with telemetry silently killed tracing for the rest of the
+  session.** `run_evals(telemetry=True)` called `observability.shutdown()` in its
+  `finally`, tearing down the **single app-wide** tracer provider (created once at
+  `app.py` startup and shared by chat, triggers **and** evals). Because it left
+  `enabled()` returning `True` (and `init_tracing` is idempotent), nothing
+  re-inited and every later span — chat turns, trigger/schedule turns, further
+  eval runs — was silently dropped by the dead batch processor. So after one eval
+  sweep, no traces arrived for anything until the app was restarted (surfacing,
+  e.g., right after changing the model and re-testing). The eval run now
+  **force-flushes** its spans (so they land immediately, and Phoenix has them to
+  annotate) but **does not shut the provider down** — the provider's lifecycle
+  belongs to `app.py` (started at boot, shut down at exit), mirroring what
+  `send_test_trace` already did. Regression test asserts a span emitted after an
+  eval-with-telemetry run still reaches the exporter. (`bridge_evals.py`.)
+
+
 ## [0.246.1] — 2026-09-11
 
 ### Fixed
