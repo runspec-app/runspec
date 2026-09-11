@@ -8,6 +8,72 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.245.0] — 2026-09-11
+
+### Added
+- **Evals — tool-selection regression tests (new tab + feature).** Check *which
+  runnable the agent would pick, with which arguments*, for a fixed set of
+  prompts — run against this console's real toolset and configured model,
+  **without executing anything**. The proactive twin of Improve: it drives the
+  model far enough to see the tool call it *decided* on, captures that decision
+  (never runs it), and scores it against a declared expectation, so a change to a
+  runnable description / the catalog index / `tool_mode` / tool visibility that
+  makes the agent pick the wrong tool shows up as a failing eval before it ships.
+  Verdicts reuse Improve's `classify_bounce` taxonomy (`wrong_tool` / `wrong_host`
+  / `wrong_args` / `no_run` / `unexpected_run` / `forbidden_tool`, plus the
+  arg-bounce buckets), so a proactive failure reads the same as a production
+  incident. See `docs/console-evals.md`.
+  - **Pure harness** (`evals.py`): drives a `ModelAdapter` over the real toolset,
+    captures the terminal runnable call without executing, scores against
+    `[[eval]]` cases (subset arg matching, tolerant value compare, negative
+    `expect_no_run` / `forbid_tools` cases). Console-specific tool naming
+    (dedup `group__name` / per_host `host__name` / search `run_runnable`) is
+    handled by injected resolvers, so a fixture is portable across `tool_mode`.
+  - **Evals tab** + `bridge_evals.py`: a fixture editor, run controls (samples per
+    case, validate-args, emit-telemetry), a saved-reports list, and a per-case
+    results table. `run_evals` uses the live `_runnables_to_tools` + `_get_adapter`
+    and, opt-in, the live `_preflight_validate` (so a would-be arg bounce is caught
+    proactively). `samples > 1` runs each case N times (`pass_rate`).
+  - **Fixtures ride Config Sync** (`runspec_evals.toml`, `[[suite]]` entries merged
+    by suite `name`): a repo suite replaces the local one of that name while an
+    operator's own local suites survive — a team shares one golden suite, and a
+    config seed can ship a baseline.
+  - **Scheduling** (`action="eval"`): put a suite on a cron/interval as a nightly
+    drift check — from the Schedules tab, from chat (the `create_schedule` agent
+    tool gained an `eval` action + fixture enum), or in `runspec_schedules.toml`.
+    Dry run, rota-gated, report lands in the Evals tab.
+  - **CI** (`scripts/record_evals.py` + `.github/workflows/console-evals.yml`): a
+    keyless **ground** tier grounds committed fixtures against the real installed
+    toolset on PRs, and a keyed nightly **live** tier drives the real model and
+    gates on a pass-rate threshold (skips cleanly with no API key). Record/replay
+    makes the fixture diff the review artifact.
+
+### Changed
+- **Agent traces now dual-emit OpenInference alongside OpenTelemetry GenAI, so
+  Arize Phoenix renders them.** Spans carried only `gen_ai.*`; open-source Phoenix
+  reads only OpenInference (`openinference.span.kind` + `llm.*` / `tool.*` /
+  `input.value` / `output.value`) and rendered every span as an unknown kind with
+  no LLM/tool card. Each span now carries **both** convention sets (the standard
+  dual-emit pattern) — the turn as an `AGENT` (GenAI `invoke_agent`, correcting a
+  prior mislabel where the turn shared the child LLM span's `chat` operation), the
+  model call as `LLM`, the tool call as `TOOL` — so one exporter serves Phoenix,
+  LangSmith, Arize AX and generic OTel. Additive: the `gen_ai.*` contract and the
+  `capture_content` privacy gate are unchanged. Affects all agent tracing, not
+  just evals. (`observability.py`.)
+
+### Notes
+- **Native eval export → Phoenix, opt-in** (`[telemetry] eval_annotations`): when
+  the OTLP endpoint is an Arize Phoenix instance, each eval verdict is also POSTed
+  as a span annotation (`/v1/span_annotations`, keyed by the span id), so pass/fail
+  shows in Phoenix's evaluation column with a score. Dependency-free (a best-effort
+  urllib POST reusing the `[telemetry]` TLS/CA + api-key settings; never breaks a
+  run). Native LangSmith *feedback* is deliberately not attempted: an OTLP span id
+  (8 bytes) doesn't map to a LangSmith run id (UUID), so an ingested span has no
+  run id to attach feedback to — doing it natively would need LangSmith's own
+  SDK/run-id generation (backend lock-in this console avoids). On LangSmith the
+  verdict stays the `runspec.eval.*` span attributes.
+
+
 ## [0.244.1] — 2026-09-11
 
 ### Fixed

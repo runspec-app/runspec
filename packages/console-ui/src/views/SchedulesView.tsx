@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Table, Tag, Button, Modal, Form, Select, Input, Space, Segmented, Switch, Tooltip, Popconfirm, Collapse, Typography, message } from 'antd'
+import { Table, Tag, Button, Modal, Form, Select, Input, InputNumber, Space, Segmented, Switch, Tooltip, Popconfirm, Collapse, Typography, message } from 'antd'
 import { DeleteOutlined, PlusOutlined, MinusCircleOutlined, EditOutlined, PlayCircleOutlined, CalendarOutlined, ReloadOutlined } from '@ant-design/icons'
-import { bridge, type ArgDef, type Credential, type Host, type Runnable, type Schedule, type ScheduleWhen, type Runbook, type SavedRun, type RunCard, type TriggerEvent } from '../bridge'
+import { bridge, type ArgDef, type Credential, type Host, type Runnable, type Schedule, type ScheduleWhen, type Runbook, type SavedRun, type RunCard, type TriggerEvent, type EvalFixtureMeta } from '../bridge'
 import { useIsDark, useAccent, textMuted, textSecondary } from '../ThemeContext'
 import { RunInbox } from '../components/RunInbox'
 import { EventLog } from '../components/EventLog'
@@ -32,7 +32,7 @@ const CRON_PRESETS = [
   { label: 'Custom…',          value: '__custom__' },
 ]
 
-type Action = 'runnable' | 'event' | 'prompt' | 'runbook' | 'saved_run'
+type Action = 'runnable' | 'event' | 'prompt' | 'runbook' | 'saved_run' | 'eval'
 type WhenKind = 'cron' | 'every'
 
 // Front-line validation of a runnable/runbook arg map — required + numeric range,
@@ -88,6 +88,13 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
   // the ids are persisted on the schedule, never a secret.
   const [credentialIds, setCredentialIds] = useState<string[]>([])
   const [creds, setCreds] = useState<Credential[]>([])
+  // Stored eval fixtures (suite names), for the "Run evals" action's picker, plus
+  // its run options. Loaded once per open.
+  const [evalFixtures, setEvalFixtures] = useState<EvalFixtureMeta[]>([])
+  const [evalFixture, setEvalFixture] = useState<string>('')
+  const [evalSamples, setEvalSamples] = useState<number>(1)
+  const [evalValidate, setEvalValidate] = useState<boolean>(false)
+  const [evalTelemetry, setEvalTelemetry] = useState<boolean>(false)
   const isDark = useIsDark()
   const labelStyle = { color: textSecondary(isDark), fontSize: 12 }
 
@@ -97,6 +104,8 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
     bridge.get_runbooks().then(setRunbooks).catch(console.error)
     // Saved runs, for the "Fire a saved run" action's picker.
     bridge.get_saved_runs().then(setSavedRuns).catch(() => setSavedRuns([]))
+    // Eval fixtures, for the "Run evals" action's picker.
+    bridge.list_eval_fixtures().then(setEvalFixtures).catch(() => setEvalFixtures([]))
   }, [open])
 
   // All saved credentials, for the runnable-action credential picker. Loaded once
@@ -155,6 +164,10 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
     setSavedRunValues({})
     setSavedRunErrors({})
     setCredentialIds([])
+    setEvalFixture('')
+    setEvalSamples(1)
+    setEvalValidate(false)
+    setEvalTelemetry(false)
   }
 
   // Prefill from the schedule being edited (or a clean slate for a new one)
@@ -204,6 +217,11 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
     setArgValues(initialFormValues(editArgs, editing.args))
     setArgErrors({})
     setCredentialIds(editing.credential_ids ?? [])
+    // Eval-action fields live outside the Form (like action/whenKind).
+    setEvalFixture(editing.eval_fixture ?? '')
+    setEvalSamples(editing.eval_samples ?? 1)
+    setEvalValidate(editing.eval_validate ?? false)
+    setEvalTelemetry(editing.eval_telemetry ?? false)
     // Runbook / saved-run value seeding is deferred to a second effect once the
     // respective list has loaded — their args come from the selected entry.
     setRunbookErrors({})
@@ -362,6 +380,13 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
       base.saved_run = savedRun
       base.values = vals
       if (!base.id) base.id = `rs-${savedRun}-${Date.now()}`
+    } else if (action === 'eval') {
+      if (!evalFixture) { message.error('Pick an eval fixture'); return }
+      base.eval_fixture = evalFixture
+      base.eval_samples = evalSamples
+      base.eval_validate = evalValidate
+      base.eval_telemetry = evalTelemetry
+      if (!base.id) base.id = `rs-eval-${evalFixture}-${Date.now()}`
     } else {
       // A schedule is persisted to disk, so a typed secret would be written in
       // plaintext — never do that. Password-typed args aren't required at save and
@@ -438,6 +463,7 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
               { label: 'Saved run', value: 'saved_run', disabled: savedRuns.length === 0 },
               { label: 'Run a prompt', value: 'prompt' },
               { label: 'Run a runbook', value: 'runbook' },
+              { label: 'Run evals', value: 'eval', disabled: evalFixtures.length === 0 },
               { label: 'Emit an event', value: 'event' },
             ]}
           />
@@ -450,6 +476,8 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
               ? 'Runs an agent turn on a fixed instruction — schedule the assistant to check or do something later. It still confirms before anything destructive.'
               : action === 'runbook'
               ? 'Runs a saved runbook as an agent turn on this cadence. It still confirms before anything destructive.'
+              : action === 'eval'
+              ? 'Runs a tool-selection eval fixture against the live agent (a dry run — never executes a runnable). The report appears in the Evals tab; a nightly drift check.'
               : 'Emits a matchable event — set up Triggers (source = schedule) to react to it, like email.'}
           </div>
         </Form.Item>
@@ -611,6 +639,40 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
                 </div>
               </>
             )}
+          </>
+        )}
+
+        {/* ── Eval action ── */}
+        {action === 'eval' && (
+          <>
+            <Form.Item label="Eval fixture"
+              help={evalFixtures.length === 0 ? 'No fixtures yet — create one in the Evals tab.' : 'The suite of tool-selection cases to run against the live agent.'}>
+              <Select
+                placeholder="Select an eval fixture"
+                value={evalFixture || undefined}
+                onChange={setEvalFixture}
+                showSearch
+                options={evalFixtures.map(f => ({ value: f.id, label: `${f.id} (${f.cases} case${f.cases === 1 ? '' : 's'})` }))}
+              />
+            </Form.Item>
+            <Space size="large" wrap>
+              <Space>
+                <span style={labelStyle}>Samples per case</span>
+                <InputNumber min={1} max={20} value={evalSamples} onChange={v => setEvalSamples(Number(v) || 1)} />
+              </Space>
+              <Space>
+                <Switch size="small" checked={evalValidate} onChange={setEvalValidate} />
+                <Tooltip title="Also assert the model's args wouldn't bounce (preflight validation)">
+                  <span style={labelStyle}>Validate args</span>
+                </Tooltip>
+              </Space>
+              <Space>
+                <Switch size="small" checked={evalTelemetry} onChange={setEvalTelemetry} />
+                <Tooltip title="Emit one turn→llm→tool OTLP trace per case (needs [telemetry] enabled)">
+                  <span style={labelStyle}>Emit telemetry</span>
+                </Tooltip>
+              </Space>
+            </Space>
           </>
         )}
 
@@ -852,6 +914,8 @@ export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewP
           ? <Space size={6}><Tag color="gold">runbook</Tag><code>{s.runbook}</code></Space>
           : s.action === 'saved_run'
           ? <Space size={6}><Tag color="blue">saved run</Tag><code>{s.saved_run}</code></Space>
+          : s.action === 'eval'
+          ? <Space size={6}><Tag color="magenta">evals</Tag><code>{s.eval_fixture}</code></Space>
           : <Space size={6}><Tag>run</Tag><code>/{s.runnable}{s.command?.length ? ` ${s.command.join(' ')}` : ''}</code></Space>,
     },
     {
@@ -864,7 +928,7 @@ export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewP
               : (s.hosts?.length
                   ? <Tag color="geekblue">any: {s.hosts.join(', ')}</Tag>
                   : (s.host ? <Tag>{s.host}</Tag> : <span style={{ color: dimCol }}>—</span>)))
-          : (s.action === 'prompt' || s.action === 'runbook')
+          : (s.action === 'prompt' || s.action === 'runbook' || s.action === 'eval')
           ? <Tag color="cyan">agent</Tag>
           : s.action === 'saved_run'
           ? <Tag color="blue">preset target</Tag>

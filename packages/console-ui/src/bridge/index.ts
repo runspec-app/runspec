@@ -537,7 +537,7 @@ export interface ScheduleWhen {
 export interface Schedule {
   id: string
   enabled?: boolean
-  action: 'runnable' | 'event' | 'prompt' | 'runbook' | 'saved_run'
+  action: 'runnable' | 'event' | 'prompt' | 'runbook' | 'saved_run' | 'eval'
   when: ScheduleWhen
   // action === 'runnable' — exactly one of host / group / hosts / selected_hosts.
   // group fans the run out across every member of the host group; hosts is a
@@ -567,6 +567,12 @@ export interface Schedule {
   values?: Record<string, unknown>
   // action === 'saved_run' — the saved-run (preset) id; targeting lives on the preset.
   saved_run?: string
+  // action === 'eval' — the eval fixture (suite name) to run against the live
+  // agent, plus the run options (a dry run — never executes a runnable).
+  eval_fixture?: string
+  eval_samples?: number
+  eval_validate?: boolean
+  eval_telemetry?: boolean
   // Optional attention cue played when the schedule fires (a named sound id or a
   // built-in cue). Empty/absent = no sound.
   sound?: string
@@ -636,6 +642,66 @@ export interface ImproveReportMeta {
   comment: string
   product_name: string
   has_synthesis: boolean
+}
+
+// ── Evals (tool-selection eval suites; mirrors bridge_evals.py) ──────────────
+export interface EvalToolInvocation {
+  name: string
+  input: Record<string, unknown>
+}
+
+export interface EvalCaseResult {
+  case_id: string
+  passed: boolean
+  category: string
+  reason: string
+  terminal: EvalToolInvocation | null
+  target: string
+  final_text: string
+  samples: number
+  pass_count: number
+  pass_rate: number
+}
+
+export interface EvalSummary {
+  total: number
+  passed: number
+  failed: number
+  pass_rate: number
+  by_category: Record<string, number>
+}
+
+export interface EvalReport {
+  id: string
+  generated_at: string
+  provider: string
+  model: string
+  tool_mode: string
+  samples: number
+  summary: EvalSummary
+  cases: EvalCaseResult[]
+}
+
+export interface EvalReportMeta {
+  id: string
+  generated_at: string
+  model: string
+  tool_mode: string
+  summary: EvalSummary
+}
+
+// run_evals returns { ok, reason } on failure, or { ok: true, ...EvalReport }.
+export type EvalRunResult = ({ ok: true } & EvalReport) | { ok: false; reason: string }
+
+export interface EvalFixtureMeta {
+  id: string
+  cases: number
+}
+
+export interface EvalFixtureSaveResult {
+  ok: boolean
+  reason?: string
+  cases?: number
 }
 
 export interface ConversationTurn {
@@ -1330,6 +1396,27 @@ export interface BridgeApi {
   // Build a mailto: to the configured developer_emails with the report body, open
   // the operator's default mail client, and return the URL (also usable as a link).
   improve_mailto: (reportId: string) => Promise<string>
+  // ── Evals (proactive tool-selection eval suites) ─────────────────────────────
+  // Drive the configured agent over a fixture's [[eval]] cases (inline `fixtureToml`
+  // or a stored `fixtureId`) and score which runnable it WOULD pick, with which
+  // args, without executing. `samples` runs each case N times (stochastic model);
+  // `validate` also asserts the args wouldn't bounce (preflight); `telemetry` emits
+  // one OTLP trace per case. Returns the scored report, or {ok:false,reason}.
+  run_evals: (
+    fixtureToml?: string,
+    fixtureId?: string,
+    samples?: number,
+    validate?: boolean,
+    telemetry?: boolean,
+  ) => Promise<EvalRunResult>
+  list_eval_reports: () => Promise<EvalReportMeta[]>
+  load_eval_report: (reportId: string) => Promise<EvalReport | null>
+  delete_eval_report: (reportId: string) => Promise<boolean>
+  // Stored fixture suites (machine-local .toml files).
+  list_eval_fixtures: () => Promise<EvalFixtureMeta[]>
+  get_eval_fixture_text: (fixtureId: string) => Promise<string>
+  save_eval_fixture: (fixtureId: string, tomlText: string) => Promise<EvalFixtureSaveResult>
+  delete_eval_fixture: (fixtureId: string) => Promise<boolean>
   // ── runbooks (user-invocable, parameterized runbooks) ─────────────────────────
   // All runbooks with their [runbook.args] parsed to ArgDef[] — feeds the `$` menu,
   // the run modal, and the Settings editor.

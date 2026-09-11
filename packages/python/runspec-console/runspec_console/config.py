@@ -213,6 +213,24 @@ def improve_reports_dir() -> Path:
     return app_dir() / "improve"
 
 
+def eval_reports_dir() -> Path:
+    """Directory holding saved **Evals** reports (one `{ts}.json` per run) — the
+    tool-selection eval sweeps produced by the Evals tab. **Machine-local** (like
+    Improve reports): a report reflects *this* install's configured agent surface
+    (its tool_mode, hidden tools, model, effort), so it is **never** synced."""
+    return app_dir() / "evals" / "reports"
+
+
+def evals_path() -> Path:
+    """The **Evals** fixture store: one `runspec_evals.toml` holding `[[suite]]`
+    entries (each a named suite with its `[[suite.eval]]` cases). A single named
+    file — not a directory — so it **rides Config Sync**: it's in gitsync's
+    KNOWN_FILES and merges by suite `name` (COLLECTION_FILES), so a team shares one
+    golden suite distributed from the versioned repo, an operator's own local
+    suites survive the merge, and it can seed a fresh install."""
+    return app_dir() / "runspec_evals.toml"
+
+
 def workspaces_root() -> Path:
     """Parent dir for per-session agent workspaces (one subdir per chat
     conversation, trigger event, or schedule run). Large runnable outputs get
@@ -463,6 +481,11 @@ def read_telemetry() -> dict[str, Any]:
         "max_content_chars": max(0, int(cfg.get("max_content_chars", 0) or 0)),
         "api_key_command": str(cfg.get("api_key_command") or "").strip() or None,
         "api_key_header": str(cfg.get("api_key_header") or "x-api-key").strip(),
+        # Native eval export: when the OTLP endpoint is an Arize Phoenix instance,
+        # also POST each eval verdict as a span annotation (`/v1/span_annotations`)
+        # so pass/fail shows as a first-class evaluation, not just a filterable
+        # attribute. Off by default; a no-op for a non-Phoenix backend.
+        "eval_annotations": bool(cfg.get("eval_annotations", False)),
     }
 
 

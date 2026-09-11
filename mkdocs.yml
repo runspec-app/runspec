@@ -53,6 +53,7 @@ nav:
     - Forms & credentials: console-forms.md
     - Team config — sync & rooms: console-team.md
     - Improve — evaluation & problem reports: console-improve.md
+    - Evals — tool-selection regression tests: console-evals.md
     - Settings & config reference: console-reference.md
   - Authoring runnables:
     - Adding your own runnables: authoring-intro.md

@@ -54,6 +54,7 @@ KNOWN_FILES: tuple[str, ...] = (
     "runspec_sounds.toml",
     "runspec_repos.toml",
     "runspec_self_service.toml",
+    "runspec_evals.toml",
 )
 
 

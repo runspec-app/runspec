@@ -1,0 +1,117 @@
+name: Console Evals
+
+# Tool-selection evals for the runspec-console agent (see runspec_console/evals.py).
+# Two tiers, matching the design:
+#   • ground  — keyless, on every relevant PR: assert each committed fixture's
+#     expect_tool / expect_args still exist on the real installed toolset, so a
+#     renamed runnable/arg that would silently invalidate a fixture fails loudly.
+#   • live    — keyed, nightly + on demand: drive the real model over the suite
+#     and gate on a pass-rate threshold (catches model drift). Skips cleanly when
+#     no ANTHROPIC_API_KEY secret is configured, so a fork / unkeyed repo is fine.
+#
+# The console itself is never `pip install -e`'d here (it declares pywin32
+# unconditionally, which fails on Linux) — the sibling packs are installed so
+# `runspec local` discovers real runnables, and the recorder runs against the
+# source tree via PYTHONPATH, exactly like the console-test job in ci.yml.
+
+on:
+  pull_request:
+    paths:
+      - 'packages/python/runspec-console/runspec_console/evals.py'
+      - 'packages/python/runspec-console/runspec_console/evals_trace.py'
+      - 'packages/python/runspec-console/runspec_console/bridge_evals.py'
+      - 'packages/python/runspec-console/scripts/record_evals.py'
+      - 'packages/python/runspec-console/tests/fixtures/agent_evals*.toml'
+      - 'packages/python/runspec-linux/**'
+      - 'packages/python/runspec-fs/**'
+      - '.github/workflows/console-evals.yml'
+  schedule:
+    - cron: '17 6 * * *'  # nightly ~06:17 UTC — the live drift check
+  workflow_dispatch:
+    inputs:
+      threshold:
+        description: 'Minimum pass rate (0..1) the live sweep must meet'
+        default: '0.9'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: console-evals-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  FIXTURE: packages/python/runspec-console/tests/fixtures/agent_evals.linux-fs.toml
+  RECORDER: packages/python/runspec-console/scripts/record_evals.py
+  PYTHONPATH: packages/python/runspec-console
+
+jobs:
+  # ── keyless: the committed fixtures still match the real toolset ────────────
+  ground:
+    name: Ground fixtures against the toolset
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install core + packs
+        run: |
+          pip install -e packages/python/runspec
+          pip install -e packages/python/runspec-linux-core \
+                       packages/python/runspec-webops-core \
+                       packages/python/runspec-fs-core
+          pip install -e packages/python/runspec-linux packages/python/runspec-fs
+      - name: Show the discovered toolset
+        run: python "$RECORDER" build-toolset
+      - name: Validate the fixture (expect_tool / expect_args exist)
+        run: python "$RECORDER" validate "$FIXTURE"
+
+  # ── keyed: drive the real model and gate on a pass-rate threshold ───────────
+  live:
+    name: Live eval sweep
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Check for a model key
+        id: guard
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "${ANTHROPIC_API_KEY}" ]; then
+            echo "No ANTHROPIC_API_KEY secret configured — skipping the live sweep."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Install core + packs + provider SDK
+        if: steps.guard.outputs.run == 'true'
+        run: |
+          pip install -e packages/python/runspec
+          pip install -e packages/python/runspec-linux-core \
+                       packages/python/runspec-webops-core \
+                       packages/python/runspec-fs-core
+          pip install -e packages/python/runspec-linux packages/python/runspec-fs
+          pip install anthropic
+      - name: Record + score against the live model
+        if: steps.guard.outputs.run == 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Optional: point at your OTLP backend to also emit a trace per case.
+          #   RUNSPEC_EVAL_MODEL: claude-sonnet-4-6
+        run: |
+          python "$RECORDER" record "$FIXTURE" \
+            --out "${RUNNER_TEMP}/eval-script.json" \
+            --threshold "${{ github.event.inputs.threshold || '0.9' }}"
+      - name: Upload the recorded script
+        if: steps.guard.outputs.run == 'true' && always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: eval-script
+          path: ${{ runner.temp }}/eval-script.json
+          if-no-files-found: ignore

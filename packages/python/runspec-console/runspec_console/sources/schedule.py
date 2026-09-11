@@ -91,6 +91,10 @@ AgentFn = Callable[["ScheduleJob"], None]
 # preset's own targeting deterministically — same no-agent path as a runnable.
 SavedFn = Callable[["ScheduleJob"], None]
 
+# What an eval-action schedule calls to run the fixture against the live agent.
+# The bridge gets the whole job (it needs eval_fixture + the run options).
+EvalFn = Callable[["ScheduleJob"], None]
+
 # Working-hours gate (no args → True/False): whether the rota currently permits a
 # fire. None means "no gate" (always fire).
 ClockFn = Callable[[], bool]
@@ -166,6 +170,13 @@ class ScheduleJob:
     values: dict[str, Any] = field(default_factory=dict)
     # action == "saved_run" — the saved-run (preset) id from runspec_saved_runs.toml.
     saved_run: str = ""
+    # action == "eval" — the eval fixture (suite name) to run against the live
+    # agent, plus the run options (samples per case / preflight-validate / emit an
+    # OTLP trace per case). A dry run — it never executes a runnable.
+    eval_fixture: str = ""
+    eval_samples: int = 1
+    eval_validate: bool = False
+    eval_telemetry: bool = False
     # Optional audio cue played when this schedule fires (any action) — a named
     # sound id, a bundled cue name, or a full token. Best-effort + Windows-only;
     # never affects whether the action runs. Resolved via sounds.play_identifier.
@@ -235,10 +246,10 @@ def parse_schedule_entry(data: dict[str, Any]) -> ScheduleJob:
     # action="skill" schedule and treat it as a runbook.
     if action == "skill":
         action = "runbook"
-    if action not in ("event", "runnable", "prompt", "runbook", "saved_run"):
+    if action not in ("event", "runnable", "prompt", "runbook", "saved_run", "eval"):
         raise ValueError(
             f"schedule '{sid}' has unknown action '{action}' "
-            "(expected 'event', 'runnable', 'prompt', 'runbook' or 'saved_run')"
+            "(expected 'event', 'runnable', 'prompt', 'runbook', 'saved_run' or 'eval')"
         )
 
     when = parse_when(data.get("when") or {})
@@ -257,6 +268,10 @@ def parse_schedule_entry(data: dict[str, Any]) -> ScheduleJob:
     runbook = ""
     values: dict[str, Any] = {}
     saved_run = ""
+    eval_fixture = ""
+    eval_samples = 1
+    eval_validate = False
+    eval_telemetry = False
     if action == "event":
         event = str(data.get("event") or "").strip()
         if not event:
@@ -311,6 +326,15 @@ def parse_schedule_entry(data: dict[str, Any]) -> ScheduleJob:
                 f"schedule '{sid}' uses action='saved_run' but has no 'saved_run' id"
             )
         values = dict(data.get("values") or {})
+    elif action == "eval":
+        eval_fixture = str(data.get("eval_fixture") or "").strip()
+        if not eval_fixture:
+            raise ValueError(
+                f"schedule '{sid}' uses action='eval' but has no 'eval_fixture'"
+            )
+        eval_samples = max(1, int(data.get("eval_samples") or 1))
+        eval_validate = bool(data.get("eval_validate", False))
+        eval_telemetry = bool(data.get("eval_telemetry", False))
     else:  # runbook
         # Read the new `runbook` key, falling back to the legacy `skill` key.
         runbook = str(data.get("runbook") or data.get("skill") or "").strip()
@@ -340,6 +364,10 @@ def parse_schedule_entry(data: dict[str, Any]) -> ScheduleJob:
         runbook=runbook,
         values=values,
         saved_run=saved_run,
+        eval_fixture=eval_fixture,
+        eval_samples=eval_samples,
+        eval_validate=eval_validate,
+        eval_telemetry=eval_telemetry,
         sound=str(data.get("sound") or "").strip(),
     )
 
@@ -425,6 +453,7 @@ class ScheduleSource:
         run_runnable: RunFn | None = None,
         run_agent: AgentFn | None = None,
         run_saved: SavedFn | None = None,
+        run_eval: EvalFn | None = None,
         clock_ok: ClockFn | None = None,
         on_event: ScheduleEventFn | None = None,
         play_sound: SoundFn | None = None,
@@ -446,6 +475,8 @@ class ScheduleSource:
         self._run_agent = run_agent
         # Saved-run schedules fire the preset deterministically through this one.
         self._run_saved = run_saved
+        # Eval-action schedules run a fixture against the live agent (dry run).
+        self._run_eval = run_eval
         # Working-hours gate + per-fire audit hook (both bridge-owned). When
         # clock_ok is set and returns False, a fire is skipped (unless the job sets
         # ignore_rota) — so schedules honour the same rota as triggers.
@@ -545,6 +576,9 @@ class ScheduleSource:
             elif job.action == "saved_run":
                 if self._run_saved is not None:
                     self._run_saved(job)
+            elif job.action == "eval":
+                if self._run_eval is not None:
+                    self._run_eval(job)
             elif self._run_runnable is not None:
                 self._run_runnable(
                     job.id,
@@ -579,6 +613,9 @@ class ScheduleSource:
         elif job.action == "saved_run":
             etype = "saved_run"
             summary = f"saved run: {job.saved_run}"
+        elif job.action == "eval":
+            etype = "eval"
+            summary = f"eval: {job.eval_fixture}"
         else:
             etype = job.runnable or "runnable"
             if job.group:

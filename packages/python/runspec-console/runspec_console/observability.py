@@ -3,10 +3,24 @@ observability.py — opt-in OpenTelemetry (OTLP) tracing of the agent.
 
 Exports one connected trace per agent turn — ``turn → llm request → tool call``
 — over OTLP to *any* OpenTelemetry backend (LangSmith, Langfuse, Phoenix,
-Jaeger, Grafana Tempo). Spans follow the OpenTelemetry GenAI semantic
-conventions (``gen_ai.*``) so a GenAI-aware backend renders the model calls and
-tool calls natively; runspec-specific detail (autonomy decision, provenance,
-cache-token split) rides under a ``runspec.*`` namespace.
+Jaeger, Grafana Tempo).
+
+Spans carry **two overlapping convention sets on purpose**, because the popular
+backends disagree on which they read:
+
+* **OpenTelemetry GenAI** (``gen_ai.*``) — LangSmith, Arize AX, and generic OTel
+  backends read this: operation name, model/provider, prompt/completion, token
+  usage, finish reason, tool name + arguments.
+* **OpenInference** (``openinference.span.kind`` + ``llm.*`` / ``tool.*`` /
+  ``input.value`` / ``output.value``) — **Arize Phoenix reads this and does NOT
+  understand ``gen_ai.*``**, so without it every span renders as an unknown kind
+  with no LLM/tool card. The two sets coexist on each span (the standard
+  dual-emit pattern), so one exporter serves both without a per-backend build.
+
+The turn is an ``AGENT`` span (GenAI ``invoke_agent``), the model call an ``LLM``
+span (GenAI ``chat``), the tool call a ``TOOL`` span (GenAI ``execute_tool``).
+runspec-specific detail (autonomy decision, provenance, cache-token split, and
+the ``runspec.eval.*`` verdict) rides under a ``runspec.*`` namespace.
 
 Design mirrors ``trace.py``: **opt-in, config/env-gated, best-effort, never
 raises into the agent loop.** Every span helper is a complete no-op when
@@ -382,7 +396,12 @@ def turn_span(
         yield None
         return
     attrs: dict[str, Any] = {
-        "gen_ai.operation.name": "chat",
+        # GenAI (LangSmith / Arize AX / generic OTel): the turn is an agent step,
+        # not the chat call itself — that's the child llm span.
+        "gen_ai.operation.name": "invoke_agent",
+        # OpenInference (Phoenix / Arize) — Phoenix classifies spans by this, and
+        # does NOT read gen_ai.*, so without it the turn renders as an unknown span.
+        "openinference.span.kind": "AGENT",
         "runspec.turn.kind": kind,
         "runspec.chat_id": chat_id,
     }
@@ -426,7 +445,8 @@ def begin_turn(
         from opentelemetry import trace as _otel_trace
 
         attrs: dict[str, Any] = {
-            "gen_ai.operation.name": "chat",
+            "gen_ai.operation.name": "invoke_agent",
+            "openinference.span.kind": "AGENT",
             "runspec.turn.kind": kind,
             "runspec.chat_id": chat_id,
         }
@@ -475,11 +495,15 @@ def llm_span(*, provider: str = "", model: str = "") -> Iterator[Any]:
         yield None
         return
     name = f"chat {model}".strip()
-    attrs: dict[str, Any] = {"gen_ai.operation.name": "chat"}
+    attrs: dict[str, Any] = {
+        "gen_ai.operation.name": "chat",
+        "openinference.span.kind": "LLM",  # Phoenix renders this as an LLM span
+    }
     if provider:
         attrs["gen_ai.provider.name"] = provider
     if model:
         attrs["gen_ai.request.model"] = model
+        attrs["llm.model_name"] = model  # OpenInference model key (Phoenix)
     with _TRACER.start_as_current_span(name or "chat", attributes=attrs) as span:
         try:
             yield span
@@ -506,12 +530,15 @@ def tool_span(
     attrs: dict[str, Any] = {
         "gen_ai.operation.name": "execute_tool",
         "gen_ai.tool.name": tool_name,
+        "openinference.span.kind": "TOOL",  # Phoenix renders this as a tool span
+        "tool.name": tool_name,  # OpenInference tool key
         "runspec.chat_id": chat_id,
     }
     if decision:
         attrs["runspec.tool.autonomy_decision"] = decision
     if tool_call_id:
         attrs["gen_ai.tool.call.id"] = tool_call_id
+        attrs["tool_call.id"] = tool_call_id  # OpenInference tool-call id
     attrs.update(_provenance_attrs(provenance))
     with _TRACER.start_as_current_span(
         f"execute_tool {tool_name}", attributes=attrs
@@ -551,6 +578,12 @@ def set_llm_response(span: Any, response: Any, usage: dict[str, int]) -> None:
             span.set_attribute("gen_ai.response.finish_reasons", [str(stop)])
         span.set_attribute("gen_ai.usage.input_tokens", int(usage.get("input", 0)))
         span.set_attribute("gen_ai.usage.output_tokens", int(usage.get("output", 0)))
+        # OpenInference token keys (Phoenix reads these, not gen_ai.usage.*).
+        prompt_toks = int(usage.get("input", 0))
+        completion_toks = int(usage.get("output", 0))
+        span.set_attribute("llm.token_count.prompt", prompt_toks)
+        span.set_attribute("llm.token_count.completion", completion_toks)
+        span.set_attribute("llm.token_count.total", prompt_toks + completion_toks)
         if usage.get("cache_read"):
             span.set_attribute(
                 "runspec.usage.cache_read_tokens", int(usage["cache_read"])
@@ -660,10 +693,12 @@ def add_prompt(messages: Any) -> None:
         from .trace import jsonsafe_messages
 
         safe = jsonsafe_messages(messages) if isinstance(messages, list) else messages
-        span.set_attribute(
-            "gen_ai.prompt",
-            _truncate_content(json.dumps(safe, default=str, ensure_ascii=False)),
-        )
+        payload = _truncate_content(json.dumps(safe, default=str, ensure_ascii=False))
+        span.set_attribute("gen_ai.prompt", payload)  # legacy/generic + LangSmith
+        # OpenInference (Phoenix): the generic input value + per-message role/content.
+        span.set_attribute("input.value", payload)
+        span.set_attribute("input.mime_type", "application/json")
+        _set_oi_messages(span, "llm.input_messages", safe)
     except Exception:  # noqa: BLE001
         pass
 
@@ -677,9 +712,34 @@ def add_completion(text: str) -> None:
     if span is None:
         return
     try:
-        span.set_attribute("gen_ai.completion", _truncate_content(str(text)))
+        payload = _truncate_content(str(text))
+        span.set_attribute("gen_ai.completion", payload)  # legacy/generic + LangSmith
+        # OpenInference (Phoenix): the generic output value + one assistant message.
+        span.set_attribute("output.value", payload)
+        span.set_attribute("llm.output_messages.0.message.role", "assistant")
+        span.set_attribute("llm.output_messages.0.message.content", payload)
     except Exception:  # noqa: BLE001
         pass
+
+
+def _set_oi_messages(span: Any, prefix: str, messages: Any) -> None:
+    """Best-effort per-message OpenInference attributes
+    (``<prefix>.<i>.message.role`` / ``.content``) for a simple ``[{role, content}]``
+    list. Skips a message whose content isn't a plain string (the full structure
+    still rides ``input.value``); never raises."""
+    if not isinstance(messages, list):
+        return
+    for i, msg in enumerate(messages):
+        if not isinstance(msg, dict):
+            continue
+        role = msg.get("role")
+        content = msg.get("content")
+        if role:
+            span.set_attribute(f"{prefix}.{i}.message.role", str(role))
+        if isinstance(content, str):
+            span.set_attribute(
+                f"{prefix}.{i}.message.content", _truncate_content(content)
+            )
 
 
 def add_tool_arguments(span: Any, tool_input: Any) -> None:
@@ -692,10 +752,14 @@ def add_tool_arguments(span: Any, tool_input: Any) -> None:
         scrubbed = (
             scrub_args(tool_input) if isinstance(tool_input, dict) else tool_input
         )
-        span.set_attribute(
-            "gen_ai.tool.call.arguments",
-            _truncate_content(json.dumps(scrubbed, default=str, ensure_ascii=False)),
+        payload = _truncate_content(
+            json.dumps(scrubbed, default=str, ensure_ascii=False)
         )
+        span.set_attribute("gen_ai.tool.call.arguments", payload)  # generic + LangSmith
+        # OpenInference (Phoenix): the tool-call arguments + generic input value.
+        span.set_attribute("tool_call.function.arguments", payload)
+        span.set_attribute("input.value", payload)
+        span.set_attribute("input.mime_type", "application/json")
     except Exception:  # noqa: BLE001
         pass
 

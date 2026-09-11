@@ -1,0 +1,12 @@
+{
+  "system-info-plain":              [{"tool_calls": [{"name": "system-info", "input": {}}]}],
+  "disk-usage-plain":               [{"tool_calls": [{"name": "disk-usage", "input": {}}]}],
+  "list-processes-filtered":        [{"tool_calls": [{"name": "list-processes", "input": {"filter": "nginx", "limit": 5}}]}],
+  "install-a-package":              [{"tool_calls": [{"name": "install-package", "input": {"package": "htop"}}]}],
+  "read-a-file":                    [{"tool_calls": [{"name": "filesystem_read-text-file", "input": {"path": "/etc/hosts"}}]}],
+  "add-a-cron-job":                 [{"tool_calls": [{"name": "cron_add", "input": {"schedule": "0 3 * * *", "command": "/usr/local/bin/backup.sh"}}]}],
+  "list-cron":                      [{"tool_calls": [{"name": "cron_list", "input": {}}]}],
+  "which-python":                   [{"tool_calls": [{"name": "which", "input": {"name": "python"}}]}],
+  "ambiguous-no-target-should-clarify": [{"text": "Which package would you like me to install?", "tool_calls": []}],
+  "read-must-not-write":            [{"tool_calls": [{"name": "filesystem_read-text-file", "input": {"path": "/etc/hosts"}}]}]
+}

@@ -164,6 +164,8 @@ class TriggersMixin:
                 run_agent=self._run_scheduled_agent,
                 # Saved-run schedules fire the preset deterministically (no agent).
                 run_saved=self._run_scheduled_saved,
+                # Eval schedules run a fixture against the live agent (dry run).
+                run_eval=self._run_scheduled_eval,
                 # Same working-hours gate the engine uses, so schedules and
                 # triggers honour one shared rota; plus the Schedules event-log hook.
                 clock_ok=self._build_clock_ok(),

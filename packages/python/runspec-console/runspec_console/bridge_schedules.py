@@ -194,6 +194,10 @@ class SchedulesMixin:
                 "runnable": job.saved_run,
                 "host": "saved run",
             }
+        if job.action == "eval":
+            result = self._run_scheduled_eval(job)
+            self._record_schedule_fire(job)
+            return {"action": "eval", "eval_fixture": job.eval_fixture, **result}
         inv_id = self._invoke_scheduled(
             job.host,
             job.runnable,
@@ -233,6 +237,8 @@ class SchedulesMixin:
             etype, summary = "runbook", f"runbook: {job.runbook}"
         elif job.action == "saved_run":
             etype, summary = "saved_run", f"saved run: {job.saved_run}"
+        elif job.action == "eval":
+            etype, summary = "eval", f"eval: {job.eval_fixture}"
         else:
             etype = job.runnable or "runnable"
             if job.group:
@@ -317,6 +323,33 @@ class SchedulesMixin:
         ``run_saved`` callback). The manual *Run now* path uses
         :meth:`_invoke_scheduled_saved` directly so it can surface the id."""
         self._invoke_scheduled_saved(job)
+
+    def _run_scheduled_eval(self, job: Any) -> dict[str, Any]:
+        """Run an eval-action schedule (ScheduleSource's ``run_eval`` callback):
+        drive the named fixture against the live agent via :meth:`run_evals` — a
+        dry run that never executes a runnable. The report persists to the machine-
+        local store, so it appears in the Evals tab. Returns the run summary (used
+        by *Run now*); best-effort — a failure is logged, never raised into the
+        scheduler thread."""
+        try:
+            res = self.run_evals(  # type: ignore[attr-defined]
+                fixture_id=str(job.eval_fixture or ""),
+                samples=int(getattr(job, "eval_samples", 1) or 1),
+                validate=bool(getattr(job, "eval_validate", False)),
+                telemetry=bool(getattr(job, "eval_telemetry", False)),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("schedule: eval fixture %r failed", job.eval_fixture)
+            return {"ok": False, "reason": str(exc)}
+        if res.get("ok"):
+            s = res.get("summary") or {}
+            logger.info(
+                "schedule: eval %s → %s/%s passed",
+                job.eval_fixture,
+                s.get("passed"),
+                s.get("total"),
+            )
+        return {"ok": bool(res.get("ok")), "summary": res.get("summary")}
 
     def _invoke_scheduled_saved(self, job: Any) -> str:
         """Fire a saved run from a schedule: load + parse the preset, fill its

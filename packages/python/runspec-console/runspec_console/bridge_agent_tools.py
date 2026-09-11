@@ -3694,6 +3694,11 @@ class AgentToolsMixin:
         from . import savedruns as savedruns_mod
 
         saved_runs = [r for r in savedruns_mod.load_saved_runs() if r.get("id")]
+        # Stored eval fixtures (suite names) — the enum for action='eval'.
+        try:
+            eval_fixtures = [f["id"] for f in self.list_eval_fixtures() if f.get("id")]
+        except Exception:  # noqa: BLE001
+            eval_fixtures = []
         if saved_runs:
 
             def _sr_line(r: dict[str, Any]) -> str:
@@ -3766,12 +3771,14 @@ class AgentToolsMixin:
                     "the trigger engine (action='event'); run a runnable directly "
                     "(action='runnable'); run an agent turn on a fixed prompt so you "
                     "(the assistant) check or do something later (action='prompt'); "
-                    "run a saved runbook as an agent turn (action='runbook'); or "
+                    "run a saved runbook as an agent turn (action='runbook'); "
                     "fire a saved run — a deterministic preset with its own stored "
-                    "targeting — (action='saved_run'). Use "
+                    "targeting — (action='saved_run'); or run a tool-selection eval "
+                    "fixture against the live agent (action='eval'). Use "
                     "'prompt' to schedule a reminder-to-act in natural language, "
-                    "'runbook' to re-run an existing runbook on a cadence, and "
-                    "'saved_run' to put an existing preset on a cadence. For a "
+                    "'runbook' to re-run an existing runbook on a cadence, "
+                    "'saved_run' to put an existing preset on a cadence, and 'eval' "
+                    "to run a nightly tool-selection regression check. For a "
                     "runnable, target exactly one of: a single 'host', a 'group' "
                     "(runs on every member), 'hosts' (a candidate list — runs on the "
                     "first connected one), or 'selected_hosts' (an explicit list — "
@@ -3792,6 +3799,7 @@ class AgentToolsMixin:
                                 "prompt",
                                 "runbook",
                                 "saved_run",
+                                "eval",
                             ],
                             "description": (
                                 "event = emit an event; runnable = run a runnable; "
@@ -3799,7 +3807,9 @@ class AgentToolsMixin:
                                 "the saved runbook named by 'runbook' as an agent turn; "
                                 "saved_run = fire the saved run named by 'saved_run' "
                                 "deterministically (its stored targeting decides the "
-                                "hosts)."
+                                "hosts); eval = run the eval fixture named by "
+                                "'eval_fixture' against the live agent (a dry run — "
+                                "never executes a runnable)."
                             ),
                         },
                         "when": {
@@ -3918,6 +3928,28 @@ class AgentToolsMixin:
                                 "Values for the runbook's {{name}} parameters "
                                 "(action='runbook') or the saved run's open params "
                                 "(action='saved_run')."
+                            ),
+                        },
+                        "eval_fixture": {
+                            "type": "string",
+                            **({"enum": eval_fixtures} if eval_fixtures else {}),
+                            "description": (
+                                "Eval fixture (suite name) to run against the live "
+                                "agent (action='eval')."
+                            ),
+                        },
+                        "eval_samples": {
+                            "type": "integer",
+                            "description": (
+                                "Times to run each eval case (action='eval'; "
+                                "default 1)."
+                            ),
+                        },
+                        "eval_validate": {
+                            "type": "boolean",
+                            "description": (
+                                "Also assert the model's args wouldn't bounce "
+                                "(action='eval'; default false)."
                             ),
                         },
                         "sound": {
@@ -4291,6 +4323,10 @@ class AgentToolsMixin:
             "runbook",
             "saved_run",
             "values",
+            "eval_fixture",
+            "eval_samples",
+            "eval_validate",
+            "eval_telemetry",
             "sound",
         ):
             if ti.get(key) is not None:
