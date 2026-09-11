@@ -108,13 +108,13 @@ pure core). Access stays bounded by the selected user's OS permissions.
 
 `runspec-fs-core` + `runspec-fs` are the shipped proof of concept — the 13-tool
 [Filesystem MCP server](https://github.com/modelcontextprotocol/servers/tree/HEAD/src/filesystem)
-ported to the `fs` runnable (read/write/edit/list/tree/search/move/stat; reads
+ported to the `filesystem` runnable (read/write/edit/list/tree/search/move/stat; reads
 `autonomous`, mutations `confirm`). `edit-file` uses the paired
 `--old-text`/`--new-text` decomposition, and the runnable takes a per-invocation
 `--run-as`. See [Agent integration (MCP)](agents.md) for how the leaf tools reach
 the console agent.
 
-`fs` is built for **agent / console** use, not for a human at a shell — on a host
+`filesystem` is built for **agent / console** use, not for a human at a shell — on a host
 you'd just reach for native `cat`/`ls`/`mv`. Its value is giving an *agent*
 uniform, autonomy-gated, `run_as`-capable filesystem access across the console's
 local and remote (SSH-fleet) hosts, with structured JSON results. That's why it

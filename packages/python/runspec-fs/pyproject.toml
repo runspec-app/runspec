@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-fs"
-version = "0.2.0"
+version = "0.3.0"
 requires-python = ">=3.10"
 description = "Filesystem runnable for runspec — read and manipulate local/remote filesystems, ported from the Filesystem MCP server"
 dependencies = [
@@ -16,8 +16,8 @@ dependencies = [
 ]
 
 [project.scripts]
-# Entry point name MUST match the runnable name in runspec.toml (`fs`).
-fs = "runspec_fs.cli:main"
+# Entry point name MUST match the runnable name in runspec.toml (`filesystem`).
+filesystem = "runspec_fs.cli:main"
 
 [project.optional-dependencies]
 dev = [

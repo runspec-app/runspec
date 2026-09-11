@@ -4,8 +4,8 @@
 # Filesystem MCP server:
 #   https://github.com/modelcontextprotocol/servers/tree/HEAD/src/filesystem
 #
-# One runnable, `fs`, with a verb per MCP tool. `runspec serve` re-expands each
-# verb into its own leaf MCP tool (fs_read-text-file, fs_write-file, …), so a
+# One runnable, `filesystem`, with a verb per MCP tool. `runspec serve` re-expands each
+# verb into its own leaf MCP tool (filesystem_read-text-file, filesystem_write-file, …), so a
 # runspec-console agent calls them individually — over SSH on any fleet host,
 # giving local AND remote filesystem access with per-verb confirm gates.
 #
@@ -20,113 +20,113 @@ autonomy-default = "confirm"
 [config.logging]
 store = "per-run"
 
-[fs]
+[filesystem]
 description = "Read and manipulate the filesystem on this host (local, or remote via runspec-console)"
 output = "json"
 require-command = true
 examples = [
-  {cmd = "fs list-directory --path .", description = "List the current directory"},
-  {cmd = "fs read-text-file --path README.md --head 20", description = "Read the first 20 lines of a file"},
-  {cmd = "fs search-files --path . --pattern '*.py'", description = "Find Python files recursively"},
-  {cmd = "fs edit-file --path a.txt --old-text foo --new-text bar", description = "Replace 'foo' with 'bar'"},
-  {cmd = "fs --run-as deploy read-text-file --path /home/deploy/app.log", description = "Run a verb as another OS user (chosen per invocation)"},
+  {cmd = "filesystem list-directory --path .", description = "List the current directory"},
+  {cmd = "filesystem read-text-file --path README.md --head 20", description = "Read the first 20 lines of a file"},
+  {cmd = "filesystem search-files --path . --pattern '*.py'", description = "Find Python files recursively"},
+  {cmd = "filesystem edit-file --path a.txt --old-text foo --new-text bar", description = "Replace 'foo' with 'bar'"},
+  {cmd = "filesystem --run-as deploy read-text-file --path /home/deploy/app.log", description = "Run a verb as another OS user (chosen per invocation)"},
 ]
 
 # ── global args (inherited by every verb) ──────────────────────────────────
 # Per-invocation run-as: the user/agent picks which OS user each verb runs as,
 # like runspec-linux's venv runnables. The operation is re-invoked as that user
 # via sudo/su, so access is bounded by THAT user's OS permissions — no jail.
-[fs.args]
+[filesystem.args]
 run-as        = {type = "str",    required = false, description = "Run this operation as another OS user (via sudo -n -u / su, chosen per invocation). Access is then bounded by that user's OS permissions. POSIX only; needs passwordless sudo for the target user."}
 become-method = {type = "choice", options = ["sudo", "su"], default = "sudo", description = "How to escalate to --run-as."}
 
 # ── reads / metadata → autonomous ──────────────────────────────────────────
 
-[fs.commands.read-text-file]
+[filesystem.commands.read-text-file]
 description = "Read a file as UTF-8 text; optionally only the first N (--head) or last N (--tail) lines"
 autonomy = "autonomous"
-[fs.commands.read-text-file.args]
+[filesystem.commands.read-text-file.args]
 path = {type = "path", required = true, description = "File to read"}
 head = {type = "int", required = false, description = "Return only the first N lines"}
 tail = {type = "int", required = false, description = "Return only the last N lines"}
 
-[fs.commands.read-media-file]
+[filesystem.commands.read-media-file]
 description = "Read a binary/media file and return it base64-encoded with its MIME type"
 autonomy = "autonomous"
-[fs.commands.read-media-file.args]
+[filesystem.commands.read-media-file.args]
 path = {type = "path", required = true, description = "File to read"}
 
-[fs.commands.read-multiple-files]
+[filesystem.commands.read-multiple-files]
 description = "Read several files at once; a failed read is reported per-file without aborting the batch"
 autonomy = "autonomous"
-[fs.commands.read-multiple-files.args]
+[filesystem.commands.read-multiple-files.args]
 paths = {type = "path", multiple = true, required = true, description = "Files to read (repeat --paths per file)"}
 
-[fs.commands.list-directory]
+[filesystem.commands.list-directory]
 description = "List a directory's immediate contents, each tagged file or directory"
 autonomy = "autonomous"
-[fs.commands.list-directory.args]
+[filesystem.commands.list-directory.args]
 path = {type = "path", required = true, description = "Directory to list"}
 
-[fs.commands.list-directory-with-sizes]
+[filesystem.commands.list-directory-with-sizes]
 description = "List a directory's contents with per-entry sizes and totals"
 autonomy = "autonomous"
-[fs.commands.list-directory-with-sizes.args]
+[filesystem.commands.list-directory-with-sizes.args]
 path = {type = "path", required = true, description = "Directory to list"}
 sort-by = {type = "choice", options = ["name", "size"], default = "name", description = "Sort order (size is descending)"}
 
-[fs.commands.directory-tree]
+[filesystem.commands.directory-tree]
 description = "Return a recursive JSON tree of a directory"
 autonomy = "autonomous"
-[fs.commands.directory-tree.args]
+[filesystem.commands.directory-tree.args]
 path = {type = "path", required = true, description = "Directory to walk"}
 exclude = {type = "str", multiple = true, required = false, description = "Glob patterns to prune (repeat --exclude)"}
 
-[fs.commands.search-files]
+[filesystem.commands.search-files]
 description = "Recursively find files/directories whose name matches a pattern (glob, or case-insensitive substring)"
 autonomy = "autonomous"
-[fs.commands.search-files.args]
+[filesystem.commands.search-files.args]
 path = {type = "path", required = true, description = "Directory to search under"}
 pattern = {type = "str", required = true, description = "Glob (e.g. '*.py') or a case-insensitive substring"}
 exclude = {type = "str", multiple = true, required = false, description = "Glob patterns to prune (repeat --exclude)"}
 
-[fs.commands.get-file-info]
+[filesystem.commands.get-file-info]
 description = "Return detailed metadata for a file or directory (size, timestamps, permissions)"
 autonomy = "autonomous"
-[fs.commands.get-file-info.args]
+[filesystem.commands.get-file-info.args]
 path = {type = "path", required = true, description = "File or directory to stat"}
 
-[fs.commands.list-allowed-directories]
+[filesystem.commands.list-allowed-directories]
 description = "Report the effective user and starting directories (informational — no directory jail is enforced)"
 autonomy = "autonomous"
 
 # ── mutations → confirm ────────────────────────────────────────────────────
 
-[fs.commands.write-file]
+[filesystem.commands.write-file]
 description = "Create a new file or overwrite an existing one with UTF-8 text"
 autonomy = "confirm"
-[fs.commands.write-file.args]
+[filesystem.commands.write-file.args]
 path = {type = "path", required = true, description = "File to write"}
 content = {type = "str", required = true, description = "File contents"}
 
-[fs.commands.edit-file]
+[filesystem.commands.edit-file]
 description = "Apply ordered old→new substring replacements to a file; returns a unified diff. Pair each --old-text with a --new-text by position."
 autonomy = "confirm"
-[fs.commands.edit-file.args]
+[filesystem.commands.edit-file.args]
 path = {type = "path", required = true, description = "File to edit"}
 old-text = {type = "str", multiple = true, required = true, description = "Text to find (repeat --old-text; paired by position with --new-text)"}
 new-text = {type = "str", multiple = true, required = true, description = "Replacement text (repeat --new-text; paired by position with --old-text)"}
 dry-run = {type = "flag", default = false, description = "Compute and diff the edits without writing"}
 
-[fs.commands.create-directory]
+[filesystem.commands.create-directory]
 description = "Create a directory (and any missing parents); idempotent"
 autonomy = "confirm"
-[fs.commands.create-directory.args]
+[filesystem.commands.create-directory.args]
 path = {type = "path", required = true, description = "Directory to create"}
 
-[fs.commands.move-file]
+[filesystem.commands.move-file]
 description = "Move or rename a file/directory; fails if the destination already exists"
 autonomy = "confirm"
-[fs.commands.move-file.args]
+[filesystem.commands.move-file.args]
 source = {type = "path", required = true, description = "Path to move"}
 destination = {type = "path", required = true, description = "New path (must not already exist)"}

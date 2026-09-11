@@ -1,5 +1,21 @@
 # runspec-fs Changelog
 
+## [0.3.0] — 2026-09-11
+
+Rename the runnable (and its console-script entry point) from `fs` to
+**`filesystem`** to make its purpose clearer at a glance.
+
+- **Breaking:** the runnable section in `runspec.toml` is now `[filesystem]`
+  (with `[filesystem.args]` / `[filesystem.commands.*]`), and the installed
+  binary / entry point is `filesystem` (was `fs`). Invoke it as
+  `filesystem list-directory …`.
+- `runspec serve` now flattens the verbs into `filesystem_<verb>` leaf MCP tools
+  (e.g. `filesystem_read-text-file`), where they were `fs_<verb>`. Agents /
+  configs referencing the old `fs_*` tool names must update.
+- No behaviour change — every verb, argument, and the `--run-as` /
+  `--become-method` globals are unchanged; only the runnable name moved. The
+  import package stays `runspec_fs` (and the logic core `runspec-fs-core`).
+
 ## [0.2.0] — 2026-07-25
 
 Add a per-invocation **`--run-as`** — two inherited global args on `fs`, so the

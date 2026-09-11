@@ -53,7 +53,7 @@ jobs:
           python -m venv /tmp/smoke
           # runspec-fs-core must already be on PyPI (publish it before runspec-fs).
           /tmp/smoke/bin/pip install dist/*.whl
-          /tmp/smoke/bin/fs --help
+          /tmp/smoke/bin/filesystem --help
           /tmp/smoke/bin/python -c "
           from importlib.resources import files
           pkg = files('runspec_fs')

@@ -1,5 +1,20 @@
 # runspec-linux Changelog
 
+## [0.12.0] — 2026-09-11
+
+### Changed — the folded filesystem runnable `fs` is now `filesystem`
+
+- **Breaking:** the filesystem runnable (folded from `runspec-fs`) is renamed
+  from `fs` to `filesystem` — clearer at a glance. Its `runspec.toml` section is
+  now `[filesystem]` and the installed entry point is `filesystem` (was `fs`);
+  invoke it as `filesystem list-directory …`.
+- `runspec serve` now emits `filesystem_<verb>` leaf MCP tools (e.g.
+  `filesystem_read-text-file`) where they were `fs_<verb>` — agents / configs
+  referencing the old names must update.
+- No behaviour change: every verb and argument is unchanged, only the runnable
+  name moved. The `runspec_linux.fs` module and `runspec-fs-core` backing are
+  unchanged.
+
 ## [0.11.0] — 2026-09-01
 
 ### Added — `--ca-bundle` on the web/TLS runnables

@@ -34,7 +34,7 @@ pip install runspec-windows
 | Sessions | `who`, `current-user` |
 | Commands | `which` |
 | Net diagnostics | `proxy-settings`, `vpn-status`, `dns-config`, `test-connection`, `trace-route`, `route-table`, `gpresult`, `list-certs`, `collect-diagnostics` |
-| Filesystem | `fs` (multi-verb, backed by `runspec-fs-core`) |
+| Filesystem | `filesystem` (multi-verb, backed by `runspec-fs-core`) |
 | Web / TLS / API | `cert-check`, `cert-chain`, `tls-info`, `http-check`, `http-headers`, `redirect-trace`, `dns-lookup`, `api-spec` |
 
 The system runnables are Windows-only; run one on macOS/Linux and it returns a

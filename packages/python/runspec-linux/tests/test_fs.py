@@ -1,4 +1,4 @@
-"""The `fs` runnable folded into runspec-linux (backed by runspec-fs-core).
+"""The `filesystem` runnable folded into runspec-linux (backed by runspec-fs-core).
 
 Smoke coverage that the folded verbs run in-process and that the run-as worker
 path builds the right escalation command. Full verb behaviour is covered by

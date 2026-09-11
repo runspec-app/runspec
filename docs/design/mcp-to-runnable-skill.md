@@ -37,7 +37,7 @@ Two sibling packages:
   `.value` at the boundary and calls the core helper.
 
 `runspec serve` re-expands the one runnable's verbs into individual leaf MCP
-tools named `<name>_<tool>` (e.g. `fs_read-text-file`), each advertising that
+tools named `<name>_<tool>` (e.g. `filesystem_read-text-file`), each advertising that
 verb's own args and inherited globals plus its `x-autonomy`. So the agent calls
 the tools individually — the round trip is: MCP `tools/call` →
 `<name> <tool> --arg …` subprocess → `parse()` resolves the verb → core helper →
@@ -63,7 +63,7 @@ Ported from
   `files.py` / `dirs.py` / `search.py` / `info.py`, with `errors.py`
   (`FsCoreError`, `EditNotAppliedError`). Filesystem failures propagate as the
   stdlib `OSError` family.
-- **`runspec-fs`** — the `fs` runnable, one verb per tool.
+- **`runspec-fs`** — the `filesystem` runnable, one verb per tool.
 
 Verbs and autonomy (reads autonomous, mutations confirm):
 
@@ -89,10 +89,10 @@ is and where it starts.
 ### Per-invocation run-as (0.2.0)
 
 Like `runspec-linux`'s venv runnables (`create-venv`, `install-into-venv`, …),
-`fs` takes a **runtime `--run-as <user>`** (+ `--become-method sudo|su`) rather
+`filesystem` takes a **runtime `--run-as <user>`** (+ `--become-method sudo|su`) rather
 than a declarative `run_as`, so the user *or* the agent picks which OS user each
 verb runs as per invocation — the service account that owns the files is chosen
-at call time. They're **inherited global args** (`[fs.args]`), so `runspec serve`
+at call time. They're **inherited global args** (`[filesystem.args]`), so `runspec serve`
 advertises them on every leaf MCP tool.
 
 The linux venv ops are already subprocesses (pip/venv/chmod), so escalation is
@@ -125,7 +125,7 @@ Illustrative (`text` to keep it out of the schema-validated fence; the real,
 validated spec is the file above):
 
 ```text
-[fs.commands.edit-file.args]
+[filesystem.commands.edit-file.args]
 path     = {type = "path", required = true}
 old-text = {type = "str", multiple = true, required = true}
 new-text = {type = "str", multiple = true, required = true}
@@ -147,7 +147,7 @@ The two packages follow the repo conventions exactly:
 - `ci.yml` gains `fs-core-quality`/`fs-core-test` and `fs-quality`/`fs-test`
   (cloned from the `linux-core` / `linux` jobs), wired into the `changes` filter
   and the aggregate `ci:` job. The core test asserts the split's contract (no
-  `runspec` requirement, no console scripts); the wrapper test asserts the `fs`
+  `runspec` requirement, no console scripts); the wrapper test asserts the `filesystem`
   script runs and `runspec.toml` ships in the wheel.
 - `fs-core-release.yml` + `fs-release.yml` mirror the linux release workflows;
   `auto-tag.yml` and `docs/releasing.md` gain both manifests (tag prefixes
@@ -156,7 +156,7 @@ The two packages follow the repo conventions exactly:
 
 ## Using it from runspec-console
 
-`pip install runspec-fs` into the console's venv; the `fs` verbs then surface as
-`fs_<tool>` leaf MCP tools in the agent's toolset on every host where it's
+`pip install runspec-fs` into the console's venv; the `filesystem` verbs then surface as
+`filesystem_<tool>` leaf MCP tools in the agent's toolset on every host where it's
 installed, reads autonomous and mutations confirm-gated. It is intentionally
 **not** in the console's dependency set — it's opt-in, like `runspec-logops`.

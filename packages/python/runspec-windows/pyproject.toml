@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-windows"
-version = "0.7.0"
+version = "0.8.0"
 requires-python = ">=3.10"
 description = "Windows system admin + cross-platform web/TLS/API runnables for runspec"
 dependencies = [
@@ -67,7 +67,7 @@ gpresult             = "runspec_windows.netdiag:main_gpresult"
 list-certs           = "runspec_windows.netdiag:main_list_certs"
 collect-diagnostics  = "runspec_windows.diagnostics:main_collect_diagnostics"
 # Filesystem (folded from runspec-fs; backed by runspec-fs-core)
-fs                   = "runspec_windows.fs.cli:main"
+filesystem           = "runspec_windows.fs.cli:main"
 # Web / TLS probes (runspec-webops-core; cross-platform)
 cert-check           = "runspec_windows.webops:main_cert_check"
 cert-chain           = "runspec_windows.webops:main_cert_chain"

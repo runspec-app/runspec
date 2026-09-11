@@ -1,4 +1,4 @@
-"""The `fs` runnable folded into runspec-windows (backed by runspec-fs-core).
+"""The `filesystem` runnable folded into runspec-windows (backed by runspec-fs-core).
 
 Verbs run in-process and cross-platform; the ``--run-as`` worker path is
 POSIX-only and raises a clear error where escalation is unsupported (Windows).

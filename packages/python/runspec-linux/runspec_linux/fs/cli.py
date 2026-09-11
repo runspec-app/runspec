@@ -1,6 +1,6 @@
-"""cli.py — the ``fs`` entry point (folded into runspec-linux).
+"""cli.py — the ``filesystem`` entry point (folded into runspec-linux).
 
-One binary, a verb per Filesystem MCP tool. ``rs.parse("fs")`` resolves the
+One binary, a verb per Filesystem MCP tool. ``rs.parse("filesystem")`` resolves the
 subcommand and its args (from the merged ``[fs]`` tables in the pack's
 ``runspec.toml``); we unpack each ``.value`` at the boundary into a plain kwargs
 dict and run the matching :mod:`runspec_fs_core` helper.
@@ -79,7 +79,7 @@ def _verb_kwargs(spec: rs.RunSpec) -> dict[str, Any]:
         return {"source": str(spec.source.value), "destination": str(spec.destination.value)}
 
     # require-command = true makes a bare invocation unreachable.
-    raise SystemExit("no command — see `fs --help`")  # pragma: no cover
+    raise SystemExit("no command — see `filesystem --help`")  # pragma: no cover
 
 
 def _run_as_worker(run_as: str, method: str, verb: str, kwargs: dict[str, Any]) -> str:
@@ -111,7 +111,7 @@ def _run_as_worker(run_as: str, method: str, verb: str, kwargs: dict[str, Any]) 
 
 
 def main() -> None:
-    spec = rs.parse("fs")
+    spec = rs.parse("filesystem")
     run_as = spec.run_as.value
     method = spec.become_method.value
     try:

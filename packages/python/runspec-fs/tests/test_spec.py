@@ -1,4 +1,4 @@
-"""Wiring / parsing tests for the `fs` runnable — no mocks, real spec."""
+"""Wiring / parsing tests for the `filesystem` runnable — no mocks, real spec."""
 
 from pathlib import Path
 
@@ -8,7 +8,7 @@ SPEC = Path(__file__).parent.parent / "runspec_fs" / "runspec.toml"
 
 
 def _harness() -> ParseHarness:
-    return ParseHarness(script_name="fs", config_path=SPEC)
+    return ParseHarness(script_name="filesystem", config_path=SPEC)
 
 
 def test_smoke_all_verbs() -> None:

@@ -1,9 +1,9 @@
-"""runspec-fs — filesystem operations as a runspec runnable (the ``fs`` runnable).
+"""runspec-fs — filesystem operations as a runspec runnable (the ``filesystem`` runnable).
 
 Ported from the
 `Filesystem MCP server <https://github.com/modelcontextprotocol/servers/tree/HEAD/src/filesystem>`_.
 The pure logic lives in ``runspec-fs-core`` (importable with **no** runspec
-dependency); this package wraps each helper as a verb of the ``fs`` runnable and
+dependency); this package wraps each helper as a verb of the ``filesystem`` runnable and
 is what ``runspec local`` / ``runspec serve`` discover.
 
 The core helpers are re-exported here for convenience / back-compat, so a caller

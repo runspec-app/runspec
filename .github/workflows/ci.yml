@@ -382,7 +382,7 @@ jobs:
           /tmp/smoke/bin/pip install dist/*.whl
           /tmp/smoke/bin/system-info
           /tmp/smoke/bin/cert-check --help
-          /tmp/smoke/bin/fs list-directory --path .
+          /tmp/smoke/bin/filesystem list-directory --path .
           /tmp/smoke/bin/python -c "
           from importlib.resources import files
           pkg = files('runspec_linux')
@@ -1280,9 +1280,9 @@ jobs:
           # The cross-platform web runnables run on Windows too.
           & "$bin\cert-check" --help | Out-Null
           Write-Host "cert-check -> OK"
-          # The folded `fs` runnable (backed by runspec-fs-core).
-          & "$bin\fs" list-directory --path . | ConvertFrom-Json | Out-Null
-          Write-Host "fs -> OK"
+          # The folded `filesystem` runnable (backed by runspec-fs-core).
+          & "$bin\filesystem" list-directory --path . | ConvertFrom-Json | Out-Null
+          Write-Host "filesystem -> OK"
           & "$env:TEMP\smoke\Scripts\python" -c "from importlib.resources import files; assert (files('runspec_windows') / 'runspec.toml').is_file(), 'runspec.toml missing from wheel'; import runspec_windows; print('Wheel contents OK')"
 
   # ── runspec-console ──────────────────────────────────────────────────────────
@@ -1737,7 +1737,7 @@ jobs:
           # Install the unpublished core dependency first, then the wheel under test.
           /tmp/smoke/bin/pip install ../runspec-fs-core
           /tmp/smoke/bin/pip install dist/*.whl
-          /tmp/smoke/bin/fs --help
+          /tmp/smoke/bin/filesystem --help
           /tmp/smoke/bin/python -c "
           from importlib.resources import files
           pkg = files('runspec_fs')
