@@ -251,6 +251,37 @@ expect_autonomy = "manual"
     assert c["autonomy"] == "confirm"
 
 
+def test_search_mode_strips_group_host_prefix_from_run_runnable_id(bridge, monkeypatch):
+    # Regression: search_runnables returns each row's id as the *dedup tool name*
+    # (`group__name` / `host__name`), so the model calls run_runnable(id=
+    # "local__restart-service"). The eval must resolve that to the bare runnable
+    # name — otherwise it never matches expect_tool ("restart-service").
+    monkeypatch.setattr(bridge, "_tool_mode", lambda: "search")
+    script = {
+        "restart": [
+            {
+                "tool_calls": [
+                    {
+                        "name": "run_runnable",
+                        "input": {
+                            "id": "local__restart-service",
+                            "host": "web-01",
+                            "args": {"service": "nginx"},
+                        },
+                    }
+                ]
+            }
+        ],
+        "ambiguous": [{"text": "Which host?", "tool_calls": []}],
+    }
+    monkeypatch.setattr(bridge, "_get_adapter", lambda *a, **k: ReplayAdapter(script))
+    report = bridge.run_evals(fixture_toml=_fixture_toml())
+    cases = {c["case_id"]: c for c in report["cases"]}
+    assert cases["restart"]["target"] == "restart-service"  # prefix stripped
+    assert cases["restart"]["passed"] is True
+    assert report["summary"]["passed"] == 2
+
+
 def test_run_evals_persists_a_report_that_lists_and_loads(bridge, monkeypatch):
     monkeypatch.setattr(
         bridge, "_get_adapter", lambda *a, **k: ReplayAdapter(_script())

@@ -102,6 +102,28 @@ def test_expect_command_passes_and_is_dropped_from_args():
     assert res.command == "add"
 
 
+def test_run_runnable_id_is_stripped_to_the_bare_runnable_name():
+    # A search-mode run_runnable id is a search_runnables row id — the dedup tool
+    # name (`group__name`). default_resolve_target must strip that qualifier so a
+    # case's bare `expect_tool` matches.
+    script = {
+        "c1": [
+            {
+                "tool_calls": [
+                    {
+                        "name": "run_runnable",
+                        "input": {"id": "local__restart-service", "args": {}},
+                    }
+                ]
+            }
+        ]
+    }
+    case = evals.EvalCase(id="c1", prompt="restart", expect_tool="restart-service")
+    res = evals.evaluate_case(ReplayAdapter(script), TOOLS, case)
+    assert res.passed
+    assert res.target == "restart-service"
+
+
 def test_wrong_command_fails_with_category():
     script = {"c1": [{"tool_calls": [_run_call("cron", command="remove")]}]}
     case = evals.EvalCase(

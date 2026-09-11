@@ -76,12 +76,18 @@ class EvalsMixin:
             # tool in `name`. Reading the wrong key made every search-mode case
             # resolve to the wrapper name "run_runnable".
             if inv.name == "run_runnable":
-                return str(
+                # The `id` is a search_runnables row id, which is the *dedup tool
+                # name* (`group__name` via _dedup_tool_name) — so it can carry a
+                # `group__`/`host__` qualifier (e.g. `local__filesystem`). Strip it
+                # to the bare runnable name, exactly as the direct-tool branch below
+                # does, so `expect_tool` (always the bare name) matches.
+                raw = str(
                     inv.input.get("id")
                     or inv.input.get("runnable")
                     or inv.input.get("name")
                     or inv.name
                 )
+                return raw.rsplit("__", 1)[-1]
             if inv.name == "use_tool":
                 return str(inv.input.get("name") or inv.input.get("tool") or inv.name)
             return inv.name.rsplit("__", 1)[-1]

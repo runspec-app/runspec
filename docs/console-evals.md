@@ -171,6 +171,9 @@ out tools for the agent ([`[llm] tool_mode`](console-reference.md)):
 - **search** — the agent calls `run_runnable` (or `use_tool`); the runnable is
   the `id` inside the call (`use_tool` carries the inner tool in `name`), the
   args are nested under `args`, and the subcommand rides a top-level `command`.
+  That `id` comes from a `search_runnables` row, which is group-qualified
+  (`group__name`) — the eval strips the qualifier back to the bare name, so
+  `expect_tool` stays the bare runnable name here too.
 
 So a fixture is portable across modes — you write the runnable name and the eval
 does the right thing.

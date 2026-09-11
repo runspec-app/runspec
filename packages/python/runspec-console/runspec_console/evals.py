@@ -196,19 +196,37 @@ def default_resolve_readonly(name: str, tool_input: dict[str, Any]) -> str:
     return "(no results)"
 
 
+def _bare_runnable(name: str) -> str:
+    """Strip a ``group__`` / ``host__`` qualifier to the bare runnable name — the
+    last ``__`` segment. A search-mode ``run_runnable`` id comes from a
+    ``search_runnables`` row, which is the *dedup tool name* (``group__name``), and
+    a dedup/per_host tool is ``group__name`` / ``host__name``; ``expect_tool`` is
+    always the bare name, so both must normalise the same way. A name with no
+    ``__`` is returned unchanged."""
+    return name.rsplit("__", 1)[-1]
+
+
 def default_resolve_target(inv: ToolInvocation) -> str:
     """The runnable identity a terminal call invokes. ``run_runnable`` carries it
-    in ``id`` (the search-mode tool's required key), ``use_tool`` the inner tool in
-    ``name``; a direct tool call *is* the runnable."""
+    in ``id`` (the search-mode tool's required key — a ``search_runnables`` row id,
+    which is ``group__name``), ``use_tool`` the inner tool in ``name``; a direct
+    tool call *is* the runnable (``group__name`` / ``host__name``). All are
+    normalised to the bare runnable name so ``expect_tool`` matches across modes."""
     if inv.name == "run_runnable":
-        return str(
-            inv.input.get("id")
-            or inv.input.get("runnable")
-            or inv.input.get("name")
-            or inv.name
+        return _bare_runnable(
+            str(
+                inv.input.get("id")
+                or inv.input.get("runnable")
+                or inv.input.get("name")
+                or inv.name
+            )
         )
     if inv.name == "use_tool":
         return str(inv.input.get("name") or inv.input.get("tool") or inv.name)
+    # A direct tool call: the tool name IS the runnable identity, used verbatim —
+    # this is the record_evals leaf-tool grounding (`filesystem_read-text-file`,
+    # `cron__add`), where `expect_tool` is that exact leaf name. The console's own
+    # dedup/per_host stripping is done in bridge_evals.resolve_target instead.
     return inv.name
 
 

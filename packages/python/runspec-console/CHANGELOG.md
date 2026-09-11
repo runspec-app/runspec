@@ -8,6 +8,22 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.246.1] — 2026-09-11
+
+### Fixed
+- **Search-mode evals still failed a correct pick when the runnable has a
+  group/host.** `search_runnables` returns each row's `id` as the *dedup tool
+  name* (`group__name` — `_dedup_tool_name`), so the model calls
+  `run_runnable(id="local__filesystem")`. The eval resolved that `id` verbatim,
+  so a case whose `expect_tool` is the bare runnable name (`filesystem`) scored
+  `wrong_tool` — the "chose" column showed `local__filesystem`. `resolve_target`
+  now strips the `group__`/`host__` qualifier from the `run_runnable` id to the
+  bare runnable name, exactly as the direct dedup/per_host tool branch already
+  does (`bridge_evals`, and the pure `evals.default_resolve_target`). Regression
+  tests added for both. (The record/replay CI grounding is unaffected — its leaf
+  tool names are the `expect_tool` verbatim.)
+
+
 ## [0.246.0] — 2026-09-11
 
 ### Added
