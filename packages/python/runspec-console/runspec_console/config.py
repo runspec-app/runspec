@@ -43,6 +43,12 @@ DEFAULT_BACKUPS_KEEP = 5
 DEFAULT_TELEMETRY_PROTOCOL = "http/protobuf"
 DEFAULT_TELEMETRY_SERVICE_NAME = "runspec-console"
 
+# [mcp_server] — the console's own in-process MCP server (an external coding
+# agent such as Claude Code connects to it). Localhost-only by default.
+DEFAULT_MCP_SERVER_HOST = "127.0.0.1"
+DEFAULT_MCP_SERVER_PORT = 8765
+_MCP_SERVER_AUTONOMY_LEVELS = ("autonomous", "confirm", "supervised", "manual")
+
 
 def app_dir() -> Path:
     env = os.environ.get("APPDATA")
@@ -610,6 +616,58 @@ def read_mcp() -> dict[str, Any]:
         "servers": servers,
         "call_timeout": max(1.0, float(cfg.get("call_timeout", 60) or 60)),
         "connect_timeout": max(1.0, float(cfg.get("connect_timeout", 20) or 20)),
+    }
+
+
+def read_mcp_server() -> dict[str, Any]:
+    """The ``[mcp_server]`` settings — the console's **own** in-process MCP server
+    that an external coding agent (Claude Code, Cursor, …) connects to.
+
+    This is the mirror of ``[mcp]`` (which makes the console an MCP *client*): here
+    the console is an MCP *server*, publishing its fleet runnables as leaf tools
+    over streamable-HTTP on localhost. A ``confirm``-level call from the agent
+    **parks in the console's confirm-card UI** (the human approves it there); both
+    agent-initiated and human-initiated runs land in the same History. Requires the
+    optional ``mcp`` extra (``pip install runspec-console[mcp]``).
+
+    - ``enabled`` (default **false**) — opt-in: it opens a listening socket.
+    - ``host`` (default ``127.0.0.1``) — bound to loopback; the primary security
+      boundary. Changing it off loopback is not recommended.
+    - ``port`` (default 8765) — the actual value is written to a discovery file in
+      the app dir so the client's MCP config need not hard-code it.
+    - ``token`` — an optional bearer token; when set it is required on every
+      request (``Authorization: Bearer <token>``) and written to the discovery
+      file. Localhost is the primary bound; the token guards against other local
+      processes.
+    - ``default_autonomy`` — optional floor applied to *every* tool
+      (``autonomous`` / ``confirm`` / ``supervised`` / ``manual``): the stricter of
+      it and the runnable's own declared autonomy wins (most-restrictive, as
+      elsewhere). Unset ⇒ use each runnable's own autonomy.
+    - ``confirm_wait`` (seconds, default 50) — how long a parked ``confirm`` call
+      blocks for the operator's approval before returning a graceful, *resumable*
+      "awaiting approval" result to the agent (rather than the runnable running
+      late/orphaned). Kept **under** an MCP client's own per-tool-call timeout
+      (Claude Code's ``MCP_TOOL_TIMEOUT`` defaults to 60s), so the agent sees our
+      clean message instead of the client's own timeout error; on the agent's
+      retry a fresh confirm is raised. Raise it if you also raise the client's
+      timeout."""
+    raw = read_config().get("mcp_server")
+    cfg = dict(raw) if isinstance(raw, dict) else {}
+    autonomy = str(cfg.get("default_autonomy") or "").strip().lower()
+    if autonomy not in _MCP_SERVER_AUTONOMY_LEVELS:
+        autonomy = ""
+    try:
+        port = int(cfg.get("port", DEFAULT_MCP_SERVER_PORT) or DEFAULT_MCP_SERVER_PORT)
+    except (TypeError, ValueError):
+        port = DEFAULT_MCP_SERVER_PORT
+    return {
+        "enabled": bool(cfg.get("enabled", False)),
+        "host": str(cfg.get("host") or DEFAULT_MCP_SERVER_HOST).strip()
+        or DEFAULT_MCP_SERVER_HOST,
+        "port": max(1, min(65535, port)),
+        "token": str(cfg.get("token") or "").strip() or None,
+        "default_autonomy": autonomy or None,
+        "confirm_wait": max(1.0, float(cfg.get("confirm_wait", 50) or 50)),
     }
 
 

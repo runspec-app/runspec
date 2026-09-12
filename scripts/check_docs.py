@@ -113,6 +113,7 @@ NON_RUNSPEC_SECTIONS = {
     "telemetry",
     "phoenix",
     "mcp",
+    "mcp_server",
     "local",
     "tool_visibility",
     "improve",

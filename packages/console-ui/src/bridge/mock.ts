@@ -836,6 +836,25 @@ export const mockApi: BridgeApi = {
     { id: 'confluence-pat', label: 'Confluence PAT', kind: 'token' },
   ],
 
+  get_mcp_server_config: async () => ({
+    enabled: false, host: '127.0.0.1', port: 8765, token: null,
+    default_autonomy: null, confirm_wait: 50,
+  }),
+  save_mcp_server_config: async (payload) => {
+    console.log('[mock] save_mcp_server_config', payload)
+    return {
+      running: !!payload.enabled, error: '', host: payload.host ?? '127.0.0.1',
+      port: payload.port ?? 8765, url: payload.enabled ? `http://127.0.0.1:${payload.port ?? 8765}/mcp` : '',
+      auth: !!payload.token, tools: payload.enabled ? 12 : 0,
+    }
+  },
+  mcp_server_status: async () => ({
+    running: false, error: '', host: '127.0.0.1', port: 8765, url: '', auth: false, tools: 0,
+  }),
+  mcp_server_start: async () => ({
+    running: false, error: '', host: '127.0.0.1', port: 8765, url: '', auth: false, tools: 0,
+  }),
+
   get_sync_config: async () => ({
     url: '', ref: '', credential_id: '', subpath: '', layers: [], ca_bundle: '', tls_verify: true,
     files: ['config.toml', 'runspec_hosts.toml', 'runspec_triggers.toml', 'runspec_filters.toml', 'runspec_credentials.toml'],

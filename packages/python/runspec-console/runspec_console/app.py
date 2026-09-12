@@ -400,6 +400,15 @@ def main() -> None:
     except Exception:  # noqa: BLE001
         pass
 
+    # Start the console's own MCP server ([mcp_server]) so an external coding
+    # agent (Claude Code) can reach the fleet over localhost. Best-effort and
+    # off by default — a no-op unless [mcp_server] enabled and the `mcp` extra is
+    # installed; it opens a listening socket, so it stays opt-in.
+    try:
+        bridge.mcp_server_start()
+    except Exception:  # noqa: BLE001
+        pass
+
     # Warm the WASM code-sandbox's compiled-module cache in the background so the
     # first run_python_sandboxed call isn't slow. Best-effort and download-free:
     # only compiles when the runtime + binary are already present locally (a

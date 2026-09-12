@@ -8,6 +8,36 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.248.0] — 2026-09-12
+
+### Added
+- **Console as an MCP server** (`[mcp_server]`; Settings → MCP Server; `mcp` extra).
+  The mirror of the `[mcp]` client: the running console now *hosts* a
+  streamable-HTTP MCP server on `127.0.0.1` that an external coding agent (Claude
+  Code, Cursor, …) connects to, publishing the fleet's runnables as
+  **serve-identical leaf tools** (subcommands flattened to `parent_child`,
+  `password` args omitted, each runnable's `autonomy` carried + escalated). A
+  `confirm`/`supervised` call **parks in the console's existing confirm-card UI**
+  and blocks up to `confirm_wait` (default 50s, kept under an MCP client's own
+  tool-call timeout — Claude Code's `MCP_TOOL_TIMEOUT` defaults to 60s); on
+  timeout it returns a graceful, *resumable* "awaiting approval" result (no
+  orphan run) and the operator re-approves on the agent's retry. `autonomous`
+  runs immediately; `manual` is refused. Runs execute via `invoke_runnable`
+  tagged `trigger="mcp"`, landing in History alongside human runs. Localhost-only
+  plus an optional bearer `token`; a `{app_dir}/runspec_mcp_server.json` discovery
+  file carries the live URL for the client's MCP config. **Off by default** — it
+  opens a listening socket. New `mcp_server.py` (SDK-only host + pure schema/
+  autonomy helpers), `bridge_mcp_server.py` (gate + executor + JS API
+  `mcp_server_start`/`mcp_server_status`/`get_mcp_server_config`/
+  `save_mcp_server_config`), `config.read_mcp_server`, and the Settings tab. See
+  `docs/console-mcp-server.md`, `docs/design/console-mcp-server.md`.
+
+### Changed
+- The `mcp` extra (and the dev dep) are pinned to **`mcp>=2,<3`** — the console's
+  MCP client + the new server both target the v2 SDK (the SDK breaks across
+  majors, so the range is capped).
+
+
 ## [0.247.0] — 2026-09-12
 
 ### Added

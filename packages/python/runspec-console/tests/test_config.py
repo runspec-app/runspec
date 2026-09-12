@@ -415,5 +415,56 @@ def test_confirm_timeout_defaults_and_overrides(monkeypatch):
     assert c.confirm_timeout(headless=True) == 0.0
 
 
+def test_read_mcp_server_defaults(monkeypatch):
+    # No [mcp_server] section → off, loopback, default port, no token/floor.
+    monkeypatch.setattr(c, "read_config", lambda: {})
+    s = c.read_mcp_server()
+    assert s == {
+        "enabled": False,
+        "host": "127.0.0.1",
+        "port": c.DEFAULT_MCP_SERVER_PORT,
+        "token": None,
+        "default_autonomy": None,
+        "confirm_wait": 50.0,
+    }
+
+
+def test_read_mcp_server_overrides_and_validation(monkeypatch):
+    monkeypatch.setattr(
+        c,
+        "read_config",
+        lambda: {
+            "mcp_server": {
+                "enabled": True,
+                "host": "127.0.0.1",
+                "port": 9001,
+                "token": "  s3cret ",
+                "default_autonomy": "CONFIRM",  # case-insensitive
+                "confirm_wait": 25,
+            }
+        },
+    )
+    s = c.read_mcp_server()
+    assert s["enabled"] is True
+    assert s["port"] == 9001
+    assert s["token"] == "s3cret"
+    assert s["default_autonomy"] == "confirm"
+    assert s["confirm_wait"] == 25.0
+
+    # Bogus autonomy → dropped (None); out-of-range/garbage port → clamped/default.
+    monkeypatch.setattr(
+        c,
+        "read_config",
+        lambda: {"mcp_server": {"default_autonomy": "yolo", "port": 999999}},
+    )
+    s = c.read_mcp_server()
+    assert s["default_autonomy"] is None
+    assert s["port"] == 65535
+    monkeypatch.setattr(
+        c, "read_config", lambda: {"mcp_server": {"port": "not-a-number"}}
+    )
+    assert c.read_mcp_server()["port"] == c.DEFAULT_MCP_SERVER_PORT
+
+
 if __name__ == "__main__":
     unittest.main()

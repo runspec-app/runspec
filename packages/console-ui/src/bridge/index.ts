@@ -247,6 +247,26 @@ export interface McpCredentialOption {
   label: string
   kind: string
 }
+// The console's *own* MCP server ([mcp_server]) — an external coding agent
+// (Claude Code) connects to it. Off by default; localhost-only. (Named Own* to
+// avoid clashing with the client-side McpServer* interfaces above.)
+export interface OwnMcpServerConfig {
+  enabled: boolean
+  host: string
+  port: number
+  token: string | null
+  default_autonomy: string | null
+  confirm_wait: number
+}
+export interface OwnMcpServerStatus {
+  running: boolean
+  error: string
+  host: string
+  port: number
+  url: string
+  auth: boolean
+  tools: number
+}
 
 // Settings → Config Sync. Where to pull the console's config files from (a git
 // repo, at a tag/ref), which credential authenticates, and the last successful
@@ -1297,6 +1317,12 @@ export interface BridgeApi {
   mcp_status: () => Promise<McpStatus>
   mcp_reload: () => Promise<McpStatus>
   mcp_credential_options: () => Promise<McpCredentialOption[]>
+  // The console's own MCP server ([mcp_server]) — get/save the settings and read
+  // live status (running/url/auth/tool count). save restarts the server to apply.
+  get_mcp_server_config: () => Promise<OwnMcpServerConfig>
+  save_mcp_server_config: (payload: Partial<OwnMcpServerConfig>) => Promise<OwnMcpServerStatus>
+  mcp_server_status: () => Promise<OwnMcpServerStatus>
+  mcp_server_start: () => Promise<OwnMcpServerStatus>
   // Config Sync (Settings → Config Sync): pull config files from a git repo by
   // tag. get/save the settings, list the repo's tags for the ref dropdown, and
   // run a pull (overwrites local config, backing up first; hot-reloads after).

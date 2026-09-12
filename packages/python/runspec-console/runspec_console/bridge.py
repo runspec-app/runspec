@@ -41,6 +41,7 @@ from .bridge_internals import InternalsMixin
 from .bridge_triggers import TriggersMixin
 from .bridge_improve import ImproveMixin
 from .bridge_evals import EvalsMixin
+from .bridge_mcp_server import McpServerMixin
 
 
 class Bridge(
@@ -61,6 +62,7 @@ class Bridge(
     TriggersMixin,
     ImproveMixin,
     EvalsMixin,
+    McpServerMixin,
 ):
     def __init__(self) -> None:
         self._window: Any = None
@@ -248,6 +250,19 @@ class Bridge(
         from .mcp_client import McpManager
 
         self._mcp = McpManager(credential_resolver=self._mcp_credential)
+        # The console's own MCP *server* ([mcp_server]): publishes the fleet's
+        # runnables to an external coding agent (Claude Code) over streamable-HTTP
+        # on localhost, with confirm-level calls parking in the console's confirm
+        # UI. Constructed cheaply (no SDK import, no socket); app.py calls
+        # mcp_server_start() at bring-up — a no-op unless [mcp_server] enabled.
+        from . import config as _config
+        from .mcp_server import ConsoleMcpServer
+
+        self._mcp_server = ConsoleMcpServer(
+            config_reader=_config.read_mcp_server,
+            tools_provider=self._mcp_server_runnables,
+            execute=self._mcp_server_execute,
+        )
         self._install_ssh_log_forwarder()
         # Apply any baseline config bundled in the deployment package before the
         # first load, so a fresh / air-gapped install is configured with no git
@@ -275,6 +290,8 @@ class Bridge(
         atexit.register(self.stop_triggers)  # quit any source pump threads cleanly
         # Close any live MCP client sessions (terminating stdio subprocesses).
         atexit.register(self._mcp.stop)
+        # Stop the console's own MCP server (shut its uvicorn loop down).
+        atexit.register(self._mcp_server.stop)
         # Unblock any in-flight turn parked at the autonomy gate so closing the
         # app can't hang waiting to join a worker stuck in event.wait(). Registered
         # last so it runs first (LIFO) — before concurrent.futures joins workers.

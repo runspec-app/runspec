@@ -81,6 +81,7 @@ nav:
     - Custom adapter behind a gateway: console-adapter-gateway.md
     - Local trace analysis with Phoenix: console-phoenix.md
     - External MCP servers: console-mcp.md
+    - Console as an MCP server: console-mcp-server.md
   - Security: security.md
 
 # Files kept in the repo but NOT built into the published (public) site.

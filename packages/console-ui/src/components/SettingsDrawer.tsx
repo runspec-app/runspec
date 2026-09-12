@@ -5157,6 +5157,110 @@ export function McpTab() {
   )
 }
 
+const OWN_MCP_AUTONOMY = [
+  { value: '', label: 'Per-runnable (default)' },
+  { value: 'autonomous', label: 'autonomous — run without asking' },
+  { value: 'confirm', label: 'confirm — park for approval' },
+  { value: 'supervised', label: 'supervised — park for approval' },
+  { value: 'manual', label: 'manual — refuse (operator-only)' },
+]
+
+export function McpServerTab() {
+  const [enabled, setEnabled] = useState(false)
+  const [host, setHost] = useState('127.0.0.1')
+  const [port, setPort] = useState<number>(8765)
+  const [token, setToken] = useState('')
+  const [autonomy, setAutonomy] = useState('')
+  const [confirmWait, setConfirmWait] = useState<number>(50)
+  const [saving, setSaving] = useState(false)
+  const [status, setStatus] = useState<Awaited<ReturnType<typeof bridge.mcp_server_status>> | null>(null)
+
+  const loadStatus = useCallback(() => { bridge.mcp_server_status().then(setStatus).catch(() => {}) }, [])
+
+  useEffect(() => {
+    bridge.get_mcp_server_config().then(c => {
+      setEnabled(c.enabled)
+      setHost(c.host || '127.0.0.1')
+      setPort(c.port || 8765)
+      setToken(c.token || '')
+      setAutonomy(c.default_autonomy || '')
+      setConfirmWait(typeof c.confirm_wait === 'number' ? c.confirm_wait : 50)
+    })
+    loadStatus()
+    const t = setInterval(loadStatus, 4000)
+    return () => clearInterval(t)
+  }, [loadStatus])
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      const st = await bridge.save_mcp_server_config({
+        enabled,
+        host: host.trim() || '127.0.0.1',
+        port: Math.max(1, Math.min(65535, Math.floor(port || 8765))),
+        token: token.trim() || null,
+        default_autonomy: autonomy || null,
+        confirm_wait: Math.max(1, Math.floor(confirmWait || 50)),
+      })
+      setStatus(st)
+      message.success('Saved')
+    } catch (e) {
+      message.error(String((e as Error)?.message || e))
+    } finally { setSaving(false) }
+  }
+
+  const row = (label: string, control: ReactNode) => (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 10 }}>
+      <span style={{ fontSize: 13 }}>{label}</span>
+      {control}
+    </div>
+  )
+
+  return (
+    <div style={{ maxWidth: 620 }}>
+      <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+        Expose this console's fleet runnables to an external coding agent (Claude Code, Cursor)
+        as an <strong>MCP server</strong> on localhost. A <code>confirm</code>-level tool call parks
+        for your approval in the console (the same confirm card the agent uses); <code>autonomous</code> runs
+        immediately, <code>manual</code> is refused. Runs land in History tagged <code>mcp</code>. Off by default —
+        it opens a listening socket. Requires the <code>mcp</code> extra:
+        <code> pip install runspec-console[mcp]</code>.
+      </Typography.Paragraph>
+
+      {row('Enable server', <Switch checked={enabled} onChange={setEnabled} />)}
+      {row('Host', <Input style={{ width: 200, fontFamily: 'monospace' }} value={host} onChange={e => setHost(e.target.value)} disabled={!enabled} />)}
+      {row('Port', <InputNumber min={1} max={65535} value={port} onChange={v => setPort(typeof v === 'number' ? v : 8765)} disabled={!enabled} />)}
+      {row('Bearer token (optional)', <Input.Password style={{ width: 260 }} placeholder="none — localhost only" value={token} onChange={e => setToken(e.target.value)} disabled={!enabled} />)}
+      {row('Default autonomy floor', <Select style={{ width: 260 }} value={autonomy} onChange={setAutonomy} options={OWN_MCP_AUTONOMY} disabled={!enabled} />)}
+      {row('Confirm wait (seconds)', <InputNumber min={1} max={3600} value={confirmWait} onChange={v => setConfirmWait(typeof v === 'number' ? v : 50)} disabled={!enabled} />)}
+      <Typography.Paragraph type="secondary" style={{ fontSize: 11, marginTop: -2 }}>
+        How long a parked call waits for your approval before returning a resumable “awaiting
+        approval” result. Keep it under your MCP client's own tool-call timeout
+        (Claude Code's <code>MCP_TOOL_TIMEOUT</code> defaults to 60s).
+      </Typography.Paragraph>
+
+      <Button type="primary" onClick={handleSave} loading={saving} style={{ marginTop: 4 }}>Save</Button>
+
+      <Divider style={{ margin: '14px 0' }} />
+      <Typography.Paragraph style={{ fontSize: 12, marginBottom: 6 }}><strong>Status</strong></Typography.Paragraph>
+      {status?.running ? (
+        <Space direction="vertical" size={2}>
+          <Space><Tag color="green">running</Tag><Typography.Text style={{ fontFamily: 'monospace', fontSize: 12 }}>{status.url}</Typography.Text></Space>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>{status.tools} tool(s) · auth {status.auth ? 'on' : 'off'}</Typography.Text>
+          <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: 6, marginBottom: 0 }}>
+            Connect Claude Code:&nbsp;
+            <code>claude mcp add --transport http runspec {status.url}{status.auth ? ' --header "Authorization: Bearer <token>"' : ''}</code>
+          </Typography.Paragraph>
+        </Space>
+      ) : (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          {status?.error ? `not running — ${status.error}` : 'not running'}
+        </Typography.Text>
+      )}
+    </div>
+  )
+}
+
 export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, connectedHosts, allRemoteHosts }: SettingsDrawerProps) {
   return (
     <Drawer title="Settings" placement="right" width="min(96vw, 1040px)" open={open} onClose={onClose}>
@@ -5177,6 +5281,7 @@ export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, co
           { key: 'credentials', label: 'Credentials', children: <CredentialsTab /> },
           { key: 'denylist',  label: 'Denylist',   children: <DenylistTab /> },
           { key: 'mcp',       label: 'MCP',        children: <McpTab /> },
+          { key: 'mcpServer', label: 'MCP Server', children: <McpServerTab /> },
           { key: 'configSync', label: 'Config Sync', children: <ConfigSyncTab /> },
           { key: 'mailbox',   label: 'Mailbox',    children: <MailboxesTab /> },
           { key: 'teams',     label: 'Teams',      children: <TeamsTab /> },
