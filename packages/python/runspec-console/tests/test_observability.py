@@ -326,8 +326,11 @@ def _chat_stub():
 
     s._run_tool_sync = run_tool_sync
 
-    # _usage_from_response is a @staticmethod — assign the plain function (no self).
+    # _usage_from_response and _context_window are @staticmethods — assign the
+    # plain functions (no self). _context_window sizes the context gauge from the
+    # adapter's capabilities(), falling back to the model-id window table.
     s._usage_from_response = Bridge._usage_from_response
+    s._context_window = Bridge._context_window
     for meth in (
         "_agentic_chat_turn",
         "_sync_history_tags",
