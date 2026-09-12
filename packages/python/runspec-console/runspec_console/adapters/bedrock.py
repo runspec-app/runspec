@@ -48,11 +48,15 @@ class BedrockAdapter(ModelAdapter):
         api_key: str | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         effort: str = "",
+        model_limits: dict[str, Any] | None = None,
     ) -> None:
         self.model = model
         self.system = system
         self.max_tokens = int(max_tokens) or DEFAULT_MAX_TOKENS
         self._effort = effort_level(effort)
+        # [llm.model_limits] table for capabilities() (model-id substring → limits);
+        # Bedrock has no Models API lookup, so the table is the sole source.
+        self._model_limits = model_limits or {}
         if base_url:
             # Corporate proxy — treat as a regular Anthropic-compatible endpoint
             self.client: anthropic.AsyncAnthropic | anthropic.AsyncAnthropicBedrock = (

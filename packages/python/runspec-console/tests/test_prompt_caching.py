@@ -60,3 +60,61 @@ def test_blank_system_not_wrapped():
 def test_returns_same_dict():
     kwargs = {"system": "s", "tools": _tools(1)}
     assert apply_prompt_caching(kwargs) is kwargs
+
+
+# ── multi-turn breakpoint: last content block of the last message ─────────────
+
+
+def test_last_message_string_content_gets_cached_block():
+    kwargs = {
+        "system": "s",
+        "messages": [
+            {"role": "user", "content": "first"},
+            {"role": "user", "content": "latest question"},
+        ],
+    }
+    out = apply_prompt_caching(kwargs)
+    # only the LAST message is wrapped + marked
+    assert out["messages"][-1]["content"] == [
+        {"type": "text", "text": "latest question", "cache_control": EPHEMERAL}
+    ]
+    # earlier message left untouched
+    assert out["messages"][0] == {"role": "user", "content": "first"}
+
+
+def test_last_message_block_list_marks_last_block():
+    kwargs = {
+        "messages": [
+            {"role": "user", "content": "hi"},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "tool_use_id": "a", "content": "1"},
+                    {"type": "tool_result", "tool_use_id": "b", "content": "2"},
+                ],
+            },
+        ],
+    }
+    out = apply_prompt_caching(kwargs)
+    blocks = out["messages"][-1]["content"]
+    assert "cache_control" not in blocks[0]
+    assert blocks[-1]["cache_control"] == EPHEMERAL
+
+
+def test_message_breakpoint_does_not_mutate_caller_history():
+    history = [{"role": "user", "content": "only"}]
+    apply_prompt_caching({"messages": history})
+    # the caller's stored history must be untouched (copied before annotating)
+    assert history == [{"role": "user", "content": "only"}]
+
+
+def test_last_message_sdk_object_blocks_left_untouched():
+    # An assistant turn whose content is raw SDK block objects (not dicts) can't
+    # carry a cache_control dict key — it's left as-is rather than crashing.
+    class _Block:
+        pass
+
+    blk = _Block()
+    kwargs = {"messages": [{"role": "assistant", "content": [blk]}]}
+    out = apply_prompt_caching(kwargs)
+    assert out["messages"][-1]["content"] == [blk]

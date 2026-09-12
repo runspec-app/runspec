@@ -624,24 +624,34 @@ class SearchMixin:
 
         tokens = [t for t in re.split(r"\W+", query.lower()) if t]
 
-        def score(rep: dict[str, Any], grp: str) -> int:
-            if not tokens:
-                return 1  # browse: everything qualifies equally
-            name = str(rep.get("name") or "").lower()
-            desc = str(rep.get("description") or "").lower()
-            grp_l = grp.lower()
-            s = 0
-            for t in tokens:
-                if t in name:
-                    s += 10
-                if t in grp_l:
-                    s += 3
-                if t in desc:
-                    s += 2
-            return s
+        # BM25(F) ranking over name/description/group/arg-names (see search_rank):
+        # term-frequency saturation + length normalisation + a rarity (idf) weight,
+        # so a long description can't win on word count and a term in every runnable
+        # barely moves the score — a real improvement over the old flat substring
+        # overlap. Scores are computed for the whole deduped set in `order`, then the
+        # host/group filters select which rows to return.
+        from .search_rank import bm25f_scores
 
-        scored: list[tuple[int, str, dict[str, Any]]] = []
-        for key in order:
+        docs = [
+            {
+                "name": groups[key][  # key == (group, name)
+                    "rep"
+                ].get("name")
+                or key[1],
+                "group": key[0],
+                "description": groups[key]["rep"].get("description") or "",
+                "args": [
+                    str(a.get("name") or "")
+                    for a in (groups[key]["rep"].get("args") or [])
+                    if isinstance(a, dict)
+                ],
+            }
+            for key in order
+        ]
+        bm25 = bm25f_scores(query, docs)
+
+        scored: list[tuple[float, str, dict[str, Any]]] = []
+        for idx, key in enumerate(order):
             grp, name = key
             rep = groups[key]["rep"]
             hosts = groups[key]["hosts"]
@@ -649,9 +659,12 @@ class SearchMixin:
                 continue
             if group and group != grp:
                 continue
-            sc = score(rep, grp)
-            if sc <= 0:
-                continue
+            if tokens:
+                sc = bm25[idx]
+                if sc <= 0:
+                    continue
+            else:
+                sc = 1.0  # browse: everything qualifies equally
             scored.append((sc, name, {"rep": rep, "hosts": hosts, "group": grp}))
         # Highest score first; stable by name for ties (deterministic output).
         scored.sort(key=lambda t: (-t[0], t[1]))

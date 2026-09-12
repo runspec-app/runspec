@@ -1736,7 +1736,7 @@ class InvokeMixin:
                 {
                     "id": chat_id,
                     "model": model,
-                    "window": utils_mod.model_context_window(model),
+                    "window": self._context_window(adapter),
                     "total_tokens": last_prompt_tokens,
                     "cache_hit_pct": round(
                         100 * last_usage["cache_read"] / last_prompt_tokens
@@ -1769,6 +1769,21 @@ class InvokeMixin:
             return len(json.dumps(obj, default=str))
         except (TypeError, ValueError):
             return len(str(obj))
+
+    @staticmethod
+    def _context_window(adapter: Any) -> int:
+        """Context-window size (tokens) for the gauge. Prefers the adapter's
+        declared ``capabilities().context_window`` (from ``[llm.model_limits]`` or
+        the Anthropic Models API) — the authoritative figure when the model is
+        hidden behind a gateway — and falls back to the model-id substring table
+        when the adapter declares none."""
+        try:
+            caps = adapter.capabilities()
+            if getattr(caps, "context_window", None):
+                return int(caps.context_window)
+        except Exception:  # noqa: BLE001 — gauge is decorative; never fail a turn
+            pass
+        return utils_mod.model_context_window(getattr(adapter, "model", "") or "")
 
     @staticmethod
     def _usage_from_response(response: Any) -> dict[str, int]:

@@ -78,6 +78,7 @@ nav:
     - Custom model adapters: console-adapters.md
     - Telemetry — OpenTelemetry tracing: console-telemetry.md
     - Telemetry for a custom adapter: console-adapter-telemetry.md
+    - Custom adapter behind a gateway: console-adapter-gateway.md
     - Local trace analysis with Phoenix: console-phoenix.md
     - External MCP servers: console-mcp.md
   - Security: security.md

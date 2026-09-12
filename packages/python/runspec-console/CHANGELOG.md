@@ -8,6 +8,72 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.247.0] — 2026-09-12
+
+### Added
+- **Adapter capabilities (`ModelAdapter.capabilities()`).** A new optional
+  adapter method returns a `ModelCapabilities` — `context_window`,
+  `max_output_tokens`, `adaptive_thinking`, `cache_markers`, `strict_tools` —
+  describing the model *behind* the adapter independently of which provider or
+  proxy carries it. This matters when the model is hidden behind a LangChain/
+  Bedrock gateway where the native Anthropic Models API isn't reachable: the
+  operator declares the facts in a new **`[llm.model_limits]`** table (model-id
+  substring → capability fields, merged broad→specific, longest key wins), so it
+  rides the config seed / Config Sync. The default `capabilities()` reads that
+  table; the `anthropic` built-in additionally fills unset numeric limits from
+  `client.models.retrieve` when reachable (cached, best-effort, falls back to the
+  table). The console uses it to (1) **clamp `[llm] max_tokens`** down to
+  `max_output_tokens` so a generous setting can't 400 against a smaller model,
+  (2) feed **`context_window`** to the context gauge instead of the model-id
+  substring table, and (3) **skip thinking/effort** when `adaptive_thinking` is
+  false (a gateway that drops the field). All built-ins accept a `model_limits`
+  kwarg; a plugin adapter gets it via `adapter_config_keys`. Reconciliation lives
+  in `base.capabilities_from_limits` (pure) + `bridge_internals._apply_capabilities`.
+  See `docs/console-adapters.md`, `docs/console-reference.md`.
+- **LangServe prompt-cache markers (`[llm] cache_markers`, default off).** When
+  enabled, the `/invoke` payload carries Anthropic-style ephemeral `cache_control`
+  breakpoints — the system prompt as a marked content block, the **last** tool
+  (caching the whole tools block), and the **last content block of the last
+  message** each turn — so a gateway that forwards them (a proxy in front of
+  Bedrock/Anthropic) caches the static prefix. The tool list is serialised
+  **deterministically** (sorted by name, copied not mutated) so the cached prefix
+  is byte-stable across turns; `cacheable_prefix()` extracts it for verification.
+  `parse_output` now also reads `usage_metadata.input_token_details.cache_creation`
+  alongside `cache_read`.
+- **LangServe streaming (`[llm] stream_events`, default on).** `stream_with_tools`
+  now drives the LangServe **`/stream_events`** SSE route — yielding text deltas as
+  they arrive and ending with a `ChatResponse` carrying the gateway's real stop
+  reason, usage, and tool calls (read from the terminal `on_chat_model_end` event)
+  — so a long reply no longer rides a single long-lived `/invoke` request. Falls
+  back to `/invoke` automatically (and for the rest of the session) the first time
+  the SSE route proves unavailable (404/405/501), or when `stream_events = false`.
+- **Multi-turn prompt-cache breakpoint in the `anthropic` + `bedrock` built-ins.**
+  `apply_prompt_caching` now also marks the **last content block of the last
+  message** (a *moving* breakpoint), so the growing conversation — the prior turns
+  and their tool results — is cached across the multi-step tool loop, not just the
+  static tools+system header. The existing tools/system breakpoints are unchanged.
+- **Gateway-adapter agent guide** (`docs/console-adapter-gateway.md`, linked from
+  the adapters page + nav). A task-oriented walkthrough for a custom adapter
+  reaching Bedrock through a LangChain/LangServe proxy — what survives the proxy
+  path, declaring limits via `capabilities()` / `[llm.model_limits]`, cache markers,
+  `/stream_events` streaming, what to ask the gateway team, and a copy-paste brief.
+
+### Changed
+- **Search-mode ranking is now BM25(F)** (`search_rank.py`). `search_runnables`
+  replaces the flat substring-overlap score with a BM25-style score over a
+  runnable's **name, description, group and argument names**, each field weighted,
+  with term-frequency saturation, length normalisation, and an idf rarity weight —
+  so a long description can't win on word count and a term in every runnable barely
+  moves the ranking. Browse (empty query) is unchanged.
+
+- **Improve: weak catalog-description signal.** The Improve report now flags
+  runnables whose **first description sentence** — the *entire* entry the agent
+  sees in the search-mode catalog index — is empty, shorter than ~40 chars, or a
+  duplicate of another runnable's (`improve.catalog_description_issues`, a new
+  `catalog_description` incident category + headline metric + report section). The
+  bridge feeds it the deduped agent-visible catalog.
+
+
 ## [0.246.3] — 2026-09-11
 
 ### Fixed

@@ -10,12 +10,18 @@ import anthropic
 from .base import (
     ChatResponse,
     ModelAdapter,
+    ModelCapabilities,
     ToolCall,
     apply_prompt_caching,
     apply_thinking,
+    capabilities_from_limits,
     effort_level,
     run_api_key_command,
 )
+
+# Sentinel for "the Models API lookup hasn't been attempted yet" — distinct from a
+# cached None (attempted, returned nothing / unreachable, don't retry).
+_UNSET: Any = object()
 
 DEFAULT_MODEL = "claude-sonnet-4-6"
 # Output-token ceiling per request. A ceiling, not a target — billed only when
@@ -41,6 +47,7 @@ class AnthropicAdapter(ModelAdapter):
         api_key_ttl_ms: int = 0,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         effort: str = "",
+        model_limits: dict[str, Any] | None = None,
     ) -> None:
         """
         Args:
@@ -62,12 +69,20 @@ class AnthropicAdapter(ModelAdapter):
                 "adaptive"}`` + ``output_config={"effort": <level>}``); the model
                 self-manages its thinking depth and it counts toward ``max_tokens``.
                 See ``base.apply_thinking``.
+            model_limits: The ``[llm.model_limits]`` table (model-id substring →
+                capability fields) used by ``capabilities()``; this adapter also
+                fills unset numeric limits from the Models API when reachable.
         """
         self.model = model
         self.system = system
         self.max_tokens = int(max_tokens) or DEFAULT_MAX_TOKENS
         self._effort = effort_level(effort)
+        # [llm.model_limits] table for the default capabilities() lookup, plus a
+        # cache of the (best-effort) Models API enrichment — see capabilities().
+        self._model_limits = model_limits or {}
+        self._model_info_cache: Any = _UNSET
         self._base_url = base_url
+        self._static_api_key = api_key
         self._api_key_command = api_key_command
         self._api_key_ttl_s = api_key_ttl_ms / 1000.0
         self._cached_key: str | None = None
@@ -104,6 +119,54 @@ class AnthropicAdapter(ModelAdapter):
         self._cached_key = key
         self._key_fetched_at = now
         self.client = anthropic.AsyncAnthropic(**self._client_kwargs(key))
+
+    def capabilities(self) -> ModelCapabilities:
+        """Model capabilities: the ``[llm.model_limits]`` table, with any numeric
+        limit it leaves unset filled best-effort from the Anthropic **Models API**
+        (``client.models.retrieve``) when that endpoint is reachable.
+
+        The table is authoritative (an operator override wins); the Models API only
+        fills gaps, and a lookup failure — the common case behind a corporate proxy
+        where the Models API is blocked — is cached so it's attempted at most once
+        and silently falls back to the table. The booleans come from the table
+        (the Models API doesn't report them)."""
+        caps = capabilities_from_limits(self.model, self._model_limits)
+        if caps.context_window is None or caps.max_output_tokens is None:
+            info = self._model_api_info()
+            if info:
+                if caps.context_window is None and info.get("context_window"):
+                    caps.context_window = int(info["context_window"])
+                if caps.max_output_tokens is None and info.get("max_output_tokens"):
+                    caps.max_output_tokens = int(info["max_output_tokens"])
+        return caps
+
+    def _model_api_info(self) -> dict[str, Any] | None:
+        """Best-effort ``{context_window, max_output_tokens}`` from the Models API,
+        cached (including a failed/empty lookup, so it never retries or blocks a
+        later turn). A synchronous, short-timeout call — the Models API may be
+        unreachable (corporate proxy), so any exception falls back to ``None``."""
+        if self._model_info_cache is not _UNSET:
+            return self._model_info_cache
+        self._model_info_cache = None
+        try:
+            key = self._static_api_key
+            if self._api_key_command:
+                key = self._cached_key
+                if key is None:
+                    key = run_api_key_command(self._api_key_command)
+                    self._cached_key = key
+                    self._key_fetched_at = time.monotonic()
+            kwargs = self._client_kwargs(key)
+            kwargs["timeout"] = 5.0
+            sync_client = anthropic.Anthropic(**kwargs)
+            info = sync_client.models.retrieve(self.model)
+            self._model_info_cache = {
+                "context_window": getattr(info, "context_window", None),
+                "max_output_tokens": getattr(info, "max_output_tokens", None),
+            }
+        except Exception:  # noqa: BLE001 — Models API is optional; table is the floor
+            self._model_info_cache = None
+        return self._model_info_cache
 
     async def chat(
         self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]

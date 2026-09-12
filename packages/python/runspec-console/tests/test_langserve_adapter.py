@@ -18,9 +18,12 @@ from runspec_console.adapters.langserve import (
     LangServeAdapter,
     _to_openai_tool,
     build_payload,
+    cacheable_prefix,
     extract_stop_reason,
     normalize_stop_reason,
     parse_output,
+    stream_delta_text,
+    stream_final_output,
 )
 
 TOOLS = [
@@ -304,6 +307,128 @@ def test_parse_output_cache_read_tokens():
     assert usage["cache_read_input_tokens"] == 80
 
 
+def test_parse_output_cache_creation_tokens():
+    output = {
+        "content": "x",
+        "usage_metadata": {
+            "input_tokens": 100,
+            "output_tokens": 5,
+            "input_token_details": {"cache_read": 10, "cache_creation": 90},
+        },
+    }
+    _text, _calls, usage = parse_output(output)
+    assert usage["cache_read_input_tokens"] == 10
+    assert usage["cache_creation_input_tokens"] == 90
+
+
+# ── cache markers (opt-in) ─────────────────────────────────────────────────────
+
+
+def test_cache_markers_off_by_default_no_markers():
+    payload = build_payload([{"role": "user", "content": "hi"}], TOOLS, "sys")
+    # system stays a plain string; tools carry no cache_control
+    assert payload["input"]["messages"][0] == {"role": "system", "content": "sys"}
+    assert "cache_control" not in payload["input"]["tools"][0]
+
+
+def test_cache_markers_mark_system_last_tool_and_last_message():
+    tools = [
+        {"name": "b_tool", "input_schema": {"type": "object"}},
+        {"name": "a_tool", "input_schema": {"type": "object"}},
+    ]
+    payload = build_payload(
+        [{"role": "user", "content": "please help"}],
+        tools,
+        "be helpful",
+        cache_markers=True,
+    )
+    msgs = payload["input"]["messages"]
+    # system became a content-block message with the marker
+    assert msgs[0]["role"] == "system"
+    assert msgs[0]["content"][-1]["cache_control"] == {"type": "ephemeral"}
+    # tools are sorted by name and only the last carries the marker
+    out_tools = payload["input"]["tools"]
+    names = [t["function"]["name"] for t in out_tools]
+    assert names == ["a_tool", "b_tool"]
+    assert "cache_control" not in out_tools[0]
+    assert out_tools[-1]["cache_control"] == {"type": "ephemeral"}
+    # last message's last block carries the per-turn marker
+    assert msgs[-1]["content"][-1]["cache_control"] == {"type": "ephemeral"}
+
+
+def test_cache_markers_byte_identical_prefix_across_turns():
+    """Two turns with the same tools+system but different conversations must
+    produce a byte-identical cacheable prefix (system + tools) — the property
+    prompt caching relies on."""
+    tools = [
+        {"name": "z_tool", "input_schema": {"type": "object"}},
+        {"name": "a_tool", "input_schema": {"type": "object"}},
+    ]
+    p1 = build_payload(
+        [{"role": "user", "content": "first short one"}],
+        tools,
+        "the system prompt",
+        cache_markers=True,
+    )
+    p2 = build_payload(
+        [
+            {"role": "user", "content": "first short one"},
+            {"role": "assistant", "content": "ok"},
+            {
+                "role": "user",
+                "content": "a completely different, much longer follow-up",
+            },
+        ],
+        list(reversed(tools)),  # discovery reordered them
+        "the system prompt",
+        cache_markers=True,
+    )
+    prefix1 = cacheable_prefix(p1)
+    prefix2 = cacheable_prefix(p2)
+    assert prefix1 == prefix2
+    # the prefix ends at the last marker (the last tool's cache_control)
+    assert '"cache_control"' in prefix1
+
+
+def test_cache_markers_do_not_mutate_caller_tools():
+    tools = [{"name": "t", "input_schema": {"type": "object"}}]
+    build_payload([{"role": "user", "content": "x"}], tools, "s", cache_markers=True)
+    assert "cache_control" not in tools[0]
+
+
+# ── stream-event interpretation helpers (pure) ─────────────────────────────────
+
+
+def test_stream_delta_text_from_chat_model_stream():
+    ev = {"event": "on_chat_model_stream", "data": {"chunk": {"content": "tok"}}}
+    assert stream_delta_text(ev) == "tok"
+
+
+def test_stream_delta_text_ignores_other_events():
+    assert stream_delta_text({"event": "on_chain_start", "data": {}}) == ""
+    assert stream_delta_text({"event": "on_chat_model_end", "data": {}}) == ""
+
+
+def test_stream_delta_text_constructor_envelope():
+    ev = {
+        "event": "on_chat_model_stream",
+        "data": {
+            "chunk": {
+                "type": "constructor",
+                "kwargs": {"content": "hi"},
+            }
+        },
+    }
+    assert stream_delta_text(ev) == "hi"
+
+
+def test_stream_final_output_from_end_event():
+    out = {"content": "done", "tool_calls": []}
+    ev = {"event": "on_chat_model_end", "data": {"output": out}}
+    assert stream_final_output(ev) == out
+    assert stream_final_output({"event": "on_chat_model_stream", "data": {}}) is None
+
+
 # ── adapter via a fake client ─────────────────────────────────────────────────
 
 
@@ -470,3 +595,166 @@ def test_rotating_token_via_command(monkeypatch):
     asyncio.run(adapter.chat([{"role": "user", "content": "hi"}], []))
     assert client.calls[0]["headers"]["Authorization"] == "Bearer rot-token"
     assert calls["n"] == 1
+
+
+# ── streaming over /stream_events ───────────────────────────────────────────────
+
+
+def _sse(events: list[str]) -> list[str]:
+    """Turn a list of astream_events JSON strings into SSE lines (event: data /
+    data: <json> / blank), ending with an ``event: end`` marker."""
+    lines: list[str] = []
+    for ev in events:
+        lines.append("event: data")
+        lines.append(f"data: {ev}")
+        lines.append("")
+    lines.append("event: end")
+    lines.append("")
+    return lines
+
+
+class _FakeStream:
+    def __init__(self, lines: list[str], status: int = 200) -> None:
+        self._lines = lines
+        self.status_code = status
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc: Any) -> None:
+        return None
+
+    def raise_for_status(self) -> None:
+        pass
+
+    async def aread(self) -> bytes:
+        return b""
+
+    async def aiter_lines(self):
+        for line in self._lines:
+            yield line
+
+
+class _FakeStreamClient:
+    """Serves /stream_events SSE lines (and records the request), plus a canned
+    /invoke body for the fallback path."""
+
+    def __init__(self, lines: list[str], status: int = 200, invoke_body=None) -> None:
+        self._lines = lines
+        self._status = status
+        self._invoke_body = invoke_body or {"output": "fallback reply"}
+        self.stream_calls: list[dict[str, Any]] = []
+        self.post_calls: list[dict[str, Any]] = []
+
+    def stream(
+        self, method: str, url: str, json: dict[str, Any], headers: dict[str, str]
+    ):  # noqa: A002
+        self.stream_calls.append(
+            {"method": method, "url": url, "json": json, "headers": headers}
+        )
+        return _FakeStream(self._lines, status=self._status)
+
+    async def post(self, url: str, json: dict[str, Any], headers: dict[str, str]):  # noqa: A002
+        self.post_calls.append({"url": url, "json": json, "headers": headers})
+        return _FakeResponse(self._invoke_body)
+
+
+def _drain(adapter: LangServeAdapter, messages, tools):
+    async def go():
+        texts: list[str] = []
+        done = None
+        async for kind, payload in adapter.stream_with_tools(messages, tools):
+            if kind == "text":
+                texts.append(payload)
+            elif kind == "done":
+                done = payload
+        return texts, done
+
+    return asyncio.run(go())
+
+
+def test_events_endpoint_derived_from_base():
+    a = LangServeAdapter(base_url="https://gw.corp/chain", client=object())
+    assert a.events_endpoint == "https://gw.corp/chain/stream_events"
+    a2 = LangServeAdapter(base_url="https://gw.corp/chain/invoke", client=object())
+    assert a2.events_endpoint == "https://gw.corp/chain/stream_events"
+
+
+def test_stream_events_yields_deltas_and_final_response():
+    events = [
+        json.dumps(
+            {"event": "on_chat_model_stream", "data": {"chunk": {"content": "Hello "}}}
+        ),
+        json.dumps(
+            {"event": "on_chat_model_stream", "data": {"chunk": {"content": "world"}}}
+        ),
+        json.dumps(
+            {
+                "event": "on_chat_model_end",
+                "data": {
+                    "output": {
+                        "content": "Hello world",
+                        "response_metadata": {"stopReason": "max_tokens"},
+                        "usage_metadata": {"input_tokens": 11, "output_tokens": 2},
+                    }
+                },
+            }
+        ),
+    ]
+    client = _FakeStreamClient(_sse(events))
+    adapter = LangServeAdapter(
+        base_url="https://gw.corp/chain", api_key="k", client=client
+    )
+    texts, done = _drain(adapter, [{"role": "user", "content": "hi"}], [])
+    assert texts == ["Hello ", "world"]
+    assert done.stop_reason == "max_tokens"  # real stop reason surfaced
+    assert done.text == "Hello world"
+    # hit /stream_events with SSE Accept, not /invoke
+    assert client.stream_calls[0]["url"] == "https://gw.corp/chain/stream_events"
+    assert client.stream_calls[0]["headers"]["Accept"] == "text/event-stream"
+    assert client.post_calls == []
+
+
+def test_stream_events_tool_call_from_end_event():
+    events = [
+        json.dumps(
+            {
+                "event": "on_chat_model_end",
+                "data": {
+                    "output": {
+                        "content": "",
+                        "tool_calls": [
+                            {"name": "host__restart", "args": {"name": "x"}, "id": "1"}
+                        ],
+                    }
+                },
+            }
+        ),
+    ]
+    client = _FakeStreamClient(_sse(events))
+    adapter = LangServeAdapter(base_url="https://gw.corp/chain", client=client)
+    _texts, done = _drain(adapter, [{"role": "user", "content": "go"}], TOOLS)
+    assert done.stop_reason == "tool_use"
+    assert done.tool_calls[0].input == {"name": "x"}
+
+
+def test_stream_events_unsupported_falls_back_to_invoke():
+    client = _FakeStreamClient([], status=404, invoke_body={"output": "via invoke"})
+    adapter = LangServeAdapter(base_url="https://gw.corp/chain", client=client)
+    texts, done = _drain(adapter, [{"role": "user", "content": "hi"}], [])
+    assert texts == ["via invoke"]
+    assert done.text == "via invoke"
+    # streaming disabled for the session after the 404
+    assert adapter.stream_events is False
+    assert len(client.post_calls) == 1
+
+
+def test_stream_events_disabled_uses_invoke_directly():
+    client = _FakeStreamClient([], invoke_body={"output": "plain"})
+    adapter = LangServeAdapter(
+        base_url="https://gw.corp/chain", client=client, stream_events=False
+    )
+    texts, done = _drain(adapter, [{"role": "user", "content": "hi"}], [])
+    assert texts == ["plain"]
+    assert client.stream_calls == []  # never tried the SSE route
+    assert len(client.post_calls) == 1

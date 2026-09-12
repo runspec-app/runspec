@@ -39,6 +39,99 @@ class ChatResponse:
     _raw: Any = field(repr=False, default=None)
 
 
+@dataclass
+class ModelCapabilities:
+    """What the model *behind* an adapter can do — the facts the console needs to
+    configure a request safely, independent of which provider or proxy carries it.
+
+    Returned by :meth:`ModelAdapter.capabilities`. Populated from the
+    ``[llm.model_limits]`` config table (so it rides the config seed / Config Sync)
+    and, for the native Anthropic adapter, best-effort from the Models API. Every
+    field is optional/defaulted so an adapter that declares nothing still works:
+
+      * ``context_window``     — total prompt+output token budget. Feeds the context
+        gauge (``None`` ⇒ fall back to the model-id substring table).
+      * ``max_output_tokens``  — hard ceiling on a single reply. The console clamps
+        ``[llm] max_tokens`` down to this so a generous operator setting can't 400
+        against a model with a lower cap (``None`` ⇒ don't clamp).
+      * ``adaptive_thinking``  — the model/gateway accepts extended-thinking /
+        reasoning-effort requests. ``False`` ⇒ the console sends no thinking/effort
+        (e.g. a LangChain proxy in front of Bedrock that drops the field).
+      * ``cache_markers``      — prompt-cache breakpoints are honoured, so applying
+        them is worthwhile.
+      * ``strict_tools``       — the endpoint enforces strict JSON-schema tool
+        arguments (informational; lets an adapter/proxy advertise the contract).
+    """
+
+    context_window: int | None = None
+    max_output_tokens: int | None = None
+    adaptive_thinking: bool = True
+    cache_markers: bool = True
+    strict_tools: bool = False
+
+
+def capabilities_from_limits(
+    model: str, limits: dict[str, Any] | None
+) -> ModelCapabilities:
+    """Build a :class:`ModelCapabilities` for ``model`` from a ``[llm.model_limits]``
+    table — a mapping of *model-id substring* → a table of capability fields.
+
+    Every entry whose key is a case-insensitive substring of ``model`` applies, and
+    they are **merged shortest-key → longest-key**, so a broad ``"claude"`` base can
+    set ``context_window`` and a specific ``"claude-opus-4-8"`` override just
+    ``max_output_tokens`` — the longer (more specific) key wins field-by-field. An
+    empty ``""`` key is a catch-all that matches any model (lowest precedence).
+    Unknown keys in an entry are ignored; absent fields fall back to the
+    :class:`ModelCapabilities` defaults. Numeric fields coerce leniently (a bad
+    value is dropped, not fatal). Deterministic (ties on key length break by the
+    key string). Pure/SDK-free and testable — the default
+    :meth:`ModelAdapter.capabilities` is just this over the adapter's stored table."""
+    caps = ModelCapabilities()
+    if not isinstance(limits, dict) or not limits:
+        return caps
+    m = (model or "").lower()
+    matches: list[tuple[int, str, dict[str, Any]]] = []
+    for key, entry in limits.items():
+        ks = str(key).lower()
+        if not isinstance(entry, dict):
+            continue
+        if ks and ks not in m:
+            continue
+        matches.append((len(ks), ks, entry))
+    if not matches:
+        return caps
+    matches.sort(key=lambda t: (t[0], t[1]))  # shortest/broadest first
+    best: dict[str, Any] = {}
+    for _len, _ks, entry in matches:
+        best.update(entry)  # longer (more specific) keys override
+
+    def _int(name: str) -> int | None:
+        val = best.get(name)
+        if val is None:
+            return None
+        try:
+            n = int(val)
+        except (TypeError, ValueError):
+            return None
+        return n if n > 0 else None
+
+    def _bool(name: str, default: bool) -> bool:
+        if name not in best:
+            return default
+        val = best[name]
+        if isinstance(val, str):
+            return val.strip().lower() not in ("false", "0", "no", "off", "")
+        return bool(val)
+
+    return ModelCapabilities(
+        context_window=_int("context_window"),
+        max_output_tokens=_int("max_output_tokens"),
+        adaptive_thinking=_bool("adaptive_thinking", caps.adaptive_thinking),
+        cache_markers=_bool("cache_markers", caps.cache_markers),
+        strict_tools=_bool("strict_tools", caps.strict_tools),
+    )
+
+
 # stop_reason values, across providers, that mean the model stopped because it
 # hit its output-token ceiling (not a natural end / a tool call). The agent loop
 # treats any of these as a truncation to auto-continue, so a custom adapter can
@@ -275,22 +368,84 @@ class ModelAdapter(ABC):
         """Return [assistant_turn, tool_result_turn] to append to the conversation."""
         ...
 
+    def capabilities(self) -> ModelCapabilities:
+        """What the model behind this adapter can do — see :class:`ModelCapabilities`.
+
+        The default reads the ``[llm.model_limits]`` table the console forwards as a
+        ``model_limits`` constructor kwarg (stored as ``self._model_limits``) and
+        matches it against ``self.model``. An adapter with a richer source (e.g. the
+        Anthropic Models API) overrides this, falling back to the table. Cheap and
+        side-effect-free by default so the console can call it per turn."""
+        return capabilities_from_limits(
+            getattr(self, "model", "") or "",
+            getattr(self, "_model_limits", None),
+        )
+
+
+def _mark_last_message_block(messages: list[Any]) -> list[Any] | None:
+    """Return a copy of ``messages`` with an ephemeral ``cache_control`` breakpoint
+    on the **last content block of the last message**, or ``None`` when there's
+    nothing to mark. This is the *moving* breakpoint that caches the growing
+    conversation prefix (the prior turns + their tool results) each turn, on top of
+    the fixed tools/system breakpoints.
+
+    Copies only the last message (and its block list) — the earlier history and the
+    caller's shared objects are never mutated. A string content becomes a single
+    cached text block; a block list has its last **dict** block marked (an assistant
+    turn's raw SDK block objects — e.g. ``TextBlock`` — are left untouched, since
+    cache_control must ride a plain dict; in the loop the last message is always the
+    user tool-result turn, whose blocks are dicts)."""
+    if not messages:
+        return None
+    out = list(messages)
+    last = dict(out[-1]) if isinstance(out[-1], dict) else None
+    if last is None:
+        return None
+    content = last.get("content")
+    if isinstance(content, str):
+        if not content:
+            return None
+        last["content"] = [
+            {"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}
+        ]
+    elif isinstance(content, list) and content:
+        blocks = list(content)
+        marked = False
+        for i in range(len(blocks) - 1, -1, -1):
+            if isinstance(blocks[i], dict):
+                blocks[i] = {**blocks[i], "cache_control": {"type": "ephemeral"}}
+                marked = True
+                break
+        if not marked:
+            return None
+        last["content"] = blocks
+    else:
+        return None
+    out[-1] = last
+    return out
+
 
 def apply_prompt_caching(kwargs: dict[str, Any]) -> dict[str, Any]:
-    """Add ephemeral cache_control breakpoints to the static prompt prefix.
+    """Add ephemeral cache_control breakpoints to the prompt prefix.
 
     Prompt caching is a *prefix match* in render order ``tools → system →
     messages``: a breakpoint on the last tool caches the whole (large, static)
     tools block, and turning ``system`` into a cached text block caches
     tools+system together. The tools array is rebuilt from the same discovered
     runnables each turn, so it's byte-stable within a session — subsequent turns
-    read the prefix at ~0.1x instead of full price. Below the model's minimum
-    cacheable prefix (~2K tokens on Sonnet 4.6, ~4K on Opus/Haiku) the API
-    silently skips caching with no error, so this is always safe to apply.
+    read the prefix at ~0.1x instead of full price.
+
+    A third, *moving* breakpoint marks the **last content block of the last
+    message** (see :func:`_mark_last_message_block`), so the growing conversation —
+    the prior turns and their tool results — is cached across the multi-step tool
+    loop too, not just the static tools+system header. Anthropic allows up to four
+    breakpoints; this uses three (last tool, system, last message). Below the
+    model's minimum cacheable prefix (~2K tokens on Sonnet 4.6, ~4K on Opus/Haiku)
+    the API silently skips caching with no error, so this is always safe to apply.
 
     Pure and SDK-free: takes the messages.create()/stream() kwargs dict, returns
-    it with caching applied. Copies the tool dicts it annotates rather than
-    mutating the caller's shared tool list.
+    it with caching applied. Copies the tool dicts / the last message it annotates
+    rather than mutating the caller's shared tool list or conversation history.
     """
     tools = kwargs.get("tools")
     if tools:
@@ -302,6 +457,11 @@ def apply_prompt_caching(kwargs: dict[str, Any]) -> dict[str, Any]:
         kwargs["system"] = [
             {"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}
         ]
+    messages = kwargs.get("messages")
+    if isinstance(messages, list) and messages:
+        marked = _mark_last_message_block(messages)
+        if marked is not None:
+            kwargs["messages"] = marked
     return kwargs
 
 

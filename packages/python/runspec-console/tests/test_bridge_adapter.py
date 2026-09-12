@@ -26,6 +26,7 @@ class _StubBridge:
         return self._cfg
 
     _get_adapter = Bridge._get_adapter
+    _apply_capabilities = staticmethod(Bridge._apply_capabilities)
     _ensure_plugins_imported = Bridge._ensure_plugins_imported
     list_providers = Bridge.list_providers
 

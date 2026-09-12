@@ -73,6 +73,7 @@ class _StubBridge:
     _debug = False  # tracing off → _trace is a no-op in these unit tests
     _usage_from_response = staticmethod(Bridge._usage_from_response)
     _messages_chars = staticmethod(Bridge._messages_chars)
+    _context_window = staticmethod(Bridge._context_window)
     _trim_chat_history = Bridge._trim_chat_history
     _sync_history_tags = Bridge._sync_history_tags
     _visible_history = Bridge._visible_history

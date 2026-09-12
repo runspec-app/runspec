@@ -54,9 +54,25 @@ Bearer token in the ``Authorization`` header, taken from a static ``api_key`` or
 override the header name and scheme.
 
 Tool calling is structured: the returned ``AIMessage`` carries a ``tool_calls``
-array which maps straight onto runspec tool calls. Streaming falls back to a
-single non-streaming ``/invoke`` (mirrors the OpenAI adapter) — correct for tool
-turns without the bookkeeping of reassembling a token stream.
+array which maps straight onto runspec tool calls.
+
+Streaming (``[llm] stream_events``, default on): ``stream_with_tools`` drives the
+LangServe ``/stream_events`` SSE route, yielding text deltas as they arrive and
+ending with a ``ChatResponse`` carrying the gateway's real stop reason + usage +
+tool calls (from the terminal ``on_chat_model_end`` event) — so a long reply no
+longer rides one long-lived ``/invoke`` request. Falls back to ``/invoke`` (and
+disables streaming for the session) if the route is unavailable, or when
+``stream_events = false``.
+
+Prompt caching (``[llm] cache_markers``, default off): for a gateway that forwards
+Anthropic ``cache_control`` to the model, mark the system prompt, the last tool,
+and the last message block each turn; the tool list is serialised deterministically
+(sorted) so the cached prefix is byte-stable across turns. ``parse_output`` reads
+``cache_creation`` as well as ``cache_read`` from ``usage_metadata``.
+
+Model limits (``[llm.model_limits]``): the gateway hides the model, so its limits
+(context window, output ceiling, whether it accepts thinking/effort) are declared
+in config and read by ``capabilities()`` — see ``base.capabilities_from_limits``.
 """
 
 from __future__ import annotations
@@ -116,6 +132,30 @@ def _place_in_slot(payload: dict[str, Any], slot: str, key: str, value: Any) -> 
         payload["kwargs"][key] = value
 
 
+_EPHEMERAL = {"type": "ephemeral"}
+
+
+def _as_text_blocks(content: Any) -> list[dict[str, Any]]:
+    """Normalise a message/system ``content`` to a list of typed text blocks, so a
+    trailing ``cache_control`` marker can be attached to the last one. A string
+    becomes one text block; an existing block list is copied (shallow)."""
+    if isinstance(content, list):
+        return [
+            dict(b) if isinstance(b, dict) else {"type": "text", "text": str(b)}
+            for b in content
+        ]
+    return [{"type": "text", "text": "" if content is None else str(content)}]
+
+
+def _mark_last_block(content: Any) -> list[dict[str, Any]]:
+    """Return ``content`` as text blocks with an ephemeral ``cache_control`` marker
+    on the **last** block — the prompt-cache breakpoint for a message."""
+    blocks = _as_text_blocks(content)
+    if blocks:
+        blocks[-1] = {**blocks[-1], "cache_control": _EPHEMERAL}
+    return blocks
+
+
 def build_payload(
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]],
@@ -130,6 +170,7 @@ def build_payload(
     effort: str = "",
     effort_key: str = "reasoning_effort",
     effort_in: str = "kwargs",
+    cache_markers: bool = False,
 ) -> dict[str, Any]:
     """Assemble the ``/invoke`` request body.
 
@@ -155,19 +196,54 @@ def build_payload(
     *adaptive* thinking shape, don't use ``effort_key``/``effort_in`` — override
     ``LangServeAdapter._build_payload`` and inject it directly (see that method's
     comment, which shows the ``apply_thinking`` one-liner).
+
+    ``cache_markers`` (off by default) adds Anthropic-style ephemeral
+    ``cache_control`` breakpoints so a gateway that forwards them (a proxy in front
+    of Bedrock/Anthropic) caches the static prefix: the system prompt becomes a
+    text *block* carrying the marker, the **last** tool carries it (caching the
+    whole tools block, which renders before the messages), and the **last content
+    block of the last message** carries it each turn. To keep the cached prefix
+    byte-stable across turns, the tools are emitted **sorted by name** and every
+    annotated dict is a copy (the caller's shared lists are never mutated). The
+    cacheable prefix (system + tools) can be extracted deterministically with
+    :func:`cacheable_prefix`.
     """
     wire_messages: list[dict[str, Any]] = []
     if system.strip():
-        wire_messages.append({"role": "system", "content": system})
+        if cache_markers:
+            wire_messages.append(
+                {"role": "system", "content": _mark_last_block(system)}
+            )
+        else:
+            wire_messages.append({"role": "system", "content": system})
     wire_messages.extend(messages)
 
     oai_tools = [_to_openai_tool(t) for t in tools] if tools else []
+    if cache_markers and oai_tools:
+        # Deterministic order so the cached tools prefix is byte-identical across
+        # turns (discovery can reorder the tool list). Sort by function name;
+        # fall back to the JSON form for a tool with no name (never in practice).
+        oai_tools = sorted(
+            oai_tools,
+            key=lambda t: (
+                (t.get("function", {}) or {}).get("name", "")
+                or json.dumps(t, sort_keys=True)
+            ),
+        )
+        # Breakpoint on the last (now stable-ordered) tool — caches the whole block.
+        oai_tools[-1] = {**oai_tools[-1], "cache_control": _EPHEMERAL}
 
     payload: dict[str, Any] = {
         "input": {messages_key: wire_messages},
         "config": {},
         "kwargs": {},
     }
+    # Per-turn breakpoint: mark the last content block of the last message, so the
+    # growing conversation prefix up to the previous turn stays cacheable.
+    if cache_markers and messages:
+        last = dict(wire_messages[-1])
+        last["content"] = _mark_last_block(last.get("content"))
+        wire_messages[-1] = last
     if oai_tools:
         if tools_in_config:
             payload["config"] = {"configurable": {tools_key: oai_tools}}
@@ -178,6 +254,26 @@ def build_payload(
     if effort and effort_key:
         _place_in_slot(payload, effort_in, effort_key, effort)
     return payload
+
+
+def cacheable_prefix(payload: dict[str, Any], *, tools_key: str = "tools") -> str:
+    """Deterministic serialisation of the **cacheable prefix** of a ``/invoke``
+    payload — the system message plus the tools block, the portion prompt caching
+    matches on (tools → system render first). Serialised with ``sort_keys`` so two
+    turns with the same tools+system produce a byte-identical string regardless of
+    the conversation messages that follow — the property the cache relies on.
+
+    Used by tests (and handy for debugging) to assert the prefix is stable up to
+    the last ``cache_control`` marker."""
+    inp = payload.get("input") or {}
+    cfg_conf = (payload.get("config") or {}).get("configurable") or {}
+    messages = inp.get("messages") or inp.get("input") or []
+    system = next(
+        (m for m in messages if isinstance(m, dict) and m.get("role") == "system"),
+        None,
+    )
+    tools = inp.get(tools_key) or cfg_conf.get(tools_key) or []
+    return json.dumps({"system": system, "tools": tools}, sort_keys=True)
 
 
 # Raw finish/stop reasons a LangChain gateway may report, mapped to the
@@ -261,6 +357,49 @@ def _content_to_text(content: Any) -> str | None:
     return None
 
 
+# ── /stream_events (SSE) interpretation — pure, unit-testable ─────────────────
+#
+# The LangServe ``astream_events`` route streams Server-Sent Events, each a JSON
+# astream_events record: ``{"event": "on_chat_model_stream", "data": {"chunk":
+# <AIMessageChunk>}}`` for a token, ``{"event": "on_chat_model_end", "data":
+# {"output": <AIMessage>}}`` at the end. These two helpers pull the text delta and
+# the final message out of one decoded event; the adapter does the SSE framing and
+# builds the final ChatResponse from the end event (complete text + tool_calls +
+# usage + stop reason).
+
+_STREAM_EVENTS = frozenset({"on_chat_model_stream", "on_llm_stream"})
+_END_EVENTS = frozenset({"on_chat_model_end", "on_llm_end"})
+
+
+def stream_delta_text(event: Any) -> str:
+    """Text delta carried by an ``on_chat_model_stream`` event, or ``""`` for any
+    other event. The chunk is an ``AIMessageChunk`` (possibly in the ``dumpd``
+    constructor envelope); its content is flattened the same way as a full
+    message."""
+    if not isinstance(event, dict) or event.get("event") not in _STREAM_EVENTS:
+        return ""
+    data = event.get("data")
+    chunk = data.get("chunk") if isinstance(data, dict) else None
+    if chunk is None:
+        return ""
+    msg = _unwrap(chunk)
+    if isinstance(msg, dict):
+        return _content_to_text(msg.get("content")) or ""
+    return ""
+
+
+def stream_final_output(event: Any) -> Any | None:
+    """The final message ``output`` from an ``on_chat_model_end`` event (for
+    :func:`parse_output` / :func:`extract_stop_reason`), or ``None`` for any other
+    event."""
+    if not isinstance(event, dict) or event.get("event") not in _END_EVENTS:
+        return None
+    data = event.get("data")
+    if isinstance(data, dict):
+        return data.get("output")
+    return None
+
+
 def parse_output(output: Any) -> tuple[str | None, list[ToolCall], dict[str, int]]:
     """Parse a LangServe ``output`` into (text, tool_calls, usage).
 
@@ -297,8 +436,14 @@ def parse_output(output: Any) -> tuple[str | None, list[ToolCall], dict[str, int
         if um.get("output_tokens"):
             usage["output_tokens"] = int(um["output_tokens"])
         details = um.get("input_token_details") or {}
-        if isinstance(details, dict) and details.get("cache_read"):
-            usage["cache_read_input_tokens"] = int(details["cache_read"])
+        if isinstance(details, dict):
+            # Anthropic-family caching, as LangChain surfaces it: the cheap re-read
+            # (`cache_read`) and the first-turn write (`cache_creation`). Both flow
+            # to the console's context gauge / cost split via _usage_from_response.
+            if details.get("cache_read"):
+                usage["cache_read_input_tokens"] = int(details["cache_read"])
+            if details.get("cache_creation"):
+                usage["cache_creation_input_tokens"] = int(details["cache_creation"])
 
     return (text, tool_calls, usage)
 
@@ -326,6 +471,9 @@ class LangServeAdapter(ModelAdapter):
         effort: str = "",
         effort_key: str = "reasoning_effort",
         effort_in: str = "kwargs",
+        cache_markers: bool = False,
+        stream_events: bool = True,
+        model_limits: dict[str, Any] | None = None,
         timeout: float = 120.0,
         client: Any = None,
     ) -> None:
@@ -337,6 +485,7 @@ class LangServeAdapter(ModelAdapter):
         self.model = model
         self.system = system
         self.endpoint = self._endpoint(base_url)
+        self.events_endpoint = self._events_endpoint(base_url)
         self._static_key = api_key
         self._auth_header = auth_header
         self._auth_scheme = auth_scheme
@@ -359,6 +508,22 @@ class LangServeAdapter(ModelAdapter):
         self.effort = "" if _eff in ("", "off", "none") else _eff
         self._effort_key = effort_key
         self._effort_in = effort_in
+        # Prompt-cache breakpoints (off by default): when on, the payload carries
+        # ephemeral cache_control markers on system / the last tool / the last
+        # message block, and the tool list is serialised deterministically so the
+        # cached prefix is byte-stable across turns. Only worthwhile when the
+        # gateway forwards cache_control to an Anthropic-family model — a proxy in
+        # front of Bedrock/Anthropic — hence opt-in. See build_payload.
+        self.cache_markers = bool(cache_markers)
+        # Use the LangServe /stream_events SSE route for stream_with_tools, so a
+        # long reply streams out incrementally instead of riding one long-lived
+        # /invoke request. Falls back to /invoke automatically if the route is
+        # unavailable; set False to force the non-streaming path.
+        self.stream_events = bool(stream_events)
+        # [llm.model_limits] table for capabilities() — the gateway hides the model,
+        # so the operator declares its limits here (context window / output ceiling /
+        # whether the proxy accepts thinking-effort). See base.capabilities_from_limits.
+        self._model_limits = model_limits or {}
 
         self._api_key_command = api_key_command
         self._api_key_ttl_s = api_key_ttl_ms / 1000.0
@@ -381,6 +546,19 @@ class LangServeAdapter(ModelAdapter):
         if url.endswith("/invoke"):
             return url
         return f"{url}/invoke"
+
+    @staticmethod
+    def _events_endpoint(base_url: str) -> str:
+        """The runnable's ``/stream_events`` route — the SSE endpoint the LangServe
+        ``astream_events`` API publishes alongside ``/invoke``. Derived from the
+        same base (stripping a trailing ``/invoke`` if the operator pointed straight
+        at it)."""
+        url = base_url.rstrip("/")
+        if url.endswith("/invoke"):
+            url = url[: -len("/invoke")].rstrip("/")
+        elif url.endswith("/stream_events"):
+            return url
+        return f"{url}/stream_events"
 
     def _token(self) -> str | None:
         """Current auth token: cached api_key_command output, else the static key."""
@@ -443,6 +621,7 @@ class LangServeAdapter(ModelAdapter):
             effort=self.effort,
             effort_key=self._effort_key,
             effort_in=self._effort_in,
+            cache_markers=self.cache_markers,
         )
 
     def _parse_output(
@@ -489,12 +668,176 @@ class LangServeAdapter(ModelAdapter):
     async def stream_with_tools(
         self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
     ):  # type: ignore[override]
-        # Mirror the OpenAI adapter: non-streaming is simpler and correct for
-        # tool turns (no partial-tool-call reassembly).
+        """Stream text deltas over the ``/stream_events`` SSE route, then emit a
+        final ChatResponse with the gateway's real stop reason + usage.
+
+        Streaming it incrementally means a long reply is not hostage to one
+        long-lived ``/invoke`` request (a slow model can blow an idle-read timeout
+        before the whole body arrives). Tool calls and the authoritative stop
+        reason/usage are read from the terminal ``on_chat_model_end`` event, so a
+        tool turn is exactly as correct as the non-streaming path.
+
+        Falls back to the non-streaming ``/invoke`` path when ``stream_events`` is
+        off, or the first time the SSE route proves unavailable (404/405/501) — and
+        disables streaming for the rest of the session so it isn't re-probed."""
+        if not self.stream_events:
+            async for item in self._stream_via_invoke(messages, tools):
+                yield item
+            return
+        try:
+            got_end = False
+            async for item in self._stream_via_events(messages, tools):
+                if item[0] == "_unsupported":
+                    # Route not published — stop streaming for this session and
+                    # fall back; nothing was yielded before this sentinel.
+                    self.stream_events = False
+                    break
+                if item[0] == "done":
+                    got_end = True
+                yield item
+            if got_end:
+                return
+            if not self.stream_events:
+                async for item in self._stream_via_invoke(messages, tools):
+                    yield item
+                return
+            # Stream ended without a terminal event and without a fallback signal:
+            # nothing more to do (any text deltas were already yielded). Emit a
+            # terminal ChatResponse so the loop always sees a ("done", …).
+            yield (
+                "done",
+                ChatResponse(text=None, tool_calls=[], stop_reason="end_turn"),
+            )
+        except Exception:
+            # A transport error after the route was confirmed: let the agent loop's
+            # network-retry / recovery handle it (re-raise) — never silently drop
+            # the turn. (An unsupported-route fallback is handled above, not here.)
+            raise
+
+    async def _stream_via_invoke(
+        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
+    ):
+        """Non-streaming fallback: one ``/invoke`` round-trip, emitted in one shot."""
         response = await self.chat(messages, tools)
         if response.text:
             yield ("text", response.text)
         yield ("done", response)
+
+    async def _stream_via_events(
+        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
+    ):
+        """Drive the ``/stream_events`` SSE route. Yields ``("text", delta)`` per
+        token and a final ``("done", ChatResponse)`` built from the terminal event;
+        yields a one-off ``("_unsupported", None)`` sentinel (before any text) when
+        the route 404/405/501s, so the caller can fall back."""
+        payload = self._build_payload(messages, tools)
+        headers = {**self._headers(), "Accept": "text/event-stream"}
+        streamed_parts: list[str] = []
+        final_output: Any = None
+        async with self.client.stream(
+            "POST", self.events_endpoint, json=payload, headers=headers
+        ) as resp:
+            status = int(getattr(resp, "status_code", 200) or 200)
+            if status in (404, 405, 501):
+                # Drain+close so the connection is reusable, then signal fallback.
+                aread = getattr(resp, "aread", None)
+                if callable(aread):
+                    try:
+                        await aread()
+                    except Exception:  # noqa: BLE001 — best-effort drain
+                        pass
+                yield ("_unsupported", None)
+                return
+            raise_for_status = getattr(resp, "raise_for_status", None)
+            if callable(raise_for_status):
+                raise_for_status()
+            event_name = "message"
+            data_lines: list[str] = []
+            async for raw in resp.aiter_lines():
+                line = raw.rstrip("\r\n")
+                if line == "":
+                    # Blank line terminates one SSE event.
+                    for item in self._dispatch_sse(event_name, data_lines):
+                        if item[0] == "text":
+                            streamed_parts.append(item[1])
+                            yield item
+                        elif item[0] == "_final":
+                            final_output = item[1]
+                        elif item[0] == "_end":
+                            # Explicit LangServe end marker — stop reading.
+                            data_lines = []
+                            event_name = "message"
+                            break
+                    event_name = "message"
+                    data_lines = []
+                    continue
+                if line.startswith(":"):
+                    continue  # SSE comment / heartbeat
+                if line.startswith("event:"):
+                    event_name = line[len("event:") :].strip()
+                elif line.startswith("data:"):
+                    data_lines.append(line[len("data:") :].lstrip())
+            # Flush a trailing event with no terminating blank line.
+            for item in self._dispatch_sse(event_name, data_lines):
+                if item[0] == "text":
+                    streamed_parts.append(item[1])
+                    yield item
+                elif item[0] == "_final":
+                    final_output = item[1]
+        yield ("done", self._finalize_stream(streamed_parts, final_output))
+
+    @staticmethod
+    def _dispatch_sse(event_name: str, data_lines: list[str]):
+        """Interpret one accumulated SSE event. A LangServe ``event: end`` yields
+        ``("_end", None)``; a data event's JSON is decoded and turned into a
+        ``("text", delta)`` and/or ``("_final", output)``. Malformed JSON is
+        skipped (never crashes the stream)."""
+        if event_name == "end":
+            return [("_end", None)]
+        if not data_lines:
+            return []
+        raw = "\n".join(data_lines)
+        try:
+            ev = json.loads(raw)
+        except (ValueError, TypeError):
+            return []
+        out: list[tuple[str, Any]] = []
+        delta = stream_delta_text(ev)
+        if delta:
+            out.append(("text", delta))
+        final = stream_final_output(ev)
+        if final is not None:
+            out.append(("_final", final))
+        return out
+
+    def _finalize_stream(
+        self, streamed_parts: list[str], final_output: Any
+    ) -> ChatResponse:
+        """Build the terminal ChatResponse from the SSE stream: prefer the complete
+        ``on_chat_model_end`` message (carries tool_calls, usage, the real stop
+        reason); fall back to the concatenated text deltas when the gateway sent no
+        end event. ``text`` is set (even though deltas were already streamed) so
+        ``make_tool_turn`` can carry the assistant's pre-tool text."""
+        if final_output is not None:
+            text, tool_calls, usage = self._parse_output(final_output)
+            if tool_calls:
+                stop_reason = "tool_use"
+            else:
+                stop_reason = normalize_stop_reason(extract_stop_reason(final_output))
+            raw = SimpleNamespace(output=final_output, usage=SimpleNamespace(**usage))
+            return ChatResponse(
+                text=text if text is not None else ("".join(streamed_parts) or None),
+                tool_calls=tool_calls,
+                stop_reason=stop_reason,
+                _raw=raw,
+            )
+        text = "".join(streamed_parts) or None
+        return ChatResponse(
+            text=text,
+            tool_calls=[],
+            stop_reason="end_turn",
+            _raw=SimpleNamespace(output=None, usage=SimpleNamespace()),
+        )
 
     def make_tool_turn(
         self, response: ChatResponse, results: list[tuple[ToolCall, str]]

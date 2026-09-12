@@ -64,6 +64,7 @@ CAT_EMPTY_SEARCH = "empty_search"
 CAT_AUTONOMY_DENIED = "autonomy_denied"
 CAT_AUTONOMY_EDITED = "autonomy_edited"
 CAT_RUN_FAILURE = "run_failure"  # from run_summary history
+CAT_CATALOG_DESC = "catalog_description"  # a weak first-sentence catalog entry
 
 # Higher = surfaced first when the incident list is capped.
 _CAT_WEIGHT = {
@@ -75,7 +76,13 @@ _CAT_WEIGHT = {
     CAT_EMPTY_SEARCH: 50,
     CAT_AUTONOMY_DENIED: 40,
     CAT_AUTONOMY_EDITED: 30,
+    CAT_CATALOG_DESC: 20,
 }
+
+# A catalog-index entry (the first sentence of a runnable's description) shorter
+# than this is too terse to tell the agent what the runnable is for. In search
+# mode that one sentence is the *whole* entry the agent sees in the always-on menu.
+_CATALOG_DESC_MIN_CHARS = 40
 
 
 def _is_error_text(text: str) -> bool:
@@ -111,6 +118,80 @@ def classify_bounce(text: str) -> str:
     if "unknown command" in low or "requires a command" in low or "subcommand" in low:
         return "bad_command"
     return "other"
+
+
+def _catalog_first_sentence(text: str, maxlen: int = 120) -> str:
+    """First sentence of a description as a single trimmed line (capped). Mirrors
+    ``bridge_search.SearchMixin._first_sentence`` — this is the exact string the
+    search-mode catalog index shows for a runnable, so the quality check sees what
+    the agent sees."""
+    s = " ".join(str(text or "").split())
+    if not s:
+        return ""
+    for sep in (". ", "! ", "? "):
+        i = s.find(sep)
+        if 0 <= i < maxlen:
+            return s[: i + 1]
+    return s if len(s) <= maxlen else s[: maxlen - 1].rstrip() + "…"
+
+
+def catalog_description_issues(
+    runnables: list[dict[str, Any]], *, min_chars: int = _CATALOG_DESC_MIN_CHARS
+) -> list[dict[str, Any]]:
+    """Flag runnables whose **catalog-index entry** — the first sentence of the
+    description — is too weak to guide discovery.
+
+    In search mode that single sentence is the *entire* entry the agent sees for a
+    runnable in the always-on menu (``bridge_search._build_catalog_index``), so a
+    missing, stub, or copy-pasted sentence quietly degrades every search. Two
+    checks, both things a human reviewer would catch:
+
+      * **empty / short** — no description, or a first sentence under ``min_chars``
+        (~40) characters; and
+      * **duplicate** — the same first sentence as another runnable, so the two are
+        indistinguishable in the menu.
+
+    ``runnables`` is a deduped list of ``{id?, name, group?, description}`` (one per
+    runnable, not per host). Returns a list of ``{runnable, kind, first_sentence,
+    shared_with?}`` in a deterministic order (empties, shorts, then duplicate groups
+    by sentence). Pure/SDK-free — unit-testable and reusable by a docs lint."""
+    rows: list[tuple[str, str]] = []
+    by_sentence: dict[str, list[str]] = {}
+    for r in runnables:
+        name = str(r.get("name") or "")
+        if not name:
+            continue
+        rid = str(r.get("id") or "")
+        if not rid:
+            group = str(r.get("group") or "")
+            rid = f"{group}/{name}" if group else name
+        sentence = _catalog_first_sentence(r.get("description") or "")
+        rows.append((rid, sentence))
+        key = sentence.strip().lower()
+        if key:
+            by_sentence.setdefault(key, []).append(rid)
+
+    issues: list[dict[str, Any]] = []
+    for rid, sentence in rows:
+        stripped = sentence.strip()
+        if not stripped:
+            issues.append({"runnable": rid, "kind": "empty", "first_sentence": ""})
+        elif len(stripped) < min_chars:
+            issues.append(
+                {"runnable": rid, "kind": "short", "first_sentence": sentence}
+            )
+    for _key, ids in sorted(by_sentence.items()):
+        if len(ids) > 1:
+            for rid in ids:
+                issues.append(
+                    {
+                        "runnable": rid,
+                        "kind": "duplicate",
+                        "first_sentence": next(s for i, s in rows if i == rid),
+                        "shared_with": [o for o in ids if o != rid],
+                    }
+                )
+    return issues
 
 
 def _is_run_attempt(name: str) -> bool:
@@ -166,6 +247,7 @@ def build_report(
     max_incidents: int = 40,
     product_name: str = "runspec-console",
     developer_emails: list[str] | None = None,
+    runnables: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Analyse conversations + run-history into an Improve report (a plain dict).
 
@@ -174,8 +256,10 @@ def build_report(
     (``get_history_all`` shape: ``{runnable, exitCode, ts, host, ...}``).
     ``comment`` (a problem-report) is carried through verbatim for the synthesis
     pass. ``since_iso`` filters both inputs by timestamp when given (defensive —
-    the bridge normally pre-filters). Incidents are prioritised and capped at
-    ``max_incidents``.
+    the bridge normally pre-filters). ``runnables`` (optional) is the deduped
+    catalog; when given, weak catalog-index descriptions are flagged as incidents
+    (see :func:`catalog_description_issues`). Incidents are prioritised and capped
+    at ``max_incidents``.
     """
     incidents: list[dict[str, Any]] = []
     metrics = {
@@ -357,6 +441,35 @@ def build_report(
     metrics["history_runs"] = hist_total
     metrics["history_failures"] = hist_failures
 
+    # ── catalog description quality (optional; needs the runnable catalog) ────
+    desc_issues = catalog_description_issues(runnables or [])
+    metrics["catalog_desc_issues"] = len(desc_issues)
+    for issue in desc_issues:
+        kind = issue["kind"]
+        if kind == "duplicate":
+            shared = ", ".join(issue.get("shared_with") or [])
+            evidence = (
+                f"first description sentence duplicates: {shared} "
+                f'("{issue["first_sentence"]}")'
+            )
+        elif kind == "empty":
+            evidence = "no description — blank catalog-index entry"
+        else:
+            evidence = (
+                f"first description sentence is only "
+                f"{len(issue['first_sentence'].strip())} chars: "
+                f'"{issue["first_sentence"]}"'
+            )
+        incidents.append(
+            _incident(
+                "",
+                -1,
+                CAT_CATALOG_DESC,
+                runnable=issue["runnable"],
+                evidence=evidence,
+            )
+        )
+
     # Prioritise (severity, then keep chronological within a category) and cap.
     incidents.sort(key=lambda i: -_CAT_WEIGHT.get(i.get("category", ""), 0))
     total_incidents = len(incidents)
@@ -376,6 +489,7 @@ def build_report(
         "scores": scores,
         "bounce_kinds": bounce_kinds,
         "autonomy_by_tool": autonomy_by_tool,
+        "catalog_description_issues": desc_issues,
         "runnables": runnable_rows,
         "incidents": incidents,
         "incident_total": total_incidents,
@@ -635,6 +749,7 @@ def render_markdown(
         f"- Stops (paused): {m.get('stops', 0)} | recoveries: {m.get('recoveries', 0)} | durable errors: {m.get('durable_errors', 0)}",
         f"- Autonomy: {m.get('autonomy_denied', 0)} denied, {m.get('autonomy_edited', 0)} edited",
         f"- Run-history failure rate: {s.get('history_failure_rate_pct', 0)}% ({m.get('history_failures', 0)}/{m.get('history_runs', 0)})",
+        f"- Weak catalog descriptions: {m.get('catalog_desc_issues', 0)}",
         "",
     ]
     recs = (synthesis or {}).get("recommendations") or []
@@ -660,6 +775,18 @@ def render_markdown(
                 f"{r.get('failure_rate_pct', 0)}% failures "
                 f"({r.get('failures')}/{r.get('total_runs_history')})"
             )
+        out.append("")
+    desc_issues = report.get("catalog_description_issues") or []
+    if desc_issues:
+        out += ["## Catalog descriptions needing attention", ""]
+        for issue in desc_issues[:20]:
+            if issue.get("kind") == "duplicate":
+                detail = "duplicate of " + ", ".join(issue.get("shared_with") or [])
+            elif issue.get("kind") == "empty":
+                detail = "no description"
+            else:
+                detail = f"too short: “{issue.get('first_sentence', '')}”"
+            out.append(f"- `{issue.get('runnable')}` — {detail}")
         out.append("")
     return "\n".join(out)
 

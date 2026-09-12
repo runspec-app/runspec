@@ -36,10 +36,13 @@ class OpenAIAdapter(ModelAdapter):
         system: str = DEFAULT_SYSTEM,
         api_key: str | None = None,
         base_url: str | None = None,
+        model_limits: dict[str, Any] | None = None,
     ) -> None:
         self.client = _openai.AsyncOpenAI(api_key=api_key, base_url=base_url)
         self.model = model
         self.system = system
+        # [llm.model_limits] table for the default capabilities() lookup.
+        self._model_limits = model_limits or {}
 
     async def chat(
         self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]

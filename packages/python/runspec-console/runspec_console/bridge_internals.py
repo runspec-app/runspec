@@ -878,6 +878,24 @@ class InternalsMixin:
                 kwargs[key] = llm_cfg[key]
         if llm_cfg.get("tools_in_config") is not None:
             kwargs["tools_in_config"] = bool(llm_cfg["tools_in_config"])
+        # LangServe-only booleans (only meaningful to that adapter; forwarded only
+        # when set so no other provider sees them).
+        if llm_cfg.get("cache_markers") is not None and provider == "langserve":
+            kwargs["cache_markers"] = bool(llm_cfg["cache_markers"])
+        if llm_cfg.get("stream_events") is not None and provider == "langserve":
+            kwargs["stream_events"] = bool(llm_cfg["stream_events"])
+        # [llm.model_limits] — a model-id-substring → capability table the built-in
+        # adapters read for capabilities() (context window, output ceiling, whether
+        # the gateway accepts thinking/effort). A nested table, so it arrives as a
+        # dict under llm_cfg["model_limits"]; forwarded to the built-ins (a plugin
+        # adapter declaring the param gets it via adapter_config_keys below).
+        if isinstance(llm_cfg.get("model_limits"), dict) and provider in {
+            "anthropic",
+            "openai",
+            "bedrock",
+            "langserve",
+        }:
+            kwargs["model_limits"] = llm_cfg["model_limits"]
         # The block above is an allowlist of keys the built-in adapters
         # understand. A plugin adapter (entry point / dotted path / registered)
         # may require its own [llm] config keys — rather than grow the allowlist
@@ -915,12 +933,49 @@ class InternalsMixin:
             ) from exc
         except ValueError as exc:
             raise ValueError(f"Model configuration error: {exc}") from exc
+        # Apply the adapter's declared capabilities: clamp the output ceiling to the
+        # model's real max, and drop thinking/effort on a gateway that doesn't accept
+        # it. Done once per build (adapters are cached) and defensively — a plugin
+        # adapter that doesn't implement capabilities() is unaffected.
+        self._apply_capabilities(adapter)
         # When a key-vending command is configured, don't cache the adapter — the
         # adapter's own TTL controls refresh. Static-key configs cache as before.
         # A system_override adapter is one-off and never cached.
         if system_override is None and not llm_cfg.get("api_key_command"):
             self._adapter = adapter
         return adapter
+
+    @staticmethod
+    def _apply_capabilities(adapter: Any) -> None:
+        """Reconcile an adapter's request settings with its model's capabilities.
+
+        Reads ``adapter.capabilities()`` (best-effort; any adapter may omit it) and:
+
+          * clamps ``adapter.max_tokens`` down to ``max_output_tokens`` when the
+            model's real ceiling is lower than the operator's ``[llm] max_tokens``,
+            so a generous setting can't 400 against a smaller model; and
+          * disables extended thinking / reasoning effort (zeroes the adapter's
+            effort field) when ``adaptive_thinking`` is false — a gateway/proxy that
+            drops the thinking-effort field would otherwise see a useless (or
+            rejected) parameter.
+
+        Never raises into adapter construction."""
+        try:
+            caps = adapter.capabilities()
+        except Exception:  # noqa: BLE001 — capabilities() is optional
+            return
+        mot = getattr(caps, "max_output_tokens", None)
+        cur = getattr(adapter, "max_tokens", None)
+        if mot and isinstance(cur, int) and cur > int(mot):
+            adapter.max_tokens = int(mot)
+        if not getattr(caps, "adaptive_thinking", True):
+            # Built-ins store the normalised effort on _effort (anthropic/bedrock)
+            # or effort (langserve); clear whichever is present so no thinking/
+            # effort field is sent. A plugin adapter manages its own via its caps.
+            if hasattr(adapter, "_effort"):
+                adapter._effort = ""
+            if hasattr(adapter, "effort"):
+                adapter.effort = ""
 
     # ── event triggers ────────────────────────────────────────────────────────
 

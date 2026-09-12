@@ -34,6 +34,7 @@ class _Stub:
     improve_mailto = Bridge.improve_mailto
     synthesize_improve_report = Bridge.synthesize_improve_report
     _build_improve_report = Bridge._build_improve_report
+    _improve_catalog_rows = Bridge._improve_catalog_rows
     _gather_improve_conversations = Bridge._gather_improve_conversations
     _improve_product_name = Bridge._improve_product_name
     _improve_path = Bridge._improve_path

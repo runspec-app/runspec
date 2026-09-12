@@ -378,3 +378,59 @@ def test_mailto_body_is_length_bounded():
     url = improve.mailto_url(rep, "x" * 10000, max_body=100)
     # body is capped, so the URL can't carry the full 10k
     assert len(url) < 1000
+
+
+# ── catalog description quality signal ────────────────────────────────────────
+
+
+def test_catalog_description_issues_flags_short_empty_and_duplicate():
+    runnables = [
+        {"id": "svc__restart", "name": "restart", "description": "Restarts it."},
+        {"id": "fs__ls", "name": "ls", "description": ""},
+        {
+            "id": "a__x",
+            "name": "x",
+            "description": "Does the thing in a perfectly clear, descriptive way.",
+        },
+        {
+            "id": "b__y",
+            "name": "y",
+            "description": "Does the thing in a perfectly clear, descriptive way.",
+        },
+    ]
+    issues = improve.catalog_description_issues(runnables)
+    kinds = {(i["runnable"], i["kind"]) for i in issues}
+    assert ("svc__restart", "short") in kinds  # < 40 chars
+    assert ("fs__ls", "empty") in kinds
+    # a__x and b__y share a first sentence → both flagged duplicate
+    assert ("a__x", "duplicate") in kinds
+    assert ("b__y", "duplicate") in kinds
+    dup = next(
+        i for i in issues if i["runnable"] == "a__x" and i["kind"] == "duplicate"
+    )
+    assert dup["shared_with"] == ["b__y"]
+
+
+def test_catalog_description_issues_clean_set_is_empty():
+    runnables = [
+        {
+            "id": "a",
+            "name": "a",
+            "description": "Restart a systemd service by its unit name. More detail here.",
+        },
+        {
+            "id": "b",
+            "name": "b",
+            "description": "List files in a directory on the target host. Extra prose.",
+        },
+    ]
+    assert improve.catalog_description_issues(runnables) == []
+
+
+def test_build_report_includes_catalog_description_incidents():
+    runnables = [{"id": "svc__x", "name": "x", "description": "Short."}]
+    rep = improve.build_report([], [], runnables=runnables)
+    assert rep["metrics"]["catalog_desc_issues"] == 1
+    assert any(i["category"] == improve.CAT_CATALOG_DESC for i in rep["incidents"])
+    md = improve.render_markdown(rep)
+    assert "Catalog descriptions needing attention" in md

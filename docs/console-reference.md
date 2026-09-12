@@ -54,7 +54,41 @@ Bedrock adds the standard AWS credential chain (`aws_region`,
 `aws_access_key`, `aws_secret_key`, `aws_session_token`) or a
 `base_url`+`api_key` proxy path. LangServe gateways add mapping knobs
 (`input_messages_key`, `input_tools_key`, `tools_in_config`, `auth_header`,
-`auth_scheme`, `max_tokens_key`) — see [adapters](console-adapters.md).
+`auth_scheme`, `max_tokens_key`), plus `stream_events` (default **on** — stream
+over `/stream_events`, falling back to `/invoke` if unavailable) and
+`cache_markers` (default **off** — add Anthropic `cache_control` breakpoints for a
+gateway that forwards them) — see [adapters](console-adapters.md).
+
+### `[llm.model_limits]` — model capabilities {#llm-model-limits}
+
+A table of **model-id substring → capability fields**, so the console knows the
+limits of a model it can't otherwise interrogate (e.g. one behind a LangServe/
+Bedrock gateway, where the Anthropic Models API isn't reachable). Entries are
+matched by substring and merged **broad → specific** (the longest matching key wins
+per field; an empty `""` key is a catch-all). It rides the config seed / Config
+Sync like the rest of `config.toml`.
+
+```toml
+[llm.model_limits."claude"]
+context_window    = 200000
+max_output_tokens = 8192
+
+[llm.model_limits."claude-sonnet-4-6"]
+max_output_tokens = 64000
+adaptive_thinking = true
+```
+
+| Field | Meaning |
+|---|---|
+| `context_window` | Total prompt+output token budget — feeds the context-window gauge (overrides the model-id substring guess) |
+| `max_output_tokens` | Hard per-reply ceiling — `[llm] max_tokens` is **clamped down** to this so a generous setting can't 400 |
+| `adaptive_thinking` | Whether the model/gateway accepts thinking / reasoning **effort**. `false` ⇒ the console sends none |
+| `cache_markers` | Whether prompt-cache breakpoints are honoured (informational) |
+| `strict_tools` | Whether the endpoint enforces strict JSON-schema tool arguments (informational) |
+
+The `anthropic` built-in fills any unset numeric limit from the Models API when
+reachable, falling back to this table. See [adapters](console-adapters.md) →
+*Model capabilities*.
 
 ## `[console]`
 

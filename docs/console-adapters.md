@@ -273,6 +273,75 @@ allowlist entry needed. That's the hook a corporate proxy adapter uses.
 
 ---
 
+## Model capabilities — `capabilities()` and `[llm.model_limits]`
+
+An adapter can tell the console what the model *behind* it can do, independent of
+which provider or proxy carries the request. This matters most when the model is
+hidden behind a gateway (a LangChain proxy in front of Bedrock, say) where the
+native Anthropic **Models API** isn't reachable — the console can't ask the model
+its limits, so the operator declares them.
+
+Override the optional `capabilities()` method to return a `ModelCapabilities`:
+
+```python
+from runspec_console.adapters.base import ModelCapabilities
+
+@dataclass
+class ModelCapabilities:
+    context_window: int | None = None     # total prompt+output token budget
+    max_output_tokens: int | None = None   # hard ceiling on one reply
+    adaptive_thinking: bool = True          # endpoint accepts thinking/effort
+    cache_markers: bool = True              # prompt-cache breakpoints honoured
+    strict_tools: bool = False              # endpoint enforces strict tool args
+```
+
+You don't have to implement it. The **default** `ModelAdapter.capabilities()`
+reads a new **`[llm.model_limits]`** config table — a mapping of *model-id
+substring* → capability fields — that the console forwards to every built-in as a
+`model_limits` kwarg (and to any plugin adapter that declares the parameter):
+
+```toml
+[llm]
+provider = "langserve"
+model    = "claude-sonnet-4-6-via-gateway"
+max_tokens = 64000
+
+# The gateway hides the model, so declare its limits here. Entries are matched by
+# substring and merged broad → specific (the longest matching key wins per field),
+# so a broad base + a specific override is the idiomatic shape. An empty "" key is
+# a catch-all default.
+[llm.model_limits."claude"]
+context_window    = 200000
+max_output_tokens = 8192
+
+[llm.model_limits."claude-sonnet-4-6"]
+max_output_tokens = 64000
+adaptive_thinking = true     # this gateway does forward thinking/effort
+```
+
+The console uses the returned capabilities to:
+
+1. **Clamp `[llm] max_tokens`** down to `max_output_tokens`, so a generous operator
+   setting can't 400 against a model with a lower ceiling (it only ever clamps
+   *down* — a smaller `max_tokens` is left alone).
+2. Feed **`context_window`** to the context-window gauge instead of the model-id
+   substring guess — the authoritative figure when the model is behind a gateway.
+3. **Skip thinking / reasoning effort** entirely when `adaptive_thinking` is false
+   — so a gateway that drops the field isn't sent a useless (or rejected) one.
+
+The table is authoritative. The `anthropic` built-in *additionally* fills any
+numeric limit the table leaves unset from `client.models.retrieve` when the Models
+API is reachable (the result is cached, and a failure — the common case behind a
+corporate proxy — silently falls back to the table). A plugin adapter with its own
+source of truth just overrides `capabilities()` and reads whatever it has, falling
+back to `capabilities_from_limits(self.model, self._model_limits)` for the table.
+
+`capabilities()` is called per turn (for the gauge) and once at adapter
+construction (for the clamp), so keep it cheap and side-effect-free — cache any
+network lookup, as the `anthropic` built-in does.
+
+---
+
 ## Registration
 
 The console resolves `provider` from three sources, in order:
@@ -330,6 +399,34 @@ lands in the `/invoke` body) and `[llm] max_tokens_key` (the field name your
 chain expects). It sends nothing when `max_tokens` is 0, so an unset value never
 disturbs a chain that pins its own ceiling.
 
+### Streaming over `/stream_events`
+
+`stream_with_tools` drives the LangServe **`/stream_events`** SSE route by default
+(`[llm] stream_events = true`): it yields text deltas as they arrive and ends with
+a `ChatResponse` carrying the gateway's real stop reason, usage, and tool calls
+(read from the terminal `on_chat_model_end` event). This means a long reply streams
+out incrementally instead of riding a single long-lived `/invoke` request that a
+slow model could hang past an idle-read timeout.
+
+If the `/stream_events` route isn't published (404/405/501), the adapter falls back
+to `/invoke` automatically — and disables streaming for the rest of the session so
+it isn't re-probed. Set `stream_events = false` to force the non-streaming path.
+
+### Prompt-cache markers (`cache_markers`)
+
+`[llm] cache_markers = true` (default off) adds Anthropic-style ephemeral
+`cache_control` breakpoints to the payload, for a gateway that forwards them to an
+Anthropic-family model (a proxy in front of Bedrock/Anthropic): the system prompt
+becomes a marked content block, the **last** tool carries the marker (caching the
+whole tools block), and the **last content block of the last message** carries it
+each turn. To keep the cached prefix byte-stable across turns, the tools are
+emitted **sorted by name** (discovery can reorder them) and the caller's lists are
+copied, never mutated. The adapter also reads
+`usage_metadata.input_token_details.cache_creation` (the first-turn write)
+alongside `cache_read`, so the console's cache gauge reflects both. Leave it off
+for a gateway that doesn't honour `cache_control` — the markers would just be
+inert noise.
+
 ---
 
 ## Verifying your adapter
@@ -384,6 +481,18 @@ Every helper is a **complete no-op** when telemetry is off or the `otel` extra
 isn't installed, so you can call them unconditionally — your plugin never needs
 OpenTelemetry as a dependency. This keeps `ChatResponse` SDK-free: enrichment is
 a side channel, not a new response field.
+
+## Behind a gateway: caching, streaming, model limits
+
+If your adapter reaches the model through a corporate proxy (a LangChain /
+LangServe gateway in front of Bedrock is the common case), the built-in
+adapters' prompt caching, model-limit lookup and streaming don't reach the
+model unless the adapter emits them and the proxy forwards them. The
+task-oriented walkthrough — what survives the proxy path, the `capabilities()`
+hook for declaring a model's output cap and context window, cache markers
+behind a `cache_markers` flag, streaming over `/stream_events`, what to ask the
+gateway team, and a copy-paste brief — is
+[Custom adapter behind a gateway](console-adapter-gateway.md).
 
 ## Checklist
 

@@ -254,6 +254,7 @@ class ImproveMixin:
             max_incidents=cfg["max_incidents"],
             product_name=product,
             developer_emails=cfg["developer_emails"],
+            runnables=self._improve_catalog_rows(),
         )
         now = datetime.now(timezone.utc)
         report["id"] = now.strftime("%Y%m%dT%H%M%S") + f"-{now.microsecond // 1000:03d}"
@@ -286,6 +287,33 @@ class ImproveMixin:
             if len(out) >= cap:
                 break
         return out
+
+    def _improve_catalog_rows(self) -> list[dict[str, Any]]:
+        """Deduped catalog rows ``{id, name, group, description}`` (one per
+        runnable, not per host) for the Improve catalog-description check. Uses the
+        agent-visible set and the same dedup id the search-mode catalog index shows,
+        so the flagged runnables match what the agent actually sees. Best-effort —
+        a discovery hiccup just yields no description incidents."""
+        rows: list[dict[str, Any]] = []
+        seen: set[tuple[str, str]] = set()
+        try:
+            runnables = self._visible_runnables("agent")
+        except Exception:  # noqa: BLE001 — description check is a nicety
+            return rows
+        for r in runnables:
+            key = (str(r.get("group") or ""), str(r.get("name") or ""))
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append(
+                {
+                    "id": self._dedup_tool_name(r),
+                    "name": r.get("name") or "",
+                    "group": r.get("group") or "",
+                    "description": r.get("description") or "",
+                }
+            )
+        return rows
 
     def _improve_product_name(self) -> str:
         try:
