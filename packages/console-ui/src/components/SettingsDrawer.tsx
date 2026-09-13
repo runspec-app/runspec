@@ -210,7 +210,7 @@ export function SoundsTab() {
       <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
         Audio cues + desktop alerts so you stay aware while the console is minimized or in the background.
         Sounds play from the app, so they work even when minimized. The desktop <em>toast</em> needs the
-        optional notifications extra (<Typography.Text code>pip install runspec-console[notifications]</Typography.Text>),
+        optional <Typography.Text code>notifications</Typography.Text> extra to be installed,
         but the <em>taskbar flash</em> and <em>sounds</em> do not. Each category can use its own
         <Typography.Text code>.wav</Typography.Text>/<Typography.Text code>.mp3</Typography.Text> file, or point a
         <em>sound pack</em> folder of category-named files at the whole set. Volume applies to synthesized and
@@ -2677,7 +2677,7 @@ function ReposTab() {
       {engineMissing && (
         <Alert type="warning" showIcon style={{ marginBottom: 12 }}
           message="Git engine not installed"
-          description={<span style={{ fontSize: 12 }}>Install the <code>git-sync</code> extra (<code>pip install runspec-console[git-sync]</code>) to clone/read repos.</span>} />
+          description={<span style={{ fontSize: 12 }}>Install the optional <code>git-sync</code> extra to clone/read repos.</span>} />
       )}
 
       <Modal
@@ -2850,7 +2850,7 @@ function CredentialsTab() {
 
       {backend && !backend.available && (
         <Text type="warning" style={{ fontSize: 12, display: 'block', marginBottom: 10 }}>
-          No OS keychain is available, so secret values can't be stored. Install the <code>credentials</code> extra (<code>pip install runspec-console[credentials]</code>) on a desktop session. Metadata-only entries still save.
+          No OS keychain is available, so secret values can't be stored. Install the optional <code>credentials</code> extra on a desktop session. Metadata-only entries still save.
         </Text>
       )}
 
@@ -3379,7 +3379,7 @@ function ConfigSyncTab() {
       {engineMissing && (
         <Alert type="warning" showIcon style={{ marginBottom: 12 }}
           message="Git engine not installed"
-          description={<span style={{ fontSize: 12 }}>Install the <code>git-sync</code> extra (<code>pip install runspec-console[git-sync]</code>) to enable pulling.</span>} />
+          description={<span style={{ fontSize: 12 }}>Install the optional <code>git-sync</code> extra to enable pulling.</span>} />
       )}
 
       <Form form={form} layout="vertical" size="small">
@@ -4653,8 +4653,8 @@ export function TelemetryTab() {
       <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
         Export a trace per agent turn — <strong>turn → LLM call → tool call</strong> — over
         OpenTelemetry (OTLP) to any OTel backend (LangSmith, Langfuse, Phoenix, Jaeger, Tempo).
-        Spans follow the OpenTelemetry GenAI conventions. Requires the <code>otel</code> extra:
-        <code> pip install runspec-console[otel]</code>. Standard <code>OTEL_*</code> environment
+        Spans follow the OpenTelemetry GenAI conventions. Requires the optional <code>otel</code> extra
+        to be installed. Standard <code>OTEL_*</code> environment
         variables fill in anything left blank below.
       </Typography.Paragraph>
 
@@ -5053,7 +5053,7 @@ export function McpTab() {
 
       {status && !status.available && (
         <Alert type="info" showIcon style={{ marginBottom: 12 }} message="MCP support not installed"
-          description={<>Install the extra to connect to external servers: <code>pip install runspec-console[mcp]</code>. {status.reason}</>} />
+          description={<>Install the optional <code>mcp</code> extra to connect to external servers. {status.reason}</>} />
       )}
 
       <Space size="large" style={{ marginBottom: 12 }} wrap>
@@ -5223,8 +5223,7 @@ export function McpServerTab() {
         as an <strong>MCP server</strong> on localhost. A <code>confirm</code>-level tool call parks
         for your approval in the console (the same confirm card the agent uses); <code>autonomous</code> runs
         immediately, <code>manual</code> is refused. Runs land in History tagged <code>mcp</code>. Off by default —
-        it opens a listening socket. Requires the <code>mcp</code> extra:
-        <code> pip install runspec-console[mcp]</code>.
+        it opens a listening socket. Requires the optional <code>mcp</code> extra to be installed.
       </Typography.Paragraph>
 
       {row('Enable server', <Switch checked={enabled} onChange={setEnabled} />)}

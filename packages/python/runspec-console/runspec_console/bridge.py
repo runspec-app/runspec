@@ -262,6 +262,7 @@ class Bridge(
             config_reader=_config.read_mcp_server,
             tools_provider=self._mcp_server_runnables,
             execute=self._mcp_server_execute,
+            brand_name=lambda: str(_config.theme_config().get("brand_name") or ""),
         )
         self._install_ssh_log_forwarder()
         # Apply any baseline config bundled in the deployment package before the

@@ -1683,7 +1683,7 @@ async function resolveMethod(
     throw new Error(
       `Bridge method "${name}" is not exposed by the Python API (still missing after ` +
       `waiting for the bridge to settle) — likely a version mismatch between the ` +
-      `installed runspec-console and this UI bundle.`,
+      `installed console backend and this UI bundle.`,
     )
   }
   return fn

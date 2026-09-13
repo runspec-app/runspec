@@ -198,7 +198,7 @@ export function DevView() {
 
   const inspectorTooltip =
     debugEnabled === false
-      ? 'Restart with `runspec-console --devtools` (or RUNSPEC_CONSOLE_DEVTOOLS=1) to enable the inspector'
+      ? 'Restart with the `--devtools` flag (or RUNSPEC_CONSOLE_DEVTOOLS=1) to enable the inspector'
       : 'Right-click anywhere → Inspect, or press F12'
 
   return (

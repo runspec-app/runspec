@@ -133,3 +133,30 @@ def test_available_returns_tuple():
     ok, reason = m.available()
     assert isinstance(ok, bool)
     assert ok or reason  # a reason when unavailable
+
+
+def _server(brand_name=None):
+    return m.ConsoleMcpServer(
+        config_reader=lambda: {},
+        tools_provider=lambda: [],
+        execute=lambda tool, args: ("", False),
+        brand_name=brand_name,
+    )
+
+
+def test_resolve_brand_name_defaults_to_runspec_console():
+    # no resolver, empty brand, and a failing resolver all fall back
+    assert _server()._resolve_brand_name() == "runspec-console"
+    assert _server(brand_name=lambda: "")._resolve_brand_name() == "runspec-console"
+    assert _server(brand_name=lambda: "  ")._resolve_brand_name() == "runspec-console"
+
+    def boom() -> str:
+        raise RuntimeError("nope")
+
+    assert _server(brand_name=boom)._resolve_brand_name() == "runspec-console"
+
+
+def test_resolve_brand_name_uses_white_label_brand():
+    assert _server(brand_name=lambda: "Acme Ops")._resolve_brand_name() == "Acme Ops"
+    # whitespace is trimmed
+    assert _server(brand_name=lambda: " Acme ")._resolve_brand_name() == "Acme"

@@ -1135,7 +1135,7 @@ export default function App() {
 
               {/* Version + update state */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <Tooltip title={version ? `runspec-console v${version} — open documentation & release notes` : ''}>
+                <Tooltip title={version ? `${brandTheme.brand_name || 'runspec-console'} v${version} — open documentation & release notes` : ''}>
                   <span
                     onClick={() => bridge.open_docs().catch(console.error)}
                     style={{ fontFamily: 'monospace', cursor: 'pointer' }}

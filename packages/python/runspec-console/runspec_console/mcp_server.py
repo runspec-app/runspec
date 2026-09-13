@@ -247,6 +247,9 @@ class ConsoleMcpServer:
         tool through the autonomy gate + executor, returning ``(text, is_error)``.
         Blocking; the server calls it off the loop via a worker thread and
         heartbeats progress until it returns.
+      * ``brand_name() -> str`` *(optional)* — the ``[console.theme] brand_name``,
+        so the protocol-level server name a connecting client sees is the
+        white-label brand rather than the literal ``runspec-console``.
     """
 
     def __init__(
@@ -255,10 +258,12 @@ class ConsoleMcpServer:
         config_reader: Callable[[], dict[str, Any]],
         tools_provider: Callable[[], list[dict[str, Any]]],
         execute: Callable[[ExecTool, dict[str, Any]], tuple[str, bool]],
+        brand_name: Callable[[], str] | None = None,
     ) -> None:
         self._config_reader = config_reader
         self._tools_provider = tools_provider
         self._execute = execute
+        self._brand_name = brand_name
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._uvicorn: Any = None
@@ -436,16 +441,30 @@ class ConsoleMcpServer:
                 is_error=bool(is_error),
             )
 
+        brand = self._resolve_brand_name()
         return Server(
-            "runspec-console",
+            brand,
             version="1",
             instructions=(
-                "runspec-console fleet runnables. confirm-level tools park for "
+                f"{brand} fleet runnables. confirm-level tools park for "
                 "human approval in the console UI."
             ),
             on_list_tools=on_list_tools,
             on_call_tool=on_call_tool,
         )
+
+    def _resolve_brand_name(self) -> str:
+        """The white-label brand for the protocol-level server name (falls back to
+        ``runspec-console``). Best-effort — a failing/empty resolver never breaks
+        bring-up."""
+        if self._brand_name is None:
+            return "runspec-console"
+        try:
+            name = str(self._brand_name() or "").strip()
+        except Exception:  # noqa: BLE001 — brand is cosmetic, never fatal
+            logger.debug("mcp_server brand_name lookup failed", exc_info=True)
+            return "runspec-console"
+        return name or "runspec-console"
 
 
 class _BearerAuthMiddleware:

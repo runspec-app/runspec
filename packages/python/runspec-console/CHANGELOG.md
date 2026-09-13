@@ -8,6 +8,31 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.249.2] — 2026-09-13
+
+### Changed
+- **MCP server name follows the white-label brand.** The console's own MCP server
+  now advertises its `[console.theme] brand_name` as the protocol-level server
+  name a connecting client (Claude Code, Cursor) sees (and in its
+  `instructions`), falling back to `runspec-console` when no brand is set —
+  `ConsoleMcpServer` gains an optional injected `brand_name` callback
+  (`mcp_server._resolve_brand_name`), wired from the Bridge via
+  `config.theme_config()`.
+- **Frontend swept for upstream-name leaks (white-label).** User-visible UI text
+  no longer hard-codes the internal distribution name where a re-branded
+  deployment would find it confusing: the six Settings tabs that named the pip
+  package (`pip install runspec-console[notifications|git-sync|credentials|otel|mcp]`,
+  incl. the MCP Server tab intro) now just name the optional extra to install;
+  the footer version tooltip uses `brand_name` (fallback `runspec-console`); the
+  Dev-tab devtools hint drops the binary name (keeps the fixed
+  `RUNSPEC_CONSOLE_DEVTOOLS` env var); and the bridge version-mismatch error says
+  "the installed console backend" instead of naming the package. Left as-is
+  deliberately: the real config-dir path shown to operators
+  (`%APPDATA%/runspec-console`), the OTel `service_name` default (a technical
+  identifier matching the backend default), and references to the core `runspec`
+  CLI/binary on fleet hosts (accurate regardless of console branding).
+
+
 ## [0.249.1] — 2026-09-13
 
 ### Changed

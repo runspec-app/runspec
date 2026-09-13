@@ -82,6 +82,11 @@ Any MCP client that speaks streamable-HTTP works the same way. The console must 
 **running** for the endpoint to be up — this is a desktop, not a daemon; open the
 console when you want the agent to reach the fleet.
 
+On a white-label build, the server advertises its `[console.theme] brand_name` as
+the protocol-level server name a connecting client sees (falling back to
+`runspec-console` when no brand is set), so the coding agent's server listing
+matches the brand.
+
 The tools are **serve-identical** to `runspec serve` / [`runspec-mcp`](mcp.md):
 subcommands are flattened to `parent_child` leaf tools, `password` args never
 appear in a tool schema, and each tool carries its runnable's autonomy. The same
