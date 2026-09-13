@@ -1,5 +1,6 @@
 import { Button, Tooltip, message } from 'antd'
 import { CopyOutlined } from '@ant-design/icons'
+import { RADIUS } from '../ThemeContext'
 
 // Shared run-inbox primitives used by both the Triggers and Schedules tabs (their
 // run inbox + detail drawer + event log). Kept in one module so the two views
@@ -39,7 +40,7 @@ export function StatusBadge({ status }: { status: string }) {
   const color = COLUMN_COLOR[status] ?? '#8c8c8c'
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color, flexShrink: 0, width: 110 }}>
-      <span style={{ width: 8, height: 8, borderRadius: 8, background: color }} />
+      <span style={{ width: 8, height: 8, borderRadius: RADIUS.md, background: color }} />
       {STATUS_LABEL[status] ?? status}
     </span>
   )

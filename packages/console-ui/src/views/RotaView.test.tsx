@@ -29,8 +29,10 @@ vi.mock('../bridge', () => ({
   }),
 }))
 
-// ThemeContext is used by RotaView; stub the helpers it imports.
-vi.mock('../ThemeContext', () => ({
+// ThemeContext is used by RotaView; pin the theme to light, keep every other
+// export real (fonts, radius…) so a new import in the view can't break the mock.
+vi.mock('../ThemeContext', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../ThemeContext')>()),
   useIsDark: () => false,
   textColor: () => '#000',
   textSecondary: () => '#666',

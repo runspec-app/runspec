@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Modal, Button, Typography, Input, message } from 'antd'
 import { KeyOutlined } from '@ant-design/icons'
 import { bridge } from '../bridge'
+import { MONO_FONT } from '../ThemeContext'
 
 const { Text } = Typography
 
@@ -59,8 +60,8 @@ export function CopyKeyModal({
       }
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <Text style={{ fontSize: 12 }}>
-          Authorize this machine on <Text strong style={{ fontFamily: 'monospace' }}>{host}</Text> by adding its public key to the host's <Text code>authorized_keys</Text>.
+        <Text style={{ fontSize: 13 }}>
+          Authorize this machine on <Text strong style={{ fontFamily: MONO_FONT }}>{host}</Text> by adding its public key to the host's <Text code>authorized_keys</Text>.
         </Text>
         <Input.Password
           autoFocus
@@ -70,7 +71,7 @@ export function CopyKeyModal({
           placeholder="SSH password"
           autoComplete="new-password"
         />
-        <Text type="secondary" style={{ fontSize: 11 }}>
+        <Text type="secondary" style={{ fontSize: 12 }}>
           Connects once with your password to install the key. The password is not stored — afterwards the host connects with the key alone.
         </Text>
       </div>

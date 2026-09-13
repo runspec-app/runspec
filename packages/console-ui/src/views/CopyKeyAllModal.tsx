@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Modal, Button, Typography, Input, Checkbox, message } from 'antd'
 import { KeyOutlined } from '@ant-design/icons'
 import { bridge } from '../bridge'
+import { MONO_FONT, RADIUS } from '../ThemeContext'
 
 const { Text } = Typography
 
@@ -114,14 +115,14 @@ export function CopyKeyAllModal({
       }
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <Text style={{ fontSize: 12 }}>
+        <Text style={{ fontSize: 13 }}>
           Authorize this machine on the selected hosts by adding its public key to each host's <Text code>authorized_keys</Text>. One password is tried against every host — ideal for a fleet that shares a bootstrap credential.
         </Text>
 
         {hosts.length === 0 ? (
-          <Text type="secondary" style={{ fontSize: 12 }}>No remote hosts configured.</Text>
+          <Text type="secondary" style={{ fontSize: 13 }}>No remote hosts configured.</Text>
         ) : (
-          <div style={{ maxHeight: 160, overflowY: 'auto', border: '1px solid #303030', borderRadius: 6, padding: '8px 10px' }}>
+          <div style={{ maxHeight: 160, overflowY: 'auto', border: '1px solid #303030', borderRadius: RADIUS.sm, padding: '8px 10px' }}>
             <Checkbox.Group
               value={selected}
               onChange={vals => setSelected(vals as string[])}
@@ -140,7 +141,7 @@ export function CopyKeyAllModal({
           autoComplete="new-password"
           disabled={hosts.length === 0}
         />
-        <Text type="secondary" style={{ fontSize: 11 }}>
+        <Text type="secondary" style={{ fontSize: 12 }}>
           Connects once to each host with this password to install the key. The password is not stored — afterwards each host connects with the key alone. Hosts that use a different password will fail; retry those individually from the host's own Copy key action.
         </Text>
 
@@ -151,8 +152,8 @@ export function CopyKeyAllModal({
               const color = h.ok ? '#52c41a' : '#ff4d4f'
               return (
                 <div key={h.host} style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
-                  <span style={{ color, fontFamily: 'monospace', fontSize: 11, flexShrink: 0 }}>{icon} {h.host}</span>
-                  {h.error && <Text type="secondary" style={{ fontSize: 10 }}>{h.error}</Text>}
+                  <span style={{ color, fontFamily: MONO_FONT, fontSize: 12, flexShrink: 0 }}>{icon} {h.host}</span>
+                  {h.error && <Text type="secondary" style={{ fontSize: 11 }}>{h.error}</Text>}
                 </div>
               )
             })}

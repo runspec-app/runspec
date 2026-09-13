@@ -4,6 +4,8 @@
 // parsed JSON log records (from bridge.logs_view), so the rendering lives here
 // once.
 
+import { MONO_FONT, RADIUS } from '../ThemeContext'
+
 const LOG_LEVEL_COLOUR: Record<string, string> = {
   INFO: '#4fc1ff',
   WARNING: '#faad14',
@@ -21,7 +23,7 @@ export interface StreamRecord {
 
 export function LogStream({ records }: { records: Record<string, unknown>[] }) {
   return (
-    <div style={{ background: '#0d0d0d', border: '1px solid #222', borderRadius: 6, padding: '8px 12px', fontFamily: 'monospace', fontSize: 12, lineHeight: 1.8 }}>
+    <div style={{ background: 'var(--rs-surface-sunken)', border: '1px solid var(--rs-border)', borderRadius: RADIUS.sm, padding: '8px 12px', fontFamily: MONO_FONT, fontSize: 13, lineHeight: 1.8 }}>
       {records.map((rec, i) => {
         const r = rec as StreamRecord
         const colour = LOG_LEVEL_COLOUR[r.level ?? ''] ?? '#d4d4d4'

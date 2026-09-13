@@ -1573,11 +1573,6 @@ export interface BridgeApi {
   browse_key_file: () => Promise<string>
   browse_folder: () => Promise<string>
   browse_sound_file: () => Promise<string>
-  minimize_window: () => Promise<void>
-  toggle_maximize_window: () => Promise<void>
-  close_window: () => Promise<void>
-  resize_window: (width: number, height: number) => Promise<void>
-  move_window: (x: number, y: number) => Promise<void>
   // ── terminal sessions ──────────────────────────────────────────────────────
   launch_terminal: (host: string) => Promise<void>
   launch_local_terminal: () => Promise<void>

@@ -3,6 +3,7 @@ import { Tree, Tag, Typography, Input } from 'antd'
 import { SearchOutlined } from '@ant-design/icons'
 import type { DataNode } from 'antd/es/tree'
 import type { Host, Runnable, ArgDef } from '../bridge'
+import { MONO_FONT } from '../ThemeContext'
 
 const { Text } = Typography
 
@@ -15,14 +16,14 @@ function HostTitle({ host }: { host: Host }) {
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
       <span style={{ fontSize: 9, color: host.connected ? '#52c41a' : '#595959' }}>●</span>
-      <Text strong style={{ fontFamily: 'monospace', fontSize: 13 }}>{host.name}</Text>
+      <Text strong style={{ fontFamily: MONO_FONT, fontSize: 14 }}>{host.name}</Text>
       {host.role && (
-        <Tag color={host.role === 'primary' ? 'geekblue' : 'default'} style={{ fontSize: 11, margin: 0 }}>
+        <Tag color={host.role === 'primary' ? 'geekblue' : 'default'} style={{ fontSize: 12, margin: 0 }}>
           {host.role}
         </Tag>
       )}
       {!host.connected && (
-        <Text type="secondary" style={{ fontSize: 11 }}>disconnected</Text>
+        <Text type="secondary" style={{ fontSize: 12 }}>disconnected</Text>
       )}
     </span>
   )
@@ -44,7 +45,7 @@ function GroupTitle({ group, count, active, onToggle }: {
       >
         {group}
       </Tag>
-      <Text type="secondary" style={{ fontSize: 11 }}>{count} {count === 1 ? 'runnable' : 'runnables'}</Text>
+      <Text type="secondary" style={{ fontSize: 12 }}>{count} {count === 1 ? 'runnable' : 'runnables'}</Text>
     </span>
   )
 }
@@ -53,12 +54,12 @@ function RunnableTitle({ runnable }: { runnable: Runnable }) {
   const reqCount = runnable.args.filter(a => a.required).length
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-      <Text code style={{ fontSize: 12 }}>{runnable.name}</Text>
+      <Text code style={{ fontSize: 13 }}>{runnable.name}</Text>
       {runnable.description && (
-        <Text type="secondary" style={{ fontSize: 12 }}>{runnable.description}</Text>
+        <Text type="secondary" style={{ fontSize: 13 }}>{runnable.description}</Text>
       )}
       {runnable.args.length > 0 && (
-        <Text type="secondary" style={{ fontSize: 11 }}>
+        <Text type="secondary" style={{ fontSize: 12 }}>
           {runnable.args.length} {runnable.args.length === 1 ? 'arg' : 'args'}
           {reqCount > 0 ? ` · ${reqCount} required` : ''}
         </Text>
@@ -71,19 +72,19 @@ function ArgTitle({ arg }: { arg: ArgDef }) {
   const ref = varRef(arg.default)
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-      <Text code style={{ fontSize: 12, minWidth: 130, flexShrink: 0 }}>--{arg.name}</Text>
-      <Tag color="default" style={{ fontSize: 11, margin: 0 }}>{arg.type}</Tag>
+      <Text code style={{ fontSize: 13, minWidth: 130, flexShrink: 0 }}>--{arg.name}</Text>
+      <Tag color="default" style={{ fontSize: 12, margin: 0 }}>{arg.type}</Tag>
       {arg.required ? (
-        <Tag color="orange" style={{ fontSize: 11, margin: 0 }}>required</Tag>
+        <Tag color="orange" style={{ fontSize: 12, margin: 0 }}>required</Tag>
       ) : ref ? (
-        <Text style={{ fontSize: 11, color: '#fa8c16', fontFamily: 'monospace' }}>{ref}</Text>
+        <Text style={{ fontSize: 12, color: '#fa8c16', fontFamily: MONO_FONT }}>{ref}</Text>
       ) : (
-        <Text type="secondary" style={{ fontSize: 11 }}>
+        <Text type="secondary" style={{ fontSize: 12 }}>
           optional{arg.default !== undefined ? ` · ${String(arg.default)}` : ''}
         </Text>
       )}
       {arg.description && (
-        <Text type="secondary" style={{ fontSize: 12 }}>{arg.description}</Text>
+        <Text type="secondary" style={{ fontSize: 13 }}>{arg.description}</Text>
       )}
     </span>
   )
@@ -178,7 +179,7 @@ export function HostsView({ hosts, runnables, selectedHost, activeScope, onScope
         expandedKeys={defaultExpandedKeys}
         selectable={false}
         blockNode={false}
-        style={{ background: 'transparent', fontFamily: 'monospace' }}
+        style={{ background: 'transparent', fontFamily: MONO_FONT }}
       />
     </div>
   )

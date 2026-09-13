@@ -31,7 +31,6 @@ EXPECTED = {
     "claim_email",
     "clear_chat",
     "close_adhoc",
-    "close_window",
     "compact_chat",
     "config_dir",
     "copy_ssh_id",
@@ -130,8 +129,6 @@ EXPECTED = {
     "mcp_server_status",
     "mcp_start",
     "mcp_status",
-    "minimize_window",
-    "move_window",
     "open_devtools",
     "open_docs",
     "open_putty_url",
@@ -141,7 +138,6 @@ EXPECTED = {
     "rename_conversation",
     "rename_group",
     "rename_profile",
-    "resize_window",
     "resolve_tool_confirmation",
     "resume_conversation",
     "restart_chat",
@@ -210,7 +206,6 @@ EXPECTED = {
     "test_host",
     "test_room_connection",
     "test_trigger",
-    "toggle_maximize_window",
     "update_schedule",
 }
 

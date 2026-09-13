@@ -12,6 +12,7 @@ import {
   runnableSelectOptions, TargetFormItems, runnablesForTarget, splitFixedAndOpen,
   type Target,
 } from '../views/RunnableAction'
+import { MONO_FONT, RADIUS, useAccent, withAlpha } from '../ThemeContext'
 
 const { Text, Link } = Typography
 
@@ -200,14 +201,14 @@ export function SoundsTab() {
 
   const row = (label: string, control: ReactNode) => (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 10 }}>
-      <span style={{ fontSize: 13 }}>{label}</span>
+      <span style={{ fontSize: 14 }}>{label}</span>
       {control}
     </div>
   )
 
   return (
     <div style={{ maxWidth: 560 }}>
-      <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+      <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
         Audio cues + desktop alerts so you stay aware while the console is minimized or in the background.
         Sounds play from the app, so they work even when minimized. The desktop <em>toast</em> needs the
         optional <Typography.Text code>notifications</Typography.Text> extra to be installed,
@@ -231,7 +232,7 @@ export function SoundsTab() {
       {row('Sound pack folder', (
         <Space size={4}>
           {pack && (
-            <Typography.Text style={{ fontSize: 11, maxWidth: 150, fontFamily: 'monospace' }} ellipsis={{ tooltip: pack }}>
+            <Typography.Text style={{ fontSize: 12, maxWidth: 150, fontFamily: MONO_FONT }} ellipsis={{ tooltip: pack }}>
               {pack}
             </Typography.Text>
           )}
@@ -240,7 +241,7 @@ export function SoundsTab() {
         </Space>
       ))}
       {pack && packInfo && (
-        <Typography.Paragraph type="secondary" style={{ fontSize: 11, marginTop: -6 }}>
+        <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: -6 }}>
           {packInfo.exists
             ? `Covers ${Object.keys(packInfo.covered).length} of ${SOUND_CATEGORIES.length} categories (files named ${'confirm.wav'}, ${'host_down.mp3'}, …). Explicit picks below still win.`
             : 'Folder not found on this machine.'}
@@ -253,8 +254,8 @@ export function SoundsTab() {
           play_sound tool. The registry rides Config Sync; the audio files stay
           machine-local (imported copies), so a synced entry not present here shows
           "missing" and plays nothing. */}
-      <Typography.Text strong style={{ fontSize: 13 }}>My sounds</Typography.Text>
-      <Typography.Paragraph type="secondary" style={{ fontSize: 11, marginTop: 4 }}>
+      <Typography.Text strong style={{ fontSize: 14 }}>My sounds</Typography.Text>
+      <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: 4 }}>
         Add your own sounds and name them, then reuse a name in the picks below, in a
         trigger or schedule action, and in what the agent can play. The registry syncs;
         the audio files stay on this machine (a synced name plays only where its file is present).
@@ -268,12 +269,12 @@ export function SoundsTab() {
             onBlur={e => renameNamedSound(s.id, e.target.value.trim() || s.id)}
             style={{ width: 200 }}
           />
-          <Typography.Text type="secondary" style={{ fontSize: 11, fontFamily: 'monospace' }}>
+          <Typography.Text type="secondary" style={{ fontSize: 12, fontFamily: MONO_FONT }}>
             sound:{s.id}
           </Typography.Text>
           {s.exists === false && (
             <Tooltip title="This sound's file isn't on this machine (it came from Config Sync). It will play only where the file is present.">
-              <Tag color="warning" style={{ fontSize: 10, marginInlineEnd: 0 }}>missing</Tag>
+              <Tag color="warning" style={{ fontSize: 11, marginInlineEnd: 0 }}>missing</Tag>
             </Tooltip>
           )}
           <span style={{ flex: 1 }} />
@@ -320,7 +321,7 @@ export function SoundsTab() {
       ))}
 
       <Divider style={{ margin: '12px 0 8px' }} />
-      <Typography.Text strong style={{ fontSize: 13 }}>Desktop notifications</Typography.Text>
+      <Typography.Text strong style={{ fontSize: 14 }}>Desktop notifications</Typography.Text>
       <div style={{ marginTop: 8 }}>
         {row('Toast + flash when a confirmation is waiting', <Switch checked={confirmNotif} onChange={setConfirmNotif} />)}
         {row('Toast + flash on a chat / helpdesk message', <Switch checked={roomNotif} onChange={setRoomNotif} />)}
@@ -333,7 +334,7 @@ export function SoundsTab() {
       </Space>
 
       {test && (
-        <pre style={{ marginTop: 12, fontSize: 12, background: 'rgba(127,127,127,0.12)', padding: 10, borderRadius: 6, whiteSpace: 'pre-wrap' }}>
+        <pre style={{ marginTop: 12, fontSize: 13, background: 'rgba(127,127,127,0.12)', padding: 10, borderRadius: RADIUS.sm, whiteSpace: 'pre-wrap' }}>
 {`Sound:  ${test.sound_available ? 'available' : 'unavailable (not Windows?)'}
 Toast:  ${test.toast_available ? 'available' : `unavailable — ${test.toast_reason}`}
 Flash:  ${test.window_found ? 'window found' : 'window NOT found — title mismatch'}`}
@@ -499,7 +500,7 @@ export function LlmTab() {
                   notFoundContent={null}
                   tokenSeparators={[',', ' ']}
                   placeholder={PROVIDER_MODELS[provider] ? `e.g. ${PROVIDER_MODELS[provider]}` : 'Add model ids…'}
-                  style={{ fontFamily: 'monospace' }}
+                  style={{ fontFamily: MONO_FONT }}
                 />
               </Form.Item>
               <Form.Item name="model" label="Model">
@@ -508,7 +509,7 @@ export function LlmTab() {
                   allowClear
                   placeholder={models.length ? 'Select a model' : 'Add a model above first'}
                   options={models.map(m => ({ value: m, label: m }))}
-                  style={{ fontFamily: 'monospace' }}
+                  style={{ fontFamily: MONO_FONT }}
                 />
               </Form.Item>
             </>
@@ -541,7 +542,7 @@ export function LlmTab() {
                 : 'Optional — for OpenAI-compatible endpoints'
               }
             >
-              <Input placeholder={provider === 'langserve' ? 'https://gateway.corp/my-chain' : 'https://...'} style={{ fontFamily: 'monospace' }} />
+              <Input placeholder={provider === 'langserve' ? 'https://gateway.corp/my-chain' : 'https://...'} style={{ fontFamily: MONO_FONT }} />
             </Form.Item>
           )}
           {provider === 'bedrock' && (
@@ -550,7 +551,7 @@ export function LlmTab() {
                 <Input.Password placeholder="token" />
               </Form.Item>
               <Form.Item name="aws_region" label="AWS region">
-                <Input placeholder="us-east-1" style={{ fontFamily: 'monospace' }} />
+                <Input placeholder="us-east-1" style={{ fontFamily: MONO_FONT }} />
               </Form.Item>
             </>
           )}
@@ -567,7 +568,7 @@ export function LlmTab() {
               // drops hand-edited keys (api_key_command, api_key_ttl_ms, …) whenever
               // the user saves without first opening Advanced.
               forceRender: true,
-              label: <Text style={{ fontSize: 12 }}>Advanced</Text>,
+              label: <Text style={{ fontSize: 13 }}>Advanced</Text>,
               children: (
                 <>
                   <Form.Item
@@ -575,7 +576,7 @@ export function LlmTab() {
                     label="Token command"
                     help="Run this command to vend a short-lived token instead of a static key (rotating corporate creds). Its stdout is used as the token."
                   >
-                    <Input placeholder="aws-vend-token --print" style={{ fontFamily: 'monospace' }} />
+                    <Input placeholder="aws-vend-token --print" style={{ fontFamily: MONO_FONT }} />
                   </Form.Item>
                   <Form.Item
                     name="api_key_ttl_ms"
@@ -606,19 +607,19 @@ export function LlmTab() {
                   {provider === 'langserve' && (
                     <>
                       <Divider style={{ margin: '4px 0 10px' }}>
-                        <Text type="secondary" style={{ fontSize: 11 }}>LangServe wiring</Text>
+                        <Text type="secondary" style={{ fontSize: 12 }}>LangServe wiring</Text>
                       </Divider>
                       <Form.Item name="auth_header" label="Auth header" help="HTTP header the token is sent in.">
-                        <Input placeholder="Authorization" style={{ fontFamily: 'monospace' }} />
+                        <Input placeholder="Authorization" style={{ fontFamily: MONO_FONT }} />
                       </Form.Item>
                       <Form.Item name="auth_scheme" label="Auth scheme" help="Scheme prefix; blank sends the raw token.">
-                        <Input placeholder="Bearer" style={{ fontFamily: 'monospace' }} />
+                        <Input placeholder="Bearer" style={{ fontFamily: MONO_FONT }} />
                       </Form.Item>
                       <Form.Item name="input_messages_key" label="Messages key" help="Key the chat history is sent under, inside input.">
-                        <Input placeholder="messages" style={{ fontFamily: 'monospace' }} />
+                        <Input placeholder="messages" style={{ fontFamily: MONO_FONT }} />
                       </Form.Item>
                       <Form.Item name="input_tools_key" label="Tools key" help="Key the tool schemas are sent under.">
-                        <Input placeholder="tools" style={{ fontFamily: 'monospace' }} />
+                        <Input placeholder="tools" style={{ fontFamily: MONO_FONT }} />
                       </Form.Item>
                       <Form.Item
                         name="tools_in_config"
@@ -638,9 +639,9 @@ export function LlmTab() {
       )}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8 }}>
         <Button type="primary" size="small" loading={saving} onClick={handleSave}>Save</Button>
-        {saved && <Text type="success" style={{ fontSize: 12 }}>Saved</Text>}
+        {saved && <Text type="success" style={{ fontSize: 13 }}>Saved</Text>}
       </div>
-      <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 10 }}>
+      <Text type="secondary" style={{ fontSize: 13, display: 'block', marginTop: 10 }}>
         Settings are saved to <code>{configDir || '%APPDATA%/runspec-console'}</code>
       </Text>
     </Form>
@@ -837,7 +838,7 @@ export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [] 
         label="HTTP proxy"
         help="Routes SSH — running runnables and Launch terminal — through an HTTP CONNECT proxy. Leave blank for none."
       >
-        <Input placeholder="http://proxy.corp:8080" style={{ fontFamily: 'monospace' }} />
+        <Input placeholder="http://proxy.corp:8080" style={{ fontFamily: MONO_FONT }} />
       </Form.Item>
 
       <Form.Item
@@ -854,7 +855,7 @@ export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [] 
         ghost
         items={[{
           key: 'advanced',
-          label: <Text style={{ fontSize: 12 }}>Advanced</Text>,
+          label: <Text style={{ fontSize: 13 }}>Advanced</Text>,
           children: (
             <>
               <Form.Item
@@ -894,7 +895,7 @@ export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [] 
               </Form.Item>
 
               <Divider style={{ margin: '4px 0 10px' }}>
-                <Text type="secondary" style={{ fontSize: 11 }}>TCP keepalive</Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>TCP keepalive</Text>
               </Divider>
               <Form.Item
                 name="ssh_tcp_keepalive"
@@ -927,7 +928,7 @@ export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [] 
               </Form.Item>
 
               <Divider style={{ margin: '4px 0 10px' }}>
-                <Text type="secondary" style={{ fontSize: 11 }}>Discovery</Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>Discovery</Text>
               </Divider>
               <Form.Item
                 name="refresh_interval"
@@ -952,12 +953,12 @@ export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [] 
 
       {/* SSH key section */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-        <Text strong style={{ fontSize: 13 }}>SSH key</Text>
+        <Text strong style={{ fontSize: 14 }}>SSH key</Text>
         {ageDays !== null && (
           <Tag
             color={ageDays >= 90 ? 'orange' : ageDays >= 75 ? 'gold' : 'success'}
             icon={<KeyOutlined />}
-            style={{ margin: 0, fontSize: 11 }}
+            style={{ margin: 0, fontSize: 12 }}
           >
             {ageDays === 0 ? 'created today' : `${ageDays}d old`}
           </Tag>
@@ -966,10 +967,10 @@ export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [] 
 
       {ageDays !== null && ageDays >= 75 && (
         <div style={{
-          padding: '6px 10px', borderRadius: 6, marginBottom: 10,
+          padding: '6px 10px', borderRadius: RADIUS.sm, marginBottom: 10,
           background: ageDays >= 90 ? 'rgba(250,140,22,0.1)' : 'rgba(250,219,20,0.08)',
           border: `1px solid ${ageDays >= 90 ? 'rgba(250,140,22,0.3)' : 'rgba(250,219,20,0.3)'}`,
-          fontSize: 12, color: ageDays >= 90 ? '#fa8c16' : '#d4b106',
+          fontSize: 13, color: ageDays >= 90 ? '#fa8c16' : '#d4b106',
         }}>
           {ageDays >= 90 ? `Key is ${ageDays} days old — rotation recommended.` : `Key is ${ageDays} days old — consider rotating soon.`}
         </div>
@@ -977,7 +978,7 @@ export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [] 
 
       {keyPath && (
         <div style={{ marginBottom: 10 }}>
-          <Text type="secondary" style={{ fontSize: 11, fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>
+          <Text type="secondary" style={{ fontSize: 12, fontFamily: MONO_FONT, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>
             {keyPath}
           </Text>
         </div>
@@ -998,7 +999,7 @@ export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [] 
           <Popconfirm
             title="Generate new key?"
             description={
-              <span style={{ fontSize: 12 }}>
+              <span style={{ fontSize: 13 }}>
                 The current key will be backed up and replaced immediately.<br />
                 You'll need to add the new public key to each host manually.<br />
                 Use <strong>Rotate key</strong> instead if your remote hosts are reachable.
@@ -1023,16 +1024,16 @@ export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [] 
             icon={disconnected.length > 0 ? <KeyOutlined style={{ color: '#fa8c16' }} /> : undefined}
             description={
               disconnected.length === 0 ? (
-                <span style={{ fontSize: 12 }}>
+                <span style={{ fontSize: 13 }}>
                   A new key will be pushed to every connected host using the current key,<br />
                   then verified before swapping. Active sessions stay alive throughout.
                 </span>
               ) : (
-                <span style={{ fontSize: 12, maxWidth: 320, display: 'inline-block' }}>
+                <span style={{ fontSize: 13, maxWidth: 320, display: 'inline-block' }}>
                   <strong style={{ color: '#fa8c16' }}>
                     {disconnected.length} host{disconnected.length !== 1 ? 's' : ''} disconnected:
                   </strong>{' '}
-                  <span style={{ fontFamily: 'monospace' }}>{disconnected.join(', ')}</span>.<br />
+                  <span style={{ fontFamily: MONO_FONT }}>{disconnected.join(', ')}</span>.<br />
                   {disconnected.length !== 1 ? 'They' : 'It'} will <strong>not</strong> receive the new key —
                   you may be locked out until you update {disconnected.length !== 1 ? 'them' : 'it'} manually.<br />
                   Connected hosts rotate now. Continue?
@@ -1077,10 +1078,10 @@ export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [] 
             size="small"
             status="active"
           />
-          <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 2 }}>
+          <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 2 }}>
             Pushing &amp; verifying {rotateProgress.done}/{rotateProgress.total} host{rotateProgress.total !== 1 ? 's' : ''}
             {rotateProgress.host ? (
-              <> — last: <span style={{ fontFamily: 'monospace' }}>{rotateProgress.host}</span>{rotateProgress.phase === 'failed' ? ' ✗' : ' ✓'}</>
+              <> — last: <span style={{ fontFamily: MONO_FONT }}>{rotateProgress.host}</span>{rotateProgress.phase === 'failed' ? ' ✗' : ' ✓'}</>
             ) : '…'}
           </Text>
         </div>
@@ -1094,13 +1095,13 @@ export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [] 
             const color = h.skipped ? '#d4b106' : h.verified ? '#52c41a' : '#ff4d4f'
             return (
               <div key={h.host} style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginBottom: 3 }}>
-                <span style={{ color, fontFamily: 'monospace', fontSize: 11, flexShrink: 0 }}>{icon} {h.host}</span>
-                {h.error && <Text type="secondary" style={{ fontSize: 10 }}>{h.error}</Text>}
+                <span style={{ color, fontFamily: MONO_FONT, fontSize: 12, flexShrink: 0 }}>{icon} {h.host}</span>
+                {h.error && <Text type="secondary" style={{ fontSize: 11 }}>{h.error}</Text>}
               </div>
             )
           })}
           {!rotationResult.committed && (
-            <Text type="warning" style={{ fontSize: 11, display: 'block', marginTop: 4 }}>
+            <Text type="warning" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
               Old key still active — fix the failures above and retry.
             </Text>
           )}
@@ -1112,13 +1113,13 @@ export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [] 
       {rotationResult && rotationResult.publicKey &&
         (!rotationResult.committed || rotationResult.perHost.some(h => h.skipped)) && (
         <div style={{ marginBottom: 10 }}>
-          <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>
+          <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
             Run on each skipped/failing host to authorise the new key manually:
           </Text>
           <Typography.Paragraph
             copyable={{ tooltips: ['Copy', 'Copied!'] }}
             style={{
-              fontFamily: 'monospace', fontSize: 10, padding: '6px 10px',
+              fontFamily: MONO_FONT, fontSize: 11, padding: '6px 10px',
               background: 'rgba(255,255,255,0.04)', border: '1px solid #333',
               borderRadius: 4, wordBreak: 'break-all', margin: 0, color: '#52c41a',
             }}
@@ -1131,13 +1132,13 @@ export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [] 
       {/* First-time generate — show manual snippet since there are no sessions to push via */}
       {publicKey && !rotationResult && (
         <div style={{ marginBottom: 10 }}>
-          <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>
+          <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
             Run on each host to authorise this key:
           </Text>
           <Typography.Paragraph
             copyable={{ tooltips: ['Copy', 'Copied!'] }}
             style={{
-              fontFamily: 'monospace', fontSize: 10, padding: '6px 10px',
+              fontFamily: MONO_FONT, fontSize: 11, padding: '6px 10px',
               background: 'rgba(255,255,255,0.04)', border: '1px solid #333',
               borderRadius: 4, wordBreak: 'break-all', margin: 0, color: '#52c41a',
             }}
@@ -1150,13 +1151,13 @@ export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [] 
       {/* Persistent public key — always available to copy, derived if no .pub */}
       {keyPath && storedPublicKey && !publicKey && !rotationResult && (
         <div style={{ marginBottom: 10 }}>
-          <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>
+          <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
             Public key — add to each host's authorized_keys:
           </Text>
           <Typography.Paragraph
             copyable={{ text: storedPublicKey, tooltips: ['Copy', 'Copied!'] }}
             style={{
-              fontFamily: 'monospace', fontSize: 10, padding: '6px 10px',
+              fontFamily: MONO_FONT, fontSize: 11, padding: '6px 10px',
               background: 'rgba(255,255,255,0.04)', border: '1px solid #333',
               borderRadius: 4, wordBreak: 'break-all', margin: 0, color: '#52c41a',
             }}
@@ -1168,7 +1169,7 @@ export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [] 
 
       <Divider />
 
-      <Text strong style={{ fontSize: 13 }}>Quick connect</Text>
+      <Text strong style={{ fontSize: 14 }}>Quick connect</Text>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10 }}>
         <Select
           size="small"
@@ -1193,9 +1194,9 @@ export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [] 
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <Button type="primary" size="small" loading={saving} onClick={handleSave}>Save</Button>
-        {saved && <Text type="success" style={{ fontSize: 12 }}>Saved</Text>}
+        {saved && <Text type="success" style={{ fontSize: 13 }}>Saved</Text>}
       </div>
-      <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 10 }}>
+      <Text type="secondary" style={{ fontSize: 13, display: 'block', marginTop: 10 }}>
         Settings are saved to <code>{configDir || '%APPDATA%/runspec-console'}</code>
       </Text>
 
@@ -1364,7 +1365,7 @@ function GroupsManager({
 
   return (
     <Modal open={open} title="Host groups" onCancel={onClose} footer={null} width={520}>
-      <Text type="secondary" style={{ fontSize: 12 }}>
+      <Text type="secondary" style={{ fontSize: 13 }}>
         Groups are shared across consoles (Config Sync) so a runbook targeting a
         group behaves the same everywhere. Hosts pick their group from this list.
       </Text>
@@ -1373,7 +1374,7 @@ function GroupsManager({
           <Space key={g.name} align="baseline" style={{ display: 'flex' }}>
             <Input
               size="small"
-              style={{ width: 150, fontFamily: 'monospace' }}
+              style={{ width: 150, fontFamily: MONO_FONT }}
               value={g.name}
               onChange={e => setRows(r => r.map((x, j) => j === i ? { ...x, name: e.target.value } : x))}
               onBlur={e => commitRename(groups[i]?.name ?? g.name, e.target.value)}
@@ -1400,7 +1401,7 @@ function GroupsManager({
         <Space.Compact style={{ marginTop: 4 }}>
           <Input
             size="small"
-            style={{ width: 200, fontFamily: 'monospace' }}
+            style={{ width: 200, fontFamily: MONO_FONT }}
             placeholder="New group name"
             value={newName}
             onChange={e => setNewName(e.target.value)}
@@ -1467,7 +1468,7 @@ function ProfilesManager({
 
   return (
     <Modal open={open} title="Host profiles" onCancel={onClose} footer={null} width={520}>
-      <Text type="secondary" style={{ fontSize: 12 }}>
+      <Text type="secondary" style={{ fontSize: 13 }}>
         A profile is a named working-set of hosts. You load one at a time — only its
         hosts stay connected. Definitions are shared across consoles (Config Sync);
         which one you have loaded is local to this machine.
@@ -1477,7 +1478,7 @@ function ProfilesManager({
           <Space key={p.name} align="baseline" style={{ display: 'flex' }}>
             <Input
               size="small"
-              style={{ width: 150, fontFamily: 'monospace' }}
+              style={{ width: 150, fontFamily: MONO_FONT }}
               value={p.name}
               onChange={e => setRows(r => r.map((x, j) => j === i ? { ...x, name: e.target.value } : x))}
               onBlur={e => commitRename(profiles[i]?.name ?? p.name, e.target.value)}
@@ -1504,7 +1505,7 @@ function ProfilesManager({
         <Space.Compact style={{ marginTop: 4 }}>
           <Input
             size="small"
-            style={{ width: 200, fontFamily: 'monospace' }}
+            style={{ width: 200, fontFamily: MONO_FONT }}
             placeholder="New profile name"
             value={newName}
             onChange={e => setNewName(e.target.value)}
@@ -1551,18 +1552,18 @@ function LocalVenvsTab() {
 
   return (
     <div style={{ maxWidth: 620 }}>
-      <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+      <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
         Discover runnables in <strong>more than one local Python venv</strong> — the same multi-venv support remote hosts
         have, for this machine. The console's own venv is always discovered; add glob patterns below whose matched
         directories are each scanned for a venv (probed for <code>Scripts\runspec.exe</code> / <code>bin/runspec</code>).
       </Typography.Paragraph>
-      <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+      <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
         These globs live in <code>config.toml</code>, so they ride <strong>Config Sync</strong> and the config seed — one
         versioned convention (e.g. <code>C:\venvs\*</code>) works across a fleet of identical machines, and each console
         resolves its own real venvs. The matches shown below are specific to <strong>this</strong> machine.
       </Typography.Paragraph>
 
-      <Typography.Text strong style={{ fontSize: 13 }}>Venv search globs</Typography.Text>
+      <Typography.Text strong style={{ fontSize: 14 }}>Venv search globs</Typography.Text>
       <div style={{ marginTop: 8 }}>
         {globs.map((g, i) => (
           <Space key={i} align="baseline" style={{ display: 'flex', marginBottom: 6 }}>
@@ -1570,7 +1571,7 @@ function LocalVenvsTab() {
               value={g}
               onChange={e => setGlob(i, e.target.value)}
               placeholder="C:\venvs\*"
-              style={{ width: 420, fontFamily: 'monospace' }}
+              style={{ width: 420, fontFamily: MONO_FONT }}
             />
             <MinusCircleOutlined onClick={() => removeGlob(i)} style={{ color: 'var(--rs-text-muted)', cursor: 'pointer' }} />
           </Space>
@@ -1579,8 +1580,8 @@ function LocalVenvsTab() {
       </div>
 
       <Divider style={{ margin: '16px 0' }} />
-      <Typography.Text strong style={{ fontSize: 13 }}>Resolved on this machine</Typography.Text>
-      <Typography.Paragraph type="secondary" style={{ fontSize: 11, marginTop: 4 }}>
+      <Typography.Text strong style={{ fontSize: 14 }}>Resolved on this machine</Typography.Text>
+      <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: 4 }}>
         The venvs the console will discover locally (own venv first). Save to refresh after editing the globs.
       </Typography.Paragraph>
       {resolved.length === 0 ? (
@@ -1590,8 +1591,8 @@ function LocalVenvsTab() {
           {resolved.map(r => (
             <div key={r.path} style={{ display: 'flex', gap: 8, alignItems: 'baseline', marginBottom: 4 }}>
               <Tag color="blue">{r.venv_name}</Tag>
-              <Text style={{ fontSize: 12, fontFamily: 'monospace', wordBreak: 'break-all' }}>{r.path}</Text>
-              {r.path === ownVenv && <Text type="secondary" style={{ fontSize: 11 }}>(console's own venv)</Text>}
+              <Text style={{ fontSize: 13, fontFamily: MONO_FONT, wordBreak: 'break-all' }}>{r.path}</Text>
+              {r.path === ownVenv && <Text type="secondary" style={{ fontSize: 12 }}>(console's own venv)</Text>}
             </div>
           ))}
         </div>
@@ -1696,7 +1697,7 @@ function AgentToolsTab() {
     {
       title: 'Runnable', dataIndex: 'name', key: 'name',
       render: (v: string, r: RunnableRow) => (
-        <span><code>{v}</code>{r.hosts > 1 && <Text type="secondary" style={{ fontSize: 11, marginLeft: 6 }}>×{r.hosts} hosts</Text>}</span>
+        <span><code>{v}</code>{r.hosts > 1 && <Text type="secondary" style={{ fontSize: 12, marginLeft: 6 }}>×{r.hosts} hosts</Text>}</span>
       ),
     },
     { title: 'Group', dataIndex: 'group', key: 'group', render: (v: string) => v ? <Tag>{v}</Tag> : <Text type="secondary">—</Text> },
@@ -1726,13 +1727,13 @@ function AgentToolsTab() {
 
   return (
     <div style={{ maxWidth: 780 }}>
-      <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+      <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
         Hide runnables you can't use from the <strong>agent's toolset</strong> — they stop bloating the model's tool list
         and it stops trying tools that will never work (e.g. Office 365 runnables where Microsoft Graph is blocked).
         <strong> Hide from agent</strong> removes a runnable from the chat/trigger/schedule agent only (still usable in the
         Forms tab); <strong>Hide everywhere</strong> also removes it from the Forms tab and the room/self-service catalogs.
       </Typography.Paragraph>
-      <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+      <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
         This is <strong>curation, not a safety block</strong> — a hidden runnable is still installed and directly runnable
         (that's what the Denylist is for). The two lists live in <code>config.toml</code>, so they ride
         <strong> Config Sync</strong> and the config seed — a baseline can hide capabilities fleet-wide from one source.
@@ -1747,7 +1748,7 @@ function AgentToolsTab() {
           onChange={e => setQuery(e.target.value)}
           style={{ width: 280 }}
         />
-        <Text type="secondary" style={{ fontSize: 12 }}>{hiddenCount} hidden of {rows.length}</Text>
+        <Text type="secondary" style={{ fontSize: 13 }}>{hiddenCount} hidden of {rows.length}</Text>
       </Space>
 
       {rows.length === 0 ? (
@@ -1770,22 +1771,22 @@ function AgentToolsTab() {
           label: 'Advanced — glob patterns',
           children: (
             <div>
-              <Typography.Paragraph type="secondary" style={{ fontSize: 11 }}>
+              <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
                 One pattern per line (or comma-separated). Globs match the runnable name (<code>outlook-*</code>); prefix
                 with <code>group:</code> or <code>host:</code> to hide a whole group/host (<code>group:m365</code>).
               </Typography.Paragraph>
-              <Text strong style={{ fontSize: 12 }}>Hidden from agent</Text>
+              <Text strong style={{ fontSize: 13 }}>Hidden from agent</Text>
               <Input.TextArea
                 autoSize={{ minRows: 2, maxRows: 8 }}
-                style={{ fontFamily: 'monospace', fontSize: 12, marginTop: 4 }}
+                style={{ fontFamily: MONO_FONT, fontSize: 13, marginTop: 4 }}
                 value={fromAgent.join('\n')}
                 onChange={e => setFromAgent(parseList(e.target.value))}
                 placeholder="outlook-*"
               />
-              <Text strong style={{ fontSize: 12, display: 'block', marginTop: 10 }}>Hidden everywhere</Text>
+              <Text strong style={{ fontSize: 13, display: 'block', marginTop: 10 }}>Hidden everywhere</Text>
               <Input.TextArea
                 autoSize={{ minRows: 2, maxRows: 8 }}
-                style={{ fontFamily: 'monospace', fontSize: 12, marginTop: 4 }}
+                style={{ fontFamily: MONO_FONT, fontSize: 13, marginTop: 4 }}
                 value={fromAll.join('\n')}
                 onChange={e => setFromAll(parseList(e.target.value))}
                 placeholder="group:m365"
@@ -1973,7 +1974,7 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
         onChanged={() => { loadProfiles(); bridge.get_jump_hosts().then(setHosts); onHostsChanged?.() }}
       />
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-        <Text type="secondary" style={{ fontSize: 12 }}>
+        <Text type="secondary" style={{ fontSize: 13 }}>
           Saved to <code>jump_hosts.toml</code>. Hosts are probed on startup.
         </Text>
         <Space size={6}>
@@ -1999,10 +2000,10 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
         <Form form={form} layout="vertical" size="small">
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 12px' }}>
               <Form.Item name="name" label="Name" rules={[{ required: true, message: 'Required' }]}>
-                <Input placeholder="prod-eu-1" style={{ fontFamily: 'monospace' }} disabled={editingKey !== ''} />
+                <Input placeholder="prod-eu-1" style={{ fontFamily: MONO_FONT }} disabled={editingKey !== ''} />
               </Form.Item>
               <Form.Item name="hostname" label="Hostname" rules={[{ required: true, message: 'Required' }]}>
-                <Input placeholder="hostname.company.com" style={{ fontFamily: 'monospace' }} />
+                <Input placeholder="hostname.company.com" style={{ fontFamily: MONO_FONT }} />
               </Form.Item>
               <Form.Item name="user" label="SSH user">
                 <Input placeholder="inherits default" />
@@ -2041,7 +2042,7 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
               label="Jump host (ProxyJump)"
               help="Reach this host through a jump host using the system ssh client, so ~/.ssh/config legacy algorithms apply (e.g. HostKeyAlgorithms +ssh-rsa for CentOS 6). An SSH host/alias as `ssh -J` expects. Needs an OpenSSH client on this machine. Leave blank for the normal (paramiko) transport."
             >
-              <Input placeholder="bastion  (or user@bastion)" style={{ fontFamily: 'monospace' }} />
+              <Input placeholder="bastion  (or user@bastion)" style={{ fontFamily: MONO_FONT }} />
             </Form.Item>
             <Form.Item
               name="group"
@@ -2051,7 +2052,7 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
                   <Button
                     type="link"
                     size="small"
-                    style={{ padding: 0, height: 'auto', fontSize: 12 }}
+                    style={{ padding: 0, height: 'auto', fontSize: 13 }}
                     onClick={() => setGroupsOpen(true)}
                   >
                     Manage groups…
@@ -2080,7 +2081,7 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
                   <Button
                     type="link"
                     size="small"
-                    style={{ padding: 0, height: 'auto', fontSize: 12 }}
+                    style={{ padding: 0, height: 'auto', fontSize: 13 }}
                     onClick={() => setProfilesOpen(true)}
                   >
                     Manage profiles…
@@ -2118,7 +2119,7 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
                 />
               </Form.Item>
               <Form.Item name="room_exec_command" label="Relay command" help="Optional override run on the host when via=exec, e.g. socat - TCP:127.0.0.1:8765. Defaults to console-room connect.">
-                <Input placeholder="defaults to console-room connect" style={{ fontFamily: 'monospace' }} />
+                <Input placeholder="defaults to console-room connect" style={{ fontFamily: MONO_FONT }} />
               </Form.Item>
               {/* The group-chat `room` stays hidden in the helpdesk-focused build
                   (kept so an existing config still round-trips; remove `hidden` to
@@ -2162,7 +2163,7 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
       </Modal>
 
       {hosts.length === 0 && editingKey === null && (
-        <Text type="secondary" style={{ fontSize: 12 }}>No jump hosts configured. Add one to get started.</Text>
+        <Text type="secondary" style={{ fontSize: 13 }}>No jump hosts configured. Add one to get started.</Text>
       )}
 
       {(() => {
@@ -2170,7 +2171,7 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
         return groups.map(({ name: groupName, hosts: groupHosts }, groupIdx) => (
           <div key={groupName || '__ungrouped__'} style={{ marginBottom: 12 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 6 }}>
-              <Text type="secondary" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.08em', flex: 1 }}>
+              <Text type="secondary" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', flex: 1 }}>
                 {groupName || 'Hosts'}
               </Text>
               <Button type="text" size="small" icon={<UpOutlined style={{ fontSize: 9 }} />} onClick={() => moveGroupUp(groupIdx)} disabled={isEditing || groupIdx === 0} style={{ padding: '0 4px', color: 'var(--rs-text-faint)', height: 18 }} />
@@ -2178,13 +2179,13 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
               {groupHosts.map((h, hostIdx) => (
-                <div key={h.name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 6, border: '1px solid #2a2a2a', background: editingKey === h.name ? 'rgba(255,255,255,0.03)' : 'transparent' }}>
+                <div key={h.name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: RADIUS.sm, border: '1px solid #2a2a2a', background: editingKey === h.name ? 'rgba(255,255,255,0.03)' : 'transparent' }}>
                   <div style={{ display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
                     <Button type="text" size="small" icon={<UpOutlined style={{ fontSize: 9 }} />} onClick={() => moveHostUp(h)} disabled={isEditing || hostIdx === 0} style={{ padding: '0 3px', color: 'var(--rs-text-faint)', height: 14, lineHeight: 1 }} />
                     <Button type="text" size="small" icon={<DownOutlined style={{ fontSize: 9 }} />} onClick={() => moveHostDown(h)} disabled={isEditing || hostIdx === groupHosts.length - 1} style={{ padding: '0 3px', color: 'var(--rs-text-faint)', height: 14, lineHeight: 1 }} />
                   </div>
-                  <Text style={{ fontFamily: 'monospace', fontSize: 12, minWidth: 110, flexShrink: 0 }}>{h.name}</Text>
-                  <Text type="secondary" title={`${h.user ? h.user + '@' : ''}${h.hostname}${h.port ? ':' + h.port : ''}`} style={{ fontFamily: 'monospace', fontSize: 11, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <Text style={{ fontFamily: MONO_FONT, fontSize: 13, minWidth: 110, flexShrink: 0 }}>{h.name}</Text>
+                  <Text type="secondary" title={`${h.user ? h.user + '@' : ''}${h.hostname}${h.port ? ':' + h.port : ''}`} style={{ fontFamily: MONO_FONT, fontSize: 12, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {h.user ? `${h.user}@` : ''}{h.hostname}{h.port ? `:${h.port}` : ''}
                   </Text>
                   {(() => {
@@ -2196,8 +2197,8 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
                     const label = ok ? `✓ ${r.runnable_count} runnable${r.runnable_count !== 1 ? 's' : ''}` : sshOnly ? '✓ SSH · runspec failed' : '✗ failed'
                     const detail = r.stderr || r.stdout || `exit ${r.exit_code}`
                     return (
-                      <Tooltip title={<pre style={{ margin: 0, fontSize: 11, whiteSpace: 'pre-wrap', maxWidth: 340 }}>{detail}</pre>} placement="left">
-                        <Tag color={color} style={{ margin: 0, cursor: 'default', fontSize: 11 }}>{label}</Tag>
+                      <Tooltip title={<pre style={{ margin: 0, fontSize: 12, whiteSpace: 'pre-wrap', maxWidth: 340 }}>{detail}</pre>} placement="left">
+                        <Tag color={color} style={{ margin: 0, cursor: 'default', fontSize: 12 }}>{label}</Tag>
                       </Tooltip>
                     )
                   })()}
@@ -2305,7 +2306,7 @@ function FiltersTab() {
     <div>
       <input ref={fileInputRef} type="file" accept=".toml" style={{ display: 'none' }} onChange={handleImport} />
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-        <Text type="secondary" style={{ fontSize: 12 }}>
+        <Text type="secondary" style={{ fontSize: 13 }}>
           Saved to <code>runspec_filters.toml</code>. Pick one in the Relay or Transfer dialog to filter on the source host.
         </Text>
         <Space size={6}>
@@ -2328,7 +2329,7 @@ function FiltersTab() {
       >
         <Form form={form} layout="vertical" size="small">
             <Form.Item name="name" label="Name" rules={[{ required: true, message: 'Required' }]}>
-              <Input placeholder="id-lines" style={{ fontFamily: 'monospace' }} disabled={editingKey !== ''} />
+              <Input placeholder="id-lines" style={{ fontFamily: MONO_FONT }} disabled={editingKey !== ''} />
             </Form.Item>
             <Form.Item
               name="pipeline"
@@ -2336,7 +2337,7 @@ function FiltersTab() {
               rules={[{ required: true, message: 'Required' }]}
               help="Runs on the source host; the file arrives on stdin. Use {{arg}} for a value you'll enter at transfer time. e.g. grep -F -- {{arg}} | cut -d, -f1,4"
             >
-              <Input.TextArea autoSize={{ minRows: 1, maxRows: 4 }} placeholder="grep -F -- {{arg}}" style={{ fontFamily: 'monospace' }} />
+              <Input.TextArea autoSize={{ minRows: 1, maxRows: 4 }} placeholder="grep -F -- {{arg}}" style={{ fontFamily: MONO_FONT }} />
             </Form.Item>
             <Form.Item name="param_label" label="Value label" tooltip="Labels the input shown when this filter is selected (only used when the pipeline has {{arg}}).">
               <Input placeholder="e.g. identifier (optional)" />
@@ -2348,15 +2349,15 @@ function FiltersTab() {
       </Modal>
 
       {filters.length === 0 && editingKey === null && (
-        <Text type="secondary" style={{ fontSize: 12 }}>No filters yet. Add one to shrink large transfers at the source.</Text>
+        <Text type="secondary" style={{ fontSize: 13 }}>No filters yet. Add one to shrink large transfers at the source.</Text>
       )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
         {filters.map(f => (
-          <div key={f.name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 6, border: '1px solid #2a2a2a', background: editingKey === f.name ? 'rgba(255,255,255,0.03)' : 'transparent' }}>
-            <Text style={{ fontFamily: 'monospace', fontSize: 12, minWidth: 90, flexShrink: 0 }}>{f.name}</Text>
-            {isParameterized(f.pipeline) && <Tag style={{ margin: 0, fontSize: 10 }}>arg</Tag>}
-            <Text type="secondary" title={f.pipeline} style={{ fontFamily: 'monospace', fontSize: 11, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <div key={f.name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: RADIUS.sm, border: '1px solid #2a2a2a', background: editingKey === f.name ? 'rgba(255,255,255,0.03)' : 'transparent' }}>
+            <Text style={{ fontFamily: MONO_FONT, fontSize: 13, minWidth: 90, flexShrink: 0 }}>{f.name}</Text>
+            {isParameterized(f.pipeline) && <Tag style={{ margin: 0, fontSize: 11 }}>arg</Tag>}
+            <Text type="secondary" title={f.pipeline} style={{ fontFamily: MONO_FONT, fontSize: 12, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {f.pipeline}
             </Text>
             <Button type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(f)} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
@@ -2380,6 +2381,7 @@ const SS_ORPHAN_KEY = '__not_discovered__'
 interface SsItem { name: string; description?: string; missing: boolean }
 
 function SelfServiceTab() {
+  const accent = useAccent()
   const [entries, setEntries] = useState<SelfServiceEntry[]>([])
   const [runnables, setRunnables] = useState<Runnable[]>([])
   const [roomHosts, setRoomHosts] = useState<RoomHost[]>([])
@@ -2476,13 +2478,13 @@ function SelfServiceTab() {
   const card = (it: SsItem) => {
     const on = isOn(it.name)
     return (
-      <div key={it.name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 9px', borderRadius: 6, border: `1px solid ${on ? '#3b5161' : '#2a2a2a'}`, background: on ? 'rgba(64, 130, 180, 0.10)' : 'transparent', minWidth: 0 }}>
+      <div key={it.name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 9px', borderRadius: RADIUS.sm, border: `1px solid ${on ? withAlpha(accent, 0.5) : 'var(--rs-border)'}`, background: on ? withAlpha(accent, 0.1) : 'transparent', minWidth: 0 }}>
         <Switch size="small" checked={on} disabled={saving} onChange={v => toggle(it.name, v)} />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div title={it.name} style={{ fontFamily: 'monospace', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.name}</div>
-          {it.description && <div title={it.description} style={{ fontSize: 10, color: 'var(--rs-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.description}</div>}
+          <div title={it.name} style={{ fontFamily: MONO_FONT, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.name}</div>
+          {it.description && <div title={it.description} style={{ fontSize: 11, color: 'var(--rs-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.description}</div>}
         </div>
-        {it.missing && <Tag color="orange" style={{ margin: 0, fontSize: 10 }}>missing</Tag>}
+        {it.missing && <Tag color="orange" style={{ margin: 0, fontSize: 11 }}>missing</Tag>}
       </div>
     )
   }
@@ -2496,10 +2498,10 @@ function SelfServiceTab() {
       key: gk,
       label: (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Tag color={isOrphan ? 'orange' : 'geekblue'} style={{ margin: 0, fontFamily: 'monospace', fontSize: 11 }}>
+          <Tag color={isOrphan ? 'orange' : 'geekblue'} style={{ margin: 0, fontFamily: MONO_FONT, fontSize: 12 }}>
             {isOrphan ? 'not discovered' : gk}
           </Tag>
-          <Text type="secondary" style={{ fontSize: 11 }}>{onCount}/{all.length} on</Text>
+          <Text type="secondary" style={{ fontSize: 12 }}>{onCount}/{all.length} on</Text>
           <span style={{ flex: 1 }} />
           {!isOrphan && (
             <span onClick={e => e.stopPropagation()}>
@@ -2529,7 +2531,7 @@ function SelfServiceTab() {
     <div>
       {roomHosts.length > 0 && (
         <div style={{ marginBottom: 16 }}>
-          <Text strong style={{ fontSize: 13, display: 'block', marginBottom: 4 }}>Connected room</Text>
+          <Text strong style={{ fontSize: 14, display: 'block', marginBottom: 4 }}>Connected room</Text>
           <Space wrap>
             <Select
               size="small"
@@ -2547,14 +2549,14 @@ function SelfServiceTab() {
               ]}
             />
           </Space>
-          <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 6 }}>
+          <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 6 }}>
             {roomHosts.length > 1
               ? 'These hosts all run the same helpdesk, for redundancy. This console connects to one at a time — pick which host staffs it (machine-local; for failover, switch here and repoint your front door to that host).'
               : 'The room-configured host this console connects to (machine-local).'}
           </Text>
         </div>
       )}
-      <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 12 }}>
+      <Text type="secondary" style={{ fontSize: 13, display: 'block', marginBottom: 12 }}>
         Saved to <code>runspec_self_service.toml</code> (synced). The enabled runnables are offered to visitors in the helpdesk room's self-service catalogue — everything else stays operator-only. A queue's optional <code>room_catalog</code> allowlist narrows this set per queue.
       </Text>
 
@@ -2568,7 +2570,7 @@ function SelfServiceTab() {
           onChange={e => setQuery(e.target.value)}
           style={{ maxWidth: 300 }}
         />
-        <Text type="secondary" style={{ fontSize: 11, whiteSpace: 'nowrap' }}>{totalOn} enabled · {totalDiscovered} discovered</Text>
+        <Text type="secondary" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>{totalOn} enabled · {totalDiscovered} discovered</Text>
       </div>
 
       {totalDiscovered === 0 && orphaned.length === 0 && (
@@ -2668,7 +2670,7 @@ function ReposTab() {
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-        <Text type="secondary" style={{ fontSize: 12 }}>
+        <Text type="secondary" style={{ fontSize: 13 }}>
           Repositories the agent may read and <strong>locally</strong> edit (the <code>repo_*</code> tools). This list is the allowlist — a repo not here is unreachable. Saved to <code>runspec_repos.toml</code>; rides Config Sync. Edits are local only (no commit/push).
         </Text>
         <Button size="small" icon={<PlusOutlined />} onClick={startAdd} disabled={isEditing}>Add repo</Button>
@@ -2677,7 +2679,7 @@ function ReposTab() {
       {engineMissing && (
         <Alert type="warning" showIcon style={{ marginBottom: 12 }}
           message="Git engine not installed"
-          description={<span style={{ fontSize: 12 }}>Install the optional <code>git-sync</code> extra to clone/read repos.</span>} />
+          description={<span style={{ fontSize: 13 }}>Install the optional <code>git-sync</code> extra to clone/read repos.</span>} />
       )}
 
       <Modal
@@ -2694,7 +2696,7 @@ function ReposTab() {
         <Form form={form} layout="vertical" size="small">
           <Form.Item name="name" label="Name" rules={[{ required: true, message: 'Required' }]}
             tooltip="A short identifier the agent uses to name this repo (e.g. 'payments').">
-            <Input placeholder="payments" style={{ fontFamily: 'monospace' }} disabled={editingKey !== ''} />
+            <Input placeholder="payments" style={{ fontFamily: MONO_FONT }} disabled={editingKey !== ''} />
           </Form.Item>
           <Form.Item name="url" label="Repository URL" rules={[{ required: true, message: 'Required' }]}
             tooltip="HTTPS (https://…) or SSH (git@host:org/repo.git).">
@@ -2720,19 +2722,19 @@ function ReposTab() {
       </Modal>
 
       {repos.length === 0 && editingKey === null && (
-        <Text type="secondary" style={{ fontSize: 12 }}>No repos yet. Add one so the agent can read and edit its code.</Text>
+        <Text type="secondary" style={{ fontSize: 13 }}>No repos yet. Add one so the agent can read and edit its code.</Text>
       )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
         {repos.map(r => (
-          <div key={r.name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 6, border: '1px solid #2a2a2a', background: editingKey === r.name ? 'rgba(255,255,255,0.03)' : 'transparent' }}>
-            <Text style={{ fontFamily: 'monospace', fontSize: 12, minWidth: 90, flexShrink: 0 }}>{r.name}</Text>
-            <Tag style={{ margin: 0, fontSize: 10 }}>{r.ref}</Tag>
+          <div key={r.name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: RADIUS.sm, border: '1px solid #2a2a2a', background: editingKey === r.name ? 'rgba(255,255,255,0.03)' : 'transparent' }}>
+            <Text style={{ fontFamily: MONO_FONT, fontSize: 13, minWidth: 90, flexShrink: 0 }}>{r.name}</Text>
+            <Tag style={{ margin: 0, fontSize: 11 }}>{r.ref}</Tag>
             {r.checked_out
-              ? <Tag color="green" style={{ margin: 0, fontSize: 10 }} title={`Checked out at ${r.commit}${r.checkout_dir ? ` — ${r.checkout_dir}` : ''}`}>synced {r.commit}</Tag>
-              : <Tag style={{ margin: 0, fontSize: 10 }}>not synced</Tag>}
-            {r.path && <Tag color="blue" style={{ margin: 0, fontSize: 10 }} title={`Custom checkout: ${r.path}`}>custom</Tag>}
-            <Text type="secondary" title={`${r.url}${credLabel(r.credential_id) ? ` — auth: ${credLabel(r.credential_id)}` : ''}`} style={{ fontFamily: 'monospace', fontSize: 11, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              ? <Tag color="green" style={{ margin: 0, fontSize: 11 }} title={`Checked out at ${r.commit}${r.checkout_dir ? ` — ${r.checkout_dir}` : ''}`}>synced {r.commit}</Tag>
+              : <Tag style={{ margin: 0, fontSize: 11 }}>not synced</Tag>}
+            {r.path && <Tag color="blue" style={{ margin: 0, fontSize: 11 }} title={`Custom checkout: ${r.path}`}>custom</Tag>}
+            <Text type="secondary" title={`${r.url}${credLabel(r.credential_id) ? ` — auth: ${credLabel(r.credential_id)}` : ''}`} style={{ fontFamily: MONO_FONT, fontSize: 12, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {r.url}
             </Text>
             <Tooltip title="Sync now (clone / fetch)">
@@ -2842,14 +2844,14 @@ function CredentialsTab() {
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-        <Text type="secondary" style={{ fontSize: 12 }}>
+        <Text type="secondary" style={{ fontSize: 13 }}>
           Secrets are stored in the OS keychain{backend?.backend ? <> (<code>{backend.backend}</code>)</> : null}; only metadata is saved to <code>runspec_credentials.toml</code>.
         </Text>
         <Button size="small" icon={<PlusOutlined />} onClick={startAdd} disabled={isEditing}>Add</Button>
       </div>
 
       {backend && !backend.available && (
-        <Text type="warning" style={{ fontSize: 12, display: 'block', marginBottom: 10 }}>
+        <Text type="warning" style={{ fontSize: 13, display: 'block', marginBottom: 10 }}>
           No OS keychain is available, so secret values can't be stored. Install the optional <code>credentials</code> extra on a desktop session. Metadata-only entries still save.
         </Text>
       )}
@@ -2874,15 +2876,15 @@ function CredentialsTab() {
             </Form.Item>
             {isSshKey ? (
               <>
-                <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 8 }}>
+                <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
                   An SSH-key credential authenticates a Config Sync SSH repo with its own deploy key (use it in Settings → Config Sync). The key files stay on disk — only the paths are saved.
                 </Text>
                 <Form.Item name="private_key" label="Private key path" rules={[{ required: true, message: 'Required' }]} tooltip="Path to the private key file (e.g. an ed25519 deploy key). Passed to the SSH client as the identity file.">
-                  <Input placeholder="~/.ssh/runspec_ed25519" style={{ fontFamily: 'monospace' }} autoComplete="off"
+                  <Input placeholder="~/.ssh/runspec_ed25519" style={{ fontFamily: MONO_FONT }} autoComplete="off"
                     addonAfter={<a onClick={() => pickKey('private_key')}>Browse</a>} />
                 </Form.Item>
                 <Form.Item name="public_key" label="Public key path" tooltip="Optional — the matching .pub file. Informational; not required to connect.">
-                  <Input placeholder="~/.ssh/runspec_ed25519.pub" style={{ fontFamily: 'monospace' }} autoComplete="off"
+                  <Input placeholder="~/.ssh/runspec_ed25519.pub" style={{ fontFamily: MONO_FONT }} autoComplete="off"
                     addonAfter={<a onClick={() => pickKey('public_key')}>Browse</a>} />
                 </Form.Item>
                 <Form.Item name="username" label="SSH user" tooltip="The SSH login user — defaults to git for most hosts (GitHub, GitLab).">
@@ -2900,28 +2902,28 @@ function CredentialsTab() {
                 <Form.Item name="secret" label="Secret" tooltip={editingId !== '' ? 'Leave blank to keep the stored secret.' : undefined}>
                   <Input.Password placeholder={editingId !== '' && editingCred?.has_secret ? '•••••••• (unchanged)' : 'password / token'} autoComplete="new-password" disabled={!backend?.available} />
                 </Form.Item>
-                <div style={{ marginBottom: 12, padding: '8px 10px', borderRadius: 6, background: 'rgba(128,128,128,0.08)' }}>
-                  <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>
+                <div style={{ marginBottom: 12, padding: '8px 10px', borderRadius: RADIUS.sm, background: 'rgba(128,128,128,0.08)' }}>
+                  <Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
                     The <b>label</b> drives the env var prefix. When this credential is passed to a run it sets:
                   </Text>
                   <div style={{ marginTop: 4 }}>
                     {envNames.length
-                      ? envNames.map((n, i) => <span key={n}>{i > 0 && ' '}<code style={{ fontSize: 11 }}>{n}</code></span>)
-                      : <Text type="secondary" style={{ fontSize: 11 }}>— (give the credential a label)</Text>}
+                      ? envNames.map((n, i) => <span key={n}>{i > 0 && ' '}<code style={{ fontSize: 12 }}>{n}</code></span>)
+                      : <Text type="secondary" style={{ fontSize: 12 }}>— (give the credential a label)</Text>}
                   </div>
-                  <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 4 }}>
+                  <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
                     Name it to match what the runnable reads from the environment.
                   </Text>
                 </div>
                 <Divider style={{ margin: '4px 0 12px' }} />
-                <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 8 }}>
+                <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
                   Binding (agent only) — which runnable arguments these values fill for agent-driven runs, and where the credential may be applied (glob patterns; blank = any). The Forms path uses the env vars above, not these.
                 </Text>
                 <Form.Item name="username_arg" label="Username → argument" tooltip="Runnable arg name that receives the username (passed normally).">
-                  <Input placeholder="service-username" style={{ fontFamily: 'monospace' }} autoComplete="off" />
+                  <Input placeholder="service-username" style={{ fontFamily: MONO_FONT }} autoComplete="off" />
                 </Form.Item>
                 <Form.Item name="secret_arg" label="Secret → argument" tooltip="Runnable arg name that receives the secret (passed via env, never argv).">
-                  <Input placeholder="user-password" style={{ fontFamily: 'monospace' }} autoComplete="off" />
+                  <Input placeholder="user-password" style={{ fontFamily: MONO_FONT }} autoComplete="off" />
                 </Form.Item>
                 <Form.Item name="scope_hosts" label="Host scope">
                   <Select mode="tags" placeholder="prod-*  (Enter to add)" tokenSeparators={[',', ' ']} open={false} suffixIcon={null} />
@@ -2935,19 +2937,19 @@ function CredentialsTab() {
       </Modal>
 
       {creds.length === 0 && editingId === null && (
-        <Text type="secondary" style={{ fontSize: 12 }}>No credentials yet. Add one to let a runnable or relay use a stored identity.</Text>
+        <Text type="secondary" style={{ fontSize: 13 }}>No credentials yet. Add one to let a runnable or relay use a stored identity.</Text>
       )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
         {creds.map(c => (
-          <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 6, border: '1px solid #2a2a2a', background: editingId === c.id ? 'rgba(255,255,255,0.03)' : 'transparent' }}>
-            <KeyOutlined style={{ color: 'var(--rs-text-muted)', fontSize: 12, flexShrink: 0 }} />
-            <Text style={{ fontSize: 12, minWidth: 110, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.label}</Text>
-            <Tag style={{ margin: 0, fontSize: 10 }}>{c.kind}</Tag>
+          <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: RADIUS.sm, border: '1px solid #2a2a2a', background: editingId === c.id ? 'rgba(255,255,255,0.03)' : 'transparent' }}>
+            <KeyOutlined style={{ color: 'var(--rs-text-muted)', fontSize: 13, flexShrink: 0 }} />
+            <Text style={{ fontSize: 13, minWidth: 110, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.label}</Text>
+            <Tag style={{ margin: 0, fontSize: 11 }}>{c.kind}</Tag>
             {c.has_secret
-              ? <Tag color="green" style={{ margin: 0, fontSize: 10 }}>secret set</Tag>
-              : <Tag style={{ margin: 0, fontSize: 10 }}>no secret</Tag>}
-            <Text type="secondary" title={c.username} style={{ fontSize: 11, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              ? <Tag color="green" style={{ margin: 0, fontSize: 11 }}>secret set</Tag>
+              : <Tag style={{ margin: 0, fontSize: 11 }}>no secret</Tag>}
+            <Text type="secondary" title={c.username} style={{ fontSize: 12, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {c.username}
             </Text>
             <Button type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(c)} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
@@ -3036,7 +3038,7 @@ function MailboxesTab() {
 
   return (
     <div>
-      <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 12 }}>
+      <Text type="secondary" style={{ fontSize: 13, display: 'block', marginBottom: 12 }}>
         Monitor one Outlook inbox for the <code>new_mail</code> trigger source. Trigger
         rules &mdash; what to do with matched mail &mdash; live in <code>runspec_triggers.toml</code>.
       </Text>
@@ -3044,7 +3046,7 @@ function MailboxesTab() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
         <Switch size="small" checked={enabled} onChange={setEnabled} />
         <MailOutlined style={{ color: 'var(--rs-text-muted)' }} />
-        <span style={{ fontSize: 13 }}>Monitor a mailbox</span>
+        <span style={{ fontSize: 14 }}>Monitor a mailbox</span>
       </div>
 
       {enabled && (
@@ -3054,7 +3056,7 @@ function MailboxesTab() {
             label="Mailbox email address"
             help="The account or shared mailbox to monitor. Leave blank for your own default account."
           >
-            <Input placeholder="helpdesk@corp.com (blank = my mailbox)" style={{ fontFamily: 'monospace' }} />
+            <Input placeholder="helpdesk@corp.com (blank = my mailbox)" style={{ fontFamily: MONO_FONT }} />
           </Form.Item>
           <Form.Item
             name="folders"
@@ -3065,7 +3067,7 @@ function MailboxesTab() {
               mode="tags"
               tokenSeparators={[',']}
               placeholder="Inbox (leave empty), or e.g. Tickets/Open"
-              style={{ fontFamily: 'monospace', width: '100%' }}
+              style={{ fontFamily: MONO_FONT, width: '100%' }}
               open={false}
               suffixIcon={null}
             />
@@ -3088,7 +3090,7 @@ function MailboxesTab() {
               style={{ marginBottom: 10 }}
               message="Shared mailbox watched by several consoles?"
               description={
-                <span style={{ fontSize: 12 }}>
+                <span style={{ fontSize: 13 }}>
                   Without coordination, every console reacts to every new mail
                   (duplicate replies / runs). Enable a <b>claim</b> on the matching
                   trigger (Triggers tab) so one operator claims each email &mdash; the
@@ -3105,9 +3107,9 @@ function MailboxesTab() {
       <Divider style={{ margin: '16px 0 12px' }} />
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
         <MailOutlined style={{ color: 'var(--rs-text-muted)' }} />
-        <span style={{ fontSize: 13 }}>Also watch (optional)</span>
+        <span style={{ fontSize: 14 }}>Also watch (optional)</span>
       </div>
-      <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 10 }}>
+      <Text type="secondary" style={{ fontSize: 13, display: 'block', marginBottom: 10 }}>
         Extra mailboxes/folders to monitor for <code>new_mail</code> alongside the one
         above &mdash; e.g. your own Inbox next to a shared helpdesk mailbox. These feed
         triggers only; the mailbox above stays the room / sign-up identity.
@@ -3119,7 +3121,7 @@ function MailboxesTab() {
             placeholder="address (blank = my default account)"
             value={w.address}
             onChange={e => setWatch(i, { address: e.target.value })}
-            style={{ fontFamily: 'monospace', flex: 2 }}
+            style={{ fontFamily: MONO_FONT, flex: 2 }}
           />
           <Select
             size="small"
@@ -3128,7 +3130,7 @@ function MailboxesTab() {
             placeholder='folders (blank = "Inbox")'
             value={w.folders ?? []}
             onChange={(vals: string[]) => setWatch(i, { folders: vals })}
-            style={{ fontFamily: 'monospace', flex: 2 }}
+            style={{ fontFamily: MONO_FONT, flex: 2 }}
             open={false}
             suffixIcon={null}
           />
@@ -3146,9 +3148,9 @@ function MailboxesTab() {
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 12 }}>
         <Button type="primary" size="small" loading={saving} onClick={save}>Save</Button>
-        {saved && <Text type="success" style={{ fontSize: 12 }}>Saved</Text>}
+        {saved && <Text type="success" style={{ fontSize: 13 }}>Saved</Text>}
       </div>
-      <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 10 }}>
+      <Text type="secondary" style={{ fontSize: 13, display: 'block', marginTop: 10 }}>
         Saved to <code>config.toml</code> in <code>{configDir || '%APPDATA%/runspec-console'}</code>. Changes restart the trigger engine.
       </Text>
     </div>
@@ -3188,14 +3190,14 @@ function TeamsTab() {
 
   return (
     <div>
-      <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 12 }}>
+      <Text type="secondary" style={{ fontSize: 13, display: 'block', marginBottom: 12 }}>
         The customer teams a visitor picks at sign-up — stored in the helpdesk room and shared across operators. <code>Default</code> is always present.
       </Text>
 
       {notConnected && (
         <Alert type="warning" showIcon style={{ marginBottom: 10 }}
           message="Not connected to a helpdesk room"
-          description={<span style={{ fontSize: 12 }}>Connect a host with a room port + a matching <code>[mailbox]</code> (Settings → Jump Hosts + Triggers) to manage teams.</span>} />
+          description={<span style={{ fontSize: 13 }}>Connect a host with a room port + a matching <code>[mailbox]</code> (Settings → Jump Hosts + Triggers) to manage teams.</span>} />
       )}
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
@@ -3207,16 +3209,16 @@ function TeamsTab() {
       {err && <Alert type="error" showIcon style={{ marginBottom: 10 }} message={err} />}
 
       {teams.length === 0 && !notConnected ? (
-        <Text type="secondary" style={{ fontSize: 12 }}>No teams yet — add one above.</Text>
+        <Text type="secondary" style={{ fontSize: 13 }}>No teams yet — add one above.</Text>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
           {teams.map(t => (
-            <div key={t.slug} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 6, border: '1px solid #2a2a2a' }}>
+            <div key={t.slug} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: RADIUS.sm, border: '1px solid #2a2a2a' }}>
               <TeamOutlined style={{ color: 'var(--rs-text-muted)', flexShrink: 0 }} />
-              <Text style={{ fontSize: 13, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</Text>
-              <Text type="secondary" style={{ fontFamily: 'monospace', fontSize: 11, flexShrink: 0 }}>{t.slug}</Text>
+              <Text style={{ fontSize: 14, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</Text>
+              <Text type="secondary" style={{ fontFamily: MONO_FONT, fontSize: 12, flexShrink: 0 }}>{t.slug}</Text>
               {t.slug === 'default' ? (
-                <Tag style={{ margin: 0, fontSize: 10 }}>protected</Tag>
+                <Tag style={{ margin: 0, fontSize: 11 }}>protected</Tag>
               ) : (
                 <Popconfirm title={`Remove team ${t.name}?`} onConfirm={() => remove(t.slug)} okText="Remove" cancelText="Cancel" placement="left">
                   <Button type="text" size="small" icon={<DeleteOutlined />} danger style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
@@ -3226,7 +3228,7 @@ function TeamsTab() {
           ))}
         </div>
       )}
-      <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 10 }}>
+      <Text type="secondary" style={{ fontSize: 13, display: 'block', marginTop: 10 }}>
         Teams live in the helpdesk room database — not a local file. Changes are shared with every operator on the same room.
       </Text>
     </div>
@@ -3372,14 +3374,14 @@ function ConfigSyncTab() {
 
   return (
     <div>
-      <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 12 }}>
+      <Text type="secondary" style={{ fontSize: 13, display: 'block', marginBottom: 12 }}>
         Pull this console's config files from a git repository at a tag, so a fresh install can be fully configured from one source. Authentication uses a saved credential (Credentials tab). A pull is <strong>non-destructive</strong>: it adds and updates from the repo but keeps your own hosts/triggers/filters/credentials and the keys you protect below (each file is backed up first).
       </Text>
 
       {engineMissing && (
         <Alert type="warning" showIcon style={{ marginBottom: 12 }}
           message="Git engine not installed"
-          description={<span style={{ fontSize: 12 }}>Install the optional <code>git-sync</code> extra to enable pulling.</span>} />
+          description={<span style={{ fontSize: 13 }}>Install the optional <code>git-sync</code> extra to enable pulling.</span>} />
       )}
 
       <Form form={form} layout="vertical" size="small">
@@ -3410,30 +3412,30 @@ function ConfigSyncTab() {
           name="preserve"
           label="Preserve (keep local on pull)"
           tooltip={'Keys whose local value a pull must never overwrite. Format: "<file>:<dotted.path>", with * matching any host/entry. e.g. config.toml:mailbox.folder or runspec_hosts.toml:*.room_user'}
-          help={cfg?.preserve_default?.length ? <span style={{ fontSize: 11 }}>Always protected: {cfg.preserve_default.map(p => <code key={p} style={{ marginRight: 6 }}>{p}</code>)}</span> : undefined}
+          help={cfg?.preserve_default?.length ? <span style={{ fontSize: 12 }}>Always protected: {cfg.preserve_default.map(p => <code key={p} style={{ marginRight: 6 }}>{p}</code>)}</span> : undefined}
         >
           <Select mode="tags" tokenSeparators={[',', ' ']} open={false} suffixIcon={null}
             placeholder="config.toml:mailbox.folder  (Enter to add)" />
         </Form.Item>
         <Form.Item name="layers" label="Folder(s) in the repo (optional)"
           tooltip="Where in the repo the config files live. Leave blank to read the repo root. Add one folder to read just that folder. Add several to combine them in order — a shared base first, your team's folder last — so common config is shared and your team overlays its own on top (later folders win; your local entries are always kept)."
-          help={<span style={{ fontSize: 11 }}>Blank = repo root. One folder, e.g. <code>teams/emea</code> = just that folder. Several, e.g. <code>_base</code> then <code>teams/emea</code> = shared base + your team on top (order = how they stack).</span>}>
-          <Select mode="tags" placeholder="blank = repo root  ·  or e.g. _base then teams/emea" tokenSeparators={[',']} open={false} suffixIcon={null} style={{ fontFamily: 'monospace' }} />
+          help={<span style={{ fontSize: 12 }}>Blank = repo root. One folder, e.g. <code>teams/emea</code> = just that folder. Several, e.g. <code>_base</code> then <code>teams/emea</code> = shared base + your team on top (order = how they stack).</span>}>
+          <Select mode="tags" placeholder="blank = repo root  ·  or e.g. _base then teams/emea" tokenSeparators={[',']} open={false} suffixIcon={null} style={{ fontFamily: MONO_FONT }} />
         </Form.Item>
         <Form.Item
           name="ca_bundle"
           label="CA bundle (optional)"
           tooltip="Path to a PEM file for verifying the server's TLS certificate. Needed for an internal CA or a TLS-inspecting corporate proxy — the pull uses certifi by default, not the OS/git cert store. Leave blank for public hosts. (HTTPS also reuses the SSH-tab proxy, if set.)"
-          help={<span style={{ fontSize: 11 }}>For a private GitLab / corporate proxy that gives an <code>SSL CERTIFICATE_VERIFY_FAILED</code> error — point this at your internal root CA <code>.pem</code>.</span>}
+          help={<span style={{ fontSize: 12 }}>For a private GitLab / corporate proxy that gives an <code>SSL CERTIFICATE_VERIFY_FAILED</code> error — point this at your internal root CA <code>.pem</code>.</span>}
         >
-          <Input placeholder="~/certs/corp-root-ca.pem" style={{ fontFamily: 'monospace' }} autoComplete="off" />
+          <Input placeholder="~/certs/corp-root-ca.pem" style={{ fontFamily: MONO_FONT }} autoComplete="off" />
         </Form.Item>
         <Form.Item
           name="tls_verify"
           label="Verify TLS"
           valuePropName="checked"
           tooltip="Off skips certificate verification entirely (like git's http.sslVerify=false). Insecure — only on a trusted internal network. Prefer a CA bundle above."
-          help={<span style={{ fontSize: 11 }}>Turn off only if you can't supply a CA bundle (e.g. your <code>git config</code> already sets <code>http.sslVerify false</code>).</span>}
+          help={<span style={{ fontSize: 12 }}>Turn off only if you can't supply a CA bundle (e.g. your <code>git config</code> already sets <code>http.sslVerify false</code>).</span>}
         >
           <Switch size="small" />
         </Form.Item>
@@ -3441,7 +3443,7 @@ function ConfigSyncTab() {
           name="backups_keep"
           label="Backups to keep per file"
           tooltip="Before a pull changes a file it copies the old one to <name>.bak-<timestamp>. This caps how many of those are kept per file — older ones are pruned after each pull. A pull that changes nothing makes no backup. 0 = keep all (never prune)."
-          help={<span style={{ fontSize: 11 }}>Default 5. Set <code>0</code> to keep every backup (they'll accumulate in the config folder).</span>}
+          help={<span style={{ fontSize: 12 }}>Default 5. Set <code>0</code> to keep every backup (they'll accumulate in the config folder).</span>}
         >
           <InputNumber min={0} step={1} style={{ width: '100%' }} placeholder="5" />
         </Form.Item>
@@ -3450,7 +3452,7 @@ function ConfigSyncTab() {
           <Button size="small" onClick={handleSave} loading={saving}>{saved ? 'Saved' : 'Save settings'}</Button>
           <Popconfirm
             title="Pull config from the repo?"
-            description={<span style={{ fontSize: 12 }}>Merges config from the chosen tag (adds/updates, keeps your own).<br />Each file is backed up first.</span>}
+            description={<span style={{ fontSize: 13 }}>Merges config from the chosen tag (adds/updates, keeps your own).<br />Each file is backed up first.</span>}
             onConfirm={pull} okText="Pull" cancelText="Cancel" placement="topLeft">
             <Button size="small" type="primary" icon={<DownloadOutlined />} loading={pulling} disabled={engineMissing}>Pull now</Button>
           </Popconfirm>
@@ -3458,7 +3460,7 @@ function ConfigSyncTab() {
       </Form>
 
       {cfg?.last_synced && (
-        <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 12 }}>
+        <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 12 }}>
           Last synced <code>{cfg.last_ref}</code> ({cfg.last_commit?.slice(0, 8)}) at {cfg.last_synced}
         </Text>
       )}
@@ -3466,7 +3468,7 @@ function ConfigSyncTab() {
       {result && result.ok && (
         <Alert type="success" showIcon style={{ marginTop: 12 }}
           message={`Pulled at ${result.ref}`}
-          description={<span style={{ fontSize: 12 }}>
+          description={<span style={{ fontSize: 13 }}>
             Wrote: {result.written?.length ? <code>{result.written.join(', ')}</code> : 'nothing'}.
             {result.skipped?.length ? <> Skipped (not in repo): <code>{result.skipped.join(', ')}</code>.</> : null}
             {result.backups?.length ? <> Backed up {result.backups.length} file(s).</> : null}
@@ -3475,21 +3477,21 @@ function ConfigSyncTab() {
           </span>} />
       )}
       {result && !result.ok && (
-        <Alert type="error" showIcon style={{ marginTop: 12 }} message="Pull failed" description={<span style={{ fontSize: 12 }}>{result.error}</span>} />
+        <Alert type="error" showIcon style={{ marginTop: 12 }} message="Pull failed" description={<span style={{ fontSize: 13 }}>{result.error}</span>} />
       )}
 
       <Divider style={{ margin: '18px 0 12px' }} />
-      <Text strong style={{ fontSize: 13, display: 'block' }}>Config seed</Text>
-      <Text type="secondary" style={{ fontSize: 12, display: 'block', margin: '4px 0 10px' }}>
+      <Text strong style={{ fontSize: 14, display: 'block' }}>Config seed</Text>
+      <Text type="secondary" style={{ fontSize: 13, display: 'block', margin: '4px 0 10px' }}>
         Baseline config <strong>bundled inside this install's package</strong> — applied automatically on launch when the package version changes, so a fresh or air-gapped machine is configured with no repo or index reachable. It's the lowest layer: a git pull above and your own edits always win (except the keys you protect above).
       </Text>
       {seed?.available ? (
         <>
-          <Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
+          <Text type="secondary" style={{ fontSize: 13, display: 'block' }}>
             Bundled: {Object.entries(seed.stamp).map(([d, v]) => <code key={d} style={{ marginRight: 6 }}>{d} v{v}</code>)}
           </Text>
           {seed.last_applied && (
-            <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 2 }}>
+            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 2 }}>
               Last applied at {seed.last_applied}
             </Text>
           )}
@@ -3497,10 +3499,10 @@ function ConfigSyncTab() {
             const active = seed.overrides.filter(o => !o.preserved)
             const kept = seed.overrides.filter(o => o.preserved)
             const row = (o: SeedOverride, i: number) => (
-              <div key={`${o.file}:${o.path}:${i}`} style={{ fontFamily: 'monospace', fontSize: 11, marginTop: 3 }}>
-                <Tag style={{ margin: '0 4px 0 0', fontSize: 10 }}>{o.file}</Tag>
+              <div key={`${o.file}:${o.path}:${i}`} style={{ fontFamily: MONO_FONT, fontSize: 12, marginTop: 3 }}>
+                <Tag style={{ margin: '0 4px 0 0', fontSize: 11 }}>{o.file}</Tag>
                 <span>{o.path}</span>: local <code>{o.local || '(empty)'}</code> → seed <code>{o.seed || '(empty)'}</code>
-                {o.preserved && <Tag color="green" style={{ marginLeft: 6, fontSize: 10 }}>protected</Tag>}
+                {o.preserved && <Tag color="green" style={{ marginLeft: 6, fontSize: 11 }}>protected</Tag>}
               </div>
             )
             return (
@@ -3511,7 +3513,7 @@ function ConfigSyncTab() {
                 message={active.length
                   ? `${active.length} local value${active.length > 1 ? 's' : ''} would be overwritten by the seed`
                   : 'Seeded keys differ from local (all protected)'}
-                description={<div style={{ fontSize: 12 }}>
+                description={<div style={{ fontSize: 13 }}>
                   {active.length > 0 && (
                     <div style={{ marginBottom: kept.length ? 10 : 0 }}>
                       <div style={{ marginBottom: 2 }}>
@@ -3532,12 +3534,12 @@ function ConfigSyncTab() {
           {seed.pending && (
             <Alert type="info" showIcon style={{ marginTop: 8 }}
               message="A newer seed is bundled"
-              description={<span style={{ fontSize: 12 }}>It applies automatically on the next launch — or re-apply it now.</span>} />
+              description={<span style={{ fontSize: 13 }}>It applies automatically on the next launch — or re-apply it now.</span>} />
           )}
           <div style={{ marginTop: 10 }}>
             <Popconfirm
               title="Re-apply the bundled config seed?"
-              description={<span style={{ fontSize: 12 }}>Re-asserts the package's baseline over local config (your own entries and protected keys are kept).<br />Each changed file is backed up first.</span>}
+              description={<span style={{ fontSize: 13 }}>Re-asserts the package's baseline over local config (your own entries and protected keys are kept).<br />Each changed file is backed up first.</span>}
               onConfirm={reapplySeed} okText="Re-apply" cancelText="Cancel" placement="topLeft">
               <Button size="small" loading={seedBusy}>Re-apply seed</Button>
             </Popconfirm>
@@ -3545,41 +3547,41 @@ function ConfigSyncTab() {
           {seedResult && seedResult.ok && seedResult.applied && (
             <Alert type="success" showIcon style={{ marginTop: 10 }}
               message="Seed applied"
-              description={<span style={{ fontSize: 12 }}>
+              description={<span style={{ fontSize: 13 }}>
                 Wrote: {seedResult.written?.length ? <code>{seedResult.written.join(', ')}</code> : 'nothing'}.
                 {seedResult.backups?.length ? <> Backed up {seedResult.backups.length} file(s).</> : null}
                 {' '}Hosts and triggers reloaded — no restart needed.
               </span>} />
           )}
           {seedResult && seedResult.ok && !seedResult.applied && (
-            <Alert type="info" showIcon style={{ marginTop: 10 }} message="Seed already up to date" description={<span style={{ fontSize: 12 }}>Nothing changed.</span>} />
+            <Alert type="info" showIcon style={{ marginTop: 10 }} message="Seed already up to date" description={<span style={{ fontSize: 13 }}>Nothing changed.</span>} />
           )}
           {seedResult && !seedResult.ok && (
-            <Alert type="error" showIcon style={{ marginTop: 10 }} message="Seed apply failed" description={<span style={{ fontSize: 12 }}>{seedResult.error}</span>} />
+            <Alert type="error" showIcon style={{ marginTop: 10 }} message="Seed apply failed" description={<span style={{ fontSize: 13 }}>{seedResult.error}</span>} />
           )}
         </>
       ) : (
-        <Text type="secondary" style={{ fontSize: 12 }}>No config seed bundled in this install.</Text>
+        <Text type="secondary" style={{ fontSize: 13 }}>No config seed bundled in this install.</Text>
       )}
 
       <Divider style={{ margin: '18px 0 12px' }} />
-      <Text strong style={{ fontSize: 13, display: 'block' }}>Runbook docs</Text>
-      <Text type="secondary" style={{ fontSize: 12, display: 'block', margin: '4px 0 10px' }}>
+      <Text strong style={{ fontSize: 14, display: 'block' }}>Runbook docs</Text>
+      <Text type="secondary" style={{ fontSize: 13, display: 'block', margin: '4px 0 10px' }}>
         Generate a plain-markdown <strong>wiki</strong> from your runbooks + fleet — grouped by tag, one page per runbook, cross-linked to the runnables and hosts each names. It's for humans to follow during an outage (when the console may be down). Output is deterministic, so re-running only changes what your runbooks changed — point it at a local clone of the config repo and commit the docs back for the team.
       </Text>
       <Space.Compact style={{ width: '100%' }}>
         <Input size="small" value={docsDir} onChange={e => setDocsDir(e.target.value)}
           placeholder={docsDefault ? `${docsDefault}  (default)` : 'output directory'}
-          style={{ fontFamily: 'monospace' }} autoComplete="off" />
+          style={{ fontFamily: MONO_FONT }} autoComplete="off" />
         <Button size="small" type="primary" onClick={generateDocs} loading={docsBusy}>Generate</Button>
       </Space.Compact>
       {docsResult && docsResult.ok && (
         <Alert type="success" showIcon style={{ marginTop: 10 }}
           message={`Wrote ${docsResult.written?.length ?? 0} file(s)`}
-          description={<span style={{ fontSize: 12 }}>Into <code>{docsResult.dir}</code>. Commit them from your repo clone to share with the team.</span>} />
+          description={<span style={{ fontSize: 13 }}>Into <code>{docsResult.dir}</code>. Commit them from your repo clone to share with the team.</span>} />
       )}
       {docsResult && !docsResult.ok && (
-        <Alert type="error" showIcon style={{ marginTop: 10 }} message="Doc generation failed" description={<span style={{ fontSize: 12 }}>{docsResult.error}</span>} />
+        <Alert type="error" showIcon style={{ marginTop: 10 }} message="Doc generation failed" description={<span style={{ fontSize: 13 }}>{docsResult.error}</span>} />
       )}
     </div>
   )
@@ -3745,7 +3747,7 @@ function RunbooksTab() {
 
   return (
     <div>
-      <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+      <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
         Runbooks are reusable, parameterized runbooks. Invoke one from the chat prompt
         with <Typography.Text code>$</Typography.Text>: it collects the parameters
         below in a form, then runs the steps through the assistant (using SSH runnables,
@@ -3761,15 +3763,15 @@ function RunbooksTab() {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
         {runbooks.length === 0 && <Empty description="No runbooks yet" image={Empty.PRESENTED_IMAGE_SIMPLE} />}
         {runbooks.map(s => (
-          <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 6, border: '1px solid #2a2a2a' }}>
+          <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: RADIUS.sm, border: '1px solid #2a2a2a' }}>
             <span style={{ minWidth: 200 }}>
-              <Typography.Text code style={{ fontSize: 12 }}>${s.id}</Typography.Text>
+              <Typography.Text code style={{ fontSize: 13 }}>${s.id}</Typography.Text>
             </span>
-            <span style={{ flex: 1, fontSize: 12, color: 'var(--rs-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span style={{ flex: 1, fontSize: 13, color: 'var(--rs-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {s.title}{s.symptom ? ` — ${s.symptom}` : ''}
             </span>
             {(s.args ?? []).length > 0 && (
-              <Tag style={{ fontSize: 10, margin: 0 }}>{(s.args ?? []).length} param{(s.args ?? []).length !== 1 ? 's' : ''}</Tag>
+              <Tag style={{ fontSize: 11, margin: 0 }}>{(s.args ?? []).length} param{(s.args ?? []).length !== 1 ? 's' : ''}</Tag>
             )}
             <Button type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(s)} disabled={editingKey !== null} />
             <Popconfirm title={`Remove ${s.id}?`} onConfirm={() => remove(s.id)}>
@@ -3791,7 +3793,7 @@ function RunbooksTab() {
         <Form form={form} layout="vertical" size="small">
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 12px' }}>
             <Form.Item name="id" label="Id" rules={[{ required: true, message: 'Required' }]}>
-              <Input placeholder="fetch-and-process-log" style={{ fontFamily: 'monospace' }} disabled={editingKey !== ''} />
+              <Input placeholder="fetch-and-process-log" style={{ fontFamily: MONO_FONT }} disabled={editingKey !== ''} />
             </Form.Item>
             <Form.Item name="title" label="Title">
               <Input placeholder="Fetch & process a prod log" />
@@ -3804,7 +3806,7 @@ function RunbooksTab() {
             <Select mode="tags" placeholder="logs, relay" tokenSeparators={[',']} />
           </Form.Item>
           <Divider style={{ margin: '8px 0' }} orientation="left" plain>Steps</Divider>
-          <Typography.Paragraph type="secondary" style={{ fontSize: 11, marginBottom: 8 }}>
+          <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 8 }}>
             One step per box, in order — the assistant follows them as numbered prose and
             uses its own judgement (e.g. write “if the node is healthy, skip the restart”
             right in a step). Reference parameters as <Typography.Text code>{'{{name}}'}</Typography.Text>.
@@ -3813,9 +3815,9 @@ function RunbooksTab() {
             {(fields, { add, remove, move }) => (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 8 }}>
                 {fields.map((field, index) => (
-                  <div key={field.key} style={{ border: '1px solid #2a2a2a', borderRadius: 6, padding: 8 }}>
+                  <div key={field.key} style={{ border: '1px solid #2a2a2a', borderRadius: RADIUS.sm, padding: 8 }}>
                     <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 6 }}>
-                      <span style={{ fontSize: 12, color: 'var(--rs-text-muted)', minWidth: 52 }}>Step {index + 1}</span>
+                      <span style={{ fontSize: 13, color: 'var(--rs-text-muted)', minWidth: 52 }}>Step {index + 1}</span>
                       <Form.Item name={[field.name, 'title']} noStyle>
                         <Input size="small" placeholder="Optional title" />
                       </Form.Item>
@@ -3824,7 +3826,7 @@ function RunbooksTab() {
                       <MinusCircleOutlined onClick={() => remove(field.name)} style={{ color: 'var(--rs-text-muted)', cursor: 'pointer' }} />
                     </div>
                     <Form.Item name={[field.name, 'text']} noStyle rules={[{ required: true, whitespace: true, message: 'Step text is required' }]}>
-                      <Input.TextArea autoSize={{ minRows: 2 }} style={{ fontFamily: 'monospace', fontSize: 12 }}
+                      <Input.TextArea autoSize={{ minRows: 2 }} style={{ fontFamily: MONO_FONT, fontSize: 13 }}
                         placeholder={'Relay /srv/prod/{{app}}/logs/{{logfile}} via filter {{filter}} to jump-01:/home/me/logs.'} />
                     </Form.Item>
                   </div>
@@ -3841,11 +3843,11 @@ function RunbooksTab() {
             {(fields, { add, remove }) => (
               <>
                 {fields.map(({ key, name, ...rest }) => (
-                  <div key={key} style={{ border: '1px solid #2a2a2a', borderRadius: 6, padding: '6px 8px', marginBottom: 6 }}>
+                  <div key={key} style={{ border: '1px solid #2a2a2a', borderRadius: RADIUS.sm, padding: '6px 8px', marginBottom: 6 }}>
                     <div style={{ display: 'flex', gap: 6, alignItems: 'baseline' }}>
                       <Form.Item {...rest} name={[name, 'name']} style={{ marginBottom: 0, width: 130 }}
                         rules={[{ required: true, message: 'name' }]}>
-                        <Input placeholder="name" style={{ fontFamily: 'monospace' }} />
+                        <Input placeholder="name" style={{ fontFamily: MONO_FONT }} />
                       </Form.Item>
                       <Form.Item {...rest} name={[name, 'type']} style={{ marginBottom: 0, width: 96 }} initialValue="str">
                         <Select options={RUNBOOK_ARG_TYPES.map(t => ({ label: t, value: t }))} />
@@ -3907,7 +3909,7 @@ function RunbooksTab() {
 // a prompt body).
 const SAVED_RUN_PARAM_TYPES = [...RUNBOOK_ARG_TYPES, 'password']
 
-const SAVED_RUN_LABEL_STYLE: CSSProperties = { color: 'var(--rs-text-muted)', fontSize: 12 }
+const SAVED_RUN_LABEL_STYLE: CSSProperties = { color: 'var(--rs-text-muted)', fontSize: 13 }
 
 interface SavedRunFormValues {
   id: string
@@ -4130,7 +4132,7 @@ function SavedRunsTab() {
 
   return (
     <div>
-      <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+      <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
         Saved runs are <strong>deterministic presets</strong>: a runnable + target host(s) +
         fixed args, with optional <strong>open parameters</strong> filled at run time. No
         agent involved — a saved run fires exactly as stored. They appear in the Forms tab,
@@ -4147,17 +4149,17 @@ function SavedRunsTab() {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
         {savedRuns.length === 0 && <Empty description="No saved runs yet" image={Empty.PRESENTED_IMAGE_SIMPLE} />}
         {savedRuns.map(s => (
-          <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 6, border: '1px solid #2a2a2a' }}>
+          <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: RADIUS.sm, border: '1px solid #2a2a2a' }}>
             <span style={{ minWidth: 200 }}>
-              <Typography.Text code style={{ fontSize: 12 }}>{s.id}</Typography.Text>
+              <Typography.Text code style={{ fontSize: 13 }}>{s.id}</Typography.Text>
             </span>
-            <span style={{ flex: 1, fontSize: 12, color: 'var(--rs-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span style={{ flex: 1, fontSize: 13, color: 'var(--rs-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               /{s.runnable} on {s.target || s.host}{s.title ? ` — ${s.title}` : ''}
             </span>
             {(s.params ?? []).length > 0 && (
-              <Tag style={{ fontSize: 10, margin: 0 }}>{(s.params ?? []).length} param{(s.params ?? []).length !== 1 ? 's' : ''}</Tag>
+              <Tag style={{ fontSize: 11, margin: 0 }}>{(s.params ?? []).length} param{(s.params ?? []).length !== 1 ? 's' : ''}</Tag>
             )}
-            {s.argsError && <Tag color="red" style={{ fontSize: 10, margin: 0 }}>invalid</Tag>}
+            {s.argsError && <Tag color="red" style={{ fontSize: 11, margin: 0 }}>invalid</Tag>}
             <Button type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(s)} disabled={editingKey !== null} />
             <Popconfirm title={`Remove ${s.id}?`} onConfirm={() => remove(s.id)}>
               <Button type="text" size="small" icon={<DeleteOutlined />} disabled={editingKey !== null} danger />
@@ -4178,7 +4180,7 @@ function SavedRunsTab() {
         <Form form={form} layout="vertical" size="small">
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 12px' }}>
             <Form.Item name="id" label="Id" rules={[{ required: true, message: 'Required' }]}>
-              <Input placeholder="restart-web" style={{ fontFamily: 'monospace' }} disabled={editingKey !== ''} />
+              <Input placeholder="restart-web" style={{ fontFamily: MONO_FONT }} disabled={editingKey !== ''} />
             </Form.Item>
             <Form.Item name="title" label="Title">
               <Input placeholder="Restart the web tier" />
@@ -4236,7 +4238,7 @@ function SavedRunsTab() {
           )}
           {runnableName !== '' && !selectedRunnable && (
             <Form.Item name="command" label="Subcommand (optional)" help="Space-separated path, e.g. db restore">
-              <Input placeholder="" style={{ fontFamily: 'monospace' }} />
+              <Input placeholder="" style={{ fontFamily: MONO_FONT }} />
             </Form.Item>
           )}
 
@@ -4255,7 +4257,7 @@ function SavedRunsTab() {
           {runnableName !== '' && !selectedRunnable && (
             <>
               <Divider style={{ margin: '8px 0' }} orientation="left" plain>Fixed args (baked in)</Divider>
-              <Typography.Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 6 }}>
+              <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>
                 This runnable isn't currently discovered on the targeted host(s), so args
                 are edited as raw key=value pairs. Reconnect the fleet for typed fields.
               </Typography.Text>
@@ -4265,11 +4267,11 @@ function SavedRunsTab() {
                     {fields.map(({ key, name, ...rest }) => (
                       <div key={key} style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 6 }}>
                         <Form.Item {...rest} name={[name, 'key']} noStyle>
-                          <Input size="small" placeholder="service" style={{ fontFamily: 'monospace', width: 160 }} />
+                          <Input size="small" placeholder="service" style={{ fontFamily: MONO_FONT, width: 160 }} />
                         </Form.Item>
                         <span style={{ color: 'var(--rs-text-muted)' }}>=</span>
                         <Form.Item {...rest} name={[name, 'value']} noStyle>
-                          <Input size="small" placeholder="nginx" style={{ fontFamily: 'monospace', flex: 1 }} />
+                          <Input size="small" placeholder="nginx" style={{ fontFamily: MONO_FONT, flex: 1 }} />
                         </Form.Item>
                         <MinusCircleOutlined onClick={() => removeRow(name)} style={{ color: 'var(--rs-text-muted)', cursor: 'pointer' }} />
                       </div>
@@ -4287,7 +4289,7 @@ function SavedRunsTab() {
             {selectedRunnable ? 'Additional open parameters' : 'Open parameters (filled at run time)'}
           </Divider>
           {selectedRunnable && (
-            <Typography.Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 6 }}>
+            <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>
               Declared args flip Open with the toggle above. Add rows here only for extras
               the runnable doesn't declare at the chosen subcommand.
             </Typography.Text>
@@ -4299,7 +4301,7 @@ function SavedRunsTab() {
                   <div key={key} style={{ display: 'flex', gap: 6, alignItems: 'baseline', marginBottom: 6 }}>
                     <Form.Item {...rest} name={[name, 'name']} style={{ marginBottom: 0, width: 130 }}
                       rules={[{ required: true, message: 'name' }]}>
-                      <Input placeholder="name" style={{ fontFamily: 'monospace' }} />
+                      <Input placeholder="name" style={{ fontFamily: MONO_FONT }} />
                     </Form.Item>
                     <Form.Item {...rest} name={[name, 'type']} style={{ marginBottom: 0, width: 96 }} initialValue="str">
                       <Select options={SAVED_RUN_PARAM_TYPES.map(t => ({ label: t, value: t }))} />
@@ -4425,7 +4427,7 @@ export function DenylistTab() {
       key: 'detail',
       render: (_: unknown, r: DenylistHostStatus) => (
         <Tooltip title={ruleSummary(r)}>
-          <Text style={{ fontSize: 12 }} ellipsis={{ tooltip: false }}>{ruleSummary(r)}</Text>
+          <Text style={{ fontSize: 13 }} ellipsis={{ tooltip: false }}>{ruleSummary(r)}</Text>
         </Tooltip>
       ),
     },
@@ -4440,7 +4442,7 @@ export function DenylistTab() {
         style={{ marginBottom: 12 }}
         message="Kill switch"
         description={
-          <Text type="secondary" style={{ fontSize: 12 }}>
+          <Text type="secondary" style={{ fontSize: 13 }}>
             Disable or re-enable runspec runnables across the fleet. This writes each
             host's venv denylist via the core <Text code>runspec deny</Text> over SSH —
             it stops the <em>runnables</em> on those hosts, never this console, and
@@ -4450,7 +4452,7 @@ export function DenylistTab() {
       />
 
       <div style={{ marginBottom: 8 }}>
-        <Text style={{ fontSize: 12 }}>Target hosts</Text>
+        <Text style={{ fontSize: 13 }}>Target hosts</Text>
         <Select
           mode="multiple"
           allowClear
@@ -4487,7 +4489,7 @@ export function DenylistTab() {
           title="Disable ALL runnables?"
           icon={<WarningOutlined style={{ color: '#faad14' }} />}
           description={
-            <span style={{ fontSize: 12 }}>
+            <span style={{ fontSize: 13 }}>
               Blocks every runnable on {scope}.<br />
               Agent and manual runs are refused until you re-enable.
             </span>
@@ -4502,7 +4504,7 @@ export function DenylistTab() {
         </Popconfirm>
         <Popconfirm
           title="Re-enable everything?"
-          description={<span style={{ fontSize: 12 }}>Clears the denylist on {scope}.</span>}
+          description={<span style={{ fontSize: 13 }}>Clears the denylist on {scope}.</span>}
           okText="Re-enable"
           onConfirm={() => run({ action: 'clear' }, 'clear')}
         >
@@ -4513,7 +4515,7 @@ export function DenylistTab() {
       </Space>
 
       <Divider style={{ margin: '8px 0' }} orientation="left" plain>
-        <Text type="secondary" style={{ fontSize: 12 }}>Disable specific runnables</Text>
+        <Text type="secondary" style={{ fontSize: 13 }}>Disable specific runnables</Text>
       </Divider>
       <Space direction="vertical" style={{ width: '100%', marginBottom: 12 }} size={6}>
         <Select mode="tags" size="small" style={{ width: '100%' }} value={runnableGlobs} onChange={setRunnableGlobs} placeholder="Runnable name globs (e.g. deploy, restart-*) — empty = all" />
@@ -4531,7 +4533,7 @@ export function DenylistTab() {
       </Space>
 
       <Divider style={{ margin: '8px 0' }} orientation="left" plain>
-        <Text type="secondary" style={{ fontSize: 12 }}>Enforcement mode</Text>
+        <Text type="secondary" style={{ fontSize: 13 }}>Enforcement mode</Text>
       </Divider>
       <Space style={{ marginBottom: 12 }}>
         <Segmented
@@ -4550,7 +4552,7 @@ export function DenylistTab() {
       </Space>
 
       {result && (
-        <pre style={{ fontSize: 12, background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: 6, padding: 10, whiteSpace: 'pre-wrap', maxHeight: 240, overflow: 'auto' }}>
+        <pre style={{ fontSize: 13, background: 'var(--rs-surface-sunken)', border: '1px solid var(--rs-border)', borderRadius: RADIUS.sm, padding: 10, whiteSpace: 'pre-wrap', maxHeight: 240, overflow: 'auto' }}>
           {result}
         </pre>
       )}
@@ -4643,14 +4645,14 @@ export function TelemetryTab() {
 
   const row = (label: string, control: ReactNode) => (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 10 }}>
-      <span style={{ fontSize: 13 }}>{label}</span>
+      <span style={{ fontSize: 14 }}>{label}</span>
       {control}
     </div>
   )
 
   return (
     <div style={{ maxWidth: 620 }}>
-      <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+      <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
         Export a trace per agent turn — <strong>turn → LLM call → tool call</strong> — over
         OpenTelemetry (OTLP) to any OTel backend (LangSmith, Langfuse, Phoenix, Jaeger, Tempo).
         Spans follow the OpenTelemetry GenAI conventions. Requires the optional <code>otel</code> extra
@@ -4669,7 +4671,7 @@ export function TelemetryTab() {
         >
           Use local Phoenix
         </Button>
-        <Typography.Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>
+        <Typography.Text type="secondary" style={{ fontSize: 13, marginLeft: 8 }}>
           Fills the endpoint for a locally-run <a href="https://github.com/Arize-ai/phoenix" target="_blank" rel="noreferrer">Arize Phoenix</a> and
           enables content capture — run <code>phoenix serve</code> in its own venv first, then Save.
         </Typography.Text>
@@ -4682,7 +4684,7 @@ export function TelemetryTab() {
       {row('Sample ratio', <InputNumber min={0} max={1} step={0.1} value={sampleRatio} onChange={v => setSampleRatio(typeof v === 'number' ? v : 1)} disabled={!enabled} />)}
 
       <Divider style={{ margin: '14px 0' }} />
-      <Typography.Paragraph style={{ fontSize: 12, marginBottom: 6 }}>
+      <Typography.Paragraph style={{ fontSize: 13, marginBottom: 6 }}>
         <strong>Headers</strong> — extra HTTP headers on every export (e.g. a LangSmith API key
         and project). Stored in <code>config.toml</code> like the model API key, not the OS keychain.
       </Typography.Paragraph>
@@ -4698,7 +4700,7 @@ export function TelemetryTab() {
       <Button size="small" icon={<PlusOutlined />} disabled={!enabled} onClick={() => setHeaders(prev => [...prev, { k: '', v: '' }])}>Add header</Button>
 
       <Divider style={{ margin: '14px 0' }} />
-      <Typography.Paragraph style={{ fontSize: 12, marginBottom: 6 }}>
+      <Typography.Paragraph style={{ fontSize: 13, marginBottom: 6 }}>
         <strong>API key from a command</strong> — instead of storing the key above, resolve it at
         startup from a command's output and inject it under the header named below. The config only
         holds the <em>command</em> (e.g. <code>keyring get langsmith key</code>, <code>vault read …</code>,
@@ -4715,7 +4717,7 @@ export function TelemetryTab() {
         style={{ marginBottom: 12 }}
         message="Content capture (privacy)"
         description={
-          <span style={{ fontSize: 12 }}>
+          <span style={{ fontSize: 13 }}>
             Off (default): spans carry <strong>structure only</strong> — models, token counts,
             tool names, decisions, durations. On: prompt / completion / tool-argument <strong>text</strong>
             is also exported (secret-looking arguments are scrubbed first). Only enable this if your
@@ -4728,7 +4730,7 @@ export function TelemetryTab() {
         'Max captured content characters (0 = no limit)',
         <InputNumber min={0} step={1000} value={maxContentChars} onChange={v => setMaxContentChars(typeof v === 'number' ? v : 0)} disabled={!enabled || !captureContent} />,
       )}
-      <Typography.Paragraph type="secondary" style={{ fontSize: 11, marginTop: -2 }}>
+      <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: -2 }}>
         Each captured prompt / completion / argument value is recorded in full by default, so a trace shows the
         real prompt (including the search-mode tool menu) — not a slice. Set a ceiling only to bound span size.
       </Typography.Paragraph>
@@ -4741,7 +4743,7 @@ export function TelemetryTab() {
         <Button type="primary" loading={saving} onClick={handleSave}>{saved ? 'Saved' : 'Save'}</Button>
         <Button loading={testing} disabled={!enabled} onClick={handleTest}>Send test trace</Button>
       </Space>
-      <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: 8, marginBottom: 0 }}>
+      <Typography.Paragraph type="secondary" style={{ fontSize: 13, marginTop: 8, marginBottom: 0 }}>
         Saves, then emits one sample <strong>turn → LLM call → tool call</strong> trace and flushes it
         immediately — so you can confirm the backend receives it (and, with content capture on, renders
         prompt / completion / argument text) without waiting for a real agent turn.
@@ -4754,7 +4756,7 @@ export function TelemetryTab() {
           message={testResult.ok ? 'Test trace sent' : 'Could not send a test trace'}
           description={
             testResult.ok ? (
-              <span style={{ fontSize: 12 }}>
+              <span style={{ fontSize: 13 }}>
                 Sent {testResult.spans?.length ?? 3} spans to <code>{testResult.endpoint}</code>
                 {testResult.trace_id ? <> — trace <code>{testResult.trace_id}</code></> : null}.{' '}
                 {testResult.capture_content
@@ -4763,7 +4765,7 @@ export function TelemetryTab() {
                 Open your backend and look for it{testResult.flushed ? ' (flushed now)' : ' (batched — may take a moment)'}.
               </span>
             ) : (
-              <span style={{ fontSize: 12 }}>{testResult.reason}</span>
+              <span style={{ fontSize: 13 }}>{testResult.reason}</span>
             )
           }
         />
@@ -4805,14 +4807,14 @@ function ChatHistoryTab() {
 
   const row = (label: string, control: ReactNode) => (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 10 }}>
-      <span style={{ fontSize: 13 }}>{label}</span>
+      <span style={{ fontSize: 14 }}>{label}</span>
       {control}
     </div>
   )
 
   return (
     <div style={{ maxWidth: 560 }}>
-      <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+      <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
         Save each chat so you can reopen and continue past conversations from the Console's <strong>History</strong> button.
         Transcripts are stored <strong>only on this machine</strong> (never synced) and may contain sensitive content.
         Old conversations are pruned to the limits below.
@@ -4820,12 +4822,12 @@ function ChatHistoryTab() {
       {row('Save chat history', <Switch checked={enabled} onChange={setEnabled} />)}
       {row('Keep at most (conversations)', <InputNumber min={0} value={maxConvs} onChange={v => setMaxConvs(Number(v) || 0)} disabled={!enabled} />)}
       {row('Delete after (days)', <InputNumber min={0} value={maxAge} onChange={v => setMaxAge(Number(v) || 0)} disabled={!enabled} />)}
-      <Typography.Paragraph type="secondary" style={{ fontSize: 11 }}>
+      <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
         0 = no limit. Disabling stops saving new conversations; existing files stay until pruned or deleted.
       </Typography.Paragraph>
 
       <Divider style={{ margin: '14px 0' }} />
-      <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+      <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
         When you reopen a long conversation, the opening turns and the most recent turns are kept word-for-word;
         the turns in between are condensed so the chat fits the model's context. <strong>The saved transcript is never changed</strong> — only what the model sees on resume.
       </Typography.Paragraph>
@@ -4835,7 +4837,7 @@ function ChatHistoryTab() {
         'Summarize older turns with a model call',
         <Switch checked={compactOnResume} onChange={setCompactOnResume} disabled={!enabled} />,
       )}
-      <Typography.Paragraph type="secondary" style={{ fontSize: 11 }}>
+      <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
         Off (default): older turns are condensed to a short note listing what they covered — no model call.
         On: an LLM summarizes them on resume (one extra call, slight delay; falls back to the note if it fails).
       </Typography.Paragraph>
@@ -4877,7 +4879,7 @@ function KvEditor({ rows, onChange, keyPlaceholder, valuePlaceholder }: {
     <div>
       {rows.map((r, i) => (
         <Space key={i} style={{ display: 'flex', marginBottom: 6 }} align="baseline">
-          <Input size="small" placeholder={keyPlaceholder} value={r.k} style={{ width: 200, fontFamily: 'monospace' }} onChange={e => set(i, { k: e.target.value })} />
+          <Input size="small" placeholder={keyPlaceholder} value={r.k} style={{ width: 200, fontFamily: MONO_FONT }} onChange={e => set(i, { k: e.target.value })} />
           <Input size="small" placeholder={valuePlaceholder} value={r.v} style={{ width: 260 }} onChange={e => set(i, { v: e.target.value })} />
           <MinusCircleOutlined onClick={() => onChange(rows.filter((_, idx) => idx !== i))} />
         </Space>
@@ -4900,7 +4902,7 @@ function McpHeaderCredEditor({ rows, options, onChange }: {
     <div>
       {rows.map((r, i) => (
         <Space key={i} style={{ display: 'flex', marginBottom: 6 }} align="baseline">
-          <Input size="small" placeholder="X-Jira-PAT" value={r.header} style={{ width: 200, fontFamily: 'monospace' }} onChange={e => set(i, { header: e.target.value })} />
+          <Input size="small" placeholder="X-Jira-PAT" value={r.header} style={{ width: 200, fontFamily: MONO_FONT }} onChange={e => set(i, { header: e.target.value })} />
           <Select size="small" allowClear placeholder="Credential" value={r.credential || undefined} style={{ width: 260 }}
             onChange={v => set(i, { credential: v ?? '' })}
             options={[{ value: '', label: 'None' }, ...options.map(c => ({ value: c.id, label: `${c.label} (${c.kind})` }))]} />
@@ -5026,8 +5028,8 @@ export function McpTab() {
   const columns = [
     { title: 'Name', dataIndex: 'name', key: 'name', render: (v: string) => <code>{v}</code> },
     { title: 'Transport', dataIndex: 'transport', key: 'transport' },
-    { title: 'Endpoint', key: 'endpoint', render: (_: unknown, s: McpServer) => <Text style={{ fontSize: 12 }} type="secondary">{s.transport === 'stdio' ? [s.command, ...(s.args ?? [])].filter(Boolean).join(' ') : s.url}</Text> },
-    { title: 'Auth', key: 'auth', render: (_: unknown, s: McpServer) => s.credential ? <Tag icon={<KeyOutlined />}>{s.credential}</Tag> : <Text type="secondary" style={{ fontSize: 12 }}>—</Text> },
+    { title: 'Endpoint', key: 'endpoint', render: (_: unknown, s: McpServer) => <Text style={{ fontSize: 13 }} type="secondary">{s.transport === 'stdio' ? [s.command, ...(s.args ?? [])].filter(Boolean).join(' ') : s.url}</Text> },
+    { title: 'Auth', key: 'auth', render: (_: unknown, s: McpServer) => s.credential ? <Tag icon={<KeyOutlined />}>{s.credential}</Tag> : <Text type="secondary" style={{ fontSize: 13 }}>—</Text> },
     { title: 'Status', key: 'status', render: (_: unknown, s: McpServer) => s.enabled === false ? <Tag>disabled</Tag> : <McpServerStatusTag st={statusFor(s.name)} /> },
     { title: '', key: 'actions', width: 90, render: (_: unknown, _s: McpServer, i: number) => (
       <Space>
@@ -5042,7 +5044,7 @@ export function McpTab() {
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-        <Text type="secondary" style={{ fontSize: 12 }}>
+        <Text type="secondary" style={{ fontSize: 13 }}>
           External MCP servers the chat agent connects to; their tools appear as <code>mcp_&lt;server&gt;_&lt;tool&gt;</code>, gated by the normal autonomy/confirm system.
         </Text>
         <Space>
@@ -5059,15 +5061,15 @@ export function McpTab() {
       <Space size="large" style={{ marginBottom: 12 }} wrap>
         <Space>
           <Switch size="small" checked={sectionEnabled} onChange={v => { setSectionEnabled(v); persist(servers, v) }} />
-          <Text style={{ fontSize: 12 }}>Enable external MCP servers</Text>
+          <Text style={{ fontSize: 13 }}>Enable external MCP servers</Text>
         </Space>
         <Space>
-          <Text style={{ fontSize: 12 }} type="secondary">Connect timeout</Text>
+          <Text style={{ fontSize: 13 }} type="secondary">Connect timeout</Text>
           <InputNumber size="small" min={1} max={600} value={connectTimeout} style={{ width: 90 }} aria-label="Connect timeout"
             onChange={v => setConnectTimeout(v ?? 20)} onBlur={commitTimeouts} onPressEnter={commitTimeouts} addonAfter="s" />
         </Space>
         <Space>
-          <Text style={{ fontSize: 12 }} type="secondary">Call timeout</Text>
+          <Text style={{ fontSize: 13 }} type="secondary">Call timeout</Text>
           <InputNumber size="small" min={1} max={3600} value={callTimeout} style={{ width: 90 }} aria-label="Call timeout"
             onChange={v => setCallTimeout(v ?? 60)} onBlur={commitTimeouts} onPressEnter={commitTimeouts} addonAfter="s" />
         </Space>
@@ -5099,22 +5101,22 @@ export function McpTab() {
           {draft.transport === 'stdio' ? (
             <>
               <Form.Item label="Command" required tooltip="The executable to spawn (a stdio MCP server).">
-                <Input placeholder="uvx" style={{ fontFamily: 'monospace' }} value={draft.command} onChange={e => setDraft({ ...draft, command: e.target.value })} />
+                <Input placeholder="uvx" style={{ fontFamily: MONO_FONT }} value={draft.command} onChange={e => setDraft({ ...draft, command: e.target.value })} />
               </Form.Item>
               <Form.Item label="Arguments" tooltip="One per line.">
-                <Input.TextArea autoSize={{ minRows: 2 }} placeholder={'mcp-server-filesystem\n/srv/data'} style={{ fontFamily: 'monospace' }} value={argsText} onChange={e => setArgsText(e.target.value)} />
+                <Input.TextArea autoSize={{ minRows: 2 }} placeholder={'mcp-server-filesystem\n/srv/data'} style={{ fontFamily: MONO_FONT }} value={argsText} onChange={e => setArgsText(e.target.value)} />
               </Form.Item>
               <Form.Item label="Environment variables">
                 <KvEditor rows={envRows} onChange={setEnvRows} keyPlaceholder="NAME" valuePlaceholder="value" />
               </Form.Item>
               <Form.Item label="Working directory">
-                <Input placeholder="(optional)" style={{ fontFamily: 'monospace' }} value={draft.cwd} onChange={e => setDraft({ ...draft, cwd: e.target.value })} />
+                <Input placeholder="(optional)" style={{ fontFamily: MONO_FONT }} value={draft.cwd} onChange={e => setDraft({ ...draft, cwd: e.target.value })} />
               </Form.Item>
             </>
           ) : (
             <>
               <Form.Item label="URL" required tooltip="The MCP server endpoint.">
-                <Input placeholder="https://mcp.example.com/mcp" style={{ fontFamily: 'monospace' }} value={draft.url} onChange={e => setDraft({ ...draft, url: e.target.value })} />
+                <Input placeholder="https://mcp.example.com/mcp" style={{ fontFamily: MONO_FONT }} value={draft.url} onChange={e => setDraft({ ...draft, url: e.target.value })} />
               </Form.Item>
               <Form.Item label="Headers" tooltip="Static request headers. A credential-derived Authorization header is added on top (unless you set one here).">
                 <KvEditor rows={headerRows} onChange={setHeaderRows} keyPlaceholder="Header" valuePlaceholder="value" />
@@ -5140,7 +5142,7 @@ export function McpTab() {
             </Form.Item>
           )}
           <Form.Item label="Proxy" tooltip="Per-server HTTP CONNECT proxy — for servers on a different corporate network. Applies to http/sse; exported as *_PROXY for a stdio subprocess.">
-            <Input placeholder="http://proxy:8080 (optional)" style={{ fontFamily: 'monospace' }} value={draft.proxy} onChange={e => setDraft({ ...draft, proxy: e.target.value })} />
+            <Input placeholder="http://proxy:8080 (optional)" style={{ fontFamily: MONO_FONT }} value={draft.proxy} onChange={e => setDraft({ ...draft, proxy: e.target.value })} />
           </Form.Item>
           <Form.Item label="Autonomy" tooltip="How this server's tools are gated. Confirm is safe-by-default.">
             <Select options={MCP_AUTONOMY} value={draft.autonomy ?? ''} onChange={v => setDraft({ ...draft, autonomy: v })} />
@@ -5148,7 +5150,7 @@ export function McpTab() {
           <Form.Item>
             <Space>
               <Switch size="small" checked={draft.enabled !== false} onChange={v => setDraft({ ...draft, enabled: v })} />
-              <Text style={{ fontSize: 12 }}>Enabled</Text>
+              <Text style={{ fontSize: 13 }}>Enabled</Text>
             </Space>
           </Form.Item>
         </Form>
@@ -5211,14 +5213,14 @@ export function McpServerTab() {
 
   const row = (label: string, control: ReactNode) => (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 10 }}>
-      <span style={{ fontSize: 13 }}>{label}</span>
+      <span style={{ fontSize: 14 }}>{label}</span>
       {control}
     </div>
   )
 
   return (
     <div style={{ maxWidth: 620 }}>
-      <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+      <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
         Expose this console's fleet runnables to an external coding agent (Claude Code, Cursor)
         as an <strong>MCP server</strong> on localhost. A <code>confirm</code>-level tool call parks
         for your approval in the console (the same confirm card the agent uses); <code>autonomous</code> runs
@@ -5227,12 +5229,12 @@ export function McpServerTab() {
       </Typography.Paragraph>
 
       {row('Enable server', <Switch checked={enabled} onChange={setEnabled} />)}
-      {row('Host', <Input style={{ width: 200, fontFamily: 'monospace' }} value={host} onChange={e => setHost(e.target.value)} disabled={!enabled} />)}
+      {row('Host', <Input style={{ width: 200, fontFamily: MONO_FONT }} value={host} onChange={e => setHost(e.target.value)} disabled={!enabled} />)}
       {row('Port', <InputNumber min={1} max={65535} value={port} onChange={v => setPort(typeof v === 'number' ? v : 8765)} disabled={!enabled} />)}
       {row('Bearer token (optional)', <Input.Password style={{ width: 260 }} placeholder="none — localhost only" value={token} onChange={e => setToken(e.target.value)} disabled={!enabled} />)}
       {row('Default autonomy floor', <Select style={{ width: 260 }} value={autonomy} onChange={setAutonomy} options={OWN_MCP_AUTONOMY} disabled={!enabled} />)}
       {row('Confirm wait (seconds)', <InputNumber min={1} max={3600} value={confirmWait} onChange={v => setConfirmWait(typeof v === 'number' ? v : 50)} disabled={!enabled} />)}
-      <Typography.Paragraph type="secondary" style={{ fontSize: 11, marginTop: -2 }}>
+      <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: -2 }}>
         How long a parked call waits for your approval before returning a resumable “awaiting
         approval” result. Keep it under your MCP client's own tool-call timeout
         (Claude Code's <code>MCP_TOOL_TIMEOUT</code> defaults to 60s).
@@ -5241,18 +5243,18 @@ export function McpServerTab() {
       <Button type="primary" onClick={handleSave} loading={saving} style={{ marginTop: 4 }}>Save</Button>
 
       <Divider style={{ margin: '14px 0' }} />
-      <Typography.Paragraph style={{ fontSize: 12, marginBottom: 6 }}><strong>Status</strong></Typography.Paragraph>
+      <Typography.Paragraph style={{ fontSize: 13, marginBottom: 6 }}><strong>Status</strong></Typography.Paragraph>
       {status?.running ? (
         <Space direction="vertical" size={2}>
-          <Space><Tag color="green">running</Tag><Typography.Text style={{ fontFamily: 'monospace', fontSize: 12 }}>{status.url}</Typography.Text></Space>
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>{status.tools} tool(s) · auth {status.auth ? 'on' : 'off'}</Typography.Text>
-          <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: 6, marginBottom: 0 }}>
+          <Space><Tag color="green">running</Tag><Typography.Text style={{ fontFamily: MONO_FONT, fontSize: 13 }}>{status.url}</Typography.Text></Space>
+          <Typography.Text type="secondary" style={{ fontSize: 13 }}>{status.tools} tool(s) · auth {status.auth ? 'on' : 'off'}</Typography.Text>
+          <Typography.Paragraph type="secondary" style={{ fontSize: 13, marginTop: 6, marginBottom: 0 }}>
             Connect Claude Code:&nbsp;
             <code>claude mcp add --transport http runspec {status.url}{status.auth ? ' --header "Authorization: Bearer <token>"' : ''}</code>
           </Typography.Paragraph>
         </Space>
       ) : (
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+        <Typography.Text type="secondary" style={{ fontSize: 13 }}>
           {status?.error ? `not running — ${status.error}` : 'not running'}
         </Typography.Text>
       )}

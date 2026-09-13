@@ -7,6 +7,33 @@ html, body, #root {
   overflow: hidden;
 }
 
+/* UI font — bundled Inter (variable weight, latin subset) served from
+   public/fonts so the chrome looks the same on every machine; the system stack
+   in ThemeContext.UI_FONT covers first paint + engines that can't load it. */
+@font-face {
+  font-family: 'Inter Variable';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/fonts/inter-latin-wght-normal.woff2') format('woff2-variations'),
+       url('/fonts/inter-latin-wght-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* Value font — bundled JetBrains Mono (variable weight, latin subset); see
+   ThemeContext.MONO_FONT for the fallback stack. */
+@font-face {
+  font-family: 'JetBrains Mono Variable';
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url('/fonts/jetbrains-mono-latin-wght-normal.woff2') format('woff2-variations'),
+       url('/fonts/jetbrains-mono-latin-wght-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
 /* Theme variables — App.tsx stamps data-theme on <html> and keeps --rs-accent
    in sync with the (possibly white-labelled) accent colour. */
 :root {
@@ -19,6 +46,24 @@ html, body, #root {
   --rs-text-secondary: #aaa;
   --rs-text-muted: #888;
   --rs-text-faint: #555;
+  /* Surface / elevation scale — mirrors ThemeContext.surfaces() (App.tsx
+     re-stamps on theme change). Use these for CSS-driven chrome instead of
+     hardcoded greys so raw elements and Ant controls share one depth model. */
+  --rs-surface-sunken: #0b0d10;
+  --rs-surface-base: #101216;
+  --rs-surface-raised: #171a1f;
+  --rs-surface-overlay: #1e2228;
+  --rs-border: #252a31;
+  --rs-border-strong: #323844;
+  --rs-divider: rgba(255, 255, 255, 0.06);
+  --rs-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.45);
+  --rs-shadow-md: 0 4px 14px rgba(0, 0, 0, 0.5);
+  --rs-shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.6);
+  --rs-radius-sm: 6px;
+  --rs-radius-md: 8px;
+  --rs-radius-lg: 12px;
+  /* One motion curve for every hover/press/state transition. */
+  --rs-motion: 160ms cubic-bezier(0.2, 0, 0, 1);
 }
 html[data-theme='light'] {
   --rs-hover: rgba(0, 0, 0, 0.04);
@@ -27,6 +72,22 @@ html[data-theme='light'] {
   --rs-text-secondary: #666;
   --rs-text-muted: #999;
   --rs-text-faint: #bbb;
+  --rs-surface-sunken: #f0f2f5;
+  --rs-surface-base: #f7f8fa;
+  --rs-surface-raised: #ffffff;
+  --rs-surface-overlay: #ffffff;
+  --rs-border: #e5e8ec;
+  --rs-border-strong: #d3d8df;
+  --rs-divider: rgba(0, 0, 0, 0.06);
+  --rs-shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
+  --rs-shadow-md: 0 4px 14px rgba(16, 24, 40, 0.08);
+  --rs-shadow-lg: 0 16px 40px rgba(16, 24, 40, 0.14);
+}
+
+body {
+  /* Inter renders best with these; harmless on the fallback stack. */
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 /* Thin, theme-aware scrollbars everywhere (standard properties + webkit
@@ -45,6 +106,7 @@ html[data-theme='light'] {
 
 /* Sidebar host rows + group headers: hover feedback via CSS (no re-renders).
    The selected row sets an inline background, which wins over this rule. */
+.rs-host-row, .rs-group-header { transition: background var(--rs-motion), border-color var(--rs-motion); }
 .rs-host-row:hover { background: var(--rs-hover); }
 .rs-group-header:hover { background: var(--rs-hover); }
 
@@ -66,11 +128,25 @@ html[data-theme='light'] {
   background: transparent;
   cursor: pointer;
   font: inherit;
+  transition: color var(--rs-motion), background var(--rs-motion), border-color var(--rs-motion);
 }
 .rs-nav-tab:hover { background: var(--rs-hover); }
 .rs-nav-tab:focus-visible {
   outline: 2px solid var(--rs-accent);
   outline-offset: -2px;
+}
+
+/* Clickable card: rests at the small shadow, lifts to the medium one on hover.
+   Colour/border changes stay inline (they depend on the accent); the lift is
+   pure CSS so it never re-renders. */
+.rs-card-lift {
+  box-shadow: var(--rs-shadow-sm);
+  transition: box-shadow var(--rs-motion), transform var(--rs-motion),
+              border-color var(--rs-motion), background var(--rs-motion);
+}
+.rs-card-lift:hover { box-shadow: var(--rs-shadow-md); }
+@media (prefers-reduced-motion: no-preference) {
+  .rs-card-lift:hover { transform: translateY(-1px); }
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -82,7 +158,7 @@ html[data-theme='light'] {
   .rs-pulse { animation: rs-pulse 1.6s ease-in-out infinite; }
 }
 @keyframes rs-view-fade {
-  from { opacity: 0.55; transform: translateY(2px); }
+  from { opacity: 0.4; transform: translateY(4px); }
   to   { opacity: 1; transform: none; }
 }
 @keyframes rs-pulse {

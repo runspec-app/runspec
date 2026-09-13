@@ -10,6 +10,7 @@ import {
 } from '@ant-design/icons'
 import { bridge, type TriggerSourceInfo, type Host, type Runnable, type ArgDef } from '../bridge'
 import { SoundSelect } from './SoundSelect'
+import { MONO_FONT, RADIUS } from '../ThemeContext'
 
 const { Text } = Typography
 
@@ -316,12 +317,12 @@ function ArgMapEditor({
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
       {declaredArgs.map(a => (
         <div key={a.name} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          <span style={{ fontFamily: 'monospace', fontSize: 12, minWidth: 110, textAlign: 'right', color: 'var(--rs-text-secondary)' }}>
+          <span style={{ fontFamily: MONO_FONT, fontSize: 13, minWidth: 110, textAlign: 'right', color: 'var(--rs-text-secondary)' }}>
             {a.name}{a.required ? <span style={{ color: '#cf5b5b' }}> *</span> : ''}
           </span>
           <span style={{ color: 'var(--rs-text-muted)' }}>→</span>
           <Input
-            size="small" style={{ fontFamily: 'monospace' }} placeholder={hintFor(a)}
+            size="small" style={{ fontFamily: MONO_FONT }} placeholder={hintFor(a)}
             value={templateOf(a.name)} onChange={e => setDeclared(a.name, e.target.value)}
           />
         </div>
@@ -329,12 +330,12 @@ function ArgMapEditor({
       {customRows.map((r, i) => (
         <div key={`c${i}`} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
           <Input
-            size="small" style={{ fontFamily: 'monospace', minWidth: 110, maxWidth: 116 }} placeholder="arg"
+            size="small" style={{ fontFamily: MONO_FONT, minWidth: 110, maxWidth: 116 }} placeholder="arg"
             value={r.arg} onChange={e => setCustom(i, 'arg', e.target.value)}
           />
           <span style={{ color: 'var(--rs-text-muted)' }}>→</span>
           <Input
-            size="small" style={{ fontFamily: 'monospace' }} placeholder="{{ field }}"
+            size="small" style={{ fontFamily: MONO_FONT }} placeholder="{{ field }}"
             value={r.template} onChange={e => setCustom(i, 'template', e.target.value)}
           />
           <MinusCircleOutlined onClick={() => removeCustom(i)} style={{ color: 'var(--rs-text-muted)', cursor: 'pointer' }} />
@@ -417,7 +418,7 @@ function TestTriggerModal({ name, trigger, onClose }: { name: string | null; tri
       okButtonProps={{ icon: <PlayCircleOutlined /> }}
       destroyOnClose
     >
-      <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 10 }}>
+      <Text type="secondary" style={{ fontSize: 13, display: 'block', marginBottom: 10 }}>
         Fires this trigger immediately with a synthetic event — bypassing the match
         rules and the working-hours rota — so you can test it without waiting for a
         real event. The message lands under the <code>body</code> field. For an
@@ -432,7 +433,7 @@ function TestTriggerModal({ name, trigger, onClose }: { name: string | null; tri
             placeholder="Paste the message body the trigger should act on…"
           />
         </Form.Item>
-        <label style={{ fontSize: 12, color: 'var(--rs-text-muted)', display: 'block', marginBottom: 4 }}>
+        <label style={{ fontSize: 13, color: 'var(--rs-text-muted)', display: 'block', marginBottom: 4 }}>
           Fields (optional) — extra payload, e.g. <code>subject</code> = <code>VIP outage</code>
         </label>
         <Form.List name="fields">
@@ -440,9 +441,9 @@ function TestTriggerModal({ name, trigger, onClose }: { name: string | null; tri
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               {fields.map(f => (
                 <div key={f.key} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                  <Form.Item name={[f.name, 'key']} noStyle><Input size="small" placeholder="subject" style={{ fontFamily: 'monospace' }} /></Form.Item>
+                  <Form.Item name={[f.name, 'key']} noStyle><Input size="small" placeholder="subject" style={{ fontFamily: MONO_FONT }} /></Form.Item>
                   <span style={{ color: 'var(--rs-text-muted)' }}>=</span>
-                  <Form.Item name={[f.name, 'value']} noStyle><Input size="small" placeholder="VIP outage" style={{ fontFamily: 'monospace' }} /></Form.Item>
+                  <Form.Item name={[f.name, 'value']} noStyle><Input size="small" placeholder="VIP outage" style={{ fontFamily: MONO_FONT }} /></Form.Item>
                   <MinusCircleOutlined onClick={() => remove(f.name)} style={{ color: 'var(--rs-text-muted)', cursor: 'pointer' }} />
                 </div>
               ))}
@@ -503,7 +504,7 @@ function PasteInputModal({ name, onClose }: { name: string | null; onClose: () =
       okButtonProps={{ icon: <SnippetsOutlined /> }}
       destroyOnClose
     >
-      <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 10 }}>
+      <Text type="secondary" style={{ fontSize: 13, display: 'block', marginBottom: 10 }}>
         Runs this trigger now with the pasted text as its input — a real run through
         the trigger’s match rules and working-hours rota (not a test). In agent mode
         the text is the agent’s input; in rule mode template it with <code>{'{{ text }}'}</code>.
@@ -515,7 +516,7 @@ function PasteInputModal({ name, onClose }: { name: string | null; onClose: () =
             placeholder="Paste the block of text the trigger should act on…"
           />
         </Form.Item>
-        <label style={{ fontSize: 12, color: 'var(--rs-text-muted)', display: 'block', marginBottom: 4 }}>
+        <label style={{ fontSize: 13, color: 'var(--rs-text-muted)', display: 'block', marginBottom: 4 }}>
           Fields (optional) — extra payload, e.g. <code>host</code> = <code>web-01</code>
         </label>
         <Form.List name="fields">
@@ -523,9 +524,9 @@ function PasteInputModal({ name, onClose }: { name: string | null; onClose: () =
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               {fields.map(f => (
                 <div key={f.key} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                  <Form.Item name={[f.name, 'key']} noStyle><Input size="small" placeholder="host" style={{ fontFamily: 'monospace' }} /></Form.Item>
+                  <Form.Item name={[f.name, 'key']} noStyle><Input size="small" placeholder="host" style={{ fontFamily: MONO_FONT }} /></Form.Item>
                   <span style={{ color: 'var(--rs-text-muted)' }}>=</span>
-                  <Form.Item name={[f.name, 'value']} noStyle><Input size="small" placeholder="web-01" style={{ fontFamily: 'monospace' }} /></Form.Item>
+                  <Form.Item name={[f.name, 'value']} noStyle><Input size="small" placeholder="web-01" style={{ fontFamily: MONO_FONT }} /></Form.Item>
                   <MinusCircleOutlined onClick={() => remove(f.name)} style={{ color: 'var(--rs-text-muted)', cursor: 'pointer' }} />
                 </div>
               ))}
@@ -637,9 +638,9 @@ export function TriggersEditor({
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 8 }}>
           {fields.map(f => (
             <div key={f.key} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              <Form.Item name={[f.name, keyName]} noStyle><Input size="small" placeholder={keyPh} style={{ fontFamily: 'monospace' }} /></Form.Item>
+              <Form.Item name={[f.name, keyName]} noStyle><Input size="small" placeholder={keyPh} style={{ fontFamily: MONO_FONT }} /></Form.Item>
               <span style={{ color: 'var(--rs-text-muted)' }}>→</span>
-              <Form.Item name={[f.name, valName]} noStyle><Input size="small" placeholder={valPh} style={{ fontFamily: 'monospace' }} /></Form.Item>
+              <Form.Item name={[f.name, valName]} noStyle><Input size="small" placeholder={valPh} style={{ fontFamily: MONO_FONT }} /></Form.Item>
               <MinusCircleOutlined onClick={() => rm(f.name)} style={{ color: 'var(--rs-text-muted)', cursor: 'pointer' }} />
             </div>
           ))}
@@ -657,14 +658,14 @@ export function TriggersEditor({
       {(fields, { add, remove: rm }) => (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 8 }}>
           {fields.map(f => (
-            <div key={f.key} style={{ border: '1px solid #2a2a2a', borderRadius: 6, padding: 8 }}>
+            <div key={f.key} style={{ border: '1px solid #2a2a2a', borderRadius: RADIUS.sm, padding: 8 }}>
               <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 6 }}>
                 <Form.Item name={[f.name, 'run']} noStyle rules={[{ required: true, whitespace: true, message: 'Required' }]}>
                   <RunPicker hosts={hosts} runnables={runnables} />
                 </Form.Item>
                 <MinusCircleOutlined onClick={() => rm(f.name)} style={{ color: 'var(--rs-text-muted)', cursor: 'pointer' }} />
               </div>
-              <label style={{ fontSize: 11, color: 'var(--rs-text-muted)', display: 'block', marginBottom: 4 }}>{'Args — literal or {{ field }} / {{ _llm.x }} template'}</label>
+              <label style={{ fontSize: 12, color: 'var(--rs-text-muted)', display: 'block', marginBottom: 4 }}>{'Args — literal or {{ field }} / {{ _llm.x }} template'}</label>
               <Form.Item name={[f.name, 'map']} noStyle>
                 <ArgMapEditor declaredArgs={argsForRun(actionsVal?.[f.name]?.run, runnables)} />
               </Form.Item>
@@ -679,7 +680,7 @@ export function TriggersEditor({
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, gap: 12 }}>
-        <Text type="secondary" style={{ fontSize: 12 }}>
+        <Text type="secondary" style={{ fontSize: 13 }}>
           React to a monitored event (<code>source:event</code>) — run a runnable (rule) or an agent turn. Saved to <code>runspec_triggers.toml</code>.
         </Text>
         <Button size="small" icon={<PlusOutlined />} onClick={startAdd} disabled={editing}>Add trigger</Button>
@@ -700,7 +701,7 @@ export function TriggersEditor({
         <Form form={form} layout="vertical" size="small">
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 12px' }}>
             <Form.Item name="name" label="Name" rules={[{ required: true, whitespace: true, message: 'Required' }, { pattern: /^[^\s]+$/, message: 'No spaces' }]}>
-              <Input placeholder="password-reset" style={{ fontFamily: 'monospace' }} disabled={editName !== null} />
+              <Input placeholder="password-reset" style={{ fontFamily: MONO_FONT }} disabled={editName !== null} />
             </Form.Item>
             <Form.Item name="source" label="Source" rules={[{ required: true, message: 'Required' }]}>
               <Select placeholder="outlook" options={sources.map(s => ({ value: s.id, label: s.available ? s.id : `${s.id} (unavailable)` }))} />
@@ -720,18 +721,18 @@ export function TriggersEditor({
           {isMailNew && (
             <Form.Item name="match_mailbox" label="Mailbox to match (optional)"
               help="Scope this trigger to one monitored mailbox (matched against the mail's mailbox), e.g. ^helpdesk@corp\.com$. Leave blank to fire for a matching folder in ANY monitored mailbox — set it when two mailboxes share a folder name.">
-              <Input placeholder="^helpdesk@corp\.com$ (blank = any mailbox)" style={{ fontFamily: 'monospace' }} />
+              <Input placeholder="^helpdesk@corp\.com$ (blank = any mailbox)" style={{ fontFamily: MONO_FONT }} />
             </Form.Item>
           )}
           {isMailNew && (
             <Form.Item name="match_folder" label="Folder to match"
               rules={claim ? [{ required: true, whitespace: true, message: 'A claim trigger needs a folder to match on' }] : []}
               help="The watched folder this trigger fires on (matched against the mail's folder), e.g. ^Tickets/Open$. Required when the claim system is on so the claim is scoped to one shared folder.">
-              <Input placeholder="^Tickets/Open$" style={{ fontFamily: 'monospace' }} />
+              <Input placeholder="^Tickets/Open$" style={{ fontFamily: MONO_FONT }} />
             </Form.Item>
           )}
 
-          <label style={{ fontSize: 12, color: 'var(--rs-text-muted)', display: 'block', marginBottom: 4 }}>Match — every field's regex must match the event payload (empty = any event of that source/type)</label>
+          <label style={{ fontSize: 13, color: 'var(--rs-text-muted)', display: 'block', marginBottom: 4 }}>Match — every field's regex must match the event payload (empty = any event of that source/type)</label>
           {pairRow('match', 'field', 'pattern', 'subject', '(?i)password', 'Add match')}
 
           {isMailNew && (
@@ -745,7 +746,7 @@ export function TriggersEditor({
                 <Form.Item name="claim_folder" label="Claim folder (must exist)"
                   rules={[{ required: true, whitespace: true, message: 'A claim trigger needs a destination folder' }]}
                   help="An existing folder in the mailbox that a claimed email is moved into (the move is the claim — one operator wins). Create it in Outlook first.">
-                  <Input placeholder="Tickets/Claimed" style={{ fontFamily: 'monospace' }} />
+                  <Input placeholder="Tickets/Claimed" style={{ fontFamily: MONO_FONT }} />
                 </Form.Item>
               )}
             </>
@@ -780,7 +781,7 @@ export function TriggersEditor({
                   <Form.Item name="run" label="Run" rules={[{ required: true, whitespace: true, message: 'Pick a host/group and runnable' }]} help="Runs this runnable when the trigger matches. Group runs it on every host in the group (one grouped confirm).">
                     <RunPicker hosts={hosts} runnables={runnables} />
                   </Form.Item>
-                  <label style={{ fontSize: 12, color: 'var(--rs-text-muted)', display: 'block', marginBottom: 4 }}>{'Args — value can be a literal or a {{ payload field }} / {{ _llm.x }} template'}</label>
+                  <label style={{ fontSize: 13, color: 'var(--rs-text-muted)', display: 'block', marginBottom: 4 }}>{'Args — value can be a literal or a {{ payload field }} / {{ _llm.x }} template'}</label>
                   <Form.Item name="map" noStyle>
                     <ArgMapEditor declaredArgs={argsForRun(runVal, runnables)} />
                   </Form.Item>
@@ -827,7 +828,7 @@ export function TriggersEditor({
             <Form.Item name="enabled" valuePropName="checked" noStyle>
               <Switch size="small" />
             </Form.Item>
-            <span style={{ fontSize: 12, color: 'var(--rs-text-muted)', marginLeft: 6 }}>Enabled</span>
+            <span style={{ fontSize: 13, color: 'var(--rs-text-muted)', marginLeft: 6 }}>Enabled</span>
           </div>
 
           {err && <Alert type="error" showIcon style={{ marginBottom: 4 }} message={err} />}
@@ -838,17 +839,17 @@ export function TriggersEditor({
       <PasteInputModal name={pasteName} onClose={() => setPasteName(null)} />
 
       {triggers.length === 0 && !editing ? (
-        <Empty description={<span style={{ fontSize: 12, color: 'var(--rs-text-muted)' }}>No triggers yet. Add one to react to a monitored event.</span>} />
+        <Empty description={<span style={{ fontSize: 13, color: 'var(--rs-text-muted)' }}>No triggers yet. Add one to react to a monitored event.</span>} />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
           {triggers.map((t, i) => (
-            <div key={`${String(t.name)} ${i}`} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 6, border: '1px solid #2a2a2a' }}>
+            <div key={`${String(t.name)} ${i}`} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: RADIUS.sm, border: '1px solid #2a2a2a' }}>
               <ThunderboltOutlined style={{ color: 'var(--rs-text-muted)', flexShrink: 0 }} />
-              <Text style={{ fontFamily: 'monospace', fontSize: 12, flexShrink: 0 }}>{String(t.name)}</Text>
-              <Text type="secondary" style={{ fontFamily: 'monospace', fontSize: 11, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <Text style={{ fontFamily: MONO_FONT, fontSize: 13, flexShrink: 0 }}>{String(t.name)}</Text>
+              <Text type="secondary" style={{ fontFamily: MONO_FONT, fontSize: 12, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {String(t.source ?? '')}:{String(t.event ?? '')}
               </Text>
-              <Tag color={t.mode === 'rule' ? 'geekblue' : 'purple'} style={{ margin: 0, fontSize: 10 }}>{String(t.mode ?? 'agent')}</Tag>
+              <Tag color={t.mode === 'rule' ? 'geekblue' : 'purple'} style={{ margin: 0, fontSize: 11 }}>{String(t.mode ?? 'agent')}</Tag>
               <Switch size="small" checked={t.enabled !== false} onChange={v => toggle(String(t.name), v)} />
               {t.source === 'paste' && (
                 <Tooltip title="Run with pasted text — paste a block of text as this trigger’s input">

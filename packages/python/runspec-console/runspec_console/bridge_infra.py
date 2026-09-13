@@ -229,29 +229,4 @@ class InfraMixin:
                 except Exception:
                     logger.debug("%s failed", attr, exc_info=True)
 
-    # ── window controls ───────────────────────────────────────────────────────
-
-    def minimize_window(self) -> None:
-        if self._window:
-            self._window.minimize()
-
-    def toggle_maximize_window(self) -> None:
-        if self._window:
-            if self._window.maximized:
-                self._window.restore()
-            else:
-                self._window.maximize()
-
-    def close_window(self) -> None:
-        if self._window:
-            self._window.destroy()
-
-    def resize_window(self, width: int, height: int) -> None:
-        if self._window:
-            self._window.resize(width, height)
-
-    def move_window(self, x: int, y: int) -> None:
-        if self._window:
-            self._window.move(x, y)
-
     # ── hosts ────────────────────────────────────────────────────────────────

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Modal, Input, Select, Typography, Tag, message } from 'antd'
 import type { ArgDef, Runbook } from '../bridge'
 import { ArgInput } from './FormsView'
+import { MONO_FONT } from '../ThemeContext'
 
 const { Text } = Typography
 const { TextArea } = Input
@@ -63,7 +64,7 @@ export function RunbookField({ arg, hostNames, value, error, onChange }: {
         onChange={e => onChange(e.target.value)}
         placeholder={arg.hint}
         status={error ? 'error' : undefined}
-        style={{ fontFamily: 'monospace', fontSize: 12 }}
+        style={{ fontFamily: MONO_FONT, fontSize: 13 }}
       />
     )
   }
@@ -120,12 +121,12 @@ export function RunbookRunModal({ runbook, hostNames, onClose, onRun }: RunbookR
       title={`Runbook: ${runbook.title || runbook.id}`}
     >
       {runbook.symptom && (
-        <Text type="secondary" style={{ display: 'block', marginBottom: 12, fontSize: 12 }}>
+        <Text type="secondary" style={{ display: 'block', marginBottom: 12, fontSize: 13 }}>
           {runbook.symptom}
         </Text>
       )}
       {runbook.argsError && (
-        <Text type="danger" style={{ display: 'block', marginBottom: 12, fontSize: 12 }}>
+        <Text type="danger" style={{ display: 'block', marginBottom: 12, fontSize: 13 }}>
           This runbook's parameters are misconfigured: {runbook.argsError}
         </Text>
       )}
@@ -133,28 +134,28 @@ export function RunbookRunModal({ runbook, hostNames, onClose, onRun }: RunbookR
         {args.map(a => (
           <div key={a.name}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
-              <Text code style={{ fontSize: 12 }}>{a.name}</Text>
-              <Tag style={{ fontSize: 10, margin: 0 }}>{a.ui === 'host' ? 'host' : a.type}</Tag>
+              <Text code style={{ fontSize: 13 }}>{a.name}</Text>
+              <Tag style={{ fontSize: 11, margin: 0 }}>{a.ui === 'host' ? 'host' : a.type}</Tag>
               {a.required
-                ? <Tag color="orange" style={{ fontSize: 10, margin: 0 }}>required</Tag>
-                : <Text type="secondary" style={{ fontSize: 10 }}>optional</Text>}
-              {a.description && <Text type="secondary" style={{ fontSize: 11 }}>{a.description}</Text>}
+                ? <Tag color="orange" style={{ fontSize: 11, margin: 0 }}>required</Tag>
+                : <Text type="secondary" style={{ fontSize: 11 }}>optional</Text>}
+              {a.description && <Text type="secondary" style={{ fontSize: 12 }}>{a.description}</Text>}
             </div>
             <RunbookField arg={a} hostNames={hostNames} value={values[a.name]} error={errors[a.name]} onChange={v => change(a.name, v)} />
-            {errors[a.name] && <Text style={{ fontSize: 11, color: '#ff4d4f' }}>{errors[a.name]}</Text>}
+            {errors[a.name] && <Text style={{ fontSize: 12, color: '#ff4d4f' }}>{errors[a.name]}</Text>}
           </div>
         ))}
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
-            <Text style={{ fontSize: 12 }}>Additional instructions</Text>
-            <Text type="secondary" style={{ fontSize: 10 }}>optional — appended to the runbook</Text>
+            <Text style={{ fontSize: 13 }}>Additional instructions</Text>
+            <Text type="secondary" style={{ fontSize: 11 }}>optional — appended to the runbook</Text>
           </div>
           <TextArea
             value={extra}
             onChange={e => setExtra(e.target.value)}
             rows={3}
             placeholder="e.g. then summarise the errors and suggest a fix"
-            style={{ fontSize: 12 }}
+            style={{ fontSize: 13 }}
           />
         </div>
       </div>

@@ -112,7 +112,7 @@ export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsVi
   if (!data) return <Empty description="No analytics data" />
 
   const dims = data.dimensions
-  const cardStyle = { background: isDark ? '#161616' : '#fff', borderColor: isDark ? '#222' : '#e8e8e8' }
+  const cardStyle = { background: 'var(--rs-surface-raised)', borderColor: 'var(--rs-border)' }
   const chartHeight = 240
   // Clicking a column/bar/slice drills into that runnable.
   const drillToRunnable = ({ chart }: { chart: { on: (e: string, cb: (evt: { data?: { data?: Record<string, unknown> } }) => void) => void } }) => {
@@ -125,7 +125,7 @@ export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsVi
 
   const exceptionColumns: ColumnType<AnalyticsException>[] = [
     { title: 'Exception', dataIndex: 'exception', key: 'exception',
-      render: (e: string) => <Text style={{ fontSize: 12 }}>{e}</Text> },
+      render: (e: string) => <Text style={{ fontSize: 13 }}>{e}</Text> },
     { title: 'Runnable', dataIndex: 'runnable', key: 'runnable',
       render: (r: string) => <Tag color="blue" style={{ cursor: 'pointer' }} onClick={() => setRunnableFilter(r)}>{r}</Tag> },
     { title: 'Host', dataIndex: 'host', key: 'host', render: (h: string) => <Tag>{h}</Tag> },
@@ -133,7 +133,7 @@ export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsVi
       sorter: (a, b) => a.count - b.count, defaultSortOrder: 'descend',
       render: (c: number) => <Tag color="red">{c}</Tag> },
     { title: 'Last seen', dataIndex: 'lastTs', key: 'lastTs',
-      render: (t: string) => <Text type="secondary" style={{ fontSize: 12 }}>{new Date(t).toLocaleString()}</Text> },
+      render: (t: string) => <Text type="secondary" style={{ fontSize: 13 }}>{new Date(t).toLocaleString()}</Text> },
   ]
 
   return (
@@ -184,7 +184,7 @@ export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsVi
         />
         {loading && <Spin size="small" indicator={<ReloadOutlined spin />} />}
         <div style={{ flex: 1 }} />
-        <Text type="secondary" style={{ fontSize: 12 }}>
+        <Text type="secondary" style={{ fontSize: 13 }}>
           {data.since} → {data.until}
         </Text>
       </div>
@@ -244,7 +244,7 @@ export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsVi
       {/* Row 2: top runnables + duration trend */}
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={12}>
-          <Card size="small" title="Top runnables" extra={<Text type="secondary" style={{ fontSize: 11 }}>click to drill</Text>} style={cardStyle}>
+          <Card size="small" title="Top runnables" extra={<Text type="secondary" style={{ fontSize: 12 }}>click to drill</Text>} style={cardStyle}>
             {topRuns.length === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} /> : (
               <Column
                 data={topRuns} xField="runnable" yField="runs"

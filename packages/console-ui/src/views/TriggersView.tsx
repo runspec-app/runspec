@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Tag, Alert, Button, Tooltip, Space, Collapse, Input, message } from 'antd'
 import { CheckOutlined, CloseOutlined, ReloadOutlined, BellOutlined, SendOutlined } from '@ant-design/icons'
 import { bridge, type TriggerCard, type TriggerEvent, type TriggerListResult } from '../bridge'
-import { useIsDark, textColor, textMuted } from '../ThemeContext'
+import { useIsDark, textColor, textMuted, MONO_FONT, RADIUS } from '../ThemeContext'
 import { Markdown } from '../components/Markdown'
 import { RunInbox, type CardTranscript } from '../components/RunInbox'
 import { EventLog } from '../components/EventLog'
@@ -347,8 +347,8 @@ export function TriggersView() {
   const convoRoom = (convoCard?.detail?.room as string | undefined) || ''
 
   const dim = textMuted(isDark)
-  const colBg = isDark ? '#141414' : '#f0f0f0'
-  const border = isDark ? '#303030' : '#e8e8e8'
+  const colBg = 'var(--rs-surface-sunken)'
+  const border = 'var(--rs-border)'
 
   const sources = config?.sources ?? []
   const triggers = config?.triggers ?? []
@@ -394,7 +394,7 @@ export function TriggersView() {
           label: (
             <span>
               <BellOutlined /> Triggers
-              <span style={{ color: dim, fontSize: 12 }}>
+              <span style={{ color: dim, fontSize: 13 }}>
                 {' · '}{triggers.length} configured{config?.running ? ' · engine running' : ''}
               </span>
             </span>
@@ -446,19 +446,19 @@ export function TriggersView() {
             <>
               {/* A portal request the hub routed here: what the visitor asked for. */}
               {card.source === 'portal' ? (
-                <div style={{ marginBottom: 16, border: `1px solid ${border}`, borderRadius: 6, padding: 12 }}>
-                  <div style={{ color: dim, fontSize: 12, marginBottom: 4 }}>
+                <div style={{ marginBottom: 16, border: `1px solid ${border}`, borderRadius: RADIUS.sm, padding: 12 }}>
+                  <div style={{ color: dim, fontSize: 13, marginBottom: 4 }}>
                     {card.detail?.visitor_name
                       ? `${String(card.detail.visitor_name)} <${String(card.detail?.visitor ?? '')}>`
                       : String(card.detail?.visitor ?? 'A visitor')}
                     {card.detail?.team ? (
-                      <Tag color="geekblue" style={{ margin: '0 0 0 6px', fontSize: 10 }}>{String(card.detail.team)}</Tag>
+                      <Tag color="geekblue" style={{ margin: '0 0 0 6px', fontSize: 11 }}>{String(card.detail.team)}</Tag>
                     ) : null}{' '}
                     requested
                   </div>
-                  <div style={{ fontFamily: 'monospace', marginBottom: 6 }}>{String(card.detail?.runnable ?? '')}</div>
+                  <div style={{ fontFamily: MONO_FONT, marginBottom: 6 }}>{String(card.detail?.runnable ?? '')}</div>
                   {!!card.detail?.args && Object.keys(card.detail.args as object).length > 0 && (
-                    <div style={{ whiteSpace: 'pre-wrap', fontSize: 12, color: dim }}>
+                    <div style={{ whiteSpace: 'pre-wrap', fontSize: 13, color: dim }}>
                       {Object.entries(card.detail.args as Record<string, unknown>)
                         .map(([k, v]) => `${k} = ${typeof v === 'string' ? v : JSON.stringify(v)}`)
                         .join('\n')}
@@ -472,7 +472,7 @@ export function TriggersView() {
                   action; the poll flips it to "claimed by X" if another console won. */}
               {card.column === 'awaiting_claim' && (
                 <div style={{
-                  border: `1px solid ${COLUMN_COLOR.awaiting_human}`, borderRadius: 6,
+                  border: `1px solid ${COLUMN_COLOR.awaiting_human}`, borderRadius: RADIUS.sm,
                   padding: 12, marginBottom: 16,
                   display: 'flex', alignItems: 'center', gap: 12,
                 }}>
@@ -480,7 +480,7 @@ export function TriggersView() {
                     <div style={{ color: COLUMN_COLOR.awaiting_human, fontWeight: 600 }}>
                       Awaiting claim
                     </div>
-                    <div style={{ color: dim, fontSize: 12 }}>
+                    <div style={{ color: dim, fontSize: 13 }}>
                       Claim to take this email — it moves to{' '}
                       <code>{String(card.detail?.claim_folder ?? 'the claim folder')}</code>{' '}
                       and this trigger runs. Only one console wins.
@@ -501,7 +501,7 @@ export function TriggersView() {
 
               {draft && (
                 <div style={{
-                  border: `1px solid ${COLUMN_COLOR.done}`, borderRadius: 6,
+                  border: `1px solid ${COLUMN_COLOR.done}`, borderRadius: RADIUS.sm,
                   padding: 12, marginBottom: 16,
                   display: 'flex', alignItems: 'center', gap: 12,
                 }}>
@@ -509,7 +509,7 @@ export function TriggersView() {
                     <div style={{ color: COLUMN_COLOR.done, fontWeight: 600 }}>
                       Draft reply saved to Outlook{draft.to ? ` · to ${draft.to}` : ''}
                     </div>
-                    <div style={{ color: dim, fontSize: 12 }}>
+                    <div style={{ color: dim, fontSize: 13 }}>
                       {draft.sent
                         ? 'Sent.'
                         : 'Review it in Outlook, then send — or send it from here.'}
@@ -568,7 +568,7 @@ export function TriggersView() {
           persistent pane under the inbox (this is where the old Rooms tab's chat
           now lives). Approve/Deny for a request still rides the right Drawer. */}
       {convoCard && (
-        <div style={{ marginTop: 16, border: `1px solid ${border}`, borderRadius: 6, display: 'flex', flexDirection: 'column', maxHeight: 440 }}>
+        <div style={{ marginTop: 16, border: `1px solid ${border}`, borderRadius: RADIUS.sm, display: 'flex', flexDirection: 'column', maxHeight: 440 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderBottom: `1px solid ${border}` }}>
             <span style={{ fontWeight: 600 }}>{visitorOf(convoRoom)}</span>
             <span style={{ color: dim }}>· {convoCard.detail?.queue as string}</span>
@@ -578,13 +578,13 @@ export function TriggersView() {
           </div>
           <div style={{ flex: 1, overflowY: 'auto', padding: '10px 12px', minHeight: 120 }}>
             {(messages[convoRoom] || []).length === 0 ? (
-              <div style={{ color: dim, fontSize: 12 }}>No messages yet.</div>
+              <div style={{ color: dim, fontSize: 13 }}>No messages yet.</div>
             ) : (messages[convoRoom] || []).map((m, i) => (
-              <div key={m.id || i} style={{ display: 'flex', gap: 8, padding: '3px 0', alignItems: 'baseline', fontSize: 13 }}>
+              <div key={m.id || i} style={{ display: 'flex', gap: 8, padding: '3px 0', alignItems: 'baseline', fontSize: 14 }}>
                 <span style={{ fontWeight: 600, color: dim, whiteSpace: 'nowrap' }}>{m.sender || visitorOf(convoRoom)}</span>
-                {m.kind === 'request' && <Tag color="purple" style={{ fontSize: 10 }}>request</Tag>}
+                {m.kind === 'request' && <Tag color="purple" style={{ fontSize: 11 }}>request</Tag>}
                 <span style={{ flex: 1, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{m.text}</span>
-                <span style={{ color: dim, fontSize: 11, whiteSpace: 'nowrap' }}>{m.ts ? fmtTime(m.ts) : ''}</span>
+                <span style={{ color: dim, fontSize: 12, whiteSpace: 'nowrap' }}>{m.ts ? fmtTime(m.ts) : ''}</span>
               </div>
             ))}
           </div>

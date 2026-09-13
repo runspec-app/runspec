@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { Switch, Button, Collapse, Segmented, Input, InputNumber, message } from 'antd'
 import { ClockCircleOutlined, CoffeeOutlined, LockOutlined, UnlockOutlined, QuestionCircleOutlined } from '@ant-design/icons'
 import { bridge, type Rota, type RotaDay, type LockState } from '../bridge'
-import { useIsDark, textColor, textMuted } from '../ThemeContext'
+import { useIsDark, textColor, textMuted, MONO_FONT } from '../ThemeContext'
 
 // JS Date.getDay() (0=Sun) → rota day key.
 const DOW_KEY = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']
@@ -30,7 +30,7 @@ function LockIndicator() {
   }
   const m = meta[state]
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: m.color, fontSize: 12 }}>
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: m.color, fontSize: 13 }}>
       {m.icon}{m.label}
     </span>
   )
@@ -97,14 +97,14 @@ function BreakControl({ rota, breakUntil, onChanged }: { rota: Rota; breakUntil:
         options={[{ label: '15m', value: 15 }, { label: '30m', value: 30 }, { label: '60m', value: 60 }, { label: 'Custom', value: 'custom' }]}
       />
       <InputNumber size="small" min={1} max={1440} value={minutes} onChange={v => setMinutes(Number(v) || 1)} style={{ width: 64 }} />
-      <span style={{ color: dim, fontSize: 12 }}>min</span>
+      <span style={{ color: dim, fontSize: 13 }}>min</span>
       <Button size="small" type="primary" icon={<CoffeeOutlined />} disabled={!rota.enabled} onClick={take} loading={busy}>
         Take a break
       </Button>
       {!rota.enabled
-        ? <span style={{ color: dim, fontSize: 12 }}>(enable the rota to take a break)</span>
+        ? <span style={{ color: dim, fontSize: 13 }}>(enable the rota to take a break)</span>
         : shiftEnd
-          ? <span style={{ color: dim, fontSize: 12 }}>your shift ends {shiftEnd} — you can break past it</span>
+          ? <span style={{ color: dim, fontSize: 13 }}>your shift ends {shiftEnd} — you can break past it</span>
           : null}
     </div>
   )
@@ -163,7 +163,7 @@ function WorkingHoursEditor({ rota, onSaved }: { rota: Rota; onSaved: () => void
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
         <Switch size="small" checked={enabled} onChange={setEnabled} />
         <span>Only run triggers and schedules during working hours</span>
-        <span style={{ color: dim, fontSize: 12 }}>
+        <span style={{ color: dim, fontSize: 13 }}>
           {enabled ? '(outside these, events are ignored)' : '(off — automation runs anytime)'}
         </span>
       </div>
@@ -180,7 +180,7 @@ function WorkingHoursEditor({ rota, onSaved }: { rota: Rota; onSaved: () => void
         <LockOutlined style={{ color: dim }} />
         <span>Pause reactive triggers while my screen is locked</span>
         <LockIndicator />
-        <span style={{ color: dim, fontSize: 12 }}>
+        <span style={{ color: dim, fontSize: 13 }}>
           {lockSuspend
             ? '(scheduled jobs still run; uncertain reads pause — fail-safe)'
             : '(off — triggers can run while you are away)'}
@@ -207,14 +207,14 @@ function WorkingHoursEditor({ rota, onSaved }: { rota: Rota; onSaved: () => void
               <span>On shift when a calendar event's subject contains</span>
               <Input
                 size="small" value={marker} onChange={e => setMarker(e.target.value)}
-                style={{ width: 120, fontFamily: 'monospace' }} placeholder="shift"
+                style={{ width: 120, fontFamily: MONO_FONT }} placeholder="shift"
               />
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
               <Switch size="small" checked={hold} onChange={setHold} />
               <span>Hold while I'm in a meeting / OOO</span>
             </div>
-            <div style={{ color: dim, fontSize: 12 }}>
+            <div style={{ color: dim, fontSize: 13 }}>
               The grid below is the fallback if Outlook can't be read.
             </div>
           </div>
@@ -227,15 +227,15 @@ function WorkingHoursEditor({ rota, onSaved }: { rota: Rota; onSaved: () => void
             <input
               type="time" value={days[k].start} disabled={!days[k].on}
               onChange={e => setDay(k, { start: e.target.value })}
-              style={{ fontFamily: 'monospace' }}
+              style={{ fontFamily: MONO_FONT }}
             />
             <span style={{ color: dim }}>to</span>
             <input
               type="time" value={days[k].end} disabled={!days[k].on}
               onChange={e => setDay(k, { end: e.target.value })}
-              style={{ fontFamily: 'monospace' }}
+              style={{ fontFamily: MONO_FONT }}
             />
-            {!days[k].on && <span style={{ color: dim, fontSize: 12 }}>not working</span>}
+            {!days[k].on && <span style={{ color: dim, fontSize: 13 }}>not working</span>}
           </div>
         ))}
       </div>
@@ -243,7 +243,7 @@ function WorkingHoursEditor({ rota, onSaved }: { rota: Rota; onSaved: () => void
         <Button type="primary" size="small" onClick={save} loading={saving}>
           Save working hours
         </Button>
-        <span style={{ color: dim, fontSize: 12 }}>Changes take effect when you click Save.</span>
+        <span style={{ color: dim, fontSize: 13 }}>Changes take effect when you click Save.</span>
       </div>
     </div>
   )
@@ -291,14 +291,14 @@ export function RotaView() {
             <span><ClockCircleOutlined /> Working hours{rota?.enabled ? '' : ' (off)'}</span>
           ),
           children: rota === null
-            ? <span style={{ color: dim, fontSize: 12 }}>Loading…</span>
+            ? <span style={{ color: dim, fontSize: 13 }}>Loading…</span>
             : <>
                 <WorkingHoursEditor key={loadSeq} rota={rota} onSaved={loadRota} />
                 <BreakControl rota={rota} breakUntil={breakUntil} onChanged={loadRota} />
               </>,
         }]}
       />
-      <div style={{ color: dim, fontSize: 12, paddingLeft: 4 }}>
+      <div style={{ color: dim, fontSize: 13, paddingLeft: 4 }}>
         Triggers and schedules only run inside these hours. Outside them, events are
         ignored — keeping the console a user tool rather than an always-on automation
         system.

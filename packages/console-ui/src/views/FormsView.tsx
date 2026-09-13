@@ -4,7 +4,7 @@ import { SearchOutlined, RightOutlined, ArrowLeftOutlined, AppstoreOutlined, Inf
 import dayjs from 'dayjs'
 import type { ArgDef, Host, Runnable, Runbook, SavedRun } from '../bridge'
 import { bridge } from '../bridge'
-import { useIsDark, useAccent, withAlpha, textSecondary } from '../ThemeContext'
+import { useIsDark, useAccent, withAlpha, surfaces, RADIUS, textSecondary, MONO_FONT } from '../ThemeContext'
 import { PathInput } from './PathInput'
 import { runnableHidden } from '../toolVisibility'
 
@@ -120,7 +120,7 @@ function AutonomyTag({ level }: { level?: string }) {
   const { color, label } = autonomyTagProps(level)
   return (
     <Tooltip title={`autonomy: ${level || 'confirm'}`}>
-      <Tag color={color} style={{ fontSize: 10, margin: 0 }}>{label}</Tag>
+      <Tag color={color} style={{ fontSize: 11, margin: 0 }}>{label}</Tag>
     </Tooltip>
   )
 }
@@ -147,7 +147,7 @@ export function TruncatedText({ text, style }: { text: string; style?: CSSProper
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
           {text}
         </span>
-        <InfoCircleOutlined style={{ flexShrink: 0, fontSize: 11, opacity: 0.55 }} />
+        <InfoCircleOutlined style={{ flexShrink: 0, fontSize: 12, opacity: 0.55 }} />
       </span>
     </Tooltip>
   )
@@ -273,8 +273,8 @@ export function ArgInput({ arg, host, runnable, runAs, group, value, error, onCh
   const placeholder = arg.hint ?? (isVarRef(arg.default) ? arg.default as string : undefined)
 
   const inputStyle = {
-    fontFamily: 'monospace',
-    fontSize: 12,
+    fontFamily: MONO_FONT,
+    fontSize: 13,
     borderColor: error ? '#ff4d4f' : undefined,
   }
 
@@ -295,7 +295,7 @@ export function ArgInput({ arg, host, runnable, runAs, group, value, error, onCh
         value={value as string | undefined}
         onChange={onChange}
         placeholder="Select…"
-        style={{ width: '100%', fontFamily: 'monospace', fontSize: 12 }}
+        style={{ width: '100%', fontFamily: MONO_FONT, fontSize: 13 }}
         status={error ? 'error' : undefined}
         options={arg.options.map(o => ({ label: o, value: o }))}
       />
@@ -471,9 +471,9 @@ function SectionLabel({ children }: { children: ReactNode }) {
   const isDark = useIsDark()
   return (
     <div style={{
-      fontSize: 10, color: textSecondary(isDark),
+      fontSize: 11, color: textSecondary(isDark),
       textTransform: 'uppercase', letterSpacing: '0.08em',
-      paddingBottom: 5, borderBottom: `1px solid ${isDark ? '#222' : '#e8e8e8'}`,
+      paddingBottom: 5, borderBottom: `1px solid var(--rs-border)`,
     }}>
       {children}
     </div>
@@ -484,41 +484,41 @@ function ArgRow({ arg, host, runnable, runAs, group, value, error, onChange, bin
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
-        <Text code style={{ fontSize: 12 }}>--{arg.name}</Text>
-        <Tag color="default" style={{ fontSize: 10, margin: 0 }}>
+        <Text code style={{ fontSize: 13 }}>--{arg.name}</Text>
+        <Tag color="default" style={{ fontSize: 11, margin: 0 }}>
           {arg.type === 'path' && arg.ui === 'directory' ? 'folder'
             : (arg.ui === 'date' || arg.ui === 'datetime' || arg.ui === 'time' || arg.ui === 'month' || arg.ui === 'color') ? arg.ui
               : arg.type}
         </Tag>
         {arg.inherited && (
           <Tooltip title="Inherited from a global arg or a parent command — applies to this run">
-            <Tag color="blue" style={{ fontSize: 10, margin: 0 }}>inherited</Tag>
+            <Tag color="blue" style={{ fontSize: 11, margin: 0 }}>inherited</Tag>
           </Tooltip>
         )}
         {binding && (
           <Tooltip title={binding.role === 'secret'
             ? `This arg's secret is supplied by credential “${binding.label}” via the environment channel — leave blank to use it, or type to override.`
             : `Pre-filled from credential “${binding.label}” — edit if needed.`}>
-            <Tag color="green" style={{ fontSize: 10, margin: 0 }}>from {binding.label}</Tag>
+            <Tag color="green" style={{ fontSize: 11, margin: 0 }}>from {binding.label}</Tag>
           </Tooltip>
         )}
         {arg.type === 'password'
-          ? <Tooltip title="A secret — typed here and sent via the environment, never on the command line. Credentials are not copied into args on the form; use the credential section below for env-var credentials."><Tag color={arg.required ? 'orange' : 'default'} style={{ fontSize: 10, margin: 0 }}>{arg.required ? 'required secret' : 'secret'}</Tag></Tooltip>
+          ? <Tooltip title="A secret — typed here and sent via the environment, never on the command line. Credentials are not copied into args on the form; use the credential section below for env-var credentials."><Tag color={arg.required ? 'orange' : 'default'} style={{ fontSize: 11, margin: 0 }}>{arg.required ? 'required secret' : 'secret'}</Tag></Tooltip>
           : arg.required
-            ? <Tag color="orange" style={{ fontSize: 10, margin: 0 }}>required</Tag>
+            ? <Tag color="orange" style={{ fontSize: 11, margin: 0 }}>required</Tag>
             : isVarRef(arg.default)
-              ? <Text style={{ fontSize: 10, color: '#fa8c16', fontFamily: 'monospace' }}>{arg.default as string}</Text>
-              : <Text type="secondary" style={{ fontSize: 10 }}>optional</Text>
+              ? <Text style={{ fontSize: 11, color: '#fa8c16', fontFamily: MONO_FONT }}>{arg.default as string}</Text>
+              : <Text type="secondary" style={{ fontSize: 11 }}>optional</Text>
         }
       </div>
       {/* Description on its own full-width line, truncated with a hover tooltip —
           so a long description no longer fights the name/tags for the row and
           the field lays out cleanly in the multi-column grid. */}
       {arg.description && (
-        <TruncatedText text={arg.description} style={{ fontSize: 11, marginBottom: 5, color: 'var(--rs-text-secondary)' }} />
+        <TruncatedText text={arg.description} style={{ fontSize: 12, marginBottom: 5, color: 'var(--rs-text-secondary)' }} />
       )}
       <ArgInput arg={arg} host={host} runnable={runnable} runAs={runAs} group={group} value={value} error={error} onChange={onChange} binding={binding} />
-      {error && <Text style={{ fontSize: 11, color: '#ff4d4f' }}>{error}</Text>}
+      {error && <Text style={{ fontSize: 12, color: '#ff4d4f' }}>{error}</Text>}
     </div>
   )
 }
@@ -534,7 +534,7 @@ function DefaultArgsCollapse({ count, children }: { count: number; children: Rea
       style={{ marginLeft: -8, marginRight: -8 }}
       items={[{
         key: 'defaults',
-        label: <Text type="secondary" style={{ fontSize: 11 }}>Default arguments ({count})</Text>,
+        label: <Text type="secondary" style={{ fontSize: 12 }}>Default arguments ({count})</Text>,
         children,
       }]}
     />
@@ -556,7 +556,7 @@ function ArgForm({ node, host, runnable, runAs, group, values, errors, onChange,
 
   if (args.length === 0) {
     return (
-      <Text type="secondary" style={{ fontSize: 12 }}>
+      <Text type="secondary" style={{ fontSize: 13 }}>
         No arguments — ready to run.
       </Text>
     )
@@ -637,8 +637,8 @@ function SubcommandPicker({ node, onSelect }: {
 }) {
   const isDark = useIsDark()
   const commands = Object.entries(node.commands ?? {})
-  const border = isDark ? '#2a2a2a' : '#e8e8e8'
-  const hoverBg = isDark ? '#1e1e1e' : '#f5f5f5'
+  const border = 'var(--rs-border)'
+  const hoverBg = surfaces(isDark).overlay
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10 }}>
@@ -648,7 +648,7 @@ function SubcommandPicker({ node, onSelect }: {
           onClick={() => onSelect(name)}
           style={{
             minWidth: 0,
-            border: `1px solid ${border}`, borderRadius: 8, padding: '14px 16px',
+            border: `1px solid ${border}`, borderRadius: RADIUS.md, padding: '14px 16px',
             cursor: 'pointer', transition: 'background 0.15s',
           }}
           onMouseEnter={e => (e.currentTarget.style.background = hoverBg)}
@@ -656,23 +656,23 @@ function SubcommandPicker({ node, onSelect }: {
         >
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, marginBottom: 4 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-              <Text style={{ fontFamily: 'monospace', fontSize: 13 }}>{name}</Text>
+              <Text style={{ fontFamily: MONO_FONT, fontSize: 14 }}>{name}</Text>
               {/* Each subcommand shows its own effective autonomy. */}
               <AutonomyTag level={cmd.autonomy} />
             </div>
-            <RightOutlined style={{ fontSize: 10, color: 'var(--rs-text-faint)', flexShrink: 0 }} />
+            <RightOutlined style={{ fontSize: 11, color: 'var(--rs-text-faint)', flexShrink: 0 }} />
           </div>
           {cmd.description && (
-            <TruncatedText text={cmd.description} style={{ fontSize: 12, color: 'var(--rs-text-secondary)' }} />
+            <TruncatedText text={cmd.description} style={{ fontSize: 13, color: 'var(--rs-text-secondary)' }} />
           )}
           {(cmd.args ?? []).filter(a => !a.inherited).length > 0 && (
             <div style={{ marginTop: 8 }}>
-              <Tag style={{ fontSize: 10 }}>{(cmd.args ?? []).filter(a => !a.inherited).length} args</Tag>
+              <Tag style={{ fontSize: 11 }}>{(cmd.args ?? []).filter(a => !a.inherited).length} args</Tag>
             </div>
           )}
           {Object.keys(cmd.commands ?? {}).length > 0 && (
             <div style={{ marginTop: 8 }}>
-              <Tag style={{ fontSize: 10 }}>{Object.keys(cmd.commands!).length} subcommands</Tag>
+              <Tag style={{ fontSize: 11 }}>{Object.keys(cmd.commands!).length} subcommands</Tag>
             </div>
           )}
         </div>
@@ -851,10 +851,10 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', paddingRight: 28 }}>
           {crumbs.map((seg, i) => (
             <span key={i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              {i > 0 && <RightOutlined style={{ fontSize: 10, color: 'var(--rs-text-faint)' }} />}
+              {i > 0 && <RightOutlined style={{ fontSize: 11, color: 'var(--rs-text-faint)' }} />}
               <Text
                 style={{
-                  fontFamily: 'monospace', fontSize: 13,
+                  fontFamily: MONO_FONT, fontSize: 14,
                   color: i === crumbs.length - 1 ? undefined : 'var(--rs-text-muted)',
                   cursor: i < crumbs.length - 1 ? 'pointer' : 'default',
                 }}
@@ -870,8 +870,8 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
                 (whose level a subcommand leaf overrides). */}
             {canRunHere && <AutonomyTag level={currentNode.autonomy} />}
             {rootRunnable.runAs && (
-              <Text type="secondary" style={{ fontSize: 11 }}>
-                as <Text code style={{ fontSize: 11 }}>{rootRunnable.runAs}</Text>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                as <Text code style={{ fontSize: 12 }}>{rootRunnable.runAs}</Text>
               </Text>
             )}
           </div>
@@ -890,7 +890,7 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
     >
       <div>
         {currentNode.description && (
-          <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 14 }}>
+          <Text type="secondary" style={{ fontSize: 13, display: 'block', marginBottom: 14 }}>
             {currentNode.description}
           </Text>
         )}
@@ -898,13 +898,13 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
           <div style={{ marginBottom: canRunHere ? 18 : 0 }}>
             {currentNode.requireCommand ? (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-                <Tag color="orange" style={{ fontSize: 10, margin: 0 }}>command required</Tag>
-                <Text type="secondary" style={{ fontSize: 12 }}>
+                <Tag color="orange" style={{ fontSize: 11, margin: 0 }}>command required</Tag>
+                <Text type="secondary" style={{ fontSize: 13 }}>
                   This runnable can't run on its own — pick a command to continue.
                 </Text>
               </div>
             ) : (
-              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 14 }}>
+              <Text type="secondary" style={{ fontSize: 13, display: 'block', marginBottom: 14 }}>
                 Choose a subcommand{canRunHere ? `, or run /${crumbs.join(' ')} at its top level below` : ''}:
               </Text>
             )}
@@ -920,18 +920,18 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
         <div>
           {hasSubcommands && (
             <div style={{ borderTop: '1px solid rgba(128,128,128,0.2)', paddingTop: 14, marginBottom: 4 }}>
-              <Text type="secondary" style={{ fontSize: 11, fontStyle: 'italic' }}>
-                Or run <Text code style={{ fontSize: 11 }}>{crumbs.join(' ')}</Text> directly:
+              <Text type="secondary" style={{ fontSize: 12, fontStyle: 'italic' }}>
+                Or run <Text code style={{ fontSize: 12 }}>{crumbs.join(' ')}</Text> directly:
               </Text>
             </div>
           )}
           <ArgForm node={currentNode} host={rootRunnable.host} runnable={rootRunnable.name} runAs={rootRunnable.runAs} group={rootRunnable.group} values={values} errors={errors} onChange={handleChange} boundArgs={boundArgs} />
           {creds.length > 0 && (
             <div style={{ marginTop: 14, borderTop: '1px solid rgba(128,128,128,0.2)', paddingTop: 12 }}>
-              <Text style={{ fontSize: 12, display: 'block', marginBottom: 2 }}>Credentials</Text>
-              <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 6 }}>
+              <Text style={{ fontSize: 13, display: 'block', marginBottom: 2 }}>Credentials</Text>
+              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>
                 A selected credential is applied two ways — whichever the runnable reads:
-                as env vars named after it (a credential <Text code style={{ fontSize: 10 }}>Jira</Text> sets <Text code style={{ fontSize: 10 }}>JIRA_USERNAME</Text>/<Text code style={{ fontSize: 10 }}>JIRA_USER</Text>/<Text code style={{ fontSize: 10 }}>JIRA_PASSWORD</Text>),
+                as env vars named after it (a credential <Text code style={{ fontSize: 11 }}>Jira</Text> sets <Text code style={{ fontSize: 11 }}>JIRA_USERNAME</Text>/<Text code style={{ fontSize: 11 }}>JIRA_USER</Text>/<Text code style={{ fontSize: 11 }}>JIRA_PASSWORD</Text>),
                 and — if it declares an argument binding matching a field above — into that argument (the username is pre-filled; the secret rides the environment, never argv).
               </Text>
               <Select
@@ -955,16 +955,16 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
                     if (c.username_arg && declaredArgNames.has(c.username_arg)) bound.push(`--${c.username_arg}`)
                     if (c.secret_arg && declaredArgNames.has(c.secret_arg)) bound.push(`--${c.secret_arg}`)
                     return (
-                      <Text key={id} type="secondary" style={{ fontSize: 11 }}>
-                        <Text style={{ fontSize: 11 }}>{c.label}</Text>
+                      <Text key={id} type="secondary" style={{ fontSize: 12 }}>
+                        <Text style={{ fontSize: 12 }}>{c.label}</Text>
                         {' → '}
                         {names.length
-                          ? names.map((n, i) => <span key={n}>{i > 0 && ', '}<Text code style={{ fontSize: 10 }}>{n}</Text></span>)
-                          : <Text type="warning" style={{ fontSize: 11 }}>no env vars (rename or pick a userpass/password/token credential)</Text>}
+                          ? names.map((n, i) => <span key={n}>{i > 0 && ', '}<Text code style={{ fontSize: 11 }}>{n}</Text></span>)
+                          : <Text type="warning" style={{ fontSize: 12 }}>no env vars (rename or pick a userpass/password/token credential)</Text>}
                         {bound.length > 0 && (
-                          <span> · binds {bound.map((n, i) => <span key={n}>{i > 0 && ', '}<Text code style={{ fontSize: 10 }}>{n}</Text></span>)}</span>
+                          <span> · binds {bound.map((n, i) => <span key={n}>{i > 0 && ', '}<Text code style={{ fontSize: 11 }}>{n}</Text></span>)}</span>
                         )}
-                        {c.kind !== 'ssh-key' && !c.has_secret && <Text type="warning" style={{ fontSize: 11 }}> · no secret stored</Text>}
+                        {c.kind !== 'ssh-key' && !c.has_secret && <Text type="warning" style={{ fontSize: 12 }}> · no secret stored</Text>}
                       </Text>
                     )
                   })}
@@ -998,62 +998,62 @@ function RunnableCard({ runnable, hosts, onClick }: {
   const isAuto = runnable.autonomy === 'autonomous'
   const isInstant = argCount === 0 && subCount === 0
 
-  const border = hovered
-    ? accent
-    : (isDark ? '#2a2a2a' : '#e0e0e0')
+  const sf = surfaces(isDark)
+  const border = hovered ? withAlpha(accent, 0.6) : sf.border
   const bg = hovered
-    ? withAlpha(accent, isDark ? 0.04 : 0.03)
-    : (isDark ? '#141414' : '#fafafa')
+    ? withAlpha(accent, isDark ? 0.05 : 0.03)
+    : sf.raised
 
   return (
     <div
       onClick={onClick}
+      className="rs-card-lift"
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
-        border: `1px solid ${border}`, borderRadius: 8, padding: '14px 16px',
-        cursor: 'pointer', background: bg, transition: 'border-color 0.15s, background 0.15s',
+        border: `1px solid ${border}`, borderRadius: RADIUS.lg, padding: '14px 16px',
+        cursor: 'pointer', background: bg,
         display: 'flex', flexDirection: 'column', gap: 6,
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <span style={{ fontSize: 9, color: connected ? '#52c41a' : '#595959', flexShrink: 0 }}>●</span>
-        <Text style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 600 }}>{runnable.name}</Text>
+        <Text style={{ fontFamily: MONO_FONT, fontSize: 14, fontWeight: 600 }}>{runnable.name}</Text>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
           {isInstant && (
             <Tooltip title="No arguments — runs immediately on click">
-              <Tag color="gold" style={{ fontSize: 10, margin: 0 }}>⚡ instant</Tag>
+              <Tag color="gold" style={{ fontSize: 11, margin: 0 }}>⚡ instant</Tag>
             </Tooltip>
           )}
           {isAuto && (
             <Tooltip title="autonomy: autonomous — the assistant can invoke this without asking">
-              <Tag color="green" style={{ fontSize: 10, margin: 0 }}>auto</Tag>
+              <Tag color="green" style={{ fontSize: 11, margin: 0 }}>auto</Tag>
             </Tooltip>
           )}
         </div>
       </div>
       {runnable.description && (
-        <Text type="secondary" style={{ fontSize: 12, lineHeight: 1.4 }}>{runnable.description}</Text>
+        <Text type="secondary" style={{ fontSize: 13, lineHeight: 1.4 }}>{runnable.description}</Text>
       )}
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 2, alignItems: 'center' }}>
-        <Tag style={{ fontSize: 10, margin: 0 }}>{runnable.host}</Tag>
+        <Tag style={{ fontSize: 11, margin: 0 }}>{runnable.host}</Tag>
         {argCount > 0 && (
-          <Tag color={requiredCount > 0 ? 'orange' : 'default'} style={{ fontSize: 10, margin: 0 }}>
+          <Tag color={requiredCount > 0 ? 'orange' : 'default'} style={{ fontSize: 11, margin: 0 }}>
             {argCount} arg{argCount !== 1 ? 's' : ''}{requiredCount > 0 ? ` · ${requiredCount} req` : ''}
           </Tag>
         )}
         {subCount > 0 && (
           runnable.requireCommand ? (
             <Tooltip title="A command is required — this runnable can't run without choosing one of its subcommands">
-              <Tag color="orange" style={{ fontSize: 10, margin: 0 }}>{subCount} subcommands · required</Tag>
+              <Tag color="orange" style={{ fontSize: 11, margin: 0 }}>{subCount} subcommands · required</Tag>
             </Tooltip>
           ) : (
-            <Tag style={{ fontSize: 10, margin: 0 }}>{subCount} subcommands</Tag>
+            <Tag style={{ fontSize: 11, margin: 0 }}>{subCount} subcommands</Tag>
           )
         )}
         {runnable.runAs && (
-          <Text type="secondary" style={{ fontSize: 10, marginLeft: 'auto' }}>
-            as <Text code style={{ fontSize: 10 }}>{runnable.runAs}</Text>
+          <Text type="secondary" style={{ fontSize: 11, marginLeft: 'auto' }}>
+            as <Text code style={{ fontSize: 11 }}>{runnable.runAs}</Text>
           </Text>
         )}
       </div>
@@ -1070,46 +1070,46 @@ function RunbookCard({ runbook, onClick }: { runbook: Runbook; onClick: () => vo
   const argCount = (runbook.args ?? []).length
   const requiredCount = (runbook.args ?? []).filter(a => a.required).length
 
+  const sf = surfaces(isDark)
   const accent = isDark ? '#bd93f9' : '#722ed1'
-  const border = hovered ? accent : (isDark ? '#2a2a2a' : '#e0e0e0')
-  const bg = hovered
-    ? (isDark ? 'rgba(189,147,249,0.05)' : 'rgba(114,46,209,0.03)')
-    : (isDark ? '#141414' : '#fafafa')
+  const border = hovered ? withAlpha(accent, 0.6) : sf.border
+  const bg = hovered ? withAlpha(accent, isDark ? 0.05 : 0.03) : sf.raised
 
   return (
     <div
       onClick={onClick}
+      className="rs-card-lift"
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
-        border: `1px solid ${border}`, borderRadius: 8, padding: '14px 16px',
-        cursor: 'pointer', background: bg, transition: 'border-color 0.15s, background 0.15s',
+        border: `1px solid ${border}`, borderRadius: RADIUS.lg, padding: '14px 16px',
+        cursor: 'pointer', background: bg,
         display: 'flex', flexDirection: 'column', gap: 6,
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        <Text style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 600, color: accent }}>
+        <Text style={{ fontFamily: MONO_FONT, fontSize: 14, fontWeight: 600, color: accent }}>
           ${runbook.id}
         </Text>
         <div style={{ marginLeft: 'auto' }}>
-          <Tag color="purple" style={{ fontSize: 10, margin: 0 }}>runbook</Tag>
+          <Tag color="purple" style={{ fontSize: 11, margin: 0 }}>runbook</Tag>
         </div>
       </div>
       {(runbook.title || runbook.symptom) && (
-        <Text type="secondary" style={{ fontSize: 12, lineHeight: 1.4 }}>
+        <Text type="secondary" style={{ fontSize: 13, lineHeight: 1.4 }}>
           {runbook.title}{runbook.title && runbook.symptom ? ' — ' : ''}{runbook.symptom}
         </Text>
       )}
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 2, alignItems: 'center' }}>
         {argCount > 0 ? (
-          <Tag color={requiredCount > 0 ? 'orange' : 'default'} style={{ fontSize: 10, margin: 0 }}>
+          <Tag color={requiredCount > 0 ? 'orange' : 'default'} style={{ fontSize: 11, margin: 0 }}>
             {argCount} param{argCount !== 1 ? 's' : ''}{requiredCount > 0 ? ` · ${requiredCount} req` : ''}
           </Tag>
         ) : (
-          <Tag style={{ fontSize: 10, margin: 0 }}>no params</Tag>
+          <Tag style={{ fontSize: 11, margin: 0 }}>no params</Tag>
         )}
         {(runbook.tags ?? []).slice(0, 3).map(t => (
-          <Tag key={t} style={{ fontSize: 10, margin: 0 }}>{t}</Tag>
+          <Tag key={t} style={{ fontSize: 11, margin: 0 }}>{t}</Tag>
         ))}
       </div>
     </div>
@@ -1126,49 +1126,49 @@ function SavedRunCard({ savedRun, onClick }: { savedRun: SavedRun; onClick: () =
   const paramCount = (savedRun.params ?? []).length
   const requiredCount = (savedRun.params ?? []).filter(a => a.required).length
 
+  const sf = surfaces(isDark)
   const accent = isDark ? '#8be9fd' : '#0958d9'
-  const border = hovered ? accent : (isDark ? '#2a2a2a' : '#e0e0e0')
-  const bg = hovered
-    ? (isDark ? 'rgba(139,233,253,0.05)' : 'rgba(9,88,217,0.03)')
-    : (isDark ? '#141414' : '#fafafa')
+  const border = hovered ? withAlpha(accent, 0.6) : sf.border
+  const bg = hovered ? withAlpha(accent, isDark ? 0.05 : 0.03) : sf.raised
 
   return (
     <div
       onClick={onClick}
+      className="rs-card-lift"
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
-        border: `1px solid ${border}`, borderRadius: 8, padding: '14px 16px',
-        cursor: 'pointer', background: bg, transition: 'border-color 0.15s, background 0.15s',
+        border: `1px solid ${border}`, borderRadius: RADIUS.lg, padding: '14px 16px',
+        cursor: 'pointer', background: bg,
         display: 'flex', flexDirection: 'column', gap: 6,
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        <Text style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 600, color: accent }}>
+        <Text style={{ fontFamily: MONO_FONT, fontSize: 14, fontWeight: 600, color: accent }}>
           {savedRun.title || savedRun.id}
         </Text>
         <div style={{ marginLeft: 'auto' }}>
-          <Tag color="blue" style={{ fontSize: 10, margin: 0 }}>saved run</Tag>
+          <Tag color="blue" style={{ fontSize: 11, margin: 0 }}>saved run</Tag>
         </div>
       </div>
-      <Text type="secondary" style={{ fontSize: 12, lineHeight: 1.4 }}>
+      <Text type="secondary" style={{ fontSize: 13, lineHeight: 1.4 }}>
         /{savedRun.runnable} on {savedRun.target || savedRun.host}
       </Text>
       {savedRun.description && (
-        <Text type="secondary" style={{ fontSize: 11, lineHeight: 1.4 }}>
+        <Text type="secondary" style={{ fontSize: 12, lineHeight: 1.4 }}>
           {savedRun.description}
         </Text>
       )}
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 2, alignItems: 'center' }}>
         {paramCount > 0 ? (
-          <Tag color={requiredCount > 0 ? 'orange' : 'default'} style={{ fontSize: 10, margin: 0 }}>
+          <Tag color={requiredCount > 0 ? 'orange' : 'default'} style={{ fontSize: 11, margin: 0 }}>
             {paramCount} param{paramCount !== 1 ? 's' : ''}{requiredCount > 0 ? ` · ${requiredCount} req` : ''}
           </Tag>
         ) : (
-          <Tag style={{ fontSize: 10, margin: 0 }}>runs immediately</Tag>
+          <Tag style={{ fontSize: 11, margin: 0 }}>runs immediately</Tag>
         )}
         {savedRun.argsError && (
-          <Tag color="red" style={{ fontSize: 10, margin: 0 }}>misconfigured</Tag>
+          <Tag color="red" style={{ fontSize: 11, margin: 0 }}>misconfigured</Tag>
         )}
       </div>
     </div>
@@ -1332,7 +1332,7 @@ export function FormsView({
     groupMap.get(r.group)!.push(r)
   }
 
-  const borderCol = isDark ? '#222' : '#e0e0e0'
+  const borderCol = 'var(--rs-border)'
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -1359,7 +1359,7 @@ export function FormsView({
           {filteredSavedRuns.length > 0 && (
             <div style={{ marginBottom: 28 }}>
               <div style={{
-                fontSize: 10, color: textSecondary(isDark),
+                fontSize: 11, color: textSecondary(isDark),
                 textTransform: 'uppercase', letterSpacing: '0.08em',
                 marginBottom: 12, paddingBottom: 6,
                 borderBottom: `1px solid ${borderCol}`,
@@ -1380,7 +1380,7 @@ export function FormsView({
           {filteredRunbooks.length > 0 && (
             <div style={{ marginBottom: 28 }}>
               <div style={{
-                fontSize: 10, color: textSecondary(isDark),
+                fontSize: 11, color: textSecondary(isDark),
                 textTransform: 'uppercase', letterSpacing: '0.08em',
                 marginBottom: 12, paddingBottom: 6,
                 borderBottom: `1px solid ${borderCol}`,
@@ -1401,7 +1401,7 @@ export function FormsView({
           {[...groupMap.entries()].map(([group, groupRunnables]) => (
             <div key={group} style={{ marginBottom: 28 }}>
               <div style={{
-                fontSize: 10, color: textSecondary(isDark),
+                fontSize: 11, color: textSecondary(isDark),
                 textTransform: 'uppercase', letterSpacing: '0.08em',
                 marginBottom: 12, paddingBottom: 6,
                 borderBottom: `1px solid ${borderCol}`,

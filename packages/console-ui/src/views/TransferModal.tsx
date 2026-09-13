@@ -6,6 +6,7 @@ import { bridge } from '../bridge'
 import { PathInput, BrowseModal } from './PathInput'
 import { FilterPicker, humanBytes } from './FilterPicker'
 import { AdHocHostFields, emptyAdHoc, adHocValid, adHocToEndpoint, type AdHocState } from './AdHocHostFields'
+import { MONO_FONT } from '../ThemeContext'
 
 const { Text } = Typography
 const LOCAL = 'local'
@@ -232,7 +233,7 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
       title={<span style={{ display: 'flex', alignItems: 'center', gap: 8 }}><SwapOutlined /> Transfer files</span>}
       footer={
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-          <Text type="secondary" style={{ fontSize: 11 }}>
+          <Text type="secondary" style={{ fontSize: 12 }}>
             {bothRemote ? 'Bytes stream through this machine — the two hosts never connect directly.' : ''}
           </Text>
           <div style={{ display: 'flex', gap: 8 }}>
@@ -251,7 +252,7 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
           {/* Source */}
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-              <Text style={{ fontSize: 12, width: 76 }}>Source</Text>
+              <Text style={{ fontSize: 13, width: 76 }}>Source</Text>
               <Select size="small" value={srcKind} onChange={v => setSrcKind(v as Kind)} style={{ width: 150 }} options={KIND_OPTIONS} />
               {srcKind === 'host' && (
                 <Select size="small" value={srcHost || undefined} onChange={setSrcHost} placeholder="Source host" style={{ minWidth: 170 }} options={hostOptions} />
@@ -267,12 +268,12 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
           {/* Source files */}
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-              <Text style={{ fontSize: 12 }}>Source files</Text>
-              <Tag style={{ fontSize: 10, margin: 0 }}>{endpointLabel(srcKind, srcHost, srcAdhoc)}</Tag>
+              <Text style={{ fontSize: 13 }}>Source files</Text>
+              <Tag style={{ fontSize: 11, margin: 0 }}>{endpointLabel(srcKind, srcHost, srcAdhoc)}</Tag>
             </div>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
               {sourcePaths.map(p => (
-                <Tag key={p} closable title={p} onClose={() => setSourcePaths(prev => prev.filter(x => x !== p))} style={{ fontFamily: 'monospace', fontSize: 11 }}>
+                <Tag key={p} closable title={p} onClose={() => setSourcePaths(prev => prev.filter(x => x !== p))} style={{ fontFamily: MONO_FONT, fontSize: 12 }}>
                   {p.split(/[\\/]/).pop()}
                 </Tag>
               ))}
@@ -296,7 +297,7 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
           {/* Destination */}
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-              <Text style={{ fontSize: 12, width: 76 }}>Destination</Text>
+              <Text style={{ fontSize: 13, width: 76 }}>Destination</Text>
               <Select size="small" value={dstKind} onChange={v => setDstKind(v as Kind)} style={{ width: 150 }} options={KIND_OPTIONS} />
               {dstKind === 'host' && (
                 srcKind === 'local' ? (
@@ -321,7 +322,7 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
               </div>
             )}
             {relayDestUnsupported ? (
-              <Text type="warning" style={{ fontSize: 11 }}>{disabledReason}</Text>
+              <Text type="warning" style={{ fontSize: 12 }}>{disabledReason}</Text>
             ) : dstKind !== 'local' && (
               <PathInput
                 host={dstBrowseHost}
@@ -337,33 +338,33 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
               <>
                 <PathInput host={LOCAL} value={destDir} onChange={setDestDir} dirsOnly placeholder="destination folder" />
                 {workspacePath && destDir === workspacePath && (
-                  <Text type="secondary" style={{ fontSize: 10 }}>
+                  <Text type="secondary" style={{ fontSize: 11 }}>
                     Defaulted to this chat's agent workspace — files here are ready for the agent to work on.
                   </Text>
                 )}
               </>
             )}
             {isFanout && (
-              <Text type="secondary" style={{ fontSize: 10 }}>
+              <Text type="secondary" style={{ fontSize: 11 }}>
                 Browsing {dstHosts[0]} — the same path is written to all {dstHosts.length} hosts.
               </Text>
             )}
             {isFanout && destDir && (
               checking ? (
-                <div><Text type="secondary" style={{ fontSize: 11 }}>Checking destination on hosts…</Text></div>
+                <div><Text type="secondary" style={{ fontSize: 12 }}>Checking destination on hosts…</Text></div>
               ) : destChecks ? (
                 missingHosts.length > 0 ? (
-                  <div><Text type="warning" style={{ fontSize: 11 }}>⚠ Folder not found on {missingHosts.join(', ')} — these hosts will be skipped.</Text></div>
+                  <div><Text type="warning" style={{ fontSize: 12 }}>⚠ Folder not found on {missingHosts.join(', ')} — these hosts will be skipped.</Text></div>
                 ) : (
-                  <div><Text type="success" style={{ fontSize: 11 }}>✓ Folder exists on all {dstHosts.length} hosts.</Text></div>
+                  <div><Text type="success" style={{ fontSize: 12 }}>✓ Folder exists on all {dstHosts.length} hosts.</Text></div>
                 )
               ) : null
             )}
             {sourcePaths.length === 1 && !bothLocal && !relayDestUnsupported && (
               <div style={{ marginTop: 8 }}>
-                <Text style={{ fontSize: 12 }}>
+                <Text style={{ fontSize: 13 }}>
                   Rename on {dstKind === 'local' ? 'this computer' : 'target'}{' '}
-                  <Text type="secondary" style={{ fontSize: 11 }}>(optional)</Text>
+                  <Text type="secondary" style={{ fontSize: 12 }}>(optional)</Text>
                 </Text>
                 <Input
                   size="small"
@@ -371,13 +372,13 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
                   value={destName}
                   onChange={e => setDestName(e.target.value)}
                   placeholder={`keep source name (${sourcePaths[0].split(/[\\/]/).pop()})`}
-                  style={{ fontFamily: 'monospace', fontSize: 12, marginTop: 4 }}
+                  style={{ fontFamily: MONO_FONT, fontSize: 13, marginTop: 4 }}
                 />
               </div>
             )}
           </div>
 
-          {bothLocal && <Text type="warning" style={{ fontSize: 11 }}>{disabledReason}</Text>}
+          {bothLocal && <Text type="warning" style={{ fontSize: 12 }}>{disabledReason}</Text>}
 
           {fanRows.length > 0 ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -387,7 +388,7 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
                 const status = hp.done ? (hp.ok ? 'success' : 'exception') : 'active'
                 return (
                   <div key={h} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <Tag style={{ fontSize: 10, margin: 0, minWidth: 90, textAlign: 'center' }}>{h}</Tag>
+                    <Tag style={{ fontSize: 11, margin: 0, minWidth: 90, textAlign: 'center' }}>{h}</Tag>
                     <Progress percent={p} status={status} size="small" style={{ flex: 1, margin: 0 }} />
                   </div>
                 )
@@ -402,7 +403,7 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
                 size="small"
               />
               {progress && (
-                <Text type="secondary" style={{ fontSize: 11, fontFamily: 'monospace' }}>
+                <Text type="secondary" style={{ fontSize: 12, fontFamily: MONO_FONT }}>
                   {progress.file}{progress.count > 1 ? ` (${progress.index + 1}/${progress.count})` : ''}
                   {progress.indeterminate ? ` · filtering… ${humanBytes(progress.transferred)} written` : ''}
                 </Text>
@@ -410,7 +411,7 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
             </div>
           ) : null}
           {result && !running && !isFanout && (
-            <Text type={result.ok ? 'success' : 'danger'} style={{ fontSize: 12 }}>
+            <Text type={result.ok ? 'success' : 'danger'} style={{ fontSize: 13 }}>
               {result.ok ? 'Done.' : `Failed: ${result.error}`}
             </Text>
           )}

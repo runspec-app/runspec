@@ -3,7 +3,7 @@ import { Button, Drawer, Empty, List, Popconfirm, Tag, Tooltip, Typography, mess
 import { CloseOutlined, LoadingOutlined, PlusOutlined, ClockCircleOutlined, HistoryOutlined, DeleteOutlined } from '@ant-design/icons'
 import { bridge, type ChatConversation, type ConversationMeta, type InFlightRecord, type Runnable } from '../bridge'
 import { OutputPanel, useInvocationBlocks, type RerunData, type InvocationBlock, type BlockSegment } from '../components/OutputPanel'
-import { useIsDark } from '../ThemeContext'
+import { useIsDark, MONO_FONT, RADIUS } from '../ThemeContext'
 
 const { Text } = Typography
 
@@ -101,7 +101,7 @@ function InFlightStrip({ inFlight }: { inFlight: InFlightRecord[] }) {
     <div style={{
       display: 'flex', flexWrap: 'wrap', gap: 8,
       padding: '8px 12px',
-      background: bg, border: `1px solid ${border}`, borderRadius: 6,
+      background: bg, border: `1px solid ${border}`, borderRadius: RADIUS.sm,
       marginBottom: 4,
     }}>
       {inFlight.map(r => {
@@ -110,20 +110,20 @@ function InFlightStrip({ inFlight }: { inFlight: InFlightRecord[] }) {
         const isTool = r.kind === 'builtin_tool'
         return (
         <span key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <LoadingOutlined style={{ color: '#52c41a', fontSize: 11 }} spin />
-          <Text style={{ fontFamily: 'monospace', fontSize: 12, color: nameCol }}>{isTool ? r.runnable : `/${r.runnable}`}</Text>
+          <LoadingOutlined style={{ color: '#52c41a', fontSize: 12 }} spin />
+          <Text style={{ fontFamily: MONO_FONT, fontSize: 13, color: nameCol }}>{isTool ? r.runnable : `/${r.runnable}`}</Text>
           {isTool && (
-            <Tag color="green" style={{ fontSize: 11, margin: 0 }}>agent</Tag>
+            <Tag color="green" style={{ fontSize: 12, margin: 0 }}>agent</Tag>
           )}
           {r.trigger === 'schedule' && (
             <Tooltip title="Ran on a schedule">
-              <ClockCircleOutlined style={{ color: 'var(--rs-text-muted)', fontSize: 11 }} />
+              <ClockCircleOutlined style={{ color: 'var(--rs-text-muted)', fontSize: 12 }} />
             </Tooltip>
           )}
-          {r.host && <Tag style={{ fontSize: 11, margin: 0 }}>{r.host}</Tag>}
-          {r.group && <Tag color="blue" style={{ fontSize: 11, margin: 0 }}>{r.group}</Tag>}
-          <Text type="secondary" style={{ fontSize: 11 }}>{r.operator}</Text>
-          <Text style={{ fontSize: 11, color: '#52c41a' }}>{elapsed(r.startedAt)}</Text>
+          {r.host && <Tag style={{ fontSize: 12, margin: 0 }}>{r.host}</Tag>}
+          {r.group && <Tag color="blue" style={{ fontSize: 12, margin: 0 }}>{r.group}</Tag>}
+          <Text type="secondary" style={{ fontSize: 12 }}>{r.operator}</Text>
+          <Text style={{ fontSize: 12, color: '#52c41a' }}>{elapsed(r.startedAt)}</Text>
           <Popconfirm
             title="Cancel this run?"
             onConfirm={() => handleCancel(r.id)}
@@ -131,7 +131,7 @@ function InFlightStrip({ inFlight }: { inFlight: InFlightRecord[] }) {
             cancelText="Keep running"
             placement="bottom"
           >
-            <Button size="small" type="text" danger icon={<CloseOutlined style={{ fontSize: 10 }} />}
+            <Button size="small" type="text" danger icon={<CloseOutlined style={{ fontSize: 11 }} />}
               style={{ padding: '0 4px', height: 18, lineHeight: 1 }} />
           </Popconfirm>
         </span>
@@ -413,7 +413,7 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
       <InFlightStrip inFlight={inFlight} />
       <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 6 }}>
         {viewing && (
-          <Tag color="blue" style={{ fontSize: 11, marginRight: 'auto', maxWidth: '60%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <Tag color="blue" style={{ fontSize: 12, marginRight: 'auto', maxWidth: '60%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             Resumed: {viewing.title} — your next message continues it
           </Tag>
         )}
@@ -422,21 +422,21 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
             <Button
               size="small" type="text"
               onClick={() => window.dispatchEvent(new CustomEvent('runspec:collapse_all', { detail: { collapsed: true } }))}
-              style={{ fontSize: 11, color: 'var(--rs-text-muted)' }}
+              style={{ fontSize: 12, color: 'var(--rs-text-muted)' }}
             >
               Collapse all
             </Button>
             <Button
               size="small" type="text"
               onClick={() => window.dispatchEvent(new CustomEvent('runspec:collapse_all', { detail: { collapsed: false } }))}
-              style={{ fontSize: 11, color: 'var(--rs-text-muted)' }}
+              style={{ fontSize: 12, color: 'var(--rs-text-muted)' }}
             >
               Expand all
             </Button>
           </>
         )}
         <Tooltip title="Browse and reopen past conversations">
-          <Button size="small" type="text" icon={<HistoryOutlined />} onClick={openConversations} style={{ fontSize: 11, color: 'var(--rs-text-muted)' }}>
+          <Button size="small" type="text" icon={<HistoryOutlined />} onClick={openConversations} style={{ fontSize: 12, color: 'var(--rs-text-muted)' }}>
             History
           </Button>
         </Tooltip>
@@ -483,7 +483,7 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
                 <List.Item.Meta
                   title={
                     <Text
-                      style={{ fontSize: 13 }}
+                      style={{ fontSize: 14 }}
                       editable={{
                         onChange: (v) => { const t = v.trim(); if (t && t !== c.title) { bridge.rename_conversation(c.id, t).then(refreshConvs) } },
                         triggerType: ['icon'],
@@ -494,8 +494,8 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
                   }
                   description={
                     <div>
-                      <Text type="secondary" style={{ fontSize: 11 }} ellipsis>{c.preview}</Text>
-                      <div style={{ fontSize: 10, color: 'var(--rs-text-muted)', marginTop: 2 }}>
+                      <Text type="secondary" style={{ fontSize: 12 }} ellipsis>{c.preview}</Text>
+                      <div style={{ fontSize: 11, color: 'var(--rs-text-muted)', marginTop: 2 }}>
                         {fmtWhen(c.updated)} · {c.turn_count} message{c.turn_count === 1 ? '' : 's'}
                       </div>
                     </div>

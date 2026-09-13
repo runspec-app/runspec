@@ -1,5 +1,6 @@
 import { Select, Input } from 'antd'
 import type { Credential, AdHocEndpoint } from '../bridge'
+import { MONO_FONT } from '../ThemeContext'
 
 // One transfer/relay endpoint that isn't a configured fleet host: an SSH host
 // reached through a configured jump, authenticated by key/agent (or a saved
@@ -46,7 +47,7 @@ export function AdHocHostFields({ value, onChange, hostOptions, creds }: {
         value={value.target}
         onChange={e => set({ target: e.target.value })}
         placeholder="target hostname"
-        style={{ width: 180, fontFamily: 'monospace' }}
+        style={{ width: 180, fontFamily: MONO_FONT }}
       />
       <Select
         size="small"

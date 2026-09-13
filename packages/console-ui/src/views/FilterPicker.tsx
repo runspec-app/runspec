@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Select, Input, Typography } from 'antd'
 import { bridge, type Filter } from '../bridge'
 import { isParameterized } from '../components/SettingsDrawer'
+import { MONO_FONT } from '../ThemeContext'
 
 const { Text } = Typography
 
@@ -37,8 +38,8 @@ export function FilterPicker({
 
   return (
     <div>
-      <Text style={{ fontSize: 12 }}>
-        Filter <Text type="secondary" style={{ fontSize: 11 }}>(optional — runs on the source, shrinks the transfer)</Text>
+      <Text style={{ fontSize: 13 }}>
+        Filter <Text type="secondary" style={{ fontSize: 12 }}>(optional — runs on the source, shrinks the transfer)</Text>
       </Text>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginTop: 6 }}>
         <Select
@@ -56,12 +57,12 @@ export function FilterPicker({
             value={filterArg}
             onChange={e => onFilterArg(e.target.value)}
             placeholder={selected?.param_label || 'value'}
-            style={{ width: 220, fontFamily: 'monospace' }}
+            style={{ width: 220, fontFamily: MONO_FONT }}
           />
         )}
       </div>
       {selected?.description && (
-        <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 4 }}>{selected.description}</Text>
+        <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>{selected.description}</Text>
       )}
     </div>
   )

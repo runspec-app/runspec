@@ -12,6 +12,7 @@ import {
   type LogStatusVenv, type LogStatusRunnable, type LogViewResult,
 } from '../bridge'
 import { LogStream } from '../components/LogStream'
+import { MONO_FONT } from '../ThemeContext'
 
 const { Title, Text } = Typography
 
@@ -134,7 +135,7 @@ function MaintenanceModal({ target, onClose, onApplied }: MaintModalProps) {
         </Popconfirm>,
       ]}
     >
-      <Text type="secondary" style={{ fontSize: 12 }}>
+      <Text type="secondary" style={{ fontSize: 13 }}>
         Target: <Text code>{scopeLabel}</Text> on <Text code>{host}</Text>
       </Text>
       <Form layout="vertical" style={{ marginTop: 16 }}>
@@ -167,7 +168,7 @@ function MaintenanceModal({ target, onClose, onApplied }: MaintModalProps) {
         <Alert type="info" showIcon style={{ marginTop: 8 }} message={preview} />
       )}
       {!hasPolicy && (
-        <Text type="secondary" style={{ fontSize: 11 }}>
+        <Text type="secondary" style={{ fontSize: 12 }}>
           {verb === 'compact' ? 'Set an age threshold to continue.' : 'Set at least one policy to continue.'}
         </Text>
       )}
@@ -197,7 +198,7 @@ function StreamDrawer({ target, onClose }: { target: ViewTarget | null; onClose:
       open={!!target}
       onClose={onClose}
       width={680}
-      title={target ? <span style={{ fontFamily: 'monospace' }}>{target.group}/{target.runnable} — merged stream</span> : ''}
+      title={target ? <span style={{ fontFamily: MONO_FONT }}>{target.group}/{target.runnable} — merged stream</span> : ''}
     >
       {loading ? (
         <div style={{ display: 'flex', justifyContent: 'center', padding: 60 }}><Spin /></div>
@@ -256,7 +257,7 @@ export function LogsView({ selectedHost, activeScope, active }: LogsViewProps) {
       title: 'Runnable',
       dataIndex: 'runnable',
       key: 'runnable',
-      render: (name: string) => <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{name}</span>,
+      render: (name: string) => <span style={{ fontFamily: MONO_FONT, fontSize: 13 }}>{name}</span>,
       sorter: (a, b) => a.runnable.localeCompare(b.runnable),
     },
     {
@@ -313,7 +314,7 @@ export function LogsView({ selectedHost, activeScope, active }: LogsViewProps) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
         <Title level={5} style={{ margin: 0 }}>Logs — {host}</Title>
         <Button size="small" icon={<ReloadOutlined />} onClick={refresh} loading={loading}>Refresh</Button>
-        <Text type="secondary" style={{ fontSize: 12 }}>
+        <Text type="secondary" style={{ fontSize: 13 }}>
           Per-invocation audit logs ({'store = "per-run"'}) — view, compact, and prune per venv.
         </Text>
       </div>
@@ -327,9 +328,9 @@ export function LogsView({ selectedHost, activeScope, active }: LogsViewProps) {
           <div key={v.group} style={{ marginBottom: 28 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
               <FolderOutlined style={{ color: 'var(--rs-text-muted)' }} />
-              <Text strong style={{ fontFamily: 'monospace' }}>{v.group}</Text>
+              <Text strong style={{ fontFamily: MONO_FONT }}>{v.group}</Text>
               {v.ok ? (
-                <Text type="secondary" style={{ fontSize: 12 }}>
+                <Text type="secondary" style={{ fontSize: 13 }}>
                   {v.total_files ?? 0} file(s), {humanSize(v.total_bytes)}
                 </Text>
               ) : (
@@ -357,7 +358,7 @@ export function LogsView({ selectedHost, activeScope, active }: LogsViewProps) {
               />
             )}
             {v.ok && v.dirs && v.dirs.length > 0 && (
-              <Text type="secondary" style={{ fontSize: 11 }}>{v.dirs.join('  ·  ')}</Text>
+              <Text type="secondary" style={{ fontSize: 12 }}>{v.dirs.join('  ·  ')}</Text>
             )}
           </div>
         ))

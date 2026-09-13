@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Table, Tag, Button, Modal, Form, Select, Input, InputNumber, Space, Segmented, Switch, Tooltip, Popconfirm, Collapse, Typography, message } from 'antd'
 import { DeleteOutlined, PlusOutlined, MinusCircleOutlined, EditOutlined, PlayCircleOutlined, CalendarOutlined, ReloadOutlined } from '@ant-design/icons'
 import { bridge, type ArgDef, type Credential, type Host, type Runnable, type Schedule, type ScheduleWhen, type Runbook, type SavedRun, type RunCard, type TriggerEvent, type EvalFixtureMeta } from '../bridge'
-import { useIsDark, useAccent, textMuted, textSecondary } from '../ThemeContext'
+import { useIsDark, useAccent, textMuted, textSecondary, MONO_FONT } from '../ThemeContext'
 import { RunInbox } from '../components/RunInbox'
 import { EventLog } from '../components/EventLog'
 import { SoundSelect } from '../components/SoundSelect'
@@ -96,7 +96,7 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
   const [evalValidate, setEvalValidate] = useState<boolean>(false)
   const [evalTelemetry, setEvalTelemetry] = useState<boolean>(false)
   const isDark = useIsDark()
-  const labelStyle = { color: textSecondary(isDark), fontSize: 12 }
+  const labelStyle = { color: textSecondary(isDark), fontSize: 13 }
 
   // Saved runbooks, for the "Run a runbook" action's picker. Loaded once per open.
   useEffect(() => {
@@ -512,7 +512,7 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
                   placeholder="e.g. 0 2 * * *"
                   value={customCron}
                   onChange={e => setCustomCron(e.target.value)}
-                  style={{ fontFamily: 'monospace' }}
+                  style={{ fontFamily: MONO_FONT }}
                 />
               </Form.Item>
             )}
@@ -520,13 +520,13 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
         ) : (
           <Form.Item name="every" label="Every" rules={[{ required: true, whitespace: true, message: 'Required' }]}
             help="A number followed by s / m / h / d — e.g. 15m, 1h, 1d.">
-            <Input placeholder="15m" style={{ fontFamily: 'monospace' }} />
+            <Input placeholder="15m" style={{ fontFamily: MONO_FONT }} />
           </Form.Item>
         )}
 
         <Form.Item name="timezone" label="Timezone (optional)"
           help="IANA name, e.g. Europe/London. Blank = this PC's local time.">
-          <Input placeholder="Europe/London" style={{ fontFamily: 'monospace' }} />
+          <Input placeholder="Europe/London" style={{ fontFamily: MONO_FONT }} />
         </Form.Item>
 
         {/* ── Event action ── */}
@@ -534,7 +534,7 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
           <>
             <Form.Item name="event" label="Event name" rules={[{ required: true, whitespace: true, message: 'Required' }]}
               help="The event type triggers match on (source = schedule).">
-              <Input placeholder="nightly_report" style={{ fontFamily: 'monospace' }} />
+              <Input placeholder="nightly_report" style={{ fontFamily: MONO_FONT }} />
             </Form.Item>
             <div style={{ ...labelStyle, marginBottom: 8 }}>Fields (optional) — extra payload a trigger can match on</div>
             <Form.List name="fields">
@@ -543,11 +543,11 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
                   {fields.map(f => (
                     <div key={f.key} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                       <Form.Item name={[f.name, 'key']} noStyle>
-                        <Input size="small" placeholder="scope" style={{ fontFamily: 'monospace' }} />
+                        <Input size="small" placeholder="scope" style={{ fontFamily: MONO_FONT }} />
                       </Form.Item>
                       <span style={{ color: 'var(--rs-text-muted)' }}>=</span>
                       <Form.Item name={[f.name, 'value']} noStyle>
-                        <Input size="small" placeholder="prod" style={{ fontFamily: 'monospace' }} />
+                        <Input size="small" placeholder="prod" style={{ fontFamily: MONO_FONT }} />
                       </Form.Item>
                       <MinusCircleOutlined onClick={() => remove(f.name)} style={{ color: 'var(--rs-text-muted)', cursor: 'pointer' }} />
                     </div>
@@ -881,13 +881,13 @@ export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewP
     return (
       <Space size={4} wrap>
         {shown.map(([k, v]) => (
-          <span key={k} style={{ fontFamily: 'monospace', fontSize: 11 }}>
+          <span key={k} style={{ fontFamily: MONO_FONT, fontSize: 12 }}>
             <span style={{ color: keyCol }}>{prefix}{k}</span>
             <span style={{ color: dimCol }}>={String(v)}</span>
           </span>
         ))}
         {entries.length > shown.length && (
-          <span style={{ color: dimCol, fontSize: 11 }}>+{entries.length - shown.length}</span>
+          <span style={{ color: dimCol, fontSize: 12 }}>+{entries.length - shown.length}</span>
         )}
       </Space>
     )
@@ -911,7 +911,7 @@ export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewP
         s.action === 'event'
           ? <Space size={6}><Tag color="purple">event</Tag><code>{s.event}</code></Space>
           : s.action === 'prompt'
-          ? <Space size={6}><Tag color="cyan">prompt</Tag><span style={{ color: dimCol, fontSize: 12 }}>{(s.prompt ?? '').slice(0, 48)}{(s.prompt ?? '').length > 48 ? '…' : ''}</span></Space>
+          ? <Space size={6}><Tag color="cyan">prompt</Tag><span style={{ color: dimCol, fontSize: 13 }}>{(s.prompt ?? '').slice(0, 48)}{(s.prompt ?? '').length > 48 ? '…' : ''}</span></Space>
           : s.action === 'runbook'
           ? <Space size={6}><Tag color="gold">runbook</Tag><code>{s.runbook}</code></Space>
           : s.action === 'saved_run'
@@ -939,7 +939,7 @@ export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewP
     {
       title: 'Schedule',
       key: 'schedule',
-      render: (_: unknown, s: Schedule) => <code style={{ fontSize: 12 }}>{whenText(s.when)}</code>,
+      render: (_: unknown, s: Schedule) => <code style={{ fontSize: 13 }}>{whenText(s.when)}</code>,
     },
     {
       title: 'Details',
@@ -991,7 +991,7 @@ export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewP
       expandable={{
         rowExpandable: s => Object.keys(detailFor(s)).length > 0,
         expandedRowRender: s => (
-          <div style={{ paddingLeft: 24, fontFamily: 'monospace', fontSize: 12, color: dimCol }}>
+          <div style={{ paddingLeft: 24, fontFamily: MONO_FONT, fontSize: 13, color: dimCol }}>
             {Object.entries(detailFor(s)).map(([k, v]) => (
               <span key={k} style={{ marginRight: 12 }}>
                 <span style={{ color: keyCol }}>
@@ -1019,7 +1019,7 @@ export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewP
           label: (
             <span>
               <CalendarOutlined /> Schedules
-              <span style={{ color: dimCol, fontSize: 12 }}>{' · '}{schedules.length} configured</span>
+              <span style={{ color: dimCol, fontSize: 13 }}>{' · '}{schedules.length} configured</span>
             </span>
           ),
           extra: (

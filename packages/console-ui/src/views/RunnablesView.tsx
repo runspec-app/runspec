@@ -3,6 +3,7 @@ import { Table, Tag, Input, Typography } from 'antd'
 import { SearchOutlined } from '@ant-design/icons'
 import type { ColumnType } from 'antd/es/table'
 import type { Runnable, ArgDef } from '../bridge'
+import { MONO_FONT } from '../ThemeContext'
 
 const { Text } = Typography
 
@@ -12,27 +13,27 @@ function isVarRef(val: unknown): val is string {
 
 function RunnableHelp({ runnable }: { runnable: Runnable }) {
   if ((runnable.args ?? []).length === 0) {
-    return <Text type="secondary" style={{ fontSize: 12, padding: '8px 48px', display: 'block' }}>No arguments.</Text>
+    return <Text type="secondary" style={{ fontSize: 13, padding: '8px 48px', display: 'block' }}>No arguments.</Text>
   }
 
   return (
     <div style={{ padding: '10px 48px 14px' }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         {(runnable.args ?? []).map((arg: ArgDef) => (
-          <div key={arg.name} style={{ display: 'flex', alignItems: 'baseline', gap: 10, fontFamily: 'monospace', fontSize: 12 }}>
-            <Text code style={{ fontSize: 12, minWidth: 140 }}>--{arg.name}</Text>
-            <Tag color="default" style={{ fontSize: 11 }}>{arg.type}</Tag>
+          <div key={arg.name} style={{ display: 'flex', alignItems: 'baseline', gap: 10, fontFamily: MONO_FONT, fontSize: 13 }}>
+            <Text code style={{ fontSize: 13, minWidth: 140 }}>--{arg.name}</Text>
+            <Tag color="default" style={{ fontSize: 12 }}>{arg.type}</Tag>
             {arg.required ? (
-              <Tag color="orange" style={{ fontSize: 11 }}>required</Tag>
+              <Tag color="orange" style={{ fontSize: 12 }}>required</Tag>
             ) : isVarRef(arg.default) ? (
-              <Text style={{ fontSize: 11, color: '#fa8c16', fontFamily: 'monospace' }}>{arg.default}</Text>
+              <Text style={{ fontSize: 12, color: '#fa8c16', fontFamily: MONO_FONT }}>{arg.default}</Text>
             ) : (
-              <Text type="secondary" style={{ fontSize: 11 }}>
+              <Text type="secondary" style={{ fontSize: 12 }}>
                 optional{arg.default !== undefined ? ` · default: ${String(arg.default)}` : ''}
               </Text>
             )}
             {arg.description && (
-              <Text type="secondary" style={{ fontSize: 12, marginLeft: 4 }}>{arg.description}</Text>
+              <Text type="secondary" style={{ fontSize: 13, marginLeft: 4 }}>{arg.description}</Text>
             )}
           </div>
         ))}
@@ -73,8 +74,8 @@ export function RunnablesView({ runnables, selectedHost, activeScope, onScopeTog
       title: 'Runnable',
       key: 'name',
       render: (_: unknown, r: Runnable) => (
-        <span style={{ fontFamily: 'monospace', fontSize: 13 }}>
-          <span style={{ color: 'var(--rs-text-muted)', fontSize: 12 }}>{r.group}/</span>{r.name}
+        <span style={{ fontFamily: MONO_FONT, fontSize: 14 }}>
+          <span style={{ color: 'var(--rs-text-muted)', fontSize: 13 }}>{r.group}/</span>{r.name}
         </span>
       ),
       sorter: (a, b) => `${a.group}/${a.name}`.localeCompare(`${b.group}/${b.name}`),
@@ -121,8 +122,8 @@ export function RunnablesView({ runnables, selectedHost, activeScope, onScopeTog
       render: (_: unknown, r: Runnable) => {
         const count = (r.args ?? []).length
         const required = (r.args ?? []).filter(a => a.required).length
-        if (count === 0) return <Text type="secondary" style={{ fontSize: 12 }}>none</Text>
-        return <Text style={{ fontSize: 12 }}>{count} ({required} required)</Text>
+        if (count === 0) return <Text type="secondary" style={{ fontSize: 13 }}>none</Text>
+        return <Text style={{ fontSize: 13 }}>{count} ({required} required)</Text>
       },
     },
   ]

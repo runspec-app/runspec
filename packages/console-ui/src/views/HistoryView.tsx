@@ -4,6 +4,7 @@ import { RedoOutlined, CopyOutlined, RobotOutlined, SearchOutlined, EditOutlined
 import type { ColumnType } from 'antd/es/table'
 import { bridge, type HistoryRecord, type HistoryLogLine, type LogViewResult } from '../bridge'
 import { LogStream } from '../components/LogStream'
+import { MONO_FONT, RADIUS } from '../ThemeContext'
 
 const { Title, Text } = Typography
 
@@ -19,7 +20,7 @@ function ArgSourceBadge({ source }: { source: string | undefined }) {
   if (!badge) return null
   return (
     <Tooltip title={badge.title}>
-      <Tag color={badge.color} style={{ fontSize: 10, margin: '0 0 0 2px', padding: '0 4px', lineHeight: '16px', cursor: 'default' }}>
+      <Tag color={badge.color} style={{ fontSize: 11, margin: '0 0 0 2px', padding: '0 4px', lineHeight: '16px', cursor: 'default' }}>
         {badge.label}
       </Tag>
     </Tooltip>
@@ -110,34 +111,34 @@ function ExpandedRun({ record, onRerun, onAskLlm, onViewFullLog }: ExpandedRunPr
 
       {/* Args — static display (edit-and-rerun opens the Forms run dialog) */}
       <div>
-        <Text type="secondary" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 1 }}>
+        <Text type="secondary" style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 1 }}>
           Arguments
         </Text>
         {hasArgs ? (
           <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: '6px 16px', alignItems: 'center' }}>
             {Object.entries(args).map(([k, v]) => (
               <span key={k} style={{ display: 'inline-flex', alignItems: 'center' }}>
-                <Text type="secondary" style={{ fontSize: 12 }}>--{k}=</Text>
-                <Text code style={{ fontSize: 12 }}>{String(v)}</Text>
+                <Text type="secondary" style={{ fontSize: 13 }}>--{k}=</Text>
+                <Text code style={{ fontSize: 13 }}>{String(v)}</Text>
                 <ArgSourceBadge source={record.argSources?.[k]} />
               </span>
             ))}
           </div>
         ) : (
-          <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>none</Text>
+          <Text type="secondary" style={{ fontSize: 13, marginLeft: 8 }}>none</Text>
         )}
       </div>
 
       {/* Log lines */}
       <div>
-        <Text type="secondary" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 1 }}>
+        <Text type="secondary" style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 1 }}>
           Log
         </Text>
         <div style={{
           position: 'relative',
           marginTop: 6,
-          background: '#0d0d0d', border: '1px solid #222', borderRadius: 6,
-          padding: '8px 12px', fontFamily: 'monospace', fontSize: 12, lineHeight: 1.8,
+          background: 'var(--rs-surface-sunken)', border: '1px solid var(--rs-border)', borderRadius: RADIUS.sm,
+          padding: '8px 12px', fontFamily: MONO_FONT, fontSize: 13, lineHeight: 1.8,
         }}>
           {logLines.length > 0 && (
             <div style={{ position: 'absolute', top: 5, right: 6, display: 'flex', gap: 2 }}>
@@ -209,7 +210,7 @@ function RunLogDrawer({ record, onClose }: { record: HistoryRecord | null; onClo
       open={!!record}
       onClose={onClose}
       width={680}
-      title={record ? <span style={{ fontFamily: 'monospace' }}>/{record.runnable} — full log ({(record.runId ?? '').slice(0, 8)})</span> : ''}
+      title={record ? <span style={{ fontFamily: MONO_FONT }}>/{record.runnable} — full log ({(record.runId ?? '').slice(0, 8)})</span> : ''}
     >
       {loading ? (
         <div style={{ display: 'flex', justifyContent: 'center', padding: 60 }}><Spin /></div>
@@ -319,16 +320,16 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       title: 'Runnable',
       key: 'runnable',
       render: (_: unknown, r: HistoryRecord) => (
-        <span style={{ fontFamily: 'monospace', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+        <span style={{ fontFamily: MONO_FONT, fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
           <span><span style={{ color: 'var(--rs-text-muted)' }}>{r.group}/</span>{r.runnable}</span>
           {r.trigger === 'schedule' && (
             <Tooltip title="Ran on a schedule">
-              <ClockCircleOutlined style={{ color: 'var(--rs-text-muted)', fontSize: 12 }} />
+              <ClockCircleOutlined style={{ color: 'var(--rs-text-muted)', fontSize: 13 }} />
             </Tooltip>
           )}
           {r.initiatedBy === 'llm' && (
             <Tooltip title="Triggered by the assistant">
-              <RobotOutlined style={{ color: '#1677ff', fontSize: 12 }} />
+              <RobotOutlined style={{ color: 'var(--rs-accent)', fontSize: 13 }} />
             </Tooltip>
           )}
         </span>
@@ -360,7 +361,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       title: 'Runbook',
       key: 'runbook',
       render: (_: unknown, r: HistoryRecord) => r.runbook
-        ? <Tag color="purple" style={{ fontFamily: 'monospace' }}>${r.runbook}</Tag>
+        ? <Tag color="purple" style={{ fontFamily: MONO_FONT }}>${r.runbook}</Tag>
         : <span style={{ color: 'var(--rs-text-faint)' }}>—</span>,
       filters: runbooks.map(s => ({ text: `$${s}`, value: s })),
       onFilter: (value, record) => record.runbook === value,
@@ -386,7 +387,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       title: 'Run as',
       dataIndex: 'runAs',
       key: 'runAs',
-      render: (u: string) => <code style={{ fontSize: 12 }}>{u}</code>,
+      render: (u: string) => <code style={{ fontSize: 13 }}>{u}</code>,
       filters: runAsUsers.map(u => ({ text: u, value: u })),
       onFilter: (value, record) => record.runAs === value,
       filteredValue: [],

@@ -8,6 +8,77 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.250.0] — 2026-09-13
+
+### Changed
+- **Design token pass — the console gets a depth model, a type scale and bundled
+  fonts.** The UI kept Ant Design 5 but was running on stock tokens with flat
+  near-black surfaces, no shadows, mixed corner radii and dense 10–12px inline
+  type, which is what made it read as "functional" next to newer desktop apps.
+  This release restyles it at the token level rather than per component:
+  - **Surface / elevation scale** (`ThemeContext.surfaces()`): four levels —
+    sunken (shell chrome), base (content), raised (cards, inputs, tables) and
+    overlay (popovers, modals, drawers) — plus border / strong-border / divider
+    and three shadows, for dark (a cool near-black, so any white-label accent
+    sits on it cleanly) and light (soft grey ground, white cards). Mapped onto
+    Ant's `colorBgLayout` / `colorBgContainer` / `colorBgElevated`, border,
+    split and shadow tokens with per-component overrides (Card, Modal, Drawer,
+    Table, Button, Input, Select, Segmented, Tooltip), and mirrored as
+    `--rs-surface-*` / `--rs-border*` / `--rs-divider` / `--rs-shadow-*` CSS
+    vars (App.tsx re-stamps them on theme change) so CSS-driven chrome shares
+    the same model. The sidebar and tab bar sit one level below the content.
+  - **One radius scale** (`ThemeContext.RADIUS` 6/8/12 → Ant `borderRadiusSM` /
+    `borderRadius` / `borderRadiusLG`); the ad-hoc 6/8/12 literals in views use
+    the named steps.
+  - **Bundled fonts, no network fetch:** `Inter Variable` for the chrome
+    (`UI_FONT`) and `JetBrains Mono Variable` for values (new
+    `ThemeContext.MONO_FONT`, also Ant's `fontFamilyCode`) ship as package
+    data (`public/fonts`, OFL licences alongside) with `@font-face` in
+    `index.css`, so the console looks the same on every machine, air-gapped
+    included. Every inline `fontFamily: 'monospace'` (206 sites) now uses the
+    named stack instead of the bare generic keyword (Courier / DejaVu on many
+    machines); `ThemeContext.test.ts` asserts none creep back.
+  - **Type scale:** every inline 10/11/12/13px font size moves up one step, so
+    body copy sits at 13, meta at 12, tags at 11 and labels at Ant's 14 base.
+    Nav-tab padding tightens so the wider labels still fit at 1440px.
+  - **Motion:** one `--rs-motion` curve; transitions on nav tabs and host rows;
+    a shared `.rs-card-lift` hover (small → medium shadow, 1px lift, honours
+    `prefers-reduced-motion`) on the Forms tiles.
+  - The pre-paint pywebview window colour (`app.py`) matches the new dark base.
+- **White-label accent now reaches the spots that hardcoded Ant blue:** the
+  sidebar's selected-host tint, the Console-card spinners and elapsed timer,
+  History's agent icon and the Settings → Self-Service chip "on" state derive
+  from `accent_color` instead of a literal `#1677ff` / `#4fc1ff`.
+
+### Fixed
+- **Three blocks ignored light mode** — the Logs merged stream, History's
+  expanded-row log block and the Settings → Denylist result pane hardcoded
+  near-black backgrounds with no light branch and rendered as black slabs in
+  the light theme. They read the surface vars now, as do the remaining
+  hardcoded dark/light grey pairs in CommandInput, RunInbox, EventLog, Forms,
+  Specs, Triggers, Analytics and Dev.
+- **Pale edge lines beside the tinted Windows title bar.** `_apply_dwm_title_bar`
+  set the DWM caption + text colours but never `DWMWA_BORDER_COLOR` (34), so
+  Windows 11 kept drawing its default 1px frame — near-white on a light
+  Windows theme — up either side of the coloured caption, re-drawn in a
+  different shade after focus/resize so it appeared to come and go. The border
+  now takes the caption colour (white-label `title_bar_color` or runspec blue).
+
+### Removed
+- **Dead frameless-window leftovers.** `TitleBar.tsx` (a custom draggable
+  caption with minimise / maximise / close — it also hardcoded Ant blue, so it
+  would have ignored a white-label accent had it ever mounted) and
+  `ResizeHandles.tsx` (invisible edge drag strips) were never rendered; the
+  native caption tinted via DWM is what ships. Both are gone, along with the
+  five window-control bridge methods that existed only for them —
+  `minimize_window`, `toggle_maximize_window`, `close_window`,
+  `resize_window`, `move_window` — removed from the `BridgeApi` interface, the
+  dev/test mock, the Python `Bridge` and the frozen JS-API surface test.
+  `Bridge._window` stays (`set_window_title` and the taskbar-flash helpers use
+  it). Frontend-only API; no config or `runspec.toml` impact.
+- `RotaView.test.tsx`'s hand-written `ThemeContext` mock now spreads the real
+  module, so a new theme import in the view can't silently break it.
+
 ## [0.249.2] — 2026-09-13
 
 ### Changed

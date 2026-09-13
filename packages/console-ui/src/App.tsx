@@ -50,7 +50,7 @@ import { SettingsDrawer } from './components/SettingsDrawer'
 import { RUNNING_STATUSES } from './components/runShared'
 import { useInFlight } from './bridge/useInFlight'
 import { bridge, type HistoryRecord, type Host, type HostProfile, type Runnable, type Runbook, type SavedRun, type RoomInfo, type BrandTheme } from './bridge'
-import { ThemeContext, AccentContext, DEFAULT_ACCENT, UI_FONT, textMuted, textSecondary, textFaint } from './ThemeContext'
+import { ThemeContext, AccentContext, DEFAULT_ACCENT, UI_FONT, MONO_FONT, RADIUS, surfaces, withAlpha, textMuted, textSecondary, textFaint } from './ThemeContext'
 
 type ViewKey = 'console' | 'specs' | 'history' | 'logs' | 'forms' | 'schedules' | 'triggers' | 'rota' | 'analytics' | 'improve' | 'evals' | 'dev'
 
@@ -648,15 +648,18 @@ export default function App() {
     return () => window.removeEventListener('runspec:schedule_card', onCard)
   }, [])
 
-  const headerBg  = isDark ? '#0d0d0d' : '#fafafa'
-  const siderBg   = isDark ? '#111'    : '#fafafa'
-  const borderCol = isDark ? '#222'    : '#e0e0e0'
+  // Shell chrome sits one level below the content (sunken vs base) so the
+  // sidebar / tab bar / footer read as a frame around the work area.
+  const sf = surfaces(isDark)
+  const headerBg  = sf.sunken
+  const siderBg   = sf.sunken
+  const borderCol = sf.border
   // The app's signature accent — sidebar title, active nav tab, section/room
   // highlights. A white-label accent_color (when set) drives it too, so the
   // brand colour shows where it's actually visible (not just Ant's colorPrimary
   // controls). Falls back to the built-in blue when no theme is set.
   const titleCol  = brandTheme.accent_color || (isDark ? DEFAULT_ACCENT.dark : DEFAULT_ACCENT.light)
-  const contentBg = isDark ? '#111'    : '#ffffff'
+  const contentBg = sf.base
   const iconCol   = textMuted(isDark)
   const textCol   = isDark ? '#ccc'    : '#333'
 
@@ -671,6 +674,19 @@ export default function App() {
     document.documentElement.style.setProperty('--rs-text-secondary', textSecondary(isDark))
     document.documentElement.style.setProperty('--rs-text-muted', textMuted(isDark))
     document.documentElement.style.setProperty('--rs-text-faint', textFaint(isDark))
+    // Same for the surface / elevation scale (index.css --rs-surface-* etc.).
+    const s = surfaces(isDark)
+    const root = document.documentElement.style
+    root.setProperty('--rs-surface-sunken', s.sunken)
+    root.setProperty('--rs-surface-base', s.base)
+    root.setProperty('--rs-surface-raised', s.raised)
+    root.setProperty('--rs-surface-overlay', s.overlay)
+    root.setProperty('--rs-border', s.border)
+    root.setProperty('--rs-border-strong', s.borderStrong)
+    root.setProperty('--rs-divider', s.divider)
+    root.setProperty('--rs-shadow-sm', s.shadowSm)
+    root.setProperty('--rs-shadow-md', s.shadowMd)
+    root.setProperty('--rs-shadow-lg', s.shadowLg)
   }, [isDark, titleCol])
 
   const navTabs = [
@@ -716,8 +732,43 @@ export default function App() {
             // values, args, host names, logs and the command bar stay monospace
             // via explicit fontFamily where it earns its keep.
             fontFamily: UI_FONT,
+            fontFamilyCode: MONO_FONT,  // <Text code>, Typography code blocks
+            // One radius scale (ThemeContext.RADIUS) for every Ant control.
+            borderRadius: RADIUS.md,
+            borderRadiusSM: RADIUS.sm,
+            borderRadiusLG: RADIUS.lg,
+            borderRadiusXS: 4,
+            // Surface / elevation scale → Ant's three background levels, so an
+            // Ant Card / Input / Table / Modal sits on the same depth model as
+            // the raw elements styled from surfaces(). Ant derives its hover,
+            // disabled and split-line greys from colorBgBase, so set that too.
+            colorBgBase: sf.base,
+            colorBgLayout: sf.base,
+            colorBgContainer: sf.raised,
+            colorBgElevated: sf.overlay,
+            colorBorder: sf.borderStrong,
+            colorBorderSecondary: sf.border,
+            colorSplit: sf.divider,
+            boxShadow: sf.shadowMd,
+            boxShadowSecondary: sf.shadowLg,
+            boxShadowTertiary: sf.shadowSm,
+            motionDurationFast: '0.1s',
+            motionDurationMid: '0.16s',
+            motionDurationSlow: '0.24s',
             // White-label accent → drives buttons, links, active tabs, switches.
             ...(brandTheme.accent_color ? { colorPrimary: brandTheme.accent_color } : {}),
+          },
+          components: {
+            Card: { colorBgContainer: sf.raised, colorBorderSecondary: sf.border, boxShadowTertiary: sf.shadowSm },
+            Modal: { contentBg: sf.overlay, headerBg: sf.overlay, footerBg: sf.overlay },
+            Drawer: { colorBgElevated: sf.overlay },
+            Table: { headerBg: sf.overlay, headerSplitColor: 'transparent', borderColor: sf.border, rowHoverBg: withAlpha(titleCol, isDark ? 0.06 : 0.04) },
+            Tag: { borderRadiusSM: 4 },
+            Button: { fontWeight: 500, primaryShadow: `0 1px 2px ${withAlpha(titleCol, 0.25)}` },
+            Input: { activeShadow: `0 0 0 3px ${withAlpha(titleCol, 0.18)}` },
+            Select: { optionSelectedBg: withAlpha(titleCol, isDark ? 0.16 : 0.1) },
+            Segmented: { itemSelectedBg: sf.overlay, trackBg: sf.sunken },
+            Tooltip: { colorBgSpotlight: sf.overlay, colorTextLightSolid: isDark ? 'rgba(255,255,255,0.88)' : 'rgba(0,0,0,0.88)' },
           },
         }}>
         {/* White-label content watermark — style-aware (tiled / banner / center),
@@ -746,7 +797,7 @@ export default function App() {
               padding: '13px 16px 12px',
               fontWeight: 700, fontSize: 14, color: titleCol,
               borderBottom: `1px solid ${borderCol}`, flexShrink: 0,
-              fontFamily: 'monospace',  // wordmark keeps the terminal identity
+              fontFamily: MONO_FONT,  // wordmark keeps the terminal identity
             }}>
               {brandTheme.brand_name || 'runspec'}
             </div>
@@ -816,13 +867,13 @@ export default function App() {
                         // Selected fill is inline (wins over the CSS :hover rule);
                         // unselected rows leave background to .rs-host-row:hover.
                         background: selectedHost === h.name
-                          ? (isDark ? 'rgba(79,193,255,0.08)' : 'rgba(9,88,217,0.06)')
+                          ? withAlpha(titleCol, isDark ? 0.1 : 0.07)
                           : undefined,
                       }}
                     >
                       <span style={{ fontSize: 9, lineHeight: 1, color: h.connected ? '#52c41a' : '#595959' }}>●</span>
                       <span style={{
-                        fontSize: 13, color: textCol, flex: 1, fontFamily: 'monospace',
+                        fontSize: 14, color: textCol, flex: 1, fontFamily: MONO_FONT,
                         overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                       }}>{h.name}</span>
                       {(() => {
@@ -832,24 +883,24 @@ export default function App() {
                         return (
                           <Tooltip
                             title={
-                              <div style={{ fontSize: 11 }}>
+                              <div style={{ fontSize: 12 }}>
                                 {count} runnable{count === 1 ? '' : 's'}
                                 {venvs.map(v => (
                                   <div key={v.group} style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
-                                    <span style={{ fontFamily: 'monospace' }}>{v.group}</span>
+                                    <span style={{ fontFamily: MONO_FONT }}>{v.group}</span>
                                     <span>{v.count}</span>
                                   </div>
                                 ))}
                               </div>
                             }
                           >
-                            <span style={{ fontSize: 10, color: iconCol, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+                            <span style={{ fontSize: 11, color: iconCol, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
                               {count}
                             </span>
                           </Tooltip>
                         )
                       })()}
-                      {runnablesLoading && <LoadingOutlined style={{ fontSize: 10, color: '#595959' }} spin />}
+                      {runnablesLoading && <LoadingOutlined style={{ fontSize: 11, color: '#595959' }} spin />}
                     </div>
                   </Dropdown>
                 )
@@ -882,7 +933,7 @@ export default function App() {
                             style={{
                               display: 'flex', alignItems: 'center', gap: 6,
                               padding: '10px 14px 3px',
-                              fontSize: 10, color: textSecondary(isDark),
+                              fontSize: 11, color: textSecondary(isDark),
                               textTransform: 'uppercase', letterSpacing: '0.08em',
                               userSelect: 'none', cursor: 'pointer',
                             }}
@@ -914,7 +965,7 @@ export default function App() {
               borderTop: `1px solid ${borderCol}`,
               padding: '6px 14px',
               display: 'flex', flexDirection: 'column', gap: 3,
-              fontSize: 11, color: iconCol,
+              fontSize: 12, color: iconCol,
             }}>
               {/* Rooms: live connection state for every configured chat/helpdesk
                   room, so a room server going down is visible at a glance instead
@@ -942,7 +993,7 @@ export default function App() {
                     placement="topLeft"
                     mouseEnterDelay={0.2}
                     content={
-                      <div style={{ maxWidth: 320, maxHeight: 320, overflowY: 'auto', fontSize: 12 }}>
+                      <div style={{ maxWidth: 320, maxHeight: 320, overflowY: 'auto', fontSize: 13 }}>
                         <div style={{ marginBottom: 6, color: iconCol }}>
                           {!active
                             ? 'No room selected — this console is detached'
@@ -963,12 +1014,12 @@ export default function App() {
                           )
                         })}
                         {active && !activeUp && (
-                          <div style={{ marginTop: 6, color: iconCol, fontSize: 11 }}>
+                          <div style={{ marginTop: 6, color: iconCol, fontSize: 12 }}>
                             The active room’s server isn’t reachable on {active.host} — check the room process is running on its port.
                           </div>
                         )}
                         {rooms.length > 1 && (
-                          <div style={{ marginTop: 6, color: iconCol, fontSize: 11 }}>
+                          <div style={{ marginTop: 6, color: iconCol, fontSize: 12 }}>
                             Standby hosts run the same room for redundancy; switch the active one in Settings → Self-Service.
                           </div>
                         )}
@@ -976,7 +1027,7 @@ export default function App() {
                     }
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'default' }}>
-                      <CommentOutlined className={active && !activeUp ? 'rs-pulse' : undefined} style={{ fontSize: 11, color: dot }} />
+                      <CommentOutlined className={active && !activeUp ? 'rs-pulse' : undefined} style={{ fontSize: 12, color: dot }} />
                       <span style={{ color: titleCol, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160 }}>
                         {label}
                       </span>
@@ -989,7 +1040,7 @@ export default function App() {
                 placement="topLeft"
                 mouseEnterDelay={0.2}
                 content={
-                  <div style={{ maxWidth: 280, maxHeight: 320, overflowY: 'auto', fontSize: 12 }}>
+                  <div style={{ maxWidth: 280, maxHeight: 320, overflowY: 'auto', fontSize: 13 }}>
                     <div style={{ marginBottom: 6, color: iconCol }}>
                       {catalogue.distinct} distinct tool{catalogue.distinct === 1 ? '' : 's'}
                       {catalogue.total !== catalogue.distinct && (
@@ -1012,7 +1063,7 @@ export default function App() {
                         <div style={{ paddingLeft: 8 }}>
                           {h.venvs.map(v => (
                             <div key={v.group} style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-                              <span style={{ fontFamily: 'monospace', color: iconCol, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.group}</span>
+                              <span style={{ fontFamily: MONO_FONT, color: iconCol, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.group}</span>
                               <span style={{ color: iconCol }}>{v.count}</span>
                             </div>
                           ))}
@@ -1024,8 +1075,8 @@ export default function App() {
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'default' }}>
                   {!discovery.ready && discovery.total > 0
-                    ? <LoadingOutlined spin style={{ fontSize: 11 }} />
-                    : <AppstoreOutlined style={{ fontSize: 11 }} />}
+                    ? <LoadingOutlined spin style={{ fontSize: 12 }} />
+                    : <AppstoreOutlined style={{ fontSize: 12 }} />}
                   <span>
                     <span style={{
                       fontVariantNumeric: 'tabular-nums',
@@ -1067,7 +1118,7 @@ export default function App() {
                     placement="topLeft"
                     mouseEnterDelay={0.2}
                     content={
-                      <div style={{ maxWidth: 320, fontSize: 12 }}>
+                      <div style={{ maxWidth: 320, fontSize: 13 }}>
                         <div style={{ marginBottom: 6, color: iconCol }}>
                           <span style={{ color: titleCol, fontVariantNumeric: 'tabular-nums' }}>{ctx.total_tokens.toLocaleString()}</span>
                           {' '}of {ctx.window.toLocaleString()} tokens ({pct}%)
@@ -1115,14 +1166,14 @@ export default function App() {
                             )}
                           </div>
                         )}
-                        <div style={{ marginTop: 6, color: iconCol, fontSize: 11 }}>
+                        <div style={{ marginTop: 6, color: iconCol, fontSize: 12 }}>
                           Total is exact (reported by the model); the per-section split is an estimate{ctx.model ? ` · ${ctx.model}` : ''}.
                         </div>
                       </div>
                     }
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'default' }}>
-                      <DashboardOutlined style={{ fontSize: 11, color: dot }} />
+                      <DashboardOutlined style={{ fontSize: 12, color: dot }} />
                       <span>
                         <span style={{ fontVariantNumeric: 'tabular-nums', color: titleCol }}>{fmtTokens(ctx.total_tokens)}</span>
                         {' / '}{fmtTokens(ctx.window)}
@@ -1138,7 +1189,7 @@ export default function App() {
                 <Tooltip title={version ? `${brandTheme.brand_name || 'runspec-console'} v${version} — open documentation & release notes` : ''}>
                   <span
                     onClick={() => bridge.open_docs().catch(console.error)}
-                    style={{ fontFamily: 'monospace', cursor: 'pointer' }}
+                    style={{ fontFamily: MONO_FONT, cursor: 'pointer' }}
                   >
                     {version ? `v${version}` : ''}
                   </span>
@@ -1148,7 +1199,7 @@ export default function App() {
                     <Tag
                       color="blue"
                       onClick={() => bridge.open_docs().catch(console.error)}
-                      style={{ cursor: 'pointer', margin: 0, fontSize: 10, lineHeight: '16px', padding: '0 5px' }}
+                      style={{ cursor: 'pointer', margin: 0, fontSize: 11, lineHeight: '16px', padding: '0 5px' }}
                     >
                       ↑ {updateInfo.latest}
                     </Tag>
@@ -1156,13 +1207,13 @@ export default function App() {
                 ) : updateInfo?.latest ? (
                   <Tooltip title="You're on the latest version">
                     <span style={{ color: '#52c41a', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-                      <CheckCircleOutlined style={{ fontSize: 11 }} /> up to date
+                      <CheckCircleOutlined style={{ fontSize: 12 }} /> up to date
                     </span>
                   </Tooltip>
                 ) : updateInfo ? null : (
                   <Tooltip title="Checking for updates…">
                     <span style={{ opacity: 0.6, display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-                      <LoadingOutlined spin style={{ fontSize: 10 }} /> checking…
+                      <LoadingOutlined spin style={{ fontSize: 11 }} /> checking…
                     </span>
                   </Tooltip>
                 )}
@@ -1186,10 +1237,10 @@ export default function App() {
                   onClick={() => setView(tab.key)}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 6,
-                    padding: '0 16px', fontSize: 13,
+                    padding: '0 12px', fontSize: 14,
+                    fontWeight: view === tab.key ? 600 : 500,
                     color: view === tab.key ? titleCol : iconCol,
                     borderBottom: view === tab.key ? `2px solid ${titleCol}` : '2px solid transparent',
-                    transition: 'color 0.15s, background 0.15s',
                   }}
                 >
                   {tab.icon}
@@ -1199,7 +1250,7 @@ export default function App() {
 
               <div style={{ flex: 1 }} />
 
-              <div style={{ display: 'flex', alignItems: 'center', gap: 2, paddingRight: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 2, paddingRight: 8, flexShrink: 0 }}>
                 <Tooltip title={docsUrl ? `Documentation — ${docsUrl}` : 'Documentation'}>
                   <Button type="text" size="small" icon={<ReadOutlined />} onClick={() => bridge.open_docs().catch(console.error)} style={{ color: iconCol }} />
                 </Tooltip>
@@ -1287,7 +1338,7 @@ export default function App() {
                     closable={activeScope.includes(g)}
                     onClose={e => { e.preventDefault(); handleScopeToggle(g) }}
                     color={activeScope.includes(g) ? 'blue' : undefined}
-                    style={{ cursor: 'pointer', fontSize: 12, margin: 0, userSelect: 'none' }}
+                    style={{ cursor: 'pointer', fontSize: 13, margin: 0, userSelect: 'none' }}
                   >
                     {g}
                   </Tag>
@@ -1296,7 +1347,7 @@ export default function App() {
                   <Button
                     size="small" type="text"
                     onClick={() => setActiveScope([])}
-                    style={{ fontSize: 11, color: textMuted(isDark), padding: '0 4px', height: 'auto' }}
+                    style={{ fontSize: 12, color: textMuted(isDark), padding: '0 4px', height: 'auto' }}
                   >
                     clear
                   </Button>
@@ -1313,9 +1364,9 @@ export default function App() {
               {!discovery.ready && discovery.total > 0 && (
                 <div style={{
                   display: 'flex', alignItems: 'center', gap: 6,
-                  margin: '0 0 6px', fontSize: 11, color: textMuted(isDark),
+                  margin: '0 0 6px', fontSize: 12, color: textMuted(isDark),
                 }}>
-                  <LoadingOutlined spin style={{ fontSize: 11 }} />
+                  <LoadingOutlined spin style={{ fontSize: 12 }} />
                   <span>Discovering fleet… {discovery.done}/{discovery.total} hosts. The assistant sees more runnables as they load.</span>
                 </div>
               )}

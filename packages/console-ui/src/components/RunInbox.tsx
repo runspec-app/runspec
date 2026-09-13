@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import { Button, Drawer, Empty, message } from 'antd'
 import { StopOutlined } from '@ant-design/icons'
 import { type RunCard } from '../bridge'
-import { useIsDark, textColor, textMuted } from '../ThemeContext'
+import { useIsDark, textColor, textMuted, MONO_FONT, RADIUS } from '../ThemeContext'
 import { Markdown } from './Markdown'
 import { ChatTranscript, StructuredOutput, parseOutput, transcriptToText, type BlockSegment } from './OutputPanel'
 import { StatusBadge, CopyButton, fmtTime, COLUMN_COLOR, RUNNING_STATUSES } from './runShared'
@@ -63,8 +63,8 @@ export function RunInbox({
 }: RunInboxProps) {
   const isDark = useIsDark()
   const dim = textMuted(isDark)
-  const colBg = isDark ? '#141414' : '#f0f0f0'
-  const border = isDark ? '#303030' : '#e8e8e8'
+  const colBg = 'var(--rs-surface-sunken)'
+  const border = 'var(--rs-border)'
 
   const status = (card: RunCard) => (statusOf ? statusOf(card) : card.column)
   const runs = Object.values(cards).sort((a, b) => b.created_at - a.created_at)
@@ -78,7 +78,7 @@ export function RunInbox({
       {runs.length === 0 ? (
         <Empty description={<span style={{ color: dim }}>{emptyText}</span>} />
       ) : (
-        <div style={{ border: `1px solid ${border}`, borderRadius: 6 }}>
+        <div style={{ border: `1px solid ${border}`, borderRadius: RADIUS.sm }}>
           {runs.map((card, i) => (
             <div
               key={card.card_id}
@@ -86,7 +86,7 @@ export function RunInbox({
               style={{
                 display: 'flex', gap: 8, alignItems: 'center', padding: '8px 10px',
                 borderBottom: i < runs.length - 1 ? `1px solid ${border}` : undefined,
-                cursor: 'pointer', fontSize: 12,
+                cursor: 'pointer', fontSize: 13,
                 background: selected === card.card_id ? colBg : undefined,
               }}
             >
@@ -96,7 +96,7 @@ export function RunInbox({
               </span>
               <span style={{ color: dim, flexShrink: 0 }}>{card.trigger}</span>
               {renderRowExtra?.(card)}
-              <span style={{ color: dim, fontFamily: 'monospace', flexShrink: 0 }}>{fmtTime(card.created_at)}</span>
+              <span style={{ color: dim, fontFamily: MONO_FONT, flexShrink: 0 }}>{fmtTime(card.created_at)}</span>
             </div>
           ))}
         </div>
@@ -127,12 +127,12 @@ export function RunInbox({
               parseOutput(body.split('\n').map(line => ({ id: '', line, stream: 'stdout' as const }))).kind,
             )
           return (
-            <div style={{ fontSize: 13, color: textColor(isDark) }}>
+            <div style={{ fontSize: 14, color: textColor(isDark) }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
                 <StatusBadge status={status(card)} />
                 <span style={{ color: dim }}>{card.trigger} · {card.source}:{card.event_type}</span>
                 {card.detail?.owner ? <span style={{ color: dim }}>· owner {String(card.detail.owner)}</span> : null}
-                <span style={{ color: dim, fontFamily: 'monospace', marginLeft: 'auto' }}>{fmtTime(card.created_at)}</span>
+                <span style={{ color: dim, fontFamily: MONO_FONT, marginLeft: 'auto' }}>{fmtTime(card.created_at)}</span>
                 {onStop && RUNNING_STATUSES.has(card.column) && (
                   <Button
                     size="small" danger icon={<StopOutlined />}
@@ -152,7 +152,7 @@ export function RunInbox({
               {(hasTranscript || body) && (
                 <>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                    <span style={{ color: dim, fontSize: 12 }}>Output</span>
+                    <span style={{ color: dim, fontSize: 13 }}>Output</span>
                     {/* When we have the rich transcript, copy the interleaved
                         text + tool calls + their output — not just the prose body. */}
                     {hasTranscript ? (
@@ -180,7 +180,7 @@ export function RunInbox({
               {card.timeline && card.timeline.length > 0 && (
                 <>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                    <span style={{ color: dim, fontSize: 12 }}>Timeline</span>
+                    <span style={{ color: dim, fontSize: 13 }}>Timeline</span>
                     <CopyButton
                       text={card.timeline.map(e => `${fmtTime(e.ts)}  ${e.text}`).join('\n')}
                       title="Copy timeline"
@@ -189,7 +189,7 @@ export function RunInbox({
                   <div style={{ borderLeft: `2px solid ${border}`, paddingLeft: 10 }}>
                     {card.timeline.map((entry, i) => (
                       <div key={i} style={{ marginBottom: 3 }}>
-                        <span style={{ color: dim, fontFamily: 'monospace', marginRight: 8 }}>{fmtTime(entry.ts)}</span>
+                        <span style={{ color: dim, fontFamily: MONO_FONT, marginRight: 8 }}>{fmtTime(entry.ts)}</span>
                         {entry.text}
                       </div>
                     ))}

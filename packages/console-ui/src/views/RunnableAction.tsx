@@ -166,23 +166,23 @@ export function ArgFieldRow({ arg, error, extra, children }: {
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
-        <Text code style={{ fontSize: 12 }}>--{arg.name}</Text>
-        <Tag style={{ fontSize: 10, margin: 0 }}>
+        <Text code style={{ fontSize: 13 }}>--{arg.name}</Text>
+        <Tag style={{ fontSize: 11, margin: 0 }}>
           {(arg.ui === 'date' || arg.ui === 'datetime' || arg.ui === 'time' || arg.ui === 'month' || arg.ui === 'color' || arg.ui === 'host') ? arg.ui : arg.type}
         </Tag>
         {arg.required
-          ? <Tag color="orange" style={{ fontSize: 10, margin: 0 }}>required</Tag>
-          : <Text type="secondary" style={{ fontSize: 10 }}>optional</Text>
+          ? <Tag color="orange" style={{ fontSize: 11, margin: 0 }}>required</Tag>
+          : <Text type="secondary" style={{ fontSize: 11 }}>optional</Text>
         }
         {extra && <span style={{ marginLeft: 'auto' }}>{extra}</span>}
       </div>
       {/* Description on its own full-width line, truncated with a hover tooltip
           (matches the Forms tab) so a long description doesn't blow up the row. */}
       {arg.description && (
-        <TruncatedText text={arg.description} style={{ fontSize: 11, marginBottom: 5, color: 'var(--rs-text-secondary)' }} />
+        <TruncatedText text={arg.description} style={{ fontSize: 12, marginBottom: 5, color: 'var(--rs-text-secondary)' }} />
       )}
       {children}
-      {error && <Text style={{ fontSize: 11, color: '#ff4d4f' }}>{error}</Text>}
+      {error && <Text style={{ fontSize: 12, color: '#ff4d4f' }}>{error}</Text>}
     </div>
   )
 }
@@ -225,7 +225,7 @@ export function RunnableArgsBlock({
             ? 'Password args are always asked at run time — the synced saved-run file never stores a secret.'
             : isOpen ? 'Asked at run time (an open parameter)' : 'Baked into the saved run'}>
             <Space size={4}>
-              <Text type="secondary" style={{ fontSize: 10 }}>open</Text>
+              <Text type="secondary" style={{ fontSize: 11 }}>open</Text>
               <Switch
                 size="small"
                 checked={isOpen}
@@ -237,7 +237,7 @@ export function RunnableArgsBlock({
         )}
       >
         {isOpen ? (
-          <Text type="secondary" style={{ fontSize: 11, fontStyle: 'italic' }}>
+          <Text type="secondary" style={{ fontSize: 12, fontStyle: 'italic' }}>
             Asked at run time{a.required ? ' (required)' : ''}.
           </Text>
         ) : (
@@ -266,7 +266,7 @@ export function RunnableArgsBlock({
             style={{ marginLeft: -8, marginRight: -8 }}
             items={[{
               key: 'defaults',
-              label: <Text type="secondary" style={{ fontSize: 11 }}>Default arguments ({defaulted.length})</Text>,
+              label: <Text type="secondary" style={{ fontSize: 12 }}>Default arguments ({defaulted.length})</Text>,
               children: <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>{defaulted.map(row)}</div>,
             }]}
           />
@@ -303,11 +303,11 @@ export function CredentialsSection({
   )
   return (
     <div style={{ marginTop: 14, borderTop: '1px solid rgba(128,128,128,0.2)', paddingTop: 12 }}>
-      <Text style={{ fontSize: 12, display: 'block', marginBottom: 2 }}>Credentials</Text>
+      <Text style={{ fontSize: 13, display: 'block', marginBottom: 2 }}>Credentials</Text>
       <Text type="secondary" style={{ ...labelStyle, display: 'block', marginBottom: 6 }}>
         Applied when it runs — as env vars named after the credential
-        (a credential <Text code style={{ fontSize: 10 }}>Jira</Text> sets{' '}
-        <Text code style={{ fontSize: 10 }}>JIRA_USERNAME</Text>/<Text code style={{ fontSize: 10 }}>JIRA_PASSWORD</Text>),
+        (a credential <Text code style={{ fontSize: 11 }}>Jira</Text> sets{' '}
+        <Text code style={{ fontSize: 11 }}>JIRA_USERNAME</Text>/<Text code style={{ fontSize: 11 }}>JIRA_PASSWORD</Text>),
         and into any argument it binds. The secret stays in the keychain; only the
         credential id is saved.
       </Text>
@@ -328,16 +328,16 @@ export function CredentialsSection({
               .filter(([, b]) => b.label === c.label)
               .map(([argName]) => `--${argName}`)
             return (
-              <Text key={c.id} type="secondary" style={{ fontSize: 11 }}>
-                <Text style={{ fontSize: 11 }}>{c.label}</Text>
+              <Text key={c.id} type="secondary" style={{ fontSize: 12 }}>
+                <Text style={{ fontSize: 12 }}>{c.label}</Text>
                 {' → '}
                 {names.length
-                  ? names.map((n, i) => <span key={n}>{i > 0 && ', '}<Text code style={{ fontSize: 10 }}>{n}</Text></span>)
-                  : <Text type="warning" style={{ fontSize: 11 }}>no env vars (rename or pick a userpass/password/token credential)</Text>}
+                  ? names.map((n, i) => <span key={n}>{i > 0 && ', '}<Text code style={{ fontSize: 11 }}>{n}</Text></span>)
+                  : <Text type="warning" style={{ fontSize: 12 }}>no env vars (rename or pick a userpass/password/token credential)</Text>}
                 {bound.length > 0 && (
-                  <span> · binds {bound.map((n, i) => <span key={n}>{i > 0 && ', '}<Text code style={{ fontSize: 10 }}>{n}</Text></span>)}</span>
+                  <span> · binds {bound.map((n, i) => <span key={n}>{i > 0 && ', '}<Text code style={{ fontSize: 11 }}>{n}</Text></span>)}</span>
                 )}
-                {c.kind !== 'ssh-key' && !c.has_secret && <Text type="warning" style={{ fontSize: 11 }}> · no secret stored</Text>}
+                {c.kind !== 'ssh-key' && !c.has_secret && <Text type="warning" style={{ fontSize: 12 }}> · no secret stored</Text>}
               </Text>
             )
           })}

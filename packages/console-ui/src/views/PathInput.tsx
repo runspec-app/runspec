@@ -2,7 +2,7 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 import { AutoComplete, Button, Modal, List, Tag, Typography, Tooltip, Spin, Segmented, Checkbox, Input } from 'antd'
 import { FolderOpenOutlined, FolderFilled, FileOutlined, ArrowUpOutlined, HomeOutlined } from '@ant-design/icons'
 import { bridge, type DirEntry, type DirListing } from '../bridge'
-import { useAccent } from '../ThemeContext'
+import { useAccent, MONO_FONT } from '../ThemeContext'
 
 const { Text } = Typography
 
@@ -53,7 +53,7 @@ export function PathInput({ host, value, placeholder, dirsOnly, error, onChange,
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const reqRef = useRef(0)
 
-  const inputStyle = { fontFamily: 'monospace', fontSize: 12 }
+  const inputStyle = { fontFamily: MONO_FONT, fontSize: 13 }
 
   // ── inline autocomplete ────────────────────────────────────────────────────
   const fetchCompletions = useCallback(async (text: string) => {
@@ -76,7 +76,7 @@ export function PathInput({ host, value, placeholder, dirsOnly, error, onChange,
           return {
             value: e.type === 'directory' ? full + sep : full,
             label: (
-              <span style={{ fontFamily: 'monospace', fontSize: 12 }}>
+              <span style={{ fontFamily: MONO_FONT, fontSize: 13 }}>
                 {e.type === 'directory'
                   ? <FolderFilled style={{ color: '#e8b339', marginRight: 6 }} />
                   : <FileOutlined style={{ color: 'var(--rs-text-muted)', marginRight: 6 }} />}
@@ -239,10 +239,10 @@ export function BrowseModal({ host, startPath, dirsOnly, runnable, runAs, group,
       open
       onCancel={onClose}
       width={560}
-      title={<Text style={{ fontFamily: 'monospace', fontSize: 13 }}>{multiSelect ? `Select files · ${host}` : dirsOnly ? `Select a folder · ${host}` : `Browse ${host}`}</Text>}
+      title={<Text style={{ fontFamily: MONO_FONT, fontSize: 14 }}>{multiSelect ? `Select files · ${host}` : dirsOnly ? `Select a folder · ${host}` : `Browse ${host}`}</Text>}
       footer={
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Text type="secondary" style={{ fontSize: 11, fontFamily: 'monospace' }}>
+          <Text type="secondary" style={{ fontSize: 12, fontFamily: MONO_FONT }}>
             {multiSelect ? `${selected.size} selected` : cwd}
           </Text>
           <div style={{ display: 'flex', gap: 8 }}>
@@ -286,7 +286,7 @@ export function BrowseModal({ host, startPath, dirsOnly, runnable, runAs, group,
             <span key={c.path} style={{ display: 'flex', alignItems: 'center' }}>
               {i > 0 && <span style={{ color: 'var(--rs-text-muted)', margin: '0 2px' }}>{sep}</span>}
               <Text
-                style={{ fontFamily: 'monospace', fontSize: 12, cursor: 'pointer', color: accent }}
+                style={{ fontFamily: MONO_FONT, fontSize: 13, cursor: 'pointer', color: accent }}
                 onClick={() => load(c.path, asSvc)}
               >
                 {c.label}
@@ -312,7 +312,7 @@ export function BrowseModal({ host, startPath, dirsOnly, runnable, runAs, group,
       </div>
 
       {err ? (
-        <div style={{ padding: 16 }}><Text type="danger" style={{ fontSize: 12 }}>{err}</Text></div>
+        <div style={{ padding: 16 }}><Text type="danger" style={{ fontSize: 13 }}>{err}</Text></div>
       ) : loading ? (
         <div style={{ padding: 24, textAlign: 'center' }}><Spin size="small" /></div>
       ) : (
@@ -323,7 +323,7 @@ export function BrowseModal({ host, startPath, dirsOnly, runnable, runAs, group,
           placeholder="Filter by name…"
           value={filter}
           onChange={e => setFilter(e.target.value)}
-          style={{ marginBottom: 8, fontFamily: 'monospace', fontSize: 12 }}
+          style={{ marginBottom: 8, fontFamily: MONO_FONT, fontSize: 13 }}
         />
         <div style={{ maxHeight: 360, overflowY: 'auto' }}>
           <List
@@ -338,7 +338,7 @@ export function BrowseModal({ host, startPath, dirsOnly, runnable, runAs, group,
                   style={{ cursor: e.type === 'directory' || multiSelect || !dirsOnly ? 'pointer' : 'default', padding: '4px 8px' }}
                   onClick={() => onEntry(e)}
                 >
-                  <span style={{ fontFamily: 'monospace', fontSize: 12, display: 'inline-flex', alignItems: 'center', opacity: dirsOnly && e.type === 'file' ? 0.45 : 1 }}>
+                  <span style={{ fontFamily: MONO_FONT, fontSize: 13, display: 'inline-flex', alignItems: 'center', opacity: dirsOnly && e.type === 'file' ? 0.45 : 1 }}>
                     {checkable && (
                       <Checkbox
                         checked={selected.has(full)}
@@ -357,12 +357,12 @@ export function BrowseModal({ host, startPath, dirsOnly, runnable, runAs, group,
             }}
           />
           {hidden > 0 && (
-            <Tag color="blue" style={{ fontSize: 10, marginTop: 6 }}>
+            <Tag color="blue" style={{ fontSize: 11, marginTop: 6 }}>
               {`showing first ${RENDER_CAP} of ${visible.length} — refine the filter`}
             </Tag>
           )}
           {listing?.truncated && (
-            <Tag color="orange" style={{ fontSize: 10, marginTop: 6 }}>listing truncated</Tag>
+            <Tag color="orange" style={{ fontSize: 11, marginTop: 6 }}>listing truncated</Tag>
           )}
         </div>
         </>

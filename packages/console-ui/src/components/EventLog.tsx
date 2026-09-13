@@ -1,7 +1,7 @@
 import { Collapse } from 'antd'
 import { BellOutlined } from '@ant-design/icons'
 import { type TriggerEvent } from '../bridge'
-import { useIsDark, textMuted } from '../ThemeContext'
+import { useIsDark, textMuted, MONO_FONT, RADIUS } from '../ThemeContext'
 import { COLUMN_COLOR, fmtTime } from './runShared'
 
 // The event-audit feed: every event seen + its disposition (fired / skipped,
@@ -45,7 +45,7 @@ export function EventLog({
 }) {
   const isDark = useIsDark()
   const dim = textMuted(isDark)
-  const border = isDark ? '#303030' : '#e8e8e8'
+  const border = 'var(--rs-border)'
 
   return (
     <Collapse
@@ -55,12 +55,12 @@ export function EventLog({
       items={[{
         key: 'events',
         label: (
-          <span><BellOutlined /> {label}<span style={{ color: dim, fontSize: 12 }}> · {hint}</span></span>
+          <span><BellOutlined /> {label}<span style={{ color: dim, fontSize: 13 }}> · {hint}</span></span>
         ),
         children: events.length === 0 ? (
-          <div style={{ color: dim, fontSize: 12 }}>No events yet.</div>
+          <div style={{ color: dim, fontSize: 13 }}>No events yet.</div>
         ) : (
-          <div style={{ maxHeight: 360, overflowY: 'auto', border: `1px solid ${border}`, borderRadius: 6 }}>
+          <div style={{ maxHeight: 360, overflowY: 'auto', border: `1px solid ${border}`, borderRadius: RADIUS.sm }}>
             {events.map((ev, i) => {
               const disp = disposition(ev, dim)
               return (
@@ -69,10 +69,10 @@ export function EventLog({
                   style={{
                     display: 'flex', gap: 8, alignItems: 'baseline', padding: '4px 8px',
                     borderBottom: i < events.length - 1 ? `1px solid ${border}` : undefined,
-                    fontSize: 12,
+                    fontSize: 13,
                   }}
                 >
-                  <span style={{ color: dim, fontFamily: 'monospace', flexShrink: 0 }}>{fmtTime(ev.ts)}</span>
+                  <span style={{ color: dim, fontFamily: MONO_FONT, flexShrink: 0 }}>{fmtTime(ev.ts)}</span>
                   <span style={{ color: dim, flexShrink: 0 }}>{ev.source}:{ev.type}</span>
                   <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ev.summary}</span>
                   <span style={{ color: disp.color, flexShrink: 0 }}>{disp.text}</span>

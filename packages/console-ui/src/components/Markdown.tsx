@@ -2,6 +2,7 @@ import { type CSSProperties } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
+import { MONO_FONT } from '../ThemeContext'
 
 // Renders an assistant message as markdown. Only the model's natural-language
 // prose flows through here — runnable stdout / JSON / tool output stays in the
@@ -53,7 +54,7 @@ function components(color: string): Components {
           <pre style={{
             margin: '0 0 6px', padding: '8px 10px', background: codeBg,
             borderRadius: 4, overflowX: 'auto',
-            fontFamily: 'monospace', fontSize: '0.92em', whiteSpace: 'pre',
+            fontFamily: MONO_FONT, fontSize: '0.92em', whiteSpace: 'pre',
           }}>
             <code>{children}</code>
           </pre>
@@ -62,7 +63,7 @@ function components(color: string): Components {
       return (
         <code style={{
           background: codeBg, borderRadius: 3, padding: '1px 4px',
-          fontFamily: 'monospace', fontSize: '0.92em',
+          fontFamily: MONO_FONT, fontSize: '0.92em',
         }}>{children}</code>
       )
     },

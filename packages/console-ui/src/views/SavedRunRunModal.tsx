@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Modal, Typography, Tag, message } from 'antd'
 import type { ArgDef, SavedRun } from '../bridge'
 import { RunbookField } from './RunbookRunModal'
+import { MONO_FONT } from '../ThemeContext'
 
 const { Text } = Typography
 
@@ -82,33 +83,33 @@ export function SavedRunRunModal({ savedRun, hostNames, onClose, onRun }: SavedR
       title={`Saved run: ${savedRun.title || savedRun.id}`}
     >
       {savedRun.description && (
-        <Text type="secondary" style={{ display: 'block', marginBottom: 12, fontSize: 12 }}>
+        <Text type="secondary" style={{ display: 'block', marginBottom: 12, fontSize: 13 }}>
           {savedRun.description}
         </Text>
       )}
       {savedRun.argsError && (
-        <Text type="danger" style={{ display: 'block', marginBottom: 12, fontSize: 12 }}>
+        <Text type="danger" style={{ display: 'block', marginBottom: 12, fontSize: 13 }}>
           This saved run is misconfigured: {savedRun.argsError}
         </Text>
       )}
       {/* Baked-in summary — read-only by design. */}
       <div style={{ marginBottom: 14, display: 'flex', flexDirection: 'column', gap: 4 }}>
         <div>
-          <Text code style={{ fontSize: 12 }}>/{savedRun.runnable}{cmd}</Text>
-          <Text type="secondary" style={{ fontSize: 12 }}> on {savedRun.target || savedRun.host}</Text>
+          <Text code style={{ fontSize: 13 }}>/{savedRun.runnable}{cmd}</Text>
+          <Text type="secondary" style={{ fontSize: 13 }}> on {savedRun.target || savedRun.host}</Text>
         </div>
         {fixed.length > 0 && (
           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-            <Text type="secondary" style={{ fontSize: 11 }}>fixed:</Text>
+            <Text type="secondary" style={{ fontSize: 12 }}>fixed:</Text>
             {fixed.map(([k, v]) => (
-              <Tag key={k} style={{ fontSize: 10, margin: 0, fontFamily: 'monospace' }}>
+              <Tag key={k} style={{ fontSize: 11, margin: 0, fontFamily: MONO_FONT }}>
                 {k}={String(v)}
               </Tag>
             ))}
           </div>
         )}
         {(savedRun.credential_ids ?? []).length > 0 && (
-          <Text type="secondary" style={{ fontSize: 11 }}>
+          <Text type="secondary" style={{ fontSize: 12 }}>
             {savedRun.credential_ids.length} credential{savedRun.credential_ids.length !== 1 ? 's' : ''} applied
             from the keychain at run time
           </Text>
@@ -119,15 +120,15 @@ export function SavedRunRunModal({ savedRun, hostNames, onClose, onRun }: SavedR
           {params.map(a => (
             <div key={a.name}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
-                <Text code style={{ fontSize: 12 }}>{a.name}</Text>
-                <Tag style={{ fontSize: 10, margin: 0 }}>{a.ui === 'host' ? 'host' : a.type}</Tag>
+                <Text code style={{ fontSize: 13 }}>{a.name}</Text>
+                <Tag style={{ fontSize: 11, margin: 0 }}>{a.ui === 'host' ? 'host' : a.type}</Tag>
                 {a.required
-                  ? <Tag color="orange" style={{ fontSize: 10, margin: 0 }}>required</Tag>
-                  : <Text type="secondary" style={{ fontSize: 10 }}>optional</Text>}
-                {a.description && <Text type="secondary" style={{ fontSize: 11 }}>{a.description}</Text>}
+                  ? <Tag color="orange" style={{ fontSize: 11, margin: 0 }}>required</Tag>
+                  : <Text type="secondary" style={{ fontSize: 11 }}>optional</Text>}
+                {a.description && <Text type="secondary" style={{ fontSize: 12 }}>{a.description}</Text>}
               </div>
               <RunbookField arg={a} hostNames={hostNames} value={values[a.name]} error={errors[a.name]} onChange={v => change(a.name, v)} />
-              {errors[a.name] && <Text style={{ fontSize: 11, color: '#ff4d4f' }}>{errors[a.name]}</Text>}
+              {errors[a.name] && <Text style={{ fontSize: 12, color: '#ff4d4f' }}>{errors[a.name]}</Text>}
             </div>
           ))}
         </div>

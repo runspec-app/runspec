@@ -222,7 +222,7 @@ export function ImproveView({ active }: ImproveViewProps) {
                         {r.kind === 'problem_report' ? 'problem' : 'eval'}
                       </Tag>
                       {r.has_synthesis && <Tag color="green">rec</Tag>}
-                      <Text style={{ fontSize: 12 }}>{r.ts?.slice(0, 16).replace('T', ' ')}</Text>
+                      <Text style={{ fontSize: 13 }}>{r.ts?.slice(0, 16).replace('T', ' ')}</Text>
                       <Button
                         size="small"
                         type="text"
@@ -235,7 +235,7 @@ export function ImproveView({ active }: ImproveViewProps) {
                     </Space>
                     {r.comment && (
                       <div>
-                        <Text type="secondary" ellipsis style={{ fontSize: 12 }}>
+                        <Text type="secondary" ellipsis style={{ fontSize: 13 }}>
                           {r.comment}
                         </Text>
                       </div>
@@ -306,7 +306,7 @@ function ReportPanel({
     {
       title: 'Evidence',
       dataIndex: 'evidence',
-      render: (e: string) => <Text style={{ fontSize: 12 }}>{e}</Text>,
+      render: (e: string) => <Text style={{ fontSize: 13 }}>{e}</Text>,
     },
   ]
 
@@ -453,7 +453,7 @@ function ReportPanel({
             />
           }
         >
-          <pre style={{ maxHeight: 220, overflow: 'auto', fontSize: 12, margin: 0 }}>
+          <pre style={{ maxHeight: 220, overflow: 'auto', fontSize: 13, margin: 0 }}>
             {report.learnings_toml}
           </pre>
         </Card>

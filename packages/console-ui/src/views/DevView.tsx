@@ -19,7 +19,7 @@ import {
   type DevEntry,
   type DevCategory,
 } from '../devbus'
-import { useIsDark, textMuted } from '../ThemeContext'
+import { useIsDark, textMuted, MONO_FONT } from '../ThemeContext'
 
 const { Text } = Typography
 
@@ -136,14 +136,14 @@ export function DevView() {
       title: 'Time',
       dataIndex: 'ts',
       width: 110,
-      render: (ts: number) => <Text style={{ fontSize: 12, color: mutedCol }}>{fmtTime(ts)}</Text>,
+      render: (ts: number) => <Text style={{ fontSize: 13, color: mutedCol }}>{fmtTime(ts)}</Text>,
     },
     {
       title: '',
       dataIndex: 'direction',
       width: 64,
       render: (dir: DevEntry['direction']) => (
-        <Text style={{ fontSize: 12, color: dir === 'call' ? '#4fc1ff' : '#b37feb' }}>
+        <Text style={{ fontSize: 13, color: dir === 'call' ? '#4fc1ff' : '#b37feb' }}>
           {dir === 'call' ? 'call →' : 'event ←'}
         </Text>
       ),
@@ -153,7 +153,7 @@ export function DevView() {
       dataIndex: 'category',
       width: 110,
       render: (c: DevCategory) => (
-        <Tag color={CATEGORY_COLOR[c]} style={{ fontSize: 11, margin: 0 }}>{c}</Tag>
+        <Tag color={CATEGORY_COLOR[c]} style={{ fontSize: 12, margin: 0 }}>{c}</Tag>
       ),
     },
     {
@@ -162,9 +162,9 @@ export function DevView() {
       width: 200,
       render: (name: string, row: DevEntry) => (
         <Space size={4}>
-          <Text style={{ fontSize: 12, fontFamily: 'monospace' }}>{name}</Text>
+          <Text style={{ fontSize: 13, fontFamily: MONO_FONT }}>{name}</Text>
           {row.count && row.count > 1 ? (
-            <Tag color="default" style={{ fontSize: 10, margin: 0, padding: '0 5px' }}>×{row.count}</Tag>
+            <Tag color="default" style={{ fontSize: 11, margin: 0, padding: '0 5px' }}>×{row.count}</Tag>
           ) : null}
         </Space>
       ),
@@ -174,7 +174,7 @@ export function DevView() {
       dataIndex: 'summary',
       ellipsis: true,
       render: (s: string, row: DevEntry) => (
-        <Text style={{ fontSize: 12, color: row.status === 'error' ? '#ff7875' : undefined }} ellipsis>
+        <Text style={{ fontSize: 13, color: row.status === 'error' ? '#ff7875' : undefined }} ellipsis>
           {row.error ? row.error : s}
         </Text>
       ),
@@ -184,14 +184,14 @@ export function DevView() {
       dataIndex: 'durationMs',
       width: 70,
       align: 'right',
-      render: (d?: number) => (d == null ? '' : <Text style={{ fontSize: 12, color: mutedCol }}>{Math.round(d)}</Text>),
+      render: (d?: number) => (d == null ? '' : <Text style={{ fontSize: 13, color: mutedCol }}>{Math.round(d)}</Text>),
     },
     {
       title: 'Status',
       dataIndex: 'status',
       width: 90,
       render: (s: DevEntry['status']) => (
-        <Tag color={STATUS_COLOR[s]} style={{ fontSize: 11, margin: 0 }}>{s}</Tag>
+        <Tag color={STATUS_COLOR[s]} style={{ fontSize: 12, margin: 0 }}>{s}</Tag>
       ),
     },
   ]
@@ -204,7 +204,7 @@ export function DevView() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
       {/* Counters */}
-      <Space size={16} style={{ marginBottom: 10, fontSize: 13 }}>
+      <Space size={16} style={{ marginBottom: 10, fontSize: 14 }}>
         <Text type="secondary">calls <Text strong>{stats.calls}</Text></Text>
         <Text type="secondary">events <Text strong>{stats.events}</Text></Text>
         <Text type="secondary">errors <Text strong style={{ color: stats.errors > 0 ? '#ff4d4f' : undefined }}>{stats.errors}</Text></Text>
@@ -242,21 +242,21 @@ export function DevView() {
           </Button>
         </Tooltip>
 
-        <span style={{ width: 1, height: 18, background: isDark ? '#333' : '#ddd', margin: '0 4px' }} />
+        <span style={{ width: 1, height: 18, background: 'var(--rs-border-strong)', margin: '0 4px' }} />
 
         {CATEGORIES.map(c => (
           <Tag
             key={c}
             onClick={() => toggleCategory(c)}
             color={activeCategories.has(c) ? CATEGORY_COLOR[c] : undefined}
-            style={{ cursor: 'pointer', fontSize: 11, margin: 0, userSelect: 'none' }}
+            style={{ cursor: 'pointer', fontSize: 12, margin: 0, userSelect: 'none' }}
           >
             {c}
           </Tag>
         ))}
         {activeCategories.size > 0 && (
           <Button size="small" type="text" onClick={() => setActiveCategories(new Set())}
-            style={{ fontSize: 11, color: 'var(--rs-text-muted)', padding: '0 4px' }}>
+            style={{ fontSize: 12, color: 'var(--rs-text-muted)', padding: '0 4px' }}>
             clear filter
           </Button>
         )}
@@ -273,7 +273,7 @@ export function DevView() {
           expandable={{
             expandedRowRender: (row: DevEntry) => (
               <pre style={{
-                margin: 0, fontSize: 12, fontFamily: 'monospace', whiteSpace: 'pre-wrap',
+                margin: 0, fontSize: 13, fontFamily: MONO_FONT, whiteSpace: 'pre-wrap',
                 wordBreak: 'break-word', maxHeight: 320, overflow: 'auto',
                 color: isDark ? '#ccc' : '#333',
               }}>

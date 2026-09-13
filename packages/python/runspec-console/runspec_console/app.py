@@ -219,7 +219,11 @@ def _apply_dwm_title_bar(title: str) -> None:
     when set — an **independent** hex, deliberately separate from `accent_color`
     so a brand can pair e.g. a blue accent UI with a red title bar — else
     runspec blue. The caption text colour follows the caption's luminance
-    (`config.title_bar_colors`).
+    (`config.title_bar_colors`). The 1px window border DWM draws around the
+    frame is tinted to the same caption colour: left at its default it stays
+    near-white on a light Windows theme and shows as pale edge lines beside
+    the coloured caption (re-drawn in a different shade on focus/resize, so it
+    appears to come and go).
 
     Called from the webview `started` callback so the window HWND is available.
     Requires Windows 11 build 22000+ for DWMWA_CAPTION_COLOR (attr 35).
@@ -257,6 +261,11 @@ def _apply_dwm_title_bar(title: str) -> None:
         # DWMWA_TEXT_COLOR = 36
         txt = ctypes.c_int(text)
         dwm.DwmSetWindowAttribute(hwnd, 36, ctypes.byref(txt), ctypes.sizeof(txt))
+
+        # DWMWA_BORDER_COLOR = 34 — the thin frame around the window. Match the
+        # caption so the title bar reads as one solid band edge to edge.
+        border = ctypes.c_int(caption)
+        dwm.DwmSetWindowAttribute(hwnd, 34, ctypes.byref(border), ctypes.sizeof(border))
     except Exception:
         pass
 
@@ -314,7 +323,7 @@ def _window_kwargs() -> dict[str, object]:
         "min_size": (1024, 600),
         # Paint the window the dark-theme content colour (App.tsx contentBg) so
         # there's no white flash before the SPA mounts.
-        "background_color": "#111111",
+        "background_color": "#101216",  # = ThemeContext.surfaces(dark).base — the pre-paint colour
         # Native "are you sure?" guard so an accidental close doesn't drop an
         # in-progress agent run or chat.
         "confirm_close": True,

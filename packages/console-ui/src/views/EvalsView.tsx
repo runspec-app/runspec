@@ -12,7 +12,7 @@ import {
   bridge, type EvalReport, type EvalReportMeta, type EvalCaseResult,
   type EvalFixtureMeta, type EvalToolInvocation,
 } from '../bridge'
-import { useIsDark, textColor, textSecondary } from '../ThemeContext'
+import { useIsDark, textColor, textSecondary, MONO_FONT } from '../ThemeContext'
 
 const { Text, Paragraph, Title } = Typography
 
@@ -256,7 +256,7 @@ export function EvalsView({ active }: EvalsViewProps) {
                 onPressEnter={saveFixture}
               />
             </Space.Compact>
-            <Text type="secondary" style={{ display: 'block', fontSize: 12, margin: '4px 0 8px' }}>
+            <Text type="secondary" style={{ display: 'block', fontSize: 13, margin: '4px 0 8px' }}>
               Open an existing suite on the left, or type a name on the right and
               <b> Save</b> to store a new one.
             </Text>
@@ -265,7 +265,7 @@ export function EvalsView({ active }: EvalsViewProps) {
               onChange={e => setFixtureText(e.target.value)}
               placeholder="TOML: one [[eval]] table per case…"
               autoSize={{ minRows: 8, maxRows: 20 }}
-              style={{ fontFamily: 'monospace', fontSize: 12 }}
+              style={{ fontFamily: MONO_FONT, fontSize: 13 }}
             />
             <Space style={{ marginTop: 8 }}>
               <Button icon={<SaveOutlined />} onClick={saveFixture}>Save</Button>
@@ -352,7 +352,7 @@ export function EvalsView({ active }: EvalsViewProps) {
                       <Tag color={r.summary.failed === 0 ? 'green' : 'red'}>
                         {r.summary.passed}/{r.summary.total}
                       </Tag>
-                      <Text style={{ fontSize: 12 }}>
+                      <Text style={{ fontSize: 13 }}>
                         {r.generated_at?.slice(0, 16).replace('T', ' ')}
                       </Text>
                       <Button
@@ -400,7 +400,7 @@ function EvalReportPanel({ report }: { report: EvalReport }) {
       title: 'Case',
       dataIndex: 'case_id',
       width: 170,
-      render: (id: string) => <Text style={{ fontSize: 12 }}>{id}</Text>,
+      render: (id: string) => <Text style={{ fontSize: 13 }}>{id}</Text>,
     },
     {
       title: 'Verdict',
@@ -412,7 +412,7 @@ function EvalReportPanel({ report }: { report: EvalReport }) {
           <Space size={4}>
             <Tag color={r.passed ? 'green' : meta.color}>{r.passed ? 'pass' : meta.label}</Tag>
             {multiSample && !r.passed && (
-              <Text type="secondary" style={{ fontSize: 11 }}>
+              <Text type="secondary" style={{ fontSize: 12 }}>
                 {r.pass_count}/{r.samples}
               </Text>
             )}
@@ -430,7 +430,7 @@ function EvalReportPanel({ report }: { report: EvalReport }) {
       dataIndex: 'target',
       width: 150,
       render: (t: string) => (
-        <Text style={{ fontFamily: 'monospace', fontSize: 12 }}>{t || '— (no run)'}</Text>
+        <Text style={{ fontFamily: MONO_FONT, fontSize: 13 }}>{t || '— (no run)'}</Text>
       ),
     },
     ...(anyCommand
@@ -439,7 +439,7 @@ function EvalReportPanel({ report }: { report: EvalReport }) {
           dataIndex: 'command',
           width: 110,
           render: (cmd: string) => (
-            <Text style={{ fontFamily: 'monospace', fontSize: 12 }}>{cmd || '—'}</Text>
+            <Text style={{ fontFamily: MONO_FONT, fontSize: 13 }}>{cmd || '—'}</Text>
           ),
         } as ColumnType<EvalCaseResult>]
       : []),
@@ -451,13 +451,13 @@ function EvalReportPanel({ report }: { report: EvalReport }) {
           render: (a: string) =>
             a
               ? <Tag color={a === 'manual' ? 'red' : a === 'confirm' ? 'gold' : 'green'}>{a}</Tag>
-              : <Text type="secondary" style={{ fontSize: 12 }}>—</Text>,
+              : <Text type="secondary" style={{ fontSize: 13 }}>—</Text>,
         } as ColumnType<EvalCaseResult>]
       : []),
     {
       title: 'Detail',
       dataIndex: 'reason',
-      render: (reason: string) => <Text style={{ fontSize: 12 }}>{reason}</Text>,
+      render: (reason: string) => <Text style={{ fontSize: 13 }}>{reason}</Text>,
     },
   ]
 
@@ -522,16 +522,16 @@ function CapturedCall({ terminal }: { terminal: EvalToolInvocation }) {
   // host, command and args — so nothing is hidden.
   const pretty = JSON.stringify(input, null, 2)
   return (
-    <div style={{ fontSize: 12 }}>
+    <div style={{ fontSize: 13 }}>
       <Text style={{ color: textSecondary(isDark) }}>
-        Captured call — <span style={{ fontFamily: 'monospace' }}>{terminal.name}</span> (not executed):
+        Captured call — <span style={{ fontFamily: MONO_FONT }}>{terminal.name}</span> (not executed):
       </Text>
       <pre
         style={{
           margin: '4px 0 0',
           padding: 8,
-          fontFamily: 'monospace',
-          fontSize: 12,
+          fontFamily: MONO_FONT,
+          fontSize: 13,
           whiteSpace: 'pre-wrap',
           wordBreak: 'break-word',
           color: textColor(isDark),

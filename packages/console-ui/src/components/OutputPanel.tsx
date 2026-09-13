@@ -2,7 +2,7 @@ import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } fro
 import { Button, Checkbox, Input, Tag, Tooltip, Typography, message } from 'antd'
 import { bridge } from '../bridge'
 import { Markdown } from './Markdown'
-import { useIsDark, textColor, useAccent, textFaint, textMuted, textSecondary } from '../ThemeContext'
+import { useIsDark, textColor, useAccent, surfaces, textFaint, textMuted, textSecondary, MONO_FONT, RADIUS } from '../ThemeContext'
 import {
   ThunderboltOutlined, CheckCircleOutlined, CloseCircleOutlined, LoadingOutlined,
   RedoOutlined, EditOutlined, CopyOutlined, RobotOutlined, CaretRightOutlined,
@@ -51,23 +51,26 @@ interface CardTheme {
 function useCardTheme(): CardTheme {
   const isDark = useIsDark()
   const accent = useAccent()
+  const sf = surfaces(isDark)
   return {
     isDark,
-    cardBg: isDark ? '#141414' : '#ffffff',
-    cardBorder: isDark ? '#2a2a2a' : '#e3e3e3',
-    headerBg: isDark ? '#1a1a1a' : '#f5f6f8',
+    // Cards sit on the content (raised); their header strip and tool blocks
+    // are one level up (overlay); code wells drop to sunken.
+    cardBg: sf.raised,
+    cardBorder: sf.border,
+    headerBg: sf.overlay,
     text: textColor(isDark),
     dim: textMuted(isDark),
     faint: textFaint(isDark),
     caret: textFaint(isDark),
     mono: isDark ? '#d4d4d4' : '#1f1f1f',
     rowAlt: isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.025)',
-    tableHeadBorder: isDark ? '#2a2a2a' : '#e3e3e3',
-    tableRowBorder: isDark ? '#1a1a1a' : '#f0f0f0',
+    tableHeadBorder: sf.border,
+    tableRowBorder: sf.divider,
     tableHead: textMuted(isDark),
-    codeBg: isDark ? '#141414' : '#f5f5f5',
-    toolBg: isDark ? '#1a1a1a' : '#f5f6f8',
-    toolBorder: isDark ? '#2a2a2a' : '#e3e3e3',
+    codeBg: sf.sunken,
+    toolBg: sf.overlay,
+    toolBorder: sf.border,
     link: accent,
     sub: isDark ? '#9ab' : '#5a6b7b',
   }
@@ -318,7 +321,7 @@ function JsonCellDisclosure({ value }: { value: unknown }) {
       </a>
       {open && (rowArray
         ? <JsonTable rows={value as Record<string, unknown>[]} />
-        : <pre style={{ margin: '4px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-all', color: c.sub, fontSize: 11 }}>
+        : <pre style={{ margin: '4px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-all', color: c.sub, fontSize: 12 }}>
             {JSON.stringify(value, null, 2)}
           </pre>
       )}
@@ -340,7 +343,7 @@ function JsonTable({ rows }: { rows: Record<string, unknown>[] }) {
     <div style={{ overflowX: 'auto', padding: '8px 14px' }}>
       <table style={{
         width: '100%', borderCollapse: 'collapse',
-        fontFamily: 'monospace', fontSize: 12, color: c.mono,
+        fontFamily: MONO_FONT, fontSize: 13, color: c.mono,
       }}>
         <thead>
           <tr>
@@ -375,8 +378,8 @@ function JsonTable({ rows }: { rows: Record<string, unknown>[] }) {
         <div
           onClick={() => setLimit(l => l + TABLE_ROW_STEP)}
           style={{
-            padding: '6px 0 2px', fontSize: 12, color: c.dim,
-            cursor: 'pointer', fontFamily: 'monospace',
+            padding: '6px 0 2px', fontSize: 13, color: c.dim,
+            cursor: 'pointer', fontFamily: MONO_FONT,
           }}
           onMouseEnter={e => (e.currentTarget.style.color = c.text)}
           onMouseLeave={e => (e.currentTarget.style.color = c.dim)}
@@ -392,7 +395,7 @@ function JsonTable({ rows }: { rows: Record<string, unknown>[] }) {
 function JsonObject({ obj }: { obj: Record<string, unknown> }) {
   const c = useCardTheme()
   return (
-    <div style={{ padding: '8px 14px', display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '4px 16px', fontFamily: 'monospace', fontSize: 12 }}>
+    <div style={{ padding: '8px 14px', display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '4px 16px', fontFamily: MONO_FONT, fontSize: 13 }}>
       {Object.entries(obj).map(([k, v]) => [
         <span key={`k-${k}`} style={{ color: c.tableHead, whiteSpace: 'nowrap' }}>{k.replace(/_/g, ' ')}</span>,
         <span key={`v-${k}`} style={{ color: c.mono }}><JsonCell keyName={k} value={v} /></span>,
@@ -409,20 +412,20 @@ function JsonSections({ meta, sections }: { meta?: Record<string, unknown>; sect
   return (
     <div style={{ padding: '8px 14px' }}>
       {metaEntries.length > 0 && (
-        <div style={{ fontFamily: 'monospace', fontSize: 12, color: c.dim, marginBottom: 8 }}>
+        <div style={{ fontFamily: MONO_FONT, fontSize: 13, color: c.dim, marginBottom: 8 }}>
           {metaEntries.map(([k, v]) => `${k.replace(/_/g, ' ')}: ${_humanVal(k, v)}`).join('   ')}
         </div>
       )}
       {sections.map((s, i) => (
         <div key={i} style={{ marginBottom: i < sections.length - 1 ? 14 : 0 }}>
           {s.title && (
-            <div style={{ fontFamily: 'monospace', fontSize: 12, color: c.mono, fontWeight: 600 }}>
+            <div style={{ fontFamily: MONO_FONT, fontSize: 13, color: c.mono, fontWeight: 600 }}>
               {s.title.replace(/_/g, ' ')}
             </div>
           )}
           {s.rows.length > 0
             ? <JsonTable rows={s.rows} />
-            : <div style={{ fontFamily: 'monospace', fontSize: 12, color: c.dim, padding: '4px 14px' }}>(no rows)</div>}
+            : <div style={{ fontFamily: MONO_FONT, fontSize: 13, color: c.dim, padding: '4px 14px' }}>(no rows)</div>}
         </div>
       ))}
     </div>
@@ -641,19 +644,19 @@ function ActivityIndicator({ block, onClick }: { block: InvocationBlock; onClick
             display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
             background: c.headerBg, border: `1px solid ${c.cardBorder}`, borderRadius: 14,
             padding: '4px 12px', maxWidth: '100%',
-            boxShadow: c.isDark ? '0 2px 8px rgba(0,0,0,0.5)' : '0 2px 8px rgba(0,0,0,0.15)',
+            boxShadow: 'var(--rs-shadow-md)',
           }}
         >
-          <LoadingOutlined style={{ color: '#1677ff', fontSize: 12 }} spin />
-          <Text style={{ fontSize: 12, color: c.dim, flexShrink: 0 }}>{act.label}</Text>
+          <LoadingOutlined style={{ color: 'var(--rs-accent)', fontSize: 13 }} spin />
+          <Text style={{ fontSize: 13, color: c.dim, flexShrink: 0 }}>{act.label}</Text>
           {act.tool && (
-            <Text code style={{ fontSize: 11, flexShrink: 0 }}>{act.tool}</Text>
+            <Text code style={{ fontSize: 12, flexShrink: 0 }}>{act.tool}</Text>
           )}
           {act.progress && (
-            <Text ellipsis style={{ fontSize: 11, color: c.dim, fontFamily: 'monospace', maxWidth: 220 }}>{act.progress}</Text>
+            <Text ellipsis style={{ fontSize: 12, color: c.dim, fontFamily: MONO_FONT, maxWidth: 220 }}>{act.progress}</Text>
           )}
-          <Text style={{ fontSize: 11, color: c.dim, flexShrink: 0, fontFamily: 'monospace' }}>· {elapsed}</Text>
-          <VerticalAlignBottomOutlined style={{ fontSize: 11, color: c.dim, flexShrink: 0 }} />
+          <Text style={{ fontSize: 12, color: c.dim, flexShrink: 0, fontFamily: MONO_FONT }}>· {elapsed}</Text>
+          <VerticalAlignBottomOutlined style={{ fontSize: 12, color: c.dim, flexShrink: 0 }} />
         </div>
       </Tooltip>
     </div>
@@ -784,8 +787,8 @@ export function OutputPanel({ blocks, onRerun, onAskLlm, onToggleContext }: Outp
             onClick={scrollToBottom}
             style={{
               background: c.headerBg, borderColor: c.cardBorder, color: c.dim,
-              fontSize: 11, height: 26, padding: '0 10px',
-              boxShadow: c.isDark ? '0 2px 8px rgba(0,0,0,0.5)' : '0 2px 8px rgba(0,0,0,0.15)',
+              fontSize: 12, height: 26, padding: '0 10px',
+              boxShadow: 'var(--rs-shadow-md)',
             }}
           >
             latest
@@ -894,7 +897,7 @@ function ToolCallBlock({
     <div style={{
       margin: '6px 0',
       border: `1px solid ${awaiting ? (c.isDark ? '#5a4a1a' : '#ffd591') : c.toolBorder}`,
-      borderRadius: 6, overflow: 'hidden',
+      borderRadius: RADIUS.sm, overflow: 'hidden',
     }}>
       <div
         style={{
@@ -907,11 +910,11 @@ function ToolCallBlock({
         onClick={() => canExpand && setExpanded(x => !x)}
       >
         {awaiting
-          ? <PauseCircleOutlined style={{ color: '#e6a23c', fontSize: 12 }} />
+          ? <PauseCircleOutlined style={{ color: '#e6a23c', fontSize: 13 }} />
           : entry.running
-            ? <LoadingOutlined style={{ color: '#1677ff', fontSize: 12 }} />
-            : <ApiOutlined style={{ color: '#52c41a', fontSize: 12 }} />}
-        <Text code style={{ fontSize: 12, flexShrink: 0 }}>{entry.name.replace(/^[^_]+__/, '')}</Text>
+            ? <LoadingOutlined style={{ color: 'var(--rs-accent)', fontSize: 13 }} />
+            : <ApiOutlined style={{ color: '#52c41a', fontSize: 13 }} />}
+        <Text code style={{ fontSize: 13, flexShrink: 0 }}>{entry.name.replace(/^[^_]+__/, '')}</Text>
         {entry.operatorDecision && (
           <Tooltip title={
             entry.operatorDecision === 'denied' ? 'You denied this call — it did not run'
@@ -919,7 +922,7 @@ function ToolCallBlock({
             : 'You approved this call'
           }>
             <Text style={{
-              fontSize: 10, flexShrink: 0, fontWeight: 600, textTransform: 'uppercase',
+              fontSize: 11, flexShrink: 0, fontWeight: 600, textTransform: 'uppercase',
               color: entry.operatorDecision === 'denied' ? '#ff4d4f' : entry.operatorDecision === 'edited' ? '#faad14' : '#52c41a',
             }}>
               {entry.operatorDecision}
@@ -927,41 +930,41 @@ function ToolCallBlock({
           </Tooltip>
         )}
         {args.length > 0 && (
-          <Text ellipsis style={{ flex: 1, minWidth: 0, color: c.dim, fontSize: 11 }}>
+          <Text ellipsis style={{ flex: 1, minWidth: 0, color: c.dim, fontSize: 12 }}>
             {args.map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(' ')}
           </Text>
         )}
         {awaiting && (
-          <Text style={{ color: '#e6a23c', fontSize: 11, marginLeft: 'auto', flexShrink: 0 }}>needs approval</Text>
+          <Text style={{ color: '#e6a23c', fontSize: 12, marginLeft: 'auto', flexShrink: 0 }}>needs approval</Text>
         )}
         {!awaiting && entry.running && (
-          <Text ellipsis style={{ color: c.dim, fontSize: 11, marginLeft: 'auto', flexShrink: 0, maxWidth: '50%', fontFamily: entry.progress ? 'monospace' : undefined }}>
+          <Text ellipsis style={{ color: c.dim, fontSize: 12, marginLeft: 'auto', flexShrink: 0, maxWidth: '50%', fontFamily: entry.progress ? 'monospace' : undefined }}>
             {entry.progress || 'running…'}
           </Text>
         )}
         {!entry.running && entry.durationMs !== undefined && (
           <Tooltip title="Time this tool call took">
-            <Text style={{ color: c.dim, fontSize: 11, marginLeft: 'auto', flexShrink: 0, fontFamily: 'monospace' }}>
+            <Text style={{ color: c.dim, fontSize: 12, marginLeft: 'auto', flexShrink: 0, fontFamily: MONO_FONT }}>
               {fmtDurationMs(entry.durationMs)}
             </Text>
           </Tooltip>
         )}
         {!entry.running && entry.truncated && (
           <Tooltip title={`This tool returned ${fmtBytes(entry.truncated.orig_len)} but was cut to ${fmtBytes(entry.truncated.cap)} before the model saw it — the JSON it received is incomplete. Have the runnable return a summary and let the agent request specifics, or raise [llm] tool_output_cap.`}>
-            <Text style={{ color: '#ff4d4f', fontSize: 11, flexShrink: 0, fontWeight: 600 }}>
+            <Text style={{ color: '#ff4d4f', fontSize: 12, flexShrink: 0, fontWeight: 600 }}>
               ⚠ output cut
             </Text>
           </Tooltip>
         )}
         {!entry.running && !entry.truncated && entry.outputChars !== undefined && entry.outputChars > LARGE_OUTPUT_CHARS && (
           <Tooltip title={`Large result (${fmtBytes(entry.outputChars)}). It stays in the conversation context for the rest of the chat — if it's data-heavy, a summary-first runnable keeps the window lean.`}>
-            <Text style={{ color: '#faad14', fontSize: 11, flexShrink: 0, fontFamily: 'monospace' }}>
+            <Text style={{ color: '#faad14', fontSize: 12, flexShrink: 0, fontFamily: MONO_FONT }}>
               {fmtBytes(entry.outputChars)}
             </Text>
           </Tooltip>
         )}
         {canExpand && !entry.running && (
-          <Text style={{ color: c.dim, fontSize: 11, marginLeft: 'auto', flexShrink: 0 }}>
+          <Text style={{ color: c.dim, fontSize: 12, marginLeft: 'auto', flexShrink: 0 }}>
             {expanded ? '▲ hide details' : '▼ show details'}
           </Text>
         )}
@@ -969,7 +972,7 @@ function ToolCallBlock({
           <Tooltip title="Copy this tool call and its output">
             <CopyOutlined
               onClick={(e) => { e.stopPropagation(); copyToClipboard(transcriptToText([{ kind: 'tool', entry }])) }}
-              style={{ color: c.dim, cursor: 'pointer', fontSize: 12, flexShrink: 0, marginLeft: 4 }}
+              style={{ color: c.dim, cursor: 'pointer', fontSize: 13, flexShrink: 0, marginLeft: 4 }}
               onMouseEnter={ev => (ev.currentTarget.style.color = c.text)}
               onMouseLeave={ev => (ev.currentTarget.style.color = c.dim)}
             />
@@ -979,7 +982,7 @@ function ToolCallBlock({
           <Tooltip title="Edit in a form & rerun — opens the run dialog pre-filled with these values">
             <EditOutlined
               onClick={(e) => { e.stopPropagation(); window.dispatchEvent(new CustomEvent('runspec:edit_in_form', { detail: rerun })) }}
-              style={{ color: c.dim, cursor: 'pointer', fontSize: 12, flexShrink: 0, marginLeft: 4 }}
+              style={{ color: c.dim, cursor: 'pointer', fontSize: 13, flexShrink: 0, marginLeft: 4 }}
               onMouseEnter={ev => (ev.currentTarget.style.color = c.text)}
               onMouseLeave={ev => (ev.currentTarget.style.color = c.dim)}
             />
@@ -989,9 +992,9 @@ function ToolCallBlock({
 
       {awaiting && (
         <div style={{ padding: '10px 12px', background: c.isDark ? '#1c1810' : '#fffbe6', borderTop: `1px solid ${c.isDark ? '#5a4a1a' : '#ffe7ba'}` }}>
-          <div style={{ fontSize: 12, color: textSecondary(c.isDark), marginBottom: 10 }}>
+          <div style={{ fontSize: 13, color: textSecondary(c.isDark), marginBottom: 10 }}>
             The assistant wants to {v}{' '}
-            {resolved && <Text code style={{ fontSize: 11 }}>{resolved.name.replace(/^[^_]+__/, '')}</Text>}
+            {resolved && <Text code style={{ fontSize: 12 }}>{resolved.name.replace(/^[^_]+__/, '')}</Text>}
             {resolved ? ' ' : 'this '}— autonomy is{' '}
             <strong style={{ color: '#e6a23c' }}>{awaiting}</strong>, so it needs your go-ahead.
           </div>
@@ -1010,21 +1013,21 @@ function ToolCallBlock({
                 const multiline = val.includes('\n') || val.length > 80
                 return (
                   <div key={k} style={{ display: 'flex', alignItems: multiline ? 'flex-start' : 'center', gap: 8 }}>
-                    <Text code style={{ fontSize: 11, flexShrink: 0, minWidth: 90, marginTop: multiline ? 4 : 0 }}>{k}</Text>
+                    <Text code style={{ fontSize: 12, flexShrink: 0, minWidth: 90, marginTop: multiline ? 4 : 0 }}>{k}</Text>
                     {multiline ? (
                       <Input.TextArea
                         size="small"
                         value={val}
                         autoSize={{ minRows: 2, maxRows: 20 }}
                         onChange={e => setEdits(prev => ({ ...(prev ?? {}), [k]: e.target.value }))}
-                        style={{ fontFamily: 'monospace', fontSize: 11 }}
+                        style={{ fontFamily: MONO_FONT, fontSize: 12 }}
                       />
                     ) : (
                       <Input
                         size="small"
                         value={val}
                         onChange={e => setEdits(prev => ({ ...(prev ?? {}), [k]: e.target.value }))}
-                        style={{ fontFamily: 'monospace', fontSize: 11 }}
+                        style={{ fontFamily: MONO_FONT, fontSize: 12 }}
                       />
                     )}
                   </div>
@@ -1042,7 +1045,7 @@ function ToolCallBlock({
             <pre style={{
               margin: '0 0 10px', padding: '8px 10px',
               background: c.codeBg, borderRadius: 4,
-              fontFamily: 'monospace', fontSize: 11, lineHeight: 1.5, color: c.sub,
+              fontFamily: MONO_FONT, fontSize: 12, lineHeight: 1.5, color: c.sub,
               whiteSpace: 'pre-wrap', wordBreak: 'break-word',
               maxHeight: 340, overflowY: 'auto',
             }}>
@@ -1068,12 +1071,12 @@ function ToolCallBlock({
               render with their real newlines via displayArgValue. */}
           {args.length > 0 && (
             <div style={{ borderTop: `1px solid ${c.toolBorder}` }}>
-              <div style={{ padding: '6px 12px 0', fontSize: 10, color: c.dim, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+              <div style={{ padding: '6px 12px 0', fontSize: 11, color: c.dim, textTransform: 'uppercase', letterSpacing: 0.4 }}>
                 command
               </div>
               <pre style={{
                 margin: 0, padding: '4px 12px 8px',
-                fontFamily: 'monospace', fontSize: 12,
+                fontFamily: MONO_FONT, fontSize: 13,
                 color: c.sub, lineHeight: 1.5,
                 whiteSpace: 'pre-wrap', wordBreak: 'break-word',
                 maxHeight: 260, overflowY: 'auto',
@@ -1088,7 +1091,7 @@ function ToolCallBlock({
           {entry.output !== undefined && (
             <pre style={{
               margin: 0, padding: '8px 12px',
-              fontFamily: 'monospace', fontSize: 12,
+              fontFamily: MONO_FONT, fontSize: 13,
               color: c.mono, lineHeight: 1.5,
               whiteSpace: 'pre-wrap', wordBreak: 'break-all',
               background: c.codeBg,
@@ -1157,7 +1160,7 @@ export function ChatTranscript({
       {(currentText || !done) && (
         <pre style={{
           margin: 0, padding: 0,
-          fontFamily: 'monospace', fontSize: 13,
+          fontFamily: MONO_FONT, fontSize: 14,
           color: c.mono, lineHeight: 1.6,
           whiteSpace: 'pre-wrap', wordBreak: 'break-all',
         }}>
@@ -1188,9 +1191,9 @@ function RenderingPlaceholder({ chars, lines }: { chars: number; lines: number }
   return (
     <div style={{
       padding: '18px 14px', display: 'flex', alignItems: 'center', gap: 10,
-      color: c.dim, fontFamily: 'monospace', fontSize: 12,
+      color: c.dim, fontFamily: MONO_FONT, fontSize: 13,
     }}>
-      <LoadingOutlined style={{ color: '#1677ff' }} />
+      <LoadingOutlined style={{ color: 'var(--rs-accent)' }} />
       Rendering result… ({fmtBytes(chars)}{lines > 1 ? `, ${lines.toLocaleString()} lines` : ''})
     </div>
   )
@@ -1298,7 +1301,7 @@ const BlockCard = memo(function BlockCard({
       : block.lines
 
   const statusIcon = !block.done
-    ? <LoadingOutlined style={{ color: '#1677ff' }} />
+    ? <LoadingOutlined style={{ color: 'var(--rs-accent)' }} />
     : block.stopped
       ? <PauseCircleOutlined style={{ color: '#8c8c8c' }} />
       : block.exitCode === 0
@@ -1366,7 +1369,7 @@ const BlockCard = memo(function BlockCard({
     : block.lines.length > 0
 
   return (
-    <div style={{ background: c.cardBg, border: `1px solid ${c.cardBorder}`, borderRadius: 8, overflow: 'hidden' }}>
+    <div style={{ background: c.cardBg, border: `1px solid ${c.cardBorder}`, borderRadius: RADIUS.md, overflow: 'hidden' }}>
       {/* Header */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: 8,
@@ -1378,11 +1381,11 @@ const BlockCard = memo(function BlockCard({
         {/* Collapse toggle */}
         <span
           onClick={() => setCollapsed(v => !v)}
-          style={{ color: c.caret, cursor: 'pointer', fontSize: 11, flexShrink: 0, width: 14 }}
+          style={{ color: c.caret, cursor: 'pointer', fontSize: 12, flexShrink: 0, width: 14 }}
         >
           {collapsed
-            ? <RightOutlined style={{ fontSize: 10 }} />
-            : <DownOutlined style={{ fontSize: 10 }} />}
+            ? <RightOutlined style={{ fontSize: 11 }} />
+            : <DownOutlined style={{ fontSize: 11 }} />}
         </span>
 
         {/* "In context" toggle — whether this card's content is part of the
@@ -1412,26 +1415,26 @@ const BlockCard = memo(function BlockCard({
 
         {statusIcon}
         <Text
-          style={{ color: c.text, fontFamily: 'monospace', fontSize: 13, cursor: 'pointer', flex: 1 }}
+          style={{ color: c.text, fontFamily: MONO_FONT, fontSize: 14, cursor: 'pointer', flex: 1 }}
           onClick={() => setCollapsed(v => !v)}
         >
           {block.label}
         </Text>
         {block.operatorOnly && (
           <Tooltip title="A run you launched yourself — saved for your review, never part of the assistant’s context">
-            <Tag color="default" style={{ fontSize: 10, marginLeft: 4 }}>operator run · not sent to agent</Tag>
+            <Tag color="default" style={{ fontSize: 11, marginLeft: 4 }}>operator run · not sent to agent</Tag>
           </Tooltip>
         )}
-        <Text style={{ color: c.dim, fontSize: 11 }}>
+        <Text style={{ color: c.dim, fontSize: 12 }}>
           {new Date(block.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
         </Text>
         {/* Live elapsed clock while the turn runs (chat turns have no InFlightStrip row). */}
         {!block.done && (
-          <Text style={{ color: '#1677ff', fontSize: 11, fontFamily: 'monospace' }}>{fmtElapsed(block.startedAt)}</Text>
+          <Text style={{ color: 'var(--rs-accent)', fontSize: 12, fontFamily: MONO_FONT }}>{fmtElapsed(block.startedAt)}</Text>
         )}
         {toolCount > 0 && (
           <Tooltip title={`${toolCount} tool call${toolCount !== 1 ? 's' : ''} this turn`}>
-            <Tag style={{ fontSize: 11, marginLeft: 4 }}><ApiOutlined style={{ fontSize: 10 }} /> {toolCount}</Tag>
+            <Tag style={{ fontSize: 12, marginLeft: 4 }}><ApiOutlined style={{ fontSize: 11 }} /> {toolCount}</Tag>
           </Tooltip>
         )}
         {block.type === 'chat' && !block.done && (
@@ -1458,7 +1461,7 @@ const BlockCard = memo(function BlockCard({
         )}
         {block.done && block.durationMs !== undefined && (
           <Tag
-            style={{ marginLeft: 4, fontSize: 11 }}
+            style={{ marginLeft: 4, fontSize: 12 }}
             color={block.stopped ? 'default' : block.exitCode === 0 ? 'green' : 'red'}
           >
             {block.stopped ? 'stopped' : block.exitCode === 0 ? 'ok' : 'error'} · {(block.durationMs / 1000).toFixed(2)}s
@@ -1478,7 +1481,7 @@ const BlockCard = memo(function BlockCard({
                 `${cacheCreation.toLocaleString()} cache write (~1.25×) · ` +
                 `Output ${output.toLocaleString()}`
               }>
-                <Tag style={{ fontSize: 11, fontFamily: 'monospace', cursor: 'default', marginLeft: 4 }}>
+                <Tag style={{ fontSize: 12, fontFamily: MONO_FONT, cursor: 'default', marginLeft: 4 }}>
                   ↑{promptTotal.toLocaleString()} ↓{output.toLocaleString()}
                 </Tag>
               </Tooltip>
@@ -1487,14 +1490,14 @@ const BlockCard = memo(function BlockCard({
                   `${cacheRead.toLocaleString()} tokens served from cache at ~10% cost` +
                   (cacheCreation > 0 ? ` · ${cacheCreation.toLocaleString()} written to cache this turn` : '')
                 }>
-                  <Tag color="green" style={{ fontSize: 11, fontFamily: 'monospace', cursor: 'default', marginLeft: 4 }}>
+                  <Tag color="green" style={{ fontSize: 12, fontFamily: MONO_FONT, cursor: 'default', marginLeft: 4 }}>
                     ⚡{hitPct}% cached
                   </Tag>
                 </Tooltip>
               )}
               {cost !== null && (
                 <Tooltip title={`Estimated cost at approximate list prices${block.model ? ` · ${block.model}` : ''}. Rates drift — treat as a guide.`}>
-                  <Tag style={{ fontSize: 11, fontFamily: 'monospace', cursor: 'default', marginLeft: 4 }}>
+                  <Tag style={{ fontSize: 12, fontFamily: MONO_FONT, cursor: 'default', marginLeft: 4 }}>
                     ~{fmtUsd(cost)}
                   </Tag>
                 </Tooltip>
@@ -1508,7 +1511,7 @@ const BlockCard = memo(function BlockCard({
               <Tooltip title="Edit in a form & rerun — opens the run dialog pre-filled with these values">
                 <EditOutlined
                   onClick={editInForm}
-                  style={{ color: c.dim, cursor: 'pointer', fontSize: 13, marginLeft: 2 }}
+                  style={{ color: c.dim, cursor: 'pointer', fontSize: 14, marginLeft: 2 }}
                   onMouseEnter={e => (e.currentTarget.style.color = c.text)}
                   onMouseLeave={e => (e.currentTarget.style.color = c.dim)}
                 />
@@ -1517,7 +1520,7 @@ const BlockCard = memo(function BlockCard({
             <Tooltip title="Rerun with same args">
               <RedoOutlined
                 onClick={() => onRerun(block.rerunData!)}
-                style={{ color: c.dim, cursor: 'pointer', fontSize: 13, marginLeft: 2 }}
+                style={{ color: c.dim, cursor: 'pointer', fontSize: 14, marginLeft: 2 }}
                 onMouseEnter={e => (e.currentTarget.style.color = c.text)}
                 onMouseLeave={e => (e.currentTarget.style.color = c.dim)}
               />
@@ -1530,7 +1533,7 @@ const BlockCard = memo(function BlockCard({
             <Tooltip title="Copy this prompt">
               <CopyOutlined
                 onClick={(e) => { e.stopPropagation(); copyToClipboard(block.label) }}
-                style={{ color: c.dim, cursor: 'pointer', fontSize: 13, marginLeft: 2 }}
+                style={{ color: c.dim, cursor: 'pointer', fontSize: 14, marginLeft: 2 }}
                 onMouseEnter={e => (e.currentTarget.style.color = c.text)}
                 onMouseLeave={e => (e.currentTarget.style.color = c.dim)}
               />
@@ -1538,7 +1541,7 @@ const BlockCard = memo(function BlockCard({
             <Tooltip title="Edit & resend — load this prompt into the composer">
               <EditOutlined
                 onClick={(e) => { e.stopPropagation(); loadToComposer() }}
-                style={{ color: c.dim, cursor: 'pointer', fontSize: 13, marginLeft: 2 }}
+                style={{ color: c.dim, cursor: 'pointer', fontSize: 14, marginLeft: 2 }}
                 onMouseEnter={e => (e.currentTarget.style.color = c.text)}
                 onMouseLeave={e => (e.currentTarget.style.color = c.dim)}
               />
@@ -1546,7 +1549,7 @@ const BlockCard = memo(function BlockCard({
             <Tooltip title="Resend this prompt">
               <RedoOutlined
                 onClick={(e) => { e.stopPropagation(); resend() }}
-                style={{ color: c.dim, cursor: 'pointer', fontSize: 13, marginLeft: 2 }}
+                style={{ color: c.dim, cursor: 'pointer', fontSize: 14, marginLeft: 2 }}
                 onMouseEnter={e => (e.currentTarget.style.color = c.text)}
                 onMouseLeave={e => (e.currentTarget.style.color = c.dim)}
               />
@@ -1630,13 +1633,13 @@ const BlockCard = memo(function BlockCard({
                 {(viewRaw || !parsed || parsed.kind === 'raw') && (
                   <Fragment>
                     {streamCapped && (
-                      <div style={{ padding: '6px 14px 0', fontSize: 11, color: c.dim, fontFamily: 'monospace' }}>
+                      <div style={{ padding: '6px 14px 0', fontSize: 12, color: c.dim, fontFamily: MONO_FONT }}>
                         streaming — showing the last {STREAM_MAX_LINES.toLocaleString()} of {total.toLocaleString()} lines
                       </div>
                     )}
                     <pre style={{
                       margin: 0, padding: '10px 14px',
-                      fontFamily: 'monospace', fontSize: 13,
+                      fontFamily: MONO_FONT, fontSize: 14,
                       color: c.mono, lineHeight: 1.6,
                       whiteSpace: 'pre-wrap', wordBreak: 'break-all',
                     }}>
@@ -1663,8 +1666,8 @@ const BlockCard = memo(function BlockCard({
                       onClick={() => setShowAll(true)}
                       style={{
                         padding: '5px 14px 10px',
-                        fontSize: 12, color: c.dim, cursor: 'pointer',
-                        fontFamily: 'monospace',
+                        fontSize: 13, color: c.dim, cursor: 'pointer',
+                        fontFamily: MONO_FONT,
                       }}
                       onMouseEnter={e => (e.currentTarget.style.color = c.text)}
                       onMouseLeave={e => (e.currentTarget.style.color = c.dim)}
