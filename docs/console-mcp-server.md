@@ -118,15 +118,21 @@ tools in one list. `tool_style` picks the shape:
 | `leaf` (default) | one tool per subcommand **per host** — `jira_get-issue`, …, and `<host>__`-prefixed copies for extra hosts (serve-identical) | precise per-verb arg schemas; fine when the client handles many tools |
 | `runnable` | one tool per **distinct** runnable — `jira` with a `command` argument (the verbs) and, when it's on more than one host, a `host` argument (the hosts) | far fewer tools; matches the console's own deduped view; use when a client chokes on a big list |
 
-`runnable` style collapses **both** multiplying dimensions:
+`runnable` style collapses **all** the multiplying dimensions — one tool per
+distinct runnable *name*:
 
 - **Subcommands** → a `command` enum argument. The runnable's own (top-level) args
   are typed; per-subcommand args ride through as additional properties (validated
   by the executor at run time).
 - **Hosts** → the same runnable discovered on several hosts is **one** tool with a
   `host` enum argument (required when it's on >1 host; absent for a single-host
-  runnable). So 5 hosts × 31 runnables is ~31 tools, not ~155 — matching the count
-  the console shows.
+  runnable). So 5 hosts × 31 runnables is ~31 tools, not ~155.
+- **Venvs / packages** → a cross-platform runnable that ships in more than one
+  package (e.g. the web/TLS/`which` runnables in both `runspec-windows` locally and
+  `runspec-linux` on the fleet, discovered under different venvs/groups) collapses
+  to **one** tool too — not a bare + `<venv>__`-prefixed pair. The correct venv is
+  chosen per host at run time. So the count matches the console's distinct-runnable
+  tally (the number in the sidebar), not a per-venv split.
 
 **Autonomy is still resolved per chosen subcommand** — picking `create-issue` gates
 exactly as the `jira_create-issue` leaf tool would, while `get-issue` stays

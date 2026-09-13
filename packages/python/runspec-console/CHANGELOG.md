@@ -8,6 +8,23 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.252.1] — 2026-09-13
+
+### Fixed
+- **MCP `tool_style = "runnable"` no longer emits `<venv>__`-prefixed duplicates.**
+  It deduped across hosts but still keyed on `(group, name)`, and local-venv
+  runnables carry `group = the venv name` — so a cross-platform runnable that ships
+  in more than one package (e.g. the web/TLS/`which` runnables in both
+  `runspec-windows` locally and `runspec-linux` on the fleet) surfaced twice: a bare
+  tool plus a `<venv>__`-prefixed copy (e.g. `which` + `console__which`). Dedup is
+  now by **runnable name across hosts *and* venvs/groups**, so each distinct
+  runnable is one tool with a `host` arg spanning every host it's on — matching the
+  console's sidebar count. The venv is resolved per chosen host at run time (the
+  collapsed tool carries no pinned group; `invoke_runnable` picks the venv from the
+  discovery record), so execution still targets the right venv. `build_tools` groups
+  by `name` for `runnable` style; `_collapse_runnable` clears the group.
+
+
 ## [0.252.0] — 2026-09-13
 
 ### Changed

@@ -299,3 +299,24 @@ def test_runnable_style_single_host_has_no_host_arg():
     assert "host" not in t.input_schema.get("properties", {})
     host, *_ = t.resolve_call({})
     assert host == "web1"
+
+
+def test_runnable_style_dedups_across_venvs_no_venv_prefix():
+    # the reported bug: a cross-platform runnable ships in the console's own venv
+    # (local, group=the venv name) AND on remote hosts (another group) — it must be
+    # ONE tool spanning both, not `which` + `console__which`.
+    entries = [
+        _runnable("which", host="local", group="console", autonomy="autonomous"),
+        _runnable("which", host="web1", group="linux", autonomy="autonomous"),
+        _runnable("which", host="web2", group="linux", autonomy="autonomous"),
+    ]
+    tools, registry = m.build_tools(entries, style="runnable")
+    assert len(tools) == 1  # collapsed across venvs + hosts
+    t = tools[0]
+    assert t.name == "which"  # no `console__` / `linux__` prefix
+    assert set(registry) == {"which"}
+    assert t.host_options == ["local", "web1", "web2"]  # every host, incl. local
+    assert t.group == ""  # no pinned venv — resolved per host at run time
+    # picking the local host resolves it; the venv is chosen by the executor
+    host, _path, _lvl, _args, err = t.resolve_call({"host": "local"})
+    assert err == "" and host == "local"

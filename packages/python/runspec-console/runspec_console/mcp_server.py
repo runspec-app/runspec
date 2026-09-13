@@ -287,15 +287,17 @@ def _command_leaves(
 
 
 def _collapse_runnable(entries: list[dict[str, Any]]) -> ExecTool | None:
-    """One whole runnable — **all its per-host copies** — → a single ExecTool.
-    The subcommand is chosen at call time via a ``command`` argument, and when the
-    runnable is discovered on more than one host the host is chosen via a ``host``
-    argument (both resolved by :meth:`ExecTool.resolve_call`). Mirrors the console
-    chat agent's deduped, collapsed shape (one entry per distinct runnable, with a
-    host selector) so a fleet's tool list matches the console — not the per-host,
-    per-subcommand explosion of ``leaf`` style. ``entries`` share a ``(group,
-    name)``; the first supplies the interface (a fleet-wide runnable is identical
-    across hosts)."""
+    """One whole runnable — **every copy of it** — → a single ExecTool. The
+    subcommand is chosen at call time via a ``command`` argument, and when the
+    runnable is found on more than one host the host is chosen via a ``host``
+    argument (both resolved by :meth:`ExecTool.resolve_call`). One tool per distinct
+    runnable *name*, so a fleet's tool list matches the console's distinct-runnable
+    count — not the per-host, per-subcommand (and per-venv) explosion of ``leaf``
+    style. ``entries`` share a ``name`` but may span hosts **and venvs/groups** (a
+    cross-platform runnable ships in more than one package); the first supplies the
+    interface, and the venv is resolved per chosen host at run time (the executor
+    picks it from the discovery record — see ``invoke_runnable``), so the tool
+    carries no group and no ``<venv>__`` prefix."""
     node = entries[0]
     name = str(node.get("name") or "")
     if not name:
@@ -335,7 +337,10 @@ def _collapse_runnable(entries: list[dict[str, Any]]) -> ExecTool | None:
         description=str(node.get("description") or ""),
         input_schema=schema,
         host=hosts[0] if hosts else str(node.get("host") or ""),
-        group=str(node.get("group") or ""),
+        # No group: a collapsed tool spans venvs/hosts, so the venv is resolved per
+        # chosen host at run time (invoke_runnable(group=None) reads it from the
+        # discovery record). Carrying entries[0]'s group would wrongly pin one venv.
+        group="",
         runnable=name,
         command_path=[],
         autonomy=base_autonomy,
@@ -350,8 +355,9 @@ def _collapse_runnable(entries: list[dict[str, Any]]) -> ExecTool | None:
 def _tool_identity(tool: ExecTool) -> tuple[str, tuple[str, ...], str, str]:
     """Distinguishes two tools that sanitise to the same name. Leaf tools of the
     same runnable on different hosts differ (host is part of identity, so each host
-    is kept, host-prefixed); a collapsed runnable-style tool is host-agnostic, so
-    only a genuinely different ``(group, runnable)`` collides (group-prefixed)."""
+    is kept, host-prefixed). A collapsed runnable-style tool is host- and
+    group-agnostic (group is always ``""``), so two of them only ever collide when
+    two genuinely different names sanitise alike — broken by a numeric suffix."""
     return (tool.host, tuple(tool.command_path), tool.runnable, tool.group)
 
 
@@ -366,12 +372,15 @@ def build_tools(
     ``style="leaf"`` (default, serve-identical): one tool per runnable **leaf**
     (subcommands flattened to ``runnable[_sub…]``), and the **same leaf on several
     hosts** is kept once per host (``<host>__`` prefixed) — the full per-host,
-    per-subcommand expansion. ``style="runnable"``: one tool per **distinct
-    runnable** (deduped across hosts by ``(group, name)``), its subcommand chosen
-    via a ``command`` argument and its host via a ``host`` argument when it's on
-    more than one host — so the tool count matches the console's deduped view
-    instead of multiplying by hosts × subcommands. ``default_autonomy`` (when set)
-    is a floor applied most-restrictively — to each per-command autonomy too."""
+    per-subcommand expansion. ``style="runnable"``: one tool per **distinct runnable
+    name** (deduped across hosts **and venvs/groups**), its subcommand chosen via a
+    ``command`` argument and its host via a ``host`` argument when it's on more than
+    one host — so the tool count matches the console's distinct-runnable count
+    instead of multiplying by hosts × subcommands (× venvs). A cross-platform
+    runnable that ships in more than one package (discovered under more than one
+    venv/group) collapses to **one** tool, not a bare + ``<venv>__``-prefixed pair.
+    ``default_autonomy`` (when set) is a floor applied most-restrictively — to each
+    per-command autonomy too."""
     registry: dict[str, ExecTool] = {}
     ordered: list[ExecTool] = []
 
@@ -401,14 +410,16 @@ def build_tools(
         ordered.append(tool)
 
     if style == "runnable":
-        grouped: "OrderedDict[tuple[str, str], list[dict[str, Any]]]" = OrderedDict()
+        grouped: "OrderedDict[str, list[dict[str, Any]]]" = OrderedDict()
         for runnable in runnables or []:
-            key = (str(runnable.get("group") or ""), str(runnable.get("name") or ""))
-            grouped.setdefault(key, []).append(runnable)
-        for (group, _name), entries in grouped.items():
+            grouped.setdefault(str(runnable.get("name") or ""), []).append(runnable)
+        for _name, entries in grouped.items():
             tool = _collapse_runnable(entries)
             if tool is not None:
-                _register(tool, group)  # collision → group-prefixed (host-agnostic)
+                # Dedup by name across hosts AND venvs/groups → no <venv>__ prefix.
+                # (Two genuinely different names rarely sanitise alike; a numeric
+                # suffix breaks any such tie.)
+                _register(tool, "")
     else:
         for runnable in runnables or []:
             for tool in _flatten(runnable, ()):
