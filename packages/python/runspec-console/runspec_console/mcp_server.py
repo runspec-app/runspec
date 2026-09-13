@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -144,6 +145,10 @@ class ExecTool:
     command_options: list[str] = field(default_factory=list)
     command_autonomy: dict[str, str] = field(default_factory=dict)
     command_required: bool = False
+    # `runnable` style, when the runnable is discovered on >1 host: the host is
+    # chosen at call time via a `host` argument (empty ⇒ the fixed `host` is used).
+    host_options: list[str] = field(default_factory=list)
+    host_required: bool = False
 
     def schema(self) -> dict[str, Any]:
         return {
@@ -154,32 +159,60 @@ class ExecTool:
 
     def resolve_call(
         self, arguments: dict[str, Any]
-    ) -> tuple[list[str], str, dict[str, Any], str]:
-        """Resolve one call's ``arguments`` into ``(command_path, autonomy, args,
-        error)``. ``error`` is non-empty when the call is invalid (bad/missing
-        ``command``) and nothing should run.
+    ) -> tuple[str, list[str], str, dict[str, Any], str]:
+        """Resolve one call's ``arguments`` into ``(host, command_path, autonomy,
+        args, error)``. ``error`` is non-empty when the call is invalid (bad/missing
+        ``host`` or ``command``) and nothing should run.
 
-        In ``leaf`` style the tool has no ``command_options`` → the fixed
-        ``(command_path, autonomy)`` is returned unchanged. In ``runnable`` style
-        the ``command`` argument is popped, validated against ``command_options``,
-        and mapped to its own autonomy (so gating matches the chosen subcommand,
-        not a blunt most-restrictive floor)."""
+        In ``leaf`` style the tool has no ``host_options``/``command_options`` → the
+        fixed ``(host, command_path, autonomy)`` is returned unchanged. In
+        ``runnable`` style the ``host`` and ``command`` arguments are popped,
+        validated against their option lists, and the command is mapped to its own
+        autonomy (so gating matches the chosen subcommand, not a blunt
+        most-restrictive floor)."""
         args = dict(arguments or {})
+        host = self.host
+        if self.host_options:
+            chosen = str(args.pop("host", "") or "").strip()
+            if not chosen:
+                if self.host_required:
+                    return (
+                        "",
+                        [],
+                        self.autonomy,
+                        args,
+                        f"'{self.runnable}' runs on multiple hosts — set 'host'. "
+                        f"Options: {', '.join(self.host_options)}.",
+                    )
+                host = self.host_options[0]
+            elif chosen not in self.host_options:
+                return (
+                    "",
+                    [],
+                    self.autonomy,
+                    args,
+                    f"unknown host '{chosen}'. "
+                    f"Options: {', '.join(self.host_options)}.",
+                )
+            else:
+                host = chosen
         if not self.command_options:
-            return list(self.command_path), self.autonomy, args, ""
+            return host, list(self.command_path), self.autonomy, args, ""
         command = str(args.pop("command", "") or "").strip()
         if not command:
             if self.command_required:
                 return (
+                    host,
                     [],
                     self.autonomy,
                     args,
                     f"'{self.runnable}' requires a command. "
                     f"Options: {', '.join(self.command_options)}.",
                 )
-            return [], self.command_autonomy.get("", self.autonomy), args, ""
+            return host, [], self.command_autonomy.get("", self.autonomy), args, ""
         if command not in self.command_options:
             return (
+                host,
                 [],
                 self.autonomy,
                 args,
@@ -187,7 +220,7 @@ class ExecTool:
                 f"Options: {', '.join(self.command_options)}.",
             )
         path = [seg for seg in command.split(" ") if seg]
-        return path, self.command_autonomy.get(command, self.autonomy), args, ""
+        return host, path, self.command_autonomy.get(command, self.autonomy), args, ""
 
 
 def _flatten(node: dict[str, Any], prefix: tuple[str, ...]) -> list[ExecTool]:
@@ -253,12 +286,17 @@ def _command_leaves(
     return [(prefix, autonomy)]
 
 
-def _collapse_runnable(node: dict[str, Any]) -> ExecTool | None:
-    """One whole runnable → a single ExecTool whose subcommand is chosen at call
-    time via a ``command`` argument (``runnable`` style). Mirrors the console chat
-    agent's collapsed shape: the runnable's own args are typed and a ``command``
-    enum lists every subcommand path; per-command args ride through as additional
-    properties (validated by the executor at run time)."""
+def _collapse_runnable(entries: list[dict[str, Any]]) -> ExecTool | None:
+    """One whole runnable — **all its per-host copies** — → a single ExecTool.
+    The subcommand is chosen at call time via a ``command`` argument, and when the
+    runnable is discovered on more than one host the host is chosen via a ``host``
+    argument (both resolved by :meth:`ExecTool.resolve_call`). Mirrors the console
+    chat agent's deduped, collapsed shape (one entry per distinct runnable, with a
+    host selector) so a fleet's tool list matches the console — not the per-host,
+    per-subcommand explosion of ``leaf`` style. ``entries`` share a ``(group,
+    name)``; the first supplies the interface (a fleet-wide runnable is identical
+    across hosts)."""
+    node = entries[0]
     name = str(node.get("name") or "")
     if not name:
         return None
@@ -267,7 +305,15 @@ def _collapse_runnable(node: dict[str, Any]) -> ExecTool | None:
     command_autonomy = {" ".join(path): autonomy for path, autonomy in leaves}
     options = [" ".join(path) for path, _ in leaves if path]
     base_autonomy = command_autonomy.get("", escalate_autonomy([a for _, a in leaves]))
-    required = bool(options) and bool(node.get("requireCommand"))
+    command_required = bool(options) and bool(node.get("requireCommand"))
+    hosts: list[str] = []
+    for entry in entries:
+        host = str(entry.get("host") or "")
+        if host and host not in hosts:
+            hosts.append(host)
+    # A `host` selector only when the runnable is on >1 host (single-host stays as
+    # simple as a leaf tool — no host arg).
+    host_options = hosts if len(hosts) > 1 else []
     schema = _input_schema(args)
     if options:
         schema.setdefault("properties", {})["command"] = {
@@ -275,21 +321,38 @@ def _collapse_runnable(node: dict[str, Any]) -> ExecTool | None:
             "enum": options,
             "description": "Subcommand to run.",
         }
-        if required:
+        if command_required:
             schema.setdefault("required", []).append("command")
+    if host_options:
+        schema.setdefault("properties", {})["host"] = {
+            "type": "string",
+            "enum": host_options,
+            "description": "Fleet host to run on.",
+        }
+        schema.setdefault("required", []).append("host")
     return ExecTool(
         name=sanitize_tool_name(name),
         description=str(node.get("description") or ""),
         input_schema=schema,
-        host=str(node.get("host") or ""),
+        host=hosts[0] if hosts else str(node.get("host") or ""),
         group=str(node.get("group") or ""),
         runnable=name,
         command_path=[],
         autonomy=base_autonomy,
         command_options=options,
         command_autonomy=command_autonomy,
-        command_required=required,
+        command_required=command_required,
+        host_options=host_options,
+        host_required=bool(host_options),
     )
+
+
+def _tool_identity(tool: ExecTool) -> tuple[str, tuple[str, ...], str, str]:
+    """Distinguishes two tools that sanitise to the same name. Leaf tools of the
+    same runnable on different hosts differ (host is part of identity, so each host
+    is kept, host-prefixed); a collapsed runnable-style tool is host-agnostic, so
+    only a genuinely different ``(group, runnable)`` collides (group-prefixed)."""
+    return (tool.host, tuple(tool.command_path), tool.runnable, tool.group)
 
 
 def build_tools(
@@ -301,48 +364,55 @@ def build_tools(
     """Flatten discovered runnables into ExecTools + a name→ExecTool registry.
 
     ``style="leaf"`` (default, serve-identical): one tool per runnable **leaf**
-    (subcommands flattened to ``runnable[_sub…]``). ``style="runnable"``: one tool
-    per **runnable**, its subcommand chosen at call time via a ``command`` argument
-    — far fewer tools for a fleet of multi-verb runnables. In both, the **same tool
-    discovered on several hosts** is disambiguated by prefixing the sanitized
-    ``<host>__`` (then a numeric suffix) so every host stays reachable, and
-    ``default_autonomy`` (when set) is a floor applied most-restrictively — to each
-    per-command autonomy too, in ``runnable`` style."""
+    (subcommands flattened to ``runnable[_sub…]``), and the **same leaf on several
+    hosts** is kept once per host (``<host>__`` prefixed) — the full per-host,
+    per-subcommand expansion. ``style="runnable"``: one tool per **distinct
+    runnable** (deduped across hosts by ``(group, name)``), its subcommand chosen
+    via a ``command`` argument and its host via a ``host`` argument when it's on
+    more than one host — so the tool count matches the console's deduped view
+    instead of multiplying by hosts × subcommands. ``default_autonomy`` (when set)
+    is a floor applied most-restrictively — to each per-command autonomy too."""
     registry: dict[str, ExecTool] = {}
     ordered: list[ExecTool] = []
-    for runnable in runnables or []:
-        if style == "runnable":
-            collapsed = _collapse_runnable(runnable)
-            tools = [collapsed] if collapsed is not None else []
-        else:
-            tools = _flatten(runnable, ())
-        for tool in tools:
-            if default_autonomy:
-                tool.autonomy = escalate_autonomy([tool.autonomy, default_autonomy])
-                if tool.command_autonomy:
-                    tool.command_autonomy = {
-                        cmd: escalate_autonomy([lvl, default_autonomy])
-                        for cmd, lvl in tool.command_autonomy.items()
-                    }
-            name = tool.name
-            existing = registry.get(name)
-            if existing is not None and (
-                existing.host,
-                existing.command_path,
-                existing.runnable,
-            ) != (tool.host, tool.command_path, tool.runnable):
-                # collision across hosts → host-prefix, then numeric
-                base = sanitize_tool_name(f"{tool.host}__{tool.name}")
-                name = base
-                i = 2
-                while name in registry:
-                    name = sanitize_tool_name(f"{base}_{i}")
-                    i += 1
-                tool = ExecTool(**{**tool.__dict__, "name": name})
-            elif existing is not None:
-                continue  # identical tool already registered (same host+cmd)
-            registry[name] = tool
-            ordered.append(tool)
+
+    def _register(tool: ExecTool, qualifier: str) -> None:
+        if default_autonomy:
+            tool.autonomy = escalate_autonomy([tool.autonomy, default_autonomy])
+            if tool.command_autonomy:
+                tool.command_autonomy = {
+                    cmd: escalate_autonomy([lvl, default_autonomy])
+                    for cmd, lvl in tool.command_autonomy.items()
+                }
+        name = tool.name
+        existing = registry.get(name)
+        if existing is not None and _tool_identity(existing) != _tool_identity(tool):
+            base = (
+                sanitize_tool_name(f"{qualifier}__{tool.name}") if qualifier else name
+            )
+            name = base
+            i = 2
+            while name in registry:
+                name = sanitize_tool_name(f"{base}_{i}")
+                i += 1
+            tool = ExecTool(**{**tool.__dict__, "name": name})
+        elif existing is not None:
+            return  # identical tool already registered
+        registry[name] = tool
+        ordered.append(tool)
+
+    if style == "runnable":
+        grouped: "OrderedDict[tuple[str, str], list[dict[str, Any]]]" = OrderedDict()
+        for runnable in runnables or []:
+            key = (str(runnable.get("group") or ""), str(runnable.get("name") or ""))
+            grouped.setdefault(key, []).append(runnable)
+        for (group, _name), entries in grouped.items():
+            tool = _collapse_runnable(entries)
+            if tool is not None:
+                _register(tool, group)  # collision → group-prefixed (host-agnostic)
+    else:
+        for runnable in runnables or []:
+            for tool in _flatten(runnable, ()):
+                _register(tool, tool.host)  # collision across hosts → host-prefixed
     return ordered, registry
 
 
@@ -400,6 +470,10 @@ class ConsoleMcpServer:
         self._state = _State()
         self._default_autonomy: str | None = None
         self._tool_style: str = "leaf"
+        # For pushing tools/list_changed when discovery updates: the serving event
+        # loop + the most-recently-seen client session (captured during a request).
+        self._loop: Any = None
+        self._session: Any = None
 
     # -- introspection -------------------------------------------------------
 
@@ -511,18 +585,23 @@ class ConsoleMcpServer:
             )
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
+            self._loop = loop  # for notify_tools_changed (cross-thread push)
             loop.run_until_complete(self._uvicorn.serve())
         except Exception as exc:  # noqa: BLE001 — record + surface, never propagate
             with self._lock:
                 self._state.running = False
                 self._state.error = str(exc) or exc.__class__.__name__
             logger.warning("console MCP server stopped: %s", exc, exc_info=True)
+        finally:
+            self._loop = None
+            self._session = None
 
     def _build_server(self) -> Any:
         import mcp.types as types
         from mcp.server.lowlevel import Server
 
         async def on_list_tools(ctx: Any, params: Any) -> Any:
+            self._capture_session(ctx)
             registry = self._build_registry(self._default_autonomy)
             with self._lock:
                 self._state.registry = registry
@@ -540,6 +619,7 @@ class ConsoleMcpServer:
         async def on_call_tool(ctx: Any, params: Any) -> Any:
             import asyncio
 
+            self._capture_session(ctx)
             with self._lock:
                 tool = self._state.registry.get(params.name)
             if tool is None:
@@ -577,7 +657,7 @@ class ConsoleMcpServer:
             )
 
         brand = self._resolve_brand_name()
-        return Server(
+        server = Server(
             brand,
             version="1",
             instructions=(
@@ -587,6 +667,63 @@ class ConsoleMcpServer:
             on_list_tools=on_list_tools,
             on_call_tool=on_call_tool,
         )
+        # Advertise tools.listChanged so the client re-lists on our push (below).
+        # streamable_http_app builds init options with defaults (tools_changed=
+        # False), so override the bound method to flip it on.
+        try:
+            from mcp.server.lowlevel.server import NotificationOptions
+
+            _orig_init_opts = server.create_initialization_options
+
+            def _init_opts(*args: Any, **kwargs: Any) -> Any:
+                # Force tools_changed=True however the SDK calls this (it passes
+                # notification_options first, positionally or by keyword); forward
+                # experimental_capabilities / extensions untouched.
+                kwargs.pop("notification_options", None)
+                rest = args[1:] if args else ()
+                return _orig_init_opts(
+                    NotificationOptions(tools_changed=True), *rest, **kwargs
+                )
+
+            server.create_initialization_options = _init_opts  # type: ignore[method-assign]
+        except Exception:  # noqa: BLE001 — capability advert is best-effort
+            logger.debug(
+                "mcp_server listChanged capability wiring failed", exc_info=True
+            )
+        return server
+
+    def _capture_session(self, ctx: Any) -> None:
+        """Remember the client's session from a live request so
+        :meth:`notify_tools_changed` can push to it later. Best-effort."""
+        try:
+            self._session = getattr(ctx, "session", None)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def notify_tools_changed(self) -> None:
+        """Push ``notifications/tools/list_changed`` to the connected client so it
+        re-lists — called when the console's runnable discovery updates (a client
+        that connected before discovery finished otherwise sees an empty/partial
+        list until it manually reconnects). Cross-thread: schedules the send on the
+        serving event loop. Best-effort and fully guarded — never raises into the
+        discovery path, and a no-op when nothing is connected yet."""
+        loop = self._loop
+        session = self._session
+        if loop is None or session is None:
+            return
+
+        async def _send() -> None:
+            try:
+                await session.send_tool_list_changed()
+            except Exception:  # noqa: BLE001 — session may have gone away
+                logger.debug("mcp_server list_changed push failed", exc_info=True)
+
+        try:
+            import asyncio
+
+            asyncio.run_coroutine_threadsafe(_send(), loop)
+        except Exception:  # noqa: BLE001 — loop may be closing
+            logger.debug("mcp_server list_changed schedule failed", exc_info=True)
 
     def _resolve_brand_name(self) -> str:
         """The white-label brand for the protocol-level server name (falls back to

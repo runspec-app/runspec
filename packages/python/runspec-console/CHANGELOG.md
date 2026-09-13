@@ -8,6 +8,33 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.252.0] — 2026-09-13
+
+### Changed
+- **MCP server `tool_style = "runnable"` now dedups across hosts too.** It already
+  collapsed a runnable's subcommands into one tool (a `command` arg); it now also
+  collapses the **host** dimension — the same runnable discovered on several fleet
+  hosts is **one** tool with a `host` argument (an enum of the hosts; required when
+  it's on >1 host, absent for a single-host runnable) instead of one
+  `<host>__`-prefixed copy per host. So a fleet of N hosts × M runnables presents
+  ~M tools (matching the console's own deduped count) rather than N×M. `leaf` style
+  is unchanged (serve-identical: per-host, per-subcommand). Autonomy is still
+  resolved per chosen subcommand, and credentials still resolve against the chosen
+  host. `mcp_server.build_tools` groups by `(group, name)` for `runnable` style;
+  `_collapse_runnable` takes the per-host entries; `ExecTool.resolve_call` returns
+  the resolved host.
+
+### Fixed
+- **MCP server now pushes `tools/list_changed` so a client refreshes without a
+  manual reconnect.** The server started before fleet discovery finished, so a
+  client that listed tools during that window saw an empty/partial set and stayed
+  stale until it reconnected. The server now advertises `tools.listChanged` and
+  pushes `notifications/tools/list_changed` whenever discovery updates
+  (`runspec:runnables_updated`), scheduled onto the serving loop from the Bridge —
+  best-effort and fully guarded. `ConsoleMcpServer.notify_tools_changed` +
+  `_capture_session`; hooked at the `Bridge._dispatch` chokepoint.
+
+
 ## [0.251.0] — 2026-09-13
 
 ### Added

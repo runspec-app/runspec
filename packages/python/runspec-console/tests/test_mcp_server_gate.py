@@ -198,6 +198,37 @@ def test_collapsed_missing_command_errors_without_running():
     assert b.registered == [] and b.runs == []
 
 
+def _collapsed_multihost():
+    """A `runnable`-style tool with no subcommands, discovered on two hosts."""
+    return ExecTool(
+        name="df",
+        description="",
+        input_schema={"type": "object", "properties": {}},
+        host="web1",
+        group="linux",
+        runnable="df",
+        command_path=[],
+        autonomy="autonomous",
+        command_autonomy={"": "autonomous"},
+        host_options=["web1", "web2"],
+        host_required=True,
+    )
+
+
+def test_collapsed_host_arg_targets_that_host():
+    b = FakeBridge()
+    text, is_error = b._mcp_server_execute(_collapsed_multihost(), {"host": "web2"})
+    assert is_error is False
+    assert b.runs and b.runs[0][0] == "web2"  # ran on the chosen host, not web1
+
+
+def test_collapsed_missing_host_errors_without_running():
+    b = FakeBridge()
+    text, is_error = b._mcp_server_execute(_collapsed_multihost(), {})
+    assert is_error is True and "multiple hosts" in text
+    assert b.runs == []
+
+
 def test_confirm_timeout_returns_resumable_and_does_not_run():
     # answer=False → the event is never set → the bounded wait elapses.
     b = FakeBridge(answer=False)

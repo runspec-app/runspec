@@ -303,6 +303,13 @@ class Bridge(
         # Non-blocking, so a caller on the COM pump / a trigger worker never
         # stalls on evaluate_js and concurrent callers can't race the webview.
         self._dispatch_q.put((event, detail))
+        # When fleet discovery updates, tell any connected MCP client to re-list —
+        # otherwise a client that connected before discovery finished keeps showing
+        # a stale/empty tool set until it manually reconnects. Best-effort.
+        if event == "runspec:runnables_updated":
+            server = getattr(self, "_mcp_server", None)
+            if server is not None:
+                server.notify_tools_changed()
 
     def _ui_dispatch_loop(self) -> None:
         """Drain the dispatch queue, delivering each event to the web view via a

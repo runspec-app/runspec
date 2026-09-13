@@ -203,17 +203,17 @@ def test_runnable_style_one_tool_with_command_enum():
 
 def test_runnable_style_resolve_call_picks_command_and_autonomy():
     t = m.build_tools([_greeter()], style="runnable")[0][0]
-    path, level, args, err = t.resolve_call({"command": "hello", "name": "x"})
+    host, path, level, args, err = t.resolve_call({"command": "hello", "name": "x"})
     assert err == ""
-    assert path == ["hello"] and level == "autonomous"
+    assert host == "local" and path == ["hello"] and level == "autonomous"
     assert args == {"name": "x"}  # `command` is popped before running
 
 
 def test_runnable_style_missing_and_unknown_command_error():
     t = m.build_tools([_greeter()], style="runnable")[0][0]
-    _, _, _, err_missing = t.resolve_call({})
+    *_, err_missing = t.resolve_call({})
     assert "requires a command" in err_missing
-    _, _, _, err_unknown = t.resolve_call({"command": "nope"})
+    *_, err_unknown = t.resolve_call({"command": "nope"})
     assert "unknown command" in err_unknown
 
 
@@ -222,7 +222,7 @@ def test_runnable_style_optional_command_root_is_callable():
     t = m.build_tools([_greeter(require=False)], style="runnable")[0][0]
     assert t.command_required is False
     assert "" in t.command_autonomy
-    path, level, args, err = t.resolve_call({})
+    host, path, level, args, err = t.resolve_call({})
     assert err == "" and path == [] and "command" not in args
 
 
@@ -235,12 +235,13 @@ def test_runnable_style_default_autonomy_floors_each_command():
 
 def test_leaf_style_resolve_call_is_passthrough():
     # a plain (no-subcommand) runnable in leaf style: resolve_call returns its fixed
-    # command_path/autonomy unchanged, args untouched.
-    tool = m.build_tools([_runnable("greet", autonomy="autonomous")], style="leaf")[0][
-        0
-    ]
-    path, level, args, err = tool.resolve_call({"x": 1})
-    assert err == "" and path == [] and level == "autonomous" and args == {"x": 1}
+    # host/command_path/autonomy unchanged, args untouched.
+    tool = m.build_tools(
+        [_runnable("greet", host="local", autonomy="autonomous")], style="leaf"
+    )[0][0]
+    host, path, level, args, err = tool.resolve_call({"x": 1})
+    assert err == "" and host == "local" and path == [] and level == "autonomous"
+    assert args == {"x": 1}
 
 
 def test_runnable_style_collapses_count_vs_leaf():
@@ -250,3 +251,51 @@ def test_runnable_style_collapses_count_vs_leaf():
     assert (
         len(leaf) == 2 and len(runnable) == 1
     )  # greeter_hello + greeter_bye vs greeter
+
+
+# ── cross-host dedup (runnable style collapses the host dimension too) ────────────
+
+
+def test_runnable_style_dedups_same_runnable_across_hosts():
+    # the reported bug: 5 hosts × a runnable should be ONE tool, not five.
+    hosts = ["web1", "web2", "web3"]
+    entries = [
+        _runnable("df", host=h, autonomy="autonomous", group="linux") for h in hosts
+    ]
+    tools, registry = m.build_tools(entries, style="runnable")
+    assert len(tools) == 1  # deduped across hosts
+    t = tools[0]
+    assert t.name == "df"
+    assert t.host_options == hosts and t.host_required is True
+    # a `host` enum (required) is injected so the agent picks the target
+    assert t.input_schema["properties"]["host"]["enum"] == hosts
+    assert "host" in t.input_schema["required"]
+
+
+def test_runnable_style_leaf_keeps_per_host():
+    # contrast: leaf style keeps one tool per host (serve-identical)
+    entries = [_runnable("df", host=h, group="linux") for h in ["web1", "web2"]]
+    leaf, _ = m.build_tools(entries, style="leaf")
+    assert len(leaf) == 2 and {t.host for t in leaf} == {"web1", "web2"}
+
+
+def test_runnable_style_host_arg_resolves_and_is_required_when_multi():
+    entries = [_runnable("df", host=h, autonomy="autonomous") for h in ["web1", "web2"]]
+    t = m.build_tools(entries, style="runnable")[0][0]
+    # no host → error naming the options
+    *_, err = t.resolve_call({})
+    assert "multiple hosts" in err
+    # a valid host resolves; the `host` key is popped from args
+    host, path, level, args, err2 = t.resolve_call({"host": "web2"})
+    assert err2 == "" and host == "web2" and "host" not in args
+    # an unknown host errors
+    *_, err3 = t.resolve_call({"host": "nope"})
+    assert "unknown host" in err3
+
+
+def test_runnable_style_single_host_has_no_host_arg():
+    t = m.build_tools([_runnable("df", host="web1")], style="runnable")[0][0]
+    assert t.host_options == [] and t.host_required is False
+    assert "host" not in t.input_schema.get("properties", {})
+    host, *_ = t.resolve_call({})
+    assert host == "web1"

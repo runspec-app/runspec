@@ -108,25 +108,43 @@ hidden from the agent is not published here either).
 
 A fleet of multi-verb runnables can expose a **lot** of leaf tools: `jira` alone
 flattens to ~37 (`jira_get-issue`, `jira_create-issue`, …), `confluence` ~20,
-`gitlab` ~17. Serve-identical, that's how `runspec serve` presents them — but some
-MCP clients struggle with hundreds of tools in one list. `tool_style` picks the
-shape:
+`gitlab` ~17 — and **every host** the runnable is installed on multiplies that
+again (5 hosts × `runspec-linux`'s ~31 runnables = a lot). Serve-identical, that's
+how `runspec serve` presents them — but some MCP clients struggle with hundreds of
+tools in one list. `tool_style` picks the shape:
 
 | `tool_style` | what the client sees | when |
 |---|---|---|
-| `leaf` (default) | one tool per subcommand — `jira_get-issue`, `jira_create-issue`, … (serve-identical) | precise per-verb arg schemas; fine when the client handles many tools |
-| `runnable` | one tool per runnable — `jira` with a `command` argument (enum of the verbs) | far fewer tools; use when a client chokes on a big list |
+| `leaf` (default) | one tool per subcommand **per host** — `jira_get-issue`, …, and `<host>__`-prefixed copies for extra hosts (serve-identical) | precise per-verb arg schemas; fine when the client handles many tools |
+| `runnable` | one tool per **distinct** runnable — `jira` with a `command` argument (the verbs) and, when it's on more than one host, a `host` argument (the hosts) | far fewer tools; matches the console's own deduped view; use when a client chokes on a big list |
 
-In `runnable` style the runnable's own (top-level) args are typed and a `command`
-enum lists the verbs; per-subcommand args ride through as additional properties
-(validated by the executor at run time). **Autonomy is still resolved per chosen
-subcommand** — picking `create-issue` gates exactly as the `jira_create-issue`
-leaf tool would, while `get-issue` stays autonomous — so the confirm gate behaves
-identically to `leaf`; only the tool *count* changes.
+`runnable` style collapses **both** multiplying dimensions:
+
+- **Subcommands** → a `command` enum argument. The runnable's own (top-level) args
+  are typed; per-subcommand args ride through as additional properties (validated
+  by the executor at run time).
+- **Hosts** → the same runnable discovered on several hosts is **one** tool with a
+  `host` enum argument (required when it's on >1 host; absent for a single-host
+  runnable). So 5 hosts × 31 runnables is ~31 tools, not ~155 — matching the count
+  the console shows.
+
+**Autonomy is still resolved per chosen subcommand** — picking `create-issue` gates
+exactly as the `jira_create-issue` leaf tool would, while `get-issue` stays
+autonomous — so the confirm gate behaves identically to `leaf`; only the tool
+*count* changes.
 
 Another lever for a large fleet is `[tool_visibility] hidden_from_agent` — hide
 whole packages/groups you don't need over MCP (the hides carry over to this
 server). Combine both: collapse to `runnable` style and hide what you don't use.
+
+### Live tool list (discovery)
+
+The server advertises `tools.listChanged` and pushes a
+`notifications/tools/list_changed` to the connected client whenever the console's
+fleet discovery updates. So if you open the console (or reconnect the client)
+while it's still connecting to remote hosts, the client refreshes to the full set
+on its own as discovery completes — no manual reconnect needed. (A client that
+ignores the notification can still re-list manually.)
 
 ---
 

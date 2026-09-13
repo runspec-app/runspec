@@ -5168,8 +5168,8 @@ const OWN_MCP_AUTONOMY = [
 ]
 
 const OWN_MCP_TOOL_STYLE = [
-  { value: 'leaf', label: 'Leaf — one tool per subcommand (serve-identical)' },
-  { value: 'runnable', label: 'Per runnable — one tool + a command arg (fewer tools)' },
+  { value: 'leaf', label: 'Leaf — one tool per subcommand per host (serve-identical)' },
+  { value: 'runnable', label: 'Per runnable — one tool per distinct runnable (fewest tools)' },
 ]
 
 export function McpServerTab() {
@@ -5250,11 +5250,12 @@ export function McpServerTab() {
 
       {row('Tool style', <Select style={{ width: 360 }} value={toolStyle} onChange={setToolStyle} options={OWN_MCP_TOOL_STYLE} disabled={!enabled} />)}
       <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: -2 }}>
-        <strong>Leaf</strong> mirrors <code>runspec serve</code> — every subcommand is its own tool
-        (<code>jira_get-issue</code>, <code>jira_create-issue</code>…), so a multi-verb fleet can expose
-        hundreds. <strong>Per runnable</strong> emits one tool per runnable with a <code>command</code>
-        argument to pick the verb — far fewer tools for clients that struggle with large lists.
-        Autonomy is still resolved per chosen subcommand either way.
+        <strong>Leaf</strong> mirrors <code>runspec serve</code> — every subcommand is its own tool,
+        once per host (<code>jira_get-issue</code>…, plus <code>host__</code> copies), so a multi-host,
+        multi-verb fleet can expose hundreds. <strong>Per runnable</strong> emits one tool per
+        <em>distinct</em> runnable with a <code>command</code> arg to pick the verb and a <code>host</code>
+        arg when it's on several hosts — collapsing both dimensions so the count matches this
+        console's own tool list. Autonomy is still resolved per chosen subcommand either way.
       </Typography.Paragraph>
 
       <Button type="primary" onClick={handleSave} loading={saving} style={{ marginTop: 4 }}>Save</Button>

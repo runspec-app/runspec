@@ -53,15 +53,17 @@ class McpServerMixin:
 
         Runs on a worker thread (the server marshals it off its event loop and
         heartbeats progress meanwhile)."""
-        # Resolve the concrete subcommand + its autonomy from the call. In `leaf`
-        # style this is the tool's fixed command_path/autonomy; in `runnable` style
-        # the `command` argument picks the subcommand and its own autonomy (so a
-        # read verb stays autonomous while a write verb gates).
-        command_path, level, args, resolve_error = tool.resolve_call(arguments)
+        # Resolve the concrete host + subcommand + autonomy from the call. In `leaf`
+        # style these are the tool's fixed host/command_path/autonomy; in `runnable`
+        # style the `host` and `command` arguments pick them (the command maps to its
+        # own autonomy, so a read verb stays autonomous while a write verb gates).
+        host, command_path, level, args, resolve_error = tool.resolve_call(arguments)
         if resolve_error:
             return (resolve_error, True)
         level = (level or "confirm").lower()
         display = "_".join([tool.runnable] + list(command_path))
+        if host and tool.host_options:
+            display = f"{display}@{host}"  # multi-host runnable: show the target
 
         if level == "manual":
             return (
@@ -91,7 +93,7 @@ class McpServerMixin:
             if isinstance(edited, dict):
                 args = edited
 
-        return self._mcp_server_run_blocking(tool, args, command_path)
+        return self._mcp_server_run_blocking(tool, args, command_path, host)
 
     def _mcp_server_confirm_wait(self) -> float:
         """The bounded confirm wait: the smaller of ``[mcp_server] confirm_wait``
@@ -132,11 +134,12 @@ class McpServerMixin:
         tool: "ExecTool",
         args: dict[str, Any],
         command_path: list[str] | None = None,
+        host: str | None = None,
     ) -> tuple[str, bool]:
         """Run the runnable via :meth:`invoke_runnable` and block for its output +
         exit code (invoke_runnable is fire-and-stream; we join on run_end).
-        ``command_path`` is the resolved subcommand (defaults to the tool's own, for
-        ``leaf`` style).
+        ``command_path`` is the resolved subcommand and ``host`` the resolved target
+        (both default to the tool's own, for ``leaf`` style).
 
         In-scope credentials are applied server-side (see
         :meth:`_mcp_server_scoped_credential_ids`) — the client supplies no
@@ -144,6 +147,7 @@ class McpServerMixin:
         resolved_path = list(
             command_path if command_path is not None else tool.command_path
         )
+        resolved_host = host or tool.host
         done = threading.Event()
         state: dict[str, Any] = {"lines": [], "exit": None}
 
@@ -155,11 +159,11 @@ class McpServerMixin:
                 done.set()
 
         credential_ids = self._mcp_server_scoped_credential_ids(
-            tool.host, tool.runnable
+            resolved_host, tool.runnable
         )
         try:
             self.invoke_runnable(
-                tool.host,
+                resolved_host,
                 tool.runnable,
                 args,
                 command_path=resolved_path,
