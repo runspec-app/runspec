@@ -96,11 +96,39 @@ class McpServerMixin:
         ceiling = self._confirm_timeout_s(headless=False)
         return min(wait, ceiling) if ceiling else wait
 
+    def _mcp_server_scoped_credential_ids(self, host: str, runnable: str) -> list[str]:
+        """The ids of the credentials in scope for ``(host, runnable)``.
+
+        The external MCP client can't select a credential (no `credential_id` in
+        the tool schema) and never sees a secret, so — like the console's own
+        agent — credentials apply **by scope** (`scope_hosts`/`scope_runnables`
+        globs; empty = match-all). Passing these ids to :meth:`invoke_runnable`
+        (rather than leaving it ``None``) makes it apply **both** channels: the
+        name-derived env vars (`JIRA_USERNAME`/`JIRA_PASSWORD`, `*_TOKEN`, …) *and*
+        the arg-bindings (`username_arg`→argv, `secret_arg`→secret env channel),
+        so an arg-interface runnable (`--user`/`--password`) gets its credential
+        over MCP just as an env-var one does. (The sole-password fallback — a lone
+        `password` arg with no `secret_arg` — stays chat-agent-only.)"""
+        try:
+            self._reload_credentials()
+            return [
+                str(c["id"])
+                for c in self._scoped_credentials(host, runnable)
+                if c.get("id")
+            ]
+        except Exception:  # noqa: BLE001 — credential resolution never breaks a run
+            logger.debug("mcp_server scoped-credential lookup failed", exc_info=True)
+            return []
+
     def _mcp_server_run_blocking(
         self, tool: "ExecTool", args: dict[str, Any]
     ) -> tuple[str, bool]:
         """Run the runnable via :meth:`invoke_runnable` and block for its output +
-        exit code (invoke_runnable is fire-and-stream; we join on run_end)."""
+        exit code (invoke_runnable is fire-and-stream; we join on run_end).
+
+        In-scope credentials are applied server-side (see
+        :meth:`_mcp_server_scoped_credential_ids`) — the client supplies no
+        secret."""
         done = threading.Event()
         state: dict[str, Any] = {"lines": [], "exit": None}
 
@@ -111,6 +139,9 @@ class McpServerMixin:
                 state["exit"] = int(data.get("exit_code", -1))
                 done.set()
 
+        credential_ids = self._mcp_server_scoped_credential_ids(
+            tool.host, tool.runnable
+        )
         try:
             self.invoke_runnable(
                 tool.host,
@@ -118,6 +149,7 @@ class McpServerMixin:
                 args,
                 command_path=list(tool.command_path),
                 group=tool.group or None,
+                credential_ids=credential_ids or None,
                 trigger="mcp",
                 on_progress=on_progress,
             )

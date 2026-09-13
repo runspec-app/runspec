@@ -122,6 +122,39 @@ single-call approval.
 
 ---
 
+## Credentials
+
+Runnables that need a secret (a Jira PAT, a service-account password, an API
+token) get it **automatically, by scope** — the same model as the console's own
+agent. You never hand a credential to the MCP client, and the client never sees a
+secret:
+
+- Credentials are matched to a run by their **scope** (`scope_hosts` /
+  `scope_runnables` globs, set in Settings → Credentials; an empty scope matches
+  everything). Every in-scope credential for the `(host, runnable)` is applied
+  server-side, its secret read from the OS keychain at run time.
+- **Both delivery channels fire.** The **name-derived env vars** (a `Jira`
+  userpass credential → `JIRA_USERNAME`/`JIRA_PASSWORD`; a `Deploy` token →
+  `DEPLOY_TOKEN`/`DEPLOY_PAT`) for runnables that read the environment, **and**
+  the **arg-bindings** (`username_arg` → the argument, `secret_arg` → the secret
+  env channel) for runnables whose interface is `--user`/`--password` args — so
+  both styles of runnable work over MCP.
+- `password`-typed args are omitted from the tool schema entirely, so the agent
+  can neither see nor supply them — the console fills them from the credential.
+
+To make a credential available to MCP runs, scope it to the host(s)/runnable(s) it
+should serve (or leave the scope empty to apply it everywhere). A runnable with no
+matching credential simply runs without one (and fails auth if it needed it).
+
+Two deliberate limits versus the in-console chat agent:
+
+- **No per-call credential selection.** The chat agent can name a `credential_id`;
+  an external MCP client can't (the tool schema exposes no such field). If two
+  credentials could match one runnable, tighten their scopes.
+- **No sole-password fallback.** Filling a lone `password` arg from a single
+  matching credential *without* a `secret_arg` binding is chat-agent-only; over
+  MCP, bind it explicitly with `secret_arg` (or use the env-var channel).
+
 ## History & provenance
 
 Agent-initiated runs execute through the same executor as Forms runs and are

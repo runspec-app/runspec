@@ -8,6 +8,22 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.249.1] — 2026-09-13
+
+### Changed
+- **Console MCP server now applies credentials by scope (both channels).** When an
+  external coding agent runs a runnable through the console's MCP server
+  (`[mcp_server]`), in-scope credentials (`scope_hosts`/`scope_runnables`) are now
+  applied server-side via **both** the name-derived env-var channel (already
+  worked) **and** the arg-binding channel (`username_arg`→argv,
+  `secret_arg`→secret env) — so an arg-interface runnable (`--user`/`--password`)
+  gets its credential over MCP just as an env-var one does. The client still
+  supplies no secret and can't select a credential by id (scope-only; the
+  sole-password fallback stays chat-agent-only). `bridge_mcp_server`
+  `_mcp_server_run_blocking` now resolves + passes the scoped credential ids to
+  `invoke_runnable`. Documented in `docs/console-mcp-server.md` → "Credentials".
+
+
 ## [0.249.0] — 2026-09-13
 
 ### Added

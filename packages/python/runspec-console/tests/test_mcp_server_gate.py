@@ -29,13 +29,24 @@ def _tool(name="greet", autonomy="autonomous", command_path=None):
 class FakeBridge(McpServerMixin):
     """McpServerMixin + just the gate/exec primitives it calls."""
 
-    def __init__(self, *, approve=True, edited=None, cancelled=False, answer=True):
+    def __init__(
+        self, *, approve=True, edited=None, cancelled=False, answer=True, scoped=None
+    ):
         self._approve = approve
         self._edited = edited
         self._cancelled = cancelled
         self._answer = answer  # whether the confirm "event" is set (answered)
+        self._scoped = scoped or []  # credentials in scope for (host, runnable)
         self.runs: list[tuple] = []
         self.registered: list[tuple] = []
+        self.credential_ids_seen: list = []
+
+    # credential scope (server-side auto-apply) ----------------------------
+    def _reload_credentials(self):
+        pass
+
+    def _scoped_credentials(self, host, runnable):
+        return list(self._scoped)
 
     # gate primitives ------------------------------------------------------
     def _confirm_timeout_s(self, headless=False):
@@ -71,10 +82,12 @@ class FakeBridge(McpServerMixin):
         *,
         command_path=None,
         group=None,
+        credential_ids=None,
         trigger="",
         on_progress=None,
         **kw,
     ):
+        self.credential_ids_seen.append(credential_ids)
         self.runs.append(
             (host, runnable, dict(args), tuple(command_path or []), trigger)
         )
@@ -124,6 +137,20 @@ def test_confirm_declined_does_not_run():
     assert is_error is True
     assert "declined" in text.lower()
     assert b.runs == []
+
+
+def test_scoped_credentials_are_passed_to_invoke():
+    # In-scope credentials apply server-side by scope — their ids reach
+    # invoke_runnable (so both the env-var + arg-binding channels fire).
+    b = FakeBridge(scoped=[{"id": "Jira"}, {"id": "Deploy"}, {"no_id": 1}])
+    b._mcp_server_execute(_tool("greet", autonomy="autonomous"), {})
+    assert b.credential_ids_seen == [["Jira", "Deploy"]]  # ids only, malformed dropped
+
+
+def test_no_scoped_credentials_passes_none():
+    b = FakeBridge(scoped=[])
+    b._mcp_server_execute(_tool("greet", autonomy="autonomous"), {})
+    assert b.credential_ids_seen == [None]  # empty scope → None (no creds)
 
 
 def test_confirm_timeout_returns_resumable_and_does_not_run():
