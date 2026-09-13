@@ -100,14 +100,61 @@ class EvalsMixin:
             # case can assert e.g. "remote add".
             return evals._command_str(inv.input.get("command"))
 
+        # Cached runnable records by bare name — the dedup host selector's key is
+        # derived from the runnable's own declared args, so resolving a host (or
+        # dropping the selector from the graded args) needs the spec, not a guess.
+        by_name_rec: dict[str, dict[str, Any]] = {}
+        try:
+            for r in self._visible_runnables("agent"):  # type: ignore[attr-defined]
+                nm = r.get("name")
+                if nm and nm not in by_name_rec:
+                    by_name_rec[nm] = r
+        except Exception:  # noqa: BLE001 — falls back to the plain "host" key
+            logger.debug("eval: could not cache runnable specs", exc_info=True)
+
+        def _host_key_for(inv: evals.ToolInvocation) -> str:
+            """The input key carrying the *fleet host* for a direct tool call.
+
+            Normally ``host`` — but `_host_selector_key` renames the injected
+            selector to ``_host``/``__host`` when the runnable declares its OWN
+            ``host`` arg (cert-check, dns-lookup, ping-host, … all do), so reading
+            ``host`` there would read the runnable's target, not the fleet host."""
+            try:
+                return str(
+                    self._host_selector_key(by_name_rec.get(resolve_target(inv)))  # type: ignore[attr-defined]
+                )
+            except Exception:  # noqa: BLE001 — fall back to the portable default
+                return "host"
+
+        def resolve_host(inv: evals.ToolInvocation) -> str:
+            # search mode: run_runnable/use_tool carry a top-level `host`, which
+            # may also be a host GROUP name (its schema says so) — graded as-is.
+            if inv.name in ("run_runnable", "use_tool"):
+                return str(inv.input.get("host") or "")
+            # per_host mode: there IS no host in the input (_build_input_schema
+            # omits the selector) — the host is the tool-name prefix `host__name`.
+            if mode == "per_host":
+                return inv.name.split("__", 1)[0] if "__" in inv.name else ""
+            # dedup mode: the injected selector, under its real (possibly renamed) key.
+            return str(inv.input.get(_host_key_for(inv)) or "")
+
         def resolve_args(inv: evals.ToolInvocation) -> dict[str, Any]:
             if inv.name in ("run_runnable", "use_tool"):
                 args = inv.input.get("args")
                 return dict(args) if isinstance(args, dict) else {}
-            # Direct tool: the runnable's own args are top-level; `host` is the
-            # console's injected enum and `command` is scored separately — drop
-            # both so a subset / preflight check doesn't treat them as unknown args.
-            return {k: v for k, v in inv.input.items() if k not in ("host", "command")}
+            # Direct tool: the runnable's own args are top-level; the injected host
+            # selector and `command` are scored separately — drop both so a subset
+            # / preflight check doesn't treat them as unknown args. The selector is
+            # dropped under its REAL key: a runnable declaring its own `host` arg
+            # gets the selector renamed to `_host`, and dropping a literal "host"
+            # there would both leak `_host` (preflight: "unknown argument(s)") and
+            # wrongly discard the runnable's own `host` argument from the grading.
+            drop = {"command"}
+            if mode == "per_host":
+                drop.add("host")  # defensive: no selector is injected in per_host
+            else:
+                drop.add(_host_key_for(inv))
+            return {k: v for k, v in inv.input.items() if k not in drop}
 
         def resolve_autonomy(inv: evals.ToolInvocation) -> str:
             # Prove — without executing — the level this exact call would gate at,
@@ -139,6 +186,7 @@ class EvalsMixin:
             "resolve_command": resolve_command,
             "resolve_args": resolve_args,
             "resolve_autonomy": resolve_autonomy,
+            "resolve_host": resolve_host,
             "mode": mode,
         }
 

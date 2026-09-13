@@ -563,3 +563,116 @@ def test_run_scheduled_eval_drives_run_evals(bridge, monkeypatch):
         "validate": True,
         "telemetry": False,
     }
+
+
+# ── host / group targeting (expect_host across tool modes) ────────────────────
+def _host_fixture(expect_host: str, tool: str = "restart-service") -> str:
+    return f"""
+[[eval]]
+id = "t"
+prompt = "run it"
+expect_tool = "{tool}"
+expect_host = "{expect_host}"
+"""
+
+
+def test_expect_host_grades_a_group_name_in_search_mode(bridge, monkeypatch):
+    # A group name rides the SAME `host` field as a host (run_runnable's schema
+    # says so — it fans out to every member), so expect_host grades group
+    # targeting with no extra fixture field.
+    monkeypatch.setattr(bridge, "_tool_mode", lambda: "search")
+    script = {
+        "t": [
+            {
+                "tool_calls": [
+                    {
+                        "name": "run_runnable",
+                        "input": {"id": "restart-service", "host": "Production"},
+                    }
+                ]
+            }
+        ]
+    }
+    monkeypatch.setattr(bridge, "_get_adapter", lambda *a, **k: ReplayAdapter(script))
+    report = bridge.run_evals(fixture_toml=_host_fixture("Production"))
+    c = report["cases"][0]
+    assert c["passed"] is True
+    assert c["host"] == "Production"
+
+
+def test_expect_host_reads_the_renamed_selector_when_runnable_declares_host(
+    bridge, monkeypatch
+):
+    # Regression: _host_selector_key renames the injected fleet-host selector to
+    # `_host` when the runnable declares its OWN `host` arg (cert-check,
+    # dns-lookup, ping-host, …). Reading a literal "host" graded the runnable's
+    # target (example.com) as if it were the fleet host — always wrong_host — and
+    # leaked `_host` into the args (preflight: "unknown argument(s): _host").
+    cert = {
+        "name": "cert-check",
+        "host": "web-01",
+        "args": [{"name": "host", "type": "str", "required": True}],
+    }
+    monkeypatch.setattr(bridge, "_visible_runnables", lambda surface: [cert])
+    script = {
+        "t": [
+            {
+                "tool_calls": [
+                    {
+                        "name": "ops__cert-check",
+                        # `_host` = the fleet host to run ON; `host` = the runnable's
+                        # own arg (the target being checked).
+                        "input": {"_host": "web-01", "host": "example.com"},
+                    }
+                ]
+            }
+        ]
+    }
+    monkeypatch.setattr(bridge, "_get_adapter", lambda *a, **k: ReplayAdapter(script))
+    fixture = """
+[[eval]]
+id = "t"
+prompt = "check the cert on example.com from web-01"
+expect_tool = "cert-check"
+expect_host = "web-01"
+expect_args = { host = "example.com" }
+"""
+    report = bridge.run_evals(fixture_toml=fixture)
+    c = report["cases"][0]
+    assert c["passed"] is True, c["reason"]
+    assert c["host"] == "web-01"  # the FLEET host, not example.com
+
+
+def test_expect_host_reads_the_tool_name_prefix_in_per_host_mode(bridge, monkeypatch):
+    # per_host mode injects no host selector at all — _build_input_schema omits it
+    # and the host rides the tool name (`host__name`), so reading input["host"]
+    # could never match.
+    monkeypatch.setattr(bridge, "_tool_mode", lambda: "per_host")
+    script = {"t": [{"tool_calls": [{"name": "web-01__restart-service", "input": {}}]}]}
+    monkeypatch.setattr(bridge, "_get_adapter", lambda *a, **k: ReplayAdapter(script))
+    report = bridge.run_evals(fixture_toml=_host_fixture("web-01"))
+    c = report["cases"][0]
+    assert c["passed"] is True, c["reason"]
+    assert c["host"] == "web-01"
+
+
+def test_wrong_host_still_fails(bridge, monkeypatch):
+    monkeypatch.setattr(bridge, "_tool_mode", lambda: "search")
+    script = {
+        "t": [
+            {
+                "tool_calls": [
+                    {
+                        "name": "run_runnable",
+                        "input": {"id": "restart-service", "host": "db-01"},
+                    }
+                ]
+            }
+        ]
+    }
+    monkeypatch.setattr(bridge, "_get_adapter", lambda *a, **k: ReplayAdapter(script))
+    report = bridge.run_evals(fixture_toml=_host_fixture("web-01"))
+    c = report["cases"][0]
+    assert c["passed"] is False
+    assert c["category"] == "wrong_host"
+    assert c["host"] == "db-01"

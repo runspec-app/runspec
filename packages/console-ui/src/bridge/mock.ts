@@ -1282,8 +1282,8 @@ export const mockApi: BridgeApi = {
     samples: 1,
     summary: { total: 2, passed: 1, failed: 1, pass_rate: 0.5, by_category: { wrong_command: 1 } },
     cases: [
-      { case_id: 'restart-nginx', passed: true, category: 'pass', reason: "tool + args as expected; would gate at 'confirm'", terminal: { name: 'restart-service', input: { service: 'nginx' } }, target: 'restart-service', command: '', autonomy: 'confirm', final_text: '', samples: 1, pass_count: 1, pass_rate: 1 },
-      { case_id: 'cron-add', passed: false, category: 'wrong_command', reason: "expected subcommand 'add', got 'remove'", terminal: { name: 'cron', input: { command: 'remove' } }, target: 'cron', command: 'remove', autonomy: 'confirm', final_text: '', samples: 1, pass_count: 0, pass_rate: 0 },
+      { case_id: 'restart-nginx', passed: true, category: 'pass', reason: "tool + args as expected; would gate at 'confirm'", terminal: { name: 'restart-service', input: { service: 'nginx' } }, target: 'restart-service', command: '', autonomy: 'confirm', host: 'web-01', final_text: '', samples: 1, pass_count: 1, pass_rate: 1 },
+      { case_id: 'cron-add', passed: false, category: 'wrong_command', reason: "expected subcommand 'add', got 'remove'", terminal: { name: 'cron', input: { command: 'remove' } }, target: 'cron', command: 'remove', autonomy: 'confirm', host: 'web-01', final_text: '', samples: 1, pass_count: 0, pass_rate: 0 },
     ],
   }),
   list_eval_reports: async () => [

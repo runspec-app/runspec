@@ -127,7 +127,7 @@ expect_autonomy = "confirm"     # a confirm WOULD be raised (use "manual" to pro
 | `expect_tool` | The runnable the agent should pick (see [tool names](#what-expect_tool-means-across-tool_mode)). |
 | `expect_command` | The subcommand/verb the agent must pick (see [subcommands + autonomy](#subcommands-and-autonomy)). Nested paths compare space-joined (`"remote add"`). |
 | `expect_args` | A **subset** of the args — extra optional args the model adds are allowed. Values compare tolerantly (`"3"` matches `3`, case-insensitive strings). |
-| `expect_host` | The host the runnable should target. |
+| `expect_host` | The host the runnable should target — **or a host group name** (see [host & group targeting](#host-and-group-targeting)). Compared trimmed + case-insensitively. |
 | `expect_autonomy` | The level the call must gate at — `autonomous` / `confirm` / `manual` (see [subcommands + autonomy](#subcommands-and-autonomy)). |
 | `expect_no_run` | `true` = a negative case: the agent must **not** run a runnable (it should clarify or answer). |
 | `forbid_tools` | Runnables the agent must **not** pick (e.g. destructive ones). |
@@ -164,8 +164,9 @@ of an otherwise-safe runnable stays gated — e.g. `cron list` is autonomous but
 `expect_tool` is always the **runnable name**, regardless of how the console lays
 out tools for the agent ([`[llm] tool_mode`](console-reference.md)):
 
-- **dedup** (default) — the agent calls a `group__name` tool with a `host` arg;
-  the eval resolves that back to the runnable name and reads `host` for
+- **dedup** (default) — the agent calls a `group__name` tool with an injected
+  host-selector arg; the eval resolves that back to the runnable name, and reads
+  the selector (see [host & group targeting](#host-and-group-targeting)) for
   `expect_host`.
 - **per_host** — the agent calls `host__name`; same resolution.
 - **search** — the agent calls `run_runnable` (or `use_tool`); the runnable is
@@ -174,6 +175,50 @@ out tools for the agent ([`[llm] tool_mode`](console-reference.md)):
   That `id` comes from a `search_runnables` row, which is group-qualified
   (`group__name`) — the eval strips the qualifier back to the bare name, so
   `expect_tool` stays the bare runnable name here too.
+
+### Host and group targeting
+
+`expect_host` grades **what the agent targeted**, and that single field covers
+both a host and a host **group** — because the agent passes them through the same
+slot. The search-mode `run_runnable` schema says so outright: *"Which host to run
+on … **OR a host group name** to fan out to every host in that group at once."*
+So:
+
+```toml
+expect_host = "web-01"      # one host
+expect_host = "Production"  # a group — asserts the fan-out target
+```
+
+The eval resolves the host per tool mode, so a fixture stays portable:
+
+| Mode | Where the host lives |
+|---|---|
+| `search` | top-level `host` on `run_runnable` (a host *or* a group) |
+| `dedup` | the injected host-selector arg — normally `host`, but **renamed to `_host`** when the runnable declares its own `host` arg (`cert-check`, `dns-lookup`, `ping-host`, `trace-route`, …) |
+| `per_host` | the tool-name prefix (`host__name`) — no host in the input at all |
+
+That renamed-selector case matters: for a runnable like `cert-check`, `host` is
+the *target being checked* and `_host` is the *fleet host to run on*. The eval
+grades `_host` against `expect_host` and leaves the runnable's own `host` in
+`expect_args`:
+
+```toml
+[[eval]]
+id          = "cert-from-web01"
+prompt      = "check the cert on example.com from web-01"
+expect_tool = "cert-check"
+expect_host = "web-01"                      # the fleet host
+expect_args = { host = "example.com" }      # the runnable's own arg
+```
+
+The targeted host is recorded on every result (a **Host** column in the report,
+and `runspec.eval.observed_host` on the trace), whether or not the case asserts it.
+
+**Profiles are not gradeable** — and shouldn't be. A [host profile](console-hosts.md)
+is an interactive *working-set* that scopes which hosts get probed and hold
+standing connections; it is never a field in a tool call, so the agent never
+"chooses" one. A profile can change *which hosts are offered*, but that's the
+environment the eval runs in, not a decision to score.
 
 So a fixture is portable across modes — you write the runnable name and the eval
 does the right thing.

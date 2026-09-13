@@ -394,6 +394,7 @@ function EvalReportPanel({ report }: { report: EvalReport }) {
   // subcommand runnable), so a plain suite's table stays uncluttered.
   const anyCommand = report.cases.some(c => c.command)
   const anyAutonomy = report.cases.some(c => c.autonomy)
+  const anyHost = report.cases.some(c => c.host)
 
   const cols: ColumnType<EvalCaseResult>[] = [
     {
@@ -440,6 +441,16 @@ function EvalReportPanel({ report }: { report: EvalReport }) {
           width: 110,
           render: (cmd: string) => (
             <Text style={{ fontFamily: MONO_FONT, fontSize: 13 }}>{cmd || '—'}</Text>
+          ),
+        } as ColumnType<EvalCaseResult>]
+      : []),
+    ...(anyHost
+      ? [{
+          title: 'Host',
+          dataIndex: 'host',
+          width: 130,
+          render: (h: string) => (
+            <Text style={{ fontFamily: MONO_FONT, fontSize: 12 }}>{h || '—'}</Text>
           ),
         } as ColumnType<EvalCaseResult>]
       : []),

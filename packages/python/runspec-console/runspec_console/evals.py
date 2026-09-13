@@ -152,6 +152,9 @@ class CaseResult:
     # The autonomy the terminal call would gate at ("autonomous"/"confirm"/
     # "manual"), "" when no run or no resolver was supplied.
     autonomy: str = ""
+    # The host (or host GROUP) the terminal call targeted — "" when no run, or
+    # when the call carried no host. See ``default_resolve_host``.
+    host: str = ""
     discovery: list[ToolInvocation] = field(default_factory=list)
     final_text: str = ""
     # Populated by the sampled runner: how many of ``samples`` runs passed.
@@ -172,6 +175,7 @@ class CaseResult:
             "target": self.target,
             "command": self.command,
             "autonomy": self.autonomy,
+            "host": self.host,
             "discovery": [d.to_dict() for d in self.discovery],
             "final_text": self.final_text,
             "samples": self.samples,
@@ -247,6 +251,20 @@ def default_resolve_command(inv: ToolInvocation) -> str:
     return _command_str(inv.input.get("command"))
 
 
+def default_resolve_host(inv: ToolInvocation) -> str:
+    """The host — or host **group** — a terminal call targeted.
+
+    The search-mode ``run_runnable`` carries it in a top-level ``host`` (whose
+    schema explicitly allows a *group* name, fanning out to every member), and a
+    dedup-mode direct tool carries the injected host selector at the top level too,
+    so ``input['host']`` is the portable default. It is **not** universally right:
+    a dedup tool whose runnable declares its *own* ``host`` arg gets the selector
+    renamed (``_host``), and in per_host mode the host is in the tool *name*, not
+    the input — both need the console-aware override
+    (``bridge_evals._eval_injections``). "" when the call carries no host."""
+    return str(inv.input.get("host") or "")
+
+
 def default_resolve_args(inv: ToolInvocation) -> dict[str, Any]:
     """The runnable args a terminal call carries. ``run_runnable`` / ``use_tool``
     nest them under ``input['args']``; a direct tool passes them at top level.
@@ -263,6 +281,7 @@ ResolveTarget = Callable[[ToolInvocation], str]
 ResolveCommand = Callable[[ToolInvocation], str]
 ResolveArgs = Callable[[ToolInvocation], dict[str, Any]]
 ResolveAutonomy = Callable[[ToolInvocation], str]
+ResolveHost = Callable[[ToolInvocation], str]
 # validate(runnable, command, args) -> "Error: …" | None. ``command`` is the
 # chosen subcommand (space-joined for a nested path, "" for none) — the preflight
 # validates a subcommand's own arg set at that node and honours require-command,
@@ -355,6 +374,7 @@ def score(
     resolve_command: ResolveCommand = default_resolve_command,
     resolve_args: ResolveArgs = default_resolve_args,
     resolve_autonomy: ResolveAutonomy | None = None,
+    resolve_host: ResolveHost = default_resolve_host,
     validate: Validate | None = None,
 ) -> CaseResult:
     """Grade a captured trajectory against the case's expectation. Assertions run
@@ -374,6 +394,7 @@ def score(
     resolved_command = (
         resolve_command(traj.terminal) if traj.terminal is not None else ""
     )
+    resolved_host = resolve_host(traj.terminal) if traj.terminal is not None else ""
     resolved_autonomy = ""
     if traj.terminal is not None and resolve_autonomy is not None:
         try:
@@ -391,6 +412,7 @@ def score(
             target=resolved,
             command=resolved_command,
             autonomy=resolved_autonomy,
+            host=resolved_host,
             discovery=traj.discovery,
             final_text=traj.final_text,
         )
@@ -432,13 +454,18 @@ def score(
                 f"expected subcommand {want!r}, got {resolved_command!r}",
             )
 
+    # The host the call targeted — which may be a host GROUP name (the agent passes
+    # a group through the same field to fan out). Resolved via the injectable, so
+    # it is right in every tool mode: a renamed `_host` selector (dedup, when the
+    # runnable declares its own `host` arg) and per_host's tool-name prefix both
+    # land here. Compared tolerantly (trim + case-insensitive) — host and group
+    # names are operator-typed config, not identifiers.
     if case.expect_host is not None:
-        got_host = traj.terminal.input.get("host")
-        if got_host != case.expect_host:
+        if resolved_host.strip().casefold() != case.expect_host.strip().casefold():
             return result(
                 False,
                 CAT_WRONG_HOST,
-                f"expected host {case.expect_host!r}, got {got_host!r}",
+                f"expected host {case.expect_host!r}, got {resolved_host!r}",
             )
 
     got_args = resolve_args(traj.terminal)
@@ -493,6 +520,7 @@ async def evaluate_case_async(
     resolve_command: ResolveCommand = default_resolve_command,
     resolve_args: ResolveArgs = default_resolve_args,
     resolve_autonomy: ResolveAutonomy | None = None,
+    resolve_host: ResolveHost = default_resolve_host,
     validate: Validate | None = None,
     max_steps: int = 6,
     samples: int = 1,
@@ -520,6 +548,7 @@ async def evaluate_case_async(
             resolve_command=resolve_command,
             resolve_args=resolve_args,
             resolve_autonomy=resolve_autonomy,
+            resolve_host=resolve_host,
             validate=validate,
         )
         last = res

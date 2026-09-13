@@ -8,6 +8,42 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.253.0] — 2026-09-13
+
+### Added
+- **Evals grade host *and* host-group targeting.** `expect_host` now works in
+  every `tool_mode`, and the same field grades a **host group** — the agent passes
+  a group through the same slot (the search-mode `run_runnable` schema: *"Which
+  host to run on … OR a host group name to fan out to every host in that group at
+  once"*), so `expect_host = "Production"` asserts the fan-out target with no new
+  fixture field. The targeted host is recorded on every result (`CaseResult.host`,
+  a **Host** column in the report, `runspec.eval.observed_host` on the trace) even
+  when the case doesn't assert it. New `resolve_host` injectable
+  (`evals.default_resolve_host` / `ResolveHost`), bound console-side in
+  `bridge_evals._eval_injections`.
+  **Profiles are deliberately not gradeable:** a host profile is an interactive
+  working-set that scopes which hosts are probed/connected — never a field in a
+  tool call, so the agent never chooses one; it shapes the environment an eval
+  runs in, not a decision to score.
+
+### Fixed
+- **`expect_host` read the wrong field for a runnable that declares its own
+  `host` arg.** `_host_selector_key` renames the injected fleet-host selector to
+  `_host` so it can't shadow a real input — which 15 shipped runnables hit
+  (`cert-check`, `cert-chain`, `tls-info`, `dns-lookup`, `ping-host`,
+  `check-port`, `trace-route`, `nc-command` across linux+windows). The eval read a
+  literal `host`, so it graded the runnable's *target* (`example.com`) as if it
+  were the fleet host — always `wrong_host` — and leaked `_host` into the graded
+  args (with Validate args on: *"unknown argument(s): `_host`"*). It now reads the
+  selector under its real key and drops that key from the args, so
+  `expect_host = "web-01"` + `expect_args = { host = "example.com" }` both hold.
+- **`expect_host` could never match in `per_host` mode.** That layout injects no
+  host selector at all (`_build_input_schema` omits it) — the host rides the tool
+  *name* (`host__name`) — so `input["host"]` was always absent. The host is now
+  read from the tool-name prefix.
+- Host/group comparison is trimmed + case-insensitive (host and group names are
+  operator-typed config, not identifiers), matching how `expect_args` compares.
+
 ## [0.252.1] — 2026-09-13
 
 ### Fixed
