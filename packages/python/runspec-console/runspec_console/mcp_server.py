@@ -122,7 +122,15 @@ def _input_schema(args: list[dict[str, Any]]) -> dict[str, Any]:
 
 @dataclass
 class ExecTool:
-    """One resolved leaf tool: how it's presented + how to run it."""
+    """One resolved tool: how it's presented + how to run it.
+
+    In the default ``leaf`` style each tool is one runnable leaf (a runnable or one
+    of its subcommands), so ``command_path`` is fixed and ``autonomy`` is that
+    leaf's. In ``runnable`` style each tool is a whole runnable and the subcommand
+    is chosen at call time via a ``command`` argument — ``command_options`` lists
+    the choices, ``command_autonomy`` maps each (space-joined) command to its
+    resolved autonomy, and :meth:`resolve_call` turns a call's arguments into the
+    concrete ``(command_path, autonomy)`` to gate + run."""
 
     name: str  # the MCP tool name (deduped, sanitized)
     description: str
@@ -132,6 +140,10 @@ class ExecTool:
     runnable: str
     command_path: list[str]
     autonomy: str
+    # `runnable` style only (empty/unused in `leaf` style):
+    command_options: list[str] = field(default_factory=list)
+    command_autonomy: dict[str, str] = field(default_factory=dict)
+    command_required: bool = False
 
     def schema(self) -> dict[str, Any]:
         return {
@@ -139,6 +151,43 @@ class ExecTool:
             "description": self.description,
             "inputSchema": self.input_schema,
         }
+
+    def resolve_call(
+        self, arguments: dict[str, Any]
+    ) -> tuple[list[str], str, dict[str, Any], str]:
+        """Resolve one call's ``arguments`` into ``(command_path, autonomy, args,
+        error)``. ``error`` is non-empty when the call is invalid (bad/missing
+        ``command``) and nothing should run.
+
+        In ``leaf`` style the tool has no ``command_options`` → the fixed
+        ``(command_path, autonomy)`` is returned unchanged. In ``runnable`` style
+        the ``command`` argument is popped, validated against ``command_options``,
+        and mapped to its own autonomy (so gating matches the chosen subcommand,
+        not a blunt most-restrictive floor)."""
+        args = dict(arguments or {})
+        if not self.command_options:
+            return list(self.command_path), self.autonomy, args, ""
+        command = str(args.pop("command", "") or "").strip()
+        if not command:
+            if self.command_required:
+                return (
+                    [],
+                    self.autonomy,
+                    args,
+                    f"'{self.runnable}' requires a command. "
+                    f"Options: {', '.join(self.command_options)}.",
+                )
+            return [], self.command_autonomy.get("", self.autonomy), args, ""
+        if command not in self.command_options:
+            return (
+                [],
+                self.autonomy,
+                args,
+                f"unknown command '{command}'. "
+                f"Options: {', '.join(self.command_options)}.",
+            )
+        path = [seg for seg in command.split(" ") if seg]
+        return path, self.command_autonomy.get(command, self.autonomy), args, ""
 
 
 def _flatten(node: dict[str, Any], prefix: tuple[str, ...]) -> list[ExecTool]:
@@ -179,21 +228,102 @@ def _flatten(node: dict[str, Any], prefix: tuple[str, ...]) -> list[ExecTool]:
     return tools
 
 
-def build_tools(
-    runnables: list[dict[str, Any]], *, default_autonomy: str | None = None
-) -> tuple[list[ExecTool], dict[str, ExecTool]]:
-    """Flatten discovered runnables into leaf ExecTools + a name→ExecTool registry.
+def _command_leaves(
+    node: dict[str, Any], prefix: tuple[str, ...] = ()
+) -> list[tuple[tuple[str, ...], str]]:
+    """Every callable command path under ``node`` (relative to the runnable root,
+    so the root itself is the empty path ``()``) paired with that leaf's resolved
+    autonomy (node autonomy escalated by its per-arg autonomy). A require-command
+    node contributes only its children; any other node is itself callable."""
+    args = node.get("args") or []
+    autonomy = escalate_autonomy(
+        [str(node.get("autonomy") or "")] + [a.get("autonomy") for a in args]
+    )
+    commands = node.get("commands")
+    if isinstance(commands, dict) and commands:
+        leaves: list[tuple[tuple[str, ...], str]] = []
+        if not node.get("requireCommand"):
+            leaves.append((prefix, autonomy))
+        for sub in commands.values():
+            if isinstance(sub, dict):
+                sub_name = str(sub.get("name") or "")
+                if sub_name:
+                    leaves.extend(_command_leaves(sub, prefix + (sub_name,)))
+        return leaves
+    return [(prefix, autonomy)]
 
-    Names are the serve-identical ``runnable[_sub…]``; the **same leaf discovered on
-    several hosts** is disambiguated by prefixing the sanitized ``<host>__`` (then a
-    numeric suffix) so every host stays reachable. ``default_autonomy`` (when set)
-    is a floor applied most-restrictively to every tool."""
+
+def _collapse_runnable(node: dict[str, Any]) -> ExecTool | None:
+    """One whole runnable → a single ExecTool whose subcommand is chosen at call
+    time via a ``command`` argument (``runnable`` style). Mirrors the console chat
+    agent's collapsed shape: the runnable's own args are typed and a ``command``
+    enum lists every subcommand path; per-command args ride through as additional
+    properties (validated by the executor at run time)."""
+    name = str(node.get("name") or "")
+    if not name:
+        return None
+    args = node.get("args") or []
+    leaves = _command_leaves(node)
+    command_autonomy = {" ".join(path): autonomy for path, autonomy in leaves}
+    options = [" ".join(path) for path, _ in leaves if path]
+    base_autonomy = command_autonomy.get("", escalate_autonomy([a for _, a in leaves]))
+    required = bool(options) and bool(node.get("requireCommand"))
+    schema = _input_schema(args)
+    if options:
+        schema.setdefault("properties", {})["command"] = {
+            "type": "string",
+            "enum": options,
+            "description": "Subcommand to run.",
+        }
+        if required:
+            schema.setdefault("required", []).append("command")
+    return ExecTool(
+        name=sanitize_tool_name(name),
+        description=str(node.get("description") or ""),
+        input_schema=schema,
+        host=str(node.get("host") or ""),
+        group=str(node.get("group") or ""),
+        runnable=name,
+        command_path=[],
+        autonomy=base_autonomy,
+        command_options=options,
+        command_autonomy=command_autonomy,
+        command_required=required,
+    )
+
+
+def build_tools(
+    runnables: list[dict[str, Any]],
+    *,
+    default_autonomy: str | None = None,
+    style: str = "leaf",
+) -> tuple[list[ExecTool], dict[str, ExecTool]]:
+    """Flatten discovered runnables into ExecTools + a name→ExecTool registry.
+
+    ``style="leaf"`` (default, serve-identical): one tool per runnable **leaf**
+    (subcommands flattened to ``runnable[_sub…]``). ``style="runnable"``: one tool
+    per **runnable**, its subcommand chosen at call time via a ``command`` argument
+    — far fewer tools for a fleet of multi-verb runnables. In both, the **same tool
+    discovered on several hosts** is disambiguated by prefixing the sanitized
+    ``<host>__`` (then a numeric suffix) so every host stays reachable, and
+    ``default_autonomy`` (when set) is a floor applied most-restrictively — to each
+    per-command autonomy too, in ``runnable`` style."""
     registry: dict[str, ExecTool] = {}
     ordered: list[ExecTool] = []
     for runnable in runnables or []:
-        for tool in _flatten(runnable, ()):
+        if style == "runnable":
+            collapsed = _collapse_runnable(runnable)
+            tools = [collapsed] if collapsed is not None else []
+        else:
+            tools = _flatten(runnable, ())
+        for tool in tools:
             if default_autonomy:
                 tool.autonomy = escalate_autonomy([tool.autonomy, default_autonomy])
+                if tool.command_autonomy:
+                    tool.command_autonomy = {
+                        cmd: escalate_autonomy([lvl, default_autonomy])
+                        for cmd, lvl in tool.command_autonomy.items()
+                    }
             name = tool.name
             existing = registry.get(name)
             if existing is not None and (
@@ -269,6 +399,7 @@ class ConsoleMcpServer:
         self._uvicorn: Any = None
         self._state = _State()
         self._default_autonomy: str | None = None
+        self._tool_style: str = "leaf"
 
     # -- introspection -------------------------------------------------------
 
@@ -283,6 +414,7 @@ class ConsoleMcpServer:
                 "url": (f"http://{s.host}:{s.port}/mcp" if s.running else ""),
                 "auth": bool(s.token),
                 "tools": len(s.registry),
+                "tool_style": self._tool_style,
             }
 
     def _build_registry(self, default_autonomy: str | None) -> dict[str, ExecTool]:
@@ -291,7 +423,9 @@ class ConsoleMcpServer:
         except Exception:  # noqa: BLE001 — a discovery hiccup shouldn't 500 the list
             logger.warning("mcp_server tools_provider failed", exc_info=True)
             runnables = []
-        _, registry = build_tools(runnables, default_autonomy=default_autonomy)
+        _, registry = build_tools(
+            runnables, default_autonomy=default_autonomy, style=self._tool_style
+        )
         return registry
 
     # -- lifecycle -----------------------------------------------------------
@@ -319,6 +453,7 @@ class ConsoleMcpServer:
             self._state.port = int(cfg.get("port") or 8765)
             self._state.token = cfg.get("token") or None
             self._default_autonomy = cfg.get("default_autonomy") or None
+            self._tool_style = cfg.get("tool_style") or "leaf"
         self._thread = threading.Thread(
             target=self._run, name="mcp-server", daemon=True
         )

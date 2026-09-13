@@ -426,6 +426,7 @@ def test_read_mcp_server_defaults(monkeypatch):
         "token": None,
         "default_autonomy": None,
         "confirm_wait": 50.0,
+        "tool_style": "leaf",
     }
 
 
@@ -441,6 +442,7 @@ def test_read_mcp_server_overrides_and_validation(monkeypatch):
                 "token": "  s3cret ",
                 "default_autonomy": "CONFIRM",  # case-insensitive
                 "confirm_wait": 25,
+                "tool_style": "RUNNABLE",  # case-insensitive
             }
         },
     )
@@ -450,16 +452,25 @@ def test_read_mcp_server_overrides_and_validation(monkeypatch):
     assert s["token"] == "s3cret"
     assert s["default_autonomy"] == "confirm"
     assert s["confirm_wait"] == 25.0
+    assert s["tool_style"] == "runnable"
 
-    # Bogus autonomy → dropped (None); out-of-range/garbage port → clamped/default.
+    # Bogus autonomy → dropped (None); bad tool_style → default leaf;
+    # out-of-range/garbage port → clamped/default.
     monkeypatch.setattr(
         c,
         "read_config",
-        lambda: {"mcp_server": {"default_autonomy": "yolo", "port": 999999}},
+        lambda: {
+            "mcp_server": {
+                "default_autonomy": "yolo",
+                "port": 999999,
+                "tool_style": "nonsense",
+            }
+        },
     )
     s = c.read_mcp_server()
     assert s["default_autonomy"] is None
     assert s["port"] == 65535
+    assert s["tool_style"] == "leaf"
     monkeypatch.setattr(
         c, "read_config", lambda: {"mcp_server": {"port": "not-a-number"}}
     )

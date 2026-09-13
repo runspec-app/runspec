@@ -8,6 +8,36 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.251.0] — 2026-09-13
+
+### Added
+- **MCP server: one-tool-per-runnable style (`[mcp_server] tool_style`).** The
+  console's MCP server can now present a runnable with subcommands as a **single
+  tool with a `command` argument** (`tool_style = "runnable"`) instead of one leaf
+  tool per subcommand (`tool_style = "leaf"`, the default, serve-identical to
+  `runspec serve`). A fleet of multi-verb runnables (`jira` ~37 verbs, `confluence`
+  ~20, `gitlab` ~17) can otherwise expose hundreds of leaf tools — enough to
+  overwhelm an MCP client; `runnable` style collapses that to ~one tool per
+  runnable. **Autonomy is still resolved per chosen subcommand** (the `command` is
+  mapped to that leaf's autonomy, escalated by any per-arg autonomy and the
+  `default_autonomy` floor), so the confirm gate behaves identically to `leaf` —
+  only the tool *count* changes; the runnable's own top-level args stay typed and
+  per-subcommand args ride through as additional properties (validated by the
+  executor at run time). New `mcp_server._collapse_runnable` / `_command_leaves` /
+  `ExecTool.resolve_call`; `build_tools(..., style=)`; `config.read_mcp_server`
+  gains `tool_style`; Settings → MCP Server gains a **Tool style** selector. See
+  `docs/console-mcp-server.md` → "Tool style".
+
+### Security
+- **MCP-server discovery file is owner-only (0600).** On a loopback server the
+  bearer token's real exposure is the discovery file at rest (loopback traffic
+  never hits a NIC, so there's no network MITM), so
+  `{app_dir}/runspec_mcp_server.json` is now written with `0600` permissions — set
+  before the token is written on POSIX (no world-readable window) and tightened if
+  an older looser file exists; on Windows the per-user app-dir ACLs govern.
+  Documented in `docs/console-mcp-server.md` → "Security & the token".
+
+
 ## [0.250.0] — 2026-09-13
 
 ### Changed

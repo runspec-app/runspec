@@ -5167,6 +5167,11 @@ const OWN_MCP_AUTONOMY = [
   { value: 'manual', label: 'manual — refuse (operator-only)' },
 ]
 
+const OWN_MCP_TOOL_STYLE = [
+  { value: 'leaf', label: 'Leaf — one tool per subcommand (serve-identical)' },
+  { value: 'runnable', label: 'Per runnable — one tool + a command arg (fewer tools)' },
+]
+
 export function McpServerTab() {
   const [enabled, setEnabled] = useState(false)
   const [host, setHost] = useState('127.0.0.1')
@@ -5174,6 +5179,7 @@ export function McpServerTab() {
   const [token, setToken] = useState('')
   const [autonomy, setAutonomy] = useState('')
   const [confirmWait, setConfirmWait] = useState<number>(50)
+  const [toolStyle, setToolStyle] = useState('leaf')
   const [saving, setSaving] = useState(false)
   const [status, setStatus] = useState<Awaited<ReturnType<typeof bridge.mcp_server_status>> | null>(null)
 
@@ -5187,6 +5193,7 @@ export function McpServerTab() {
       setToken(c.token || '')
       setAutonomy(c.default_autonomy || '')
       setConfirmWait(typeof c.confirm_wait === 'number' ? c.confirm_wait : 50)
+      setToolStyle(c.tool_style || 'leaf')
     })
     loadStatus()
     const t = setInterval(loadStatus, 4000)
@@ -5203,6 +5210,7 @@ export function McpServerTab() {
         token: token.trim() || null,
         default_autonomy: autonomy || null,
         confirm_wait: Math.max(1, Math.floor(confirmWait || 50)),
+        tool_style: toolStyle || 'leaf',
       })
       setStatus(st)
       message.success('Saved')
@@ -5238,6 +5246,15 @@ export function McpServerTab() {
         How long a parked call waits for your approval before returning a resumable “awaiting
         approval” result. Keep it under your MCP client's own tool-call timeout
         (Claude Code's <code>MCP_TOOL_TIMEOUT</code> defaults to 60s).
+      </Typography.Paragraph>
+
+      {row('Tool style', <Select style={{ width: 360 }} value={toolStyle} onChange={setToolStyle} options={OWN_MCP_TOOL_STYLE} disabled={!enabled} />)}
+      <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: -2 }}>
+        <strong>Leaf</strong> mirrors <code>runspec serve</code> — every subcommand is its own tool
+        (<code>jira_get-issue</code>, <code>jira_create-issue</code>…), so a multi-verb fleet can expose
+        hundreds. <strong>Per runnable</strong> emits one tool per runnable with a <code>command</code>
+        argument to pick the verb — far fewer tools for clients that struggle with large lists.
+        Autonomy is still resolved per chosen subcommand either way.
       </Typography.Paragraph>
 
       <Button type="primary" onClick={handleSave} loading={saving} style={{ marginTop: 4 }}>Save</Button>

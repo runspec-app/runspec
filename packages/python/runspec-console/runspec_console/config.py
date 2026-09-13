@@ -50,6 +50,11 @@ DEFAULT_TELEMETRY_SERVICE_NAME = "runspec-console"
 DEFAULT_MCP_SERVER_HOST = "127.0.0.1"
 DEFAULT_MCP_SERVER_PORT = 8765
 _MCP_SERVER_AUTONOMY_LEVELS = ("autonomous", "confirm", "supervised", "manual")
+# How the MCP server presents runnables with subcommands: "leaf" (default,
+# serve-identical — one tool per subcommand leaf) or "runnable" (one tool per
+# runnable with a `command` arg — far fewer tools for a multi-verb fleet).
+_MCP_SERVER_TOOL_STYLES = ("leaf", "runnable")
+DEFAULT_MCP_SERVER_TOOL_STYLE = "leaf"
 
 
 # An explicit config directory pinned by `runspec-console --config-dir <dir>`
@@ -677,12 +682,21 @@ def read_mcp_server() -> dict[str, Any]:
       (Claude Code's ``MCP_TOOL_TIMEOUT`` defaults to 60s), so the agent sees our
       clean message instead of the client's own timeout error; on the agent's
       retry a fresh confirm is raised. Raise it if you also raise the client's
-      timeout."""
+      timeout.
+    - ``tool_style`` (``leaf`` default / ``runnable``) — how runnables with
+      subcommands are presented. ``leaf`` is serve-identical (one MCP tool per
+      subcommand leaf, e.g. ``jira_get-issue``…). ``runnable`` emits one tool per
+      runnable with a ``command`` argument selecting the subcommand — far fewer
+      tools for a multi-verb fleet, at the cost of per-subcommand arg typing.
+      Autonomy is still resolved per chosen subcommand, so gating is unchanged."""
     raw = read_config().get("mcp_server")
     cfg = dict(raw) if isinstance(raw, dict) else {}
     autonomy = str(cfg.get("default_autonomy") or "").strip().lower()
     if autonomy not in _MCP_SERVER_AUTONOMY_LEVELS:
         autonomy = ""
+    tool_style = str(cfg.get("tool_style") or "").strip().lower()
+    if tool_style not in _MCP_SERVER_TOOL_STYLES:
+        tool_style = DEFAULT_MCP_SERVER_TOOL_STYLE
     try:
         port = int(cfg.get("port", DEFAULT_MCP_SERVER_PORT) or DEFAULT_MCP_SERVER_PORT)
     except (TypeError, ValueError):
@@ -695,6 +709,7 @@ def read_mcp_server() -> dict[str, Any]:
         "token": str(cfg.get("token") or "").strip() or None,
         "default_autonomy": autonomy or None,
         "confirm_wait": max(1.0, float(cfg.get("confirm_wait", 50) or 50)),
+        "tool_style": tool_style,
     }
 
 

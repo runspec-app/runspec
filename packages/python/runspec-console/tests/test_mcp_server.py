@@ -160,3 +160,93 @@ def test_resolve_brand_name_uses_white_label_brand():
     assert _server(brand_name=lambda: "Acme Ops")._resolve_brand_name() == "Acme Ops"
     # whitespace is trimmed
     assert _server(brand_name=lambda: " Acme ")._resolve_brand_name() == "Acme"
+
+
+# ── runnable (collapsed) tool style ──────────────────────────────────────────────
+
+
+def _greeter(require=True):
+    """A multi-verb runnable: greeter { hello (autonomous, needs name), bye (confirm) }
+    plus a top-level `verbose` flag."""
+    hello = _runnable(
+        "hello",
+        host="local",
+        autonomy="autonomous",
+        args=[{"name": "name", "type": "str", "required": True}],
+    )
+    bye = _runnable("bye", host="local", autonomy="confirm")
+    return _runnable(
+        "greeter",
+        host="local",
+        requireCommand=require,
+        args=[{"name": "verbose", "type": "flag", "required": False, "default": False}],
+        commands={"hello": hello, "bye": bye},
+    )
+
+
+def test_runnable_style_one_tool_with_command_enum():
+    tools, registry = m.build_tools([_greeter()], style="runnable")
+    # one tool for the whole runnable — not one per verb
+    assert len(tools) == 1
+    t = tools[0]
+    assert t.name == "greeter" and t.runnable == "greeter" and t.command_path == []
+    assert sorted(t.command_options) == ["bye", "hello"]
+    assert t.command_required is True
+    props = t.input_schema["properties"]
+    assert "command" in props and sorted(props["command"]["enum"]) == ["bye", "hello"]
+    assert "command" in t.input_schema["required"]
+    assert "verbose" in props  # the runnable's own top-level arg is still typed
+    # per-verb autonomy is preserved for call-time gating
+    assert t.command_autonomy["hello"] == "autonomous"
+    assert t.command_autonomy["bye"] == "confirm"
+
+
+def test_runnable_style_resolve_call_picks_command_and_autonomy():
+    t = m.build_tools([_greeter()], style="runnable")[0][0]
+    path, level, args, err = t.resolve_call({"command": "hello", "name": "x"})
+    assert err == ""
+    assert path == ["hello"] and level == "autonomous"
+    assert args == {"name": "x"}  # `command` is popped before running
+
+
+def test_runnable_style_missing_and_unknown_command_error():
+    t = m.build_tools([_greeter()], style="runnable")[0][0]
+    _, _, _, err_missing = t.resolve_call({})
+    assert "requires a command" in err_missing
+    _, _, _, err_unknown = t.resolve_call({"command": "nope"})
+    assert "unknown command" in err_unknown
+
+
+def test_runnable_style_optional_command_root_is_callable():
+    # requireCommand=False → the runnable itself is callable (empty command)
+    t = m.build_tools([_greeter(require=False)], style="runnable")[0][0]
+    assert t.command_required is False
+    assert "" in t.command_autonomy
+    path, level, args, err = t.resolve_call({})
+    assert err == "" and path == [] and "command" not in args
+
+
+def test_runnable_style_default_autonomy_floors_each_command():
+    t = m.build_tools([_greeter()], style="runnable", default_autonomy="confirm")[0][0]
+    # the floor lifts the autonomous verb to confirm too (most-restrictive wins)
+    assert t.command_autonomy["hello"] == "confirm"
+    assert t.command_autonomy["bye"] == "confirm"
+
+
+def test_leaf_style_resolve_call_is_passthrough():
+    # a plain (no-subcommand) runnable in leaf style: resolve_call returns its fixed
+    # command_path/autonomy unchanged, args untouched.
+    tool = m.build_tools([_runnable("greet", autonomy="autonomous")], style="leaf")[0][
+        0
+    ]
+    path, level, args, err = tool.resolve_call({"x": 1})
+    assert err == "" and path == [] and level == "autonomous" and args == {"x": 1}
+
+
+def test_runnable_style_collapses_count_vs_leaf():
+    # the whole point: N verbs → 1 tool in runnable style, N (+parent) in leaf style
+    leaf, _ = m.build_tools([_greeter()], style="leaf")
+    runnable, _ = m.build_tools([_greeter()], style="runnable")
+    assert (
+        len(leaf) == 2 and len(runnable) == 1
+    )  # greeter_hello + greeter_bye vs greeter

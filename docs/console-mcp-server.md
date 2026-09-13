@@ -42,6 +42,10 @@ Settings → **MCP Server**:
   level (most-restrictive wins). Unset ⇒ each runnable's own declared autonomy.
 - **Confirm wait** — how long a parked call waits for your approval before
   returning a resumable result (see [Autonomy](#autonomy-the-confirm-gate) below).
+- **Tool style** — how runnables with subcommands are presented (see
+  [Tool style](#tool-style-leaf-vs-per-runnable) below). `leaf` (default) is
+  serve-identical; `runnable` collapses each runnable to one tool with a
+  `command` argument.
 
 Or in `config.toml`:
 
@@ -53,6 +57,7 @@ port = 8765
 # token = "…"              # optional bearer token
 # default_autonomy = "confirm"
 confirm_wait = 50
+# tool_style = "leaf"      # or "runnable" — one tool per runnable + a command arg
 ```
 
 `[mcp_server]` lives in `config.toml`, so it rides Config Sync / the config seed
@@ -68,6 +73,9 @@ While the console is running it writes a discovery file at
 ```json
 { "url": "http://127.0.0.1:8765/mcp", "token": "…", "header": "Authorization: Bearer …" }
 ```
+
+When a bearer token is set it's written here in the clear, so the file is created
+**owner-only (0600)** — see [Security & the token](#security-the-token) below.
 
 Add it to Claude Code (the Settings tab shows the exact command):
 
@@ -93,6 +101,32 @@ appear in a tool schema, and each tool carries its runnable's autonomy. The same
 runnable discovered on several fleet hosts is exposed once per host (the extra
 hosts get a `<host>__` prefix). `[tool_visibility]` hides carry over (a runnable
 hidden from the agent is not published here either).
+
+---
+
+## Tool style — `leaf` vs per-runnable
+
+A fleet of multi-verb runnables can expose a **lot** of leaf tools: `jira` alone
+flattens to ~37 (`jira_get-issue`, `jira_create-issue`, …), `confluence` ~20,
+`gitlab` ~17. Serve-identical, that's how `runspec serve` presents them — but some
+MCP clients struggle with hundreds of tools in one list. `tool_style` picks the
+shape:
+
+| `tool_style` | what the client sees | when |
+|---|---|---|
+| `leaf` (default) | one tool per subcommand — `jira_get-issue`, `jira_create-issue`, … (serve-identical) | precise per-verb arg schemas; fine when the client handles many tools |
+| `runnable` | one tool per runnable — `jira` with a `command` argument (enum of the verbs) | far fewer tools; use when a client chokes on a big list |
+
+In `runnable` style the runnable's own (top-level) args are typed and a `command`
+enum lists the verbs; per-subcommand args ride through as additional properties
+(validated by the executor at run time). **Autonomy is still resolved per chosen
+subcommand** — picking `create-issue` gates exactly as the `jira_create-issue`
+leaf tool would, while `get-issue` stays autonomous — so the confirm gate behaves
+identically to `leaf`; only the tool *count* changes.
+
+Another lever for a large fleet is `[tool_visibility] hidden_from_agent` — hide
+whole packages/groups you don't need over MCP (the hides carry over to this
+server). Combine both: collapse to `runnable` style and hide what you don't use.
 
 ---
 
@@ -159,6 +193,29 @@ Two deliberate limits versus the in-console chat agent:
 - **No sole-password fallback.** Filling a lone `password` arg from a single
   matching credential *without* a `secret_arg` binding is chat-agent-only; over
   MCP, bind it explicitly with `secret_arg` (or use the env-var channel).
+
+## Security & the token
+
+The server binds to **loopback** (`127.0.0.1`), which is the primary boundary:
+loopback traffic never touches a network interface, so there's no network
+man-in-the-middle to worry about, and the optional **bearer token** guards against
+*other local processes* connecting to the port. That's why plain HTTP is fine here
+and TLS isn't needed on loopback (a client that *demands* `https://` is better
+served by a local stdio bridge than by adding a cert the client won't trust).
+
+Given that, the bearer token's real exposure is **at rest**, not on the wire — so:
+
+- The **discovery file** (`{app_dir}/runspec_mcp_server.json`) is written
+  **owner-only (0600)**: on POSIX the permissions are set before the token is
+  written (no readable window) and an older looser file is tightened; on Windows
+  the per-user app directory's ACLs govern.
+- The token is **never** written to `config.toml`'s synced copy in a way that
+  leaves Config Sync — set it per machine (`[mcp_server] token`), it stays local.
+- Runnable **secrets** (credential-supplied passwords/tokens) never travel to the
+  client and are never audited — see [Credentials](#credentials) above.
+
+If you don't run other untrusted local processes, the token is optional; set one
+when you want to be sure only your own client can reach the port.
 
 ## History & provenance
 

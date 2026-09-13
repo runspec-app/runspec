@@ -21,6 +21,7 @@ gate + executor live here (the Bridge owns ``_register_confirm`` / ``invoke_runn
 from __future__ import annotations
 
 import json
+import os
 import threading
 from typing import TYPE_CHECKING, Any
 
@@ -52,9 +53,15 @@ class McpServerMixin:
 
         Runs on a worker thread (the server marshals it off its event loop and
         heartbeats progress meanwhile)."""
-        level = (tool.autonomy or "confirm").lower()
-        display = "_".join([tool.runnable] + list(tool.command_path))
-        args = dict(arguments or {})
+        # Resolve the concrete subcommand + its autonomy from the call. In `leaf`
+        # style this is the tool's fixed command_path/autonomy; in `runnable` style
+        # the `command` argument picks the subcommand and its own autonomy (so a
+        # read verb stays autonomous while a write verb gates).
+        command_path, level, args, resolve_error = tool.resolve_call(arguments)
+        if resolve_error:
+            return (resolve_error, True)
+        level = (level or "confirm").lower()
+        display = "_".join([tool.runnable] + list(command_path))
 
         if level == "manual":
             return (
@@ -84,7 +91,7 @@ class McpServerMixin:
             if isinstance(edited, dict):
                 args = edited
 
-        return self._mcp_server_run_blocking(tool, args)
+        return self._mcp_server_run_blocking(tool, args, command_path)
 
     def _mcp_server_confirm_wait(self) -> float:
         """The bounded confirm wait: the smaller of ``[mcp_server] confirm_wait``
@@ -121,14 +128,22 @@ class McpServerMixin:
             return []
 
     def _mcp_server_run_blocking(
-        self, tool: "ExecTool", args: dict[str, Any]
+        self,
+        tool: "ExecTool",
+        args: dict[str, Any],
+        command_path: list[str] | None = None,
     ) -> tuple[str, bool]:
         """Run the runnable via :meth:`invoke_runnable` and block for its output +
         exit code (invoke_runnable is fire-and-stream; we join on run_end).
+        ``command_path`` is the resolved subcommand (defaults to the tool's own, for
+        ``leaf`` style).
 
         In-scope credentials are applied server-side (see
         :meth:`_mcp_server_scoped_credential_ids`) — the client supplies no
         secret."""
+        resolved_path = list(
+            command_path if command_path is not None else tool.command_path
+        )
         done = threading.Event()
         state: dict[str, Any] = {"lines": [], "exit": None}
 
@@ -147,7 +162,7 @@ class McpServerMixin:
                 tool.host,
                 tool.runnable,
                 args,
-                command_path=list(tool.command_path),
+                command_path=resolved_path,
                 group=tool.group or None,
                 credential_ids=credential_ids or None,
                 trigger="mcp",
@@ -220,6 +235,11 @@ class McpServerMixin:
                 section["confirm_wait"] = max(1.0, float(data["confirm_wait"]))
             except (TypeError, ValueError) as exc:
                 raise ValueError("confirm_wait must be a number") from exc
+        tool_style = str(data.get("tool_style") or "").strip().lower()
+        if tool_style:
+            if tool_style not in ("leaf", "runnable"):
+                raise ValueError(f"invalid tool_style: {tool_style}")
+            section["tool_style"] = tool_style
 
         def _mutate(cfg: dict[str, Any]) -> None:
             cfg["mcp_server"] = section
@@ -236,7 +256,14 @@ class McpServerMixin:
     def _write_mcp_server_discovery(self) -> None:
         """Write ``{app_dir}/runspec_mcp_server.json`` with the live URL (+ token,
         when set) so a client's MCP config need not hard-code the port. Removed
-        when the server isn't running."""
+        when the server isn't running.
+
+        Written **owner-only (0600)**: on a loopback server the bearer token's real
+        exposure is this file at rest (loopback traffic never touches a NIC, so
+        there's no network MITM), so it must not be group/world-readable. On POSIX
+        the perms are enforced before the secret is written (so there's no window
+        where it's readable); on Windows ``chmod`` is a best-effort no-op (ACLs on
+        the per-user app dir govern instead)."""
         path = config_mod.app_dir() / _DISCOVERY_FILE
         st = self._mcp_server.status()
         try:
@@ -248,6 +275,19 @@ class McpServerMixin:
             if token:
                 entry["token"] = token
                 entry["header"] = f"Authorization: Bearer {token}"
-            path.write_text(json.dumps(entry, indent=2), encoding="utf-8")
+            # Create/truncate with 0600 so the token is never briefly world-readable;
+            # also chmod an already-existing file down (O_CREAT won't relax perms,
+            # but it also won't tighten a pre-existing looser file).
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            try:
+                os.write(fd, json.dumps(entry, indent=2).encode("utf-8"))
+            finally:
+                os.close(fd)
+            try:
+                os.chmod(
+                    path, 0o600
+                )  # tighten a pre-existing looser file; no-op on Windows
+            except OSError:
+                pass
         except Exception:  # noqa: BLE001 — discovery file is a convenience, never fatal
             logger.debug("writing MCP server discovery file failed", exc_info=True)

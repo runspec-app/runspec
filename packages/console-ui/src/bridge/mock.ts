@@ -838,18 +838,18 @@ export const mockApi: BridgeApi = {
 
   get_mcp_server_config: async () => ({
     enabled: false, host: '127.0.0.1', port: 8765, token: null,
-    default_autonomy: null, confirm_wait: 50,
+    default_autonomy: null, confirm_wait: 50, tool_style: 'leaf',
   }),
   save_mcp_server_config: async (payload) => {
     console.log('[mock] save_mcp_server_config', payload)
     return {
       running: !!payload.enabled, error: '', host: payload.host ?? '127.0.0.1',
       port: payload.port ?? 8765, url: payload.enabled ? `http://127.0.0.1:${payload.port ?? 8765}/mcp` : '',
-      auth: !!payload.token, tools: payload.enabled ? 12 : 0,
+      auth: !!payload.token, tools: payload.enabled ? 12 : 0, tool_style: payload.tool_style ?? 'leaf',
     }
   },
   mcp_server_status: async () => ({
-    running: false, error: '', host: '127.0.0.1', port: 8765, url: '', auth: false, tools: 0,
+    running: false, error: '', host: '127.0.0.1', port: 8765, url: '', auth: false, tools: 0, tool_style: 'leaf',
   }),
   mcp_server_start: async () => ({
     running: false, error: '', host: '127.0.0.1', port: 8765, url: '', auth: false, tools: 0,

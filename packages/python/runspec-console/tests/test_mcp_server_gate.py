@@ -7,8 +7,11 @@ no socket, no real executor.
 
 from __future__ import annotations
 
+import json
+import os
 import threading
 
+from runspec_console import config as config_mod
 from runspec_console.bridge_mcp_server import McpServerMixin
 from runspec_console.mcp_server import ExecTool
 
@@ -153,6 +156,48 @@ def test_no_scoped_credentials_passes_none():
     assert b.credential_ids_seen == [None]  # empty scope → None (no creds)
 
 
+def _collapsed():
+    """A `runnable`-style tool: greeter with hello=autonomous, bye=confirm."""
+    return ExecTool(
+        name="greeter",
+        description="",
+        input_schema={"type": "object", "properties": {}},
+        host="local",
+        group="venv",
+        runnable="greeter",
+        command_path=[],
+        autonomy="confirm",
+        command_options=["hello", "bye"],
+        command_autonomy={"hello": "autonomous", "bye": "confirm"},
+        command_required=True,
+    )
+
+
+def test_collapsed_autonomous_command_runs_without_confirm():
+    b = FakeBridge()
+    text, is_error = b._mcp_server_execute(
+        _collapsed(), {"command": "hello", "name": "x"}
+    )
+    assert is_error is False
+    assert b.registered == []  # hello is autonomous → no confirm raised
+    # the resolved subcommand path is passed through, `command` popped from args
+    assert b.runs and b.runs[0][3] == ("hello",) and b.runs[0][2] == {"name": "x"}
+
+
+def test_collapsed_confirm_command_parks_and_runs_on_approval():
+    b = FakeBridge(approve=True, answer=True)
+    b._mcp_server_execute(_collapsed(), {"command": "bye"})
+    assert b.registered and b.registered[0][3] == "confirm"  # bye gates
+    assert b.runs and b.runs[0][3] == ("bye",)
+
+
+def test_collapsed_missing_command_errors_without_running():
+    b = FakeBridge()
+    text, is_error = b._mcp_server_execute(_collapsed(), {})
+    assert is_error is True and "requires a command" in text
+    assert b.registered == [] and b.runs == []
+
+
 def test_confirm_timeout_returns_resumable_and_does_not_run():
     # answer=False → the event is never set → the bounded wait elapses.
     b = FakeBridge(answer=False)
@@ -162,3 +207,57 @@ def test_confirm_timeout_returns_resumable_and_does_not_run():
     assert is_error is False  # resumable, not an error
     assert "awaiting operator approval" in text.lower()
     assert b.runs == []  # nothing ran (no orphan execution)
+
+
+# ── discovery file hardening ─────────────────────────────────────────────────────
+
+
+class _FakeServer:
+    def __init__(self, running=True, url="http://127.0.0.1:8765/mcp"):
+        self._running = running
+        self._url = url
+
+    def status(self):
+        return {"running": self._running, "url": self._url}
+
+
+class _DiscoveryBridge(McpServerMixin):
+    def __init__(self, server):
+        self._mcp_server = server
+
+
+def test_discovery_file_written_owner_only(tmp_path, monkeypatch):
+    monkeypatch.setattr(config_mod, "app_dir", lambda: tmp_path)
+    monkeypatch.setattr(config_mod, "read_mcp_server", lambda: {"token": "s3cret"})
+    b = _DiscoveryBridge(_FakeServer(running=True))
+    b._write_mcp_server_discovery()
+
+    path = tmp_path / "runspec_mcp_server.json"
+    assert path.exists()
+    data = json.loads(path.read_text())
+    assert data["token"] == "s3cret" and data["url"].endswith("/mcp")
+    assert data["header"] == "Authorization: Bearer s3cret"
+    if os.name != "nt":  # POSIX: the token file must not be group/world-readable
+        assert (path.stat().st_mode & 0o777) == 0o600
+
+
+def test_discovery_file_removed_when_not_running(tmp_path, monkeypatch):
+    monkeypatch.setattr(config_mod, "app_dir", lambda: tmp_path)
+    monkeypatch.setattr(config_mod, "read_mcp_server", lambda: {"token": None})
+    path = tmp_path / "runspec_mcp_server.json"
+    path.write_text("{}")  # stale file from a previous run
+    b = _DiscoveryBridge(_FakeServer(running=False))
+    b._write_mcp_server_discovery()
+    assert not path.exists()
+
+
+def test_discovery_file_tightens_preexisting_loose_perms(tmp_path, monkeypatch):
+    if os.name == "nt":
+        return  # POSIX perms only
+    monkeypatch.setattr(config_mod, "app_dir", lambda: tmp_path)
+    monkeypatch.setattr(config_mod, "read_mcp_server", lambda: {"token": "t"})
+    path = tmp_path / "runspec_mcp_server.json"
+    path.write_text("{}")
+    os.chmod(path, 0o644)  # world-readable leftover
+    _DiscoveryBridge(_FakeServer(running=True))._write_mcp_server_discovery()
+    assert (path.stat().st_mode & 0o777) == 0o600

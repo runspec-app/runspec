@@ -257,6 +257,7 @@ export interface OwnMcpServerConfig {
   token: string | null
   default_autonomy: string | null
   confirm_wait: number
+  tool_style: string        // 'leaf' (serve-identical) | 'runnable' (one tool per runnable + command arg)
 }
 export interface OwnMcpServerStatus {
   running: boolean
@@ -266,6 +267,7 @@ export interface OwnMcpServerStatus {
   url: string
   auth: boolean
   tools: number
+  tool_style?: string
 }
 
 // Settings → Config Sync. Where to pull the console's config files from (a git

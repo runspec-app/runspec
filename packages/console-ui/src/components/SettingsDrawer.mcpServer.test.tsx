@@ -36,7 +36,7 @@ describe('McpServerTab', () => {
   beforeEach(() => {
     getCfg.mockReset().mockResolvedValue({
       enabled: false, host: '127.0.0.1', port: 8765, token: null,
-      default_autonomy: null, confirm_wait: 50,
+      default_autonomy: null, confirm_wait: 50, tool_style: 'leaf',
     })
     saveCfg.mockReset().mockResolvedValue({ ...OFF, running: true, url: 'http://127.0.0.1:8765/mcp', tools: 12 })
     statusFn.mockReset().mockResolvedValue(OFF)
@@ -67,6 +67,7 @@ describe('McpServerTab', () => {
       token: null,
       default_autonomy: null,
       confirm_wait: 50,
+      tool_style: 'leaf',
     })
   })
 
