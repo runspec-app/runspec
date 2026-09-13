@@ -65,10 +65,20 @@ export function sanitizeToolName(raw: string): string {
   return raw.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64)
 }
 
-// The search-mode `run_runnable` `id` (and the dedup-mode tool name): a sanitised
-// `group__name`, or the bare sanitised name when the runnable has no group.
-// Mirrors bridge_agent_tools._dedup_tool_name. Exported for tests.
+// The search-mode `run_runnable` `id` (and the dedup-mode tool name): the
+// sanitised runnable **name**. Mirrors bridge_agent_tools._dedup_tool_name, which
+// stopped group-qualifying in 0.254.0 — a runnable's group is the venv/package it
+// was discovered in, so qualifying split one cross-platform runnable into a tool
+// per venv, each pinned to one host. Exported for tests.
 export function dedupToolName(r: { group?: string; name: string }): string {
+  return sanitizeToolName(r.name)
+}
+
+// The legacy group-qualified spelling of that id. No longer emitted, but it is
+// still written down in a saved runbook step / trigger allowlist / eval fixture,
+// and the backend still routes it (bridge_agent_tools._dedup_tool_aliases), so
+// edit-and-rerun must still resolve it. Exported for tests.
+export function legacyDedupToolName(r: { group?: string; name: string }): string {
   const g = r.group || ''
   return sanitizeToolName(g ? `${g}__${r.name}` : r.name)
 }
@@ -87,9 +97,12 @@ export function matchRunnableForEdit(
   // 1. Exact host + name — the human run / History path (a real name + host).
   const exact = runnables.find(r => r.host === host && r.name === idOrName)
   if (exact) return exact
-  // 2. A dedup tool id (search mode): match the reconstructed group__name, then
-  //    pin the host — concrete host wins, else a group match, else a unique host.
-  const dedup = runnables.filter(r => dedupToolName(r) === idOrName)
+  // 2. A dedup tool id (search mode): match the reconstructed name — or its
+  //    legacy group__name spelling — then pin the host: concrete host wins, else
+  //    a group match, else a unique host.
+  const dedup = runnables.filter(
+    r => dedupToolName(r) === idOrName || legacyDedupToolName(r) === idOrName,
+  )
   if (dedup.length) {
     return dedup.find(r => r.host === host) ?? dedup.find(r => r.group === host) ?? uniqueHost(dedup)
   }

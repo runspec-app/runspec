@@ -335,11 +335,13 @@ class SearchMixin:
 
     def _runnables_for_id(self, rid: str) -> list[dict[str, Any]]:
         """Every cached runnable whose dedup id is ``rid`` (one per host that has
-        it). Falls back to an explicit ``host__name`` so a caller can address one
-        host directly. Empty when nothing matches. Hidden-from-agent runnables are
-        excluded here too, so a hidden tool can't be run/described by id."""
+        it, across every venv it ships in). A legacy group-qualified ``group__name``
+        id still resolves — scoped to that venv — and an explicit ``host__name``
+        addresses one host directly. Empty when nothing matches. Hidden-from-agent
+        runnables are excluded here too, so a hidden tool can't be run/described by
+        id."""
         runnables = self._visible_runnables("agent")
-        matches = [r for r in runnables if self._dedup_tool_name(r) == rid]
+        matches = [r for r in runnables if rid in self._dedup_tool_aliases(r)]
         if matches:
             return matches
         if "__" in rid:
@@ -601,7 +603,8 @@ class SearchMixin:
     ) -> dict[str, Any]:
         """Rank cached runnables for a search query and build compact, typed rows.
 
-        Collapses per-host copies by ``(group, name)`` like the dedup layout: one
+        Collapses copies by runnable *name* like the dedup layout — across hosts
+        and across venvs/packages, so a cross-platform runnable is one row: one
         row per runnable, ``hosts`` is the union, ``id`` is the dedup tool name.
         ``password`` args are omitted (they flow via credentials/env, never inline).
         Ranking is deterministic lexical token overlap over name/description/group;
@@ -609,15 +612,18 @@ class SearchMixin:
         from .catalog import arg_to_property
 
         runnables = self._visible_runnables("agent")
-        groups: dict[tuple[str, str], dict[str, Any]] = {}
+        groups: dict[str, dict[str, Any]] = {}
         order: list[tuple[str, str]] = []
         for r in runnables:
-            key = (str(r.get("group") or ""), str(r.get("name") or ""))
+            key = str(r.get("name") or "")
             g = groups.get(key)
             if g is None:
-                g = {"rep": r, "hosts": []}
+                g = {"rep": r, "hosts": [], "groups": []}
                 groups[key] = g
                 order.append(key)
+            grp = str(r.get("group") or "")
+            if grp and grp not in g["groups"]:
+                g["groups"].append(grp)
             h = r.get("host", "local")
             if h not in g["hosts"]:
                 g["hosts"].append(h)
@@ -634,11 +640,10 @@ class SearchMixin:
 
         docs = [
             {
-                "name": groups[key][  # key == (group, name)
-                    "rep"
-                ].get("name")
-                or key[1],
-                "group": key[0],
+                "name": groups[key]["rep"].get("name") or key,  # key == the name
+                # Every venv/package this runnable ships in, so a query naming one
+                # still matches a runnable collapsed across several.
+                "group": " ".join(groups[key]["groups"]),
                 "description": groups[key]["rep"].get("description") or "",
                 "args": [
                     str(a.get("name") or "")
@@ -652,12 +657,16 @@ class SearchMixin:
 
         scored: list[tuple[float, str, dict[str, Any]]] = []
         for idx, key in enumerate(order):
-            grp, name = key
+            name = key
+            grps = groups[key]["groups"]
+            grp = grps[0] if grps else ""
             rep = groups[key]["rep"]
             hosts = groups[key]["hosts"]
             if host and host not in hosts:
                 continue
-            if group and group != grp:
+            # Membership, not equality: a collapsed row spans every venv the
+            # runnable ships in, so filtering by any one of them must find it.
+            if group and group not in grps:
                 continue
             if tokens:
                 sc = bm25[idx]
@@ -906,7 +915,7 @@ class SearchMixin:
 
     def _build_catalog_index(self) -> str:
         """Compact, always-on menu of runnables for search mode: ``id — sentence``,
-        one per ``(group, name)``, sorted, bounded by ``[llm] tool_index_limit``
+        one per runnable name, sorted, bounded by ``[llm] tool_index_limit``
         (default 300) with an overflow note. Empty when disabled or nothing's
         discovered."""
         if not self._catalog_index_enabled():
@@ -919,10 +928,10 @@ class SearchMixin:
         with self._lock:
             ready = self._discovery_ready
             done, total = self._discovery_progress
-        seen: dict[tuple[str, str], dict[str, Any]] = {}
-        order: list[tuple[str, str]] = []
+        seen: dict[str, dict[str, Any]] = {}
+        order: list[str] = []
         for r in runnables:
-            key = (str(r.get("group") or ""), str(r.get("name") or ""))
+            key = str(r.get("name") or "")
             if key not in seen:
                 seen[key] = r
                 order.append(key)

@@ -164,17 +164,21 @@ of an otherwise-safe runnable stays gated — e.g. `cron list` is autonomous but
 `expect_tool` is always the **runnable name**, regardless of how the console lays
 out tools for the agent ([`[llm] tool_mode`](console-reference.md)):
 
-- **dedup** (default) — the agent calls a `group__name` tool with an injected
-  host-selector arg; the eval resolves that back to the runnable name, and reads
-  the selector (see [host & group targeting](#host-and-group-targeting)) for
-  `expect_host`.
-- **per_host** — the agent calls `host__name`; same resolution.
+- **dedup** (default) — the agent calls a tool named for the runnable itself,
+  with an injected host-selector arg; the eval reads the selector (see
+  [host & group targeting](#host-and-group-targeting)) for `expect_host`.
+- **per_host** — the agent calls `host__name`; the eval strips the host
+  qualifier back to the bare name.
 - **search** — the agent calls `run_runnable` (or `use_tool`); the runnable is
   the `id` inside the call (`use_tool` carries the inner tool in `name`), the
   args are nested under `args`, and the subcommand rides a top-level `command`.
-  That `id` comes from a `search_runnables` row, which is group-qualified
-  (`group__name`) — the eval strips the qualifier back to the bare name, so
-  `expect_tool` stays the bare runnable name here too.
+  That `id` comes from a `search_runnables` row, which is the dedup tool name —
+  so it is the bare runnable name too.
+
+A fixture written before 0.254.0 may spell a dedup/search id the old
+group-qualified way (`console__which`). Those still resolve — the eval strips the
+qualifier, and the console still routes it — but the qualifier now narrows the
+match to that one venv, so prefer the bare name.
 
 ### Host and group targeting
 

@@ -212,10 +212,11 @@ class AgentToolsMixin:
     def _tool_mode(self) -> str:
         """Agent tool-list layout, from ``[llm] tool_mode``.
 
-        ``"dedup"`` (default) emits one tool per folder/runnable (named
-        ``group__name``) with a required ``host`` enum listing every host that has
-        it — collapsing the N identical per-host copies a uniform fleet produces
-        into a single definition, which is the bulk of the agent's context budget.
+        ``"dedup"`` (default) emits one tool per distinct runnable (named for the
+        runnable itself) with a required ``host`` enum listing every host that has
+        it — collapsing the N identical copies a uniform fleet produces, across
+        hosts *and* venvs, into a single definition, which is the bulk of the
+        agent's context budget.
         ``"per_host"`` restores the original one-tool-per-(host, runnable) layout
         (``host__name``) as a zero-code escape hatch. ``"search"`` replaces the
         per-runnable tools entirely with discovery meta-tools (search_runnables /
@@ -348,11 +349,34 @@ class AgentToolsMixin:
         return re.sub(r"[^a-zA-Z0-9_-]", "_", raw)[:64]
 
     def _dedup_tool_name(self, r: dict[str, Any]) -> str:
-        """Folder-qualified tool name for dedup mode: sanitised ``group__name``
-        (the bare name when the runnable has no group)."""
-        group = str(r.get("group") or "")
+        """Tool name for dedup mode: the sanitised runnable **name**.
+
+        Deliberately *not* group-qualified. A runnable's ``group`` is the venv /
+        package it was discovered in, so keying on ``(group, name)`` split one
+        cross-platform runnable into several tools — ``console__which`` pinned to
+        ``local`` beside ``runspec_linux__which`` pinned to ``web-01`` — each
+        offering only the hosts of its own venv, which is exactly the host
+        targeting the agent needs. One name is one tool spanning every host that
+        has it; the venv is resolved per chosen host at run time from that host's
+        discovery record (see ``_resolve_tool_target``), so execution still lands
+        in the right venv. Mirrors the MCP server's ``tool_style="runnable"``
+        dedup (``mcp_server.build_tools``)."""
+        return self._sanitize_tool_name(str(r.get("name") or ""))
+
+    def _dedup_tool_aliases(self, r: dict[str, Any]) -> set[str]:
+        """Every dedup id that should resolve to ``r`` — the advertised bare name
+        plus the legacy sanitised ``group__name``.
+
+        The qualified form is no longer *offered*, but it is written down in
+        places the console does not own: a trigger's ``runnables`` / ``action_allow``
+        allowlist, a saved runbook step, an eval fixture's ``expect_tool``. Those
+        keep resolving instead of dead-ending on "unknown tool"."""
         name = str(r.get("name") or "")
-        return self._sanitize_tool_name(f"{group}__{name}" if group else name)
+        group = str(r.get("group") or "")
+        aliases = {self._sanitize_tool_name(name)}
+        if group:
+            aliases.add(self._sanitize_tool_name(f"{group}__{name}"))
+        return aliases
 
     @staticmethod
     def _declared_arg_name_set(r: dict[str, Any] | None) -> set[str]:
@@ -400,15 +424,24 @@ class AgentToolsMixin:
         return out
 
     def _allowed_hosts(
-        self, allowset: set[str], name: str, tool_name: str, hosts: list[str]
+        self,
+        allowset: set[str],
+        name: str,
+        tool_name: str,
+        hosts: list[str],
+        aliases: set[str] | None = None,
     ) -> list[str]:
         """Subset of ``hosts`` a dedup tool may target under a trigger allowlist.
 
-        A bare runnable ``name`` or the dedup ``tool_name`` admits every host; a
-        host-qualified entry (``host__name``, raw or sanitised) admits only that
-        host — so a trigger scoped to one host's runnable stays scoped even though
-        the deduped tool is shared across hosts."""
+        A bare runnable ``name``, the dedup ``tool_name``, or any of ``aliases``
+        (the legacy ``group__name`` spellings an existing allowlist may still use)
+        admits every host; a host-qualified entry (``host__name``, raw or
+        sanitised) admits only that host — so a trigger scoped to one host's
+        runnable stays scoped even though the deduped tool is shared across
+        hosts."""
         if name in allowset or tool_name in allowset:
+            return list(hosts)
+        if aliases and (aliases & allowset):
             return list(hosts)
         out: list[str] = []
         for h in hosts:
@@ -646,7 +679,7 @@ class AgentToolsMixin:
         """Convert cached runnables to Anthropic-format tool schemas.
 
         Layout follows ``_tool_mode()``: ``"dedup"`` (default) emits one tool per
-        ``(group, name)`` with a host enum; ``"per_host"`` emits one per
+        runnable ``name`` with a host enum; ``"per_host"`` emits one per
         ``(host, name)``; ``"search"`` emits only the discovery meta-tools. ``allow``
         (when non-empty) scopes the result to an allowlist — each entry matches a
         runnable's bare ``name`` or its qualified ``host__name`` (raw or sanitised) —
@@ -719,18 +752,22 @@ class AgentToolsMixin:
                     }
                 )
         else:
-            # dedup: collapse the per-host copies of each (group, name). The first
-            # runnable seen for a key drives the schema (a uniform fleet runs an
-            # identical spec on every host); the host enum lists every host with it.
-            groups: dict[tuple[str, str], dict[str, Any]] = {}
-            order: list[tuple[str, str]] = []
+            # dedup: collapse every copy of each runnable NAME — across hosts *and*
+            # across venvs/groups. The first runnable seen for a name drives the
+            # schema (a uniform fleet runs an identical spec everywhere); the host
+            # enum lists every host with it. Keying on (group, name) instead split a
+            # cross-platform runnable into one tool per venv, each offering only
+            # that venv's hosts — see _dedup_tool_name.
+            groups: dict[str, dict[str, Any]] = {}
+            order: list[str] = []
             for r in runnables:
-                key = (str(r.get("group") or ""), str(r.get("name") or ""))
+                key = str(r.get("name") or "")
                 g = groups.get(key)
                 if g is None:
-                    g = {"rep": r, "hosts": []}
+                    g = {"rep": r, "hosts": [], "aliases": set()}
                     groups[key] = g
                     order.append(key)
+                g["aliases"] |= self._dedup_tool_aliases(r)
                 h = r.get("host", "local")
                 if h not in g["hosts"]:
                     g["hosts"].append(h)
@@ -740,7 +777,9 @@ class AgentToolsMixin:
                 name = rep.get("name", "")
                 tool_name = self._dedup_tool_name(rep)
                 if allowset is not None:
-                    hosts = self._allowed_hosts(allowset, name, tool_name, hosts)
+                    hosts = self._allowed_hosts(
+                        allowset, name, tool_name, hosts, groups[key]["aliases"]
+                    )
                     if not hosts:
                         continue  # no allowed host for this runnable
                 if tool_name in seen_tool_names:
@@ -4693,7 +4732,10 @@ class AgentToolsMixin:
         ``per_host``: parse ``host__name`` from the tool name.
         ``dedup``: recover the runnable by re-deriving each cached runnable's dedup
         tool name (robust against the lossy name sanitiser, and guaranteed to agree
-        with the builder), then pick the host from the call's host argument."""
+        with the builder), then pick the host from the call's host argument. The
+        cached record picked is the one discovered *on the chosen host*, so its
+        ``group`` names that host's venv — which is how a name-deduped tool spanning
+        several venvs still executes in the right one."""
         with self._lock:
             runnables = list(self._runnables_cache)
         if self._tool_mode() == "per_host":
@@ -4709,8 +4751,9 @@ class AgentToolsMixin:
                 None,
             )
             return host, name, cached_r, None
-        # dedup: all runnables sharing this folder-qualified tool name
-        matches = [r for r in runnables if self._dedup_tool_name(r) == tool_name]
+        # dedup: all runnables sharing this tool name (or a legacy group-qualified
+        # spelling of it, still written down in triggers/runbooks/eval fixtures).
+        matches = [r for r in runnables if tool_name in self._dedup_tool_aliases(r)]
         if not matches:
             # Fall back to the explicit host__name form so internal callers that
             # build a per-host tool name directly (e.g. the helpdesk portal enact

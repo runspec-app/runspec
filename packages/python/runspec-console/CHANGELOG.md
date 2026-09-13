@@ -8,6 +8,37 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.254.0] — 2026-09-13
+
+### Fixed
+- **The agent's deduped tool list no longer splits one runnable per venv.** The
+  dedup toolset keyed on `(group, name)`, and a runnable's `group` is the venv /
+  package it was discovered in — so a cross-platform runnable that ships in more
+  than one package surfaced as **several tools, each pinned to one host**:
+
+  ```
+  console__which                 host enum=['local']
+  runspec_linux__which           host enum=['web-01']
+  ```
+
+  The agent saw two capabilities where there is one, and neither tool could reach
+  the other's host — an accident of packaging silently breaking the host targeting
+  0.253.0 just made gradeable. Dedup is now keyed and named by the runnable
+  **name** across hosts *and* venvs: one tool, `which`, whose host enum spans
+  `['local', 'web-01']`, matching the sidebar's distinct-runnable count. The venv
+  is resolved per chosen host at run time (the cached record picked by
+  `_resolve_tool_target` is the one discovered on that host, and its `group` names
+  that host's venv), so execution still lands in the right venv. Same change for
+  the search-mode surfaces that share the id: `search_runnables` rows collapse
+  across venvs (and its `group` filter now matches *any* venv a collapsed row
+  spans), and the catalogue index emits one line per runnable. Mirrors the fix
+  already made for the MCP server in 0.252.1.
+
+  **Back-compat:** the group-qualified spelling is no longer advertised but still
+  resolves — a trigger's `runnables`/`action_allow` allowlist, a saved runbook
+  step or an eval fixture naming `console__which` keeps working, scoped to that
+  venv (`_dedup_tool_aliases`).
+
 ## [0.253.0] — 2026-09-13
 
 ### Added

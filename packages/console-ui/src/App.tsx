@@ -518,8 +518,9 @@ export default function App() {
       const { host, runnable, args, commandPath = [] } =
         (e as CustomEvent).detail as { host: string; runnable: string; args: Record<string, unknown>; commandPath?: string[] }
       // `runnable` may be a plain name (human run / History) or an agent tool id —
-      // a search-mode run_runnable dedup id (sanitize(group__name)) or a
-      // host__name id; `host` may be a concrete host, a venv/group, or empty.
+      // a search-mode run_runnable dedup id (the sanitised runnable name, or its
+      // legacy group__name spelling) or a host__name id; `host` may be a concrete
+      // host, a venv/group, or empty.
       // matchRunnableForEdit mirrors the backend resolver so all three resolve
       // (name-only matching used to silently fail on a dedup id — the pencil did
       // nothing).

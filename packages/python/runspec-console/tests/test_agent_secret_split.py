@@ -24,6 +24,7 @@ class _AgentBridge:
     _resolve_tool_target = Bridge._resolve_tool_target
     _tool_mode = Bridge._tool_mode
     _dedup_tool_name = Bridge._dedup_tool_name
+    _dedup_tool_aliases = Bridge._dedup_tool_aliases
     _host_selector_key = Bridge._host_selector_key
     # These are @staticmethod on Bridge; re-wrap so binding onto the harness
     # doesn't turn them into instance methods (which would inject ``self``).

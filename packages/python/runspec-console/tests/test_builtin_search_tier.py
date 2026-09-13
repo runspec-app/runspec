@@ -66,6 +66,7 @@ class _Stub:
     _first_sentence = staticmethod(Bridge._first_sentence)
     _fold_catalog_index = Bridge._fold_catalog_index
     _dedup_tool_name = Bridge._dedup_tool_name
+    _dedup_tool_aliases = Bridge._dedup_tool_aliases
     _sanitize_tool_name = staticmethod(Bridge._sanitize_tool_name)
     _effective_tool_autonomy = Bridge._effective_tool_autonomy
 

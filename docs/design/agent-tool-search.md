@@ -26,8 +26,11 @@ list is re-sent to the model **on every turn**, so its size is a standing contex
 cost.
 
 **0.85.0 (dedup)** collapsed the *host axis*: a uniform fleet of N hosts running
-the same M runnables went from N×M tools (`host__runnable`) to M tools
-(`group__runnable`) with a required `host` enum. An 18×20 fleet: 360 → 20 tools.
+the same M runnables went from N×M tools (`host__runnable`) to M tools with a
+required `host` enum. An 18×20 fleet: 360 → 20 tools. (Until 0.254.0 the deduped
+tool was named `group__runnable` and keyed on `(group, name)`, which re-split a
+runnable that ships in more than one venv/package; it is now keyed and named by
+the runnable name alone — see [Multiple local venvs](../console-hosts.md).)
 
 What dedup does **not** address is the *breadth axis* — the number of **distinct**
 runnables. A realistic fleet installs several packages: `runspec-linux` (21) +

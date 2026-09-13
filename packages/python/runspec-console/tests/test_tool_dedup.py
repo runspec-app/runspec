@@ -59,6 +59,7 @@ class _Bridge:
     _tool_mode = Bridge._tool_mode
     _sanitize_tool_name = staticmethod(Bridge._sanitize_tool_name)
     _dedup_tool_name = Bridge._dedup_tool_name
+    _dedup_tool_aliases = Bridge._dedup_tool_aliases
     _declared_arg_name_set = staticmethod(Bridge._declared_arg_name_set)
     _host_selector_key = Bridge._host_selector_key
     _union_scoped_credentials = Bridge._union_scoped_credentials
@@ -94,12 +95,13 @@ def _names(tools):
 # ── layout: counts ────────────────────────────────────────────────────────────
 
 
-def test_dedup_collapses_identical_runnables_to_one_tool_per_group_name():
+def test_dedup_collapses_identical_runnables_to_one_tool_per_name():
     hosts = ["a", "b", "c"]
     runnables = [_rn(h, n) for h in hosts for n in ("ping", "restart")]
     tools = _Bridge(runnables, mode="dedup")._runnables_to_tools()
-    # 3 hosts × 2 runnables → 2 deduped tools, named group__name.
-    assert _names(tools) == {"fleet__ping", "fleet__restart"}
+    # 3 hosts × 2 runnables → 2 deduped tools, named for the runnable itself
+    # (no venv/package prefix — see test_same_name_across_venvs_collapses).
+    assert _names(tools) == {"ping", "restart"}
 
 
 def test_per_host_mode_keeps_one_tool_per_host_runnable():
@@ -119,7 +121,7 @@ def test_per_host_mode_keeps_one_tool_per_host_runnable():
 def test_invalid_mode_falls_back_to_dedup():
     runnables = [_rn("a", "ping"), _rn("b", "ping")]
     tools = _Bridge(runnables, mode="bogus")._runnables_to_tools()
-    assert _names(tools) == {"fleet__ping"}
+    assert _names(tools) == {"ping"}
 
 
 # ── layout: the host enum ─────────────────────────────────────────────────────
@@ -140,12 +142,49 @@ def test_single_host_runnable_still_carries_required_host_enum():
     assert "host" in tool["input_schema"]["required"]
 
 
-def test_distinct_groups_with_same_name_stay_separate_tools():
-    runnables = [_rn("a", "ping", group="net"), _rn("a", "ping", group="sys")]
-    assert _names(_Bridge(runnables)._runnables_to_tools()) == {
-        "net__ping",
-        "sys__ping",
-    }
+def test_same_name_across_venvs_collapses_to_one_tool_spanning_hosts():
+    # The regression this dedup key fixes. A cross-platform runnable ships in more
+    # than one package, and a locally-discovered runnable's "group" is the venv
+    # folder — so keying on (group, name) split `which` into console__which (local
+    # only) and runspec_linux__which (web-01 only). Two single-host tools, neither
+    # able to reach the other's host: host targeting broken by an accident of
+    # packaging. One name is now one tool whose host enum spans every host.
+    runnables = [
+        _rn("local", "which", group="console"),
+        _rn("web-01", "which", group="runspec_linux"),
+    ]
+    tools = _Bridge(runnables)._runnables_to_tools()
+    assert _names(tools) == {"which"}
+    assert tools[0]["input_schema"]["properties"]["host"]["enum"] == ["local", "web-01"]
+
+
+def test_legacy_group_qualified_name_still_routes():
+    # The qualified form is no longer advertised, but it is written down in places
+    # the console does not own (a trigger allowlist, a saved runbook step, an eval
+    # fixture), so it must keep resolving — scoped to that venv.
+    runnables = [
+        _rn("local", "which", group="console"),
+        _rn("web-01", "which", group="runspec_linux"),
+    ]
+    b = _Bridge(runnables)
+    host, name, cached, _key = b._resolve_tool_target(
+        "console__which", {"host": "local"}
+    )
+    assert (host, name) == ("local", "which")
+    assert cached["group"] == "console"
+
+
+def test_dispatch_picks_the_venv_of_the_chosen_host():
+    # A name-deduped tool spans venvs, so the cached record handed to the executor
+    # must be the one discovered on the chosen host — that record's `group` is the
+    # venv the run executes in.
+    runnables = [
+        _rn("local", "which", group="console"),
+        _rn("web-01", "which", group="runspec_linux"),
+    ]
+    b = _Bridge(runnables)
+    _h, _n, cached, _k = b._resolve_tool_target("which", {"host": "web-01"})
+    assert cached["group"] == "runspec_linux"
 
 
 def test_host_arg_collision_renames_selector_key():
@@ -303,8 +342,18 @@ def _allow_tool(allow):
 
 def test_allow_bare_name_admits_every_host():
     tools = {t["name"]: t for t in _allow_tool(["deploy"])}
-    assert set(tools) == {"fleet__deploy"}
-    assert tools["fleet__deploy"]["input_schema"]["properties"]["host"]["enum"] == [
+    assert set(tools) == {"deploy"}
+    assert tools["deploy"]["input_schema"]["properties"]["host"]["enum"] == [
+        "web",
+        "db",
+    ]
+
+
+def test_allow_legacy_group_qualified_name_admits_every_host():
+    # An existing trigger allowlist spelling the old group__name form keeps working.
+    tools = {t["name"]: t for t in _allow_tool(["fleet__deploy"])}
+    assert set(tools) == {"deploy"}
+    assert tools["deploy"]["input_schema"]["properties"]["host"]["enum"] == [
         "web",
         "db",
     ]
@@ -312,11 +361,9 @@ def test_allow_bare_name_admits_every_host():
 
 def test_allow_host_qualified_narrows_the_host_enum():
     tools = {t["name"]: t for t in _allow_tool(["web__deploy"])}
-    assert set(tools) == {"fleet__deploy"}
+    assert set(tools) == {"deploy"}
     # scoped to the one allowed host even though the tool is shared
-    assert tools["fleet__deploy"]["input_schema"]["properties"]["host"]["enum"] == [
-        "web"
-    ]
+    assert tools["deploy"]["input_schema"]["properties"]["host"]["enum"] == ["web"]
 
 
 def test_allow_unknown_yields_no_tools():

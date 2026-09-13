@@ -77,6 +77,7 @@ class _Bridge:
     _tool_mode = Bridge._tool_mode
     _sanitize_tool_name = staticmethod(Bridge._sanitize_tool_name)
     _dedup_tool_name = Bridge._dedup_tool_name
+    _dedup_tool_aliases = Bridge._dedup_tool_aliases
     _declared_arg_name_set = staticmethod(Bridge._declared_arg_name_set)
     _host_selector_key = Bridge._host_selector_key
     _union_scoped_credentials = Bridge._union_scoped_credentials
@@ -151,7 +152,7 @@ def test_trigger_allowlist_falls_back_to_dedup_layout():
     # An allow-scoped (trigger) turn keeps the curated dedup tools, not search.
     runnables = [_rn("a", "ping"), _rn("b", "ping"), _rn("a", "restart")]
     tools = _Bridge(runnables)._runnables_to_tools(allow=["ping"])
-    assert _names(tools) == {"fleet__ping"}
+    assert _names(tools) == {"ping"}
 
 
 def test_run_runnable_schema_shape():
@@ -172,7 +173,7 @@ def _search(runnables, query, **kw):
     return _Bridge(runnables)._search_runnables(query, **kw)
 
 
-def test_search_returns_typed_rows_collapsed_by_group_name():
+def test_search_returns_typed_rows_collapsed_by_name():
     runnables = [
         _rn(
             "a",
@@ -206,12 +207,66 @@ def test_search_returns_typed_rows_collapsed_by_group_name():
     out = _search(runnables, "drain")
     assert out["count"] == 1
     row = out["results"][0]
-    assert row["id"] == "fleet__drain-node"
+    assert row["id"] == "drain-node"
     assert row["hosts"] == ["a", "b"]
     node = next(a for a in row["args"] if a["name"] == "node")
     region = next(a for a in row["args"] if a["name"] == "region")
     assert node["required"] is True
     assert region["enum"] == ["us", "eu"] and region["default"] == "us"
+
+
+def test_search_collapses_the_same_name_across_venvs():
+    # Search mode's row id is the dedup tool name, so it inherited the same split:
+    # `which` from the console's own venv and from runspec_linux on a fleet host
+    # came back as two rows, each offering only its own host. One runnable is one
+    # row whose hosts span every host that has it.
+    runnables = [
+        _rn("local", "which", group="console", description="Find a command."),
+        _rn("web-01", "which", group="runspec_linux", description="Find a command."),
+    ]
+    out = _search(runnables, "which")
+    assert out["count"] == 1
+    assert out["results"][0]["id"] == "which"
+    assert out["results"][0]["hosts"] == ["local", "web-01"]
+
+
+def test_search_group_filter_matches_any_venv_of_a_collapsed_row():
+    # The row spans venvs, so filtering by either one must still find it —
+    # equality against a single "group" would hide it from one of them.
+    runnables = [
+        _rn("local", "which", group="console", description="Find a command."),
+        _rn("web-01", "which", group="runspec_linux", description="Find a command."),
+    ]
+    for grp in ("console", "runspec_linux"):
+        out = _search(runnables, "which", group=grp)
+        assert out["count"] == 1, grp
+        assert out["results"][0]["hosts"] == ["local", "web-01"]
+    assert _search(runnables, "which", group="nope")["count"] == 0
+
+
+def test_run_runnable_id_resolves_across_venvs():
+    # The collapsed id must reach the host the agent picked, whichever venv that
+    # host's copy lives in — and the cached record handed on carries that venv.
+    runnables = [
+        _rn("local", "which", group="console"),
+        _rn("web-01", "which", group="runspec_linux"),
+    ]
+    b = _Bridge(runnables)
+    host, name, cached = b._resolve_id_host("which", "web-01")
+    assert (host, name) == ("web-01", "which")
+    assert cached["group"] == "runspec_linux"
+
+
+def test_run_runnable_legacy_group_qualified_id_still_resolves():
+    # A saved eval fixture / runbook step still spelling the old group__name id
+    # keeps working, scoped to that venv.
+    runnables = [
+        _rn("local", "which", group="console"),
+        _rn("web-01", "which", group="runspec_linux"),
+    ]
+    host, name, cached = _Bridge(runnables)._resolve_id_host("console__which", "local")
+    assert (host, name) == ("local", "which")
+    assert cached["group"] == "console"
 
 
 def test_search_row_lists_nested_command_paths():

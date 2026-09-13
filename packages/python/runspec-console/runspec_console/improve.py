@@ -201,8 +201,8 @@ def _is_run_attempt(name: str) -> bool:
 
 def _runnable_of(name: str, tool_input: Any) -> str:
     """Best-effort runnable identity for grouping. ``run_runnable`` carries the id
-    in its input; a dedup/per_host tool name is ``group__runnable`` (or
-    ``host__runnable``)."""
+    in its input; a ``per_host`` tool name is ``host__runnable`` (as is a legacy
+    group-qualified dedup name), and a dedup tool name is the runnable itself."""
     if name == _META_RUN and isinstance(tool_input, dict):
         return str(tool_input.get("id") or "run_runnable")
     if "__" in name:

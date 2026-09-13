@@ -18,8 +18,9 @@ injected callables, run the suite (via ``asyncio.run``, the same pattern
 dated machine-local report, and expose fixture CRUD for the tab.
 
 Tool identity across ``tool_mode`` (why the injected callables exist):
-  * ``dedup``    tool = ``group__name`` (+ a ``host`` enum arg)  → target = last
-                 ``__`` segment; args = tool input minus ``host``.
+  * ``dedup``    tool = the runnable ``name`` (+ a ``host`` enum arg) → target =
+                 last ``__`` segment (a no-op, but it also normalises a legacy
+                 group-qualified id); args = tool input minus ``host``.
   * ``per_host`` tool = ``host__name``                          → same.
   * ``search``   the model calls ``run_runnable`` / ``use_tool`` → target/args
                  live in the tool input (``name`` / ``args``); the read-only
@@ -76,11 +77,12 @@ class EvalsMixin:
             # tool in `name`. Reading the wrong key made every search-mode case
             # resolve to the wrapper name "run_runnable".
             if inv.name == "run_runnable":
-                # The `id` is a search_runnables row id, which is the *dedup tool
-                # name* (`group__name` via _dedup_tool_name) — so it can carry a
-                # `group__`/`host__` qualifier (e.g. `local__filesystem`). Strip it
-                # to the bare runnable name, exactly as the direct-tool branch below
-                # does, so `expect_tool` (always the bare name) matches.
+                # The `id` is a search_runnables row id — the dedup tool name,
+                # which is now the bare runnable name. A legacy `group__`/`host__`
+                # qualifier (e.g. `local__filesystem`) still resolves and can still
+                # be spelled in a saved fixture, so keep stripping it, exactly as
+                # the direct-tool branch below does (per_host ids stay qualified),
+                # so `expect_tool` (always the bare name) matches.
                 raw = str(
                     inv.input.get("id")
                     or inv.input.get("runnable")

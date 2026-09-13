@@ -179,6 +179,7 @@ class _ToolsBridge:
     _visible_runnables = Bridge._visible_runnables
     _sanitize_tool_name = staticmethod(Bridge._sanitize_tool_name)
     _dedup_tool_name = Bridge._dedup_tool_name
+    _dedup_tool_aliases = Bridge._dedup_tool_aliases
     _host_selector_key = Bridge._host_selector_key
     _union_scoped_credentials = Bridge._union_scoped_credentials
     _allowed_hosts = Bridge._allowed_hosts

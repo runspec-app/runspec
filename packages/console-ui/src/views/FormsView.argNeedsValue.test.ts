@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { argNeedsValue, credEnvPrefix, credEnvNames, bindingsForArgs, initialFormValues, partitionArgs, suppressPlainEnter, argSpansRow, autonomyTagProps, dedupToolName, matchRunnableForEdit } from './FormsView'
+import { argNeedsValue, credEnvPrefix, credEnvNames, bindingsForArgs, initialFormValues, partitionArgs, suppressPlainEnter, argSpansRow, autonomyTagProps, dedupToolName, legacyDedupToolName, matchRunnableForEdit } from './FormsView'
 import type { ArgDef, Runnable } from '../bridge'
 
 const arg = (over: Partial<ArgDef>): ArgDef => ({ name: 'x', type: 'str', required: false, ...over })
@@ -190,10 +190,25 @@ describe('autonomyTagProps', () => {
 })
 
 describe('dedupToolName', () => {
-  it('joins group and name, sanitising non-tool-name chars', () => {
-    expect(dedupToolName({ group: 'ops', name: 'deploy' })).toBe('ops__deploy')
-    expect(dedupToolName({ name: 'backup' })).toBe('backup')          // no group → bare name
-    expect(dedupToolName({ group: 'my.venv', name: 'sync-files' })).toBe('my_venv__sync-files')
+  it('is the sanitised runnable name, never group-qualified', () => {
+    // The group is the venv the runnable was discovered in, so qualifying split
+    // one cross-platform runnable into a tool per venv (backend 0.254.0).
+    expect(dedupToolName({ group: 'ops', name: 'deploy' })).toBe('deploy')
+    expect(dedupToolName({ name: 'backup' })).toBe('backup')
+    expect(dedupToolName({ group: 'my.venv', name: 'sync.files' })).toBe('sync_files')
+  })
+
+  it('is stable across the venvs one runnable ships in', () => {
+    expect(dedupToolName({ group: 'console', name: 'which' }))
+      .toBe(dedupToolName({ group: 'runspec_linux', name: 'which' }))
+  })
+})
+
+describe('legacyDedupToolName', () => {
+  it('still joins group and name, sanitising non-tool-name chars', () => {
+    expect(legacyDedupToolName({ group: 'ops', name: 'deploy' })).toBe('ops__deploy')
+    expect(legacyDedupToolName({ name: 'backup' })).toBe('backup')   // no group → bare name
+    expect(legacyDedupToolName({ group: 'my.venv', name: 'sync-files' })).toBe('my_venv__sync-files')
   })
 })
 
@@ -212,8 +227,24 @@ describe('matchRunnableForEdit', () => {
   })
 
   it('resolves a search-mode dedup id, pinning the host', () => {
+    expect(matchRunnableForEdit(all, 'deploy', 'web2')).toBe(B)
+    expect(matchRunnableForEdit(all, 'sync-files', 'nas')).toBe(D)
+  })
+
+  it('still resolves a legacy group-qualified dedup id', () => {
+    // Saved runbook steps / trigger allowlists / eval fixtures still carry it.
     expect(matchRunnableForEdit(all, 'ops__deploy', 'web2')).toBe(B)
     expect(matchRunnableForEdit(all, 'my_venv__sync-files', 'nas')).toBe(D)
+  })
+
+  it('resolves one runnable name across the venvs it ships in', () => {
+    // The case the backend dedup fix is about: `which` discovered under the
+    // console's own venv locally and under runspec_linux on a fleet host is one
+    // tool, so its id must reach whichever host the agent picked.
+    const L = rn({ name: 'which', group: 'console', host: 'local' })
+    const R = rn({ name: 'which', group: 'runspec_linux', host: 'web-01' })
+    expect(matchRunnableForEdit([L, R], 'which', 'web-01')).toBe(R)
+    expect(matchRunnableForEdit([L, R], 'which', 'local')).toBe(L)
   })
 
   it('resolves a dedup id whose host field is actually the group', () => {

@@ -31,6 +31,7 @@ class _Bridge:
     _first_sentence = staticmethod(Bridge._first_sentence)
     _sanitize_tool_name = staticmethod(Bridge._sanitize_tool_name)
     _dedup_tool_name = Bridge._dedup_tool_name
+    _dedup_tool_aliases = Bridge._dedup_tool_aliases
     _catalog_index_enabled = Bridge._catalog_index_enabled
     _build_catalog_index = Bridge._build_catalog_index
     _visible_runnables = Bridge._visible_runnables
@@ -70,16 +71,27 @@ def test_index_one_line_per_runnable_deduped_and_sorted():
     ]
     out = _Bridge(runnables)._build_catalog_index()
     lines = out.splitlines()
-    # deduped across hosts → 2 lines; sorted by (group, name)
+    # deduped across hosts (and venvs) → 2 lines, sorted by name
     assert lines == [
-        "- jsm__jsm-raise — Raise a request.",
-        "- linux__list-procs — List processes.",
+        "- jsm-raise — Raise a request.",
+        "- list-procs — List processes.",
     ]
+
+
+def test_index_dedups_the_same_name_across_venvs():
+    # A cross-platform runnable ships in more than one package, so its "group" —
+    # the venv it was discovered in — differs per host. It is one runnable and
+    # gets one menu line, not one per venv.
+    runnables = [
+        _rn("local", "which", group="console", description="Find a command."),
+        _rn("web-01", "which", group="runspec_linux", description="Find a command."),
+    ]
+    assert _Bridge(runnables)._build_catalog_index() == "- which — Find a command."
 
 
 def test_index_handles_missing_description():
     out = _Bridge([_rn("a", "ping", description="")])._build_catalog_index()
-    assert out == "- fleet__ping"
+    assert out == "- ping"
 
 
 def test_index_disabled_returns_empty():
@@ -133,7 +145,7 @@ def test_index_partial_and_not_ready_appends_loading_note():
         [_rn("a", "ping", description="Ping a host.")], ready=False, progress=(1, 3)
     )._build_catalog_index()
     lines = out.splitlines()
-    assert lines[0] == "- fleet__ping — Ping a host."  # the real entry still leads
+    assert lines[0] == "- ping — Ping a host."  # the real entry still leads
     assert "1 of 3 hosts" in lines[-1]  # trailing readiness note
 
 
@@ -207,7 +219,7 @@ def test_chat_index_text_carries_arg_lookup_instruction():
     index = b._chat_index_text()
     assert "search_runnables or describe_runnable" in index
     assert "before running it" in index
-    assert "fleet__ping" in index  # the runnable menu is present
+    assert "- ping" in index  # the runnable menu is present
     # The bare menu (what the trigger path used before the fix) lacks it.
     assert "before running it" not in b._build_catalog_index()
 

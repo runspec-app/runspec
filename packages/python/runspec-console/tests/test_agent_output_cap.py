@@ -25,6 +25,7 @@ class _AgentBridge:
     _resolve_tool_target = Bridge._resolve_tool_target
     _tool_mode = Bridge._tool_mode
     _dedup_tool_name = Bridge._dedup_tool_name
+    _dedup_tool_aliases = Bridge._dedup_tool_aliases
     _host_selector_key = Bridge._host_selector_key
     _sanitize_tool_name = staticmethod(Bridge._sanitize_tool_name)
     _declared_arg_name_set = staticmethod(Bridge._declared_arg_name_set)
