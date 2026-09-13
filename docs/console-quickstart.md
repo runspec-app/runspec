@@ -177,7 +177,14 @@ things that still need the Settings UI.
 ## Launch flags
 
 ```
-runspec-console              # normal start
-runspec-console --devtools   # enable the Chromium inspector
-runspec-console --dev        # point at a running Vite dev server (UI development)
+runspec-console                       # normal start
+runspec-console --devtools            # enable the Chromium inspector
+runspec-console --dev                 # point at a running Vite dev server (UI development)
+runspec-console --config-dir ./cfg    # use an isolated config directory (testing)
 ```
+
+`--config-dir <dir>` points the console at a specific directory for **all** its
+state — hosts, credentials, triggers, `config.toml`, everything under the
+default `%APPDATA%/runspec-console` — so you can test against a throwaway config
+without touching your real profile. The `RUNSPEC_CONSOLE_DIR` environment
+variable does the same (the flag wins if both are set).

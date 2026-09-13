@@ -466,5 +466,48 @@ def test_read_mcp_server_overrides_and_validation(monkeypatch):
     assert c.read_mcp_server()["port"] == c.DEFAULT_MCP_SERVER_PORT
 
 
+def test_set_app_dir_override_wins_over_env(tmp_path, monkeypatch):
+    """--config-dir (set_app_dir) uses the directory directly and beats
+    RUNSPEC_CONSOLE_DIR / APPDATA."""
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    monkeypatch.setenv("RUNSPEC_CONSOLE_DIR", str(tmp_path / "env"))
+    target = tmp_path / "explicit"
+    monkeypatch.setattr(c, "_APP_DIR_OVERRIDE", None)  # ensure clean start
+    try:
+        c.set_app_dir(target)
+        got = c.app_dir()
+        assert got == target
+        assert got.is_dir()  # created on demand
+        # A derived path lands inside the override, not APPDATA/runspec-console.
+        assert c.hosts_path() == target / "runspec_hosts.toml"
+    finally:
+        c.set_app_dir(None)
+
+
+def test_app_dir_env_var_override(tmp_path, monkeypatch):
+    """RUNSPEC_CONSOLE_DIR is honoured (used directly) when no explicit
+    override is pinned, and beats APPDATA."""
+    monkeypatch.setattr(c, "_APP_DIR_OVERRIDE", None)
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    monkeypatch.setenv("RUNSPEC_CONSOLE_DIR", str(tmp_path / "env"))
+    assert c.app_dir() == tmp_path / "env"
+
+
+def test_app_dir_default_appends_runspec_console(tmp_path, monkeypatch):
+    """With no override and no env var, state lives under APPDATA/runspec-console."""
+    monkeypatch.setattr(c, "_APP_DIR_OVERRIDE", None)
+    monkeypatch.delenv("RUNSPEC_CONSOLE_DIR", raising=False)
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    assert c.app_dir() == tmp_path / "runspec-console"
+
+
+def test_set_app_dir_none_clears_override(tmp_path, monkeypatch):
+    monkeypatch.delenv("RUNSPEC_CONSOLE_DIR", raising=False)
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    c.set_app_dir(tmp_path / "explicit")
+    c.set_app_dir(None)
+    assert c.app_dir() == tmp_path / "runspec-console"
+
+
 if __name__ == "__main__":
     unittest.main()

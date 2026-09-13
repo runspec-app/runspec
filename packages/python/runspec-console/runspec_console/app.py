@@ -363,6 +363,15 @@ def main() -> None:
     port: int = int(args.port.value) if args.port.value is not None else 5173
     debug_enabled: bool = _resolve_debug(dev, bool(args.devtools.value))
 
+    # Pin an explicit config directory before anything reads config (the Bridge
+    # loads it on construction). --config-dir wins over RUNSPEC_CONSOLE_DIR /
+    # APPDATA so a test instance keeps its state isolated from the real profile.
+    if args.config_dir.value is not None:
+        from . import config as _cfg
+
+        _cfg.set_app_dir(args.config_dir.value)
+        logger.info("Using config directory: %s", _cfg.app_dir())
+
     import webview
 
     # Run pywebview in debug mode so the WebView2 default right-click menu +

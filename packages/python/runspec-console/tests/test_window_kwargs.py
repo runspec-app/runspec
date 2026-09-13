@@ -111,6 +111,7 @@ def test_main_wires_create_window_and_start(monkeypatch):
         dev = types.SimpleNamespace(value=True)  # dev mode → skips dist/static server
         port = types.SimpleNamespace(value=5173)
         devtools = types.SimpleNamespace(value=False)
+        config_dir = types.SimpleNamespace(value=None)  # no --config-dir override
 
     monkeypatch.setattr(app, "_suppress_noisy_loggers", lambda: None)
 

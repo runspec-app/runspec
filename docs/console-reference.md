@@ -264,10 +264,17 @@ register custom LLM adapters; see [adapters](console-adapters.md).
 ## Launch flags
 
 ```
-runspec-console              # normal start
-runspec-console --devtools   # Chromium inspector in the packaged build
-runspec-console --dev        # attach to a running Vite dev server (UI development)
+runspec-console                       # normal start
+runspec-console --devtools            # Chromium inspector in the packaged build
+runspec-console --dev                 # attach to a running Vite dev server (UI development)
+runspec-console --config-dir ./cfg    # isolate all console state in a directory (testing)
 ```
+
+`--config-dir <dir>` overrides the default `%APPDATA%/runspec-console` location
+for **all** console state (hosts, credentials, triggers, `config.toml`, …) so a
+test instance stays isolated from your real profile. Equivalent env var:
+`RUNSPEC_CONSOLE_DIR` (the flag takes precedence when both are set). The
+directory is created if it doesn't exist.
 
 ## Troubleshooting
 

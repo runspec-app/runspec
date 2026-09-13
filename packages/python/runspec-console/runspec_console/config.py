@@ -1,7 +1,9 @@
-"""
+r"""
 config.py — app-level paths, config file locations, and config I/O helpers.
 
-All persistent state lives under %APPDATA%\runspec-console\ on Windows.
+All persistent state lives under %APPDATA%\runspec-console\ on Windows, unless
+overridden by `runspec-console --config-dir <dir>` / the RUNSPEC_CONSOLE_DIR env
+var (see :func:`app_dir` / :func:`set_app_dir`).
 """
 
 from __future__ import annotations
@@ -50,10 +52,35 @@ DEFAULT_MCP_SERVER_PORT = 8765
 _MCP_SERVER_AUTONOMY_LEVELS = ("autonomous", "confirm", "supervised", "manual")
 
 
+# An explicit config directory pinned by `runspec-console --config-dir <dir>`
+# (see app.main). It wins over APPDATA and the RUNSPEC_CONSOLE_DIR env var, and
+# is used directly (not with `runspec-console` appended) so a test / throwaway
+# instance keeps its whole state — hosts, credentials, triggers, config.toml —
+# isolated from the real profile. None means "use the default location".
+_APP_DIR_OVERRIDE: Path | None = None
+
+
+def set_app_dir(path: str | os.PathLike[str] | None) -> None:
+    """Pin the console's config directory, overriding the default location.
+
+    Wired to `runspec-console --config-dir <dir>`. Must be called before the
+    Bridge is built (it reads config on construction). Pass None to clear the
+    override and fall back to RUNSPEC_CONSOLE_DIR / APPDATA."""
+    global _APP_DIR_OVERRIDE
+    _APP_DIR_OVERRIDE = Path(path).expanduser() if path else None
+
+
 def app_dir() -> Path:
-    env = os.environ.get("APPDATA")
-    base = Path(env) if env else Path.home() / "AppData" / "Roaming"
-    d = base / "runspec-console"
+    if _APP_DIR_OVERRIDE is not None:
+        d = _APP_DIR_OVERRIDE
+    elif env_override := os.environ.get("RUNSPEC_CONSOLE_DIR"):
+        # An env-var twin of --config-dir, handy for test harnesses that launch
+        # the console as a subprocess. Same "use the directory directly" rule.
+        d = Path(env_override).expanduser()
+    else:
+        env = os.environ.get("APPDATA")
+        base = Path(env) if env else Path.home() / "AppData" / "Roaming"
+        d = base / "runspec-console"
     d.mkdir(parents=True, exist_ok=True)
     return d
 

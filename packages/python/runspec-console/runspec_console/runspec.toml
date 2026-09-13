@@ -17,6 +17,11 @@ description = "Vite dev server port (only used with --dev)"
 type        = "flag"
 description = "Enable the Chromium inspector (right-click → Inspect / F12) in production builds"
 
+[runspec-console.args.config-dir]
+type        = "path"
+required    = false
+description = "Use this directory for all console state (hosts, credentials, triggers, config.toml) instead of the default %APPDATA%/runspec-console — handy for testing against an isolated config"
+
 [generate-ssh-key]
 description = "Generate or rotate the runspec-console SSH key pair"
 autonomy    = "confirm"

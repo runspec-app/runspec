@@ -8,6 +8,22 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.249.0] — 2026-09-13
+
+### Added
+- **`--config-dir` launch flag.** `runspec-console --config-dir <dir>` points the
+  console at a specific directory for **all** its state (hosts, credentials,
+  triggers, `config.toml`, and everything else that lives under the default
+  `%APPDATA%/runspec-console`), so a test / throwaway instance stays isolated
+  from the real profile. The directory is used directly (not with
+  `runspec-console` appended) and created on demand. The `RUNSPEC_CONSOLE_DIR`
+  environment variable is an equivalent twin (handy for test harnesses that
+  launch the console as a subprocess); the flag wins when both are set.
+  Implemented as a single override on `config.app_dir()` (`config.set_app_dir`),
+  pinned in `app.main` before the Bridge is constructed. See
+  `docs/console-reference.md` → "Launch flags".
+
+
 ## [0.248.0] — 2026-09-12
 
 ### Added
