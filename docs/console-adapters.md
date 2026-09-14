@@ -460,6 +460,16 @@ alongside `cache_read`, so the console's cache gauge reflects both. Leave it off
 for a gateway that doesn't honour `cache_control` — the markers would just be
 inert noise.
 
+In **search mode** (`[llm] tool_mode = "search"`) the tool list is deliberately
+tiny — three meta-tools instead of every runnable's schema — and the fleet's
+**catalogue index** rides in the *system prompt* instead (a one-line-per-runnable
+menu, plus the deferred-built-ins menu). So in search mode the system prompt is
+the large, static, byte-stable part of the prefix, and the marker on the **system
+block** is the one that carries the caching: a gateway that translates only the
+system `cache_control` still caches the bulk of the prefix. (Before 0.262.0 the
+index was folded into the first user message, where a system-only cache marker
+cached almost nothing — see the gateway guide's minimum-cacheable-prefix gotcha.)
+
 ---
 
 ## Verifying your adapter

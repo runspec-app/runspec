@@ -64,7 +64,7 @@ class _Stub:
     _build_catalog_index = Bridge._build_catalog_index
     _catalog_index_enabled = Bridge._catalog_index_enabled
     _first_sentence = staticmethod(Bridge._first_sentence)
-    _fold_catalog_index = Bridge._fold_catalog_index
+    _catalog_system_section = staticmethod(Bridge._catalog_system_section)
     _dedup_tool_name = Bridge._dedup_tool_name
     _dedup_tool_aliases = Bridge._dedup_tool_aliases
     _sanitize_tool_name = staticmethod(Bridge._sanitize_tool_name)
@@ -457,14 +457,15 @@ def test_builtin_index_empty_when_inline_or_disabled():
     assert _Stub(llm_extra={"tool_index": False})._build_builtin_index() == ""
 
 
-def test_chat_index_folds_deferred_menu_into_first_user_message():
+def test_chat_index_includes_deferred_menu_and_rides_the_system_section():
     stub = _Stub()
     text = stub._chat_index_text()
     assert "use_tool" in text and "- repo_grep" in text
-    history = [{"role": "user", "content": "hi"}]
-    folded = stub._fold_catalog_index(history, text)
-    assert "repo_grep" in folded[0]["content"]
-    assert history[0]["content"] == "hi"  # stored history untouched
+    # The index composes into the system prompt as a trailing section (not the
+    # first user message) — so the deferred-tools menu still reaches the model.
+    section = stub._catalog_system_section(text)
+    assert "repo_grep" in section
+    assert section.startswith("What you can reach right now, by category:")
 
 
 def test_chat_index_empty_outside_search_mode():

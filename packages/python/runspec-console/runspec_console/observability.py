@@ -680,10 +680,15 @@ def set_attributes(**attrs: Any) -> None:
         pass
 
 
-def add_prompt(messages: Any) -> None:
-    """Attach the outbound message list to the active LLM span as
-    ``gen_ai.prompt`` — **only when capture_content is on** (privacy). Serialised
-    via ``trace.jsonsafe_messages`` so SDK content blocks don't leak raw reprs."""
+def add_prompt(messages: Any, system: str = "") -> None:
+    """Attach the outbound prompt to the active LLM span as ``gen_ai.prompt`` —
+    **only when capture_content is on** (privacy). Serialised via
+    ``trace.jsonsafe_messages`` so SDK content blocks don't leak raw reprs.
+
+    ``system`` (the adapter's system prompt, when supplied) is captured as a
+    leading ``system`` message, so the search-mode catalogue index — which now
+    rides in the system prompt rather than the first user message — still shows
+    up in the captured prompt."""
     if not _CAPTURE_CONTENT:
         return
     span = current_span()
@@ -693,6 +698,8 @@ def add_prompt(messages: Any) -> None:
         from .trace import jsonsafe_messages
 
         safe = jsonsafe_messages(messages) if isinstance(messages, list) else messages
+        if system and isinstance(safe, list):
+            safe = [{"role": "system", "content": system}, *safe]
         payload = _truncate_content(json.dumps(safe, default=str, ensure_ascii=False))
         span.set_attribute("gen_ai.prompt", payload)  # legacy/generic + LangSmith
         # OpenInference (Phoenix): the generic input value + per-message role/content.

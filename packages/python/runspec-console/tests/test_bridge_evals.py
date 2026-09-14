@@ -92,6 +92,48 @@ def test_run_evals_scores_against_the_real_toolset(bridge, monkeypatch):
     assert cases["ambiguous"]["passed"] is True
 
 
+def test_search_mode_eval_system_carries_the_catalogue_index(bridge, monkeypatch):
+    """An eval must drive the model over the SAME system the live search-mode
+    agent gets — the base system prompt plus the catalogue index — so a discovery
+    decision the index shapes is reproduced faithfully. _eval_system composes it
+    and run_evals passes it to the adapter."""
+    monkeypatch.setattr(bridge, "_tool_mode", lambda: "search")
+    system = bridge._eval_system()
+    assert "What you can reach right now, by category:" in system
+    # the fixture's visible runnables appear in the folded index
+    assert "- restart-service" in system and "- disk-usage" in system
+
+    # run_evals actually builds the adapter with that system (search-mode
+    # run_runnable script so the resolved case still scores a pass).
+    seen: dict = {}
+    script = {
+        "restart": [
+            {
+                "tool_calls": [
+                    {
+                        "name": "run_runnable",
+                        "input": {
+                            "id": "restart-service",
+                            "host": "web-01",
+                            "args": {"service": "nginx"},
+                        },
+                    }
+                ]
+            }
+        ],
+        "ambiguous": [{"text": "Which host?", "tool_calls": []}],
+    }
+
+    def get_adapter(system_override=None):
+        seen["system"] = system_override
+        return ReplayAdapter(script)
+
+    monkeypatch.setattr(bridge, "_get_adapter", get_adapter)
+    bridge.run_evals(fixture_toml=_fixture_toml())
+    assert "What you can reach right now, by category:" in seen["system"]
+    assert "- restart-service" in seen["system"]
+
+
 def test_run_evals_flags_a_wrong_tool(bridge, monkeypatch):
     script = {
         "restart": [

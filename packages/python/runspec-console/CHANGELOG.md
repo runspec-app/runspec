@@ -8,6 +8,42 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.262.0] — 2026-09-14
+
+### Changed
+- **Search-mode catalogue index rides the system prompt, so a gateway that
+  caches only the system block actually caches it.** In `[llm] tool_mode =
+  "search"` the fleet's catalogue index (the one-line-per-runnable menu, plus the
+  deferred-built-ins menu — `_chat_index_text`) was folded into the **first user
+  message** each turn. Through a gateway adapter that marks only the *system*
+  prompt as cacheable, that index therefore never entered the cached prefix — and
+  because search mode's tool list is tiny (three meta-tools), system alone could
+  fall under the model's minimum cacheable prefix, so caching silently never
+  engaged. The index now composes into the **system prompt** as a trailing
+  section (after the base system, date/tz, presence caveat and pinned-memory
+  header, under its own heading), in both the chat loop
+  (`bridge_invoke._spawn_chat_turn` → `_agentic_chat_turn`) and the headless
+  trigger/schedule loop (`bridge_triggers._trigger_run_agent_turn` →
+  `_run_isolated_agent_turn`). It stays byte-stable across a turn (already sorted,
+  nothing time-varying), so the cached system prefix holds. The `catalog` context
+  gauge bucket still measures `len(index_text)` separately from `system`.
+  `_fold_catalog_index` is removed (nothing folds into the messages now); the
+  shared wrapper is `bridge_search._catalog_system_section`. Allow-scoped headless
+  turns are unchanged (they fall back to dedup — full schemas inline — so they get
+  no index), and the conversation store still never persists the index (it lives
+  in the system prompt, never the messages/history).
+- **Evals score the prompt the agent actually gets.** `run_evals`
+  (`bridge_evals`) now drives the model over the same system the live search-mode
+  agent sees — the base system prompt plus the catalogue index
+  (`_eval_system` / `_eval_system_adapter`) — instead of the bare adapter default,
+  so a discovery decision the index shapes is reproduced faithfully.
+- **Telemetry captures the system prompt.** `observability.add_prompt` now also
+  records the adapter's system prompt as a leading `system` message, so
+  `gen_ai.prompt` still shows the catalogue index (which moved from the first user
+  message into the system). Honours `capture_content` / `max_content_chars` as
+  before.
+
+
 ## [0.261.0] — 2026-09-14
 
 ### Added

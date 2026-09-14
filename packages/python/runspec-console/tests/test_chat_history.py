@@ -65,10 +65,9 @@ class _StubBridge:
         return f"ran:{name}"
 
     _tool_mode = Bridge._tool_mode
-    _fold_catalog_index = Bridge._fold_catalog_index
 
     def _chat_index_text(self):
-        return ""  # dedup-mode stub: no folded menu
+        return ""  # dedup-mode stub: no catalogue index
 
     _debug = False  # tracing off → _trace is a no-op in these unit tests
     _usage_from_response = staticmethod(Bridge._usage_from_response)
@@ -129,6 +128,27 @@ def test_history_persists_across_turns():
         "user",
         "assistant",
     ]
+
+
+def test_catalogue_index_never_enters_history_or_store():
+    """The search-mode catalogue index rides the system prompt, never the
+    messages — so even with a non-empty index_text the adapter's message list,
+    the stored _chat_history, and the saved-conversation store stay index-free."""
+    b, ad = _StubBridge(), _TextAdapter("done")
+    persisted: list[str] = []
+    b._persist_conversation_turn = lambda user, *a, **k: persisted.append(user)
+    index = "- ping — Ping a host."
+    asyncio.run(b._agentic_chat_turn("c1", "ping web01", ad, None, index))
+    # The adapter never saw the index in its message list…
+    assert all(
+        index not in m["content"]
+        for m in ad.seen[0]
+        if isinstance(m.get("content"), str)
+    )
+    # …the stored history is just the raw exchange…
+    assert [m["content"] for m in b._chat_history] == ["ping web01", "done"]
+    # …and the persisted user turn is the raw message, index-free.
+    assert persisted == ["ping web01"]
 
 
 def test_clear_chat_starts_fresh():

@@ -224,6 +224,25 @@ class EvalsMixin:
 
         return validate
 
+    def _eval_system(self) -> str:
+        """The system prompt an eval run drives the model over: the live agent's
+        base system (``_base_system``) plus, in search mode, the catalogue index
+        as a trailing section (``_catalog_system_section`` — empty otherwise). This
+        is exactly what the search-mode chat/trigger turns compose, minus the
+        volatile per-turn date/presence/memory blocks, so an eval scores the same
+        discovery surface the agent gets."""
+        catalog_section = self._catalog_system_section(self._chat_index_text())  # type: ignore[attr-defined]
+        system = self._base_system()  # type: ignore[attr-defined]
+        if catalog_section:
+            system += "\n\n" + catalog_section
+        return system
+
+    def _eval_system_adapter(self) -> Any:
+        """The configured adapter with :meth:`_eval_system` as its system prompt
+        (a one-off, never the cached chat adapter). ``None`` when no provider is
+        configured / AI is off — the caller reports that."""
+        return self._get_adapter(system_override=self._eval_system())  # type: ignore[attr-defined]
+
     # ── the run (JS-callable) ────────────────────────────────────────────────
     def run_evals(
         self,
@@ -246,7 +265,14 @@ class EvalsMixin:
             from .bridge_const import AI_OFF_MESSAGE
 
             return {"ok": False, "reason": AI_OFF_MESSAGE}
-        adapter = self._get_adapter()  # type: ignore[attr-defined]
+        # Drive the model over the SAME system prompt the live agent composes: the
+        # base system plus, in search mode, the catalogue index as a trailing
+        # section (empty in dedup/per-host mode). The index shapes a search-mode
+        # discovery decision, so scoring against a barer prompt than production
+        # would test a prompt the agent never actually gets. (The volatile
+        # per-turn blocks — date/presence/memory — are deliberately left out: they
+        # don't steer tool choice and would make the eval non-deterministic.)
+        adapter = self._eval_system_adapter()
         if adapter is None:
             return {"ok": False, "reason": "no model provider configured ([llm])"}
 

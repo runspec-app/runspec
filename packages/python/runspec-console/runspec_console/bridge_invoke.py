@@ -415,23 +415,41 @@ class InvokeMixin:
                     console_block = self._presence_caveat()
                     memory_block = memory.build_header()
                     base_block = self._base_system()
+                    # Search-mode catalogue index (runnables menu + deferred
+                    # built-ins menu). Byte-stable across a day's turns, so it now
+                    # rides the per-turn system_override path as a TRAILING section
+                    # — after base/date/presence/memory — instead of being folded
+                    # into the first user message. A gateway that marks only the
+                    # system block as cacheable then actually caches it: in search
+                    # mode the tools block is tiny, so a system-only cache marker
+                    # used to fall under the model's minimum cacheable prefix and
+                    # silently cache nothing. Empty outside search mode.
+                    index_text = self._chat_index_text()
                     extra = "\n\n".join(
                         part
                         for part in (now_block, console_block, memory_block)
                         if part
                     )
+                    catalog_section = self._catalog_system_section(index_text)
+                    system_body = base_block
+                    if extra:
+                        system_body += "\n\n" + extra
+                    if catalog_section:
+                        system_body += "\n\n" + catalog_section
                     adapter = (
-                        self._get_adapter(system_override=base_block + "\n\n" + extra)
-                        if extra
+                        self._get_adapter(system_override=system_body)
+                        if (extra or catalog_section)
                         else self._get_adapter()
                     )
                     # Char counts of the system-prompt buckets, for the context
                     # indicator's composition breakdown. The date block is tiny
                     # (~250 chars) so it folds into "system" rather than earning
                     # its own near-zero slice. The "console_context" bucket now
-                    # measures the lean presence caveat (usually 0). Computed here
-                    # where the blocks already exist — no recomputation in the
-                    # turn loop.
+                    # measures the lean presence caveat (usually 0). The catalogue
+                    # index keeps its own "catalog" bucket even though it now lives
+                    # inside the system prompt string, so the gauge still shows it
+                    # separately from "system". Computed here where the blocks
+                    # already exist — no recomputation in the turn loop.
                     system_parts = {
                         "system": len(base_block) + len(now_block),
                         "console_context": len(console_block),
@@ -467,7 +485,9 @@ class InvokeMixin:
                     )
                 try:
                     asyncio.run(
-                        self._agentic_chat_turn(chat_id, message, adapter, system_parts)
+                        self._agentic_chat_turn(
+                            chat_id, message, adapter, system_parts, index_text
+                        )
                     )
                 finally:
                     if runbook:
@@ -1246,14 +1266,16 @@ class InvokeMixin:
         message: str,
         adapter: Any,
         system_parts: dict[str, int] | None = None,
+        index_text: str = "",
     ) -> None:
         start = time.monotonic()
         tools = self._runnables_to_tools()
-        # Search mode hides runnables behind search_runnables (and defers the
-        # long tail of built-ins behind describe_tool/use_tool); fold an
-        # always-on menu (id/name + one-liner) into what the model sees so it
-        # knows what exists. Empty outside search mode.
-        index_text = self._chat_index_text()
+        # ``index_text`` is the search-mode always-on menu (runnables + deferred
+        # built-ins). It is composed into the adapter's system prompt by the
+        # caller (_spawn_chat_turn → system_override), NOT folded into the
+        # messages here — so a gateway caching only the system block caches it.
+        # It reaches this loop only to size the "catalog" context bucket + the
+        # overflow figure below; empty outside search mode.
         usage_total = {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0}
         # For the context indicator: the *last* iteration's prompt size (not the
         # cross-iteration sum usage_total accumulates) is the current window fill,
@@ -1334,10 +1356,11 @@ class InvokeMixin:
                 # history — _visible_history() just filters — so it's reversible.
                 self._sync_history_tags(chat_id)
                 visible = self._visible_history()
-                # The message list actually sent this iteration — visible history
-                # plus the folded-in catalog index (search mode). A per-call copy,
-                # so the stored history is never polluted with the index.
-                model_messages = self._fold_catalog_index(visible, index_text)
+                # The message list actually sent this iteration — the visible
+                # history verbatim. The catalogue index no longer rides here (it
+                # is in the system prompt now), so the stored history is never
+                # polluted with it and messages[0] stays the raw user turn.
+                model_messages = visible
                 # Size of the history sent this iteration (the catalog index is
                 # measured separately as its own bucket, so use the visible history
                 # — the indicator should reflect what the model actually receives).
@@ -1355,7 +1378,12 @@ class InvokeMixin:
                 with observability.llm_span(
                     provider=provider_name, model=model_name
                 ) as llm_span:
-                    observability.add_prompt(model_messages)
+                    # Capture the system prompt alongside the messages so
+                    # gen_ai.prompt still shows the search-mode catalogue index
+                    # (it moved from the first user message into the system).
+                    observability.add_prompt(
+                        model_messages, system=getattr(adapter, "system", "")
+                    )
                     try:
                         async for event in adapter.stream_with_tools(
                             model_messages, tools

@@ -299,12 +299,15 @@ never needs OpenTelemetry as a hard dependency.
   short session's spans flush on shutdown; a crash may drop the last batch.
 - **A page behind SSH, not a backend.** Telemetry is only the tracing exporter;
   it doesn't change how the agent reaches hosts.
-- **The captured prompt starts with "What you can reach right now, by category:"**
-  That's the [search-mode](console-agent.md) **catalog index** — a compact one-line-per-runnable
-  menu the console folds into the first user message each turn so the agent knows
-  what exists without every runnable's full tool schema. It's expected (and it's
-  the *lean* path — the alternative is shipping every schema in the tool list), and
-  it's the same each turn because it's deterministic for a given fleet. If the
-  prompt looked *cut off* in your backend on an older build, that was the capture
-  attribute's old 4000-char cap, not the real request — `max_content_chars = 0`
-  (the default) now records the full prompt.
+- **The captured prompt contains "What you can reach right now, by category:"**
+  That's the [search-mode](console-agent.md) **catalog index** — a compact
+  one-line-per-runnable menu the console composes into the **system prompt** each
+  turn so the agent knows what exists without every runnable's full tool schema.
+  (Before 0.262.0 it rode the first *user* message; it moved into the system prompt
+  so a gateway that caches only the system block actually caches it. `gen_ai.prompt`
+  captures the system prompt alongside the messages, so the index still shows up in
+  the recorded prompt.) It's expected (and it's the *lean* path — the alternative is
+  shipping every schema in the tool list), and it's the same each turn because it's
+  deterministic for a given fleet. If the prompt looked *cut off* in your backend on
+  an older build, that was the capture attribute's old 4000-char cap, not the real
+  request — `max_content_chars = 0` (the default) now records the full prompt.

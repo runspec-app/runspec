@@ -108,6 +108,30 @@ def test_message_breakpoint_does_not_mutate_caller_history():
     assert history == [{"role": "user", "content": "only"}]
 
 
+def test_search_mode_index_rides_the_marked_system_block():
+    """In search mode the catalogue index composes into the SYSTEM prompt (not the
+    first user message, as before 0.262.0). apply_prompt_caching marks the system
+    block, so the index sits inside the cached prefix — and never in messages[0].
+    This is the whole point of the move: a gateway that caches only the system
+    block then caches the index."""
+    from runspec_console.bridge import Bridge
+
+    index_section = Bridge._catalog_system_section("- ping — Ping a host.")
+    system = "BASE INSTRUCTIONS\n\n" + index_section
+    out = apply_prompt_caching(
+        {
+            "system": system,
+            "tools": _tools(1),
+            "messages": [{"role": "user", "content": "ping web01"}],
+        }
+    )
+    block = out["system"][0]
+    assert block["cache_control"] == EPHEMERAL  # the system block is the cached one
+    assert "- ping — Ping a host." in block["text"]  # …and the index is inside it
+    # The index is absent from the (also-marked) first/last user message.
+    assert "- ping — Ping a host." not in str(out["messages"][0]["content"])
+
+
 def test_last_message_sdk_object_blocks_left_untouched():
     # An assistant turn whose content is raw SDK block objects (not dicts) can't
     # carry a cache_control dict key — it's left as-is rather than crashing.

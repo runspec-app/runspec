@@ -77,7 +77,6 @@ def _chat_stub(max_cont: int = 3, max_tool_rounds: int | None = None):
     s._runnables_to_tools = lambda *a, **k: []
     s._tool_mode = lambda: "dedup"
     s._chat_index_text = lambda: ""
-    s._fold_catalog_index = lambda history, index_text: list(history)
     s._messages_chars = lambda _msgs: 0
     s._trace = lambda *a, **k: None
     s._trim_chat_history = lambda: None

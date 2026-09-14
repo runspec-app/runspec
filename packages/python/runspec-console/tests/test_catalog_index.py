@@ -11,6 +11,7 @@ config gate + cap, and the non-mutating fold into the message history.
 from __future__ import annotations
 
 import threading
+import types
 
 from runspec_console.bridge import Bridge
 
@@ -35,7 +36,7 @@ class _Bridge:
     _catalog_index_enabled = Bridge._catalog_index_enabled
     _build_catalog_index = Bridge._build_catalog_index
     _visible_runnables = Bridge._visible_runnables
-    _fold_catalog_index = Bridge._fold_catalog_index
+    _catalog_system_section = staticmethod(Bridge._catalog_system_section)
     _tool_mode = Bridge._tool_mode
     _defer_builtins_enabled = Bridge._defer_builtins_enabled
     _build_builtin_index = Bridge._build_builtin_index
@@ -156,50 +157,35 @@ def test_index_when_ready_has_no_loading_note():
     assert "discovery in progress" not in out.lower()
 
 
-# ── folding into history (non-mutating) ───────────────────────────────────────
+# ── the catalogue system-prompt section (was: folding into the user message) ──
+#
+# The index no longer rides the first user message; it composes into the system
+# prompt as a trailing section via _catalog_system_section (so a gateway caching
+# only the system block actually caches it — see bridge_search). These pin the
+# pure wrapper; the loop-level placement (index in system, not in messages[0]) is
+# covered in test_chat_bridge / test_schedule_bridge.
 
 
-def test_fold_prepends_to_first_user_message():
-    history = [
-        {"role": "user", "content": "raise a ticket"},
-        {"role": "assistant", "content": "ok"},
-    ]
-    out = _Bridge([])._fold_catalog_index(history, "- jsm__raise — Raise.")
-    assert out[0]["content"].endswith("raise a ticket")
-    assert "jsm__raise" in out[0]["content"]
-    assert out[1] == {"role": "assistant", "content": "ok"}
-    # original history untouched
-    assert history[0]["content"] == "raise a ticket"
+def test_catalog_section_wraps_index_under_a_heading():
+    out = Bridge._catalog_system_section("- jsm__raise — Raise.")
+    assert out.startswith("What you can reach right now, by category:")
+    assert "- jsm__raise — Raise." in out
 
 
-def test_fold_noop_when_index_empty():
-    history = [{"role": "user", "content": "hi"}]
-    out = _Bridge([])._fold_catalog_index(history, "")
-    assert out is history  # same object, no copy
+def test_catalog_section_empty_when_index_empty():
+    # No index (dedup/per-host mode, or the index disabled) → empty, so the caller
+    # appends nothing to the system prompt.
+    assert Bridge._catalog_system_section("") == ""
 
 
-def test_fold_only_first_user_message():
-    history = [
-        {"role": "user", "content": "first"},
-        {"role": "assistant", "content": "a"},
-        {"role": "user", "content": "second"},
-    ]
-    out = _Bridge([])._fold_catalog_index(history, "- x — y")
-    assert "x — y" in out[0]["content"]
-    assert out[2]["content"] == "second"  # untouched
-
-
-def test_fold_preamble_is_a_generic_header():
-    """The preamble must not describe the blob's contents — the index carries more
+def test_catalog_section_heading_is_a_generic_header():
+    """The heading must not describe the blob's contents — the index carries more
     than one kind of section (runnables, plus the deferred built-ins menu), and each
-    labels itself. It also used to claim "This is the full menu", which is false
+    labels itself. It must also not claim completeness ("the full menu"), false
     whenever _build_catalog_index truncated at tool_index_limit."""
-    out = _Bridge([])._fold_catalog_index(
-        [{"role": "user", "content": "hi"}], "- x — y"
-    )
-    preamble = out[0]["content"].split("- x — y")[0]
-    assert "run_runnable" not in preamble
-    assert "full menu" not in preamble
+    heading = Bridge._catalog_system_section("- x — y").split("- x — y")[0]
+    assert "run_runnable" not in heading
+    assert "full menu" not in heading
 
 
 # ── the argument-lookup instruction (chat + trigger parity) ───────────────────
@@ -227,3 +213,69 @@ def test_chat_index_text_carries_arg_lookup_instruction():
 def test_chat_index_text_empty_outside_search_mode():
     b = _Bridge([_rn("a", "ping")], config={"llm": {"tool_mode": "dedup"}})
     assert b._chat_index_text() == ""
+
+
+# ── chat-turn placement: index rides the system prompt, not messages[0] ───────
+
+
+def _spawn_stub(index_text, monkeypatch):
+    """A bare stub with the real ``_spawn_chat_turn`` bound, its dependencies
+    stubbed, and ``_agentic_chat_turn`` replaced by a recorder that signals when
+    the (threaded) turn has composed everything."""
+    from runspec_console import memory as memory_mod
+
+    monkeypatch.setattr(memory_mod, "build_header", lambda: "")
+    captured: dict = {}
+    done = threading.Event()
+
+    s = types.SimpleNamespace()
+    s._lock = threading.Lock()
+    s._chat_cancels = {}
+    s._ai_enabled = True
+    s._now_context = lambda: "DATE"
+    s._presence_caveat = lambda: ""
+    s._base_system = lambda: "BASE"
+    s._chat_index_text = lambda: index_text
+    s._catalog_system_section = Bridge._catalog_system_section  # staticmethod
+    s._dispatch = lambda *a, **k: None
+
+    def get_adapter(system_override=None):
+        captured["system"] = system_override
+        return object()
+
+    s._get_adapter = get_adapter
+
+    async def fake_turn(chat_id, message, adapter, system_parts=None, index_text=""):
+        captured["message"] = message
+        captured["system_parts"] = system_parts
+        captured["index_text"] = index_text
+        done.set()
+
+    s._agentic_chat_turn = fake_turn
+    s._spawn_chat_turn = types.MethodType(Bridge._spawn_chat_turn, s)
+    return s, captured, done
+
+
+def test_chat_turn_puts_index_in_system_not_messages(monkeypatch):
+    s, captured, done = _spawn_stub("- ping — Ping a host.", monkeypatch)
+    s._spawn_chat_turn("do it")
+    assert done.wait(2)
+    # The index rides the system prompt as a trailing section, after base + date.
+    assert captured["system"].startswith("BASE\n\nDATE")
+    assert "What you can reach right now, by category:" in captured["system"]
+    assert "- ping — Ping a host." in captured["system"]
+    # The user message handed to the loop is unchanged — nothing folded in.
+    assert captured["message"] == "do it"
+    # The loop still receives the index text for its "catalog" context bucket.
+    assert captured["index_text"] == "- ping — Ping a host."
+
+
+def test_chat_turn_no_catalogue_section_when_index_disabled(monkeypatch):
+    # dedup mode / tool_index=false → _chat_index_text() is "" → the system prompt
+    # carries no catalogue section at all.
+    s, captured, done = _spawn_stub("", monkeypatch)
+    s._spawn_chat_turn("do it")
+    assert done.wait(2)
+    assert captured["system"] == "BASE\n\nDATE"
+    assert "What you can reach right now" not in captured["system"]
+    assert captured["index_text"] == ""

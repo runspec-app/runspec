@@ -229,6 +229,18 @@ In order of leverage:
   rebuilds the assistant turn from `text` + tool calls drops the thinking
   block, so each tool round re-reasons from scratch and, on a raw Anthropic
   path, can 400. Echo the provider's raw content blocks unchanged (see Tier 3).
+- **Minimum cacheable prefix — where the big static block lives.** Below the
+  model's minimum cacheable prefix (~1–4K tokens) the API silently caches
+  nothing, so a marker only pays off on a block that clears the minimum. In
+  **search mode** the tool list is tiny (three meta-tools), so tools+system can
+  itself fall under the minimum unless the system prompt is substantial. The
+  console's fleet **catalogue index** is that substance — and from console
+  **0.262.0** it rides in the *system prompt* (a trailing section), so a marker
+  on the system block caches it. Before 0.262.0 the index lived in the first
+  *user* message: a gateway that marked only the system block then cached almost
+  nothing in search mode. If your adapter emits cache markers, mark the system
+  block (not just the last tool), and confirm the proxy translates that one —
+  it's the marker that matters most in search mode.
 
 ## Verifying
 

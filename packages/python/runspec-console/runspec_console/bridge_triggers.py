@@ -2194,6 +2194,23 @@ class TriggersMixin:
         if not getattr(self, "_ai_enabled", True):
             return f"⚠ {AI_OFF_MESSAGE}"
         system = self._now_context() + "\n\n" + system
+        # Fold the search-mode catalogue index into the system prompt as a trailing
+        # section (same reasoning as the chat turn — a gateway caching only the
+        # system block then caches it). Only when search mode is actually active
+        # for this turn: an allow-scoped turn falls back to dedup, which carries
+        # full schemas inline, so it gets no index. The index carries the
+        # "call search_runnables/describe_runnable for a runnable's arguments
+        # before running it" instruction a schema-less run_runnable needs. The
+        # deferred-built-ins section is empty here (headless turns keep built-ins
+        # inline), so this is the runnable menu only.
+        index_text = (
+            self._chat_index_text()
+            if (self._tool_mode() == "search" and not allowed_runnables)
+            else ""
+        )
+        catalog_section = self._catalog_system_section(index_text)
+        if catalog_section:
+            system = system + "\n\n" + catalog_section
         try:
             adapter = self._get_adapter(system_override=system)
         except Exception as exc:  # noqa: BLE001 — surface, don't crash the worker
@@ -2523,21 +2540,10 @@ class TriggersMixin:
         # list, and the deferral meta-tools (describe_tool/use_tool) would let
         # a turn reach around that narrowing.
         tools = self._runnables_to_tools(allow=allowed_runnables, inline_builtins=True)
-        # Search mode hides runnables behind search_runnables; fold the same
-        # always-on menu the chat turn gets — via _chat_index_text(), so the
-        # runnable index carries the "call search_runnables/describe_runnable for
-        # a runnable's arguments and hosts before running it" instruction (the
-        # bare _build_catalog_index() omits it, and a schema-less run_runnable
-        # then leads the agent to guess args). The deferred-built-ins section is
-        # empty here because headless turns keep built-ins inline
-        # (inline_builtins=True → _build_builtin_index() == ""). Only when search
-        # mode is actually active for this turn (no allowlist — an allow-scoped
-        # turn falls back to dedup, which carries full schemas inline).
-        index_text = (
-            self._chat_index_text()
-            if (self._tool_mode() == "search" and not allowed_runnables)
-            else ""
-        )
+        # The search-mode catalogue index is composed into the adapter's system
+        # prompt by the caller (_trigger_run_agent_turn → system_override), not
+        # folded into the messages here — so a gateway caching only the system
+        # block caches it. Nothing to do in this loop.
         tools = self._filter_headless_tools(tools, action_allow)
         if allowed_runnables and not tools:
             # A non-empty allowlist that matched no installed runnable — the agent
@@ -2596,13 +2602,18 @@ class TriggersMixin:
             errored = False
             error_detail = ""
             try:
-                # A per-call copy with the catalog index folded into the first user
-                # message (search mode only); the stored history stays clean.
-                model_messages = self._fold_catalog_index(history, index_text)
+                # The catalogue index rides the system prompt now (composed by
+                # _trigger_run_agent_turn), so the messages are the isolated
+                # history verbatim — messages[0] stays the raw user turn.
+                model_messages = history
                 with observability.llm_span(
                     provider=_provider_name, model=_model_name
                 ) as _llm_span:
-                    observability.add_prompt(model_messages)
+                    # Capture the system prompt too, so gen_ai.prompt still shows
+                    # the catalogue index in search mode (it lives in system now).
+                    observability.add_prompt(
+                        model_messages, system=getattr(adapter, "system", "")
+                    )
                     async for event in adapter.stream_with_tools(model_messages, tools):
                         if cancel.is_set():
                             stopped = True

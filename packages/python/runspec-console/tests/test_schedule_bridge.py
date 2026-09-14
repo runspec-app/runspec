@@ -521,7 +521,17 @@ def _agent_turn_stub():
     ns = types.SimpleNamespace()
     ns._trigger_run_agent_turn = types.MethodType(Bridge._trigger_run_agent_turn, ns)
     ns._now_context = lambda: "NOW"
-    ns._get_adapter = lambda system_override=None: object()
+    # dedup mode → no catalogue index in these workspace tests.
+    ns._tool_mode = lambda: "dedup"
+    ns._chat_index_text = lambda: ""
+    ns._catalog_system_section = Bridge._catalog_system_section  # staticmethod
+    ns.captured_system = {}
+
+    def get_adapter(system_override=None):
+        ns.captured_system["last"] = system_override
+        return object()
+
+    ns._get_adapter = get_adapter
     ns._lock = threading.Lock()
     ns._chat_cancels = {}
     ns._workspace_by_chat = {}
@@ -551,6 +561,34 @@ def test_schedule_agent_turn_uses_schedule_workspace_prefix():
     # A reactive turn keeps the default trigger- prefix.
     ns._trigger_run_agent_turn("card-10", "SYS", "go", draft=False)
     assert ns.captured["card-10"] == "trigger-card-10"
+
+
+def test_headless_search_turn_folds_catalogue_into_system():
+    # An unrestricted (no allowlist) search-mode headless turn composes the
+    # catalogue index into the system prompt as a trailing section — not the
+    # messages — so a gateway caching only the system block caches it.
+    ns = _agent_turn_stub()
+    ns._tool_mode = lambda: "search"
+    ns._chat_index_text = lambda: "- restart-service — Restart a unit."
+    ns._trigger_run_agent_turn("card-11", "SYS", "go", draft=False)
+    system = ns.captured_system["last"]
+    assert system.startswith("NOW\n\nSYS")  # base composed first
+    assert "What you can reach right now, by category:" in system
+    assert "- restart-service — Restart a unit." in system
+
+
+def test_headless_allow_scoped_turn_gets_no_catalogue_index():
+    # An allow-scoped turn falls back to dedup (full schemas inline), so the
+    # catalogue index is not folded even in search mode.
+    ns = _agent_turn_stub()
+    ns._tool_mode = lambda: "search"
+    ns._chat_index_text = lambda: "- restart-service — Restart a unit."
+    ns._trigger_run_agent_turn(
+        "card-12", "SYS", "go", draft=False, allowed_runnables=["restart-service"]
+    )
+    system = ns.captured_system["last"]
+    assert "What you can reach right now, by category:" not in system
+    assert system == "NOW\n\nSYS"
 
 
 # ── run_schedule_now: saved_run action ───────────────────────────────────────

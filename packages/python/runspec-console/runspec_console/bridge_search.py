@@ -35,6 +35,14 @@ _RUNBOOK_SEARCH_LIMIT = 5
 # verbs (the common shape — cron, filesystem) fits comfortably under it.
 _SEARCH_COMMAND_ARG_BUDGET = 40
 
+# The heading under which the search-mode catalogue index rides as a TRAILING
+# section of the system prompt. Before 0.262.0 the index was folded into the
+# first *user* message; it now composes into the system prompt instead, so a
+# gateway that marks only the system block as cacheable actually caches it. In
+# search mode the tools block is small, so a system-only cache marker used to
+# fall under the model's minimum cacheable prefix and silently cache nothing.
+_CATALOG_SYSTEM_HEADING = "What you can reach right now, by category:"
+
 
 def _deliver_property() -> dict[str, Any]:
     """The ``deliver`` JSON-schema property (shared with the dedup/per-host tool
@@ -1119,13 +1127,14 @@ class SearchMixin:
         )
 
     def _chat_index_text(self) -> str:
-        """The full folded menu for a chat turn: the runnable catalog index
-        plus, when built-ins are deferred, a labelled deferred-tools section.
-        Empty outside search mode. Rides ``_fold_catalog_index`` unchanged —
-        the section is part of the index text, not a new fold.
+        """The full always-on menu for a search-mode agent turn: the runnable
+        catalog index plus, when built-ins are deferred, a labelled deferred-tools
+        section. Empty outside search mode. Composed into the system prompt as a
+        trailing section (see ``_catalog_system_section``), not folded into the
+        first user message — so a gateway caching only the system block caches it.
 
-        Each section labels itself; the fold's preamble is only a generic header
-        (it used to hard-code the runnables wording for the whole blob)."""
+        Each section labels itself; ``_catalog_system_section`` adds only a generic
+        heading over the whole blob."""
         if self._tool_mode() != "search":
             return ""
         index = self._build_catalog_index()
@@ -1146,28 +1155,19 @@ class SearchMixin:
             index = f"{index}\n\n{block}" if index else block
         return index
 
-    def _fold_catalog_index(
-        self, history: list[dict[str, Any]], index_text: str
-    ) -> list[dict[str, Any]]:
-        """Return a copy of ``history`` with the catalog index prepended to the
-        first user message — provider-agnostic (every adapter handles user
-        messages) and it leaves the cached tools+system prefix untouched. Never
-        mutates the stored history.
+    @staticmethod
+    def _catalog_system_section(index_text: str) -> str:
+        """Wrap the search-mode catalogue index (``_chat_index_text``) as a
+        trailing section of the system prompt, under a generic heading. Empty
+        when ``index_text`` is empty (dedup/per-host mode, or the index disabled),
+        so the caller appends nothing.
 
-        The preamble is a generic header only: each section inside ``index_text``
-        labels itself (see ``_chat_index_text``). It used to hard-code "Runnables
-        you can execute via run_runnable… This is the full menu", which was wrong
-        on two counts — it labelled the deferred-built-ins section as runnables,
-        and it claimed completeness even when ``_build_catalog_index`` had
-        truncated at ``tool_index_limit`` and appended "…and N more"."""
+        The heading is generic on purpose: each section inside ``index_text``
+        already labels itself (runnables menu, deferred-built-ins menu). Byte-stable
+        across a turn — ``index_text`` is already sorted and carries nothing
+        time-varying — so the cached system prefix holds turn to turn."""
         if not index_text:
-            return history
-        preamble = f"What you can reach right now, by category:\n\n{index_text}\n\n"
-        out = [dict(m) for m in history]
-        for m in out:
-            if m.get("role") == "user" and isinstance(m.get("content"), str):
-                m["content"] = preamble + m["content"]
-                break
-        return out
+            return ""
+        return f"{_CATALOG_SYSTEM_HEADING}\n\n{index_text}"
 
     # ── terminal sessions ─────────────────────────────────────────────────────
