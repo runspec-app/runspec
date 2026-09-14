@@ -688,7 +688,14 @@ def read_mcp_server() -> dict[str, Any]:
       subcommand leaf, e.g. ``jira_get-issue``…). ``runnable`` emits one tool per
       runnable with a ``command`` argument selecting the subcommand — far fewer
       tools for a multi-verb fleet, at the cost of per-subcommand arg typing.
-      Autonomy is still resolved per chosen subcommand, so gating is unchanged."""
+      Autonomy is still resolved per chosen subcommand, so gating is unchanged.
+    - ``expose_builtins`` (default **false**) — also publish the console's own
+      **console-specific** built-in agent tools (status, run history, memory +
+      runbooks, host→local file transfer, Outlook, the action tools) so the
+      external agent gets the console's ops/fleet powers, not just the runnables.
+      Opt-in: it widens what an external process can drive. Each built-in keeps its
+      own autonomy (reads run, writes park in the confirm card). The config +
+      search-meta tools and the workspace/exec/web tools are never exposed."""
     raw = read_config().get("mcp_server")
     cfg = dict(raw) if isinstance(raw, dict) else {}
     autonomy = str(cfg.get("default_autonomy") or "").strip().lower()
@@ -697,6 +704,7 @@ def read_mcp_server() -> dict[str, Any]:
     tool_style = str(cfg.get("tool_style") or "").strip().lower()
     if tool_style not in _MCP_SERVER_TOOL_STYLES:
         tool_style = DEFAULT_MCP_SERVER_TOOL_STYLE
+    expose_builtins = bool(cfg.get("expose_builtins", False))
     try:
         port = int(cfg.get("port", DEFAULT_MCP_SERVER_PORT) or DEFAULT_MCP_SERVER_PORT)
     except (TypeError, ValueError):
@@ -710,6 +718,7 @@ def read_mcp_server() -> dict[str, Any]:
         "default_autonomy": autonomy or None,
         "confirm_wait": max(1.0, float(cfg.get("confirm_wait", 50) or 50)),
         "tool_style": tool_style,
+        "expose_builtins": expose_builtins,
     }
 
 

@@ -427,6 +427,7 @@ def test_read_mcp_server_defaults(monkeypatch):
         "default_autonomy": None,
         "confirm_wait": 50.0,
         "tool_style": "leaf",
+        "expose_builtins": False,
     }
 
 
@@ -443,6 +444,7 @@ def test_read_mcp_server_overrides_and_validation(monkeypatch):
                 "default_autonomy": "CONFIRM",  # case-insensitive
                 "confirm_wait": 25,
                 "tool_style": "RUNNABLE",  # case-insensitive
+                "expose_builtins": True,
             }
         },
     )
@@ -453,6 +455,7 @@ def test_read_mcp_server_overrides_and_validation(monkeypatch):
     assert s["default_autonomy"] == "confirm"
     assert s["confirm_wait"] == 25.0
     assert s["tool_style"] == "runnable"
+    assert s["expose_builtins"] is True
 
     # Bogus autonomy → dropped (None); bad tool_style → default leaf;
     # out-of-range/garbage port → clamped/default.

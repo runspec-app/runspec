@@ -305,6 +305,30 @@ _HOT_BUILTIN_NAMES = (
 )
 
 
+# Built-in agent tools the console's OWN MCP server may expose to an external
+# coding agent (Claude Code, …) when ``[mcp_server] expose_builtins`` is on. The
+# console-SPECIFIC ops/fleet built-ins a coding agent can't do itself — status,
+# run history, memory + runbooks, host→local file transfer, Outlook, and the
+# action tools. Deliberately EXCLUDES:
+#   • config tools + search meta-tools — never (automation must not rewrite
+#     itself; the meta-tools are internal indirection a direct client doesn't use),
+#   • workspace / exec / web / files / repo / improve — a coding agent already has
+#     its own file/bash/web tools, and the workspace/exec ones are chat-session
+#     bound,
+#   • manage_denylist — fleet governance stays operator-only.
+# Filtered against the LIVE ``_custom_agent_tools()`` at publish time, so a tool
+# unavailable on this install (e.g. Outlook off-Windows) simply isn't offered.
+_MCP_SERVER_BUILTIN_NAMES = (
+    _STATUS_TOOL_NAMES
+    | _HISTORY_TOOL_NAMES
+    | _MEMORY_TOOL_NAMES
+    | _RUNBOOK_READ_TOOL_NAMES
+    | _OUTLOOK_TOOL_NAMES
+    | _ACTION_TOOL_NAMES
+    | frozenset({"download_file", "relay_file"})
+)
+
+
 class ToolCancelled(Exception):
     """Raised inside a built-in agent tool when its cancel Event is set — the
     operator pressed the chat Stop button or the tool's Console-card Cancel.

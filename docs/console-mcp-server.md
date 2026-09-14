@@ -58,6 +58,7 @@ port = 8765
 # default_autonomy = "confirm"
 confirm_wait = 50
 # tool_style = "leaf"      # or "runnable" — one tool per runnable + a command arg
+# expose_builtins = false  # also publish the console's console-specific built-in tools
 ```
 
 `[mcp_server]` lives in `config.toml`, so it rides Config Sync / the config seed
@@ -142,6 +143,36 @@ autonomous — so the confirm gate behaves identically to `leaf`; only the tool
 Another lever for a large fleet is `[tool_visibility] hidden_from_agent` — hide
 whole packages/groups you don't need over MCP (the hides carry over to this
 server). Combine both: collapse to `runnable` style and hide what you don't use.
+
+## Built-in tools (opt-in)
+
+By default the server publishes only your **fleet runnables**. Set
+`[mcp_server] expose_builtins = true` (Settings → MCP Server → **Expose built-in
+tools**) to also publish the console's own **console-specific** built-in agent
+tools — the ops/fleet powers a coding agent can't do itself:
+
+- `console_status`, `search_history`
+- memory + runbooks (`remember`, `search_memory`, `list_memories`, `forget_memory`,
+  `save_runbook`, `load_runbook`, `run_runbook`)
+- host→local file transfer (`download_file`, `relay_file`)
+- Outlook (`outlook_*`, when Outlook COM is available)
+- the action tools (`create_document`, `create_schedule`, `emit_event`,
+  `open_url`, `play_sound`, …)
+
+Each keeps its own autonomy — reads run immediately, writes (send mail, save a
+runbook, create a schedule, …) **park in the console confirm card** just like a
+`confirm` runnable, and the bounded-wait/resumable behaviour is identical.
+
+**Never exposed**, regardless of this setting: the console-config tools
+(`manage_hosts`/`manage_triggers`/…) and the search meta-tools (automation must
+not rewrite itself; the meta-tools are internal indirection), and the generic
+**workspace / code-exec / web / repo** tools — a coding agent already has its own
+file/bash/web tools, and the workspace/exec ones are tied to a chat session. The
+set is filtered against what's actually available on this install, so e.g. Outlook
+tools only appear on a Windows box with Outlook.
+
+Off by default: it widens what an external process can drive through your console
+beyond running fleet runnables.
 
 ### Live tool list (discovery)
 

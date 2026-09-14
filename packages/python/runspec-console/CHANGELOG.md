@@ -8,6 +8,33 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.256.0] — 2026-09-14
+
+### Added
+- **Console MCP server can expose the console's own built-in agent tools
+  (`[mcp_server] expose_builtins`, opt-in, default off).** Beyond the fleet
+  runnables, the server can now publish the **console-specific** built-ins a coding
+  agent can't do itself — `console_status`, `search_history`, memory + runbooks
+  (`remember`/`search_memory`/`list_memories`/`forget_memory`/`save_runbook`/
+  `load_runbook`/`run_runbook`), host→local transfer (`download_file`/`relay_file`),
+  Outlook (`outlook_*`), and the action tools (`create_document`/`create_schedule`/
+  `emit_event`/`open_url`/`play_sound`/…). Each keeps its own autonomy: reads run,
+  writes **park in the console confirm card** (same bounded-wait/resumable contract
+  as a runnable). Routed through the chat agent's own resolver
+  (`_effective_tool_autonomy`) + dispatch (`_run_tool_sync`) under a stable
+  `__mcp_server__` chat id. **Never exposed** regardless of the setting: the
+  console-config tools + search meta-tools (automation must not rewrite itself) and
+  the generic workspace/exec/web/repo tools (a coding agent has its own, and the
+  workspace ones are chat-session bound). The set is filtered against the live
+  `_custom_agent_tools()`, so an unavailable tool (e.g. Outlook off-Windows) isn't
+  offered. Settings → MCP Server gains an **Expose built-in tools** toggle + a
+  built-in count in the status line. New `mcp_server` `builtins_provider` /
+  `execute_builtin` injected callbacks + `_MCP_SERVER_BUILTIN_NAMES`
+  (`bridge_const`); `bridge_mcp_server._mcp_server_builtins` /
+  `_mcp_server_execute_builtin`. See `docs/console-mcp-server.md` → "Built-in
+  tools".
+
+
 ## [0.255.0] — 2026-09-14
 
 ### Added

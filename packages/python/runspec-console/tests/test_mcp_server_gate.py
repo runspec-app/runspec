@@ -240,6 +240,103 @@ def test_confirm_timeout_returns_resumable_and_does_not_run():
     assert b.runs == []  # nothing ran (no orphan execution)
 
 
+# ── built-in agent tools over MCP (opt-in) ───────────────────────────────────────
+
+
+class BuiltinBridge(McpServerMixin):
+    """McpServerMixin + the built-in dispatch primitives it reuses."""
+
+    def __init__(self, *, autonomy="autonomous", approve=True, answer=True):
+        self._autonomy = autonomy
+        self._approve = approve
+        self._answer = answer
+        self.ran: list[tuple] = []
+        self.registered: list[tuple] = []
+
+    def _custom_agent_tools(self):
+        # a mix: two exposed console-specific tools + two that must be filtered out
+        return [
+            {"name": "console_status", "description": "", "input_schema": {}},
+            {"name": "remember", "description": "", "input_schema": {}},
+            {"name": "manage_hosts", "description": "", "input_schema": {}},
+            {"name": "run_python_sandboxed", "description": "", "input_schema": {}},
+        ]
+
+    def _effective_tool_autonomy(self, name, ti):
+        return self._autonomy
+
+    def _confirm_timeout_s(self, headless=False):
+        return 300.0
+
+    def _register_confirm(self, chat_id, tool_name, tool_input, level):
+        self.registered.append((chat_id, tool_name, level))
+        event = threading.Event()
+        if self._answer:
+            event.set()
+        return "req-b1", event, {"approved": self._approve, "cancelled": False}
+
+    def _finish_confirm(self, request_id, holder, timed_out):
+        return (holder["approved"] and not timed_out), None
+
+    def _run_tool_sync(self, name, args, chat_id=""):
+        self.ran.append((name, dict(args), chat_id))
+        return f"ran {name}"
+
+
+def _expose(monkeypatch, on=True):
+    monkeypatch.setattr(
+        config_mod,
+        "read_mcp_server",
+        lambda: {"expose_builtins": on, "confirm_wait": 50},
+    )
+
+
+def test_builtins_off_by_default(monkeypatch):
+    _expose(monkeypatch, on=False)
+    assert BuiltinBridge()._mcp_server_builtins() == []
+
+
+def test_builtins_filtered_to_console_specific_set(monkeypatch):
+    _expose(monkeypatch, on=True)
+    names = {t["name"] for t in BuiltinBridge()._mcp_server_builtins()}
+    assert names == {"console_status", "remember"}  # config + exec tools dropped
+
+
+def test_builtin_autonomous_runs_under_mcp_chat_id(monkeypatch):
+    _expose(monkeypatch, on=True)
+    b = BuiltinBridge(autonomy="autonomous")
+    text, is_error = b._mcp_server_execute_builtin("console_status", {"x": 1})
+    assert is_error is False and "ran console_status" in text
+    assert b.registered == []  # autonomous → no confirm
+    assert b.ran and b.ran[0][0] == "console_status" and b.ran[0][2] == "__mcp_server__"
+
+
+def test_builtin_confirm_parks_then_runs(monkeypatch):
+    _expose(monkeypatch, on=True)
+    b = BuiltinBridge(autonomy="confirm", approve=True, answer=True)
+    text, is_error = b._mcp_server_execute_builtin("remember", {"text": "x"})
+    assert is_error is False
+    assert b.registered and b.registered[0][2] == "confirm"
+    assert b.ran and b.ran[0][0] == "remember"
+
+
+def test_builtin_not_in_allowlist_is_refused(monkeypatch):
+    _expose(monkeypatch, on=True)
+    b = BuiltinBridge()
+    text, is_error = b._mcp_server_execute_builtin("manage_hosts", {})
+    assert is_error is True and "not exposed" in text
+    assert b.ran == []
+
+
+def test_builtin_confirm_timeout_is_resumable(monkeypatch):
+    _expose(monkeypatch, on=True)
+    b = BuiltinBridge(autonomy="confirm", answer=False)
+    b._mcp_server_confirm_wait = lambda: 0.05  # type: ignore
+    text, is_error = b._mcp_server_execute_builtin("remember", {})
+    assert is_error is False and "awaiting operator approval" in text.lower()
+    assert b.ran == []
+
+
 # ── discovery file hardening ─────────────────────────────────────────────────────
 
 

@@ -26,7 +26,7 @@ import threading
 from typing import TYPE_CHECKING, Any
 
 from . import config as config_mod
-from .bridge_const import logger
+from .bridge_const import _MCP_SERVER_BUILTIN_NAMES, logger
 
 if TYPE_CHECKING:
     from .mcp_server import ExecTool
@@ -94,6 +94,76 @@ class McpServerMixin:
                 args = edited
 
         return self._mcp_server_run_blocking(tool, args, command_path, host)
+
+    # -- built-in agent tools (opt-in: [mcp_server] expose_builtins) ---------
+
+    def _mcp_server_builtins(self) -> list[dict[str, Any]]:
+        """builtins_provider: the console-specific built-in tool schemas to publish
+        over MCP — **only** when ``[mcp_server] expose_builtins`` is on. Filtered
+        from the **live** :meth:`_custom_agent_tools` by ``_MCP_SERVER_BUILTIN_NAMES``
+        (status / run-history / memory + runbooks / host→local transfer / Outlook /
+        action tools), so a tool unavailable on this install (e.g. Outlook
+        off-Windows) simply isn't offered, and the never-expose sets (config +
+        search-meta) and the client-redundant ones (workspace/exec/web/files/repo)
+        are absent by construction."""
+        try:
+            if not config_mod.read_mcp_server().get("expose_builtins"):
+                return []
+            tools = self._custom_agent_tools()
+        except Exception:  # noqa: BLE001 — never break the tool list
+            logger.debug("mcp_server builtins list failed", exc_info=True)
+            return []
+        return [t for t in tools if t.get("name") in _MCP_SERVER_BUILTIN_NAMES]
+
+    def _mcp_server_execute_builtin(
+        self, name: str, arguments: dict[str, Any]
+    ) -> tuple[str, bool]:
+        """Gate + run one built-in agent tool over MCP → ``(text, is_error)``.
+
+        Reuses the chat agent's own autonomy resolver (reads run; writes park in the
+        console confirm card, same bounded-wait-then-resumable contract as a
+        runnable) and dispatch (:meth:`_run_tool_sync`), under the stable
+        ``__mcp_server__`` chat id — so a tool that needs a workspace gets a
+        dedicated MCP one. Defence-in-depth: refuse anything not in the exposed
+        allowlist even if a stale name reaches here."""
+        if name not in _MCP_SERVER_BUILTIN_NAMES:
+            return (f"'{name}' is not exposed over MCP.", True)
+        args = dict(arguments or {})
+        try:
+            level = (self._effective_tool_autonomy(name, args) or "confirm").lower()
+        except Exception:  # noqa: BLE001 — fail closed
+            level = "confirm"
+        if level == "manual":
+            return (
+                f"'{name}' is autonomy = 'manual' — operator-only; run it in the "
+                "console.",
+                True,
+            )
+        if level in ("confirm", "supervised"):
+            request_id, event, holder = self._register_confirm(
+                _MCP_SERVER_CHAT_ID, name, args, level
+            )
+            approved_in_time = event.wait(timeout=self._mcp_server_confirm_wait())
+            approved, edited = self._finish_confirm(
+                request_id, holder, timed_out=not approved_in_time
+            )
+            if not approved_in_time:
+                return (
+                    f"⏳ Awaiting operator approval in the console (request "
+                    f"{request_id[:8]}). Approve it there, then call this tool "
+                    "again to run it.",
+                    False,
+                )
+            if holder.get("cancelled") or not approved:
+                return (f"Operator declined '{name}'.", True)
+            if isinstance(edited, dict):
+                args = edited
+        try:
+            text = self._run_tool_sync(name, args, _MCP_SERVER_CHAT_ID)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("mcp_server builtin %s failed", name, exc_info=True)
+            return (f"'{name}' failed: {exc}", True)
+        return (str(text), False)
 
     def _mcp_server_confirm_wait(self) -> float:
         """The bounded confirm wait: the smaller of ``[mcp_server] confirm_wait``
@@ -244,6 +314,8 @@ class McpServerMixin:
             if tool_style not in ("leaf", "runnable"):
                 raise ValueError(f"invalid tool_style: {tool_style}")
             section["tool_style"] = tool_style
+        if data.get("expose_builtins"):
+            section["expose_builtins"] = True
 
         def _mutate(cfg: dict[str, Any]) -> None:
             cfg["mcp_server"] = section

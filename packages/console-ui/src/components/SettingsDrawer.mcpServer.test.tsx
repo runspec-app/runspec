@@ -36,7 +36,7 @@ describe('McpServerTab', () => {
   beforeEach(() => {
     getCfg.mockReset().mockResolvedValue({
       enabled: false, host: '127.0.0.1', port: 8765, token: null,
-      default_autonomy: null, confirm_wait: 50, tool_style: 'leaf',
+      default_autonomy: null, confirm_wait: 50, tool_style: 'leaf', expose_builtins: false,
     })
     saveCfg.mockReset().mockResolvedValue({ ...OFF, running: true, url: 'http://127.0.0.1:8765/mcp', tools: 12 })
     statusFn.mockReset().mockResolvedValue(OFF)
@@ -54,8 +54,8 @@ describe('McpServerTab', () => {
     await act(async () => { render(<McpServerTab />) })
     await waitFor(() => expect(getCfg).toHaveBeenCalled())
 
-    // flip the enable switch on
-    await user.click(screen.getByRole('switch'))
+    // flip the enable switch on (the first switch; the second is "Expose built-in tools")
+    await user.click(screen.getAllByRole('switch')[0])
     await user.click(screen.getByRole('button', { name: 'Save' }))
 
     await waitFor(() => expect(saveCfg).toHaveBeenCalledTimes(1))
@@ -68,6 +68,7 @@ describe('McpServerTab', () => {
       default_autonomy: null,
       confirm_wait: 50,
       tool_style: 'leaf',
+      expose_builtins: false,
     })
   })
 

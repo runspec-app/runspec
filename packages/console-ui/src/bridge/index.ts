@@ -258,6 +258,7 @@ export interface OwnMcpServerConfig {
   default_autonomy: string | null
   confirm_wait: number
   tool_style: string        // 'leaf' (serve-identical) | 'runnable' (one tool per runnable + command arg)
+  expose_builtins: boolean  // also publish the console's console-specific built-in agent tools
 }
 export interface OwnMcpServerStatus {
   running: boolean
@@ -267,6 +268,7 @@ export interface OwnMcpServerStatus {
   url: string
   auth: boolean
   tools: number
+  builtins?: number
   tool_style?: string
 }
 

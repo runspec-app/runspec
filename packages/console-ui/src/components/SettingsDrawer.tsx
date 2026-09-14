@@ -5180,6 +5180,7 @@ export function McpServerTab() {
   const [autonomy, setAutonomy] = useState('')
   const [confirmWait, setConfirmWait] = useState<number>(50)
   const [toolStyle, setToolStyle] = useState('leaf')
+  const [exposeBuiltins, setExposeBuiltins] = useState(false)
   const [saving, setSaving] = useState(false)
   const [status, setStatus] = useState<Awaited<ReturnType<typeof bridge.mcp_server_status>> | null>(null)
 
@@ -5194,6 +5195,7 @@ export function McpServerTab() {
       setAutonomy(c.default_autonomy || '')
       setConfirmWait(typeof c.confirm_wait === 'number' ? c.confirm_wait : 50)
       setToolStyle(c.tool_style || 'leaf')
+      setExposeBuiltins(!!c.expose_builtins)
     })
     loadStatus()
     const t = setInterval(loadStatus, 4000)
@@ -5211,6 +5213,7 @@ export function McpServerTab() {
         default_autonomy: autonomy || null,
         confirm_wait: Math.max(1, Math.floor(confirmWait || 50)),
         tool_style: toolStyle || 'leaf',
+        expose_builtins: exposeBuiltins,
       })
       setStatus(st)
       message.success('Saved')
@@ -5258,6 +5261,17 @@ export function McpServerTab() {
         console's own tool list. Autonomy is still resolved per chosen subcommand either way.
       </Typography.Paragraph>
 
+      {row('Expose built-in tools', <Switch checked={exposeBuiltins} onChange={setExposeBuiltins} disabled={!enabled} />)}
+      <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: -2 }}>
+        Also publish the console's own <em>console-specific</em> built-in tools so the coding agent
+        gets your ops/fleet powers, not just the runnables: <code>console_status</code>,
+        <code>search_history</code>, memory + runbooks, host→local file transfer
+        (<code>download_file</code>/<code>relay_file</code>), Outlook, and the action tools
+        (<code>create_document</code>, <code>create_schedule</code>, …). Reads run; writes park in the
+        confirm card. The config + workspace/exec/web tools are never exposed. Off by default — it
+        widens what an external process can drive.
+      </Typography.Paragraph>
+
       <Button type="primary" onClick={handleSave} loading={saving} style={{ marginTop: 4 }}>Save</Button>
 
       <Divider style={{ margin: '14px 0' }} />
@@ -5265,7 +5279,7 @@ export function McpServerTab() {
       {status?.running ? (
         <Space direction="vertical" size={2}>
           <Space><Tag color="green">running</Tag><Typography.Text style={{ fontFamily: MONO_FONT, fontSize: 13 }}>{status.url}</Typography.Text></Space>
-          <Typography.Text type="secondary" style={{ fontSize: 13 }}>{status.tools} tool(s) · auth {status.auth ? 'on' : 'off'}</Typography.Text>
+          <Typography.Text type="secondary" style={{ fontSize: 13 }}>{status.tools} tool(s){status.builtins ? ` + ${status.builtins} built-in(s)` : ''} · auth {status.auth ? 'on' : 'off'}</Typography.Text>
           <Typography.Paragraph type="secondary" style={{ fontSize: 13, marginTop: 6, marginBottom: 0 }}>
             Connect Claude Code:&nbsp;
             <code>claude mcp add --transport http runspec {status.url}{status.auth ? ' --header "Authorization: Bearer <token>"' : ''}</code>

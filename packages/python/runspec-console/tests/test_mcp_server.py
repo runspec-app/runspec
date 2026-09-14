@@ -162,6 +162,53 @@ def test_resolve_brand_name_uses_white_label_brand():
     assert _server(brand_name=lambda: " Acme ")._resolve_brand_name() == "Acme"
 
 
+# ── built-in agent tools published alongside runnables ───────────────────────────
+
+
+def test_builtin_schemas_empty_without_provider():
+    # default server (no builtins_provider) publishes no built-ins
+    assert _server()._builtin_schemas() == []
+
+
+def _server_with_builtins():
+    return m.ConsoleMcpServer(
+        config_reader=lambda: {},
+        tools_provider=lambda: [
+            _runnable("greet", host="local", autonomy="autonomous")
+        ],
+        execute=lambda tool, args: ("", False),
+        builtins_provider=lambda: [
+            {
+                "name": "console_status",
+                "description": "status",
+                "input_schema": {"type": "object", "properties": {}},
+            }
+        ],
+        execute_builtin=lambda name, args: (f"ran {name}", False),
+    )
+
+
+def test_resolve_call_target_routes_builtin_runnable_unknown():
+    srv = _server_with_builtins()
+    # seed state as on_list_tools would
+    srv._state.registry = m.build_tools(
+        [_runnable("greet", host="local", autonomy="autonomous")], style="runnable"
+    )[1]
+    srv._state.builtin_names = {b["name"] for b in srv._builtin_schemas()}
+    assert srv._resolve_call_target("console_status")[0] == "builtin"
+    kind, tool = srv._resolve_call_target("greet")
+    assert kind == "runnable" and tool is not None and tool.name == "greet"
+    assert srv._resolve_call_target("nope")[0] == "unknown"
+
+
+def test_resolve_call_target_rebuilds_on_cold_miss():
+    # a call arriving before any tools/list still resolves (rebuilds once)
+    srv = _server_with_builtins()
+    assert srv._state.builtin_names == set()  # nothing listed yet
+    assert srv._resolve_call_target("console_status")[0] == "builtin"
+    assert srv._resolve_call_target("greet")[0] == "runnable"
+
+
 # ── runnable (collapsed) tool style ──────────────────────────────────────────────
 
 

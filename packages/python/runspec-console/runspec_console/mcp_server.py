@@ -443,6 +443,7 @@ class _State:
     port: int = 0
     token: str | None = None
     registry: dict[str, ExecTool] = field(default_factory=dict)
+    builtin_names: set[str] = field(default_factory=set)
 
 
 class ConsoleMcpServer:
@@ -461,6 +462,13 @@ class ConsoleMcpServer:
       * ``brand_name() -> str`` *(optional)* — the ``[console.theme] brand_name``,
         so the protocol-level server name a connecting client sees is the
         white-label brand rather than the literal ``runspec-console``.
+      * ``builtins_provider() -> list[dict]`` *(optional)* — schemas for the
+        console's own built-in agent tools to publish alongside the runnables
+        (empty unless ``[mcp_server] expose_builtins``). Names here are routed to
+        ``execute_builtin`` instead of the runnable executor.
+      * ``execute_builtin(name: str, arguments: dict) -> tuple[str, bool]``
+        *(optional)* — gate + run one built-in tool call (same contract as
+        ``execute``); required whenever ``builtins_provider`` yields any tool.
     """
 
     def __init__(
@@ -470,11 +478,16 @@ class ConsoleMcpServer:
         tools_provider: Callable[[], list[dict[str, Any]]],
         execute: Callable[[ExecTool, dict[str, Any]], tuple[str, bool]],
         brand_name: Callable[[], str] | None = None,
+        builtins_provider: Callable[[], list[dict[str, Any]]] | None = None,
+        execute_builtin: Callable[[str, dict[str, Any]], tuple[str, bool]]
+        | None = None,
     ) -> None:
         self._config_reader = config_reader
         self._tools_provider = tools_provider
         self._execute = execute
         self._brand_name = brand_name
+        self._builtins_provider = builtins_provider
+        self._execute_builtin = execute_builtin
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._uvicorn: Any = None
@@ -499,6 +512,7 @@ class ConsoleMcpServer:
                 "url": (f"http://{s.host}:{s.port}/mcp" if s.running else ""),
                 "auth": bool(s.token),
                 "tools": len(s.registry),
+                "builtins": len(s.builtin_names),
                 "tool_style": self._tool_style,
             }
 
@@ -512,6 +526,39 @@ class ConsoleMcpServer:
             runnables, default_autonomy=default_autonomy, style=self._tool_style
         )
         return registry
+
+    def _builtin_schemas(self) -> list[dict[str, Any]]:
+        """The console's own built-in tool schemas to publish (empty unless
+        ``[mcp_server] expose_builtins`` is on / no provider injected). Called on
+        every ``tools/list`` so the set stays live."""
+        if self._builtins_provider is None:
+            return []
+        try:
+            return list(self._builtins_provider() or [])
+        except Exception:  # noqa: BLE001 — a builtins hiccup shouldn't 500 the list
+            logger.warning("mcp_server builtins_provider failed", exc_info=True)
+            return []
+
+    def _resolve_call_target(self, name: str) -> tuple[str, ExecTool | None]:
+        """Route an incoming call to ``("builtin", None)`` (→ ``execute_builtin``),
+        ``("runnable", ExecTool)`` (→ ``execute``), or ``("unknown", None)``.
+        Rebuilds the registry + built-in set once on a miss (a client may call
+        before a fresh ``tools/list``)."""
+        with self._lock:
+            if name in self._state.builtin_names and self._execute_builtin is not None:
+                return "builtin", None
+            tool = self._state.registry.get(name)
+        if tool is not None:
+            return "runnable", tool
+        registry = self._build_registry(self._default_autonomy)
+        names = {b["name"] for b in self._builtin_schemas()}
+        with self._lock:
+            self._state.registry = registry
+            self._state.builtin_names = names
+        if name in names and self._execute_builtin is not None:
+            return "builtin", None
+        tool = registry.get(name)
+        return ("runnable", tool) if tool is not None else ("unknown", None)
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -614,29 +661,36 @@ class ConsoleMcpServer:
         async def on_list_tools(ctx: Any, params: Any) -> Any:
             self._capture_session(ctx)
             registry = self._build_registry(self._default_autonomy)
+            builtins = self._builtin_schemas()
             with self._lock:
                 self._state.registry = registry
-            return types.ListToolsResult(
-                tools=[
-                    types.Tool(
-                        name=t.name,
-                        description=t.description or None,
-                        input_schema=t.input_schema,
-                    )
-                    for t in registry.values()
-                ]
-            )
+                self._state.builtin_names = {b["name"] for b in builtins}
+            tools = [
+                types.Tool(
+                    name=t.name,
+                    description=t.description or None,
+                    input_schema=t.input_schema,
+                )
+                for t in registry.values()
+            ]
+            tools += [
+                types.Tool(
+                    name=b["name"],
+                    description=b.get("description") or None,
+                    input_schema=b.get("input_schema")
+                    or {"type": "object", "properties": {}},
+                )
+                for b in builtins
+            ]
+            return types.ListToolsResult(tools=tools)
 
         async def on_call_tool(ctx: Any, params: Any) -> Any:
             import asyncio
 
             self._capture_session(ctx)
-            with self._lock:
-                tool = self._state.registry.get(params.name)
-            if tool is None:
-                # rebuild once — the client may be calling before a fresh list
-                tool = self._build_registry(self._default_autonomy).get(params.name)
-            if tool is None:
+            args = dict(params.arguments or {})
+            kind, tool = self._resolve_call_target(params.name)
+            if kind == "unknown":
                 return types.CallToolResult(
                     content=[
                         types.TextContent(
@@ -645,8 +699,18 @@ class ConsoleMcpServer:
                     ],
                     is_error=True,
                 )
-            args = dict(params.arguments or {})
-            worker = asyncio.create_task(asyncio.to_thread(self._execute, tool, args))
+            if kind == "builtin":
+                # _resolve_call_target only returns "builtin" when execute_builtin
+                # is set (asserted for the type checker).
+                assert self._execute_builtin is not None
+                worker = asyncio.create_task(
+                    asyncio.to_thread(self._execute_builtin, params.name, args)
+                )
+            else:
+                assert tool is not None  # "runnable" ⇒ a resolved ExecTool
+                worker = asyncio.create_task(
+                    asyncio.to_thread(self._execute, tool, args)
+                )
             step = 0
             while True:
                 done, _ = await asyncio.wait({worker}, timeout=_HEARTBEAT_S)
