@@ -1479,6 +1479,18 @@ class AutonomyMixin:
         entry = self._host_entry(host)
         if entry is None:
             return f"Error: host '{host}' not found"
+        # An unknown credential_id used to be a logged warning and the run went
+        # ahead without it — so a typo'd or stale id produced a confusing
+        # authentication failure deep in the runnable instead of a mistake the
+        # agent could see and fix. In search mode credential_id is a free string
+        # (no enum to constrain it), which makes that the likely case, so bounce
+        # it in-turn like any other bad argument. `credential_ids` (a saved run's
+        # stored list) keeps the warn-and-skip behaviour: those ids were valid
+        # when saved and a since-deleted one must not break replaying the run.
+        if credential_id:
+            cred_err = self._unknown_credential_error(credential_id)
+            if cred_err:
+                return cred_err
         output_lines: list[str] = []
         exit_code_holder = [0]
 

@@ -8,6 +8,84 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.255.0] — 2026-09-14
+
+### Added
+- **Search rows now describe subcommand runnables honestly.** A
+  `search_runnables` row listed a runnable's args flat — which for a subcommand
+  runnable is only its *inherited globals* — while every verb's own args stayed
+  invisible until `describe_runnable` was called. The row read like the whole
+  interface, so a call built straight from it bounced on "unknown argument(s)".
+  A row for a runnable with commands now carries `args_are_per_command: true`
+  and a `command.args` map of **command path → that verb's own args** (globals
+  not repeated, `password` args omitted as everywhere else). A many-verb
+  runnable would dominate the payload search mode exists to keep small, so the
+  detail is **all-or-nothing**: past a budget the row drops it and names
+  `describe_runnable` instead (a half-listed interface is worse than none — the
+  agent would read the truncation as "this verb takes no args").
+  `run_runnable`'s description now also states that `command` is a top-level
+  field and that the row's flat `args` are the shared globals.
+  (`bridge_search._command_arg_rows`.)
+
+- **Search rows now carry the credentials in scope for the runnable.** Dedup
+  mode advertises them as a `credential_id` enum on each tool's schema; search
+  mode has no per-runnable schema, so the agent could not know a credential
+  existed or how its id was spelled. Each row now lists the in-scope
+  credentials as `{id, label}` — **never a secret, never a username** — with a
+  hint that they already apply on their own. The credential cache is refreshed
+  per search (the dedup path refreshes when it builds its enums; search mode
+  never called that, so a credential added since start-up was invisible).
+
+### Changed
+- **An unknown `credential_id` is now a preflight error, not a logged warning.**
+  It used to be logged and dropped, and the run went ahead without the
+  credential — surfacing as a confusing authentication failure inside the
+  runnable rather than a mistake the agent could see and fix. In search mode
+  `credential_id` is a free string with no enum to constrain it, which makes a
+  typo'd or stale id the likely case, so it now bounces in-turn like any other
+  bad argument, naming the ids that *are* saved. A saved run's stored
+  `credential_ids` list keeps the warn-and-skip behaviour: those ids were valid
+  when saved, and a since-deleted one must not break replaying the run.
+  (`bridge_internals._unknown_credential_error`.)
+
+- **`[llm] max_tokens` is now raised to the model's real ceiling when unset.**
+  The capability reconciliation only ever clamped *down*, so a model whose
+  `max_output_tokens` is 64000 was still held at the conservative 8192 default —
+  and every long reply hit the ceiling and auto-continued, re-sending the whole
+  conversation each round to produce a reply the model could have written in
+  one. `max_tokens` is a ceiling, not a spend, so when the operator has **not**
+  set `[llm] max_tokens` the default is now raised to the model's cap. Clamping
+  down is unchanged and still applies either way; an **explicitly set**
+  `max_tokens` is never raised — a deliberately low ceiling is a budget
+  decision. (`bridge_internals._apply_capabilities`.)
+
+### Docs
+- **`[llm] effort` guidance for ops work** — a new *how hard the model thinks*
+  section in `docs/console-reference.md` with a per-level table:
+  `low` is the everyday ops default (picking a runnable from a large catalogue,
+  building a call from a search row), `medium` for multi-step and consequential
+  work (chaining runnables, triage, group fan-out), `off` for one-shot lookups,
+  and `high`+ rarely right for a standing console. Notes that thinking shares
+  the `max_tokens` budget and that effort composes with tool use. The `[llm]`
+  table also gained the previously-undocumented `effort`, `max_continuations`
+  and `max_tool_rounds` rows, and `max_continuations`' stale default (3) is
+  corrected to its actual 12.
+
+### Testing
+- Three grounded eval cases pin subcommand selection on real runnables —
+  `expect_command` + `expect_args` together on `cron add` / `cron list` /
+  `filesystem read-text-file`, which `expect_tool` alone cannot tell apart
+  ("list the crontab" vs "wipe the crontab").
+- `scripts/record_evals.py` grounds and scores **both spellings** of a
+  subcommand case. Its toolset is the flattened `runspec serve` one (`cron_add`),
+  while a console-runtime case names the runnable and verb separately
+  (`expect_tool = "cron"` + `expect_command = "add"`); the two describe the same
+  decision, so the driver now joins them for grounding and splits the leaf name
+  back apart for scoring. Without it a console-shaped case scored `wrong_tool`
+  on a call that was in fact correct, which would have made `expect_command`
+  unusable in the shared fixture.
+
+
 ## [0.254.0] — 2026-09-13
 
 ### Fixed

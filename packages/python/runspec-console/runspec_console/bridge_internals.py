@@ -159,6 +159,36 @@ class InternalsMixin:
             user = str(entry["username"])
         return user, cred.get_secret(str(credential_id))
 
+    def _unknown_credential_error(self, credential_id: str) -> str | None:
+        """An agent-readable error when ``credential_id`` names no saved
+        credential, or ``None`` when it resolves.
+
+        Reloads the store first so a credential added since start-up isn't
+        reported missing. A store that can't be read returns ``None`` — the run
+        proceeds and the downstream warn-and-skip still applies; refusing on an
+        unreadable store would turn a credentials problem into a run outage."""
+        cid = str(credential_id or "").strip()
+        if not cid:
+            return None
+        try:
+            self._reload_credentials()
+        except Exception:  # noqa: BLE001 — an unreadable store must not block a run
+            logger.debug("credential store unavailable for validation", exc_info=True)
+            return None
+        if self._credential_entry(cid) is not None:
+            return None
+        known = sorted(str(c.get("id", "")) for c in self._credentials if c.get("id"))
+        return (
+            f"Error: unknown credential_id '{cid}'. "
+            + (
+                f"Saved credentials: {', '.join(known)}."
+                if known
+                else "No credentials are saved on this console."
+            )
+            + " In-scope credentials apply automatically — omit credential_id "
+            "unless you need to force a specific one."
+        )
+
     def _credential_env(
         self, host: str, runnable: str, ids: list[str] | None
     ) -> tuple[dict[str, str], list[str]]:
@@ -937,7 +967,9 @@ class InternalsMixin:
         # model's real max, and drop thinking/effort on a gateway that doesn't accept
         # it. Done once per build (adapters are cached) and defensively — a plugin
         # adapter that doesn't implement capabilities() is unaffected.
-        self._apply_capabilities(adapter)
+        self._apply_capabilities(
+            adapter, explicit_max_tokens=llm_cfg.get("max_tokens") is not None
+        )
         # When a key-vending command is configured, don't cache the adapter — the
         # adapter's own TTL controls refresh. Static-key configs cache as before.
         # A system_override adapter is one-off and never cached.
@@ -946,18 +978,32 @@ class InternalsMixin:
         return adapter
 
     @staticmethod
-    def _apply_capabilities(adapter: Any) -> None:
+    def _apply_capabilities(adapter: Any, explicit_max_tokens: bool = True) -> None:
         """Reconcile an adapter's request settings with its model's capabilities.
 
         Reads ``adapter.capabilities()`` (best-effort; any adapter may omit it) and:
 
-          * clamps ``adapter.max_tokens`` down to ``max_output_tokens`` when the
-            model's real ceiling is lower than the operator's ``[llm] max_tokens``,
-            so a generous setting can't 400 against a smaller model; and
+          * reconciles ``adapter.max_tokens`` with the model's real
+            ``max_output_tokens`` — see below; and
           * disables extended thinking / reasoning effort (zeroes the adapter's
             effort field) when ``adaptive_thinking`` is false — a gateway/proxy that
             drops the thinking-effort field would otherwise see a useless (or
             rejected) parameter.
+
+        The reconciliation runs **both ways**, and which way depends on whether the
+        operator set ``[llm] max_tokens`` themselves (``explicit_max_tokens``):
+
+          * **Down, always.** A ceiling above the model's real cap 400s, so it is
+            clamped whether the operator chose it or not.
+          * **Up, only from the adapter's default.** The 8192 default is a
+            conservative floor picked to be safe on any model, not a considered
+            choice — and leaving it there on a model that allows 64000 makes every
+            long reply hit the ceiling and auto-continue, spending extra round
+            trips (and re-sending the whole conversation each time) to produce a
+            reply the model could have written in one. ``max_tokens`` is a ceiling,
+            not a spend — raising it costs nothing unless the tokens are used. An
+            operator who set the value explicitly is left alone: a deliberately low
+            ceiling is a budget decision, not something to second-guess.
 
         Never raises into adapter construction."""
         try:
@@ -966,8 +1012,11 @@ class InternalsMixin:
             return
         mot = getattr(caps, "max_output_tokens", None)
         cur = getattr(adapter, "max_tokens", None)
-        if mot and isinstance(cur, int) and cur > int(mot):
-            adapter.max_tokens = int(mot)
+        if mot and isinstance(cur, int):
+            if cur > int(mot):
+                adapter.max_tokens = int(mot)
+            elif cur < int(mot) and not explicit_max_tokens:
+                adapter.max_tokens = int(mot)
         if not getattr(caps, "adaptive_thinking", True):
             # Built-ins store the normalised effort on _effort (anthropic/bedrock)
             # or effort (langserve); clear whichever is present so no thinking/

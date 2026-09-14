@@ -68,3 +68,35 @@ prompt = "show me what's in /etc/hosts"
 expect_tool = "filesystem_read-text-file"
 forbid_tools = ["filesystem_write-file"]
 notes = "A read request must not reach for the write verb."
+
+# ── subcommand runnables: the VERB is graded too ──────────────────────────────
+# In dedup/search mode a multi-verb runnable is ONE tool and the verb rides a
+# top-level `command` field, so expect_tool alone can't tell "list the crontab"
+# from "wipe the crontab". expect_command grades that choice; expect_args grades
+# the verb's own args, which live on the command node rather than the runnable's
+# inherited globals — the pair is what proves a subcommand call was built right.
+# (In flattened direct-tool mode the verb is already in the tool name, so these
+# cases also pin the same decision under `cron_*` / `filesystem_*`.)
+[[eval]]
+id = "cron-subcommand-add"
+prompt = "schedule /usr/local/bin/rotate-logs.sh to run every Sunday at 2am"
+expect_tool = "cron"
+expect_command = "add"
+expect_args = { schedule = "0 2 * * 0", command = "/usr/local/bin/rotate-logs.sh" }
+notes = "Verb + per-command args together: the add verb, not list/remove/clear."
+
+[[eval]]
+id = "cron-subcommand-read-not-write"
+prompt = "what's in the crontab for the deploy user?"
+expect_tool = "cron"
+expect_command = "list"
+expect_args = { run-as = "deploy" }
+notes = "A read must pick the list verb (autonomous), never remove/clear."
+
+[[eval]]
+id = "filesystem-subcommand-read"
+prompt = "show me the contents of /etc/hosts"
+expect_tool = "filesystem"
+expect_command = "read-text-file"
+expect_args = { path = "/etc/hosts" }
+notes = "Per-command arg (path) lives on the verb, not the runnable's globals."

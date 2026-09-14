@@ -93,11 +93,48 @@ def test_apply_capabilities_clamps_max_tokens_down():
     assert a.max_tokens == 4096
 
 
-def test_apply_capabilities_does_not_raise_max_tokens():
+def test_apply_capabilities_clamps_down_even_when_operator_set_it():
+    # A ceiling above the model's real cap 400s, so it is clamped whoever chose it.
+    a = _Tiny("claude-x", {"claude-x": {"max_output_tokens": 4096}})
+    a.max_tokens = 64000
+    InternalsMixin._apply_capabilities(a, explicit_max_tokens=True)
+    assert a.max_tokens == 4096
+
+
+def test_apply_capabilities_raises_default_max_tokens_to_model_cap():
+    # No `[llm] max_tokens` set → the adapter carries its conservative 8192
+    # default, which is a safe floor rather than a considered choice. Holding a
+    # 64000-capable model there makes every long reply hit the ceiling and
+    # auto-continue, re-sending the conversation each round for a reply the model
+    # could have written in one.
+    a = _Tiny("claude-x", {"claude-x": {"max_output_tokens": 64000}})
+    a.max_tokens = 8192
+    InternalsMixin._apply_capabilities(a, explicit_max_tokens=False)
+    assert a.max_tokens == 64000
+
+
+def test_apply_capabilities_never_raises_an_explicit_max_tokens():
+    # A deliberately low ceiling is a budget decision — left alone.
+    a = _Tiny("claude-x", {"claude-x": {"max_output_tokens": 64000}})
+    a.max_tokens = 8192
+    InternalsMixin._apply_capabilities(a, explicit_max_tokens=True)
+    assert a.max_tokens == 8192
+
+
+def test_apply_capabilities_defaults_to_treating_max_tokens_as_explicit():
+    # The default is the conservative one: a caller that doesn't say gets the
+    # old clamp-down-only behaviour.
     a = _Tiny("claude-x", {"claude-x": {"max_output_tokens": 64000}})
     a.max_tokens = 8192
     InternalsMixin._apply_capabilities(a)
-    assert a.max_tokens == 8192  # only clamps DOWN, never up
+    assert a.max_tokens == 8192
+
+
+def test_apply_capabilities_without_a_known_cap_leaves_max_tokens_alone():
+    a = _Tiny("claude-x", {})
+    a.max_tokens = 8192
+    InternalsMixin._apply_capabilities(a, explicit_max_tokens=False)
+    assert a.max_tokens == 8192
 
 
 def test_apply_capabilities_disables_effort_when_no_adaptive_thinking():

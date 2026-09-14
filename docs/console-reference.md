@@ -40,7 +40,10 @@ Set in **Settings → Model / API**.
 | `api_key_command` / `api_key_ttl_ms` | Instead of a static key: a command whose stdout is a short-lived token, re-run after the TTL |
 | `base_url` | Corporate proxy / gateway endpoint |
 | `model` / `models` | Active model id / the dropdown's list of available ids |
-| `max_tokens` | Per-reply output ceiling (default 8192); replies that hit it auto-continue, up to `max_continuations` (default 3) |
+| `max_tokens` | Per-reply output ceiling (default 8192); replies that hit it auto-continue, up to `max_continuations`. Left unset, the console **raises** it to the model's real `max_output_tokens` when that is higher (see [`[llm.model_limits]`](#llm-model-limits)) — set it explicitly only to hold a lower ceiling |
+| `max_continuations` | How many times a reply cut off at `max_tokens` is auto-continued (default **12**). A runaway backstop, not a per-task dial |
+| `max_tool_rounds` | How many tool-execution rounds one turn may take (default **25**). Independent of `max_continuations`. Hitting it ends the turn with a visible, resumable *paused after N tool steps* marker — say "continue" to resume |
+| `effort` | Reasoning effort before the model answers: `off` (default), `low`, `medium`, `high`, `xhigh`, `max` — see [below](#llm-effort) |
 | `max_network_retries` | How many times a model call is retried after a **transient** failure — read/connect timeout, dropped connection, 429/5xx — before any text has streamed (default 4; 0 disables). Spaced by exponential backoff, so a proxy blip no longer ends a turn on a bare "Error" |
 | `max_self_recoveries` | How many times a turn that still failed after its network retries is handed back to the agent to **analyse and resume** (default 1; 0 disables). Injects a short reflection turn with the full conversation still in context, then re-enters the loop after a backoff |
 | `system` | System prompt — **replaces** the built-in default wholesale (including its clarify-don't-guess guidance) |
@@ -58,6 +61,37 @@ Bedrock adds the standard AWS credential chain (`aws_region`,
 over `/stream_events`, falling back to `/invoke` if unavailable) and
 `cache_markers` (default **off** — add Anthropic `cache_control` breakpoints for a
 gateway that forwards them) — see [adapters](console-adapters.md).
+
+### `effort` — how hard the model thinks {#llm-effort}
+
+`[llm] effort` buys deliberation before the model answers (adaptive extended
+thinking — see [adapters](console-adapters.md) → *`effort`*
+for the wire format and gateway knobs). It trades latency and output tokens for a
+better-reasoned answer, so the level worth paying for depends on the work.
+
+**For ops work — day-to-day fleet operation — `low` or `medium` is the band that
+pays.** `off` is the default and is genuinely fine for one-shot lookups; above
+`medium` the extra thinking mostly buys latency on tasks whose difficulty is in
+*reaching* the right host, not in reasoning about it.
+
+| Level | Where it earns its keep |
+|---|---|
+| `off` | Single-step, unambiguous requests — "what's disk usage on web-01", "list the crontab". The answer is one tool call; thinking adds latency and nothing else |
+| `low` | **The everyday ops default.** Picking the right runnable from a large fleet catalogue, reading a `search_runnables` row and building the call (choosing the subcommand, mapping a request onto typed args), interpreting one tool's output |
+| `medium` | **Multi-step and consequential work.** Chaining several runnables, triage that reads output and decides what to do next, writing or following a runbook, anything destructive or fanned out across a host group where getting the target wrong is expensive |
+| `high` and above | Genuinely hard reasoning — diagnosing an unfamiliar failure from logs, designing an automation. Rarely the right setting for a standing console |
+
+Two things to keep in mind when turning it up:
+
+- Thinking counts toward `max_tokens`, since it shares the output budget. At
+  `medium` and above, leave `max_tokens` unset (the console then raises it to the
+  model's real ceiling) or set it generously — otherwise a deep reply spends its
+  budget thinking and gets cut off, then auto-continues.
+- It composes with tool use: thinking blocks survive tool-call turns, so the
+  effort applies to every step of a multi-tool turn, not just the first.
+
+Effort is dropped automatically on a model or gateway that doesn't accept it
+(`adaptive_thinking = false` in `[llm.model_limits]`).
 
 ### `[llm.model_limits]` — model capabilities {#llm-model-limits}
 
@@ -81,7 +115,7 @@ adaptive_thinking = true
 | Field | Meaning |
 |---|---|
 | `context_window` | Total prompt+output token budget — feeds the context-window gauge (overrides the model-id substring guess) |
-| `max_output_tokens` | Hard per-reply ceiling — `[llm] max_tokens` is **clamped down** to this so a generous setting can't 400 |
+| `max_output_tokens` | The model's real per-reply ceiling. `[llm] max_tokens` is **clamped down** to it so a generous setting can't 400 — and, when `max_tokens` is unset, **raised up** to it, so a model that allows 64000 isn't held at the conservative 8192 default (an explicit `max_tokens` is never raised) |
 | `adaptive_thinking` | Whether the model/gateway accepts thinking / reasoning **effort**. `false` ⇒ the console sends none |
 | `cache_markers` | Whether prompt-cache breakpoints are honoured (informational) |
 | `strict_tools` | Whether the endpoint enforces strict JSON-schema tool arguments (informational) |

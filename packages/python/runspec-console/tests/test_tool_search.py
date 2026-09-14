@@ -101,6 +101,7 @@ class _Bridge:
     _node_at = staticmethod(Bridge._node_at)
     _preflight_validate = Bridge._preflight_validate
     _search_runnables = Bridge._search_runnables
+    _command_arg_rows = staticmethod(Bridge._command_arg_rows)
     _search_runbooks = Bridge._search_runbooks
     _score_runbook = staticmethod(Bridge._score_runbook)
     _runbook_id_hint = staticmethod(Bridge._runbook_id_hint)
@@ -112,6 +113,7 @@ class _Bridge:
     _scoped_credentials = Bridge._scoped_credentials
     _scope_matches = staticmethod(Bridge._scope_matches)
     _credential_entry = Bridge._credential_entry
+    _unknown_credential_error = Bridge._unknown_credential_error
     _apply_credentials = Bridge._apply_credentials
     _credential_env = Bridge._credential_env
     _declared_arg_names = staticmethod(Bridge._declared_arg_names)
@@ -299,6 +301,96 @@ def test_search_row_lists_nested_command_paths():
         "restore incremental",
     }
     assert "restore" not in row["command"]["options"]  # require-command node
+
+
+def test_search_row_lists_per_command_args():
+    # The row's flat `args` are only the inherited globals; each command's OWN
+    # args must be listed under command.args, keyed by the space-joined path, so
+    # a call can be built without a describe_runnable round-trip.
+    runnables = [
+        _rn(
+            "a",
+            "cron",
+            description="crontab management",
+            args=[{"name": "run-as", "type": "str"}],
+            requireCommand=True,
+            commands={
+                # Discovery merges inherited globals into every node, so the
+                # fixture carries `run-as` on the command too — it must not be
+                # repeated per verb.
+                "list": {"args": [{"name": "run-as", "type": "str"}]},
+                "add": {
+                    "args": [
+                        {"name": "run-as", "type": "str"},
+                        {"name": "schedule", "type": "str", "required": True},
+                        {"name": "command", "type": "str", "required": True},
+                        {"name": "secret", "type": "password"},
+                    ]
+                },
+            },
+        )
+    ]
+    row = _search(runnables, "cron")["results"][0]
+    assert [a["name"] for a in row["args"]] == ["run-as"]
+    assert row["command"]["args_are_per_command"] is True
+    per = row["command"]["args"]
+    assert {a["name"] for a in per["add"]} == {"schedule", "command"}  # no globals
+    assert all(a["name"] != "secret" for a in per["add"])  # secrets never inline
+    assert [a["required"] for a in per["add"]] == [True, True]
+    assert "list" not in per  # no args of its own beyond the globals
+    assert "note" not in row["command"]
+
+
+def test_search_row_defers_per_command_args_when_over_budget():
+    # A many-verb runnable must not dominate the result payload — the row drops
+    # the detail entirely (never half of it) and names describe_runnable instead.
+    commands = {
+        f"verb{i}": {"args": [{"name": f"a{i}", "type": "str"}]} for i in range(80)
+    }
+    runnables = [_rn("a", "jira", description="jira", commands=commands)]
+    row = _search(runnables, "jira")["results"][0]
+    assert "args" not in row["command"]
+    assert "describe_runnable" in row["command"]["note"]
+    assert row["command"]["args_are_per_command"] is True
+
+
+# ── credentials in search rows ────────────────────────────────────────────────
+
+
+def test_search_row_lists_in_scope_credentials_without_secrets():
+    # Dedup mode advertises credentials as a `credential_id` enum on the tool
+    # schema; search mode has no per-runnable schema, so the row must carry them
+    # or the agent can't know one exists. Id + label only — never a secret.
+    creds = [
+        {
+            "id": "c1",
+            "label": "Jira",
+            "username": "svc",
+            "secret_arg": "pw",
+            "scope_runnables": ["ticket"],
+        },
+        {"id": "c2", "label": "Other", "scope_runnables": ["nothing-else"]},
+    ]
+    b = _Bridge([_rn("a", "ticket", description="raise a ticket")], credentials=creds)
+    row = b._search_runnables("ticket")["results"][0]
+    assert row["credentials"] == [{"id": "c1", "label": "Jira"}]  # out of scope gone
+    assert "credential_id" in row["credentials_hint"]
+    blob = json.dumps(row)
+    assert "svc" not in blob and "secret" not in blob.lower()
+
+
+def test_search_row_omits_credentials_key_when_none_in_scope():
+    b = _Bridge([_rn("a", "ticket")], credentials=[])
+    row = b._search_runnables("ticket")["results"][0]
+    assert "credentials" not in row and "credentials_hint" not in row
+
+
+def test_run_runnable_schema_says_credential_id_is_top_level():
+    tools = {t["name"]: t for t in _Bridge([])._search_mode_tools()}
+    run = tools["run_runnable"]
+    assert "never put" in run["description"].lower()
+    desc = run["input_schema"]["properties"]["credential_id"]["description"]
+    assert "NOT an entry in 'args'" in desc
 
 
 def test_search_omits_password_args():
@@ -674,6 +766,46 @@ def test_run_runnable_preflight_blocks_before_dispatch(monkeypatch):
     )
     assert out.startswith("Error:") and "missing required" in out
     assert called["ran"] is False  # never dispatched
+
+
+def test_run_runnable_rejects_unknown_credential_id(monkeypatch):
+    # Search mode's credential_id is a free string (no enum), so a typo'd or
+    # stale id used to be logged and dropped — the run went ahead unauthenticated
+    # and failed confusingly inside the runnable. It must bounce in-turn instead.
+    called = {"ran": False}
+    monkeypatch.setattr(
+        "runspec_console.executor.run_local", lambda *a, **k: called.update(ran=True)
+    )
+    monkeypatch.setattr(
+        "runspec_console.bridge_utils._paths", lambda e: ["/bin/runspec"]
+    )
+    monkeypatch.setattr("runspec_console.hosts.venv_name", lambda p: "fleet")
+
+    b = _Bridge([_rn("h1local", "ticket")], credentials=[{"id": "c1", "label": "Jira"}])
+    out = b._run_tool_sync(
+        "run_runnable",
+        {"id": "fleet__ticket", "host": "h1local", "credential_id": "typo"},
+    )
+    assert out.startswith("Error:") and "unknown credential_id 'typo'" in out
+    assert "c1" in out  # names what IS available
+    assert called["ran"] is False  # never dispatched
+
+
+def test_run_runnable_accepts_known_credential_id(monkeypatch):
+    monkeypatch.setattr(
+        "runspec_console.executor.run_local", lambda *a, **k: a[5](0, 1)
+    )
+    monkeypatch.setattr(
+        "runspec_console.bridge_utils._paths", lambda e: ["/bin/runspec"]
+    )
+    monkeypatch.setattr("runspec_console.hosts.venv_name", lambda p: "fleet")
+
+    b = _Bridge([_rn("h1local", "ticket")], credentials=[{"id": "c1", "label": "Jira"}])
+    out = b._run_tool_sync(
+        "run_runnable",
+        {"id": "fleet__ticket", "host": "h1local", "credential_id": "c1"},
+    )
+    assert not out.startswith("Error")
 
 
 def test_run_runnable_splits_password_into_secrets(monkeypatch):

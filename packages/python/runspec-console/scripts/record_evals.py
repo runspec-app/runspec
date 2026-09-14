@@ -54,9 +54,15 @@ from runspec_console.adapters.replay import (
 
 
 # ── build the real toolset from installed runnables ───────────────────────────
-def build_toolset() -> list[dict[str, Any]]:
+def build_toolset() -> tuple[list[dict[str, Any]], dict[str, tuple[str, str]]]:
     """The MCP tool schemas for every runnable installed in this venv, expanded
-    exactly as ``runspec serve`` would (subcommands → leaf tools)."""
+    exactly as ``runspec serve`` would (subcommands → leaf tools).
+
+    Returns ``(tools, split)``. ``split`` maps each leaf tool name back to the
+    ``(runnable, command)`` pair it was flattened from (``cron_add`` →
+    ``("cron", "add")``; a nested path space-joined, ``""`` for a runnable with no
+    subcommands) — what a console-runtime case, where the runnable is one tool and
+    the verb rides a ``command`` field, actually names."""
     raw = subprocess.run(
         [sys.prefix + "/bin/runspec", "local", "--format", "json"],
         capture_output=True,
@@ -64,6 +70,7 @@ def build_toolset() -> list[dict[str, Any]]:
         check=True,
     ).stdout
     tools: list[dict[str, Any]] = []
+    split: dict[str, tuple[str, str]] = {}
     for entry in json.loads(raw):
         spec = entry["spec"]
         name = entry["runnable"]
@@ -76,7 +83,11 @@ def build_toolset() -> list[dict[str, Any]]:
             spec.get("become_flags"),
         ):
             tools.append(schema)
-    return tools
+            # _expand_tools joins the runnable and each path segment with "_",
+            # so stripping the runnable prefix recovers the verb path.
+            verb = tname[len(name) + 1 :] if tname.startswith(name + "_") else ""
+            split[tname] = (name, " ".join(verb.split("_")) if verb else "")
+    return tools, split
 
 
 def _tool_props(tool: dict[str, Any]) -> set[str]:
@@ -86,13 +97,40 @@ def _tool_props(tool: dict[str, Any]) -> set[str]:
 # Direct-tool injections: every tool is a terminal runnable; its identity is its
 # name; its args are the top-level tool input. Split so run_case_async (which
 # accepts only is_terminal/resolve_readonly) and score (resolve_target/_args) each
-# get the subset they take; _DIRECT (the union) is for evaluate_case / run_suite.
+# get the subset they take; _score_injections composes the score-side half per
+# case (a case naming a subcommand via expect_command reads the leaf name split).
 _DIRECT_RUN = dict(is_terminal=lambda name: True)
 _DIRECT_SCORE = dict(
     resolve_target=lambda inv: inv.name,
     resolve_args=lambda inv: dict(inv.input),
 )
-_DIRECT = {**_DIRECT_RUN, **_DIRECT_SCORE}
+
+
+def _score_injections(
+    case: evals.EvalCase, split: dict[str, tuple[str, str]]
+) -> dict[str, Any]:
+    """Score-side resolvers for one case against this flattened toolset.
+
+    A fixture may write a subcommand call either way, and both describe the same
+    decision — so read the model's leaf call in whichever spelling the case used:
+
+      * ``expect_tool = "cron_add"`` — the leaf name, as ``runspec serve`` presents
+        it. Resolve to the tool name as-is (the long-standing behaviour).
+      * ``expect_tool = "cron"`` + ``expect_command = "add"`` — the console-runtime
+        spelling, where the runnable is ONE tool and the verb rides a top-level
+        ``command`` field. Split the leaf name back apart so the runnable and the
+        verb are graded separately, as the console would grade them.
+
+    Without the split a console-shaped case scores ``wrong_tool`` on a call that
+    was in fact correct, which would make ``expect_command`` unusable in the
+    shared fixture."""
+    if case.expect_command is None:
+        return dict(_DIRECT_SCORE)
+    return dict(
+        resolve_target=lambda inv: split.get(inv.name, (inv.name, ""))[0],
+        resolve_command=lambda inv: split.get(inv.name, (inv.name, ""))[1],
+        resolve_args=lambda inv: dict(inv.input),
+    )
 
 
 def _init_telemetry(args: argparse.Namespace) -> bool:
@@ -144,7 +182,7 @@ def _add_telemetry_flags(parser: argparse.ArgumentParser) -> None:
 
 # ── modes ─────────────────────────────────────────────────────────────────────
 def cmd_build_toolset(_args: argparse.Namespace) -> int:
-    tools = build_toolset()
+    tools, _split = build_toolset()
     print(f"{len(tools)} MCP tools from runnables installed in {sys.prefix}\n")
     for t in tools:
         props = ", ".join(sorted(_tool_props(t))) or "—"
@@ -152,20 +190,45 @@ def cmd_build_toolset(_args: argparse.Namespace) -> int:
     return 0
 
 
+def _grounding_name(case: evals.EvalCase) -> str:
+    """The installed tool name a case grounds against.
+
+    This toolset is the flattened ``runspec serve`` one, where a subcommand is its
+    own leaf tool (``cron_add``). A console-runtime case instead names the runnable
+    and its verb separately (``expect_tool = "cron"`` + ``expect_command = "add"``),
+    because in the console's dedup/search modes the runnable is ONE tool and the
+    verb rides a top-level ``command`` field. Both spellings describe the same
+    decision, so join them the way ``_expand_tools`` does — a nested path's spaces
+    become underscores too — and ground either form against the same leaf."""
+    tool = case.expect_tool or ""
+    if not tool or case.expect_command is None:
+        return tool
+    verb = "_".join(str(case.expect_command).split())
+    return f"{tool}_{verb}" if verb else tool
+
+
 def cmd_validate(args: argparse.Namespace) -> int:
     """Ground a fixture against the real toolset — no model needed."""
-    tools = {t["name"]: t for t in build_toolset()}
+    tools = {t["name"]: t for t in build_toolset()[0]}
     cases = evals.load_cases(args.fixture)
     ok = True
     for case in cases:
         problems: list[str] = []
-        target = case.expect_tool
+        target = _grounding_name(case)
         if case.expect_no_run:
             pass  # nothing to ground — negative case
-        elif not target:
+        elif not case.expect_tool:
             problems.append("no expect_tool set")
         elif target not in tools:
-            problems.append(f"expect_tool {target!r} is not an installed tool")
+            problems.append(
+                f"expect_tool {case.expect_tool!r} is not an installed tool"
+                if case.expect_command is None
+                else (
+                    f"expect_tool {case.expect_tool!r} + expect_command "
+                    f"{case.expect_command!r} is not an installed tool "
+                    f"(looked for {target!r})"
+                )
+            )
         else:
             declared = _tool_props(tools[target])
             for key in {**case.expect_args}:
@@ -204,7 +267,7 @@ def cmd_record(args: argparse.Namespace) -> int:
     provider = os.environ.get("RUNSPEC_EVAL_PROVIDER", "anthropic")
     model = os.environ.get("RUNSPEC_EVAL_MODEL", "")
     system = os.environ.get("RUNSPEC_EVAL_SYSTEM", "")
-    tools = build_toolset()
+    tools, split = build_toolset()
     cases = evals.load_cases(args.fixture)
 
     inner = _make_adapter(provider, model, system)
@@ -218,7 +281,7 @@ def cmd_record(args: argparse.Namespace) -> int:
 
         for case in cases:
             traj = await evals.run_case_async(recorder, tools, case, **_DIRECT_RUN)
-            result = evals.score(case, traj, **_DIRECT_SCORE)
+            result = evals.score(case, traj, **_score_injections(case, split))
             evals_trace.emit_case(case, result, model=recorder.model)
             results.append(result)
 
@@ -258,12 +321,17 @@ def cmd_demo(args: argparse.Namespace) -> int:
     toolset and print the scored report (the CI path — no key, deterministic)."""
     from runspec_console import evals_trace
 
-    tools = build_toolset()
+    tools, split = build_toolset()
     cases = evals.load_cases(args.fixture)
     adapter = ReplayAdapter(load_script(args.script))
     _init_telemetry(args)
 
-    results = [evals.evaluate_case(adapter, tools, case, **_DIRECT) for case in cases]
+    results = [
+        evals.evaluate_case(
+            adapter, tools, case, **_DIRECT_RUN, **_score_injections(case, split)
+        )
+        for case in cases
+    ]
     model = getattr(adapter, "model", "")
     for case, res in zip(cases, results):
         evals_trace.emit_case(case, res, model=model)

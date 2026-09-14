@@ -28,6 +28,13 @@ logger = logging.getLogger("runspec_console")
 # narrowing tool, not the only way to see what exists.
 _RUNBOOK_SEARCH_LIMIT = 5
 
+# How many per-command arg rows one subcommand runnable may contribute to a
+# search result before the row drops the detail and points at describe_runnable
+# instead. Search mode exists to keep the tool surface small, so a 37-verb
+# runnable must not be allowed to dominate a 10-row result payload; a handful of
+# verbs (the common shape — cron, filesystem) fits comfortably under it.
+_SEARCH_COMMAND_ARG_BUDGET = 40
+
 
 class SearchMixin:
     def _search_mode_tools(self) -> list[dict[str, Any]]:
@@ -40,8 +47,10 @@ class SearchMixin:
                 "name": "search_runnables",
                 "description": (
                     "Find runnables across the fleet by keyword. Returns matches under "
-                    "'results' with their id, hosts, description, and typed argument "
-                    "list. Call this first, then run_runnable with the id and host. "
+                    "'results' with their id, hosts, description, typed argument "
+                    "list, any subcommands (with their own args), and any saved "
+                    "credentials in scope. "
+                    "Call this first, then run_runnable with the id and host. "
                     "Use an empty query (optionally with group/host) to browse. "
                     "Matching saved runbooks — the operator's standing procedures — "
                     "come back under a separate 'runbooks' key; follow one with "
@@ -71,11 +80,16 @@ class SearchMixin:
                 "name": "run_runnable",
                 "description": (
                     "Run a runnable found via search_runnables. Pass its id, the host "
-                    "to run on, and arguments by name (per the row's args). Arguments "
+                    "to run on, and arguments by name (per the row's args). If the "
+                    "row has a 'command' block, also pass 'command' — its args are "
+                    "PER COMMAND (the row's flat 'args' are only the inherited "
+                    "globals shared by every command). Arguments "
                     "are validated before execution; a clear error comes back if "
                     "anything is missing or wrong. The host may instead be a host "
                     "GROUP name (see Console context) to run on every host in that "
-                    "group at once, behind a single grouped confirm."
+                    "group at once, behind a single grouped confirm. "
+                    "'command' and 'credential_id' are TOP-LEVEL fields — never put "
+                    "either inside 'args'."
                 ),
                 "input_schema": {
                     "type": "object",
@@ -103,7 +117,14 @@ class SearchMixin:
                         },
                         "credential_id": {
                             "type": "string",
-                            "description": "Optional saved credential id to apply.",
+                            "description": (
+                                "Optional: force a specific saved credential, by an "
+                                "id from the row's 'credentials' list. A top-level "
+                                "field — NOT an entry in 'args'. In-scope "
+                                "credentials already apply on their own, so set "
+                                "this only to override that choice. An unknown id "
+                                "is rejected before the run."
+                            ),
                         },
                     },
                     "required": ["id", "host"],
@@ -598,6 +619,49 @@ class SearchMixin:
                     )
         return None
 
+    @staticmethod
+    def _command_arg_rows(
+        paths: list[tuple[list[str], dict[str, Any]]],
+        inherited: set[str],
+        budget: int = _SEARCH_COMMAND_ARG_BUDGET,
+    ) -> tuple[dict[str, list[dict[str, Any]]], bool]:
+        """Per-command arg rows for a subcommand runnable's search row.
+
+        Returns ``({command path: [arg rows]}, over_budget)``. Each command lists
+        only the args it adds on top of the runnable's ``inherited`` globals (which
+        the row already carries in its flat ``args``), so nothing is repeated once
+        per verb. ``password`` args are omitted exactly as they are at the top
+        level — secrets never travel inline.
+
+        ``over_budget`` is True when the total row count would exceed ``budget``;
+        the caller then emits a describe_runnable pointer instead of the detail.
+        Counting happens before anything is returned, so the decision is
+        all-or-nothing — a half-listed interface is worse than none, since the
+        agent would read the truncation as "this command has no args"."""
+        from .catalog import arg_to_property
+
+        out: dict[str, list[dict[str, Any]]] = {}
+        total = 0
+        for path, node in paths:
+            rows: list[dict[str, Any]] = []
+            for a in node.get("args") or []:
+                if not isinstance(a, dict):
+                    continue
+                nm = str(a.get("name") or "")
+                # Discovery merges inherited globals into every node's args, so
+                # skip the ones the flat `args` list already showed.
+                if not nm or nm in inherited or str(a.get("type")) == "password":
+                    continue
+                row = {"name": nm, "required": bool(a.get("required"))}
+                row.update(arg_to_property(a))
+                rows.append(row)
+            if rows:
+                total += len(rows)
+                if total > budget:
+                    return {}, True
+                out[" ".join(path)] = rows
+        return out, False
+
     def _search_runnables(
         self, query: str, host: str = "", group: str = "", limit: int = 10
     ) -> dict[str, Any]:
@@ -610,6 +674,14 @@ class SearchMixin:
         Ranking is deterministic lexical token overlap over name/description/group;
         an empty query browses (optionally filtered by host/group)."""
         from .catalog import arg_to_property
+
+        # Row-level credential lists read the cache, which the dedup path refreshes
+        # when it builds its enums (_custom_agent_tools). Search mode never calls
+        # that, so refresh here or a credential added since start-up is invisible.
+        try:
+            self._reload_credentials()
+        except Exception:  # noqa: BLE001 — a bad store must not sink the search
+            logger.debug("credential store unavailable for search", exc_info=True)
 
         runnables = self._visible_runnables("agent")
         groups: dict[str, dict[str, Any]] = {}
@@ -697,15 +769,54 @@ class SearchMixin:
                 "autonomy": str(rep.get("autonomy") or "confirm"),
                 "args": arg_rows,
             }
+            # Saved credentials in scope for this runnable on any of its hosts —
+            # id + label only, never a secret. Dedup mode puts these in the tool
+            # schema as a `credential_id` enum; search mode has no per-runnable
+            # schema, so without this the agent can't know a credential exists (or
+            # what its id spells) and passes a guessed one — or none at all, on a
+            # runnable that needs an out-of-scope pick.
+            creds = [
+                {"id": str(c.get("id", "")), "label": str(c.get("label", ""))}
+                for c in self._union_scoped_credentials(list(info["hosts"]), name)
+                if c.get("id")
+            ]
+            if creds:
+                entry["credentials"] = creds
+                entry["credentials_hint"] = (
+                    "These apply automatically. Pass one's id as run_runnable's "
+                    "TOP-LEVEL credential_id field only to force a specific one — "
+                    "never inside args."
+                )
             commands = rep.get("commands") or {}
             if commands:
                 # Every runnable path (nested included) as a space-joined string;
                 # for a flat runnable these are just the top-level verb names.
                 paths = utils_mod.subcommand_paths(rep)
-                entry["command"] = {
+                cmd: dict[str, Any] = {
                     "required": bool(rep.get("requireCommand")),
                     "options": [" ".join(p) for p, _ in paths] or list(commands.keys()),
+                    # `args` above are the runnable's inherited globals — valid for
+                    # every command; each command adds its OWN args on top. Stated
+                    # explicitly because the row's flat `args` list otherwise reads
+                    # like the whole interface, and a call built from it alone
+                    # bounces on "unknown argument(s)".
+                    "args_are_per_command": True,
                 }
+                per_command, over_budget = self._command_arg_rows(
+                    paths, {str(a.get("name")) for a in (rep.get("args") or [])}
+                )
+                if over_budget:
+                    # A many-verb runnable (dozens of commands) would dominate the
+                    # result payload — the one thing search mode exists to avoid.
+                    # Name the tool that has the full answer instead of guessing.
+                    cmd["note"] = (
+                        "Arguments differ per command and are too many to list "
+                        "here — call describe_runnable for the full schema before "
+                        "running this."
+                    )
+                elif per_command:
+                    cmd["args"] = per_command
+                entry["command"] = cmd
             rows.append(entry)
         result: dict[str, Any] = {"count": len(rows), "results": rows}
         if truncated:
