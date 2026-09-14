@@ -1326,7 +1326,13 @@ def _check_dist_files(dist: Any) -> list[dict[str, Any]]:
                 raw = load_raw(config_path)
                 if not raw["runnables"]:
                     return []
-                config_autonomy = raw.get("config", {}).get("autonomy")
+                # load_raw normalises [config] autonomy-default to the
+                # "autonomy_default" key (loader._normalise_config); reading
+                # "autonomy" here always missed it, so the package's configured
+                # default never reached `runspec local --format json` consumers
+                # (e.g. the console Forms tab, which then showed every
+                # no-autonomy subcommand as "confirm").
+                config_autonomy = raw.get("config", {}).get("autonomy_default")
                 return [{"source": str(config_path), "runnable": name, "spec": spec, "config_autonomy": config_autonomy} for name, spec in raw["runnables"].items()]
             except Exception:
                 pass
@@ -1375,7 +1381,13 @@ def _check_editable_source(dist: Any) -> list[dict[str, Any]]:
                 continue
             try:
                 raw = load_raw(candidate)
-                config_autonomy = raw.get("config", {}).get("autonomy")
+                # load_raw normalises [config] autonomy-default to the
+                # "autonomy_default" key (loader._normalise_config); reading
+                # "autonomy" here always missed it, so the package's configured
+                # default never reached `runspec local --format json` consumers
+                # (e.g. the console Forms tab, which then showed every
+                # no-autonomy subcommand as "confirm").
+                config_autonomy = raw.get("config", {}).get("autonomy_default")
                 for name, spec in raw["runnables"].items():
                     discovered.append({"source": str(candidate), "runnable": name, "spec": spec, "config_autonomy": config_autonomy})
             except Exception:

@@ -119,6 +119,62 @@ def test_check_dist_files_finds_runspec_toml(tmp_path):
     assert str(tmp_path / "runspec.toml") == result[0]["source"] or Path(result[0]["source"]).name == "runspec.toml"
 
 
+def test_check_dist_files_carries_config_autonomy_default(tmp_path):
+    # [config] autonomy-default must reach the discovered item as config_autonomy
+    # so `runspec local --format json` consumers (the console Forms tab) resolve
+    # a no-autonomy subcommand to the package default, not "confirm". Regression:
+    # this read the "autonomy" key while load_raw normalises to "autonomy_default".
+    toml_content = textwrap.dedent("""\
+        [config]
+        autonomy-default = "autonomous"
+        [deploy]
+        description = "Deploy"
+        require-command = true
+        [deploy.commands.rollout]
+        description = "Roll out"
+    """)
+    f = _make_dist_file("runspec.toml", toml_content, tmp_path)
+    dist = SimpleNamespace(files=[f])
+
+    result = _check_dist_files(dist)
+    assert len(result) == 1
+    assert result[0]["config_autonomy"] == "autonomous"
+
+
+def test_check_dist_files_config_autonomy_defaults_to_confirm(tmp_path):
+    # No [config] autonomy-default → the library default "confirm" (loader fills
+    # it), so consumers still get a concrete value rather than None.
+    toml_content = textwrap.dedent("""\
+        [greet]
+        description = "Say hello"
+    """)
+    f = _make_dist_file("runspec.toml", toml_content, tmp_path)
+    dist = SimpleNamespace(files=[f])
+
+    result = _check_dist_files(dist)
+    assert result[0]["config_autonomy"] == "confirm"
+
+
+def test_check_editable_source_carries_config_autonomy_default(tmp_path):
+    toml_content = textwrap.dedent("""\
+        [config]
+        autonomy-default = "autonomous"
+        [compress]
+        description = "Compress files"
+    """)
+    pkg_dir = tmp_path / "mypkg"
+    pkg_dir.mkdir()
+    (pkg_dir / "runspec.toml").write_text(toml_content, encoding="utf-8")
+
+    data = {"url": tmp_path.as_uri(), "dir_info": {"editable": True}}
+    f = _make_dist_file("direct_url.json", json.dumps(data), tmp_path)
+    dist = SimpleNamespace(files=[f])
+
+    result = _check_editable_source(dist)
+    assert len(result) == 1
+    assert result[0]["config_autonomy"] == "autonomous"
+
+
 def test_check_dist_files_empty_runnables(tmp_path):
     toml_content = textwrap.dedent("""\
         [config]

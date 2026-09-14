@@ -7,6 +7,22 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.51.1] — 2026-09-14
+
+### Fixed
+- **`runspec local --format json` now carries `[config] autonomy-default`.** The
+  JSON discovery output read the raw `config.autonomy` key, but `load_raw`
+  normalises the section to `autonomy_default` — so the configured default was
+  **always dropped** (`config_autonomy = None`). Consumers that resolve a
+  no-autonomy runnable/subcommand as `spec.autonomy or config_autonomy or
+  "confirm"` (the runspec-console Forms tab) therefore showed **`confirm` on
+  every subcommand** even when the package declared `[config] autonomy-default =
+  "autonomous"`. `cli.py` now reads `autonomy_default`; a package's configured
+  default reaches the console and subcommands resolve to it. (Note: a
+  subcommand with no `autonomy` falls back to the `[config]` default, not to its
+  parent runnable's declared `autonomy` — parent→child inheritance is not part
+  of the spec.)
+
 ## [0.51.0] / [node-0.38.0] — 2026-09-14
 
 ### Changed
