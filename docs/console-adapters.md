@@ -216,6 +216,15 @@ Sonnet 4.6 supports `low`/`medium`/`high`/`max` (no `xhigh`). A level the chosen
 model doesn't support surfaces as an API error rather than being silently
 downgraded.
 
+!!! warning "`off` means *model default*, which on Sonnet 5 / Opus 5 / Fable is high-effort thinking"
+    `off` sends **no** `thinking` parameter. On Opus 4.8 / 4.7 that means no
+    extended thinking. On **Sonnet 5, Opus 5 and Fable** the API runs *adaptive*
+    thinking by default at effort **high** when the parameter is omitted — so
+    `off` there is the slowest, most token-hungry setting, not the cheapest.
+    Set `effort` explicitly on those models (`medium` is a sensible default for
+    routine ops work). See the gateway guide's
+    [field gotchas](console-adapter-gateway.md#gotchas-found-in-the-field).
+
 !!! note "This replaced the deprecated `budget_tokens` shape"
     Earlier the console mapped `effort` to a manual `thinking = {"type":
     "enabled", "budget_tokens": N}` budget. That shape is deprecated on Opus/

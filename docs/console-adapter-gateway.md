@@ -205,6 +205,31 @@ In order of leverage:
 4. **Forward stop reason and usage** on every response, including the streaming
    route's final event, with the cache split intact.
 
+## Gotchas found in the field
+
+- **Markers only count where the proxy forwards them as message content.** A
+  gateway route that takes the prompt in an opaque `body` / `kwargs` slot and
+  passes it through untouched never turns a marker into a cache point — the
+  bytes reach the model, the cache hint doesn't. Put the system prompt,
+  history and tools in the slots the proxy converts to provider messages
+  (for LangServe, the `input` messages/tools keys), and put the markers
+  there. The tell is `cache_read_input_tokens` staying at 0 with everything
+  else working.
+- **"Effort off" is not "thinking off" on Sonnet 5 / Opus 5 / Fable.** Those
+  models run *adaptive* thinking when the `thinking` parameter is omitted, at
+  the API's default effort of **high** — so an adapter that sends nothing for
+  `[llm] effort = off` gets high-effort thinking on every call (slower, more
+  output tokens against `max_tokens`). Opus 4.8 / 4.7 are the other way round
+  (omitted = no thinking). Set `effort` explicitly (`medium` is a sensible
+  ops default) and forward it. An explicit `thinking = {"type": "disabled"}`
+  is accepted on Sonnet 5, on Opus 5 only at effort `high` or below, and
+  **rejected** on Fable — gate a hard disable on the model's capabilities,
+  and prefer low effort over disabling on Opus 5.
+- **Thinking must round-trip between tool rounds.** A `make_tool_turn` that
+  rebuilds the assistant turn from `text` + tool calls drops the thinking
+  block, so each tool round re-reasons from scratch and, on a raw Anthropic
+  path, can 400. Echo the provider's raw content blocks unchanged (see Tier 3).
+
 ## Verifying
 
 - **Caching:** log two consecutive proxy→Bedrock request bodies and diff them.
@@ -212,7 +237,9 @@ In order of leverage:
   differs); the overlap must be byte-identical up to the previous request's
   end. Then confirm `cache_read_input_tokens` is non-zero from the second
   iteration of a tool turn — the console shows it as *cache hit %* on the
-  context gauge and in the usage event.
+  context gauge and in the usage event. Check it **within** one multi-tool
+  turn, not only on the next chat turn: reads that collapse to 0 on each tool
+  round mean `make_tool_turn` is rewriting the prefix.
 - **Limits:** with `capabilities()` declared, set `[llm] max_tokens` above the
   model's cap and confirm the request goes out clamped; switch model ids and
   confirm the gauge's window changes.
