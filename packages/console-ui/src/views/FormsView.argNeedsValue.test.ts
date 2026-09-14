@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { argNeedsValue, credEnvPrefix, credEnvNames, bindingsForArgs, initialFormValues, partitionArgs, suppressPlainEnter, argSpansRow, autonomyTagProps, dedupToolName, legacyDedupToolName, matchRunnableForEdit } from './FormsView'
+import { argNeedsValue, isMultiChoice, credEnvPrefix, credEnvNames, bindingsForArgs, initialFormValues, partitionArgs, suppressPlainEnter, argSpansRow, autonomyTagProps, dedupToolName, legacyDedupToolName, matchRunnableForEdit } from './FormsView'
 import type { ArgDef, Runnable } from '../bridge'
 
 const arg = (over: Partial<ArgDef>): ArgDef => ({ name: 'x', type: 'str', required: false, ...over })
@@ -29,6 +29,31 @@ describe('argNeedsValue', () => {
 
   it('does not block an optional arg', () => {
     expect(argNeedsValue(arg({ type: 'str', required: false }), '')).toBe(false)
+  })
+
+  it('treats an empty multi-select array as no value, a non-empty one as present', () => {
+    const a = arg({ type: 'choice', options: ['x', 'y'], multiple: true, required: true })
+    expect(argNeedsValue(a, [])).toBe(true)
+    expect(argNeedsValue(a, undefined)).toBe(true)
+    expect(argNeedsValue(a, ['x'])).toBe(false)
+    // optional multi-select never blocks
+    expect(argNeedsValue(arg({ type: 'choice', options: ['x'], multiple: true, required: false }), [])).toBe(false)
+  })
+})
+
+describe('isMultiChoice', () => {
+  it('is true for a choice with options that is multiple or ui="multiselect"', () => {
+    expect(isMultiChoice(arg({ type: 'choice', options: ['a', 'b'], multiple: true }))).toBe(true)
+    expect(isMultiChoice(arg({ type: 'choice', options: ['a', 'b'], ui: 'multiselect' }))).toBe(true)
+  })
+
+  it('is false for a single-value choice', () => {
+    expect(isMultiChoice(arg({ type: 'choice', options: ['a', 'b'] }))).toBe(false)
+  })
+
+  it('is false without options, or for non-choice types even when multiple', () => {
+    expect(isMultiChoice(arg({ type: 'choice', multiple: true }))).toBe(false)
+    expect(isMultiChoice(arg({ type: 'str', multiple: true }))).toBe(false)
   })
 })
 

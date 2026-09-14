@@ -8,7 +8,26 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
-## [0.258.0] — 2026-09-14
+## [0.259.0] — 2026-09-14
+
+### Added
+- **Multi-select form control for a `multiple` choice arg.** A `choice` arg
+  declared `multiple = true` (or with an explicit `ui = "multiselect"`) now
+  renders as a multi-select in the Forms tab instead of a single-value dropdown —
+  the operator picks several values, each validated against `options` by core at
+  run time. The selected `string[]` is serialised to repeated `--flag v` args by
+  the executor (already supported), so nothing else in the run path changes.
+  `FormsView.tsx` gains an `isMultiChoice` predicate driving the `<Select
+  mode="multiple">`, and `argNeedsValue` now treats an empty array as "no value"
+  so a required multi-select still blocks submission until something is chosen.
+- **Room/portal catalog emits a multi-select for a `multiple` choice.**
+  `catalog.arg_to_property` wraps a `multiple` choice into an array-of-enum
+  property (`{"type":"array","items":{"enum":[…]}, "x-ui":"multiselect"}`),
+  mirroring runspec core's MCP schema, so the runspec-room visitor/operator web
+  form renders a real multi-select (needs runspec-room ≥ 0.36.0). The same helper
+  feeds the agent's `search_runnables` rows in `tool_mode = "search"`, so a
+  multi-value choice now reads as an array-of-enum there too instead of a bare
+  string. A single-value choice is unchanged.
 
 ### Added
 - **AI off-switch — frontend gate (`[console] ai = false`).** Completes the

@@ -227,7 +227,7 @@ description = "Output quality. Values below 60 are rarely useful."
 | `env` | string \| array | Environment variable fallback(s), checked after the CLI and before the default. |
 | `deprecated` | string | Deprecation message shown on use. |
 | `autonomy` | string | Per-arg autonomy override. Most restrictive level wins. |
-| `ui` | string | Form control hint. Inferred from type if omitted. On a `str` arg: `"date"`/`"datetime"`/`"time"`/`"month"` request a date / date-time / time / month picker (value an ISO-8601 string) and `"color"` a colour picker (`#rrggbb`). On an `int`/`float` arg with a `range`, `"slider"` renders a slider. |
+| `ui` | string | Form control hint. Inferred from type if omitted. On a `str` arg: `"date"`/`"datetime"`/`"time"`/`"month"` request a date / date-time / time / month picker (value an ISO-8601 string) and `"color"` a colour picker (`#rrggbb`). On an `int`/`float` arg with a `range`, `"slider"` renders a slider. On a `choice` arg, `"multiselect"` renders a multi-select (pair with `multiple = true`; a `multiple` choice is a multi-select by inference). |
 | `hint` | string | Placeholder text for a UI form field. Advisory for `str`/`path`/`password`; never affects parsing. |
 | `meta` | table | Developer-defined pass-through metadata. runspec never reads it. |
 | `position` | int | 1-based positional index. Makes the arg positional rather than a `--flag`. |
@@ -352,6 +352,16 @@ position and value, validating the whole list before reporting:
 ```toml
 [deploy.args]
 ticket = {type = "str", multiple = true, pattern = "[A-Z]+-[0-9]+"}
+```
+
+A `multiple` **choice** is the multi-value picker — each value is validated
+against `options`. The runspec-console Forms tab and the room web form render it
+as a multi-select (also via an explicit `ui = "multiselect"`, best paired with
+`multiple = true`):
+
+```toml
+[deploy.args]
+regions = {type = "choice", options = ["us", "eu", "apac"], multiple = true, ui = "multiselect"}
 ```
 
 ```bash

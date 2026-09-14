@@ -4,6 +4,15 @@ All notable changes to `runspec-room` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 semantic versioning.
 
+## [0.36.0]
+
+### Added
+- **Multi-select in the catalogue request form.** A catalog property shaped as an
+  array-of-enum (`{"type":"array","items":{"enum":[…]}, "x-ui":"multiselect"}`) —
+  emitted by a runspec-console ≥ 0.259.0 for a `multiple` choice arg — now renders
+  as a native multi-select `<select multiple>` in the web form, and submits the
+  chosen values as a `string[]`. Single-value enums are unchanged.
+
 ## [0.35.1]
 
 ### Fixed

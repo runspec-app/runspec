@@ -393,7 +393,20 @@
 
       const xui = prop["x-ui"];
       let input;
-      if (Array.isArray(prop.enum)) {
+      if (prop.type === "array" && prop.items && Array.isArray(prop.items.enum)) {
+        // Multi-value choice — a native multi-select. Value collected as a
+        // string[] on submit (see argMulti below); each item is validated
+        // against `options` by core at run time.
+        input = document.createElement("select");
+        input.multiple = true;
+        for (const opt of prop.items.enum) {
+          const o = document.createElement("option");
+          o.value = o.textContent = String(opt);
+          if (Array.isArray(prop.default) && prop.default.includes(o.value)) o.selected = true;
+          input.append(o);
+        }
+        input.dataset.argMulti = "1";
+      } else if (Array.isArray(prop.enum)) {
         input = document.createElement("select");
         for (const opt of prop.enum) {
           const o = document.createElement("option");
@@ -535,7 +548,11 @@
       for (const el of reqForm.querySelectorAll("[data-arg]")) {
         const name = el.dataset.arg;
         const type = el.dataset.argType;
-        if (el.type === "checkbox") {
+        if (el.dataset.argMulti) {
+          // Multi-select → string[]; omit when nothing is chosen.
+          const vals = Array.from(el.selectedOptions, (o) => o.value);
+          if (vals.length) args[name] = vals;
+        } else if (el.type === "checkbox") {
           if (el.checked) args[name] = true; // flags: present means on
         } else if (el.value !== "") {
           if (type === "integer") {

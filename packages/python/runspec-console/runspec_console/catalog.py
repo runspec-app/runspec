@@ -51,10 +51,26 @@ def arg_to_property(arg: dict[str, Any]) -> dict[str, Any]:
     rng = arg.get("range")
     if isinstance(rng, (list, tuple)) and len(rng) == 2:
         prop["minimum"], prop["maximum"] = rng[0], rng[1]
+    ui = arg.get("ui")
+    # A multi-value choice presents as an array-of-enum with a "multiselect" hint,
+    # so the room form can render a real multi-select (each item still validated
+    # against `options` by core at run time). Driven by `multiple` — the runtime
+    # multi-value contract — or an explicit ui="multiselect". Mirrors runspec
+    # core's MCP schema (cli._build_schema wraps a `multiple` arg in an array).
+    if (arg.get("multiple") or ui == "multiselect") and prop.get("enum"):
+        array_prop: dict[str, Any] = {
+            "type": "array",
+            "items": {"type": "string", "enum": prop["enum"]},
+            "x-ui": "multiselect",
+        }
+        if "description" in prop:
+            array_prop["description"] = prop["description"]
+        if "default" in prop:
+            array_prop["default"] = prop["default"]
+        return array_prop
     # Pass the form-control hint through so the room form can render a matching
     # control (e.g. a date picker for ui="date"/"datetime"). x-* prefix mirrors
     # the x-kind/x-hosts convention and is ignored by anything that doesn't read it.
-    ui = arg.get("ui")
     if ui:
         prop["x-ui"] = str(ui)
     return prop

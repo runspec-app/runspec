@@ -1351,8 +1351,14 @@ written as an ISO-8601 string — `YYYY-MM-DD` for `date`, a full timestamp for
 `datetime`, `HH:MM:SS` for `time`, `YYYY-MM` for `month`), and `ui = "color"`
 requests a colour picker (value a `#rrggbb` hex string). On an `int`/`float` arg
 with a `range`, `ui = "slider"` renders a slider (falling back to a number field
-when no range is declared). These are all explicit opt-ins — they are never
-inferred.
+when no range is declared). On a `choice` arg, `ui = "multiselect"` renders a
+multi-select — equivalently, a `choice` arg with `multiple = true` is a
+multi-select by inference (the table above). Because a multi-select yields
+several values, pair `ui = "multiselect"` with `multiple = true` so the arg is
+genuinely multi-valued at parse time (each picked value is validated against
+`options`); `multiple` alone is sufficient. These are all explicit opt-ins —
+they are never inferred (apart from the `multiple = true → multi-select` row
+above).
 
 When `hint` is declared, implementations should surface it as the field's
 placeholder text (an example or format hint shown in the empty control). It is

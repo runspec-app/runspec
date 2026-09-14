@@ -83,6 +83,48 @@ def test_arg_to_property_passes_ui_hint_as_x_ui():
     assert "x-ui" not in arg_to_property({"type": "str"})
 
 
+def test_arg_to_property_multiselect_choice_becomes_array_of_enum():
+    # A `multiple` choice → an array-of-enum with a multiselect hint, so the room
+    # renders a real multi-select and each item is validated against `options`.
+    prop = arg_to_property(
+        {"type": "choice", "options": ["us", "eu", "apac"], "multiple": True}
+    )
+    assert prop["type"] == "array"
+    assert prop["items"] == {"type": "string", "enum": ["us", "eu", "apac"]}
+    assert prop["x-ui"] == "multiselect"
+
+    # An explicit ui="multiselect" reaches the same shape.
+    assert (
+        arg_to_property({"type": "choice", "options": ["a", "b"], "ui": "multiselect"})[
+            "type"
+        ]
+        == "array"
+    )
+
+    # description + list default ride along on the array property.
+    prop2 = arg_to_property(
+        {
+            "type": "choice",
+            "options": ["a", "b"],
+            "multiple": True,
+            "description": "pick some",
+            "default": ["a"],
+        }
+    )
+    assert prop2["description"] == "pick some"
+    assert prop2["default"] == ["a"]
+
+    # A single-value choice is unchanged (plain enum, not an array).
+    single = arg_to_property({"type": "choice", "options": ["a", "b"]})
+    assert single["type"] == "string"
+    assert single["enum"] == ["a", "b"]
+    assert "items" not in single
+
+    # `multiple` without options (not a choice) does not become an array here —
+    # there's no enum to render as a multi-select.
+    assert arg_to_property({"type": "str", "multiple": True})["type"] == "string"
+
+
 def test_entry_surfaces_ui_hint_in_schema():
     runnable = _runnable(
         "schedule-job",

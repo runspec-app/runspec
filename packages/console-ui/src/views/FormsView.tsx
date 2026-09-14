@@ -23,7 +23,19 @@ function isVarRef(val: unknown): val is string {
 // unit tests.
 export function argNeedsValue(arg: ArgDef, value: unknown): boolean {
   if (!arg.required) return false
+  // A multi-select holds an array — an empty one is "no value".
+  if (Array.isArray(value)) return value.length === 0
   return value === undefined || value === ''
+}
+
+// Whether a choice arg should render as a multi-select (Ant `<Select mode="multiple">`,
+// value = string[]) rather than a single-value picker. Driven by `multiple` — the
+// runtime multi-value contract: core accepts a list and validates each item against
+// `options` — or by an explicit `ui = "multiselect"` presentational hint (pair it
+// with `multiple = true`, since `multiple` is what makes the arg genuinely
+// multi-valued). Exported for unit tests.
+export function isMultiChoice(arg: ArgDef): boolean {
+  return arg.type === 'choice' && !!arg.options && (arg.multiple === true || arg.ui === 'multiselect')
 }
 
 // String fields auto-grow on multiple lines, but a bare Enter should not insert a
@@ -302,12 +314,21 @@ export function ArgInput({ arg, host, runnable, runAs, group, value, error, onCh
   }
 
   if (arg.type === 'choice' && arg.options) {
+    // A `multiple` choice (or ui="multiselect") is an Ant multi-select whose
+    // value is a string[]; the backend serialises the list into repeated
+    // `--flag v` args (executor.args_to_argv), and core validates each item
+    // against `options`. A scalar default/prefill is coerced up to a one-element
+    // array so the control accepts it.
+    const multi = isMultiChoice(arg)
+    const multiValue = Array.isArray(value) ? (value as string[]) : value != null ? [value as string] : []
     return (
       <Select
         size="small"
-        value={value as string | undefined}
+        mode={multi ? 'multiple' : undefined}
+        allowClear={multi}
+        value={multi ? multiValue : (value as string | undefined)}
         onChange={onChange}
-        placeholder="Select…"
+        placeholder={multi ? 'Select one or more…' : 'Select…'}
         style={{ width: '100%', fontFamily: MONO_FONT, fontSize: 13 }}
         status={error ? 'error' : undefined}
         options={arg.options.map(o => ({ label: o, value: o }))}
