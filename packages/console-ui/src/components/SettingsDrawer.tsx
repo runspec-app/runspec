@@ -13,6 +13,7 @@ import {
   type Target,
 } from '../views/RunnableAction'
 import { MONO_FONT, RADIUS, useAccent, withAlpha } from '../ThemeContext'
+import { useFeatures, visibleSettingsTabs } from '../features'
 
 const { Text, Link } = Typography
 
@@ -5295,12 +5296,22 @@ export function McpServerTab() {
 }
 
 export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, connectedHosts, allRemoteHosts }: SettingsDrawerProps) {
+  // `[console] ai` off-switch: the agent tabs (Model / API, Agent tools,
+  // Runbooks, MCP client, Chat History, Telemetry) are hidden; MCP Server stays.
+  const features = useFeatures()
   return (
     <Drawer title="Settings" placement="right" width="min(96vw, 1040px)" open={open} onClose={onClose}>
+      {!features.ai && (
+        <Alert
+          type="info" showIcon style={{ marginBottom: 12 }}
+          message="AI features are off in this console"
+          description={<>Set by <Text code>[console] ai = false</Text> in config.toml (typically from a config seed or Config Sync). The assistant, runbooks, agent-mode triggers and prompt / runbook / eval schedules are unavailable; everything else works. Change the flag and restart the console to apply.</>}
+        />
+      )}
       <Tabs
         size="small"
         tabPosition="left"
-        items={[
+        items={visibleSettingsTabs([
           { key: 'ssh',       label: 'SSH',        children: <SshTab onKeyChanged={onKeyChanged} connectedHosts={connectedHosts} allRemoteHosts={allRemoteHosts} /> },
           { key: 'llm',       label: 'Model / API',  children: <LlmTab /> },
           { key: 'jumpHosts', label: 'Jump Hosts',  children: <JumpHostsTab onHostsChanged={onHostsChanged} /> },
@@ -5321,7 +5332,7 @@ export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, co
           { key: 'sounds',    label: 'Sounds & Notifications', children: <SoundsTab /> },
           { key: 'chatHistory', label: 'Chat History', children: <ChatHistoryTab /> },
           { key: 'telemetry', label: 'Telemetry', children: <TelemetryTab /> },
-        ]}
+        ], features)}
       />
     </Drawer>
   )

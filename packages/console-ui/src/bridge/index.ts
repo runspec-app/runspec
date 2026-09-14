@@ -1203,6 +1203,10 @@ export interface BridgeApi {
   // Validated [console.theme] for white-label rendering (read-only; set by a
   // config seed or by hand). Empty object = the default look.
   brand_theme: () => Promise<BrandTheme>
+  // The `[console] ai` off-switch (default true). Read once at bring-up by the
+  // backend; false hides the AI surfaces here (see src/features.ts) while the
+  // backend refuses every agent path. Restart to apply a config change.
+  ai_enabled: () => Promise<boolean>
   app_version: () => Promise<string>
   check_for_update: () => Promise<{ ok: boolean; current: string; latest: string | null; update_available: boolean }>
   docs_url: () => Promise<string>

@@ -8,6 +8,32 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.258.0] — 2026-09-14
+
+### Added
+- **AI off-switch — frontend gate (`[console] ai = false`).** Completes the
+  0.257.0 backend gate: the UI now hides what the backend refuses, so the console
+  presents as a **non-AI fleet tool**. A new `features.ts` context (read once at
+  mount via the `ai_enabled()` JS API; default on) drives: the **Improve** and
+  **Evals** tabs drop from the nav (`visibleNavTabs`); the **Console** tab stays —
+  it is the output pane for every run — but loses its chat half (plain text in the
+  command bar shows a hint instead of sending, the `$` runbook menu and "ask the
+  assistant" placeholder go, conversation **History** / "Ask the assistant" /
+  include-in-context toggles hide, *New chat* reads *Clear*, the sidebar context
+  gauge never renders); Settings hides **Model / API, Agent tools, Runbooks, MCP
+  (client), Chat History, Telemetry** (`visibleSettingsTabs`) and shows a
+  read-only notice explaining the flag + restart-to-apply — **MCP Server stays**
+  (it gates an external coding agent with no model inside); the Schedules editor
+  offers only runnable / saved run / event (`visibleScheduleActions`, mirroring the
+  backend's `AI_SCHEDULE_ACTIONS`); the Triggers editor defaults a new trigger to
+  rule mode and hides the mode toggle, LLM pre-turn and reply-drafting controls
+  (an existing agent-mode trigger still opens with a warning + the toggle so it
+  can be converted). History's "Ask the assistant" hides too. Dev mode previews it
+  with `?ai=0`. New docs page **Console without AI** (`docs/console-ai-off.md`)
+  with the seed rollout recipe. Tests: `features.test.ts`,
+  `CommandInput.aiOff.test.tsx`.
+
+
 ## [0.257.0] — 2026-09-14
 
 ### Added

@@ -3,6 +3,7 @@ import { Table, Tag, Button, Modal, Form, Select, Input, InputNumber, Space, Seg
 import { DeleteOutlined, PlusOutlined, MinusCircleOutlined, EditOutlined, PlayCircleOutlined, CalendarOutlined, ReloadOutlined } from '@ant-design/icons'
 import { bridge, type ArgDef, type Credential, type Host, type Runnable, type Schedule, type ScheduleWhen, type Runbook, type SavedRun, type RunCard, type TriggerEvent, type EvalFixtureMeta } from '../bridge'
 import { useIsDark, useAccent, textMuted, textSecondary, MONO_FONT } from '../ThemeContext'
+import { useFeatures, visibleScheduleActions } from '../features'
 import { RunInbox } from '../components/RunInbox'
 import { EventLog } from '../components/EventLog'
 import { SoundSelect } from '../components/SoundSelect'
@@ -65,6 +66,9 @@ interface ScheduleModalProps {
 function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel, onSaved }: ScheduleModalProps) {
   const [form] = Form.useForm()
   const [action, setAction] = useState<Action>('runnable')
+  // `[console] ai` off-switch: the agent-turn actions (prompt / runbook /
+  // evals) are not offered — the backend refuses them as invalid schedules.
+  const features = useFeatures()
   const [target, setTarget] = useState<Target>('host')
   const [whenKind, setWhenKind] = useState<WhenKind>('cron')
   const [selectedRunnable, setSelectedRunnable] = useState<Runnable | null>(null)
@@ -460,14 +464,14 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
           <Select
             value={action}
             onChange={v => setAction(v as Action)}
-            options={[
+            options={visibleScheduleActions([
               { label: 'Run a runnable', value: 'runnable' },
               { label: 'Saved run', value: 'saved_run', disabled: savedRuns.length === 0 },
               { label: 'Run a prompt', value: 'prompt' },
               { label: 'Run a runbook', value: 'runbook' },
               { label: 'Run evals', value: 'eval', disabled: evalFixtures.length === 0 },
               { label: 'Emit an event', value: 'event' },
-            ]}
+            ], features)}
           />
           <div style={{ ...labelStyle, marginTop: 6 }}>
             {action === 'runnable'

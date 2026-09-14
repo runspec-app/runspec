@@ -11,6 +11,7 @@ import {
 import { bridge, type TriggerSourceInfo, type Host, type Runnable, type ArgDef } from '../bridge'
 import { SoundSelect } from './SoundSelect'
 import { MONO_FONT, RADIUS } from '../ThemeContext'
+import { useFeatures } from '../features'
 
 const { Text } = Typography
 
@@ -555,6 +556,10 @@ export function TriggersEditor({
   const [form] = Form.useForm<TriggerForm>()
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
+  // `[console] ai` off-switch: a new trigger is a rule; the agent-mode controls
+  // (mode toggle, LLM pre-turn, reply drafting) are hidden. An existing
+  // agent-mode trigger still opens with the toggle so it can be converted.
+  const { ai } = useFeatures()
 
   const mode = Form.useWatch('mode', form)
   const source = Form.useWatch('source', form)
@@ -603,7 +608,7 @@ export function TriggersEditor({
     setEditName(null); setErr('')
     form.resetFields()
     form.setFieldsValue({
-      mode: 'agent', autonomy: 'confirm', enabled: true, match: [], once_per_thread: 'default',
+      mode: ai ? 'agent' : 'rule', autonomy: 'confirm', enabled: true, match: [], once_per_thread: 'default',
       runnables: [], map: [], reply_draft: false,
       rule_kind: 'single', action_mode: 'sequential', actions: [], action_allow: [], pre_turn: '',
       match_mailbox: '', match_folder: '', claim: false, claim_folder: '',
@@ -714,9 +719,16 @@ export function TriggersEditor({
             </Form.Item>
           </div>
 
-          <Form.Item name="mode" label="Mode">
-            <Segmented options={[{ label: 'Agent', value: 'agent' }, { label: 'Rule (fixed run)', value: 'rule' }]} />
-          </Form.Item>
+          {!ai && mode === 'agent' && (
+            <Alert type="warning" showIcon style={{ marginBottom: 12 }}
+              message="AI is off in this console — this agent-mode trigger will not run"
+              description="Switch it to Rule (fixed run) so it runs a runnable directly, or enable [console] ai and restart." />
+          )}
+          {(ai || mode === 'agent') && (
+            <Form.Item name="mode" label="Mode">
+              <Segmented options={[{ label: 'Agent', value: 'agent' }, { label: 'Rule (fixed run)', value: 'rule' }]} />
+            </Form.Item>
+          )}
 
           {isMailNew && (
             <Form.Item name="match_mailbox" label="Mailbox to match (optional)"
@@ -761,10 +773,12 @@ export function TriggersEditor({
 
           {mode === 'rule' ? (
             <>
-              <Form.Item name="pre_turn" label="Assistant pre-turn (optional)"
-                help={'A single LLM step that reads the event and fills the args below — reference its output as {{ _llm.<name> }}. It only extracts; it never decides which runnables run.'}>
-                <Input.TextArea autoSize={{ minRows: 1, maxRows: 4 }} placeholder="Extract the affected hostname and severity from the alert." />
-              </Form.Item>
+              {ai && (
+                <Form.Item name="pre_turn" label="Assistant pre-turn (optional)"
+                  help={'A single LLM step that reads the event and fills the args below — reference its output as {{ _llm.<name> }}. It only extracts; it never decides which runnables run.'}>
+                  <Input.TextArea autoSize={{ minRows: 1, maxRows: 4 }} placeholder="Extract the affected hostname and severity from the alert." />
+                </Form.Item>
+              )}
               <Form.Item name="rule_kind" label="Action">
                 <Segmented options={[{ label: 'Single runnable', value: 'single' }, { label: 'Multiple runnables', value: 'list' }]} />
               </Form.Item>
@@ -806,7 +820,7 @@ export function TriggersEditor({
             </>
           )}
 
-          {threaded && (
+          {threaded && ai && (
             <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '0 12px' }}>
               <Form.Item name="reply_draft" label={isChat ? 'Propose a reply' : 'Draft a reply'} valuePropName="checked"
                 help={isChat ? 'Offer a propose_reply tool — pre-fills the room composer for you to send.' : 'Offer a draft_reply tool — saves a draft for you to review and send (never sent automatically).'}>

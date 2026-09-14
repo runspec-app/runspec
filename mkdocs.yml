@@ -44,6 +44,7 @@ nav:
   - Home: index.md
   - Console:
     - Get started: console-quickstart.md
+    - Console without AI: console-ai-off.md
     - Working with the agent: console-agent.md
     - Sandboxed code execution: console-sandbox.md
     - Hosts & fleet: console-hosts.md

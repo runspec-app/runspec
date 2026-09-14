@@ -51,6 +51,7 @@ import { RUNNING_STATUSES } from './components/runShared'
 import { useInFlight } from './bridge/useInFlight'
 import { bridge, type HistoryRecord, type Host, type HostProfile, type Runnable, type Runbook, type SavedRun, type RoomInfo, type BrandTheme } from './bridge'
 import { ThemeContext, AccentContext, DEFAULT_ACCENT, UI_FONT, MONO_FONT, RADIUS, surfaces, withAlpha, textMuted, textSecondary, textFaint } from './ThemeContext'
+import { FeaturesContext, AI_ONLY_VIEWS, visibleNavTabs, type Features } from './features'
 
 type ViewKey = 'console' | 'specs' | 'history' | 'logs' | 'forms' | 'schedules' | 'triggers' | 'rota' | 'analytics' | 'improve' | 'evals' | 'dev'
 
@@ -142,6 +143,11 @@ function BrandWatermark(
 
 export default function App() {
   const [view, setView] = useState<ViewKey>('console')
+  // Feature flags read once at mount. `ai` is the `[console] ai` off-switch:
+  // false hides the AI tabs/controls (the backend refuses the AI paths itself).
+  // Defaults to on, so an older backend / failed call keeps the default look.
+  const [features, setFeatures] = useState<Features>({ ai: true })
+  const aiEnabled = features.ai
   // Current tab, readable from stable event listeners (which close over the
   // mount-time value otherwise).
   const viewRef = useRef(view)
@@ -339,6 +345,8 @@ export default function App() {
 
   useEffect(() => { loadSshKeyAge() }, [])
   useEffect(() => { if (view === 'analytics') setAnalyticsVisited(true) }, [view])
+  // An AI-only tab can't stay selected once the flag resolves to off.
+  useEffect(() => { if (!aiEnabled && AI_ONLY_VIEWS.has(view)) setView('console') }, [aiEnabled, view])
 
   useEffect(() => {
     // Version renders instantly; the PyPI update check resolves in the
@@ -350,6 +358,7 @@ export default function App() {
     // page title matches too.
     bridge.app_title().then(t => { document.title = t }).catch(() => {})
     bridge.brand_theme().then(setBrandTheme).catch(() => {})
+    bridge.ai_enabled().then(ai => setFeatures({ ai: !!ai })).catch(() => {})
     // Always resolve the indicator — on `ok: false` (offline / private index
     // unreachable, after the backend's pip timeout) keep `latest` null so the
     // footer stops "checking…" without falsely claiming "up to date".
@@ -690,7 +699,7 @@ export default function App() {
     root.setProperty('--rs-shadow-lg', s.shadowLg)
   }, [isDark, titleCol])
 
-  const navTabs = [
+  const navTabs = visibleNavTabs([
     {
       key: 'console' as ViewKey,
       label: 'Console',
@@ -721,10 +730,11 @@ export default function App() {
     },
     { key: 'rota'      as ViewKey, label: 'Rota',      icon: <ClockCircleOutlined /> },
     { key: 'dev'       as ViewKey, label: 'Dev',       icon: <BugOutlined /> },
-  ]
+  ], features)
 
   return (
     <ThemeContext.Provider value={isDark}>
+    <FeaturesContext.Provider value={features}>
       <AccentContext.Provider value={titleCol}>
       <ConfigProvider theme={{
           algorithm: isDark ? theme.darkAlgorithm : theme.defaultAlgorithm,
@@ -1098,7 +1108,7 @@ export default function App() {
                   by-source composition hover. Hidden until a chat reports usage,
                   so non-chat tabs don't show a stale/zero gauge. See
                   docs/design/console-context-indicator.md. */}
-              {ctx && (() => {
+              {aiEnabled && ctx && (() => {
                 const pct = ctx.window > 0 ? Math.round((ctx.total_tokens / ctx.window) * 100) : 0
                 const dot = pct >= 85 ? '#ff4d4f' : (pct >= 60 ? '#faad14' : '#52c41a')
                 const shown = ctx.buckets.filter(b => b.tokens > 0).slice().sort((a, b) => b.tokens - a.tokens)
@@ -1286,7 +1296,7 @@ export default function App() {
                     instead of unmounting and reloading from empty over SSH. Its
                     poll is gated on `active` so it only runs while visible. */}
                 <div className="rs-view" style={{ display: view === 'history' ? 'block' : 'none', flex: 1, overflow: 'auto' }}>
-                  <HistoryView search={historySearch} onSearchChange={setHistorySearch} onRerun={handleHistoryRerun} onAskLlm={handleAskLlm} activeScope={activeScope} onScopeToggle={handleScopeToggle} selectedHost={selectedHost} active={view === 'history'} />
+                  <HistoryView search={historySearch} onSearchChange={setHistorySearch} onRerun={handleHistoryRerun} onAskLlm={aiEnabled ? handleAskLlm : undefined} activeScope={activeScope} onScopeToggle={handleScopeToggle} selectedHost={selectedHost} active={view === 'history'} />
                 </div>
                 {/* Logs stays mounted (display toggle) so its logs_status SSH
                     inventory survives tab switches; its fetch is gated on `active`
@@ -1316,8 +1326,8 @@ export default function App() {
                   <div className="rs-view" style={{ flex: 1, overflow: 'auto' }}>
                     {view === 'forms'     && <FormsView runnables={runnables} hosts={hosts} selectedHost={selectedHost} activeScope={activeScope} onRunRunnable={handleRunRunnable} pendingForm={pendingForm} onPendingFormClear={() => setPendingForm(null)} runbooks={runbooks} onOpenRunbook={handleOpenRunbook} savedRuns={savedRuns} onOpenSavedRun={handleOpenSavedRun} />}
                     {view === 'schedules' && <SchedulesView hosts={hosts} runnables={runnables} selectedHost={selectedHost} />}
-                    {view === 'improve'   && <ImproveView active={view === 'improve'} />}
-                    {view === 'evals'     && <EvalsView active={view === 'evals'} />}
+                    {aiEnabled && view === 'improve' && <ImproveView active={view === 'improve'} />}
+                    {aiEnabled && view === 'evals'   && <EvalsView active={view === 'evals'} />}
                     {view === 'rota'      && <RotaView />}
                     {view === 'dev'       && <DevView />}
                   </div>
@@ -1368,7 +1378,7 @@ export default function App() {
                   margin: '0 0 6px', fontSize: 12, color: textMuted(isDark),
                 }}>
                   <LoadingOutlined spin style={{ fontSize: 12 }} />
-                  <span>Discovering fleet… {discovery.done}/{discovery.total} hosts. The assistant sees more runnables as they load.</span>
+                  <span>Discovering fleet… {discovery.done}/{discovery.total} hosts. {aiEnabled ? 'The assistant sees more runnables as they load.' : 'More runnables appear as they load.'}</span>
                 </div>
               )}
               <CommandInput
@@ -1439,6 +1449,7 @@ export default function App() {
         />
       </ConfigProvider>
       </AccentContext.Provider>
+    </FeaturesContext.Provider>
     </ThemeContext.Provider>
   )
 }

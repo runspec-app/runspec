@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button, Drawer, Empty, List, Popconfirm, Tag, Tooltip, Typography, message } from 'antd'
 import { CloseOutlined, LoadingOutlined, PlusOutlined, ClockCircleOutlined, HistoryOutlined, DeleteOutlined } from '@ant-design/icons'
 import { bridge, type ChatConversation, type ConversationMeta, type InFlightRecord, type Runnable } from '../bridge'
+import { useFeatures } from '../features'
 import { OutputPanel, useInvocationBlocks, type RerunData, type InvocationBlock, type BlockSegment } from '../components/OutputPanel'
 import { useIsDark, MONO_FONT, RADIUS } from '../ThemeContext'
 
@@ -143,6 +144,10 @@ function InFlightStrip({ inFlight }: { inFlight: InFlightRecord[] }) {
 
 export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewProps) {
   const { blocks, addBlock, clearBlocks, hydrateBlocks, setBlockInContext } = useInvocationBlocks()
+  // `[console] ai` off-switch: the Console stays (it is the output pane for every
+  // run) but its chat affordances — conversation History, "Ask the assistant",
+  // the include-in-context toggle — go.
+  const { ai } = useFeatures()
   const addBlockRef = useRef(addBlock)
   addBlockRef.current = addBlock
   // Current blocks, for the send handlers (which live in []-dep effects and would
@@ -435,20 +440,22 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
             </Button>
           </>
         )}
-        <Tooltip title="Browse and reopen past conversations">
-          <Button size="small" type="text" icon={<HistoryOutlined />} onClick={openConversations} style={{ fontSize: 12, color: 'var(--rs-text-muted)' }}>
-            History
-          </Button>
-        </Tooltip>
+        {ai && (
+          <Tooltip title="Browse and reopen past conversations">
+            <Button size="small" type="text" icon={<HistoryOutlined />} onClick={openConversations} style={{ fontSize: 12, color: 'var(--rs-text-muted)' }}>
+              History
+            </Button>
+          </Tooltip>
+        )}
         {blocks.length > 0 && (
-          <Tooltip title="Clear the transcript and the assistant's memory of this conversation">
+          <Tooltip title={ai ? "Clear the transcript and the assistant's memory of this conversation" : 'Clear the run output'}>
             <Button size="small" icon={<PlusOutlined />} onClick={handleNewChat}>
-              New chat
+              {ai ? 'New chat' : 'Clear'}
             </Button>
           </Tooltip>
         )}
       </div>
-      <OutputPanel blocks={blocks} onRerun={handleRerun} onAskLlm={handleAskLlm} onToggleContext={handleToggleContext} />
+      <OutputPanel blocks={blocks} onRerun={handleRerun} onAskLlm={ai ? handleAskLlm : undefined} onToggleContext={ai ? handleToggleContext : undefined} />
 
       <Drawer
         title="Conversations"
