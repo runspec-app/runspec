@@ -15,6 +15,7 @@ from runspec_console.bridge import Bridge
 
 EXPECTED = {
     "add_team",
+    "ai_enabled",
     "app_title",
     "app_version",
     "brand_theme",

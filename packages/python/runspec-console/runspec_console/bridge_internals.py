@@ -842,6 +842,11 @@ class InternalsMixin:
         # that system prompt — never served from / written to the shared cache.
         if system_override is None and self._adapter is not None:
             return self._adapter
+        # AI off-switch: never build an adapter (nor import plugin modules) —
+        # every caller treats None as "no model"; the user-facing surfaces word
+        # it as AI_OFF_MESSAGE rather than "no provider configured".
+        if not getattr(self, "_ai_enabled", True):
+            return None
         cfg = self.get_config()
         provider = cfg.get("llm", {}).get("provider")
         if not provider:

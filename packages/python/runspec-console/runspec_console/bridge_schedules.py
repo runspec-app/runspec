@@ -25,6 +25,7 @@ from . import hosts as hosts_mod
 
 from .bridge_const import (
     logger,
+    AI_OFF_MESSAGE,
 )
 from .bridge_utils import (
     _write_schedules,
@@ -34,6 +35,21 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .bridge import Bridge  # noqa: F401
+
+
+def _refuse_ai_schedule(data: dict[str, Any], ai_enabled: bool) -> None:
+    """Reject a prompt/runbook/eval schedule when AI is off (`[console] ai`).
+
+    create/update do no other validation (the UI editors pre-validate), but the
+    ``create_schedule`` *action tool* is reachable over the MCP server, so this
+    door needs its own lock. Module-level so stub-bound tests need no method."""
+    from .sources.schedule import AI_SCHEDULE_ACTIONS
+
+    action = str(data.get("action") or "runnable").strip()
+    if action == "skill":
+        action = "runbook"
+    if not ai_enabled and action in AI_SCHEDULE_ACTIONS:
+        raise ValueError(AI_OFF_MESSAGE)
 
 
 class SchedulesMixin:
@@ -102,13 +118,16 @@ class SchedulesMixin:
         try:
             from .sources.schedule import next_fire_time, parse_schedule_entry
 
-            job = parse_schedule_entry(raw)
+            job = parse_schedule_entry(
+                raw, ai_enabled=getattr(self, "_ai_enabled", True)
+            )
             nxt = next_fire_time(job.when)
             return nxt.isoformat(timespec="seconds") if nxt is not None else ""
         except Exception:
             return ""
 
     def create_schedule(self, data: dict[str, Any]) -> None:
+        _refuse_ai_schedule(data, getattr(self, "_ai_enabled", True))
         path = config_mod.hosts_path().parent / "runspec_schedules.toml"
         schedules = self._read_schedules()
         schedules.append(data)
@@ -124,6 +143,7 @@ class SchedulesMixin:
         toggle. Falls back to appending if no entry matches (so a stale id can't
         silently drop an edit). Restarts the engine so the change takes effect
         immediately — same as create/delete."""
+        _refuse_ai_schedule(data, getattr(self, "_ai_enabled", True))
         path = config_mod.hosts_path().parent / "runspec_schedules.toml"
         entry = {k: v for k, v in data.items() if k != "nextRun"}
         entry["id"] = id
@@ -160,7 +180,7 @@ class SchedulesMixin:
             raise ValueError(f"no schedule with id {id!r}")
         from .sources.schedule import event_payload, parse_schedule_entry
 
-        job = parse_schedule_entry(raw)
+        job = parse_schedule_entry(raw, ai_enabled=getattr(self, "_ai_enabled", True))
         if job.action == "event":
             from datetime import datetime
 
@@ -316,6 +336,10 @@ class SchedulesMixin:
         """Run a prompt/runbook-action schedule on the timer (ScheduleSource's
         ``run_agent`` callback). The manual *Run now* path uses
         :meth:`_invoke_scheduled_agent` directly so it can surface the card id."""
+        # Defence in depth — parse already refused an agent job when AI is off.
+        if not getattr(self, "_ai_enabled", True):
+            logger.warning("schedule %r skipped: %s", job.id, AI_OFF_MESSAGE)
+            return
         self._invoke_scheduled_agent(job)
 
     def _run_scheduled_saved(self, job: Any) -> None:
@@ -331,6 +355,9 @@ class SchedulesMixin:
         local store, so it appears in the Evals tab. Returns the run summary (used
         by *Run now*); best-effort — a failure is logged, never raised into the
         scheduler thread."""
+        # Defence in depth — parse already refused an agent job when AI is off.
+        if not getattr(self, "_ai_enabled", True):
+            return {"ok": False, "reason": AI_OFF_MESSAGE}
         try:
             res = self.run_evals(  # type: ignore[attr-defined]
                 fixture_id=str(job.eval_fixture or ""),

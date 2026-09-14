@@ -299,13 +299,18 @@ class Trigger:
         self._patterns = {k: re.compile(v) for k, v in self.match.items()}
 
     @classmethod
-    def from_config(cls, data: dict[str, Any]) -> Trigger:
+    def from_config(cls, data: dict[str, Any], *, ai_enabled: bool = True) -> Trigger:
         """Build (and validate) a Trigger from a parsed ``[triggers.<name>]`` table.
 
         The trigger's ``name`` is the table key (injected by
         :func:`config.read_triggers`), so a config-sourced trigger always has
         one. Raises ``ValueError`` with a human-first message on bad config —
         the same spirit as runspec's own errors.
+
+        ``ai_enabled=False`` (the console's ``[console] ai`` off-switch) refuses
+        an agent-mode trigger and a rule trigger with an LLM ``pre_turn`` — the
+        trigger is reported invalid rather than silently degraded to a plain
+        rule, so a seeded file makes its AI dependence visible.
         """
         name = str(data.get("name") or "").strip()
         if not name:
@@ -329,6 +334,18 @@ class Trigger:
                 f"trigger '{name}' has unknown mode '{mode}' "
                 f"(expected one of: {', '.join(sorted(_VALID_MODES))})"
             )
+        if not ai_enabled:
+            if mode != "rule":
+                raise ValueError(
+                    f"trigger '{name}' is an agent-mode trigger, but AI features "
+                    "are disabled in this console ([console] ai = false) — set "
+                    'mode = "rule" or enable AI'
+                )
+            if str(data.get("pre_turn") or "").strip():
+                raise ValueError(
+                    f"trigger '{name}' has an LLM pre_turn step, but AI features "
+                    "are disabled in this console ([console] ai = false)"
+                )
 
         autonomy = str(data.get("autonomy") or "confirm").strip()
         if autonomy not in _VALID_AUTONOMY:
@@ -1055,17 +1072,20 @@ class TriggerEngine:
         return True
 
 
-def load_triggers(configs: list[dict[str, Any]]) -> tuple[list[Trigger], list[str]]:
+def load_triggers(
+    configs: list[dict[str, Any]], *, ai_enabled: bool = True
+) -> tuple[list[Trigger], list[str]]:
     """Parse a list of ``[triggers.<name>]`` tables.
 
     Returns ``(triggers, errors)``: a bad table is skipped with a message rather
     than sinking the whole set, so one typo doesn't disable every trigger.
+    ``ai_enabled`` is forwarded to :meth:`Trigger.from_config`.
     """
     triggers: list[Trigger] = []
     errors: list[str] = []
     for raw in configs:
         try:
-            triggers.append(Trigger.from_config(raw))
+            triggers.append(Trigger.from_config(raw, ai_enabled=ai_enabled))
         except ValueError as exc:
             errors.append(str(exc))
     return triggers, errors

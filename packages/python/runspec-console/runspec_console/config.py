@@ -1475,6 +1475,26 @@ def backups_keep_value(sync: dict[str, Any]) -> int:
         return DEFAULT_BACKUPS_KEEP
 
 
+def ai_enabled() -> bool:
+    """`[console] ai` — whether the AI/agent features are enabled (default True).
+
+    Set ``ai = false`` (typically from a config seed / Config Sync) to run the
+    console as a non-AI fleet tool: no chat, no agent-mode triggers, no
+    prompt/runbook/eval schedules, no model adapter ever built. The MCP server,
+    Forms, History, saved runs, rule triggers and rooms keep working. Read once at
+    bring-up (``Bridge._ai_enabled``) so the UI and the backend gates agree for
+    the whole session — restart to apply a change. An absent or non-bool value
+    means enabled, so a default install is unchanged. Deliberately **not** in the
+    preserve lists: a seeded ``false`` re-asserts on every seed re-apply / sync
+    pull. See docs/design/console-ai-off-switch.md."""
+    console = read_config().get("console")
+    if isinstance(console, dict):
+        val = console.get("ai")
+        if isinstance(val, bool):
+            return val
+    return True
+
+
 def confirm_notifications_enabled() -> bool:
     """`[console] confirm_notifications` — raise a desktop toast when an agent
     tool call hits the autonomy gate. Defaults to True; set false to silence the

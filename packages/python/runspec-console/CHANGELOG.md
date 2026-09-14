@@ -8,6 +8,43 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.257.0] — 2026-09-14
+
+### Added
+- **AI off-switch — backend gate (`[console] ai = false`).** The same binary can
+  now run as a **non-AI fleet tool**: one config flag, read once at bring-up
+  (`Bridge._ai_enabled`, after the config seed applies, so a seeded value holds
+  from first launch; restart to change), refuses every path that would run a
+  model turn — and *refuses* rather than silently degrading: `send_chat` /
+  `run_runbook` / `run_evals` / `synthesize_improve_report` / `send_test_trace`
+  return one clear `AI_OFF_MESSAGE`; `_get_adapter` never builds an adapter nor
+  imports plugin modules; `Trigger.from_config` rejects **agent-mode** triggers
+  and a rule trigger's LLM `pre_turn` (the trigger shows as invalid, never
+  quietly runs as a rule); `parse_schedule_entry` rejects `prompt` / `runbook`
+  (and legacy `skill`) / `eval` schedules, and the bridge's `create_schedule` /
+  `update_schedule` refuse them too (that door is reachable from the
+  `create_schedule` **action tool over the MCP server**, whose `action` enum
+  also shrinks); the room catalog publishes no runbooks and a runbook assignment
+  fails on its card; the scheduled agent/eval callbacks and the trigger agent /
+  pre-turn runtime paths are inert as defence in depth. At bring-up the
+  agent-only services are skipped — OTel tracing (`init_tracing`), the external
+  MCP **client** (`mcp_start`), the sandbox warm-up — while the console's **own
+  MCP server stays up** (it gates an *external* coding agent's fleet calls with
+  no model inside; `tool_style` / `expose_builtins` / `tools/list_changed`
+  unchanged). Forms, History, saved runs, rule triggers, runnable/saved-run/event
+  schedules, rooms (transport + runnable enactment), credentials, denylist,
+  Config Sync / seed: unchanged. Absent or non-bool ⇒ enabled, so a default
+  install is byte-identical. **Not** in the `preserve` lists on purpose — a
+  seeded `ai = false` re-asserts on every seed re-apply / sync pull (a
+  re-asserting default; the only true lock is not installing a model extra,
+  which a bare `pip install runspec-console` already is). New JS API
+  `ai_enabled()` (the frontend gate lands in the next release — until then the
+  AI tabs still render but every AI action returns the message).
+  `config.ai_enabled`, `bridge_const.AI_OFF_MESSAGE`,
+  `sources.schedule.AI_SCHEDULE_ACTIONS`; see
+  `docs/design/console-ai-off-switch.md`.
+
+
 ## [0.256.0] — 2026-09-14
 
 ### Added

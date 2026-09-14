@@ -185,6 +185,11 @@ class ImproveMixin:
         if not cfg.get("llm_synthesis", True):
             report["synthesis_error"] = "LLM synthesis is disabled ([improve])."
             return report
+        if not getattr(self, "_ai_enabled", True):
+            from .bridge_const import AI_OFF_MESSAGE
+
+            report["synthesis_error"] = AI_OFF_MESSAGE
+            return report
         adapter = self._get_adapter()
         if adapter is None:
             report["synthesis_error"] = (

@@ -20,6 +20,7 @@ import threading
 from datetime import datetime
 from typing import Any
 
+from . import config as config_mod
 from .bridge_const import logger
 from .bridge_helpers import _ParamikoDevHandler
 
@@ -276,6 +277,12 @@ class Bridge(
             self.seed_apply()
         except Exception:
             logger.warning("config seed apply at startup failed", exc_info=True)
+        # The AI off-switch (`[console] ai`), read once — after the seed so a
+        # seeded value applies on first launch — and held for the whole session:
+        # every agent surface (chat, triggers, schedules, evals, improve, the
+        # adapter itself) and the UI read this one flag, so they can't disagree
+        # mid-session. Restart to apply a change.
+        self._ai_enabled: bool = config_mod.ai_enabled()
         # Drop workspaces whose owning session (a chat conversation, an old
         # trigger/schedule turn) is gone — a cheap belt-and-braces on the
         # inline retention already run by conv.prune and delete_conversation.

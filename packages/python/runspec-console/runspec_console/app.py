@@ -407,16 +407,24 @@ def main() -> None:
     from . import config as _config
     from . import observability
 
-    observability.init_tracing(_config.read_telemetry())
+    # With the AI off-switch set ([console] ai = false) none of the agent-only
+    # bring-up below runs: tracing only traces agent turns, external MCP servers
+    # only feed the agent's toolset, and the sandbox only serves agent tools.
+    # The console's *own* MCP server (further down) stays — it gates an external
+    # agent's fleet calls with no model inside.
+    ai_on = bridge.ai_enabled()
+    if ai_on:
+        observability.init_tracing(_config.read_telemetry())
 
     # Connect any external MCP servers ([mcp] / [[mcp.servers]]) so their tools
     # join the chat agent's toolset. Best-effort and idempotent — a no-op unless
     # servers are configured and the `mcp` extra is installed; a slow/down server
     # just lands disconnected (visible in mcp_status) and never blocks startup.
-    try:
-        bridge.mcp_start()
-    except Exception:  # noqa: BLE001
-        pass
+    if ai_on:
+        try:
+            bridge.mcp_start()
+        except Exception:  # noqa: BLE001
+            pass
 
     # Start the console's own MCP server ([mcp_server]) so an external coding
     # agent (Claude Code) can reach the fleet over localhost. Best-effort and
@@ -441,7 +449,8 @@ def main() -> None:
                 pass
 
         if (
-            _config.read_workspace().get("code_exec", True)
+            ai_on
+            and _config.read_workspace().get("code_exec", True)
             and _config.read_sandbox().get("enabled", True)
             and sandbox._wasmtime() is not None
             and sandbox.wasm_path() is not None

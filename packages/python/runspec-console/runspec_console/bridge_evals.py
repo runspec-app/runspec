@@ -242,6 +242,10 @@ class EvalsMixin:
         model's args wouldn't bounce (``_preflight_validate``). ``telemetry`` emits
         one ``turn → llm → tool`` OTLP trace per case with ``runspec.eval.*``
         attributes (no-op unless ``[telemetry]`` is enabled)."""
+        if not getattr(self, "_ai_enabled", True):
+            from .bridge_const import AI_OFF_MESSAGE
+
+            return {"ok": False, "reason": AI_OFF_MESSAGE}
         adapter = self._get_adapter()  # type: ignore[attr-defined]
         if adapter is None:
             return {"ok": False, "reason": "no model provider configured ([llm])"}

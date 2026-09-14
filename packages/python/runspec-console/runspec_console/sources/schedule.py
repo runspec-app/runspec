@@ -227,7 +227,14 @@ def parse_when(table: dict[str, Any]) -> When:
     return When(cron=cron, every=every, timezone=timezone)
 
 
-def parse_schedule_entry(data: dict[str, Any]) -> ScheduleJob:
+# The schedule actions that run an agent turn (or drive the model) — refused
+# when the console's AI off-switch (`[console] ai = false`) is set.
+AI_SCHEDULE_ACTIONS: frozenset[str] = frozenset({"prompt", "runbook", "eval"})
+
+
+def parse_schedule_entry(
+    data: dict[str, Any], *, ai_enabled: bool = True
+) -> ScheduleJob:
     """Validate and parse one ``[[schedule]]`` table into a :class:`ScheduleJob`.
 
     Raises ``ValueError`` with a human-first message on bad config. The ``when``
@@ -235,7 +242,9 @@ def parse_schedule_entry(data: dict[str, Any]) -> ScheduleJob:
     schedule needs an ``event`` name; a ``"runnable"`` schedule needs ``runnable``
     plus exactly one of ``host`` (one host) or ``group`` (fan out to a host group);
     a ``"prompt"`` schedule needs a ``prompt``; a ``"runbook"`` schedule needs a
-    ``runbook`` id.
+    ``runbook`` id. With ``ai_enabled=False`` the ``prompt`` / ``runbook`` /
+    ``eval`` actions are refused (they run an agent turn) — the job is reported
+    invalid rather than silently dropped.
     """
     sid = str(data.get("id") or "").strip()
     if not sid:
@@ -250,6 +259,11 @@ def parse_schedule_entry(data: dict[str, Any]) -> ScheduleJob:
         raise ValueError(
             f"schedule '{sid}' has unknown action '{action}' "
             "(expected 'event', 'runnable', 'prompt', 'runbook', 'saved_run' or 'eval')"
+        )
+    if not ai_enabled and action in AI_SCHEDULE_ACTIONS:
+        raise ValueError(
+            f"schedule '{sid}' has action '{action}', which runs an agent turn, "
+            "but AI features are disabled in this console ([console] ai = false)"
         )
 
     when = parse_when(data.get("when") or {})
@@ -450,6 +464,7 @@ class ScheduleSource:
         self,
         schedules: list[dict[str, Any]] | None = None,
         *,
+        ai_enabled: bool = True,
         run_runnable: RunFn | None = None,
         run_agent: AgentFn | None = None,
         run_saved: SavedFn | None = None,
@@ -461,7 +476,7 @@ class ScheduleSource:
         self._jobs: list[ScheduleJob] = []
         for raw in schedules or []:
             try:
-                job = parse_schedule_entry(raw)
+                job = parse_schedule_entry(raw, ai_enabled=ai_enabled)
             except Exception:
                 logger.exception(
                     "schedule: skipping invalid schedule %r",

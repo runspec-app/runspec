@@ -21,6 +21,7 @@ from . import observability
 
 from .bridge_const import (
     logger,
+    AI_OFF_MESSAGE,
     _AUTONOMY_RANK,
     _OUTLOOK_TOOL_NAMES,
     _ACTION_TOOL_NAMES,
@@ -85,7 +86,9 @@ class TriggersMixin:
             # A TOML syntax error rejects the whole file → no triggers load.
             # Log loudly (the UI surfaces it via list_triggers' errors).
             logger.warning("trigger config: %s", file_error)
-        triggers, errors = load_triggers(read_triggers())
+        triggers, errors = load_triggers(
+            read_triggers(), ai_enabled=getattr(self, "_ai_enabled", True)
+        )
         for err in errors:
             logger.warning("trigger config: %s", err)
         # A configured mailbox needs the Outlook source running even with zero
@@ -158,6 +161,7 @@ class TriggersMixin:
 
             src = ScheduleSource(
                 schedules,
+                ai_enabled=getattr(self, "_ai_enabled", True),
                 run_runnable=self._run_scheduled,
                 # Prompt/runbook schedules run a headless agent turn (isolated, same
                 # autonomy gate as a reactive agent-mode trigger).
@@ -723,6 +727,9 @@ class TriggersMixin:
         from . import memory
         from .catalog import build_runbook_catalog
 
+        # AI off: a runbook enacts as an agent turn, so publish none.
+        if not getattr(self, "_ai_enabled", True):
+            return [], {}
         try:
             runbooks = memory.load_runbooks()
         except Exception:
@@ -983,6 +990,12 @@ class TriggersMixin:
             self._portal_fail(
                 request_id, source, f"runbook '{label}' is no longer available"
             )
+            return
+        if not getattr(self, "_ai_enabled", True):
+            # Never published in the catalog when AI is off (see
+            # _build_room_runbooks), so only a stale request from another console
+            # lands here — fail the request rather than run a model turn.
+            self._portal_fail(request_id, source, AI_OFF_MESSAGE)
             return
         runbook = memory.load_runbook(runbook_id)
         if not runbook:
@@ -1565,7 +1578,7 @@ class TriggersMixin:
         from .triggers import load_triggers
 
         raw = read_triggers()
-        _, errors = load_triggers(raw)
+        _, errors = load_triggers(raw, ai_enabled=getattr(self, "_ai_enabled", True))
         # A whole-file TOML error rejects every trigger silently — surface it.
         file_error = trigger_file_error()
         if file_error:
@@ -2178,6 +2191,8 @@ class TriggersMixin:
         # Prepend the current local date so trigger/schedule agent turns resolve
         # relative dates against the machine clock too (same helper the chat turn
         # folds in). Schedules reach this via _invoke_scheduled_agent.
+        if not getattr(self, "_ai_enabled", True):
+            return f"⚠ {AI_OFF_MESSAGE}"
         system = self._now_context() + "\n\n" + system
         try:
             adapter = self._get_adapter(system_override=system)
@@ -2379,6 +2394,8 @@ class TriggersMixin:
             "action. Call emit_params exactly once with the values you infer from "
             "the event. Do not take any other action.\n\n" + (instructions or "")
         )
+        if not getattr(self, "_ai_enabled", True):
+            return {}
         try:
             adapter = self._get_adapter(system_override=system)
         except Exception:  # noqa: BLE001

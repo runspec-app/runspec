@@ -440,7 +440,9 @@ class ConfigToolsMixin:
     def _config_manage_triggers(self, action: str, ti: dict[str, Any]) -> str:
         if action == "list":
             raw = config_mod.read_triggers()
-            _parsed, errors = triggers_mod.load_triggers(raw)
+            _parsed, errors = triggers_mod.load_triggers(
+                raw, ai_enabled=getattr(self, "_ai_enabled", True)
+            )
             return json.dumps({"triggers": raw, "errors": errors}, ensure_ascii=False)
         name = str(ti.get("name") or "").strip()
         if not name:
@@ -451,7 +453,9 @@ class ConfigToolsMixin:
                 return "✗ 'trigger' (object) is required for save."
             clean = self._clean_trigger({**trigger, "name": name}, name)
             try:
-                triggers_mod.Trigger.from_config(clean)
+                triggers_mod.Trigger.from_config(
+                    clean, ai_enabled=getattr(self, "_ai_enabled", True)
+                )
             except ValueError as exc:
                 return f"✗ Not saved — invalid trigger: {exc}"
             result = self.save_trigger(clean)

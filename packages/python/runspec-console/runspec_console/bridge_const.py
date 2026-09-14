@@ -411,3 +411,12 @@ _TOOL_HEARTBEAT_SECS = 12
 PUTTY_PROXY_SESSION = "runspec-console-proxy"
 
 _EVENT_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+
+# The one user-facing sentence every AI surface returns when `[console] ai =
+# false` — chat, runbooks, agent-mode triggers, prompt/runbook/eval schedules,
+# evals, improve synthesis. Distinct from "no model provider configured" (an
+# unset [llm] provider): this one means the operator/seed switched AI off.
+AI_OFF_MESSAGE = (
+    "AI features are disabled in this console ([console] ai = false). "
+    "Set ai = true in config.toml and restart to enable them."
+)

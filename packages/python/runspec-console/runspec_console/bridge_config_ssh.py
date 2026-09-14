@@ -25,6 +25,7 @@ from .config import (
 
 from .bridge_const import (
     logger,
+    AI_OFF_MESSAGE,
 )
 from .bridge_utils import (
     _normalize_path,
@@ -183,6 +184,13 @@ class ConfigSshMixin:
         """The window/app title — branded to the active LLM plugin, else default."""
         return self._get_branding().title
 
+    def ai_enabled(self) -> bool:
+        """Whether the AI/agent features are on (`[console] ai`, default true).
+
+        Read once at bring-up; the frontend hides the AI surfaces when false and
+        the backend refuses agent turns. Restart to apply a config change."""
+        return bool(getattr(self, "_ai_enabled", True))
+
     def brand_theme(self) -> dict[str, Any]:
         """The validated `[console.theme]` for the frontend (read-only white-label).
 
@@ -322,6 +330,8 @@ class ConfigSshMixin:
         ``capture_content`` / ``flushed`` (on success)."""
         from . import observability
 
+        if not getattr(self, "_ai_enabled", True):
+            return {"ok": False, "reason": AI_OFF_MESSAGE}
         ok, reason = observability.available()
         if not ok:
             return {"ok": False, "reason": reason}

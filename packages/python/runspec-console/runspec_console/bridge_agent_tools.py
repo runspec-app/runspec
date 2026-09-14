@@ -3564,6 +3564,23 @@ class AgentToolsMixin:
         open a URL in the operator's browser. All are side-effecting, so the autonomy
         gate prompts before each (see ``_ACTION_TOOL_NAMES`` in
         ``_effective_tool_autonomy``)."""
+        # The create_schedule tool's action enum — the agent-turn actions
+        # (prompt/runbook/eval) drop out when AI is off ([console] ai = false).
+        # This schema is also what the MCP server publishes under expose_builtins.
+        from .sources.schedule import AI_SCHEDULE_ACTIONS
+
+        schedule_actions = [
+            "event",
+            "runnable",
+            "prompt",
+            "runbook",
+            "saved_run",
+            "eval",
+        ]
+        if not getattr(self, "_ai_enabled", True):
+            schedule_actions = [
+                a for a in schedule_actions if a not in AI_SCHEDULE_ACTIONS
+            ]
         from . import memory
 
         remote = [h["name"] for h in self._hosts if h.get("ssh")]
@@ -3832,14 +3849,7 @@ class AgentToolsMixin:
                         },
                         "action": {
                             "type": "string",
-                            "enum": [
-                                "event",
-                                "runnable",
-                                "prompt",
-                                "runbook",
-                                "saved_run",
-                                "eval",
-                            ],
+                            "enum": schedule_actions,
                             "description": (
                                 "event = emit an event; runnable = run a runnable; "
                                 "prompt = run an agent turn on 'prompt'; runbook = run "
@@ -4371,7 +4381,9 @@ class AgentToolsMixin:
             if ti.get(key) is not None:
                 data[key] = ti[key]
         try:
-            parse_schedule_entry(data)  # validate shape before persisting
+            parse_schedule_entry(  # validate shape before persisting
+                data, ai_enabled=getattr(self, "_ai_enabled", True)
+            )
         except Exception as exc:  # noqa: BLE001
             return f"Error: invalid schedule — {exc}"
         try:

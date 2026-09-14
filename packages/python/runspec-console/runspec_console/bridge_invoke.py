@@ -28,6 +28,7 @@ from .trace import jsonsafe_messages
 
 from .bridge_const import (
     logger,
+    AI_OFF_MESSAGE,
     _CANCEL_KEY,
     _OPERATOR_RUN_OUTPUT_CAP,
     _UI_OUTPUT_LINE_CAP,
@@ -446,12 +447,14 @@ class InvokeMixin:
                     )
                     return
                 if adapter is None:
+                    no_model = (
+                        AI_OFF_MESSAGE
+                        if not getattr(self, "_ai_enabled", True)
+                        else "No model provider configured. Set provider and API key in Settings."
+                    )
                     self._dispatch(
                         "runspec:token",
-                        {
-                            "id": chat_id,
-                            "token": "⚠ No model provider configured. Set provider and API key in Settings.",
-                        },
+                        {"id": chat_id, "token": f"⚠ {no_model}"},
                     )
                     self._dispatch(
                         "runspec:run_end",
@@ -639,6 +642,8 @@ class InvokeMixin:
         shows as the chat block — or ``{error}`` if the runbook is unknown / values invalid."""
         from . import memory, runbookargs
 
+        if not getattr(self, "_ai_enabled", True):
+            return {"error": AI_OFF_MESSAGE}
         runbook = memory.load_runbook(str(runbook_id or ""))
         if not runbook:
             return {"error": f"No runbook with id '{runbook_id}'."}
