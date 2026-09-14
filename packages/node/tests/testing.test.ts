@@ -120,6 +120,89 @@ test('exactly-one group with no supplied member skips the valid check', () => {
   harn.close();
 });
 
+// Presence groups — at-least-one / inclusive / if->requires — the constraints
+// that require a member to be *present*. smoke must add a fabricatable member so
+// the built invocation satisfies the group instead of one the validator rejects.
+const AT_LEAST_ONE = `
+[emit]
+[emit.commands.run]
+[emit.commands.run.args]
+verbose = {type = "flag"}
+quiet   = {type = "flag"}
+[emit.commands.run.groups.mode]
+at-least-one = true
+args = ["verbose", "quiet"]
+`;
+
+const AT_LEAST_ONE_UNFABRICATABLE = `
+[emit]
+[emit.commands.run]
+[emit.commands.run.args]
+a = {type = "str", required = false}
+b = {type = "str", required = false}
+[emit.commands.run.groups.src]
+at-least-one = true
+args = ["a", "b"]
+`;
+
+const INCLUSIVE = `
+[emit]
+[emit.commands.run]
+[emit.commands.run.args]
+tls = {type = "flag"}
+ca  = {type = "choice", options = ["system", "bundled"]}
+[emit.commands.run.groups.secure]
+inclusive = true
+args = ["tls", "ca"]
+`;
+
+const CONDITION = `
+[emit]
+[emit.commands.run]
+[emit.commands.run.args]
+deploy = {type = "flag"}
+target = {type = "choice", options = ["stage", "prod"]}
+[emit.commands.run.groups.dep]
+if = "deploy"
+requires = ["target"]
+`;
+
+test('at-least-one group fabricates a member when none is supplied', () => {
+  const harn = new ParseHarness({ scriptName: 'emit', toml: AT_LEAST_ONE });
+  expect(harn.smoke({ values: {} })).toContain('run (valid)');
+  harn.close();
+  const h2 = new ParseHarness({ scriptName: 'emit', toml: AT_LEAST_ONE });
+  expect(h2.smoke({ values: { quiet: true } })).toContain('run (valid)');
+  h2.close();
+});
+
+test('at-least-one group with only non-fabricatable members skips the valid check', () => {
+  const harn = new ParseHarness({ scriptName: 'emit', toml: AT_LEAST_ONE_UNFABRICATABLE });
+  expect(harn.smoke({ values: {} })).not.toContain('run (valid)');
+  harn.close();
+  const h2 = new ParseHarness({ scriptName: 'emit', toml: AT_LEAST_ONE_UNFABRICATABLE });
+  expect(h2.smoke({ values: { a: 'x' } })).toContain('run (valid)');
+  h2.close();
+});
+
+test('inclusive group completes to all-or-none', () => {
+  const harn = new ParseHarness({ scriptName: 'emit', toml: INCLUSIVE });
+  expect(harn.smoke({ values: { tls: true } })).toContain('run (valid)'); // adds the choice member
+  harn.close();
+  const h2 = new ParseHarness({ scriptName: 'emit', toml: INCLUSIVE });
+  expect(h2.smoke({ values: {} })).toContain('run (valid)'); // none supplied is valid
+  h2.close();
+});
+
+test('if->requires group fills the required arg when the condition is present', () => {
+  const harn = new ParseHarness({ scriptName: 'emit', toml: CONDITION });
+  expect(harn.smoke({ values: { deploy: true } })).toContain('run (valid)');
+  harn.close();
+  const h2 = new ParseHarness({ scriptName: 'emit', toml: CONDITION });
+  expect(h2.smoke({ values: {} })).toContain('run (valid)'); // condition absent -> valid
+  h2.close();
+});
+
 test('--help renders group constraints', () => {
   const harn = new ParseHarness({ scriptName: 'emit', toml: GROUPED });
   const out = harn.expectExit(['run', '--help'], { code: 0 });

@@ -188,9 +188,13 @@ args        = ["url", "file"]
 ```
 
 `--help` lists these under a **Constraints:** section. When testing, `smoke()` is
-group-aware (includes at most one member of an exclusive/exactly-one group), but
-**supply only one member of the group in `values`** if you want the valid-path
-check to run for an `exactly-one` group, e.g. `h.smoke(values={"url": "x"})`.
+group-aware for every constraint: it includes at most one member of an
+exclusive/exactly-one group, and adds a fabricatable member (a flag or a choice)
+to satisfy an `at-least-one`/`inclusive`/`if`+`requires` group. If a group's only
+members are plain `str`/`int` args with no value to fabricate (and, for
+`exactly-one`, when none is supplied), smoke **skips** that leaf's valid-path
+check — **supply one member in `values`** to cover it, e.g.
+`h.smoke(values={"url": "x"})`.
 
 ---
 
@@ -352,7 +356,7 @@ runspec ships a test harness that is **stdlib-only and pulls in no test framewor
 
 - `expect_ok(argv)` → returns the parsed `RunSpec`; fails the test if it exits.
 - `expect_exit(argv, code=1, contains=...)` → asserts a clean error exit; `contains` checks the message names the offending flag. `code=0` for `--help`.
-- `smoke(values={...})` → auto-covers the whole command tree in one call: `--help` exits 0, `require-command` is enforced, omitting required args exits 1, and (when `values` supplies arg values) a fully-populated invocation parses. It's **group-aware** (includes at most one member of an exclusive/exactly-one group) and **choice-aware** — when the same arg name declares different `options` per subcommand, smoke picks a value valid for each leaf, so one shared `values` entry (or none) works tree-wide; no per-subcommand workaround needed.
+- `smoke(values={...})` → auto-covers the whole command tree in one call: `--help` exits 0, `require-command` is enforced, omitting required args exits 1, and (when `values` supplies arg values) a fully-populated invocation parses. It's **group-aware** (caps an exclusive/exactly-one group at one member, and adds a fabricatable member to satisfy an at-least-one/inclusive/conditional group) and **choice-aware** — when the same arg name declares different `options` per subcommand, smoke picks a value valid for each leaf, so one shared `values` entry (or none) works tree-wide; no per-subcommand workaround needed.
 
 ```python
 # tests/test_myrule.py  — lives in the package's tests/ dir

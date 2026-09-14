@@ -320,14 +320,23 @@ class ParseHarness:
 
     def _build_valid_argv(self, path: list[str], values: dict[str, Any]) -> list[str] | None:
         """Build argv covering every required arg from ``values``; None if a leaf
-        can't be satisfied (a required non-choice arg has no value, or an
-        ``exactly-one`` group has no supplied member).
+        can't be satisfied (a required non-choice arg has no value, or a group
+        constraint needs a member that can't be fabricated).
 
-        Group-aware: for an ``exclusive`` / ``exactly-one`` group, at most one
-        member is included even when ``values`` supplies several — so a populated
-        ``values`` map doesn't build a mutually-exclusive invocation the group
-        would (correctly) reject. A required member is preferred when choosing
-        which one to keep.
+        Group-aware across every constraint the group validator enforces:
+
+        * ``exclusive`` / ``exactly-one`` (*capping*): at most one member is
+          included even when ``values`` supplies several — so a populated
+          ``values`` map doesn't build a mutually-exclusive invocation the group
+          would (correctly) reject. A required member is preferred when choosing
+          which one to keep. An ``exactly-one`` group with no supplied member
+          can't be built, so the leaf is skipped (None).
+        * ``at-least-one`` / ``inclusive`` / ``if``-``requires`` (*presence*): a
+          member the constraint needs is added even when ``values`` supplies none
+          — a fabricatable one (a flag, or a choice filled from its options). An
+          ``at-least-one`` group with only non-fabricatable members (non-choice,
+          non-flag args with no value) can't be built cleanly, so the leaf is
+          skipped (None) rather than producing an invocation the group rejects.
 
         Choice-aware: ``values`` is one flat map keyed by arg name, but the same
         arg name can declare *different* ``options`` on different subcommands. For
@@ -338,8 +347,13 @@ class ParseHarness:
         the whole tree.
         """
         merged = self._merged_args(path)
+        groups = list(self._merged_groups(path).values())
+
+        # Phase 1 — capping groups: pick members to drop so a fully-populated
+        # `values` map can't build an invocation an exclusive/exactly-one group
+        # rejects. An exactly-one group with no supplied member can't be built.
         drop: set[str] = set()
-        for group in self._merged_groups(path).values():
+        for group in groups:
             if not (group.get("exclusive") or group.get("exactly_one")):
                 continue
             supplied = [m for m in (group.get("args") or []) if values.get(m) is not None]
@@ -350,29 +364,110 @@ class ParseHarness:
                 supplied.sort(key=lambda m: not (merged.get(m) or {}).get("required"))
                 drop.update(supplied[1:])
 
+        # Phase 2 — build argv from supplied values plus required-arg fills.
         argv: list[str] = []
+        included: set[str] = set()
         for name, a in merged.items():
             if name in drop:
                 continue
-            options = a.get("options")
-            value = values.get(name)
-            if value is None:
-                if a.get("required"):
-                    if not options:
-                        return None  # required non-choice with no value -> skip leaf
-                    value = options[0]  # required choice -> fill from its own options
-                else:
-                    continue  # optional + unsupplied -> omit
-            elif options and value not in options:
-                value = options[0]  # shared value invalid for THIS leaf -> a valid option
+            frag = self._arg_fragment(name, a, values.get(name))
+            if frag is None:
+                return None  # required non-choice with no value -> skip this leaf
+            if frag:
+                argv += frag
+                included.add(name)
 
-            flag = "--" + name  # runspec keys the flag by the declared arg name
-            if a.get("type") == "flag":
-                if value:
-                    argv.append(flag)
-            else:
-                argv += [flag, str(value)]
+        # Phase 3 — presence groups: add fabricatable members so the built argv
+        # satisfies each constraint (or skip the leaf if it can't be).
+        for group in groups:
+            fill = self._presence_fill(group, merged, included, drop)
+            if fill is None:
+                return None
+            argv += fill
         return argv
+
+    def _arg_fragment(self, name: str, spec: dict[str, Any], value: Any, *, force: bool = False) -> list[str] | None:
+        """The argv fragment for one arg, or a signal for omit / can't-build.
+
+        Returns the ``["--flag", value]`` (or ``["--flag"]``) fragment; ``[]``
+        when the arg should be omitted (optional, unsupplied, not forced); or
+        ``None`` when it must appear but can't be fabricated (a required/forced
+        non-choice, non-flag arg with no value — the caller skips the leaf).
+
+        Choice-aware: a supplied value invalid for *this* leaf's options is
+        replaced with the leaf's first option, and a needed choice with no value
+        is filled from its options.
+        """
+        options = spec.get("options")
+        is_flag = spec.get("type") == "flag"
+        if value is None:
+            if not (force or spec.get("required")):
+                return []  # optional + unsupplied -> omit
+            if is_flag:
+                value = True
+            elif options:
+                value = options[0]  # fill a needed choice from its own options
+            else:
+                return None  # non-choice with no value -> can't fabricate
+        elif options and value not in options:
+            value = options[0]  # shared value invalid for THIS leaf -> a valid option
+
+        flag = "--" + name  # runspec keys the flag by the declared arg name
+        if is_flag:
+            return [flag] if value else []
+        return [flag, str(value)]
+
+    def _presence_fill(
+        self,
+        group: dict[str, Any],
+        merged: dict[str, dict[str, Any]],
+        included: set[str],
+        drop: set[str],
+    ) -> list[str] | None:
+        """Extra argv fragments so a presence group is satisfied by the built
+        invocation, or ``None`` when a needed member can't be fabricated.
+
+        * ``at-least-one`` — if no member is included yet, add one fabricatable
+          member.
+        * ``inclusive`` (all-or-none) — if any member is included, add every
+          other member; none included is already valid.
+        * ``if`` + ``requires`` — if the condition arg is included, add every
+          required arg not already present.
+
+        Returns ``[]`` when nothing needs adding. ``included`` is updated in
+        place so members added for one group count toward a later one.
+        """
+        members = group.get("args") or []
+
+        def fabricate(names: list[str]) -> list[str] | None:
+            frags: list[str] = []
+            for m in names:
+                if m in drop:
+                    return None  # a capping group already excluded this member
+                frag = self._arg_fragment(m, merged.get(m) or {}, None, force=True)
+                if frag is None:
+                    return None
+                frags += frag
+                included.add(m)
+            return frags
+
+        if group.get("at_least_one"):
+            if any(m in included for m in members):
+                return []
+            for m in members:
+                frag = fabricate([m])
+                if frag is not None:
+                    return frag
+            return None
+        if group.get("inclusive"):
+            if not any(m in included for m in members):
+                return []  # all-or-none: none supplied is valid
+            return fabricate([m for m in members if m not in included])
+        if group.get("condition"):
+            if group["condition"] not in included:
+                return []
+            return fabricate([m for m in (group.get("requires") or []) if m not in included])
+        return []
 
     @contextlib.contextmanager
     def _env(self) -> Iterator[None]:

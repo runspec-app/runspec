@@ -109,17 +109,28 @@ assert it actually exercised something. Args missing from `values` are simply
 omitted — a leaf with an unsupplied *required* arg skips only its valid-invocation
 check; its missing-required check still runs.
 
-`smoke()` is **group-aware**: when a leaf has an `exclusive` or `exactly-one`
-[group](format.md#groups), it includes **at most one** member when building the
-valid invocation, even if `values` supplies several — so you can list every
-member in `values` without the populated call tripping the mutual-exclusivity
-constraint. (For an `exactly-one` group, supply at least one member; if none is
-supplied, smoke skips that leaf's valid-invocation check rather than building a
-call the group would reject.)
+`smoke()` is **group-aware** across every [group](format.md#groups) constraint
+the validator enforces, so a populated `values` map never builds a call the group
+would reject:
+
+* *Capping* groups (`exclusive`, `exactly-one`): smoke includes **at most one**
+  member even if `values` supplies several — so you can list every member in
+  `values` without tripping the mutual-exclusivity constraint. For an
+  `exactly-one` group, supply at least one member; if none is supplied, smoke
+  skips that leaf's valid-invocation check rather than building a call that fails.
+* *Presence* groups (`at-least-one`, `inclusive`, `if`+`requires`): smoke **adds
+  a member** so the built call satisfies the constraint even when `values`
+  supplies none — a *fabricatable* one (a flag, or a `choice` filled from its
+  options). An `at-least-one` group whose only members are plain `str`/`int`/etc.
+  args with no supplied value has nothing to fabricate, so smoke skips that
+  leaf's valid-invocation check (supply one member in `values` to cover it).
 
 ```python
 # emit run --json | --yaml  (exactly-one group)
 h.smoke(values={"json": True, "yaml": True})   # builds `run --json` — not both
+
+# emit run --verbose | --quiet  (at-least-one group)
+h.smoke(values={})                             # builds `run --verbose` — one member added
 ```
 
 `smoke()` is also **choice-aware**. `values` is one flat map keyed by arg name,

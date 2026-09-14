@@ -314,18 +314,32 @@ export class ParseHarness {
   }
 
   // Build argv covering every required arg from `values`; null if a leaf can't
-  // be satisfied (a required non-choice arg has no value, or an exactly-one group
-  // has no supplied member). Group-aware: for an exclusive / exactly-one group,
-  // at most one member is included even when `values` supplies several, so a
-  // populated values map doesn't build a mutually-exclusive call the group would
-  // reject. Choice-aware: `values` is one flat map keyed by arg name, but the
-  // same name can declare different `options` on different subcommands; for a
-  // choice arg the value is validated against THIS leaf's options (falling back
-  // to its first option), so one value — or none — works across the whole tree.
+  // be satisfied (a required non-choice arg has no value, or a group constraint
+  // needs a member that can't be fabricated). Group-aware across every constraint
+  // the group validator enforces:
+  //   * exclusive / exactly-one (capping): at most one member is included even
+  //     when `values` supplies several, so a populated values map doesn't build a
+  //     mutually-exclusive call the group would reject; a required member is
+  //     preferred when choosing which to keep. An exactly-one group with no
+  //     supplied member can't be built (null).
+  //   * at-least-one / inclusive / if->requires (presence): a member the
+  //     constraint needs is added even when `values` supplies none — a
+  //     fabricatable one (a flag, or a choice filled from its options). An
+  //     at-least-one group with only non-fabricatable members (non-choice,
+  //     non-flag args with no value) can't be built cleanly, so the leaf is
+  //     skipped (null) rather than building a call the group rejects.
+  // Choice-aware: `values` is one flat map keyed by arg name, but the same name
+  // can declare different `options` on different subcommands; for a choice arg the
+  // value is validated against THIS leaf's options (falling back to its first
+  // option), so one value — or none — works across the whole tree.
   private buildValidArgv(p: string[], values: Record<string, unknown>): string[] | null {
     const merged = this.mergedArgs(p);
+    const groups = Object.values(this.mergedGroups(p));
+
+    // Phase 1 — capping groups: pick members to drop so a fully-populated
+    // `values` map can't build a call an exclusive/exactly-one group rejects.
     const drop = new Set<string>();
-    for (const g of Object.values(this.mergedGroups(p))) {
+    for (const g of groups) {
       if (!(g.exclusive || g.exactlyOne)) continue;
       const supplied = (g.args ?? []).filter((m) => values[m] !== undefined && values[m] !== null);
       if (g.exactlyOne && supplied.length === 0) return null;
@@ -336,29 +350,100 @@ export class ParseHarness {
       }
     }
 
+    // Phase 2 — build argv from supplied values plus required-arg fills.
     const argv: string[] = [];
+    const included = new Set<string>();
     for (const [name, a] of Object.entries(merged)) {
       if (drop.has(name)) continue;
-      const options = a.options;
-      let supplied = values[name];
-      if (supplied === undefined || supplied === null) {
-        if (a.required) {
-          if (!options || options.length === 0) return null; // required non-choice, no value
-          supplied = options[0]; // required choice -> fill from its own options
-        } else {
-          continue; // optional + unsupplied -> omit
-        }
-      } else if (options && options.length > 0 && !options.includes(supplied as string)) {
-        supplied = options[0]; // shared value invalid for THIS leaf -> a valid option
-      }
-      const flag = `--${name}`;
-      if (a.type === 'flag') {
-        if (supplied) argv.push(flag);
-      } else {
-        argv.push(flag, String(supplied));
+      const frag = this.argFragment(name, a, values[name]);
+      if (frag === null) return null; // required non-choice with no value -> skip leaf
+      if (frag.length > 0) {
+        argv.push(...frag);
+        included.add(name);
       }
     }
+
+    // Phase 3 — presence groups: add fabricatable members so the built argv
+    // satisfies each constraint (or skip the leaf if it can't be).
+    for (const g of groups) {
+      const fill = this.presenceFill(g, merged, included, drop);
+      if (fill === null) return null;
+      argv.push(...fill);
+    }
     return argv;
+  }
+
+  // The argv fragment for one arg, or a signal for omit / can't-build: the
+  // ["--flag", value] (or ["--flag"]) fragment; [] when the arg should be
+  // omitted (optional, unsupplied, not forced); or null when it must appear but
+  // can't be fabricated (a required/forced non-choice, non-flag arg with no
+  // value — the caller then skips the leaf). Choice-aware: a value invalid for
+  // THIS leaf's options falls back to its first option; a needed choice with no
+  // value is filled from its options.
+  private argFragment(name: string, spec: ArgSpec, value: unknown, force = false): string[] | null {
+    const options = spec.options;
+    const isFlag = spec.type === 'flag';
+    let v = value;
+    if (v === undefined || v === null) {
+      if (!(force || spec.required)) return []; // optional + unsupplied -> omit
+      if (isFlag) {
+        v = true;
+      } else if (options && options.length > 0) {
+        v = options[0]; // fill a needed choice from its own options
+      } else {
+        return null; // non-choice with no value -> can't fabricate
+      }
+    } else if (options && options.length > 0 && !options.includes(v as string)) {
+      v = options[0]; // shared value invalid for THIS leaf -> a valid option
+    }
+    const flag = `--${name}`;
+    if (isFlag) return v ? [flag] : [];
+    return [flag, String(v)];
+  }
+
+  // Extra argv fragments so a presence group is satisfied by the built call, or
+  // null when a needed member can't be fabricated. at-least-one: if no member is
+  // included yet, add one fabricatable member. inclusive (all-or-none): if any
+  // member is included, add every other member; none is already valid. if +
+  // requires: if the condition arg is included, add every required arg not
+  // already present. Returns [] when nothing needs adding. `included` is updated
+  // in place so members added for one group count toward a later one.
+  private presenceFill(
+    group: GroupSpec,
+    merged: Record<string, ArgSpec>,
+    included: Set<string>,
+    drop: Set<string>,
+  ): string[] | null {
+    const members = group.args ?? [];
+    const fabricate = (names: string[]): string[] | null => {
+      const frags: string[] = [];
+      for (const m of names) {
+        if (drop.has(m)) return null; // a capping group already excluded this member
+        const frag = this.argFragment(m, merged[m] ?? {}, undefined, true);
+        if (frag === null) return null;
+        frags.push(...frag);
+        included.add(m);
+      }
+      return frags;
+    };
+
+    if (group.atLeastOne) {
+      if (members.some((m) => included.has(m))) return [];
+      for (const m of members) {
+        const frag = fabricate([m]);
+        if (frag !== null) return frag;
+      }
+      return null;
+    }
+    if (group.inclusive) {
+      if (!members.some((m) => included.has(m))) return []; // all-or-none: none is valid
+      return fabricate(members.filter((m) => !included.has(m)));
+    }
+    if (group.condition) {
+      if (!included.has(group.condition)) return [];
+      return fabricate((group.requires ?? []).filter((m) => !included.has(m)));
+    }
+    return [];
   }
 
   // `suppressSummary` is retained for back-compat but is now a no-op: the

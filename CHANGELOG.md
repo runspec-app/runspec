@@ -7,6 +7,27 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.51.0] / [node-0.38.0] — 2026-09-14
+
+### Changed
+
+- **`ParseHarness.smoke()` is group-aware for *presence* constraints too.**
+  smoke was aware of the *capping* groups (`exclusive` / `exactly-one`) but not
+  the *presence* ones, so a runnable with an `at-least-one` group whose members
+  weren't listed in `values` made smoke build a call omitting them all — which
+  the validator rejects — turning a valid-invocation check into a spurious
+  failure. smoke now satisfies every group constraint the validator enforces:
+  for `at-least-one`, `inclusive`, and `if`+`requires` groups it **adds a
+  fabricatable member** (a flag, or a `choice` filled from its options) so the
+  built call passes. A group whose only members are non-fabricatable
+  (plain `str`/`int`/etc. args with no supplied value) has nothing to add, so
+  smoke **skips** that leaf's valid-invocation check rather than building a call
+  that fails — the same graceful skip already used for an `exactly-one` group
+  with no supplied member. Supply one member in `values` to cover such a leaf.
+  Both packs (`testing.py` / `testing.ts` `_build_valid_argv` / `buildValidArgv`,
+  with new `_arg_fragment` / `_presence_fill` / `argFragment` / `presenceFill`
+  helpers). Docs: `docs/testing.md`.
+
 ## [0.50.1] — 2026-08-07
 
 ### Fixed

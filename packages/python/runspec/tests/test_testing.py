@@ -152,6 +152,108 @@ class TestSmokeGroupAware:
         assert "run (valid)" not in performed
 
 
+# Presence groups — at-least-one / inclusive / if->requires — the constraints
+# that require a member to be *present* (as opposed to exclusive/exactly-one,
+# which cap). smoke must add a fabricatable member so the built invocation
+# satisfies the group instead of building one the validator rejects.
+AT_LEAST_ONE = textwrap.dedent("""\
+    [emit]
+    [emit.commands.run]
+    [emit.commands.run.args]
+    verbose = {type = "flag"}
+    quiet   = {type = "flag"}
+    [emit.commands.run.groups.mode]
+    at-least-one = true
+    args = ["verbose", "quiet"]
+""")
+
+# An at-least-one group whose only members are plain strings with no supplied
+# value — nothing to fabricate, so the leaf's valid check is skipped, not failed.
+AT_LEAST_ONE_UNFABRICATABLE = textwrap.dedent("""\
+    [emit]
+    [emit.commands.run]
+    [emit.commands.run.args]
+    a = {type = "str", required = false}
+    b = {type = "str", required = false}
+    [emit.commands.run.groups.src]
+    at-least-one = true
+    args = ["a", "b"]
+""")
+
+INCLUSIVE = textwrap.dedent("""\
+    [emit]
+    [emit.commands.run]
+    [emit.commands.run.args]
+    tls = {type = "flag"}
+    ca  = {type = "choice", options = ["system", "bundled"]}
+    [emit.commands.run.groups.secure]
+    inclusive = true
+    args = ["tls", "ca"]
+""")
+
+CONDITION = textwrap.dedent("""\
+    [emit]
+    [emit.commands.run]
+    [emit.commands.run.args]
+    deploy = {type = "flag"}
+    target = {type = "choice", options = ["stage", "prod"]}
+    [emit.commands.run.groups.dep]
+    if = "deploy"
+    requires = ["target"]
+""")
+
+
+class TestSmokePresenceGroups:
+    def test_at_least_one_fabricates_a_member(self) -> None:
+        # No member supplied -> smoke fabricates a member (the flag) so the
+        # built invocation satisfies at-least-one instead of being rejected.
+        with harness("emit", toml=AT_LEAST_ONE) as h:
+            performed = h.smoke(values={})
+        assert "run (valid)" in performed
+
+    def test_at_least_one_honours_a_supplied_member(self) -> None:
+        with harness("emit", toml=AT_LEAST_ONE) as h:
+            performed = h.smoke(values={"quiet": True})
+        assert "run (valid)" in performed
+
+    def test_at_least_one_unfabricatable_skips_valid(self) -> None:
+        # Members are plain strings with no value -> nothing to fabricate, so
+        # the valid-invocation check is skipped (not failed).
+        with harness("emit", toml=AT_LEAST_ONE_UNFABRICATABLE) as h:
+            performed = h.smoke(values={})
+        assert "run (valid)" not in performed
+        # Supplying one member makes a valid invocation constructible again.
+        with harness("emit", toml=AT_LEAST_ONE_UNFABRICATABLE) as h:
+            performed = h.smoke(values={"a": "x"})
+        assert "run (valid)" in performed
+
+    def test_inclusive_completes_the_group(self) -> None:
+        # One member supplied -> smoke adds the other (a fabricatable choice) so
+        # the all-or-none inclusive group is satisfied.
+        with harness("emit", toml=INCLUSIVE) as h:
+            performed = h.smoke(values={"tls": True})
+        assert "run (valid)" in performed
+
+    def test_inclusive_none_supplied_is_valid(self) -> None:
+        # inclusive is all-or-none: supplying nothing is a valid invocation.
+        with harness("emit", toml=INCLUSIVE) as h:
+            performed = h.smoke(values={})
+        assert "run (valid)" in performed
+
+    def test_condition_fills_required_arg(self) -> None:
+        # The condition arg is supplied -> smoke adds the `requires` member so
+        # the if->requires constraint is satisfied.
+        with harness("emit", toml=CONDITION) as h:
+            performed = h.smoke(values={"deploy": True})
+        assert "run (valid)" in performed
+
+    def test_condition_untriggered_is_valid(self) -> None:
+        # Condition arg absent -> the requirement is inactive, empty call valid.
+        with harness("emit", toml=CONDITION) as h:
+            performed = h.smoke(values={})
+        assert "run (valid)" in performed
+
+
 # The same arg name (`status`, a choice) declares DIFFERENT options on each
 # subcommand — the classic case where one shared `values` entry can't be valid
 # everywhere.
