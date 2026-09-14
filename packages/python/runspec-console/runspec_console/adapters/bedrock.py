@@ -17,9 +17,12 @@ import anthropic
 from .base import (
     ChatResponse,
     ModelAdapter,
+    ModelCapabilities,
     ToolCall,
+    anthropic_thinking_base,
     apply_prompt_caching,
     apply_thinking,
+    capabilities_from_limits,
     effort_level,
 )
 
@@ -74,6 +77,16 @@ class BedrockAdapter(ModelAdapter):
                 kwargs["aws_session_token"] = aws_session_token
             self.client = anthropic.AsyncAnthropicBedrock(**kwargs)
 
+    def capabilities(self) -> ModelCapabilities:
+        """Model capabilities from the ``[llm.model_limits]`` table (the sole source
+        — Bedrock has no Models API lookup), seeded with the built-in per-family
+        thinking defaults (``anthropic_thinking_base``) so ``effort = off`` behaves
+        correctly on a Claude 5 model reached via Bedrock. The operator's table
+        overrides the built-in defaults field-by-field."""
+        return capabilities_from_limits(
+            self.model, self._model_limits, base=anthropic_thinking_base(self.model)
+        )
+
     async def chat(
         self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
     ) -> ChatResponse:
@@ -85,7 +98,7 @@ class BedrockAdapter(ModelAdapter):
         )
         if tools:
             kwargs["tools"] = tools
-        apply_thinking(kwargs, self._effort)
+        apply_thinking(kwargs, self._effort, self.capabilities(), self.model)
         apply_prompt_caching(kwargs)
         response = await self.client.messages.create(**kwargs)
         text = next(
@@ -114,7 +127,7 @@ class BedrockAdapter(ModelAdapter):
         )
         if tools:
             kwargs["tools"] = tools
-        apply_thinking(kwargs, self._effort)
+        apply_thinking(kwargs, self._effort, self.capabilities(), self.model)
         apply_prompt_caching(kwargs)
         async with self.client.messages.stream(**kwargs) as stream:
             async for token in stream.text_stream:
@@ -133,7 +146,7 @@ class BedrockAdapter(ModelAdapter):
         )
         if tools:
             kwargs["tools"] = tools
-        apply_thinking(kwargs, self._effort)
+        apply_thinking(kwargs, self._effort, self.capabilities(), self.model)
         apply_prompt_caching(kwargs)
         tool_map: dict[int, dict[str, Any]] = {}
         stop_reason = "end_turn"

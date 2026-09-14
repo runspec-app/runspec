@@ -12,6 +12,7 @@ from .base import (
     ModelAdapter,
     ModelCapabilities,
     ToolCall,
+    anthropic_thinking_base,
     apply_prompt_caching,
     apply_thinking,
     capabilities_from_limits,
@@ -128,9 +129,10 @@ class AnthropicAdapter(ModelAdapter):
         The table is authoritative (an operator override wins); the Models API only
         fills gaps, and a lookup failure — the common case behind a corporate proxy
         where the Models API is blocked — is cached so it's attempted at most once
-        and silently falls back to the table. The booleans come from the table
-        (the Models API doesn't report them)."""
-        caps = capabilities_from_limits(self.model, self._model_limits)
+        and silently falls back to the table. The booleans come from the built-in
+        per-family thinking defaults (``anthropic_thinking_base``), which the table
+        overrides — the Models API doesn't report them."""
+        caps = self._base_caps()
         if caps.context_window is None or caps.max_output_tokens is None:
             info = self._model_api_info()
             if info:
@@ -139,6 +141,16 @@ class AnthropicAdapter(ModelAdapter):
                 if caps.max_output_tokens is None and info.get("max_output_tokens"):
                     caps.max_output_tokens = int(info["max_output_tokens"])
         return caps
+
+    def _base_caps(self) -> ModelCapabilities:
+        """Capabilities from the ``[llm.model_limits]`` table + the built-in
+        per-family thinking defaults — **without** the Models API lookup, so it's
+        cheap enough to call on every request. This is what ``apply_thinking``
+        needs (the thinking booleans never come from the Models API); the public
+        ``capabilities()`` enriches this with the numeric limits."""
+        return capabilities_from_limits(
+            self.model, self._model_limits, base=anthropic_thinking_base(self.model)
+        )
 
     def _model_api_info(self) -> dict[str, Any] | None:
         """Best-effort ``{context_window, max_output_tokens}`` from the Models API,
@@ -180,7 +192,7 @@ class AnthropicAdapter(ModelAdapter):
         )
         if tools:
             kwargs["tools"] = tools
-        apply_thinking(kwargs, self._effort)
+        apply_thinking(kwargs, self._effort, self._base_caps(), self.model)
         apply_prompt_caching(kwargs)
         response = await self.client.messages.create(**kwargs)
         text = next(
@@ -210,7 +222,7 @@ class AnthropicAdapter(ModelAdapter):
         )
         if tools:
             kwargs["tools"] = tools
-        apply_thinking(kwargs, self._effort)
+        apply_thinking(kwargs, self._effort, self._base_caps(), self.model)
         apply_prompt_caching(kwargs)
         async with self.client.messages.stream(**kwargs) as stream:
             async for token in stream.text_stream:
@@ -230,7 +242,7 @@ class AnthropicAdapter(ModelAdapter):
         )
         if tools:
             kwargs["tools"] = tools
-        apply_thinking(kwargs, self._effort)
+        apply_thinking(kwargs, self._effort, self._base_caps(), self.model)
         apply_prompt_caching(kwargs)
         # Collect tool input JSON chunks indexed by content-block position
         tool_map: dict[int, dict[str, Any]] = {}

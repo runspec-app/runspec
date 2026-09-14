@@ -70,13 +70,13 @@ for the wire format and gateway knobs). It trades latency and output tokens for 
 better-reasoned answer, so the level worth paying for depends on the work.
 
 **For ops work — day-to-day fleet operation — `low` or `medium` is the band that
-pays.** `off` is the default and is genuinely fine for one-shot lookups; above
-`medium` the extra thinking mostly buys latency on tasks whose difficulty is in
-*reaching* the right host, not in reasoning about it.
+pays, and `medium` is the sensible default when you're not sure.** `off` is fine
+for one-shot lookups; above `medium` the extra thinking mostly buys latency on
+tasks whose difficulty is in *reaching* the right host, not in reasoning about it.
 
 | Level | Where it earns its keep |
 |---|---|
-| `off` | Single-step, unambiguous requests — "what's disk usage on web-01", "list the crontab". The answer is one tool call; thinking adds latency and nothing else |
+| `off` | Single-step, unambiguous requests — "what's disk usage on web-01", "list the crontab". The answer is one tool call; thinking adds latency and nothing else. On Sonnet 5 / Opus 5 / Fable, *omitting* the parameter would run high-effort thinking by default, so the console makes `off` genuinely off where the model allows it (an explicit disable), falling back to `low` on Fable — see [adapters](console-adapters.md) → *`effort`* |
 | `low` | **The everyday ops default.** Picking the right runnable from a large fleet catalogue, reading a `search_runnables` row and building the call (choosing the subcommand, mapping a request onto typed args), interpreting one tool's output |
 | `medium` | **Multi-step and consequential work.** Chaining several runnables, triage that reads output and decides what to do next, writing or following a runbook, anything destructive or fanned out across a host group where getting the target wrong is expensive |
 | `high` and above | Genuinely hard reasoning — diagnosing an unfamiliar failure from logs, designing an automation. Rarely the right setting for a standing console |
@@ -91,7 +91,9 @@ Two things to keep in mind when turning it up:
   effort applies to every step of a multi-tool turn, not just the first.
 
 Effort is dropped automatically on a model or gateway that doesn't accept it
-(`adaptive_thinking = false` in `[llm.model_limits]`).
+(`adaptive_thinking = false` in `[llm.model_limits]`), and `off` is made genuinely
+off per model (`thinking_default_on` / `thinking_disable`, below) rather than
+silently leaving high-effort thinking on.
 
 ### `[llm.model_limits]` — model capabilities {#llm-model-limits}
 
@@ -117,6 +119,8 @@ adaptive_thinking = true
 | `context_window` | Total prompt+output token budget — feeds the context-window gauge (overrides the model-id substring guess) |
 | `max_output_tokens` | The model's real per-reply ceiling. `[llm] max_tokens` is **clamped down** to it so a generous setting can't 400 — and, when `max_tokens` is unset, **raised up** to it, so a model that allows 64000 isn't held at the conservative 8192 default (an explicit `max_tokens` is never raised) |
 | `adaptive_thinking` | Whether the model/gateway accepts thinking / reasoning **effort**. `false` ⇒ the console sends none |
+| `thinking_default_on` | Whether *omitting* the thinking parameter runs extended thinking anyway (at effort **high**) — true for Sonnet 5 / Opus 5 / Fable. When true, `effort = off` sends an explicit disable instead of nothing. Seeded per-family by the Anthropic/Bedrock built-ins; set it here only to correct a model they don't know |
+| `thinking_disable` | Whether the model accepts `thinking = {"type": "disabled"}`. `true` for most Claude models; `false` for Fable, where `effort = off` falls back to `effort = low` instead. Only consulted when `thinking_default_on` is true |
 | `cache_markers` | Whether prompt-cache breakpoints are honoured (informational) |
 | `strict_tools` | Whether the endpoint enforces strict JSON-schema tool arguments (informational) |
 

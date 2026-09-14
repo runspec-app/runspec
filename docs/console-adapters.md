@@ -203,27 +203,43 @@ short-lived corporate tokens), `base_url`, `model`, `system`, and `max_tokens`
 effort = "medium"   # off (default) | low | medium | high | xhigh | max
 ```
 
-The console uses Anthropic's **adaptive** thinking shape (Claude 4.6+): it sends
-`thinking = {"type": "adaptive"}` plus `output_config = {"effort": <level>}`, and
-the model self-manages its own thinking depth per request. `effort` is just the
-dial. Adaptive thinking **counts toward `max_tokens`** (the output ceiling), so
-there's no separate budget to reserve — `max_tokens` is left exactly as you set
-it. If you turn effort up, consider raising `max_tokens` too so a deep reply has
-room after thinking.
+At a named level the console uses Anthropic's **adaptive** thinking shape
+(Claude 4.6+): it sends `thinking = {"type": "adaptive"}` plus
+`output_config = {"effort": <level>}`, and the model self-manages its own thinking
+depth per request. `effort` is just the dial. Adaptive thinking **counts toward
+`max_tokens`** (the output ceiling), so there's no separate budget to reserve —
+`max_tokens` is left exactly as you set it. If you turn effort up, consider raising
+`max_tokens` too so a deep reply has room after thinking.
 
 Levels: `low` / `medium` / `high` / `xhigh` / `max`. `xhigh` needs Opus 4.7+;
 Sonnet 4.6 supports `low`/`medium`/`high`/`max` (no `xhigh`). A level the chosen
 model doesn't support surfaces as an API error rather than being silently
-downgraded.
+downgraded. `medium` is the sensible default for routine ops work — see
+[`console-reference.md`](console-reference.md).
 
-!!! warning "`off` means *model default*, which on Sonnet 5 / Opus 5 / Fable is high-effort thinking"
-    `off` sends **no** `thinking` parameter. On Opus 4.8 / 4.7 that means no
-    extended thinking. On **Sonnet 5, Opus 5 and Fable** the API runs *adaptive*
-    thinking by default at effort **high** when the parameter is omitted — so
-    `off` there is the slowest, most token-hungry setting, not the cheapest.
-    Set `effort` explicitly on those models (`medium` is a sensible default for
-    routine ops work). See the gateway guide's
+!!! note "`off` is handled per model — omitting the parameter isn't "off" everywhere"
+    Omitting the `thinking` parameter does **not** mean "no thinking" on every
+    model, so `off` is **capability-driven** (from the model's
+    [`ModelCapabilities`](#model-capabilities-capabilities-and-llmmodel_limits)):
+
+    * **Opus 4.8 / 4.7** — omitting already means no extended thinking, so `off`
+      sends nothing.
+    * **Sonnet 5 / Opus 5** — these run *adaptive* thinking at effort **high** when
+      the parameter is omitted, so the console sends an explicit
+      `thinking = {"type": "disabled"}` — `off` is genuinely off, not the slowest,
+      most token-hungry setting.
+    * **Fable** — also defaults thinking on but **rejects** an explicit disable, so
+      `off` falls back to `effort = "low"` (the cheapest available, logged once) —
+      not truly zero. Set `effort` explicitly there if you want a specific depth.
+
+    A gateway/proxy that advertises `adaptive_thinking = false` gets no thinking
+    field at all. See the gateway guide's
     [field gotchas](console-adapter-gateway.md#gotchas-found-in-the-field).
+
+    The built-in Anthropic + Bedrock adapters know these facts per model family;
+    an operator can override them per model in
+    [`[llm.model_limits]`](#model-capabilities-capabilities-and-llmmodel_limits)
+    (`thinking_default_on` / `thinking_disable`).
 
 !!! note "This replaced the deprecated `budget_tokens` shape"
     Earlier the console mapped `effort` to a manual `thinking = {"type":
@@ -297,12 +313,20 @@ from runspec_console.adapters.base import ModelCapabilities
 
 @dataclass
 class ModelCapabilities:
-    context_window: int | None = None     # total prompt+output token budget
-    max_output_tokens: int | None = None   # hard ceiling on one reply
-    adaptive_thinking: bool = True          # endpoint accepts thinking/effort
-    cache_markers: bool = True              # prompt-cache breakpoints honoured
-    strict_tools: bool = False              # endpoint enforces strict tool args
+    context_window: int | None = None      # total prompt+output token budget
+    max_output_tokens: int | None = None    # hard ceiling on one reply
+    adaptive_thinking: bool = True           # endpoint accepts thinking/effort
+    thinking_default_on: bool = False        # omitting the param runs thinking (high)
+    thinking_disable: bool = True            # accepts thinking={"type":"disabled"}
+    cache_markers: bool = True               # prompt-cache breakpoints honoured
+    strict_tools: bool = False               # endpoint enforces strict tool args
 ```
+
+`thinking_default_on` / `thinking_disable` drive what `effort = off` sends (see
+[the `effort` section](#effort-reasoning-effort-adaptive-extended-thinking)). The
+built-in Anthropic + Bedrock adapters seed them from per-family knowledge —
+Sonnet 5 / Opus 5 / Fable default thinking **on**, and Fable alone rejects the
+explicit disable — which an operator can override per model in the table.
 
 You don't have to implement it. The **default** `ModelAdapter.capabilities()`
 reads a new **`[llm.model_limits]`** config table — a mapping of *model-id

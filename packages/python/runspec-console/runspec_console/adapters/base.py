@@ -7,6 +7,7 @@ can be ported between the two packages without changes.
 
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 import sys
@@ -14,6 +15,8 @@ import sysconfig
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Callable
+
+logger = logging.getLogger("runspec_console")
 
 
 @dataclass
@@ -57,6 +60,16 @@ class ModelCapabilities:
       * ``adaptive_thinking``  — the model/gateway accepts extended-thinking /
         reasoning-effort requests. ``False`` ⇒ the console sends no thinking/effort
         (e.g. a LangChain proxy in front of Bedrock that drops the field).
+      * ``thinking_default_on`` — omitting the thinking parameter runs extended
+        thinking *by default* (Sonnet 5 / Opus 5 / Fable run adaptive thinking at
+        effort **high** when nothing is sent). ``False`` (Opus 4.x, unknown models,
+        the safe default) ⇒ omitting already means no thinking, so ``effort = off``
+        sends nothing. See :func:`apply_thinking`.
+      * ``thinking_disable``   — the model accepts an explicit
+        ``thinking={"type": "disabled"}`` to turn thinking off. ``True`` for most
+        Claude models; ``False`` for Fable, which rejects it (so ``effort = off``
+        there falls back to the lowest real effort). Only consulted when
+        ``thinking_default_on`` is true.
       * ``cache_markers``      — prompt-cache breakpoints are honoured, so applying
         them is worthwhile.
       * ``strict_tools``       — the endpoint enforces strict JSON-schema tool
@@ -66,29 +79,24 @@ class ModelCapabilities:
     context_window: int | None = None
     max_output_tokens: int | None = None
     adaptive_thinking: bool = True
+    thinking_default_on: bool = False
+    thinking_disable: bool = True
     cache_markers: bool = True
     strict_tools: bool = False
 
 
-def capabilities_from_limits(
-    model: str, limits: dict[str, Any] | None
-) -> ModelCapabilities:
-    """Build a :class:`ModelCapabilities` for ``model`` from a ``[llm.model_limits]``
-    table — a mapping of *model-id substring* → a table of capability fields.
+def _resolve_limits(model: str, limits: dict[str, Any] | None) -> dict[str, Any]:
+    """Flatten a *model-id substring* → entry table to the merged field dict for
+    ``model``.
 
     Every entry whose key is a case-insensitive substring of ``model`` applies, and
     they are **merged shortest-key → longest-key**, so a broad ``"claude"`` base can
-    set ``context_window`` and a specific ``"claude-opus-4-8"`` override just
-    ``max_output_tokens`` — the longer (more specific) key wins field-by-field. An
-    empty ``""`` key is a catch-all that matches any model (lowest precedence).
-    Unknown keys in an entry are ignored; absent fields fall back to the
-    :class:`ModelCapabilities` defaults. Numeric fields coerce leniently (a bad
-    value is dropped, not fatal). Deterministic (ties on key length break by the
-    key string). Pure/SDK-free and testable — the default
-    :meth:`ModelAdapter.capabilities` is just this over the adapter's stored table."""
-    caps = ModelCapabilities()
+    set one field and a specific ``"claude-opus-4-8"`` override another — the longer
+    (more specific) key wins field-by-field. An empty ``""`` key is a catch-all that
+    matches any model (lowest precedence). Returns ``{}`` when nothing matches.
+    Deterministic (ties on key length break by the key string). Pure/SDK-free."""
     if not isinstance(limits, dict) or not limits:
-        return caps
+        return {}
     m = (model or "").lower()
     matches: list[tuple[int, str, dict[str, Any]]] = []
     for key, entry in limits.items():
@@ -99,11 +107,36 @@ def capabilities_from_limits(
             continue
         matches.append((len(ks), ks, entry))
     if not matches:
-        return caps
+        return {}
     matches.sort(key=lambda t: (t[0], t[1]))  # shortest/broadest first
     best: dict[str, Any] = {}
     for _len, _ks, entry in matches:
         best.update(entry)  # longer (more specific) keys override
+    return best
+
+
+def capabilities_from_limits(
+    model: str,
+    limits: dict[str, Any] | None,
+    *,
+    base: dict[str, Any] | None = None,
+) -> ModelCapabilities:
+    """Build a :class:`ModelCapabilities` for ``model`` from a ``[llm.model_limits]``
+    table — a mapping of *model-id substring* → a table of capability fields.
+
+    Entries are resolved by substring match and merged shortest → longest (see
+    :func:`_resolve_limits`). An optional ``base`` dict is applied **first / lowest
+    precedence** — built-in, model-family knowledge (e.g. the Anthropic thinking
+    defaults) that the operator's ``limits`` table then overrides field-by-field.
+
+    Unknown keys in an entry are ignored; absent fields fall back to the
+    :class:`ModelCapabilities` defaults. Numeric fields coerce leniently (a bad
+    value is dropped, not fatal). Pure/SDK-free and testable — the default
+    :meth:`ModelAdapter.capabilities` is just this over the adapter's stored table."""
+    best: dict[str, Any] = dict(base or {})
+    best.update(_resolve_limits(model, limits))
+    if not best:
+        return ModelCapabilities()
 
     def _int(name: str) -> int | None:
         val = best.get(name)
@@ -123,13 +156,45 @@ def capabilities_from_limits(
             return val.strip().lower() not in ("false", "0", "no", "off", "")
         return bool(val)
 
+    d = ModelCapabilities()  # field defaults for anything the table leaves unset
     return ModelCapabilities(
         context_window=_int("context_window"),
         max_output_tokens=_int("max_output_tokens"),
-        adaptive_thinking=_bool("adaptive_thinking", caps.adaptive_thinking),
-        cache_markers=_bool("cache_markers", caps.cache_markers),
-        strict_tools=_bool("strict_tools", caps.strict_tools),
+        adaptive_thinking=_bool("adaptive_thinking", d.adaptive_thinking),
+        thinking_default_on=_bool("thinking_default_on", d.thinking_default_on),
+        thinking_disable=_bool("thinking_disable", d.thinking_disable),
+        cache_markers=_bool("cache_markers", d.cache_markers),
+        strict_tools=_bool("strict_tools", d.strict_tools),
     )
+
+
+# Built-in thinking-behaviour defaults per Claude model family — the two facts
+# `apply_thinking` needs when `effort = off`, keyed by model-id substring and
+# resolved exactly like `[llm.model_limits]` (an operator entry overrides these).
+# Encodes what omitting the thinking parameter *means* on each family:
+#   • Opus/Sonnet/Haiku 4.x — omitting means no extended thinking (off is off).
+#   • Sonnet 5 / Opus 5     — omitting runs adaptive thinking at effort HIGH, but
+#                             they accept an explicit disable, so `off` sends it.
+#   • Fable                 — also defaults thinking on, but REJECTS an explicit
+#                             disable, so `off` falls back to the lowest effort.
+_ANTHROPIC_THINKING_DEFAULTS: dict[str, dict[str, Any]] = {
+    "claude-opus-4": {"thinking_default_on": False, "thinking_disable": True},
+    "claude-sonnet-4": {"thinking_default_on": False, "thinking_disable": True},
+    "claude-haiku-4": {"thinking_default_on": False, "thinking_disable": True},
+    "claude-sonnet-5": {"thinking_default_on": True, "thinking_disable": True},
+    "claude-opus-5": {"thinking_default_on": True, "thinking_disable": True},
+    "claude-fable": {"thinking_default_on": True, "thinking_disable": False},
+}
+
+
+def anthropic_thinking_base(model: str) -> dict[str, Any]:
+    """Built-in thinking-behaviour defaults (``thinking_default_on`` /
+    ``thinking_disable``) for a Claude model, as a flat field dict to seed
+    :func:`capabilities_from_limits` (via its ``base`` argument). ``{}`` for an
+    unrecognised model — the :class:`ModelCapabilities` defaults then apply, which
+    are the safe ones (omitting the parameter treated as "already off"). Shared by
+    the anthropic + bedrock adapters (both talk the Anthropic SDK)."""
+    return _resolve_limits(model, _ANTHROPIC_THINKING_DEFAULTS)
 
 
 # stop_reason values, across providers, that mean the model stopped because it
@@ -470,9 +535,8 @@ def apply_prompt_caching(kwargs: dict[str, Any]) -> dict[str, Any]:
 # `[llm] effort` sets how hard the model thinks before it answers — Anthropic
 # "extended thinking". The modern (Claude 4.6+) request shape is *adaptive*: the
 # model self-manages its own thinking depth per request, and `output_config.effort`
-# is the dial. We send `thinking={"type": "adaptive"}` plus
-# `output_config={"effort": <level>}`; `off` (default) / empty sends no thinking
-# param at all.
+# is the dial. At a named level we send `thinking={"type": "adaptive"}` plus
+# `output_config={"effort": <level>}`.
 #
 # This replaces the deprecated `thinking={"type": "enabled", "budget_tokens": N}`
 # shape, which is *rejected with a 400* on Opus 4.8/4.7, Sonnet 5, and Fable 5 (and
@@ -480,12 +544,26 @@ def apply_prompt_caching(kwargs: dict[str, Any]) -> dict[str, Any]:
 # output ceiling), so there's no separate budget to reserve — `max_tokens` is left
 # exactly as the operator set it. Applies to the anthropic + bedrock adapters (both
 # talk the Anthropic SDK, so the request shape is identical).
+#
+# `off` is the subtle case. Omitting the thinking parameter does NOT mean "off" on
+# every model: on Sonnet 5 / Opus 5 / Fable the API runs adaptive thinking at effort
+# *high* by default when nothing is sent — so a naive "off = send nothing" makes off
+# the slowest, most expensive setting, the opposite of what the operator asked for.
+# So `off` is now capability-driven (see the caps arg): on a model that defaults
+# thinking on and accepts an explicit disable we send `thinking={"type": "disabled"}`;
+# on Fable (defaults on, rejects the disable) we fall back to the lowest real effort
+# and log once; on Opus 4.x / unknown models omitting already means off, so we send
+# nothing (also the caps-less path a plugin/gateway subclass gets).
 
 # Levels output_config.effort accepts, mapped straight from the named `[llm] effort`
 # dial. "xhigh" needs Opus 4.7+; "max" is the deepest. A level the chosen model
 # doesn't support (e.g. xhigh on Sonnet 4.6) surfaces as an API error rather than
 # being silently downgraded here.
 _EFFORT_LEVELS = frozenset({"low", "medium", "high", "xhigh", "max"})
+
+# Models for which the `effort = off` → effort="low" fallback has been logged, so
+# the info line is emitted at most once per model (not every request).
+_THINKING_FALLBACK_LOGGED: set[str] = set()
 
 
 def effort_level(effort: str) -> str:
@@ -497,19 +575,68 @@ def effort_level(effort: str) -> str:
     return level if level in _EFFORT_LEVELS else ""
 
 
-def apply_thinking(kwargs: dict[str, Any], effort: str) -> dict[str, Any]:
-    """Enable Anthropic *adaptive* extended thinking at the given ``effort`` level
-    on a messages.create()/stream() kwargs dict — ``thinking={"type": "adaptive"}``
-    plus ``output_config={"effort": <level>}``. No-op when ``effort`` normalises to
-    empty (so ``effort = off`` changes nothing). ``max_tokens`` is left untouched:
-    adaptive thinking counts toward it, so the operator's ceiling already covers it.
-    Pure and SDK-free — mutates and returns the kwargs dict."""
+def apply_thinking(
+    kwargs: dict[str, Any],
+    effort: str,
+    caps: ModelCapabilities | None = None,
+    model: str = "",
+) -> dict[str, Any]:
+    """Set the Anthropic thinking request on a messages.create()/stream() kwargs
+    dict for the given ``[llm] effort``.
+
+    At a named level (``low``…``max``) sends *adaptive* extended thinking —
+    ``thinking={"type": "adaptive"}`` + ``output_config={"effort": <level>}``.
+    ``max_tokens`` is left untouched: adaptive thinking counts toward it, so the
+    operator's ceiling already covers it.
+
+    When ``effort`` normalises to empty (``off``), the request depends on the
+    model's capabilities (``caps``), because omitting the parameter is **not** the
+    same as "off" everywhere:
+
+      * ``caps`` is ``None`` (a plugin / gateway subclass managing its own request)
+        or ``caps.adaptive_thinking`` is false (a proxy that drops the field) →
+        send nothing.
+      * the model does not default thinking on (``thinking_default_on`` false —
+        Opus 4.x, unknown models) → omitting already means off, so send nothing.
+      * the model defaults thinking on and accepts an explicit disable
+        (``thinking_disable`` true — Sonnet 5, Opus 5) → send
+        ``thinking={"type": "disabled"}`` so ``off`` is genuinely off.
+      * the model defaults thinking on but rejects the disable (Fable) → fall back
+        to ``effort="low"`` (the cheapest honest setting) and log once, since a
+        disable would 400.
+
+    Pure apart from the once-per-model info log — mutates and returns the kwargs
+    dict."""
     level = effort_level(effort)
     if level:
         kwargs["thinking"] = {"type": "adaptive"}
         output_config = dict(kwargs.get("output_config") or {})
         output_config["effort"] = level
         kwargs["output_config"] = output_config
+        return kwargs
+    # effort off — decide what "off" means for this model.
+    if caps is None or not getattr(caps, "adaptive_thinking", True):
+        return kwargs  # caps-less / thinking-dropping proxy → send nothing
+    if not getattr(caps, "thinking_default_on", False):
+        return kwargs  # omitting already means off (Opus 4.x / unknown)
+    if getattr(caps, "thinking_disable", True):
+        kwargs["thinking"] = {"type": "disabled"}  # Sonnet 5 / Opus 5
+        return kwargs
+    # Defaults thinking on AND rejects an explicit disable (Fable): the lowest real
+    # effort is the cheapest honest setting a disable can't reach.
+    kwargs["thinking"] = {"type": "adaptive"}
+    output_config = dict(kwargs.get("output_config") or {})
+    output_config["effort"] = "low"
+    kwargs["output_config"] = output_config
+    key = model or "?"
+    if key not in _THINKING_FALLBACK_LOGGED:
+        _THINKING_FALLBACK_LOGGED.add(key)
+        logger.info(
+            "[llm] effort=off on %s: this model runs adaptive thinking by default "
+            "and rejects an explicit disable, so falling back to effort=low (the "
+            "cheapest available). Set [llm] effort explicitly to choose a depth.",
+            model or "this model",
+        )
     return kwargs
 
 

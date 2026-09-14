@@ -8,6 +8,36 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.260.0] — 2026-09-14
+
+### Fixed
+- **`effort = off` no longer silently leaves high-effort thinking on (Sonnet 5 /
+  Opus 5 / Fable).** Omitting the `thinking` parameter is not "off" on every model:
+  Sonnet 5, Opus 5 and Fable run *adaptive* thinking at effort **high** by default
+  when nothing is sent, so `off` there was the slowest, most token-hungry setting —
+  the opposite of what it reads as. `apply_thinking` is now **capability-driven**
+  for `off`: on a model that defaults thinking on **and** accepts an explicit
+  disable (Sonnet 5, Opus 5) it sends `thinking = {"type": "disabled"}`; on **Fable**
+  (defaults on, *rejects* the disable) it falls back to `effort = "low"` — the
+  cheapest available — and logs once; on Opus 4.x / unknown models omitting already
+  means off, so it sends nothing (also the caps-less path a plugin / gateway
+  subclass gets). An explicit disable is **never** sent to a model that rejects it.
+
+### Added
+- **`ModelCapabilities.thinking_default_on` / `thinking_disable`.** Two new
+  capability booleans describe a model's thinking behaviour when the effort
+  parameter is omitted. The built-in `anthropic` + `bedrock` adapters seed them
+  per model family (`adapters.base.anthropic_thinking_base`, resolved like
+  `[llm.model_limits]`); an operator can override either per model in
+  `[llm.model_limits]`. `capabilities_from_limits` gains a `base=` layer (lowest
+  precedence) so the built-in family defaults sit under the operator's table.
+
+### Changed
+- Documented `medium` as the sensible default reasoning effort for routine ops
+  work (`docs/console-reference.md`), and rewrote the `effort` warning box in
+  `docs/console-adapters.md` to describe the new per-model `off` behaviour.
+
+
 ## [0.259.0] — 2026-09-14
 
 ### Added

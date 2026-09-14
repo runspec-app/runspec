@@ -7,12 +7,25 @@ from __future__ import annotations
 
 from typing import Any
 
+import logging
+
+from runspec_console.adapters import base as base_mod
 from runspec_console.adapters.base import (
     ModelAdapter,
     ModelCapabilities,
+    anthropic_thinking_base,
+    apply_thinking,
     capabilities_from_limits,
 )
 from runspec_console.bridge_internals import InternalsMixin
+
+
+def _caps(model: str, limits: dict[str, Any] | None = None) -> ModelCapabilities:
+    """Capabilities as the anthropic/bedrock adapters build them for apply_thinking:
+    the operator table over the built-in per-family thinking defaults."""
+    return capabilities_from_limits(
+        model, limits or {}, base=anthropic_thinking_base(model)
+    )
 
 
 # ── capabilities_from_limits (pure) ───────────────────────────────────────────
@@ -157,3 +170,111 @@ def test_apply_capabilities_tolerates_missing_method():
     # A plugin adapter without capabilities() must not break construction.
     InternalsMixin._apply_capabilities(obj)
     assert obj.max_tokens == 999
+
+
+# ── built-in per-family thinking defaults + capabilities_from_limits(base=) ────
+
+
+def test_thinking_base_opus_4_defaults_off():
+    caps = _caps("claude-opus-4-8")
+    assert caps.thinking_default_on is False and caps.thinking_disable is True
+
+
+def test_thinking_base_sonnet_5_defaults_on_accepts_disable():
+    caps = _caps("claude-sonnet-5")
+    assert caps.thinking_default_on is True and caps.thinking_disable is True
+
+
+def test_thinking_base_opus_5_defaults_on_accepts_disable():
+    caps = _caps("claude-opus-5")
+    assert caps.thinking_default_on is True and caps.thinking_disable is True
+
+
+def test_thinking_base_fable_defaults_on_rejects_disable():
+    caps = _caps("claude-fable-5-1")
+    assert caps.thinking_default_on is True and caps.thinking_disable is False
+
+
+def test_thinking_base_bedrock_prefixed_model_matches():
+    caps = _caps("anthropic.claude-sonnet-5")
+    assert caps.thinking_default_on is True
+
+
+def test_thinking_base_unknown_model_is_safe_default():
+    caps = _caps("some-proxy-model")
+    assert caps.thinking_default_on is False and caps.thinking_disable is True
+
+
+def test_operator_table_overrides_thinking_base():
+    # An operator [llm.model_limits] entry wins over the built-in family default.
+    caps = _caps("claude-fable-5-1", {"fable": {"thinking_disable": True}})
+    assert caps.thinking_disable is True
+
+
+# ── apply_thinking: named level (unchanged) ───────────────────────────────────
+
+
+def test_apply_thinking_named_level_sends_adaptive():
+    kw: dict[str, Any] = {}
+    apply_thinking(kw, "high", _caps("claude-sonnet-5"), "claude-sonnet-5")
+    assert kw["thinking"] == {"type": "adaptive"}
+    assert kw["output_config"] == {"effort": "high"}
+
+
+# ── apply_thinking: effort=off, per model class ───────────────────────────────
+
+
+def test_apply_thinking_off_opus4_sends_nothing():
+    kw: dict[str, Any] = {}
+    apply_thinking(kw, "off", _caps("claude-opus-4-8"), "claude-opus-4-8")
+    assert "thinking" not in kw and "output_config" not in kw
+
+
+def test_apply_thinking_off_sonnet5_sends_explicit_disable():
+    kw: dict[str, Any] = {}
+    apply_thinking(kw, "off", _caps("claude-sonnet-5"), "claude-sonnet-5")
+    assert kw["thinking"] == {"type": "disabled"}
+    assert "output_config" not in kw
+
+
+def test_apply_thinking_off_opus5_sends_explicit_disable():
+    kw: dict[str, Any] = {}
+    apply_thinking(kw, "off", _caps("claude-opus-5"), "claude-opus-5")
+    assert kw["thinking"] == {"type": "disabled"}
+
+
+def test_apply_thinking_off_fable_falls_back_to_low_and_logs(caplog):
+    base_mod._THINKING_FALLBACK_LOGGED.discard("claude-fable-5-1")
+    kw: dict[str, Any] = {}
+    with caplog.at_level(logging.INFO, logger="runspec_console"):
+        apply_thinking(kw, "off", _caps("claude-fable-5-1"), "claude-fable-5-1")
+    assert kw["thinking"] == {"type": "adaptive"}
+    assert kw["output_config"] == {"effort": "low"}
+    assert any("effort=off" in r.getMessage() for r in caplog.records)
+
+
+def test_apply_thinking_off_fable_logs_only_once(caplog):
+    base_mod._THINKING_FALLBACK_LOGGED.discard("claude-fable-5-1")
+    caps = _caps("claude-fable-5-1")
+    apply_thinking({}, "off", caps, "claude-fable-5-1")  # primes the log guard
+    with caplog.at_level(logging.INFO, logger="runspec_console"):
+        kw: dict[str, Any] = {}
+        apply_thinking(kw, "off", caps, "claude-fable-5-1")
+    # Fallback still applied, but no second log line.
+    assert kw["output_config"] == {"effort": "low"}
+    assert not any("effort=off" in r.getMessage() for r in caplog.records)
+
+
+def test_apply_thinking_off_without_caps_sends_nothing():
+    # A plugin / gateway subclass calling the 2-arg form manages its own request.
+    kw: dict[str, Any] = {}
+    apply_thinking(kw, "off")
+    assert "thinking" not in kw
+
+
+def test_apply_thinking_off_no_adaptive_thinking_sends_nothing():
+    # A proxy that drops the thinking field: never send it, even on a default-on model.
+    caps = ModelCapabilities(adaptive_thinking=False, thinking_default_on=True)
+    kw: dict[str, Any] = {}
+    apply_thinking(kw, "off", caps, "proxied-model")
+    assert "thinking" not in kw
