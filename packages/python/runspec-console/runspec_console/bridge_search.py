@@ -36,6 +36,14 @@ _RUNBOOK_SEARCH_LIMIT = 5
 _SEARCH_COMMAND_ARG_BUDGET = 40
 
 
+def _deliver_property() -> dict[str, Any]:
+    """The ``deliver`` JSON-schema property (shared with the dedup/per-host tool
+    schema via ``workspaces.deliver_schema_property``)."""
+    from .workspaces import deliver_schema_property
+
+    return deliver_schema_property()
+
+
 class SearchMixin:
     def _search_mode_tools(self) -> list[dict[str, Any]]:
         """The fixed meta-tool set for search mode: discover → run, plus an
@@ -88,8 +96,8 @@ class SearchMixin:
                     "anything is missing or wrong. The host may instead be a host "
                     "GROUP name (see Console context) to run on every host in that "
                     "group at once, behind a single grouped confirm. "
-                    "'command' and 'credential_id' are TOP-LEVEL fields — never put "
-                    "either inside 'args'."
+                    "'command', 'credential_id' and 'deliver' are TOP-LEVEL fields — "
+                    "never put any of them inside 'args'."
                 ),
                 "input_schema": {
                     "type": "object",
@@ -126,6 +134,7 @@ class SearchMixin:
                                 "is rejected before the run."
                             ),
                         },
+                        "deliver": _deliver_property(),
                     },
                     "required": ["id", "host"],
                 },

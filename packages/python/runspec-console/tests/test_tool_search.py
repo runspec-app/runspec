@@ -92,6 +92,7 @@ class _Bridge:
     _effective_tool_autonomy = Bridge._effective_tool_autonomy
     _confirm_decision = Bridge._confirm_decision
     _run_tool_sync = Bridge._run_tool_sync
+    _finalize_tool_output = Bridge._finalize_tool_output
     _tool_output_cap = Bridge._tool_output_cap
     # search-mode additions
     _search_mode_tools = Bridge._search_mode_tools
@@ -744,6 +745,37 @@ def test_run_runnable_dispatches_to_chosen_host(monkeypatch):
     assert captured["where"] == "remote" and captured["ssh"] == "u@h2"
     assert captured["args"] == {"count": 3} and captured["runnable"] == "ping"
     assert not out.startswith("Error")
+
+
+def test_run_runnable_deliver_is_top_level_not_an_arg(monkeypatch):
+    """`deliver` is a top-level output-shaping directive — it must never reach the
+    runnable as an argument, whether passed top-level or misplaced inside `args`."""
+    for placement in ("top", "in_args"):
+        captured = {}
+
+        def fake_run_remote(
+            ssh, rp, runnable, args, command_path, on_line, on_done, idf, **kw
+        ):
+            captured.update(args=args)
+            on_done(0, 1)
+
+        monkeypatch.setattr("runspec_console.executor.run_remote", fake_run_remote)
+        monkeypatch.setattr(
+            "runspec_console.bridge_utils._paths", lambda e: ["/bin/runspec"]
+        )
+        monkeypatch.setattr("runspec_console.hosts.venv_name", lambda p: "fleet")
+
+        runnables = [_rn("h2", "ping", args=[{"name": "count", "type": "int"}])]
+        ti = {"id": "fleet__ping", "host": "h2", "args": {"count": 3}}
+        if placement == "top":
+            ti["deliver"] = "inline"
+        else:
+            ti["args"]["deliver"] = "digest"  # misplaced — must be moved out
+        out = _Bridge(runnables)._run_tool_sync("run_runnable", ti)
+        # deliver is popped before preflight/dispatch: the call runs and the runnable
+        # only ever sees its own args.
+        assert not out.startswith("Error"), (placement, out)
+        assert captured["args"] == {"count": 3}, placement
 
 
 def test_run_runnable_preflight_blocks_before_dispatch(monkeypatch):

@@ -349,6 +349,8 @@ def test_run_tool_sync_threads_command(monkeypatch):
         _positionals_for = staticmethod(Bridge._positionals_for)
         _secret_arg_names = staticmethod(Bridge._secret_arg_names)
         _run_tool_sync = Bridge._run_tool_sync
+
+        _finalize_tool_output = Bridge._finalize_tool_output
         _tool_output_cap = Bridge._tool_output_cap
         # Routing helpers _run_tool_sync now delegates to (host__name fallback
         # resolves these per-host tool names under either layout).
@@ -416,6 +418,7 @@ def test_run_tool_sync_no_command_is_top_level(monkeypatch):
         _positionals_for = staticmethod(Bridge._positionals_for)
         _secret_arg_names = staticmethod(Bridge._secret_arg_names)
         _run_tool_sync = Bridge._run_tool_sync
+        _finalize_tool_output = Bridge._finalize_tool_output
         _tool_output_cap = Bridge._tool_output_cap
         # Routing helpers _run_tool_sync now delegates to (host__name fallback
         # resolves these per-host tool names under either layout).

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import sys
 import threading
 import time
@@ -1434,6 +1435,14 @@ class AutonomyMixin:
             call_args = self._coerce_run_args(ti.get("args"))
             credential_id = str(ti.get("credential_id") or "")
             credential_id_list: list[str] = []
+            # `deliver` shapes how the output reaches the model (see
+            # _finalize_tool_output). A top-level field — move it out of `args` if
+            # the model misplaced it, so preflight doesn't flag it as unknown.
+            misplaced_deliver = call_args.pop("deliver", None)
+            deliver = str(ti.get("deliver") or misplaced_deliver or "auto")
+            # Name the spill after the resolved runnable (host__name, the id the
+            # Console card shows) — not the "run_runnable" meta-tool.
+            spill_name = f"{host}__{runnable}"
             # Normalise `command` (str OR nested list path) with the SAME helper
             # the autonomy gate uses (_effective_tool_autonomy → _command_path),
             # so the node the gate approved is the node that runs. A bare
@@ -1467,6 +1476,12 @@ class AutonomyMixin:
                 for c in (call_args.pop("credential_ids", None) or [])
                 if str(c).strip()
             ]
+            # `deliver` (output-shaping directive) is a reserved key, popped before
+            # anything treats call_args as runnable arguments — like credential_id.
+            deliver = str(call_args.pop("deliver", None) or "auto")
+            # Dedup keys the tool by runnable name; per-host by host__name. Either is
+            # already the id the Console card shows, so it names the spill as-is.
+            spill_name = tool_name
             if isinstance(chosen_command, list):
                 # A saved run stores its subcommand as a path (possibly nested).
                 command_path = [str(c) for c in chosen_command if str(c)]
@@ -1606,54 +1621,155 @@ class AutonomyMixin:
             )
 
         output = "\n".join(output_lines)
-        orig_len = len(output)
-        # Workspace spill: above the threshold, write the full raw output to the
-        # active session's workspace/tool-results/ folder and hand the model a
-        # short envelope + head preview. The model then reaches for the
-        # workspace_* tools to interrogate the file at its own pace — the raw
-        # bytes never enter the model context. Below the threshold, or when
-        # there is no active workspace id, fall through to the classic
-        # cap-and-truncate behaviour so nothing regresses.
-        spilled = False
-        if orig_len > _TOOL_OUTPUT_SPILL_THRESHOLD:
-            spill_threshold = _TOOL_OUTPUT_SPILL_THRESHOLD
-            try:
-                ws_cfg = config_mod.read_workspace()
-                spill_threshold = ws_cfg.get(
-                    "spill_threshold", _TOOL_OUTPUT_SPILL_THRESHOLD
-                )
-            except (OSError, ValueError, TypeError):
-                pass
-            with self._lock:
-                ws_map = getattr(self, "_workspace_by_chat", {})
-                workspace_id = ws_map.get(chat_id, "")
-            if not workspace_id:
-                workspace_id = getattr(self, "_conversation_id", "")
-            if spill_threshold and orig_len > spill_threshold and workspace_id:
-                try:
-                    from . import workspaces as ws_mod
-
-                    ws_root = config_mod.workspace_dir(workspace_id)
-                    envelope, _rel_path = ws_mod.spill_output(
-                        ws_root,
-                        tool_name,
-                        uuid.uuid4().hex[:12],
-                        output,
-                        head_bytes=_SPILL_ENVELOPE_HEAD_BYTES,
-                    )
-                    output = envelope
-                    spilled = True
-                except OSError as e:
-                    logger.warning(
-                        "workspace spill failed (%s) — falling back to inline cap",
-                        e,
-                    )
-        if not spilled:
-            cap = self._tool_output_cap()
-            if orig_len > cap:
-                output = output[:cap] + make_truncation_suffix(orig_len, cap)
+        output = self._finalize_tool_output(output, deliver, spill_name, chat_id)
         if exit_code_holder[0] != 0:
             return f"[exit {exit_code_holder[0]}]\n{output}"
         return output or "(no output)"
+
+    def _finalize_tool_output(
+        self, output: str, deliver: str, spill_name: str, chat_id: str
+    ) -> str:
+        """Shape a runnable's stdout for the model per the call's ``deliver``
+        directive (auto | inline | digest | extract).
+
+        ``auto`` is the default and unchanged: above ``[workspace] spill_threshold``
+        (and with an active workspace) the full raw output is written to
+        ``tool-results/{spill_name}-{inv}.{json|txt}`` and the model gets a short
+        shape/head envelope; otherwise the raw string is capped-and-truncated. The
+        other modes reshape the output (see :mod:`workspaces`); every mode that
+        can't apply falls back to auto with a one-line note. Reality overrides
+        intent — an inline output over the cap spills, a digest of JSON falls back."""
+        from . import workspaces as ws_mod
+
+        total = len(output)
+        mode = (deliver or "auto").strip().lower()
+        if mode not in ws_mod.DELIVER_MODES:
+            mode = "auto"
+        # Fast path: the common small-output auto case reads no config and never
+        # touches the workspace — byte-identical to the pre-deliver behaviour.
+        if mode == "auto" and total <= _TOOL_OUTPUT_SPILL_THRESHOLD:
+            return output
+
+        spill_threshold = _TOOL_OUTPUT_SPILL_THRESHOLD
+        inline_max = ws_mod.INLINE_MAX_DEFAULT
+        try:
+            ws_cfg = config_mod.read_workspace()
+            spill_threshold = ws_cfg.get("spill_threshold", spill_threshold)
+            inline_max = ws_cfg.get("inline_max", inline_max)
+        except (OSError, ValueError, TypeError):
+            pass
+        with self._lock:
+            ws_map = getattr(self, "_workspace_by_chat", {})
+            workspace_id = ws_map.get(chat_id, "")
+        if not workspace_id:
+            workspace_id = getattr(self, "_conversation_id", "")
+        ws_root = config_mod.workspace_dir(workspace_id) if workspace_id else None
+        inv = uuid.uuid4().hex[:12]
+
+        def _auto() -> str:
+            if ws_root is not None and spill_threshold and total > spill_threshold:
+                try:
+                    envelope, _rel = ws_mod.spill_output(
+                        ws_root,
+                        spill_name,
+                        inv,
+                        output,
+                        head_bytes=_SPILL_ENVELOPE_HEAD_BYTES,
+                    )
+                    return envelope
+                except OSError as e:
+                    logger.warning(
+                        "workspace spill failed (%s) — falling back to inline cap", e
+                    )
+            cap = self._tool_output_cap()
+            if total > cap:
+                return output[:cap] + make_truncation_suffix(total, cap)
+            return output
+
+        if mode == "auto":
+            return _auto()
+
+        if mode == "inline":
+            if total <= inline_max:
+                return output
+            note = (
+                f"[deliver=inline requested, but the output is "
+                f"{ws_mod.human_size(total)} (over inline_max "
+                f"{ws_mod.human_size(inline_max)}) — delivering as auto instead.]"
+            )
+            return note + "\n" + _auto()
+
+        if mode == "digest":
+            _parsed, is_json = ws_mod._parse_json_bounded(output)
+            if is_json:
+                note = (
+                    "[deliver=digest is for line-oriented text; this output is JSON "
+                    "— delivering as auto. Use deliver=extract, or workspace_json_get "
+                    "to page fields.]"
+                )
+                return note + "\n" + _auto()
+            result = ws_mod.line_digest(output)
+            if ws_root is not None:
+                try:
+                    result["raw_spill"] = ws_mod.write_spill_file(
+                        ws_root, spill_name, inv, output
+                    )
+                    result["raw_spill_hint"] = (
+                        "Full output kept here — workspace_read/grep it if the digest "
+                        "isn't enough."
+                    )
+                except OSError:
+                    pass
+            return json.dumps(result, default=str)
+
+        # mode == "extract"
+        parsed, is_json = ws_mod._parse_json_bounded(output)
+        if not is_json or not isinstance(parsed, dict):
+            note = (
+                "[deliver=extract is for a JSON object with a dominant text field; "
+                "this output isn't one — delivering as auto.]"
+            )
+            return note + "\n" + _auto()
+        ex = ws_mod.extract_document(parsed, inline_max)
+        if ex is None:
+            note = (
+                "[deliver=extract found no string field to surface — delivering as "
+                "auto.]"
+            )
+            return note + "\n" + _auto()
+        if ex["fits"]:
+            return json.dumps(
+                {
+                    "delivered_as": "extract",
+                    "field": ex["field"],
+                    "field_length": ex["full_len"],
+                    "other_fields": ex["other_shape"],
+                    "content": ex["text"],
+                },
+                default=str,
+            )
+        out: dict[str, Any] = {
+            "delivered_as": "extract",
+            "field": ex["field"],
+            "field_length": ex["full_len"],
+            "other_fields": ex["other_shape"],
+            "note": (
+                f"the '{ex['field']}' field is {ws_mod.human_size(ex['full_len'])} "
+                "— over inline_max, so it was spilled rather than inlined."
+            ),
+        }
+        if ws_root is not None:
+            try:
+                rel = ws_mod.write_spill_file(ws_root, spill_name, inv, output)
+                out["raw_spill"] = rel
+                out["hint"] = (
+                    f"use workspace_json_get(path='{rel}', pointer='{ex['field']}') "
+                    "to page the field"
+                )
+            except OSError:
+                out["content"] = ex["text"]
+        else:
+            out["content"] = ex["text"]
+        return json.dumps(out, default=str)
 
     # ── search mode (tool_mode = "search") ────────────────────────────────────

@@ -1339,6 +1339,14 @@ class InternalsMixin:
             "a file, workspace_grep to search, and workspace_write to save "
             "a distilled note. All autonomous; scoped to this session only."
         )
+        lines.append(
+            "Choose a runnable call's `deliver` from the task: to read a result "
+            "use `inline` (small output) or `extract` (one field of a JSON "
+            "document); to see why something failed use `digest` (clusters a log); "
+            "otherwise leave it `auto`. To reshape a spill after the fact prefer "
+            "workspace_json_get (one field of a JSON file) or workspace_materialize "
+            "(digest a text log) over run_python_sandboxed."
+        )
         from . import sandbox
 
         if (

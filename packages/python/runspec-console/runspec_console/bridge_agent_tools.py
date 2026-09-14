@@ -630,6 +630,12 @@ class AgentToolsMixin:
                 ),
             }
 
+        # `deliver` — how this runnable's output should reach the model (a reserved
+        # top-level key, popped before the args are validated, like credential_id).
+        from . import workspaces as _ws
+
+        properties["deliver"] = _ws.deliver_schema_property()
+
         schema: dict[str, Any] = {"type": "object", "properties": properties}
         if required:
             schema["required"] = required
@@ -2964,6 +2970,73 @@ class AgentToolsMixin:
                     "required": ["path", "content"],
                 },
             },
+            {
+                "name": "workspace_json_get",
+                "description": (
+                    "Read ONE field of a spilled JSON file by path — the cheap way "
+                    "to pull a single large field (a log body, a diff, a document) "
+                    "out of a big JSON object without loading the whole thing. "
+                    "'pointer' is a dotted path ('result.body', 'items.0.name') or a "
+                    "JSON Pointer ('/result/body'). A string field is paged like "
+                    "workspace_read (offset/limit lines); any other value comes back "
+                    "as its shape + a bounded rendering. Prefer this over run_python "
+                    "for reshaping a JSON spill."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": (
+                                "Workspace-relative JSON file (e.g. "
+                                "'tool-results/web-01__fetch-abc.json')."
+                            ),
+                        },
+                        "pointer": {
+                            "type": "string",
+                            "description": (
+                                "Field to read — dotted ('result.body') or JSON "
+                                "Pointer ('/result/body'). Empty = the whole document."
+                            ),
+                        },
+                        "offset": {
+                            "type": "integer",
+                            "description": "For a string field: 0-based start line (default 0).",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "For a string field: max lines (default 200, cap 2000).",
+                        },
+                    },
+                    "required": ["path"],
+                },
+            },
+            {
+                "name": "workspace_materialize",
+                "description": (
+                    "Reshape an already-spilled file after the fact — read-only, "
+                    "returns the view, writes nothing. as='digest' clusters a "
+                    "line-oriented text log by signature and returns the top few "
+                    "clusters (count, first/last timestamp, sample), the same view "
+                    "deliver='digest' produces — use it when a runnable spilled as "
+                    "auto and you now want the why-did-it-fail summary."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Workspace-relative text spill (e.g. 'tool-results/…txt').",
+                        },
+                        "as": {
+                            "type": "string",
+                            "enum": ["digest"],
+                            "description": "The transform to apply (currently only 'digest').",
+                        },
+                    },
+                    "required": ["path"],
+                },
+            },
         ]
 
     def _exec_tools(self) -> list[dict[str, Any]]:
@@ -3192,6 +3265,24 @@ class AgentToolsMixin:
                         root,
                         str(ti.get("path") or ""),
                         str(ti.get("content") or ""),
+                    )
+                )
+            if name == "workspace_json_get":
+                return json.dumps(
+                    workspaces.json_get(
+                        root,
+                        str(ti.get("path") or ""),
+                        pointer=str(ti.get("pointer") or ""),
+                        offset=int(ti.get("offset") or 0),
+                        limit=int(ti.get("limit") or 200),
+                    )
+                )
+            if name == "workspace_materialize":
+                return json.dumps(
+                    workspaces.materialize(
+                        root,
+                        str(ti.get("path") or ""),
+                        as_=str(ti.get("as") or "digest"),
                     )
                 )
         except (

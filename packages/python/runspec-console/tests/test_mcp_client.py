@@ -583,6 +583,8 @@ class _WiringStub:
     _run_mcp_tool = Bridge._run_mcp_tool
     _effective_tool_autonomy = Bridge._effective_tool_autonomy
     _run_tool_sync = Bridge._run_tool_sync
+
+    _finalize_tool_output = Bridge._finalize_tool_output
     mcp_status = Bridge.mcp_status
 
     def __init__(self):

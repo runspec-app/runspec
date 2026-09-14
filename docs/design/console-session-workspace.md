@@ -110,6 +110,50 @@ envelope, but it's no longer the primary shaping mechanism. A spill failure
 (disk full, jailed path resolution failed) logs and falls through to the old
 cap-and-truncate behaviour, so a hiccup can never fail a tool call.
 
+### 3.2 Spill naming (0.261.0)
+
+The spill file is named after the **resolved runnable** — `host__name`, the id
+the Console card shows — not the tool the agent called. In search mode every
+runnable is executed through the one `run_runnable` meta-tool, so before 0.261.0
+every spill was named `run_runnable-…`; now `_finalize_tool_output` passes
+`f"{host}__{runnable}"` as the `spill_name`. Dedup/per-host mode already keyed
+the spill by the runnable's own tool name, so it's unchanged; a `use_tool` call
+is unwrapped to its inner tool before dispatch, so a deferred built-in that
+spills is named after the inner tool, not `use_tool`.
+
+### 3.3 Agent-chosen delivery — the `deliver` field (0.261.0)
+
+The spill rule above shapes output by **size**. A runnable call can also shape it
+by **intent**: an optional `deliver` field (enum `auto | inline | digest |
+extract`, default `auto`) says how the output should reach the model, chosen from
+the *task*. It is a top-level field on `run_runnable` (moved out of `args` if the
+model misplaces it) and a reserved key on the dedup/per-host tool schema (popped
+before the args are validated, like `credential_id`). `_finalize_tool_output`
+resolves it:
+
+- **`auto`** — the size rule above, unchanged. The one addition (§3.1): the shape
+  summary now annotates any string field over 8 KB with its size (`body: str[41
+  KB]`), the one JSON shape a minified dump otherwise hides.
+- **`inline`** — hand the raw output back whole, up to `[workspace] inline_max`
+  (default 128 KB). Above it, fall back to `auto` (spill) with a one-line note.
+- **`digest`** *(text)* — cluster the lines by a normalised **signature** and
+  return the top-N clusters (count, first/last timestamp, one sample). The
+  signature logic is a stdlib-only port of `runspec-logops-core`'s `signatures`
+  (mask timestamps/ids/hex/quoted/numbers; an exception line → its class + frame)
+  — no new dependency, and the console runs without `runspec-logops` installed.
+  The full output is still written to `tool-results/` so the agent can page it if
+  the digest isn't enough. JSON falls back to `auto`.
+- **`extract`** *(JSON document object)* — return the largest string field as text
+  (up to `inline_max`) plus the other fields' shape. Above the cap, spill the
+  document and point at `workspace_json_get(path, pointer=<field>)`. A non-object
+  falls back to `auto`.
+
+**Reality overrides intent**: every mode that can't apply to the actual output
+falls back to `auto` and says so in one line. A `table` mode was deliberately left
+out until arrays-of-records show up in a spill census (they didn't). The pure
+pieces (`line_digest`, `extract_document`, the shape annotation) live in
+`workspaces.py`; the orchestration is `Bridge._finalize_tool_output`.
+
 ## 4. The workspace agent tools
 
 All autonomous (registered in `_WORKSPACE_TOOL_NAMES`; hit the "read-only or
@@ -125,6 +169,8 @@ path-jailed under the current session's workspace root.
 | `workspace_head`   | First N lines                                     |
 | `workspace_tail`   | Last N lines (seeks near EOF for huge files)      |
 | `workspace_write`  | Write agent-authored notes (refuses `tool-results/`) |
+| `workspace_json_get` | Read ONE field of a JSON spill by dotted path / JSON Pointer — a string field paged like `workspace_read`, any other value as its shape + a bounded rendering. The cheap reshape for a big JSON object, preferred over `run_python_sandboxed` (0.261.0) |
+| `workspace_materialize` | Reshape an already-spilled file after the fact — `as="digest"` clusters a text log by signature (the same view `deliver="digest"` produces). Read-only, writes nothing (0.261.0) |
 
 `workspace_write` deliberately refuses to touch `tool-results/` — that dir
 holds the audit-quality record of what a runnable actually emitted, and the

@@ -139,11 +139,28 @@ _JSON_PREVIEW_MAX_CHARS = 25_000_000  # don't attempt to parse beyond this
 _JSON_SHAPE_MAX_KEYS = 40  # cap keys listed per object
 _JSON_SHAPE_MAX_DEPTH = 2  # how deep to describe nested structure
 _JSON_ARRAY_KEY_SAMPLE = 20  # elements sampled to union an array's record keys
+# A string field at least this long is shown in the shape summary with its size
+# (``body: str[41 KB]``) instead of a bare ``str`` — the one JSON shape that a
+# minified dump hides, and the field an agent most wants to know is large before
+# pulling it (see the ``extract`` delivery mode).
+_LARGE_STR_BYTES = 8_192
+
+
+def human_size(n: int) -> str:
+    """Human-readable byte/char count: ``B`` under 1 KB, ``KB`` (integer) under
+    1 MB, ``MB`` (one decimal) above. Used in shape summaries and delivery notes."""
+    n = int(n)
+    if n < 1024:
+        return f"{n} B"
+    if n < 1_048_576:
+        return f"{round(n / 1024)} KB"
+    return f"{n / 1_048_576:.1f} MB"
 
 
 def _json_type_name(value: Any) -> str:
     """Compact type label for a parsed JSON value (bool before int — ``bool`` is
-    an ``int`` subclass)."""
+    an ``int`` subclass). A long string carries its size (``str[41 KB]``) so the
+    shape summary reveals which field dominates a document."""
     if isinstance(value, bool):
         return "bool"
     if isinstance(value, int):
@@ -151,7 +168,9 @@ def _json_type_name(value: Any) -> str:
     if isinstance(value, float):
         return "float"
     if isinstance(value, str):
-        return "str"
+        return (
+            f"str[{human_size(len(value))}]" if len(value) > _LARGE_STR_BYTES else "str"
+        )
     if value is None:
         return "null"
     if isinstance(value, list):
@@ -216,6 +235,319 @@ def json_preview(value: Any) -> str:
     """One-line human/agent-readable shape summary for a parsed JSON value."""
     kind = _json_type_name(value)
     return f"JSON {kind} — shape: {_json_shape(value)}"
+
+
+# ── agent-chosen delivery (the `deliver` field on a runnable call) ─────────────
+#
+# A runnable call carries an optional `deliver` directive saying how its output
+# should reach the model, chosen from the *task*, not the payload size:
+#
+#   auto     — the default: inline when small, else spill to tool-results/ with a
+#              shape/head envelope (unchanged behaviour).
+#   inline    — hand the raw output straight to the model, up to `[workspace]
+#              inline_max`; above it, fall back to auto with a note.
+#   digest    — cluster a text log by normalised signature and return the top-N
+#              clusters (count, first/last timestamp, one sample). JSON falls back
+#              to auto.
+#   extract   — for a JSON *document object*, surface its largest string field as
+#              text (up to inline_max) plus the other fields' shape; above the cap,
+#              spill and point at workspace_json_get. Non-objects fall back to auto.
+#
+# Reality overrides intent: every mode that can't apply falls back to auto and
+# says so in one line. The orchestration lives in bridge_autonomy; these are the
+# pure pieces it composes (so they unit-test without a Bridge).
+
+DELIVER_MODES = ("auto", "inline", "digest", "extract")
+
+INLINE_MAX_DEFAULT = 131_072  # `[workspace] inline_max` default (chars)
+
+_DIGEST_TOP_DEFAULT = 10  # clusters returned by a digest
+_DIGEST_MAX_SCAN_BYTES = 4_000_000  # bound the bytes a digest reads
+
+
+def deliver_schema_property() -> dict[str, Any]:
+    """The JSON-schema property describing the ``deliver`` field — one line per
+    value — shared by the search-mode ``run_runnable`` schema and the dedup/per-host
+    tool schema so the option reads identically wherever it surfaces."""
+    return {
+        "type": "string",
+        "enum": list(DELIVER_MODES),
+        "description": (
+            "Optional: how this runnable's output should reach you — chosen from "
+            "the task, not the size. 'auto' (default): inline if small, else spilled "
+            "to the workspace with a shape/head preview. 'inline': hand back the raw "
+            "output whole (up to the inline cap; larger falls back to auto). "
+            "'digest': cluster a text log by signature and return the top few with "
+            "counts + timestamps + a sample (use for a why-did-it-fail read; JSON "
+            "falls back to auto). 'extract': for a JSON document, return its largest "
+            "text field plus the other fields' shape (use for a read; non-documents "
+            "fall back to auto). A top-level field — never inside 'args'."
+        ),
+    }
+
+
+# ── log-signature clustering (ported from runspec-logops-core) ─────────────────
+#
+# Collapse the *variable* parts of a log line (timestamps, ids, hex, quoted
+# literals, numbers) into a stable "shape" so thousands of near-identical lines
+# fold onto one signature; for an exception line, the signature is the exception
+# class (+ a frame when present). A faithful, stdlib-only port of the pieces of
+# ``runspec_logops_core.signatures`` a line-oriented digest needs — no new
+# dependency, and the console must run without runspec-logops installed.
+
+_SIG_UUID = re.compile(
+    r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
+)
+_SIG_HEX = re.compile(r"\b0x[0-9a-fA-F]+\b")
+_SIG_LONGHEX = re.compile(r"\b[0-9a-fA-F]{16,}\b")
+_SIG_HEXID = re.compile(
+    r"\b(?=[0-9a-fA-F]*[0-9])(?=[0-9a-fA-F]*[a-fA-F])[0-9a-fA-F]{4,}\b"
+)
+_SIG_QUOTED = re.compile(r"""(['"]).*?\1""")
+_SIG_NUM = re.compile(r"\d+")
+_SIG_WS = re.compile(r"\s+")
+_SIG_LEADING_TS = re.compile(
+    r"""^\s*
+    (?:
+        \[?(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\]?
+      | ([A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})
+    )
+    """,
+    re.VERBOSE,
+)
+_SIG_EXC = re.compile(r"\b([A-Za-z_][\w.]*(?:Error|Exception|Failure|Fault))\b")
+_SIG_FRAME_JAVA = re.compile(r"\bat\s+([\w.$]+)\s*\(")
+_SIG_FRAME_PY = re.compile(r'File\s+"[^"]+",\s+line\s+\d+,\s+in\s+(\S+)')
+_SIG_FRAME_JS = re.compile(r"\bat\s+([\w.$<>]+)\s*\(")
+
+
+def _leading_ts(line: str) -> str | None:
+    """The leading timestamp of ``line`` (ISO / bracketed / syslog) as its raw
+    string, or ``None``. Kept as text — no datetime parse — so it's dependency-free
+    and comparison-order comes from scan order, not clock parsing."""
+    m = _SIG_LEADING_TS.match(line)
+    if not m:
+        return None
+    return (m.group(1) or m.group(2) or "").strip() or None
+
+
+def _line_signature(line: str) -> str:
+    """A stable signature for one log line: the exception class (+ first frame on
+    the line) when present, else the normalised shape with volatile parts masked."""
+    exc_m = _SIG_EXC.search(line)
+    if exc_m:
+        exc = exc_m.group(1).rsplit(".", 1)[-1]
+        for pat in (_SIG_FRAME_PY, _SIG_FRAME_JAVA, _SIG_FRAME_JS):
+            fm = pat.search(line)
+            if fm:
+                return f"{exc}@{fm.group(1)}"
+        return exc
+    s = _SIG_LEADING_TS.sub("", line, count=1)
+    s = _SIG_UUID.sub("<uuid>", s)
+    s = _SIG_HEX.sub("<hex>", s)
+    s = _SIG_LONGHEX.sub("<hex>", s)
+    s = _SIG_HEXID.sub("<hex>", s)
+    s = _SIG_QUOTED.sub("<str>", s)
+    s = _SIG_NUM.sub("<n>", s)
+    return _SIG_WS.sub(" ", s).strip()[:200]
+
+
+def line_digest(
+    output: str,
+    *,
+    top: int = _DIGEST_TOP_DEFAULT,
+    max_scan_bytes: int = _DIGEST_MAX_SCAN_BYTES,
+) -> dict[str, Any]:
+    """Cluster ``output``'s lines by normalised signature and return the top-N
+    clusters — each with a count, first/last timestamp, and one sample line.
+
+    Bounds the bytes scanned (``max_scan_bytes``); a signature with no exception
+    or frame is the masked line shape, so near-identical log lines fold together.
+    Pure/deterministic (ties on count broken by signature)."""
+    clusters: dict[str, dict[str, Any]] = {}
+    scanned = 0
+    counted = 0
+    scan_capped = False
+    for line in output.split("\n"):
+        scanned += len(line) + 1
+        if scanned > max_scan_bytes:
+            scan_capped = True
+            break
+        if not line.strip():
+            continue
+        counted += 1
+        sig = _line_signature(line)
+        ts = _leading_ts(line)
+        g = clusters.get(sig)
+        if g is None:
+            clusters[sig] = {
+                "signature": sig,
+                "count": 1,
+                "first_ts": ts,
+                "last_ts": ts,
+                "sample": line[:200],
+            }
+        else:
+            g["count"] += 1
+            if ts:
+                if g["first_ts"] is None:
+                    g["first_ts"] = ts
+                g["last_ts"] = ts
+    ranked = sorted(clusters.values(), key=lambda g: (-g["count"], g["signature"]))
+    return {
+        "delivered_as": "digest",
+        "lines_scanned": counted,
+        "distinct_signatures": len(clusters),
+        "truncated": scan_capped or len(clusters) > top,
+        "top": ranked[:top],
+    }
+
+
+def extract_document(value: Any, inline_max: int) -> dict[str, Any] | None:
+    """For a JSON **object**, pick the field with the longest string value and
+    return ``{field, text, fits, full_len, other_shape}`` — ``text`` capped at
+    ``inline_max`` and ``fits`` False when the field is longer. ``None`` when
+    ``value`` isn't an object or has no string field (the caller falls back to
+    auto). ``other_shape`` is the shape of every *other* field."""
+    if not isinstance(value, dict):
+        return None
+    str_fields = [(k, v) for k, v in value.items() if isinstance(v, str)]
+    if not str_fields:
+        return None
+    field, text = max(str_fields, key=lambda kv: len(kv[1]))
+    other = {k: v for k, v in value.items() if k != field}
+    full_len = len(text)
+    fits = full_len <= inline_max
+    return {
+        "field": field,
+        "text": text if fits else text[:inline_max],
+        "fits": fits,
+        "full_len": full_len,
+        "other_shape": _json_shape(other) if other else "{}",
+    }
+
+
+def write_spill_file(
+    workspace_root: Path, tool_name: str, inv_id: str, output: str
+) -> str:
+    """Write ``output`` verbatim to ``tool-results/{tool}-{inv}.{json|txt}`` and
+    return the workspace-relative path — the raw-file half of :func:`spill_output`,
+    without the envelope. Used by the ``digest`` / ``extract`` delivery modes,
+    which return a reshaped view but still persist the full output so the agent can
+    page it via the ``workspace_*`` tools."""
+    results_dir = workspace_root / TOOL_RESULTS_DIRNAME
+    results_dir.mkdir(parents=True, exist_ok=True)
+    ext = "json" if _is_json_line(output) else "txt"
+    fname = f"{_sanitize_filename_part(tool_name)}-{_safe_id(inv_id) or 'run'}.{ext}"
+    _atomic_write_bytes(results_dir / fname, output.encode("utf-8", "replace"))
+    return f"{TOOL_RESULTS_DIRNAME}/{fname}"
+
+
+# ── after-the-fact reshaping of a spilled file (workspace_json_get / materialize)
+
+
+def _json_navigate(root: Any, pointer: str) -> tuple[Any, bool]:
+    """Descend ``root`` by ``pointer`` — a JSON Pointer (``/a/b/0``) when it starts
+    with ``/``, else a dotted path (``a.b.0``). Array indices are integers. Returns
+    ``(value, found)``; ``found`` is False on a missing key / bad index."""
+    p = str(pointer or "").strip()
+    if not p or p in ("/", "."):
+        return root, True
+    if p.startswith("/"):
+        parts = [seg.replace("~1", "/").replace("~0", "~") for seg in p.split("/")[1:]]
+    else:
+        parts = p.split(".")
+    cur = root
+    for seg in parts:
+        if isinstance(cur, dict):
+            if seg not in cur:
+                return None, False
+            cur = cur[seg]
+        elif isinstance(cur, list):
+            try:
+                cur = cur[int(seg)]
+            except (ValueError, IndexError):
+                return None, False
+        else:
+            return None, False
+    return cur, True
+
+
+def json_get(
+    workspace_root: Path,
+    rel: str,
+    pointer: str = "",
+    offset: int = 0,
+    limit: int = 200,
+) -> dict[str, Any]:
+    """Return one field of a JSON spill file, addressed by ``pointer`` (dotted path
+    or JSON Pointer). A **string** field is paged like :func:`read_file` (0-based
+    ``offset`` line window, ``limit`` lines); any other value comes back as its
+    shape plus a bounded JSON rendering. Raises ``FileNotFoundError`` /
+    ``ValueError`` (bad file / not JSON / missing pointer) — jailed by :func:`jail`."""
+    target = jail(workspace_root, rel)
+    if not target.exists() or not target.is_file():
+        raise FileNotFoundError(f"{rel} is not a file in the workspace")
+    raw = target.read_bytes()
+    if _is_binary(raw):
+        raise ValueError(f"{rel} looks binary — not JSON")
+    parsed, ok = _parse_json_bounded(raw.decode("utf-8", "replace"))
+    if not ok:
+        raise ValueError(f"{rel} is not a JSON object/array (or is too large to parse)")
+    value, found = _json_navigate(parsed, pointer)
+    if not found:
+        raise ValueError(f"pointer {pointer!r} does not resolve in {rel}")
+    if isinstance(value, str):
+        lines = value.split("\n")
+        off = max(0, int(offset or 0))
+        lim = max(1, min(int(limit or 200), _READ_MAX_LINES))
+        window = lines[off : off + lim]
+        return {
+            "path": rel,
+            "pointer": pointer,
+            "type": "str",
+            "total_lines": len(lines),
+            "total_chars": len(value),
+            "offset": off,
+            "limit": lim,
+            "truncated": off + len(window) < len(lines),
+            "content": "\n".join(window)[:_READ_MAX_BYTES],
+        }
+    rendered = json.dumps(value, ensure_ascii=False, default=str)
+    return {
+        "path": rel,
+        "pointer": pointer,
+        "type": _json_type_name(value),
+        "shape": _json_shape(value),
+        "truncated": len(rendered) > _READ_MAX_BYTES,
+        "value": rendered[:_READ_MAX_BYTES],
+    }
+
+
+def materialize(workspace_root: Path, rel: str, as_: str = "digest") -> dict[str, Any]:
+    """Apply a delivery transform to an already-spilled file, after the fact.
+    ``as_ = "digest"`` clusters a text spill by signature (see :func:`line_digest`).
+    Read-only — returns the transformed view, writes nothing. Raises
+    ``FileNotFoundError`` / ``ValueError``; jailed by :func:`jail`."""
+    mode = str(as_ or "digest").strip().lower()
+    if mode != "digest":
+        raise ValueError(f"unsupported materialize target {as_!r} (only 'digest')")
+    target = jail(workspace_root, rel)
+    if not target.exists() or not target.is_file():
+        raise FileNotFoundError(f"{rel} is not a file in the workspace")
+    with open(target, "rb") as fh:
+        raw = fh.read(_DIGEST_MAX_SCAN_BYTES)
+    if _is_binary(raw):
+        raise ValueError(f"{rel} looks binary — cannot digest")
+    text = raw.decode("utf-8", "replace")
+    parsed, is_json = _parse_json_bounded(text)
+    if is_json:
+        raise ValueError(
+            f"{rel} is JSON, not a line-oriented log — use workspace_json_get to page fields"
+        )
+    result = line_digest(text)
+    result["source"] = rel
+    return result
 
 
 # ── path jail ─────────────────────────────────────────────────────────────────

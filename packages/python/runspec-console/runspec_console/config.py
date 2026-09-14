@@ -298,7 +298,9 @@ def read_workspace() -> dict[str, Any]:
     than this is written to the session workspace instead of inlined; the model
     gets a short envelope + head preview and reaches for the ``workspace_*``
     tools. Set to 0 to disable spill and keep the pre-workspace cap-and-truncate
-    behaviour. ``headless_retention_days`` (default 7) — how long
+    behaviour. ``inline_max`` (chars, default 131_072) — the ceiling for a call's
+    ``deliver = "inline"`` request (hand the raw output back whole); above it the
+    call falls back to ``auto`` (spill). ``headless_retention_days`` (default 7) — how long
     trigger/schedule workspaces live after the isolated turn finishes (chat
     workspaces follow ``[chat_history]`` retention).
 
@@ -313,6 +315,7 @@ def read_workspace() -> dict[str, Any]:
     cfg = dict(raw) if isinstance(raw, dict) else {}
     return {
         "spill_threshold": max(0, int(cfg.get("spill_threshold", 32_768) or 0)),
+        "inline_max": max(1, int(cfg.get("inline_max", 131_072) or 131_072)),
         "headless_retention_days": max(
             0, int(cfg.get("headless_retention_days", 7) or 0)
         ),

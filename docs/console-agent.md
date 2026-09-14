@@ -184,7 +184,16 @@ configurable under **Settings → Chat History**.
 Each conversation gets a scratch **workspace** on disk. Large tool results
 spill there automatically (with a shape summary for big JSON), and the agent
 uses `workspace_grep` / `workspace_read` to sift them without re-reading
-everything into context. Two tools execute code in that workspace, inside a
+everything into context. The agent can also **shape a runnable's output up
+front** with a `deliver` field on the call — `inline` (hand the result back
+whole, up to `[workspace] inline_max`), `digest` (cluster a text log by
+signature and return the top few with counts + timestamps — a why-did-it-fail
+read), or `extract` (return the largest field of a JSON document); `auto` (the
+default) inlines small results and spills large ones. Anything a mode can't apply
+to falls back to `auto` with a note. To reshape a spill *after the fact*,
+`workspace_json_get` pulls one field of a JSON file and `workspace_materialize`
+digests a text log — both cheaper than reaching for the sandboxed interpreter.
+Two tools execute code in that workspace, inside a
 **WASM/WASI capability sandbox** (no network, no host filesystem beyond the
 workspace, no subprocess, memory + hard wall-clock limits): `run_python_sandboxed`
 (a Python snippet — pass `code` as a string or a list of lines) and

@@ -195,6 +195,10 @@ _WORKSPACE_TOOL_NAMES = frozenset(
         "workspace_head",
         "workspace_tail",
         "workspace_write",
+        # After-the-fact reshaping of a spilled file — read-only, so autonomous
+        # like the rest, and hot in search mode alongside them.
+        "workspace_json_get",
+        "workspace_materialize",
     }
 )
 

@@ -8,6 +8,42 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.261.0] — 2026-09-14
+
+### Added
+- **Agent-chosen output delivery — a `deliver` field on a runnable call.** A
+  runnable call can now shape its output by *intent*, not just size:
+  `deliver = auto | inline | digest | extract` (default `auto`). `inline` hands
+  the raw output back whole up to a new `[workspace] inline_max` (default 128 KB);
+  `digest` clusters a text log by normalised **signature** and returns the top-N
+  clusters (count, first/last timestamp, sample) — a why-did-it-fail read, with
+  the signature logic ported stdlib-only from `runspec-logops-core` (no new
+  dependency); `extract` returns the largest string field of a JSON document plus
+  the other fields' shape. Reality overrides intent — every mode that can't apply
+  falls back to `auto` with a one-line note. It's a top-level field on the search
+  `run_runnable` tool (moved out of `args` if misplaced) and a reserved key on the
+  dedup/per-host schema (popped before validation, like `credential_id`). Logic in
+  `workspaces.py` (`line_digest` / `extract_document`); orchestration in
+  `Bridge._finalize_tool_output`.
+- **`workspace_json_get` / `workspace_materialize` — reshape a spill after the
+  fact.** Two read-only, autonomous workspace tools (hot in search mode beside the
+  rest): `workspace_json_get(path, pointer, offset, limit)` returns one field of a
+  JSON spill by dotted path / JSON Pointer, paging a string field like
+  `workspace_read`; `workspace_materialize(path, as="digest")` clusters an already
+  spilled text log. Both are cheaper than a confirm-gated `run_python_sandboxed`
+  for reshaping a spilled file, and the agent is told to prefer them.
+
+### Changed
+- **Spill files are named after the resolved runnable (`host__name`), not the
+  meta-tool.** In search mode every runnable runs through one `run_runnable` tool,
+  so every spill file used to be named `run_runnable-…`; it now carries the id the
+  Console card shows. Dedup/per-host naming is unchanged; a `use_tool` call is
+  already unwrapped to its inner tool before it spills.
+- **The `auto` shape summary annotates a large string field with its size**
+  (`body: str[41 KB]` for any string field over 8 KB) — the one JSON shape a
+  minified dump otherwise hides.
+
+
 ## [0.260.0] — 2026-09-14
 
 ### Fixed

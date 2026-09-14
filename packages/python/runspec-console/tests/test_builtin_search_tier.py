@@ -151,6 +151,11 @@ def test_hot_kernel_is_pinned_exactly():
         "workspace_head",
         "workspace_tail",
         "workspace_info",
+        # After-the-fact reshaping of a spilled file — read-only, hot beside the
+        # rest of the workspace tools so the agent reshapes a spill in one hop
+        # rather than reaching for confirm-gated run_python.
+        "workspace_json_get",
+        "workspace_materialize",
     }
 
 

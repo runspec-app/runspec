@@ -201,6 +201,7 @@ documented with the fleet setup in [Hosts & fleet](console-hosts.md#ssh-tuning).
 | Key | Default | Meaning |
 |---|---|---|
 | `spill_threshold` | 32768 | Tool results above this many bytes spill to workspace files |
+| `inline_max` | 131072 | Ceiling for a call's `deliver = "inline"` request (hand the raw output back whole); above it the call falls back to `auto` (spill). Also the extract-field cap |
 | `code_exec` | `true` | Master switch for the `run_python_sandboxed` / `run_sql_sandboxed` tools |
 | `exec_timeout` | 30 | Seconds before a sandboxed run is killed (hard limit — the run is a killable subprocess) |
 | `headless_retention_days` | 7 | How long trigger/schedule-run workspaces are kept |
