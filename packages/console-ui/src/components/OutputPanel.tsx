@@ -885,12 +885,22 @@ function ToolCallBlock({
 
   const approve = () => {
     if (editable && edits) {
-      const out: Record<string, unknown> = {}
-      for (const [k, s] of Object.entries(edits)) out[k] = parseEdited(s)
-      onAnswer?.(true, out)
-    } else {
-      onAnswer?.(true)
+      // Did the operator actually change anything? Compare the edit buffer to a
+      // fresh seed of the original args (both plain strings — this sidesteps the
+      // lossy jsonValue→parseEdited round-trip that would otherwise make an
+      // untouched value look different). Only send `editedInput` when a field's
+      // text really changed, so a bare Approve records "approved", not "edited",
+      // and runs the agent's original args verbatim (no round-trip corruption).
+      const seed = Object.fromEntries(approveArgs.map(([k, val]) => [k, jsonValue(val)]))
+      const changed = Object.keys(edits).some(k => edits[k] !== seed[k])
+      if (changed) {
+        const out: Record<string, unknown> = {}
+        for (const [k, s] of Object.entries(edits)) out[k] = parseEdited(s)
+        onAnswer?.(true, out)
+        return
+      }
     }
+    onAnswer?.(true)
   }
 
   return (

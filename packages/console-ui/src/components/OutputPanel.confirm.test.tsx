@@ -139,10 +139,29 @@ describe('OutputPanel autonomy-gate confirm', () => {
     // The button reflects the verb: "save", not the misleading "run".
     expect(screen.queryByRole('button', { name: /approve & run/i })).toBeNull()
     await userEvent.click(screen.getByRole('button', { name: /approve & save/i }))
-    expect(resolveConfirm).toHaveBeenCalledWith('req-9', true, {
-      title: 'Triage 502s',
-      steps,
+    // Approving without touching the fields is NOT an edit — the gate is answered
+    // with no editedInput, so the backend records "approved" (not "edited") and
+    // runs the agent's original args untouched.
+    expect(resolveConfirm).toHaveBeenCalledWith('req-9', true, undefined)
+  })
+
+  it('approving an editable confirm without changing anything is not an edit', async () => {
+    // The bug: an editable confirm always shipped its (unchanged) edit buffer as
+    // editedInput, so a bare Approve got labelled "Edited" even though the operator
+    // only clicked confirm. Now an untouched buffer answers with no editedInput.
+    render(<OutputPanel blocks={[chatBlockWithRunningTool('create_document')]} />)
+    fireConfirm({
+      id: 'chat1',
+      request_id: 'req-noop',
+      tool_name: 'create_document',
+      tool_input: { filename: 'note.md', dest: 'local' },
+      display_name: 'create_document',
+      display_input: { filename: 'note.md', dest: 'local' },
+      confirm_verb: 'create',
+      autonomy: 'confirm',
     })
+    await userEvent.click(screen.getByRole('button', { name: /approve & create/i }))
+    expect(resolveConfirm).toHaveBeenCalledWith('req-noop', true, undefined)
   })
 
   it('lets the operator edit args before approving a plain tool call', async () => {

@@ -8,6 +8,23 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.263.1] — 2026-09-15
+
+### Fixed
+- **Editable confirm cards no longer report "Edited" on a plain Approve.** An
+  editable confirm (a plain/direct tool call, Console tab) seeded an edit buffer
+  from the agent's proposed args and, on Approve, *always* shipped that buffer
+  back as `edited_input` — so clicking confirm without touching a field still
+  recorded the operator decision as **edited** (amber "EDITED" badge on the
+  card). The Approve handler now compares the current buffer to a fresh seed of
+  the original args (as plain strings, sidestepping the lossy
+  `jsonValue`→`parseEdited` round-trip) and answers the gate with no
+  `edited_input` when nothing changed — so an untouched approval records
+  **approved** and runs the agent's original args verbatim, while a real edit
+  still records **edited**. Frontend-only (`OutputPanel.tsx` `ToolCallBlock`);
+  covered by `OutputPanel.confirm.test.tsx`.
+
+
 ## [0.263.0] — 2026-09-15
 
 ### Added
