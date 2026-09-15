@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import sys
 import time
 from datetime import datetime, timezone
@@ -11,7 +10,7 @@ from pathlib import Path
 
 import runspec
 
-from ..config import read_config, write_config
+from ..config import app_dir, read_config, write_config
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +31,10 @@ def _generate(rotate: bool) -> dict:
             "message": "cryptography package not installed — run: pip install cryptography",
         }
 
-    key_dir = Path(os.environ.get("APPDATA", "~")).expanduser() / "runspec-console"
+    # The console's config dir (the branded %APPDATA%\<package> folder), not a
+    # hardcoded "runspec-console" — so the key lives with the rest of this
+    # install's state instead of a stray folder.
+    key_dir = app_dir()
     key_dir.mkdir(parents=True, exist_ok=True)
     key_path = key_dir / "runspec_ed25519"
 

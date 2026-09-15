@@ -12,8 +12,7 @@ still brands itself from the package it was installed as.
 
 Resolution is per-field, first hit wins:
 
-    title            : [console.theme] brand_name     → prettified dist name
-                       → "runspec console"
+    title            : prettified dist name           → "runspec console"
     docs_url         : [console] docs_url             → dist Project-URL
                        (Documentation → Homepage → Home-page) → DEFAULT_DOCS_URL
     version_package  : dist name                      → "runspec-console"
@@ -21,11 +20,12 @@ Resolution is per-field, first hit wins:
 The ``dist`` is the external distribution supplying the active provider, else the
 single external distribution contributing a config seed. A built-in provider
 (anthropic/openai/bedrock/langserve) with no seed package falls straight through
-to the runspec defaults. ``brand_name`` is an explicit display override (it drives
-the sidebar too), so it wins the title even when a dist is present, but it never
-feeds ``version_package`` (which needs a real dist name). Every field is wrapped
-so a malformed / missing dist degrades to its default rather than raising into the
-UI (the same best-effort contract as ``version.latest_version``).
+to the runspec defaults. The window title is the *packaging* identity — the
+prettified distribution name (``mycorp-console`` → ``Mycorp Console``) — and is
+deliberately independent of ``[console.theme] brand_name``, which already titles
+the sidebar heading (so reusing it here would only duplicate it). Every field is
+wrapped so a malformed / missing dist degrades to its default rather than raising
+into the UI (the same best-effort contract as ``version.latest_version``).
 """
 
 from __future__ import annotations
@@ -148,19 +148,6 @@ def _seed_dist() -> meta.Distribution | None:
         return None
 
 
-def _brand_name(config: dict) -> str | None:
-    """``[console.theme] brand_name`` if set — the explicit display override that
-    also titles the sidebar, so the window title matches it."""
-    console = config.get("console")
-    if isinstance(console, dict):
-        theme = console.get("theme")
-        if isinstance(theme, dict):
-            name = theme.get("brand_name")
-            if isinstance(name, str) and name.strip():
-                return name.strip()
-    return None
-
-
 def _config_docs_url(config: dict) -> str | None:
     console = config.get("console")
     if isinstance(console, dict):
@@ -191,13 +178,13 @@ def resolve_branding(config: dict | None = None) -> Branding:
     if dist is None:
         dist = _seed_dist()
 
-    # title — explicit [console.theme] brand_name wins (matches the sidebar), then
-    # the branding dist's prettified name, then the default.
+    # title — the branding dist's prettified name (dashes/underscores → spaces,
+    # Title Case), else the default. Deliberately NOT [console.theme] brand_name:
+    # that already titles the sidebar heading, so using it here too would just
+    # duplicate it. The window title is the packaging identity (the distribution
+    # you installed); the sidebar is the display brand.
     title = _DEFAULT_TITLE
-    brand = _brand_name(config)
-    if brand:
-        title = brand
-    elif dist is not None:
+    if dist is not None:
         try:
             pretty = _prettify_dist_name(dist.name)
             if pretty:

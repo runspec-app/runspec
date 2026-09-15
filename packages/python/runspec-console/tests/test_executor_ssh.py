@@ -187,6 +187,25 @@ def test_default_host_key_checking_is_accept_new(monkeypatch, tmp_path):
     assert not isinstance(policy, (paramiko.AutoAddPolicy, paramiko.RejectPolicy))
 
 
+def test_known_hosts_default_follows_app_dir_branded_slug(monkeypatch, tmp_path):
+    """The app-managed known_hosts lives under the console's config dir (the
+    branded %APPDATA%\\<package> folder), not a hardcoded runspec-console — so a
+    white-label install spawns no stray runspec-console folder. (Regression.)"""
+    from runspec_console import config as cfg
+
+    monkeypatch.setattr(cfg, "_APP_DIR_OVERRIDE", None)
+    monkeypatch.setattr(cfg, "_APP_SLUG", None)
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    # A white-label package supplies the folder slug (installed metadata).
+    monkeypatch.setattr(cfg, "_app_slug", lambda: "jason-console")
+
+    assert executor._known_hosts_path({}) == tmp_path / "jason-console" / "known_hosts"
+    # An explicit [ssh] known_hosts override still wins.
+    assert executor._known_hosts_path({"known_hosts": str(tmp_path / "kh")}) == (
+        tmp_path / "kh"
+    )
+
+
 def test_host_key_checking_yes_is_strict_reject():
     with patch("paramiko.SSHClient") as MockClient:
         _make_ssh_client("deploy@prod-1", None, {"host_key_checking": "yes"})

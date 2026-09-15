@@ -8,6 +8,25 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.264.4] — 2026-09-15
+
+### Fixed
+- **No stray `%APPDATA%\runspec-console\` folder for white-label installs.** The
+  SSH key pair (`generate-ssh-key`, `_regenerate_ssh_key`, `_do_rotate_ssh_key`)
+  and the app-managed `known_hosts` file were written to a **hardcoded**
+  `%APPDATA%\runspec-console\`, ignoring the branded config folder — so every
+  white-label install spawned a second, stray `runspec-console` folder holding
+  its SSH state. All four now write under `config.app_dir()` (the branded
+  `%APPDATA%\<package>\`), so an install keeps *all* its state in one folder.
+- **Window title is the prettified package name again, not `brand_name`.**
+  `0.264.2` made an explicit `[console.theme] brand_name` win the window title —
+  but `brand_name` already titles the **sidebar** heading, so the two duplicated.
+  The window title is once more the prettified distribution name
+  (`mycorp-console` → `Mycorp Console`); `brand_name` is sidebar-only.
+  `branding.resolve_branding` no longer reads `brand_name` (the config-seed /
+  active-provider dist fallback from `0.264.2` is unchanged).
+
+
 ## [0.264.3] — 2026-09-15
 
 ### Changed

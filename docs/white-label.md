@@ -278,7 +278,7 @@ install, pixel-identical.
 
 | Key | Accepts | Effect |
 |---|---|---|
-| `brand_name` | text | Sidebar title **and window title** (unset ⇒ sidebar "runspec", window from package metadata) |
+| `brand_name` | text | Sidebar title (unset ⇒ "runspec"). The window title is separate — the prettified package name (§1) |
 | `accent_color` | `#rgb` / `#rrggbb` | UI primary colour **and** the generated app icon |
 | `icon` | file path or `pkg:<module>:<relpath>` | Explicit `.ico`/`.png` app icon (bundle it as package data with the `pkg:` form) |
 | `title_bar_color` | hex | Native Windows 11 caption tint — independent of `accent_color`, so a blue-accent UI can carry a red title bar; no-op elsewhere |
@@ -289,9 +289,11 @@ install, pixel-identical.
 The window title, in-app documentation link, and update-check target come
 from your **package metadata** (§1) — the package supplying the active LLM
 provider, or (for an AI-off / adapter-less package) the one contributing the
-config seed. Set **`brand_name`** to title the window explicitly (it drives the
-sidebar and the window title together); an adapter-less package with no
-`brand_name` still titles the window from its distribution name.
+config seed. The window title is the **prettified distribution name**
+(`mycorp-console` → `Mycorp Console`). It is *not* `brand_name`: that already
+titles the **sidebar** heading (top-left, under the title bar), so reusing it for
+the window title would only duplicate it. Name your distribution what you want
+the window title to read.
 
 Your **config folder** is named the same way: a seed package `jason-console`
 stores its state in `%APPDATA%\jason-console\`, so different white-label consoles

@@ -135,8 +135,15 @@ def _known_hosts_path(cfg: dict[str, Any]) -> Path:
     override = cfg.get("known_hosts")
     if override:
         return Path(str(override)).expanduser()
-    base = os.environ.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
-    return Path(base) / "runspec-console" / "known_hosts"
+    # Under the console's config dir (the branded %APPDATA%\<package> folder, or
+    # a --config-dir override) — not a hardcoded "runspec-console", which would
+    # spawn a stray folder for every white-label install. Lazy import avoids any
+    # config↔executor import cycle. app_dir() creates the (already-existing)
+    # config dir; the known_hosts file itself is still written lazily by the
+    # accept-new policy.
+    from . import config as _config
+
+    return _config.app_dir() / "known_hosts"
 
 
 def _accept_new_policy(known_hosts: Path) -> Any:

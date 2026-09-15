@@ -6,7 +6,6 @@ instance, so ``self`` carries all shared state.
 
 from __future__ import annotations
 
-import os
 import random
 import threading
 import time
@@ -475,7 +474,10 @@ class ConfigSshMixin:
         import time
         from datetime import timezone
 
-        key_dir = Path(os.environ.get("APPDATA", "~")).expanduser() / "runspec-console"
+        # The console's config dir (branded %APPDATA%\<package>), not a hardcoded
+        # runspec-console — otherwise a white-label install writes its SSH key to a
+        # stray folder separate from the rest of its state.
+        key_dir = config_mod.app_dir()
         canonical = key_dir / "runspec_ed25519"
 
         if canonical.exists():
@@ -1046,7 +1048,9 @@ class ConfigSshMixin:
         }
 
     def _do_rotate_ssh_key(self) -> dict[str, Any]:
-        key_dir = Path(os.environ.get("APPDATA", "~")).expanduser() / "runspec-console"
+        # The console's config dir (branded %APPDATA%\<package>), not a hardcoded
+        # runspec-console — same as _regenerate_ssh_key above.
+        key_dir = config_mod.app_dir()
         canonical = key_dir / "runspec_ed25519"
         new_path = key_dir / "runspec_ed25519.new"
 

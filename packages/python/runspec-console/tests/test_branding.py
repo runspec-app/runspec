@@ -4,8 +4,9 @@ config-seed package.
 
 The window title, docs link, and update-check package follow whichever installed
 distribution supplies the configured provider, else the single package that
-contributes a config seed (the AI-off / adapter-less white-label case); an
-explicit ``[console.theme] brand_name`` overrides the title. A built-in / unset
+contributes a config seed (the AI-off / adapter-less white-label case). The title
+is the prettified distribution name and is independent of
+``[console.theme] brand_name`` (which titles the sidebar). A built-in / unset
 provider with no seed package falls back to runspec's own identity. Resolution
 must never raise into the UI.
 """
@@ -272,17 +273,17 @@ class TestConfigSeedBranding(unittest.TestCase):
         self.assertEqual(b.version_package, "runspec-console")
 
 
-class TestBrandNameOverride(unittest.TestCase):
-    """[console.theme] brand_name is the explicit display override — it titles the
-    window (matching the sidebar) even without any white-label distribution."""
+class TestBrandNameDoesNotTitleWindow(unittest.TestCase):
+    """[console.theme] brand_name titles the *sidebar* (frontend), never the
+    window title — the window title is the prettified distribution name, so the
+    two aren't duplicated."""
 
-    def test_brand_name_titles_without_dist(self) -> None:
+    def test_brand_name_does_not_set_title_without_dist(self) -> None:
         b = _resolve({"console": {"ai": False, "theme": {"brand_name": "Acme Fleet"}}})
-        self.assertEqual(b.title, "Acme Fleet")
-        # No dist ⇒ version-check package stays runspec-console.
+        self.assertEqual(b.title, "runspec console")  # not "Acme Fleet"
         self.assertEqual(b.version_package, "runspec-console")
 
-    def test_brand_name_wins_over_dist_title_but_not_version(self) -> None:
+    def test_title_is_prettified_dist_name_ignoring_brand_name(self) -> None:
         dist = _FakeDist(
             "mycorp-console", project_urls=["Documentation, https://docs.mycorp.com"]
         )
@@ -293,13 +294,21 @@ class TestBrandNameOverride(unittest.TestCase):
             },
             entry_points=[_FakeEP("mycorp", dist)],
         )
-        self.assertEqual(b.title, "Acme Fleet")  # display override
-        self.assertEqual(b.version_package, "mycorp-console")  # real dist name
+        # brand_name is ignored for the title; the package name is prettified.
+        self.assertEqual(b.title, "Mycorp Console")
+        self.assertEqual(b.version_package, "mycorp-console")
         self.assertEqual(b.docs_url, "https://docs.mycorp.com")
 
-    def test_blank_brand_name_ignored(self) -> None:
-        b = _resolve({"console": {"theme": {"brand_name": "   "}}})
-        self.assertEqual(b.title, "runspec console")
+    def test_seed_only_white_label_title_is_prettified_dist_name(self) -> None:
+        # The reported case: adapter-less package with brand_name set. The window
+        # title must be the package name (Jason Console), not the brand_name.
+        dist = _FakeDist("jason-console")
+        b = _resolve(
+            {"console": {"ai": False, "theme": {"brand_name": "Jason's Fleet"}}},
+            seed_entry_points=[_FakeEP("jason", dist)],
+        )
+        self.assertEqual(b.title, "Jason Console")
+        self.assertEqual(b.version_package, "jason-console")
 
 
 class TestNeverRaises(unittest.TestCase):
