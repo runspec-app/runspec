@@ -507,20 +507,77 @@ def test_app_dir_env_var_override(tmp_path, monkeypatch):
     assert c.app_dir() == tmp_path / "env"
 
 
-def test_app_dir_default_appends_runspec_console(tmp_path, monkeypatch):
-    """With no override and no env var, state lives under APPDATA/runspec-console."""
+def test_app_dir_default_is_venv_scoped(tmp_path, monkeypatch):
+    """With no override/env var and running in a venv, state lives under the venv
+    root (`{sys.prefix}/runspec-console`) — isolated per install."""
     monkeypatch.setattr(c, "_APP_DIR_OVERRIDE", None)
     monkeypatch.delenv("RUNSPEC_CONSOLE_DIR", raising=False)
+    monkeypatch.setattr(c, "_venv_config_dir", lambda: tmp_path / "venv-cfg")
+    assert c.app_dir() == tmp_path / "venv-cfg"
+
+
+def test_app_dir_default_non_venv_falls_back_to_appdata(tmp_path, monkeypatch):
+    """A bare (non-venv) interpreter has no private prefix, so it keeps the
+    historic %APPDATA%/runspec-console location."""
+    monkeypatch.setattr(c, "_APP_DIR_OVERRIDE", None)
+    monkeypatch.delenv("RUNSPEC_CONSOLE_DIR", raising=False)
+    monkeypatch.setattr(c, "_venv_config_dir", lambda: None)  # simulate non-venv
     monkeypatch.setenv("APPDATA", str(tmp_path))
     assert c.app_dir() == tmp_path / "runspec-console"
 
 
 def test_set_app_dir_none_clears_override(tmp_path, monkeypatch):
     monkeypatch.delenv("RUNSPEC_CONSOLE_DIR", raising=False)
+    monkeypatch.setattr(c, "_venv_config_dir", lambda: None)  # deterministic default
     monkeypatch.setenv("APPDATA", str(tmp_path))
     c.set_app_dir(tmp_path / "explicit")
     c.set_app_dir(None)
     assert c.app_dir() == tmp_path / "runspec-console"
+
+
+def test_migrate_legacy_profile_adopts_appdata_into_venv(tmp_path, monkeypatch):
+    """A first launch on the venv-scoped default copies the top-level config
+    files from an existing %APPDATA% profile into the venv dir; history subtrees
+    and non-config files are left behind."""
+    legacy = tmp_path / "appdata" / "runspec-console"
+    (legacy / "conversations").mkdir(parents=True)
+    (legacy / "config.toml").write_text("[console]\nai = false\n")
+    (legacy / "runspec_hosts.toml").write_text("[[host]]\nname='a'\n")
+    (legacy / "runspec_mcp_server.json").write_text("{}")
+    (legacy / "runspec-console.log").write_text("noise")  # not a config file
+    (legacy / "conversations" / "c1.json").write_text("{}")  # subtree, not copied
+
+    venv = tmp_path / "venv-cfg"
+    monkeypatch.setattr(c, "_APP_DIR_OVERRIDE", None)
+    monkeypatch.delenv("RUNSPEC_CONSOLE_DIR", raising=False)
+    monkeypatch.setattr(c, "_venv_config_dir", lambda: venv)
+    monkeypatch.setattr(c, "legacy_app_dir", lambda: legacy)
+
+    assert c.migrate_legacy_profile() == venv
+    assert (venv / "config.toml").read_text() == "[console]\nai = false\n"
+    assert (venv / "runspec_hosts.toml").exists()
+    assert (venv / "runspec_mcp_server.json").exists()
+    assert not (venv / "runspec-console.log").exists()  # non-config left behind
+    assert not (venv / "conversations").exists()  # subtree not migrated
+
+    # Idempotent: the venv dir now has a config.toml, so a second call is a no-op.
+    (venv / "runspec_hosts.toml").unlink()
+    assert c.migrate_legacy_profile() is None
+    assert not (venv / "runspec_hosts.toml").exists()
+
+
+def test_migrate_legacy_profile_noop_with_override_or_no_legacy(tmp_path, monkeypatch):
+    monkeypatch.setattr(c, "_venv_config_dir", lambda: tmp_path / "venv-cfg")
+    # --config-dir set ⇒ never migrate (the operator chose that dir).
+    c.set_app_dir(tmp_path / "explicit")
+    try:
+        assert c.migrate_legacy_profile() is None
+    finally:
+        c.set_app_dir(None)
+    # No legacy profile on disk ⇒ a clean install starts empty.
+    monkeypatch.delenv("RUNSPEC_CONSOLE_DIR", raising=False)
+    monkeypatch.setattr(c, "legacy_app_dir", lambda: tmp_path / "nonexistent")
+    assert c.migrate_legacy_profile() is None
 
 
 if __name__ == "__main__":

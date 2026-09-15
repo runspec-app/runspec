@@ -1,9 +1,13 @@
 r"""
 config.py — app-level paths, config file locations, and config I/O helpers.
 
-All persistent state lives under %APPDATA%\runspec-console\ on Windows, unless
-overridden by `runspec-console --config-dir <dir>` / the RUNSPEC_CONSOLE_DIR env
-var (see :func:`app_dir` / :func:`set_app_dir`).
+By default persistent state lives under `{sys.prefix}/runspec-console` — the
+venv (or pipx) root the console is installed in — so two installs are isolated
+without any flag. A bare system interpreter (no venv) falls back to the historic
+%APPDATA%\runspec-console\ location. Both are overridden by `runspec-console
+--config-dir <dir>` / the RUNSPEC_CONSOLE_DIR env var (see :func:`app_dir` /
+:func:`set_app_dir`). On first launch after upgrading, an existing %APPDATA%
+profile is adopted into the venv dir (see :func:`migrate_legacy_profile`).
 """
 
 from __future__ import annotations
@@ -75,6 +79,35 @@ def set_app_dir(path: str | os.PathLike[str] | None) -> None:
     _APP_DIR_OVERRIDE = Path(path).expanduser() if path else None
 
 
+def _in_venv() -> bool:
+    """True when running inside a venv / virtualenv / pipx environment (the
+    normal way the console is installed), where ``sys.prefix`` is the isolated
+    environment root rather than the shared system interpreter."""
+    return sys.prefix != getattr(sys, "base_prefix", sys.prefix)
+
+
+def _venv_config_dir() -> Path | None:
+    """The per-venv config dir (``{sys.prefix}/runspec-console``) when in a venv,
+    else ``None``. ``sys.prefix`` is the venv root — it survives ``pip install
+    -U`` (config lives beside, not inside, ``site-packages``) and is unique per
+    environment, so each installed instance is isolated by default. Returns
+    ``None`` for a bare system interpreter, where writing under the shared prefix
+    would be unwritable / pollute the install — that case keeps the %APPDATA%
+    location below."""
+    return Path(sys.prefix) / "runspec-console" if _in_venv() else None
+
+
+def legacy_app_dir() -> Path:
+    """The pre-venv-scoped default location (``%APPDATA%/runspec-console``, or
+    ``~/AppData/Roaming/runspec-console``). Still the default for a non-venv
+    interpreter; otherwise kept only so :func:`migrate_legacy_profile` can adopt
+    an existing profile into the venv-scoped dir. No side effects (does not
+    create the directory)."""
+    env = os.environ.get("APPDATA")
+    base = Path(env) if env else Path.home() / "AppData" / "Roaming"
+    return base / "runspec-console"
+
+
 def app_dir() -> Path:
     if _APP_DIR_OVERRIDE is not None:
         d = _APP_DIR_OVERRIDE
@@ -83,11 +116,58 @@ def app_dir() -> Path:
         # the console as a subprocess. Same "use the directory directly" rule.
         d = Path(env_override).expanduser()
     else:
-        env = os.environ.get("APPDATA")
-        base = Path(env) if env else Path.home() / "AppData" / "Roaming"
-        d = base / "runspec-console"
+        # Venv-scoped by default so two installs (two venvs / pipx apps) keep
+        # separate hosts/credentials/config without --config-dir. A bare
+        # system interpreter has no private prefix to use, so it keeps the
+        # historical %APPDATA% location.
+        d = _venv_config_dir() or legacy_app_dir()
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def migrate_legacy_profile() -> Path | None:
+    """One-time adoption of a pre-venv-scoped ``%APPDATA%`` profile into the new
+    venv-scoped config dir.
+
+    Copies the top-level config files (the ``*.toml`` config + ``*.json``
+    pointers — *not* the ``conversations/`` / reports subtrees, which are
+    per-profile history, nor the machine-wide run logs) into the active dir when
+    it has no ``config.toml`` yet and a legacy profile exists, so upgrading users
+    keep their hosts/credentials/config. Returns the target dir when files were
+    copied, else ``None``.
+
+    No-op when: an explicit ``--config-dir`` / ``RUNSPEC_CONSOLE_DIR`` is set
+    (the operator chose that dir deliberately), the active dir already holds a
+    profile (never clobber), the active dir *is* the legacy dir (non-venv), or no
+    legacy profile exists (a clean new install starts empty). Idempotent — once
+    the target has a ``config.toml`` it is skipped forever."""
+    if _APP_DIR_OVERRIDE is not None or os.environ.get("RUNSPEC_CONSOLE_DIR"):
+        return None
+    target = app_dir()
+    legacy = legacy_app_dir()
+    if target == legacy or (target / "config.toml").exists() or not legacy.is_dir():
+        return None
+    import shutil
+
+    files = [
+        p for p in legacy.iterdir() if p.is_file() and p.suffix in (".toml", ".json")
+    ]
+    copied = 0
+    for src in files:
+        try:
+            shutil.copy2(src, target / src.name)
+            copied += 1
+        except OSError:
+            logger.warning("could not migrate config file %s", src.name, exc_info=True)
+    if copied:
+        logger.info(
+            "adopted %d config file(s) from the previous profile at %s into %s",
+            copied,
+            legacy,
+            target,
+        )
+        return target
+    return None
 
 
 def hosts_path() -> Path:

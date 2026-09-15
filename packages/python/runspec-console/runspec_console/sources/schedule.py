@@ -263,7 +263,7 @@ def parse_schedule_entry(
     if not ai_enabled and action in AI_SCHEDULE_ACTIONS:
         raise ValueError(
             f"schedule '{sid}' has action '{action}', which runs an agent turn, "
-            "but AI features are disabled in this console ([console] ai = false)"
+            "but AI features are not available in this console"
         )
 
     when = parse_when(data.get("when") or {})

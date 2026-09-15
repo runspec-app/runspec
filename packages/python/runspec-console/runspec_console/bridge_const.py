@@ -420,7 +420,6 @@ _EVENT_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 # false` — chat, runbooks, agent-mode triggers, prompt/runbook/eval schedules,
 # evals, improve synthesis. Distinct from "no model provider configured" (an
 # unset [llm] provider): this one means the operator/seed switched AI off.
-AI_OFF_MESSAGE = (
-    "AI features are disabled in this console ([console] ai = false). "
-    "Set ai = true in config.toml and restart to enable them."
-)
+# Deliberately neutral — it does not name the `[console] ai` switch or how to
+# flip it, so a locked-down console never advertises a way back into AI.
+AI_OFF_MESSAGE = "AI features are not available in this console."

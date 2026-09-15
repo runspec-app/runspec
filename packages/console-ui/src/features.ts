@@ -27,6 +27,14 @@ export const useFeatures = () => useContext(FeaturesContext)
 // Top-level views that exist only for the agent (App.tsx `navTabs` keys).
 export const AI_ONLY_VIEWS: ReadonlySet<string> = new Set(['improve', 'evals'])
 
+// Views hidden when AI is off but not *strictly* agent-only. Triggers lean on
+// the agent for most actions (and a rule-only trigger doesn't earn a top-level
+// tab here), and Rota is presence governance for reactive/agent behaviour —
+// with no agent turns there is nothing for it to gate. This is UI curation, not
+// a hard gate: the backend still runs any rule trigger a seed ships, and the
+// rota gate goes inert when AI is off (see bridge_triggers `_build_*_ok`).
+export const AI_OFF_HIDDEN_VIEWS: ReadonlySet<string> = new Set(['triggers', 'rota'])
+
 // Settings tabs that configure the agent (SettingsDrawer `items` keys). The
 // MCP *Server* tab stays — it gates an external coding agent's fleet calls with
 // no model inside the console, the non-AI-inside demo.
@@ -36,7 +44,9 @@ export const AI_ONLY_SETTINGS: ReadonlySet<string> = new Set([
 
 /** The nav tabs to render for the active feature set (order preserved). */
 export function visibleNavTabs<T extends { key: string }>(tabs: T[], features: Features): T[] {
-  return features.ai ? tabs : tabs.filter(t => !AI_ONLY_VIEWS.has(t.key))
+  return features.ai
+    ? tabs
+    : tabs.filter(t => !AI_ONLY_VIEWS.has(t.key) && !AI_OFF_HIDDEN_VIEWS.has(t.key))
 }
 
 /** The Settings tabs to render for the active feature set (order preserved). */
@@ -48,10 +58,22 @@ export function visibleSettingsTabs<T extends { key: string }>(tabs: T[], featur
 // `sources.schedule.AI_SCHEDULE_ACTIONS` (refused there when AI is off).
 export const AI_SCHEDULE_ACTIONS: ReadonlySet<string> = new Set(['prompt', 'runbook', 'eval'])
 
+// 'event' emits a matchable event with no agent involvement, so the backend
+// never refuses it — but its only consumer is a source="schedule" Trigger, and
+// Triggers are hidden when AI is off (AI_OFF_HIDDEN_VIEWS). A dead option, so we
+// curate it out of the Schedules picker too. Frontend-only, not a backend gate.
+export const AI_OFF_HIDDEN_SCHEDULE_ACTIONS: ReadonlySet<string> = new Set(['event'])
+
 /** The schedule-action options to offer (order preserved). */
 export function visibleScheduleActions<T extends { value: string }>(options: T[], features: Features): T[] {
-  return features.ai ? options : options.filter(o => !AI_SCHEDULE_ACTIONS.has(o.value))
+  return features.ai
+    ? options
+    : options.filter(
+        o => !AI_SCHEDULE_ACTIONS.has(o.value) && !AI_OFF_HIDDEN_SCHEDULE_ACTIONS.has(o.value),
+      )
 }
 
-// What the command bar says instead of sending a chat turn when AI is off.
-export const AI_OFF_COMPOSER_HINT = 'AI is off in this console — type / for runnables or > for saved runs.'
+// What the command bar says instead of sending a chat turn when AI is off. It
+// describes what the bar *does* accept — deliberately without naming AI or how
+// to re-enable it (a locked-down console shouldn't advertise the switch).
+export const AI_OFF_COMPOSER_HINT = 'Type / for runnables or > for saved runs.'

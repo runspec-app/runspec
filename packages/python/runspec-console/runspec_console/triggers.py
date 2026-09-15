@@ -338,13 +338,13 @@ class Trigger:
             if mode != "rule":
                 raise ValueError(
                     f"trigger '{name}' is an agent-mode trigger, but AI features "
-                    "are disabled in this console ([console] ai = false) — set "
-                    'mode = "rule" or enable AI'
+                    'are not available in this console — set mode = "rule" for it '
+                    "to run"
                 )
             if str(data.get("pre_turn") or "").strip():
                 raise ValueError(
                     f"trigger '{name}' has an LLM pre_turn step, but AI features "
-                    "are disabled in this console ([console] ai = false)"
+                    "are not available in this console"
                 )
 
         autonomy = str(data.get("autonomy") or "confirm").strip()

@@ -234,6 +234,36 @@ Phase 2 (vitest):
 
 ---
 
+## Follow-up refinements (0.264.0)
+
+After the first real use of AI-off mode, four adjustments (the inventory tables
+above predate them):
+
+- **Hide Triggers and Rota nav tabs** (`features.AI_OFF_HIDDEN_VIEWS`, filtered
+  in `visibleNavTabs` alongside `AI_ONLY_VIEWS`). Triggers actions lean on the
+  agent, and a rule-only trigger doesn't earn a top-level tab; Rota is presence
+  governance with no agent turns to gate. A seeded rule trigger still runs
+  headless (backend unchanged) — this is UI curation, not a new backend gate.
+  Supersedes A1's "keep Triggers, Rota" and A8 (the editor is no longer reached).
+- **Rota gate inert** (`bridge_triggers._build_clock_ok` / `_build_lock_ok`
+  short-circuit to always-`True` when `_ai_enabled` is false). Lock auto-suspend
+  defaults *on*, so with the Rota tab hidden a stale/seeded rota could otherwise
+  silently suppress a plain runnable schedule.
+- **Hide the "Emit an event" schedule action**
+  (`features.AI_OFF_HIDDEN_SCHEDULE_ACTIONS`). `event` needs no AI so the backend
+  still accepts it, but its only consumer is a `source="schedule"` Trigger — dead
+  with Triggers hidden. UI-only (distinct from `AI_SCHEDULE_ACTIONS`, which
+  mirrors a real backend refusal).
+- **No advertising.** `AI_OFF_MESSAGE`, the command-bar hint, and the
+  trigger/schedule validation errors are neutral — they never name the `[console]
+  ai` switch or how to re-enable it. A locked-down console reads as a fleet tool
+  with no AI, not one hiding AI behind a flag.
+
+Also in 0.264.0 (unrelated to AI-off, but shipped together): the default config
+directory became **venv-scoped** (`{sys.prefix}/runspec-console`) so multiple
+installs isolate without `--config-dir`, with a one-time `%APPDATA%` adoption on
+upgrade (`config.migrate_legacy_profile`). See `docs/console-reference.md`.
+
 ## Explicitly out of scope
 
 - A browser-accessible / headless / always-on web daemon. The operator confirmed

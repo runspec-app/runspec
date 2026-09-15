@@ -8,7 +8,8 @@ import { describe, it, expect } from 'vitest'
 
 import {
   visibleNavTabs, visibleSettingsTabs, visibleScheduleActions,
-  AI_ONLY_VIEWS, AI_ONLY_SETTINGS, AI_SCHEDULE_ACTIONS, DEFAULT_FEATURES,
+  AI_ONLY_VIEWS, AI_OFF_HIDDEN_VIEWS, AI_ONLY_SETTINGS, AI_SCHEDULE_ACTIONS,
+  AI_OFF_HIDDEN_SCHEDULE_ACTIONS, DEFAULT_FEATURES,
 } from './features'
 
 const NAV = ['console', 'history', 'logs', 'analytics', 'improve', 'evals', 'specs', 'forms', 'schedules', 'triggers', 'rota', 'dev']
@@ -29,12 +30,12 @@ describe('features — AI on (default)', () => {
 describe('features — AI off', () => {
   const off = { ai: false }
 
-  it('hides only Improve and Evals; the Console (run output) tab stays', () => {
+  it('hides Improve, Evals, Triggers and Rota; the Console (run output) tab stays', () => {
     const keys = visibleNavTabs(NAV, off).map(t => t.key)
-    expect(keys).toEqual(['console', 'history', 'logs', 'analytics', 'specs', 'forms', 'schedules', 'triggers', 'rota', 'dev'])
-    expect(keys).not.toContain('improve')
-    expect(keys).not.toContain('evals')
+    expect(keys).toEqual(['console', 'history', 'logs', 'analytics', 'specs', 'forms', 'schedules', 'dev'])
+    for (const k of ['improve', 'evals', 'triggers', 'rota']) expect(keys).not.toContain(k)
     expect([...AI_ONLY_VIEWS]).toEqual(['improve', 'evals'])
+    expect([...AI_OFF_HIDDEN_VIEWS]).toEqual(['triggers', 'rota'])
   })
 
   it('hides the agent Settings tabs but keeps MCP Server and the fleet tabs', () => {
@@ -43,9 +44,12 @@ describe('features — AI off', () => {
     expect(keys).toEqual(['ssh', 'jumpHosts', 'localVenvs', 'savedRuns', 'selfService', 'filters', 'repos', 'credentials', 'denylist', 'mcpServer', 'configSync', 'mailbox', 'teams', 'sounds'])
   })
 
-  it('drops the agent-turn schedule actions (mirrors the backend set)', () => {
+  it('drops the agent-turn schedule actions plus the dead event action', () => {
     const values = visibleScheduleActions(ACTIONS, off).map(o => o.value)
-    expect(values).toEqual(['runnable', 'saved_run', 'event'])
+    // prompt/runbook/eval (agent turns) AND event (its only consumer, a
+    // source="schedule" Trigger, is hidden when AI is off) all drop.
+    expect(values).toEqual(['runnable', 'saved_run'])
     expect([...AI_SCHEDULE_ACTIONS].sort()).toEqual(['eval', 'prompt', 'runbook'])
+    expect([...AI_OFF_HIDDEN_SCHEDULE_ACTIONS]).toEqual(['event'])
   })
 })

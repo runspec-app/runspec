@@ -8,6 +8,43 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.264.0] — 2026-09-15
+
+### Changed
+- **Venv-scoped config directory by default.** Console config now lives under
+  the venv it's installed in — `{sys.prefix}/runspec-console/` — instead of a
+  single shared `%APPDATA%/runspec-console/`, so two installs (two venvs, or two
+  `pipx` apps) keep separate hosts/credentials/config with no `--config-dir`
+  needed. A bare (non-venv) interpreter keeps the historic `%APPDATA%` location.
+  On first launch after upgrading, an existing `%APPDATA%` profile's config files
+  are copied into the venv folder (`config.migrate_legacy_profile` — top-level
+  `*.toml`/`*.json` only, not history/report subtrees), so nothing is lost.
+  `--config-dir` / `RUNSPEC_CONSOLE_DIR` still override everything.
+- **AI-off console no longer advertises AI.** With `[console] ai = false` the
+  command bar hint, the shared refusal message (`AI_OFF_MESSAGE`), the
+  trigger/schedule validation errors and the agent-mode-trigger warning are all
+  neutral — they describe only what the fleet tool accepts and never name the
+  `[console] ai` switch or how to re-enable it. A locked-down deployment reads as
+  a fleet tool with no AI, not one hiding AI behind a flag.
+
+### AI-off UI
+- **Triggers and Rota tabs are hidden** with AI off (Triggers actions lean on the
+  agent; Rota is presence governance with no agent turns to gate). A seeded rule
+  trigger still runs in the backend — it just has no tab.
+- **The Rota gate goes inert** with AI off (`_build_clock_ok` / `_build_lock_ok`
+  short-circuit), so a stale or seeded rota — including lock auto-suspend, which
+  defaults on — can never silently suppress a plain runnable schedule.
+- **The "Emit an event" schedule action is hidden** with AI off: its only
+  consumer is a `source="schedule"` Trigger, and the Triggers tab is now hidden.
+  (`event` needs no AI, so the backend still accepts it — this is UI curation.)
+
+### Docs
+- Document that **History / Analytics / Logs are machine/venv-wide**, read from
+  the venv's `logs/` + `~/logs` (written by each runnable, not the console), so a
+  fresh `--config-dir` starts with empty *config* but still shows the venv's run
+  history. Point the console at a different venv for a separate run history.
+
+
 ## [0.263.1] — 2026-09-15
 
 ### Fixed

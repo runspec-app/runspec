@@ -163,11 +163,11 @@ def test_bridge_create_and_update_schedule_refuse_agent_actions(
     monkeypatch.setattr(config_mod, "hosts_path", lambda: tmp_path / "hosts.toml")
     monkeypatch.setattr(off_bridge, "restart_triggers", lambda: None)
     for action in ("prompt", "runbook", "skill", "eval"):
-        with pytest.raises(ValueError, match="AI features are disabled"):
+        with pytest.raises(ValueError, match="AI features are not available"):
             off_bridge.create_schedule(
                 {"id": "j", "action": action, "when": {"every": "5m"}}
             )
-        with pytest.raises(ValueError, match="AI features are disabled"):
+        with pytest.raises(ValueError, match="AI features are not available"):
             off_bridge.update_schedule("j", {"action": action, "when": {"every": "5m"}})
     assert not (tmp_path / "runspec_schedules.toml").exists()
     # A runnable schedule still writes.
@@ -195,7 +195,8 @@ def test_action_create_schedule_tool_refuses(off_bridge, monkeypatch, tmp_path):
         }
     )
     assert (
-        out.startswith("Error: invalid schedule") and "AI features are disabled" in out
+        out.startswith("Error: invalid schedule")
+        and "AI features are not available" in out
     )
 
 
@@ -223,6 +224,31 @@ def test_trigger_agent_turn_and_pre_turn_are_inert(off_bridge):
     assert off_bridge._trigger_run_pre_turn("c1", "extract", "event text") == {}
 
 
+def test_rota_gate_is_inert_when_ai_off(off_bridge, monkeypatch):
+    """With AI off the rota gates go no-op — even a rota that *would* suppress
+    (enabled + working hours that exclude now, screen locked) can't hold back a
+    plain runnable schedule, since there is no agent behaviour to govern and the
+    Rota tab is hidden."""
+    from runspec_console import config as cfg
+    from runspec_console import winlock
+
+    # A rota that an AI-on console would honour: enabled, lock-suspend on.
+    monkeypatch.setattr(
+        cfg, "read_rota", lambda: {"enabled": True, "lock_suspend": True}
+    )
+    # Present the most suppressive live state: screen locked, break not relevant.
+    monkeypatch.setattr(winlock, "screen_lock_state", lambda: "locked")
+    monkeypatch.setattr(winlock, "is_screen_locked", lambda: True)
+
+    assert off_bridge._build_clock_ok()() is True
+    assert off_bridge._build_lock_ok()() is True
+
+    # Contrast: an AI-on bridge honours lock-suspend and reports the locked state.
+    monkeypatch.setattr(config_mod, "ai_enabled", lambda: True)
+    on_bridge = Bridge()
+    assert on_bridge._build_lock_ok()() is False
+
+
 # ── pure validators: triggers ────────────────────────────────────────────────
 
 
@@ -233,7 +259,9 @@ def _trigger(**over):
 
 
 def test_trigger_agent_mode_refused_when_ai_off():
-    with pytest.raises(ValueError, match="agent-mode trigger.*ai = false"):
+    # The refusal is actionable (use rule mode) but never names the [console] ai
+    # switch or how to re-enable it — a locked-down console doesn't advertise it.
+    with pytest.raises(ValueError, match="agent-mode trigger.*not available"):
         Trigger.from_config(_trigger(), ai_enabled=False)  # mode defaults to agent
     with pytest.raises(ValueError, match="agent-mode trigger"):
         Trigger.from_config(_trigger(mode="agent"), ai_enabled=False)
@@ -241,7 +269,7 @@ def test_trigger_agent_mode_refused_when_ai_off():
 
 def test_trigger_pre_turn_refused_when_ai_off():
     data = _trigger(mode="rule", run="h__r", pre_turn="extract the ticket id")
-    with pytest.raises(ValueError, match="pre_turn.*ai = false"):
+    with pytest.raises(ValueError, match="pre_turn.*not available"):
         Trigger.from_config(data, ai_enabled=False)
     # Same trigger is fine with AI on, and a rule trigger without pre_turn loads.
     assert Trigger.from_config(data).pre_turn == "extract the ticket id"
@@ -258,7 +286,7 @@ def test_load_triggers_reports_agent_triggers_as_errors_when_ai_off():
         ai_enabled=False,
     )
     assert [t.name for t in triggers] == ["rule"]
-    assert len(errors) == 1 and "agentic" in errors[0] and "ai = false" in errors[0]
+    assert len(errors) == 1 and "agentic" in errors[0] and "not available" in errors[0]
     # Default keeps today's behaviour: both load.
     triggers, errors = load_triggers(
         [_trigger(name="agentic"), _trigger(name="rule", mode="rule", run="h__r")]
@@ -280,7 +308,7 @@ def test_load_triggers_reports_agent_triggers_as_errors_when_ai_off():
 )
 def test_schedule_agent_actions_refused_when_ai_off(entry):
     entry = {**entry, "when": {"every": "5m"}}
-    with pytest.raises(ValueError, match="runs an agent turn.*ai = false"):
+    with pytest.raises(ValueError, match="runs an agent turn.*not available"):
         parse_schedule_entry(entry, ai_enabled=False)
     # Unchanged with AI on.
     assert parse_schedule_entry(entry).action in AI_SCHEDULE_ACTIONS

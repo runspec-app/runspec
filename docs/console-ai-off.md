@@ -23,9 +23,9 @@ Two reasons to want this:
 | Keeps working | Goes away |
 |---|---|
 | **Console** tab as the run-output pane (command bar `/` runnables and `>` saved runs, Forms runs, History reruns) | Chat: plain text in the command bar, conversation History, "Ask the assistant", include-in-context toggles, the context gauge |
-| **Forms**, **History**, **Logs**, **Analytics**, **Specs**, **Rota**, **Dev** | **Improve** and **Evals** tabs |
-| **Schedules** — `runnable`, `saved_run`, `event` actions | `prompt`, `runbook` and `eval` schedules (refused as invalid) |
-| **Triggers** — rule mode (fixed run, single or multiple runnables, claim gate, replies) | Agent-mode triggers and a rule's LLM `pre_turn` (refused as invalid) |
+| **Forms**, **History**, **Logs**, **Analytics**, **Specs**, **Dev** | **Improve**, **Evals**, **Triggers** and **Rota** tabs |
+| **Schedules** — `runnable`, `saved_run` actions | `prompt`, `runbook` and `eval` schedules (refused as invalid); the `event` action is hidden (its only consumer is a Triggers rule) |
+| A seeded **rule trigger still runs** in the backend (fixed run, claim gate, replies) — it just has no tab | The **Triggers** editor; agent-mode triggers and a rule's LLM `pre_turn` (refused as invalid); the **Rota** gate goes inert, so it never suppresses a runnable schedule |
 | **Rooms** — join, read, reply; portal requests for runnables are enacted | Runbooks in the room catalog; agent replies / claim cards from agent-mode chat triggers |
 | Settings: SSH, Jump Hosts, Local venvs, Saved runs, Self-Service, Filters, Repos, Credentials, Denylist, **MCP Server**, Config Sync, Mailbox, Teams, Sounds | Settings: Model / API, Agent tools, Runbooks, MCP (client), Chat History, Telemetry |
 | **The console as an MCP server** — an *external* coding agent (Claude Code) still reaches the fleet through the console's confirm gate | Tracing, external MCP servers and the code sandbox are not started (they only serve the agent) |
@@ -35,7 +35,13 @@ honest. An agent-mode trigger or a `prompt` schedule that lands in a seeded file
 shows as **invalid with a clear reason**, it never silently runs as something
 else; `send_chat` / `run_runbook` / `run_evals` return one message:
 
-> AI features are disabled in this console ([console] ai = false).
+> AI features are not available in this console.
+
+**No advertising.** A console with AI off never names the `[console] ai` switch
+or tells anyone how to turn it back on — the command bar, refusal messages and
+warnings describe only what the fleet tool *does* accept. A locked-down
+deployment reads as a fleet tool that simply has no AI, not one with AI hidden
+behind a flag.
 
 ## How the flag behaves
 

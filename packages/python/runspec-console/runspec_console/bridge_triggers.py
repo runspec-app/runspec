@@ -225,6 +225,14 @@ class TriggersMixin:
         from .triggers import _DAYS, within_rota
         from .winlock import is_screen_locked
 
+        # AI off ([console] ai = false): the rota is presence governance for
+        # reactive/agent behaviour, and its config surface (the Rota tab) is
+        # hidden. With no agent turns to gate, keep it inert so a stale or seeded
+        # rota can never silently suppress a plain runnable schedule. See
+        # features.ts AI_OFF_HIDDEN_VIEWS.
+        if not getattr(self, "_ai_enabled", True):
+            return lambda: True
+
         rota = read_rota()
         grid_configured = any(isinstance(rota.get(d), dict) for d in _DAYS)
 
@@ -271,6 +279,12 @@ class TriggersMixin:
         is read live."""
         from .config import read_rota
         from .winlock import screen_lock_state
+
+        # AI off: nothing reactive to gate, and the Rota toggle is hidden — keep
+        # lock auto-suspend (which defaults on) inert so it never suppresses a
+        # runnable schedule. Mirrors _build_clock_ok.
+        if not getattr(self, "_ai_enabled", True):
+            return lambda: True
 
         enabled = bool(read_rota().get("lock_suspend", True))
 

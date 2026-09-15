@@ -1,7 +1,22 @@
 # Settings & config reference
 
-Everything the console persists lives in one folder:
-`%APPDATA%\runspec-console\` (macOS/Linux: `~/AppData/Roaming/runspec-console/`).
+Everything the console persists lives in one folder. By default that is the
+**venv the console is installed in** — `{sys.prefix}/runspec-console/` — so two
+installs (two venvs, or two `pipx` apps) keep separate hosts, credentials and
+config without any flag. A console run from a bare system interpreter (no venv)
+falls back to the historic `%APPDATA%\runspec-console\` (macOS/Linux:
+`~/AppData/Roaming/runspec-console/`); on first launch after upgrading, an
+existing `%APPDATA%` profile is copied into the venv folder so nothing is lost.
+`--config-dir <dir>` (or `RUNSPEC_CONSOLE_DIR`) overrides the location entirely.
+
+> **Run history is machine/venv-wide, not config-scoped.** The **History**,
+> **Analytics** and **Logs** tabs read each runnable's audit logs from the venv's
+> `logs/` dir and `~/logs` — written by the runnable itself, not by the console —
+> so they show what actually ran on this host/venv regardless of `--config-dir`.
+> A fresh `--config-dir` therefore starts with empty *config* but still shows the
+> venv's existing run history. Point the console at a different venv for a
+> separate run history.
+
 The Settings UI manages these files; this page is the map for when you want
 to read, seed, or sync them directly. All files are plain TOML.
 
@@ -310,11 +325,14 @@ runspec-console --dev                 # attach to a running Vite dev server (UI 
 runspec-console --config-dir ./cfg    # isolate all console state in a directory (testing)
 ```
 
-`--config-dir <dir>` overrides the default `%APPDATA%/runspec-console` location
-for **all** console state (hosts, credentials, triggers, `config.toml`, …) so a
-test instance stays isolated from your real profile. Equivalent env var:
+`--config-dir <dir>` overrides the default location (the venv folder, or
+`%APPDATA%/runspec-console` on a non-venv interpreter) for **all** console
+*config* state (hosts, credentials, triggers, `config.toml`, …) so a test
+instance stays isolated from your real profile. Equivalent env var:
 `RUNSPEC_CONSOLE_DIR` (the flag takes precedence when both are set). The
-directory is created if it doesn't exist.
+directory is created if it doesn't exist. Note it does **not** isolate the
+History/Analytics/Logs tabs — those are venv-scoped run logs (see the note at
+the top of this page).
 
 ## Troubleshooting
 

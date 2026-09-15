@@ -721,8 +721,8 @@ export function TriggersEditor({
 
           {!ai && mode === 'agent' && (
             <Alert type="warning" showIcon style={{ marginBottom: 12 }}
-              message="AI is off in this console — this agent-mode trigger will not run"
-              description="Switch it to Rule (fixed run) so it runs a runnable directly, or enable [console] ai and restart." />
+              message="This agent-mode trigger will not run in this console"
+              description="Switch it to Rule (fixed run) so it runs a runnable directly." />
           )}
           {(ai || mode === 'agent') && (
             <Form.Item name="mode" label="Mode">
