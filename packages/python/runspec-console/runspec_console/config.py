@@ -570,6 +570,11 @@ def read_mcp() -> dict[str, Any]:
     * ``command`` / ``args`` / ``env`` / ``cwd`` — for a ``stdio`` server.
     * ``url`` / ``headers`` — for an ``http`` / ``sse`` server.
     * ``enabled`` (default true) — per-server toggle.
+    * ``call_timeout`` / ``connect_timeout`` — per-server overrides of the
+      section defaults above (seconds). A positive value overrides just this
+      server's call / connect deadline; absent (or non-positive) ⇒ inherit the
+      ``[mcp]`` default — so a single slow server can be given a longer leash
+      without loosening the whole fleet.
     * ``autonomy`` — ``autonomous`` / ``confirm`` / ``manual`` override for this
       server's tools. Unset ⇒ ``confirm`` (an external tool is a side effect
       until the operator trusts the server): trust is opt-in, as elsewhere.
@@ -596,6 +601,17 @@ def read_mcp() -> dict[str, Any]:
       networks each get their own egress. Mirrors ``[ssh] proxy`` / Config Sync's
       ``proxy``. Applies to ``http`` / ``sse``; for ``stdio`` it is exported to
       the subprocess as ``HTTPS_PROXY`` / ``HTTP_PROXY`` / ``ALL_PROXY``."""
+
+    def _server_timeout(v: Any) -> float | None:
+        """A per-server timeout override: a positive number, else ``None`` to
+        inherit the section default. TOML can't store ``None`` (an absent key is
+        the inherit case), and a non-positive value is treated as "inherit" too."""
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return None
+        return f if f > 0 else None
+
     raw = read_config().get("mcp")
     cfg = dict(raw) if isinstance(raw, dict) else {}
     servers: list[dict[str, Any]] = []
@@ -644,6 +660,8 @@ def read_mcp() -> dict[str, Any]:
                     "credential": str(s.get("credential") or "").strip(),
                     "credential_header": str(s.get("credential_header") or "").strip(),
                     "proxy": str(s.get("proxy") or "").strip(),
+                    "call_timeout": _server_timeout(s.get("call_timeout")),
+                    "connect_timeout": _server_timeout(s.get("connect_timeout")),
                 }
             )
     return {
@@ -770,6 +788,17 @@ def _clean_mcp_server(raw: dict[str, Any]) -> dict[str, Any]:
         val = str(raw.get(key) or "").strip()
         if val:
             out[key] = val
+    # Per-server timeout overrides — only a positive number is written; empty /
+    # 0 / non-numeric means "inherit the section default", so it stays out of
+    # config.toml (matching the read side that treats absent as inherit).
+    for key in ("call_timeout", "connect_timeout"):
+        raw_val = raw.get(key)
+        try:
+            num = float(raw_val)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            num = 0.0
+        if num > 0:
+            out[key] = num
     if raw.get("enabled") is False:
         out["enabled"] = False
     return out

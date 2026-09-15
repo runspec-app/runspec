@@ -30,8 +30,9 @@ on/off switch, and the connect/call timeouts. The edit dialog has the transport
 picker, the
 transport-specific fields (command/args/env or url/headers), a **credential**
 dropdown (from your Credentials tab), the credential-header override, the proxy,
-and the autonomy level. Saving validates the entry, writes `config.toml`, and
-reconnects immediately.
+per-server timeout overrides, and the autonomy level. Saving validates the entry,
+writes `config.toml`, and reconnects immediately. Each row also has an inline
+**Enabled** switch, so a server can be toggled without opening its editor.
 
 Everything the tab writes is plain `config.toml`, so you can also hand-edit it.
 Each server is a `[[mcp.servers]]` entry. Three transports are supported:
@@ -39,8 +40,8 @@ Each server is a `[[mcp.servers]]` entry. Three transports are supported:
 ```toml
 [mcp]
 # enabled = true            # section kill switch (default true)
-# call_timeout = 60         # seconds per tool call
-# connect_timeout = 20      # seconds to wait for the initial connect
+# call_timeout = 60         # default seconds per tool call (all servers)
+# connect_timeout = 20      # default seconds to wait for the initial connect (all servers)
 
 # A local server started as a subprocess (stdio).
 [[mcp.servers]]
@@ -59,6 +60,8 @@ transport = "http"
 url = "https://mcp.example.com/mcp"
 credential = "cred-search-token"   # keychain-backed; becomes Authorization: Bearer
 proxy = "http://proxy.corp:8080"   # this server's egress (see "Per-server proxy")
+call_timeout = 300                 # override just this server's per-call deadline
+# connect_timeout = 45             # …and/or its connect wait; omit to inherit [mcp]
 
 # A remote server over SSE with a custom auth header.
 [[mcp.servers]]
@@ -77,7 +80,8 @@ Fields:
 | `transport` | all | `stdio`, `http` (streamable-HTTP), or `sse`. Inferred from `command`/`url` if omitted. |
 | `command` / `args` / `env` / `cwd` | stdio | The subprocess to spawn. `env` is added on top of the console's environment. |
 | `url` / `headers` | http, sse | The server endpoint and any auth headers. |
-| `enabled` | all | Per-server toggle (default true). |
+| `enabled` | all | Per-server toggle (default true). Also an inline switch on the row. |
+| `call_timeout` / `connect_timeout` | all | Per-server overrides (seconds) of the section defaults above. A positive value overrides just this server's per-call / connect deadline; omit (or 0) to inherit the `[mcp]` default. Lets one slow server get a longer leash without loosening the fleet. |
 | `autonomy` | all | `confirm` (default), `autonomous`, or `manual` for this server's tools. |
 | `credential` | all | A named-credential id (Settings → Credentials) — see [Credentials](#credentials). |
 | `credential_header` | http, sse | Header the secret is sent under (default `Authorization`). |

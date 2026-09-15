@@ -818,7 +818,7 @@ export const mockApi: BridgeApi = {
     connect_timeout: 20,
     servers: [
       { name: 'files', transport: 'stdio', command: 'uvx', args: ['mcp-server-filesystem', '/srv'], enabled: true, autonomy: '' },
-      { name: 'search', transport: 'http', url: 'https://mcp.example.com/mcp', credential: 'svc-prod', proxy: 'http://proxy.corp:8080', enabled: true, autonomy: 'autonomous' },
+      { name: 'search', transport: 'http', url: 'https://mcp.example.com/mcp', credential: 'svc-prod', proxy: 'http://proxy.corp:8080', enabled: true, autonomy: 'autonomous', call_timeout: 120 },
       { name: 'atlassian', transport: 'http', url: 'https://mcp.atlassian.example/mcp', enabled: true, autonomy: 'confirm',
         header_credentials: [
           { header: 'X-Jira-PAT', credential: 'jira-pat' },

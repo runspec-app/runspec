@@ -5012,6 +5012,10 @@ export function McpTab() {
       proxy: (draft.proxy ?? '').trim(),
       command: (draft.command ?? '').trim(),
       url: (draft.url ?? '').trim(),
+      // A positive number overrides the section default; anything else inherits
+      // (kept null so the backend drops it from config.toml).
+      connect_timeout: typeof draft.connect_timeout === 'number' && draft.connect_timeout > 0 ? draft.connect_timeout : null,
+      call_timeout: typeof draft.call_timeout === 'number' && draft.call_timeout > 0 ? draft.call_timeout : null,
     }
     if (!s.name) { message.error('Name is required'); return }
     const dup = servers.some((o, i) => o.name === s.name && i !== editing)
@@ -5021,6 +5025,10 @@ export function McpTab() {
   }
 
   const remove = async (i: number) => { await persist(servers.filter((_, idx) => idx !== i)) }
+  // Inline per-entry enable/disable — no need to open the edit dialog.
+  const toggleEnabled = async (i: number, val: boolean) => {
+    await persist(servers.map((s, idx) => (idx === i ? { ...s, enabled: val } : s)))
+  }
   const reconnect = async () => { setBusy(true); try { setStatus(await bridge.mcp_reload()) } finally { setBusy(false) } }
 
   const isRemote = draft.transport === 'http' || draft.transport === 'sse'
@@ -5032,6 +5040,9 @@ export function McpTab() {
     { title: 'Endpoint', key: 'endpoint', render: (_: unknown, s: McpServer) => <Text style={{ fontSize: 13 }} type="secondary">{s.transport === 'stdio' ? [s.command, ...(s.args ?? [])].filter(Boolean).join(' ') : s.url}</Text> },
     { title: 'Auth', key: 'auth', render: (_: unknown, s: McpServer) => s.credential ? <Tag icon={<KeyOutlined />}>{s.credential}</Tag> : <Text type="secondary" style={{ fontSize: 13 }}>—</Text> },
     { title: 'Status', key: 'status', render: (_: unknown, s: McpServer) => s.enabled === false ? <Tag>disabled</Tag> : <McpServerStatusTag st={statusFor(s.name)} /> },
+    { title: 'Enabled', key: 'enabled', width: 80, render: (_: unknown, s: McpServer, i: number) => (
+      <Switch size="small" checked={s.enabled !== false} loading={busy} onChange={v => toggleEnabled(i, v)} aria-label={`Enable ${s.name}`} />
+    ) },
     { title: '', key: 'actions', width: 90, render: (_: unknown, _s: McpServer, i: number) => (
       <Space>
         <EditOutlined onClick={() => startEdit(i)} />
@@ -5065,16 +5076,19 @@ export function McpTab() {
           <Text style={{ fontSize: 13 }}>Enable external MCP servers</Text>
         </Space>
         <Space>
-          <Text style={{ fontSize: 13 }} type="secondary">Connect timeout</Text>
-          <InputNumber size="small" min={1} max={600} value={connectTimeout} style={{ width: 90 }} aria-label="Connect timeout"
+          <Text style={{ fontSize: 13 }} type="secondary">Default connect timeout</Text>
+          <InputNumber size="small" min={1} max={600} value={connectTimeout} style={{ width: 90 }} aria-label="Default connect timeout"
             onChange={v => setConnectTimeout(v ?? 20)} onBlur={commitTimeouts} onPressEnter={commitTimeouts} addonAfter="s" />
         </Space>
         <Space>
-          <Text style={{ fontSize: 13 }} type="secondary">Call timeout</Text>
-          <InputNumber size="small" min={1} max={3600} value={callTimeout} style={{ width: 90 }} aria-label="Call timeout"
+          <Text style={{ fontSize: 13 }} type="secondary">Default call timeout</Text>
+          <InputNumber size="small" min={1} max={3600} value={callTimeout} style={{ width: 90 }} aria-label="Default call timeout"
             onChange={v => setCallTimeout(v ?? 60)} onBlur={commitTimeouts} onPressEnter={commitTimeouts} addonAfter="s" />
         </Space>
       </Space>
+      <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: -6, marginBottom: 12 }}>
+        These apply to every server unless a server sets its own override (in its edit dialog).
+      </Text>
 
       {servers.length === 0
         ? <Empty description="No MCP servers configured" image={Empty.PRESENTED_IMAGE_SIMPLE} />
@@ -5144,6 +5158,24 @@ export function McpTab() {
           )}
           <Form.Item label="Proxy" tooltip="Per-server HTTP CONNECT proxy — for servers on a different corporate network. Applies to http/sse; exported as *_PROXY for a stdio subprocess.">
             <Input placeholder="http://proxy:8080 (optional)" style={{ fontFamily: MONO_FONT }} value={draft.proxy} onChange={e => setDraft({ ...draft, proxy: e.target.value })} />
+          </Form.Item>
+          <Form.Item label="Timeout overrides" tooltip="Override the section's default connect / call timeouts for just this server. Leave blank to inherit.">
+            <Space size="large">
+              <Space size={6}>
+                <Text style={{ fontSize: 13 }} type="secondary">Connect</Text>
+                <InputNumber min={1} max={600} style={{ width: 130 }} aria-label="Connect timeout override"
+                  placeholder={`${connectTimeout} (default)`} addonAfter="s"
+                  value={draft.connect_timeout ?? undefined}
+                  onChange={v => setDraft({ ...draft, connect_timeout: typeof v === 'number' ? v : null })} />
+              </Space>
+              <Space size={6}>
+                <Text style={{ fontSize: 13 }} type="secondary">Call</Text>
+                <InputNumber min={1} max={3600} style={{ width: 130 }} aria-label="Call timeout override"
+                  placeholder={`${callTimeout} (default)`} addonAfter="s"
+                  value={draft.call_timeout ?? undefined}
+                  onChange={v => setDraft({ ...draft, call_timeout: typeof v === 'number' ? v : null })} />
+              </Space>
+            </Space>
           </Form.Item>
           <Form.Item label="Autonomy" tooltip="How this server's tools are gated. Confirm is safe-by-default.">
             <Select options={MCP_AUTONOMY} value={draft.autonomy ?? ''} onChange={v => setDraft({ ...draft, autonomy: v })} />

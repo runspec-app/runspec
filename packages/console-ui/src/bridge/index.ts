@@ -215,6 +215,11 @@ export interface McpServer {
   // is resolved at connect time and never written to config.
   header_credentials?: McpHeaderCredential[]
   proxy?: string
+  // Per-server overrides of the section's default timeouts (seconds). A positive
+  // value overrides just this server's deadline; unset / 0 ⇒ inherit the [mcp]
+  // call_timeout / connect_timeout that apply to all servers.
+  call_timeout?: number | null
+  connect_timeout?: number | null
 }
 export interface McpHeaderCredential {
   header: string

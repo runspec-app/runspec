@@ -179,6 +179,41 @@ describe('McpTab', () => {
     expect(search.credential).toBe('')
   })
 
+  it('toggling a row\'s inline enable switch persists just that server', async () => {
+    render(<McpTab />)
+    await screen.findByText('search')
+    const user = userEvent.setup()
+    // The per-row switch is labelled "Enable <name>"; toggling 'search' off.
+    const rowSwitch = screen.getByRole('switch', { name: 'Enable search' })
+    await act(async () => { await user.click(rowSwitch) })
+    await waitFor(() => expect(saveMcpConfig).toHaveBeenCalled())
+    const payload = saveMcpConfig.mock.calls[saveMcpConfig.mock.calls.length - 1][0]
+    const files = payload.servers.find((s: { name: string }) => s.name === 'files')
+    const search = payload.servers.find((s: { name: string }) => s.name === 'search')
+    expect(search.enabled).toBe(false)
+    expect(files.enabled).toBe(true)  // the other server is untouched
+  })
+
+  it('saves a per-server timeout override entered in the editor', async () => {
+    render(<McpTab />)
+    await screen.findByText('search')
+    const user = userEvent.setup()
+    const edits = document.querySelectorAll('.anticon-edit')
+    await act(async () => { await user.click(edits[1]) })  // 'search' row
+    const call = await screen.findByRole('spinbutton', { name: /call timeout override/i })
+    await act(async () => {
+      await user.clear(call)
+      await user.type(call, '120')
+    })
+    await act(async () => { await user.click(document.querySelector('.ant-modal-footer .ant-btn-primary')!) })
+    await waitFor(() => expect(saveMcpConfig).toHaveBeenCalled())
+    const payload = saveMcpConfig.mock.calls[saveMcpConfig.mock.calls.length - 1][0]
+    const search = payload.servers.find((s: { name: string }) => s.name === 'search')
+    expect(search.call_timeout).toBe(120)
+    // The untouched connect override stays null (inherit the section default).
+    expect(search.connect_timeout).toBeNull()
+  })
+
   it('toggling the section enable persists it', async () => {
     render(<McpTab />)
     await screen.findByText('Enable external MCP servers')

@@ -8,6 +8,26 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.263.0] — 2026-09-15
+
+### Added
+- **Per-server enable + connection-setting overrides for external MCP servers
+  (`[mcp]` / Settings → MCP).** The section had one enable switch and one pair of
+  connect/call timeouts that applied to *every* server. Now each
+  `[[mcp.servers]]` entry can also carry its own `call_timeout` /
+  `connect_timeout` (seconds) — a positive value overrides just that server's
+  deadline, omit (or 0) to inherit the section default — so one slow server gets
+  a longer leash without loosening the whole fleet. The MCP tab renders the two
+  overrides in the server's edit dialog (blank ⇒ inherit, placeholder shows the
+  default) and surfaces per-server enable as an **inline switch on each row**
+  (previously buried in the editor); the section timeouts are relabelled
+  **Default** connect/call timeout. Wired through `config.read_mcp` /
+  `write_mcp` (the override is written only when positive), `_ServerState`
+  (`call_timeout`/`connect_timeout`), and the manager's `start()` (per-server
+  connect wait) + `call_tool()` (`timeout or st.call_timeout or default`).
+
+---
+
 ## [0.262.0] — 2026-09-14
 
 ### Changed

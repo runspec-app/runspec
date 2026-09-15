@@ -68,6 +68,16 @@ _RESULT_CAP = 1_000_000
 # ── pure helpers (no SDK import) ─────────────────────────────────────────────
 
 
+def _opt_pos_float(v: Any) -> float | None:
+    """A positive float, else ``None`` — for an optional per-server timeout
+    override where a missing / non-positive value means "inherit the default"."""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return f if f > 0 else None
+
+
 def available() -> tuple[bool, str]:
     """``(True, "")`` when the ``mcp`` SDK imports; else ``(False, reason)``.
 
@@ -284,6 +294,11 @@ class _ServerState:
         self.cfg = cfg
         self.name = str(cfg.get("name") or "")
         self.transport = str(cfg.get("transport") or "stdio")
+        # Per-server timeout overrides (seconds); None ⇒ inherit the manager's
+        # section default. read_mcp already normalises a non-positive value to
+        # None, but be defensive for states built straight from a raw cfg.
+        self.call_timeout = _opt_pos_float(cfg.get("call_timeout"))
+        self.connect_timeout = _opt_pos_float(cfg.get("connect_timeout"))
         self.session: Any = None
         self.tools: list[Any] = []  # live SDK Tool models
         # bare MCP tool name → display name, filled at connect time.
@@ -379,7 +394,8 @@ class McpManager:
         for st in states:
             asyncio.run_coroutine_threadsafe(self._serve_one(st), loop)
         for st in states:
-            if not st.ready.wait(timeout=self._connect_timeout):
+            wait = st.connect_timeout or self._connect_timeout
+            if not st.ready.wait(timeout=wait):
                 st.error = st.error or "connect timed out"
                 logger.warning("MCP server %s did not connect in time", st.name)
         logger.info(
@@ -638,7 +654,9 @@ class McpManager:
         session = st.session
         if session is None:
             return f"Error: MCP tool '{name}' has no live session."
-        deadline = float(timeout or self._call_timeout)
+        # An explicit caller timeout wins; then this server's own override; then
+        # the section default.
+        deadline = float(timeout or st.call_timeout or self._call_timeout)
         try:
             fut = asyncio.run_coroutine_threadsafe(
                 session.call_tool(bare, arguments or {}, read_timeout_seconds=deadline),

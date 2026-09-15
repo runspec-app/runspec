@@ -367,6 +367,59 @@ def test_read_mcp_credential_and_proxy_default_empty(monkeypatch):
     assert s["header_credentials"] == []
 
 
+def test_read_mcp_parses_per_server_timeout_overrides(monkeypatch):
+    _patch_config(
+        monkeypatch,
+        {
+            "servers": [
+                {
+                    "name": "slow",
+                    "url": "https://h/mcp",
+                    "call_timeout": 300,
+                    "connect_timeout": 45,
+                }
+            ]
+        },
+    )
+    (s,) = config.read_mcp()["servers"]
+    assert s["call_timeout"] == 300.0 and s["connect_timeout"] == 45.0
+
+
+def test_read_mcp_per_server_timeout_defaults_none(monkeypatch):
+    # Absent or non-positive per-server overrides mean "inherit the section
+    # default" — surfaced as None, distinct from the section-level float default.
+    _patch_config(
+        monkeypatch,
+        {"servers": [{"name": "x", "url": "https://h", "call_timeout": 0}]},
+    )
+    (s,) = config.read_mcp()["servers"]
+    assert s["call_timeout"] is None and s["connect_timeout"] is None
+
+
+def test_per_server_timeout_round_trips_through_write(monkeypatch):
+    """write_mcp emits a positive per-server override and drops a blank/0 one,
+    surviving a read_mcp round-trip."""
+    store = _patch_config_store(monkeypatch)
+    config.write_mcp(
+        {
+            "servers": [
+                {
+                    "name": "slow",
+                    "transport": "http",
+                    "url": "https://h/mcp",
+                    "call_timeout": 300,
+                    "connect_timeout": None,  # inherit → not written
+                }
+            ]
+        }
+    )
+    (written,) = store["mcp"]["servers"]
+    assert written["call_timeout"] == 300.0
+    assert "connect_timeout" not in written  # inherit → stays out of config.toml
+    (s,) = config.read_mcp()["servers"]
+    assert s["call_timeout"] == 300.0 and s["connect_timeout"] is None
+
+
 def test_read_mcp_parses_header_credentials_and_drops_partial(monkeypatch):
     _patch_config(
         monkeypatch,
@@ -483,6 +536,20 @@ def test_autonomy_for_reads_server_override():
         {"name": "safe", "autonomy": "autonomous"}, [_fake_tool("go")]
     )
     assert mgr.autonomy_for("mcp_safe_go") == "autonomous"
+
+
+def test_server_state_reads_per_server_timeout_overrides():
+    st = mcp_client._ServerState(
+        {"name": "slow", "call_timeout": 300, "connect_timeout": 45}
+    )
+    assert st.call_timeout == 300.0 and st.connect_timeout == 45.0
+
+
+def test_server_state_timeout_overrides_default_none():
+    # No override (or a non-positive one) ⇒ None, so call_tool/start fall back to
+    # the manager's section default via `st.call_timeout or self._call_timeout`.
+    st = mcp_client._ServerState({"name": "x", "call_timeout": 0})
+    assert st.call_timeout is None and st.connect_timeout is None
 
 
 def test_autonomy_for_unknown_tool_is_confirm():
