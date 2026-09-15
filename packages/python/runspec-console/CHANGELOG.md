@@ -8,6 +8,56 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.264.3] — 2026-09-15
+
+### Changed
+- **Config lives under `%APPDATA%` again, in a folder named for the package —
+  reverting the venv-scoped default from 0.264.0.** A venv can be read-only for a
+  non-admin operator (installed by an admin), where a venv-scoped config dir
+  fails every write. Config is back under the writable per-user app-data root, but
+  the **folder is named for the white-label distribution** — a config-seed package
+  `jason-console` stores its state in `%APPDATA%\jason-console\` (default
+  `runspec-console`), the *same* source that names the window title. So two
+  different white-label consoles stay isolated under one writable root without
+  `--config-dir`, while two copies of the same package share one profile.
+  `config.app_dir` derives the folder from `configseed.branding_dist_name`
+  (installed metadata only — never `config.toml`, which lives inside the folder,
+  so it's non-circular and cached). The single source of truth
+  `configseed.branding_dist` backs both the folder name and the window title, so
+  they always agree.
+- **Removed the first-launch `%APPDATA%`→venv config migration** (`0.264.0`'s
+  `migrate_legacy_profile`) and the venv detection — no longer needed now that the
+  default is back under `%APPDATA%`. A default `runspec-console` install keeps its
+  historic `%APPDATA%\runspec-console\` location unchanged.
+
+
+## [0.264.2] — 2026-09-15
+
+### Fixed
+- **A white-label console with no LLM adapter can now brand its window title.**
+  The window title (and docs link / update-check package) was derived *only* from
+  the distribution supplying the active `[llm] provider` — so an AI-off,
+  adapter-less package (config seed only) always showed "runspec console".
+  `branding.resolve_branding` now also brands from the **config-seed** package
+  (the single external distribution contributing a `runspec_console.config_seed`
+  entry point) when there is no active provider, and honours an explicit
+  **`[console.theme] brand_name`** as the window title (matching the sidebar) —
+  so the title reflects the package you installed, or the exact name you set.
+  `version_package` (the update-check target) still uses the real distribution
+  name, never `brand_name`.
+
+
+## [0.264.1] — 2026-09-15
+
+### Fixed
+- **Settings no longer advertises the AI switch when AI is off.** A leftover
+  Settings-drawer notice ("AI features are off in this console… Set by
+  `[console] ai = false`… Change the flag and restart") still named the switch
+  and how to re-enable it, contradicting the 0.264.0 "no advertising" goal. The
+  notice is removed — with AI off the agent Settings tabs are simply hidden and
+  nothing about AI is shown (`SettingsDrawer.tsx`).
+
+
 ## [0.264.0] — 2026-09-15
 
 ### Changed

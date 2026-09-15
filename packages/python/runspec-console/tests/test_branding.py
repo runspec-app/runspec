@@ -1,9 +1,13 @@
 """
-test_branding.py — white-label identity derived from the active LLM plugin.
+test_branding.py — white-label identity derived from the active LLM plugin or the
+config-seed package.
 
 The window title, docs link, and update-check package follow whichever installed
-distribution supplies the configured provider; a built-in / unset provider falls
-back to runspec's own identity. Resolution must never raise into the UI.
+distribution supplies the configured provider, else the single package that
+contributes a config seed (the AI-off / adapter-less white-label case); an
+explicit ``[console.theme] brand_name`` overrides the title. A built-in / unset
+provider with no seed package falls back to runspec's own identity. Resolution
+must never raise into the UI.
 """
 
 from __future__ import annotations
@@ -13,6 +17,7 @@ from unittest import mock
 
 from runspec_console import branding
 from runspec_console.config import DEFAULT_DOCS_URL
+from runspec_console.configseed import ENTRY_POINT_GROUP as CONFIG_SEED_GROUP
 
 
 class _FakeMetadata:
@@ -49,9 +54,19 @@ class _FakeEP:
 
 
 def _resolve(
-    config, *, entry_points=(), packages_distributions=None, distribution=None
+    config,
+    *,
+    entry_points=(),
+    seed_entry_points=(),
+    packages_distributions=None,
+    distribution=None,
 ):
-    """Resolve branding with importlib.metadata stubbed inside branding.py."""
+    """Resolve branding with importlib.metadata stubbed inside branding.py.
+
+    ``entry_points`` are advertised in the LLM-adapter group, ``seed_entry_points``
+    in the config-seed group — the mock dispatches on the ``group`` kwarg, just as
+    the real ``importlib.metadata.entry_points`` filters by group.
+    """
     pd = packages_distributions or (lambda: {})
 
     def fake_dist(name):
@@ -59,10 +74,13 @@ def _resolve(
             raise branding.meta.PackageNotFoundError(name)
         return distribution(name)
 
+    def fake_entry_points(*, group=None):
+        if group == CONFIG_SEED_GROUP:
+            return list(seed_entry_points)
+        return list(entry_points)
+
     with (
-        mock.patch.object(
-            branding.meta, "entry_points", return_value=list(entry_points)
-        ),
+        mock.patch.object(branding.meta, "entry_points", fake_entry_points),
         mock.patch.object(branding.meta, "packages_distributions", pd),
         mock.patch.object(branding.meta, "distribution", fake_dist),
     ):
@@ -204,6 +222,83 @@ class TestDottedPathProvider(unittest.TestCase):
             packages_distributions=lambda: {},
         )
         self.assertEqual(b.version_package, "runspec-console")
+        self.assertEqual(b.title, "runspec console")
+
+
+class TestConfigSeedBranding(unittest.TestCase):
+    """An AI-off / adapter-less white-label package brands from the config seed
+    it contributes, since there is no active LLM provider to trace."""
+
+    def test_seed_dist_brands_when_no_provider(self) -> None:
+        dist = _FakeDist(
+            "mycorp-console", project_urls=["Documentation, https://docs.mycorp.com"]
+        )
+        b = _resolve(
+            {"console": {"ai": False}},  # no [llm] provider
+            seed_entry_points=[_FakeEP("mycorp", dist)],
+        )
+        self.assertEqual(b.title, "Mycorp Console")
+        self.assertEqual(b.docs_url, "https://docs.mycorp.com")
+        self.assertEqual(b.version_package, "mycorp-console")
+
+    def test_active_provider_dist_wins_over_seed(self) -> None:
+        adapter = _FakeDist(
+            "acme-console", project_urls=["Documentation, https://docs.acme.com"]
+        )
+        seed = _FakeDist("seed-only")
+        b = _resolve(
+            {"llm": {"provider": "acme"}},
+            entry_points=[_FakeEP("acme", adapter)],
+            seed_entry_points=[_FakeEP("seed", seed)],
+        )
+        self.assertEqual(b.title, "Acme Console")
+        self.assertEqual(b.version_package, "acme-console")
+
+    def test_ambiguous_seed_dists_use_defaults(self) -> None:
+        a = _FakeDist("acme-console")
+        m = _FakeDist("mycorp-console")
+        b = _resolve(
+            {},
+            seed_entry_points=[_FakeEP("acme", a), _FakeEP("mycorp", m)],
+        )
+        self.assertEqual(b.title, "runspec console")
+        self.assertEqual(b.version_package, "runspec-console")
+
+    def test_seed_dist_that_is_runspec_console_is_ignored(self) -> None:
+        # A seed contributed by runspec-console itself is not white-label branding.
+        dist = _FakeDist("runspec-console")
+        b = _resolve({}, seed_entry_points=[_FakeEP("self", dist)])
+        self.assertEqual(b.title, "runspec console")
+        self.assertEqual(b.version_package, "runspec-console")
+
+
+class TestBrandNameOverride(unittest.TestCase):
+    """[console.theme] brand_name is the explicit display override — it titles the
+    window (matching the sidebar) even without any white-label distribution."""
+
+    def test_brand_name_titles_without_dist(self) -> None:
+        b = _resolve({"console": {"ai": False, "theme": {"brand_name": "Acme Fleet"}}})
+        self.assertEqual(b.title, "Acme Fleet")
+        # No dist ⇒ version-check package stays runspec-console.
+        self.assertEqual(b.version_package, "runspec-console")
+
+    def test_brand_name_wins_over_dist_title_but_not_version(self) -> None:
+        dist = _FakeDist(
+            "mycorp-console", project_urls=["Documentation, https://docs.mycorp.com"]
+        )
+        b = _resolve(
+            {
+                "llm": {"provider": "mycorp"},
+                "console": {"theme": {"brand_name": "Acme Fleet"}},
+            },
+            entry_points=[_FakeEP("mycorp", dist)],
+        )
+        self.assertEqual(b.title, "Acme Fleet")  # display override
+        self.assertEqual(b.version_package, "mycorp-console")  # real dist name
+        self.assertEqual(b.docs_url, "https://docs.mycorp.com")
+
+    def test_blank_brand_name_ignored(self) -> None:
+        b = _resolve({"console": {"theme": {"brand_name": "   "}}})
         self.assertEqual(b.title, "runspec console")
 
 

@@ -49,8 +49,9 @@ behind a flag.
   install is unchanged.
 - **Read once at start.** The console reads it at bring-up (after the config
   seed applies) and holds it for the session, so the UI and the backend gates
-  can never disagree. Change the flag and **restart** to apply. Settings shows a
-  notice while it is off.
+  can never disagree. Change the flag and **restart** to apply. Nothing in the
+  running console advertises the flag or how to re-enable it — with AI off the
+  agent surfaces are simply absent.
 - **Config only.** There is no toggle in Settings — the flag is meant to be a
   governance default that ships from a config seed or Config Sync.
 - **Independent of "no provider".** Leaving `[llm] provider` unset still shows

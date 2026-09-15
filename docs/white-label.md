@@ -13,7 +13,7 @@ The moving parts:
 | Mechanism | What it does |
 |---|---|
 | A custom **LLM adapter** entry point (`runspec_console.adapters`) | Makes your gateway a selectable provider — and, when active, the console brands its window title, docs link, and update check from *your* package's metadata |
-| A **config seed** entry point (`runspec_console.config_seed`) | Ships baseline config files as package data, applied on first launch and re-applied on upgrade — works fully offline |
+| A **config seed** entry point (`runspec_console.config_seed`) | Ships baseline config files as package data, applied on first launch and re-applied on upgrade — works fully offline. **Also a branding source:** an AI-off / adapter-less package (no LLM provider) brands its window title, docs link and update check from *this* package's metadata |
 | **`[console.theme]`** (delivered by the seed) | Accent colour, brand name, icon, watermark, title-bar tint |
 | **`[project.scripts]`** | A branded launcher command |
 
@@ -278,7 +278,7 @@ install, pixel-identical.
 
 | Key | Accepts | Effect |
 |---|---|---|
-| `brand_name` | text | Sidebar title (unset ⇒ "runspec") |
+| `brand_name` | text | Sidebar title **and window title** (unset ⇒ sidebar "runspec", window from package metadata) |
 | `accent_color` | `#rgb` / `#rrggbb` | UI primary colour **and** the generated app icon |
 | `icon` | file path or `pkg:<module>:<relpath>` | Explicit `.ico`/`.png` app icon (bundle it as package data with the `pkg:` form) |
 | `title_bar_color` | hex | Native Windows 11 caption tint — independent of `accent_color`, so a blue-accent UI can carry a red title bar; no-op elsewhere |
@@ -287,7 +287,18 @@ install, pixel-identical.
 | `watermark_style` | `tiled` / `banner` / `center` | Repeated marks, one large upper-third mark, or one centred mark |
 
 The window title, in-app documentation link, and update-check target come
-from your **package metadata** (§1), not the theme.
+from your **package metadata** (§1) — the package supplying the active LLM
+provider, or (for an AI-off / adapter-less package) the one contributing the
+config seed. Set **`brand_name`** to title the window explicitly (it drives the
+sidebar and the window title together); an adapter-less package with no
+`brand_name` still titles the window from its distribution name.
+
+Your **config folder** is named the same way: a seed package `jason-console`
+stores its state in `%APPDATA%\jason-console\`, so different white-label consoles
+on one machine stay isolated under the writable app-data root without any flag
+(see [config reference](console-reference.md)). The folder name follows the
+config-seed distribution name — not `brand_name`, which is a display string —
+because it must be known before any config file is read.
 
 ---
 

@@ -28,9 +28,51 @@ logged, never raised — a broken plugin must not stop the console from starting
 
 from __future__ import annotations
 
+import importlib.metadata as meta
+
 from .bridge_const import logger
 
 ENTRY_POINT_GROUP = "runspec_console.config_seed"
+
+
+def branding_dist() -> meta.Distribution | None:
+    """The single external distribution contributing a config seed, or ``None``.
+
+    This is the white-label identity for a package that ships a config seed
+    rather than an LLM adapter: it names **both** the window title (see
+    ``branding.resolve_branding``) **and** the ``%APPDATA%`` config folder (see
+    ``config.app_dir``), so the two always agree — install ``jason-console`` and
+    the title reads "Jason Console" while its config lives in
+    ``%APPDATA%/jason-console``.
+
+    Returns the one config-seed contributor whose distribution isn't
+    ``runspec-console`` itself; ``None`` when there are none, or more than one
+    (ambiguous — callers fall back to the default). Metadata-only (never reads
+    config.toml), so it is safe to call *before* config is located and cheap
+    enough to cache. Best-effort: any lookup failure degrades to ``None``.
+    """
+    try:
+        eps = list(meta.entry_points(group=ENTRY_POINT_GROUP))
+    except Exception:
+        return None
+    out: list[meta.Distribution] = []
+    seen: set[str] = set()
+    for ep in eps:
+        dist = getattr(ep, "dist", None)
+        name = (getattr(dist, "name", None) or "").strip().lower()
+        if not name or name == "runspec-console" or name in seen:
+            continue
+        seen.add(name)
+        out.append(dist)  # type: ignore[arg-type]
+    return out[0] if len(out) == 1 else None
+
+
+def branding_dist_name() -> str | None:
+    """The distribution name of :func:`branding_dist` (e.g. ``jason-console``),
+    stripped, or ``None``."""
+    dist = branding_dist()
+    name = getattr(dist, "name", None)
+    return name.strip() if isinstance(name, str) and name.strip() else None
 
 
 def discover() -> tuple[dict[str, list[bytes]], dict[str, str]]:

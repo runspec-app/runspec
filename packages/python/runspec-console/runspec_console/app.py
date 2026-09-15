@@ -381,18 +381,6 @@ def main() -> None:
         _cfg.set_app_dir(args.config_dir.value)
         logger.info("Using config directory: %s", _cfg.app_dir())
 
-    # First launch on the venv-scoped default: adopt an existing %APPDATA%
-    # profile into the venv dir so an upgrading user keeps their hosts /
-    # credentials / config. Self-guards — a no-op with --config-dir set, once the
-    # venv dir already holds config, or on a bare (non-venv) interpreter. Must run
-    # before the Bridge reads config on construction.
-    from . import config as _cfg_migrate
-
-    if _cfg_migrate.migrate_legacy_profile() is not None:
-        logger.info(
-            "Adopted the previous config profile into %s", _cfg_migrate.app_dir()
-        )
-
     import webview
 
     # Run pywebview in debug mode so the WebView2 default right-click menu +

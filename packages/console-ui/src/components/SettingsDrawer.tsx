@@ -5333,13 +5333,9 @@ export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, co
   const features = useFeatures()
   return (
     <Drawer title="Settings" placement="right" width="min(96vw, 1040px)" open={open} onClose={onClose}>
-      {!features.ai && (
-        <Alert
-          type="info" showIcon style={{ marginBottom: 12 }}
-          message="AI features are off in this console"
-          description={<>Set by <Text code>[console] ai = false</Text> in config.toml (typically from a config seed or Config Sync). The assistant, runbooks, agent-mode triggers and prompt / runbook / eval schedules are unavailable; everything else works. Change the flag and restart the console to apply.</>}
-        />
-      )}
+      {/* With AI off ([console] ai = false) the agent Settings tabs are simply
+          hidden (visibleSettingsTabs below) — no notice is shown. A locked-down
+          console never advertises AI or how to re-enable it. */}
       <Tabs
         size="small"
         tabPosition="left"
