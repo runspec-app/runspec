@@ -50,6 +50,11 @@ class _StubBridge:
     def _play_sound(self, category, *, force=False):
         pass
 
+    # Chat run_summary audit — covered in the reporting tests; a no-op here keeps
+    # these history tests off the audit-log write path.
+    def _audit_chat_turn(self, *a, **k):
+        pass
+
     def _window_is_foreground(self):
         return False
 

@@ -1,9 +1,19 @@
 """
-observability.py — opt-in OpenTelemetry (OTLP) tracing of the agent.
+observability.py — opt-in OpenTelemetry (OTLP) tracing + metrics of the agent.
 
 Exports one connected trace per agent turn — ``turn → llm request → tool call``
 — over OTLP to *any* OpenTelemetry backend (LangSmith, Langfuse, Phoenix,
 Jaeger, Grafana Tempo).
+
+It also exports **metrics** as a *separate* OTLP signal (see the "metrics"
+section below): per-tool-run and per-turn counters/histograms
+(``runspec.tool.runs`` / ``runspec.tool.duration`` / ``runspec.agent.turns`` /
+``runspec.agent.turn.duration`` / ``runspec.agent.turn.tokens``) pushed on an
+interval by a ``PeriodicExportingMetricReader``. Metrics have their **own
+endpoint + auth** (``[telemetry.metrics]``) and enable independently of traces,
+so a deployment can send traces to a trace backend (e.g. LangSmith, which
+ingests OTLP traces but not metrics) and metrics to a metrics/OTLP backend (a
+Grafana/Prometheus OTLP endpoint or a local collector).
 
 Spans carry **two overlapping convention sets on purpose**, because the popular
 backends disagree on which they read:
@@ -65,6 +75,22 @@ _MAX_CONTENT_CHARS: int = 0
 # for any single scrubbed tool-argument string — these are meant to be short
 # attributes, not the big content blobs, so they stay bounded regardless.
 _MAX_ATTR_CHARS = 4000
+
+# ── metrics state, set once by init_metrics (all None/False = disabled no-op) ──
+# Metrics are a SEPARATE OTLP signal from traces, with their own MeterProvider,
+# exporter, endpoint and auth (config `[telemetry.metrics]`). They can be enabled
+# independently and pointed at a different backend (e.g. traces → LangSmith,
+# metrics → a Grafana/Prometheus OTLP endpoint). Every recording helper is a
+# complete no-op when metrics are off, mirroring the trace contract.
+_METER_PROVIDER: Any = None
+_METER: Any = None
+_METRICS_ENABLED: bool = False
+# Instruments, created once in _create_instruments.
+_TOOL_RUNS: Any = None
+_TOOL_DURATION: Any = None
+_TURN_RUNS: Any = None
+_TURN_DURATION: Any = None
+_TURN_TOKENS: Any = None
 
 # Argument keys whose value is replaced with «redacted» when capture_content is
 # on. A defence-in-depth net over the console's own secret handling: prompts and
@@ -135,6 +161,31 @@ def _build_exporter(cfg: dict[str, Any]) -> Any:
     session (the proto-http exporter has no public insecure flag)."""
     from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 
+    return _construct_exporter(OTLPSpanExporter, cfg)
+
+
+def _build_metric_exporter(cfg: dict[str, Any]) -> Any:
+    """Construct the OTLP **metric** exporter from a ``[telemetry.metrics]`` config
+    dict (see ``config._telemetry_metrics_config``).
+
+    Same endpoint / headers / CA / TLS knobs and the same "unset ⇒ fall through to
+    the SDK's OTEL_* env reading" discipline as :func:`_build_exporter` — only the
+    exporter class differs (and it ships in the same
+    ``opentelemetry-exporter-otlp-proto-http`` wheel, so no new dependency). The
+    endpoint here is the metrics URL (``…/v1/metrics``), which is why it is a
+    separate config value from the traces endpoint."""
+    from opentelemetry.exporter.otlp.proto.http.metric_exporter import (
+        OTLPMetricExporter,
+    )
+
+    return _construct_exporter(OTLPMetricExporter, cfg)
+
+
+def _construct_exporter(exporter_cls: Any, cfg: dict[str, Any]) -> Any:
+    """Build an OTLP proto-http exporter (span or metric) from ``cfg``, passing a
+    constructor arg only when set (so an unset value falls through to the SDK's
+    own ``OTEL_*`` env reading) and honouring ``tls_verify = false`` best-effort on
+    the exporter's requests session."""
     kwargs: dict[str, Any] = {}
     if cfg.get("endpoint"):
         kwargs["endpoint"] = cfg["endpoint"]
@@ -143,9 +194,9 @@ def _build_exporter(cfg: dict[str, Any]) -> Any:
         kwargs["headers"] = headers
     if cfg.get("ca_bundle"):
         kwargs["certificate_file"] = cfg["ca_bundle"]
-    exporter = OTLPSpanExporter(**kwargs)
+    exporter = exporter_cls(**kwargs)
     if cfg.get("tls_verify") is False:
-        # No public "insecure" flag on the proto-http exporter — reach into its
+        # No public "insecure" flag on the proto-http exporters — reach into their
         # requests.Session best-effort. Guarded so an SDK internals change can't
         # break init.
         try:  # pragma: no cover - depends on exporter internals
@@ -376,6 +427,306 @@ def send_test_trace() -> dict[str, Any]:
             "execute_tool run_runnable",
         ],
         "capture_content": _CAPTURE_CONTENT,
+        "flushed": flushed,
+    }
+
+
+# ── metrics: MeterProvider + OTLP export (separate signal from traces) ────────
+#
+# Same opt-in / best-effort / never-raises / no-op-when-disabled contract as the
+# tracing above. The instrument site is the shared tool chokepoint
+# (bridge_autonomy._gated_run_tool_async → record_tool_run) and the turn boundary
+# (bridge_invoke / bridge_triggers → record_turn). Labels are kept to a BOUNDED
+# set on purpose — a high-cardinality attribute (chat_id, a run id, an ad-hoc SSH
+# host) would explode the backend's time-series count, so those stay on spans, not
+# metrics.
+
+
+def metrics_available() -> tuple[bool, str]:
+    """``(True, "")`` when the OTel SDK metrics + OTLP-http metric exporter import;
+    otherwise ``(False, reason)``. The metric exporter ships in the same wheel as
+    the span exporter, so this succeeds whenever :func:`available` does. Never
+    raises."""
+    try:
+        import opentelemetry.sdk.metrics  # noqa: F401
+        from opentelemetry.exporter.otlp.proto.http.metric_exporter import (  # noqa: F401
+            OTLPMetricExporter,
+        )
+    except Exception:  # noqa: BLE001
+        return (
+            False,
+            "OpenTelemetry not installed — pip install runspec-console[otel]",
+        )
+    return (True, "")
+
+
+def _create_instruments(meter: Any) -> None:
+    """Create the metric instruments once from ``meter`` and store them globally."""
+    global _TOOL_RUNS, _TOOL_DURATION, _TURN_RUNS, _TURN_DURATION, _TURN_TOKENS
+    _TOOL_RUNS = meter.create_counter(
+        "runspec.tool.runs",
+        unit="1",
+        description="Agent tool calls executed through the autonomy gate.",
+    )
+    _TOOL_DURATION = meter.create_histogram(
+        "runspec.tool.duration",
+        unit="ms",
+        description="Wall-clock duration of an agent tool call's execution.",
+    )
+    _TURN_RUNS = meter.create_counter(
+        "runspec.agent.turns",
+        unit="1",
+        description="Agent turns completed (chat / trigger / schedule).",
+    )
+    _TURN_DURATION = meter.create_histogram(
+        "runspec.agent.turn.duration",
+        unit="ms",
+        description="Wall-clock duration of an agent turn.",
+    )
+    _TURN_TOKENS = meter.create_counter(
+        "runspec.agent.turn.tokens",
+        unit="1",
+        description="Model tokens used by agent turns (by gen_ai.token.type).",
+    )
+
+
+def init_metrics(config: dict[str, Any] | None = None) -> bool:
+    """Best-effort, idempotent one-time metrics init. ``config`` is a
+    ``config.read_telemetry()`` dict (read here if omitted); the metrics sub-config
+    is ``config["metrics"]``.
+
+    Returns ``True`` when metrics export is now active. Returns ``False`` and
+    leaves every recording helper a no-op when ``[telemetry.metrics] enabled`` is
+    false, the SDK is missing, or any setup step fails — logged once, never raised.
+    Independent of :func:`init_tracing`: traces and metrics enable separately and
+    may target different endpoints."""
+    global _METER_PROVIDER, _METER, _METRICS_ENABLED
+    if _METER is not None:
+        return True  # already initialised
+    if config is None:
+        from . import config as config_mod
+
+        config = config_mod.read_telemetry()
+    mcfg = config.get("metrics") or {}
+    if not mcfg.get("enabled"):
+        return False
+    ok, reason = metrics_available()
+    if not ok:
+        logger.warning("telemetry metrics enabled but %s", reason)
+        return False
+    try:
+        from opentelemetry.sdk.metrics import MeterProvider
+        from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+        from opentelemetry.sdk.resources import Resource
+
+        resource = Resource.create(
+            {"service.name": mcfg.get("service_name") or "runspec-console"}
+        )
+        interval_ms = int(mcfg.get("export_interval", 60) or 60) * 1000
+        reader = PeriodicExportingMetricReader(
+            _build_metric_exporter(mcfg), export_interval_millis=interval_ms
+        )
+        provider = MeterProvider(resource=resource, metric_readers=[reader])
+        _METER_PROVIDER = provider
+        _METER = provider.get_meter("runspec-console")
+        _create_instruments(_METER)
+        _METRICS_ENABLED = True
+        logger.info(
+            "telemetry: OTLP metrics enabled (endpoint=%s, interval=%ss)",
+            mcfg.get("endpoint") or "<env/default>",
+            mcfg.get("export_interval", 60),
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001 — degrade to disabled, never raise
+        logger.warning("telemetry: metrics init failed, metrics disabled: %s", exc)
+        _METER_PROVIDER = None
+        _METER = None
+        _METRICS_ENABLED = False
+        return False
+
+
+def reconfigure_metrics(config: dict[str, Any] | None = None) -> bool:
+    """Tear down any live MeterProvider and re-init from ``config`` — the runtime
+    endpoint-switch seam for metrics (``init_metrics`` is idempotent, so it can't
+    switch on its own). Best-effort; never raises. Mirrors :func:`reconfigure`."""
+    global _METER_PROVIDER, _METER, _METRICS_ENABLED
+    global _TOOL_RUNS, _TOOL_DURATION, _TURN_RUNS, _TURN_DURATION, _TURN_TOKENS
+    try:
+        shutdown_metrics()
+    except Exception:  # noqa: BLE001
+        pass
+    _METER_PROVIDER = None
+    _METER = None
+    _METRICS_ENABLED = False
+    _TOOL_RUNS = _TOOL_DURATION = _TURN_RUNS = _TURN_DURATION = _TURN_TOKENS = None
+    return init_metrics(config)
+
+
+def metrics_enabled() -> bool:
+    """True when metrics export is active (init succeeded and not shut down)."""
+    return _METRICS_ENABLED and _METER is not None
+
+
+def shutdown_metrics() -> None:
+    """Flush + shut down the MeterProvider so a short headless / schedule run
+    doesn't drop its last metric export. Best-effort; safe to call when disabled."""
+    provider = _METER_PROVIDER
+    if provider is None:
+        return
+    try:
+        provider.force_flush()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        provider.shutdown()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def flush_metrics() -> bool:
+    """Force-flush pending metrics to the backend **without** shutting the provider
+    down (so a test metric lands immediately and metrics keep working). Best-effort;
+    ``False`` when there's no live provider."""
+    provider = _METER_PROVIDER
+    if provider is None:
+        return False
+    try:
+        return bool(provider.force_flush())
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _tool_status(output: str) -> str:
+    """Coarse success class for a tool result, from the console's stable leading
+    markers (``✗`` error, ``⏹`` cancelled) — else ``ok``. A bounded label."""
+    text = (output or "").lstrip()
+    if text.startswith("✗"):
+        return "error"
+    if text.startswith("⏹"):
+        return "cancelled"
+    return "ok"
+
+
+def record_tool_run(
+    *,
+    tool: str,
+    decision: str = "",
+    operator_decision: str = "",
+    provenance: dict[str, Any] | None = None,
+    duration_ms: float = 0.0,
+    output: str = "",
+    host: str = "",
+) -> None:
+    """Record one agent tool call: increment ``runspec.tool.runs`` and observe
+    ``runspec.tool.duration`` (ms), labelled with a bounded attribute set. No-op
+    when metrics are off, so the chokepoint calls it unconditionally. Never raises."""
+    if not _METRICS_ENABLED or _TOOL_RUNS is None:
+        return
+    try:
+        attrs: dict[str, Any] = {
+            "runspec.tool.name": tool,
+            "runspec.tool.status": _tool_status(output),
+        }
+        if decision:
+            attrs["runspec.tool.autonomy_decision"] = decision
+        if operator_decision:
+            attrs["runspec.tool.operator_decision"] = operator_decision
+        if host:
+            attrs["runspec.host"] = host
+        attrs.update(_provenance_attrs(provenance))
+        _TOOL_RUNS.add(1, attrs)
+        _TOOL_DURATION.record(float(duration_ms), attrs)
+    except Exception:  # noqa: BLE001 — metrics are best-effort, never break a turn
+        pass
+
+
+def record_turn(
+    *,
+    kind: str,
+    provenance: dict[str, Any] | None = None,
+    duration_ms: float = 0.0,
+    usage: dict[str, int] | None = None,
+    status: str = "ok",
+) -> None:
+    """Record one completed agent turn: increment ``runspec.agent.turns``, observe
+    ``runspec.agent.turn.duration`` (ms), and add token usage to
+    ``runspec.agent.turn.tokens`` split by ``gen_ai.token.type`` (input/output).
+    No-op when metrics are off. Never raises."""
+    if not _METRICS_ENABLED or _TURN_RUNS is None:
+        return
+    try:
+        attrs: dict[str, Any] = {
+            "runspec.turn.kind": kind,
+            "runspec.turn.status": status,
+        }
+        attrs.update(_provenance_attrs(provenance))
+        _TURN_RUNS.add(1, attrs)
+        _TURN_DURATION.record(float(duration_ms), attrs)
+        for key in ("input", "output"):
+            count = int((usage or {}).get(key, 0) or 0)
+            if count:
+                _TURN_TOKENS.add(count, {**attrs, "gen_ai.token.type": key})
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def init_metrics_for_test(reader: Any) -> None:
+    """Wire an injected metric reader (e.g. ``InMemoryMetricReader``) — the
+    network-free test seam. Resets prior metrics state."""
+    global _METER_PROVIDER, _METER, _METRICS_ENABLED
+    from opentelemetry.sdk.metrics import MeterProvider
+
+    provider = MeterProvider(metric_readers=[reader])
+    _METER_PROVIDER = provider
+    _METER = provider.get_meter("runspec-console-test")
+    _create_instruments(_METER)
+    _METRICS_ENABLED = True
+
+
+def reset_metrics_for_test() -> None:
+    """Tear metrics back down to the disabled no-op state (test cleanup)."""
+    global _METER_PROVIDER, _METER, _METRICS_ENABLED
+    global _TOOL_RUNS, _TOOL_DURATION, _TURN_RUNS, _TURN_DURATION, _TURN_TOKENS
+    shutdown_metrics()
+    _METER_PROVIDER = None
+    _METER = None
+    _METRICS_ENABLED = False
+    _TOOL_RUNS = _TOOL_DURATION = _TURN_RUNS = _TURN_DURATION = _TURN_TOKENS = None
+
+
+def send_test_metric() -> dict[str, Any]:
+    """Emit one representative tool-run + turn metric using the real recording
+    helpers, then :func:`flush_metrics` so it reaches the backend right away — the
+    metrics twin of :func:`send_test_trace`. Returns a UI summary dict; ``ok=False``
+    with a ``reason`` when metrics are not active."""
+    if not metrics_enabled():
+        return {"ok": False, "reason": "metrics are not active"}
+    try:
+        record_tool_run(
+            tool="run_runnable",
+            decision="run",
+            duration_ms=42.0,
+            output="hello world\n",
+            host="local",
+        )
+        record_turn(
+            kind="test",
+            duration_ms=100.0,
+            usage={"input": 42, "output": 17},
+            status="ok",
+        )
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "reason": f"emit failed: {exc}"}
+    flushed = flush_metrics()
+    return {
+        "ok": True,
+        "instruments": [
+            "runspec.tool.runs",
+            "runspec.tool.duration",
+            "runspec.agent.turns",
+            "runspec.agent.turn.duration",
+            "runspec.agent.turn.tokens",
+        ],
         "flushed": flushed,
     }
 

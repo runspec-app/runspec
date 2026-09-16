@@ -1241,6 +1241,17 @@ export interface BridgeApi {
     capture_content?: boolean
     flushed?: boolean
   }>
+  // Emit one representative tool-run + turn metric to the configured
+  // [telemetry.metrics] OTLP endpoint and flush it immediately — the metrics twin
+  // of send_test_trace. Reconfigures the meter from the saved config first.
+  // ok=false carries a reason; on success, instruments / endpoint / flushed.
+  send_test_metric: () => Promise<{
+    ok: boolean
+    reason?: string
+    instruments?: string[]
+    endpoint?: string
+    flushed?: boolean
+  }>
   // Fire a test toast + taskbar flash + confirm sound; reports which channels are
   // available (Settings → Sounds & Notifications). window_found surfaces the
   // flash/focus title-match prerequisite.

@@ -4533,10 +4533,21 @@ export function TelemetryTab() {
   const [headers, setHeaders] = useState<Array<{ k: string; v: string }>>([])
   const [apiKeyCommand, setApiKeyCommand] = useState('')
   const [apiKeyHeader, setApiKeyHeader] = useState('x-api-key')
+  // Metrics ([telemetry.metrics]) — a SEPARATE OTLP signal with its own endpoint
+  // and auth, so metrics can go to a different backend than traces (e.g. traces →
+  // LangSmith, which takes OTLP traces but not metrics, and metrics → Grafana).
+  const [metricsEnabled, setMetricsEnabled] = useState(false)
+  const [metricsEndpoint, setMetricsEndpoint] = useState('')
+  const [metricsInterval, setMetricsInterval] = useState<number>(60)
+  const [metricsHeaders, setMetricsHeaders] = useState<Array<{ k: string; v: string }>>([])
+  const [metricsApiKeyCommand, setMetricsApiKeyCommand] = useState('')
+  const [metricsApiKeyHeader, setMetricsApiKeyHeader] = useState('x-api-key')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<Awaited<ReturnType<typeof bridge.send_test_trace>> | null>(null)
+  const [metricsTesting, setMetricsTesting] = useState(false)
+  const [metricsTestResult, setMetricsTestResult] = useState<Awaited<ReturnType<typeof bridge.send_test_metric>> | null>(null)
 
   useEffect(() => {
     bridge.get_config().then(cfg => {
@@ -4558,6 +4569,18 @@ export function TelemetryTab() {
           ? Object.entries(h).map(([k, v]) => ({ k, v: String(v) }))
           : [],
       )
+      const m = (t.metrics ?? {}) as Record<string, unknown>
+      setMetricsEnabled(m.enabled === true)
+      setMetricsEndpoint(typeof m.endpoint === 'string' ? m.endpoint : '')
+      setMetricsInterval(typeof m.export_interval === 'number' ? m.export_interval : 60)
+      setMetricsApiKeyCommand(typeof m.api_key_command === 'string' ? m.api_key_command : '')
+      setMetricsApiKeyHeader(typeof m.api_key_header === 'string' && m.api_key_header ? m.api_key_header : 'x-api-key')
+      const mh = (m.headers ?? {}) as Record<string, unknown>
+      setMetricsHeaders(
+        mh && typeof mh === 'object'
+          ? Object.entries(mh).map(([k, v]) => ({ k, v: String(v) }))
+          : [],
+      )
     })
   }, [])
 
@@ -4567,6 +4590,8 @@ export function TelemetryTab() {
       const cfg = await bridge.get_config()
       const headerObj: Record<string, string> = {}
       for (const { k, v } of headers) if (k.trim()) headerObj[k.trim()] = v
+      const metricsHeaderObj: Record<string, string> = {}
+      for (const { k, v } of metricsHeaders) if (k.trim()) metricsHeaderObj[k.trim()] = v
       await bridge.save_config({
         ...cfg,
         telemetry: {
@@ -4582,6 +4607,14 @@ export function TelemetryTab() {
           headers: headerObj,
           api_key_command: apiKeyCommand.trim(),
           api_key_header: apiKeyHeader.trim() || 'x-api-key',
+          metrics: {
+            enabled: metricsEnabled,
+            endpoint: metricsEndpoint.trim(),
+            export_interval: Math.max(1, Math.floor(metricsInterval || 60)),
+            headers: metricsHeaderObj,
+            api_key_command: metricsApiKeyCommand.trim(),
+            api_key_header: metricsApiKeyHeader.trim() || 'x-api-key',
+          },
         },
       })
       setSaved(true); setTimeout(() => setSaved(false), 2000)
@@ -4599,6 +4632,18 @@ export function TelemetryTab() {
     } catch (e) {
       setTestResult({ ok: false, reason: String((e as Error)?.message || e) })
     } finally { setTesting(false) }
+  }
+
+  // Save the current form, then emit + flush one test metric — the metrics twin
+  // of handleTest (verifies the [telemetry.metrics] pipeline independently).
+  const handleTestMetric = async () => {
+    setMetricsTesting(true); setMetricsTestResult(null)
+    try {
+      await handleSave()
+      setMetricsTestResult(await bridge.send_test_metric())
+    } catch (e) {
+      setMetricsTestResult({ ok: false, reason: String((e as Error)?.message || e) })
+    } finally { setMetricsTesting(false) }
   }
 
   const row = (label: string, control: ReactNode) => (
@@ -4724,6 +4769,69 @@ export function TelemetryTab() {
               </span>
             ) : (
               <span style={{ fontSize: 13 }}>{testResult.reason}</span>
+            )
+          }
+        />
+      )}
+
+      <Divider style={{ margin: '18px 0' }} />
+      <Typography.Title level={5} style={{ marginTop: 0 }}>Metrics</Typography.Title>
+      <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
+        Also export <strong>metrics</strong> — per-tool-run and per-turn counters and duration
+        histograms (<code>runspec.tool.runs</code>, <code>runspec.tool.duration</code>,{' '}
+        <code>runspec.agent.turns</code>, <code>runspec.agent.turn.duration</code>,{' '}
+        <code>runspec.agent.turn.tokens</code>) pushed on an interval. Metrics are a{' '}
+        <strong>separate signal with their own endpoint</strong>, so they can go to a different
+        backend than traces — many trace backends (LangSmith) ingest OTLP traces but not metrics,
+        so point these at a metrics/OTLP endpoint (a Grafana / Prometheus OTLP endpoint, or a
+        collector). Transport trust (CA bundle / TLS verify) is inherited from the trace settings
+        above; endpoint and auth are set here. Requires the same <code>otel</code> extra.
+      </Typography.Paragraph>
+      {row('Enable metrics', <Switch checked={metricsEnabled} onChange={setMetricsEnabled} />)}
+      {row('OTLP metrics endpoint', <Input style={{ width: 380 }} placeholder="https://…/v1/metrics  (blank ⇒ OTEL_EXPORTER_OTLP_METRICS_ENDPOINT)" value={metricsEndpoint} onChange={e => setMetricsEndpoint(e.target.value)} disabled={!metricsEnabled} />)}
+      {row('Export interval (seconds)', <InputNumber min={1} step={10} value={metricsInterval} onChange={v => setMetricsInterval(typeof v === 'number' ? v : 60)} disabled={!metricsEnabled} />)}
+
+      <Typography.Paragraph style={{ fontSize: 13, margin: '10px 0 6px' }}>
+        <strong>Metrics headers</strong> — extra HTTP headers on the metrics export (e.g. a Grafana
+        Cloud <code>Authorization: Basic …</code>). Not shared with the trace headers.
+      </Typography.Paragraph>
+      {metricsHeaders.map((h, i) => (
+        <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
+          <Input placeholder="header" style={{ width: 220 }} value={h.k} disabled={!metricsEnabled}
+            onChange={e => setMetricsHeaders(prev => prev.map((x, j) => j === i ? { ...x, k: e.target.value } : x))} />
+          <Input.Password placeholder="value" style={{ width: 300 }} value={h.v} disabled={!metricsEnabled}
+            onChange={e => setMetricsHeaders(prev => prev.map((x, j) => j === i ? { ...x, v: e.target.value } : x))} />
+          <Button icon={<MinusCircleOutlined />} disabled={!metricsEnabled} onClick={() => setMetricsHeaders(prev => prev.filter((_, j) => j !== i))} />
+        </div>
+      ))}
+      <Button size="small" icon={<PlusOutlined />} disabled={!metricsEnabled} onClick={() => setMetricsHeaders(prev => [...prev, { k: '', v: '' }])}>Add header</Button>
+
+      {row('Metrics API key command', <Input style={{ width: 380 }} placeholder="e.g. keyring get grafana key" value={metricsApiKeyCommand} onChange={e => setMetricsApiKeyCommand(e.target.value)} disabled={!metricsEnabled} />)}
+      {row('Inject under header', <Input style={{ width: 220 }} placeholder="x-api-key" value={metricsApiKeyHeader} onChange={e => setMetricsApiKeyHeader(e.target.value)} disabled={!metricsEnabled || !metricsApiKeyCommand.trim()} />)}
+
+      <Space style={{ marginTop: 10 }}>
+        <Button loading={metricsTesting} disabled={!metricsEnabled} onClick={handleTestMetric}>Send test metric</Button>
+      </Space>
+      <Typography.Paragraph type="secondary" style={{ fontSize: 13, marginTop: 8, marginBottom: 0 }}>
+        The <strong>Save</strong> button above persists these metrics settings too. Send test metric
+        saves first, then records one sample tool-run + turn metric and flushes it immediately — so you
+        can confirm the metrics backend receives it without waiting for the export interval.
+      </Typography.Paragraph>
+      {metricsTestResult && (
+        <Alert
+          type={metricsTestResult.ok ? 'success' : 'error'}
+          showIcon
+          style={{ marginTop: 10 }}
+          message={metricsTestResult.ok ? 'Test metric sent' : 'Could not send a test metric'}
+          description={
+            metricsTestResult.ok ? (
+              <span style={{ fontSize: 13 }}>
+                Recorded {metricsTestResult.instruments?.length ?? 5} instruments to{' '}
+                <code>{metricsTestResult.endpoint}</code>. Open your backend and look for them
+                {metricsTestResult.flushed ? ' (flushed now)' : ' (batched — may take a moment)'}.
+              </span>
+            ) : (
+              <span style={{ fontSize: 13 }}>{metricsTestResult.reason}</span>
             )
           }
         />

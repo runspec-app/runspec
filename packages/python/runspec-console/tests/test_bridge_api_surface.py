@@ -182,6 +182,7 @@ EXPECTED = {
     "seed_status",
     "send_chat",
     "send_room_message",
+    "send_test_metric",
     "send_test_trace",
     "send_trigger_draft",
     "set_debug",

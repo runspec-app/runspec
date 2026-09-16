@@ -414,7 +414,12 @@ def main() -> None:
     # agent's fleet calls with no model inside.
     ai_on = bridge.ai_enabled()
     if ai_on:
-        observability.init_tracing(_config.read_telemetry())
+        _telemetry_cfg = _config.read_telemetry()
+        observability.init_tracing(_telemetry_cfg)
+        # Metrics are a separate OTLP signal ([telemetry.metrics]) with their own
+        # endpoint; init independently so they can go to a different backend than
+        # traces. Best-effort no-op when disabled or the `otel` extra is absent.
+        observability.init_metrics(_telemetry_cfg)
 
     # Connect any external MCP servers ([mcp] / [[mcp.servers]]) so their tools
     # join the chat agent's toolset. Best-effort and idempotent — a no-op unless
@@ -494,6 +499,7 @@ def main() -> None:
     try:
         webview.start(**start_kwargs)
     finally:
-        # Flush any batched spans before the process exits (no-op when tracing off)
-        # so a short session doesn't drop its last traces.
+        # Flush any batched spans + metrics before the process exits (no-op when
+        # off) so a short session doesn't drop its last traces / metric export.
         observability.shutdown()
+        observability.shutdown_metrics()

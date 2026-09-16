@@ -121,6 +121,93 @@ def test_read_telemetry_api_key_command(monkeypatch):
     assert config_mod.read_telemetry()["api_key_command"] is None
 
 
+# ── [telemetry.metrics] config (separate signal, independent endpoint) ─────────
+
+
+def test_read_telemetry_metrics_defaults(monkeypatch):
+    monkeypatch.setattr(config_mod, "read_config", lambda: {})
+    m = config_mod.read_telemetry()["metrics"]
+    assert m["enabled"] is False  # independent of trace enabled, opt-in
+    assert m["endpoint"] is None
+    assert m["headers"] == {}
+    assert m["export_interval"] == 60
+    assert m["api_key_header"] == "x-api-key"
+    assert m["service_name"] == "runspec-console"
+
+
+def test_read_telemetry_metrics_independent_endpoint_and_auth(monkeypatch):
+    """Metrics endpoint + auth are metrics-specific and do NOT inherit the trace
+    values — the split case (traces → LangSmith, metrics → Grafana) must not ship
+    the traces API key to the metrics backend."""
+    monkeypatch.setattr(
+        config_mod,
+        "read_config",
+        lambda: {
+            "telemetry": {
+                "enabled": True,
+                "endpoint": "https://ls.internal/otel/v1/traces",
+                "headers": {"x-api-key": "ls-secret"},
+                "api_key_command": "keyring get ls",
+                "metrics": {
+                    "enabled": True,
+                    "endpoint": "  https://grafana.internal/otlp/v1/metrics  ",
+                    "headers": {"Authorization": "Basic abc"},
+                    "export_interval": 15,
+                },
+            }
+        },
+    )
+    m = config_mod.read_telemetry()["metrics"]
+    assert m["enabled"] is True
+    assert m["endpoint"] == "https://grafana.internal/otlp/v1/metrics"
+    # Auth is NOT inherited from [telemetry].
+    assert m["headers"] == {"Authorization": "Basic abc"}
+    assert m["api_key_command"] is None
+    assert m["export_interval"] == 15
+
+
+def test_read_telemetry_metrics_transport_trust_falls_back(monkeypatch):
+    """ca_bundle + tls_verify (non-secret transport trust) inherit from
+    [telemetry] when unset under [telemetry.metrics]; an explicit value wins."""
+    monkeypatch.setattr(
+        config_mod,
+        "read_config",
+        lambda: {
+            "telemetry": {
+                "ca_bundle": "/etc/pki/corp-ca.pem",
+                "tls_verify": False,
+                "metrics": {"enabled": True},
+            }
+        },
+    )
+    m = config_mod.read_telemetry()["metrics"]
+    assert m["ca_bundle"] == "/etc/pki/corp-ca.pem"  # inherited
+    assert m["tls_verify"] is False  # inherited
+    # An explicit metrics ca_bundle overrides the inherited one.
+    monkeypatch.setattr(
+        config_mod,
+        "read_config",
+        lambda: {
+            "telemetry": {
+                "ca_bundle": "/etc/pki/corp-ca.pem",
+                "metrics": {"enabled": True, "ca_bundle": "/etc/pki/metrics-ca.pem"},
+            }
+        },
+    )
+    assert (
+        config_mod.read_telemetry()["metrics"]["ca_bundle"] == "/etc/pki/metrics-ca.pem"
+    )
+
+
+def test_read_telemetry_metrics_export_interval_floor(monkeypatch):
+    monkeypatch.setattr(
+        config_mod,
+        "read_config",
+        lambda: {"telemetry": {"metrics": {"export_interval": 0}}},
+    )
+    assert config_mod.read_telemetry()["metrics"]["export_interval"] == 60
+
+
 # ── api_key_command → header resolution ("ship the command, not the key") ─────
 
 
@@ -308,6 +395,9 @@ def _chat_stub():
         s.tokens.append(payload["token"]) if event == "runspec:token" else None
     )
     s._persist_conversation_turn = lambda *a, **k: None
+    # Chat run_summary audit — exercised in its own test; a no-op here keeps these
+    # trace-focused tests independent of the audit-log write path.
+    s._audit_chat_turn = lambda *a, **k: None
 
     # Autonomy gate helpers: a plain runnable tool, autonomous ("run") so no
     # confirm prompt; _run_tool_sync creates a child span so we can prove the
@@ -537,3 +627,156 @@ def test_send_test_trace_capture_content_scrubs(exporter):
     assert "world" in args  # non-secret kept
     assert "hunter2" not in args  # secret scrubbed
     assert "«redacted»" in args
+
+
+# ── 6. metrics — separate OTLP signal (MeterProvider + instruments) ───────────
+#
+# Network-free via InMemoryMetricReader. Covers the same three pillars as the
+# tracing tests: the disabled no-op contract, the recording helpers producing the
+# right instruments/attributes, and the reconfigure/test-emit seams.
+
+
+@pytest.fixture
+def metric_reader():
+    """A fresh in-memory metric reader wired into observability; torn down after."""
+    from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+
+    reader = InMemoryMetricReader()
+    yield reader
+    obs.reset_metrics_for_test()
+
+
+def _collect_points(reader):
+    """Flatten a reader's metrics into ``{name: [(attributes, point)]}`` where a
+    point is a NumberDataPoint (counter) or HistogramDataPoint."""
+    out: dict[str, list] = {}
+    data = reader.get_metrics_data()
+    if data is None:
+        return out
+    for rm in data.resource_metrics:
+        for sm in rm.scope_metrics:
+            for metric in sm.metrics:
+                pts = out.setdefault(metric.name, [])
+                for dp in metric.data.data_points:
+                    pts.append((dict(dp.attributes), dp))
+    return out
+
+
+def test_metrics_disabled_is_noop():
+    """With metrics off, every recording helper is a no-op and nothing raises."""
+    obs.reset_metrics_for_test()
+    assert obs.metrics_enabled() is False
+    assert obs.init_metrics({"metrics": {"enabled": False}}) is False
+    obs.record_tool_run(tool="run_runnable", duration_ms=5, output="ok")
+    obs.record_turn(kind="chat", duration_ms=5, usage={"input": 1, "output": 1})
+    assert obs.flush_metrics() is False
+    assert obs.send_test_metric() == {"ok": False, "reason": "metrics are not active"}
+
+
+@otel_only
+def test_record_tool_run_emits_counter_and_histogram(metric_reader):
+    obs.init_metrics_for_test(metric_reader)
+    obs.record_tool_run(
+        tool="run_runnable",
+        decision="confirm",
+        operator_decision="approved",
+        provenance={"trigger": "nightly", "agent": True, "runbook": ""},
+        duration_ms=12.5,
+        output="✗ boom",  # error status from the leading marker
+        host="web1",
+    )
+    points = _collect_points(metric_reader)
+
+    runs = points["runspec.tool.runs"]
+    assert len(runs) == 1
+    attrs, dp = runs[0]
+    assert dp.value == 1
+    assert attrs["runspec.tool.name"] == "run_runnable"
+    assert attrs["runspec.tool.status"] == "error"
+    assert attrs["runspec.tool.autonomy_decision"] == "confirm"
+    assert attrs["runspec.tool.operator_decision"] == "approved"
+    assert attrs["runspec.host"] == "web1"
+    assert attrs["runspec.provenance.trigger"] == "nightly"
+    assert attrs["runspec.provenance.agent"] is True
+
+    dur = points["runspec.tool.duration"]
+    assert len(dur) == 1
+    assert dur[0][1].count == 1
+
+
+@otel_only
+def test_record_tool_run_status_from_output(metric_reader):
+    obs.init_metrics_for_test(metric_reader)
+    obs.record_tool_run(tool="a", duration_ms=1, output="all good")
+    obs.record_tool_run(tool="a", duration_ms=1, output="⏹ stopped")
+    statuses = sorted(
+        attrs["runspec.tool.status"]
+        for attrs, _ in _collect_points(metric_reader)["runspec.tool.runs"]
+    )
+    assert statuses == ["cancelled", "ok"]
+
+
+@otel_only
+def test_record_turn_emits_turn_and_tokens(metric_reader):
+    obs.init_metrics_for_test(metric_reader)
+    obs.record_turn(
+        kind="chat",
+        duration_ms=100.0,
+        usage={"input": 42, "output": 17},
+        status="ok",
+    )
+    points = _collect_points(metric_reader)
+
+    turns = points["runspec.agent.turns"]
+    assert len(turns) == 1 and turns[0][1].value == 1
+    assert turns[0][0]["runspec.turn.kind"] == "chat"
+    assert turns[0][0]["runspec.turn.status"] == "ok"
+
+    assert points["runspec.agent.turn.duration"][0][1].count == 1
+
+    tokens = {
+        attrs["gen_ai.token.type"]: dp.value
+        for attrs, dp in points["runspec.agent.turn.tokens"]
+    }
+    assert tokens == {"input": 42, "output": 17}
+
+
+@otel_only
+def test_reconfigure_metrics_round_trip():
+    """reconfigure_metrics swaps the live MeterProvider (init_metrics alone can't —
+    it's idempotent) and leaves a clean no-op when re-inited disabled."""
+    obs.reset_metrics_for_test()
+    assert obs.metrics_enabled() is False
+    cfg1 = {
+        "metrics": {
+            "enabled": True,
+            "endpoint": "http://127.0.0.1:4318/v1/metrics",
+            "export_interval": 3600,
+        }
+    }
+    assert obs.reconfigure_metrics(cfg1) is True
+    assert obs.metrics_enabled() is True
+    first = obs._METER_PROVIDER
+    cfg2 = {
+        "metrics": {
+            "enabled": True,
+            "endpoint": "http://127.0.0.1:9999/v1/metrics",
+            "export_interval": 3600,
+        }
+    }
+    assert obs.reconfigure_metrics(cfg2) is True
+    assert obs._METER_PROVIDER is not first
+    assert obs.reconfigure_metrics({"metrics": {"enabled": False}}) is False
+    assert obs.metrics_enabled() is False
+    assert obs._METER_PROVIDER is None
+    obs.reset_metrics_for_test()
+
+
+@otel_only
+def test_send_test_metric_emits_all_instruments(metric_reader):
+    obs.init_metrics_for_test(metric_reader)
+    result = obs.send_test_metric()
+    assert result["ok"] is True
+    assert "runspec.tool.runs" in result["instruments"]
+    names = set(_collect_points(metric_reader))
+    assert {"runspec.tool.runs", "runspec.agent.turns"} <= names

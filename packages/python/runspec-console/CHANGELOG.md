@@ -8,6 +8,52 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.266.0] — 2026-09-16
+
+### Added
+- **OTLP metrics export — a second telemetry signal alongside traces
+  (`[telemetry.metrics]`).** The console now also exports **metrics** over OTLP:
+  per-tool-run and per-turn counters + duration histograms — `runspec.tool.runs`,
+  `runspec.tool.duration`, `runspec.agent.turns`, `runspec.agent.turn.duration`,
+  and `runspec.agent.turn.tokens` (split by `gen_ai.token.type`) — recorded
+  synchronously at the shared autonomy-gate chokepoint
+  (`bridge_autonomy._gated_run_tool_async` → `observability.record_tool_run`) and
+  the turn boundary (`bridge_invoke` → `observability.record_turn`), then pushed on
+  an interval by a `PeriodicExportingMetricReader`. Labels are a **bounded** set
+  (tool name, autonomy/operator decision, status, turn kind, provenance; host only
+  for `run_runnable`) to keep backend cardinality sane — high-cardinality detail
+  (chat id, ad-hoc host) stays on spans. No new dependency: the OTLP metric
+  exporter ships in the same `opentelemetry-exporter-otlp-proto-http` wheel as the
+  span exporter (the `otel` extra).
+- **Metrics are a separate signal with their own endpoint + auth.** `endpoint`,
+  `headers`, and `api_key_command`/`api_key_header` under `[telemetry.metrics]` are
+  metrics-specific and do **not** inherit the trace values — so traces can go to
+  one backend and metrics to another (e.g. traces direct to **LangSmith**, which
+  ingests OTLP traces but not metrics, and metrics to a **Grafana/Prometheus OTLP**
+  endpoint or a local collector) without the trace backend's API key ever being
+  sent to the metrics backend. The two **non-secret transport-trust** knobs
+  (`ca_bundle`, `tls_verify`) *do* inherit from `[telemetry]` when unset. `enabled`
+  defaults off and is independent of trace `enabled`; `export_interval` defaults 60s.
+- **Settings → Telemetry gains a Metrics section** — enable toggle, metrics
+  endpoint, export interval, metrics-specific headers, and an
+  `api_key_command`/header, plus a **Send test metric** button
+  (`send_test_metric` bridge method → `observability.send_test_metric`) that saves,
+  emits one sample tool-run + turn metric, and force-flushes it so the pipeline can
+  be verified without waiting for the export interval — the metrics twin of Send
+  test trace.
+- **Chat turns now write a `run_summary` audit record** (`_audit_chat_turn`), so a
+  chat turn is visible in History/Analytics and carries turn-granularity data
+  (duration, exit code, token usage, provenance) — previously only runnable runs
+  and built-in tool calls wrote one. Best-effort and independent of telemetry.
+
+### Notes
+- `app.py` brings metrics up beside tracing at startup (guarded by the AI
+  off-switch) and flushes + shuts the MeterProvider down at exit. The metrics
+  path follows the same opt-in / best-effort / never-raises / complete-no-op-when-
+  disabled contract as tracing (`observability.init_metrics` / `metrics_enabled` /
+  `flush_metrics` / `shutdown_metrics` / `reconfigure_metrics`).
+
+
 ## [0.265.2] — 2026-09-16
 
 ### Changed

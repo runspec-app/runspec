@@ -81,6 +81,7 @@ def _chat_stub(max_cont: int = 3, max_tool_rounds: int | None = None):
     s._trace = lambda *a, **k: None
     s._trim_chat_history = lambda: None
     s._play_sound = lambda *a, **k: None
+    s._audit_chat_turn = lambda *a, **k: None
     s._window_is_foreground = lambda: True
     s._usage_from_response = lambda _r: {
         "input": 0,

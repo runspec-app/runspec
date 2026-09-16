@@ -936,6 +936,7 @@ class AutonomyMixin:
             # and can be stopped mid-run. Runnable executions (run_runnable /
             # search meta-tools) keep their own invoke_runnable card and are
             # excluded.
+            _tool_started = time.monotonic()
             if tool_name in _BUILTIN_TOOL_NAMES or (
                 getattr(self, "_mcp", None) is not None and self._is_mcp_tool(tool_name)
             ):
@@ -947,6 +948,24 @@ class AutonomyMixin:
                     self._run_tool_sync, tool_name, tool_input, chat_id
                 )
             observability.set_tool_exit(_tool_span, out)
+            # OTLP metric for this tool run (no-op unless [telemetry.metrics] is
+            # on). Host is recorded only for run_runnable — the one tool whose
+            # `host` names a bounded fleet host/group; other tools may carry an
+            # ad-hoc SSH host string, which would explode metric cardinality.
+            _metric_host = ""
+            if tool_name == "run_runnable":
+                _h = tool_input.get("host")
+                if isinstance(_h, str) and _h:
+                    _metric_host = _h
+            observability.record_tool_run(
+                tool=tool_name,
+                decision=decision,
+                operator_decision=gate_operator_decision,
+                provenance=getattr(self, "_run_origin", {}).get(chat_id),
+                duration_ms=(time.monotonic() - _tool_started) * 1000.0,
+                output=out,
+                host=_metric_host,
+            )
             # Tell the agent the call went through a human confirm gate and how it
             # was answered (approved / approved-with-edits). Autonomous "run" calls
             # never reach here with a decision set, so an ungated call carries no

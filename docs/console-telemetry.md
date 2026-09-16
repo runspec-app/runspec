@@ -1,4 +1,4 @@
-# Telemetry — OpenTelemetry tracing
+# Telemetry — OpenTelemetry tracing & metrics
 
 The console can export a **trace per agent turn** over
 [OpenTelemetry](https://opentelemetry.io/) (OTLP) so you can see, in your
@@ -6,6 +6,12 @@ observability backend, exactly what the agent did: the model calls it made, the
 tokens they cost, the tools it ran, and how each was gated. Spans follow the
 OpenTelemetry **GenAI semantic conventions** (`gen_ai.*`), so a GenAI-aware
 backend renders the model and tool calls natively.
+
+It can **also export metrics** — per-tool-run and per-turn counters and duration
+histograms — as a *separate* OTLP signal with its own endpoint, so you can drive
+live dashboards/alerts in a metrics backend (Grafana, Prometheus-via-OTLP) even
+when your traces go somewhere that only ingests traces (like LangSmith). See
+[Metrics](#metrics).
 
 It is **vendor-neutral**: point it at any OTel backend —
 [LangSmith](https://docs.smith.langchain.com/observability/how_to_guides/trace_with_opentelemetry),
@@ -98,6 +104,76 @@ Tool execution dispatches onto a worker thread, but the tool span is opened
 before that hand-off, so a runnable's execution stays **parented to its turn's
 trace** — the whole turn is one connected tree.
 
+## Metrics
+
+Alongside traces, the console can export **metrics** over OTLP. Metrics are a
+**separate signal with their own endpoint and auth**, enabled independently of
+tracing — because many trace backends don't ingest metrics. In particular
+**LangSmith's OTLP endpoint takes traces, not metrics**, so the common setup is:
+
+- **traces** → your trace backend (e.g. LangSmith), via `[telemetry]`;
+- **metrics** → a metrics/OTLP backend (a Grafana / Prometheus OTLP endpoint, or
+  a local OpenTelemetry Collector), via `[telemetry.metrics]`.
+
+You record nothing by hand and there's no "emit after each run" plumbing: the
+console records into in-memory instruments synchronously (cheap) and a
+`PeriodicExportingMetricReader` pushes them to the backend on an interval.
+
+### Instruments
+
+| Metric | Type | Unit | Notes |
+|---|---|---|---|
+| `runspec.tool.runs` | counter | 1 | One per agent tool call through the autonomy gate. |
+| `runspec.tool.duration` | histogram | ms | Tool execution wall-clock. |
+| `runspec.agent.turns` | counter | 1 | One per completed chat / trigger / schedule turn. |
+| `runspec.agent.turn.duration` | histogram | ms | Turn wall-clock. |
+| `runspec.agent.turn.tokens` | counter | 1 | Model tokens, split by `gen_ai.token.type` (input/output). |
+
+Attributes are a **bounded** set so they don't blow up backend cardinality:
+`runspec.tool.name`, `runspec.tool.status` (ok/error/cancelled),
+`runspec.tool.autonomy_decision`, `runspec.tool.operator_decision`,
+`runspec.turn.kind`, `runspec.turn.status`, `runspec.provenance.*`, and
+`runspec.host` (only for `run_runnable`, whose host is a bounded fleet host —
+other tools may carry an ad-hoc host, which is deliberately left off metrics and
+kept on spans). These mirror the dimensions the Analytics tab already buckets on.
+
+### Enable it
+
+**Settings → Telemetry → Metrics**, or edit `config.toml`:
+
+```toml
+[telemetry.metrics]
+enabled = true
+endpoint = "http://127.0.0.1:4318/v1/metrics"   # your collector / Grafana / Prometheus-OTLP
+export_interval = 60                             # seconds between exports
+
+# Metrics auth is metrics-specific (NOT inherited from [telemetry]) so the trace
+# backend's key is never sent here. e.g. Grafana Cloud basic auth:
+[telemetry.metrics.headers]
+"Authorization" = "Basic ..."
+```
+
+| Key | Meaning |
+|---|---|
+| `enabled` | Master switch for metrics. Default **false**, independent of trace `enabled`. |
+| `endpoint` | OTLP **metrics** URL (`…/v1/metrics`). Blank ⇒ the SDK reads `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`. |
+| `export_interval` | Seconds between metric exports. Default 60 (min 1). |
+| `headers` | Extra HTTP headers on the metrics export. **Not** shared with the trace headers. |
+| `api_key_command` / `api_key_header` | Resolve the metrics key at runtime from a command (same "ship the command, not the key" pattern as traces); metrics-specific. |
+| `ca_bundle` / `tls_verify` | **Inherited from `[telemetry]`** when unset here (transport trust is environment-wide, not a per-backend secret); set to override. |
+
+The metrics `endpoint` and auth are deliberately **not** inherited from the trace
+`[telemetry]` values — pointing metrics at a different backend must never ship the
+trace backend's API key to it. (The OTLP/HTTP metrics path is also a different URL
+— `/v1/metrics` vs `/v1/traces` — so the endpoints genuinely differ.)
+
+### Verify it — send a test metric
+
+**Settings → Telemetry → Metrics → Send test metric** saves the current settings,
+records one sample tool-run + turn metric, and **force-flushes** it so it lands
+immediately instead of waiting for `export_interval`. The result panel reports the
+instruments and the endpoint. It's the metrics twin of **Send test trace**.
+
 ## Verify it works — send a test trace
 
 You don't have to run a real agent turn to check the pipeline. In **Settings →
@@ -156,15 +232,21 @@ runspec-console`, or by any span attribute the console sets
 (`runspec.turn.kind`, `gen_ai.request.model`, `runspec.tool.autonomy_decision`,
 `runspec.provenance.trigger`, …) via TraceQL. Each trace is one agent turn.
 
-### A note on Prometheus
+### A note on Prometheus / metrics backends
 
 [Prometheus](https://prometheus.io/) is a **metrics** store — it does not ingest
-traces, and this feature exports traces only, so Prometheus is not a backend for
-it. If you later want aggregate metrics (request rate / error rate / duration per
-tool or model), the standard path is to run an **OpenTelemetry Collector** with
-the `spanmetrics` connector (or Tempo's metrics-generator) to *derive* those
-metrics from the same trace stream and expose them to Prometheus — no change to
-the console. That's an ops add-on, separate from this tracing feature.
+traces, so it's not a *traces* backend. For **metrics**, the console now exports
+them natively over OTLP (see [Metrics](#metrics)) — point `[telemetry.metrics]
+endpoint` at a metrics/OTLP receiver:
+
+- **Grafana Cloud / Grafana + Prometheus:** send OTLP metrics to Grafana Cloud's
+  OTLP endpoint (with its basic-auth header under `[telemetry.metrics.headers]`),
+  or to a local **OpenTelemetry Collector** with a `prometheus` /
+  `prometheusremotewrite` exporter that forwards to your Prometheus.
+- **Deriving metrics from traces** (the old approach) still works and is
+  complementary: a Collector's `spanmetrics` connector (or Tempo's
+  metrics-generator) can *also* derive request/error/duration metrics from the
+  trace stream. Use whichever fits — the native metrics above are the direct path.
 
 ## Providing the API key without shipping it
 

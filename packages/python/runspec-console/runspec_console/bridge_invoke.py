@@ -1710,6 +1710,27 @@ class InvokeMixin:
         observability.end_turn(turn_span, usage=usage_total)
 
         duration_ms = int((time.monotonic() - start) * 1000)
+        # OTLP turn metric + a run_summary audit line so a chat turn is visible in
+        # metrics and in the History/Analytics stream (previously only runnable
+        # runs and built-in tool calls wrote a run_summary — a chat turn wrote
+        # none). Both best-effort; a chat turn's exit is 130 when the operator
+        # stopped it, else 0 (an in-turn model/tool error surfaces as text, not a
+        # turn-level non-zero, so it isn't distinguished here).
+        observability.record_turn(
+            kind="chat",
+            provenance=getattr(self, "_run_origin", {}).get(chat_id),
+            duration_ms=duration_ms,
+            usage=usage_total,
+            status="stopped" if stopped else "ok",
+        )
+        self._audit_chat_turn(
+            run_id=uuid.uuid4().hex,
+            chat_id=chat_id,
+            model=getattr(adapter, "model", "") or "",
+            duration_ms=duration_ms,
+            usage=usage_total,
+            stopped=stopped,
+        )
         if stopped:
             self._dispatch("runspec:token", {"id": chat_id, "token": "\n⏹ Stopped."})
         self._dispatch(

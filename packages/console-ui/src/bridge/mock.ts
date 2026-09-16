@@ -718,6 +718,19 @@ export const mockApi: BridgeApi = {
     flushed: true,
   }),
 
+  send_test_metric: async () => ({
+    ok: true,
+    instruments: [
+      'runspec.tool.runs',
+      'runspec.tool.duration',
+      'runspec.agent.turns',
+      'runspec.agent.turn.duration',
+      'runspec.agent.turn.tokens',
+    ],
+    endpoint: 'http://127.0.0.1:4318/v1/metrics',
+    flushed: true,
+  }),
+
   test_notification: async () => ({ toast_available: false, toast_reason: 'mock', sound_available: false, window_found: false }),
   test_sound: async () => false,
   sound_pack_info: async (path?: string) => ({ dir: path ?? '', exists: false, covered: {}, categories: [] }),

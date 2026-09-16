@@ -95,6 +95,61 @@ class ReportingMixin:
         except Exception:  # noqa: BLE001 — auditing is best-effort
             logger.warning("could not write built-in tool audit line", exc_info=True)
 
+    def _audit_chat_turn(
+        self,
+        run_id: str,
+        chat_id: str,
+        model: str,
+        duration_ms: int,
+        usage: dict[str, int] | None,
+        stopped: bool,
+    ) -> None:
+        """Append a History/Analytics run_summary line for one completed chat
+        turn. A chat turn previously wrote no run_summary (only runnable runs and
+        built-in tool calls did), so it was absent from History/Analytics and had
+        no turn-granularity record; this fills that gap alongside the OTLP turn
+        metric. ``exit_code`` is 130 when the operator stopped the turn, else 0.
+        Best-effort — a logging failure must never break the turn."""
+        exit_code = 130 if stopped else 0
+        with self._lock:
+            origin = dict(self._run_origin.get(chat_id, {})) if chat_id else {}
+        usage = usage or {}
+        extra = {
+            "event": "run_summary",
+            "run_id": run_id,
+            "runnable": "chat",
+            "tool": "chat",
+            "user": self._current_user(),
+            "exit_code": exit_code,
+            "duration_ms": int(duration_ms),
+            "agent": bool(origin.get("agent", True)),
+            "trigger": origin.get("trigger", "") or "",
+            "runbook": origin.get("runbook", "") or "",
+            "cancelled": bool(stopped),
+            "builtin": True,
+            "model": model,
+            "input_tokens": int(usage.get("input", 0) or 0),
+            "output_tokens": int(usage.get("output", 0) or 0),
+            "args": {},
+        }
+        record = {
+            "ts": utils_mod._iso_now(),
+            "level": "INFO" if exit_code == 0 else "WARNING",
+            "message": f"chat turn ({'stopped' if stopped else 'ok'})",
+            "extra": extra,
+        }
+        try:
+            log_dir = Path.home() / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            line = json.dumps(record, default=str) + "\n"
+            with self._audit_lock:
+                with (log_dir / self._TOOL_AUDIT_FILE).open(
+                    "a", encoding="utf-8"
+                ) as fh:
+                    fh.write(line)
+        except Exception:  # noqa: BLE001 — auditing is best-effort
+            logger.warning("could not write chat-turn audit line", exc_info=True)
+
     # Cap on rows the History tab shows. Applied newest-first, and used as the
     # early-stop target so we never read more files than needed to fill it.
     _HISTORY_CAP = 200

@@ -51,6 +51,8 @@ DEFAULT_BACKUPS_KEEP = 5
 # default (it exports data to an external backend, so it's strictly opt-in).
 DEFAULT_TELEMETRY_PROTOCOL = "http/protobuf"
 DEFAULT_TELEMETRY_SERVICE_NAME = "runspec-console"
+# Default seconds between OTLP metric exports (PeriodicExportingMetricReader).
+DEFAULT_METRIC_EXPORT_INTERVAL = 60
 
 # [mcp_server] — the console's own in-process MCP server (an external coding
 # agent such as Claude Code connects to it). Localhost-only by default.
@@ -554,11 +556,21 @@ def read_telemetry() -> dict[str, Any]:
     the backend's API key **at runtime** from the command's stdout and injects it
     under that header — so a config seed / git-sync ships the *command* (e.g.
     ``keyring get …`` / ``vault read …`` / a bundled venv helper), never the key
-    in the clear. Mirrors ``[llm] api_key_command`` (see ``adapters/base.py``)."""
+    in the clear. Mirrors ``[llm] api_key_command`` (see ``adapters/base.py``).
+
+    ``[telemetry.metrics]`` (nested) is the parallel **OTLP metrics** export
+    (per-tool-run and per-turn counters/histograms; see ``observability`` +
+    :func:`_telemetry_metrics_config`). It is a **separate signal with its own
+    endpoint and auth**, defaulting off, so metrics can go to a *different*
+    backend than traces — e.g. traces direct to LangSmith (which ingests OTLP
+    traces, not metrics) while metrics go to a Grafana / Prometheus OTLP endpoint
+    or a local collector. See the nested block under the returned ``metrics`` key."""
     raw = read_config().get("telemetry")
     cfg = dict(raw) if isinstance(raw, dict) else {}
     hdrs = cfg.get("headers")
-    ca = str(cfg.get("ca_bundle") or "").strip()
+    ca = str(cfg.get("ca_bundle") or "").strip() or None
+    tls = bool(cfg.get("tls_verify", True))
+    service = str(cfg.get("service_name") or DEFAULT_TELEMETRY_SERVICE_NAME).strip()
     return {
         "enabled": bool(cfg.get("enabled", False)),
         "endpoint": str(cfg.get("endpoint") or "").strip() or None,
@@ -566,12 +578,10 @@ def read_telemetry() -> dict[str, Any]:
             {str(k): str(v) for k, v in hdrs.items()} if isinstance(hdrs, dict) else {}
         ),
         "protocol": str(cfg.get("protocol") or DEFAULT_TELEMETRY_PROTOCOL).strip(),
-        "service_name": str(
-            cfg.get("service_name") or DEFAULT_TELEMETRY_SERVICE_NAME
-        ).strip(),
+        "service_name": service,
         "sample_ratio": min(1.0, max(0.0, float(cfg.get("sample_ratio", 1.0) or 1.0))),
-        "ca_bundle": ca or None,
-        "tls_verify": bool(cfg.get("tls_verify", True)),
+        "ca_bundle": ca,
+        "tls_verify": tls,
         "capture_content": bool(cfg.get("capture_content", False)),
         "max_content_chars": max(0, int(cfg.get("max_content_chars", 0) or 0)),
         "api_key_command": str(cfg.get("api_key_command") or "").strip() or None,
@@ -581,6 +591,64 @@ def read_telemetry() -> dict[str, Any]:
         # so pass/fail shows as a first-class evaluation, not just a filterable
         # attribute. Off by default; a no-op for a non-Phoenix backend.
         "eval_annotations": bool(cfg.get("eval_annotations", False)),
+        "metrics": _telemetry_metrics_config(
+            cfg.get("metrics"),
+            parent_ca=ca,
+            parent_tls=tls,
+            service_name=service,
+        ),
+    }
+
+
+def _telemetry_metrics_config(
+    raw: Any, *, parent_ca: str | None, parent_tls: bool, service_name: str
+) -> dict[str, Any]:
+    """Normalise the nested ``[telemetry.metrics]`` block into a metrics-export
+    config dict, with defaults applied.
+
+    Metrics are a **distinct OTLP signal with an independent destination**, so
+    ``endpoint`` and auth (``headers`` / ``api_key_command`` / ``api_key_header``)
+    are metrics-specific and do **not** inherit from the trace ``[telemetry]``
+    values. This is deliberate and security-motivated: the common split — traces
+    to LangSmith, metrics to a Grafana/Prometheus OTLP endpoint — must not silently
+    ship the *traces* backend's API key to the *metrics* backend. Point metrics
+    somewhere and you configure its auth there.
+
+    The exceptions are the two **non-secret transport-trust** knobs, which *do*
+    fall back to the trace values because a private CA / TLS-intercepting proxy is
+    an environment property, not a per-backend secret:
+
+    - ``ca_bundle`` — inherits the trace ``ca_bundle`` when unset here.
+    - ``tls_verify`` — inherits the trace ``tls_verify`` when unset here.
+
+    ``service_name`` is shared with traces (it names the app, not the backend).
+    ``endpoint`` empty ⇒ ``None`` ⇒ the OTLP exporter falls through to its own
+    ``OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`` / default (``…/v1/metrics``). Note the
+    OTLP/HTTP metrics URL path (``/v1/metrics``) differs from traces
+    (``/v1/traces``), which is a second reason the endpoints can't be shared.
+
+    ``enabled`` defaults **false** (independent of trace ``enabled``, so metrics
+    and traces switch on separately). ``export_interval`` (seconds, default 60,
+    min 1) is how often the ``PeriodicExportingMetricReader`` flushes."""
+    cfg = dict(raw) if isinstance(raw, dict) else {}
+    hdrs = cfg.get("headers")
+    ca = str(cfg.get("ca_bundle") or "").strip()
+    return {
+        "enabled": bool(cfg.get("enabled", False)),
+        "endpoint": str(cfg.get("endpoint") or "").strip() or None,
+        "headers": (
+            {str(k): str(v) for k, v in hdrs.items()} if isinstance(hdrs, dict) else {}
+        ),
+        # Transport trust: inherit from [telemetry] unless overridden here.
+        "ca_bundle": (ca or None) if ca else parent_ca,
+        "tls_verify": bool(cfg.get("tls_verify", parent_tls)),
+        # Auth: metrics-specific, no cross-signal fallback (see docstring).
+        "api_key_command": str(cfg.get("api_key_command") or "").strip() or None,
+        "api_key_header": str(cfg.get("api_key_header") or "x-api-key").strip(),
+        "service_name": service_name,
+        "export_interval": max(
+            1, int(cfg.get("export_interval", DEFAULT_METRIC_EXPORT_INTERVAL) or 60)
+        ),
     }
 
 

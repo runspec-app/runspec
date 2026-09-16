@@ -387,6 +387,42 @@ class ConfigSshMixin:
         result.setdefault("endpoint", cfg.get("endpoint") or "<OTEL_* env / default>")
         return result
 
+    def send_test_metric(self) -> dict[str, Any]:
+        """Emit one representative tool-run + turn metric to verify the **metrics**
+        OTLP pipeline — the metrics twin of :meth:`send_test_trace`, for the
+        Settings → Telemetry "Send test metric" button.
+
+        Reconfigures the meter from the currently-saved ``[telemetry.metrics]``
+        config first (so a just-saved endpoint / enable is picked up without a
+        restart), then records + force-flushes one of each instrument. Returns a
+        UI-friendly result dict: ``ok`` plus either a ``reason`` or ``instruments``
+        / ``endpoint`` / ``flushed``."""
+        from . import observability
+
+        if not getattr(self, "_ai_enabled", True):
+            return {"ok": False, "reason": AI_OFF_MESSAGE}
+        ok, reason = observability.metrics_available()
+        if not ok:
+            return {"ok": False, "reason": reason}
+        cfg = config_mod.read_telemetry()
+        mcfg = cfg.get("metrics") or {}
+        if not mcfg.get("enabled"):
+            return {
+                "ok": False,
+                "reason": "Enable metrics and Save first, then send a test metric.",
+            }
+        if not observability.reconfigure_metrics(cfg):
+            return {
+                "ok": False,
+                "reason": (
+                    "Metrics failed to initialise — check the endpoint and the "
+                    "console log."
+                ),
+            }
+        result = observability.send_test_metric()
+        result.setdefault("endpoint", mcfg.get("endpoint") or "<OTEL_* env / default>")
+        return result
+
     def _commit_ssh_fields(self, **fields: Any) -> None:
         """Atomically merge ``fields`` into the ``[ssh]`` section under the config
         lock (read-modify-write can't race another Settings save), then re-apply.

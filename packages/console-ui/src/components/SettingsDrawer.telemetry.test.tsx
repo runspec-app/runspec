@@ -20,13 +20,20 @@ const INITIAL_CONFIG: Record<string, unknown> = {
     headers: { 'x-api-key': 'ls-secret' },
     api_key_command: 'keyring get langsmith key',
     api_key_header: 'x-api-key',
+    metrics: {
+      enabled: true,
+      endpoint: 'https://grafana.internal/otlp/v1/metrics',
+      export_interval: 30,
+      headers: { Authorization: 'Basic abc' },
+    },
   },
 }
 
-const { getConfig, saveConfig, sendTestTrace } = vi.hoisted(() => ({
+const { getConfig, saveConfig, sendTestTrace, sendTestMetric } = vi.hoisted(() => ({
   getConfig: vi.fn(),
   saveConfig: vi.fn(),
   sendTestTrace: vi.fn(),
+  sendTestMetric: vi.fn(),
 }))
 
 vi.mock('../bridge', () => ({
@@ -38,6 +45,7 @@ vi.mock('../bridge', () => ({
         if (prop === 'get_config') return getConfig
         if (prop === 'save_config') return saveConfig
         if (prop === 'send_test_trace') return sendTestTrace
+        if (prop === 'send_test_metric') return sendTestMetric
         return vi.fn().mockResolvedValue(undefined)
       },
     },
@@ -54,6 +62,12 @@ describe('TelemetryTab Save round-trip', () => {
       spans: ['runspec.agent.turn', 'chat runspec-test-model', 'execute_tool run_runnable'],
       endpoint: 'https://langsmith.internal/otel/v1/traces',
       capture_content: false,
+      flushed: true,
+    })
+    sendTestMetric.mockReset().mockResolvedValue({
+      ok: true,
+      instruments: ['runspec.tool.runs', 'runspec.agent.turns'],
+      endpoint: 'https://grafana.internal/otlp/v1/metrics',
       flushed: true,
     })
   })
@@ -84,6 +98,26 @@ describe('TelemetryTab Save round-trip', () => {
     // The "ship the command, not the key" fields round-trip.
     expect(saved.telemetry.api_key_command).toBe('keyring get langsmith key')
     expect(saved.telemetry.api_key_header).toBe('x-api-key')
+    // The nested metrics section round-trips as its own signal (separate endpoint
+    // + auth from traces).
+    const metrics = saved.telemetry.metrics as Record<string, unknown>
+    expect(metrics.enabled).toBe(true)
+    expect(metrics.endpoint).toBe('https://grafana.internal/otlp/v1/metrics')
+    expect(metrics.export_interval).toBe(30)
+    expect(metrics.headers).toEqual({ Authorization: 'Basic abc' })
+  })
+
+  it('"Send test metric" saves first, calls the bridge, and shows the result', async () => {
+    render(<TelemetryTab />)
+    await screen.findByDisplayValue('https://grafana.internal/otlp/v1/metrics')
+    const user = userEvent.setup()
+    await act(async () => {
+      await user.click(screen.getByRole('button', { name: /send test metric/i }))
+    })
+    await waitFor(() => expect(saveConfig).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(sendTestMetric).toHaveBeenCalledTimes(1))
+    await screen.findByText(/test metric sent/i)
+    await screen.findByText(/grafana\.internal/)
   })
 
   it('the "Use local Phoenix" preset fills the endpoint, enables, and captures content', async () => {
