@@ -105,6 +105,26 @@ per venv path under `lock2`, appends to `discovered`). The dedup, cache write,
 `runspec:runnables_updated`, `_publish_catalogs`, and `pool.reap()` tail is
 unchanged.
 
+### Phase 2b — discovery by site-packages scan (0.265.2)
+
+`discover_remote`/`discover_local` no longer start with `runspec local --format
+json`. That command is `runspec.loader.load_raw` per installed package printed
+as-is (inference is *not* applied), so the console gets identical runnables by
+fetching the `runspec.toml` files itself: one POSIX shell command per remote
+venv (`_scan_command` — `ls bin/`, an editable-install probe on
+`*.dist-info/direct_url.json`, then `find … -name runspec.toml -exec cat`),
+parsed by `_parse_scan_output` and normalised with the loader's own
+`_normalise_config`/`_normalise_runnables` (`_normalise_toml_text`). The same
+filters the CLI applies are applied here (`_runnables_from_tomls`: entry point
+present in bin/, dedupe by path+name, the core `runspec/runspec.toml` and the
+console's own runnable excluded). Local venvs do the same in-process
+(`_scan_local`, via `hosts.site_packages`). The CLI stays as the per-venv
+**fallback** whenever the scan can't be trusted: non-zero exit or a reply
+without the END marker (a Windows remote / non-POSIX shell), no `runspec.toml`
+found, or an editable install (its TOML lives in a source tree the CLI's
+`direct_url.json` logic follows). Cost per venv drops from a Python
+interpreter start + `importlib.metadata` walk to a `find`.
+
 ### Phase 3 — discovery cadence (0.265.0)
 
 Phase 2 used to re-run `runspec local --format json` on **every** venv of

@@ -4,7 +4,12 @@ The console runs runnables on remote machines over plain SSH. There are no
 agents or daemons to install on the hosts — a host needs only an SSH login and
 the `runspec` core library installed in one or more Python environments. The
 console keeps one pooled, keepalive'd SSH connection per host and discovers
-each host's runnables by running `runspec local --format json` over it.
+each host's runnables over it — by scanning the venv's site-packages for
+`runspec.toml` files with one `find`+`cat` command (no Python starts on the
+host) and normalising them with runspec's own loader, which yields exactly
+what `runspec local --format json` would; that CLI is the per-venv fallback
+when the scan can't be trusted (a Windows remote, no `runspec.toml` found, or
+an editable install).
 
 Add hosts either in **Settings → Jump Hosts** or by asking the agent — its
 `manage_hosts` tool edits the same config behind a confirmation card. Once a

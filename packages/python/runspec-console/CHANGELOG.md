@@ -8,6 +8,27 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.265.2] — 2026-09-16
+
+### Changed
+- **Discovery scans site-packages for `runspec.toml` instead of starting
+  Python on every host.** `runspec local --format json` is runspec's `load_raw`
+  per installed package printed as-is (inference is not applied there), so the
+  console now fetches the TOML files itself — one POSIX `find`+`cat` shell
+  command per remote venv (plus the `bin/` listing and an editable-install
+  probe), an in-process glob for a local venv — and normalises them with the
+  loader's own functions, producing byte-identical runnables at a fraction of
+  the cost (no interpreter start, no `importlib.metadata` walk per host). The
+  same filters apply (entry point present in `bin/`/`Scripts/`, dedupe, the
+  core control-plane runnable and the console itself excluded). `runspec local`
+  remains the per-venv **fallback** whenever the scan can't be trusted: the
+  command fails or returns something other than a scan reply (a Windows
+  remote), no `runspec.toml` is found, or an editable install is present (the
+  CLI knows how to follow its `direct_url.json`). `discovery.py`
+  `_scan_command`/`_parse_scan_output`/`_normalise_toml_text`/
+  `_runnables_from_tomls`/`_scan_local`; the module docstring's long-stale
+  claim that local discovery already scanned site-packages is now true.
+
 ## [0.265.1] — 2026-09-16
 
 ### Fixed

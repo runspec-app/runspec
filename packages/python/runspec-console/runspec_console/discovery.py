@@ -1,8 +1,20 @@
 """
-discovery.py — discover runnables by scanning site-packages for runspec.toml files.
+discovery.py — discover runnables in a venv, locally or over SSH.
 
-For local hosts: scan the venv's site-packages directory directly (no subprocess).
-For remote hosts: SSH + `runspec local --format json` (runspec is already installed there).
+Fast path (both local and remote): **scan the venv's site-packages for
+``runspec.toml`` files** and normalise them here with runspec's own loader —
+one ``find``+``cat`` shell command per remote venv (no Python interpreter
+starts on the host), an in-process glob for a local venv. This is byte-for-byte
+what ``runspec local --format json`` emits (that command is ``load_raw`` per
+package, printed as-is — inference is *not* applied there either), so the
+runnables that come back are identical; it is just an order of magnitude
+cheaper than starting Python and walking ``importlib.metadata`` on every host.
+
+Fallback: ``<venv>/bin/runspec local --format json`` — used per venv whenever
+the scan can't be trusted: the shell command fails or its output is not a scan
+reply (a Windows remote, a non-POSIX shell), no ``runspec.toml`` was found, or
+an **editable install** is present (its ``runspec.toml`` lives in a source tree
+``direct_url.json`` points at, which the CLI already knows how to follow).
 
 Returns a list of Runnable dicts matching the bridge/index.ts Runnable interface.
 """
@@ -10,6 +22,8 @@ Returns a list of Runnable dicts matching the bridge/index.ts Runnable interface
 from __future__ import annotations
 
 import json
+import logging
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -20,7 +34,9 @@ if sys.version_info >= (3, 11):
 else:
     import tomli as tomllib
 
-from .hosts import venv_name
+from .hosts import scripts_dir, site_packages, venv_name
+
+logger = logging.getLogger(__name__)
 
 # Dirs inside site-packages that never contain user packages
 _SKIP_DIRS = frozenset(
@@ -37,14 +53,198 @@ _SKIP_DIRS = frozenset(
 
 _SELF_EXCLUDE = frozenset({"runspec-console"})
 
+# The scan also sees the core package's own ``runspec/runspec.toml`` (the CLI's
+# dogfooded ``runspec`` control-plane runnable, whose ``bin/runspec`` binary of
+# course exists). ``runspec local`` never lists it — it only walks dists that
+# *require* runspec — so the scan excludes it by name to stay identical.
+_SCAN_EXCLUDE = _SELF_EXCLUDE | frozenset({"runspec"})
+
+# Markers in the remote scan reply. ``_SCAN_END`` doubles as the "this really
+# was our scan command's complete output" check — anything without it (a
+# Windows shell, a truncated stream, a plain ``[]``) falls back to the CLI.
+_SCAN_BIN = "=====BIN"
+_SCAN_EDITABLE = "=====EDITABLE"
+_SCAN_FILE = "=====FILE "
+_SCAN_END = "=====END"
+
+
+def _scan_command(runspec_path: str) -> str:
+    """The one-shot POSIX shell command that dumps everything the scan needs
+    from a remote venv: the ``bin/`` listing (entry-point filter), any editable
+    install marker (⇒ fall back to the CLI), and every ``runspec.toml`` under
+    ``lib/python*/site-packages`` with its contents.
+
+    Portable ``sh``: no bashisms, ``find -exec … +`` (no ``-print0``/``xargs``),
+    paths with spaces survive (``$f`` is always quoted). ``lib64`` is skipped on
+    purpose — on the distros that have it, it is a symlink to ``lib`` and the
+    same files would be listed twice.
+    """
+    rp = shlex.quote(runspec_path)
+    return (
+        f'b=$(dirname {rp}); r=$(dirname "$b"); '
+        f'echo {_SCAN_BIN}; ls -1 "$b" 2>/dev/null; '
+        f"echo {_SCAN_EDITABLE}; "
+        'find "$r"/lib/python*/site-packages -maxdepth 2 -name direct_url.json '
+        "-exec grep -l '\"editable\": *true' {} + 2>/dev/null; "
+        'find "$r"/lib/python*/site-packages -maxdepth 3 -name runspec.toml '
+        f'-exec sh -c \'for f; do echo "{_SCAN_FILE}$f"; cat "$f"; done\' _ {{}} + '
+        "2>/dev/null; "
+        f"echo {_SCAN_END}"
+    )
+
+
+def _parse_scan_output(out: str) -> tuple[set[str], bool, list[tuple[str, str]]] | None:
+    """Parse a scan reply into ``(bin_names, editable_present, [(path, toml_text)])``.
+
+    ``None`` when the text is not a complete scan reply (no END marker), which
+    the callers treat as "fall back to the CLI".
+    """
+    if _SCAN_END not in out:
+        return None
+    bin_names: set[str] = set()
+    editable = False
+    files: list[tuple[str, str]] = []
+    section = ""
+    cur_path = ""
+    cur_lines: list[str] = []
+
+    def _flush() -> None:
+        if section == "file" and cur_path:
+            files.append((cur_path, "\n".join(cur_lines)))
+
+    for line in out.splitlines():
+        if line == _SCAN_BIN:
+            _flush()
+            section, cur_path, cur_lines = "bin", "", []
+        elif line == _SCAN_EDITABLE:
+            _flush()
+            section, cur_path, cur_lines = "editable", "", []
+        elif line.startswith(_SCAN_FILE):
+            _flush()
+            section, cur_path, cur_lines = "file", line[len(_SCAN_FILE) :].strip(), []
+        elif line == _SCAN_END:
+            _flush()
+            section, cur_path, cur_lines = "end", "", []
+        elif section == "bin":
+            if line.strip():
+                bin_names.add(line.strip())
+        elif section == "editable":
+            if line.strip():
+                editable = True
+        elif section == "file":
+            cur_lines.append(line)
+    return bin_names, editable, files
+
+
+def _normalise_toml_text(text: str) -> dict[str, Any] | None:
+    """``runspec.loader.load_raw`` for TOML *text*: the same two normalisers the
+    CLI runs per package, so the spec shape matches ``runspec local``'s JSON
+    exactly. ``None`` when the file isn't a runspec.toml (or runspec's loader
+    can't be imported), so the caller skips it."""
+    try:
+        from runspec.loader import _normalise_config, _normalise_runnables
+    except ImportError:  # pragma: no cover — loader layout changed
+        return None
+    try:
+        data = tomllib.loads(text)
+        runnables_raw = {
+            k: v for k, v in data.items() if k != "config" and isinstance(v, dict)
+        }
+        return {
+            "config": _normalise_config(data.get("config", {})),
+            "runnables": _normalise_runnables(runnables_raw),
+        }
+    except Exception:  # noqa: BLE001 — malformed / non-runspec TOML ⇒ skip
+        return None
+
+
+def _is_core_toml(path: str) -> bool:
+    """The core package's own ``…/site-packages/runspec/runspec.toml``."""
+    parts = Path(path).parts
+    return len(parts) >= 3 and parts[-2] == "runspec" and parts[-3] == "site-packages"
+
+
+def _runnables_from_tomls(
+    files: list[tuple[str, str]],
+    bin_names: set[str],
+    host: str,
+    group: str,
+) -> list[dict[str, Any]]:
+    """Turn scanned ``(path, toml_text)`` pairs into Runnable dicts, applying the
+    same filters ``runspec local --format json`` does: only runnables with an
+    entry point in the venv's bin dir (``name`` or ``name.exe``), deduped by
+    (path, name), minus the console's own / the core control-plane runnable."""
+    out: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for path, text in files:
+        if _is_core_toml(path):
+            continue
+        raw = _normalise_toml_text(text)
+        if not raw or not raw["runnables"]:
+            continue
+        config_autonomy = raw["config"].get("autonomy_default")
+        for name, spec in raw["runnables"].items():
+            if name in _SCAN_EXCLUDE:
+                continue
+            if name not in bin_names and f"{name}.exe" not in bin_names:
+                continue
+            key = (path, name)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.extend(_spec_to_runnables(name, spec, host, group, config_autonomy))
+    return out
+
+
+def _scan_local(runspec_path: str, host: str) -> list[dict[str, Any]] | None:
+    """In-process site-packages scan of a local venv. ``None`` ⇒ fall back to
+    the CLI (no site-packages found, an editable install present, or no
+    ``runspec.toml`` at all)."""
+    sp = site_packages(runspec_path)
+    if sp is None:
+        return None
+    try:
+        for du in list(sp.glob("*.dist-info/direct_url.json")):
+            try:
+                if (
+                    json.loads(du.read_text(encoding="utf-8"))
+                    .get("dir_info", {})
+                    .get("editable")
+                ):
+                    return None
+            except Exception:  # noqa: BLE001 — unreadable marker ⇒ ignore it
+                continue
+        tomls = sorted(
+            set(sp.glob("*/runspec.toml")) | set(sp.glob("*/*/runspec.toml"))
+        )
+    except OSError:
+        return None
+    if not tomls:
+        return None
+    files: list[tuple[str, str]] = []
+    for t in tomls:
+        try:
+            files.append((str(t), t.read_text(encoding="utf-8")))
+        except OSError:
+            continue
+    try:
+        bin_names = {p.name for p in scripts_dir(runspec_path).iterdir()}
+    except OSError:
+        bin_names = set()
+    return _runnables_from_tomls(files, bin_names, host, venv_name(runspec_path))
+
 
 def discover_local(runspec_path: str, host: str) -> list[dict[str, Any]]:
-    """Shell out to the local runspec binary for discovery.
+    """Discover a local venv's runnables: site-packages scan first (see the
+    module docstring), ``runspec local --format json`` as the fallback."""
+    scanned = _scan_local(runspec_path, host)
+    if scanned is not None:
+        return scanned
+    return _discover_local_cli(runspec_path, host)
 
-    Using 'runspec local --format json' rather than scanning site-packages
-    directly ensures inference rules are applied (type, required) — giving the
-    same arg shape as discover_remote(), which also goes through the CLI.
-    """
+
+def _discover_local_cli(runspec_path: str, host: str) -> list[dict[str, Any]]:
+    """Shell out to the local runspec binary for discovery (the fallback)."""
     group = venv_name(runspec_path)
     try:
         result = subprocess.run(
@@ -87,6 +287,9 @@ def discover_remote(
 ) -> list[dict[str, Any]]:
     """Discover runnables on a remote host via paramiko SSH.
 
+    Site-packages scan first (one ``find``+``cat`` shell command — see the
+    module docstring), ``runspec local --format json`` as the fallback.
+
     ``runner`` is the SSH command executor — defaults to ``executor.ssh_run``
     (connect-per-call). The bridge passes its pooled runner so discovery reuses
     the per-host transport instead of opening a fresh handshake every cycle.
@@ -95,6 +298,30 @@ def discover_remote(
         from .executor import ssh_run as runner
 
     group = venv_name(runspec_path)
+    code, out, _err = runner(
+        ssh_target,
+        _scan_command(runspec_path),
+        identity_file=identity_file,
+        global_ssh_config=global_ssh_config,
+    )
+    parsed = _parse_scan_output(out) if code == 0 else None
+    if parsed is not None:
+        bin_names, editable, files = parsed
+        if files and not editable:
+            return _runnables_from_tomls(files, bin_names, host, group)
+        logger.debug(
+            "discovery %s:%s — scan %s, falling back to runspec local",
+            host,
+            group,
+            "found an editable install" if editable else "found no runspec.toml",
+        )
+    else:
+        logger.debug(
+            "discovery %s:%s — scan reply unusable (exit %s), falling back to runspec local",
+            host,
+            group,
+            code,
+        )
     code, out, _err = runner(
         ssh_target,
         f"{runspec_path} local --format json",
