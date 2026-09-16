@@ -413,16 +413,20 @@ def main() -> None:
     # The console's *own* MCP server (further down) stays — it gates an external
     # agent's fleet calls with no model inside.
     ai_on = bridge.ai_enabled()
+    # Resolve any keychain-backed credential into the export headers first (traces
+    # + metrics), so a per-user API key set up during onboarding authenticates the
+    # export; observability itself stays keyring-free.
+    _telemetry_cfg = bridge._resolve_telemetry_credentials()
+    # Metrics cover *runnable* runs (Forms / MCP server / schedules / triggers via
+    # invoke_runnable), not just agent activity, so they init **regardless of the
+    # AI switch** — an AI-off fleet console still reports its run counts/durations.
+    # Best-effort no-op when [telemetry.metrics] is disabled or the `otel` extra is
+    # absent.
+    observability.init_metrics(_telemetry_cfg)
     if ai_on:
-        # Resolve any keychain-backed credential into the export headers first
-        # (traces + metrics), so a per-user API key set up during onboarding
-        # authenticates the export; observability itself stays keyring-free.
-        _telemetry_cfg = bridge._resolve_telemetry_credentials()
+        # Tracing is agent-turn-only (turn → LLM call → tool call), so it stays
+        # gated on the AI switch — there are no agent turns to trace when AI is off.
         observability.init_tracing(_telemetry_cfg)
-        # Metrics are a separate OTLP signal ([telemetry.metrics]) with their own
-        # endpoint; init independently so they can go to a different backend than
-        # traces. Best-effort no-op when disabled or the `otel` extra is absent.
-        observability.init_metrics(_telemetry_cfg)
 
     # Connect any external MCP servers ([mcp] / [[mcp.servers]]) so their tools
     # join the chat agent's toolset. Best-effort and idempotent — a no-op unless

@@ -4557,6 +4557,10 @@ export function TelemetryTab() {
   const [testResult, setTestResult] = useState<Awaited<ReturnType<typeof bridge.send_test_trace>> | null>(null)
   const [metricsTesting, setMetricsTesting] = useState(false)
   const [metricsTestResult, setMetricsTestResult] = useState<Awaited<ReturnType<typeof bridge.send_test_metric>> | null>(null)
+  // Tracing is agent-turn-only, so its controls hide when AI is off; metrics
+  // cover runnable runs, so they (and the shared resource identity + transport
+  // trust) stay. Renders a metrics-only tab in an AI-off fleet console.
+  const { ai } = useFeatures()
 
   useEffect(() => {
     bridge.get_config().then(cfg => {
@@ -4676,122 +4680,140 @@ export function TelemetryTab() {
 
   return (
     <div style={{ maxWidth: 620 }}>
-      <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
-        Export a trace per agent turn — <strong>turn → LLM call → tool call</strong> — over
-        OpenTelemetry (OTLP) to any OTel backend (LangSmith, Langfuse, Phoenix, Jaeger, Tempo).
-        Spans follow the OpenTelemetry GenAI conventions. Requires the optional <code>otel</code> extra
-        to be installed. Standard <code>OTEL_*</code> environment
-        variables fill in anything left blank below.
-      </Typography.Paragraph>
+      {ai ? (
+        <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
+          Export a trace per agent turn — <strong>turn → LLM call → tool call</strong> — over
+          OpenTelemetry (OTLP) to any OTel backend (LangSmith, Langfuse, Phoenix, Jaeger, Tempo).
+          Spans follow the OpenTelemetry GenAI conventions. Requires the optional <code>otel</code> extra
+          to be installed. Standard <code>OTEL_*</code> environment
+          variables fill in anything left blank below.
+        </Typography.Paragraph>
+      ) : (
+        <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
+          Export <strong>metrics</strong> over OpenTelemetry (OTLP) — per-runnable-run counters and
+          durations for every run this console does (Forms, MCP server, schedules, triggers). Tracing is
+          for agent turns, so it's not shown here. Requires the optional <code>otel</code> extra.
+          Configure the endpoint in the <strong>Metrics</strong> section below; the resource identity and
+          TLS settings here apply to it.
+        </Typography.Paragraph>
+      )}
 
-      <div style={{ marginBottom: 12 }}>
-        <Button
-          size="small"
-          onClick={() => {
-            setEnabled(true)
-            setEndpoint('http://127.0.0.1:6006/v1/traces')
-            setCaptureContent(true)
-          }}
-        >
-          Use local Phoenix
-        </Button>
-        <Typography.Text type="secondary" style={{ fontSize: 13, marginLeft: 8 }}>
-          Fills the endpoint for a locally-run <a href="https://github.com/Arize-ai/phoenix" target="_blank" rel="noreferrer">Arize Phoenix</a> and
-          enables content capture — run <code>phoenix serve</code> in its own venv first, then Save.
-        </Typography.Text>
-      </div>
+      {ai && (
+        <div style={{ marginBottom: 12 }}>
+          <Button
+            size="small"
+            onClick={() => {
+              setEnabled(true)
+              setEndpoint('http://127.0.0.1:6006/v1/traces')
+              setCaptureContent(true)
+            }}
+          >
+            Use local Phoenix
+          </Button>
+          <Typography.Text type="secondary" style={{ fontSize: 13, marginLeft: 8 }}>
+            Fills the endpoint for a locally-run <a href="https://github.com/Arize-ai/phoenix" target="_blank" rel="noreferrer">Arize Phoenix</a> and
+            enables content capture — run <code>phoenix serve</code> in its own venv first, then Save.
+          </Typography.Text>
+        </div>
+      )}
 
-      {row('Enable tracing', <Switch checked={enabled} onChange={setEnabled} />)}
-      {row('OTLP endpoint', <Input style={{ width: 380 }} placeholder="https://…/v1/traces  (blank ⇒ OTEL_EXPORTER_OTLP_ENDPOINT)" value={endpoint} onChange={e => setEndpoint(e.target.value)} disabled={!enabled} />)}
-      {row('Protocol', <Select style={{ width: 180 }} value={protocol} onChange={setProtocol} disabled={!enabled} options={[{ value: 'http/protobuf', label: 'http/protobuf' }]} />)}
-      {row('Service name', <Input style={{ width: 260 }} placeholder="(defaults to the app name)" value={serviceName} onChange={e => setServiceName(e.target.value)} disabled={!enabled} />)}
-      {row('Instance label', <Input style={{ width: 260 }} placeholder="(defaults to this machine's hostname)" value={label} onChange={e => setLabel(e.target.value)} disabled={!enabled} />)}
+      {ai && row('Enable tracing', <Switch checked={enabled} onChange={setEnabled} />)}
+      {ai && row('OTLP endpoint', <Input style={{ width: 380 }} placeholder="https://…/v1/traces  (blank ⇒ OTEL_EXPORTER_OTLP_ENDPOINT)" value={endpoint} onChange={e => setEndpoint(e.target.value)} disabled={!enabled} />)}
+      {ai && row('Protocol', <Select style={{ width: 180 }} value={protocol} onChange={setProtocol} disabled={!enabled} options={[{ value: 'http/protobuf', label: 'http/protobuf' }]} />)}
+      {row('Service name', <Input style={{ width: 260 }} placeholder="(defaults to the app name)" value={serviceName} onChange={e => setServiceName(e.target.value)} disabled={ai && !enabled} />)}
+      {row('Instance label', <Input style={{ width: 260 }} placeholder="(defaults to this machine's hostname)" value={label} onChange={e => setLabel(e.target.value)} disabled={ai && !enabled} />)}
       <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: -2 }}>
         Every span and metric carries a resource identity: <strong>service name</strong> (blank ⇒ this
         install's app name), an <strong>instance label</strong> that becomes <code>service.instance.id</code>
         (blank ⇒ hostname) so several consoles — even on one machine — stay distinct time series rather
         than colliding, plus this machine's hostname and OS user (<code>host.name</code> / <code>process.owner</code>).
       </Typography.Paragraph>
-      {row('Sample ratio', <InputNumber min={0} max={1} step={0.1} value={sampleRatio} onChange={v => setSampleRatio(typeof v === 'number' ? v : 1)} disabled={!enabled} />)}
+      {ai && row('Sample ratio', <InputNumber min={0} max={1} step={0.1} value={sampleRatio} onChange={v => setSampleRatio(typeof v === 'number' ? v : 1)} disabled={!enabled} />)}
 
-      <Divider style={{ margin: '14px 0' }} />
-      <Typography.Paragraph style={{ fontSize: 13, marginBottom: 6 }}>
-        <strong>Headers</strong> — extra HTTP headers on every export (e.g. a LangSmith API key
-        and project). Stored in <code>config.toml</code> like the model API key, not the OS keychain.
-      </Typography.Paragraph>
-      {headers.map((h, i) => (
-        <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
-          <Input placeholder="header" style={{ width: 220 }} value={h.k} disabled={!enabled}
-            onChange={e => setHeaders(prev => prev.map((x, j) => j === i ? { ...x, k: e.target.value } : x))} />
-          <Input.Password placeholder="value" style={{ width: 300 }} value={h.v} disabled={!enabled}
-            onChange={e => setHeaders(prev => prev.map((x, j) => j === i ? { ...x, v: e.target.value } : x))} />
-          <Button icon={<MinusCircleOutlined />} disabled={!enabled} onClick={() => setHeaders(prev => prev.filter((_, j) => j !== i))} />
-        </div>
-      ))}
-      <Button size="small" icon={<PlusOutlined />} disabled={!enabled} onClick={() => setHeaders(prev => [...prev, { k: '', v: '' }])}>Add header</Button>
+      {ai && (
+        <>
+          <Divider style={{ margin: '14px 0' }} />
+          <Typography.Paragraph style={{ fontSize: 13, marginBottom: 6 }}>
+            <strong>Headers</strong> — extra HTTP headers on every export (e.g. a LangSmith API key
+            and project). Stored in <code>config.toml</code> like the model API key, not the OS keychain.
+          </Typography.Paragraph>
+          {headers.map((h, i) => (
+            <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
+              <Input placeholder="header" style={{ width: 220 }} value={h.k} disabled={!enabled}
+                onChange={e => setHeaders(prev => prev.map((x, j) => j === i ? { ...x, k: e.target.value } : x))} />
+              <Input.Password placeholder="value" style={{ width: 300 }} value={h.v} disabled={!enabled}
+                onChange={e => setHeaders(prev => prev.map((x, j) => j === i ? { ...x, v: e.target.value } : x))} />
+              <Button icon={<MinusCircleOutlined />} disabled={!enabled} onClick={() => setHeaders(prev => prev.filter((_, j) => j !== i))} />
+            </div>
+          ))}
+          <Button size="small" icon={<PlusOutlined />} disabled={!enabled} onClick={() => setHeaders(prev => [...prev, { k: '', v: '' }])}>Add header</Button>
 
-      <Divider style={{ margin: '14px 0' }} />
-      <Typography.Paragraph style={{ fontSize: 13, marginBottom: 6 }}>
-        <strong>API key from a command</strong> — instead of storing the key above, resolve it at
-        startup from a command's output and inject it under the header named below. The config only
-        holds the <em>command</em> (e.g. <code>keyring get langsmith key</code>, <code>vault read …</code>,
-        or a bundled helper), so a config seed / sync can distribute it without ever shipping the key
-        in the clear. Mirrors the model <code>api_key_command</code>.
-      </Typography.Paragraph>
-      {row('API key command', <Input style={{ width: 380 }} placeholder="e.g. keyring get langsmith key" value={apiKeyCommand} onChange={e => setApiKeyCommand(e.target.value)} disabled={!enabled} />)}
-      {row('Inject under header', <Input style={{ width: 220 }} placeholder="x-api-key" value={apiKeyHeader} onChange={e => setApiKeyHeader(e.target.value)} disabled={!enabled || !apiKeyCommand.trim()} />)}
+          <Divider style={{ margin: '14px 0' }} />
+          <Typography.Paragraph style={{ fontSize: 13, marginBottom: 6 }}>
+            <strong>API key from a command</strong> — instead of storing the key above, resolve it at
+            startup from a command's output and inject it under the header named below. The config only
+            holds the <em>command</em> (e.g. <code>keyring get langsmith key</code>, <code>vault read …</code>,
+            or a bundled helper), so a config seed / sync can distribute it without ever shipping the key
+            in the clear. Mirrors the model <code>api_key_command</code>.
+          </Typography.Paragraph>
+          {row('API key command', <Input style={{ width: 380 }} placeholder="e.g. keyring get langsmith key" value={apiKeyCommand} onChange={e => setApiKeyCommand(e.target.value)} disabled={!enabled} />)}
+          {row('Inject under header', <Input style={{ width: 220 }} placeholder="x-api-key" value={apiKeyHeader} onChange={e => setApiKeyHeader(e.target.value)} disabled={!enabled || !apiKeyCommand.trim()} />)}
 
-      <Typography.Paragraph style={{ fontSize: 13, margin: '10px 0 6px' }}>
-        <strong>Or use a stored credential</strong> — pick a Credential (Settings → Credentials; its
-        secret stays in the OS keychain) and it's injected at startup. This is the recommended path for a
-        per-user API key you set up during onboarding (log in to LangSmith / Grafana, create a key, add it
-        as a Credential). A <code>userpass</code> credential becomes <code>Authorization: Basic</code>, a
-        <code>token</code> becomes <code>Bearer</code>, or set a header below to send the raw secret under
-        it (e.g. <code>x-api-key</code> for LangSmith).
-      </Typography.Paragraph>
-      {row('Credential', <Select style={{ width: 300 }} value={credential} onChange={setCredential} disabled={!enabled}
-        options={[{ value: '', label: 'None' }, ...credOptions.map(c => ({ value: c.id, label: `${c.label} (${c.kind})` }))]} />)}
-      {row('Inject under header', <Input style={{ width: 220 }} placeholder="Authorization (default)" value={credentialHeader} onChange={e => setCredentialHeader(e.target.value)} disabled={!enabled || !credential} />)}
+          <Typography.Paragraph style={{ fontSize: 13, margin: '10px 0 6px' }}>
+            <strong>Or use a stored credential</strong> — pick a Credential (Settings → Credentials; its
+            secret stays in the OS keychain) and it's injected at startup. This is the recommended path for a
+            per-user API key you set up during onboarding (log in to LangSmith / Grafana, create a key, add it
+            as a Credential). A <code>userpass</code> credential becomes <code>Authorization: Basic</code>, a
+            <code>token</code> becomes <code>Bearer</code>, or set a header below to send the raw secret under
+            it (e.g. <code>x-api-key</code> for LangSmith).
+          </Typography.Paragraph>
+          {row('Credential', <Select style={{ width: 300 }} value={credential} onChange={setCredential} disabled={!enabled}
+            options={[{ value: '', label: 'None' }, ...credOptions.map(c => ({ value: c.id, label: `${c.label} (${c.kind})` }))]} />)}
+          {row('Inject under header', <Input style={{ width: 220 }} placeholder="Authorization (default)" value={credentialHeader} onChange={e => setCredentialHeader(e.target.value)} disabled={!enabled || !credential} />)}
 
-      <Divider style={{ margin: '14px 0' }} />
-      <Alert
-        type="warning"
-        showIcon
-        style={{ marginBottom: 12 }}
-        message="Content capture (privacy)"
-        description={
-          <span style={{ fontSize: 13 }}>
-            Off (default): spans carry <strong>structure only</strong> — models, token counts,
-            tool names, decisions, durations. On: prompt / completion / tool-argument <strong>text</strong>
-            is also exported (secret-looking arguments are scrubbed first). Only enable this if your
-            backend is trusted — prompts and arguments can contain sensitive data.
-          </span>
-        }
-      />
-      {row('Capture prompt / completion / argument text', <Switch checked={captureContent} onChange={setCaptureContent} disabled={!enabled} />)}
-      {row(
-        'Max captured content characters (0 = no limit)',
-        <InputNumber min={0} step={1000} value={maxContentChars} onChange={v => setMaxContentChars(typeof v === 'number' ? v : 0)} disabled={!enabled || !captureContent} />,
+          <Divider style={{ margin: '14px 0' }} />
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 12 }}
+            message="Content capture (privacy)"
+            description={
+              <span style={{ fontSize: 13 }}>
+                Off (default): spans carry <strong>structure only</strong> — models, token counts,
+                tool names, decisions, durations. On: prompt / completion / tool-argument <strong>text</strong>
+                is also exported (secret-looking arguments are scrubbed first). Only enable this if your
+                backend is trusted — prompts and arguments can contain sensitive data.
+              </span>
+            }
+          />
+          {row('Capture prompt / completion / argument text', <Switch checked={captureContent} onChange={setCaptureContent} disabled={!enabled} />)}
+          {row(
+            'Max captured content characters (0 = no limit)',
+            <InputNumber min={0} step={1000} value={maxContentChars} onChange={v => setMaxContentChars(typeof v === 'number' ? v : 0)} disabled={!enabled || !captureContent} />,
+          )}
+          <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: -2 }}>
+            Each captured prompt / completion / argument value is recorded in full by default, so a trace shows the
+            real prompt (including the search-mode tool menu) — not a slice. Set a ceiling only to bound span size.
+          </Typography.Paragraph>
+        </>
       )}
-      <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: -2 }}>
-        Each captured prompt / completion / argument value is recorded in full by default, so a trace shows the
-        real prompt (including the search-mode tool menu) — not a slice. Set a ceiling only to bound span size.
-      </Typography.Paragraph>
 
       <Divider style={{ margin: '14px 0' }} />
-      {row('CA bundle (private CA / TLS proxy)', <Input style={{ width: 360 }} placeholder="path to a .pem" value={caBundle} onChange={e => setCaBundle(e.target.value)} disabled={!enabled} />)}
-      {row('Verify TLS certificate', <Switch checked={tlsVerify} onChange={setTlsVerify} disabled={!enabled} />)}
+      {row('CA bundle (private CA / TLS proxy)', <Input style={{ width: 360 }} placeholder="path to a .pem" value={caBundle} onChange={e => setCaBundle(e.target.value)} disabled={ai && !enabled} />)}
+      {row('Verify TLS certificate', <Switch checked={tlsVerify} onChange={setTlsVerify} disabled={ai && !enabled} />)}
 
       <Space style={{ marginTop: 6 }}>
         <Button type="primary" loading={saving} onClick={handleSave}>{saved ? 'Saved' : 'Save'}</Button>
-        <Button loading={testing} disabled={!enabled} onClick={handleTest}>Send test trace</Button>
+        {ai && <Button loading={testing} disabled={!enabled} onClick={handleTest}>Send test trace</Button>}
       </Space>
-      <Typography.Paragraph type="secondary" style={{ fontSize: 13, marginTop: 8, marginBottom: 0 }}>
-        Saves, then emits one sample <strong>turn → LLM call → tool call</strong> trace and flushes it
-        immediately — so you can confirm the backend receives it (and, with content capture on, renders
-        prompt / completion / argument text) without waiting for a real agent turn.
-      </Typography.Paragraph>
-      {testResult && (
+      {ai && (
+        <Typography.Paragraph type="secondary" style={{ fontSize: 13, marginTop: 8, marginBottom: 0 }}>
+          Saves, then emits one sample <strong>turn → LLM call → tool call</strong> trace and flushes it
+          immediately — so you can confirm the backend receives it (and, with content capture on, renders
+          prompt / completion / argument text) without waiting for a real agent turn.
+        </Typography.Paragraph>
+      )}
+      {ai && testResult && (
         <Alert
           type={testResult.ok ? 'success' : 'error'}
           showIcon

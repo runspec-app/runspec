@@ -273,6 +273,24 @@ class InvokeMixin:
                     "runspec:run_end",
                     {"id": inv_id, "exit_code": exit_code, "duration_ms": duration_ms},
                 )
+                # OTLP tool-run metric for this runnable execution (no-op unless
+                # [telemetry.metrics] is on). This is the human/automation path —
+                # Forms, MCP server, schedules, rule triggers — which is disjoint
+                # from the agent tool gate (agent run_runnable executes via
+                # executor.run_remote, built-ins never reach here), so a run is
+                # counted exactly once. `trigger` names the source (mcp / schedule /
+                # a trigger name); blank ⇒ an operator Forms/command-bar run.
+                observability.record_tool_run(
+                    tool=runnable,
+                    provenance={"trigger": trigger, "agent": False},
+                    duration_ms=duration_ms,
+                    host=host,
+                    status=(
+                        "ok"
+                        if exit_code == 0
+                        else ("cancelled" if exit_code == 130 else "error")
+                    ),
+                )
                 # Audio cue for the run outcome (best-effort; muted unless enabled).
                 self._play_sound(
                     "completion_success" if exit_code == 0 else "completion_error"

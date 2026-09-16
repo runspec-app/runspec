@@ -8,6 +8,33 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.268.0] — 2026-09-16
+
+### Added
+- **Metrics work with the AI off-switch — and now count every runnable run.**
+  Previously the tool-run metric was recorded only on the agent path
+  (`_gated_run_tool_async`), so an `[console] ai = false` console emitted nothing
+  and its Telemetry tab was hidden. `record_tool_run` now also fires at
+  `invoke_runnable` — the human/automation execution path (Forms, MCP server,
+  schedules, rule triggers) — so `runspec.tool.runs`/`runspec.tool.duration`
+  become a **true per-run counter for the whole fleet, AI on or off**. The two
+  sites are **disjoint** (agent `run_runnable` executes via `executor.run_remote`,
+  built-ins never reach `invoke_runnable`), so a run is still counted exactly
+  once; a new `source`-style provenance (`trigger`/`agent=False`) distinguishes
+  Forms/MCP/schedule/trigger runs from agent runs. `record_tool_run` gained an
+  explicit `status` (the runnable path has an exit code, not a leading marker).
+- **`observability.init_metrics` now runs regardless of the AI switch** (tracing
+  stays AI-gated — it's agent-turn-only). `send_test_metric` is no longer AI-gated
+  either.
+- **Settings → Telemetry is shown when AI is off, rendering metrics-only.** The
+  trace-specific controls (enable tracing, endpoint/protocol/sample-ratio, headers,
+  API-key command, trace credential, content capture, Send test trace) hide; the
+  shared **resource identity** (service name / instance label) + **CA bundle / TLS
+  verify** + the whole **Metrics** section (endpoint, interval, headers,
+  credential, Send test metric) + **Save** remain. `telemetry` left the frontend's
+  `AI_ONLY_SETTINGS` set; `TelemetryTab` gates the trace blocks on `useFeatures().ai`.
+
+
 ## [0.267.0] — 2026-09-16
 
 ### Added

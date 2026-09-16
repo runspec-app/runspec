@@ -443,11 +443,12 @@ class ConfigSshMixin:
         config first (so a just-saved endpoint / enable is picked up without a
         restart), then records + force-flushes one of each instrument. Returns a
         UI-friendly result dict: ``ok`` plus either a ``reason`` or ``instruments``
-        / ``endpoint`` / ``flushed``."""
+        / ``endpoint`` / ``flushed``.
+
+        **Not** AI-gated (unlike :meth:`send_test_trace`): metrics cover runnable
+        runs, so they're useful on an AI-off fleet console too."""
         from . import observability
 
-        if not getattr(self, "_ai_enabled", True):
-            return {"ok": False, "reason": AI_OFF_MESSAGE}
         ok, reason = observability.metrics_available()
         if not ok:
             return {"ok": False, "reason": reason}

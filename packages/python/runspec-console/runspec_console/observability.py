@@ -667,16 +667,24 @@ def record_tool_run(
     duration_ms: float = 0.0,
     output: str = "",
     host: str = "",
+    status: str = "",
 ) -> None:
-    """Record one agent tool call: increment ``runspec.tool.runs`` and observe
+    """Record one runnable/tool run: increment ``runspec.tool.runs`` and observe
     ``runspec.tool.duration`` (ms), labelled with a bounded attribute set. No-op
-    when metrics are off, so the chokepoint calls it unconditionally. Never raises."""
+    when metrics are off, so a chokepoint calls it unconditionally. Never raises.
+
+    Called from two disjoint execution paths (no double-count): the agent tool
+    gate (``_gated_run_tool_async`` — agent runnables + built-ins, deriving status
+    from the result's leading marker via ``output``) and the human/automation
+    runnable path (``invoke_runnable`` — Forms / MCP-server / schedule / trigger,
+    which passes an explicit ``status`` from the exit code). ``status`` wins when
+    given; otherwise it's derived from ``output``."""
     if not _METRICS_ENABLED or _TOOL_RUNS is None:
         return
     try:
         attrs: dict[str, Any] = {
             "runspec.tool.name": tool,
-            "runspec.tool.status": _tool_status(output),
+            "runspec.tool.status": status or _tool_status(output),
         }
         if decision:
             attrs["runspec.tool.autonomy_decision"] = decision

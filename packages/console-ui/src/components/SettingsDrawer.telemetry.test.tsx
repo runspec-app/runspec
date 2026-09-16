@@ -6,10 +6,12 @@
  * headers key/value map — the shape config.read_telemetry() consumes.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { createElement } from 'react'
 import { render, screen, act, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { TelemetryTab } from './SettingsDrawer'
+import { FeaturesContext } from '../features'
 
 const INITIAL_CONFIG: Record<string, unknown> = {
   telemetry: {
@@ -164,5 +166,24 @@ describe('TelemetryTab Save round-trip', () => {
     // The success result surfaces the trace id.
     await screen.findByText(/test trace sent/i)
     await screen.findByText(/0123456789abcdef0123456789abcdef/)
+  })
+
+  it('renders metrics-only when AI is off (traces controls hidden, metrics + Save shown)', async () => {
+    await act(async () => {
+      render(
+        createElement(FeaturesContext.Provider, { value: { ai: false } },
+          createElement(TelemetryTab)),
+      )
+    })
+    await waitFor(() => expect(getConfig).toHaveBeenCalled())
+    // Trace-only controls are gone.
+    expect(screen.queryByText('Enable tracing')).toBeNull()
+    expect(screen.queryByRole('button', { name: /send test trace/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /use local phoenix/i })).toBeNull()
+    // Metrics + the shared resource identity + Save remain.
+    expect(screen.getByText('Enable metrics')).toBeTruthy()
+    expect(screen.getByRole('button', { name: /send test metric/i })).toBeTruthy()
+    expect(screen.getByText('Instance label')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Save' })).toBeTruthy()
   })
 })

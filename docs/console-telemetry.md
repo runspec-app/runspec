@@ -146,12 +146,20 @@ You record nothing by hand and there's no "emit after each run" plumbing: the
 console records into in-memory instruments synchronously (cheap) and a
 `PeriodicExportingMetricReader` pushes them to the backend on an interval.
 
+**Metrics cover every runnable run — and work with the AI off-switch.** The
+`runspec.tool.*` instruments fire both on the agent tool gate *and* on the
+human/automation execution path (Forms, MCP server, schedules, rule triggers), so
+they count the whole fleet's activity whether or not the agent is involved. That
+means metrics are exported even with `[console] ai = false` (tracing is
+agent-turn-only, so it stays off in that mode) — and Settings → Telemetry stays
+visible with AI off, showing a **metrics-only** form.
+
 ### Instruments
 
 | Metric | Type | Unit | Notes |
 |---|---|---|---|
-| `runspec.tool.runs` | counter | 1 | One per agent tool call through the autonomy gate. |
-| `runspec.tool.duration` | histogram | ms | Tool execution wall-clock. |
+| `runspec.tool.runs` | counter | 1 | One per runnable run (agent tool call, Forms, MCP server, schedule, trigger). |
+| `runspec.tool.duration` | histogram | ms | Runnable execution wall-clock. |
 | `runspec.agent.turns` | counter | 1 | One per completed chat / trigger / schedule turn. |
 | `runspec.agent.turn.duration` | histogram | ms | Turn wall-clock. |
 | `runspec.agent.turn.tokens` | counter | 1 | Model tokens, split by `gen_ai.token.type` (input/output). |
