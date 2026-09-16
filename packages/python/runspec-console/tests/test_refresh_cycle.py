@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from unittest.mock import patch
 
 from runspec_console.bridge import Bridge
@@ -610,3 +611,132 @@ def test_refresh_hosts_forces_a_cycle():
                 break
             _t.sleep(0.01)
     assert seen == {"force": True}
+
+
+# ── progressive sidebar updates + supersession ───────────────────────────────
+
+
+def test_probe_phase_emits_hosts_updated_progressively():
+    """The sidebar learns each host's state as its probe lands (coalesced), not
+    only when the whole fleet's probe phase finishes."""
+    b = _make_bridge()
+    b._hosts = [
+        {"name": f"h{i}", "ssh": f"u@h{i}", "runspec_paths": ["/v/bin/runspec"]}
+        for i in range(6)
+    ]
+    events: list[str] = []
+    real_probe = b._probe_one
+
+    def slow_check(h, *, ssh_cfg=None):
+        time.sleep(0.02)
+        return True
+
+    with (
+        patch.object(b, "_reload_hosts"),
+        patch.object(b, "_local_host_entry", return_value={"name": "local"}),
+        patch.object(b, "_dispatch", side_effect=lambda ev, _d: events.append(ev)),
+        patch.object(b, "get_config", return_value={}),
+        patch.object(b, "_publish_catalogs"),
+        patch.object(b, "_connection_cue"),
+        patch.object(b, "_check_connected", side_effect=slow_check),
+        patch.object(b, "_probe_one", side_effect=real_probe),
+        patch.object(b, "_discover_one", side_effect=lambda h, **kw: []),
+        patch("runspec_console.bridge_internals._PROBE_DISPATCH_MIN_INTERVAL", 0.0),
+        patch(
+            "runspec_console.ssh_pool.refresh_settings",
+            return_value={"interval": 30, "jitter": 0, "workers": 1},
+        ),
+    ):
+        b._refresh_cycle()
+    # The kickoff discovery_state precedes every probe, and hosts_updated fires
+    # per host (min interval 0 here) before the unconditional phase-end one.
+    assert events[0] == "runspec:discovery_state"
+    first_probe_emit = events.index("runspec:hosts_updated")
+    assert events.count("runspec:hosts_updated") >= 6 + 1
+    assert first_probe_emit < len(events) - 2
+
+
+def test_hosts_updated_is_coalesced_and_only_on_change():
+    b = _make_bridge()
+    b._hosts = [
+        {"name": f"h{i}", "ssh": f"u@h{i}", "runspec_paths": ["/v/bin/runspec"]}
+        for i in range(10)
+    ]
+    b._connected_cache = {h["name"]: True for h in b._hosts}  # already known up
+    events: list[str] = []
+    real_probe = b._probe_one
+    with (
+        patch.object(b, "_reload_hosts"),
+        patch.object(b, "_local_host_entry", return_value={"name": "local"}),
+        patch.object(b, "_dispatch", side_effect=lambda ev, _d: events.append(ev)),
+        patch.object(b, "get_config", return_value={}),
+        patch.object(b, "_publish_catalogs"),
+        patch.object(b, "_connection_cue"),
+        patch.object(b, "_check_connected", return_value=True),
+        patch.object(b, "_probe_one", side_effect=real_probe),
+        patch.object(b, "_discover_one", side_effect=lambda h, **kw: []),
+        patch(
+            "runspec_console.ssh_pool.refresh_settings",
+            return_value={"interval": 30, "jitter": 0, "workers": 4},
+        ),
+    ):
+        b._refresh_cycle()
+    # No flips → only the unconditional phase-end hosts_updated.
+    assert events.count("runspec:hosts_updated") == 1
+
+
+def test_kicked_refresh_supersedes_a_running_cycle():
+    """A slow periodic cycle yields as soon as _kick_refresh bumps the epoch, so
+    a profile switch / Refresh doesn't wait behind the whole fleet's probe."""
+    b = _make_bridge()
+    b._hosts = [
+        {"name": f"h{i}", "ssh": f"u@h{i}", "runspec_paths": ["/v/bin/runspec"]}
+        for i in range(8)
+    ]
+    probed: list[str] = []
+    events: list[str] = []
+
+    def slow_probe(h, **_kw):
+        probed.append(h["name"])
+        if len(probed) == 2:
+            with b._lock:
+                b._refresh_epoch += 1  # what _kick_refresh does
+        time.sleep(0.01)
+        with b._lock:
+            b._connected_cache[h["name"]] = True
+
+    with (
+        patch.object(b, "_reload_hosts"),
+        patch.object(b, "_local_host_entry", return_value={"name": "local"}),
+        patch.object(b, "_dispatch", side_effect=lambda ev, _d: events.append(ev)),
+        patch.object(b, "get_config", return_value={}),
+        patch.object(b, "_publish_catalogs"),
+        patch.object(b, "_probe_one", side_effect=slow_probe),
+        patch.object(
+            b, "_discover_one", side_effect=lambda h, **kw: [{"host": h["name"]}]
+        ),
+        patch(
+            "runspec_console.ssh_pool.refresh_settings",
+            return_value={"interval": 30, "jitter": 0, "workers": 1},
+        ),
+    ):
+        b._refresh_cycle()
+    assert len(probed) == 2  # the remaining six were never probed by this cycle
+    assert b._runnables_cache == []  # no discovery, no canonical assign
+    assert b._discovery_ready is False
+    # A final (ready) discovery_state was NOT emitted by the yielded cycle.
+    assert events[-1] == "runspec:hosts_updated"
+
+
+def test_kick_refresh_bumps_epoch_and_forces():
+    b = _make_bridge()
+    seen = {}
+    with patch.object(b, "_refresh_cycle", side_effect=lambda **kw: seen.update(kw)):
+        before = b._refresh_epoch
+        b._kick_refresh(force=True)
+        for _ in range(100):
+            if seen:
+                break
+            time.sleep(0.01)
+    assert seen == {"force": True}
+    assert b._refresh_epoch == before + 1

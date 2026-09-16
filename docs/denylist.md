@@ -93,11 +93,14 @@ The [desktop console](console-quickstart.md) drives the same `runspec deny` acro
 fleet over the SSH connections it already holds — one call per venv on each host
 — in two ways:
 
-- **Settings → Denylist** — a tab with a host picker (empty ⇒ all hosts),
+- **The Denylist button at the bottom of the hosts panel** — a modal scoped to
+  the hosts *connected right now* in the active profile (greyed out until the
+  fleet sweep has settled): a host picker (empty ⇒ every connected host),
   **Disable all** / **Re-enable all (clear)** buttons (danger-confirmed), an
   *add specific rule* form (runnable / user / host globs + reason), and an
   enforcement-mode toggle (`enforce`/`warn`/`off`). The aggregated result is
-  shown inline.
+  shown inline. A disconnected host is never queried or touched — reopen the
+  modal once it reconnects.
 - **The agent tool `manage_denylist`** — ask the agent something like *"disable
   all runnables on prod-\* until further notice"* or *"re-enable everything on
   prod-2"* and approve the confirm prompt.

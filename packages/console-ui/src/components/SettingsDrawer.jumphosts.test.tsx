@@ -4,7 +4,7 @@
  * search box / profile filter that flattens across groups.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, act, waitFor } from '@testing-library/react'
+import { render, screen, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { SettingsDrawer, buildHostGroups, filterHosts, groupSummary } from './SettingsDrawer'
@@ -12,7 +12,7 @@ import type { JumpHost } from '../bridge'
 
 const { getJumpHosts, getHosts, getGroups, getProfiles } = vi.hoisted(() => ({
   getJumpHosts: vi.fn(),
-  getHosts: vi.fn(),
+  getHosts: vi.fn(),  // must NOT be consulted — no live state on this tab
   getGroups: vi.fn(),
   getProfiles: vi.fn(),
 }))
@@ -50,24 +50,20 @@ describe('pure helpers', () => {
     expect(filterHosts(HOSTS, 'web', 'devops').map(h => h.name)).toEqual(['web-02'])
   })
 
-  it('groupSummary counts members + connected and collects profiles; buildHostGroups keeps order', () => {
+  it('groupSummary counts members and collects profiles; buildHostGroups keeps order', () => {
     expect(buildHostGroups(HOSTS).map(g => g.name)).toEqual(['Production', 'Staging', ''])
-    const sum = groupSummary(HOSTS, { 'web-01': true, 'db-01': true, 'stg-01': false })
-    expect(sum[0]).toMatchObject({ name: 'Production', up: 2, profiles: ['app-support', 'devops'] })
+    const sum = groupSummary(HOSTS)
+    expect(sum[0]).toMatchObject({ name: 'Production', profiles: ['app-support', 'devops'] })
     expect(sum[0].hosts).toHaveLength(3)
-    expect(sum[1]).toMatchObject({ name: 'Staging', up: 0, profiles: ['devops'] })
-    expect(sum[2]).toMatchObject({ name: '', up: 0, profiles: [] })
+    expect(sum[1]).toMatchObject({ name: 'Staging', profiles: ['devops'] })
+    expect(sum[2]).toMatchObject({ name: '', profiles: [] })
   })
 })
 
 describe('Jump Hosts tab', () => {
   beforeEach(() => {
     getJumpHosts.mockReset().mockResolvedValue(HOSTS)
-    getHosts.mockReset().mockResolvedValue([
-      { name: 'local', connected: true, runnableCount: 0, groups: [] },
-      { name: 'web-01', connected: true, runnableCount: 1, groups: [], group: 'Production' },
-      { name: 'web-02', connected: false, runnableCount: 0, groups: [], group: 'Production' },
-    ])
+    getHosts.mockReset().mockResolvedValue([])
     getGroups.mockReset().mockResolvedValue([{ name: 'Production', description: 'Customer-facing' }, { name: 'Staging' }])
     getProfiles.mockReset().mockResolvedValue([{ name: 'app-support' }, { name: 'devops' }])
   })
@@ -119,6 +115,7 @@ describe('Jump Hosts tab', () => {
     await screen.findByText('2 of 5 hosts match')
     expect(screen.getByText('web-02')).toBeTruthy()
     expect(screen.getByText('stg-01')).toBeTruthy()
-    await waitFor(() => expect(getHosts).toHaveBeenCalled())
+    // Managing host entries never reads live connection state.
+    expect(getHosts).not.toHaveBeenCalled()
   })
 })

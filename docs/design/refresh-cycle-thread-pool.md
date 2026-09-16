@@ -127,7 +127,7 @@ Now discovery is decoupled from the probe:
   (default 300 s, `0` = every cycle) elapsed. Otherwise the host keeps its
   cached runnables.
 - **Force** — host save / profile switch / import / `refresh_hosts()` (the
-  sidebar Refresh button) run `_refresh_cycle(force=True)`; copy-key
+  tool-count click at the bottom of the hosts panel) run `_refresh_cycle(force=True)`; copy-key
   invalidates just the touched hosts' stamps. Cycles are serialised by
   `_refresh_cycle_lock`.
 - **Probe as a use** — `pool.connectable()` now touches `last_used`, so a host

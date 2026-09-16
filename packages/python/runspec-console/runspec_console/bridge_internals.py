@@ -43,6 +43,8 @@ if TYPE_CHECKING:
 # Minimum spacing (s) between mid-cycle discovery progress dispatches — see
 # _refresh_cycle_locked. The final end-of-cycle dispatch is never throttled.
 _DISCOVERY_DISPATCH_MIN_INTERVAL = 0.5
+# Same for the probe phase's per-host hosts_updated (sidebar dots).
+_PROBE_DISPATCH_MIN_INTERVAL = 0.5
 
 
 class InternalsMixin:
@@ -601,11 +603,20 @@ class InternalsMixin:
             time.sleep(random.uniform(0, jitter))  # spread the connects
         result = self._check_connected(h, ssh_cfg=ssh_cfg)
         with self._lock:
+            changed = self._connected_cache.get(h["name"]) is not result
             self._connected_cache[h["name"]] = result
         # Unattended connection flips are exactly what audio awareness is for —
         # the interactive flows (test host, copy key) already have visual
         # feedback, so only the refresh-loop probe cues.
         self._connection_cue("host", h["name"], result)
+        # Let the sidebar turn this host green/grey *now* rather than when the
+        # whole fleet's probe finishes (tens of seconds on a large fleet, during
+        # which the cue had already played) — coalesced so a 70-host sweep is a
+        # handful of refetches, not 70. The phase-end dispatch is unconditional.
+        if changed:
+            self._dispatch_coalesced(
+                "runspec:hosts_updated", {}, min_interval=_PROBE_DISPATCH_MIN_INTERVAL
+            )
 
     def _discover_one(
         self, h: dict[str, Any], *, ssh_cfg: dict[str, Any] | None = None
@@ -759,15 +770,42 @@ class InternalsMixin:
             return True
         return (now - ts) >= discovery_interval
 
+    def _dispatch_coalesced(
+        self, event: str, detail: dict[str, Any], *, min_interval: float
+    ) -> bool:
+        """Dispatch ``event`` unless one went out less than ``min_interval`` s
+        ago — for per-host progress signals during a fleet sweep, where each
+        dispatch is a synchronous evaluate_js and a frontend refetch. Returns
+        whether it was sent; a phase's final dispatch should be unconditional."""
+        now = time.monotonic()
+        with self._lock:
+            last = self._coalesced_at.get(event, 0.0)
+            if now - last < min_interval:
+                return False
+            self._coalesced_at[event] = now
+        self._dispatch(event, detail)
+        return True
+
     def _kick_refresh(self, *, force: bool = False) -> None:
-        """Run one refresh cycle on a daemon thread (returns immediately)."""
+        """Run one refresh cycle on a daemon thread (returns immediately). Bumps
+        the refresh epoch so a cycle already in progress yields at its next task
+        boundary — a profile switch or Refresh click takes effect within one
+        host's probe instead of after the whole fleet's."""
+        with self._lock:
+            self._refresh_epoch += 1
         threading.Thread(
             target=lambda: self._refresh_cycle(force=force), daemon=True
         ).start()
 
+    def _refresh_superseded(self, epoch: int) -> bool:
+        """True once a newer kicked refresh has been requested since ``epoch``."""
+        with self._lock:
+            return self._refresh_epoch != epoch
+
     def refresh_hosts(self) -> None:
         """Probe every in-scope host and re-discover its runnables now (the
-        sidebar Refresh button) — a forced cycle, ignoring the discovery stamps."""
+        tool-count click at the bottom of the hosts panel) — a forced cycle,
+        ignoring the discovery stamps."""
         self._kick_refresh(force=True)
 
     def _refresh_cycle(self, *, force: bool = False) -> None:
@@ -815,14 +853,33 @@ class InternalsMixin:
             discovery_interval = max(0, int(settings.get("discovery_interval", 300)))
         except (TypeError, ValueError):
             discovery_interval = 300
+        # A kicked refresh (profile switch / host save / Refresh button) bumps the
+        # epoch; this cycle yields at its next task boundary once that happens so
+        # the kick doesn't wait behind a whole fleet sweep.
+        with self._lock:
+            epoch = self._refresh_epoch
+        total = len(all_hosts)
+        # Tell the UI a sweep is under way *before* the probe — on a large fleet
+        # the probe alone is tens of seconds, and this used to be the first sign
+        # of life after launch.
+        self._dispatch(
+            "runspec:discovery_state",
+            {"done": 0, "total": total, "ready": self._discovery_ready},
+        )
 
         # ── Phase 1: connectivity (warms the pooled transport) ─────────────────
         # A bounded pool instead of one thread per host: at large fleets this
         # holds a constant ~workers threads rather than ~N. Order is preserved —
-        # the whole probe phase completes before hosts_updated fires and before
-        # discovery (which skips hosts the probe marked disconnected) runs.
+        # the whole probe phase completes before discovery (which skips hosts
+        # the probe marked disconnected) runs; the sidebar is updated
+        # progressively by _probe_one as hosts land.
         with self._lock:
             self._connected_cache["local"] = True
+
+        def _probe(h: dict[str, Any]) -> None:
+            if self._refresh_superseded(epoch):
+                return  # a newer refresh is waiting — leave this host to it
+            self._probe_one(h, jitter=jitter, ssh_cfg=ssh_cfg)
 
         ssh_hosts = [h for h in all_hosts if h.get("ssh")]
         if ssh_hosts:
@@ -830,13 +887,11 @@ class InternalsMixin:
                 max_workers=min(workers, len(ssh_hosts)),
                 thread_name_prefix="refresh-probe",
             ) as ex:
-                list(
-                    ex.map(
-                        lambda h: self._probe_one(h, jitter=jitter, ssh_cfg=ssh_cfg),
-                        ssh_hosts,
-                    )
-                )
+                list(ex.map(_probe, ssh_hosts))
         self._dispatch("runspec:hosts_updated", {})
+        if self._refresh_superseded(epoch):
+            logger.debug("refresh: superseded after probe phase, yielding")
+            return
 
         # ── Phase 2: runnables discovery (reuses the warm transport) ───────────
         # Only hosts whose discovery could be stale are re-run (see
@@ -874,12 +929,7 @@ class InternalsMixin:
                 r for r in self._runnables_cache if r.get("host", "") in keep_names
             ]
 
-        total = len(all_hosts)
         done = total - len(to_discover)
-        self._dispatch(
-            "runspec:discovery_state",
-            {"done": 0, "total": total, "ready": self._discovery_ready},
-        )
         # Progress dispatches are coalesced: each one is a synchronous
         # evaluate_js on the single UI-dispatch thread AND makes the frontend
         # re-fetch the whole catalogue, so per-host emission on a large fleet was
@@ -892,10 +942,13 @@ class InternalsMixin:
                 max_workers=min(workers, len(to_discover)),
                 thread_name_prefix="refresh-disc",
             ) as ex:
-                futures = {
-                    ex.submit(self._discover_one, h, ssh_cfg=ssh_cfg): h
-                    for h in to_discover
-                }
+
+                def _discover(h: dict[str, Any]) -> list[dict[str, Any]] | None:
+                    if self._refresh_superseded(epoch):
+                        return None  # yield to the newer refresh
+                    return self._discover_one(h, ssh_cfg=ssh_cfg)
+
+                futures = {ex.submit(_discover, h): h for h in to_discover}
                 for fut in as_completed(futures):
                     h = futures[fut]
                     host_name = h.get("name", "")
@@ -908,6 +961,8 @@ class InternalsMixin:
                         )
                         host_runnables = []
                         ok = False
+                    if host_runnables is None:
+                        continue  # skipped: superseded — the next cycle re-runs it
                     cleaned = self._dedup_host_runnables(host_runnables, host_name)
                     accumulated.extend(cleaned)
                     done += 1
@@ -939,6 +994,13 @@ class InternalsMixin:
                                 "ready": self._discovery_ready,
                             },
                         )
+
+        if self._refresh_superseded(epoch):
+            # Leave the cache as spliced so far; the newer refresh finishes the
+            # job (and emits the final state) — no canonical assign from a
+            # partial sweep.
+            logger.debug("refresh: superseded during discovery, yielding")
+            return
 
         # Canonical assign: prunes any host that left the fleet (its entries linger
         # in the spliced cache until here), and marks discovery ready after the

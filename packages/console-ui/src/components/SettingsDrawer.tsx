@@ -1329,17 +1329,16 @@ export function filterHosts(hosts: JumpHost[], query: string, profile: string): 
 export interface HostGroupSummary {
   name: string
   hosts: JumpHost[]
-  up: number          // members currently connected (from the live host list)
   profiles: string[]  // every profile tag carried by a member, sorted
 }
 
-// One row per group for the Jump Hosts overview: member count, how many are
-// connected right now, and the profiles the group's hosts belong to.
-export function groupSummary(hosts: JumpHost[], connected: Record<string, boolean>): HostGroupSummary[] {
+// One row per group for the Jump Hosts overview: the members and the profiles
+// they belong to. Deliberately no live connection state — this tab is for
+// *managing* host entries; connection state lives in the sidebar.
+export function groupSummary(hosts: JumpHost[]): HostGroupSummary[] {
   return buildHostGroups(hosts).map(g => ({
     name: g.name,
     hosts: g.hosts,
-    up: g.hosts.filter(h => connected[h.name]).length,
     profiles: [...new Set(g.hosts.flatMap(h => h.profiles ?? []))].sort((a, b) => a.localeCompare(b)),
   }))
 }
@@ -1890,8 +1889,6 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
   const [view, setView] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [profileFilter, setProfileFilter] = useState('')
-  // Live connection flags for the overview's connected counts (sidebar source).
-  const [connected, setConnected] = useState<Record<string, boolean>>({})
 
   const loadGroups = useCallback(() => { bridge.get_groups().then(setGroups) }, [])
   const loadProfiles = useCallback(() => { bridge.get_profiles().then(setProfiles) }, [])
@@ -1922,19 +1919,6 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
     loadGroups()
     loadProfiles()
   }, [loadGroups, loadProfiles])
-
-  useEffect(() => {
-    const loadConnected = () => {
-      bridge.get_hosts().then(list => {
-        const next: Record<string, boolean> = {}
-        for (const h of list) next[h.name] = !!h.connected
-        setConnected(next)
-      }).catch(() => {})
-    }
-    loadConnected()
-    window.addEventListener('runspec:hosts_updated', loadConnected)
-    return () => window.removeEventListener('runspec:hosts_updated', loadConnected)
-  }, [])
 
   // Tear down any browse connection opened from the add/edit form on unmount.
   useEffect(() => () => { bridge.close_adhoc().catch(() => {}) }, [])
@@ -2290,7 +2274,6 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
                 <Button type="text" size="small" icon={<DownOutlined style={{ fontSize: 9 }} />} onClick={() => moveHostDown(h)} disabled={isEditing || opts.idx === opts.count - 1} style={{ padding: '0 3px', color: 'var(--rs-text-faint)', height: 14, lineHeight: 1 }} />
               </div>
             )}
-            <span title={connected[h.name] ? 'connected' : 'disconnected'} style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: connected[h.name] ? '#52c41a' : 'var(--rs-text-faint)' }} />
             <Text style={{ fontFamily: MONO_FONT, fontSize: 13, minWidth: 110, flexShrink: 0 }}>{h.name}</Text>
             <Text type="secondary" title={`${h.user ? h.user + '@' : ''}${h.hostname}${h.port ? ':' + h.port : ''}`} style={{ fontFamily: MONO_FONT, fontSize: 12, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {h.user ? `${h.user}@` : ''}{h.hostname}{h.port ? `:${h.port}` : ''}
@@ -2344,7 +2327,7 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
           )
         }
 
-        const groupsSummary = groupSummary(hosts, connected)
+        const groupsSummary = groupSummary(hosts)
 
         // Drilled into one group: its hosts with the reorder controls.
         if (view !== null) {
@@ -2356,7 +2339,7 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                 <Button type="link" size="small" style={{ padding: 0 }} onClick={() => setView(null)}>← All groups</Button>
                 <Text type="secondary" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em' }}>{g.name || 'Ungrouped'}</Text>
-                <Text type="secondary" style={{ fontSize: 12 }}>· {g.hosts.length} host{g.hosts.length === 1 ? '' : 's'} · <span style={{ color: '#52c41a' }}>● {g.up}</span></Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>· {g.hosts.length} host{g.hosts.length === 1 ? '' : 's'}</Text>
                 {desc && <Text type="secondary" style={{ fontSize: 12 }}>— {desc}</Text>}
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
@@ -2385,8 +2368,7 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
                     <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
                       <Text strong style={{ fontSize: 13 }}>{g.name || 'Ungrouped'}</Text>
                       <Text type="secondary" style={{ fontSize: 12 }}>
-                        {g.hosts.length} host{g.hosts.length === 1 ? '' : 's'} · <span style={{ color: '#52c41a' }}>● {g.up}</span>
-                        {g.hosts.length - g.up > 0 && <span style={{ color: 'var(--rs-text-faint)' }}> ● {g.hosts.length - g.up}</span>}
+                        {g.hosts.length} host{g.hosts.length === 1 ? '' : 's'}
                       </Text>
                     </div>
                     {desc && <div style={{ fontSize: 12, color: 'var(--rs-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{desc}</div>}
@@ -4536,228 +4518,6 @@ function SavedRunsTab() {
   )
 }
 
-// ── Denylist (fleet kill switch) ────────────────────────────────────────────
-
-export function DenylistTab() {
-  const [hosts, setHosts] = useState<Host[]>([])
-  const [targets, setTargets] = useState<string[]>([])
-  const [runnableGlobs, setRunnableGlobs] = useState<string[]>([])
-  const [userGlobs, setUserGlobs] = useState<string[]>([])
-  const [hostGlobs, setHostGlobs] = useState<string[]>([])
-  const [reason, setReason] = useState('')
-  const [mode, setMode] = useState<'enforce' | 'warn' | 'off'>('enforce')
-  const [result, setResult] = useState('')
-  const [busy, setBusy] = useState('')
-  const [status, setStatus] = useState<DenylistHostStatus[]>([])
-  const [loadingStatus, setLoadingStatus] = useState(false)
-
-  useEffect(() => { bridge.get_hosts().then(setHosts) }, [])
-
-  const scope = targets.length ? `${targets.length} selected host(s)` : 'ALL hosts'
-
-  // One fleet-wide read (every host, in parallel on the backend) on open, on
-  // Refresh, and after a mutation. The host picker filters the loaded rows
-  // client-side — it no longer re-queries the fleet on every selection change.
-  const refresh = useCallback(async () => {
-    setLoadingStatus(true)
-    try {
-      setStatus(await bridge.denylist_status([]))
-    } catch (err) {
-      message.error((err as Error)?.message || 'could not read denylist status')
-    } finally {
-      setLoadingStatus(false)
-    }
-  }, [])
-
-  useEffect(() => { refresh() }, [refresh])
-
-  const targetSet = new Set(targets)
-  const shownStatus = targets.length ? status.filter(r => targetSet.has(r.host)) : status
-
-  const run = async (payload: DenylistPayload, label: string) => {
-    setBusy(label)
-    try {
-      setResult(await bridge.manage_denylist({ ...payload, targets }))
-      await refresh()  // reflect the change in the table immediately
-    } catch (err) {
-      message.error((err as Error)?.message || 'denylist action failed')
-    } finally {
-      setBusy('')
-    }
-  }
-
-  const hostOptions = hosts.map(h => ({
-    value: h.name,
-    label: h.group ? `${h.name} (${h.group})` : h.name,
-  }))
-
-  const ruleSummary = (r: DenylistHostStatus): string => {
-    if (!r.ok) return r.error || 'unreachable'
-    if (r.disabled) return 'ALL disabled' + (r.reason ? ` (${r.reason})` : '')
-    if (!r.rules?.length) return 'none'
-    return r.rules
-      .map(rule => `${rule.runnables.join(',')} [users ${rule.users.join(',')}; hosts ${rule.hosts.join(',')}]${rule.reason ? ` — ${rule.reason}` : ''}`)
-      .join(' · ')
-  }
-
-  const statusColumns = [
-    { title: 'Host', dataIndex: 'host', key: 'host' },
-    { title: 'Venv', dataIndex: 'venv', key: 'venv' },
-    {
-      title: 'Mode',
-      key: 'mode',
-      render: (_: unknown, r: DenylistHostStatus) =>
-        !r.ok ? <Tag color="default">—</Tag>
-          : <Tag color={r.mode === 'off' ? 'default' : r.mode === 'warn' ? 'gold' : 'blue'}>{r.mode}</Tag>,
-    },
-    {
-      title: 'Disabled',
-      key: 'disabled',
-      render: (_: unknown, r: DenylistHostStatus) => {
-        if (!r.ok) return <Tag color="red">error</Tag>
-        if (r.disabled) return <Tag color="red">ALL</Tag>
-        if (r.rules?.length) return <Tag color="orange">{r.rules.length} rule{r.rules.length === 1 ? '' : 's'}</Tag>
-        return <Tag color="green">none</Tag>
-      },
-    },
-    {
-      title: 'Detail',
-      key: 'detail',
-      render: (_: unknown, r: DenylistHostStatus) => (
-        <Tooltip title={ruleSummary(r)}>
-          <Text style={{ fontSize: 13 }} ellipsis={{ tooltip: false }}>{ruleSummary(r)}</Text>
-        </Tooltip>
-      ),
-    },
-  ]
-
-  return (
-    <div>
-      <Alert
-        type="warning"
-        showIcon
-        icon={<WarningOutlined />}
-        style={{ marginBottom: 12 }}
-        message="Kill switch"
-        description={
-          <Text type="secondary" style={{ fontSize: 13 }}>
-            Disable or re-enable runspec runnables across the fleet. This writes each
-            host's venv denylist via the core <Text code>runspec deny</Text> over SSH —
-            it stops the <em>runnables</em> on those hosts, never this console, and
-            “Re-enable all” always works. Remote hosts need <Text code>runspec ≥ 0.43.0</Text>.
-          </Text>
-        }
-      />
-
-      <div style={{ marginBottom: 8 }}>
-        <Text style={{ fontSize: 13 }}>Target hosts</Text>
-        <Select
-          mode="multiple"
-          allowClear
-          size="small"
-          style={{ width: '100%', marginTop: 4 }}
-          placeholder="All hosts (leave empty to apply to the whole fleet)"
-          value={targets}
-          onChange={setTargets}
-          options={hostOptions}
-        />
-      </div>
-
-      <Table<DenylistHostStatus>
-        size="small"
-        rowKey={r => `${r.host}/${r.venv}`}
-        columns={statusColumns}
-        dataSource={shownStatus}
-        loading={loadingStatus ? { tip: `Querying ${hosts.filter(h => h.name !== 'local').length || ''} hosts…`.replace('  ', ' ') } : false}
-        pagination={false}
-        style={{ marginBottom: 12 }}
-        locale={{ emptyText: targets.length && status.length ? 'No rows for the selected hosts.' : 'No hosts with a runspec path.' }}
-      />
-
-      <Space wrap style={{ marginBottom: 12 }}>
-        <Button
-          size="small"
-          icon={loadingStatus ? <LoadingOutlined /> : <ReloadOutlined />}
-          loading={loadingStatus}
-          onClick={refresh}
-        >
-          Refresh status
-        </Button>
-        <Popconfirm
-          title="Disable ALL runnables?"
-          icon={<WarningOutlined style={{ color: '#faad14' }} />}
-          description={
-            <span style={{ fontSize: 13 }}>
-              Blocks every runnable on {scope}.<br />
-              Agent and manual runs are refused until you re-enable.
-            </span>
-          }
-          okText="Disable all"
-          okButtonProps={{ danger: true }}
-          onConfirm={() => run({ action: 'all', reason }, 'all')}
-        >
-          <Button size="small" danger icon={<StopOutlined />} loading={busy === 'all'}>
-            Disable all
-          </Button>
-        </Popconfirm>
-        <Popconfirm
-          title="Re-enable everything?"
-          description={<span style={{ fontSize: 13 }}>Clears the denylist on {scope}.</span>}
-          okText="Re-enable"
-          onConfirm={() => run({ action: 'clear' }, 'clear')}
-        >
-          <Button size="small" icon={<ReloadOutlined />} loading={busy === 'clear'}>
-            Re-enable all (clear)
-          </Button>
-        </Popconfirm>
-      </Space>
-
-      <Divider style={{ margin: '8px 0' }} orientation="left" plain>
-        <Text type="secondary" style={{ fontSize: 13 }}>Disable specific runnables</Text>
-      </Divider>
-      <Space direction="vertical" style={{ width: '100%', marginBottom: 12 }} size={6}>
-        <Select mode="tags" size="small" style={{ width: '100%' }} value={runnableGlobs} onChange={setRunnableGlobs} placeholder="Runnable name globs (e.g. deploy, restart-*) — empty = all" />
-        <Select mode="tags" size="small" style={{ width: '100%' }} value={userGlobs} onChange={setUserGlobs} placeholder="Username globs — empty = all users" />
-        <Select mode="tags" size="small" style={{ width: '100%' }} value={hostGlobs} onChange={setHostGlobs} placeholder="Hostname globs the rule applies to — empty = all hosts" />
-        <Input size="small" placeholder="Reason (shown on the refusal)" value={reason} onChange={e => setReason(e.target.value)} />
-        <Button
-          size="small"
-          icon={<StopOutlined />}
-          loading={busy === 'add'}
-          onClick={() => run({ action: 'add', runnable: runnableGlobs, user: userGlobs, host: hostGlobs, reason }, 'add')}
-        >
-          Add deny rule
-        </Button>
-      </Space>
-
-      <Divider style={{ margin: '8px 0' }} orientation="left" plain>
-        <Text type="secondary" style={{ fontSize: 13 }}>Enforcement mode</Text>
-      </Divider>
-      <Space style={{ marginBottom: 12 }}>
-        <Segmented
-          size="small"
-          value={mode}
-          onChange={v => setMode(v as 'enforce' | 'warn' | 'off')}
-          options={[
-            { label: 'Enforce', value: 'enforce' },
-            { label: 'Warn', value: 'warn' },
-            { label: 'Off', value: 'off' },
-          ]}
-        />
-        <Button size="small" loading={busy === 'mode'} onClick={() => run({ action: 'mode', setting: mode }, 'mode')}>
-          Apply mode
-        </Button>
-      </Space>
-
-      {result && (
-        <pre style={{ fontSize: 13, background: 'var(--rs-surface-sunken)', border: '1px solid var(--rs-border)', borderRadius: RADIUS.sm, padding: 10, whiteSpace: 'pre-wrap', maxHeight: 240, overflow: 'auto' }}>
-          {result}
-        </pre>
-      )}
-    </div>
-  )
-}
-
 // ── Drawer ────────────────────────────────────────────────────────────────────
 
 export function TelemetryTab() {
@@ -5548,7 +5308,6 @@ export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, co
           { key: 'filters',   label: 'Filters',    children: <FiltersTab /> },
           { key: 'repos',     label: 'Repos',      children: <ReposTab /> },
           { key: 'credentials', label: 'Credentials', children: <CredentialsTab /> },
-          { key: 'denylist',  label: 'Denylist',   children: <DenylistTab /> },
           { key: 'mcp',       label: 'MCP',        children: <McpTab /> },
           { key: 'mcpServer', label: 'MCP Server', children: <McpServerTab /> },
           { key: 'configSync', label: 'Config Sync', children: <ConfigSyncTab /> },

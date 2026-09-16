@@ -29,6 +29,7 @@ import {
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   ReloadOutlined,
+  StopOutlined,
 } from '@ant-design/icons'
 import { ConsoleView } from './views/ConsoleView'
 import { SpecsView } from './views/SpecsView'
@@ -43,6 +44,7 @@ import { DevView } from './views/DevView'
 import { FormsView, matchRunnableForEdit, type PendingForm } from './views/FormsView'
 import { TransferModal } from './views/TransferModal'
 import { CopyKeyModal } from './views/CopyKeyModal'
+import { DenylistModal } from './views/DenylistModal'
 import { RunbookRunModal } from './views/RunbookRunModal'
 import { SavedRunRunModal } from './views/SavedRunRunModal'
 // Lazy-loaded: @ant-design/plots is heavy and only the Analytics tab needs it,
@@ -176,6 +178,10 @@ export default function App() {
   // host (discovery otherwise only re-runs on reconnect / every
   // discovery_interval). Spins until the cycle reports ready.
   const [refreshingHosts, setRefreshingHosts] = useState(false)
+  // Denylist (fleet kill switch) — opened from the bottom of the hosts panel,
+  // scoped to the hosts connected right now. Disabled until the fleet sweep
+  // has settled so its scope is the set of green dots you can see.
+  const [denylistOpen, setDenylistOpen] = useState(false)
   const refreshHosts = () => {
     setRefreshingHosts(true)
     bridge.refresh_hosts?.().catch(() => setRefreshingHosts(false))
@@ -431,7 +437,9 @@ export default function App() {
     const onDiscoveryState = (e: Event) => {
       const d = (e as CustomEvent).detail as { ready: boolean; done: number; total: number }
       if (d) setDiscovery(d)
-      if (d?.ready) setRefreshingHosts(false)
+      // The kickoff state carries ready=true on a steady-state cycle; only the
+      // final done==total state ends a Refresh.
+      if (d?.ready && d.done >= d.total) setRefreshingHosts(false)
     }
     // Room connection state: read on mount, then refetch on every connect/drop
     // flip (a refetch is cheap and always reflects the full configured set, incl.
@@ -856,16 +864,6 @@ export default function App() {
                   </Tooltip>
                 )
               })()}
-              <Tooltip title="Refresh hosts — probe every host and re-discover its runnables now" placement="bottom">
-                <Button
-                  type="text" size="small"
-                  aria-label="Refresh hosts"
-                  icon={refreshingHosts ? <LoadingOutlined /> : <ReloadOutlined />}
-                  disabled={refreshingHosts}
-                  onClick={refreshHosts}
-                  style={{ color: textMuted(isDark), padding: '0 4px', height: 22 }}
-                />
-              </Tooltip>
             </div>
             {/* Host-profile switcher — only when profiles are defined. Picking one
                 scopes the sidebar + standing connections to that working-set. */}
@@ -1020,6 +1018,34 @@ export default function App() {
               display: 'flex', flexDirection: 'column', gap: 3,
               fontSize: 12, color: iconCol,
             }}>
+              {/* Denylist: the fleet kill switch for the hosts connected right
+                  now. Greyed out while a sweep is in flight (first discovery or a
+                  Refresh) so the modal's scope matches the sidebar's green dots. */}
+              {(() => {
+                const connectedRemote = hosts.filter(h => h.name !== 'local' && h.connected)
+                const sweeping = !discovery.ready || refreshingHosts
+                const disabled = sweeping || connectedRemote.length === 0
+                const tip = sweeping
+                  ? `Waiting for the fleet to finish connecting… (${discovery.done}/${discovery.total} hosts)`
+                  : connectedRemote.length === 0
+                    ? 'No connected hosts to manage'
+                    : `Denylist (kill switch) for the ${connectedRemote.length} connected host${connectedRemote.length === 1 ? '' : 's'}`
+                return (
+                  <Tooltip title={tip} placement="topLeft">
+                    <Button
+                      size="small"
+                      block
+                      icon={sweeping ? <LoadingOutlined /> : <StopOutlined />}
+                      disabled={disabled}
+                      onClick={() => setDenylistOpen(true)}
+                      aria-label="Denylist"
+                      style={{ marginBottom: 4, fontSize: 12 }}
+                    >
+                      Denylist{!sweeping && connectedRemote.length > 0 ? ` · ${connectedRemote.length} connected` : ''}
+                    </Button>
+                  </Tooltip>
+                )
+              })()}
               {/* Rooms: live connection state for every configured chat/helpdesk
                   room, so a room server going down is visible at a glance instead
                   of buried in the Dev tab. Hidden entirely when none are set. */}
@@ -1106,6 +1132,11 @@ export default function App() {
                         <span> · still loading ({discovery.done}/{discovery.total} hosts)</span>
                       )}
                     </div>
+                    <div style={{ marginBottom: 6, color: iconCol, fontSize: 12 }}>
+                      {refreshingHosts
+                        ? 'Refreshing — probing every host and re-discovering its runnables…'
+                        : 'Click to refresh: probe every host in the profile and re-discover its runnables now (otherwise re-discovery happens on reconnect / every few minutes).'}
+                    </div>
                     {catalogue.hostsBreakdown.length === 0 ? (
                       <div style={{ color: iconCol }}>No runnables discovered yet.</div>
                     ) : catalogue.hostsBreakdown.map(h => (
@@ -1126,10 +1157,19 @@ export default function App() {
                   </div>
                 }
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'default' }}>
-                  {!discovery.ready && discovery.total > 0
+                <div
+                  role="button"
+                  tabIndex={0}
+                  aria-label="Refresh hosts and tools"
+                  aria-busy={refreshingHosts}
+                  onClick={() => { if (!refreshingHosts) refreshHosts() }}
+                  onKeyDown={e => { if ((e.key === 'Enter' || e.key === ' ') && !refreshingHosts) { e.preventDefault(); refreshHosts() } }}
+                  className="rs-host-row"
+                  style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: refreshingHosts ? 'progress' : 'pointer', margin: '0 -6px', padding: '1px 6px', borderRadius: 4 }}
+                >
+                  {refreshingHosts || (!discovery.ready && discovery.total > 0)
                     ? <LoadingOutlined spin style={{ fontSize: 12 }} />
-                    : <AppstoreOutlined style={{ fontSize: 12 }} />}
+                    : <ReloadOutlined style={{ fontSize: 12 }} />}
                   <span>
                     <span style={{
                       fontVariantNumeric: 'tabular-nums',
@@ -1139,7 +1179,7 @@ export default function App() {
                     }}>{catalogue.distinct}</span>
                     {' '}tool{catalogue.distinct === 1 ? '' : 's'}
                     {catalogue.venvCount > 0 && <span> · {catalogue.venvCount} venv{catalogue.venvCount === 1 ? '' : 's'}</span>}
-                    {!discovery.ready && discovery.total > 0 && (
+                    {(refreshingHosts || (!discovery.ready && discovery.total > 0)) && (
                       <span style={{ opacity: 0.7 }}> · {discovery.done}/{discovery.total} hosts</span>
                     )}
                   </span>
@@ -1476,6 +1516,11 @@ export default function App() {
             bridge.get_hosts().then(setHosts)
             bridge.get_runnables('all').then(setRunnables)
           }}
+        />
+        <DenylistModal
+          open={denylistOpen}
+          onClose={() => setDenylistOpen(false)}
+          hosts={hosts.filter(h => h.name === 'local' || h.connected)}
         />
 
         <SettingsDrawer

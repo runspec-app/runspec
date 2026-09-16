@@ -46,7 +46,8 @@ class HostsMixin:
         return result
 
     def manage_denylist(self, payload: dict[str, Any]) -> str:
-        """Public wrapper for the denylist kill switch (Settings → Denylist).
+        """Public wrapper for the denylist kill switch (the hosts-panel Denylist
+        modal).
 
         Runs ``runspec deny <action>`` across the selected fleet hosts (one call
         per venv) and returns the aggregated per-host/per-venv summary. Same
@@ -60,7 +61,7 @@ class HostsMixin:
         return self._run_manage_denylist(dict(payload or {}))
 
     def denylist_status(self, targets: list[str] | None = None) -> list[dict[str, Any]]:
-        """Structured denylist state per host/venv (Settings → Denylist table).
+        """Structured denylist state per host/venv (the hosts-panel Denylist modal).
 
         Runs ``runspec deny list --json`` on each selected host (one call per
         venv) and parses it. ``targets`` selects host names (empty/None ⇒ all
@@ -74,7 +75,9 @@ class HostsMixin:
 
         wanted = {str(t) for t in (targets or [])}
         # Deliberately the full configured fleet (``self._hosts``), not the active
-        # profile's working set — the denylist is a fleet kill switch.
+        # profile's working set — the denylist is a fleet kill switch; the modal
+        # passes the currently *connected* hosts as ``targets`` so a down host
+        # never waits out an SSH timeout here.
         hosts = [h for h in self._hosts if utils_mod._paths(h)]
         if wanted:
             hosts = [h for h in hosts if h.get("name") in wanted]

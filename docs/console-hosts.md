@@ -46,9 +46,14 @@ profiles its hosts belong to. Click a group to drill into its hosts (reorder,
 test, copy key, edit, delete); the search box (name / hostname / user / group)
 and the profile filter flatten the list across groups. The sidebar's title
 row has a **collapse / expand all** toggle for the host groups (remembered
-across restarts, and a group that appears later follows your last choice) and
-a **Refresh** button that probes every host and re-discovers its runnables on
-demand.
+across restarts, and a group that appears later follows your last choice).
+The **tool count** at the bottom of the hosts panel (*N tools · M venvs*) is
+also the refresh control: click it to probe every host in the profile and
+re-discover its runnables now — which is exactly what that number reflects
+(hover shows the per-host breakdown). The sidebar's connection dots update
+host-by-host as the sweep runs (coalesced to a few refetches), and a profile
+switch or refresh takes over from a sweep already in progress instead of
+waiting behind it.
 
 Once saved, the host shows in the sidebar; the background refresh probes
 connectivity and inventories its runnables. Ask the agent:
@@ -223,9 +228,10 @@ host over its warm pooled transport (cheap). `discovery_interval` is the
 per venv) re-runs on a host only when it first connects, reconnects after a
 drop, its `runspec_paths` / identity change, or this many seconds have passed
 since its last discovery — plus on any explicit trigger (a host save, profile
-switch, host import, copy-key, or the sidebar **Refresh** button). `0` re-runs
+switch, host import, copy-key, or clicking the tool count at the bottom of the
+hosts panel). `0` re-runs
 discovery every cycle. `workers` also bounds the other fleet-wide sweeps
-(Settings → Denylist / `runspec deny`).
+(the hosts-panel Denylist modal / `runspec deny`).
 
 The connection pool exists to avoid hammering bastions with handshake bursts
 (which trips `sshd MaxStartups` and surfaces as *"Error reading SSH protocol
@@ -249,8 +255,12 @@ Each venv on each host has a [denylist](denylist.md) — a kill switch that
 makes `runspec` refuse matched runnables at parse time, no matter how they're
 invoked. The console drives it fleet-wide two ways:
 
-- **Settings → Denylist** — pick hosts, disable/re-enable all, add rules,
-  set enforce/warn/off;
+- the **Denylist** button at the bottom of the hosts panel — a modal scoped to
+  the hosts *connected right now* in the active profile (greyed out until the
+  fleet sweep has settled, so its scope is the green dots you can see): pick a
+  subset or act on all of them, disable/re-enable all, add rules, set
+  enforce/warn/off. A disconnected host is never queried or touched — reopen
+  once it reconnects;
 - the agent's `manage_denylist` tool:
 
 > Disable reboot-host on all production hosts. …later… What's currently denylisted across the fleet?

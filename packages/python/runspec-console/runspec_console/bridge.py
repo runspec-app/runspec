@@ -207,6 +207,14 @@ class Bridge(
         # interleave their cache splices. Acquired inside the cycle, never at
         # spawn, so a UI call that kicks a cycle returns immediately.
         self._refresh_cycle_lock = threading.Lock()
+        # Bumped by every kicked (non-periodic) refresh so a cycle already in
+        # progress notices it has been superseded and bails out at its next task
+        # boundary instead of making the kick wait a full fleet probe. Guarded by
+        # ``self._lock``.
+        self._refresh_epoch = 0
+        # event name → monotonic ts of its last coalesced dispatch (see
+        # _dispatch_coalesced). Guarded by ``self._lock``.
+        self._coalesced_at: dict[str, float] = {}
         # Persistent agent conversation so the model remembers prior turns. One
         # rolling conversation per app session; reset via clear_chat(). The lock
         # serialises turns so two quick sends can't interleave the history.

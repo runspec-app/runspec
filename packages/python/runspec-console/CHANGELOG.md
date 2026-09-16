@@ -8,6 +8,46 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.265.1] — 2026-09-16
+
+### Fixed
+- **The sidebar now turns hosts green as they connect, not after the whole
+  fleet's probe.** The refresh cycle emitted a single `hosts_updated` at the
+  *end* of the probe phase, so on a large fleet the hosts panel sat blank for
+  tens of seconds after launch (and after Refresh) while the connection cue
+  had already played per host and the Settings tab — which read the live cache
+  — showed green counts first. `_probe_one` now emits a coalesced
+  `hosts_updated` on every state flip (≤ one per 0.5 s), and the
+  `discovery_state` kickoff fires *before* the probe so "Discovering fleet…"
+  shows immediately after launch.
+- **A profile switch / Refresh no longer waits behind a sweep in progress.**
+  0.265.0 serialised refresh cycles, so a kicked cycle (profile switch, host
+  save, Refresh) queued behind the periodic one — on a 70-host fleet that could
+  be a full probe's worth of nothing happening. Every kick now bumps a refresh
+  epoch; a running cycle checks it at each host boundary and yields (no partial
+  canonical assign), so the kicked cycle starts within one host's probe.
+- The sidebar Refresh spinner ends on the *final* `discovery_state`
+  (`done == total`), not the kickoff.
+- **The refresh control is the tool count.** The title-row Refresh button is
+  gone; clicking *N tools · M venvs* at the bottom of the hosts panel runs the
+  forced probe + re-discovery (that count is exactly what it refreshes), with
+  the spinner and *done/total hosts* progress shown in place and the per-host
+  breakdown still on hover.
+
+### Changed
+- **Denylist moved from Settings to a button at the bottom of the hosts
+  panel**, scoped to the hosts *connected right now* in the active profile.
+  The button is greyed out until the fleet sweep has settled (first discovery /
+  a Refresh) so the modal's scope is the green dots you can see; every status
+  read and `runspec deny` mutation targets only those hosts, so it is fast — the
+  old tab queried every configured host regardless of profile or state, and each
+  disconnected host waited out a 20 s SSH timeout. New `views/DenylistModal.tsx`
+  (replaces the `DenylistTab`); bridge methods unchanged.
+- **Settings → Jump Hosts no longer shows connection state.** The group rows
+  and host rows carry no green/grey dots or connected counts — the tab is for
+  managing host entries; live state lives in the sidebar. `groupSummary()` no
+  longer takes a connection map.
+
 ## [0.265.0] — 2026-09-16
 
 ### Changed
