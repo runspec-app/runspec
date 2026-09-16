@@ -300,6 +300,10 @@ class _ServerState:
         self.call_timeout = _opt_pos_float(cfg.get("call_timeout"))
         self.connect_timeout = _opt_pos_float(cfg.get("connect_timeout"))
         self.session: Any = None
+        # The supervisor coroutine's asyncio.Task (set once it starts on the loop
+        # thread), so stop() can cancel one still stuck mid-connect — which never
+        # reaches the stop_event wait and so can't be unwound by signalling alone.
+        self.task: Any = None
         self.tools: list[Any] = []  # live SDK Tool models
         # bare MCP tool name → display name, filled at connect time.
         self.display_names: dict[str, str] = {}
@@ -406,29 +410,54 @@ class McpManager:
         )
 
     def _run_loop(self) -> None:
-        asyncio.set_event_loop(self._loop)
+        # Bind the loop to a local: stop() nulls self._loop, so the finally must
+        # not reach through self (it would AttributeError and leak the loop's fds).
+        loop = self._loop
+        asyncio.set_event_loop(loop)
         try:
-            self._loop.run_forever()
+            loop.run_forever()
         finally:
             with contextlib.suppress(Exception):
-                self._loop.close()
+                loop.close()
 
     async def _serve_one(self, st: _ServerState) -> None:
         """Open + hold one server's session until shutdown. Runs on the loop
         thread. Any failure is recorded on the state and the ready flag set so
-        ``start()`` never blocks the full timeout on a fast failure."""
+        ``start()`` never blocks the full timeout on a fast failure.
+
+        The connect handshake (open transport → ``initialize`` → ``list_tools``)
+        is bounded by ``asyncio.wait_for(connect_timeout)``. Without it an
+        unresponsive-but-reachable server (streams open, no reply) pins this
+        coroutine forever on ``initialize()`` — it never reaches the ``stop_event``
+        wait, so a later ``stop()``/``reload()`` can't unwind it, leaking the task
+        and any stdio subprocess. On timeout the stack unwinds and the supervisor
+        exits disconnected (recorded in ``status()``). Once connected it parks on
+        ``stop_event`` until :meth:`stop` signals shutdown."""
+        st.task = asyncio.current_task()
         st.stop_event = asyncio.Event()
+        connect = st.connect_timeout or self._connect_timeout
         try:
             cred = self._resolve_credential(st.cfg)
             async with contextlib.AsyncExitStack() as stack:
-                read, write = await self._open_streams(stack, st.cfg, cred)
-                from mcp import ClientSession
 
-                session = await stack.enter_async_context(
-                    ClientSession(read, write, read_timeout_seconds=None)
-                )
-                await session.initialize()
-                listed = await session.list_tools()
+                async def _handshake() -> tuple[Any, Any]:
+                    read, write = await self._open_streams(stack, st.cfg, cred)
+                    from mcp import ClientSession
+
+                    session = await stack.enter_async_context(
+                        ClientSession(read, write, read_timeout_seconds=None)
+                    )
+                    await session.initialize()
+                    return session, await session.list_tools()
+
+                try:
+                    session, listed = await asyncio.wait_for(
+                        _handshake(), timeout=connect
+                    )
+                except (TimeoutError, asyncio.TimeoutError) as exc:
+                    raise TimeoutError(
+                        f"connect timed out after {connect:.0f}s"
+                    ) from exc
                 st.session = session
                 st.tools = list(getattr(listed, "tools", []) or [])
                 st.connected = True
@@ -441,6 +470,11 @@ class McpManager:
                 )
                 st.ready.set()
                 await st.stop_event.wait()
+        except asyncio.CancelledError:
+            # stop()/reload() cancelled us — re-raise so the AsyncExitStack unwinds
+            # in-task (terminating any stdio subprocess) rather than being recorded
+            # as a server "failure".
+            raise
         except Exception as exc:  # noqa: BLE001 — record + surface, never propagate
             st.error = str(exc) or exc.__class__.__name__
             st.connected = False
@@ -564,9 +598,18 @@ class McpManager:
                 st.display_names[bare] = name
 
     def stop(self) -> None:
-        """Signal every supervisor to unwind its session (terminating any stdio
-        subprocess) and stop the loop. Best-effort; safe to call more than once
-        and safe when never started."""
+        """Unwind every supervisor's session (terminating any stdio subprocess),
+        stop the loop, and join its thread. Best-effort; safe to call more than
+        once and safe when never started.
+
+        Ordering matters: the loop thread sits in ``run_forever()``, which does
+        *not* return when the supervisors finish, so ``loop.stop()`` must be
+        scheduled onto the loop for the thread to exit. The earlier code joined
+        the thread *before* scheduling that stop, so the join always waited out
+        its full 5s timeout — the ~5s the app lingered on close. Here the unwind
+        runs to completion on the loop first (setting each ``stop_event`` and
+        cancelling any supervisor stuck mid-connect), *then* ``loop.stop()`` is
+        scheduled and the thread join returns promptly."""
         with self._lock:
             loop = self._loop
             states = list(self._servers.values())
@@ -578,18 +621,34 @@ class McpManager:
         if loop is None:
             return
 
-        def _signal() -> None:
+        async def _unwind() -> None:
+            # Wake supervisors parked on their stop_event so they unwind gracefully…
             for st in states:
                 if st.stop_event is not None:
                     st.stop_event.set()
+            # …and cancel any still stuck mid-connect (or not yet parked), so a
+            # hung handshake can't keep the loop alive. Cancellation is delivered
+            # in-task, so the AsyncExitStack unwinds cleanly either way.
+            tasks = [
+                st.task for st in states if st.task is not None and not st.task.done()
+            ]
+            for t in tasks:
+                t.cancel()
+            if tasks:
+                with contextlib.suppress(Exception):
+                    await asyncio.gather(*tasks, return_exceptions=True)
 
-        with contextlib.suppress(Exception):
-            loop.call_soon_threadsafe(_signal)
-        # Give supervisors a moment to unwind cleanly, then stop the loop.
-        if thread is not None:
-            thread.join(timeout=5.0)
+        # Run the unwind on the loop and wait for it (bounded), *then* stop the
+        # loop — deliberately not inside _unwind, since a loop.stop() there could
+        # cut run_forever before this future's completion callback is delivered.
+        try:
+            asyncio.run_coroutine_threadsafe(_unwind(), loop).result(timeout=5.0)
+        except Exception:  # noqa: BLE001 — loop gone / an unwind wedged past the cap
+            pass
         with contextlib.suppress(Exception):
             loop.call_soon_threadsafe(loop.stop)
+        if thread is not None:
+            thread.join(timeout=5.0)
 
     def reload(self) -> None:
         """Reconnect from the current config (stop, then start)."""

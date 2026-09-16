@@ -598,6 +598,91 @@ def test_start_respects_section_kill_switch():
     assert mgr._loop is None  # disabled ⇒ never connects
 
 
+# ── lifecycle: shutdown ordering (no SDK — drives the loop with stub tasks) ───
+
+
+def _wire_loop(mgr):
+    """Attach a live event-loop thread to ``mgr`` the way ``start()`` does, but
+    without the SDK — the caller launches its own stub supervisor coroutines."""
+    import asyncio
+    import threading
+
+    loop = asyncio.new_event_loop()
+    mgr._loop = loop
+    mgr._thread = threading.Thread(
+        target=mgr._run_loop, name="mcp-loop-test", daemon=True
+    )
+    mgr._thread.start()
+    return loop
+
+
+def test_stop_returns_promptly_and_stops_the_loop():
+    # Regression: stop() used to join the loop thread *before* scheduling
+    # loop.stop(), so the join always burned its full 5s timeout (the ~5s the app
+    # lingered on close). A parked-but-healthy supervisor must now shut down fast.
+    import asyncio
+    import threading
+    import time
+
+    mgr = mcp_client.McpManager()
+    loop = _wire_loop(mgr)
+    thread = mgr._thread
+
+    st = mcp_client._ServerState({"name": "s"})
+    parked = threading.Event()
+
+    async def _parked() -> None:
+        st.task = asyncio.current_task()
+        st.stop_event = asyncio.Event()
+        parked.set()
+        await st.stop_event.wait()
+
+    asyncio.run_coroutine_threadsafe(_parked(), loop)
+    mgr._servers["s"] = st
+    assert parked.wait(2.0)
+
+    t0 = time.monotonic()
+    mgr.stop()
+    elapsed = time.monotonic() - t0
+
+    assert elapsed < 3.0, f"stop() took {elapsed:.1f}s — join-before-stop regressed"
+    assert not thread.is_alive()  # the loop actually stopped and the thread exited
+    assert mgr._loop is None and mgr._servers == {}
+
+
+def test_stop_cancels_a_supervisor_stuck_mid_connect():
+    # A supervisor still awaiting a hung handshake never reaches the stop_event
+    # wait, so signalling alone can't unwind it. stop() must cancel the task so a
+    # wedged server can't keep the loop (and its subprocess) alive across a
+    # reload / shutdown.
+    import asyncio
+    import threading
+    import time
+
+    mgr = mcp_client.McpManager()
+    loop = _wire_loop(mgr)
+
+    st = mcp_client._ServerState({"name": "s"})
+    started = threading.Event()
+
+    async def _stuck() -> None:
+        st.task = asyncio.current_task()
+        st.stop_event = asyncio.Event()  # set by stop(), but we never wait on it
+        started.set()
+        await asyncio.Event().wait()  # a handshake that never returns
+
+    asyncio.run_coroutine_threadsafe(_stuck(), loop)
+    mgr._servers["s"] = st
+    assert started.wait(2.0)
+
+    t0 = time.monotonic()
+    mgr.stop()
+    elapsed = time.monotonic() - t0
+
+    assert elapsed < 3.0
+    assert st.task.done()  # cancelled, not left pinning the loop
+
+
 # ── bridge wiring (light stub, fake manager) ─────────────────────────────────
 
 

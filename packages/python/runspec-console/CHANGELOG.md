@@ -8,6 +8,31 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.264.5] — 2026-09-16
+
+### Fixed
+- **External MCP servers no longer make the console linger ~5–10s on close.**
+  `McpManager.stop()` (registered at `atexit`) joined the loop thread *before*
+  scheduling `loop.stop()`. The loop thread sits in `run_forever()`, which does
+  not return when the supervisors finish, so the join always waited out its full
+  5s timeout on every shutdown that had any MCP server configured — the terminal
+  window lingering the user saw. `stop()` now runs the session unwind to
+  completion on the loop first, *then* schedules `loop.stop()`, so the thread
+  join returns promptly.
+- **A slow / unresponsive MCP server can no longer wedge the client.** The
+  connect handshake (open transport → `initialize` → `list_tools`) ran with no
+  timeout, so a reachable-but-unresponsive server (streams open, no reply) pinned
+  its supervisor coroutine forever on `initialize()`. Because that coroutine
+  never reached the `stop_event` wait, a later `stop()` / `mcp_reload()` could not
+  unwind it — leaking the task and any stdio subprocess, and leaving the manager
+  in a half-applied state after saving MCP settings. The handshake is now bounded
+  by `asyncio.wait_for(connect_timeout)`; on timeout the server lands disconnected
+  (visible in `mcp_status`) and its supervisor exits cleanly. `stop()` also now
+  cancels any supervisor still stuck mid-connect, so a wedged server can't survive
+  a reload or shutdown. `_run_loop` binds the loop to a local so it is always
+  closed on thread exit (`stop()` nulls `self._loop`).
+
+
 ## [0.264.4] — 2026-09-15
 
 ### Fixed
