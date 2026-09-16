@@ -9,9 +9,14 @@ construction, host/venv fan-out, target filtering, and the autonomy gate.
 from __future__ import annotations
 
 import json
+import threading
+import time
 from typing import Any
 
+import pytest
+
 from runspec_console.bridge import Bridge
+from runspec_console.bridge_const import ToolCancelled
 
 HOSTS = [
     {
@@ -40,6 +45,10 @@ class _StubBridge:
         self.ssh_calls.append((ssh, command, identity_file))
         return (0, "ok", "")
 
+    def get_config(self) -> dict[str, Any]:
+        return getattr(self, "_cfg", {})
+
+    _fanout_workers = Bridge._fanout_workers
     _denylist_tool = Bridge._denylist_tool
     _run_manage_denylist = Bridge._run_manage_denylist
     _run_custom_tool = Bridge._run_custom_tool
@@ -229,3 +238,103 @@ def test_status_error_surfaced_as_row():
     rows = b.denylist_status(["prod-2"])
     assert rows[0]["ok"] is False
     assert rows[0]["error"] == "ssh down"
+
+
+# ── parallel fan-out (bounded, order-preserving, cancellable) ───────────────
+
+
+def _slow_ssh_run(b: _StubBridge, slow_target: str, delay: float = 0.05):
+    def run(ssh, command, *, identity_file=None, timeout=15):
+        if ssh == slow_target:
+            time.sleep(delay)
+        b.ssh_calls.append((ssh, command, identity_file))
+        return (0, _STATUS_JSON, "")
+
+    return run
+
+
+def test_status_rows_keep_order_under_parallelism():
+    b = _StubBridge(HOSTS)
+    b._ssh_run = _slow_ssh_run(b, "deploy@prod-1")  # type: ignore[method-assign]
+    rows = b.denylist_status()
+    assert [(r["host"], r["venv"]) for r in rows] == [
+        ("prod-1", "app"),
+        ("prod-1", "ops"),
+        ("prod-2", "app"),
+    ]
+
+
+def _concurrency_probe(b: _StubBridge, hold: float = 0.05):
+    lock = threading.Lock()
+    state = {"active": 0, "peak": 0}
+
+    def run(ssh, command, *, identity_file=None, timeout=15):
+        with lock:
+            state["active"] += 1
+            state["peak"] = max(state["peak"], state["active"])
+        time.sleep(hold)
+        with lock:
+            state["active"] -= 1
+        b.ssh_calls.append((ssh, command, identity_file))
+        return (0, "ok", "")
+
+    return run, state
+
+
+def test_fanout_runs_concurrently():
+    b = _StubBridge(HOSTS)
+    run, state = _concurrency_probe(b)
+    b._ssh_run = run  # type: ignore[method-assign]
+    out = b._run_manage_denylist({"action": "all"})
+    assert state["peak"] >= 2  # not serial any more
+    assert "3/3 venv(s) ok across 2 host(s)" in out
+    # Summary lines stay in host/venv order.
+    body = out.splitlines()[1:]
+    assert [ln.split(":")[0] for ln in body] == [
+        "✓ prod-1/app",
+        "✓ prod-1/ops",
+        "✓ prod-2/app",
+    ]
+
+
+def test_fanout_workers_honours_refresh_workers():
+    b = _StubBridge(HOSTS)
+    b._cfg = {"refresh": {"workers": 1}}
+    run, state = _concurrency_probe(b)
+    b._ssh_run = run  # type: ignore[method-assign]
+    b.denylist_status()
+    assert state["peak"] == 1
+    assert b._fanout_workers() == 1
+
+
+def test_on_progress_lines_are_ordered():
+    b = _StubBridge(HOSTS)
+    b._ssh_run = _slow_ssh_run(b, "deploy@prod-1")  # type: ignore[method-assign]
+    seen: list[str] = []
+    b._run_manage_denylist({"action": "list"}, on_progress=seen.append)
+    assert seen == ["host 1 of 2: prod-1", "host 2 of 2: prod-2"]
+
+
+def test_cancel_event_raises_tool_cancelled_and_stops_issuing():
+    b = _StubBridge(HOSTS)
+    b._cfg = {"refresh": {"workers": 1}}  # serial so the cancel lands mid-run
+    ev = threading.Event()
+
+    def run(ssh, command, *, identity_file=None, timeout=15):
+        b.ssh_calls.append((ssh, command, identity_file))
+        ev.set()  # cancel from inside the first command
+        return (0, "ok", "")
+
+    b._ssh_run = run  # type: ignore[method-assign]
+    with pytest.raises(ToolCancelled):
+        b._run_manage_denylist({"action": "all"}, cancel_event=ev)
+    assert len(b.ssh_calls) < 3  # later venvs were never issued
+
+
+def test_cancel_before_start_issues_nothing():
+    b = _StubBridge(HOSTS)
+    ev = threading.Event()
+    ev.set()
+    with pytest.raises(ToolCancelled):
+        b._run_manage_denylist({"action": "all"}, cancel_event=ev)
+    assert b.ssh_calls == []

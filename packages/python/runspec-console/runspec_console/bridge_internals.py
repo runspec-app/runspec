@@ -26,6 +26,7 @@ from .discovery import discover_local, discover_remote
 from .hosts import group_members, groups_map, host_in_profile
 
 from .bridge_const import (
+    DEFAULT_SYSTEM_PROMPT,
     logger,
 )
 from .bridge_utils import (
@@ -33,10 +34,15 @@ from .bridge_utils import (
     _parse_ssh,
 )
 
+from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .bridge import Bridge  # noqa: F401
+
+# Minimum spacing (s) between mid-cycle discovery progress dispatches — see
+# _refresh_cycle_locked. The final end-of-cycle dispatch is never throttled.
+_DISCOVERY_DISPATCH_MIN_INTERVAL = 0.5
 
 
 class InternalsMixin:
@@ -568,12 +574,32 @@ class InternalsMixin:
             raise
         return True
 
-    def _probe_one(self, h: dict[str, Any], *, jitter: float = 0) -> None:
+    def _fanout_workers(self) -> int:
+        """Bounded worker count for a fleet-wide fan-out outside the refresh cycle
+        (denylist status / ``runspec deny`` across hosts): the same ``[refresh]
+        workers`` bound the cycle uses, so one knob sizes every fleet sweep and
+        the handshake storm stays capped by ``[ssh] max_concurrent`` underneath."""
+        from .ssh_pool import pool_settings, refresh_settings
+
+        cfg = self.get_config()
+        max_concurrent = pool_settings(cfg.get("ssh"))["max_concurrent"]
+        settings = refresh_settings(cfg.get("refresh"), max_concurrent=max_concurrent)
+        return max(1, int(settings.get("workers") or 16))
+
+    def _probe_one(
+        self,
+        h: dict[str, Any],
+        *,
+        jitter: float = 0,
+        ssh_cfg: dict[str, Any] | None = None,
+    ) -> None:
         """One host's connectivity probe (a refresh-cycle worker task): optional
-        start jitter to spread connects, then record the result in the cache."""
+        start jitter to spread connects, then record the result in the cache.
+        ``ssh_cfg`` is the cycle's one-shot read of ``[ssh]`` (avoids a config.toml
+        read per host)."""
         if jitter:
             time.sleep(random.uniform(0, jitter))  # spread the connects
-        result = self._check_connected(h)
+        result = self._check_connected(h, ssh_cfg=ssh_cfg)
         with self._lock:
             self._connected_cache[h["name"]] = result
         # Unattended connection flips are exactly what audio awareness is for —
@@ -581,10 +607,15 @@ class InternalsMixin:
         # feedback, so only the refresh-loop probe cues.
         self._connection_cue("host", h["name"], result)
 
-    def _discover_one(self, h: dict[str, Any]) -> list[dict[str, Any]]:
+    def _discover_one(
+        self, h: dict[str, Any], *, ssh_cfg: dict[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
         """One host's runnable discovery (a refresh-cycle worker task). Returns the
         discovered runnables (empty if the host was marked disconnected by the
-        probe phase), so the caller can flatten results without a shared lock."""
+        probe phase), so the caller can flatten results without a shared lock.
+        ``ssh_cfg`` is the cycle's one-shot read of ``[ssh]``; ``None`` reads it."""
+        if ssh_cfg is None:
+            ssh_cfg = self.get_config().get("ssh")
         ssh = h.get("ssh")
         name = h["name"]
         with self._lock:
@@ -623,7 +654,7 @@ class InternalsMixin:
                     rp,
                     name,
                     idf,
-                    global_ssh_config=self.get_config().get("ssh"),
+                    global_ssh_config=ssh_cfg,
                     runner=runner,
                 )
                 if ssh
@@ -654,8 +685,98 @@ class InternalsMixin:
             out.append(r)
         return out
 
-    def _refresh_cycle(self) -> None:
+    # ── discovery cadence ────────────────────────────────────────────────────
+    #
+    # Connectivity is probed every cycle (cheap: a warm pooled transport), but a
+    # host's runnables are re-discovered — one ``runspec local`` SSH exec per venv
+    # — only when something could have changed: first sight, a new transport
+    # (reconnect), an edited path/identity, ``[refresh] discovery_interval``
+    # elapsed, or an explicit force (host save, profile switch, Refresh button).
+    # On a 70-host fleet this removes ~70 SSH execs and ~140 UI events from every
+    # steady-state 30 s cycle.
+
+    @staticmethod
+    def _discovery_key(h: dict[str, Any]) -> tuple:
+        """What a host's discovery depends on — a change forces re-discovery."""
+        return (
+            tuple(utils_mod._paths(h)),
+            str(h.get("ssh") or ""),
+            str(h.get("identityFile") or ""),
+            str(h.get("jump") or "").strip(),
+        )
+
+    def _invalidate_discovery(self, names: Iterable[str] | None = None) -> None:
+        """Forget the last-discovered stamp for ``names`` (all when ``None``) so
+        the next cycle re-discovers them — the targeted alternative to a forced
+        cycle (e.g. after a key was copied to one host)."""
+        with self._lock:
+            if names is None:
+                self._discovery_stamp.clear()
+            else:
+                for n in names:
+                    self._discovery_stamp.pop(n, None)
+
+    def _transport_generation(
+        self, h: dict[str, Any], ssh_cfg: dict[str, Any] | None
+    ) -> int:
+        """The pool's transport generation for ``h`` (0 for local / jump / no pool)."""
+        pool = self._ssh_pool
+        ssh = h.get("ssh")
+        if pool is None or not ssh or str(h.get("jump") or "").strip():
+            return 0
+        try:
+            return pool.generation(
+                ssh, identity_file=h.get("identityFile"), global_ssh_config=ssh_cfg
+            )
+        except Exception:  # noqa: BLE001 — a diagnostic read never blocks the cycle
+            return 0
+
+    def _should_discover(
+        self,
+        h: dict[str, Any],
+        *,
+        now: float,
+        force: bool,
+        discovery_interval: int,
+        ssh_cfg: dict[str, Any] | None,
+    ) -> bool:
+        """Decide whether this cycle re-discovers ``h`` (see the cadence note).
+        A disconnected host is never discovered (its stamp is dropped so the
+        disconnected→connected transition re-discovers)."""
+        name = h["name"]
+        with self._lock:
+            connected = self._connected_cache.get(name, h.get("ssh") is None)
+            stamp = self._discovery_stamp.get(name)
+            if not connected:
+                self._discovery_stamp.pop(name, None)
+                return False
+        if force or stamp is None or discovery_interval <= 0:
+            return True  # (0 ⇒ discover every cycle, the pre-0.265 behaviour)
+        ts, gen, key = stamp
+        if key != self._discovery_key(h):
+            return True
+        if self._transport_generation(h, ssh_cfg) != gen:
+            return True
+        return (now - ts) >= discovery_interval
+
+    def _kick_refresh(self, *, force: bool = False) -> None:
+        """Run one refresh cycle on a daemon thread (returns immediately)."""
+        threading.Thread(
+            target=lambda: self._refresh_cycle(force=force), daemon=True
+        ).start()
+
+    def refresh_hosts(self) -> None:
+        """Probe every in-scope host and re-discover its runnables now (the
+        sidebar Refresh button) — a forced cycle, ignoring the discovery stamps."""
+        self._kick_refresh(force=True)
+
+    def _refresh_cycle(self, *, force: bool = False) -> None:
         """Probe connectivity, then discover runnables — reusing pooled connections.
+
+        ``force`` re-discovers every connected host regardless of its stamp
+        (host save / profile switch / manual refresh); otherwise only hosts
+        ``_should_discover`` picks are re-run and the rest keep their cached
+        runnables. Cycles are serialised by ``_refresh_cycle_lock``.
 
         With the pool on, Phase 1 *warms* the per-host transport that Phase 2's
         discovery then reuses, so a host costs one handshake per cycle (often
@@ -664,7 +785,11 @@ class InternalsMixin:
         the same instant; the pool's global semaphore bounds how many connect at
         once; ``reap()`` closes transports gone idle.
         """
-        from concurrent.futures import ThreadPoolExecutor
+        with self._refresh_cycle_lock:
+            self._refresh_cycle_locked(force=force)
+
+    def _refresh_cycle_locked(self, *, force: bool = False) -> None:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
 
         from .ssh_pool import pool_settings, refresh_settings
 
@@ -673,14 +798,23 @@ class InternalsMixin:
         # Automation still reaches out-of-scope hosts on demand via _host_entry /
         # _all_host_entries; the pool idle-reaps those transient transports.
         all_hosts = self._active_host_entries()
-        max_concurrent = pool_settings(self.get_config().get("ssh"))["max_concurrent"]
-        settings = refresh_settings(
-            self.get_config().get("refresh"), max_concurrent=max_concurrent
-        )
+        # config.toml is read ONCE per cycle and threaded into every worker —
+        # it used to be re-read (disk + TOML parse under the config lock) per
+        # host, per venv, and per probe.
+        cfg = self.get_config()
+        # ``{}`` (not None) when the section is absent, so the workers' "None ⇒
+        # read config" fallback never triggers inside the cycle.
+        ssh_cfg: dict[str, Any] = dict(cfg.get("ssh") or {})
+        max_concurrent = pool_settings(ssh_cfg)["max_concurrent"]
+        settings = refresh_settings(cfg.get("refresh"), max_concurrent=max_concurrent)
         jitter = settings["jitter"]
         # Bounded worker count for the fan-out — see refresh_settings. A patched
         # refresh_settings (tests) may omit it; fall back to a safe default.
         workers = max(1, int(settings.get("workers") or 16))
+        try:
+            discovery_interval = max(0, int(settings.get("discovery_interval", 300)))
+        except (TypeError, ValueError):
+            discovery_interval = 300
 
         # ── Phase 1: connectivity (warms the pooled transport) ─────────────────
         # A bounded pool instead of one thread per host: at large fleets this
@@ -696,57 +830,115 @@ class InternalsMixin:
                 max_workers=min(workers, len(ssh_hosts)),
                 thread_name_prefix="refresh-probe",
             ) as ex:
-                list(ex.map(lambda h: self._probe_one(h, jitter=jitter), ssh_hosts))
+                list(
+                    ex.map(
+                        lambda h: self._probe_one(h, jitter=jitter, ssh_cfg=ssh_cfg),
+                        ssh_hosts,
+                    )
+                )
         self._dispatch("runspec:hosts_updated", {})
 
         # ── Phase 2: runnables discovery (reuses the warm transport) ───────────
-        # Merge each host's runnables into the cache *as it completes* rather than
-        # waiting for the whole fleet, so local (no SSH — near-instant) and fast
-        # hosts are usable on the very first turn instead of being blocked behind
-        # the slowest bastion. Dedup is per-host (the key includes the host, so two
-        # hosts never collide); a removed host is pruned by the canonical assign at
-        # the end of the cycle.
-        from concurrent.futures import as_completed
+        # Only hosts whose discovery could be stale are re-run (see
+        # _should_discover); the rest keep their cached entries. Each re-run
+        # host's runnables are merged into the cache *as it completes* rather
+        # than waiting for the whole fleet, so local (no SSH — near-instant) and
+        # fast hosts are usable on the very first turn instead of being blocked
+        # behind the slowest bastion. Dedup is per-host (the key includes the
+        # host, so two hosts never collide); a removed host is pruned by the
+        # canonical assign at the end of the cycle.
+        now = time.monotonic()
+        to_discover = [
+            h
+            for h in all_hosts
+            if self._should_discover(
+                h,
+                now=now,
+                force=force,
+                discovery_interval=discovery_interval,
+                ssh_cfg=ssh_cfg,
+            )
+        ]
+        rerun_names = {h["name"] for h in to_discover}
+        # A disconnected host contributes nothing (its stale entries drop), a
+        # skipped-but-connected host keeps what it had.
+        with self._lock:
+            keep_names = {
+                h["name"]
+                for h in all_hosts
+                if h["name"] not in rerun_names
+                and self._connected_cache.get(h["name"], h.get("ssh") is None)
+            }
+            previous_hosts = {r.get("host", "") for r in self._runnables_cache}
+            accumulated: list[dict[str, Any]] = [
+                r for r in self._runnables_cache if r.get("host", "") in keep_names
+            ]
 
         total = len(all_hosts)
+        done = total - len(to_discover)
         self._dispatch(
             "runspec:discovery_state",
             {"done": 0, "total": total, "ready": self._discovery_ready},
         )
-        accumulated: list[dict[str, Any]] = []
-        done = 0
-        with ThreadPoolExecutor(
-            max_workers=min(workers, len(all_hosts)),
-            thread_name_prefix="refresh-disc",
-        ) as ex:
-            futures = {ex.submit(self._discover_one, h): h for h in all_hosts}
-            for fut in as_completed(futures):
-                host_name = futures[fut].get("name", "")
-                try:
-                    host_runnables = fut.result()
-                except Exception:
-                    logger.debug(
-                        "discovery failed for host %s", host_name, exc_info=True
-                    )
-                    host_runnables = []
-                cleaned = self._dedup_host_runnables(host_runnables, host_name)
-                accumulated.extend(cleaned)
-                done += 1
-                # Splice this host's results into the live cache: drop its prior
-                # entries, keep every other host's, append the fresh set. Never
-                # empties the cache mid-cycle (steady-state refreshes stay warm).
-                with self._lock:
-                    self._runnables_cache = [
-                        r
-                        for r in self._runnables_cache
-                        if r.get("host", "") != host_name
-                    ] + cleaned
-                    self._discovery_progress = (done, total)
-                self._dispatch("runspec:runnables_updated", {})
-                self._dispatch(
-                    "runspec:discovery_state",
-                    {"done": done, "total": total, "ready": self._discovery_ready},
-                )
+        # Progress dispatches are coalesced: each one is a synchronous
+        # evaluate_js on the single UI-dispatch thread AND makes the frontend
+        # re-fetch the whole catalogue, so per-host emission on a large fleet was
+        # an event storm that slowed the entire app. Emit at most one per
+        # _DISCOVERY_DISPATCH_MIN_INTERVAL mid-cycle; the final emit below is
+        # unconditional.
+        last_emit = 0.0
+        if to_discover:
+            with ThreadPoolExecutor(
+                max_workers=min(workers, len(to_discover)),
+                thread_name_prefix="refresh-disc",
+            ) as ex:
+                futures = {
+                    ex.submit(self._discover_one, h, ssh_cfg=ssh_cfg): h
+                    for h in to_discover
+                }
+                for fut in as_completed(futures):
+                    h = futures[fut]
+                    host_name = h.get("name", "")
+                    ok = True
+                    try:
+                        host_runnables = fut.result()
+                    except Exception:
+                        logger.debug(
+                            "discovery failed for host %s", host_name, exc_info=True
+                        )
+                        host_runnables = []
+                        ok = False
+                    cleaned = self._dedup_host_runnables(host_runnables, host_name)
+                    accumulated.extend(cleaned)
+                    done += 1
+                    # Splice this host's results into the live cache: drop its
+                    # prior entries, keep every other host's, append the fresh
+                    # set. Never empties the cache mid-cycle.
+                    with self._lock:
+                        self._runnables_cache = [
+                            r
+                            for r in self._runnables_cache
+                            if r.get("host", "") != host_name
+                        ] + cleaned
+                        self._discovery_progress = (done, total)
+                        if ok:
+                            self._discovery_stamp[host_name] = (
+                                time.monotonic(),
+                                self._transport_generation(h, ssh_cfg),
+                                self._discovery_key(h),
+                            )
+                    t = time.monotonic()
+                    if t - last_emit >= _DISCOVERY_DISPATCH_MIN_INTERVAL:
+                        last_emit = t
+                        self._dispatch("runspec:runnables_updated", {})
+                        self._dispatch(
+                            "runspec:discovery_state",
+                            {
+                                "done": done,
+                                "total": total,
+                                "ready": self._discovery_ready,
+                            },
+                        )
 
         # Canonical assign: prunes any host that left the fleet (its entries linger
         # in the spliced cache until here), and marks discovery ready after the
@@ -755,26 +947,47 @@ class InternalsMixin:
             self._runnables_cache = accumulated
             self._discovery_ready = True
             self._discovery_progress = (total, total)
-        self._dispatch("runspec:runnables_updated", {})
+            # Stamps only for hosts still in scope — a host that leaves a profile
+            # and comes back within discovery_interval must not look "fresh".
+            in_scope = {h["name"] for h in all_hosts}
+            for n in [n for n in self._discovery_stamp if n not in in_scope]:
+                self._discovery_stamp.pop(n, None)
+            current_hosts = {r.get("host", "") for r in accumulated}
+        changed = bool(to_discover) or current_hosts != previous_hosts
+        logger.debug(
+            "discovery: %d host(s) re-discovered, %d kept (fresh), force=%s",
+            len(to_discover),
+            total - len(to_discover),
+            force,
+        )
         self._dispatch(
             "runspec:discovery_state", {"done": total, "total": total, "ready": True}
         )
-        # The fleet's runnables changed — refresh every staffed queue's
-        # self-service catalog so visitors are offered what can run *now*.
-        try:
-            self._publish_catalogs()
-        except Exception:
-            logger.exception("chat: catalog republish after discovery failed")
+        if changed:
+            # Something was re-discovered or a host left — tell the UI once (a
+            # steady-state cycle with nothing to re-run stays silent, so the
+            # frontend doesn't refetch the catalogue every 30 s).
+            self._dispatch("runspec:runnables_updated", {})
+            # The fleet's runnables changed — refresh every staffed queue's
+            # self-service catalog so visitors are offered what can run *now*.
+            try:
+                self._publish_catalogs()
+            except Exception:
+                logger.exception("chat: catalog republish after discovery failed")
 
         # Close transports that have gone idle beyond their TTL (cheap, per-cycle
         # — no separate timer thread).
         if self._ssh_pool is not None:
             self._ssh_pool.reap()
 
-    def _check_connected(self, host: dict[str, Any]) -> bool:
+    def _check_connected(
+        self, host: dict[str, Any], *, ssh_cfg: dict[str, Any] | None = None
+    ) -> bool:
         ssh = host.get("ssh")
         if not ssh:
             return True
+        if ssh_cfg is None:
+            ssh_cfg = self.get_config().get("ssh")
         jump = str(host.get("jump") or "").strip()
         if jump:
             # System-ssh transport (not pooled): a successful `ssh … true` over
@@ -785,7 +998,7 @@ class InternalsMixin:
                 "true",
                 jump=jump,
                 identity_file=host.get("identityFile"),
-                global_ssh_config=self.get_config().get("ssh"),
+                global_ssh_config=ssh_cfg,
                 timeout=8,
             )
             return code == 0
@@ -797,7 +1010,7 @@ class InternalsMixin:
             return pool.connectable(
                 ssh,
                 identity_file=host.get("identityFile"),
-                global_ssh_config=self.get_config().get("ssh"),
+                global_ssh_config=ssh_cfg,
             )
         from .executor import ssh_run
 
@@ -805,7 +1018,7 @@ class InternalsMixin:
             ssh,
             "true",
             identity_file=host.get("identityFile"),
-            global_ssh_config=self.get_config().get("ssh"),
+            global_ssh_config=ssh_cfg,
             timeout=5,
         )
         return code == 0
@@ -1063,6 +1276,11 @@ class InternalsMixin:
             "``console_status`` tool first."
         )
 
+    def default_system_prompt(self) -> str:
+        """The built-in base system prompt (what runs when ``[llm] system`` is
+        unset) — read by Settings → Model / API to pre-fill the field."""
+        return DEFAULT_SYSTEM_PROMPT
+
     def _base_system(self) -> str:
         """Base system prompt for the chat + trigger agent turns: the configured
         assistant instructions (``[llm] system``) if set, else a sensible default,
@@ -1077,21 +1295,7 @@ class InternalsMixin:
         combination most operators actually want."""
         llm_cfg = self.get_config().get("llm", {})
         configured = str(llm_cfg.get("system", "")).strip()
-        base = configured or (
-            "You are an assistant embedded in runspec-console. You can run "
-            "runspec runnables on local and remote hosts via tools. Use tools "
-            "when they help, and confirm before anything destructive.\n\n"
-            "When a required argument is missing or ambiguous — and getting it "
-            "wrong would matter (scheduling, sending mail, targeting a host, or "
-            "anything destructive) — ask the operator one brief clarifying question "
-            "instead of guessing. Prefer a quick question over a wrong assumption. "
-            "For low-stakes or clearly-implied values, go ahead; don't over-ask.\n\n"
-            "Saved runbooks are the operator's standing procedures. Prefer following "
-            "an existing one over improvising. When a correction you were just given "
-            "would apply again next time, offer to capture it with save_runbook — "
-            "the operator approves every save, so propose rather than ask permission "
-            "first."
-        )
+        base = configured or DEFAULT_SYSTEM_PROMPT
         append = str(llm_cfg.get("system_append", "")).strip()
         return f"{base}\n\n{append}" if append else base
 

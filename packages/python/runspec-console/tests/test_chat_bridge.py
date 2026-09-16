@@ -49,7 +49,7 @@ def test_save_jump_hosts_preserves_unmanaged_keys(tmp_path, monkeypatch):
     s._MANAGED_HOST_KEYS = Bridge._MANAGED_HOST_KEYS
     s._reload_hosts = lambda: None
     s.restart_chat = lambda: None
-    s._refresh_cycle = lambda: None
+    s._kick_refresh = lambda **kw: None  # spawned on a daemon thread by save
     s._dispatch = lambda *a, **k: None
     s.save_jump_hosts = types.MethodType(Bridge.save_jump_hosts, s)
 
@@ -78,7 +78,7 @@ def _save_host_stub(bridge_mod, hosts_file, monkeypatch):
     s._MANAGED_HOST_KEYS = Bridge._MANAGED_HOST_KEYS
     s._reload_hosts = lambda: None
     s.restart_chat = lambda: None
-    s._refresh_cycle = lambda: None
+    s._kick_refresh = lambda **kw: None  # spawned on a daemon thread by save
     s._dispatch = lambda *a, **k: None
     s.save_jump_hosts = types.MethodType(Bridge.save_jump_hosts, s)
     s.get_jump_hosts = types.MethodType(Bridge.get_jump_hosts, s)

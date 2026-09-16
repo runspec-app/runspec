@@ -34,7 +34,7 @@ class _StubBridge:
     def restart_chat(self) -> None:  # save_jump_hosts re-joins rooms
         pass
 
-    def _refresh_cycle(self) -> None:  # spawned on a daemon thread by save
+    def _kick_refresh(self, *, force: bool = False) -> None:  # spawned by save
         pass
 
     def _dispatch(self, event: str, detail: dict) -> None:  # hosts_updated signal

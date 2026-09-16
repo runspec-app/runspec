@@ -10,6 +10,9 @@ import {
   recordCallError,
   recordEvent,
   installDispatchTap,
+  getErrorSnapshot,
+  CAP,
+  ERROR_CAP,
   _resetForTests,
 } from './devbus'
 
@@ -26,16 +29,16 @@ describe('ring buffer', () => {
   })
 
   it('evicts oldest entries past CAP', () => {
-    // CAP is 1000; push more and confirm the buffer caps and drops the front.
-    for (let i = 0; i < 1100; i++) {
+    // Push past CAP and confirm the buffer caps and drops the front.
+    for (let i = 0; i < CAP + 100; i++) {
       recordEvent('runspec:run_end', { id: `r${i}`, exit_code: 0, duration_ms: 1 })
     }
     const snap = getSnapshot()
-    expect(snap).toHaveLength(1000)
+    expect(snap).toHaveLength(CAP)
     // The first survivors should be the later ids — front was dropped.
     expect(snap[snap.length - 1].summary).toContain('exit 0')
     // Lifetime event counter keeps counting past the buffer cap.
-    expect(getStats().events).toBe(1100)
+    expect(getStats().events).toBe(CAP + 100)
   })
 
   it('clear() empties the buffer', () => {
@@ -250,5 +253,53 @@ describe('installDispatchTap', () => {
     fakeWindow.dispatchEvent(new CustomEvent('runspec:hosts_updated', { detail: {} }))
     expect(original).toHaveBeenCalledTimes(1)
     expect(getSnapshot()).toHaveLength(1)
+  })
+})
+
+describe('error retention', () => {
+  it('keeps error rows reachable after they age out of the main ring', () => {
+    // Two early errors (a failed call + an ERROR ssh record) …
+    const id = recordCallStart('get_hosts', [])
+    recordCallError(id, new Error('boom'), 3)
+    recordEvent('runspec:ssh', { level: 'ERROR', message: 'banner timeout' })
+    // … then enough traffic to evict them from the main ring.
+    for (let i = 0; i < CAP + 10; i++) {
+      recordEvent('runspec:run_end', { id: `r${i}`, exit_code: 0, duration_ms: 1 })
+    }
+    expect(getSnapshot().some(e => e.status === 'error')).toBe(false)  // gone from the ring
+    const errs = getErrorSnapshot()
+    expect(errs).toHaveLength(2)
+    expect(errs[0].name).toBe('get_hosts')
+    expect(errs[0].error).toBe('boom')
+    expect(errs[1].name).toBe('runspec:ssh')
+    expect(getStats().errors).toBe(2)
+  })
+
+  it('dedupes by id while an error is still in the ring and caps retention at ERROR_CAP', () => {
+    for (let i = 0; i < ERROR_CAP + 20; i++) {
+      recordEvent('runspec:ssh', { level: 'ERROR', message: `e${i}` })
+    }
+    // All still in the main ring → every one is visible exactly once.
+    let errs = getErrorSnapshot()
+    expect(errs).toHaveLength(ERROR_CAP + 20)
+    expect(new Set(errs.map(e => e.id)).size).toBe(ERROR_CAP + 20)
+    // Evict them from the ring: only the newest ERROR_CAP survive via retention.
+    for (let i = 0; i < CAP + 10; i++) {
+      recordEvent('runspec:run_end', { id: `r${i}`, exit_code: 0, duration_ms: 1 })
+    }
+    errs = getErrorSnapshot()
+    expect(errs).toHaveLength(ERROR_CAP)
+    expect(errs[errs.length - 1].summary).toContain(`e${ERROR_CAP + 19}`)
+    expect(errs[0].summary).toContain('e20')
+  })
+
+  it('is reference-stable between mutations and cleared by clear()', () => {
+    recordEvent('runspec:ssh', { level: 'ERROR', message: 'x' })
+    const a = getErrorSnapshot()
+    expect(getErrorSnapshot()).toBe(a)
+    recordEvent('runspec:hosts_updated', {})
+    expect(getErrorSnapshot()).not.toBe(a)
+    clear()
+    expect(getErrorSnapshot()).toHaveLength(0)
   })
 })

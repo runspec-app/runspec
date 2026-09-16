@@ -12,6 +12,27 @@ logger = logging.getLogger(__name__)
 
 _CANCEL_KEY = "__cancel_event__"  # key in _in_flight dicts, not surfaced to JS
 
+# The built-in base system prompt for every agent turn (chat / trigger /
+# schedule) when ``[llm] system`` is unset. Exposed to the Settings → Model / API
+# tab via ``Bridge.default_system_prompt()`` so the field is pre-filled with what
+# actually runs; a saved value equal to this is dropped from config.toml so the
+# install keeps tracking future changes to the default (see save_config).
+DEFAULT_SYSTEM_PROMPT = (
+    "You are an assistant embedded in runspec-console. You can run "
+    "runspec runnables on local and remote hosts via tools. Use tools "
+    "when they help, and confirm before anything destructive.\n\n"
+    "When a required argument is missing or ambiguous — and getting it "
+    "wrong would matter (scheduling, sending mail, targeting a host, or "
+    "anything destructive) — ask the operator one brief clarifying question "
+    "instead of guessing. Prefer a quick question over a wrong assumption. "
+    "For low-stakes or clearly-implied values, go ahead; don't over-ask.\n\n"
+    "Saved runbooks are the operator's standing procedures. Prefer following "
+    "an existing one over improvising. When a correction you were just given "
+    "would apply again next time, offer to capture it with save_runbook — "
+    "the operator approves every save, so propose rather than ask permission "
+    "first."
+)
+
 # Autonomy escalation order — higher = more restrictive (must check before run).
 _AUTONOMY_RANK = {"autonomous": 0, "confirm": 1, "supervised": 2, "manual": 3}
 

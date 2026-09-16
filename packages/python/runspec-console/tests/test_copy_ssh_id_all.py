@@ -113,6 +113,12 @@ class _StubBridge:
     def _dispatch(self, event: str, detail: dict) -> None:
         self.dispatched.append(event)
 
+    def _kick_refresh(self, *, force: bool = False) -> None:  # no-op in tests
+        pass
+
+    def _invalidate_discovery(self, names=None) -> None:  # no-op in tests
+        pass
+
     def _refresh_cycle(self) -> None:  # background thread no-op in tests
         pass
 

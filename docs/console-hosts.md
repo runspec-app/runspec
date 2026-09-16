@@ -40,6 +40,16 @@ identityFile  = "C:/Users/me/.ssh/app-01_ed25519" # optional per-host key
   own key, or your `~/.ssh/config`). The console honours `ProxyCommand` from
   `~/.ssh/config` when `[ssh] use_ssh_config = true`.
 
+On a large fleet the **Jump Hosts** tab opens on a **group overview** — one
+row per group with its host count, how many are connected right now, and the
+profiles its hosts belong to. Click a group to drill into its hosts (reorder,
+test, copy key, edit, delete); the search box (name / hostname / user / group)
+and the profile filter flatten the list across groups. The sidebar's title
+row has a **collapse / expand all** toggle for the host groups (remembered
+across restarts, and a group that appears later follows your last choice) and
+a **Refresh** button that probes every host and re-discovers its runnables on
+demand.
+
 Once saved, the host shows in the sidebar; the background refresh probes
 connectivity and inventories its runnables. Ask the agent:
 
@@ -201,10 +211,21 @@ banner_timeout  = 30
 auth_timeout    = 30
 
 [refresh]
-interval = 30          # seconds between background refresh cycles
+interval = 30          # seconds between background connectivity probes
 jitter   = 3
-workers  = 16          # bounded worker pool for the refresh fan-out
+workers  = 16          # bounded worker pool for every fleet fan-out
+discovery_interval = 300  # seconds between per-host runnable re-discovery
 ```
+
+`interval` is the **connectivity** cadence: every cycle probes each in-scope
+host over its warm pooled transport (cheap). `discovery_interval` is the
+**runnable re-discovery** cadence: `runspec local --format json` (one SSH exec
+per venv) re-runs on a host only when it first connects, reconnects after a
+drop, its `runspec_paths` / identity change, or this many seconds have passed
+since its last discovery — plus on any explicit trigger (a host save, profile
+switch, host import, copy-key, or the sidebar **Refresh** button). `0` re-runs
+discovery every cycle. `workers` also bounds the other fleet-wide sweeps
+(Settings → Denylist / `runspec deny`).
 
 The connection pool exists to avoid hammering bastions with handshake bursts
 (which trips `sshd MaxStartups` and surfaces as *"Error reading SSH protocol
@@ -235,5 +256,6 @@ invoked. The console drives it fleet-wide two ways:
 > Disable reboot-host on all production hosts. …later… What's currently denylisted across the fleet?
 
 Listing is autonomous; changes are confirm-gated. The mechanism runs the core
-`runspec deny` command over SSH, and the control path is exempt from its own
-denylist — the console can always re-enable.
+`runspec deny` command over SSH — across hosts in parallel, bounded by
+`[refresh] workers` — and the control path is exempt from its own denylist —
+the console can always re-enable.

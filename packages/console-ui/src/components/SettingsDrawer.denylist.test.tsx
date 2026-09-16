@@ -38,7 +38,36 @@ describe('DenylistTab', () => {
     manageDenylist.mockReset().mockResolvedValue('runspec deny all — 1/1 venv(s) ok across 1 host(s):\n✓ prod-1/app: ok')
     denylistStatus.mockReset().mockResolvedValue([
       { host: 'prod-1', venv: 'app', ok: true, present: true, mode: 'enforce', disabled: false, reason: '', rules: [{ runnables: ['deploy'], users: ['*'], hosts: ['*'], reason: 'freeze' }] },
+      { host: 'prod-2', venv: 'app', ok: true, present: true, mode: 'enforce', disabled: true, reason: 'freeze', rules: [] },
     ])
+  })
+
+  it('queries the whole fleet once on mount and filters client-side when hosts are picked', async () => {
+    render(<DenylistTab />)
+    await screen.findByText('1 rule')
+    await screen.findByText('ALL')
+    expect(denylistStatus).toHaveBeenCalledTimes(1)
+    expect(denylistStatus.mock.calls[0][0]).toEqual([])
+
+    // Pick prod-1 in the target picker → the table narrows, no new query.
+    const user = userEvent.setup()
+    const picker = screen.getAllByRole('combobox')[0]  // Target hosts (the mode select comes later)
+    await act(async () => {
+      await user.click(picker)
+      await user.click(await screen.findByTitle('prod-1 (Production)'))
+    })
+    await waitFor(() => expect(screen.queryByText('ALL')).toBeNull())
+    expect(screen.getByText('1 rule')).toBeTruthy()
+    expect(denylistStatus).toHaveBeenCalledTimes(1)
+
+    // A mutation still sends the picked targets and re-reads the fleet after.
+    await act(async () => {
+      await user.click(screen.getByRole('button', { name: 'Apply mode' }))
+    })
+    await waitFor(() => expect(manageDenylist).toHaveBeenCalledTimes(1))
+    expect(manageDenylist.mock.calls[0][0]).toEqual({ action: 'mode', setting: 'enforce', targets: ['prod-1'] })
+    await waitFor(() => expect(denylistStatus).toHaveBeenCalledTimes(2))
+    expect(denylistStatus.mock.calls[1][0]).toEqual([])
   })
 
   it('loads the status table on mount and refresh re-reads it', async () => {

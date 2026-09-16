@@ -105,6 +105,41 @@ per venv path under `lock2`, appends to `discovered`). The dedup, cache write,
 `runspec:runnables_updated`, `_publish_catalogs`, and `pool.reap()` tail is
 unchanged.
 
+### Phase 3 — discovery cadence (0.265.0)
+
+Phase 2 used to re-run `runspec local --format json` on **every** venv of
+**every** connected host **every cycle**, read `config.toml` per venv, and
+dispatch two UI events per host (each `runspec:runnables_updated` makes the
+frontend refetch the whole catalogue). On a 70-host fleet that was ~70 SSH
+execs and ~140 synchronous `evaluate_js` calls every 30 s — the "whole app
+slows down" symptom, which more `workers` only made worse.
+
+Now discovery is decoupled from the probe:
+
+- **Stamp** — `Bridge._discovery_stamp[host] = (monotonic ts, transport
+  generation, discovery key)` after each successful discovery. The *discovery
+  key* is `(runspec_paths, ssh, identityFile, jump)`; the *transport
+  generation* is `SSHConnectionPool.generation(...)`, a per-connection-key
+  counter bumped whenever a new transport is opened.
+- **`_should_discover(h)`** — re-run when: forced; no stamp (first sight);
+  disconnected→connected (a disconnected host's stamp is dropped); the key
+  changed; the generation moved (reconnect); or `[refresh] discovery_interval`
+  (default 300 s, `0` = every cycle) elapsed. Otherwise the host keeps its
+  cached runnables.
+- **Force** — host save / profile switch / import / `refresh_hosts()` (the
+  sidebar Refresh button) run `_refresh_cycle(force=True)`; copy-key
+  invalidates just the touched hosts' stamps. Cycles are serialised by
+  `_refresh_cycle_lock`.
+- **Probe as a use** — `pool.connectable()` now touches `last_used`, so a host
+  that is only probed isn't idle-reaped at `idle_ttl` (which would re-handshake
+  and, via the generation bump, re-discover every `idle_ttl`).
+- **Coalesced events** — mid-cycle `runnables_updated`/`discovery_state` fire
+  at most every 0.5 s; the final `discovery_state` is unconditional, and
+  `runnables_updated` (+ catalogue republish) fires at the end only when
+  something was re-discovered or a host left. A steady-state cycle is silent.
+- **One config read per cycle** — `[ssh]` is read once and threaded into
+  `_probe_one` / `_check_connected` / `_discover_one` as `ssh_cfg`.
+
 ### Hung-host containment (important)
 
 Thread-per-host has one property the bounded pool loses: a hung host occupies

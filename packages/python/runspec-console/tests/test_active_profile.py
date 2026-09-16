@@ -50,8 +50,9 @@ class _StubBridge:
     def _dispatch(self, event: str, detail: dict) -> None:
         self.dispatched.append(event)
 
-    def _refresh_cycle(self) -> None:
+    def _kick_refresh(self, *, force: bool = False) -> None:
         self.refreshed += 1
+        self.refresh_forced = force
 
     _reload_hosts = Bridge._reload_hosts
     _local_host_entry = Bridge._local_host_entry
@@ -138,6 +139,7 @@ def test_switch_evicts_leaving_hosts_and_kicks_refresh(app):
     assert b._connected_cache.get("h1") is True  # still in scope, untouched
     assert "runspec:hosts_updated" in b.dispatched
     assert b.refreshed == 1
+    assert b.refresh_forced is True  # a switch re-discovers the new scope
 
 
 def test_save_profiles_delete_strips_tag_and_resets_active(app):

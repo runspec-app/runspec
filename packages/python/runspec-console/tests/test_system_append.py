@@ -11,6 +11,7 @@ from __future__ import annotations
 import types
 
 from runspec_console.bridge import Bridge
+from runspec_console.bridge_const import DEFAULT_SYSTEM_PROMPT
 
 
 def _stub(llm: dict) -> object:
@@ -58,3 +59,16 @@ def test_default_points_the_agent_at_runbooks():
     text = _stub({})._base_system()
     assert "runbook" in text.lower()
     assert "save_runbook" in text
+
+
+def test_default_system_prompt_is_the_base_default():
+    """The Settings pre-fill reads exactly what an unset [llm] system runs."""
+    assert Bridge.default_system_prompt(object()) == DEFAULT_SYSTEM_PROMPT
+    assert _stub({})._base_system() == DEFAULT_SYSTEM_PROMPT
+
+
+def test_configured_system_equal_to_default_is_byte_identical():
+    assert (
+        _stub({"system": DEFAULT_SYSTEM_PROMPT})._base_system()
+        == _stub({})._base_system()
+    )

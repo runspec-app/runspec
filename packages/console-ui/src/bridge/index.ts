@@ -1218,6 +1218,15 @@ export interface BridgeApi {
   open_docs: () => Promise<void>
   list_providers: () => Promise<{ value: string; label: string }[]>
   save_config: (data: Record<string, unknown>) => Promise<void>
+  // The built-in base system prompt (what runs when `[llm] system` is unset).
+  // Settings → Model / API pre-fills the field with it; a saved value equal to
+  // it is dropped from config.toml so the install keeps tracking the default.
+  default_system_prompt: () => Promise<string>
+  // Probe every in-scope host and re-discover its runnables now (a forced
+  // refresh cycle — discovery otherwise only re-runs on reconnect / every
+  // `[refresh] discovery_interval`). Returns immediately; progress arrives via
+  // `runspec:discovery_state` and the result via `runspec:runnables_updated`.
+  refresh_hosts: () => Promise<void>
   // Emit one representative agent-turn trace (turn → LLM call → tool call) to the
   // configured OTLP backend and flush it immediately, so the operator can verify
   // the [telemetry] pipeline without running a real turn. Reconfigures the tracer

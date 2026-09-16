@@ -4784,40 +4784,68 @@ class AgentToolsMixin:
         if not hosts:
             return "Error: no matching fleet host has a runspec path to act on."
 
-        lines: list[str] = []
-        ok_count = 0
+        from concurrent.futures import Future, ThreadPoolExecutor
+
         total = len(hosts)
-        for i, h in enumerate(hosts, 1):
+        # One task per (host, venv), fanned out in parallel (bounded by [refresh]
+        # workers, handshakes by the pool's max_concurrent) — the serial loop this
+        # replaces took minutes on a large fleet. Results are collected in
+        # submission order so the summary reads host-by-host as before.
+        tasks: list[tuple[int, dict[str, Any], str]] = [
+            (i, h, rp) for i, h in enumerate(hosts, 1) for rp in utils_mod._paths(h)
+        ]
+
+        def _one(task: tuple[int, dict[str, Any], str]) -> tuple[bool, str] | None:
+            _i, h, rp = task
             if cancel_event is not None and cancel_event.is_set():
-                raise ToolCancelled()
+                return None  # cancelled before this venv's command was issued
             host_name = str(h.get("name"))
-            if on_progress is not None:
-                on_progress(f"host {i} of {total}: {host_name}")
             ssh = h.get("ssh")
             idf = h.get("identityFile")
-            for rp in utils_mod._paths(h):
-                argv = [rp, "deny", action, *tail]
-                venv = hosts_mod.venv_name(rp)
-                try:
-                    if ssh:
-                        cmd = " ".join(shlex.quote(p) for p in argv)
-                        code, out, err = self._ssh_run(
-                            ssh, cmd, identity_file=idf, timeout=20
-                        )
-                    else:
-                        proc = subprocess.run(
-                            argv, capture_output=True, text=True, timeout=20
-                        )
-                        code, out, err = proc.returncode, proc.stdout, proc.stderr
-                except Exception as exc:  # noqa: BLE001 — report any failure per venv
-                    lines.append(f"✗ {host_name}/{venv}: {exc}")
-                    continue
-                body = (out or "").strip() or (err or "").strip() or f"exit {code}"
-                if code == 0:
-                    ok_count += 1
-                    lines.append(f"✓ {host_name}/{venv}: {body}")
+            argv = [rp, "deny", action, *tail]
+            venv = hosts_mod.venv_name(rp)
+            try:
+                if ssh:
+                    cmd = " ".join(shlex.quote(p) for p in argv)
+                    code, out, err = self._ssh_run(
+                        ssh, cmd, identity_file=idf, timeout=20
+                    )
                 else:
-                    lines.append(f"✗ {host_name}/{venv}: {body}")
+                    proc = subprocess.run(
+                        argv, capture_output=True, text=True, timeout=20
+                    )
+                    code, out, err = proc.returncode, proc.stdout, proc.stderr
+            except Exception as exc:  # noqa: BLE001 — report any failure per venv
+                return False, f"✗ {host_name}/{venv}: {exc}"
+            body = (out or "").strip() or (err or "").strip() or f"exit {code}"
+            if code == 0:
+                return True, f"✓ {host_name}/{venv}: {body}"
+            return False, f"✗ {host_name}/{venv}: {body}"
+
+        lines: list[str] = []
+        ok_count = 0
+        with ThreadPoolExecutor(
+            max_workers=min(self._fanout_workers(), max(1, len(tasks))),
+            thread_name_prefix="denylist",
+        ) as ex:
+            futures: list[tuple[int, Future[tuple[bool, str] | None]]] = [
+                (t[0], ex.submit(_one, t)) for t in tasks
+            ]
+            for idx, (i, fut) in enumerate(futures):
+                first_of_host = idx == 0 or futures[idx - 1][0] != i
+                if first_of_host:
+                    if cancel_event is not None and cancel_event.is_set():
+                        ex.shutdown(wait=False, cancel_futures=True)
+                        raise ToolCancelled()
+                    if on_progress is not None:
+                        on_progress(f"host {i} of {total}: {hosts[i - 1].get('name')}")
+                res = fut.result()
+                if res is None:
+                    ex.shutdown(wait=False, cancel_futures=True)
+                    raise ToolCancelled()
+                ok, line = res
+                ok_count += 1 if ok else 0
+                lines.append(line)
 
         header = f"runspec deny {action} — {ok_count}/{len(lines)} venv(s) ok across {len(hosts)} host(s):"
         return header + "\n" + "\n".join(lines)

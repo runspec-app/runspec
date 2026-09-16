@@ -119,6 +119,14 @@ def _app_slug() -> str:
     return _APP_SLUG
 
 
+def app_slug() -> str:
+    """Public accessor for the install's branded slug (see :func:`_app_slug`) —
+    the config folder name **and** the SSH key marker (``bridge_utils.key_marker``)
+    derive from it, so the two always agree. Delegates at call time (tests
+    monkeypatch ``_app_slug``)."""
+    return _app_slug()
+
+
 def app_dir() -> Path:
     if _APP_DIR_OVERRIDE is not None:
         d = _APP_DIR_OVERRIDE

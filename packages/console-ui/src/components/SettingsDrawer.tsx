@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { Drawer, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Empty, Table, Slider, Progress } from 'antd'
-import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined, SearchOutlined, SoundOutlined } from '@ant-design/icons'
+import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, RightOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined, SearchOutlined, SoundOutlined } from '@ant-design/icons'
 import { bridge, type JumpHost, type LocalVenvConfig, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SeedStatus, type SeedOverride, type SeedApplyResult, type Runbook, type RunbookStep, type SavedRun, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost, type McpServer, type McpHeaderCredential, type McpStatus, type McpServerStatus, type McpCredentialOption, type ToolVisibility, type NamedSound } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
 import { CopyKeyAllModal } from '../views/CopyKeyAllModal'
@@ -357,6 +357,10 @@ export function LlmTab() {
   // The operator-defined list of selectable models — the source for the strict
   // Model dropdown, edited via the "Available models" tag field.
   const [models, setModels] = useState<string[]>([])
+  // The built-in system prompt: pre-fills the field when `[llm] system` is
+  // unset, so the operator edits what actually runs rather than a blank box.
+  // Saving it unchanged writes nothing (the install keeps tracking the default).
+  const [defaultSystem, setDefaultSystem] = useState('')
 
   useEffect(() => { bridge.config_dir().then(setConfigDir) }, [])
   // Built-ins plus any discovered plugins (entry points / [plugins] modules).
@@ -367,7 +371,13 @@ export function LlmTab() {
   }, [])
 
   useEffect(() => {
-    bridge.get_config().then(cfg => {
+    // Load the default prompt first so the field can fall back to it; an older
+    // backend without the method just leaves the field blank as before.
+    const defaultPrompt = (bridge.default_system_prompt?.() ?? Promise.resolve(''))
+      .then(t => (typeof t === 'string' ? t : ''))
+      .catch(() => '')
+    Promise.all([bridge.get_config(), defaultPrompt]).then(([cfg, dflt]) => {
+      setDefaultSystem(dflt)
       const llm = (cfg.llm ?? {}) as Record<string, unknown>
       const p = (llm.provider as string) ?? ''
       setProvider(p)
@@ -386,7 +396,7 @@ export function LlmTab() {
         model: modelVal,
         base_url: (llm.base_url as string) ?? '',
         aws_region: (llm.aws_region as string) ?? '',
-        system: (llm.system as string) ?? '',
+        system: ((llm.system as string) ?? '').trim() || dflt,
         tool_mode: (llm.tool_mode as string) ?? '',
         api_key_command: (llm.api_key_command as string) ?? '',
         api_key_ttl_ms: llm.api_key_ttl_ms ?? undefined,
@@ -426,7 +436,10 @@ export function LlmTab() {
         model: v.model ?? '',
         base_url: v.base_url ?? '',
         aws_region: v.aws_region ?? '',
-        system: v.system?.trim() ?? '',
+        // Equal to the built-in default ⇒ not a customisation: drop the key so
+        // future default improvements still apply (the backend enforces the
+        // same rule in save_config).
+        system: (v.system?.trim() ?? '') === defaultSystem.trim() ? '' : (v.system?.trim() ?? ''),
         tool_mode: v.tool_mode ?? '',
         api_key_command: v.api_key_command?.trim() ?? '',
         auth_header: v.auth_header?.trim() ?? '',
@@ -516,14 +529,26 @@ export function LlmTab() {
             </>
           )}
           <Form.Item
-            name="system"
-            label="System prompt"
-            help="Optional standing instructions applied to every chat turn — site policy, host context, tone. For rules you must enforce, use a runnable's autonomy level; this is guidance, not a guard."
+            label={
+              <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                System prompt
+                {!!defaultSystem && (
+                  <Form.Item noStyle shouldUpdate={(a, b) => a.system !== b.system}>
+                    {() => (form.getFieldValue('system') ?? '').trim() !== defaultSystem.trim() && (
+                      <Button type="link" size="small" style={{ padding: 0, height: 'auto', fontSize: 12 }}
+                        onClick={() => form.setFieldValue('system', defaultSystem)}>
+                        Reset to default
+                      </Button>
+                    )}
+                  </Form.Item>
+                )}
+              </span>
+            }
+            help="Pre-filled with the built-in default that runs when nothing is configured. Editing it replaces the default wholesale (including its clarify-don't-guess guidance) — to add site policy on top instead, set `system_append` in config.toml. Guidance, not a guard: for rules you must enforce, use a runnable's autonomy level."
           >
-            <Input.TextArea
-              autoSize={{ minRows: 3, maxRows: 10 }}
-              placeholder={'You are a helpful assistant with access to runspec tools on local and remote hosts.\nUse tools when they help; briefly explain each call before running it.'}
-            />
+            <Form.Item name="system" noStyle>
+              <Input.TextArea autoSize={{ minRows: 3, maxRows: 14 }} />
+            </Form.Item>
           </Form.Item>
           <Form.Item
             name="tool_mode"
@@ -1276,6 +1301,49 @@ export function normalizeHostForm(values: HostFormValues): HostFormValues {
   return v
 }
 
+// Group hosts by their `group` label, preserving file order (the order the
+// sidebar and the reorder buttons use). Pure + exported for the tab's tests.
+export function buildHostGroups(hostList: JumpHost[]): { name: string; hosts: JumpHost[] }[] {
+  const map = new Map<string, JumpHost[]>()
+  const order: string[] = []
+  for (const h of hostList) {
+    const g = h.group ?? ''
+    if (!map.has(g)) { map.set(g, []); order.push(g) }
+    map.get(g)!.push(h)
+  }
+  return order.map(g => ({ name: g, hosts: map.get(g)! }))
+}
+
+// The Jump Hosts search: case-insensitive substring over name / hostname / user /
+// group / jump; `profile` narrows to hosts tagged with that profile ('' = any).
+export function filterHosts(hosts: JumpHost[], query: string, profile: string): JumpHost[] {
+  const q = query.trim().toLowerCase()
+  return hosts.filter(h => {
+    if (profile && !(h.profiles ?? []).includes(profile)) return false
+    if (!q) return true
+    const hay = [h.name, h.hostname, h.user ?? '', h.group ?? '', h.jump ?? '']
+    return hay.some(v => v.toLowerCase().includes(q))
+  })
+}
+
+export interface HostGroupSummary {
+  name: string
+  hosts: JumpHost[]
+  up: number          // members currently connected (from the live host list)
+  profiles: string[]  // every profile tag carried by a member, sorted
+}
+
+// One row per group for the Jump Hosts overview: member count, how many are
+// connected right now, and the profiles the group's hosts belong to.
+export function groupSummary(hosts: JumpHost[], connected: Record<string, boolean>): HostGroupSummary[] {
+  return buildHostGroups(hosts).map(g => ({
+    name: g.name,
+    hosts: g.hosts,
+    up: g.hosts.filter(h => connected[h.name]).length,
+    profiles: [...new Set(g.hosts.flatMap(h => h.profiles ?? []))].sort((a, b) => a.localeCompare(b)),
+  }))
+}
+
 function toToml(hosts: JumpHost[]): string {
   return hosts.map(h => {
     const lines = [`[${h.name}]`, `hostname = "${h.hostname}"`]
@@ -1804,6 +1872,7 @@ function AgentToolsTab() {
 }
 
 function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
+  const accent = useAccent()
   const [hosts, setHosts] = useState<JumpHost[]>([])
   const [editingKey, setEditingKey] = useState<string | null>(null)
   const [form] = Form.useForm<HostFormValues>()
@@ -1815,6 +1884,14 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
   const [groupsOpen, setGroupsOpen] = useState(false)
   const [profiles, setProfiles] = useState<HostProfile[]>([])
   const [profilesOpen, setProfilesOpen] = useState(false)
+  // Drill-in navigation for large fleets: `null` = the group overview (one row
+  // per group), a string = that group's hosts ('' = ungrouped). A search query
+  // or profile filter flattens the list across groups instead.
+  const [view, setView] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
+  const [profileFilter, setProfileFilter] = useState('')
+  // Live connection flags for the overview's connected counts (sidebar source).
+  const [connected, setConnected] = useState<Record<string, boolean>>({})
 
   const loadGroups = useCallback(() => { bridge.get_groups().then(setGroups) }, [])
   const loadProfiles = useCallback(() => { bridge.get_profiles().then(setProfiles) }, [])
@@ -1845,6 +1922,19 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
     loadGroups()
     loadProfiles()
   }, [loadGroups, loadProfiles])
+
+  useEffect(() => {
+    const loadConnected = () => {
+      bridge.get_hosts().then(list => {
+        const next: Record<string, boolean> = {}
+        for (const h of list) next[h.name] = !!h.connected
+        setConnected(next)
+      }).catch(() => {})
+    }
+    loadConnected()
+    window.addEventListener('runspec:hosts_updated', loadConnected)
+    return () => window.removeEventListener('runspec:hosts_updated', loadConnected)
+  }, [])
 
   // Tear down any browse connection opened from the add/edit form on unmount.
   useEffect(() => () => { bridge.close_adhoc().catch(() => {}) }, [])
@@ -1899,16 +1989,7 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
     if (editingKey === name) setEditingKey(null)
   }
 
-  const buildGroups = (hostList: JumpHost[]) => {
-    const map = new Map<string, JumpHost[]>()
-    const order: string[] = []
-    for (const h of hostList) {
-      const g = h.group ?? ''
-      if (!map.has(g)) { map.set(g, []); order.push(g) }
-      map.get(g)!.push(h)
-    }
-    return order.map(g => ({ name: g, hosts: map.get(g)! }))
-  }
+  const buildGroups = buildHostGroups
 
   const moveGroupUp = async (groupIdx: number) => {
     const groups = buildGroups(hosts)
@@ -1984,6 +2065,34 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
           <Button size="small" icon={<PlusOutlined />} onClick={startAdd} disabled={isEditing}>Add host</Button>
         </Space>
       </div>
+      {hosts.length > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+          <Input
+            allowClear
+            size="small"
+            prefix={<SearchOutlined />}
+            placeholder="Search hosts (name, hostname, user, group)…"
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            style={{ maxWidth: 320 }}
+            aria-label="Search hosts"
+          />
+          {profiles.length > 0 && (
+            <Select
+              size="small"
+              value={profileFilter}
+              onChange={setProfileFilter}
+              style={{ minWidth: 160 }}
+              popupMatchSelectWidth={false}
+              options={[{ value: '', label: 'Any profile' }, ...profiles.map(p => ({ value: p.name, label: p.name }))]}
+              title="Filter by host profile"
+            />
+          )}
+          <Text type="secondary" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
+            {hosts.length} host{hosts.length === 1 ? '' : 's'} · {buildGroups(hosts).length} group{buildGroups(hosts).length === 1 ? '' : 's'}
+          </Text>
+        </div>
+      )}
 
       {/* The add/edit form lives in a modal so editing a host deep in a long list
           never requires scrolling back to the top — it opens centred in view. */}
@@ -2168,56 +2277,131 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
       )}
 
       {(() => {
-        const groups = buildGroups(hosts)
-        return groups.map(({ name: groupName, hosts: groupHosts }, groupIdx) => (
-          <div key={groupName || '__ungrouped__'} style={{ marginBottom: 12 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 6 }}>
-              <Text type="secondary" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', flex: 1 }}>
-                {groupName || 'Hosts'}
-              </Text>
-              <Button type="text" size="small" icon={<UpOutlined style={{ fontSize: 9 }} />} onClick={() => moveGroupUp(groupIdx)} disabled={isEditing || groupIdx === 0} style={{ padding: '0 4px', color: 'var(--rs-text-faint)', height: 18 }} />
-              <Button type="text" size="small" icon={<DownOutlined style={{ fontSize: 9 }} />} onClick={() => moveGroupDown(groupIdx)} disabled={isEditing || groupIdx === groups.length - 1} style={{ padding: '0 4px', color: 'var(--rs-text-faint)', height: 18 }} />
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-              {groupHosts.map((h, hostIdx) => (
-                <div key={h.name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: RADIUS.sm, border: '1px solid #2a2a2a', background: editingKey === h.name ? 'rgba(255,255,255,0.03)' : 'transparent' }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
-                    <Button type="text" size="small" icon={<UpOutlined style={{ fontSize: 9 }} />} onClick={() => moveHostUp(h)} disabled={isEditing || hostIdx === 0} style={{ padding: '0 3px', color: 'var(--rs-text-faint)', height: 14, lineHeight: 1 }} />
-                    <Button type="text" size="small" icon={<DownOutlined style={{ fontSize: 9 }} />} onClick={() => moveHostDown(h)} disabled={isEditing || hostIdx === groupHosts.length - 1} style={{ padding: '0 3px', color: 'var(--rs-text-faint)', height: 14, lineHeight: 1 }} />
-                  </div>
-                  <Text style={{ fontFamily: MONO_FONT, fontSize: 13, minWidth: 110, flexShrink: 0 }}>{h.name}</Text>
-                  <Text type="secondary" title={`${h.user ? h.user + '@' : ''}${h.hostname}${h.port ? ':' + h.port : ''}`} style={{ fontFamily: MONO_FONT, fontSize: 12, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {h.user ? `${h.user}@` : ''}{h.hostname}{h.port ? `:${h.port}` : ''}
-                  </Text>
-                  {(() => {
-                    const r = testResults[h.name]
-                    if (!r) return null
-                    const ok = r.runspec_ok
-                    const sshOnly = r.connected && !r.runspec_ok
-                    const color = ok ? 'success' : sshOnly ? 'warning' : 'error'
-                    const label = ok ? `✓ ${r.runnable_count} runnable${r.runnable_count !== 1 ? 's' : ''}` : sshOnly ? '✓ SSH · runspec failed' : '✗ failed'
-                    const detail = r.stderr || r.stdout || `exit ${r.exit_code}`
-                    return (
-                      <Tooltip title={<pre style={{ margin: 0, fontSize: 12, whiteSpace: 'pre-wrap', maxWidth: 340 }}>{detail}</pre>} placement="left">
-                        <Tag color={color} style={{ margin: 0, cursor: 'default', fontSize: 12 }}>{label}</Tag>
-                      </Tooltip>
-                    )
-                  })()}
-                  <Tooltip title="Test connection">
-                    <Button type="text" size="small" icon={testingHost === h.name ? <LoadingOutlined /> : <ApiOutlined />} onClick={() => handleTest(h.name)} disabled={isEditing || testingHost !== null} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
-                  </Tooltip>
-                  <Tooltip title="Copy SSH public key (authorize this machine)">
-                    <Button type="text" size="small" icon={<KeyOutlined />} onClick={() => setCopyKeyHost(h.name)} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
-                  </Tooltip>
-                  <Button type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(h)} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
-                  <Popconfirm title={`Remove ${h.name}?`} onConfirm={() => remove(h.name)} okText="Remove" cancelText="Cancel" placement="left">
-                    <Button type="text" size="small" icon={<DeleteOutlined />} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} danger />
-                  </Popconfirm>
-                </div>
-              ))}
-            </div>
+        const filtering = !!query.trim() || !!profileFilter
+        const accentRow = (h: JumpHost) => editingKey === h.name ? withAlpha(accent, 0.06) : 'transparent'
+
+        // One host row — the same markup in every view. Reordering is only
+        // meaningful inside an unfiltered group, so it's hidden when filtering.
+        const hostRow = (h: JumpHost, opts: { idx: number; count: number; showGroup?: boolean; reorder: boolean }) => (
+          <div key={h.name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: RADIUS.sm, border: '1px solid var(--rs-border)', background: accentRow(h) }}>
+            {opts.reorder && (
+              <div style={{ display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+                <Button type="text" size="small" icon={<UpOutlined style={{ fontSize: 9 }} />} onClick={() => moveHostUp(h)} disabled={isEditing || opts.idx === 0} style={{ padding: '0 3px', color: 'var(--rs-text-faint)', height: 14, lineHeight: 1 }} />
+                <Button type="text" size="small" icon={<DownOutlined style={{ fontSize: 9 }} />} onClick={() => moveHostDown(h)} disabled={isEditing || opts.idx === opts.count - 1} style={{ padding: '0 3px', color: 'var(--rs-text-faint)', height: 14, lineHeight: 1 }} />
+              </div>
+            )}
+            <span title={connected[h.name] ? 'connected' : 'disconnected'} style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: connected[h.name] ? '#52c41a' : 'var(--rs-text-faint)' }} />
+            <Text style={{ fontFamily: MONO_FONT, fontSize: 13, minWidth: 110, flexShrink: 0 }}>{h.name}</Text>
+            <Text type="secondary" title={`${h.user ? h.user + '@' : ''}${h.hostname}${h.port ? ':' + h.port : ''}`} style={{ fontFamily: MONO_FONT, fontSize: 12, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {h.user ? `${h.user}@` : ''}{h.hostname}{h.port ? `:${h.port}` : ''}
+            </Text>
+            {opts.showGroup && (
+              <Tag style={{ margin: 0, fontSize: 11 }}>{h.group || 'Ungrouped'}</Tag>
+            )}
+            {(() => {
+              const r = testResults[h.name]
+              if (!r) return null
+              const ok = r.runspec_ok
+              const sshOnly = r.connected && !r.runspec_ok
+              const color = ok ? 'success' : sshOnly ? 'warning' : 'error'
+              const label = ok ? `✓ ${r.runnable_count} runnable${r.runnable_count !== 1 ? 's' : ''}` : sshOnly ? '✓ SSH · runspec failed' : '✗ failed'
+              const detail = r.stderr || r.stdout || `exit ${r.exit_code}`
+              return (
+                <Tooltip title={<pre style={{ margin: 0, fontSize: 12, whiteSpace: 'pre-wrap', maxWidth: 340 }}>{detail}</pre>} placement="left">
+                  <Tag color={color} style={{ margin: 0, cursor: 'default', fontSize: 12 }}>{label}</Tag>
+                </Tooltip>
+              )
+            })()}
+            <Tooltip title="Test connection">
+              <Button type="text" size="small" icon={testingHost === h.name ? <LoadingOutlined /> : <ApiOutlined />} onClick={() => handleTest(h.name)} disabled={isEditing || testingHost !== null} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
+            </Tooltip>
+            <Tooltip title="Copy SSH public key (authorize this machine)">
+              <Button type="text" size="small" icon={<KeyOutlined />} onClick={() => setCopyKeyHost(h.name)} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
+            </Tooltip>
+            <Button type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(h)} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} aria-label={`Edit ${h.name}`} />
+            <Popconfirm title={`Remove ${h.name}?`} onConfirm={() => remove(h.name)} okText="Remove" cancelText="Cancel" placement="left">
+              <Button type="text" size="small" icon={<DeleteOutlined />} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} danger aria-label={`Remove ${h.name}`} />
+            </Popconfirm>
           </div>
-        ))
+        )
+
+        // Search / profile filter: a flat list across every group.
+        if (filtering) {
+          const shown = filterHosts(hosts, query, profileFilter)
+          return (
+            <div>
+              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>
+                {shown.length} of {hosts.length} host{hosts.length === 1 ? '' : 's'} match
+              </Text>
+              {shown.length === 0 ? (
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No hosts match" />
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                  {shown.map(h => hostRow(h, { idx: 0, count: 1, showGroup: true, reorder: false }))}
+                </div>
+              )}
+            </div>
+          )
+        }
+
+        const groupsSummary = groupSummary(hosts, connected)
+
+        // Drilled into one group: its hosts with the reorder controls.
+        if (view !== null) {
+          const g = groupsSummary.find(x => x.name === view)
+          if (!g) { setView(null); return null }
+          const desc = groups.find(x => x.name === g.name)?.description
+          return (
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                <Button type="link" size="small" style={{ padding: 0 }} onClick={() => setView(null)}>← All groups</Button>
+                <Text type="secondary" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em' }}>{g.name || 'Ungrouped'}</Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>· {g.hosts.length} host{g.hosts.length === 1 ? '' : 's'} · <span style={{ color: '#52c41a' }}>● {g.up}</span></Text>
+                {desc && <Text type="secondary" style={{ fontSize: 12 }}>— {desc}</Text>}
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                {g.hosts.map((h, hostIdx) => hostRow(h, { idx: hostIdx, count: g.hosts.length, reorder: true }))}
+              </div>
+            </div>
+          )
+        }
+
+        // Group overview: one row per group, click to drill in.
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            {groupsSummary.map((g, groupIdx) => {
+              const desc = groups.find(x => x.name === g.name)?.description
+              return (
+                <div
+                  key={g.name || '__ungrouped__'}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Open group ${g.name || 'Ungrouped'}`}
+                  onClick={() => setView(g.name)}
+                  onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setView(g.name) } }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', borderRadius: RADIUS.sm, border: '1px solid var(--rs-border)', cursor: 'pointer' }}
+                >
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                      <Text strong style={{ fontSize: 13 }}>{g.name || 'Ungrouped'}</Text>
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        {g.hosts.length} host{g.hosts.length === 1 ? '' : 's'} · <span style={{ color: '#52c41a' }}>● {g.up}</span>
+                        {g.hosts.length - g.up > 0 && <span style={{ color: 'var(--rs-text-faint)' }}> ● {g.hosts.length - g.up}</span>}
+                      </Text>
+                    </div>
+                    {desc && <div style={{ fontSize: 12, color: 'var(--rs-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{desc}</div>}
+                  </div>
+                  {g.profiles.map(pn => <Tag key={pn} style={{ margin: 0, fontSize: 11 }}>{pn}</Tag>)}
+                  <span onClick={e => e.stopPropagation()} style={{ display: 'flex' }}>
+                    <Button type="text" size="small" icon={<UpOutlined style={{ fontSize: 9 }} />} onClick={() => moveGroupUp(groupIdx)} disabled={isEditing || groupIdx === 0} style={{ padding: '0 4px', color: 'var(--rs-text-faint)', height: 18 }} aria-label={`Move group ${g.name || 'Ungrouped'} up`} />
+                    <Button type="text" size="small" icon={<DownOutlined style={{ fontSize: 9 }} />} onClick={() => moveGroupDown(groupIdx)} disabled={isEditing || groupIdx === groupsSummary.length - 1} style={{ padding: '0 4px', color: 'var(--rs-text-faint)', height: 18 }} aria-label={`Move group ${g.name || 'Ungrouped'} down`} />
+                  </span>
+                  <RightOutlined style={{ fontSize: 10, color: 'var(--rs-text-muted)' }} />
+                </div>
+              )
+            })}
+          </div>
+        )
       })()}
 
       <CopyKeyModal
@@ -2557,6 +2741,12 @@ function SelfServiceTab() {
           </Text>
         </div>
       )}
+      <div style={{ marginBottom: 16 }}>
+        <Text strong style={{ fontSize: 14, display: 'block', marginBottom: 4 }}>Teams</Text>
+        <TeamsSection />
+      </div>
+      <Divider style={{ margin: '4px 0 14px' }} />
+      <Text strong style={{ fontSize: 14, display: 'block', marginBottom: 4 }}>Self-service catalogue</Text>
       <Text type="secondary" style={{ fontSize: 13, display: 'block', marginBottom: 12 }}>
         Saved to <code>runspec_self_service.toml</code> (synced). The enabled runnables are offered to visitors in the helpdesk room's self-service catalogue — everything else stays operator-only. A queue's optional <code>room_catalog</code> allowlist narrows this set per queue.
       </Text>
@@ -3160,7 +3350,9 @@ function MailboxesTab() {
 
 // ── Teams tab (customer departments, managed in the helpdesk room) ──────────
 
-function TeamsTab() {
+// Teams live in the helpdesk room (not a local file), so they're managed next to
+// the room selector on the Self-Service tab — formerly a standalone Teams tab.
+function TeamsSection() {
   const [teams, setTeams] = useState<Team[]>([])
   const [name, setName] = useState('')
   const [err, setErr] = useState('')
@@ -3214,7 +3406,7 @@ function TeamsTab() {
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
           {teams.map(t => (
-            <div key={t.slug} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: RADIUS.sm, border: '1px solid #2a2a2a' }}>
+            <div key={t.slug} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: RADIUS.sm, border: '1px solid var(--rs-border)' }}>
               <TeamOutlined style={{ color: 'var(--rs-text-muted)', flexShrink: 0 }} />
               <Text style={{ fontSize: 14, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</Text>
               <Text type="secondary" style={{ fontFamily: MONO_FONT, fontSize: 12, flexShrink: 0 }}>{t.slug}</Text>
@@ -4363,19 +4555,24 @@ export function DenylistTab() {
 
   const scope = targets.length ? `${targets.length} selected host(s)` : 'ALL hosts'
 
+  // One fleet-wide read (every host, in parallel on the backend) on open, on
+  // Refresh, and after a mutation. The host picker filters the loaded rows
+  // client-side — it no longer re-queries the fleet on every selection change.
   const refresh = useCallback(async () => {
     setLoadingStatus(true)
     try {
-      setStatus(await bridge.denylist_status(targets))
+      setStatus(await bridge.denylist_status([]))
     } catch (err) {
       message.error((err as Error)?.message || 'could not read denylist status')
     } finally {
       setLoadingStatus(false)
     }
-  }, [targets])
+  }, [])
 
-  // Show live state on open and whenever the host selection changes.
   useEffect(() => { refresh() }, [refresh])
+
+  const targetSet = new Set(targets)
+  const shownStatus = targets.length ? status.filter(r => targetSet.has(r.host)) : status
 
   const run = async (payload: DenylistPayload, label: string) => {
     setBusy(label)
@@ -4470,11 +4667,11 @@ export function DenylistTab() {
         size="small"
         rowKey={r => `${r.host}/${r.venv}`}
         columns={statusColumns}
-        dataSource={status}
-        loading={loadingStatus}
+        dataSource={shownStatus}
+        loading={loadingStatus ? { tip: `Querying ${hosts.filter(h => h.name !== 'local').length || ''} hosts…`.replace('  ', ' ') } : false}
         pagination={false}
         style={{ marginBottom: 12 }}
-        locale={{ emptyText: 'No hosts with a runspec path.' }}
+        locale={{ emptyText: targets.length && status.length ? 'No rows for the selected hosts.' : 'No hosts with a runspec path.' }}
       />
 
       <Space wrap style={{ marginBottom: 12 }}>
@@ -5356,8 +5553,7 @@ export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, co
           { key: 'mcpServer', label: 'MCP Server', children: <McpServerTab /> },
           { key: 'configSync', label: 'Config Sync', children: <ConfigSyncTab /> },
           { key: 'mailbox',   label: 'Mailbox',    children: <MailboxesTab /> },
-          { key: 'teams',     label: 'Teams',      children: <TeamsTab /> },
-          { key: 'sounds',    label: 'Sounds & Notifications', children: <SoundsTab /> },
+                  { key: 'sounds',    label: 'Sounds & Notifications', children: <SoundsTab /> },
           { key: 'chatHistory', label: 'Chat History', children: <ChatHistoryTab /> },
           { key: 'telemetry', label: 'Telemetry', children: <TelemetryTab /> },
         ], features)}

@@ -8,6 +8,77 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.265.0] — 2026-09-16
+
+### Changed
+- **Runnable discovery no longer runs on every 30 s refresh cycle.** The cycle
+  still probes connectivity every `[refresh] interval`, but re-runs
+  `runspec local --format json` on a host only when it (re)connects (a new
+  pooled transport — `SSHConnectionPool.generation`), its `runspec_paths` /
+  identity change, every `[refresh] discovery_interval` seconds (default 300;
+  `0` = every cycle), or on an explicit trigger (host save, profile switch,
+  local-venv save, host import, copy-key for the touched hosts, and the new
+  sidebar **Refresh** button / `refresh_hosts()` bridge method). On a ~70-host
+  fleet this removes ~70 SSH execs and ~140 synchronous UI events per
+  steady-state cycle — the "raising workers made the whole app slower" symptom:
+  mid-cycle `runspec:runnables_updated` / `discovery_state` dispatches are now
+  coalesced (≤ one per 0.5 s) and a cycle that re-discovered nothing emits no
+  `runnables_updated` at all (so the frontend stops refetching the catalogue
+  every 30 s). `config.toml` is read once per cycle instead of once per venv
+  per host. The pool's `connectable()` probe now counts as a use for
+  `idle_ttl`, so a probed-only transport stays warm between discoveries.
+  Overlapping cycles are serialised (`_refresh_cycle_lock`).
+- **Settings → Denylist loads in parallel and no longer re-queries the fleet
+  on every host-picker change.** `denylist_status` and the `runspec deny`
+  fan-out (`manage_denylist`) run one SSH exec per venv across hosts
+  concurrently, bounded by `[refresh] workers` (row order preserved; the agent
+  tool keeps its cancel / per-host progress semantics). The tab queries the
+  whole fleet once on open, after a mutation, and on **Refresh**; the target
+  picker filters the loaded rows client-side and scopes mutations only.
+- **SSH key marker follows the white-label package name.** Console-generated
+  public keys (Settings → SSH and the `generate-ssh-key` CLI, which now also
+  writes the `.pub`) are tagged with the branded dist name — the same source
+  that names the config folder (`config.app_slug()` → `bridge_utils.key_marker`)
+  — and rotation prunes only keys tagged with *its own* marker, matched as the
+  exact trailing field (so `runspec-console` never matches
+  `runspec-console-corp`). Two white-label installs on one machine therefore
+  each clean up only their own keys. Keys a white-label install pushed before
+  this release (tagged `runspec-console`) are still pruned through the
+  backup-blob match, so nothing is orphaned; a dist name unsafe for the awk
+  program falls back to `runspec-console`, and a default install is unchanged.
+- **Settings → Jump Hosts is a group drill-in for large fleets.** The tab opens
+  on one row per group (host count, connected count, profiles, description,
+  reorder) and drills into a group's host rows; a search box (name / hostname /
+  user / group) and a profile filter flatten the list across groups. Every
+  per-host action (test, copy key, edit, delete, reorder within the group) is
+  unchanged. Pure helpers `buildHostGroups` / `filterHosts` / `groupSummary`.
+- **Teams moved onto the Self-Service tab.** The standalone Settings → Teams
+  tab is gone; the same manager (add / remove, `Default` protected, room-backed)
+  sits under a *Teams* heading next to the Connected-room selector on
+  **Settings → Self-Service**, where the room it lives in is chosen.
+- **Model / API pre-fills the system prompt with the real built-in default**
+  (`default_system_prompt()`), with a *Reset to default* link. Saving it
+  unchanged writes no `[llm] system` key — enforced in `save_config` too — so
+  the install keeps tracking future default improvements; an edit replaces the
+  default wholesale as before (`system_append` for additive site policy).
+- **Sidebar: collapse / expand all host groups, remembered across restarts.**
+  A fold/unfold toggle in the sidebar title row (shown with more than one
+  group) collapses or expands every group; the bulk choice is persisted as the
+  default a group not toggled individually follows, so a group that appears
+  later (e.g. after a Config Sync pull) starts in the state you chose
+  (`sidebarGroups.ts`).
+- **Dev tab keeps errors reachable.** The ring buffer holds 5000 entries (was
+  1000) and error rows (failed bridge calls, ERROR-level SSH records) are
+  retained separately (up to 500) so the *error* filter still shows them after
+  they age out of the buffer — the header's "errors N" no longer promises rows
+  the filter can't find; it shows "· M retained" when the two differ.
+
+### Added
+- `[refresh] discovery_interval` (default 300 s).
+- Bridge methods `default_system_prompt()` and `refresh_hosts()`.
+- `config.app_slug()` public accessor; `bridge_utils.key_marker()` /
+  `valid_key_marker()` / `DEFAULT_KEY_MARKER`.
+
 ## [0.264.5] — 2026-09-16
 
 ### Fixed

@@ -23,13 +23,17 @@ from .config import (
 )
 
 from .bridge_const import (
+    DEFAULT_SYSTEM_PROMPT,
     logger,
     AI_OFF_MESSAGE,
 )
 from .bridge_utils import (
+    DEFAULT_KEY_MARKER,
     _normalize_path,
     _public_key_from_private,
     _write_ppk_v2,
+    key_marker,
+    valid_key_marker,
 )
 
 from typing import TYPE_CHECKING
@@ -38,15 +42,24 @@ if TYPE_CHECKING:
     from .bridge import Bridge  # noqa: F401
 
 
-# Comment appended to every runspec-console-generated public key, so a rotation
-# can identify (and prune) the keys *it* put in a host's authorized_keys without
-# touching the operator's own keys. A key line reads
-# ``ssh-ed25519 <base64-blob> runspec-console``. Matching by this marker is safe;
-# matching by the leading base64 is not — every ed25519 key shares the same
-# ``AAAAC3NzaC1lZDI1NTE5AAAAI`` prefix (the algorithm + length header), so it
-# would also match the operator's own keys. Do not change this string — a host
-# still carrying keys tagged with an older marker would no longer be recognised.
-_KEY_MARKER = "runspec-console"
+# Comment appended to every console-generated public key, so a rotation can
+# identify (and prune) the keys *it* put in a host's authorized_keys without
+# touching the operator's own keys. The live marker is ``key_marker()``
+# (bridge_utils): the white-label package name — the same source that names the
+# config folder — so two branded installs on one machine (each with its own key
+# + config dir) prune only their *own* keys; a default install keeps the
+# historic ``runspec-console``. A key line reads
+# ``ssh-ed25519 <base64-blob> <marker>`` and the marker is matched as the exact
+# trailing field (never a substring, so ``runspec-console`` cannot match
+# ``runspec-console-corp``). Matching by the leading base64 is not safe — every
+# ed25519 key shares the same ``AAAAC3NzaC1lZDI1NTE5AAAAI`` prefix (the
+# algorithm + length header), so it would also match the operator's own keys.
+# Do not change the default string — a host still carrying keys tagged with an
+# older marker would no longer be recognised. Keys a white-label install pushed
+# before the marker followed the package name carry ``runspec-console``; those
+# are still pruned via the backup-blob match (``_stale_key_blobs``), so nothing
+# is orphaned.
+_KEY_MARKER = DEFAULT_KEY_MARKER
 
 # Cap on how many historical (backup-derived) key blobs are threaded into a
 # single push command, so the remote command stays a sane length on a console
@@ -65,7 +78,11 @@ def _key_blob(line: str) -> str:
 
 
 def _build_rotation_push_cmd(
-    new_line: str, old_blob: str, remove_blobs: list[str]
+    new_line: str,
+    old_blob: str,
+    remove_blobs: list[str],
+    *,
+    marker: str | None = None,
 ) -> str:
     """Build the per-host rotation push command: prune the console's *stale* keys
     from ``authorized_keys`` (marker-tagged, or an exact blob-match to a key the
@@ -84,9 +101,16 @@ def _build_rotation_push_cmd(
         the bytes back (``cat >``) so the file's existing perms / owner / SELinux
         context are preserved. A failure at any step leaves the original intact.
 
-    All interpolated values (base64 blobs, the marker) come from a fixed charset
-    with no shell/awk metacharacters, so single-quoting the awk program is safe.
+    ``marker`` is the comment this install tags its keys with (default:
+    ``key_marker()`` — the white-label package name); only lines whose *last
+    field* equals it are treated as ours, so another branded install's keys
+    survive. All interpolated values (base64 blobs, the marker) come from a fixed
+    charset with no shell/awk metacharacters — the marker is re-validated here as
+    defence in depth — so single-quoting the awk program is safe.
     """
+    marker = marker or key_marker()
+    if not valid_key_marker(marker):
+        marker = DEFAULT_KEY_MARKER
     new_blob = _key_blob(new_line)
     keep = [b for b in (old_blob, new_blob) if b]
     begin = "".join(f'keep["{b}"]=1;' for b in keep)
@@ -95,7 +119,7 @@ def _build_rotation_push_cmd(
         "BEGIN{" + begin + "}"
         "{"
         "if(NF>=2&&($2 in keep)){print;next}"  # never drop current / new
-        f'if(index($0,"{_KEY_MARKER}")>0){{next}}'  # drop our marker-tagged keys
+        f'if(NF>=3&&$NF=="{marker}"){{next}}'  # drop keys tagged with OUR marker
         "if(NF>=2&&($2 in rm)){next}"  # drop keys we generated before
         "print"  # keep everything else (operator's own keys)
         "}"
@@ -302,6 +326,14 @@ class ConfigSshMixin:
         ssh = data.get("ssh")
         if isinstance(ssh, dict):
             data = {**data, "ssh": utils_mod._normalize_ssh_section(ssh)}
+        llm = data.get("llm")
+        if isinstance(llm, dict) and isinstance(llm.get("system"), str):
+            # A system prompt equal to the built-in default is not a customisation
+            # — drop it so the install keeps tracking future default changes (the
+            # Settings field is pre-filled with the default; a Config-Sync'd
+            # config.toml carrying an old default gets the same treatment).
+            if llm["system"].strip() == DEFAULT_SYSTEM_PROMPT.strip():
+                data = {**data, "llm": {k: v for k, v in llm.items() if k != "system"}}
         config_mod.write_config(data)
         self._after_config_change(old, data)
 
@@ -447,11 +479,12 @@ class ConfigSshMixin:
             .decode()
             .strip()
         )
-        # Tag the key with a stable comment so rotation can recognise and prune
-        # the keys the console itself placed on a host (see _KEY_MARKER). The
-        # comment is ignored by sshd for authentication.
-        if _key_blob(pub) and _KEY_MARKER not in pub:
-            pub = f"{pub} {_KEY_MARKER}"
+        # Tag the key with this install's marker so rotation can recognise and
+        # prune the keys the console itself placed on a host (see _KEY_MARKER /
+        # key_marker). The comment is ignored by sshd for authentication.
+        marker = key_marker()
+        if _key_blob(pub) and not pub.endswith(f" {marker}"):
+            pub = f"{pub} {marker}"
         # Persist the public key next to the private key so it can be copied
         # again later (e.g. to authorise it on a host after the fact).
         try:
@@ -722,7 +755,10 @@ class ConfigSshMixin:
         with self._lock:
             self._connected_cache[host_name] = connected
         self._dispatch("runspec:hosts_updated", {})
-        threading.Thread(target=self._refresh_cycle, daemon=True).start()
+        # Targeted: forget just this host's discovery stamp, then run a normal
+        # cycle — no fleet-wide re-discovery for one key push.
+        self._invalidate_discovery([host_name])
+        self._kick_refresh()
         return {
             "ok": True,
             "connected": connected,
@@ -808,7 +844,9 @@ class ConfigSshMixin:
                 )
 
         self._dispatch("runspec:hosts_updated", {})
-        threading.Thread(target=self._refresh_cycle, daemon=True).start()
+        # Targeted: only the hosts that just got the key need re-discovery.
+        self._invalidate_discovery([str(n) for n in names])
+        self._kick_refresh()
 
         ok_n = sum(1 for h in per_host if h["ok"])
         fail_n = len(per_host) - ok_n
@@ -1178,7 +1216,13 @@ class ConfigSshMixin:
         remove_blobs = self._stale_key_blobs(
             key_dir, exclude={b for b in (old_blob, new_blob) if b}
         )
-        push_cmd = _build_rotation_push_cmd(public_key, old_blob, remove_blobs)
+        marker = key_marker()
+        push_cmd = _build_rotation_push_cmd(
+            public_key, old_blob, remove_blobs, marker=marker
+        )
+        self._rotate_emit(
+            "DEBUG", f"rotation prunes keys tagged {marker!r} on each host"
+        )
         if remove_blobs:
             self._rotate_emit(
                 "INFO",

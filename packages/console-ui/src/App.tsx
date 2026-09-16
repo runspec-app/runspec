@@ -26,6 +26,9 @@ import {
   CheckCircleOutlined,
   CommentOutlined,
   DashboardOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
+  ReloadOutlined,
 } from '@ant-design/icons'
 import { ConsoleView } from './views/ConsoleView'
 import { SpecsView } from './views/SpecsView'
@@ -51,6 +54,10 @@ import { RUNNING_STATUSES } from './components/runShared'
 import { useInFlight } from './bridge/useInFlight'
 import { bridge, type HistoryRecord, type Host, type HostProfile, type Runnable, type Runbook, type SavedRun, type RoomInfo, type BrandTheme } from './bridge'
 import { ThemeContext, AccentContext, DEFAULT_ACCENT, UI_FONT, MONO_FONT, RADIUS, surfaces, withAlpha, textMuted, textSecondary, textFaint } from './ThemeContext'
+import {
+  anyExpanded, isGroupCollapsed, loadSidebarGroups, saveSidebarGroups, setAllGroups, toggleGroupState,
+  type GroupsMode, type SidebarGroupsState,
+} from './sidebarGroups'
 import { FeaturesContext, AI_ONLY_VIEWS, visibleNavTabs, type Features } from './features'
 
 type ViewKey = 'console' | 'specs' | 'history' | 'logs' | 'forms' | 'schedules' | 'triggers' | 'rota' | 'analytics' | 'improve' | 'evals' | 'dev'
@@ -157,20 +164,22 @@ export default function App() {
   const [analyticsVisited, setAnalyticsVisited] = useState(false)
   const [isDark, setIsDark] = useState(() => localStorage.getItem('theme') !== 'light')
   const [autoSwitch, setAutoSwitch] = useState(() => localStorage.getItem('autoSwitch') !== 'false')
-  // Which sidebar host groups are collapsed (group name → true). Persisted so the
-  // layout survives reloads; a group absent from the map is expanded.
-  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>(() => {
-    try {
-      return JSON.parse(localStorage.getItem('runspec.sidebar.collapsedGroups') || '{}')
-    } catch {
-      return {}
-    }
-  })
-  const toggleGroup = (g: string) => setCollapsedGroups(prev => {
-    const next = { ...prev, [g]: !prev[g] }
-    localStorage.setItem('runspec.sidebar.collapsedGroups', JSON.stringify(next))
-    return next
-  })
+  // Which sidebar host groups are collapsed: a per-group override map plus the
+  // default a group not in the map follows (set by Collapse all / Expand all).
+  // Persisted (write-through) so the layout survives restarts — see
+  // sidebarGroups.ts for the pure state logic.
+  const [groupsState, setGroupsState] = useState<SidebarGroupsState>(() => loadSidebarGroups())
+  const updateGroups = (next: SidebarGroupsState) => { saveSidebarGroups(next); setGroupsState(next) }
+  const toggleGroup = (g: string) => updateGroups(toggleGroupState(groupsState, g))
+  const setAllGroupsMode = (mode: GroupsMode) => updateGroups(setAllGroups(mode))
+  // The sidebar Refresh button: a forced probe + re-discovery of every in-scope
+  // host (discovery otherwise only re-runs on reconnect / every
+  // discovery_interval). Spins until the cycle reports ready.
+  const [refreshingHosts, setRefreshingHosts] = useState(false)
+  const refreshHosts = () => {
+    setRefreshingHosts(true)
+    bridge.refresh_hosts?.().catch(() => setRefreshingHosts(false))
+  }
   // Resizable sidebar width — the whole left column (title, host list, footer
   // info) shares this container width, so dragging widens all three together.
   // Persisted so it survives restarts; clamped to keep the layout sane.
@@ -271,6 +280,24 @@ export default function App() {
   // Catalogue stats for the footer indicator: `distinct` (unique tool names — the
   // headline count, so a tool exposed on several hosts/venvs is counted once),
   // `total` (raw sum incl. those duplicates), distinct hosts/venvs, and a
+  // Sidebar grouping: hosts bucketed by group label in file order, group keys
+  // sorted with the ungrouped bucket first. Shared by the title-row Collapse /
+  // Expand-all toggle and the host list.
+  const { groupMap, sortedGroupKeys } = useMemo(() => {
+    const groupMap = new Map<string, typeof hosts>()
+    const groupOrder: string[] = []
+    for (const h of hosts) {
+      const g = h.group ?? ''
+      if (!groupMap.has(g)) { groupMap.set(g, []); groupOrder.push(g) }
+      groupMap.get(g)!.push(h)
+    }
+    const sortedGroupKeys = [...groupOrder].sort((a, b) => {
+      if (!a && b) return -1
+      if (a && !b) return 1
+      return a.localeCompare(b)
+    })
+    return { groupMap, sortedGroupKeys }
+  }, [hosts])
   // per-host → per-venv breakdown for the hover popover. Recomputed when the
   // runnables cache changes — so the count visibly grows as discovery streams hosts
   // in on startup, and settles at a number you learn to expect.
@@ -404,6 +431,7 @@ export default function App() {
     const onDiscoveryState = (e: Event) => {
       const d = (e as CustomEvent).detail as { ready: boolean; done: number; total: number }
       if (d) setDiscovery(d)
+      if (d?.ready) setRefreshingHosts(false)
     }
     // Room connection state: read on mount, then refetch on every connect/drop
     // flip (a refetch is cheap and always reflects the full configured set, incl.
@@ -805,12 +833,39 @@ export default function App() {
               }}
             />
             <div style={{
-              padding: '13px 16px 12px',
+              padding: '13px 12px 12px 16px',
               fontWeight: 700, fontSize: 14, color: titleCol,
               borderBottom: `1px solid ${borderCol}`, flexShrink: 0,
               fontFamily: MONO_FONT,  // wordmark keeps the terminal identity
+              display: 'flex', alignItems: 'center', gap: 4,
             }}>
-              {brandTheme.brand_name || 'runspec'}
+              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {brandTheme.brand_name || 'runspec'}
+              </span>
+              {sortedGroupKeys.length > 1 && (() => {
+                const expanded = anyExpanded(groupsState, sortedGroupKeys)
+                return (
+                  <Tooltip title={expanded ? 'Collapse all groups' : 'Expand all groups'} placement="bottom">
+                    <Button
+                      type="text" size="small"
+                      aria-label={expanded ? 'Collapse all groups' : 'Expand all groups'}
+                      icon={expanded ? <MenuFoldOutlined /> : <MenuUnfoldOutlined />}
+                      onClick={() => setAllGroupsMode(expanded ? 'collapsed' : 'expanded')}
+                      style={{ color: textMuted(isDark), padding: '0 4px', height: 22 }}
+                    />
+                  </Tooltip>
+                )
+              })()}
+              <Tooltip title="Refresh hosts — probe every host and re-discover its runnables now" placement="bottom">
+                <Button
+                  type="text" size="small"
+                  aria-label="Refresh hosts"
+                  icon={refreshingHosts ? <LoadingOutlined /> : <ReloadOutlined />}
+                  disabled={refreshingHosts}
+                  onClick={refreshHosts}
+                  style={{ color: textMuted(isDark), padding: '0 4px', height: 22 }}
+                />
+              </Tooltip>
             </div>
             {/* Host-profile switcher — only when profiles are defined. Picking one
                 scopes the sidebar + standing connections to that working-set. */}
@@ -916,24 +971,11 @@ export default function App() {
                   </Dropdown>
                 )
 
-                const groupMap = new Map<string, typeof hosts>()
-                const groupOrder: string[] = []
-                for (const h of hosts) {
-                  const g = h.group ?? ''
-                  if (!groupMap.has(g)) { groupMap.set(g, []); groupOrder.push(g) }
-                  groupMap.get(g)!.push(h)
-                }
-                const sortedGroupKeys = [...groupOrder].sort((a, b) => {
-                  if (!a && b) return -1
-                  if (a && !b) return 1
-                  return a.localeCompare(b)
-                })
-
                 return (
                   <>
                     {sortedGroupKeys.map(g => {
                       const members = groupMap.get(g)!
-                      const collapsed = !!collapsedGroups[g]
+                      const collapsed = isGroupCollapsed(groupsState, g)
                       const up = members.filter(m => m.connected).length
                       const down = members.length - up
                       return (

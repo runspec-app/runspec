@@ -21,6 +21,7 @@ from typing import Any
 from unittest.mock import patch
 
 from runspec_console.bridge import Bridge
+from runspec_console.bridge_const import DEFAULT_SYSTEM_PROMPT
 
 
 class _FakePool:
@@ -141,3 +142,24 @@ def test_rebuild_closes_old_pool():
         stub.save_config({"ssh": {"pool": False}})
     assert old_pool.closed is True
     assert stub._ssh_pool is not old_pool
+
+
+# ── [llm] system equal to the built-in default is not persisted ──────────────
+
+
+def test_save_drops_system_prompt_equal_to_default():
+    stub = _SaveStub({"llm": {"provider": "acme-llm"}})
+    with patch(NORM, side_effect=lambda s: s), patch(WRITE) as write:
+        stub.save_config(
+            {"llm": {"provider": "acme-llm", "system": DEFAULT_SYSTEM_PROMPT + "\n"}}
+        )
+    written = write.call_args.args[0]
+    assert "system" not in written["llm"]
+    assert written["llm"]["provider"] == "acme-llm"
+
+
+def test_save_keeps_customised_system_prompt():
+    stub = _SaveStub({"llm": {}})
+    with patch(NORM, side_effect=lambda s: s), patch(WRITE) as write:
+        stub.save_config({"llm": {"system": "Only speak in haiku."}})
+    assert write.call_args.args[0]["llm"]["system"] == "Only speak in haiku."

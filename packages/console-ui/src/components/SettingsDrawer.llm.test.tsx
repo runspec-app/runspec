@@ -31,10 +31,13 @@ const INITIAL_CONFIG: Record<string, unknown> = {
   },
 }
 
-const { getConfig, saveConfig } = vi.hoisted(() => ({
+const { getConfig, saveConfig, defaultSystemPrompt } = vi.hoisted(() => ({
   getConfig: vi.fn(),
   saveConfig: vi.fn(),
+  defaultSystemPrompt: vi.fn(),
 }))
+
+const DEFAULT_PROMPT = 'You are an assistant embedded in runspec-console.\n\nAsk one brief clarifying question instead of guessing.'
 
 vi.mock('../bridge', () => ({
   bridge: new Proxy(
@@ -46,6 +49,7 @@ vi.mock('../bridge', () => ({
         if (prop === 'save_config') return saveConfig
         if (prop === 'config_dir') return async () => 'C:/cfg'
         if (prop === 'list_providers') return async () => []
+        if (prop === 'default_system_prompt') return defaultSystemPrompt
         return vi.fn()
       },
     },
@@ -56,6 +60,7 @@ describe('LlmTab Save round-trip', () => {
   beforeEach(() => {
     getConfig.mockReset().mockResolvedValue(INITIAL_CONFIG)
     saveConfig.mockReset().mockResolvedValue(undefined)
+    defaultSystemPrompt.mockReset().mockResolvedValue(DEFAULT_PROMPT)
   })
 
   it('preserves api_key_command and api_key_ttl_ms when saving without opening Advanced', async () => {
@@ -141,5 +146,48 @@ describe('LlmTab model selector', () => {
     expect(saved.llm.model).toBe('claude-experimental')
     // Prepended so it survives the round-trip and stays a valid option.
     expect(saved.llm.models).toEqual(['claude-experimental', 'claude-sonnet-4-6', 'claude-opus-4-1'])
+  })
+})
+
+
+describe('LlmTab system prompt default', () => {
+  beforeEach(() => {
+    saveConfig.mockReset().mockResolvedValue(undefined)
+    defaultSystemPrompt.mockReset().mockResolvedValue(DEFAULT_PROMPT)
+  })
+
+  it('pre-fills the field with the built-in default when [llm] system is unset', async () => {
+    getConfig.mockReset().mockResolvedValue({ llm: { provider: 'anthropic', model: 'm' } })
+    render(<LlmTab />)
+    const area = (await screen.findByDisplayValue(/You are an assistant embedded/)) as HTMLTextAreaElement
+    expect(area.value).toBe(DEFAULT_PROMPT)
+    // Unchanged default ⇒ no "Reset to default" affordance.
+    expect(screen.queryByText('Reset to default')).toBeNull()
+  })
+
+  it('saving the unchanged default writes no system key', async () => {
+    getConfig.mockReset().mockResolvedValue({ llm: { provider: 'anthropic', model: 'm' } })
+    render(<LlmTab />)
+    await screen.findByDisplayValue(/You are an assistant embedded/)
+    const user = userEvent.setup()
+    await act(async () => { await user.click(screen.getByRole('button', { name: 'Save' })) })
+    await waitFor(() => expect(saveConfig).toHaveBeenCalledTimes(1))
+    const saved = saveConfig.mock.calls[0][0] as { llm: Record<string, unknown> }
+    expect(saved.llm.system).toBeUndefined()
+  })
+
+  it('shows a configured prompt as-is, and an edit is written; reset restores the default', async () => {
+    getConfig.mockReset().mockResolvedValue({ llm: { provider: 'anthropic', model: 'm', system: 'Only speak in haiku.' } })
+    render(<LlmTab />)
+    const area = (await screen.findByDisplayValue('Only speak in haiku.')) as HTMLTextAreaElement
+    const user = userEvent.setup()
+    await user.clear(area)
+    await user.type(area, 'Be terse.')
+    await act(async () => { await user.click(screen.getByRole('button', { name: 'Save' })) })
+    await waitFor(() => expect(saveConfig).toHaveBeenCalledTimes(1))
+    expect((saveConfig.mock.calls[0][0] as { llm: Record<string, unknown> }).llm.system).toBe('Be terse.')
+
+    await act(async () => { await user.click(screen.getByText('Reset to default')) })
+    expect((screen.getByDisplayValue(/You are an assistant embedded/) as HTMLTextAreaElement).value).toBe(DEFAULT_PROMPT)
   })
 })

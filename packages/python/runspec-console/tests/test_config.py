@@ -564,3 +564,16 @@ def test_set_app_dir_none_clears_override(tmp_path, monkeypatch):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_app_slug_public_accessor_delegates(monkeypatch):
+    """``app_slug()`` (the SSH key marker's source) reads the same cached slug the
+    config folder uses, resolved from installed metadata."""
+    from runspec_console import configseed
+
+    monkeypatch.setattr(c, "_APP_SLUG", None)
+    monkeypatch.setattr(configseed, "branding_dist_name", lambda: "acme-console")
+    assert c.app_slug() == "acme-console"
+    monkeypatch.setattr(c, "_APP_SLUG", None)
+    monkeypatch.setattr(configseed, "branding_dist_name", lambda: None)
+    assert c.app_slug() == "runspec-console"

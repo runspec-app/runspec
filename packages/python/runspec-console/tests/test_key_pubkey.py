@@ -90,3 +90,13 @@ def test_get_public_key_missing_file(tmp_path):
     r = _StubBridge({"ssh": {"identityFile": str(tmp_path / "nope")}}).get_public_key()
     assert r["ok"] is False
     assert "not found" in r["message"]
+
+
+def test_generate_keypair_tags_marker_with_slug(tmp_path, monkeypatch):
+    from runspec_console import config
+
+    monkeypatch.setattr(config, "_app_slug", lambda: "jason-console")
+    dest = tmp_path / "runspec_ed25519"
+    result = _StubBridge({})._generate_keypair_to_path(dest)
+    assert result["public_key"].endswith(" jason-console")
+    assert Path(str(dest) + ".pub").read_text().strip().endswith(" jason-console")

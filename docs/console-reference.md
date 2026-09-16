@@ -61,7 +61,7 @@ Set in **Settings → Model / API**.
 | `effort` | Reasoning effort before the model answers: `off` (default), `low`, `medium`, `high`, `xhigh`, `max` — see [below](#llm-effort) |
 | `max_network_retries` | How many times a model call is retried after a **transient** failure — read/connect timeout, dropped connection, 429/5xx — before any text has streamed (default 4; 0 disables). Spaced by exponential backoff, so a proxy blip no longer ends a turn on a bare "Error" |
 | `max_self_recoveries` | How many times a turn that still failed after its network retries is handed back to the agent to **analyse and resume** (default 1; 0 disables). Injects a short reflection turn with the full conversation still in context, then re-enters the loop after a backoff |
-| `system` | System prompt — **replaces** the built-in default wholesale (including its clarify-don't-guess guidance) |
+| `system` | System prompt — **replaces** the built-in default wholesale (including its clarify-don't-guess guidance). Settings → Model / API pre-fills the field with the built-in default; leaving it equal to the default keeps the install on future default updates (the key is not written) |
 | `system_append` | Extra system-prompt text **added to** whichever base applies. Prefer this for site policy: you keep the built-in guidance instead of trading it away |
 | `tool_mode` | `dedup` (default — one tool per runnable with a `host` enum), `per_host`, or `search` (meta-tools + catalogue index; `tool_index_limit` caps the index) |
 | `tool_index` | Search mode only: fold the always-on one-line-per-runnable catalogue menu into the prompt (default **true**). `false` ⇒ the agent discovers purely via `search_runnables` |

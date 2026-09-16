@@ -154,7 +154,8 @@ security-review cost — a future OIDC need is built separately):
   - ✅ **Teams-management UI** (room 0.25.0 protocol / console 0.71.0 bridge + tab):
     console→room `team_list`/`team_add`/`team_remove` frames → `hub.*`, answered
     with a `teams` frame; bridge `list_teams/add_team/remove_team` + `runspec:teams`
-    event; **Settings → Teams** tab (add name→slug / remove, Default protected).
+    event; the Teams section on **Settings → Self-Service** (add name→slug /
+    remove, Default protected; a standalone Teams tab until console 0.265.0).
 - **F. Docs** — ⬜ reconcile `helpdesk-rooms.md` + `email-queue-signup.md` to single
   queue + email-only + team-as-tag (still open). The visitor frontend was caught up
   to single-queue + teams + verified auto-join (room 0.26.0).

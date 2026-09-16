@@ -10,7 +10,6 @@ import filecmp
 import os
 import shutil
 import sys
-import threading
 import time
 import uuid
 from collections.abc import Callable
@@ -291,7 +290,7 @@ class FleetMixin:
         # refetch — otherwise e.g. a host whose room config was just removed still
         # shows in the room dropdown until the app restarts.
         self._dispatch("runspec:hosts_updated", {})
-        threading.Thread(target=self._refresh_cycle, daemon=True).start()
+        self._kick_refresh(force=True)
 
     # ── local venv auto-discovery ([local] venv_globs) ────────────────────────
 
@@ -344,7 +343,7 @@ class FleetMixin:
 
         config_mod.update_config(_mutate)
         self._dispatch("runspec:hosts_updated", {})
-        threading.Thread(target=self._refresh_cycle, daemon=True).start()
+        self._kick_refresh(force=True)
         return self.get_local_venv_config()
 
     # ── host-group registry (runspec_groups.toml) ─────────────────────────────
@@ -485,7 +484,7 @@ class FleetMixin:
         active = read_active_profile(active_profile_path())
         if active and active.casefold() not in legal:
             write_active_profile(active_profile_path(), "")
-            threading.Thread(target=self._refresh_cycle, daemon=True).start()
+            self._kick_refresh(force=True)
         self._dispatch("runspec:hosts_updated", {})
 
     def rename_profile(self, old: str, new: str) -> None:
@@ -559,7 +558,7 @@ class FleetMixin:
                     self._connected_cache.pop(n, None)
 
         self._dispatch("runspec:hosts_updated", {})
-        threading.Thread(target=self._refresh_cycle, daemon=True).start()
+        self._kick_refresh(force=True)
         return {"active": str(name or "").strip()}
 
     # ── self-service catalog registry (runspec_self_service.toml) ──────────────
@@ -1507,7 +1506,7 @@ class FleetMixin:
         new = [h for h in imported if h.get("name") and h["name"] not in existing]
         self._hosts.extend(new)
         hosts_mod.save_hosts(config_mod.hosts_path(), self._hosts)
-        threading.Thread(target=self._refresh_cycle, daemon=True).start()
+        self._kick_refresh(force=True)
         return new
 
     # ── invocation ────────────────────────────────────────────────────────────

@@ -70,41 +70,56 @@ class HostsMixin:
         import json as _json
         import shlex
         import subprocess
+        from concurrent.futures import ThreadPoolExecutor
 
         wanted = {str(t) for t in (targets or [])}
+        # Deliberately the full configured fleet (``self._hosts``), not the active
+        # profile's working set — the denylist is a fleet kill switch.
         hosts = [h for h in self._hosts if utils_mod._paths(h)]
         if wanted:
             hosts = [h for h in hosts if h.get("name") in wanted]
 
-        rows: list[dict[str, Any]] = []
-        for h in hosts:
+        tasks = [(h, rp) for h in hosts for rp in utils_mod._paths(h)]
+
+        def _one(task: tuple[dict[str, Any], str]) -> dict[str, Any]:
+            h, rp = task
             host_name = str(h.get("name"))
             ssh = h.get("ssh")
             idf = h.get("identityFile")
-            for rp in utils_mod._paths(h):
-                venv = hosts_mod.venv_name(rp)
-                argv = [rp, "deny", "list", "--json"]
-                row: dict[str, Any] = {"host": host_name, "venv": venv, "ok": False}
-                try:
-                    if ssh:
-                        cmd = " ".join(shlex.quote(p) for p in argv)
-                        code, out, err = self._ssh_run(
-                            ssh, cmd, identity_file=idf, timeout=20
-                        )
-                    else:
-                        proc = subprocess.run(
-                            argv, capture_output=True, text=True, timeout=20
-                        )
-                        code, out, err = proc.returncode, proc.stdout, proc.stderr
-                    if code != 0:
-                        row["error"] = (err or out or f"exit {code}").strip()
-                    else:
-                        row.update(_json.loads(out))
-                        row["ok"] = True
-                except Exception as exc:  # noqa: BLE001 — surface any failure as a row
-                    row["error"] = str(exc)
-                rows.append(row)
-        return rows
+            venv = hosts_mod.venv_name(rp)
+            argv = [rp, "deny", "list", "--json"]
+            row: dict[str, Any] = {"host": host_name, "venv": venv, "ok": False}
+            try:
+                if ssh:
+                    cmd = " ".join(shlex.quote(p) for p in argv)
+                    code, out, err = self._ssh_run(
+                        ssh, cmd, identity_file=idf, timeout=20
+                    )
+                else:
+                    proc = subprocess.run(
+                        argv, capture_output=True, text=True, timeout=20
+                    )
+                    code, out, err = proc.returncode, proc.stdout, proc.stderr
+                if code != 0:
+                    row["error"] = (err or out or f"exit {code}").strip()
+                else:
+                    row.update(_json.loads(out))
+                    row["ok"] = True
+            except Exception as exc:  # noqa: BLE001 — surface any failure as a row
+                row["error"] = str(exc)
+            return row
+
+        if not tasks:
+            return []
+        # One SSH exec per venv, fanned out across hosts in parallel (bounded by
+        # [refresh] workers; handshakes by the pool's max_concurrent) instead of
+        # serially — a 70-host fleet used to take minutes here. ``ex.map`` keeps
+        # submission order, so rows come back host-by-host, venv-by-venv.
+        with ThreadPoolExecutor(
+            max_workers=min(self._fanout_workers(), len(tasks)),
+            thread_name_prefix="denylist",
+        ) as ex:
+            return list(ex.map(_one, tasks))
 
     def get_runnables(self, host: str) -> list[dict[str, Any]]:
         with self._lock:

@@ -498,3 +498,54 @@ def test_update_settings_applies_tunables_without_dropping_connections():
     # the live connection is untouched — update_settings never drops transports
     assert len(pool._conns) == 1
     assert next(iter(pool._conns.values())) is conn_before
+
+
+# ── transport generation (reconnect detection for the discovery cadence) ─────
+
+
+def test_generation_increments_only_on_new_transport():
+    clients = []
+
+    def make_client(*a):
+        c = FakeClient()
+        clients.append(c)
+        return c
+
+    pool = make_pool({}, make_client=make_client)
+    assert pool.generation("u@h") == 0  # never connected
+    pool.run("u@h", "true")
+    assert pool.generation("u@h") == 1
+    pool.run("u@h", "true")  # warm reuse — no bump
+    assert pool.generation("u@h") == 1
+    clients[0].transport.active = False  # transport died → reconnect on next use
+    pool.run("u@h", "true")
+    assert pool.generation("u@h") == 2
+    pool.drop("u@h")
+    pool.run("u@h", "true")
+    assert pool.generation("u@h") == 3
+    assert pool.generation("u@other") == 0  # per connection key
+
+
+def test_connectable_touches_last_used():
+    """The probe counts as a use, so a host that is only probed (discovery
+    skipped as fresh) is not idle-reaped at idle_ttl."""
+    now = {"t": 0.0}
+    pool = make_pool(
+        {"idle_ttl": 60}, make_client=lambda *a: FakeClient(), clock=lambda: now["t"]
+    )
+    pool.run("u@h", "true")
+    now["t"] = 50.0
+    assert pool.connectable("u@h") is True  # touches last_used → 50
+    now["t"] = 100.0  # 100 s since the run, 50 s since the probe
+    assert pool.reap() == 0
+    assert pool.generation("u@h") == 1  # no re-handshake happened
+
+
+def test_refresh_settings_discovery_interval():
+    from runspec_console.ssh_pool import refresh_settings
+
+    assert refresh_settings({})["discovery_interval"] == 300
+    assert refresh_settings({"discovery_interval": 60})["discovery_interval"] == 60
+    assert refresh_settings({"discovery_interval": 0})["discovery_interval"] == 0
+    assert refresh_settings({"discovery_interval": -5})["discovery_interval"] == 0
+    assert refresh_settings({"discovery_interval": "x"})["discovery_interval"] == 300

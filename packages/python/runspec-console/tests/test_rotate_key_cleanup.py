@@ -20,16 +20,25 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from runspec_console import config
 from runspec_console.bridge import Bridge
 from runspec_console.bridge_config_ssh import (
     _KEY_MARKER,
     _build_rotation_push_cmd,
     _key_blob,
 )
+from runspec_console.bridge_utils import DEFAULT_KEY_MARKER, key_marker
 
 _SH = shutil.which("sh")
 _AWK = shutil.which("awk")
 needs_sh = pytest.mark.skipif(not (_SH and _AWK), reason="needs sh + awk")
+
+
+@pytest.fixture(autouse=True)
+def _default_install(monkeypatch):
+    """Pin the branded slug to the default install so the marker is the historic
+    ``runspec-console`` regardless of what's installed in the test env."""
+    monkeypatch.setattr(config, "_app_slug", lambda: "runspec-console")
 
 
 def _run(cmd: str, home: Path) -> None:
@@ -174,3 +183,82 @@ def test_push_never_empties_file_and_preserves_perms(tmp_path):
     assert ak.stat().st_mode == before_mode  # cat > ak preserves the inode/perms
     # No temp file left behind.
     assert not list((tmp_path / ".ssh").glob("ak.*"))
+
+
+# ── white-label marker (follows the package name, like the config folder) ────
+
+
+def test_marker_follows_white_label_slug(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "_app_slug", lambda: "jason-console")
+    assert key_marker() == "jason-console"
+    b = Bridge.__new__(Bridge)
+    res = Bridge._generate_keypair_to_path(b, tmp_path / "k")
+    assert res["public_key"].endswith(" jason-console")
+    assert (tmp_path / "k.pub").read_text().strip().endswith(" jason-console")
+    cmd = _build_rotation_push_cmd("ssh-ed25519 NEW jason-console", "OLD", [])
+    assert '$NF=="jason-console"' in cmd
+    assert "runspec-console" not in cmd
+
+
+def test_marker_falls_back_when_slug_unsafe(monkeypatch):
+    # A slug that couldn't be interpolated into the single-quoted awk program.
+    monkeypatch.setattr(config, "_app_slug", lambda: "acme console'x")
+    assert key_marker() == DEFAULT_KEY_MARKER
+    cmd = _build_rotation_push_cmd("ssh-ed25519 NEW x", "OLD", [], marker="a b")
+    assert f'$NF=="{DEFAULT_KEY_MARKER}"' in cmd
+
+
+def test_default_marker_unchanged():
+    assert _KEY_MARKER == DEFAULT_KEY_MARKER == "runspec-console"
+    assert key_marker() == "runspec-console"
+
+
+@needs_sh
+def test_push_default_install_leaves_other_apps_keys(tmp_path):
+    stale = "ssh-ed25519 STALEBLOB runspec-console"  # ours — must go
+    other_app = "ssh-ed25519 OTHERBLOB jason-console"  # another install's — keep
+    corp = "ssh-ed25519 CORPBLOB runspec-console-corp"  # prefix collision — keep
+    old_key = "ssh-ed25519 OLDBLOB runspec-console"
+    new_key = "ssh-ed25519 NEWBLOB runspec-console"
+    ak = _seed(tmp_path, [stale, other_app, corp, old_key])
+    _run(
+        _build_rotation_push_cmd(new_key, old_blob="OLDBLOB", remove_blobs=[]), tmp_path
+    )
+    lines = ak.read_text().splitlines()
+    assert stale not in lines
+    assert other_app in lines
+    assert corp in lines
+    assert old_key in lines and new_key in lines
+
+
+@needs_sh
+def test_push_white_label_prunes_only_its_own_tag(tmp_path):
+    mine = "ssh-ed25519 MINEBLOB jason-console"  # ours — must go
+    default_app = "ssh-ed25519 DEFBLOB runspec-console"  # the default install's — keep
+    legacy = "ssh-ed25519 LEGACYBLOB runspec-console"  # ours pre-0.265 (in backups)
+    old_key = "ssh-ed25519 OLDBLOB jason-console"
+    new_key = "ssh-ed25519 NEWBLOB jason-console"
+    ak = _seed(tmp_path, [mine, default_app, legacy, old_key])
+    cmd = _build_rotation_push_cmd(
+        new_key, old_blob="OLDBLOB", remove_blobs=["LEGACYBLOB"], marker="jason-console"
+    )
+    _run(cmd, tmp_path)
+    lines = ak.read_text().splitlines()
+    assert mine not in lines  # tagged with our marker
+    assert legacy not in lines  # migration: pruned via the backup-blob match
+    assert default_app in lines  # the other install's key survives
+    assert old_key in lines and new_key in lines
+
+
+@needs_sh
+def test_push_marker_must_be_the_last_field(tmp_path):
+    # Exact trailing-field semantics: a line merely *containing* the marker is
+    # not ours.
+    odd = "ssh-ed25519 ODDBLOB runspec-console extra"
+    old_key = "ssh-ed25519 OLDBLOB runspec-console"
+    new_key = "ssh-ed25519 NEWBLOB runspec-console"
+    ak = _seed(tmp_path, [odd, old_key])
+    _run(
+        _build_rotation_push_cmd(new_key, old_blob="OLDBLOB", remove_blobs=[]), tmp_path
+    )
+    assert odd in ak.read_text().splitlines()

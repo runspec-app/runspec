@@ -195,6 +195,18 @@ class Bridge(
         # ``self._lock`` alongside ``_runnables_cache``.
         self._discovery_ready = False
         self._discovery_progress: tuple[int, int] = (0, 0)
+        # host name → (monotonic ts, pool transport generation, discovery key) of
+        # the host's last successful runnable discovery. The refresh cycle re-runs
+        # discovery only when a host has no stamp, its transport generation moved
+        # (reconnect), its discovery key changed (paths / identity edited), or
+        # ``[refresh] discovery_interval`` has elapsed — the connectivity probe
+        # itself stays on every cycle. Guarded by ``self._lock``.
+        self._discovery_stamp: dict[str, tuple[float, int, tuple]] = {}
+        # Serialises overlapping refresh cycles (the 30 s watcher vs. a forced
+        # cycle kicked by a host save / profile switch) so two cycles never
+        # interleave their cache splices. Acquired inside the cycle, never at
+        # spawn, so a UI call that kicks a cycle returns immediately.
+        self._refresh_cycle_lock = threading.Lock()
         # Persistent agent conversation so the model remembers prior turns. One
         # rolling conversation per app session; reset via clear_chat(). The lock
         # serialises turns so two quick sends can't interleave the history.

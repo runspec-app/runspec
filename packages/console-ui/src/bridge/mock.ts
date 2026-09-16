@@ -692,6 +692,15 @@ export const mockApi: BridgeApi = {
     { value: 'bedrock', label: 'AWS Bedrock' },
     { value: 'langserve', label: 'LangServe gateway' },
   ],
+  default_system_prompt: async () =>
+    'You are an assistant embedded in runspec-console. You can run runspec runnables on local and remote hosts via tools. Use tools when they help, and confirm before anything destructive.\n\nWhen a required argument is missing or ambiguous — ask the operator one brief clarifying question instead of guessing.',
+  refresh_hosts: async () => {
+    window.dispatchEvent(new CustomEvent('runspec:discovery_state', { detail: { ready: false, done: 0, total: 3 } }))
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('runspec:runnables_updated', { detail: {} }))
+      window.dispatchEvent(new CustomEvent('runspec:discovery_state', { detail: { ready: true, done: 3, total: 3 } }))
+    }, 600)
+  },
   get_config: async () => ({
     ssh: { user: 'jason', identityFile: 'C:/Users/jason/AppData/Roaming/runspec-console/runspec_ed25519', key_created_at: MOCK_KEY_CREATED_AT },
     llm: { apiBaseUrl: '', model: 'claude-opus-4-7' },

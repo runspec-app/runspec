@@ -41,6 +41,7 @@ DEFAULT_CONNECT_RETRY_DELAY = 1.0  # s base delay between inline handshake retri
 DEFAULT_REFRESH_INTERVAL = 30  # s between refresh cycles
 DEFAULT_REFRESH_JITTER = 3  # +/- s of per-host start jitter
 DEFAULT_REFRESH_WORKERS_FLOOR = 16  # min bounded workers for the refresh fan-out
+DEFAULT_DISCOVERY_INTERVAL = 300  # s between per-host runnable re-discovery
 
 
 def refresh_settings(
@@ -56,6 +57,12 @@ def refresh_settings(
     count a small multiple above it overlaps warm-transport discovery without
     ever spawning one thread per host. Default: ``max(16, 2 * max_concurrent)``;
     an explicit positive ``[refresh] workers`` overrides it.
+
+    ``discovery_interval`` decouples runnable discovery from the connectivity
+    probe: the cycle still probes every ``interval`` seconds, but re-runs
+    ``runspec local`` on a host only when it (re)connects, its paths change, or
+    this many seconds have passed since its last discovery. ``0`` ⇒ every cycle
+    (the pre-0.265 behaviour).
     """
     cfg = refresh_cfg or {}
 
@@ -72,6 +79,9 @@ def refresh_settings(
         "interval": max(1, _int("interval", DEFAULT_REFRESH_INTERVAL)),
         "jitter": max(0, _int("jitter", DEFAULT_REFRESH_JITTER)),
         "workers": max(1, workers),
+        "discovery_interval": max(
+            0, _int("discovery_interval", DEFAULT_DISCOVERY_INTERVAL)
+        ),
     }
 
 
@@ -326,6 +336,11 @@ class SSHConnectionPool:
         ] = {}  # key → (fails, next_attempt)
         self._map_lock = threading.Lock()
         self._handshakes = threading.BoundedSemaphore(settings["max_concurrent"])
+        # key → how many transports have been opened for it (0 = never). A change
+        # tells the refresh cycle the host got a *new* transport since it was last
+        # discovered (reconnect after a drop / reap), so discovery reruns without
+        # the cycle having to track connection identity itself.
+        self._generation: dict[tuple, int] = {}
 
     def _event(self, level: str, message: str) -> None:
         """Surface a pool-lifecycle event (reuse / connect / backoff / reap).
@@ -401,6 +416,7 @@ class SSHConnectionPool:
             )
             with self._map_lock:
                 self._conns[key] = conn
+                self._generation[key] = self._generation.get(key, 0) + 1
             return conn
 
     def _handshake_once(
@@ -609,7 +625,28 @@ class SSHConnectionPool:
             conn = self._acquire_conn(ssh_target, identity_file, cfg)
         except Exception:
             return False
-        return conn.is_alive(self._settings["idle_ttl"])
+        alive = conn.is_alive(self._settings["idle_ttl"])
+        if alive:
+            # The probe counts as a use: now that discovery no longer touches
+            # every host each cycle, this is what keeps an in-profile transport
+            # from idle-reaping between discoveries (which would re-handshake and
+            # — via the generation bump — re-discover at idle_ttl instead).
+            conn.last_used = self._clock()
+        return alive
+
+    def generation(
+        self,
+        ssh_target: str,
+        *,
+        identity_file: str | None = None,
+        global_ssh_config: dict[str, Any] | None = None,
+    ) -> int:
+        """How many transports have been opened for this host's connection key
+        (``0`` = never connected). Compared across refresh cycles to detect a
+        reconnect without holding on to connection objects."""
+        key = _host_key(ssh_target, identity_file, global_ssh_config or {})
+        with self._map_lock:
+            return self._generation.get(key, 0)
 
     def _drop(
         self, ssh_target: str, identity_file: str | None, cfg: dict[str, Any]

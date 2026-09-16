@@ -293,3 +293,27 @@ def test_rotation_emits_progress_and_logs(tmp_path, monkeypatch):
     assert {p.get("host") for p in progress if p.get("host")} == {"a", "b"}
     assert progress[-1]["done"] == progress[-1]["total"] == 2
     assert any(d.get("logger") == "ssh.rotate" for d in logs)
+
+
+def test_push_command_carries_the_branded_marker(tmp_path, monkeypatch):
+    from runspec_console import config
+
+    monkeypatch.setattr(config, "_app_slug", lambda: "jason-console")
+    hosts = [{"name": "alive", "ssh": "user@alive"}]
+    bridge, key_dir, canonical = _setup(tmp_path, monkeypatch, hosts, {"alive": True})
+    seen: list[str] = []
+    inner = _make_ssh_run({"user@alive": "ok"})
+
+    def capture(
+        ssh_target, command, identity_file=None, global_ssh_config=None, timeout=15
+    ):
+        seen.append(command)
+        return inner(ssh_target, command, identity_file, global_ssh_config, timeout)
+
+    monkeypatch.setattr(executor, "ssh_run", capture)
+    result = bridge.rotate_ssh_key()
+    assert result["committed"] is True
+    push = [c for c in seen if "awk" in c]
+    assert push and '$NF=="jason-console"' in push[0]
+    # The new key line itself is tagged with the same marker.
+    assert " jason-console'" in push[0]

@@ -18,6 +18,7 @@ import {
   isPaused,
   type DevEntry,
   type DevCategory,
+  getErrorSnapshot,
 } from '../devbus'
 import { useIsDark, textMuted, MONO_FONT } from '../ThemeContext'
 
@@ -98,10 +99,23 @@ export function DevView() {
     bridge.is_debug_enabled().then(setDebugEnabled).catch(() => setDebugEnabled(false))
   }, [])
 
-  const shown = useMemo(
-    () => (activeCategories.size > 0 ? entries.filter(e => activeCategories.has(e.category)) : entries),
-    [entries, activeCategories],
-  )
+  // Errors are retained beyond the main ring (devbus ERROR_CAP), so when the
+  // `error` filter is on the rows come from the retained set — the header's
+  // "errors N" counter and the filtered table then agree instead of the rows
+  // silently aging out after CAP entries.
+  const retainedErrors = useMemo(() => getErrorSnapshot(), [entries])
+  const shown = useMemo(() => {
+    if (activeCategories.size === 0) return entries
+    if (activeCategories.size === 1 && activeCategories.has('error')) return retainedErrors
+    if (activeCategories.has('error')) {
+      const inRing = new Set(entries.map(e => e.id))
+      const rest = activeCategories
+      const merged = entries.filter(e => rest.has(e.category))
+      const aged = retainedErrors.filter(e => !inRing.has(e.id))
+      return aged.length ? [...aged, ...merged].sort((a, b) => a.id - b.id) : merged
+    }
+    return entries.filter(e => activeCategories.has(e.category))
+  }, [entries, activeCategories, retainedErrors])
 
   // Auto-scroll to the newest entry as rows arrive (unless paused or disabled).
   useEffect(() => {
@@ -207,7 +221,9 @@ export function DevView() {
       <Space size={16} style={{ marginBottom: 10, fontSize: 14 }}>
         <Text type="secondary">calls <Text strong>{stats.calls}</Text></Text>
         <Text type="secondary">events <Text strong>{stats.events}</Text></Text>
-        <Text type="secondary">errors <Text strong style={{ color: stats.errors > 0 ? '#ff4d4f' : undefined }}>{stats.errors}</Text></Text>
+        <Tooltip title={`${retainedErrors.length} error row${retainedErrors.length === 1 ? '' : 's'} retained (the error filter shows them even after they age out of the buffer)`}>
+          <Text type="secondary">errors <Text strong style={{ color: stats.errors > 0 ? '#ff4d4f' : undefined }}>{stats.errors}</Text>{retainedErrors.length !== stats.errors && <Text type="secondary"> · {retainedErrors.length} retained</Text>}</Text>
+        </Tooltip>
         <Text type="secondary">buffer <Text strong>{stats.total}</Text></Text>
       </Space>
 

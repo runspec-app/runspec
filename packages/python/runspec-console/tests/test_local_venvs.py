@@ -119,7 +119,7 @@ class _StubBridge:
         self._lock = threading.Lock()
         self.dispatched: list[str] = []
 
-    def _refresh_cycle(self) -> None:  # spawned on a daemon thread by save
+    def _kick_refresh(self, *, force: bool = False) -> None:  # spawned by save
         pass
 
     def _dispatch(self, event: str, detail: dict) -> None:

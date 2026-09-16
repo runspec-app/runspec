@@ -10,6 +10,7 @@ from pathlib import Path
 
 import runspec
 
+from ..bridge_utils import key_marker
 from ..config import app_dir, read_config, write_config
 
 logger = logging.getLogger(__name__)
@@ -73,6 +74,11 @@ def _generate(rotate: bool) -> dict:
         .decode()
         .strip()
     )
+    # Tag with this install's marker (the white-label package name) and persist
+    # the .pub, exactly like the Settings → SSH generator, so a later rotation
+    # recognises and prunes this key from hosts too.
+    public_key = f"{public_key} {key_marker()}"
+    Path(str(key_path) + ".pub").write_text(public_key + "\n", encoding="utf-8")
 
     normalized = _normalize_path(str(key_path))
     return {
@@ -84,7 +90,7 @@ def _generate(rotate: bool) -> dict:
 
 
 def _write_ppk_v2(
-    dest: Path, raw_priv: bytes, raw_pub: bytes, comment: str = "runspec-console"
+    dest: Path, raw_priv: bytes, raw_pub: bytes, comment: str | None = None
 ) -> None:
     import base64
     import hashlib
@@ -94,6 +100,7 @@ def _write_ppk_v2(
 
     key_type = b"ssh-ed25519"
     enc_type = b"none"
+    comment = comment or key_marker()
     comment_b = comment.encode()
     pub_blob = (
         struct.pack(">I", len(key_type))

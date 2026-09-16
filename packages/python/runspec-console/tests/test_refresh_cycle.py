@@ -228,10 +228,12 @@ def test_refresh_settings_workers_resolution():
     assert refresh_settings({"workers": 0}, max_concurrent=10)["workers"] == 20
 
 
-def _run_cycle(b, *, workers=4):
+def _run_cycle(b, *, workers=4, force=False, discovery_interval=300, connected=None):
     """Drive one _refresh_cycle with discovery returning one runnable per host,
     capturing the cache size at every runnables_updated and every discovery_state
-    detail. Returns (sizes, states)."""
+    detail. Returns (sizes, states); the hosts discovered this cycle land on
+    ``b.last_discovered``. ``connected`` maps host → probe result (default True)."""
+    connected = connected or {}
     sizes: list[int] = []
     states: list[dict] = []
 
@@ -242,9 +244,17 @@ def _run_cycle(b, *, workers=4):
         elif ev == "runspec:discovery_state":
             states.append(dict(detail))
 
-    def fake_discover(h):
+    def fake_discover(h, **_kw):
+        discovered.append(h["name"])
         return [{"host": h["name"], "name": f"r-{h['name']}"}]
 
+    def fake_probe(h, **_kw):
+        # The probe phase marks a host connected; discovery only runs for
+        # connected hosts, so the fake must record the result like the real one.
+        with b._lock:
+            b._connected_cache[h["name"]] = connected.get(h["name"], True)
+
+    discovered: list[str] = []
     with (
         patch.object(b, "_reload_hosts"),
         patch.object(b, "_local_host_entry", return_value={"name": "local"}),
@@ -252,13 +262,19 @@ def _run_cycle(b, *, workers=4):
         patch.object(b, "get_config", return_value={}),
         patch.object(b, "_publish_catalogs"),
         patch.object(b, "_discover_one", side_effect=fake_discover),
-        patch.object(b, "_probe_one"),
+        patch.object(b, "_probe_one", side_effect=fake_probe),
         patch(
             "runspec_console.ssh_pool.refresh_settings",
-            return_value={"interval": 30, "jitter": 0, "workers": workers},
+            return_value={
+                "interval": 30,
+                "jitter": 0,
+                "workers": workers,
+                "discovery_interval": discovery_interval,
+            },
         ),
     ):
-        b._refresh_cycle()
+        b._refresh_cycle(force=force)
+    b.last_discovered = discovered  # type: ignore[attr-defined]
     return sizes, states
 
 
@@ -327,12 +343,12 @@ def test_refresh_cycle_bounds_concurrency_and_orders_phases():
         with lock:
             state["active"] -= 1
 
-    def fake_probe(h, *, jitter=0):
+    def fake_probe(h, *, jitter=0, **_kw):
         busy("probe")
         with b._lock:
             b._connected_cache[h["name"]] = True
 
-    def fake_discover(h):
+    def fake_discover(h, **_kw):
         busy("disc")
         return []
 
@@ -384,3 +400,213 @@ def test_refresh_tick_stops_quietly_on_interpreter_shutdown():
     assert InternalsMixin._refresh_tick(_FakeSelf(None)) is True
     with pytest.raises(RuntimeError):
         InternalsMixin._refresh_tick(_FakeSelf(RuntimeError("something else")))
+
+
+# ── discovery cadence: discover on (re)connect + periodic, not every cycle ────
+
+_H = [
+    {"name": "h1", "ssh": "u@h1", "runspec_paths": ["/v/bin/runspec"]},
+    {"name": "h2", "ssh": "u@h2", "runspec_paths": ["/v/bin/runspec"]},
+]
+
+
+def test_second_cycle_skips_fresh_hosts():
+    b = _make_bridge()
+    b._hosts = list(_H)
+    _run_cycle(b)
+    assert sorted(b.last_discovered) == ["h1", "h2", "local"]
+    assert set(b._discovery_stamp) == {"local", "h1", "h2"}
+    sizes, states = _run_cycle(b)
+    assert b.last_discovered == []  # nothing stale → no SSH execs
+    assert {r["host"] for r in b._runnables_cache} == {"local", "h1", "h2"}  # kept
+    assert states[-1] == {"done": 3, "total": 3, "ready": True}
+
+
+def test_steady_state_cycle_emits_no_runnables_updated():
+    b = _make_bridge()
+    b._hosts = list(_H)
+    _run_cycle(b)
+    sizes, states = _run_cycle(b)
+    assert sizes == []  # no runnables_updated → the UI doesn't refetch
+    assert len(states) == 2  # kickoff + final discovery_state only
+
+
+def test_force_rediscovers_everything():
+    b = _make_bridge()
+    b._hosts = list(_H)
+    _run_cycle(b)
+    _run_cycle(b, force=True)
+    assert sorted(b.last_discovered) == ["h1", "h2", "local"]
+
+
+def test_discovery_interval_elapsed_rediscovers():
+    b = _make_bridge()
+    b._hosts = list(_H)
+    _run_cycle(b)
+    with b._lock:  # age every stamp past the interval
+        for n, (ts, gen, key) in list(b._discovery_stamp.items()):
+            b._discovery_stamp[n] = (ts - 1000, gen, key)
+    _run_cycle(b, discovery_interval=300)
+    assert sorted(b.last_discovered) == ["h1", "h2", "local"]
+
+
+def test_discovery_interval_zero_means_every_cycle():
+    b = _make_bridge()
+    b._hosts = list(_H)
+    _run_cycle(b, discovery_interval=0)
+    _run_cycle(b, discovery_interval=0)
+    assert sorted(b.last_discovered) == ["h1", "h2", "local"]
+
+
+def test_paths_change_rediscovers_that_host_only():
+    b = _make_bridge()
+    b._hosts = [dict(h) for h in _H]
+    _run_cycle(b)
+    b._hosts[0] = {**b._hosts[0], "runspec_paths": ["/v/bin/runspec", "/w/bin/runspec"]}
+    _run_cycle(b)
+    assert b.last_discovered == ["h1"]
+
+
+def test_disconnected_then_connected_rediscovers():
+    b = _make_bridge()
+    b._hosts = list(_H)
+    _run_cycle(b)
+    # h2 drops: its runnables vanish, its stamp is forgotten, h1 stays fresh.
+    _run_cycle(b, connected={"h2": False})
+    assert b.last_discovered == []
+    assert {r["host"] for r in b._runnables_cache} == {"local", "h1"}
+    assert "h2" not in b._discovery_stamp
+    # h2 comes back → re-discovered (h1 still fresh).
+    _run_cycle(b)
+    assert b.last_discovered == ["h2"]
+    assert {r["host"] for r in b._runnables_cache} == {"local", "h1", "h2"}
+
+
+def test_reconnect_bumps_generation_and_rediscovers():
+    """A real pool: cycle 1 connects + discovers; the transport dies; cycle 2
+    reconnects (new generation) and re-discovers even though the stamp is fresh."""
+    b = _make_bridge()
+    host = {
+        "name": "prod-1",
+        "ssh": "deploy@prod-1",
+        "runspec_paths": ["/v/bin/runspec"],
+    }
+    clients = []
+
+    def make_client(target, idf, cfg):
+        c = _Client([])  # a valid (empty) `runspec local --format json` reply
+        clients.append(c)
+        return c
+
+    pool = SSHConnectionPool(settings=pool_settings({}), make_client=make_client)
+    b._ssh_pool = pool
+    b._hosts = [host]
+    discovered: list[str] = []
+    real_discover = b._discover_one
+
+    def counting(h, **kw):
+        discovered.append(h["name"])
+        return real_discover(h, **kw)
+
+    ctx = lambda: (  # noqa: E731
+        patch.object(b, "_reload_hosts"),
+        patch.object(b, "_local_host_entry", return_value={"name": "local"}),
+        patch.object(b, "_dispatch"),
+        patch.object(b, "get_config", return_value={}),
+        patch.object(b, "_publish_catalogs"),
+        patch.object(b, "_discover_one", side_effect=counting),
+        patch(
+            "runspec_console.ssh_pool.refresh_settings",
+            return_value={"interval": 30, "jitter": 0, "workers": 8},
+        ),
+    )
+    from contextlib import ExitStack
+
+    with ExitStack() as st:
+        for c in ctx():
+            st.enter_context(c)
+        b._refresh_cycle()
+        assert sorted(discovered) == ["local", "prod-1"]
+        assert len(clients) == 1
+        assert "prod-1" in b._discovery_stamp
+        discovered.clear()
+        b._refresh_cycle()  # warm transport, fresh stamp → nothing re-discovered
+        assert "prod-1" not in discovered
+        assert len(clients) == 1
+        clients[0].close()  # the transport drops
+        discovered.clear()
+        b._refresh_cycle()
+        assert len(clients) == 2  # reconnected...
+        assert "prod-1" in discovered  # ...and re-discovered
+
+
+def test_stamps_pruned_for_hosts_leaving_scope():
+    b = _make_bridge()
+    b._hosts = list(_H)
+    _run_cycle(b)
+    b._hosts = [_H[0]]
+    _run_cycle(b)
+    assert set(b._discovery_stamp) == {"local", "h1"}
+    assert {r["host"] for r in b._runnables_cache} == {"local", "h1"}
+
+
+def test_dispatches_coalesced_mid_cycle():
+    b = _make_bridge()
+    b._hosts = [
+        {"name": f"h{i}", "ssh": f"u@h{i}", "runspec_paths": ["/v/bin/runspec"]}
+        for i in range(20)
+    ]
+    with patch(
+        "runspec_console.bridge_internals._DISCOVERY_DISPATCH_MIN_INTERVAL", 1e9
+    ):
+        sizes, states = _run_cycle(b)
+    assert sizes == [21]  # exactly one runnables_updated — the final one
+    assert len(states) == 2  # kickoff + final
+    assert states[-1]["ready"] is True
+
+
+def test_get_config_read_once_per_cycle():
+    b = _make_bridge()
+    b._hosts = [
+        {"name": f"h{i}", "ssh": f"u@h{i}", "runspec_paths": ["/v/a", "/v/b"]}
+        for i in range(5)
+    ]
+    from unittest.mock import MagicMock
+
+    cfg = MagicMock(return_value={})
+
+    def fake_probe(h, **_kw):
+        with b._lock:
+            b._connected_cache[h["name"]] = True
+
+    with (
+        patch.object(b, "_reload_hosts"),
+        patch.object(b, "_local_host_entry", return_value={"name": "local"}),
+        patch.object(b, "_dispatch"),
+        patch.object(b, "get_config", cfg),
+        patch.object(b, "_publish_catalogs"),
+        patch.object(b, "_probe_one", side_effect=fake_probe),
+        patch("runspec_console.discovery.discover_remote", return_value=[]),
+        patch("runspec_console.bridge_internals.discover_remote", return_value=[]),
+        patch("runspec_console.bridge_internals.discover_local", return_value=[]),
+        patch(
+            "runspec_console.ssh_pool.refresh_settings",
+            return_value={"interval": 30, "jitter": 0, "workers": 8},
+        ),
+    ):
+        b._refresh_cycle()
+    assert cfg.call_count == 1
+
+
+def test_refresh_hosts_forces_a_cycle():
+    b = _make_bridge()
+    seen = {}
+    with patch.object(b, "_refresh_cycle", side_effect=lambda **kw: seen.update(kw)):
+        b.refresh_hosts()
+        import time as _t
+
+        for _ in range(100):
+            if seen:
+                break
+            _t.sleep(0.01)
+    assert seen == {"force": True}

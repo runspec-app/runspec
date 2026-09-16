@@ -273,8 +273,40 @@ def _remote_log_script(
     return f"for f in {patterns}; do {body}done 2>/dev/null"
 
 
+# The historic SSH key comment. ``key_marker()`` returns the live one (the
+# white-label package name); this default is what an unbranded install uses and
+# what keys pushed before the marker followed the package name carry. Never
+# change it — see bridge_config_ssh._KEY_MARKER.
+DEFAULT_KEY_MARKER = "runspec-console"
+
+# Charset a marker must fit: it is interpolated into a single-quoted shell/awk
+# program (rotation push) and appended to an authorized_keys line, so it must be
+# one whitespace-free token with no shell/awk metacharacters. Dist names are.
+_KEY_MARKER_RE = re.compile(r"[A-Za-z0-9._-]+")
+
+
+def valid_key_marker(marker: str) -> bool:
+    """True when ``marker`` is a single safe token usable as the key comment."""
+    return bool(marker) and _KEY_MARKER_RE.fullmatch(marker) is not None
+
+
+def key_marker() -> str:
+    """The comment this install tags its generated public keys with, and the one
+    its rotation prunes: the white-label package name (the same source that names
+    the config folder — ``config.app_slug()``), or ``runspec-console`` for a
+    default install / when the slug would not be safe inside the awk program.
+    Two branded installs on one machine therefore prune only their own keys."""
+    try:
+        from . import config as config_mod  # lazy: config never imports us
+
+        slug = config_mod.app_slug()
+    except Exception:
+        slug = ""
+    return slug if valid_key_marker(slug) else DEFAULT_KEY_MARKER
+
+
 def _write_ppk_v2(
-    dest: Path, raw_priv: bytes, raw_pub: bytes, comment: str = "runspec-console"
+    dest: Path, raw_priv: bytes, raw_pub: bytes, comment: str | None = None
 ) -> None:
     """Write a PuTTY PPK v2 file for an ed25519 key pair (no passphrase).
 
@@ -289,6 +321,7 @@ def _write_ppk_v2(
 
     key_type = b"ssh-ed25519"
     enc_type = b"none"
+    comment = comment or key_marker()
     comment_b = comment.encode()
 
     # SSH wire-format public blob

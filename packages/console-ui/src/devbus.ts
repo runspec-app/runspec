@@ -49,13 +49,22 @@ export interface DevStats {
 
 // Tunable: how many entries the ring buffer retains. On overflow the oldest
 // entries are dropped from the front.
-const CAP = 1000
+export const CAP = 5000
+
+// Errors are retained separately (up to ERROR_CAP) so they stay reachable via
+// the `error` filter after they've aged out of the main ring — the header's
+// "errors N" counter used to promise rows the buffer no longer held.
+export const ERROR_CAP = 500
 
 // Cap on the appended snippet length for coalesced token/output entries, so a
 // long stream doesn't grow one entry's detail without bound.
 const COALESCE_SNIPPET_CAP = 200
 
 let buf: DevEntry[] = []
+// Error entries (call failures + ERROR-level ssh records), newest last, kept
+// beyond the main ring's eviction. Entries here are the same objects (or later
+// `replace()`d versions) as in `buf` while both hold them.
+let errorBuf: DevEntry[] = []
 let seq = 0
 let paused = false
 
@@ -77,11 +86,27 @@ function refreshStats(): void {
   stats = { calls: statCalls, events: statEvents, errors: statErrors, total: buf.length }
 }
 
+function isErrorEntry(e: DevEntry): boolean {
+  return e.status === 'error' || e.category === 'error'
+}
+
+/** Record `e` in the error-retention ring (replacing a prior version by id). */
+function retainError(e: DevEntry): void {
+  const idx = errorBuf.findIndex(x => x.id === e.id)
+  const next = idx === -1
+    ? (errorBuf.length >= ERROR_CAP ? errorBuf.slice(errorBuf.length - ERROR_CAP + 1) : errorBuf.slice())
+    : errorBuf.slice()
+  if (idx === -1) next.push(e)
+  else next[idx] = e
+  errorBuf = next
+}
+
 /** Append an entry, evicting from the front past CAP. Replaces `buf` (new ref). */
 function push(entry: DevEntry): void {
   const next = buf.length >= CAP ? buf.slice(buf.length - CAP + 1) : buf.slice()
   next.push(entry)
   buf = next
+  if (isErrorEntry(entry)) retainError(entry)
   refreshStats()
   notify()
 }
@@ -93,6 +118,7 @@ function replace(id: number, patch: Partial<DevEntry>): void {
   const next = buf.slice()
   next[idx] = { ...next[idx], ...patch }
   buf = next
+  if (isErrorEntry(next[idx])) retainError(next[idx])
   refreshStats()
   notify()
 }
@@ -114,10 +140,28 @@ export function getStats(): DevStats {
   return stats
 }
 
+/**
+ * The error entries still retained — those in the main ring plus any that aged
+ * out of it — deduped by id, oldest first. Backs the Dev tab's `error` filter.
+ * Reference-stable: rebuilt only when the underlying buffers change.
+ */
+let errorSnapshot: DevEntry[] = []
+let errorSnapshotSrc: { buf: DevEntry[]; err: DevEntry[] } | null = null
+export function getErrorSnapshot(): DevEntry[] {
+  if (errorSnapshotSrc && errorSnapshotSrc.buf === buf && errorSnapshotSrc.err === errorBuf) return errorSnapshot
+  const byId = new Map<number, DevEntry>()
+  for (const e of errorBuf) byId.set(e.id, e)
+  for (const e of buf) if (isErrorEntry(e)) byId.set(e.id, e)  // in-ring version wins
+  errorSnapshot = [...byId.values()].sort((a, b) => a.id - b.id)
+  errorSnapshotSrc = { buf, err: errorBuf }
+  return errorSnapshot
+}
+
 // ── controls ───────────────────────────────────────────────────────────────
 
 export function clear(): void {
   buf = []
+  errorBuf = []
   refreshStats()
   notify()
 }
@@ -318,6 +362,7 @@ export function installDispatchTap(): void {
 // Exposed for tests so each case starts from a clean slate.
 export function _resetForTests(): void {
   buf = []
+  errorBuf = []
   seq = 0
   paused = false
   statCalls = 0
