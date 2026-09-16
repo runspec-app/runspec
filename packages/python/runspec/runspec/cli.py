@@ -542,6 +542,21 @@ def cmd_deny(args: list[str]) -> None:
         _deny_show(path, as_json=parsed.json.value)
         return
 
+    # Every write below lands in the venv root ({sys.prefix}) — a venv created
+    # as a service account (`sudo -u svc python -m venv …`) is not writable by
+    # the operator who manages it, so turn the raw PermissionError traceback
+    # into a one-line refusal naming the owner and the `sudo -u` remedy.
+    try:
+        _deny_write(action, parsed, path)
+    except PermissionError as exc:
+        _deny_permission_denied(path, exc, args)
+        sys.exit(1)
+
+
+def _deny_write(action: str, parsed: Any, path: Path) -> None:
+    """The mutating half of ``cmd_deny`` (clear / mode / all / add)."""
+    from runspec import denylist as _dl
+
     if action == "clear":
         if path.exists():
             path.unlink()
@@ -594,6 +609,37 @@ def cmd_deny(args: list[str]) -> None:
     print(f"✗  Unknown deny action: {action}")
     print("   Available actions: add | all | list | clear | mode")
     sys.exit(1)
+
+
+def _venv_owner(path: Path) -> str:
+    """Best-effort owner name of the venv root holding ``path`` (``""`` when
+    the platform has no owner notion or the lookup fails)."""
+    try:
+        return path.parent.owner()
+    except (OSError, KeyError, NotImplementedError):  # Windows / unknown uid
+        return ""
+
+
+def _deny_permission_denied(path: Path, exc: PermissionError, args: list[str]) -> None:
+    """Explain a denied denylist write: the file lives in the venv root, which a
+    venv created as another user (``sudo -u svc …``) doesn't let the operator
+    write. Names the owner and the exact escalated command to re-run."""
+    print("✗  Cannot write the denylist: permission denied.", file=sys.stderr)
+    print(f"   {path}", file=sys.stderr)
+    owner = _venv_owner(path)
+    if owner:
+        print(f"   The venv is owned by '{owner}' — re-run as that user, e.g.:", file=sys.stderr)
+        argv = " ".join(_shell_quote(a) for a in args)
+        print(f"     sudo -u {owner} {sys.argv[0]} deny {argv}".rstrip(), file=sys.stderr)
+    else:
+        print("   Re-run as the user that owns the virtual environment.", file=sys.stderr)
+    print(f"   ({exc.strerror or exc})", file=sys.stderr)
+
+
+def _shell_quote(value: str) -> str:
+    import shlex
+
+    return shlex.quote(value)
 
 
 def _deny_show(path: Path, as_json: bool = False) -> None:

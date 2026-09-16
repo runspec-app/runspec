@@ -9,12 +9,18 @@ construction, host/venv fan-out, target filtering, and the autonomy gate.
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import stat as _stat
+import subprocess
 import threading
 import time
+from pathlib import Path
 from typing import Any
 
 import pytest
 
+from runspec_console import bridge_utils as bu
 from runspec_console.bridge import Bridge
 from runspec_console.bridge_const import ToolCancelled
 
@@ -338,3 +344,224 @@ def test_cancel_before_start_issues_nothing():
     with pytest.raises(ToolCancelled):
         b._run_manage_denylist({"action": "all"}, cancel_event=ev)
     assert b.ssh_calls == []
+
+
+# ── escalation: a venv root owned by a service account ──────────────────────
+#
+# `runspec deny` writes into the venv root; a venv created as a service account
+# (`sudo -u svc python -m venv …`) refuses the login user's write. The fan-out
+# re-runs a permission-denied *write* once, escalated to the venv owner / root.
+
+_DENIED_OLD_CORE = (
+    "Traceback (most recent call last):\n  ...\n"
+    "PermissionError: [Errno 13] Permission denied: "
+    "'/opt/venvs/app/runspec_denylist.toml.tmp'"
+)
+_DENIED_NEW_CORE = (
+    "✗  Cannot write the denylist: permission denied.\n"
+    "   /opt/venvs/app/runspec_denylist.toml\n"
+    "   The venv is owned by 'svc-app' — re-run as that user"
+)
+
+
+def _denied_then_escalated(
+    b: _StubBridge,
+    denied: str,
+    escalated=(0, "=====AS svc-app\n✓  Disabled ALL runnables in this venv.", ""),
+):
+    def run(ssh, command, *, identity_file=None, timeout=15):
+        b.ssh_calls.append((ssh, command, identity_file))
+        if "sudo -n" in command:
+            return escalated
+        return (1, "", denied)
+
+    return run
+
+
+@pytest.mark.parametrize("denied", [_DENIED_OLD_CORE, _DENIED_NEW_CORE])
+def test_permission_denied_write_is_retried_escalated(denied: str):
+    b = _StubBridge(HOSTS)
+    b._ssh_run = _denied_then_escalated(b, denied)  # type: ignore[method-assign]
+    out = b._run_manage_denylist(
+        {"action": "all", "reason": "freeze", "targets": ["prod-2"]}
+    )
+    assert len(b.ssh_calls) == 2
+    plain, escalated = b.ssh_calls[0][1], b.ssh_calls[1][1]
+    assert plain == "/opt/venvs/app/bin/runspec deny all --reason freeze"
+    assert escalated == bu.denylist_escalation_cmd(
+        "/opt/venvs/app/bin/runspec", ["all", "--reason", "freeze"]
+    )
+    assert 'sudo -n -u "$o" "$rp" deny all --reason freeze' in escalated
+    assert "✓ prod-2/app (as svc-app): ✓  Disabled ALL runnables" in out
+    assert "1/1 venv(s) ok" in out
+
+
+def test_escalation_root_tier_labelled():
+    b = _StubBridge(HOSTS)
+    b._ssh_run = _denied_then_escalated(  # type: ignore[method-assign]
+        b, _DENIED_NEW_CORE, (0, "=====AS root\n✓  Cleared denylist", "")
+    )
+    out = b._run_manage_denylist({"action": "clear", "targets": ["prod-2"]})
+    assert "✓ prod-2/app (as root): ✓  Cleared denylist" in out
+
+
+def test_escalation_refused_is_reported_per_venv():
+    b = _StubBridge(HOSTS)
+    refusal = "cannot escalate: the venv root /opt/venvs/app is owned by svc-app and passwordless sudo (as svc-app or root) for /opt/venvs/app/bin/runspec was refused"
+    b._ssh_run = _denied_then_escalated(  # type: ignore[method-assign]
+        b, _DENIED_NEW_CORE, (77, "", refusal)
+    )
+    out = b._run_manage_denylist(
+        {"action": "mode", "setting": "warn", "targets": ["prod-2"]}
+    )
+    assert len(b.ssh_calls) == 2
+    assert f"✗ prod-2/app: {refusal}" in out
+    assert "0/1 venv(s) ok" in out
+
+
+def test_list_never_escalates():
+    b = _StubBridge(HOSTS)
+    b._ssh_run = _denied_then_escalated(b, _DENIED_NEW_CORE)  # type: ignore[method-assign]
+    out = b._run_manage_denylist({"action": "list", "targets": ["prod-2"]})
+    assert len(b.ssh_calls) == 1
+    assert "✗ prod-2/app:" in out
+
+
+def test_non_permission_failure_not_retried():
+    b = _StubBridge(HOSTS)
+
+    def failing(ssh, command, *, identity_file=None, timeout=15):
+        b.ssh_calls.append((ssh, command, identity_file))
+        return (1, "", "✗  mode requires one of: enforce | warn | off")
+
+    b._ssh_run = failing  # type: ignore[method-assign]
+    b._run_manage_denylist({"action": "all", "targets": ["prod-2"]})
+    assert len(b.ssh_calls) == 1
+
+
+def test_successful_plain_write_not_retried():
+    b = _StubBridge(HOSTS)
+    out = b._run_manage_denylist({"action": "all", "targets": ["prod-2"]})
+    assert len(b.ssh_calls) == 1
+    assert "(as " not in out
+
+
+# ── pure helpers ────────────────────────────────────────────────────────────
+
+
+def test_looks_permission_denied():
+    assert bu.looks_permission_denied(_DENIED_OLD_CORE)
+    assert bu.looks_permission_denied(_DENIED_NEW_CORE)
+    assert bu.looks_permission_denied("OSError: [Errno 13] Permission denied")
+    assert not bu.looks_permission_denied("✗  Unknown deny action: frob")
+    assert not bu.looks_permission_denied("")
+
+
+def test_split_denylist_as():
+    assert bu.split_denylist_as("=====AS svc\n✓ ok\nmore") == ("svc", "✓ ok\nmore")
+    assert bu.split_denylist_as("=====AS root") == ("root", "")
+    assert bu.split_denylist_as("✓ ok") == ("", "✓ ok")
+    assert bu.split_denylist_as("") == ("", "")
+
+
+def test_escalation_cmd_quotes_path_and_args():
+    cmd = bu.denylist_escalation_cmd(
+        "/opt/v x/bin/runspec", ["add", "-r", "deploy", "--reason", "change freeze"]
+    )
+    assert cmd.startswith("rp='/opt/v x/bin/runspec'; ")
+    assert cmd.count("deny add -r deploy --reason 'change freeze'") == 3
+    assert 'stat -c %U "$r"' in cmd and "exit 77" in cmd
+    assert cmd.count("=====AS ") == 2
+
+
+# ── the real shell script with a fake sudo / stat / runspec on PATH ────────
+
+_SH = shutil.which("sh")
+needs_sh = pytest.mark.skipif(not _SH, reason="needs sh")
+
+
+def _fake_tools(
+    tmp_path: Path, *, owner: str, sudo_allows: str
+) -> tuple[str, Path, Path]:
+    """Build a fake venv (`bin/runspec` shell script) plus a PATH dir holding a
+    fake `sudo` (records `-u <user>`, honours `sudo_allows` = 'owner'|'root'|
+    'both'|'none', then execs the command) and a fake `stat` reporting `owner`.
+    Returns (runspec_path, bin_dir, sudo_log)."""
+    venv = tmp_path / "venv"
+    (venv / "bin").mkdir(parents=True)
+    rp = venv / "bin" / "runspec"
+    rp.write_text(
+        '#!/bin/sh\nif [ "$2" = "list" ]; then echo listed; exit 0; fi\n'
+        'echo "wrote: $*"; exit 0\n'
+    )
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    log = tmp_path / "sudo.log"
+    sudo = tools / "sudo"
+    sudo.write_text(
+        "#!/bin/sh\n"
+        "as=root; tag=default\n"
+        'while [ $# -gt 0 ]; do case "$1" in -n) shift;; -u) as=$2; tag="-u $2"; shift 2;; *) break;; esac; done\n'
+        f'echo "$tag $*" >> "{log}"\n'
+        f'allow="{sudo_allows}"\n'
+        'if [ "$as" = root ]; then [ "$allow" = root ] || [ "$allow" = both ] || { echo "sudo: a password is required" >&2; exit 1; }\n'
+        'else [ "$allow" = owner ] || [ "$allow" = both ] || { echo "sudo: a password is required" >&2; exit 1; }; fi\n'
+        'exec "$@"\n'
+    )
+    fake_stat = tools / "stat"
+    fake_stat.write_text(f'#!/bin/sh\necho "{owner}"\n')
+    for f in (rp, sudo, fake_stat):
+        f.chmod(f.stat().st_mode | _stat.S_IXUSR)
+    return str(rp), tools, log
+
+
+def _run_escalation(tmp_path: Path, *, owner: str, sudo_allows: str):
+    rp, tools, log = _fake_tools(tmp_path, owner=owner, sudo_allows=sudo_allows)
+    env = dict(os.environ, PATH=f"{tools}{os.pathsep}{os.environ.get('PATH', '')}")
+    proc = subprocess.run(
+        [_SH, "-c", bu.denylist_escalation_cmd(rp, ["all", "--reason", "x y"])],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    return proc, (log.read_text().splitlines() if log.exists() else [])
+
+
+@needs_sh
+def test_sh_owner_tier_when_owner_differs_and_sudo_u_allowed(tmp_path: Path):
+    proc, log = _run_escalation(tmp_path, owner="svc-app", sudo_allows="owner")
+    assert proc.returncode == 0, proc.stderr
+    as_user, rest = bu.split_denylist_as(proc.stdout)
+    assert as_user == "svc-app"
+    assert rest.strip() == "wrote: deny all --reason x y"
+    assert log[-1].startswith("-u svc-app ")
+
+
+@needs_sh
+def test_sh_root_tier_when_owner_grant_missing(tmp_path: Path):
+    """The `scoped` sudoers drop-in grants (root) on the venv bin dir only."""
+    proc, log = _run_escalation(tmp_path, owner="svc-app", sudo_allows="root")
+    assert proc.returncode == 0, proc.stderr
+    as_user, rest = bu.split_denylist_as(proc.stdout)
+    assert as_user == "root"
+    assert rest.strip() == "wrote: deny all --reason x y"
+    assert log[0].startswith("-u svc-app ") and log[-1].startswith("default ")
+
+
+@needs_sh
+def test_sh_root_tier_when_owner_is_login_user(tmp_path: Path):
+    me = subprocess.run(["id", "-un"], capture_output=True, text=True).stdout.strip()
+    proc, log = _run_escalation(tmp_path, owner=me, sudo_allows="both")
+    assert proc.returncode == 0, proc.stderr
+    assert bu.split_denylist_as(proc.stdout)[0] == "root"
+    assert all(line.startswith("default ") for line in log)  # owner tier skipped
+
+
+@needs_sh
+def test_sh_refusal_exits_77_with_hint(tmp_path: Path):
+    proc, _log = _run_escalation(tmp_path, owner="svc-app", sudo_allows="none")
+    assert proc.returncode == 77
+    assert proc.stdout == ""
+    assert "cannot escalate" in proc.stderr
+    assert "owned by svc-app" in proc.stderr
+    assert "sudo -u svc-app" in proc.stderr and "deny all --reason 'x y'" in proc.stderr

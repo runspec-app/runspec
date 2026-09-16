@@ -8,6 +8,29 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.266.1] — 2026-09-16
+
+### Fixed
+- **Denylist writes work on venvs owned by a service account.** `runspec deny`
+  writes `runspec_denylist.toml` into the venv root, so on a fleet whose venvs
+  were created as a service account (`create-venv --run-as svc`) every
+  Denylist-modal / `manage_denylist` write failed with a permission-denied
+  traceback (listing still worked — it only reads). The fan-out now re-runs a
+  write refused with *permission denied* once, **escalated**: as the venv
+  root's **owner** via passwordless `sudo -n -u <owner>` (the file stays owned
+  by the service account like the rest of the venv), else as **root** via
+  `sudo -n` (the `enable-passwordless-sudo scoped` drop-in grants `(root)` on
+  the venv's `bin/` only, so an owner grant may be absent while root works),
+  else a one-line "cannot escalate" refusal naming the owner and the exact
+  `sudo -u` command. Each tier is probed with the read-only `deny list` on the
+  same binary, so it needs exactly the sudoers grant the write does; `-n` never
+  prompts. The per-venv result line says which tier ran (`✓ prod-1/app (as
+  svc-app): …`). Reads never escalate; a successful plain write is untouched;
+  the local host still runs as the console user. Detection accepts both the
+  new one-line core refusal (runspec 0.51.2) and an older core's traceback.
+  Pure `bridge_utils.denylist_escalation_cmd` / `looks_permission_denied` /
+  `split_denylist_as`; wired in `bridge_agent_tools._run_manage_denylist`.
+
 ## [0.266.0] — 2026-09-16
 
 ### Added

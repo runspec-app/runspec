@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -179,3 +180,104 @@ def test_cli_list_json(dl_path: Path, capsys: pytest.CaptureFixture[str]) -> Non
     assert payload["present"] is True
     assert payload["rules"][0]["runnables"] == ["deploy"]
     assert payload["rules"][0]["hosts"] == ["prod-*"]
+
+
+# ── CLI: permission denied on a venv root owned by someone else ─────────────
+
+_not_root = pytest.mark.skipif(
+    not hasattr(os, "geteuid") or os.geteuid() == 0,
+    reason="chmod-based permission test needs a non-root POSIX user",
+)
+
+
+@_not_root
+def test_cli_write_permission_denied_is_explained(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    """A denylist write into a venv root the operator can't write (the venv was
+    created as a service account) must be a one-line refusal naming the owner
+    and the `sudo -u <owner>` remedy — not a PermissionError traceback."""
+    from runspec import cli
+
+    venv = tmp_path / "venv"
+    venv.mkdir()
+    monkeypatch.setenv("RUNSPEC_DENYLIST_FILE", str(venv / "runspec_denylist.toml"))
+    venv.chmod(0o555)
+    try:
+        with pytest.raises(SystemExit) as exc:
+            cli.cmd_deny(["all", "--reason", "change freeze"])
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert "Cannot write the denylist: permission denied" in err
+        assert str(venv / "runspec_denylist.toml") in err
+        assert f"owned by '{venv.owner()}'" in err
+        assert f"sudo -u {venv.owner()}" in err
+        assert "deny all --reason 'change freeze'" in err
+        assert "Traceback" not in err
+    finally:
+        venv.chmod(0o755)
+
+
+@_not_root
+def test_cli_clear_permission_denied_is_explained(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    from runspec import cli
+
+    venv = tmp_path / "venv"
+    venv.mkdir()
+    path = venv / "runspec_denylist.toml"
+    denylist.write_denylist({"disabled": True}, path)
+    monkeypatch.setenv("RUNSPEC_DENYLIST_FILE", str(path))
+    venv.chmod(0o555)
+    try:
+        with pytest.raises(SystemExit) as exc:
+            cli.cmd_deny(["clear"])
+        assert exc.value.code == 1
+        assert "permission denied" in capsys.readouterr().err
+        assert path.exists()  # nothing was removed
+    finally:
+        venv.chmod(0o755)
+
+
+def test_cli_write_still_works_when_writable(dl_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """The try/except wrapper must not change the happy path."""
+    from runspec import cli
+
+    cli.cmd_deny(["all", "--reason", "freeze"])
+    assert "Disabled ALL runnables" in capsys.readouterr().out
+    assert denylist.load_denylist(dl_path)["disabled"] is True
+    cli.cmd_deny(["clear"])
+    assert not dl_path.exists()
+
+
+def test_cli_permission_denied_message_via_seam(dl_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    """Platform-independent twin of the chmod test (runs as root / on Windows):
+    the write raising PermissionError yields the owner-naming refusal."""
+    from runspec import cli
+
+    def denied(section: object, path: object = None) -> None:
+        raise PermissionError(13, "Permission denied", str(dl_path))
+
+    monkeypatch.setattr(denylist, "write_denylist", denied)
+    monkeypatch.setattr(cli, "_venv_owner", lambda _p: "svc-app")
+    with pytest.raises(SystemExit) as exc:
+        cli.cmd_deny(["add", "-r", "deploy", "--reason", "change freeze"])
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "Cannot write the denylist: permission denied" in err
+    assert "owned by 'svc-app'" in err
+    assert "sudo -u svc-app" in err
+    assert "deny add -r deploy --reason 'change freeze'" in err
+    assert "Permission denied" in err
+
+
+def test_cli_permission_denied_without_owner(dl_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    from runspec import cli
+
+    def denied(section: object, path: object = None) -> None:
+        raise PermissionError(13, "Permission denied", str(dl_path))
+
+    monkeypatch.setattr(denylist, "write_denylist", denied)
+    monkeypatch.setattr(cli, "_venv_owner", lambda _p: "")
+    with pytest.raises(SystemExit):
+        cli.cmd_deny(["mode", "warn"])
+    err = capsys.readouterr().err
+    assert "Re-run as the user that owns the virtual environment" in err
+    assert "sudo -u" not in err

@@ -80,6 +80,25 @@ Because the file carries hostname rules, one canonical denylist can be
 distributed across many hosts and still target only the right ones (e.g. disable
 `deploy` on `prod-*` while leaving `dev-*` alone).
 
+## Venvs owned by a service account
+
+`runspec deny` writes into the venv root, so a venv created as another user
+(`sudo -u svc python -m venv …` — for example runspec-linux's `create-venv
+--run-as svc`) refuses the operator's write. runspec ≥ 0.51.2 turns that into a
+one-line refusal naming the owner and the exact re-run instead of a traceback:
+
+```
+✗  Cannot write the denylist: permission denied.
+   /opt/venvs/app/runspec_denylist.toml
+   The venv is owned by 'svc-app' — re-run as that user, e.g.:
+     sudo -u svc-app /opt/venvs/app/bin/runspec deny all --reason 'change freeze'
+```
+
+Run it as the owner (the file then stays owned by the service account like the
+rest of the venv) or as root — runnables only *read* the file, so either owner
+works. `runspec deny list` never needs escalation. The desktop console does
+this escalation for you (below).
+
 ## Why it cannot lock you out
 
 The `runspec` binary itself is exempt from the denylist, so `runspec deny clear`,
@@ -115,6 +134,16 @@ Because the tool shells out to the core `runspec` binary (which is exempt from
 its own denylist), it disables the *runnables* on those hosts, never the console
 itself, and `clear` can always re-enable them. Remote hosts need
 `runspec >= 0.43.0` for the tool to take effect.
+
+**Service-account venvs.** When a remote write comes back *permission denied*
+(the venv root belongs to the account it was created as — see above), the
+console re-runs it once, escalated: as the venv **owner** via passwordless
+`sudo -n -u <owner>` when that grant exists, else as **root** via `sudo -n`
+(what `enable-passwordless-sudo scoped` grants on the venv's `bin/`), else it
+reports *cannot escalate* with the exact `sudo -u` command to run by hand. The
+result line says which ran — `✓ prod-1/app (as svc-app): …`. Listing never
+escalates, a write that succeeds plainly is untouched, and `-n` means a
+missing sudoers rule fails fast rather than hanging on a password prompt.
 
 ## Testing
 

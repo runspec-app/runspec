@@ -10,6 +10,7 @@ import gzip
 import hashlib
 import json
 import re
+import shlex
 import shutil
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -277,6 +278,72 @@ def _remote_log_script(
 # white-label package name); this default is what an unbranded install uses and
 # what keys pushed before the marker followed the package name carry. Never
 # change it — see bridge_config_ssh._KEY_MARKER.
+# ── denylist: escalate a write to the venv owner ─────────────────────────────
+
+DENYLIST_WRITE_ACTIONS = frozenset({"add", "all", "clear", "mode"})
+DENYLIST_AS_MARKER = "=====AS "
+_PERMISSION_DENIED_RE = re.compile(
+    r"permission denied|PermissionError|EACCES|EPERM|Errno 13", re.IGNORECASE
+)
+
+
+def looks_permission_denied(text: str) -> bool:
+    """True when a failed ``runspec deny`` reply is a filesystem permission
+    refusal (the 0.51.2+ one-line message *or* an older core's traceback)."""
+    return bool(_PERMISSION_DENIED_RE.search(text or ""))
+
+
+def denylist_escalation_cmd(runspec_path: str, tail: list[str]) -> str:
+    """POSIX shell command re-running ``runspec deny <tail>`` **escalated** on a
+    remote host whose venv root the login user can't write.
+
+    ``runspec deny`` writes ``runspec_denylist.toml`` into the venv root
+    (``{sys.prefix}``); a venv created as a service account (``sudo -u svc
+    python -m venv …``, e.g. runspec-linux's ``create-venv --run-as``) refuses
+    the operator's write. Two tiers, probed with the read-only ``deny list`` on
+    the *same* binary so the probe needs exactly the sudoers grant the write
+    does (``enable-passwordless-sudo scoped`` grants ``(root)`` on the venv's
+    ``bin/`` only, so an owner grant may be absent while root works):
+
+    1. the venv root's **owner** (``stat -c %U``) when it isn't the login user
+       and ``sudo -n -u <owner>`` is permitted — the file stays owned by the
+       service account like the rest of the venv;
+    2. else **root** via ``sudo -n``;
+    3. else exit 77 with a one-line explanation (no password prompt: ``-n``
+       fails fast on a TTY-less channel).
+
+    The chosen tier is announced on stdout's first line as
+    ``=====AS <user>`` (:data:`DENYLIST_AS_MARKER`) for the caller to strip and
+    surface. ``tail`` is the argv after ``deny`` (already validated by the
+    caller); everything is ``shlex``-quoted."""
+    rp = shlex.quote(runspec_path)
+    args = " ".join(shlex.quote(a) for a in tail)
+    m = DENYLIST_AS_MARKER
+    return (
+        f'rp={rp}; r=$(dirname "$(dirname "$rp")"); '
+        'o=$(stat -c %U "$r" 2>/dev/null || stat -f %Su "$r" 2>/dev/null); '
+        "me=$(id -un 2>/dev/null); "
+        'if [ -n "$o" ] && [ "$o" != "$me" ] '
+        '&& sudo -n -u "$o" "$rp" deny list >/dev/null 2>&1; then '
+        f'echo "{m}$o"; exec sudo -n -u "$o" "$rp" deny {args}; '
+        'elif sudo -n "$rp" deny list >/dev/null 2>&1; then '
+        f'echo "{m}root"; exec sudo -n "$rp" deny {args}; '
+        'else echo "cannot escalate: the venv root $r is owned by ${o:-?} and '
+        "passwordless sudo (as ${o:-the owner} or root) for $rp was refused — "
+        "grant it, or run: sudo -u ${o:-<owner>} $rp deny "
+        f'{args}" >&2; exit 77; fi'
+    )
+
+
+def split_denylist_as(out: str) -> tuple[str, str]:
+    """Split the ``=====AS <user>`` first line off an escalated reply →
+    ``(user, rest)``; ``("", out)`` when the marker is absent."""
+    first, _, rest = (out or "").partition("\n")
+    if first.startswith(DENYLIST_AS_MARKER):
+        return first[len(DENYLIST_AS_MARKER) :].strip(), rest
+    return "", out or ""
+
+
 DEFAULT_KEY_MARKER = "runspec-console"
 
 # Charset a marker must fit: it is interpolated into a single-quoted shell/awk

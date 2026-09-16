@@ -273,4 +273,8 @@ invoked. The console drives it fleet-wide two ways:
 Listing is autonomous; changes are confirm-gated. The mechanism runs the core
 `runspec deny` command over SSH — across hosts in parallel, bounded by
 `[refresh] workers` — and the control path is exempt from its own denylist —
-the console can always re-enable.
+the console can always re-enable. A venv created as a service account
+(`create-venv --run-as svc`) isn't writable by the login user, so a write that
+comes back *permission denied* is re-run once escalated — as the venv owner via
+passwordless `sudo -n -u`, else as root — and the result line says which
+(`(as svc)`); see [Denylist → service-account venvs](denylist.md#venvs-owned-by-a-service-account).

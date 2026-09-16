@@ -2018,7 +2018,9 @@ class AgentToolsMixin:
                 "because the core `runspec` binary is exempt from its own "
                 "denylist. Actions: 'list' (inspect), 'add' (disable specific "
                 "runnable/user/host globs), 'all' (disable every runnable), "
-                "'clear' (re-enable everything), 'mode' (set enforce|warn|off)."
+                "'clear' (re-enable everything), 'mode' (set enforce|warn|off). "
+                "A venv owned by a service account is written as that owner "
+                "(or root) via passwordless sudo — the result says '(as <user>)'."
             ),
             "input_schema": {
                 "type": "object",
@@ -4742,6 +4744,12 @@ class AgentToolsMixin:
         venv), aggregating per-host/per-venv results. The autonomy gate has
         already approved this call.
 
+        A write refused with *permission denied* on a remote venv (its root is
+        owned by the service account the venv was created as) is re-run once
+        **escalated** — as the venv owner via passwordless ``sudo -n -u``, else
+        as root — and the result line says which (``(as svc)``). Reads never
+        escalate; the local host runs as the console user.
+
         ``cancel_event``/``on_progress`` (set when the agent runs this) make the
         SSH fan-out interruptible between hosts and stream a per-host progress
         line; a set ``cancel_event`` raises ``ToolCancelled``."""
@@ -4804,12 +4812,30 @@ class AgentToolsMixin:
             idf = h.get("identityFile")
             argv = [rp, "deny", action, *tail]
             venv = hosts_mod.venv_name(rp)
+            as_user = ""
             try:
                 if ssh:
                     cmd = " ".join(shlex.quote(p) for p in argv)
                     code, out, err = self._ssh_run(
                         ssh, cmd, identity_file=idf, timeout=20
                     )
+                    if (
+                        code != 0
+                        and action in utils_mod.DENYLIST_WRITE_ACTIONS
+                        and utils_mod.looks_permission_denied(
+                            f"{out or ''}\n{err or ''}"
+                        )
+                    ):
+                        # The venv root isn't ours to write (a venv created as a
+                        # service account): re-run escalated to its owner, or
+                        # root — see bridge_utils.denylist_escalation_cmd.
+                        code, out, err = self._ssh_run(
+                            ssh,
+                            utils_mod.denylist_escalation_cmd(rp, [action, *tail]),
+                            identity_file=idf,
+                            timeout=30,
+                        )
+                        as_user, out = utils_mod.split_denylist_as(out or "")
                 else:
                     proc = subprocess.run(
                         argv, capture_output=True, text=True, timeout=20
@@ -4818,9 +4844,10 @@ class AgentToolsMixin:
             except Exception as exc:  # noqa: BLE001 — report any failure per venv
                 return False, f"✗ {host_name}/{venv}: {exc}"
             body = (out or "").strip() or (err or "").strip() or f"exit {code}"
+            label = f"{host_name}/{venv}" + (f" (as {as_user})" if as_user else "")
             if code == 0:
-                return True, f"✓ {host_name}/{venv}: {body}"
-            return False, f"✗ {host_name}/{venv}: {body}"
+                return True, f"✓ {label}: {body}"
+            return False, f"✗ {label}: {body}"
 
         lines: list[str] = []
         ok_count = 0

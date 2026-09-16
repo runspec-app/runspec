@@ -7,6 +7,18 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.51.2] — 2026-09-16
+
+### Fixed
+- **`runspec deny` explains a permission-denied write instead of tracing back.**
+  The denylist lives in the venv root (`{sys.prefix}/runspec_denylist.toml`),
+  so a venv created as a service account (`sudo -u svc python -m venv …`, e.g.
+  runspec-linux's `create-venv --run-as`) refuses the operator's `deny add` /
+  `all` / `mode` / `clear` with a raw `PermissionError` traceback. The CLI now
+  catches it and prints a one-line refusal naming the path, the venv's owner,
+  and the exact escalated re-run (`sudo -u <owner> runspec deny …`), exit 1.
+  The happy path is unchanged. (`cli._deny_write` / `_deny_permission_denied`.)
+
 ## [0.51.1] — 2026-09-14
 
 ### Fixed
