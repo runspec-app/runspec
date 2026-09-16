@@ -4524,7 +4524,8 @@ export function TelemetryTab() {
   const [enabled, setEnabled] = useState(false)
   const [endpoint, setEndpoint] = useState('')
   const [protocol, setProtocol] = useState('http/protobuf')
-  const [serviceName, setServiceName] = useState('runspec-console')
+  const [serviceName, setServiceName] = useState('')
+  const [label, setLabel] = useState('')
   const [sampleRatio, setSampleRatio] = useState<number>(1)
   const [captureContent, setCaptureContent] = useState(false)
   const [maxContentChars, setMaxContentChars] = useState<number>(0)
@@ -4533,6 +4534,12 @@ export function TelemetryTab() {
   const [headers, setHeaders] = useState<Array<{ k: string; v: string }>>([])
   const [apiKeyCommand, setApiKeyCommand] = useState('')
   const [apiKeyHeader, setApiKeyHeader] = useState('x-api-key')
+  // Keychain-backed auth: pick a named Credential (secret stays in the OS
+  // keychain) — the per-user API key set up during onboarding. Mirrors the MCP
+  // tab's credential picker.
+  const [credential, setCredential] = useState('')
+  const [credentialHeader, setCredentialHeader] = useState('')
+  const [credOptions, setCredOptions] = useState<McpCredentialOption[]>([])
   // Metrics ([telemetry.metrics]) — a SEPARATE OTLP signal with its own endpoint
   // and auth, so metrics can go to a different backend than traces (e.g. traces →
   // LangSmith, which takes OTLP traces but not metrics, and metrics → Grafana).
@@ -4542,6 +4549,8 @@ export function TelemetryTab() {
   const [metricsHeaders, setMetricsHeaders] = useState<Array<{ k: string; v: string }>>([])
   const [metricsApiKeyCommand, setMetricsApiKeyCommand] = useState('')
   const [metricsApiKeyHeader, setMetricsApiKeyHeader] = useState('x-api-key')
+  const [metricsCredential, setMetricsCredential] = useState('')
+  const [metricsCredentialHeader, setMetricsCredentialHeader] = useState('')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [testing, setTesting] = useState(false)
@@ -4555,7 +4564,9 @@ export function TelemetryTab() {
       setEnabled(t.enabled === true)
       setEndpoint(typeof t.endpoint === 'string' ? t.endpoint : '')
       setProtocol(typeof t.protocol === 'string' && t.protocol ? t.protocol : 'http/protobuf')
-      setServiceName(typeof t.service_name === 'string' && t.service_name ? t.service_name : 'runspec-console')
+      // Blank ⇒ the backend derives service.name from the branded app slug.
+      setServiceName(typeof t.service_name === 'string' ? t.service_name : '')
+      setLabel(typeof t.label === 'string' ? t.label : '')
       setSampleRatio(typeof t.sample_ratio === 'number' ? t.sample_ratio : 1)
       setCaptureContent(t.capture_content === true)
       setMaxContentChars(typeof t.max_content_chars === 'number' ? t.max_content_chars : 0)
@@ -4563,6 +4574,8 @@ export function TelemetryTab() {
       setTlsVerify(t.tls_verify !== false)
       setApiKeyCommand(typeof t.api_key_command === 'string' ? t.api_key_command : '')
       setApiKeyHeader(typeof t.api_key_header === 'string' && t.api_key_header ? t.api_key_header : 'x-api-key')
+      setCredential(typeof t.credential === 'string' ? t.credential : '')
+      setCredentialHeader(typeof t.credential_header === 'string' ? t.credential_header : '')
       const h = (t.headers ?? {}) as Record<string, unknown>
       setHeaders(
         h && typeof h === 'object'
@@ -4575,6 +4588,8 @@ export function TelemetryTab() {
       setMetricsInterval(typeof m.export_interval === 'number' ? m.export_interval : 60)
       setMetricsApiKeyCommand(typeof m.api_key_command === 'string' ? m.api_key_command : '')
       setMetricsApiKeyHeader(typeof m.api_key_header === 'string' && m.api_key_header ? m.api_key_header : 'x-api-key')
+      setMetricsCredential(typeof m.credential === 'string' ? m.credential : '')
+      setMetricsCredentialHeader(typeof m.credential_header === 'string' ? m.credential_header : '')
       const mh = (m.headers ?? {}) as Record<string, unknown>
       setMetricsHeaders(
         mh && typeof mh === 'object'
@@ -4582,6 +4597,7 @@ export function TelemetryTab() {
           : [],
       )
     })
+    bridge.mcp_credential_options().then(setCredOptions).catch(() => setCredOptions([]))
   }, [])
 
   const handleSave = async () => {
@@ -4598,7 +4614,8 @@ export function TelemetryTab() {
           enabled,
           endpoint: endpoint.trim(),
           protocol: protocol.trim() || 'http/protobuf',
-          service_name: serviceName.trim() || 'runspec-console',
+          service_name: serviceName.trim(),
+          label: label.trim(),
           sample_ratio: sampleRatio,
           capture_content: captureContent,
           max_content_chars: Math.max(0, Math.floor(maxContentChars || 0)),
@@ -4607,6 +4624,8 @@ export function TelemetryTab() {
           headers: headerObj,
           api_key_command: apiKeyCommand.trim(),
           api_key_header: apiKeyHeader.trim() || 'x-api-key',
+          credential: credential.trim(),
+          credential_header: credentialHeader.trim(),
           metrics: {
             enabled: metricsEnabled,
             endpoint: metricsEndpoint.trim(),
@@ -4614,6 +4633,8 @@ export function TelemetryTab() {
             headers: metricsHeaderObj,
             api_key_command: metricsApiKeyCommand.trim(),
             api_key_header: metricsApiKeyHeader.trim() || 'x-api-key',
+            credential: metricsCredential.trim(),
+            credential_header: metricsCredentialHeader.trim(),
           },
         },
       })
@@ -4683,7 +4704,14 @@ export function TelemetryTab() {
       {row('Enable tracing', <Switch checked={enabled} onChange={setEnabled} />)}
       {row('OTLP endpoint', <Input style={{ width: 380 }} placeholder="https://…/v1/traces  (blank ⇒ OTEL_EXPORTER_OTLP_ENDPOINT)" value={endpoint} onChange={e => setEndpoint(e.target.value)} disabled={!enabled} />)}
       {row('Protocol', <Select style={{ width: 180 }} value={protocol} onChange={setProtocol} disabled={!enabled} options={[{ value: 'http/protobuf', label: 'http/protobuf' }]} />)}
-      {row('Service name', <Input style={{ width: 260 }} value={serviceName} onChange={e => setServiceName(e.target.value)} disabled={!enabled} />)}
+      {row('Service name', <Input style={{ width: 260 }} placeholder="(defaults to the app name)" value={serviceName} onChange={e => setServiceName(e.target.value)} disabled={!enabled} />)}
+      {row('Instance label', <Input style={{ width: 260 }} placeholder="(defaults to this machine's hostname)" value={label} onChange={e => setLabel(e.target.value)} disabled={!enabled} />)}
+      <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: -2 }}>
+        Every span and metric carries a resource identity: <strong>service name</strong> (blank ⇒ this
+        install's app name), an <strong>instance label</strong> that becomes <code>service.instance.id</code>
+        (blank ⇒ hostname) so several consoles — even on one machine — stay distinct time series rather
+        than colliding, plus this machine's hostname and OS user (<code>host.name</code> / <code>process.owner</code>).
+      </Typography.Paragraph>
       {row('Sample ratio', <InputNumber min={0} max={1} step={0.1} value={sampleRatio} onChange={v => setSampleRatio(typeof v === 'number' ? v : 1)} disabled={!enabled} />)}
 
       <Divider style={{ margin: '14px 0' }} />
@@ -4712,6 +4740,18 @@ export function TelemetryTab() {
       </Typography.Paragraph>
       {row('API key command', <Input style={{ width: 380 }} placeholder="e.g. keyring get langsmith key" value={apiKeyCommand} onChange={e => setApiKeyCommand(e.target.value)} disabled={!enabled} />)}
       {row('Inject under header', <Input style={{ width: 220 }} placeholder="x-api-key" value={apiKeyHeader} onChange={e => setApiKeyHeader(e.target.value)} disabled={!enabled || !apiKeyCommand.trim()} />)}
+
+      <Typography.Paragraph style={{ fontSize: 13, margin: '10px 0 6px' }}>
+        <strong>Or use a stored credential</strong> — pick a Credential (Settings → Credentials; its
+        secret stays in the OS keychain) and it's injected at startup. This is the recommended path for a
+        per-user API key you set up during onboarding (log in to LangSmith / Grafana, create a key, add it
+        as a Credential). A <code>userpass</code> credential becomes <code>Authorization: Basic</code>, a
+        <code>token</code> becomes <code>Bearer</code>, or set a header below to send the raw secret under
+        it (e.g. <code>x-api-key</code> for LangSmith).
+      </Typography.Paragraph>
+      {row('Credential', <Select style={{ width: 300 }} value={credential} onChange={setCredential} disabled={!enabled}
+        options={[{ value: '', label: 'None' }, ...credOptions.map(c => ({ value: c.id, label: `${c.label} (${c.kind})` }))]} />)}
+      {row('Inject under header', <Input style={{ width: 220 }} placeholder="Authorization (default)" value={credentialHeader} onChange={e => setCredentialHeader(e.target.value)} disabled={!enabled || !credential} />)}
 
       <Divider style={{ margin: '14px 0' }} />
       <Alert
@@ -4808,6 +4848,9 @@ export function TelemetryTab() {
 
       {row('Metrics API key command', <Input style={{ width: 380 }} placeholder="e.g. keyring get grafana key" value={metricsApiKeyCommand} onChange={e => setMetricsApiKeyCommand(e.target.value)} disabled={!metricsEnabled} />)}
       {row('Inject under header', <Input style={{ width: 220 }} placeholder="x-api-key" value={metricsApiKeyHeader} onChange={e => setMetricsApiKeyHeader(e.target.value)} disabled={!metricsEnabled || !metricsApiKeyCommand.trim()} />)}
+      {row('Metrics credential', <Select style={{ width: 300 }} value={metricsCredential} onChange={setMetricsCredential} disabled={!metricsEnabled}
+        options={[{ value: '', label: 'None' }, ...credOptions.map(c => ({ value: c.id, label: `${c.label} (${c.kind})` }))]} />)}
+      {row('Inject under header', <Input style={{ width: 220 }} placeholder="Authorization (default)" value={metricsCredentialHeader} onChange={e => setMetricsCredentialHeader(e.target.value)} disabled={!metricsEnabled || !metricsCredential} />)}
 
       <Space style={{ marginTop: 10 }}>
         <Button loading={metricsTesting} disabled={!metricsEnabled} onClick={handleTestMetric}>Send test metric</Button>
@@ -5270,6 +5313,15 @@ const OWN_MCP_TOOL_STYLE = [
   { value: 'runnable', label: 'Per runnable — one tool per distinct runnable (fewest tools)' },
 ]
 
+// A cryptographically-random bearer token (32 bytes → 64 hex chars), so the
+// operator doesn't have to invent one. Web Crypto is available in the console's
+// webview and under jsdom in tests.
+function generateBearerToken(): string {
+  const bytes = new Uint8Array(32)
+  crypto.getRandomValues(bytes)
+  return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('')
+}
+
 export function McpServerTab() {
   const [enabled, setEnabled] = useState(false)
   const [host, setHost] = useState('127.0.0.1')
@@ -5340,7 +5392,12 @@ export function McpServerTab() {
       {row('Enable server', <Switch checked={enabled} onChange={setEnabled} />)}
       {row('Host', <Input style={{ width: 200, fontFamily: MONO_FONT }} value={host} onChange={e => setHost(e.target.value)} disabled={!enabled} />)}
       {row('Port', <InputNumber min={1} max={65535} value={port} onChange={v => setPort(typeof v === 'number' ? v : 8765)} disabled={!enabled} />)}
-      {row('Bearer token (optional)', <Input.Password style={{ width: 260 }} placeholder="none — localhost only" value={token} onChange={e => setToken(e.target.value)} disabled={!enabled} />)}
+      {row('Bearer token (optional)',
+        <Space.Compact style={{ width: 340 }}>
+          <Input.Password style={{ fontFamily: MONO_FONT }} placeholder="none — localhost only" value={token} onChange={e => setToken(e.target.value)} disabled={!enabled} />
+          <Button onClick={() => setToken(generateBearerToken())} disabled={!enabled}>Generate</Button>
+        </Space.Compact>,
+      )}
       {row('Default autonomy floor', <Select style={{ width: 260 }} value={autonomy} onChange={setAutonomy} options={OWN_MCP_AUTONOMY} disabled={!enabled} />)}
       {row('Confirm wait (seconds)', <InputNumber min={1} max={3600} value={confirmWait} onChange={v => setConfirmWait(typeof v === 'number' ? v : 50)} disabled={!enabled} />)}
       <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: -2 }}>

@@ -348,6 +348,53 @@ class ConfigSshMixin:
         if old.get("chat") != new.get("chat") or self._ssh_pool is not pool_before:
             self.restart_chat()
 
+    def _resolve_telemetry_credentials(
+        self, cfg: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Return :func:`config.read_telemetry` with any keychain-backed credential
+        secrets folded into the trace **and** metrics ``headers`` — so
+        ``observability`` stays keyring-free and just consumes finished headers.
+
+        Mirrors the MCP-client convention (``[[mcp.servers]] credential`` /
+        ``header_credentials``): a section's ``credential`` id resolves to a secret
+        header (``userpass`` ⇒ ``Authorization: Basic``; ``token`` ⇒ ``Bearer``;
+        or the raw secret under ``credential_header`` — e.g. ``x-api-key`` for
+        LangSmith), and ``header_credentials`` fills several named headers. An
+        explicit header the operator set always wins. Because the console is a
+        single-user machine app, each operator sets up their **own** API key as a
+        Credential during onboarding; only the id lives in config, the secret in
+        the OS keychain. Best-effort: an unresolvable id is skipped, never raised —
+        the export just goes out with whatever headers did resolve."""
+        from . import mcp_client
+
+        if cfg is None:
+            cfg = config_mod.read_telemetry()
+
+        def _enrich(section: dict[str, Any]) -> None:
+            headers = dict(section.get("headers") or {})
+            cid = str(section.get("credential") or "").strip()
+            if cid:
+                try:
+                    cred = self._mcp_credential(cid)
+                except Exception:  # noqa: BLE001 — a lookup must never break init
+                    cred = None
+                if cred:
+                    mcp_client.apply_credential_header(headers, section, cred)
+            try:
+                mcp_client.apply_header_credentials(
+                    headers, section.get("header_credentials"), self._mcp_credential
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            section["headers"] = headers
+
+        out = dict(cfg)
+        _enrich(out)  # traces
+        metrics = dict(out.get("metrics") or {})
+        _enrich(metrics)
+        out["metrics"] = metrics
+        return out
+
     def send_test_trace(self) -> dict[str, Any]:
         """Emit one representative agent-turn trace (``turn → LLM call → tool
         call``) to the configured OTLP backend and flush it immediately, so the
@@ -366,7 +413,7 @@ class ConfigSshMixin:
         ok, reason = observability.available()
         if not ok:
             return {"ok": False, "reason": reason}
-        cfg = config_mod.read_telemetry()
+        cfg = self._resolve_telemetry_credentials()
         if not cfg.get("enabled"):
             return {
                 "ok": False,
@@ -404,7 +451,7 @@ class ConfigSshMixin:
         ok, reason = observability.metrics_available()
         if not ok:
             return {"ok": False, "reason": reason}
-        cfg = config_mod.read_telemetry()
+        cfg = self._resolve_telemetry_credentials()
         mcfg = cfg.get("metrics") or {}
         if not mcfg.get("enabled"):
             return {

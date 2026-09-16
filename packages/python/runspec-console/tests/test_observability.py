@@ -62,6 +62,32 @@ def test_read_telemetry_defaults(monkeypatch):
     assert t["sample_ratio"] == 1.0
     assert t["tls_verify"] is True
     assert t["max_content_chars"] == 0  # 0 = no limit (faithful traces)
+    # service_name defaults to the branded app slug (runspec-console by default,
+    # asserted above); label (→ service.instance.id) defaults blank (the hostname
+    # is filled in at init).
+    assert t["label"] == ""
+
+
+def test_read_telemetry_service_name_derives_from_app_slug(monkeypatch):
+    """An unset service_name follows the branded app slug (the config-dir / window-
+    title source), so a white-label build self-identifies; an explicit value wins."""
+    monkeypatch.setattr(config_mod, "read_config", lambda: {})
+    monkeypatch.setattr(config_mod, "_app_slug", lambda: "jason-console")
+    assert config_mod.read_telemetry()["service_name"] == "jason-console"
+    # An explicit service_name overrides the derived slug.
+    monkeypatch.setattr(
+        config_mod,
+        "read_config",
+        lambda: {"telemetry": {"service_name": "custom-svc"}},
+    )
+    assert config_mod.read_telemetry()["service_name"] == "custom-svc"
+
+
+def test_read_telemetry_label(monkeypatch):
+    monkeypatch.setattr(
+        config_mod, "read_config", lambda: {"telemetry": {"label": "  ops-console-1 "}}
+    )
+    assert config_mod.read_telemetry()["label"] == "ops-console-1"
 
 
 def test_read_telemetry_max_content_chars(monkeypatch):
@@ -780,3 +806,143 @@ def test_send_test_metric_emits_all_instruments(metric_reader):
     assert "runspec.tool.runs" in result["instruments"]
     names = set(_collect_points(metric_reader))
     assert {"runspec.tool.runs", "runspec.agent.turns"} <= names
+
+
+# ── resource identity (service.name / instance.id / host / user) ──────────────
+
+
+@otel_only
+def test_build_resource_attributes(monkeypatch):
+    """The shared resource names the app (service.name), distinguishes the instance
+    (service.instance.id), and stamps host + user — so multiple consoles don't
+    collide into one OTLP time series."""
+    monkeypatch.setattr(obs, "_hostname", lambda: "consolebox")
+    monkeypatch.setattr(obs, "_username", lambda: "alice")
+
+    r = obs._build_resource({"service_name": "jason-console", "label": "ops-1"})
+    a = dict(r.attributes)
+    assert a["service.name"] == "jason-console"
+    assert a["service.instance.id"] == "ops-1"  # operator label wins
+    assert a["host.name"] == "consolebox"
+    assert a["process.owner"] == "alice"
+
+    # No label ⇒ instance id falls back to the hostname (still one series per box).
+    r2 = obs._build_resource({"service_name": "x", "label": ""})
+    assert dict(r2.attributes)["service.instance.id"] == "consolebox"
+
+
+@otel_only
+def test_build_resource_omits_unreadable_host_user(monkeypatch):
+    """Host / user that can't be read are simply omitted; instance id still resolves."""
+    monkeypatch.setattr(obs, "_hostname", lambda: "")
+    monkeypatch.setattr(obs, "_username", lambda: "")
+    a = dict(obs._build_resource({"service_name": "svc", "label": ""}).attributes)
+    assert a["service.name"] == "svc"
+    assert "host.name" not in a
+    assert "process.owner" not in a
+    assert a["service.instance.id"] == "runspec-console"  # last-resort fallback
+
+
+# ── keychain-backed export credentials (mirrors [[mcp.servers]] credential) ────
+
+
+def test_read_telemetry_credential_fields(monkeypatch):
+    monkeypatch.setattr(
+        config_mod,
+        "read_config",
+        lambda: {
+            "telemetry": {
+                "credential": "  langsmith  ",
+                "credential_header": " x-api-key ",
+                "header_credentials": [
+                    {"header": "X-Extra", "credential": "e1"},
+                    {"bad": 1},  # dropped
+                ],
+                "metrics": {
+                    "credential": "grafana",
+                    "header_credentials": [
+                        {"header": "Authorization", "credential": "g1"}
+                    ],
+                },
+            }
+        },
+    )
+    t = config_mod.read_telemetry()
+    assert t["credential"] == "langsmith"
+    assert t["credential_header"] == "x-api-key"
+    assert t["header_credentials"] == [{"header": "X-Extra", "credential": "e1"}]
+    m = t["metrics"]
+    assert m["credential"] == "grafana"
+    assert m["header_credentials"] == [{"header": "Authorization", "credential": "g1"}]
+
+    # Absent ⇒ blank / empty, on both signals.
+    monkeypatch.setattr(config_mod, "read_config", lambda: {})
+    t2 = config_mod.read_telemetry()
+    assert t2["credential"] == ""
+    assert t2["credential_header"] == ""
+    assert t2["header_credentials"] == []
+    assert t2["metrics"]["credential"] == ""
+    assert t2["metrics"]["header_credentials"] == []
+
+
+def _cred_bridge(creds: dict):
+    """A minimal object carrying the real _resolve_telemetry_credentials bound to a
+    stub _mcp_credential (id → material), for testing header resolution in
+    isolation."""
+    s = types.SimpleNamespace()
+    s._mcp_credential = lambda cid: creds.get(cid)
+    s._resolve_telemetry_credentials = types.MethodType(
+        Bridge._resolve_telemetry_credentials, s
+    )
+    return s
+
+
+def test_resolve_telemetry_credentials_folds_secrets_both_signals():
+    import base64
+
+    creds = {
+        # token → raw secret under the custom header (LangSmith x-api-key)
+        "ls": {"id": "ls", "kind": "token", "username": "", "secret": "sk-abc"},
+        # userpass, no custom header → Authorization: Basic (Grafana Cloud)
+        "grafana": {
+            "id": "grafana",
+            "kind": "userpass",
+            "username": "12345",
+            "secret": "gtok",
+        },
+    }
+    b = _cred_bridge(creds)
+    cfg = {
+        "headers": {},
+        "credential": "ls",
+        "credential_header": "x-api-key",
+        "header_credentials": [],
+        "metrics": {
+            "headers": {},
+            "credential": "grafana",
+            "credential_header": "",
+            "header_credentials": [],
+        },
+    }
+    out = b._resolve_telemetry_credentials(cfg)
+    # traces: token under the operator-named header
+    assert out["headers"]["x-api-key"] == "sk-abc"
+    # metrics: userpass → Basic on Authorization, independent of the trace key
+    expect = "Basic " + base64.b64encode(b"12345:gtok").decode()
+    assert out["metrics"]["headers"]["Authorization"] == expect
+
+
+def test_resolve_telemetry_credentials_explicit_header_wins_and_bad_id_skipped():
+    creds = {"ls": {"id": "ls", "kind": "token", "secret": "sk-abc"}}
+    b = _cred_bridge(creds)
+    cfg = {
+        # explicit header set → credential must not overwrite it
+        "headers": {"x-api-key": "manual-key"},
+        "credential": "ls",
+        "credential_header": "x-api-key",
+        "header_credentials": [{"header": "X-Extra", "credential": "missing"}],
+        "metrics": {"headers": {}, "credential": "", "header_credentials": []},
+    }
+    out = b._resolve_telemetry_credentials(cfg)
+    assert out["headers"]["x-api-key"] == "manual-key"  # explicit wins
+    assert "X-Extra" not in out["headers"]  # unresolvable id skipped, no raise

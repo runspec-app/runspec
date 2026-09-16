@@ -72,6 +72,21 @@ describe('McpServerTab', () => {
     })
   })
 
+  it('Generate fills the bearer token and it round-trips on save', async () => {
+    const user = userEvent.setup()
+    await act(async () => { render(<McpServerTab />) })
+    await waitFor(() => expect(getCfg).toHaveBeenCalled())
+
+    // Enable the server, then generate a token (empty until clicked).
+    await user.click(screen.getAllByRole('switch')[0])
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(saveCfg).toHaveBeenCalledTimes(1))
+    const token = saveCfg.mock.calls[0][0].token as string
+    expect(token).toMatch(/^[0-9a-f]{64}$/)  // 32 random bytes as hex
+  })
+
   it('renders the running URL + connect hint from status', async () => {
     statusFn.mockResolvedValue({ ...OFF, running: true, url: 'http://127.0.0.1:8765/mcp', tools: 7 })
     await act(async () => { render(<McpServerTab />) })

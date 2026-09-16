@@ -564,13 +564,28 @@ def read_telemetry() -> dict[str, Any]:
     endpoint and auth**, defaulting off, so metrics can go to a *different*
     backend than traces — e.g. traces direct to LangSmith (which ingests OTLP
     traces, not metrics) while metrics go to a Grafana / Prometheus OTLP endpoint
-    or a local collector. See the nested block under the returned ``metrics`` key."""
+    or a local collector. See the nested block under the returned ``metrics`` key.
+
+    ``service_name`` defaults to the install's **branded app slug**
+    (:func:`app_slug` — the same source that names the config directory and the
+    window title), so a white-label build reports its own brand as the OTLP
+    ``service.name`` with no extra config; a default install still gets
+    ``runspec-console``. Set it explicitly to override. ``label`` is the
+    per-instance identifier that becomes ``service.instance.id`` on every span and
+    metric — it defaults to the machine hostname (so each console is its own clean
+    time series), and you set it to run **several distinct instances** (e.g. more
+    than one console on one machine) as separate, named streams. The console also
+    stamps ``host.name`` and ``process.owner`` (OS username) on the resource
+    automatically (see ``observability._build_resource``)."""
     raw = read_config().get("telemetry")
     cfg = dict(raw) if isinstance(raw, dict) else {}
     hdrs = cfg.get("headers")
     ca = str(cfg.get("ca_bundle") or "").strip() or None
     tls = bool(cfg.get("tls_verify", True))
-    service = str(cfg.get("service_name") or DEFAULT_TELEMETRY_SERVICE_NAME).strip()
+    # Default the OTLP service.name to the branded app slug (config-dir / window-
+    # title source), so a white-label install is self-identifying; an explicit
+    # value in config.toml still wins.
+    service = str(cfg.get("service_name") or app_slug()).strip()
     return {
         "enabled": bool(cfg.get("enabled", False)),
         "endpoint": str(cfg.get("endpoint") or "").strip() or None,
@@ -579,6 +594,8 @@ def read_telemetry() -> dict[str, Any]:
         ),
         "protocol": str(cfg.get("protocol") or DEFAULT_TELEMETRY_PROTOCOL).strip(),
         "service_name": service,
+        # Per-instance label → service.instance.id (blank ⇒ hostname at init).
+        "label": str(cfg.get("label") or "").strip(),
         "sample_ratio": min(1.0, max(0.0, float(cfg.get("sample_ratio", 1.0) or 1.0))),
         "ca_bundle": ca,
         "tls_verify": tls,
@@ -586,6 +603,17 @@ def read_telemetry() -> dict[str, Any]:
         "max_content_chars": max(0, int(cfg.get("max_content_chars", 0) or 0)),
         "api_key_command": str(cfg.get("api_key_command") or "").strip() or None,
         "api_key_header": str(cfg.get("api_key_header") or "x-api-key").strip(),
+        # Keychain-backed auth (mirrors [[mcp.servers]] credential): a named
+        # Credentials id whose secret is injected as a header at export init —
+        # userpass ⇒ Authorization: Basic, token ⇒ Authorization: Bearer, or the
+        # raw secret under `credential_header` (e.g. x-api-key for LangSmith).
+        # `header_credentials` sends several secrets under several headers. Only
+        # ids are stored; the secret stays in the OS keychain. The console
+        # resolves these before init (bridge `_resolve_telemetry_credentials`),
+        # so a per-user API key set up during onboarding drives the export.
+        "credential": str(cfg.get("credential") or "").strip(),
+        "credential_header": str(cfg.get("credential_header") or "").strip(),
+        "header_credentials": _read_header_credentials(cfg.get("header_credentials")),
         # Native eval export: when the OTLP endpoint is an Arize Phoenix instance,
         # also POST each eval verdict as a span annotation (`/v1/span_annotations`)
         # so pass/fail shows as a first-class evaluation, not just a filterable
@@ -645,6 +673,13 @@ def _telemetry_metrics_config(
         # Auth: metrics-specific, no cross-signal fallback (see docstring).
         "api_key_command": str(cfg.get("api_key_command") or "").strip() or None,
         "api_key_header": str(cfg.get("api_key_header") or "x-api-key").strip(),
+        # Keychain-backed auth, metrics-specific (no cross-signal fallback) — the
+        # same convention as the trace section: a Credentials id + optional header,
+        # resolved to a secret header before init. So metrics → Grafana can carry
+        # its own key while traces → LangSmith carry theirs.
+        "credential": str(cfg.get("credential") or "").strip(),
+        "credential_header": str(cfg.get("credential_header") or "").strip(),
+        "header_credentials": _read_header_credentials(cfg.get("header_credentials")),
         "service_name": service_name,
         "export_interval": max(
             1, int(cfg.get("export_interval", DEFAULT_METRIC_EXPORT_INTERVAL) or 60)

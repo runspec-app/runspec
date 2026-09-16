@@ -414,7 +414,10 @@ def main() -> None:
     # agent's fleet calls with no model inside.
     ai_on = bridge.ai_enabled()
     if ai_on:
-        _telemetry_cfg = _config.read_telemetry()
+        # Resolve any keychain-backed credential into the export headers first
+        # (traces + metrics), so a per-user API key set up during onboarding
+        # authenticates the export; observability itself stays keyring-free.
+        _telemetry_cfg = bridge._resolve_telemetry_credentials()
         observability.init_tracing(_telemetry_cfg)
         # Metrics are a separate OTLP signal ([telemetry.metrics]) with their own
         # endpoint; init independently so they can go to a different backend than

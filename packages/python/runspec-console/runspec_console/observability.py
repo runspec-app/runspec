@@ -206,6 +206,61 @@ def _construct_exporter(exporter_cls: Any, cfg: dict[str, Any]) -> Any:
     return exporter
 
 
+def _hostname() -> str:
+    """The console machine's hostname, or ``""`` if it can't be read."""
+    try:
+        import socket
+
+        return socket.gethostname() or ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _username() -> str:
+    """The OS user running the console, or ``""`` if it can't be read."""
+    try:
+        import getpass
+
+        return getpass.getuser() or ""
+    except Exception:  # noqa: BLE001 — getuser raises when no username resolves
+        return ""
+
+
+def _build_resource(config: dict[str, Any]) -> Any:
+    """Build the OTel ``Resource`` shared by the tracer and meter providers.
+
+    Every console exports its own spans and metrics, so each needs a resource
+    identity that (a) names the app and (b) distinguishes this instance — otherwise
+    N consoles emitting under one identical resource collide into overlapping OTLP
+    time series (cumulative counters read as resets), and per-console breakdown is
+    impossible. Attributes:
+
+    * ``service.name`` — the branded app slug (``service_name``; defaults to
+      :func:`config.app_slug`), so a white-label build self-identifies.
+    * ``service.instance.id`` — the operator ``label`` if set, else the hostname,
+      so each console (including several on one machine, once labelled) is its own
+      clean time series.
+    * ``host.name`` / ``process.owner`` — the console machine's hostname and OS
+      user, so a fleet dashboard can group/filter by *where* and *who*.
+
+    Best-effort: any unreadable value is simply omitted."""
+    from opentelemetry.sdk.resources import Resource
+
+    attrs: dict[str, Any] = {
+        "service.name": config.get("service_name") or "runspec-console"
+    }
+    host = _hostname()
+    if host:
+        attrs["host.name"] = host
+    user = _username()
+    if user:
+        attrs["process.owner"] = user
+    attrs["service.instance.id"] = (
+        str(config.get("label") or "").strip() or host or "runspec-console"
+    )
+    return Resource.create(attrs)
+
+
 def init_tracing(config: dict[str, Any] | None = None) -> bool:
     """Best-effort, idempotent one-time init. ``config`` is a
     ``config.read_telemetry()`` dict (read here if omitted).
@@ -227,7 +282,6 @@ def init_tracing(config: dict[str, Any] | None = None) -> bool:
         logger.warning("telemetry enabled but %s", reason)
         return False
     try:
-        from opentelemetry.sdk.resources import Resource
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
         from opentelemetry.sdk.trace.sampling import (
@@ -235,9 +289,7 @@ def init_tracing(config: dict[str, Any] | None = None) -> bool:
             TraceIdRatioBased,
         )
 
-        resource = Resource.create(
-            {"service.name": config.get("service_name") or "runspec-console"}
-        )
+        resource = _build_resource(config)
         ratio = float(config.get("sample_ratio", 1.0))
         sampler = ParentBased(TraceIdRatioBased(ratio))
         provider = TracerProvider(resource=resource, sampler=sampler)
@@ -517,11 +569,10 @@ def init_metrics(config: dict[str, Any] | None = None) -> bool:
     try:
         from opentelemetry.sdk.metrics import MeterProvider
         from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
-        from opentelemetry.sdk.resources import Resource
 
-        resource = Resource.create(
-            {"service.name": mcfg.get("service_name") or "runspec-console"}
-        )
+        # Build the resource from the top-level telemetry config (service_name +
+        # label + host/user), so the meter shares the tracer's identity.
+        resource = _build_resource(config)
         interval_ms = int(mcfg.get("export_interval", 60) or 60) * 1000
         reader = PeriodicExportingMetricReader(
             _build_metric_exporter(mcfg), export_interval_millis=interval_ms

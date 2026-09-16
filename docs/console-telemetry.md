@@ -45,7 +45,8 @@ tracing stays a no-op even if enabled.
 enabled = true
 endpoint = "https://api.smith.langchain.com/otel/v1/traces"
 protocol = "http/protobuf"
-service_name = "runspec-console"
+service_name = "runspec-console"   # blank ⇒ this install's app name (brand)
+label = "ops-console-1"            # this instance's service.instance.id (blank ⇒ hostname)
 sample_ratio = 1.0
 capture_content = false
 max_content_chars = 0   # 0 = capture full text; set a ceiling to bound span size
@@ -64,8 +65,12 @@ max_content_chars = 0   # 0 = capture full text; set a ceiling to bound span siz
 | `endpoint` | OTLP **traces** URL. Blank ⇒ the SDK reads `OTEL_EXPORTER_OTLP_ENDPOINT`. |
 | `headers` | Extra HTTP headers on every export — e.g. a LangSmith API key + project. |
 | `protocol` | `http/protobuf` (the shipped exporter). |
-| `service_name` | `service.name` resource attribute. Default `runspec-console`. |
+| `service_name` | `service.name` resource attribute. Blank (default) ⇒ the install's **branded app slug** (the same source as the config directory + window title), so a white-label build self-identifies; `runspec-console` on a default install. |
+| `label` | This console's `service.instance.id`. Blank (default) ⇒ the machine hostname. Set it to run **several distinct consoles** (even on one machine) as separate, named streams. See [Resource identity](#resource-identity). |
 | `sample_ratio` | Head sampling ratio, 0–1. Default 1.0 (trace everything). |
+| `credential` | A named **Credential** id (secret in the OS keychain) injected as an auth header at init — the recommended per-user path. With `credential_header` set, the secret is sent raw under that header (e.g. `x-api-key`); otherwise `userpass` ⇒ `Authorization: Basic`, `token` ⇒ `Bearer`. See [Credentials](#credentials-recommended). |
+| `credential_header` | Header name for `credential`'s secret (blank ⇒ `Authorization` with the scheme above). |
+| `header_credentials` | Array of `{header, credential}` for sending several keychain secrets under several headers. |
 | `ca_bundle` | Path to a CA bundle for a private-CA / TLS-proxy endpoint. |
 | `tls_verify` | Verify the server certificate. Default true. |
 | `capture_content` | Attach prompt / completion / tool-argument **text**. Default **false** — see [Privacy](#privacy). |
@@ -82,6 +87,28 @@ falls through to the matching `OTEL_*` variable. The one exception is `enabled`
 
 This means you can drive everything from env vars if you prefer: set
 `[telemetry] enabled = true` and leave `endpoint`/`headers` blank.
+
+## Resource identity
+
+Every span **and** metric the console exports carries a resource that identifies
+*which* console produced it. This matters most for [metrics](#metrics): multiple
+consoles are separate processes, and if they all exported under one identical
+resource their OTLP cumulative counters would collide into overlapping series
+(reads look like counter resets) and per-console breakdown would be impossible.
+The resource carries:
+
+| Attribute | Value |
+|---|---|
+| `service.name` | `[telemetry] service_name`, or (blank) the install's branded app slug — the same source as the config directory and window title. |
+| `service.instance.id` | `[telemetry] label`, or (blank) the machine hostname. |
+| `host.name` | The console machine's hostname. |
+| `process.owner` | The OS user running the console. |
+
+So each machine is its own clean time series out of the box, and to run **several
+consoles on one machine** as distinct streams you give each a different `label`.
+Traces get the same identity, so a trace backend can filter by `service.name` /
+`service.instance.id` / `host.name` too. (The values are best-effort — an
+unreadable hostname or username is simply omitted.)
 
 ## What gets traced
 
@@ -250,13 +277,44 @@ endpoint` at a metrics/OTLP receiver:
 
 ## Providing the API key without shipping it
 
-A shared backend like LangSmith needs an API key, and there's no good answer that
-puts that key in `config.toml` in the clear — a config seed ships in package data
-and a Config-Sync repo is checked out on every machine, so a key placed directly
-in `[telemetry.headers]` would leak. Two patterns solve this; the first removes
-the problem entirely.
+A backend like LangSmith or Grafana needs an API key, and there's no good answer
+that puts that key in `config.toml` in the clear — a config seed ships in package
+data and a Config-Sync repo is checked out on every machine, so a key placed
+directly in `[telemetry.headers]` would leak. The patterns below solve this.
 
-### Relay through an internal OTel Collector (recommended)
+### Credentials (recommended)
+
+Because the console is a **single-user machine app**, the simplest answer is a
+per-user key: during onboarding each operator logs in to LangSmith / Grafana,
+mints their own API key, and adds it as a **Credential** (Settings → Credentials)
+whose secret lives in the **OS keychain**. Then point telemetry at it — the id is
+all that's stored in config:
+
+```toml
+[telemetry]
+enabled = true
+endpoint = "https://api.smith.langchain.com/otel/v1/traces"
+credential = "langsmith"          # a Credentials id; secret stays in the keychain
+credential_header = "x-api-key"   # LangSmith wants the key under x-api-key
+
+[telemetry.metrics]
+enabled = true
+endpoint = "https://otlp-gateway.grafana.net/otlp/v1/metrics"
+credential = "grafana-otlp"       # a userpass credential ⇒ Authorization: Basic
+```
+
+The mapping mirrors the MCP client: a `userpass` credential becomes
+`Authorization: Basic base64(user:pass)` (Grafana Cloud's instance-id + token), a
+`token` credential becomes `Bearer`, or — with `credential_header` set — the raw
+secret is sent under that header (LangSmith's `x-api-key`). Traces and metrics each
+take their **own** `credential`, so per-user keys for two different backends never
+mix. An explicit `[telemetry.headers]` entry always wins, and `header_credentials`
+= `[{ header, credential }, …]` sends several secrets under several headers. Pick
+the credential from the dropdown in **Settings → Telemetry** (traces and metrics
+sections). This is the right fit when every operator authenticates as themselves;
+the two patterns below suit a shared/fleet key instead.
+
+### Relay through an internal OTel Collector
 
 Point every console at an internal **[OpenTelemetry
 Collector](https://opentelemetry.io/docs/collector/)** and let *it* hold the one

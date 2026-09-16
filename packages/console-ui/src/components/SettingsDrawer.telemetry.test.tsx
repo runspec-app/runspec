@@ -20,20 +20,24 @@ const INITIAL_CONFIG: Record<string, unknown> = {
     headers: { 'x-api-key': 'ls-secret' },
     api_key_command: 'keyring get langsmith key',
     api_key_header: 'x-api-key',
+    credential: 'langsmith-key',
+    credential_header: 'x-api-key',
     metrics: {
       enabled: true,
       endpoint: 'https://grafana.internal/otlp/v1/metrics',
       export_interval: 30,
       headers: { Authorization: 'Basic abc' },
+      credential: 'grafana-key',
     },
   },
 }
 
-const { getConfig, saveConfig, sendTestTrace, sendTestMetric } = vi.hoisted(() => ({
+const { getConfig, saveConfig, sendTestTrace, sendTestMetric, credOptions } = vi.hoisted(() => ({
   getConfig: vi.fn(),
   saveConfig: vi.fn(),
   sendTestTrace: vi.fn(),
   sendTestMetric: vi.fn(),
+  credOptions: vi.fn(),
 }))
 
 vi.mock('../bridge', () => ({
@@ -46,6 +50,7 @@ vi.mock('../bridge', () => ({
         if (prop === 'save_config') return saveConfig
         if (prop === 'send_test_trace') return sendTestTrace
         if (prop === 'send_test_metric') return sendTestMetric
+        if (prop === 'mcp_credential_options') return credOptions
         return vi.fn().mockResolvedValue(undefined)
       },
     },
@@ -64,6 +69,10 @@ describe('TelemetryTab Save round-trip', () => {
       capture_content: false,
       flushed: true,
     })
+    credOptions.mockReset().mockResolvedValue([
+      { id: 'langsmith-key', label: 'LangSmith', kind: 'token' },
+      { id: 'grafana-key', label: 'Grafana', kind: 'userpass' },
+    ])
     sendTestMetric.mockReset().mockResolvedValue({
       ok: true,
       instruments: ['runspec.tool.runs', 'runspec.agent.turns'],
@@ -94,7 +103,10 @@ describe('TelemetryTab Save round-trip', () => {
     expect(saved.telemetry.headers).toEqual({ 'x-api-key': 'ls-secret' })
     // Sensible defaults are written even when the section omitted them.
     expect(saved.telemetry.protocol).toBe('http/protobuf')
-    expect(saved.telemetry.service_name).toBe('runspec-console')
+    // service_name is left blank when unset — the backend derives it from the
+    // branded app slug — and label (→ service.instance.id) is blank too.
+    expect(saved.telemetry.service_name).toBe('')
+    expect(saved.telemetry.label).toBe('')
     // The "ship the command, not the key" fields round-trip.
     expect(saved.telemetry.api_key_command).toBe('keyring get langsmith key')
     expect(saved.telemetry.api_key_header).toBe('x-api-key')
@@ -105,6 +117,10 @@ describe('TelemetryTab Save round-trip', () => {
     expect(metrics.endpoint).toBe('https://grafana.internal/otlp/v1/metrics')
     expect(metrics.export_interval).toBe(30)
     expect(metrics.headers).toEqual({ Authorization: 'Basic abc' })
+    // Keychain credential picks round-trip per signal (ids only — never secrets).
+    expect(saved.telemetry.credential).toBe('langsmith-key')
+    expect(saved.telemetry.credential_header).toBe('x-api-key')
+    expect(metrics.credential).toBe('grafana-key')
   })
 
   it('"Send test metric" saves first, calls the bridge, and shows the result', async () => {

@@ -8,6 +8,58 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.267.0] — 2026-09-16
+
+### Added
+- **Per-instance telemetry resource identity (traces + metrics).** Every span and
+  metric now carries a resource that names the app and distinguishes the console,
+  so multiple consoles no longer collide into one OTLP time series (identical
+  resources make cumulative counters read as resets and hide per-console
+  breakdown). New shared `observability._build_resource` stamps:
+  - `service.name` — defaults to the install's **branded app slug**
+    (`config.app_slug()` — the *same* source as the config directory and window
+    title), so a white-label build self-identifies with no extra config; a default
+    install still reports `runspec-console`. An explicit `[telemetry] service_name`
+    still overrides.
+  - `service.instance.id` — the new `[telemetry] label`, so you can run **several
+    distinct consoles** (including more than one on a single machine) as separate,
+    named streams. Blank ⇒ the machine hostname, so each box is its own clean
+    series by default.
+  - `host.name` and `process.owner` — the console machine's hostname and OS user,
+    so a fleet dashboard can group/filter by *where* and *who*.
+- Settings → Telemetry: **Service name** now blanks to the app name (placeholder
+  says so) and a new **Instance label** field maps to `[telemetry] label`, with a
+  caption explaining the resource identity. Both apply to traces and metrics.
+- **Keychain-backed export credentials for traces *and* metrics.** Telemetry auth
+  can now come from a named **Credential** (secret in the OS keychain) the same
+  way MCP servers do, instead of a plaintext header or an `api_key_command`. Each
+  signal takes `[telemetry] credential` / `[telemetry.metrics] credential` (a
+  Credentials id) with an optional `credential_header`: a `userpass` credential
+  becomes `Authorization: Basic`, a `token` becomes `Bearer`, or the raw secret is
+  sent under `credential_header` (e.g. `x-api-key` for LangSmith). Because the
+  console is a single-user machine app, each operator sets up their **own** API
+  key as a Credential during onboarding (log in to LangSmith / Grafana, mint a
+  key) — only the id lives in config, never the secret. The console resolves these
+  into the export headers before init (`bridge._resolve_telemetry_credentials`,
+  reusing the MCP `apply_credential_header` / `apply_header_credentials` helpers),
+  so `observability` stays keyring-free; an explicit header always wins and an
+  unresolvable id is skipped (never breaks the export). `header_credentials`
+  (several secrets under several headers) is honoured too. Settings → Telemetry
+  gains a **Credential** picker + header field in both the traces and metrics
+  sections.
+- **Generate button for the MCP Server bearer token.** Settings → MCP Server's
+  optional bearer-token field gets a **Generate** button that fills it with a
+  cryptographically-random 32-byte token (Web Crypto), so the operator doesn't
+  have to invent one. Frontend-only.
+
+### Notes
+- Recording is unchanged (still at the in-process autonomy-gate chokepoint and the
+  turn boundary), so a run is still counted exactly once by the console that ran
+  it — the resource attributes only make each console's stream identifiable, they
+  do not change what is counted. `_build_resource` is best-effort: an unreadable
+  hostname/username is simply omitted.
+
+
 ## [0.266.1] — 2026-09-16
 
 ### Fixed

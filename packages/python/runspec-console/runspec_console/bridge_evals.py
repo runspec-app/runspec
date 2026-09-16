@@ -304,7 +304,7 @@ class EvalsMixin:
             try:
                 from . import observability
 
-                tcfg = config_mod.read_telemetry()
+                tcfg = self._resolve_telemetry_credentials()
                 observability.init_tracing(tcfg)
             except Exception:  # noqa: BLE001
                 logger.debug("eval: telemetry init failed", exc_info=True)
