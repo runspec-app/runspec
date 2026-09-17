@@ -8,6 +8,21 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.272.3] — 2026-09-17
+
+### Changed
+- **Neutral wording on the Tool visibility tab.** The description enumerated the
+  built-in chat/trigger agent, the MCP server's "external coding agent", the
+  "model's tool list", and the room/self-service catalogs — AI-specific consumers
+  that read oddly (and could raise questions in a corporate assessment) on an
+  `[console] ai = false` console where the tab now also shows. Reworded to
+  describe the mechanism instead of the consumers: **Hide from agent** removes a
+  runnable from the tool list that connected callers receive (keeping it runnable
+  directly in Forms); **Hide everywhere** also removes it from Forms and any
+  published catalog. Reads correctly whether or not the built-in assistant is
+  enabled. No behaviour change.
+
+
 ## [0.272.2] — 2026-09-17
 
 ### Changed

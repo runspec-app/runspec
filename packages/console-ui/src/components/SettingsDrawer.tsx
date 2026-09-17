@@ -1817,11 +1817,11 @@ function AgentToolsTab() {
   return (
     <div style={{ maxWidth: 780 }}>
       <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
-        Curate which runnables agents can see. <strong>Hide from agent</strong> removes a runnable from the built-in
-        chat/trigger/schedule agent <strong>and the console's MCP server</strong> (the tool list an external coding agent
-        connects to), but keeps it in the Forms tab; <strong>Hide everywhere</strong> also removes it from the Forms tab
-        and the room/self-service catalogs. Hidden tools stop bloating a model's tool list and stop it trying tools that
-        can't work (e.g. Office 365 runnables where Microsoft Graph is blocked).
+        Curate where each runnable is offered. <strong>Hide from agent</strong> removes it from the tool list that
+        connected callers receive, while keeping it runnable directly in the <strong>Forms</strong> tab.
+        <strong> Hide everywhere</strong> also removes it from Forms and from any published catalog. This keeps the offered
+        tool list focused and hides capabilities that can't work in this environment (e.g. Office 365 runnables where
+        Microsoft Graph is blocked).
       </Typography.Paragraph>
       <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
         This is <strong>curation, not a safety block</strong> — a hidden runnable is still installed and directly runnable
