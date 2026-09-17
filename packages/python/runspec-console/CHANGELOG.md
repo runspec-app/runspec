@@ -8,7 +8,21 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
-## [0.271.3] — 2026-09-17
+## [0.271.4] — 2026-09-17
+
+### Fixed
+- **No more console window flashing during startup (and on local runs) under the
+  windowed launcher.** The `runspec-console-app` gui-script runs under
+  `pythonw.exe`, which has no console — so when it spawned a child that is itself
+  a *console* program (`runspec.exe` for the discovery CLI fallback / denylist
+  status, `pip` for the update check, `ssh`/`sshpass`, the sandbox worker, a local
+  runnable, a filtered-transfer `sh` pipeline, an `api_key_command`), Windows
+  allocated a fresh console for the child and briefly flashed a terminal window.
+  All local `subprocess` spawns now pass `CREATE_NO_WINDOW` via a shared
+  `procutil.no_window_kwargs()` helper (a no-op off Windows, so captured output
+  and non-Windows behaviour are unchanged). The GUI file-manager launchers
+  (`explorer /select`, `open -R`, `xdg-open`) are deliberately left alone — those
+  are meant to show a window.
 
 ### Fixed
 - **Reverted 0.271.2's thread-start timing — it left the window blank on some

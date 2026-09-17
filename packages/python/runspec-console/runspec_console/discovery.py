@@ -35,6 +35,7 @@ else:
     import tomli as tomllib
 
 from .hosts import scripts_dir, site_packages, venv_name
+from .procutil import no_window_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -254,6 +255,7 @@ def _discover_local_cli(runspec_path: str, host: str) -> list[dict[str, Any]]:
             timeout=15,
             encoding="utf-8",
             errors="replace",
+            **no_window_kwargs(),
         )
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return []

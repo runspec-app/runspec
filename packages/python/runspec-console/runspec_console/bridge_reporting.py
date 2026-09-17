@@ -763,6 +763,8 @@ class ReportingMixin:
 
         import subprocess
 
+        from .procutil import no_window_kwargs
+
         try:
             proc = subprocess.run(
                 [rp, *argv],
@@ -771,6 +773,7 @@ class ReportingMixin:
                 timeout=timeout,
                 encoding="utf-8",
                 errors="replace",
+                **no_window_kwargs(),
             )
         except FileNotFoundError:
             return -1, "", f"runspec not found at {rp}"

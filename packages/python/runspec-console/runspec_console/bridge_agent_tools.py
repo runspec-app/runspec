@@ -4756,6 +4756,8 @@ class AgentToolsMixin:
         import shlex
         import subprocess
 
+        from .procutil import no_window_kwargs
+
         action = str(ti.get("action") or "").strip().lower()
         valid = {"list", "add", "all", "clear", "mode"}
         if action not in valid:
@@ -4838,7 +4840,11 @@ class AgentToolsMixin:
                         as_user, out = utils_mod.split_denylist_as(out or "")
                 else:
                     proc = subprocess.run(
-                        argv, capture_output=True, text=True, timeout=20
+                        argv,
+                        capture_output=True,
+                        text=True,
+                        timeout=20,
+                        **no_window_kwargs(),
                     )
                     code, out, err = proc.returncode, proc.stdout, proc.stderr
             except Exception as exc:  # noqa: BLE001 — report any failure per venv

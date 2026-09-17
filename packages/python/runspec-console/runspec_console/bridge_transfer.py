@@ -981,6 +981,8 @@ class TransferMixin:
         semantics. Requires a POSIX shell on PATH (raises otherwise)."""
         import subprocess
 
+        from .procutil import no_window_kwargs
+
         if shutil.which("sh") is None:
             raise RuntimeError("filtering on upload needs a POSIX shell (sh) on PATH")
 
@@ -1008,6 +1010,7 @@ class TransferMixin:
                 stdin=src,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
+                **no_window_kwargs(),
             )
         finally:
             src.close()  # the child holds its own copy of the fd

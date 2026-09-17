@@ -16,6 +16,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Callable
 
+from ..procutil import no_window_kwargs
+
 logger = logging.getLogger("runspec_console")
 
 
@@ -390,6 +392,7 @@ def run_api_key_command(command: str) -> str:
         text=True,
         shell=True,
         env=api_key_command_env(),
+        **no_window_kwargs(),
     )
     key = result.stdout.strip()
     if not key:

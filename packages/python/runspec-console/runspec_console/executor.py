@@ -23,6 +23,8 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlparse
 
+from .procutil import no_window_kwargs
+
 # Ensure child Python processes use UTF-8 for print()/sys.stdout
 _UTF8_ENV = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
 
@@ -887,6 +889,7 @@ def ssh_jump_run(
             encoding="utf-8",
             errors="replace",
             timeout=timeout,
+            **no_window_kwargs(),
         )
     except subprocess.TimeoutExpired:
         return -1, "", f"ssh to {ssh_target} timed out after {timeout}s"
@@ -973,6 +976,7 @@ def ssh_jump_copy_id(
             errors="replace",
             timeout=timeout,
             env=env,
+            **no_window_kwargs(),
         )
     except subprocess.TimeoutExpired:
         return -1, "", f"ssh to {ssh_target} timed out after {timeout}s"
@@ -1030,6 +1034,7 @@ def _stream(
             encoding="utf-8",
             errors="replace",
             env=env,
+            **no_window_kwargs(),
         )
     except FileNotFoundError:
         on_line(f"✗  Command not found: {cmd[0]}", "stderr")

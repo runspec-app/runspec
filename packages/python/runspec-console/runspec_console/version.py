@@ -26,6 +26,8 @@ import tomllib
 from importlib import metadata
 from pathlib import Path
 
+from .procutil import no_window_kwargs
+
 PACKAGE_NAME = "runspec-console"
 
 # `pip index versions <pkg>` prints, e.g.:
@@ -90,6 +92,7 @@ def latest_version(timeout: float = 8.0, package: str = PACKAGE_NAME) -> str | N
             encoding="utf-8",
             errors="replace",
             timeout=timeout,
+            **no_window_kwargs(),
         )
     except Exception:
         return None

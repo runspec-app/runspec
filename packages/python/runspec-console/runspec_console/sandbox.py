@@ -43,6 +43,7 @@ from typing import Any, Callable
 
 from . import config as config_mod
 from .bridge_const import ToolCancelled
+from .procutil import no_window_kwargs
 from .workspaces import jail
 
 # The pinned WASI CPython build the sandbox runs (VMware Wasm Labs). Stdlib is
@@ -279,6 +280,7 @@ def _run_module(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        **no_window_kwargs(),
     )
     # Drain the worker's own stdout (result JSON) / stderr on background threads so
     # a filled pipe can't deadlock the poll loop (mirrors the old subprocess path).

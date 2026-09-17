@@ -73,6 +73,8 @@ class HostsMixin:
         import subprocess
         from concurrent.futures import ThreadPoolExecutor
 
+        from .procutil import no_window_kwargs
+
         wanted = {str(t) for t in (targets or [])}
         # Deliberately the full configured fleet (``self._hosts``), not the active
         # profile's working set — the denylist is a fleet kill switch; the modal
@@ -100,7 +102,11 @@ class HostsMixin:
                     )
                 else:
                     proc = subprocess.run(
-                        argv, capture_output=True, text=True, timeout=20
+                        argv,
+                        capture_output=True,
+                        text=True,
+                        timeout=20,
+                        **no_window_kwargs(),
                     )
                     code, out, err = proc.returncode, proc.stdout, proc.stderr
                 if code != 0:
