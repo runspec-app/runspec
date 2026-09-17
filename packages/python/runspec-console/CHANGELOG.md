@@ -8,6 +8,26 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.272.0] — 2026-09-17
+
+### Changed
+- **Lazy-load the remaining tab views to shrink the first-paint bundle further.**
+  0.271.0 code-split the off-Console views; the still-eager History, Logs, Specs
+  and Triggers views (plus the Forms run dialog) kept the heavy antd `Table`
+  shared chunk and their own code in the initial bundle the web view parses at
+  startup. All five now `React.lazy`-load with their tab: the History/Logs
+  always-mounted views mount on first visit and stay mounted after (a
+  `viewsVisited` latch, mirroring the existing `analyticsVisited` pattern), so
+  their fetched data and any pending-approval Approve/Deny buttons still survive
+  tab switches. Measured effect: the startup module graph drops from ~1,612 kB to
+  ~1,352 kB (~260 kB / ~16% less to parse before first paint), and the ~150 kB
+  antd `Table` chunk no longer loads at startup. The `matchRunnableForEdit` /
+  `dedupToolName` resolver helpers moved out of `FormsView` into a tiny
+  `views/formsMatch.ts` split so `App` can resolve an edit-and-rerun target
+  without pulling the (heavy) Forms module in eagerly; `FormsView` re-exports them
+  for back-compat. No behaviour change.
+
+
 ## [0.271.4] — 2026-09-17
 
 ### Fixed

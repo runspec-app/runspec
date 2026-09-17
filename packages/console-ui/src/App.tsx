@@ -32,16 +32,21 @@ import {
   StopOutlined,
 } from '@ant-design/icons'
 import { ConsoleView } from './views/ConsoleView'
-import { SpecsView } from './views/SpecsView'
-import { HistoryView } from './views/HistoryView'
-import { LogsView } from './views/LogsView'
-import { TriggersView } from './views/TriggersView'
-import { FormsView, matchRunnableForEdit, type PendingForm } from './views/FormsView'
+import { matchRunnableForEdit } from './views/formsMatch'
+import type { PendingForm } from './views/FormsView'
 // Code-split: everything below is off the Console tab's first-paint path, so it
 // lazy-loads on first use instead of bloating the initial bundle the web view
-// parses at startup. The Console shell (ConsoleView, CommandInput, the sidebar)
-// and the display-toggle views that stay mounted are kept eager above. FormsView
-// stays eager because App uses its matchRunnableForEdit helper directly.
+// parses at startup. Only the Console shell (ConsoleView, CommandInput, the
+// sidebar) is kept eager above — it is the landing tab. Every other tab view
+// lazy-loads with its tab; the History/Logs tables (antd Table, a ~220 kB shared
+// chunk) and the Forms run dialog now leave the first-paint bundle entirely.
+// matchRunnableForEdit is imported from the tiny ./formsMatch split so App can
+// resolve an edit-and-rerun target without pulling FormsView in eagerly.
+const SpecsView = React.lazy(() => import('./views/SpecsView').then(m => ({ default: m.SpecsView })))
+const HistoryView = React.lazy(() => import('./views/HistoryView').then(m => ({ default: m.HistoryView })))
+const LogsView = React.lazy(() => import('./views/LogsView').then(m => ({ default: m.LogsView })))
+const TriggersView = React.lazy(() => import('./views/TriggersView').then(m => ({ default: m.TriggersView })))
+const FormsView = React.lazy(() => import('./views/FormsView').then(m => ({ default: m.FormsView })))
 const ImproveView = React.lazy(() => import('./views/ImproveView').then(m => ({ default: m.ImproveView })))
 const EvalsView = React.lazy(() => import('./views/EvalsView').then(m => ({ default: m.EvalsView })))
 const SchedulesView = React.lazy(() => import('./views/SchedulesView').then(m => ({ default: m.SchedulesView })))
@@ -229,6 +234,14 @@ export default function App() {
   // stays out of the initial bundle until you first open Settings.
   const settingsVisited = useRef(false)
   if (settingsOpen) settingsVisited.current = true
+  // The lazy always-mounted tab views (Triggers/History/Logs/Specs) mount on
+  // first visit and stay mounted after (display toggle), so their fetched data +
+  // pending-approval state survive tab switches — but they stay out of the
+  // first-paint bundle until then. Mirrors the settingsVisited / analyticsVisited
+  // latch; a ref (not state) since latching never needs to force a re-render (the
+  // `view` state change that reveals a tab already triggers one).
+  const viewsVisited = useRef<Set<string>>(new Set(['console']))
+  viewsVisited.current.add(view)
   const [transferOpen, setTransferOpen] = useState(false)
   const [copyKeyHost, setCopyKeyHost] = useState<string | null>(null)
   const [sshKeyAgeDays, setSshKeyAgeDays] = useState<number | null>(null)
@@ -1379,23 +1392,38 @@ export default function App() {
                 </div>
                 {/* Triggers stays mounted (display toggle) so a pending approval's
                     Approve/Deny buttons survive tab switches — unmounting it drops
-                    the live tool_confirm and the buttons can't return until timeout. */}
-                <div className="rs-view" style={{ display: view === 'triggers' ? 'block' : 'none', flex: 1, overflow: 'auto' }}>
-                  <TriggersView />
-                </div>
+                    the live tool_confirm and the buttons can't return until timeout.
+                    Lazy-loaded, so it mounts on first visit and stays mounted after. */}
+                {viewsVisited.current.has('triggers') && (
+                  <div className="rs-view" style={{ display: view === 'triggers' ? 'block' : 'none', flex: 1, overflow: 'auto' }}>
+                    <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin size="large" /></div>}>
+                      <TriggersView />
+                    </Suspense>
+                  </div>
+                )}
                 {/* History stays mounted (display toggle) so its fetched records
                     survive tab switches — returning shows the last data instantly
                     instead of unmounting and reloading from empty over SSH. Its
-                    poll is gated on `active` so it only runs while visible. */}
-                <div className="rs-view" style={{ display: view === 'history' ? 'block' : 'none', flex: 1, overflow: 'auto' }}>
-                  <HistoryView search={historySearch} onSearchChange={setHistorySearch} onRerun={handleHistoryRerun} onAskLlm={aiEnabled ? handleAskLlm : undefined} activeScope={activeScope} onScopeToggle={handleScopeToggle} selectedHost={selectedHost} active={view === 'history'} />
-                </div>
+                    poll is gated on `active` so it only runs while visible.
+                    Lazy-loaded (antd Table), so it mounts on first visit. */}
+                {viewsVisited.current.has('history') && (
+                  <div className="rs-view" style={{ display: view === 'history' ? 'block' : 'none', flex: 1, overflow: 'auto' }}>
+                    <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin size="large" /></div>}>
+                      <HistoryView search={historySearch} onSearchChange={setHistorySearch} onRerun={handleHistoryRerun} onAskLlm={aiEnabled ? handleAskLlm : undefined} activeScope={activeScope} onScopeToggle={handleScopeToggle} selectedHost={selectedHost} active={view === 'history'} />
+                    </Suspense>
+                  </div>
+                )}
                 {/* Logs stays mounted (display toggle) so its logs_status SSH
                     inventory survives tab switches; its fetch is gated on `active`
-                    so it only runs while visible and on host change. */}
-                <div className="rs-view" style={{ display: view === 'logs' ? 'block' : 'none', flex: 1, overflow: 'auto' }}>
-                  <LogsView selectedHost={selectedHost} activeScope={activeScope} onScopeToggle={handleScopeToggle} active={view === 'logs'} />
-                </div>
+                    so it only runs while visible and on host change.
+                    Lazy-loaded (antd Table), so it mounts on first visit. */}
+                {viewsVisited.current.has('logs') && (
+                  <div className="rs-view" style={{ display: view === 'logs' ? 'block' : 'none', flex: 1, overflow: 'auto' }}>
+                    <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin size="large" /></div>}>
+                      <LogsView selectedHost={selectedHost} activeScope={activeScope} onScopeToggle={handleScopeToggle} active={view === 'logs'} />
+                    </Suspense>
+                  </div>
+                )}
                 {/* Analytics is lazy-loaded (heavy plots chunk). Mount it on first
                     visit, then keep it mounted (display toggle) so its scanned data
                     survives tab switches and it doesn't re-run the fleet scan on
@@ -1410,10 +1438,15 @@ export default function App() {
                 )}
                 {/* Specs is a full-height master/detail inspector — its own flex
                     block (not the shared overflow:auto one) so each pane scrolls
-                    independently. */}
-                <div className="rs-view" style={{ display: view === 'specs' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-                  <SpecsView runnables={runnables} selectedHost={selectedHost} activeScope={activeScope} onScopeToggle={handleScopeToggle} onOpenForm={handleOpenForm} />
-                </div>
+                    independently. Lazy-loaded, so it mounts on first visit and
+                    stays mounted after (display toggle). */}
+                {viewsVisited.current.has('specs') && (
+                  <div className="rs-view" style={{ display: view === 'specs' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+                    <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin size="large" /></div>}>
+                      <SpecsView runnables={runnables} selectedHost={selectedHost} activeScope={activeScope} onScopeToggle={handleScopeToggle} onOpenForm={handleOpenForm} />
+                    </Suspense>
+                  </div>
+                )}
                 {view !== 'console' && view !== 'triggers' && view !== 'history' && view !== 'analytics' && view !== 'logs' && view !== 'specs' && (
                   <div className="rs-view" style={{ flex: 1, overflow: 'auto' }}>
                     <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin size="large" /></div>}>
