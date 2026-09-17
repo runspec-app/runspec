@@ -38,12 +38,15 @@ describe('features — AI off', () => {
     expect([...AI_OFF_HIDDEN_VIEWS]).toEqual(['triggers', 'rota'])
   })
 
-  it('hides the agent Settings tabs but keeps MCP Server, Telemetry, and the fleet tabs', () => {
+  it('hides the agent Settings tabs but keeps MCP Server, Telemetry, Tool visibility, and the fleet tabs', () => {
     const keys = visibleSettingsTabs(SETTINGS, off).map(t => t.key)
     for (const k of AI_ONLY_SETTINGS) expect(keys).not.toContain(k)
     // Telemetry stays — metrics cover runnable runs, so it renders metrics-only
-    // when AI is off (see TelemetryTab).
-    expect(keys).toEqual(['ssh', 'jumpHosts', 'localVenvs', 'savedRuns', 'selfService', 'filters', 'repos', 'credentials', 'denylist', 'mcpServer', 'configSync', 'mailbox', 'teams', 'sounds', 'telemetry'])
+    // when AI is off. Tool visibility (agentTools) stays too — its globs filter
+    // the MCP server's published tool list (+ Forms/catalogs via "hide
+    // everywhere"), so it is meaningful with no embedded agent.
+    expect(keys).toEqual(['ssh', 'jumpHosts', 'localVenvs', 'agentTools', 'savedRuns', 'selfService', 'filters', 'repos', 'credentials', 'denylist', 'mcpServer', 'configSync', 'mailbox', 'teams', 'sounds', 'telemetry'])
+    expect(AI_ONLY_SETTINGS.has('agentTools')).toBe(false)
   })
 
   it('drops the agent-turn schedule actions plus the dead event action', () => {

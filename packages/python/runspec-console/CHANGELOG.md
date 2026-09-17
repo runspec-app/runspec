@@ -8,7 +8,27 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
-## [0.272.1] — 2026-09-17
+## [0.272.2] — 2026-09-17
+
+### Changed
+- **Settings → "Agent tools" renamed to "Tool visibility", and shown with AI
+  off.** The tab's globs filter the **"agent" surface**, which the console's MCP
+  server already publishes through (`_visible_runnables("agent")`) — so hiding a
+  tool from the agent has always also hidden it from the MCP server's tool list.
+  But the tab was gated as AI-only and hidden when `[console] ai = false`, even
+  though the MCP server runs in that mode — leaving an AI-off console able to
+  host the server with no UI to curate what an external agent sees. The tab is no
+  longer AI-only (dropped from `AI_ONLY_SETTINGS`), so it shows regardless, and
+  its copy now spells out that **Hide from agent** applies to the built-in agent
+  **and the console's MCP server** (Hide everywhere additionally covers the Forms
+  tab + room/self-service catalogs). Renamed to "Tool visibility" to read as a
+  sibling to the Denylist — visibility (curation) vs enforcement (the Denylist
+  still refuses execution and is the safety block). No backend change; the tab
+  key (`agentTools`) is unchanged.
+- **Tool-visibility selector is easier to read in dark mode.** Each option in the
+  per-runnable Visible / Hide-from-agent / Hide-everywhere `Segmented` now carries
+  a small state-coloured dot (green / amber / red), so the current state stands
+  out instead of grey-on-dark text that read the same.
 
 ### Changed
 - **Denylist modal usability + correctness.** The fleet-kill-switch modal (bottom

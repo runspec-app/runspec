@@ -1683,6 +1683,19 @@ function LocalVenvsTab() {
 // One row per distinct runnable name (the agent hides by name across hosts).
 interface RunnableRow { name: string; group: string; host: string; hosts: number }
 
+// A small state-coloured dot for the visibility Segmented, so each option (and
+// the selected one) is distinguishable at a glance — the plain grey-on-dark
+// labels read the same. Uses Ant's semantic success/warning/error hues (as the
+// Tag colours elsewhere in this file do), which hold up in dark and light.
+function VisibilityDot({ color }: { color: string }) {
+  return (
+    <span
+      aria-hidden
+      style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: color, marginRight: 6, verticalAlign: 'middle' }}
+    />
+  )
+}
+
 function AgentToolsTab() {
   const [rows, setRows] = useState<RunnableRow[]>([])
   const [fromAgent, setFromAgent] = useState<string[]>([])
@@ -1789,9 +1802,9 @@ function AgentToolsTab() {
               disabled={via !== null}
               onChange={val => setRowState(r.name, val as 'visible' | 'agent' | 'all')}
               options={[
-                { label: 'Visible', value: 'visible' },
-                { label: 'Hide from agent', value: 'agent' },
-                { label: 'Hide everywhere', value: 'all' },
+                { label: <span><VisibilityDot color="#52c41a" />Visible</span>, value: 'visible' },
+                { label: <span><VisibilityDot color="#faad14" />Hide from agent</span>, value: 'agent' },
+                { label: <span><VisibilityDot color="#ff4d4f" />Hide everywhere</span>, value: 'all' },
               ]}
             />
             {via && <Tooltip title="Hidden by a pattern in the Advanced lists below — edit it there."><Tag color="orange">via pattern</Tag></Tooltip>}
@@ -1804,10 +1817,11 @@ function AgentToolsTab() {
   return (
     <div style={{ maxWidth: 780 }}>
       <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
-        Hide runnables you can't use from the <strong>agent's toolset</strong> — they stop bloating the model's tool list
-        and it stops trying tools that will never work (e.g. Office 365 runnables where Microsoft Graph is blocked).
-        <strong> Hide from agent</strong> removes a runnable from the chat/trigger/schedule agent only (still usable in the
-        Forms tab); <strong>Hide everywhere</strong> also removes it from the Forms tab and the room/self-service catalogs.
+        Curate which runnables agents can see. <strong>Hide from agent</strong> removes a runnable from the built-in
+        chat/trigger/schedule agent <strong>and the console's MCP server</strong> (the tool list an external coding agent
+        connects to), but keeps it in the Forms tab; <strong>Hide everywhere</strong> also removes it from the Forms tab
+        and the room/self-service catalogs. Hidden tools stop bloating a model's tool list and stop it trying tools that
+        can't work (e.g. Office 365 runnables where Microsoft Graph is blocked).
       </Typography.Paragraph>
       <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
         This is <strong>curation, not a safety block</strong> — a hidden runnable is still installed and directly runnable
@@ -5491,8 +5505,10 @@ export function McpServerTab() {
 }
 
 export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, connectedHosts, allRemoteHosts }: SettingsDrawerProps) {
-  // `[console] ai` off-switch: the agent tabs (Model / API, Agent tools,
-  // Runbooks, MCP client, Chat History, Telemetry) are hidden; MCP Server stays.
+  // `[console] ai` off-switch: the agent tabs (Model / API, Runbooks, MCP
+  // client, Chat History) are hidden; MCP Server, Telemetry and Tool visibility
+  // stay (the last filters the MCP server's published tool list, so it is
+  // meaningful with no embedded agent).
   const features = useFeatures()
   return (
     <Drawer title="Settings" placement="right" width="min(96vw, 1040px)" open={open} onClose={onClose}>
@@ -5507,7 +5523,7 @@ export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, co
           { key: 'llm',       label: 'Model / API',  children: <LlmTab /> },
           { key: 'jumpHosts', label: 'Jump Hosts',  children: <JumpHostsTab onHostsChanged={onHostsChanged} /> },
           { key: 'localVenvs', label: 'Local venvs', children: <LocalVenvsTab /> },
-          { key: 'agentTools', label: 'Agent tools', children: <AgentToolsTab /> },
+          { key: 'agentTools', label: 'Tool visibility', children: <AgentToolsTab /> },
           { key: 'runbooks',    label: 'Runbooks',     children: <RunbooksTab /> },
           { key: 'savedRuns',   label: 'Saved runs',   children: <SavedRunsTab /> },
           // Self-Service (helpdesk catalogue + rooms) hidden pending approval —

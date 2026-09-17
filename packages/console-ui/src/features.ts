@@ -37,13 +37,16 @@ export const AI_OFF_HIDDEN_VIEWS: ReadonlySet<string> = new Set(['triggers', 'ro
 
 // Settings tabs that configure the agent (SettingsDrawer `items` keys). The
 // MCP *Server* tab stays — it gates an external coding agent's fleet calls with
-// no model inside the console, the non-AI-inside demo. **Telemetry stays too**:
-// metrics cover runnable runs (Forms / MCP server / schedules / triggers), not
-// just agent activity, so an AI-off fleet console still exports them — the tab
-// renders metrics-only when AI is off (tracing is agent-turn-only, so its
-// controls hide). See TelemetryTab.
+// no model inside the console, the non-AI-inside demo. **Tool visibility stays
+// too** — its globs filter the "agent" surface, which includes the MCP server's
+// published tool list (and, via "hide everywhere", the Forms tab + catalogs), so
+// an AI-off console hosting the MCP server still needs it to curate what an
+// external agent sees. **Telemetry stays too**: metrics cover runnable runs
+// (Forms / MCP server / schedules / triggers), not just agent activity, so an
+// AI-off fleet console still exports them — the tab renders metrics-only when AI
+// is off (tracing is agent-turn-only, so its controls hide). See TelemetryTab.
 export const AI_ONLY_SETTINGS: ReadonlySet<string> = new Set([
-  'llm', 'agentTools', 'runbooks', 'mcp', 'chatHistory',
+  'llm', 'runbooks', 'mcp', 'chatHistory',
 ])
 
 /** The nav tabs to render for the active feature set (order preserved). */
