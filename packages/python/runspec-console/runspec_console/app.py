@@ -484,16 +484,15 @@ def main() -> None:
     # agent's fleet calls with no model inside.
     ai_on = bridge.ai_enabled()
 
-    # Telemetry / MCP / sandbox bring-up all run on background threads, but the
-    # threads are *started* further down — after webview.create_window(), right
-    # before webview.start() (see "_start_background_bring_up"). Their work is
-    # import- and setup-heavy (OTLP exporters, the MCP SDK, APScheduler, the
-    # wasmtime extension), which is CPU-bound and holds the GIL, so starting them
-    # here made them contend with create_window() on the main thread. Deferring
-    # the start lets create_window() run uncontended and overlaps that Python work
-    # with webview.start()'s native WebView2 init instead (native code runs with
-    # the GIL released, so the overlap is real). Nothing before the window paints
-    # needs any of them.
+    # Telemetry / MCP / sandbox bring-up all run on background threads, defined
+    # here and started together further down (see "_start_background_bring_up",
+    # called before the window is created). Threading them keeps the once-
+    # synchronous MCP connect (a network handshake per server) off the main
+    # thread. Nothing before the window paints needs any of them.
+    # (0.271.2 tried starting them just before webview.start() to keep
+    # create_window() uncontended; WebView2 init doesn't release the GIL enough to
+    # overlap the work, so it only moved the cost into webview.start() and racing
+    # the frontend mount left the window blank — reverted in 0.271.3.)
 
     # Telemetry (OTLP traces + metrics): resolving a keychain-backed credential
     # and importing/initialising the OTLP exporters costs tens of ms. Best-effort;
@@ -559,6 +558,17 @@ def main() -> None:
         for target in (_bring_up_telemetry, _bring_up_mcp, _warm_sandbox):
             threading.Thread(target=target, daemon=True).start()
 
+    # Start telemetry / MCP / sandbox on background threads before the window is
+    # created. 0.271.2 tried starting them just before webview.start() to keep
+    # create_window() uncontended, but a profiled launch showed WebView2 init does
+    # NOT release the GIL enough to overlap: the same CPU-bound import/setup work
+    # simply reappeared inside webview.start() (no net gain), and worse, contending
+    # during the frontend's load/mount sometimes lost the JS-API wiring race and
+    # left the window blank. Starting here keeps the window content reliable; the
+    # ~200 ms won by threading (vs the pre-0.271.1 synchronous bring-up) stays.
+    _start_background_bring_up()
+    prof("telemetry + MCP + sandbox threads started")
+
     if dev:
         url = f"http://localhost:{port}"
     else:
@@ -598,11 +608,6 @@ def main() -> None:
         on_started=_started,
         icon=str(icon) if icon else None,
     )
-    # Start telemetry / MCP / sandbox now — after the window is created, so their
-    # CPU-bound import/setup work overlaps webview.start()'s native WebView2 init
-    # (GIL released) instead of contending with create_window() on the main thread.
-    _start_background_bring_up()
-    prof("telemetry + MCP + sandbox threads started")
     try:
         prof("webview.start() — loading the frontend bundle")
         webview.start(**start_kwargs)

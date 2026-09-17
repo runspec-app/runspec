@@ -8,6 +8,24 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.271.3] — 2026-09-17
+
+### Fixed
+- **Reverted 0.271.2's thread-start timing — it left the window blank on some
+  launches.** 0.271.2 moved the telemetry / MCP / sandbox thread starts to just
+  before `webview.start()` on the theory that their CPU-bound import/setup work
+  would overlap WebView2's native init (GIL released). A profiled launch showed it
+  did not: `window created` dropped (~916 ms → ~275 ms) but the same time
+  reappeared in `webview started` (~664 ms → ~1250 ms) for **no net change in
+  total startup**, and — the real problem — running that heavy work *during* the
+  frontend's load/mount intermittently lost the JS-API wiring race and rendered an
+  empty window. The thread starts are back before window creation (the known-good
+  0.271.1 behaviour). The genuine win from threading the bring-up (vs the
+  pre-0.271.1 synchronous MCP connect that blocked the main thread) is retained;
+  the remaining startup cost is pywebview / WebView2 framework init, which isn't
+  ours to optimise.
+
+
 ## [0.271.2] — 2026-09-17
 
 ### Changed
