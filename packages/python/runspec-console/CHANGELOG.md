@@ -8,6 +8,26 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.271.1] — 2026-09-17
+
+### Changed
+- **MCP bring-up no longer blocks the window.** Connecting to external MCP
+  servers (`[mcp]`, a network handshake per server) and starting the console's
+  own MCP server (`[mcp_server]`, opening a localhost listening socket) ran
+  synchronously on the main thread — on a real launch that was the single
+  largest pre-paint phase (~0.85 s in a profiled run). Both now run on a
+  background daemon thread, in parallel with the telemetry thread: the chat agent
+  doesn't reach an external MCP tool until the first message, and an external
+  coding agent connecting to our server retries / polls the discovery file, so
+  nothing before first paint needs either.
+
+### Added
+- **`--profile-startup` CLI flag.** The startup profiler added in 0.271.0 can now
+  be turned on with `runspec-console --profile-startup` as well as the
+  `RUNSPEC_STARTUP_PROFILE=1` environment variable (the flag is documented in
+  `--help`). Off (zero cost) otherwise.
+
+
 ## [0.271.0] — 2026-09-17
 
 ### Changed

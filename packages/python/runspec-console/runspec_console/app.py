@@ -385,16 +385,28 @@ def _ensure_std_streams() -> None:
         sys.stdin = open(os.devnull, encoding="utf-8")
 
 
+def _startup_profile_requested() -> bool:
+    """Whether startup profiling is on — via ``RUNSPEC_STARTUP_PROFILE`` or the
+    ``--profile-startup`` CLI flag. ``sys.argv`` is scanned directly (not the
+    parsed args) because the profiler is created before ``runspec.parse()`` so it
+    can time the parse itself; the flag is still declared in ``runspec.toml`` so
+    ``parse()`` accepts it and ``--help`` documents it."""
+    if os.environ.get("RUNSPEC_STARTUP_PROFILE"):
+        return True
+    return "--profile-startup" in sys.argv[1:]
+
+
 def _startup_profiler() -> Callable[[str], None]:
     """Opt-in phase timer for diagnosing a slow startup.
 
-    With ``RUNSPEC_STARTUP_PROFILE`` set, returns a ``mark(label)`` that prints the
-    cumulative / per-phase milliseconds for each bring-up phase to stderr (visible
-    when launched from a terminal via the ``runspec-console`` console script) and
-    logs the same line. Otherwise returns a no-op callable, so it costs nothing
-    when off. The import and WebView2 costs are the same in the windowed and
-    console launchers, so profiling from a terminal measures the real bring-up."""
-    if not os.environ.get("RUNSPEC_STARTUP_PROFILE"):
+    When ``RUNSPEC_STARTUP_PROFILE`` is set or ``--profile-startup`` is passed,
+    returns a ``mark(label)`` that prints the cumulative / per-phase milliseconds
+    for each bring-up phase to stderr (visible when launched from a terminal via
+    the ``runspec-console`` console script) and logs the same line. Otherwise
+    returns a no-op callable, so it costs nothing when off. The import and WebView2
+    costs are the same in the windowed and console launchers, so profiling from a
+    terminal measures the real bring-up."""
+    if not _startup_profile_requested():
         return lambda _label: None
     import time as _time
 
@@ -490,25 +502,33 @@ def main() -> None:
 
     threading.Thread(target=_bring_up_telemetry, daemon=True).start()
 
-    # Connect any external MCP servers ([mcp] / [[mcp.servers]]) so their tools
-    # join the chat agent's toolset. Best-effort and idempotent — a no-op unless
-    # servers are configured and the `mcp` extra is installed; a slow/down server
-    # just lands disconnected (visible in mcp_status) and never blocks startup.
-    if ai_on:
+    # MCP bring-up on its own background thread — connecting to external servers
+    # (a network handshake per server) and opening our own localhost listening
+    # socket cost hundreds of ms combined, and nothing before the window paints
+    # needs either: the chat agent doesn't reach an external MCP tool until the
+    # first message, and an external coding agent connecting to our server retries
+    # / polls the discovery file. Runs in parallel with the telemetry thread.
+    def _bring_up_mcp() -> None:
+        # Connect any external MCP servers ([mcp] / [[mcp.servers]]) so their tools
+        # join the chat agent's toolset. Best-effort and idempotent — a no-op
+        # unless servers are configured and the `mcp` extra is installed; a
+        # slow/down server just lands disconnected (visible in mcp_status).
+        if ai_on:
+            try:
+                bridge.mcp_start()
+            except Exception:  # noqa: BLE001
+                pass
+        # Start the console's own MCP server ([mcp_server]) so an external coding
+        # agent (Claude Code) can reach the fleet over localhost. Best-effort and
+        # off by default — a no-op unless [mcp_server] enabled and the `mcp` extra
+        # is installed; it opens a listening socket, so it stays opt-in.
         try:
-            bridge.mcp_start()
+            bridge.mcp_server_start()
         except Exception:  # noqa: BLE001
             pass
 
-    # Start the console's own MCP server ([mcp_server]) so an external coding
-    # agent (Claude Code) can reach the fleet over localhost. Best-effort and
-    # off by default — a no-op unless [mcp_server] enabled and the `mcp` extra is
-    # installed; it opens a listening socket, so it stays opt-in.
-    try:
-        bridge.mcp_server_start()
-    except Exception:  # noqa: BLE001
-        pass
-    prof("telemetry threaded + MCP started")
+    threading.Thread(target=_bring_up_mcp, daemon=True).start()
+    prof("telemetry + MCP threaded")
 
     # Warm the WASM code-sandbox's compiled-module cache in the background so the
     # first run_python_sandboxed call isn't slow. The *whole* guard — including the

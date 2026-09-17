@@ -40,6 +40,7 @@ def test_ensure_std_streams_leaves_real_streams(monkeypatch):
 
 def test_startup_profiler_off_by_default(monkeypatch, capsys):
     monkeypatch.delenv("RUNSPEC_STARTUP_PROFILE", raising=False)
+    monkeypatch.setattr(sys, "argv", ["runspec-console"])
     mark = app._startup_profiler()
     mark("phase one")  # must be a silent no-op
     assert capsys.readouterr().err == ""
@@ -53,6 +54,25 @@ def test_startup_profiler_on_emits_phase_lines(monkeypatch, capsys):
     assert "startup[" in err
     assert "main() entered" in err
     assert "phase one" in err
+
+
+def test_startup_profile_requested_env(monkeypatch):
+    monkeypatch.setenv("RUNSPEC_STARTUP_PROFILE", "1")
+    monkeypatch.setattr(sys, "argv", ["runspec-console"])
+    assert app._startup_profile_requested() is True
+
+
+def test_startup_profile_requested_cli_flag(monkeypatch):
+    # The flag is scanned off sys.argv because the profiler runs before parse().
+    monkeypatch.delenv("RUNSPEC_STARTUP_PROFILE", raising=False)
+    monkeypatch.setattr(sys, "argv", ["runspec-console", "--profile-startup"])
+    assert app._startup_profile_requested() is True
+
+
+def test_startup_profile_requested_off(monkeypatch):
+    monkeypatch.delenv("RUNSPEC_STARTUP_PROFILE", raising=False)
+    monkeypatch.setattr(sys, "argv", ["runspec-console", "--dev"])
+    assert app._startup_profile_requested() is False
 
 
 def test_main_gui_runs_main_on_success(monkeypatch):

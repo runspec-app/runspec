@@ -22,6 +22,10 @@ type        = "path"
 required    = false
 description = "Use this directory for all console state (hosts, credentials, triggers, config.toml) instead of the default %APPDATA%/runspec-console — handy for testing against an isolated config"
 
+[runspec-console.args.profile-startup]
+type        = "flag"
+description = "Print cumulative + per-phase startup timings to stderr and the log (same as setting RUNSPEC_STARTUP_PROFILE=1) — for diagnosing a slow launch"
+
 [generate-ssh-key]
 description = "Generate or rotate the runspec-console SSH key pair"
 autonomy    = "confirm"
