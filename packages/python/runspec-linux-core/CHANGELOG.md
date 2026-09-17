@@ -1,5 +1,22 @@
 # runspec-linux-core Changelog
 
+## [0.6.2] — 2026-09-17
+
+### Fixed
+
+- **`install_into_venv` regression (0.6.1): `chmod: … Operation not permitted` on
+  a `--symlinks` venv's `bin/python*`.** 0.6.1 replaced the `chmod -R` normalise
+  sweep with `find … -exec chmod {} +` to prune the `logs/` dir. But `find -exec
+  chmod` **dereferences a symlink argument**, and a venv built with `--symlinks`
+  (what `create_venv` always does) has `bin/python`, `bin/python3`,
+  `bin/python3.X` pointing at the **root-owned system interpreter outside the
+  venv** — so the sweep tried to `chmod /usr/bin/python3.X` and failed for a
+  non-root caller (or, under sudo, would have silently repermissioned the system
+  Python). `chmod -R` skipped symlinks for free; the `find` sweep now prunes them
+  explicitly too (`-type l -prune`), matching the old behaviour. A symlink's own
+  mode is unused on Linux, so nothing is lost. The `logs/` prune from 0.6.1 is
+  unchanged. No API change.
+
 ## [0.6.1] — 2026-09-17
 
 ### Fixed

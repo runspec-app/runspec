@@ -1,5 +1,15 @@
 # runspec-linux Changelog
 
+## [0.13.2] — 2026-09-17
+
+### Fixed
+
+- **`install-into-venv` regression (0.13.1): `chmod: … Operation not permitted`
+  on `bin/python3`/`bin/python3.X`.** The 0.13.1 normalise sweep followed the
+  venv's `--symlinks` interpreter links and tried to `chmod` the root-owned
+  system Python they point at. The sweep now prunes symlinks as well as `logs/`
+  (fix in `runspec-linux-core`; pin bumped to `>=0.6.2`). No runnable/arg changes.
+
 ## [0.13.1] — 2026-09-17
 
 ### Fixed

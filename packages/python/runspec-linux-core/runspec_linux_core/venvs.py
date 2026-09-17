@@ -140,11 +140,15 @@ def install_into_venv(
     regardless of the caller's umask — a ``sudo`` upgrade under a PAM-set ``027``
     login umask otherwise lands site-packages entries at ``750`` and hides the
     packs from ``runspec local`` / ``importlib.metadata`` for anyone but the
-    owner. The sweep **prunes** ``<venv>/logs``: it is the group-shared audit dir
-    and holds per-run log files owned by other users (a ``run_as="root"`` runnable
-    leaves root-owned logs there), so a blanket ``chmod`` as a non-root caller
-    would fail with "Operation not permitted". Its ``2775`` setgid mode is left
-    intact, and restored afterwards as a guard if the dir exists.
+    owner. The sweep **prunes** two things: ``<venv>/logs`` (the group-shared
+    audit dir, which holds per-run log files owned by other users — a
+    ``run_as="root"`` runnable leaves root-owned logs there — so its ``2775``
+    setgid mode is left intact and restored afterwards as a guard), and
+    **symlinks** (a ``--symlinks`` venv's ``bin/python*`` point at the root-owned
+    system interpreter *outside* the venv; ``find -exec chmod`` would dereference
+    them and fail — or, under sudo, silently repermission the system Python —
+    where ``chmod -R`` skipped symlinks for free). A symlink's own mode is unused
+    on Linux, so pruning them changes nothing.
     """
     from runspec_linux_core.packages import _validate_packages
 
@@ -179,17 +183,40 @@ def install_into_venv(
     # Normalise pip's freshly-created site-packages entries to u=rwX,go=rX (the
     # same step create_venv runs) so a sudo install under a restrictive login
     # umask can't land them at 750 and hide the packs from `runspec local` /
-    # importlib.metadata. Prune <venv>/logs from the sweep: it is the group-shared
-    # (2775) audit dir and accrues per-run log files owned by *other* users — a
-    # run_as="root" runnable (list-upgrades / upgrade-packages) leaves root-owned
-    # logs there, so a blanket `chmod -R` as a non-root caller dies with
-    # "Operation not permitted" on them. `find ... -prune` skips that subtree; its
-    # own 2775 mode is left intact (and restored below as a belt-and-braces guard).
+    # importlib.metadata. Two subtrees are pruned:
+    #   * <venv>/logs — the group-shared (2775) audit dir, which accrues per-run
+    #     log files owned by *other* users (a run_as="root" runnable such as
+    #     list-upgrades / upgrade-packages leaves root-owned logs there), so a
+    #     non-root caller's chmod on them dies with "Operation not permitted".
+    #   * symlinks (-type l) — a `--symlinks` venv's bin/python* point at the
+    #     system interpreter (root-owned, *outside* the venv). `find -exec chmod`
+    #     dereferences a symlink argument, so without this it would chmod the
+    #     system python: "Operation not permitted" as a normal user, or a silent
+    #     repermission of /usr/bin/python* under sudo. `chmod -R` skipped symlinks
+    #     for free; the find sweep must skip them explicitly to match. A symlink's
+    #     own mode is irrelevant on Linux, so nothing is lost.
+    # The logs dir keeps its 2775 mode (restored below as a belt-and-braces guard).
     logs_dir = os.path.join(venv, "logs")
     _check(
         _run(
             build_become(
-                ["find", venv, "-path", logs_dir, "-prune", "-o", "-exec", "chmod", "u=rwX,go=rX", "{}", "+"],
+                [
+                    "find",
+                    venv,
+                    "-path",
+                    logs_dir,
+                    "-prune",
+                    "-o",
+                    "-type",
+                    "l",
+                    "-prune",
+                    "-o",
+                    "-exec",
+                    "chmod",
+                    "u=rwX,go=rX",
+                    "{}",
+                    "+",
+                ],
                 run_as,
                 become_method,
             )

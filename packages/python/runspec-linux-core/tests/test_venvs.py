@@ -148,9 +148,11 @@ def test_install_into_venv_normalises_perms(tmp_path, monkeypatch: pytest.Monkey
 
     venvs.install_into_venv(venv, "httpx", upgrade=True, run_as="svc")
 
-    # The normalise sweep prunes <venv>/logs so a non-root caller never chmods the
-    # root-owned per-run log files a run_as="root" runnable leaves there
-    # (otherwise: chmod "Operation not permitted", and the install reports failure).
+    # The normalise sweep prunes <venv>/logs (root-owned per-run logs a
+    # run_as="root" runnable leaves there) AND symlinks (a --symlinks venv's
+    # bin/python* point at the root-owned system interpreter; find -exec chmod
+    # would dereference and fail / repermission it). Otherwise: chmod "Operation
+    # not permitted", and the install reports failure.
     assert [
         "sudo",
         "-n",
@@ -160,6 +162,10 @@ def test_install_into_venv_normalises_perms(tmp_path, monkeypatch: pytest.Monkey
         venv,
         "-path",
         f"{venv}/logs",
+        "-prune",
+        "-o",
+        "-type",
+        "l",
         "-prune",
         "-o",
         "-exec",
@@ -198,7 +204,23 @@ def test_install_into_venv_skips_logs_restore_when_absent(tmp_path, monkeypatch:
 
     venvs.install_into_venv(venv, "httpx")
 
-    assert ["find", venv, "-path", f"{venv}/logs", "-prune", "-o", "-exec", "chmod", "u=rwX,go=rX", "{}", "+"] in calls
+    assert [
+        "find",
+        venv,
+        "-path",
+        f"{venv}/logs",
+        "-prune",
+        "-o",
+        "-type",
+        "l",
+        "-prune",
+        "-o",
+        "-exec",
+        "chmod",
+        "u=rwX,go=rX",
+        "{}",
+        "+",
+    ] in calls
     assert ["test", "-d", f"{venv}/logs"] in calls
     assert not any(c[:2] == ["chmod", "2775"] for c in calls)
 
