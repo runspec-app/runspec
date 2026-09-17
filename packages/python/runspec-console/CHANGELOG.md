@@ -8,6 +8,29 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.272.1] — 2026-09-17
+
+### Changed
+- **Denylist modal usability + correctness.** The fleet-kill-switch modal (bottom
+  of the hosts panel) got a polish pass:
+  - The "Disable specific runnables" fields (Runnable names / Usernames / Hosts /
+    Reason) now carry **persistent labels with hover tooltips**, so a field's
+    meaning survives after a value is entered (the placeholder hint disappears
+    then). The Hosts tooltip makes clear the glob is matched against the target
+    machine's own `gethostname()`, not the console's `local` routing alias.
+  - The modal is **wider** (720 → 900) and the per-host status list is a
+    **fixed-height scroll area with a sticky header**, so a long fleet scrolls
+    instead of pushing the form down.
+- **Fixed: the Denylist modal no longer offers `local`.** It counted the
+  synthetic `local` host under "connected" (so a 5-host fleet read "6 connected")
+  and listed it in the target-host picker, but the backend `denylist_status` /
+  `manage_denylist` operate on the configured SSH fleet, which excludes `local` —
+  so `local` produced no status row and no action. The modal is now scoped to the
+  connected **remote** hosts only, so the count, picker and table agree. (Denying
+  the console's own local venv — e.g. to gate an external agent reaching it via
+  the console's MCP server — is a separate feature for later.)
+
+
 ## [0.272.0] — 2026-09-17
 
 ### Changed

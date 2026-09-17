@@ -1579,7 +1579,7 @@ export default function App() {
             <DenylistModal
               open={denylistOpen}
               onClose={() => setDenylistOpen(false)}
-              hosts={hosts.filter(h => h.name === 'local' || h.connected)}
+              hosts={hosts.filter(h => h.name !== 'local' && h.connected)}
             />
           )}
         </Suspense>

@@ -7,13 +7,26 @@
  * host count it shows is the one you can see is green in the sidebar. Was a
  * Settings tab querying every configured host regardless of profile/state.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Modal, Alert, Button, Divider, Input, Popconfirm, Segmented, Select, Space, Table, Tag, Tooltip, Typography, message } from 'antd'
-import { ReloadOutlined, StopOutlined, WarningOutlined, LoadingOutlined } from '@ant-design/icons'
+import { ReloadOutlined, StopOutlined, WarningOutlined, LoadingOutlined, InfoCircleOutlined } from '@ant-design/icons'
 import { bridge, type DenylistHostStatus, type DenylistPayload, type Host } from '../bridge'
 import { RADIUS } from '../ThemeContext'
 
 const { Text } = Typography
+
+/** A persistent field label with an info tooltip, so a tags/input field's meaning
+ *  survives after a value is entered (the placeholder hint disappears then). */
+function FieldLabel({ children, hint }: { children: ReactNode; hint: ReactNode }) {
+  return (
+    <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 2 }}>
+      {children}{' '}
+      <Tooltip title={hint}>
+        <InfoCircleOutlined style={{ fontSize: 11, cursor: 'help' }} />
+      </Tooltip>
+    </Text>
+  )
+}
 
 export interface DenylistModalProps {
   open: boolean
@@ -40,9 +53,21 @@ export function DenylistModal({ open, onClose, hosts }: DenylistModalProps) {
   const scopeNames = useMemo(() => hosts.map(h => h.name), [hosts])
   const scopeKey = scopeNames.join('\u0000')
   const effectiveTargets = targets.length ? targets : scopeNames
+  // Scope is the SSH-connected remote hosts. The caller filters out the synthetic
+  // `local` host (the denylist backend acts on the configured fleet, not the
+  // local venv), so this normally reduces to "N connected hosts". The `local`
+  // handling stays as defence in depth: if it is ever in scope it must not be
+  // counted under "connected" (it is not an SSH connection — that once read
+  // "6 connected" when only 5 remotes were).
+  const localInScope = scopeNames.includes('local')
+  const remoteCount = scopeNames.length - (localInScope ? 1 : 0)
+  const scopeLabel = [
+    localInScope ? 'local' : '',
+    remoteCount ? `${remoteCount} connected host${remoteCount === 1 ? '' : 's'}` : '',
+  ].filter(Boolean).join(' + ') || 'no hosts'
   const scope = targets.length
-    ? `${targets.length} selected host(s)`
-    : `all ${scopeNames.length} connected host${scopeNames.length === 1 ? '' : 's'}`
+    ? `${targets.length} selected host${targets.length === 1 ? '' : 's'}`
+    : scopeLabel
 
   // One read of the connected hosts (in parallel on the backend) when the modal
   // opens, on Refresh, and after a mutation. The host picker filters the loaded
@@ -134,7 +159,7 @@ export function DenylistModal({ open, onClose, hosts }: DenylistModalProps) {
       open={open}
       onCancel={onClose}
       footer={null}
-      width={720}
+      width={900}
       title={<span><StopOutlined style={{ marginRight: 8 }} />Denylist — fleet kill switch</span>}
       destroyOnHidden
     >
@@ -146,7 +171,7 @@ export function DenylistModal({ open, onClose, hosts }: DenylistModalProps) {
         message="Kill switch"
         description={
           <Text type="secondary" style={{ fontSize: 13 }}>
-            Disable or re-enable runspec runnables on the <strong>{scopeNames.length} connected</strong> host{scopeNames.length === 1 ? '' : 's'} of the
+            Disable or re-enable runspec runnables on <strong>{scopeLabel}</strong> of the
             active profile. This writes each host's venv denylist via the core <Text code>runspec deny</Text> over SSH —
             it stops the <em>runnables</em> on those hosts, never this console, and
             “Re-enable all” always works. A host that is disconnected right now is not touched; reopen once it
@@ -162,7 +187,7 @@ export function DenylistModal({ open, onClose, hosts }: DenylistModalProps) {
           allowClear
           size="small"
           style={{ width: '100%', marginTop: 4 }}
-          placeholder={`All ${scopeNames.length} connected host${scopeNames.length === 1 ? '' : 's'} (leave empty to apply to every one)`}
+          placeholder={`Apply to all in scope — ${scopeLabel} (leave empty for every one)`}
           value={targets}
           onChange={setTargets}
           options={hostOptions}
@@ -174,8 +199,10 @@ export function DenylistModal({ open, onClose, hosts }: DenylistModalProps) {
         rowKey={r => `${r.host}/${r.venv}`}
         columns={statusColumns}
         dataSource={shownStatus}
-        loading={loadingStatus ? { tip: `Querying ${scopeNames.length} connected host${scopeNames.length === 1 ? '' : 's'}…` } : false}
+        loading={loadingStatus ? { tip: `Querying ${scopeLabel}…` } : false}
         pagination={false}
+        sticky
+        scroll={{ y: 300 }}
         style={{ marginBottom: 12 }}
         locale={{ emptyText: !scopeNames.length ? 'No connected hosts.' : targets.length && status.length ? 'No rows for the selected hosts.' : 'No connected host has a runspec path.' }}
       />
@@ -221,11 +248,23 @@ export function DenylistModal({ open, onClose, hosts }: DenylistModalProps) {
       <Divider style={{ margin: '8px 0' }} orientation="left" plain>
         <Text type="secondary" style={{ fontSize: 13 }}>Disable specific runnables</Text>
       </Divider>
-      <Space direction="vertical" style={{ width: '100%', marginBottom: 12 }} size={6}>
-        <Select mode="tags" size="small" style={{ width: '100%' }} value={runnableGlobs} onChange={setRunnableGlobs} placeholder="Runnable name globs (e.g. deploy, restart-*) — empty = all" />
-        <Select mode="tags" size="small" style={{ width: '100%' }} value={userGlobs} onChange={setUserGlobs} placeholder="Username globs — empty = all users" />
-        <Select mode="tags" size="small" style={{ width: '100%' }} value={hostGlobs} onChange={setHostGlobs} placeholder="Hostname globs the rule applies to — empty = all hosts" />
-        <Input size="small" placeholder="Reason (shown on the refusal)" value={reason} onChange={e => setReason(e.target.value)} />
+      <Space direction="vertical" style={{ width: '100%', marginBottom: 12 }} size={8}>
+        <div>
+          <FieldLabel hint="Glob(s) matched against the runnable name. Empty = every runnable.">Runnable names</FieldLabel>
+          <Select mode="tags" size="small" style={{ width: '100%' }} value={runnableGlobs} onChange={setRunnableGlobs} placeholder="e.g. deploy, restart-* — empty = all" />
+        </div>
+        <div>
+          <FieldLabel hint="Glob(s) matched against the effective OS user the runnable runs as (its run_as user, or the login user). Empty = all users.">Usernames</FieldLabel>
+          <Select mode="tags" size="small" style={{ width: '100%' }} value={userGlobs} onChange={setUserGlobs} placeholder="e.g. deploy, svc-* — empty = all users" />
+        </div>
+        <div>
+          <FieldLabel hint="Glob(s) matched against the hostname of the machine running the runnable — its own gethostname(). The rule only takes effect on hosts whose name matches, so one rule distributed to many hosts fires only where it should. Empty = all hosts. (This is the target host's real name, not the console's “local” alias.)">Hosts this rule applies to</FieldLabel>
+          <Select mode="tags" size="small" style={{ width: '100%' }} value={hostGlobs} onChange={setHostGlobs} placeholder="e.g. prod-* — empty = all hosts" />
+        </div>
+        <div>
+          <FieldLabel hint="Free text shown to the caller on the refusal when a matching run is blocked.">Reason</FieldLabel>
+          <Input size="small" placeholder="e.g. incident INC-1234 — paused pending review" value={reason} onChange={e => setReason(e.target.value)} />
+        </div>
         <Button
           size="small"
           icon={<StopOutlined />}
