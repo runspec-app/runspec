@@ -484,13 +484,23 @@ def main() -> None:
     # agent's fleet calls with no model inside.
     ai_on = bridge.ai_enabled()
 
-    # Telemetry (OTLP traces + metrics) on a background thread — resolving a
-    # keychain-backed credential and importing/initialising the OTLP exporters
-    # costs tens of ms, and none of it is needed before the window paints.
-    # Best-effort; a no-op unless [telemetry]/[telemetry.metrics] is enabled and
-    # the `otel` extra is present. Metrics cover *runnable* runs (Forms / MCP
-    # server / schedules / triggers), so they init **regardless of the AI switch**;
-    # tracing is agent-turn-only, so it stays gated on it.
+    # Telemetry / MCP / sandbox bring-up all run on background threads, but the
+    # threads are *started* further down — after webview.create_window(), right
+    # before webview.start() (see "_start_background_bring_up"). Their work is
+    # import- and setup-heavy (OTLP exporters, the MCP SDK, APScheduler, the
+    # wasmtime extension), which is CPU-bound and holds the GIL, so starting them
+    # here made them contend with create_window() on the main thread. Deferring
+    # the start lets create_window() run uncontended and overlaps that Python work
+    # with webview.start()'s native WebView2 init instead (native code runs with
+    # the GIL released, so the overlap is real). Nothing before the window paints
+    # needs any of them.
+
+    # Telemetry (OTLP traces + metrics): resolving a keychain-backed credential
+    # and importing/initialising the OTLP exporters costs tens of ms. Best-effort;
+    # a no-op unless [telemetry]/[telemetry.metrics] is enabled and the `otel`
+    # extra is present. Metrics cover *runnable* runs (Forms / MCP server /
+    # schedules / triggers), so they init **regardless of the AI switch**; tracing
+    # is agent-turn-only, so it stays gated on it.
     def _bring_up_telemetry() -> None:
         try:
             cfg = bridge._resolve_telemetry_credentials()
@@ -500,14 +510,11 @@ def main() -> None:
         except Exception:  # noqa: BLE001 — telemetry bring-up must never block/fatal
             logger.debug("telemetry bring-up failed", exc_info=True)
 
-    threading.Thread(target=_bring_up_telemetry, daemon=True).start()
-
-    # MCP bring-up on its own background thread — connecting to external servers
-    # (a network handshake per server) and opening our own localhost listening
-    # socket cost hundreds of ms combined, and nothing before the window paints
-    # needs either: the chat agent doesn't reach an external MCP tool until the
-    # first message, and an external coding agent connecting to our server retries
-    # / polls the discovery file. Runs in parallel with the telemetry thread.
+    # MCP bring-up: connecting to external servers (a network handshake per
+    # server) and opening our own localhost listening socket cost hundreds of ms
+    # combined, and nothing before the window paints needs either — the chat agent
+    # doesn't reach an external MCP tool until the first message, and an external
+    # coding agent connecting to our server retries / polls the discovery file.
     def _bring_up_mcp() -> None:
         # Connect any external MCP servers ([mcp] / [[mcp.servers]]) so their tools
         # join the chat agent's toolset. Best-effort and idempotent — a no-op
@@ -527,15 +534,12 @@ def main() -> None:
         except Exception:  # noqa: BLE001
             pass
 
-    threading.Thread(target=_bring_up_mcp, daemon=True).start()
-    prof("telemetry + MCP threaded")
-
-    # Warm the WASM code-sandbox's compiled-module cache in the background so the
-    # first run_python_sandboxed call isn't slow. The *whole* guard — including the
+    # Warm the WASM code-sandbox's compiled-module cache so the first
+    # run_python_sandboxed call isn't slow. The *whole* guard — including the
     # `wasmtime` import behind sandbox._wasmtime() (a heavy compiled extension) —
-    # runs on the worker thread, so nothing here touches the window-paint path.
-    # Best-effort and download-free: only compiles when runtime + binary are
-    # already present locally (a missing binary stays lazy download-on-first-use).
+    # runs on the worker thread. Best-effort and download-free: only compiles when
+    # runtime + binary are already present locally (a missing binary stays lazy
+    # download-on-first-use).
     def _warm_sandbox() -> None:
         try:
             from . import sandbox
@@ -551,7 +555,9 @@ def main() -> None:
         except Exception:  # noqa: BLE001 — warming is best-effort
             pass
 
-    threading.Thread(target=_warm_sandbox, daemon=True).start()
+    def _start_background_bring_up() -> None:
+        for target in (_bring_up_telemetry, _bring_up_mcp, _warm_sandbox):
+            threading.Thread(target=target, daemon=True).start()
 
     if dev:
         url = f"http://localhost:{port}"
@@ -592,6 +598,11 @@ def main() -> None:
         on_started=_started,
         icon=str(icon) if icon else None,
     )
+    # Start telemetry / MCP / sandbox now — after the window is created, so their
+    # CPU-bound import/setup work overlaps webview.start()'s native WebView2 init
+    # (GIL released) instead of contending with create_window() on the main thread.
+    _start_background_bring_up()
+    prof("telemetry + MCP + sandbox threads started")
     try:
         prof("webview.start() — loading the frontend bundle")
         webview.start(**start_kwargs)

@@ -8,6 +8,23 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.271.2] — 2026-09-17
+
+### Changed
+- **Background bring-up threads now start *after* the window is created**, so
+  `webview.create_window()` runs uncontended. 0.271.1 moved the MCP bring-up onto
+  a background thread, but a profiled launch showed ~600 ms of that work
+  reappearing inside the `window created` phase: the telemetry / MCP / sandbox
+  threads are import- and setup-heavy (OTLP exporters, the MCP SDK, APScheduler,
+  the `wasmtime` extension), which is CPU-bound and holds the GIL, so starting
+  them before `create_window()` just made them contend on the main thread. The
+  threads are now started immediately before `webview.start()`, so their Python
+  work overlaps the native WebView2 init instead (native code runs with the GIL
+  released). Behaviourally identical — nothing before first paint needs telemetry,
+  MCP or the sandbox. Profiler mark renamed to
+  `telemetry + MCP + sandbox threads started`.
+
+
 ## [0.271.1] — 2026-09-17
 
 ### Changed
