@@ -60,6 +60,14 @@ def test_verb_kwargs_search_exclude_defaults_to_none() -> None:
     h.close()
 
 
+def test_verb_kwargs_directory_size() -> None:
+    h = _harness()
+    spec = h.expect_ok(["directory-size", "--path", "sub", "--limit", "5", "--depth", "3"])
+    kw = _verb_kwargs(spec)
+    assert kw["path"].endswith("sub") and kw["limit"] == 5 and kw["depth"] == 3
+    h.close()
+
+
 # ── run-as worker path (mock the sudo subprocess) ───────────────────────────
 
 
@@ -126,6 +134,17 @@ def _run_fs(argv: list[str], tmp_path: Path) -> dict:
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout.strip().splitlines()[-1])
+
+
+def test_directory_size_end_to_end(tmp_path: Path) -> None:
+    (tmp_path / "big").mkdir()
+    (tmp_path / "big" / "a.bin").write_bytes(b"x" * 100)
+    (tmp_path / "tiny.bin").write_bytes(b"x")
+    out = _run_fs(["directory-size", "--path", str(tmp_path)], tmp_path)
+    by_name = {e["name"]: e for e in out["entries"]}
+    assert by_name["big"]["size"] == 100
+    assert out["entries"][0]["name"] == "big"  # largest first
+    assert out["total_size"] == 101
 
 
 def test_run_as_current_user_skips_escalation(tmp_path: Path) -> None:

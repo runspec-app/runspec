@@ -13,6 +13,7 @@ from typing import Any
 from runspec_fs_core import (
     allowed_directories,
     create_directory,
+    directory_size,
     directory_tree,
     edit_file,
     get_file_info,
@@ -40,6 +41,8 @@ def run_verb(verb: str, kwargs: dict[str, Any]) -> dict[str, Any]:
         return list_directory(kwargs["path"])
     if verb == "list-directory-with-sizes":
         return list_directory_with_sizes(kwargs["path"], sort_by=kwargs["sort_by"])
+    if verb == "directory-size":
+        return directory_size(kwargs["path"], limit=kwargs["limit"], depth=kwargs["depth"])
     if verb == "directory-tree":
         return directory_tree(kwargs["path"], exclude=kwargs.get("exclude"))
     if verb == "search-files":

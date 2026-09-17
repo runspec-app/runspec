@@ -24,6 +24,17 @@ def test_dispatch_read_and_list(tmp_path) -> None:
     assert listing["entries"][0]["name"] == "a.txt"
 
 
+def test_dispatch_directory_size(tmp_path) -> None:
+    (tmp_path / "big").mkdir()
+    (tmp_path / "big" / "a.bin").write_bytes(b"x" * 100)
+    (tmp_path / "tiny.bin").write_bytes(b"x")
+    out = _dispatch.run_verb("directory-size", {"path": str(tmp_path), "limit": 20, "depth": 1})
+    by_name = {e["name"]: e for e in out["entries"]}
+    assert by_name["big"]["size"] == 100  # recursive folder total
+    assert out["entries"][0]["name"] == "big"  # largest first
+    assert out["total_size"] == 101
+
+
 def test_dispatch_unknown_verb() -> None:
     with pytest.raises(ValueError):
         _dispatch.run_verb("frobnicate", {})

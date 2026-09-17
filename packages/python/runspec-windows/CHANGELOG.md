@@ -1,5 +1,23 @@
 # runspec-windows Changelog
 
+## [0.9.0] — 2026-09-17
+
+### Added — `directory-size` verb on the folded `filesystem` runnable
+
+- The folded `filesystem` runnable gains a `directory-size` verb:
+  `filesystem directory-size --path <dir> [--limit N] [--depth N]` reports the recursive
+  total size of each immediate child of a directory, largest first — the
+  folder-level "what's filling this drive" view that `disk-usage` (per-drive
+  free/used space) doesn't provide. Each subdirectory's size is the total of
+  everything beneath it, so the console agent can trace disk pressure and drill
+  into the biggest folder. `--depth N` (default 1) nests the breakdown N levels
+  deep in one call (each folder carries its own sorted `children`), so several
+  levels need no call per level. Autonomous; `runspec serve` exposes it as the
+  `filesystem_directory-size` leaf MCP tool. `--path` is a directory arg
+  (`ui = "directory"`) — a folder picker in the console Forms tab.
+- Backed by the new `runspec_fs_core.directory_size` helper (pin bumped to
+  `runspec-fs-core>=0.3.0`).
+
 ## [0.8.0] — 2026-09-11
 
 ### Changed — the folded filesystem runnable `fs` is now `filesystem`

@@ -75,6 +75,14 @@ autonomy = "autonomous"
 path = {type = "path", required = true, description = "Directory to list"}
 sort-by = {type = "choice", options = ["name", "size"], default = "name", description = "Sort order (size is descending)"}
 
+[filesystem.commands.directory-size]
+description = "Report the recursive total size of each immediate child of a directory, largest first — find which folder is eating a drive (like `du -d1 | sort`). Unlike list-directory-with-sizes (which shows 0 for a folder), each subdirectory's size is the total of everything beneath it; drill into the biggest to trace disk usage."
+autonomy = "autonomous"
+[filesystem.commands.directory-size.args]
+path = {type = "path", ui = "directory", required = true, description = "Directory to measure"}
+limit = {type = "int", short = "-n", default = 20, description = "Return only the N largest children, biggest first (0 = all)"}
+depth = {type = "int", short = "-d", default = 1, description = "Break down this many directory levels deep in one call (1 = immediate children only; like du -d<depth>). Each --limit caps every level."}
+
 [filesystem.commands.directory-tree]
 description = "Return a recursive JSON tree of a directory"
 autonomy = "autonomous"

@@ -27,6 +27,7 @@ from runspec_fs_core.become import (
 )
 from runspec_fs_core.dirs import (
     create_directory,
+    directory_size,
     directory_tree,
     list_directory,
     list_directory_with_sizes,
@@ -65,6 +66,7 @@ __all__ = [
     "create_directory",
     "list_directory",
     "list_directory_with_sizes",
+    "directory_size",
     "directory_tree",
     "move_file",
     # search / info

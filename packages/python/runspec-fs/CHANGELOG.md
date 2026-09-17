@@ -1,5 +1,24 @@
 # runspec-fs Changelog
 
+## [0.4.0] — 2026-09-17
+
+### Added — `directory-size` verb (folder-size disk-usage triage)
+
+- New `filesystem directory-size --path <dir> [--limit N] [--depth N]` verb: report the
+  recursive total size of each immediate child of a directory, largest first —
+  the "which folder is eating the drive" view (like `du -d1 | sort`). Unlike
+  `list-directory-with-sizes` (which shows `0` for a folder entry), each
+  subdirectory's size is the total of everything beneath it, so an agent
+  investigating a full drive can find the culprit folder and drill down.
+  `--depth N` (default 1) nests the breakdown that many levels deep in one
+  call (each folder carries its own sorted `children`), so several levels can
+  be seen without a call per level.
+  Autonomous (read-only). `runspec serve` flattens it to a
+  `filesystem_directory-size` leaf MCP tool. `--path` is a directory arg
+  (`ui = "directory"`), so the console Forms tab renders a folder picker.
+- Backed by the new `runspec_fs_core.directory_size` helper (pin bumped to
+  `runspec-fs-core>=0.3.0`).
+
 ## [0.3.0] — 2026-09-11
 
 Rename the runnable (and its console-script entry point) from `fs` to

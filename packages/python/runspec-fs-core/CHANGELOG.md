@@ -1,5 +1,21 @@
 # runspec-fs-core Changelog
 
+## [0.3.0] — 2026-09-17
+
+Add **`directory_size`** — the recursive folder-size helper for disk-usage
+triage (the "which folder is eating the drive" view, like `du -d1 | sort`):
+
+- **`directory_size(path, *, limit=20)`** — report the recursive total size of
+  each immediate child of a directory, largest first. Unlike
+  `list_directory_with_sizes` (which reports `0` for a directory entry), every
+  subdirectory's `size` is the total of all files beneath it, so an agent
+  investigating a full drive can spot the culprit folder and drill down.
+- Symlinks are not followed (link targets are never double-counted or looped),
+  `total_size` stays the true total even when `entries` is truncated to the top
+  `limit` (`limit <= 0` returns all), and unreadable entries (permissions,
+  races) are skipped and tallied under `skipped` rather than failing the scan.
+- Raises `NotADirectoryError` when pointed at a file. Stdlib-only (`os.scandir`).
+
 ## [0.2.0] — 2026-07-25
 
 Add `become.py` — the pure privilege-escalation command builder behind the
