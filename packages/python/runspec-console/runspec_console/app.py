@@ -363,7 +363,30 @@ def _on_started(title: str) -> None:
     _apply_dwm_title_bar(title)
 
 
+def _ensure_std_streams() -> None:
+    """Make ``sys.stdin``/``stdout``/``stderr`` safe to probe.
+
+    Under ``pythonw.exe`` (the windowed launcher) there is no console, so these
+    are ``None``. Anything that checks e.g. ``sys.stdout.isatty()`` for colour /
+    TTY detection — runspec core's ``parse()`` (``sys.stdin.isatty()``), colorama,
+    rich, argparse — then dies with ``'NoneType' object has no attribute
+    'isatty'`` before the window ever appears. Point each *missing* stream at
+    ``os.devnull`` (a real file object whose ``isatty()`` is ``False``). Only
+    touches a stream that is actually ``None``, so it is a no-op for the console
+    script / a real terminal, and covers every launch path (``main_gui``,
+    ``pythonw -m runspec_console``)."""
+    sink_w = None
+    for name in ("stdout", "stderr"):
+        if getattr(sys, name, None) is None:
+            if sink_w is None:
+                sink_w = open(os.devnull, "w", encoding="utf-8", errors="replace")
+            setattr(sys, name, sink_w)
+    if getattr(sys, "stdin", None) is None:
+        sys.stdin = open(os.devnull, encoding="utf-8")
+
+
 def main() -> None:
+    _ensure_std_streams()
     _suppress_noisy_loggers()
 
     import runspec

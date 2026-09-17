@@ -9,9 +9,33 @@ plain `runspec-console` console script is unchanged (tracebacks to the terminal)
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 import runspec_console.app as app
+
+
+def test_ensure_std_streams_replaces_none(monkeypatch):
+    # Simulate pythonw: no console → sys.stdin/stdout/stderr are None. Probing
+    # .isatty() (runspec core's parse(), colorama, …) must not crash.
+    monkeypatch.setattr(sys, "stdout", None)
+    monkeypatch.setattr(sys, "stderr", None)
+    monkeypatch.setattr(sys, "stdin", None)
+
+    app._ensure_std_streams()
+
+    for stream in (sys.stdout, sys.stderr, sys.stdin):
+        assert stream is not None
+        assert stream.isatty() is False  # the exact call that used to blow up
+
+
+def test_ensure_std_streams_leaves_real_streams(monkeypatch):
+    # A real terminal / the console script: streams exist → no-op, not replaced.
+    sentinel_out, sentinel_err = sys.stdout, sys.stderr
+    app._ensure_std_streams()
+    assert sys.stdout is sentinel_out
+    assert sys.stderr is sentinel_err
 
 
 def test_main_gui_runs_main_on_success(monkeypatch):

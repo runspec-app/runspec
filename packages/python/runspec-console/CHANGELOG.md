@@ -8,6 +8,20 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.270.1] — 2026-09-17
+
+### Fixed
+- **Windowed launch crashed with `'NoneType' object has no attribute 'isatty'`.**
+  Under `pythonw.exe` (the `runspec-console-app` launcher) there is no console, so
+  `sys.stdin`/`stdout`/`stderr` are `None`; runspec core's `parse()` (and colour /
+  TTY detection in colorama, rich, argparse) probes `.isatty()` and died before
+  the window appeared. `main()` now normalises any `None` std stream to
+  `os.devnull` first (`_ensure_std_streams`) — a no-op for the console script /
+  a real terminal, covering every launch path (`main_gui`, `pythonw -m
+  runspec_console`). (The 0.270.0 startup crash guard is what surfaced this as a
+  dialog rather than a silent failure.)
+
+
 ## [0.270.0] — 2026-09-17
 
 ### Added
