@@ -8,6 +8,25 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.272.4] — 2026-09-17
+
+### Fixed
+- **Removed the 120 s wall-clock cap on the agent's runnable runs.** The internal
+  chat/trigger/schedule agent's `run_runnable` chokepoint
+  (`bridge_autonomy._run_tool_sync`) hardcoded `timeout=120` on both the remote
+  and local executor calls, so a long-but-legitimate run — e.g. a bulk
+  `runspec-windows filesystem` move over SSH — was killed mid-flight at exactly
+  two minutes (`⏱ Process killed: exceeded 120s timeout`). The cap is dropped, so
+  the agent path now runs **unbounded**, matching the two paths that share the
+  identical executor and never had a cap: Forms (`invoke_runnable`) and the
+  console's own MCP server (which routes through `invoke_runnable` too, and so was
+  already unbounded — an `[console] ai = false` console is unaffected either way).
+  The confirm gate + Stop button remain the operator backstop, consistent with the
+  agent-loop philosophy ("generous runaway backstops, not per-task dials"). No
+  config knob is introduced; per-runnable timeout overrides can be added later if
+  a real need appears.
+
+
 ## [0.272.3] — 2026-09-17
 
 ### Changed

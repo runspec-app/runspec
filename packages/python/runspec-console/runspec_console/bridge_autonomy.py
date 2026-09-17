@@ -1629,7 +1629,10 @@ class AutonomyMixin:
                 on_line,
                 on_done,
                 entry.get("identityFile"),
-                timeout=120,
+                # No wall-clock timeout — matches the Forms (invoke_runnable) and
+                # MCP-server paths, which run the same executor unbounded. A tight
+                # cap here killed long-but-legitimate runs (e.g. a bulk filesystem
+                # move) mid-flight; the confirm gate + Stop button are the backstop.
                 agent=run_agent,
                 global_ssh_config=self.get_config().get("ssh"),
                 run_as=run_as,
@@ -1650,7 +1653,7 @@ class AutonomyMixin:
                 command_path,
                 on_line,
                 on_done,
-                timeout=120,
+                # Unbounded, as above — parity with the Forms/MCP execution paths.
                 agent=run_agent,
                 run_as=run_as,
                 become_method=become_method,
