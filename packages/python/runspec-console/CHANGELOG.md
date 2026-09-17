@@ -8,6 +8,24 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.270.0] — 2026-09-17
+
+### Added
+- **Windowed launcher — start with no terminal window on Windows.** A new
+  `[project.gui-scripts]` entry point `runspec-console-app` (→ `app.main_gui`) is
+  built by pip against `pythonw.exe`, so a double-click / Start-menu shortcut
+  launches the desktop app with **no console window**. The existing
+  `runspec-console` console script is unchanged (it keeps a terminal open for
+  logs / troubleshooting). `python -m runspec_console` also works now (a new
+  `__main__.py`). White-label wrappers get the same by adding a
+  `[project.gui-scripts]` `<brand>-app` launcher — see `docs/white-label.md`.
+- **Startup crash guard for the windowed launch.** Because `pythonw` has no
+  terminal, a crash *before* the app's own logging is up would otherwise vanish;
+  `main_gui` writes the traceback to `startup-crash.log` in the (brand-aware)
+  config dir and shows a native error dialog, then exits non-zero. The console
+  script still prints tracebacks to its terminal.
+
+
 ## [0.269.0] — 2026-09-17
 
 ### Added

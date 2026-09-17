@@ -5,7 +5,8 @@ Dev mode  (--dev):  points the window at the Vite dev server (http://localhost:<
 Prod mode (default): serves the built Vite dist folder via a local HTTP server.
 
 Usage:
-  runspec-console            # production — requires packages/console-ui/dist/
+  runspec-console-app        # windowed launcher (no console window; gui-scripts → main_gui)
+  runspec-console            # console launcher — same app, logs to the terminal
   runspec-console --dev      # development — requires `npm run dev` running
   runspec-console --dev --port 5174
 """
@@ -510,3 +511,78 @@ def main() -> None:
         # off) so a short session doesn't drop its last traces / metric export.
         observability.shutdown()
         observability.shutdown_metrics()
+
+
+def _crash_log_path() -> str:
+    """Where a startup-crash traceback is written — the brand-aware config dir if
+    reachable, else the OS temp dir. Best-effort; the caller tolerates either."""
+    import tempfile
+
+    try:
+        from . import config
+
+        base = str(config.app_dir())
+    except Exception:  # noqa: BLE001 — the crash itself may be in config
+        base = tempfile.gettempdir()
+    return os.path.join(base, "startup-crash.log")
+
+
+def _startup_title() -> str:
+    """The app name for the crash dialog — branded when resolvable, else default."""
+    try:
+        from .branding import resolve_branding
+
+        return resolve_branding().title
+    except Exception:  # noqa: BLE001
+        return "runspec console"
+
+
+def _show_startup_error(summary: str, log_path: str | None) -> None:
+    """Surface a startup crash to the user. Under a windowed (``pythonw``) launch
+    there is no terminal, so show a native Windows dialog; elsewhere fall back to
+    stderr. Overridable in tests. Never raises."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+
+            title = _startup_title()
+            where = f"\n\nDetails written to:\n{log_path}" if log_path else ""
+            ctypes.windll.user32.MessageBoxW(  # type: ignore[attr-defined]
+                None, f"{title} could not start.\n\n{summary}{where}", title, 0x10
+            )  # 0x10 = MB_ICONERROR
+            return
+        except Exception:  # noqa: BLE001
+            pass
+    try:
+        print(summary, file=sys.stderr)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def main_gui() -> None:
+    """Windowed entry point — the ``gui-scripts`` launcher, which runs under
+    ``pythonw.exe`` on Windows with **no console window**. It wraps :func:`main`
+    so a crash *before* the app's own logging is up is not a silent no-op: the
+    traceback is written to a crash log and shown in a native dialog, since there
+    is no terminal to print it to. The plain ``runspec-console`` console script
+    keeps printing tracebacks to its terminal, so this guard is windowed-only."""
+    try:
+        main()
+    except Exception:  # noqa: BLE001 — last-resort GUI-launch startup guard
+        import traceback
+
+        tb = traceback.format_exc()
+        path: str | None = _crash_log_path()
+        try:
+            from datetime import datetime
+
+            with open(path, "a", encoding="utf-8") as fh:  # type: ignore[arg-type]
+                fh.write(
+                    f"\n--- startup crash {datetime.now().isoformat()} ---\n{tb}\n"
+                )
+        except Exception:  # noqa: BLE001
+            path = None
+        # The dialog shows the concise exception line; the full trace is in the file.
+        lines = tb.strip().splitlines()
+        _show_startup_error(lines[-1] if lines else "Unknown error.", path)
+        raise SystemExit(1)

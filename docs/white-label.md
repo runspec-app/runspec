@@ -70,8 +70,16 @@ Documentation = "https://docs.mycorp.example/console"
 Homepage = "https://mycorp.example"
 
 # A branded launcher alongside `runspec-console` — same console underneath.
+# `[project.scripts]` is a *console* launcher (prints logs to the terminal —
+# handy for troubleshooting). For a double-click / Start-menu shortcut, add a
+# `[project.gui-scripts]` launcher too: pip builds it against pythonw.exe on
+# Windows, so it starts with NO console window. Point the shortcut at the
+# `-app` command.
 [project.scripts]
 mycorp-console = "runspec_console.app:main"
+
+[project.gui-scripts]
+mycorp-console-app = "runspec_console.app:main_gui"
 
 # Your gateway becomes a selectable provider: `provider = "mycorp"`.
 [project.entry-points."runspec_console.adapters"]
@@ -315,8 +323,13 @@ Operator install — this is the entire rollout instruction:
 
 ```
 pip install mycorp-console --index-url https://pypi.mycorp.example/simple
-mycorp-console
+mycorp-console-app     # windowed, no console window (pin a shortcut to this)
+# mycorp-console       # same app, but keeps a terminal open for logs
 ```
+
+On Windows, create the Start-menu / desktop shortcut against
+`Scripts\mycorp-console-app.exe` (the `[project.gui-scripts]` launcher) so
+operators get a clean, terminal-free launch.
 
 The footer's update badge now tracks `mycorp-console` against your index, so
 publishing `1.1.0` prompts every operator. For fleet-side venvs behind the

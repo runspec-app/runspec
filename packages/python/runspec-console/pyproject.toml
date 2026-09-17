@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-console"
-version = "0.269.0"
+version = "0.270.0"
 requires-python = ">=3.11"
 dependencies = [
     "pywebview>=5.0",
@@ -41,6 +41,12 @@ path = "hatch_build.py"
 [project.scripts]
 runspec-console = "runspec_console.app:main"
 generate-ssh-key = "runspec_console.tools.generate_ssh_key:main"
+
+# Windowed launcher: pip builds this one against pythonw.exe on Windows, so it
+# starts with NO console window — the form to pin a Start-menu/desktop shortcut
+# to. The console-script `runspec-console` above stays for terminal diagnostics.
+[project.gui-scripts]
+runspec-console-app = "runspec_console.app:main_gui"
 
 [project.optional-dependencies]
 anthropic = ["anthropic>=0.40.0"]
