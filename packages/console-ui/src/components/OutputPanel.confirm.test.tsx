@@ -45,9 +45,31 @@ function chatBlockWithRunningTool(toolName: string): InvocationBlock {
   }
 }
 
+// A rule-mode trigger run: a plain run block with no tool segment at all. Its
+// confirm has nothing to bind to inside the transcript, so the card-level gate
+// must render it.
+function ruleRunBlock(id: string): InvocationBlock {
+  return {
+    id,
+    type: 'run',
+    label: '/drain-node',
+    startedAt: new Date().toISOString(),
+    lines: [],
+    segments: [],
+    currentText: '',
+    done: false,
+    trigger: { name: 'nightly', source: 'outlook' },
+  }
+}
+
 function fireConfirm(detail: Record<string, unknown>) {
   act(() => {
     window.dispatchEvent(new CustomEvent('runspec:tool_confirm', { detail }))
+  })
+}
+function fireResolved(detail: Record<string, unknown>) {
+  act(() => {
+    window.dispatchEvent(new CustomEvent('runspec:confirm_resolved', { detail }))
   })
 }
 
@@ -80,18 +102,23 @@ describe('OutputPanel autonomy-gate confirm', () => {
     expect(screen.getByText(/node = "n1"/)).toBeTruthy()
   })
 
-  it('does NOT render buttons when the confirm name mismatches the segment (the 0.91.0 bug)', () => {
+  it('falls back to a card-level gate when the confirm matches no running segment', () => {
+    // Historically (0.91.0) a confirm whose tool_name didn't match the running
+    // segment rendered nothing — wedging the run with no way to approve. The
+    // card-level gate is the backstop: a confirm keyed to this block's id always
+    // gets a reachable Approve/Deny (bound by request_id), whether the segment
+    // name differs or the segment simply hasn't streamed yet.
     render(<OutputPanel blocks={[chatBlockWithRunningTool('run_runnable')]} />)
-    // The old, broken shape: tool_name was the *unwrapped* runnable name, which
-    // never equals the segment's "run_runnable" → buttons must stay hidden.
     fireConfirm({
       id: 'chat1',
       request_id: 'req-1',
       tool_name: 'drain-node',
       tool_input: { host: 'a', node: 'n1' },
+      display_name: 'drain-node',
       autonomy: 'confirm',
     })
-    expect(screen.queryByRole('button', { name: /approve & run/i })).toBeNull()
+    expect(screen.getByRole('button', { name: /approve & run/i })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /^deny$/i })).toBeTruthy()
   })
 
   it('answers the gate via the bridge when Approve is clicked', async () => {
@@ -224,6 +251,62 @@ describe('OutputPanel autonomy-gate confirm', () => {
     const text = (container.querySelector('pre') as HTMLPreElement).textContent || ''
     expect(text).toContain('a = 2\nprint(a)')
     expect(text).not.toContain('["a = 2"') // not shown as a raw JSON array
+  })
+
+  it('renders a card-level gate for a rule run with no tool segment, and answers it', async () => {
+    render(<OutputPanel blocks={[ruleRunBlock('t-card-1')]} />)
+    expect(screen.queryByRole('button', { name: /approve & run/i })).toBeNull()
+
+    // A rule-mode trigger runnable is gated: the confirm is keyed to the run's
+    // card id, and there is no running tool segment to host it.
+    fireConfirm({
+      id: 't-card-1',
+      request_id: 'req-card',
+      tool_name: 'drain-node',
+      tool_input: { host: 'web-01' },
+      display_name: 'drain-node',
+      display_input: { host: 'web-01' },
+      autonomy: 'confirm',
+    })
+    expect(screen.getByRole('button', { name: /approve & run/i })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /^deny$/i })).toBeTruthy()
+
+    await userEvent.click(screen.getByRole('button', { name: /approve & run/i }))
+    // display_name === tool_name → editable, but nothing was changed → no edits.
+    expect(resolveConfirm).toHaveBeenCalledWith('req-card', true, undefined)
+  })
+
+  it('clears the card-level gate on runspec:confirm_resolved (timeout / other console)', () => {
+    render(<OutputPanel blocks={[ruleRunBlock('t-card-2')]} />)
+    fireConfirm({
+      id: 't-card-2',
+      request_id: 'req-timeout',
+      tool_name: 'drain-node',
+      tool_input: { host: 'web-01' },
+      display_name: 'drain-node',
+      autonomy: 'confirm',
+    })
+    expect(screen.getByRole('button', { name: /approve & run/i })).toBeTruthy()
+    // The backend resolves the gate itself (timeout / another console) — the gate
+    // must clear without the operator clicking.
+    fireResolved({ id: 't-card-2', request_id: 'req-timeout' })
+    expect(screen.queryByRole('button', { name: /approve & run/i })).toBeNull()
+  })
+
+  it('does not double-render: an agent tool segment gate stays a single panel', () => {
+    // A chat block whose running tool segment matches the confirm — the inline
+    // segment gate handles it, so the card-level gate must NOT also draw.
+    render(<OutputPanel blocks={[chatBlockWithRunningTool('run_runnable')]} />)
+    fireConfirm({
+      id: 'chat1',
+      request_id: 'req-single',
+      tool_name: 'run_runnable',
+      tool_input: { id: 'fleet__drain-node' },
+      display_name: 'drain-node',
+      autonomy: 'confirm',
+    })
+    // Exactly one Approve button, not two.
+    expect(screen.getAllByRole('button', { name: /approve & run/i }).length).toBe(1)
   })
 
   it('falls back to "run" when the backend sends no confirm_verb', () => {

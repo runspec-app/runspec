@@ -989,6 +989,10 @@ class TriggerEngine:
             source=event.source,
             event_type=event.type,
             summary=_summarize(event),
+            # Stamp the trigger's mode so the Console can pick the right block
+            # type (agent → chat/transcript, rule → run/output) when it renders
+            # this card as a live run. Rides `detail` through to_dict().
+            detail={"mode": trigger.mode},
             _on_change=self._on_card,
         )
         if self._on_card is not None:

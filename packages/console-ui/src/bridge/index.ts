@@ -960,6 +960,9 @@ export interface TriggerCard {
   event_type: string
   summary: string
   column: string
+  // Free-form per-stage data. Notable keys: `mode` ('agent' | 'rule', stamped at
+  // dispatch — lets the Console pick a chat/transcript vs a run/output block),
+  // `tool`/`args` (rule run target), `result`/`error` (terminal output).
   detail: Record<string, unknown>
   created_at: number
   timeline?: TimelineEntry[]   // timestamped audit trail of stage changes + steps

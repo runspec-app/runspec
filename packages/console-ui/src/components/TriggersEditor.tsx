@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import {
   Form, Modal, Input, Select, AutoComplete, Segmented, Switch, Button, Tag,
-  Empty, Popconfirm, Typography, Tooltip, Alert, message,
+  Empty, Popconfirm, Typography, Tooltip, Alert, Divider, message,
 } from 'antd'
 import {
   PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined,
@@ -14,6 +14,17 @@ import { MONO_FONT, RADIUS } from '../ThemeContext'
 import { useFeatures } from '../features'
 
 const { Text } = Typography
+
+// A labelled section divider for the (busy) trigger-edit modal, so the fields
+// group visually into Trigger / Match / Action / Assistant / Notifications
+// instead of one long scroll. Layout only — no effect on the form values.
+function Section({ children }: { children: ReactNode }) {
+  return (
+    <Divider orientation="left" plain style={{ margin: '2px 0 12px', color: 'var(--rs-text-muted)', fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.6 }}>
+      {children}
+    </Divider>
+  )
+}
 
 // ── Triggers editor (runspec_triggers.toml) ─────────────────────────────────
 // Moved here from Settings → Triggers so trigger editing lives on the Triggers
@@ -694,7 +705,7 @@ export function TriggersEditor({
       <Modal
         open={editing}
         title={editName === null ? 'New trigger' : `Edit — ${editName}`}
-        width={680}
+        width={760}
         onCancel={cancel}
         onOk={save}
         okText="Save"
@@ -704,6 +715,7 @@ export function TriggersEditor({
         cancelButtonProps={{ icon: <CloseOutlined /> }}
       >
         <Form form={form} layout="vertical" size="small">
+          <Section>Trigger</Section>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 12px' }}>
             <Form.Item name="name" label="Name" rules={[{ required: true, whitespace: true, message: 'Required' }, { pattern: /^[^\s]+$/, message: 'No spaces' }]}>
               <Input placeholder="password-reset" style={{ fontFamily: MONO_FONT }} disabled={editName !== null} />
@@ -730,6 +742,7 @@ export function TriggersEditor({
             </Form.Item>
           )}
 
+          <Section>Match</Section>
           {isMailNew && (
             <Form.Item name="match_mailbox" label="Mailbox to match (optional)"
               help="Scope this trigger to one monitored mailbox (matched against the mail's mailbox), e.g. ^helpdesk@corp\.com$. Leave blank to fire for a matching folder in ANY monitored mailbox — set it when two mailboxes share a folder name.">
@@ -771,6 +784,7 @@ export function TriggersEditor({
             </Form.Item>
           )}
 
+          <Section>Action</Section>
           {mode === 'rule' ? (
             <>
               {ai && (
@@ -805,7 +819,7 @@ export function TriggersEditor({
           ) : (
             <>
               <Form.Item name="rules" label="Agent instructions" help="The per-trigger system prompt the assistant follows.">
-                <Input.TextArea autoSize={{ minRows: 2, maxRows: 6 }} placeholder="Triage the email and draft a reset link…" />
+                <Input.TextArea autoSize={{ minRows: 6, maxRows: 18 }} placeholder="Triage the email and draft a reset link…" />
               </Form.Item>
               <Form.Item name="runnables" label="Runnable allowlist (optional)" help="Tools the agent may call. Empty = any runnable.">
                 <Select mode="tags" tokenSeparators={[',', ' ']} open={false} suffixIcon={null} placeholder="reset-password, request-vm" />
@@ -822,6 +836,7 @@ export function TriggersEditor({
 
           {threaded && ai && (
             <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '0 12px' }}>
+              <Section>Assistant</Section>
               <Form.Item name="reply_draft" label={isChat ? 'Propose a reply' : 'Draft a reply'} valuePropName="checked"
                 help={isChat ? 'Offer a propose_reply tool — pre-fills the room composer for you to send.' : 'Offer a draft_reply tool — saves a draft for you to review and send (never sent automatically).'}>
                 <Switch size="small" />
@@ -833,6 +848,7 @@ export function TriggersEditor({
             </div>
           )}
 
+          <Section>Notifications</Section>
           <Form.Item name="sound" label="Play a sound (optional)"
             help="An attention cue played when this trigger fires — a sound you named in Settings → Sounds, or a built-in cue.">
             <SoundSelect />

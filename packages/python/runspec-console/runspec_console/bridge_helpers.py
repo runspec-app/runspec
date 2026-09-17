@@ -200,16 +200,21 @@ class _BridgeTriggerOps:
         # [console.sounds] toggle; no-op off Windows / when the file is absent).
         self._bridge._play_sound_id(identifier)
 
-    def mirror_to_chat(self, kind: str, label: str, text: str) -> None:
+    def mirror_to_chat(
+        self, kind: str, label: str, text: str, card_id: str | None = None
+    ) -> None:
         # The Console tab renders this as a finished block matching the trigger
         # mode: kind="run" → a slash-command run card, kind="chat" → an agent
         # card — the same blocks a manual invocation makes, so a triggered run
-        # looks like the same command run by hand. The Triggers tab's activity
-        # list listens for this event too. The id keys the Console block.
+        # looks like the same command run by hand. The id keys the Console block:
+        # passing the firing card's id lets the Console upsert this finished
+        # mirror onto the live block it already created (from runspec:trigger_card)
+        # instead of appending a duplicate. Callers without a card (or older ones)
+        # omit it and get a fresh id, preserving the previous behaviour.
         self._bridge._dispatch(
             "runspec:trigger_note",
             {
-                "id": uuid.uuid4().hex[:12],
+                "id": card_id or uuid.uuid4().hex[:12],
                 "kind": kind,
                 "label": label,
                 "text": text,

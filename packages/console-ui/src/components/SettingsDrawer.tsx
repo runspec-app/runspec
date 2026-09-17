@@ -3139,6 +3139,7 @@ function CredentialsTab() {
 // ── Mailbox tab (the monitored mailbox; its own tab so Triggers has room) ────
 
 function MailboxesTab() {
+  const { ai } = useFeatures()
   const [form] = Form.useForm<Mailbox>()
   // Whether a [mailbox] is configured at all (the master switch). Off → save null.
   const [enabled, setEnabled] = useState(false)
@@ -3214,6 +3215,13 @@ function MailboxesTab() {
       <Text type="secondary" style={{ fontSize: 13, display: 'block', marginBottom: 12 }}>
         Monitor one Outlook inbox for the <code>new_mail</code> trigger source. Trigger
         rules &mdash; what to do with matched mail &mdash; live in <code>runspec_triggers.toml</code>.
+        {!ai && (
+          <>
+            {' '}With AI features off, matched mail drives <b>rule-mode</b> triggers only
+            (they run headless, no model); those rules come from the config seed / Config
+            Sync, and the Triggers editor is hidden in this mode.
+          </>
+        )}
       </Text>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
@@ -3266,10 +3274,11 @@ function MailboxesTab() {
                 <span style={{ fontSize: 13 }}>
                   Without coordination, every console reacts to every new mail
                   (duplicate replies / runs). Enable a <b>claim</b> on the matching
-                  trigger (Triggers tab) so one operator claims each email &mdash; the
-                  item moves to a claim folder and only the winner proceeds. Otherwise
-                  monitor one folder from one console, or let Outlook rules sort each
-                  operator's mail into a personal folder.
+                  trigger ({ai ? 'Triggers tab' : <><code>runspec_triggers.toml</code></>}) so
+                  one operator claims each email &mdash; the item moves to a claim folder
+                  and only the winner proceeds. Otherwise monitor one folder from one
+                  console, or let Outlook rules sort each operator's mail into a personal
+                  folder.
                 </span>
               }
             />

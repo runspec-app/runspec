@@ -509,6 +509,10 @@ export interface InvocationBlock {
   // but never part of the agent's context. Drives a distinguishing tag and
   // suppresses the in-context checkbox.
   operatorOnly?: boolean
+  // Set when this block is a trigger fire mirrored into the Console (from
+  // runspec:trigger_card). Drives a distinguishing "Trigger" tag; the run/chat
+  // content still streams through the normal id-keyed handlers.
+  trigger?: { name: string; source: string }
 }
 
 /** Derive an edit-and-rerun target from an agent tool-call entry, or null when
@@ -670,11 +674,29 @@ export function OutputPanel({ blocks, onRerun, onAskLlm, onToggleContext }: Outp
   const blockCountRef = useRef(0)
   const [showScrollDown, setShowScrollDown] = useState(false)
 
-  // Agent autonomy gate: the bridge dispatches runspec:tool_confirm and blocks
-  // until we answer via resolve_tool_confirmation. Rendered as a normal element
-  // in this (always-mounted, already-rendering) component — not an antd static
-  // Modal, which does not render reliably inside the WebView2 host.
-  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null)
+  // Autonomy gate: the bridge dispatches runspec:tool_confirm (keyed by the run's
+  // chat/card id) and blocks until we answer via resolve_tool_confirmation. Held
+  // as a map keyed by that id so several parked runs — e.g. concurrent trigger
+  // fires, now mirrored into the Console — each keep their own gate. Rendered as a
+  // normal element in this always-mounted component, not an antd static Modal
+  // (which does not render reliably inside the WebView2 host).
+  const [pendingConfirms, setPendingConfirms] = useState<Record<string, PendingConfirm>>({})
+
+  // Cold-start seed: a run may have parked at the gate before this view mounted (a
+  // reopened console, or a trigger that fired while another tab was active).
+  // Defensive: tolerate an older backend without the method, or a stubbed bridge.
+  useEffect(() => {
+    const p = bridge.get_pending_confirms?.()
+    if (!p || typeof p.then !== 'function') return
+    p.then(gates => {
+      if (!gates?.length) return
+      setPendingConfirms(prev => {
+        const next = { ...prev }
+        for (const g of gates) next[g.id] = g
+        return next
+      })
+    }).catch(() => {})
+  }, [])
 
   useEffect(() => {
     const onToolConfirm = (e: Event) => {
@@ -682,35 +704,45 @@ export function OutputPanel({ blocks, onRerun, onAskLlm, onToggleContext }: Outp
         id: string; request_id: string; tool_name: string; tool_input: Record<string, unknown>
         display_name?: string; display_input?: Record<string, unknown>; confirm_verb?: string; autonomy: string
       }
-      console.log('[runspec] tool_confirm received', { id, request_id, tool_name, autonomy })
-      setPendingConfirm({ request_id, id, tool_name, tool_input: tool_input ?? {}, display_name, display_input, confirm_verb, autonomy })
+      setPendingConfirms(prev => ({ ...prev, [id]: { request_id, id, tool_name, tool_input: tool_input ?? {}, display_name, display_input, confirm_verb, autonomy } }))
     }
-    window.addEventListener('runspec:tool_confirm', onToolConfirm)
-    return () => window.removeEventListener('runspec:tool_confirm', onToolConfirm)
-  }, [])
-
-  // If the turn ends while its confirm prompt is still open — e.g. the user hit
-  // Stop instead of answering — drop the now-stale prompt so it doesn't linger.
-  useEffect(() => {
+    // Authoritative "this gate finished" from the backend (approved / denied /
+    // timed out) — request-id-precise so a late signal can't clear a newer gate
+    // for the same id.
+    const onResolved = (e: Event) => {
+      const { id, request_id } = (e as CustomEvent).detail as { id: string; request_id: string }
+      setPendingConfirms(prev => {
+        if (!prev[id] || prev[id].request_id !== request_id) return prev
+        const next = { ...prev }; delete next[id]; return next
+      })
+    }
+    // If the run ends while its gate is still open — e.g. the user hit Stop — drop
+    // the now-stale prompt so it doesn't linger.
     const onEnd = (e: Event) => {
       const { id } = (e as CustomEvent).detail as { id: string }
-      setPendingConfirm(prev => (prev && prev.id === id ? null : prev))
+      setPendingConfirms(prev => { if (!prev[id]) return prev; const next = { ...prev }; delete next[id]; return next })
     }
+    window.addEventListener('runspec:tool_confirm', onToolConfirm)
+    window.addEventListener('runspec:confirm_resolved', onResolved)
     window.addEventListener('runspec:run_end', onEnd)
-    return () => window.removeEventListener('runspec:run_end', onEnd)
+    return () => {
+      window.removeEventListener('runspec:tool_confirm', onToolConfirm)
+      window.removeEventListener('runspec:confirm_resolved', onResolved)
+      window.removeEventListener('runspec:run_end', onEnd)
+    }
   }, [])
 
   // Stable across renders (only the setter + module-level bridge are closed over)
   // so it doesn't defeat the memoised BlockCard by handing each card a fresh prop
-  // on every streamed frame.
-  const answerConfirm = useCallback((approved: boolean, editedInput?: Record<string, unknown>) => {
-    setPendingConfirm(prev => {
-      if (prev) {
-        console.log('[runspec] resolving tool_confirm', { request_id: prev.request_id, approved, edited: !!editedInput })
-        bridge.resolve_tool_confirmation(prev.request_id, approved, editedInput)
-          .catch(err => console.error('[runspec] resolve_tool_confirmation failed', err))
-      }
-      return null
+  // on every streamed frame. Keyed by the gate's request_id — each BlockCard binds
+  // its own gate's request_id before calling.
+  const answerConfirm = useCallback((requestId: string, approved: boolean, editedInput?: Record<string, unknown>) => {
+    bridge.resolve_tool_confirmation(requestId, approved, editedInput)
+      .catch(err => console.error('[runspec] resolve_tool_confirmation failed', err))
+    setPendingConfirms(prev => {
+      const hit = Object.entries(prev).find(([, v]) => v.request_id === requestId)
+      if (!hit) return prev
+      const next = { ...prev }; delete next[hit[0]]; return next
     })
   }, [])
 
@@ -766,7 +798,7 @@ export function OutputPanel({ blocks, onRerun, onAskLlm, onToggleContext }: Outp
               onRerun={onRerun}
               onAskLlm={onAskLlm}
               onToggleContext={onToggleContext}
-              pendingConfirm={pendingConfirm && pendingConfirm.id === block.id ? pendingConfirm : null}
+              pendingConfirm={pendingConfirms[block.id] ?? null}
               onAnswerConfirm={answerConfirm}
             />
           ))}
@@ -1230,12 +1262,29 @@ const BlockCard = memo(function BlockCard({
   onAskLlm?: (text: string) => void
   onToggleContext?: (id: string, inContext: boolean) => void
   pendingConfirm?: PendingConfirm | null
-  onAnswerConfirm?: (approved: boolean) => void
+  onAnswerConfirm?: (requestId: string, approved: boolean, editedInput?: Record<string, unknown>) => void
 }) {
   const c = useCardTheme()
   const [collapsed, setCollapsed] = useState(false)
   const [showAll, setShowAll] = useState(false)
   const [viewRaw, setViewRaw] = useState(false)
+
+  // Bind this card's gate to its own request_id, so the shared resolver knows
+  // which parked run to answer. Passed to both the inline segment gate (agent
+  // tool calls) and the card-level gate (rule runs / any gate with no segment).
+  const answerThis = useCallback((approved: boolean, editedInput?: Record<string, unknown>) => {
+    if (pendingConfirm) onAnswerConfirm?.(pendingConfirm.request_id, approved, editedInput)
+  }, [pendingConfirm, onAnswerConfirm])
+  // Does a running tool segment already own this confirm? Then the inline gate
+  // inside ChatTranscript renders it (matched by tool_name) — don't also draw the
+  // card-level gate, or the run would show two Approve/Deny panels.
+  const segmentMatch = !!pendingConfirm && block.type === 'chat'
+    && block.segments.some(s => s.kind === 'tool' && s.entry.running && s.entry.name === pendingConfirm.tool_name)
+  // A card-level gate is needed when a confirm is parked for this block but no
+  // running tool segment claims it — the rule-mode trigger case (a runnable run,
+  // not an agent tool call), and the cold-start seed case (a gate restored before
+  // its tool segment streamed).
+  const cardGate = pendingConfirm && !segmentMatch ? pendingConfirm : null
 
   // Tick once a second while this block is still running, so the header's live
   // elapsed timer updates (chat turns aren't in the InFlightStrip, so without
@@ -1435,6 +1484,11 @@ const BlockCard = memo(function BlockCard({
             <Tag color="default" style={{ fontSize: 11, marginLeft: 4 }}>operator run · not sent to agent</Tag>
           </Tooltip>
         )}
+        {block.trigger && (
+          <Tooltip title={`Fired automatically by the “${block.trigger.name}” trigger (${block.trigger.source})`}>
+            <Tag color="gold" style={{ fontSize: 11, marginLeft: 4 }}>trigger: {block.trigger.name}</Tag>
+          </Tooltip>
+        )}
         <Text style={{ color: c.dim, fontSize: 12 }}>
           {new Date(block.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
         </Text>
@@ -1571,6 +1625,23 @@ const BlockCard = memo(function BlockCard({
       {/* Body — hidden when collapsed */}
       {!collapsed && (
         <Fragment>
+          {/* Card-level autonomy gate: a confirm parked for this run with no
+              running tool segment to host it (a rule-mode trigger runnable, or a
+              gate restored on cold start). Reuses the same Approve/Deny +
+              editable-args panel as the inline agent-tool gate by rendering a
+              ToolCallBlock in a synthetic awaiting state. */}
+          {cardGate && (
+            <div style={{ padding: '10px 14px 0' }}>
+              <ToolCallBlock
+                entry={{ name: cardGate.tool_name, input: cardGate.tool_input, running: false }}
+                awaiting={cardGate.autonomy}
+                resolved={cardGate.display_name ? { name: cardGate.display_name, input: cardGate.display_input ?? {} } : null}
+                verb={cardGate.confirm_verb}
+                editable={(cardGate.display_name ?? cardGate.tool_name) === cardGate.tool_name}
+                onAnswer={answerThis}
+              />
+            </div>
+          )}
           {/* Output body */}
           <div style={{ position: 'relative' }}>
             {/* Card toolbar — a single right-aligned strip so the Copy/Ask
@@ -1696,7 +1767,7 @@ const BlockCard = memo(function BlockCard({
                 currentText={block.currentText}
                 done={block.done}
                 pendingConfirm={pendingConfirm}
-                onAnswerConfirm={onAnswerConfirm}
+                onAnswerConfirm={answerThis}
               />
             )}
           </div>
@@ -1911,6 +1982,21 @@ export function useInvocationBlocks() {
   // referentially-stable callbacks to the memoised BlockCard.
   const addBlock = useCallback((block: InvocationBlock) => setBlocks(prev => [...prev, block]), [])
   const clearBlocks = useCallback(() => setBlocks([]), [])
+  // Idempotent create keyed by id: append only if no block with that id exists.
+  // Used for trigger fires — several runspec:trigger_card events arrive per card
+  // (TRIGGERED → RUNNING → DONE) and only the first should create the block; the
+  // rest reconcile via updateBlock. `make` is called lazily so the block is only
+  // built on the creating event.
+  const upsertBlock = useCallback((id: string, make: () => InvocationBlock) =>
+    setBlocks(prev => (prev.some(b => b.id === id) ? prev : [...prev, make()])), [])
+  // Patch a single block by id (a partial or a functional updater). No-op when
+  // the id is absent, so a late card update for an evicted block is dropped
+  // cleanly.
+  const updateBlock = useCallback(
+    (id: string, patch: Partial<InvocationBlock> | ((b: InvocationBlock) => InvocationBlock)) =>
+      setBlocks(prev => prev.map(b =>
+        b.id === id ? (typeof patch === 'function' ? patch(b) : { ...b, ...patch }) : b,
+      )), [])
   // Replace the whole transcript — used to render a reopened saved conversation.
   const hydrateBlocks = useCallback((next: InvocationBlock[]) => setBlocks(next), [])
   // Toggle a card's "in context" flag (the header checkbox). Local state only;
@@ -1919,5 +2005,5 @@ export function useInvocationBlocks() {
   const setBlockInContext = useCallback((id: string, inContext: boolean) =>
     setBlocks(prev => prev.map(b => (b.id === id ? { ...b, inContext } : b))), [])
 
-  return { blocks, addBlock, clearBlocks, hydrateBlocks, setBlockInContext }
+  return { blocks, addBlock, upsertBlock, updateBlock, clearBlocks, hydrateBlocks, setBlockInContext }
 }

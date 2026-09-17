@@ -506,6 +506,32 @@ def test_fire_test_dispatches_one_trigger_bypassing_gates():
     assert fired == ["vip"]
 
 
+def test_dispatched_card_stamps_trigger_mode():
+    """The card carries the trigger's mode in detail (→ to_dict) so the Console
+    can pick a run block (rule) vs a chat/transcript block (agent)."""
+
+    def handler(card, trigger, event):
+        card.move(Column.DONE)
+
+    agent = Trigger.from_config({"name": "a", "source": "outlook", "event": "new_mail"})
+    rule = Trigger.from_config(
+        {
+            "name": "r",
+            "source": "outlook",
+            "event": "new_mail",
+            "mode": "rule",
+            "run": "local__restart",
+        }
+    )
+    engine, _, cards = _engine([agent, rule], handler, cards=[])
+    engine.start()
+    engine.fire_test("a", Event.new("outlook", "new_mail", {"subject": "x"}))
+    engine.fire_test("r", Event.new("outlook", "new_mail", {"subject": "y"}))
+    by_trigger = {c.trigger: c for c in cards}
+    assert by_trigger["a"].to_dict()["detail"]["mode"] == "agent"
+    assert by_trigger["r"].to_dict()["detail"]["mode"] == "rule"
+
+
 # ── card timeline ─────────────────────────────────────────────────────────────
 
 

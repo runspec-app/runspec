@@ -1,12 +1,43 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button, Drawer, Empty, List, Popconfirm, Tag, Tooltip, Typography, message } from 'antd'
 import { CloseOutlined, LoadingOutlined, PlusOutlined, ClockCircleOutlined, HistoryOutlined, DeleteOutlined } from '@ant-design/icons'
-import { bridge, type ChatConversation, type ConversationMeta, type InFlightRecord, type Runnable } from '../bridge'
+import { bridge, type ChatConversation, type ConversationMeta, type InFlightRecord, type Runnable, type TriggerCard } from '../bridge'
 import { useFeatures } from '../features'
 import { OutputPanel, useInvocationBlocks, type RerunData, type InvocationBlock, type BlockSegment } from '../components/OutputPanel'
 import { useIsDark, MONO_FONT, RADIUS } from '../ThemeContext'
 
 const { Text } = Typography
+
+// A finished rule run's result text → run-block lines + exit code. The autonomy
+// gate prefixes a non-zero exit as "[exit N]" on the first line. Shared by the
+// live trigger_card reconcile and the finished trigger_note mirror.
+function runBodyToLines(
+  blockId: string,
+  text: string,
+): { lines: { id: string; line: string; stream: 'stdout' }[]; exitCode: number } {
+  let body = text || ''
+  let exitCode = 0
+  const m = /^\[exit (\d+)\]\n?/.exec(body)
+  if (m) {
+    exitCode = Number(m[1])
+    body = body.slice(m[0].length)
+  }
+  const lines = body
+    ? body.split('\n').map(line => ({ id: blockId, line, stream: 'stdout' as const }))
+    : []
+  return { lines, exitCode }
+}
+
+// The Console block label for a trigger card. Rule runs read best as the target
+// runnable (`detail.tool`); agent runs as "Trigger <name> · <event>".
+function triggerCardLabel(card: TriggerCard): string {
+  const mode = String(card.detail?.mode ?? 'agent')
+  if (mode === 'rule') {
+    const tool = typeof card.detail?.tool === 'string' ? card.detail.tool : ''
+    return tool ? `/${tool}` : card.summary || `Trigger ${card.trigger}`
+  }
+  return `Trigger ${card.trigger} · ${card.event_type}`
+}
 
 // Render a saved conversation's provider-agnostic transcript back into chat
 // blocks the OutputPanel can show — one block per turn (label = the user's
@@ -143,13 +174,21 @@ function InFlightStrip({ inFlight }: { inFlight: InFlightRecord[] }) {
 }
 
 export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewProps) {
-  const { blocks, addBlock, clearBlocks, hydrateBlocks, setBlockInContext } = useInvocationBlocks()
+  const { blocks, addBlock, upsertBlock, updateBlock, clearBlocks, hydrateBlocks, setBlockInContext } = useInvocationBlocks()
   // `[console] ai` off-switch: the Console stays (it is the output pane for every
   // run) but its chat affordances — conversation History, "Ask the assistant",
   // the include-in-context toggle — go.
   const { ai } = useFeatures()
   const addBlockRef = useRef(addBlock)
   addBlockRef.current = addBlock
+  // upsert/update keyed by id — used to render live trigger runs (which arrive as
+  // runspec:trigger_card events) without duplicating, and to fold their finished
+  // mirror onto the same block. Kept in refs so the []-dep listener effects don't
+  // close over stale callbacks.
+  const upsertBlockRef = useRef(upsertBlock)
+  upsertBlockRef.current = upsertBlock
+  const updateBlockRef = useRef(updateBlock)
+  updateBlockRef.current = updateBlock
   // Current blocks, for the send handlers (which live in []-dep effects and would
   // otherwise close over a stale array) — used to gather ticked run cards.
   const blocksRef = useRef(blocks)
@@ -326,6 +365,69 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
   //   kind="run"  → a standard slash-command run card (mode=rule)
   //   kind="chat" → an agent/chat card (mode=agent)
   // (The bridge dispatches runspec:trigger_note with id/kind/label/text.)
+  // A trigger fired: mirror its run into the Console as a live block so all agent
+  // activity — and its Approve/Deny gate — has one home (the Console tab), rather
+  // than living only in the Triggers tab (which is hidden when AI is off, leaving
+  // a confirm-gated run unapprovable). The block is keyed by card_id, which
+  // doubles as the chat_id, so the already-global streaming/confirm handlers in
+  // useInvocationBlocks attribute token/tool/run_end/tool_confirm to it. First
+  // sighting creates the block; later card events reconcile terminal state only —
+  // segments/currentText belong to the streamed handlers.
+  const applyCard = useCallback((card: TriggerCard) => {
+    if (!card?.card_id) return
+    const id = card.card_id
+    const isRule = String(card.detail?.mode ?? 'agent') === 'rule'
+    upsertBlockRef.current(id, () => ({
+      id,
+      type: isRule ? 'run' : 'chat',
+      label: triggerCardLabel(card),
+      startedAt: new Date((card.created_at || Date.now() / 1000) * 1000).toISOString(),
+      lines: [],
+      segments: [],
+      currentText: '',
+      done: false,
+      trigger: { name: card.trigger, source: card.source },
+    }))
+    if (card.column === 'done' || card.column === 'failed') {
+      const failed = card.column === 'failed'
+      updateBlockRef.current(id, b => {
+        const patch: Partial<InvocationBlock> = { done: true, exitCode: failed ? 1 : 0 }
+        // A rule run whose output never streamed line-by-line — fill from the
+        // card's terminal result/error. Agent blocks keep their streamed
+        // segments (run_end, keyed by the same id, already marked them done).
+        if (b.type === 'run' && b.lines.length === 0) {
+          if (failed) {
+            const err = String(card.detail?.error ?? '')
+            patch.lines = err ? [{ id, line: err, stream: 'stderr' as const }] : []
+          } else {
+            const { lines, exitCode } = runBodyToLines(id, String(card.detail?.result ?? ''))
+            patch.lines = lines
+            patch.exitCode = exitCode
+          }
+        }
+        return { ...b, ...patch }
+      })
+    }
+  }, [])
+
+  useEffect(() => {
+    const onCard = (e: Event) => applyCard((e as CustomEvent).detail as TriggerCard)
+    window.addEventListener('runspec:trigger_card', onCard)
+    return () => window.removeEventListener('runspec:trigger_card', onCard)
+  }, [applyCard])
+
+  // Cold start: a trigger may have fired before this view mounted (a reopened
+  // console). Replay the current board so those runs show, mirroring how the
+  // Triggers tab seeds itself.
+  useEffect(() => {
+    bridge.get_trigger_board().then(board => board.forEach(applyCard)).catch(() => {})
+  }, [applyCard])
+
+  // The finished post_to_chat mirror (runspec:trigger_note). With the live block
+  // already present (same id — the firing card's), fold this onto it only if it's
+  // empty (a rule run whose lines never streamed); an agent block that already
+  // streamed segments is left as-is. When no live block exists (card evicted, or
+  // a legacy caller that passed no card_id), create the finished mirror as before.
   useEffect(() => {
     const onTriggerNote = (e: Event) => {
       const { id, kind, label, text } = (e as CustomEvent).detail as {
@@ -333,17 +435,19 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
       }
       if (!text && !label) return
       const blockId = id || `trigger-${Date.now()}`
+      if (blocksRef.current.some(b => b.id === blockId)) {
+        updateBlockRef.current(blockId, b => {
+          if (kind === 'run' && b.type === 'run' && b.lines.length === 0) {
+            const { lines, exitCode } = runBodyToLines(blockId, text || '')
+            return { ...b, lines, done: true, exitCode }
+          }
+          return { ...b, done: true }
+        })
+        return
+      }
       const startedAt = new Date().toISOString()
       if (kind === 'run') {
-        // Render the runnable output as run-block lines; surface a non-zero exit
-        // from the "[exit N]" prefix the gate adds so it reads like a real run.
-        let body = text || ''
-        let exitCode = 0
-        const m = /^\[exit (\d+)\]\n?/.exec(body)
-        if (m) { exitCode = Number(m[1]); body = body.slice(m[0].length) }
-        const lines = body
-          ? body.split('\n').map(line => ({ id: blockId, line, stream: 'stdout' as const }))
-          : []
+        const { lines, exitCode } = runBodyToLines(blockId, text || '')
         addBlockRef.current({
           id: blockId, type: 'run', label: label || 'trigger run',
           startedAt, lines, segments: [], currentText: '',

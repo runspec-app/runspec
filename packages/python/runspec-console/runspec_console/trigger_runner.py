@@ -121,7 +121,9 @@ class BridgeOps(Protocol):
         pure extract. Returns ``{}`` on any failure (the action still runs)."""
         ...
 
-    def mirror_to_chat(self, kind: str, label: str, text: str) -> None:
+    def mirror_to_chat(
+        self, kind: str, label: str, text: str, card_id: str | None = None
+    ) -> None:
         """Mirror a finished ``post_to_chat`` trigger run into the Console as the
         same kind of block a manual invocation makes: ``kind="run"`` (a
         slash-command run card, for mode=rule) or ``kind="chat"`` (an agent/chat
@@ -355,7 +357,10 @@ def make_handler(
                 if trigger.post_to_chat:
                     # Mirror as a standard slash-command run card.
                     ops.mirror_to_chat(
-                        "run", f"{label}  (trigger: {trigger.name})", output
+                        "run",
+                        f"{label}  (trigger: {trigger.name})",
+                        output,
+                        card_id=card.id,
                     )
                 return
 
@@ -400,6 +405,7 @@ def make_handler(
                     "run",
                     f"{len(calls)} runnables (trigger: {trigger.name})",
                     joined,
+                    card_id=card.id,
                 )
             return
 
@@ -452,6 +458,11 @@ def make_handler(
         if trigger.post_to_chat:
             # Mirror as an agent/chat card — the same shape as an LLM turn.
             label = f"Trigger '{trigger.name}' · {event.type}"
-            ops.mirror_to_chat("chat", label, summary or "(handled — no textual reply)")
+            ops.mirror_to_chat(
+                "chat",
+                label,
+                summary or "(handled — no textual reply)",
+                card_id=card.id,
+            )
 
     return handler

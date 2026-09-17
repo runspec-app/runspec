@@ -114,8 +114,10 @@ class FakeOps:
         )
         return dict(self._pre_turn_result)
 
-    def mirror_to_chat(self, kind, label, text):
-        self.chat_mirrors.append({"kind": kind, "label": label, "text": text})
+    def mirror_to_chat(self, kind, label, text, card_id=None):
+        self.chat_mirrors.append(
+            {"kind": kind, "label": label, "text": text, "card_id": card_id}
+        )
 
     def play_sound(self, identifier):
         self.sound_calls.append(identifier)
@@ -275,6 +277,9 @@ def test_handler_agent_post_to_chat():
     mirror = ops.chat_mirrors[0]
     assert mirror["kind"] == "chat"  # agent mode → chat card
     assert "t" in mirror["label"] and mirror["text"] == "agent reply"
+    # The mirror carries the firing card's id so the Console folds it onto the
+    # live block instead of duplicating it.
+    assert mirror["card_id"] == card.id
 
 
 def test_handler_agent_draft_only_when_both_enabled():
