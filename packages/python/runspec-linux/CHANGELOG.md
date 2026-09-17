@@ -1,5 +1,17 @@
 # runspec-linux Changelog
 
+## [0.13.1] — 2026-09-17
+
+### Fixed
+
+- **`install-into-venv` no longer errors with `chmod: … Operation not permitted`
+  when the venv's `logs/` holds root-owned files.** The post-install
+  permission-normalisation swept the whole venv tree, including the group-shared
+  `logs/` audit dir where `run_as="root"` runnables (`list-upgrades`,
+  `upgrade-packages`) leave root-owned per-run logs — which a non-root caller
+  can't `chmod`. The sweep now prunes `logs/` (fix in `runspec-linux-core`; pin
+  bumped to `>=0.6.1`). No runnable/arg changes.
+
 ## [0.13.0] — 2026-09-17
 
 ### Added — `directory-size` verb on the folded `filesystem` runnable

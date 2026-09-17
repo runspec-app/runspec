@@ -148,21 +148,42 @@ def test_install_into_venv_normalises_perms(tmp_path, monkeypatch: pytest.Monkey
 
     venvs.install_into_venv(venv, "httpx", upgrade=True, run_as="svc")
 
-    assert ["sudo", "-n", "-u", "svc", "chmod", "-R", "u=rwX,go=rX", venv] in calls
-    # logs_dir exists (the default stub returns 0 for `test -d`), so the setgid
-    # mode is restored after the wide chmod would have stripped it.
+    # The normalise sweep prunes <venv>/logs so a non-root caller never chmods the
+    # root-owned per-run log files a run_as="root" runnable leaves there
+    # (otherwise: chmod "Operation not permitted", and the install reports failure).
+    assert [
+        "sudo",
+        "-n",
+        "-u",
+        "svc",
+        "find",
+        venv,
+        "-path",
+        f"{venv}/logs",
+        "-prune",
+        "-o",
+        "-exec",
+        "chmod",
+        "u=rwX,go=rX",
+        "{}",
+        "+",
+    ] in calls
+    # No blanket `chmod -R` over the whole tree any more.
+    assert not any(c[-4:] == ["chmod", "-R", "u=rwX,go=rX", venv] for c in calls)
+    # logs_dir exists (the default stub returns 0 for `test -d`), so its 2775 mode
+    # is restored as a guard.
     assert ["sudo", "-n", "-u", "svc", "test", "-d", f"{venv}/logs"] in calls
     assert ["sudo", "-n", "-u", "svc", "chmod", "2775", f"{venv}/logs"] in calls
-    # And the chmod steps run *after* the pip install (order matters — pip
+    # And the normalise sweep runs *after* the pip install (order matters — pip
     # creates the dirs we're normalising).
     pip_i = next(i for i, c in enumerate(calls) if "pip" in c and "install" in c)
-    chmod_i = next(i for i, c in enumerate(calls) if "chmod" in c and "u=rwX,go=rX" in c)
+    chmod_i = next(i for i, c in enumerate(calls) if "find" in c and "u=rwX,go=rX" in c)
     assert chmod_i > pip_i
 
 
 def test_install_into_venv_skips_logs_restore_when_absent(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A venv without a logs/ dir (not built by create_venv) gets the wide chmod
-    but no 2775 restore — the test -d guard skips the logs step."""
+    """A venv without a logs/ dir (not built by create_venv) gets the normalise
+    sweep but no 2775 restore — the test -d guard skips the logs step."""
     venv = _fake_venv(tmp_path, monkeypatch)
     calls: list[list[str]] = []
 
@@ -177,7 +198,7 @@ def test_install_into_venv_skips_logs_restore_when_absent(tmp_path, monkeypatch:
 
     venvs.install_into_venv(venv, "httpx")
 
-    assert ["chmod", "-R", "u=rwX,go=rX", venv] in calls
+    assert ["find", venv, "-path", f"{venv}/logs", "-prune", "-o", "-exec", "chmod", "u=rwX,go=rX", "{}", "+"] in calls
     assert ["test", "-d", f"{venv}/logs"] in calls
     assert not any(c[:2] == ["chmod", "2775"] for c in calls)
 

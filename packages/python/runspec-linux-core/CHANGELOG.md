@@ -1,5 +1,21 @@
 # runspec-linux-core Changelog
 
+## [0.6.1] — 2026-09-17
+
+### Fixed
+
+- **`install_into_venv` no longer fails with `chmod: … Operation not permitted`
+  on a venv with root-owned logs.** The post-install permission-normalisation
+  step ran a blanket `chmod -R u=rwX,go=rX <venv>` over the *whole* tree —
+  including `<venv>/logs`, the group-shared (`2775`) audit directory. A
+  `run_as="root"` runnable (`list-upgrades` / `upgrade-packages`) leaves
+  **root-owned** per-run log files there, so a non-root caller's `chmod` hit them
+  with "Operation not permitted" and the install reported failure. The sweep now
+  uses `find <venv> -path <venv>/logs -prune -o -exec chmod u=rwX,go=rX {} +`,
+  which skips the `logs` subtree entirely (its `2775` mode is left intact and
+  still restored afterwards as a guard). Site-packages normalisation is
+  unchanged. No API change.
+
 ## [0.6.0] — 2026-08-24
 
 New `runspec_linux_core.cron` module — pure helpers for managing a user's

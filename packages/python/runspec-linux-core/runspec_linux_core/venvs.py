@@ -140,8 +140,11 @@ def install_into_venv(
     regardless of the caller's umask — a ``sudo`` upgrade under a PAM-set ``027``
     login umask otherwise lands site-packages entries at ``750`` and hides the
     packs from ``runspec local`` / ``importlib.metadata`` for anyone but the
-    owner. If ``<venv>/logs`` exists (``create_venv`` leaves it there), its
-    ``2775`` setgid mode is restored after the wide chmod strips it.
+    owner. The sweep **prunes** ``<venv>/logs``: it is the group-shared audit dir
+    and holds per-run log files owned by other users (a ``run_as="root"`` runnable
+    leaves root-owned logs there), so a blanket ``chmod`` as a non-root caller
+    would fail with "Operation not permitted". Its ``2775`` setgid mode is left
+    intact, and restored afterwards as a guard if the dir exists.
     """
     from runspec_linux_core.packages import _validate_packages
 
@@ -173,8 +176,27 @@ def install_into_venv(
     result = _run(cmd)
     _check(result, "pip install", run_as)
 
-    _check(_run(build_become(["chmod", "-R", "u=rwX,go=rX", venv], run_as, become_method)), "chmod venv", run_as)
+    # Normalise pip's freshly-created site-packages entries to u=rwX,go=rX (the
+    # same step create_venv runs) so a sudo install under a restrictive login
+    # umask can't land them at 750 and hide the packs from `runspec local` /
+    # importlib.metadata. Prune <venv>/logs from the sweep: it is the group-shared
+    # (2775) audit dir and accrues per-run log files owned by *other* users — a
+    # run_as="root" runnable (list-upgrades / upgrade-packages) leaves root-owned
+    # logs there, so a blanket `chmod -R` as a non-root caller dies with
+    # "Operation not permitted" on them. `find ... -prune` skips that subtree; its
+    # own 2775 mode is left intact (and restored below as a belt-and-braces guard).
     logs_dir = os.path.join(venv, "logs")
+    _check(
+        _run(
+            build_become(
+                ["find", venv, "-path", logs_dir, "-prune", "-o", "-exec", "chmod", "u=rwX,go=rX", "{}", "+"],
+                run_as,
+                become_method,
+            )
+        ),
+        "chmod venv",
+        run_as,
+    )
     if _run(build_become(["test", "-d", logs_dir], run_as, become_method)).returncode == 0:
         _check(_run(build_become(["chmod", "2775", logs_dir], run_as, become_method)), "chmod logs", run_as)
 
