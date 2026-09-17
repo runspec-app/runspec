@@ -922,14 +922,37 @@ class AutonomyMixin:
         # copied context carries it into the worker thread — this is what keeps
         # the runnable execution parented to the turn's trace. Shared by chat and
         # trigger/schedule turns, so one wrap covers every turn type.
+        #
+        # Name the span for the real tool + subcommand, not the search-mode
+        # `run_runnable` wrapper. By here `use_tool` is already unwrapped (above),
+        # and per_host/dedup tool names already carry the real runnable — so only
+        # `run_runnable` still needs renaming, to `display` (its resolved bare
+        # name, from _confirm_card_view). Leaving the others as tool_name keeps the
+        # per_host `host__name` (host info) and avoids churn. The subcommand rides
+        # a top-level `command` in every tool_mode; append it for all. For a
+        # `run_runnable` envelope the real args are nested under `args` — record
+        # those, not the `{id, host, args, command}` wrapper. tool_name/tool_input
+        # stay raw for dispatch, gating, and metrics below.
+        _span_display = display if tool_name == "run_runnable" else ""
+        _span_cmd = tool_input.get("command") if isinstance(tool_input, dict) else None
+        _span_command = (
+            " ".join(str(x) for x in _span_cmd)
+            if isinstance(_span_cmd, list)
+            else (str(_span_cmd) if _span_cmd else "")
+        )
+        _span_args: Any = tool_input
+        if tool_name == "run_runnable" and isinstance(tool_input, dict):
+            _span_args = tool_input.get("args") or {}
         with observability.tool_span(
             tool_name,
             chat_id,
             decision=decision,
             provenance=getattr(self, "_run_origin", {}).get(chat_id),
+            display_name=_span_display,
+            command=_span_command,
         ) as _tool_span:
             observability.set_tool_decision(_tool_span, gate_operator_decision)
-            observability.add_tool_arguments(_tool_span, tool_input)
+            observability.add_tool_arguments(_tool_span, _span_args)
             # Built-in tools (repo_*, outlook_*, manage_denylist, memory, status,
             # action tools) run on a worker thread with no native run card — wrap
             # them so they show as a live Console in-flight card, stream progress,

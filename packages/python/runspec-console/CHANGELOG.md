@@ -8,6 +8,45 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.269.0] — 2026-09-17
+
+### Added
+- **Trigger runs and their Approve/Deny gate now live in the Console tab**, in
+  both AI modes. A fire mirrors into the Console as a live run/chat block (keyed
+  by the card id, which doubles as the chat id) with an inline confirm gate —
+  fixing the AI-off dead-end where a `confirm`-autonomy trigger parked forever
+  with its Approve/Deny only reachable in the hidden Triggers tab. The Triggers
+  tab is refocused on editing (the run inbox drawer is gone; the helpdesk queue
+  moved to a self-hiding `HelpdeskPanel`), and the trigger-edit modal is grouped
+  into sections with a larger Agent-instructions box.
+
+### Changed
+- **Telemetry tool spans are named for the real runnable + subcommand**, not the
+  search-mode `run_runnable` wrapper. `observability.tool_span` gained
+  `display_name`/`command`; the autonomy-gate chokepoint unwraps a `run_runnable`
+  envelope (reusing `_confirm_card_view`), records the real nested args instead of
+  the `{id, host, args, command}` wrapper, and appends the top-level `command` for
+  every `tool_mode` (`per_host`/`dedup` names are left as-is — they already carry
+  the real tool + host). Eval sweeps get the same via `result.target`/`.command`.
+  The raw wrapper is kept on `runspec.tool.wrapper`. Arg *values* stay gated by
+  `[telemetry] capture_content`; the improved span name + subcommand show
+  regardless.
+- **The Rota "Take a break" Outlook reminder uses the white-label app name** (the
+  same `branding.resolve_branding().title` string as the OS window title) instead
+  of the literal "runspec".
+- **Experimental helpdesk surfaces are hidden pending approval** (a hardcoded
+  `SHOW_HELPDESK_ROOMS` flag in `SettingsDrawer.tsx`, default off): the room-setup
+  section in the Jump Hosts add/edit host modal, and the Settings → Self-Service
+  tab (catalogue + folded-in Teams manager). UI-only — the components, bridge
+  methods, and config round-tripping are intact, existing `room_*` values are
+  preserved on save, and re-enabling is a one-line flip.
+
+### Fixed
+- **The Mailbox settings tab explains itself with AI off**: its copy now notes
+  that matched mail drives rule-mode triggers (from the config seed / Config Sync)
+  when AI is off, rather than pointing at the hidden Triggers editor.
+
+
 ## [0.268.0] — 2026-09-16
 
 ### Added

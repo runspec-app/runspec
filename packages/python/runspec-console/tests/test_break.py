@@ -27,6 +27,9 @@ class _Stub:
     def restart_chat(self) -> None:  # gate/break refresh presence — no-op in tests
         pass
 
+    def app_title(self) -> str:  # the white-label window title (branding.py in prod)
+        return "Acme Console"
+
 
 # ── gate behaviour ───────────────────────────────────────────────────────────
 
@@ -90,6 +93,8 @@ def test_start_break_sets_until_and_reminder(monkeypatch):
     assert res["reminder_set"] is True
     assert res["break_until"]  # ISO string
     assert seen["subject"].startswith("Break over")
+    # The reminder is branded to the window-title name, not the literal "runspec".
+    assert "Acme Console" in seen["subject"]
 
 
 def test_start_break_without_outlook(monkeypatch):

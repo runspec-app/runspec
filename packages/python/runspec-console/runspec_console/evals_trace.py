@@ -28,7 +28,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from . import observability
-from .evals import CaseResult, EvalCase
+from .evals import CaseResult, EvalCase, default_resolve_args
 
 
 @dataclass
@@ -110,13 +110,20 @@ def emit_case(case: EvalCase, result: CaseResult, *, model: str = "") -> Emitted
                 observability.add_completion(result.final_text)
 
         term = result.terminal
+        # Name the span for the real tool the model chose, not the search-mode
+        # wrapper (`run_runnable`/`use_tool`/`host__name`). The harness already
+        # resolved these onto the result — `target` is the real runnable, `command`
+        # the subcommand — so reuse them; `default_resolve_args` unwraps the real
+        # args the same way for the recorded arguments.
         with observability.tool_span(
             term.name if term else "(no tool)",
             case.id,
             decision="eval",
+            display_name=result.target if term else "",
+            command=result.command if term else "",
         ) as tool:
             if term is not None:
-                observability.add_tool_arguments(tool, term.input)
+                observability.add_tool_arguments(tool, default_resolve_args(term))
             observability.set_attributes(**eval_attributes(case, result))
             try:
                 out.tool_span_id = format(tool.get_span_context().span_id, "016x")

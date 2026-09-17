@@ -1849,7 +1849,11 @@ class TriggersMixin:
 
         if ol.outlook_available():
             try:
-                ol.create_reminder("Break over — re-enable runspec automation", until)
+                # Use the same white-label name the OS window title shows, not the
+                # literal "runspec", so a branded install reads consistently.
+                ol.create_reminder(
+                    f"Break over — re-enable {self.app_title()} automation", until
+                )
                 reminder_set = True
             except Exception:
                 logger.warning(

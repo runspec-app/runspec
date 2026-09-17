@@ -930,20 +930,37 @@ def tool_span(
     decision: str = "",
     tool_call_id: str = "",
     provenance: dict[str, Any] | None = None,
+    display_name: str = "",
+    command: str = "",
 ) -> Iterator[Any]:
     """Child span for one tool call. Created in the async gate *before* the
     ``asyncio.to_thread`` dispatch so the copied context carries it into the
-    worker thread and the tool stays parented to this turn's trace."""
+    worker thread and the tool stays parented to this turn's trace.
+
+    ``display_name`` is the real tool the operator sees when ``tool_name`` is a
+    search-mode wrapper (``run_runnable``/``use_tool``) — the span is named for it
+    instead of the wrapper. ``command`` is the invoked subcommand/verb, appended
+    to the span name and recorded as an attribute. Both are name/structure only,
+    so they are set regardless of ``capture_content`` (which gates arg *values*)."""
     if not enabled():
         yield None
         return
+    # The span-facing name: the real tool + subcommand, not a wrapper. Falls back
+    # to the raw tool_name so a direct tool is unchanged.
+    name = display_name or tool_name
+    label = f"{name} {command}".strip() if command else name
     attrs: dict[str, Any] = {
         "gen_ai.operation.name": "execute_tool",
-        "gen_ai.tool.name": tool_name,
+        "gen_ai.tool.name": name,
         "openinference.span.kind": "TOOL",  # Phoenix renders this as a tool span
-        "tool.name": tool_name,  # OpenInference tool key
+        "tool.name": name,  # OpenInference tool key
         "runspec.chat_id": chat_id,
     }
+    if command:
+        attrs["runspec.tool.command"] = command
+    if name != tool_name:
+        # Keep the wrapper visible for debugging when we renamed the span.
+        attrs["runspec.tool.wrapper"] = tool_name
     if decision:
         attrs["runspec.tool.autonomy_decision"] = decision
     if tool_call_id:
@@ -951,7 +968,7 @@ def tool_span(
         attrs["tool_call.id"] = tool_call_id  # OpenInference tool-call id
     attrs.update(_provenance_attrs(provenance))
     with _TRACER.start_as_current_span(
-        f"execute_tool {tool_name}", attributes=attrs
+        f"execute_tool {label}", attributes=attrs
     ) as span:
         try:
             yield span

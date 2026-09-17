@@ -17,6 +17,14 @@ import { useFeatures, visibleSettingsTabs } from '../features'
 
 const { Text, Link } = Typography
 
+// Experimental helpdesk "rooms" / self-service surfaces, hidden pending internal
+// application approval. Flip to `true` to re-expose the jump-host room-setup
+// section and the Settings → Self-Service tab. The underlying components, bridge
+// methods, and config round-tripping are all left intact — this only gates what
+// the UI renders, so an existing config keeps working and re-enabling is a
+// one-line change.
+const SHOW_HELPDESK_ROOMS: boolean = false
+
 interface SettingsDrawerProps {
   open: boolean
   onClose: () => void
@@ -2191,6 +2199,7 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
                 options={profiles.map(p => ({ value: p.name, label: p.name }))}
               />
             </Form.Item>
+            {SHOW_HELPDESK_ROOMS && (
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 12px' }}>
               <Form.Item
                 name="room_port"
@@ -2253,6 +2262,7 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
                 />
               </Form.Item>
             </div>
+            )}
         </Form>
       </Modal>
 
@@ -5500,7 +5510,9 @@ export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, co
           { key: 'agentTools', label: 'Agent tools', children: <AgentToolsTab /> },
           { key: 'runbooks',    label: 'Runbooks',     children: <RunbooksTab /> },
           { key: 'savedRuns',   label: 'Saved runs',   children: <SavedRunsTab /> },
-          { key: 'selfService', label: 'Self-Service', children: <SelfServiceTab /> },
+          // Self-Service (helpdesk catalogue + rooms) hidden pending approval —
+          // see SHOW_HELPDESK_ROOMS. The tab component is left intact.
+          ...(SHOW_HELPDESK_ROOMS ? [{ key: 'selfService', label: 'Self-Service', children: <SelfServiceTab /> }] : []),
           { key: 'filters',   label: 'Filters',    children: <FiltersTab /> },
           { key: 'repos',     label: 'Repos',      children: <ReposTab /> },
           { key: 'credentials', label: 'Credentials', children: <CredentialsTab /> },

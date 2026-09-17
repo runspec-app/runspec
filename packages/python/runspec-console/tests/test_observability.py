@@ -553,6 +553,42 @@ def test_capture_content_attaches_and_scrubs(exporter, monkeypatch):
 
 
 @otel_only
+def test_tool_span_names_real_tool_and_subcommand(exporter):
+    """A search-mode run_runnable span is named for the real runnable + subcommand
+    (display_name/command), not the wrapper — the reported "everything shows as
+    run_runnable" issue. The raw wrapper stays on runspec.tool.wrapper."""
+    obs.init_tracing_for_test(exporter, capture_content=False)
+    with obs.tool_span(
+        "run_runnable", "chat1", decision="run", display_name="cron", command="add"
+    ):
+        pass
+    obs.shutdown()
+
+    span = exporter.get_finished_spans()[0]
+    assert span.name == "execute_tool cron add"
+    assert span.attributes["gen_ai.tool.name"] == "cron"
+    assert span.attributes["tool.name"] == "cron"
+    assert span.attributes["runspec.tool.command"] == "add"
+    assert span.attributes["runspec.tool.wrapper"] == "run_runnable"
+
+
+@otel_only
+def test_tool_span_falls_back_to_raw_name(exporter):
+    """No display_name (a direct / per_host / dedup tool) ⇒ the span keeps the raw
+    tool name and adds no wrapper attribute."""
+    obs.init_tracing_for_test(exporter, capture_content=False)
+    with obs.tool_span("web1__deploy", "chat1", decision="run"):
+        pass
+    obs.shutdown()
+
+    span = exporter.get_finished_spans()[0]
+    assert span.name == "execute_tool web1__deploy"
+    assert span.attributes["gen_ai.tool.name"] == "web1__deploy"
+    assert "runspec.tool.wrapper" not in span.attributes
+    assert "runspec.tool.command" not in span.attributes
+
+
+@otel_only
 def test_capture_content_full_by_default(exporter):
     """No max_content_chars ⇒ the whole prompt/completion is captured, not a
     4000-char slice — the trace is faithful (the reported LangSmith issue)."""
