@@ -8,6 +8,32 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.271.0] — 2026-09-17
+
+### Changed
+- **Faster startup — the initial frontend bundle is roughly halved.** The web
+  view had to parse a ~1.97 MB `index.js` before first paint because `App.tsx`
+  eagerly imported all 17 views + the (large) Settings drawer + every modal. The
+  Console tab's first-paint path now keeps only the Console shell + the
+  display-toggle views eager; the Settings drawer (~184 kB), the on-demand views
+  (Improve / Evals / Rota / Dev / Schedules) and the modals `React.lazy`-load on
+  first use (`index.js` ~1.97 MB → ~0.9 MB). The Settings drawer mounts on first
+  open and stays mounted (open/close still animates, tab state survives).
+- **Telemetry bring-up and the sandbox warm-up no longer block the window.**
+  `observability.init_metrics`/`init_tracing` (which resolve a keychain credential
+  and import the OTLP exporters when enabled) now run on a background thread, and
+  the sandbox-warm guard — including the heavy `wasmtime` import behind
+  `sandbox._wasmtime()` — moved entirely onto its worker thread, so neither
+  touches the window-paint path.
+
+### Added
+- **Opt-in startup profiler.** Set `RUNSPEC_STARTUP_PROFILE=1` and launch from a
+  terminal (`runspec-console`) to log the cumulative / per-phase milliseconds for
+  each bring-up phase (args parsed → `Bridge()` → telemetry/MCP → static server →
+  window created → `webview.start`), so a slow launch can be pinned to imports vs
+  construction vs the web view. No-op (zero cost) when unset.
+
+
 ## [0.270.1] — 2026-09-17
 
 ### Fixed

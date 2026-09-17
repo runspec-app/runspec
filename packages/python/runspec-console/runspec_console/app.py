@@ -19,7 +19,7 @@ import sys
 import threading
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -385,13 +385,49 @@ def _ensure_std_streams() -> None:
         sys.stdin = open(os.devnull, encoding="utf-8")
 
 
+def _startup_profiler() -> Callable[[str], None]:
+    """Opt-in phase timer for diagnosing a slow startup.
+
+    With ``RUNSPEC_STARTUP_PROFILE`` set, returns a ``mark(label)`` that prints the
+    cumulative / per-phase milliseconds for each bring-up phase to stderr (visible
+    when launched from a terminal via the ``runspec-console`` console script) and
+    logs the same line. Otherwise returns a no-op callable, so it costs nothing
+    when off. The import and WebView2 costs are the same in the windowed and
+    console launchers, so profiling from a terminal measures the real bring-up."""
+    if not os.environ.get("RUNSPEC_STARTUP_PROFILE"):
+        return lambda _label: None
+    import time as _time
+
+    start = _time.perf_counter()
+    last = start
+
+    def mark(label: str) -> None:
+        nonlocal last
+        now = _time.perf_counter()
+        line = (
+            f"startup[{(now - start) * 1000:8.1f} ms | "
+            f"+{(now - last) * 1000:7.1f} ms]  {label}"
+        )
+        last = now
+        try:
+            print(line, file=sys.stderr)
+        except Exception:  # noqa: BLE001
+            pass
+        logger.info(line)
+
+    mark("main() entered")
+    return mark
+
+
 def main() -> None:
     _ensure_std_streams()
+    prof = _startup_profiler()
     _suppress_noisy_loggers()
 
     import runspec
 
     args = runspec.parse("runspec-console")
+    prof("args parsed (runspec core imported)")
     dev: bool = bool(args.dev.value)
     port: int = int(args.port.value) if args.port.value is not None else 5173
     debug_enabled: bool = _resolve_debug(dev, bool(args.devtools.value))
@@ -424,10 +460,8 @@ def main() -> None:
 
     bridge = Bridge()
     bridge.set_debug(debug_enabled)
+    prof("Bridge() constructed")
 
-    # Bring up OpenTelemetry (OTLP) agent tracing if [telemetry] enabled — a
-    # best-effort, idempotent no-op when disabled or the `otel` extra is absent.
-    # One in-process init covers chat, trigger, and schedule turns.
     from . import config as _config
     from . import observability
 
@@ -437,20 +471,24 @@ def main() -> None:
     # The console's *own* MCP server (further down) stays — it gates an external
     # agent's fleet calls with no model inside.
     ai_on = bridge.ai_enabled()
-    # Resolve any keychain-backed credential into the export headers first (traces
-    # + metrics), so a per-user API key set up during onboarding authenticates the
-    # export; observability itself stays keyring-free.
-    _telemetry_cfg = bridge._resolve_telemetry_credentials()
-    # Metrics cover *runnable* runs (Forms / MCP server / schedules / triggers via
-    # invoke_runnable), not just agent activity, so they init **regardless of the
-    # AI switch** — an AI-off fleet console still reports its run counts/durations.
-    # Best-effort no-op when [telemetry.metrics] is disabled or the `otel` extra is
-    # absent.
-    observability.init_metrics(_telemetry_cfg)
-    if ai_on:
-        # Tracing is agent-turn-only (turn → LLM call → tool call), so it stays
-        # gated on the AI switch — there are no agent turns to trace when AI is off.
-        observability.init_tracing(_telemetry_cfg)
+
+    # Telemetry (OTLP traces + metrics) on a background thread — resolving a
+    # keychain-backed credential and importing/initialising the OTLP exporters
+    # costs tens of ms, and none of it is needed before the window paints.
+    # Best-effort; a no-op unless [telemetry]/[telemetry.metrics] is enabled and
+    # the `otel` extra is present. Metrics cover *runnable* runs (Forms / MCP
+    # server / schedules / triggers), so they init **regardless of the AI switch**;
+    # tracing is agent-turn-only, so it stays gated on it.
+    def _bring_up_telemetry() -> None:
+        try:
+            cfg = bridge._resolve_telemetry_credentials()
+            observability.init_metrics(cfg)
+            if ai_on:
+                observability.init_tracing(cfg)
+        except Exception:  # noqa: BLE001 — telemetry bring-up must never block/fatal
+            logger.debug("telemetry bring-up failed", exc_info=True)
+
+    threading.Thread(target=_bring_up_telemetry, daemon=True).start()
 
     # Connect any external MCP servers ([mcp] / [[mcp.servers]]) so their tools
     # join the chat agent's toolset. Best-effort and idempotent — a no-op unless
@@ -470,30 +508,30 @@ def main() -> None:
         bridge.mcp_server_start()
     except Exception:  # noqa: BLE001
         pass
+    prof("telemetry threaded + MCP started")
 
     # Warm the WASM code-sandbox's compiled-module cache in the background so the
-    # first run_python_sandboxed call isn't slow. Best-effort and download-free:
-    # only compiles when the runtime + binary are already present locally (a
-    # missing binary is left to lazy download-on-first-use behind the confirm gate).
-    try:
-        from . import sandbox
+    # first run_python_sandboxed call isn't slow. The *whole* guard — including the
+    # `wasmtime` import behind sandbox._wasmtime() (a heavy compiled extension) —
+    # runs on the worker thread, so nothing here touches the window-paint path.
+    # Best-effort and download-free: only compiles when runtime + binary are
+    # already present locally (a missing binary stays lazy download-on-first-use).
+    def _warm_sandbox() -> None:
+        try:
+            from . import sandbox
 
-        def _warm_sandbox() -> None:
-            try:
+            if (
+                ai_on
+                and _config.read_workspace().get("code_exec", True)
+                and _config.read_sandbox().get("enabled", True)
+                and sandbox._wasmtime() is not None
+                and sandbox.wasm_path() is not None
+            ):
                 sandbox.ensure_cwasm()
-            except Exception:  # noqa: BLE001 — warming is best-effort
-                pass
+        except Exception:  # noqa: BLE001 — warming is best-effort
+            pass
 
-        if (
-            ai_on
-            and _config.read_workspace().get("code_exec", True)
-            and _config.read_sandbox().get("enabled", True)
-            and sandbox._wasmtime() is not None
-            and sandbox.wasm_path() is not None
-        ):
-            threading.Thread(target=_warm_sandbox, daemon=True).start()
-    except Exception:  # noqa: BLE001
-        pass
+    threading.Thread(target=_warm_sandbox, daemon=True).start()
 
     if dev:
         url = f"http://localhost:{port}"
@@ -505,6 +543,7 @@ def main() -> None:
         except FileNotFoundError as exc:
             print(f"✗  {exc}", file=sys.stderr)
             sys.exit(1)
+    prof("dist located + static server ready")
 
     # White-label the native window title to the active LLM plugin's package
     # (see branding.py). Resolve once and share it with the Bridge so its
@@ -520,14 +559,21 @@ def main() -> None:
         **_window_kwargs(),
     )
     bridge.set_window(window)
+    prof("window created")
 
     icon = _build_icon()
+
+    def _started() -> None:
+        prof("webview started (handing over to the web view)")
+        _on_started(window_title)
+
     start_kwargs = _start_kwargs(
         debug=webview_debug,
-        on_started=lambda: _on_started(window_title),
+        on_started=_started,
         icon=str(icon) if icon else None,
     )
     try:
+        prof("webview.start() — loading the frontend bundle")
         webview.start(**start_kwargs)
     finally:
         # Flush any batched spans + metrics before the process exits (no-op when

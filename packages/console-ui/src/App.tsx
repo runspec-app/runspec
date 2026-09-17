@@ -34,24 +34,29 @@ import {
 import { ConsoleView } from './views/ConsoleView'
 import { SpecsView } from './views/SpecsView'
 import { HistoryView } from './views/HistoryView'
-import { ImproveView } from './views/ImproveView'
-import { EvalsView } from './views/EvalsView'
 import { LogsView } from './views/LogsView'
-import { SchedulesView } from './views/SchedulesView'
 import { TriggersView } from './views/TriggersView'
-import { RotaView } from './views/RotaView'
-import { DevView } from './views/DevView'
 import { FormsView, matchRunnableForEdit, type PendingForm } from './views/FormsView'
-import { TransferModal } from './views/TransferModal'
-import { CopyKeyModal } from './views/CopyKeyModal'
-import { DenylistModal } from './views/DenylistModal'
-import { RunbookRunModal } from './views/RunbookRunModal'
-import { SavedRunRunModal } from './views/SavedRunRunModal'
-// Lazy-loaded: @ant-design/plots is heavy and only the Analytics tab needs it,
-// so it stays out of the initial bundle.
+// Code-split: everything below is off the Console tab's first-paint path, so it
+// lazy-loads on first use instead of bloating the initial bundle the web view
+// parses at startup. The Console shell (ConsoleView, CommandInput, the sidebar)
+// and the display-toggle views that stay mounted are kept eager above. FormsView
+// stays eager because App uses its matchRunnableForEdit helper directly.
+const ImproveView = React.lazy(() => import('./views/ImproveView').then(m => ({ default: m.ImproveView })))
+const EvalsView = React.lazy(() => import('./views/EvalsView').then(m => ({ default: m.EvalsView })))
+const SchedulesView = React.lazy(() => import('./views/SchedulesView').then(m => ({ default: m.SchedulesView })))
+const RotaView = React.lazy(() => import('./views/RotaView').then(m => ({ default: m.RotaView })))
+const DevView = React.lazy(() => import('./views/DevView').then(m => ({ default: m.DevView })))
+// @ant-design/plots is heavy and only the Analytics tab needs it.
 const AnalyticsView = React.lazy(() => import('./views/AnalyticsView').then(m => ({ default: m.AnalyticsView })))
+// Modals + the (large) Settings drawer — mounted only once their open state trips.
+const TransferModal = React.lazy(() => import('./views/TransferModal').then(m => ({ default: m.TransferModal })))
+const CopyKeyModal = React.lazy(() => import('./views/CopyKeyModal').then(m => ({ default: m.CopyKeyModal })))
+const DenylistModal = React.lazy(() => import('./views/DenylistModal').then(m => ({ default: m.DenylistModal })))
+const RunbookRunModal = React.lazy(() => import('./views/RunbookRunModal').then(m => ({ default: m.RunbookRunModal })))
+const SavedRunRunModal = React.lazy(() => import('./views/SavedRunRunModal').then(m => ({ default: m.SavedRunRunModal })))
+const SettingsDrawer = React.lazy(() => import('./components/SettingsDrawer').then(m => ({ default: m.SettingsDrawer })))
 import { CommandInput } from './components/CommandInput'
-import { SettingsDrawer } from './components/SettingsDrawer'
 import { RUNNING_STATUSES } from './components/runShared'
 import { useInFlight } from './bridge/useInFlight'
 import { bridge, type HistoryRecord, type Host, type HostProfile, type Runnable, type Runbook, type SavedRun, type RoomInfo, type BrandTheme } from './bridge'
@@ -219,6 +224,11 @@ export default function App() {
     window.addEventListener('mouseup', onUp)
   }
   const [settingsOpen, setSettingsOpen] = useState(false)
+  // Mount the (lazy, large) Settings drawer on its first open and keep it mounted
+  // after, so open/close still animates and its tab state survives — it just
+  // stays out of the initial bundle until you first open Settings.
+  const settingsVisited = useRef(false)
+  if (settingsOpen) settingsVisited.current = true
   const [transferOpen, setTransferOpen] = useState(false)
   const [copyKeyHost, setCopyKeyHost] = useState<string | null>(null)
   const [sshKeyAgeDays, setSshKeyAgeDays] = useState<number | null>(null)
@@ -1406,12 +1416,14 @@ export default function App() {
                 </div>
                 {view !== 'console' && view !== 'triggers' && view !== 'history' && view !== 'analytics' && view !== 'logs' && view !== 'specs' && (
                   <div className="rs-view" style={{ flex: 1, overflow: 'auto' }}>
-                    {view === 'forms'     && <FormsView runnables={runnables} hosts={hosts} selectedHost={selectedHost} activeScope={activeScope} onRunRunnable={handleRunRunnable} pendingForm={pendingForm} onPendingFormClear={() => setPendingForm(null)} runbooks={runbooks} onOpenRunbook={handleOpenRunbook} savedRuns={savedRuns} onOpenSavedRun={handleOpenSavedRun} />}
-                    {view === 'schedules' && <SchedulesView hosts={hosts} runnables={runnables} selectedHost={selectedHost} />}
-                    {aiEnabled && view === 'improve' && <ImproveView active={view === 'improve'} />}
-                    {aiEnabled && view === 'evals'   && <EvalsView active={view === 'evals'} />}
-                    {view === 'rota'      && <RotaView />}
-                    {view === 'dev'       && <DevView />}
+                    <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin size="large" /></div>}>
+                      {view === 'forms'     && <FormsView runnables={runnables} hosts={hosts} selectedHost={selectedHost} activeScope={activeScope} onRunRunnable={handleRunRunnable} pendingForm={pendingForm} onPendingFormClear={() => setPendingForm(null)} runbooks={runbooks} onOpenRunbook={handleOpenRunbook} savedRuns={savedRuns} onOpenSavedRun={handleOpenSavedRun} />}
+                      {view === 'schedules' && <SchedulesView hosts={hosts} runnables={runnables} selectedHost={selectedHost} />}
+                      {aiEnabled && view === 'improve' && <ImproveView active={view === 'improve'} />}
+                      {aiEnabled && view === 'evals'   && <EvalsView active={view === 'evals'} />}
+                      {view === 'rota'      && <RotaView />}
+                      {view === 'dev'       && <DevView />}
+                    </Suspense>
                   </div>
                 )}
               </div>
@@ -1487,42 +1499,60 @@ export default function App() {
         </div>
         </BrandWatermark>
 
-        <TransferModal
-          open={transferOpen}
-          onClose={() => setTransferOpen(false)}
-          hosts={hosts}
-          defaultRemoteHost={selectedHost}
-        />
+        {/* Modals + the Settings drawer are lazy-loaded and mounted only once
+            their open state trips, so their JS stays out of the startup bundle.
+            fallback={null} — nothing to show until the (usually cached) chunk
+            resolves on first open. */}
+        <Suspense fallback={null}>
+          {transferOpen && (
+            <TransferModal
+              open={transferOpen}
+              onClose={() => setTransferOpen(false)}
+              hosts={hosts}
+              defaultRemoteHost={selectedHost}
+            />
+          )}
 
-        <RunbookRunModal
-          runbook={pendingRunbook}
-          hostNames={hosts.map(h => h.name)}
-          onClose={() => setPendingRunbook(null)}
-          onRun={handleRunRunbook}
-        />
+          {pendingRunbook !== null && (
+            <RunbookRunModal
+              runbook={pendingRunbook}
+              hostNames={hosts.map(h => h.name)}
+              onClose={() => setPendingRunbook(null)}
+              onRun={handleRunRunbook}
+            />
+          )}
 
-        <SavedRunRunModal
-          savedRun={pendingSavedRun}
-          hostNames={hosts.map(h => h.name)}
-          onClose={() => setPendingSavedRun(null)}
-          onRun={handleRunSavedRun}
-        />
+          {pendingSavedRun !== null && (
+            <SavedRunRunModal
+              savedRun={pendingSavedRun}
+              hostNames={hosts.map(h => h.name)}
+              onClose={() => setPendingSavedRun(null)}
+              onRun={handleRunSavedRun}
+            />
+          )}
 
-        <CopyKeyModal
-          open={copyKeyHost !== null}
-          host={copyKeyHost ?? ''}
-          onClose={() => setCopyKeyHost(null)}
-          onDone={() => {
-            bridge.get_hosts().then(setHosts)
-            bridge.get_runnables('all').then(setRunnables)
-          }}
-        />
-        <DenylistModal
-          open={denylistOpen}
-          onClose={() => setDenylistOpen(false)}
-          hosts={hosts.filter(h => h.name === 'local' || h.connected)}
-        />
+          {copyKeyHost !== null && (
+            <CopyKeyModal
+              open={copyKeyHost !== null}
+              host={copyKeyHost ?? ''}
+              onClose={() => setCopyKeyHost(null)}
+              onDone={() => {
+                bridge.get_hosts().then(setHosts)
+                bridge.get_runnables('all').then(setRunnables)
+              }}
+            />
+          )}
+          {denylistOpen && (
+            <DenylistModal
+              open={denylistOpen}
+              onClose={() => setDenylistOpen(false)}
+              hosts={hosts.filter(h => h.name === 'local' || h.connected)}
+            />
+          )}
+        </Suspense>
 
+        {settingsVisited.current && (
+        <Suspense fallback={null}>
         <SettingsDrawer
           open={settingsOpen}
           onClose={() => setSettingsOpen(false)}
@@ -1534,6 +1564,8 @@ export default function App() {
           }}
           onKeyChanged={loadSshKeyAge}
         />
+        </Suspense>
+        )}
       </ConfigProvider>
       </AccentContext.Provider>
     </FeaturesContext.Provider>

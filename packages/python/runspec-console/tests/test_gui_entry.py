@@ -38,6 +38,23 @@ def test_ensure_std_streams_leaves_real_streams(monkeypatch):
     assert sys.stderr is sentinel_err
 
 
+def test_startup_profiler_off_by_default(monkeypatch, capsys):
+    monkeypatch.delenv("RUNSPEC_STARTUP_PROFILE", raising=False)
+    mark = app._startup_profiler()
+    mark("phase one")  # must be a silent no-op
+    assert capsys.readouterr().err == ""
+
+
+def test_startup_profiler_on_emits_phase_lines(monkeypatch, capsys):
+    monkeypatch.setenv("RUNSPEC_STARTUP_PROFILE", "1")
+    mark = app._startup_profiler()  # emits "main() entered"
+    mark("phase one")
+    err = capsys.readouterr().err
+    assert "startup[" in err
+    assert "main() entered" in err
+    assert "phase one" in err
+
+
 def test_main_gui_runs_main_on_success(monkeypatch):
     called: list[bool] = []
     monkeypatch.setattr(app, "main", lambda: called.append(True))
