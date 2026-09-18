@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { Drawer, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Empty, Table, Slider, Progress } from 'antd'
 import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, RightOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined, SearchOutlined, SoundOutlined } from '@ant-design/icons'
-import { bridge, type JumpHost, type LocalVenvConfig, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SeedStatus, type SeedOverride, type SeedApplyResult, type Runbook, type RunbookStep, type SavedRun, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost, type McpServer, type McpHeaderCredential, type McpStatus, type McpServerStatus, type McpCredentialOption, type ToolVisibility, type NamedSound } from '../bridge'
+import { VoiceConfig, VoiceDevice, bridge, type JumpHost, type LocalVenvConfig, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SeedStatus, type SeedOverride, type SeedApplyResult, type Runbook, type RunbookStep, type SavedRun, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost, type McpServer, type McpHeaderCredential, type McpStatus, type McpServerStatus, type McpCredentialOption, type ToolVisibility, type NamedSound } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
 import { CopyKeyAllModal } from '../views/CopyKeyAllModal'
 import { PathInput } from '../views/PathInput'
@@ -5504,6 +5504,159 @@ export function McpServerTab() {
   )
 }
 
+
+// ── Voice (dictation) ─────────────────────────────────────────────────────────
+
+const MODEL_HINTS: Record<string, string> = {
+  'tiny-streaming': 'fastest, least accurate',
+  'base-streaming': 'fast',
+  'small-streaming': 'balanced',
+  'medium-streaming': 'most accurate (default)',
+}
+
+export function VoiceTab() {
+  const [cfg, setCfg] = useState<VoiceConfig | null>(null)
+  const [devices, setDevices] = useState<VoiceDevice[]>([])
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+
+  const load = useCallback(() => {
+    bridge.get_voice_config().then(setCfg).catch(() => {})
+    bridge.list_voice_devices().then(setDevices).catch(() => {})
+  }, [])
+  useEffect(() => { load() }, [load])
+
+  const set = <K extends keyof VoiceConfig>(key: K, value: VoiceConfig[K]) =>
+    setCfg(c => (c ? { ...c, [key]: value } : c))
+
+  const handleSave = async () => {
+    if (!cfg) return
+    setSaving(true)
+    try {
+      const { available: _a, reason: _r, model_loaded: _m, models: _ms, ...section } = cfg
+      const fresh = await bridge.save_voice_config(section)
+      setCfg(fresh)
+      setSaved(true); setTimeout(() => setSaved(false), 2000)
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : 'Could not save voice settings')
+    } finally { setSaving(false) }
+  }
+
+  const browse = async () => {
+    try {
+      const dir = await bridge.browse_folder()
+      if (dir) set('model_dir', dir)
+    } catch { /* picker cancelled / unavailable */ }
+  }
+
+  if (!cfg) return <Typography.Text type="secondary">Loading…</Typography.Text>
+
+  // The device select holds an index (from the picker), a name (typed in config
+  // by hand — kept as an extra option so it round-trips), or '' = system default.
+  const deviceOptions = [
+    { value: '', label: 'System default microphone' },
+    ...devices.map(d => ({ value: d.index, label: `${d.name}${d.default ? ' (default)' : ''}` })),
+  ]
+  const deviceValue: number | string = cfg.device === null ? '' : cfg.device
+  if (typeof deviceValue === 'string' && deviceValue !== '' && !deviceOptions.some(o => o.value === deviceValue)) {
+    deviceOptions.push({ value: deviceValue, label: `${deviceValue} (by name)` })
+  }
+
+  const row = (label: string, control: React.ReactNode, hint?: React.ReactNode) => (
+    <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', marginBottom: 12 }}>
+      <div style={{ width: 200, paddingTop: 5, flexShrink: 0 }}><Text style={{ fontSize: 13 }}>{label}</Text></div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        {control}
+        {hint && <div style={{ marginTop: 4 }}><Text type="secondary" style={{ fontSize: 12 }}>{hint}</Text></div>}
+      </div>
+    </div>
+  )
+
+  return (
+    <div style={{ maxWidth: 680 }}>
+      <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
+        <strong>Dictate into the prompt box.</strong> The composer's mic button (Ctrl+M) runs on-device speech-to-text
+        in the console process via Moonshine Voice (the <code>voice</code> extra) — no audio leaves this machine and
+        nothing auto-sends: finished lines land in the box and Enter still sends. These settings live in
+        <code>config.toml</code> under <code>[voice]</code>.
+      </Typography.Paragraph>
+
+      <div style={{ marginBottom: 14 }}>
+        {cfg.available ? (
+          <Space size={8}>
+            <Tag color="green">dictation available</Tag>
+            <Tag color={cfg.model_loaded ? 'blue' : undefined}>{cfg.model_loaded ? 'engine loaded — next press is instant' : 'engine not loaded'}</Tag>
+          </Space>
+        ) : (
+          <Tag color="orange" style={{ whiteSpace: 'normal' }}>unavailable — {cfg.reason}</Tag>
+        )}
+      </div>
+
+      {row('Enable dictation',
+        <Switch aria-label="Enable dictation" checked={cfg.enabled} onChange={v => set('enabled', v)} />,
+        'Off hides the mic button.')}
+
+      {row('Model',
+        <Select
+          aria-label="Model"
+          style={{ width: 320 }}
+          value={cfg.model}
+          onChange={v => set('model', v)}
+          options={cfg.models.map(m => ({ value: m, label: `${m}${MODEL_HINTS[m] ? ` — ${MODEL_HINTS[m]}` : ''}` }))}
+        />,
+        'Streaming sizes only (dictation needs the in-progress line). Drop a size if the live text lags on this CPU.')}
+
+      {row('Language',
+        <Input aria-label="Language" style={{ width: 120 }} value={cfg.language} onChange={e => set('language', e.target.value)} />,
+        <>Moonshine language code. English streaming models are MIT-licensed; other languages may fall under Moonshine's non-commercial Community License.</>)}
+
+      {row('Vendored model directory',
+        <Space.Compact style={{ width: '100%' }}>
+          <Input
+            aria-label="Vendored model directory"
+            value={cfg.model_dir ?? ''}
+            onChange={e => set('model_dir', e.target.value || null)}
+            placeholder="blank = download from download.moonshine.ai on first use"
+            style={{ fontFamily: MONO_FONT }}
+          />
+          <Button onClick={browse}>Browse…</Button>
+        </Space.Compact>,
+        <>For fleets that block downloads: point at a model directory shipped through the internal channel and the engine never fetches anything. Run <code>moonshine-voice download --language en</code> on a connected machine to produce one.</>)}
+
+      {row('Microphone',
+        <Select
+          aria-label="Microphone"
+          style={{ width: 360 }}
+          value={deviceValue}
+          onChange={v => set('device', v === '' ? null : v)}
+          options={deviceOptions}
+        />,
+        devices.length === 0 ? 'No input devices reported (capture unavailable here, or the extra is not installed).' : undefined)}
+
+      {row('Keep model loaded',
+        <Switch aria-label="Keep model loaded" checked={cfg.keep_loaded} onChange={v => set('keep_loaded', v)} />,
+        'Keeps the speech engine resident between sessions so the second press opens the mic instantly. Costs the model\'s RAM while idle; off reloads it on every press.')}
+
+      {row('Auto-off after silence',
+        <Space>
+          <InputNumber aria-label="Silence timeout" min={0} max={300} step={1} value={cfg.silence_timeout} onChange={v => set('silence_timeout', typeof v === 'number' ? v : 0)} />
+          <Text type="secondary">seconds · 0 = never</Text>
+        </Space>,
+        'The mic turns itself off after this long with no recognised speech (stopping or sending still ends it immediately).')}
+
+      {row('Live-text refresh',
+        <Space>
+          <InputNumber aria-label="Update interval" min={0.1} max={5} step={0.1} value={cfg.update_interval} onChange={v => set('update_interval', typeof v === 'number' ? v : 0.5)} />
+          <Text type="secondary">seconds</Text>
+        </Space>,
+        'How often the in-progress line above the box refreshes.')}
+
+      <Divider style={{ margin: '16px 0' }} />
+      <Button type="primary" loading={saving} onClick={handleSave}>{saved ? 'Saved' : 'Save'}</Button>
+    </div>
+  )
+}
+
 export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, connectedHosts, allRemoteHosts }: SettingsDrawerProps) {
   // `[console] ai` off-switch: the agent tabs (Model / API, Runbooks, MCP
   // client, Chat History) are hidden; MCP Server, Telemetry and Tool visibility
@@ -5537,6 +5690,7 @@ export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, co
           { key: 'configSync', label: 'Config Sync', children: <ConfigSyncTab /> },
           { key: 'mailbox',   label: 'Mailbox',    children: <MailboxesTab /> },
                   { key: 'sounds',    label: 'Sounds & Notifications', children: <SoundsTab /> },
+          { key: 'voice',     label: 'Voice',      children: <VoiceTab /> },
           { key: 'chatHistory', label: 'Chat History', children: <ChatHistoryTab /> },
           { key: 'telemetry', label: 'Telemetry', children: <TelemetryTab /> },
         ], features)}

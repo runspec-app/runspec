@@ -71,12 +71,18 @@ skipped on that path). Without `model_dir`, first use fetches from
 
 ## Behaviour (as built)
 
-- A **mic button** sits in the composer's button column (next to Auto-switch /
-  Send). Hidden entirely when the backend says dictation is unavailable — extra
+- A **mic button** sits in a left-hand column of the input row, **above the
+  `❯` prompt character**, mirroring the Auto-switch / Send icon column on the
+  right (moved there in 0.273.2 on first-use feedback). Hidden entirely when the backend says dictation is unavailable — extra
   not installed, PortAudio missing, `[voice] enabled = false`, unsupported Python
   — rather than a nagging disabled control (`dictation_status().reason` says why).
 - Click (or **Ctrl+M**) starts a session; click again, Ctrl+M, or **sending** stops
   it. While starting the icon spins; while listening it is red with a soft pulse.
+- **Auto-off on silence:** nothing recognised for `[voice] silence_timeout`
+  seconds (default 8; `0` = never) ends the session by itself (a watchdog thread
+  in `DictationSession`; any partial/final *with text* resets the clock, which
+  starts when the mic opens) — the strip clears and a brief "Mic off" notice
+  shows, so a mic left open in a quiet room doesn't listen indefinitely.
 - A **status strip** above the input row shows the model opening (with download
   progress on first run) and then the **in-progress line**, greyed, replaced as
   the recogniser refines it. Each **finished line is appended into the textarea**
@@ -87,6 +93,18 @@ skipped on that path). Without `model_dir`, first use fetches from
   `cert-check` and `db-3` come out spelled the way the catalogue does.
 - Only one session at a time; starting a new one stops the previous. An engine
   error ends the session with a visible reason.
+- **Warm engine (`[voice] keep_loaded`, default on):** the loaded Moonshine
+  `Transcriber` is kept in a process-wide `ModelCache` keyed by
+  (language, arch, vendored dir) and handed to each new `MicTranscriber` via
+  `use_transcriber`, so the second press opens the mic instantly instead of
+  re-opening the model (~1–2 s). A config change that alters the key, or
+  turning `keep_loaded` off, releases it (`release_model`); off ⇒ the mic owns
+  and closes the engine per session as before.
+- **Settings → Voice** edits every `[voice]` key (enable, model, language,
+  vendored dir + folder picker, microphone picker from `sounddevice`, keep
+  loaded, silence timeout, refresh interval) and shows availability / reason /
+  engine-loaded state — bridge `get_voice_config` / `save_voice_config`
+  (validated, atomic `update_config`) / `list_voice_devices`.
 
 ## Architecture (one bridge call + three event streams)
 
@@ -163,9 +181,9 @@ CommandInput (mic button)
   surprise egress.
 - **No `getUserMedia`/MediaRecorder path.** Host-side capture makes browser mic
   access — and WebView2 permission handling — unnecessary.
-- **No `[voice]` Settings tab yet.** It's a config-file section (rides Config Sync
-  / the seed, so a fleet baseline can pin `model_dir`); a Settings surface is a
-  follow-up once the engine is confirmed.
+- **No per-arg or per-runnable voice grammar.** The keyterm bias is the whole
+  vocabulary story; a spoken-command grammar would make voice a control
+  surface, which is out of scope.
 
 ## Distribution / governance
 

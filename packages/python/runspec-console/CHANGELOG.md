@@ -8,6 +8,46 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.273.2] — 2026-09-18
+
+### Added
+- **The mic turns itself off on silence.** New `[voice] silence_timeout`
+  (default **8** s; `0` = never): once nothing has been recognised for that long
+  the dictation session ends by itself — the strip clears and a brief "Mic off"
+  notice shows — so a mic left open in a quiet room doesn't listen until the
+  operator remembers. A watchdog thread in `DictationSession` polls the
+  last-activity clock; any partial/final line *with text* resets it, and the
+  clock starts when the mic opens so there's a full window to begin speaking.
+  An operator stop or a send still wins. `dictation_status` reports the
+  timeout (shown in the mic tooltip). First-use feedback on 0.273.0.
+- **Warm engine — the second press is instant.** New `[voice] keep_loaded`
+  (default **true**): the loaded Moonshine engine stays resident between
+  dictation sessions (a process-wide `dictation.ModelCache` keyed by
+  language / model / vendored dir, handed to each session via
+  `MicTranscriber.use_transcriber`), so only the first press pays the 1–2 s
+  model open. A model/language/dir change or turning it off releases the
+  engine; `false` restores load-per-press.
+- **Settings → Voice tab.** Every `[voice]` key is now editable in the UI —
+  enable, model (streaming sizes with hints), language, vendored model
+  directory (+ folder picker), microphone (picker over the input devices
+  PortAudio reports), keep-loaded, silence timeout, live-text refresh — with a
+  status line showing whether dictation is available here (and why not),
+  and whether the engine is currently loaded. New bridge `get_voice_config`
+  / `save_voice_config` (validated; atomic `config.update_config`; releases
+  the resident engine when the model selection changed or keep-loaded turned
+  off, stopping a live session first) / `list_voice_devices`
+  (`SettingsDrawer.tsx` `VoiceTab`, not AI-gated).
+
+### Changed
+- **Mic button moved to the left, above the prompt arrow.** It sat stacked in
+  the right-hand button column above the auto-switch/Send icons ("top right");
+  it now sits in a matching left-hand column **above the `❯` prompt
+  character**, in the vertical space the two-line textarea leaves there —
+  first real-use feedback on the 0.273.0 dictation prototype (which otherwise
+  worked: the model opens in a second or two, speech lands in the box,
+  click/Enter stops).
+
+
 ## [0.273.1] — 2026-09-18
 
 ### Fixed

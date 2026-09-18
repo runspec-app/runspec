@@ -331,6 +331,61 @@ def test_stop_before_start_ends_immediately():
     assert mic.calls == []
 
 
+# ── silence auto-stop ─────────────────────────────────────────────────────────
+
+
+def test_silence_timeout_ends_session_after_no_speech():
+    mic, emit = FakeMic(), Emitted()
+    s = make_session(mic, emit, silence_timeout=0.3)
+    s.start()
+    wait_for(lambda: s.state == "listening")
+    wait_for(lambda: s.state == "ended", timeout=3)
+    assert emit.last_state()["reason"] == "silence"
+    assert mic.calls == ["load", "start", "stop", "close"]
+
+
+def test_speech_keeps_resetting_the_silence_clock():
+    mic, emit = FakeMic(), Emitted()
+    s = make_session(mic, emit, silence_timeout=0.3)
+    s.start()
+    wait_for(lambda: s.state == "listening")
+    # Keep talking for longer than the timeout — partials with text reset it.
+    for _ in range(6):
+        time.sleep(0.1)
+        mic.say_partial("still talking")
+        assert s.state == "listening"
+    # Whitespace-only partials are not activity.
+    for _ in range(5):
+        time.sleep(0.1)
+        mic.say_partial("  ")
+    wait_for(lambda: s.state == "ended", timeout=3)
+    assert emit.last_state()["reason"] == "silence"
+
+
+def test_silence_timeout_zero_never_auto_stops():
+    mic, emit = FakeMic(), Emitted()
+    s = make_session(mic, emit, silence_timeout=0)
+    s.start()
+    wait_for(lambda: s.state == "listening")
+    time.sleep(0.4)
+    assert s.state == "listening"
+    s.stop()
+    wait_for(lambda: s.state == "ended")
+    assert emit.last_state()["reason"] == "stopped"
+
+
+def test_operator_stop_wins_over_silence_watchdog():
+    mic, emit = FakeMic(), Emitted()
+    s = make_session(mic, emit, silence_timeout=0.3)
+    s.start()
+    wait_for(lambda: s.state == "listening")
+    s.stop()
+    wait_for(lambda: s.state == "ended")
+    time.sleep(0.5)
+    assert emit.states().count("ended") == 1
+    assert emit.last_state()["reason"] == "stopped"
+
+
 # ── bridge mixin ──────────────────────────────────────────────────────────────
 
 
@@ -340,6 +395,9 @@ class _VoiceBridge:
     dictation_status = _M.dictation_status
     start_dictation = _M.start_dictation
     stop_dictation = _M.stop_dictation
+    get_voice_config = _M.get_voice_config
+    save_voice_config = _M.save_voice_config
+    list_voice_devices = _M.list_voice_devices
     _dictation_keyterms = _M._dictation_keyterms
 
     def __init__(self, runnables):
@@ -386,6 +444,9 @@ def test_bridge_status_reports_model_and_keyterms(voice_bridge):
         "model": "small-streaming",
         "language": "en",
         "vendored": False,
+        "silence_timeout": 0.0,
+        "keep_loaded": True,
+        "model_loaded": False,
     }
     assert voice_bridge._dictation_keyterms() == [
         "web-01",
@@ -411,8 +472,14 @@ def test_bridge_start_stop_round_trip(voice_bridge, monkeypatch):
     created: list[dict[str, Any]] = []
 
     class FakeSession:
-        def __init__(self, emit, *, config, keyterms):
-            created.append({"config": config, "keyterms": list(keyterms)})
+        def __init__(self, emit, *, config, keyterms, silence_timeout=0.0):
+            created.append(
+                {
+                    "config": config,
+                    "keyterms": list(keyterms),
+                    "silence_timeout": silence_timeout,
+                }
+            )
             self.session_id = f"s{len(created)}"
             self.active = True
             self.stopped = False
@@ -430,6 +497,7 @@ def test_bridge_start_stop_round_trip(voice_bridge, monkeypatch):
     assert r == {"ok": True, "session_id": "s1"}
     assert created[0]["keyterms"] == ["web-01", "db-3", "cert-check", "which"]
     assert created[0]["config"]["model"] == "small"
+    assert created[0]["silence_timeout"] == 0.0
     assert voice_bridge.dictation_status()["listening"] is True
     assert voice_bridge.dictation_status()["session_id"] == "s1"
     first = voice_bridge._dictation
@@ -455,3 +523,215 @@ def test_bridge_status_logs_unavailable_reason_once(voice_bridge, monkeypatch, c
     assert [r.getMessage() for r in caplog.records] == [
         "dictation unavailable: no engine"
     ]
+
+
+# ── warm model cache ──────────────────────────────────────────────────────────
+
+
+class FakeEngine:
+    def __init__(self, tag: str) -> None:
+        self.tag = tag
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def test_acquire_engine_reuses_cached_engine_for_same_config():
+    cache = dictation.ModelCache()
+    loads: list[str] = []
+
+    def load(cfg, on_progress):
+        loads.append(cfg["model"])
+        return FakeEngine(cfg["model"])
+
+    cfg = {"language": "en", "model": "small", "model_dir": None}
+    e1, reused1 = dictation.acquire_engine(cfg, lambda *a: None, cache=cache, load=load)
+    e2, reused2 = dictation.acquire_engine(cfg, lambda *a: None, cache=cache, load=load)
+    assert (reused1, reused2) == (False, True)
+    assert e1 is e2 and loads == ["small"] and cache.loaded
+
+
+def test_acquire_engine_replaces_and_closes_on_config_change():
+    cache = dictation.ModelCache()
+    load = lambda cfg, on_progress: FakeEngine(cfg["model"])  # noqa: E731
+    e1, _ = dictation.acquire_engine(
+        {"language": "en", "model": "small"}, lambda *a: None, cache=cache, load=load
+    )
+    e2, reused = dictation.acquire_engine(
+        {"language": "en", "model": "medium"}, lambda *a: None, cache=cache, load=load
+    )
+    assert reused is False and e2 is not e1 and e1.closed and not e2.closed
+    # Language / vendored dir are part of the key too.
+    assert dictation.model_cache_key(
+        {"language": "EN ", "model": "", "model_dir": ""}
+    ) == (
+        "en",
+        "medium-streaming",
+        "",
+    )
+    assert dictation.model_cache_key(
+        {"language": "en", "model": "", "model_dir": "C:/m"}
+    ) != (dictation.model_cache_key({"language": "en", "model": ""}))
+    cache.clear()
+    assert e2.closed and not cache.loaded
+
+
+def test_module_cache_release(monkeypatch):
+    cache = dictation.ModelCache()
+    monkeypatch.setattr(dictation, "_MODEL_CACHE", cache)
+    eng = FakeEngine("x")
+    cache.put(("en", "small-streaming", ""), eng)
+    assert dictation.model_loaded()
+    dictation.release_model()
+    assert eng.closed and not dictation.model_loaded()
+
+
+def test_list_input_devices_without_portaudio(monkeypatch):
+    monkeypatch.setitem(sys.modules, "sounddevice", None)
+    assert dictation.list_input_devices() == []
+
+
+# ── Settings → Voice get/save ─────────────────────────────────────────────────
+
+
+def test_save_voice_config_writes_section_and_releases_on_model_change(
+    voice_bridge, monkeypatch
+):
+    from runspec_console import bridge_voice
+
+    stored: dict[str, Any] = {}
+    reads = [
+        {
+            "enabled": True,
+            "model": "small",
+            "language": "en",
+            "model_dir": None,
+            "keep_loaded": True,
+            "silence_timeout": 8.0,
+            "update_interval": 0.5,
+            "device": None,
+        },
+    ]
+
+    def read_voice():
+        return dict(reads[-1])
+
+    def update_config(mutate):
+        cfg: dict[str, Any] = {"other": {"keep": 1}}
+        mutate(cfg)
+        stored.update(cfg)
+        v = cfg["voice"]
+        reads.append(
+            {
+                "enabled": v["enabled"],
+                "model": v["model"],
+                "language": v["language"],
+                "model_dir": v.get("model_dir"),
+                "keep_loaded": v["keep_loaded"],
+                "silence_timeout": v["silence_timeout"],
+                "update_interval": v["update_interval"],
+                "device": v.get("device"),
+            }
+        )
+        return cfg
+
+    released: list[bool] = []
+    monkeypatch.setattr(bridge_voice.config_mod, "read_voice", read_voice)
+    monkeypatch.setattr(bridge_voice.config_mod, "update_config", update_config)
+    monkeypatch.setattr(
+        bridge_voice.dictation, "release_model", lambda: released.append(True)
+    )
+    monkeypatch.setattr(bridge_voice.dictation, "model_loaded", lambda: True)
+
+    got = voice_bridge.get_voice_config()
+    assert got["model"] == "small-streaming" and got["models"][0] == "tiny-streaming"
+    assert got["available"] is True and got["model_loaded"] is True
+
+    # Same model → no release.
+    out = voice_bridge.save_voice_config(
+        {
+            "enabled": True,
+            "language": "en",
+            "model": "small",
+            "model_dir": "",
+            "device": "",
+            "update_interval": 0.5,
+            "silence_timeout": 12,
+            "keep_loaded": True,
+        }
+    )
+    assert stored["voice"] == {
+        "enabled": True,
+        "language": "en",
+        "model": "small-streaming",
+        "update_interval": 0.5,
+        "silence_timeout": 12.0,
+        "keep_loaded": True,
+    }
+    assert stored["other"] == {"keep": 1}
+    assert out["silence_timeout"] == 12.0 and released == []
+
+    # Model change → release; device index + vendored dir written.
+    voice_bridge.save_voice_config(
+        {
+            "enabled": True,
+            "language": "en",
+            "model": "medium-streaming",
+            "model_dir": " C:/models/en ",
+            "device": 3,
+            "update_interval": 1,
+            "silence_timeout": 0,
+            "keep_loaded": True,
+        }
+    )
+    assert (
+        stored["voice"]["model_dir"] == "C:/models/en"
+        and stored["voice"]["device"] == 3
+    )
+    assert released == [True]
+
+    # keep_loaded off → release too.
+    voice_bridge.save_voice_config(
+        {
+            "enabled": False,
+            "language": "en",
+            "model": "medium-streaming",
+            "device": "USB Mic",
+            "update_interval": 1,
+            "silence_timeout": 0,
+            "keep_loaded": False,
+        }
+    )
+    assert (
+        stored["voice"]["device"] == "USB Mic" and stored["voice"]["enabled"] is False
+    )
+    assert released == [True, True]
+
+
+@pytest.mark.parametrize(
+    "bad, msg",
+    [
+        ({"model": "huge"}, "unknown \\[voice\\] model"),
+        ({"language": "  "}, "language must not be blank"),
+        ({"update_interval": 9}, "update_interval"),
+        ({"silence_timeout": -1}, "silence_timeout"),
+        ({"update_interval": "abc"}, "must be numbers"),
+        ({"device": True}, "device"),
+    ],
+)
+def test_save_voice_config_rejects_bad_input(voice_bridge, monkeypatch, bad, msg):
+    from runspec_console import bridge_voice
+
+    monkeypatch.setattr(
+        bridge_voice.config_mod,
+        "update_config",
+        lambda m: pytest.fail("must not write"),
+    )
+    with pytest.raises(ValueError, match=msg):
+        voice_bridge.save_voice_config({"model": "small", "language": "en", **bad})
+
+
+def test_save_voice_config_rejects_non_object(voice_bridge):
+    with pytest.raises(ValueError):
+        voice_bridge.save_voice_config("nope")  # type: ignore[arg-type]

@@ -1530,9 +1530,24 @@ export const mockApi: BridgeApi = {
   dictation_status: async () => ({
     available: false, reason: 'Dictation is not available in the browser preview',
     listening: false, session_id: null, model: 'medium-streaming', language: 'en', vendored: false,
+    silence_timeout: 8, keep_loaded: true, model_loaded: false,
   }),
   start_dictation: async () => ({ ok: false, error: 'Dictation is not available in the browser preview' }),
   stop_dictation: async () => ({ ok: true, session_id: null }),
+  get_voice_config: async () => ({
+    enabled: true, language: 'en', model: 'medium-streaming', model_dir: null, device: null,
+    update_interval: 0.5, silence_timeout: 8, keep_loaded: true,
+    available: false, reason: 'Dictation is not available in the browser preview', model_loaded: false,
+    models: ['tiny-streaming', 'base-streaming', 'small-streaming', 'medium-streaming'],
+  }),
+  save_voice_config: async (cfg) => {
+    console.log('[mock] save_voice_config', cfg)
+    return {
+      ...cfg, available: false, reason: 'Dictation is not available in the browser preview',
+      model_loaded: false, models: ['tiny-streaming', 'base-streaming', 'small-streaming', 'medium-streaming'],
+    }
+  },
+  list_voice_devices: async () => [{ index: 1, name: 'Built-in microphone', default: true }],
   get_trigger_board: async () => [
     {
       card_id: 'demo1', trigger: 'vip-outage-triage', source: 'outlook',

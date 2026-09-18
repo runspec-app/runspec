@@ -54,7 +54,8 @@ function renderComposer(onSendChat = vi.fn()) {
 
 const available = {
   available: true, reason: '', listening: false, session_id: null,
-  model: 'medium-streaming', language: 'en', vendored: false,
+  model: 'medium-streaming', language: 'en', vendored: false, silence_timeout: 8,
+  keep_loaded: true, model_loaded: false,
 }
 
 function emit(event: string, detail: Record<string, unknown>) {
@@ -115,6 +116,18 @@ describe('CommandInput dictation', () => {
     expect(stopDictation).toHaveBeenCalled()
 
     emit('runspec:dictation_state', { session_id: 's1', state: 'ended', reason: 'stopped' })
+    expect(screen.getByLabelText('Start dictation')).toBeTruthy()
+    expect(screen.queryByTestId('dictation-strip')).toBeNull()
+  })
+
+  it('returns to idle quietly when the backend ends the session on silence', async () => {
+    dictationStatus.mockResolvedValue(available)
+    renderComposer()
+    fireEvent.click(await screen.findByLabelText('Start dictation'))
+    await waitFor(() => expect(startDictation).toHaveBeenCalled())
+    emit('runspec:dictation_state', { session_id: 's1', state: 'listening' })
+    expect(screen.getByLabelText('Stop dictation')).toBeTruthy()
+    emit('runspec:dictation_state', { session_id: 's1', state: 'ended', reason: 'silence' })
     expect(screen.getByLabelText('Start dictation')).toBeTruthy()
     expect(screen.queryByTestId('dictation-strip')).toBeNull()
   })

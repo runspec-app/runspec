@@ -58,7 +58,61 @@ class VoiceMixin:
             "model": model,
             "language": cfg.get("language", "en"),
             "vendored": bool(cfg.get("model_dir")),
+            "silence_timeout": float(cfg.get("silence_timeout", 0) or 0),
+            "keep_loaded": bool(cfg.get("keep_loaded", True)),
+            "model_loaded": dictation.model_loaded(),
         }
+
+    def get_voice_config(self) -> dict[str, Any]:
+        """The ``[voice]`` section for Settings → Voice, plus live availability
+        (``available``/``reason``), whether the engine is resident
+        (``model_loaded``) and the selectable model names."""
+        cfg = config_mod.read_voice()
+        ok, reason = dictation.available(cfg)
+        return {
+            **cfg,
+            "model": dictation.normalise_model(cfg.get("model"))
+            if ok or not cfg.get("model")
+            else cfg.get("model"),
+            "available": ok,
+            "reason": reason,
+            "model_loaded": dictation.model_loaded(),
+            "models": list(dictation.STREAMING_MODELS),
+        }
+
+    def save_voice_config(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Validate + persist the ``[voice]`` section (atomic, other sections
+        untouched). A model/language/vendored-dir change — or turning
+        ``keep_loaded`` off — releases the resident engine so the next press
+        loads the right one; a live session is stopped first. Raises
+        ``ValueError`` (→ rejected JS promise) on bad input."""
+        if not isinstance(payload, dict):
+            raise ValueError("voice config must be an object")
+        section = _validate_voice(payload)
+        before = config_mod.read_voice()
+
+        def _mutate(cfg: dict[str, Any]) -> None:
+            cfg["voice"] = section
+
+        config_mod.update_config(_mutate)
+        after = config_mod.read_voice()
+        key_changed = dictation.model_cache_key(before) != dictation.model_cache_key(
+            after
+        )
+        if key_changed or not after["keep_loaded"]:
+            session = self._dictation
+            if session is not None and session.active:
+                session.stop()
+            dictation.release_model()
+        logger.info(
+            "voice config saved (%s)",
+            ", ".join(f"{k}={v!r}" for k, v in section.items()),
+        )
+        return self.get_voice_config()
+
+    def list_voice_devices(self) -> list[dict[str, Any]]:
+        """Input devices for the Settings → Voice microphone picker."""
+        return dictation.list_input_devices()
 
     def start_dictation(self) -> dict[str, Any]:
         """Open the microphone and start streaming text into the composer.
@@ -76,6 +130,7 @@ class VoiceMixin:
             self._dispatch,  # type: ignore[attr-defined]
             config=cfg,
             keyterms=self._dictation_keyterms(),
+            silence_timeout=float(cfg.get("silence_timeout", 0) or 0),
         )
         self._dictation = session
         session.start()
@@ -104,3 +159,40 @@ class VoiceMixin:
         names = [str(r.get("name") or "") for r in runnables]
         hosts = [str(r.get("host") or "") for r in runnables]
         return dictation.build_keyterms(names, hosts)
+
+
+def _validate_voice(payload: dict[str, Any]) -> dict[str, Any]:
+    """Coerce the Settings → Voice form into the ``[voice]`` table shape
+    ``config.read_voice`` reads. Blank ``model_dir`` / ``device`` are omitted
+    (= defaults) rather than written as empty strings."""
+    out: dict[str, Any] = {"enabled": bool(payload.get("enabled", True))}
+    language = str(payload.get("language") or "en").strip()
+    if not language:
+        raise ValueError("language must not be blank")
+    out["language"] = language
+    out["model"] = dictation.normalise_model(payload.get("model"))  # ValueError on junk
+    model_dir = str(payload.get("model_dir") or "").strip()
+    if model_dir:
+        out["model_dir"] = model_dir
+    device = payload.get("device")
+    if isinstance(device, bool):
+        raise ValueError("device must be an index or a name")
+    if isinstance(device, (int, float)) and not isinstance(device, bool):
+        out["device"] = int(device)
+    elif isinstance(device, str) and device.strip():
+        out["device"] = device.strip()
+    try:
+        interval = float(payload.get("update_interval", 0.5))
+        silence = float(payload.get("silence_timeout", 8))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("update_interval and silence_timeout must be numbers") from exc
+    if not 0.1 <= interval <= 5:
+        raise ValueError("update_interval must be between 0.1 and 5 seconds")
+    if not 0 <= silence <= 300:
+        raise ValueError(
+            "silence_timeout must be between 0 and 300 seconds (0 = never)"
+        )
+    out["update_interval"] = interval
+    out["silence_timeout"] = silence
+    out["keep_loaded"] = bool(payload.get("keep_loaded", True))
+    return out

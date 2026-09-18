@@ -1055,10 +1055,32 @@ export interface DictationStatus {
   model: string             // streaming model size, e.g. 'medium-streaming'
   language: string
   vendored: boolean         // model loaded from [voice] model_dir (never downloads)
+  silence_timeout: number   // seconds of no recognised speech before the mic turns itself off (0 = never)
+  keep_loaded: boolean      // engine stays resident between sessions (second press is instant)
+  model_loaded: boolean     // the engine is resident right now
 }
+// Settings → Voice: the `[voice]` section plus live availability. `model` is the
+// normalised streaming arch; `models` the selectable names; `device` an input
+// index, a device name, or null for the system default.
+export interface VoiceConfig {
+  enabled: boolean
+  language: string
+  model: string
+  model_dir: string | null
+  device: number | string | null
+  update_interval: number
+  silence_timeout: number
+  keep_loaded: boolean
+  available: boolean
+  reason: string
+  model_loaded: boolean
+  models: string[]
+}
+export interface VoiceDevice { index: number; name: string; default: boolean }
 // `runspec:dictation_state` detail. `loading` = the model is opening (first run
 // may download it — `progress` 0..1 + `file`); `listening` = mic open; `ended`
-// = stopped or failed (`reason`; 'stopped' is the normal case).
+// = over (`reason`: 'stopped' by the operator, 'silence' after
+// `silence_timeout` seconds with nothing recognised, else an error message).
 export interface DictationStateEvent {
   session_id: string
   state: 'loading' | 'listening' | 'ended'
@@ -1587,6 +1609,12 @@ export interface BridgeApi {
   dictation_status: () => Promise<DictationStatus>
   start_dictation: () => Promise<{ ok: boolean; session_id?: string; error?: string }>
   stop_dictation: () => Promise<{ ok: boolean; session_id: string | null }>
+  // Settings → Voice. save validates (rejects the promise with the reason),
+  // writes `[voice]` atomically, releases the resident engine when the model
+  // selection changed or keep_loaded turned off, and returns the fresh config.
+  get_voice_config: () => Promise<VoiceConfig>
+  save_voice_config: (cfg: Omit<VoiceConfig, 'available' | 'reason' | 'model_loaded' | 'models'>) => Promise<VoiceConfig>
+  list_voice_devices: () => Promise<VoiceDevice[]>
   get_trigger_board: () => Promise<TriggerCard[]>
   get_trigger_events: () => Promise<TriggerEvent[]>
   // Fire a trigger now with a synthetic event (the Triggers table's "Trigger now"

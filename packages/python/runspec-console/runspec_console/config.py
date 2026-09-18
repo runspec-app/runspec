@@ -418,6 +418,14 @@ def read_voice() -> dict[str, Any]:
       into its own cache (``MOONSHINE_VOICE_CACHE`` overrides the location).
     - ``device``: capture device index or name (default: system default mic).
     - ``update_interval`` (default 0.5 s): how often partial text refreshes.
+    - ``silence_timeout`` (default 8 s): the mic turns itself off after this many
+      seconds with no recognised speech; ``0`` keeps listening until the operator
+      stops it or sends.
+    - ``keep_loaded`` (default true): keep the speech engine resident between
+      sessions so the second mic press opens instantly (costs the model's RAM
+      while idle); ``false`` reloads it on every press and frees it after.
+
+    Edited from Settings → Voice (``VoiceMixin.save_voice_config``).
     """
     raw = read_config().get("voice")
     cfg = dict(raw) if isinstance(raw, dict) else {}
@@ -431,6 +439,10 @@ def read_voice() -> dict[str, Any]:
         interval = float(cfg.get("update_interval", 0.5) or 0.5)
     except (TypeError, ValueError):
         interval = 0.5
+    try:
+        silence = float(cfg.get("silence_timeout", 8.0))
+    except (TypeError, ValueError):
+        silence = 8.0
     return {
         "enabled": bool(cfg.get("enabled", True)),
         "language": str(cfg.get("language") or "en").strip() or "en",
@@ -438,6 +450,8 @@ def read_voice() -> dict[str, Any]:
         "model_dir": model_dir or None,
         "device": device,
         "update_interval": min(5.0, max(0.1, interval)),
+        "silence_timeout": min(300.0, max(0.0, silence)),
+        "keep_loaded": bool(cfg.get("keep_loaded", True)),
     }
 
 

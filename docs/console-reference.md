@@ -257,7 +257,9 @@ Settings for the chat composer's **mic button** — on-device speech-to-text via
 Recognition runs host-side in the console process — no audio leaves the machine
 and the web view never touches the microphone. Dictation only *fills* the prompt
 box; Enter still sends, so voice sits below every autonomy/confirm gate. The
-button is hidden until the extra is installed. Ctrl+M toggles it.
+button is hidden until the extra is installed. Ctrl+M toggles it. Every key
+below is editable from **Settings → Voice** (which also shows whether dictation
+is available here, why not if so, and lists the microphones it can open).
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -267,6 +269,8 @@ button is hidden until the extra is installed. Ctrl+M toggles it.
 | `model_dir` | — | Path to a **vendored** model directory. Set on a fleet that blocks outbound downloads — the engine then never fetches anything. Unset ⇒ the model is fetched from `download.moonshine.ai` on first use into Moonshine's cache (`MOONSHINE_VOICE_CACHE` overrides the location) |
 | `device` | system default | Capture device index or name |
 | `update_interval` | 0.5 | Seconds between refreshes of the in-progress line |
+| `silence_timeout` | 8 | The mic turns itself off after this many seconds with no recognised speech; `0` keeps it open until you stop it or send |
+| `keep_loaded` | `true` | Keep the speech engine resident between sessions so the second press opens the mic instantly (costs the model's RAM while idle); `false` reloads on every press and frees it after |
 
 To vendor the model, run `moonshine-voice download --language en` once on a
 machine with access, copy the resulting model directory alongside the package
