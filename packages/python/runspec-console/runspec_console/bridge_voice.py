@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 from . import config as config_mod
 from . import dictation
-from .bridge_const import logger
+from .bridge_const import AI_OFF_MESSAGE, logger
 
 if TYPE_CHECKING:
     from .bridge import Bridge  # noqa: F401
@@ -26,6 +26,11 @@ if TYPE_CHECKING:
 
 class VoiceMixin:
     _dictation: dictation.DictationSession | None
+    # Dictation fills the chat prompt; with ``[console] ai = false`` there is no
+    # assistant to dictate to, so the feature is refused (not degraded) like the
+    # other agent surfaces — the UI hides it, and these methods refuse too so a
+    # stale bundle or a direct JS call can't open the microphone.
+    _ai_enabled: bool
     # The last "unavailable" reason we logged — a hidden mic button gives the
     # operator nothing to go on, so the reason goes to runspec-console.log once
     # per distinct reason (the status is polled on every composer mount).
@@ -38,7 +43,7 @@ class VoiceMixin:
         false ⇒ ``reason`` explains (extra not installed, PortAudio missing,
         ``[voice] enabled = false``, bad model name)."""
         cfg = config_mod.read_voice()
-        ok, reason = dictation.available(cfg)
+        ok, reason = self._voice_available(cfg)
         if not ok and reason != getattr(self, "_dictation_reason_logged", ""):
             self._dictation_reason_logged = reason
             logger.info("dictation unavailable: %s", reason)
@@ -68,7 +73,7 @@ class VoiceMixin:
         (``available``/``reason``), whether the engine is resident
         (``model_loaded``) and the selectable model names."""
         cfg = config_mod.read_voice()
-        ok, reason = dictation.available(cfg)
+        ok, reason = self._voice_available(cfg)
         return {
             **cfg,
             "model": dictation.normalise_model(cfg.get("model"))
@@ -120,7 +125,7 @@ class VoiceMixin:
         thread (``runspec:dictation_state`` reports ``loading`` → ``listening``,
         or ``ended`` with a reason)."""
         cfg = config_mod.read_voice()
-        ok, reason = dictation.available(cfg)
+        ok, reason = self._voice_available(cfg)
         if not ok:
             return {"ok": False, "error": reason}
         previous = self._dictation
@@ -148,6 +153,13 @@ class VoiceMixin:
         return {"ok": True, "session_id": session.session_id}
 
     # ── internals ──
+
+    def _voice_available(self, cfg: dict[str, Any]) -> tuple[bool, str]:
+        """``dictation.available`` behind the AI off-switch — neutral wording,
+        never naming the flag (see docs/console-ai-off.md)."""
+        if not getattr(self, "_ai_enabled", True):
+            return (False, AI_OFF_MESSAGE)
+        return dictation.available(cfg)
 
     def _dictation_keyterms(self) -> list[str]:
         """Runnable + host names from the discovery cache, as decoder-bias terms."""

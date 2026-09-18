@@ -400,8 +400,11 @@ class _VoiceBridge:
     list_voice_devices = _M.list_voice_devices
     _dictation_keyterms = _M._dictation_keyterms
 
-    def __init__(self, runnables):
+    _voice_available = _M._voice_available
+
+    def __init__(self, runnables, *, ai_enabled=True):
         self._dictation = None
+        self._ai_enabled = ai_enabled
         self._lock = threading.Lock()
         self._runnables_cache = runnables
         self.dispatched: list[tuple[str, dict[str, Any]]] = []
@@ -735,3 +738,27 @@ def test_save_voice_config_rejects_bad_input(voice_bridge, monkeypatch, bad, msg
 def test_save_voice_config_rejects_non_object(voice_bridge):
     with pytest.raises(ValueError):
         voice_bridge.save_voice_config("nope")  # type: ignore[arg-type]
+
+
+def test_voice_refused_when_ai_off(monkeypatch):
+    from runspec_console import bridge_voice
+    from runspec_console.bridge_const import AI_OFF_MESSAGE
+
+    monkeypatch.setattr(
+        bridge_voice.config_mod,
+        "read_voice",
+        lambda: {"enabled": True, "model": "", "language": "en", "model_dir": None},
+    )
+    # Even with the engine present, AI off wins — and the message is neutral.
+    monkeypatch.setattr(bridge_voice.dictation, "available", lambda cfg: (True, ""))
+    monkeypatch.setattr(
+        bridge_voice.dictation,
+        "DictationSession",
+        lambda *a, **k: pytest.fail("must not start a session"),
+    )
+    b = _VoiceBridge([], ai_enabled=False)
+    st = b.dictation_status()
+    assert st["available"] is False and st["reason"] == AI_OFF_MESSAGE
+    assert b.start_dictation() == {"ok": False, "error": AI_OFF_MESSAGE}
+    assert b.get_voice_config()["available"] is False
+    assert b.stop_dictation() == {"ok": True, "session_id": None}

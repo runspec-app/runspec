@@ -14,7 +14,7 @@ import {
 
 const NAV = ['console', 'history', 'logs', 'analytics', 'improve', 'evals', 'specs', 'forms', 'schedules', 'triggers', 'rota', 'dev']
   .map(key => ({ key }))
-const SETTINGS = ['ssh', 'llm', 'jumpHosts', 'localVenvs', 'agentTools', 'runbooks', 'savedRuns', 'selfService', 'filters', 'repos', 'credentials', 'denylist', 'mcp', 'mcpServer', 'configSync', 'mailbox', 'teams', 'sounds', 'chatHistory', 'telemetry']
+const SETTINGS = ['ssh', 'llm', 'jumpHosts', 'localVenvs', 'agentTools', 'runbooks', 'savedRuns', 'selfService', 'filters', 'repos', 'credentials', 'denylist', 'mcp', 'mcpServer', 'configSync', 'mailbox', 'teams', 'sounds', 'voice', 'chatHistory', 'telemetry']
   .map(key => ({ key }))
 const ACTIONS = ['runnable', 'saved_run', 'prompt', 'runbook', 'eval', 'event'].map(value => ({ value }))
 
@@ -47,6 +47,7 @@ describe('features — AI off', () => {
     // everywhere"), so it is meaningful with no embedded agent.
     expect(keys).toEqual(['ssh', 'jumpHosts', 'localVenvs', 'agentTools', 'savedRuns', 'selfService', 'filters', 'repos', 'credentials', 'denylist', 'mcpServer', 'configSync', 'mailbox', 'teams', 'sounds', 'telemetry'])
     expect(AI_ONLY_SETTINGS.has('agentTools')).toBe(false)
+    expect(AI_ONLY_SETTINGS.has('voice')).toBe(true)
   })
 
   it('drops the agent-turn schedule actions plus the dead event action', () => {

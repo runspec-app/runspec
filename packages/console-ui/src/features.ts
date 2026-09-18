@@ -47,6 +47,9 @@ export const AI_OFF_HIDDEN_VIEWS: ReadonlySet<string> = new Set(['triggers', 'ro
 // is off (tracing is agent-turn-only, so its controls hide). See TelemetryTab.
 export const AI_ONLY_SETTINGS: ReadonlySet<string> = new Set([
   'llm', 'runbooks', 'mcp', 'chatHistory',
+  // Dictation fills the chat prompt — with no assistant there is nothing to
+  // dictate to (the backend refuses start_dictation too).
+  'voice',
 ])
 
 /** The nav tabs to render for the active feature set (order preserved). */

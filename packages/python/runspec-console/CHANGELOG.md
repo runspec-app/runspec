@@ -8,6 +8,17 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.273.3] — 2026-09-18
+
+### Changed
+- **Dictation follows the AI off-switch.** With `[console] ai = false` the
+  composer's mic button and Ctrl+M are hidden and the **Settings → Voice** tab
+  joins the AI-only set (`features.AI_ONLY_SETTINGS`); the backend refuses
+  `dictation_status` / `start_dictation` / `get_voice_config` with the neutral
+  `AI_OFF_MESSAGE` (never naming the switch), so a stale bundle or a direct JS
+  call can't open the microphone. Dictation fills the chat prompt — with no
+  assistant there is nothing to dictate to, and 0.273.2 had left it visible.
+
 ## [0.273.2] — 2026-09-18
 
 ### Added

@@ -191,7 +191,12 @@ Voice is a pure input convenience with **no new autonomy surface**, so it needs 
 Config-Sync-enforced policy of its own — what the agent *does* with the dictated
 text is still governed by denylist / rota / lock-suspend / confirm-gates
 unchanged. Orgs that want to withhold it simply don't ship the `[voice]` extra, or
-set `[voice] enabled = false` in the seeded `config.toml`.
+set `[voice] enabled = false` in the seeded `config.toml`. With **`[console] ai =
+false`** it is gated like every other agent surface (0.273.3): the mic, Ctrl+M
+and the Settings → Voice tab are hidden, and the backend refuses
+`dictation_status` / `start_dictation` with the neutral `AI_OFF_MESSAGE` —
+dictation fills the chat prompt, and with no assistant there is nothing to
+dictate to.
 
 ---
 

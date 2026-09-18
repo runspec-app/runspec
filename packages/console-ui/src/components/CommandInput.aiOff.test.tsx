@@ -34,6 +34,14 @@ function renderComposer(ai: boolean, onSendChat = vi.fn()) {
 }
 
 describe('CommandInput with AI off', () => {
+  it('never shows the dictation mic (nothing to dictate to)', async () => {
+    renderComposer(false)
+    // Give the mount-time status probe a chance to run; it must not, and the
+    // mic must not appear even though the default bridge would report it.
+    await new Promise(r => setTimeout(r, 20))
+    expect(screen.queryByLabelText('Start dictation')).toBeNull()
+  })
+
   it('drops the chat and runbook affordances from the placeholder', () => {
     renderComposer(false)
     expect(screen.queryByPlaceholderText(/ask the assistant/i)).toBeNull()
