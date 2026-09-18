@@ -401,6 +401,46 @@ def read_web() -> dict[str, Any]:
     }
 
 
+def read_voice() -> dict[str, Any]:
+    """The ``[voice]`` settings for in-app dictation (the composer's mic button,
+    Moonshine Voice via the ``[voice]`` extra), with defaults.
+
+    - ``enabled`` (default true): master switch — false hides the mic button.
+    - ``language`` (default ``"en"``): Moonshine language code. English is the
+      MIT-licensed streaming model; other languages may fall under Moonshine's
+      non-commercial Community License — check before enabling fleet-wide.
+    - ``model`` (default ``medium-streaming``): streaming model size —
+      ``tiny-streaming`` / ``base-streaming`` / ``small-streaming`` /
+      ``medium-streaming`` (a bare size such as ``"small"`` is accepted).
+    - ``model_dir``: path to a **vendored** model directory. Set on a fleet that
+      blocks outbound downloads — the engine then never fetches anything. Unset
+      ⇒ Moonshine downloads the model from ``download.moonshine.ai`` on first use
+      into its own cache (``MOONSHINE_VOICE_CACHE`` overrides the location).
+    - ``device``: capture device index or name (default: system default mic).
+    - ``update_interval`` (default 0.5 s): how often partial text refreshes.
+    """
+    raw = read_config().get("voice")
+    cfg = dict(raw) if isinstance(raw, dict) else {}
+    model_dir = str(cfg.get("model_dir") or "").strip()
+    device: Any = cfg.get("device")
+    if isinstance(device, str):
+        device = device.strip() or None
+    elif not isinstance(device, int) or isinstance(device, bool):
+        device = None
+    try:
+        interval = float(cfg.get("update_interval", 0.5) or 0.5)
+    except (TypeError, ValueError):
+        interval = 0.5
+    return {
+        "enabled": bool(cfg.get("enabled", True)),
+        "language": str(cfg.get("language") or "en").strip() or "en",
+        "model": str(cfg.get("model") or "").strip(),
+        "model_dir": model_dir or None,
+        "device": device,
+        "update_interval": min(5.0, max(0.1, interval)),
+    }
+
+
 def read_improve() -> dict[str, Any]:
     """The ``[improve]`` settings for the Improve (evaluation + problem-report)
     feature, with defaults applied.

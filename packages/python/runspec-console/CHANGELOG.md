@@ -8,6 +8,38 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.273.0] — 2026-09-18
+
+### Added
+- **Dictate into the prompt box (prototype).** A **mic button** in the chat
+  composer (and **Ctrl+M**) turns speech into text in the prompt box, on-device,
+  via [Moonshine Voice](https://github.com/moonshine-ai/moonshine) — a streaming
+  engine built for laptop CPUs, installed with the new **`[voice]` extra**
+  (`pip install runspec-console[voice]`). Recognition runs **host-side in the
+  console process**: the backend owns the microphone (Moonshine's
+  `MicTranscriber` over `sounddevice`) and streams text back as
+  `runspec:dictation_state` / `_partial` / `_final` events, so the web view
+  never touches `getUserMedia` and no audio crosses the JS↔Python bridge. The
+  in-progress line renders greyed above the input row; each finished line is
+  **appended into the textarea**; **nothing auto-sends** — Enter still sends, so
+  voice is an input method that sits below every autonomy/confirm gate. Sending
+  stops dictation. The decoder is **biased toward the fleet's vocabulary**
+  (runnable + host names as Moonshine keyterms) so `cert-check` / `db-3` come
+  out spelled the way the catalogue does. New `[voice]` config (`enabled`,
+  `language`, `model`, `model_dir`, `device`, `update_interval`); the model is
+  fetched from `download.moonshine.ai` on first use, or loaded from a
+  **vendored `model_dir`** on a fleet that blocks downloads (nothing is ever
+  fetched from HuggingFace). The button is **hidden** until the extra is
+  installed (`dictation_status` reports the reason). New `dictation.py`
+  (`DictationSession`, engine behind an injectable factory — unit-tested with no
+  Moonshine/mic/model), `bridge_voice.py` `VoiceMixin` (`dictation_status` /
+  `start_dictation` / `stop_dictation`), `config.read_voice`. Python 3.11–3.12
+  only for now (Moonshine's wheels stop at 3.12; the extra carries a marker).
+  The earlier Voice-access hotkey approach stays dormant (`winkeys.py`,
+  `start_voice_dictation`/`stop_voice_dictation`) pending removal. See
+  `docs/design/console-voice-input.md` (rewritten with the September 2026
+  engine landscape) and `docs/console-reference.md` → `[voice]`.
+
 ## [0.272.6] — 2026-09-18
 
 ### Fixed

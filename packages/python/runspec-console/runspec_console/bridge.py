@@ -43,6 +43,8 @@ from .bridge_triggers import TriggersMixin
 from .bridge_improve import ImproveMixin
 from .bridge_evals import EvalsMixin
 from .bridge_mcp_server import McpServerMixin
+from .bridge_voice import VoiceMixin
+from .dictation import DictationSession
 
 
 class Bridge(
@@ -64,6 +66,7 @@ class Bridge(
     ImproveMixin,
     EvalsMixin,
     McpServerMixin,
+    VoiceMixin,
 ):
     def __init__(self) -> None:
         self._window: Any = None
@@ -264,6 +267,8 @@ class Bridge(
         # (the gate evaluates `now` live) and self-clears. Held only in memory so a
         # break is naturally transient (lost on restart, which is fine).
         self._break_until: datetime | None = None
+        # In-app dictation (bridge_voice.py): the one live session, or None.
+        self._dictation: DictationSession | None = None
         # External MCP servers the chat agent connects to ([mcp] / [[mcp.servers]]).
         # Constructed cheaply (no SDK import, no connection) so the Bridge always
         # has one; app.py calls mcp_start() at bring-up to actually connect. A

@@ -1527,6 +1527,12 @@ export const mockApi: BridgeApi = {
   screen_state: async () => 'unlocked' as const,
   start_voice_dictation: async () => ({ ok: false }),
   stop_voice_dictation: async () => ({ ok: false }),
+  dictation_status: async () => ({
+    available: false, reason: 'Dictation is not available in the browser preview',
+    listening: false, session_id: null, model: 'medium-streaming', language: 'en', vendored: false,
+  }),
+  start_dictation: async () => ({ ok: false, error: 'Dictation is not available in the browser preview' }),
+  stop_dictation: async () => ({ ok: true, session_id: null }),
   get_trigger_board: async () => [
     {
       card_id: 'demo1', trigger: 'vip-outage-triage', source: 'outlook',

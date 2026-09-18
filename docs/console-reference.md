@@ -249,6 +249,29 @@ Settings for the agent's read-only `fetch_url` web-page tool (see
 | `ca_bundle` | — | Path to a private-CA bundle for internal HTTPS hosts |
 | `tls_verify` | `true` | Set `false` to skip TLS verification (TLS-intercepting proxies) |
 
+## `[voice]` — dictation into the prompt box {#voice}
+
+Settings for the chat composer's **mic button** — on-device speech-to-text via
+[Moonshine Voice](https://github.com/moonshine-ai/moonshine), installed with the
+`[voice]` extra (`pip install runspec-console[voice]`; Python 3.11–3.12 today).
+Recognition runs host-side in the console process — no audio leaves the machine
+and the web view never touches the microphone. Dictation only *fills* the prompt
+box; Enter still sends, so voice sits below every autonomy/confirm gate. The
+button is hidden until the extra is installed. Ctrl+M toggles it.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | `true` | Master switch — `false` hides the mic button |
+| `language` | `"en"` | Moonshine language code (English is the MIT-licensed streaming model) |
+| `model` | `medium-streaming` | Streaming model size: `tiny-streaming` / `base-streaming` / `small-streaming` / `medium-streaming` (a bare size such as `small` is accepted) |
+| `model_dir` | — | Path to a **vendored** model directory. Set on a fleet that blocks outbound downloads — the engine then never fetches anything. Unset ⇒ the model is fetched from `download.moonshine.ai` on first use into Moonshine's cache (`MOONSHINE_VOICE_CACHE` overrides the location) |
+| `device` | system default | Capture device index or name |
+| `update_interval` | 0.5 | Seconds between refreshes of the in-progress line |
+
+To vendor the model, run `moonshine-voice download --language en` once on a
+machine with access, copy the resulting model directory alongside the package
+(or ship it through the internal index), and point `model_dir` at it.
+
 ## `[mailbox]` and `[[watch]]` — email monitoring {#mailbox}
 
 The Outlook `new_mail` trigger source. Set in **Settings → Mailbox**. See

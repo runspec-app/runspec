@@ -1046,6 +1046,34 @@ export interface TriggerListResult {
 // as locked / fail-closed by the gate when lock_suspend is on).
 export type LockState = 'locked' | 'unlocked' | 'unknown'
 
+// ── In-app dictation (the composer's mic button; `[voice]` extra) ─────────────
+export interface DictationStatus {
+  available: boolean
+  reason: string            // why unavailable (extra not installed, PortAudio missing, disabled)
+  listening: boolean        // a session is live right now
+  session_id: string | null
+  model: string             // streaming model size, e.g. 'medium-streaming'
+  language: string
+  vendored: boolean         // model loaded from [voice] model_dir (never downloads)
+}
+// `runspec:dictation_state` detail. `loading` = the model is opening (first run
+// may download it — `progress` 0..1 + `file`); `listening` = mic open; `ended`
+// = stopped or failed (`reason`; 'stopped' is the normal case).
+export interface DictationStateEvent {
+  session_id: string
+  state: 'loading' | 'listening' | 'ended'
+  reason?: string
+  progress?: number
+  file?: string
+  model?: string
+}
+// `runspec:dictation_partial` (in-progress line, replaced as it firms up) and
+// `runspec:dictation_final` (a finished line to append) detail.
+export interface DictationTextEvent {
+  session_id: string
+  text: string
+}
+
 
 // ── chat room (Rooms view) ───────────────────────────────────────────────────
 // The room is a "dumb message pipe with presence" the console connects to over
@@ -1550,6 +1578,15 @@ export interface BridgeApi {
   // still drive Voice access from its own bar).
   start_voice_dictation: () => Promise<{ ok: boolean }>
   stop_voice_dictation: () => Promise<{ ok: boolean }>
+  // In-app dictation (Moonshine Voice, the `[voice]` extra): the composer's mic
+  // button. `dictation_status` is the mount-time availability probe; start/stop
+  // run the on-device engine host-side, which streams text back as
+  // `runspec:dictation_state` / `runspec:dictation_partial` /
+  // `runspec:dictation_final` window events (DictationStateEvent /
+  // DictationTextEvent). Finals are appended into the prompt box; nothing sends.
+  dictation_status: () => Promise<DictationStatus>
+  start_dictation: () => Promise<{ ok: boolean; session_id?: string; error?: string }>
+  stop_dictation: () => Promise<{ ok: boolean; session_id: string | null }>
   get_trigger_board: () => Promise<TriggerCard[]>
   get_trigger_events: () => Promise<TriggerEvent[]>
   // Fire a trigger now with a synthetic event (the Triggers table's "Trigger now"

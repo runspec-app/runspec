@@ -1,0 +1,349 @@
+"""
+dictation.py — in-app voice dictation into the chat composer (the ``[voice]``
+extra).
+
+Speech is transcribed **on-device** by `Moonshine Voice
+<https://github.com/moonshine-ai/moonshine>`_ (``pip install
+runspec-console[voice]``), a streaming engine built for laptop CPUs. Recognition
+runs **host-side in Python**: Moonshine's ``MicTranscriber`` captures the system
+default microphone itself (via ``sounddevice``, whose wheel bundles PortAudio),
+so the web view never touches ``getUserMedia`` and no audio crosses the JS↔Python
+bridge — only small text events flow back through the Bridge's ``_dispatch``
+queue:
+
+- ``runspec:dictation_state``   ``{session_id, state, reason?, progress?, model?}``
+  where ``state`` is ``loading`` (model opening / first-run download),
+  ``listening`` (mic open) or ``ended`` (stopped, or failed — ``reason`` says why).
+- ``runspec:dictation_partial`` ``{session_id, text}`` — the in-progress text of
+  the line being spoken, replaced as the recogniser refines it.
+- ``runspec:dictation_final``   ``{session_id, text}`` — a finished line; the UI
+  appends it into the composer's ``<textarea>``.
+
+Dictation is an **input method, not a control surface**: the transcript lands in
+the prompt box and the operator still reads it and presses Enter, so it sits
+entirely below the autonomy / confirm gates that govern what the agent does.
+Nothing auto-sends.
+
+**Model distribution.** By default Moonshine fetches its model from
+``download.moonshine.ai`` on first use into its own cache (``MOONSHINE_VOICE_CACHE``
+overrides the directory). A fleet that blocks outbound model downloads sets
+``[voice] model_dir`` to a **vendored** model directory (shipped through the
+internal index / a package) and the engine never downloads anything.
+
+The engine is wrapped behind an injectable factory so the session logic —
+threading, event shaping, stop-during-load, keyterm biasing — is unit-tested
+with no Moonshine, no microphone and no model. ``available()`` reports why the
+feature is off (extra not installed, PortAudio missing, disabled by config) so
+the composer can show a disabled mic with a tooltip instead of failing.
+"""
+
+from __future__ import annotations
+
+import logging
+import threading
+import uuid
+from typing import Any, Callable, Iterable
+
+logger = logging.getLogger("runspec.console.dictation")
+
+Emit = Callable[[str, dict[str, Any]], None]
+
+EVENT_STATE = "runspec:dictation_state"
+EVENT_PARTIAL = "runspec:dictation_partial"
+EVENT_FINAL = "runspec:dictation_final"
+
+# Moonshine's streaming architectures, by the name used in ``[voice] model``.
+# The catalog's recommended English model is medium-streaming (~245M params),
+# which is what an unset ``model`` resolves to. Non-streaming arches (``tiny`` /
+# ``base``) are deliberately not offered — dictation needs partial results.
+STREAMING_MODELS: tuple[str, ...] = (
+    "tiny-streaming",
+    "base-streaming",
+    "small-streaming",
+    "medium-streaming",
+)
+DEFAULT_MODEL = "medium-streaming"
+
+# Upper bound on decoder-bias terms handed to the engine — Moonshine's own
+# guidance is to keep the list modest (a long list costs accuracy elsewhere).
+MAX_KEYTERMS = 200
+
+
+# ── pure helpers (unit-tested, no Moonshine) ──────────────────────────────────
+
+
+def normalise_model(name: str | None) -> str:
+    """Resolve ``[voice] model`` to a streaming architecture name.
+
+    Empty/None ⇒ :data:`DEFAULT_MODEL`. A bare size (``"small"``) is accepted as
+    its streaming variant so the config reads naturally. Unknown ⇒ ValueError
+    (surfaced as the disabled-state reason rather than a crash)."""
+    raw = (name or "").strip().lower()
+    if not raw:
+        return DEFAULT_MODEL
+    if raw in STREAMING_MODELS:
+        return raw
+    if f"{raw}-streaming" in STREAMING_MODELS:
+        return f"{raw}-streaming"
+    raise ValueError(
+        f"unknown [voice] model {name!r} — expected one of {', '.join(STREAMING_MODELS)}"
+    )
+
+
+def clean_keyterms(terms: Iterable[Any], *, limit: int = MAX_KEYTERMS) -> list[str]:
+    """Dedupe/trim a list of decoder-bias terms.
+
+    Moonshine separates terms with commas internally, so a term containing one
+    is dropped (never split — a half term biases toward the wrong word). Order is
+    preserved so callers can put the most important vocabulary first; the list is
+    capped at ``limit``."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in terms:
+        term = str(raw or "").strip()
+        if not term or "," in term:
+            continue
+        key = term.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(term)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def build_keyterms(
+    runnable_names: Iterable[str], host_names: Iterable[str]
+) -> list[str]:
+    """The console's vocabulary an operator is likely to say — runnable names
+    (``cert-check``, ``upgrade-packages``) and fleet host names (``db-3``) — so
+    the decoder spells them the way the catalogue does. Hosts first: they are
+    the shorter, more ambiguous tokens."""
+    return clean_keyterms([*host_names, *runnable_names])
+
+
+def available(cfg: dict[str, Any]) -> tuple[bool, str]:
+    """Whether dictation can run here: ``[voice] enabled``, the ``[voice]`` extra
+    (``moonshine_voice``) importable, and microphone capture (``sounddevice`` —
+    its import raises ``OSError`` when PortAudio is absent) loadable. Never
+    raises; the reason is what the composer's tooltip shows."""
+    if not cfg.get("enabled", True):
+        return (False, "Dictation is disabled ([voice] enabled = false)")
+    try:
+        normalise_model(cfg.get("model"))
+    except ValueError as exc:
+        return (False, str(exc))
+    try:
+        import moonshine_voice  # noqa: F401
+    except Exception:
+        return (
+            False,
+            "moonshine-voice not installed — pip install runspec-console[voice]",
+        )
+    try:
+        import sounddevice  # noqa: F401
+    except Exception as exc:
+        return (False, f"microphone capture unavailable: {exc}")
+    return (True, "")
+
+
+# ── engine factory (the only Moonshine-touching code) ─────────────────────────
+
+
+def _build_mic(cfg: dict[str, Any], on_progress: Callable[[float, str], None]) -> Any:
+    """Configure a Moonshine ``MicTranscriber`` from ``[voice]`` — imported here
+    so the module imports cleanly without the extra."""
+    from moonshine_voice import ModelArch
+    from moonshine_voice.mic_transcriber import MicTranscriber
+
+    model = normalise_model(cfg.get("model"))
+    arch = ModelArch[model.upper().replace("-", "_")]
+    mic = (
+        MicTranscriber()
+        .language(str(cfg.get("language") or "en"))
+        .model_arch(arch)
+        .update_interval(float(cfg.get("update_interval") or 0.5))
+        .on_progress(on_progress)
+    )
+    model_dir = cfg.get("model_dir")
+    if model_dir:
+        # Vendored model: load from disk, never download (the fleet case).
+        mic.models_from(str(model_dir))
+    device = cfg.get("device")
+    if device not in (None, ""):
+        mic.device(device)
+    return mic
+
+
+# ── session ───────────────────────────────────────────────────────────────────
+
+
+class DictationSession:
+    """One microphone → composer dictation session.
+
+    ``start()`` returns immediately; a worker thread opens the model (blocking —
+    the first run may download it), starts the mic and then relays Moonshine's
+    partial / final line callbacks as bridge events. ``stop()`` also returns
+    immediately: Moonshine's ``stop()`` joins its transcription worker so any
+    queued audio is still finalised (and delivered as a last ``final`` event)
+    before the ``ended`` state is emitted.
+
+    ``transcriber_factory`` builds the engine object (anything with Moonshine's
+    ``MicTranscriber`` surface: ``on_text``/``on_line``/``on_error``/``load``/
+    ``start``/``stop``/``close``/``set_keyterms``); tests inject a fake."""
+
+    def __init__(
+        self,
+        emit: Emit,
+        *,
+        config: dict[str, Any],
+        keyterms: Iterable[str] = (),
+        transcriber_factory: Callable[..., Any] | None = None,
+    ) -> None:
+        self.session_id = uuid.uuid4().hex[:12]
+        self._emit = emit
+        self._config = dict(config)
+        self._keyterms = clean_keyterms(keyterms)
+        self._factory = transcriber_factory or (
+            lambda on_progress: _build_mic(self._config, on_progress)
+        )
+        self._lock = threading.Lock()
+        self._mic: Any = None
+        self._stopped = False
+        self._ended = False
+        self._last_progress = -1.0
+        self.state = "idle"
+
+    # ── public ──
+
+    @property
+    def active(self) -> bool:
+        return not self._ended and not self._stopped
+
+    def start(self) -> None:
+        threading.Thread(
+            target=self._run, name="runspec-dictation", daemon=True
+        ).start()
+
+    def stop(self) -> None:
+        """Request stop. Idempotent; the ``ended`` event follows once the engine
+        has flushed (or immediately if it never started)."""
+        with self._lock:
+            if self._stopped:
+                return
+            self._stopped = True
+            mic = self._mic
+            self._mic = None
+        if mic is None:
+            # Never reached `listening` (still loading, or already ended): the
+            # worker thread notices `_stopped` after load and cleans up itself —
+            # unless it already finished, in which case end now.
+            if self.state in ("idle", "ended"):
+                self._end("stopped")
+            return
+        threading.Thread(
+            target=self._shutdown, args=(mic, "stopped"), daemon=True
+        ).start()
+
+    # ── worker ──
+
+    def _run(self) -> None:
+        self._set_state("loading")
+        try:
+            mic = self._factory(self._on_progress)
+            mic.on_text(self._on_partial).on_line(self._on_final).on_error(
+                self._on_error
+            )
+            mic.load()
+            if self._keyterms:
+                try:
+                    mic.set_keyterms(self._keyterms)
+                except Exception:
+                    # Biasing is a nicety (and only streaming arches support it);
+                    # dictation works without it.
+                    logger.debug("dictation: set_keyterms failed", exc_info=True)
+            with self._lock:
+                if self._stopped:
+                    stopped_early = True
+                else:
+                    stopped_early = False
+                    self._mic = mic
+            if stopped_early:
+                self._shutdown(mic, "stopped")
+                return
+            mic.start()
+            self._set_state(
+                "listening", model=normalise_model(self._config.get("model"))
+            )
+        except Exception as exc:
+            logger.warning("dictation: failed to start: %s", exc)
+            with self._lock:
+                self._mic = None
+            self._end(f"could not start dictation: {exc}")
+
+    def _shutdown(self, mic: Any, reason: str) -> None:
+        try:
+            mic.stop()
+        except Exception:
+            logger.debug("dictation: mic.stop failed", exc_info=True)
+        try:
+            mic.close()
+        except Exception:
+            logger.debug("dictation: mic.close failed", exc_info=True)
+        self._end(reason)
+
+    # ── engine callbacks (Moonshine worker thread) ──
+
+    def _on_progress(self, fraction: float, filename: str) -> None:
+        # Model download/open progress — only on first use (or a vendored model
+        # opening). Emit at 5% steps so a download doesn't flood the UI queue.
+        try:
+            frac = float(fraction)
+        except Exception:
+            return
+        if frac - self._last_progress < 0.05 and frac < 1.0:
+            return
+        self._last_progress = frac
+        self._set_state("loading", progress=round(frac, 2), file=str(filename or ""))
+
+    def _on_partial(self, text: str) -> None:
+        if self._ended:
+            return
+        self._emit(EVENT_PARTIAL, {"session_id": self.session_id, "text": text or ""})
+
+    def _on_final(self, line: Any) -> None:
+        if self._ended:
+            return
+        text = str(getattr(line, "text", line) or "").strip()
+        if not text:
+            return
+        self._emit(EVENT_FINAL, {"session_id": self.session_id, "text": text})
+
+    def _on_error(self, exc: BaseException) -> None:
+        logger.warning("dictation: engine error: %s", exc)
+        with self._lock:
+            mic = self._mic
+            self._mic = None
+            self._stopped = True
+        if mic is not None:
+            threading.Thread(
+                target=self._shutdown, args=(mic, f"error: {exc}"), daemon=True
+            ).start()
+        else:
+            self._end(f"error: {exc}")
+
+    # ── events ──
+
+    def _set_state(self, state: str, **extra: Any) -> None:
+        self.state = state
+        self._emit(
+            EVENT_STATE, {"session_id": self.session_id, "state": state, **extra}
+        )
+
+    def _end(self, reason: str) -> None:
+        with self._lock:
+            if self._ended:
+                return
+            self._ended = True
+        self._set_state("ended", reason=reason)

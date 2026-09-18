@@ -174,3 +174,11 @@ body {
 .rs-schedule-disabled td:last-child {
   opacity: 1;
 }
+
+/* Composer mic button while dictation is live — a soft pulse so the open
+   microphone is visible at a glance (colour comes from the button style). */
+@keyframes rs-dictation-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+.rs-dictation-live { animation: rs-dictation-pulse 1.4s ease-in-out infinite; }

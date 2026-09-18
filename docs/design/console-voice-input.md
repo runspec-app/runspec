@@ -1,38 +1,13 @@
 # In-app voice input (dictation into the prompt box)
 
-## Status: SHELVED (button removed in 0.122.0) — plumbing kept dormant
+## Status: PROTOTYPE (0.273.0) — Moonshine Voice behind the `[voice]` extra
 
-The Voice-access approach was tried end-to-end and **abandoned**. The composer
-**Speak/Listening… button was removed** because driving Windows Voice access from
-the app proved unreliable: the documented wake/sleep chord (Alt+Shift+B) works
-from a physical keyboard but **the injected keystroke does not wake Voice access**
-— even after making the injection mimic real hardware (per-key events, holds,
-`MapVirtualKey` scan codes). The most likely cause is that Voice access, as an
-accessibility app, **ignores synthetic/injected input** (the injected-input flag /
-UIPI integrity barrier), which `SendInput` fundamentally cannot defeat. Chasing it
-further was diminishing returns.
-
-**What was removed:** only the **UI** — the button + its state/handlers in
-`CommandInput.tsx`.
-
-**What was deliberately kept (dormant, no UI caller):**
-- `runspec_console/winkeys.py` — the (now scan-code-correct) chord injector.
-- `bridge_triggers.py` `start_voice_dictation()` / `stop_voice_dictation()` bridge
-  methods (still in the frozen JS API surface) + their `index.ts`/`mock.ts` types.
-
-So re-enabling Voice access (a new button calling the existing bridge methods) is a
-small change if the injection barrier is ever solved — but the **intended next step
-is a real local STT engine**, not Voice access.
-
-### Future engine: hard constraint — no runtime model download
-
-When picking this back up with **faster-whisper / Vosk / sherpa-onnx**, note that on
-the target fleet **outbound HuggingFace access is blocked**, so the model **cannot
-be downloaded at first run**. The model file must be **vendored** — bundled into the
-wheel or served from the internal index/mirror — and the engine pointed at that
-local path (e.g. faster-whisper `model_size_or_path=<local dir>`, download disabled).
-Treat "ship the model artifact through the internal channel" as part of the work,
-not an afterthought. See "The realistic menu" / engine notes below.
+A **mic button** in the chat composer (and **Ctrl+M**) dictates into the prompt
+box using an **on-device streaming engine that runs in the console process**.
+The first attempt (0.116.0–0.121.0) drove Windows Voice access by injecting its
+hotkey and was **abandoned in 0.122.0** — the engine landscape was re-surveyed in
+September 2026 and this doc now records that survey and the engine actually built
+on. The Voice-access history is kept at the bottom for context.
 
 ## Why
 
@@ -49,220 +24,178 @@ reads it and presses Enter. Voice is an *input method*, not a new control surfac
 so it sits entirely below the autonomy/confirm gates that already govern what the
 agent does.
 
-## ⚠️ Real-world finding: Voice access already covers this (maybe zero code)
+## Hard constraints (from the target fleet)
 
-Test on a target workstation (2026-06-23): **Win+H is disabled by org policy**
-("managed by your organisation"), but **Windows 11 Voice access works nicely and
-accurately**, with an on-device English pack already installed and the Voice
-access bar auto-starting at login. The org permits *on-device* speech and blocks
-the *online / Win+H* path.
+1. **On-device only, no cloud STT and no silent cloud fallback.** Win+H (online
+   speech) is policy-blocked on the target workstations; the org permits only
+   on-device speech.
+2. **No run-time model download from HuggingFace** — outbound HF access is
+   blocked. The model must be **vendorable**: shipped through the internal index /
+   a package and loaded from a local path.
+3. **Windows-only, WebView2 (Edge/Chromium) front end, Python (pywebview) host.**
+   No C toolchain on install; wheels only.
+4. **Streaming with partial results** — dictation needs the in-progress line, not
+   batch file transcription.
 
-**Voice access is not an API we call — it's a system dictation app that types into
-whatever editable control has focus** (UI Automation text insertion), exactly like
-Win+H but policy-permitted. The console renders in **WebView2 (Edge/Chromium)** and
-the composer is a standard `<textarea>`, which accepts UIA text insertion. So
-**dictation into the prompt box very likely already works today with no console
-code at all.**
+## The September 2026 engine survey
 
-Two consequences that gut most of the build below:
-1. **Confirm with no release:** dictate into a text field in the **Edge browser**
-   (same engine as WebView2). Works there ⇒ works in the console prompt box.
-2. **An in-app mic button can't *transcribe* via Voice access** — it exposes no
-   programmatic recognition API. But it *can* be **toggled by its hotkey**: Windows
-   documents **Alt+Shift+B** to wake/sleep Voice access listening (and Alt+Shift+C
-   for mic on/off). JS in the WebView2 sandbox can't synthesize a hotkey, but the
-   **Python host can** (`SendInput`). So the shipped button wakes Voice access and
-   focuses the prompt box — dictation lands in the box — and sleeps it again on
-   send. A *true* in-app transcription engine (WinRT/SAPI/Whisper) remains a
-   separate, heavier path below.
+What changed since the Voice-access attempt, and why each option was or wasn't
+picked. (Sources: Microsoft Learn / Windows App SDK release notes, Edge developer
+docs, Moonshine + sherpa-onnx + Desert Ant Labs repos and PyPI metadata.)
 
-### Shipped: Speak button (0.116.0 affordance → 0.118.0 wake/sleep toggle)
-- `console-ui/.../CommandInput.tsx` — a **Speak** mic button in the strip above the
-  `❯` row. `toggleVoice()` focuses the `<textarea>` and wakes Voice access (button
-  shows *Listening…* in red); a second click or **sending** sleeps it
-  (`sleepVoiceIfAwake()` in `submit()`). The same chord toggles both ways, so the
-  UI tracks `voiceAwake` and presses it to flip. One-time discoverability hint.
-- `runspec_console/winkeys.py` — `send_voice_access_toggle()` injects
-  `VOICE_ACCESS_TOGGLE = Alt+Shift+B` via ctypes `SendInput` (modifiers pressed
-  first, released in reverse). Windows-only, fail-soft no-op elsewhere. **No new
-  dependency.** A one-line constant change if a build documents a different combo.
-- `runspec_console/bridge.py` — `start_voice_dictation()` (wake) /
-  `stop_voice_dictation()` (sleep), both `-> {"ok": bool}`, same toggle chord.
-- History: 0.117.0 first used **Ctrl+Win+S**, but that opens *legacy WSR* (with a
-  deprecation note), not Voice access — corrected to **Alt+Shift+B** in 0.118.0.
-- Open verification (operator, on the box): confirm Alt+Shift+B wakes Voice access
-  on the target build, and that the wake/sleep state stays in sync with the button
-  in normal use (manual Alt+Shift+B outside the UI would desync our `voiceAwake`).
+| Option | Streaming | On-device | Model source | Python-reachable | Verdict |
+|---|---|---|---|---|---|
+| **Moonshine Voice** (`moonshine-voice` 0.1.5, Aug 2026) | ✅ `MicTranscriber` partials + finals, ~100 ms | ✅ CPU | `download.moonshine.ai`, **or a local dir** (`models_from`) | ✅ pip wheel, win_amd64, **Py 3.8–3.12** | **Built (this prototype)** |
+| **sherpa-onnx** (1.13.8, Sep 2026) | ✅ streaming Zipformer; also runs Moonshine + Parakeet models offline | ✅ CPU | GitHub releases / local files | ✅ wheels cp37–cp314 | **Fallback** — covers Py 3.13; more assembly (bring your own mic capture) |
+| **Windows AI Speech API** (`Microsoft.Windows.AI.Speech`, Windows App SDK **2.2 experimental 9**, Jun 2026) | ✅ `StreamingRecognition` Recognizing/Recognized | ✅ NPU **and CPU** (Build 2026) | **Windows Update "AI Components"** — org-manageable, no HF | ⚠️ needs a PyWinRT `winui3-*` projection (none for `.Speech` yet) **and package identity** (sparse MSIX) | **Watch** — the right long-term answer once stable + identity story solved |
+| **Edge on-device Web Speech API** (`processLocally`, Edge 150, Jul 2026; Chrome 139+) | ✅ `interimResults` | ✅ | Microsoft component download via `SpeechRecognition.install()` | n/a (JS in the web view) | **Cheap probe** — still behind an `edge://flags` toggle in Canary/Dev; WebView2 has never exposed Web Speech (#1613); needs a pywebview mic-permission handler |
+| **Foundry Local** (Whisper) | JS/C# only; Python path is DIY onnxruntime+transformers | ✅ | Foundry catalog (Azure CDN) | ⚠️ heavy | No |
+| **Voz** (Desert Ant Labs) | ❌ batch (file / full buffer) | ✅ Apple Neural Engine | HuggingFace | ❌ Swift only (Apple platforms) | No — wrong platform, batch, HF |
+| **Windows Voice access / Win+H / Fluid Dictation** | — | Voice access yes; Win+H online; Fluid Dictation Copilot+ only | — | ❌ no developer API; injected hotkeys ignored | No (see history below) |
 
-The SAPI/WinRT engine design below is retained as the fallback **only if** Voice
-access proves insufficient (e.g. operators want one-click in-composer capture
-without the floating Voice access bar).
+**Why Moonshine won:** it is the only option that is *all* of streaming, CPU-only,
+vendorable-without-HF, pip-installable with a Windows wheel, and drivable from
+the Python host with no new native build — and it ships its own mic capture, so
+the WebView2 microphone-permission problem never arises. MIT-licensed for the
+English streaming models. Its one gap is **Python 3.13** (no wheel yet), which is
+why sherpa-onnx stays the named fallback and the extra carries a version marker.
 
-## ⚠️ (Superseded) Engine choice as an empirical question
+**Vendoring the model:** `moonshine-voice download --language en` on a connected
+machine, copy the model directory into the internal channel, and set
+`[voice] model_dir` — the engine then loads from disk and never downloads
+(`MicTranscriber.models_from(dir)`; the spelling-model side download is also
+skipped on that path). Without `model_dir`, first use fetches from
+`download.moonshine.ai` into Moonshine's cache (`MOONSHINE_VOICE_CACHE`).
 
-This directly threatens the original WinRT pick below: `Windows.Media.
-SpeechRecognition`'s **free-dictation** mode can ride the **same online speech
-path that Win+H uses** — so it may be blocked by the exact policy that killed
-Win+H, while **SAPI (proven to work here) is the engine actually permitted.**
+## Behaviour (as built)
 
-Two consequences:
-1. **Run `scripts/speech_probe.py` on the target box first.** It reports (read-only,
-   no mic capture) the policy keys, whether SAPI constructs, and whether WinRT's
-   online/offline language lists are populated. Empty WinRT *online* list ⇒ WinRT
-   free-dictation is blocked ⇒ use SAPI.
-2. **Leading candidate is now SAPI**, not WinRT — it's **fully on-device** (a
-   *stronger* no-cloud guarantee), and Python drives it through **`pywin32`, already
-   a console dependency**, so **no new `[voice]` extra is even required.** The
-   sections below still describe the WinRT shape; treat SAPI as the front-runner
-   pending the probe, and swap `dictation.py`'s backend accordingly (the bridge/UI
-   contract is identical either way).
+- A **mic button** sits in the composer's button column (next to Auto-switch /
+  Send). Hidden entirely when the backend says dictation is unavailable — extra
+  not installed, PortAudio missing, `[voice] enabled = false`, unsupported Python
+  — rather than a nagging disabled control (`dictation_status().reason` says why).
+- Click (or **Ctrl+M**) starts a session; click again, Ctrl+M, or **sending** stops
+  it. While starting the icon spins; while listening it is red with a soft pulse.
+- A **status strip** above the input row shows the model opening (with download
+  progress on first run) and then the **in-progress line**, greyed, replaced as
+  the recogniser refines it. Each **finished line is appended into the textarea**
+  (space-separated), so the operator can keep editing by keyboard mid-dictation.
+- **Nothing auto-sends.** Enter still sends, Stop still stops a chat turn.
+- The decoder is **biased toward the fleet's vocabulary**: the discovery cache's
+  runnable + host names are handed to Moonshine as keyterms (`set_keyterms`), so
+  `cert-check` and `db-3` come out spelled the way the catalogue does.
+- Only one session at a time; starting a new one stops the previous. An engine
+  error ends the session with a visible reason.
 
-## The platform bet that makes this simple
+## Architecture (one bridge call + three event streams)
 
-runspec-console is **Windows-only and staying that way**, so we transcribe with an
-**on-device Windows engine** — originally **`Windows.Media.SpeechRecognition`**
-(projected via PyWinRT, the pattern the `[notifications]` extra uses), now likely
-**SAPI** per the policy finding above. Either way recognition runs **host-side in
-Python**, which is the property that makes this simple:
-
-The decisive property: **`SpeechRecognizer` captures from the system default
-microphone itself.** Recognition runs in the **Python host process**, not the web
-view. That means:
-
-- **No `getUserMedia`, no `MediaRecorder`, no WebView2 microphone permission.** The
-  WebView2 permission dance (the fiddliest, most error-prone part of any in-browser
-  mic feature) is *entirely sidestepped* — the front end never touches the mic. It
-  only renders a button and writes received text into the composer.
-- **No audio shuttled over the bridge.** No base64 WAV blobs crossing the JS↔Python
-  boundary; only small text events flow back.
-- **On-device, no API key, no model download, no cloud egress** — consistent with
-  the fleet's privacy/governance posture (denylist, lock-suspend, env-only creds).
-
-So WinRT is both the privacy-friendly pick *and* the structurally simplest one.
-
-## Behaviour
-
-- A **mic button** sits in the composer's status strip **above the `❯` input row**
-  (`CommandInput.tsx` — the area currently used only by the `/` and `$` dropdowns;
-  the input row itself is at `:330`). Idle = outline mic; recording = filled/red mic
-  with a subtle pulse.
-- Click (or a hotkey, e.g. `Ctrl+M`) **starts** dictation; click again, `Esc`, or
-  the first send **stops** it.
-- While recording, a **live partial transcript** renders in that strip (greyed),
-  replaced as the recognizer refines it. On each *finalised* phrase the text is
-  **appended into the textarea** at the caret via the existing `setValue` path, so
-  the operator can keep editing by keyboard mid-dictation.
-- Recognition is **continuous** (multiple sentences) until stopped; a short silence
-  finalises a phrase but does not end the session.
-- **Nothing auto-sends.** Dictation only fills the box. Enter still sends, Stop still
-  stops a chat turn — voice does not change the send/gate semantics at all.
-- **Graceful degradation:** if the `[voice]` extra isn't installed, the mic privacy
-  setting is off, or no recognizer language is available, the button shows a disabled
-  state with a tooltip explaining why (mirrors how `credentials`/`git-sync` report
-  themselves unavailable). The console is fully usable without it.
-
-## Architecture (one bridge call + two event streams)
-
-Mirrors the established `send_chat` streaming pattern (sync bridge method returns a
-session id immediately; a worker thread streams results back via `_dispatch`).
+Mirrors the `send_chat` streaming pattern: a sync bridge call returns a session id
+immediately; a worker thread streams results back via `_dispatch`.
 
 ```
 CommandInput (mic button)
-    │  bridge.start_dictation()  ── sync, returns session_id ──▶
-    │                                                           Bridge.start_dictation()
-    │                                                             └─ spawn worker thread:
-    │                                                                  SpeechRecognizer()
-    │                                                                  session.RecognitionQualityDegrading → (log)
-    │                                                                  recognizer.HypothesisGenerated  ─┐ partials
-    │                                                                  recognizer.ContinuousRecognitionSession
-    │                                                                    .ResultGenerated             ─┘ finals
-    │  ◀── runspec:dictation_partial {session_id, text} ──────────────────┘  (via _dispatch)
-    │  ◀── runspec:dictation_final   {session_id, text} ───────────────────
-    │  ◀── runspec:dictation_end     {session_id, reason} ────────────────
+    │  bridge.start_dictation()  ── sync, returns {ok, session_id} ──▶
+    │                                                     VoiceMixin.start_dictation()
+    │                                                       └─ DictationSession.start()
+    │                                                            worker thread:
+    │                                                              MicTranscriber()
+    │                                                                .on_text(partial) ─┐
+    │                                                                .on_line(final)   ─┤
+    │                                                                .load() → set_keyterms() → .start()
+    │  ◀── runspec:dictation_state   {session_id, state: loading|listening|ended, …}
+    │  ◀── runspec:dictation_partial {session_id, text} ─────────────────────────────┘
+    │  ◀── runspec:dictation_final   {session_id, text}
     │
-    └─ partial → render in strip;  final → setValue(prev + text);  end → reset button
-    bridge.stop_dictation(session_id)  ── sync ──▶ cancels the session
+    └─ partial → status strip;  final → setValue(prev + ' ' + text);  ended → reset button
+    bridge.stop_dictation()  ── sync ──▶ session.stop() (mic.stop() flushes queued audio → last finals → ended)
 ```
 
-- `start_dictation()` / `stop_dictation(session_id)` are **synchronous** bridge
-  methods (pywebview requirement); the recognizer lifecycle lives on a worker
-  thread, exactly like `_spawn_chat_turn`.
-- Events ride the existing single-threaded `_dispatch` queue → `window.evaluate_js`
-  path (`bridge.py:10568`), so they serialise safely with token/run events.
-- Only **one** dictation session at a time (guarded by a session id); starting a new
-  one cancels the prior.
+- Recognition runs **host-side in Python**: Moonshine's `MicTranscriber` captures
+  the system default microphone via `sounddevice` (PortAudio bundled in the
+  Windows wheel). **No `getUserMedia`, no MediaRecorder, no WebView2 mic
+  permission, no audio over the bridge** — only small text events.
+- Events ride the existing single-threaded `_dispatch` queue → `evaluate_js`, so
+  they serialise safely with token/run events.
+- The engine sits behind an **injectable factory** (`transcriber_factory`), so the
+  session's threading, event shaping, stop-during-load and keyterm handling are
+  unit-tested with no Moonshine, no mic and no model.
 
-## Files (planned)
+## Files
 
-| File | Change |
+| File | Role |
 |---|---|
-| `runspec_console/dictation.py` | **new** — WinRT `SpeechRecognizer` lifecycle: start/stop, language constraint, partial/final callbacks. winrt imports *inside* functions (import-clean anywhere); pure availability/format helpers unit-tested with no winrt, mirroring `notify.py`. Safe no-op off-Windows / extra-absent. |
-| `runspec_console/bridge.py` | `start_dictation()` / `stop_dictation()` sync methods; `dictation_available()` for the disabled-state probe; a `_console_context` note that a mic is wired. |
-| `console-ui/src/components/CommandInput.tsx` | Mic button in the status strip above `:335`; recording state; live-partial render; append-final into `value`; `Ctrl+M` toggle. |
-| `console-ui/src/bridge/index.ts` + `mock.ts` | `start_dictation`/`stop_dictation`/`dictation_available` signatures; `DictationState` type; mock for browser-dev. |
-| `runspec-console/pyproject.toml` | new `[voice]` optional-dependency extra (below) + add to the `[all]` aggregate. |
-| `runspec_console/tests/test_dictation.py` | unit tests for the pure helpers + availability probe (no winrt needed). |
-| `docs/` + `CHANGELOG.md` | feature note + version bump entry. |
+| `runspec_console/dictation.py` | `DictationSession` (worker thread, event shaping, stop-during-load, error → ended), `available()` probe, `normalise_model`, `clean_keyterms`/`build_keyterms`, `_build_mic` (the only Moonshine-touching code). |
+| `runspec_console/bridge_voice.py` | `VoiceMixin`: `dictation_status()`, `start_dictation()`, `stop_dictation()`; seeds keyterms from `_runnables_cache`. |
+| `runspec_console/bridge.py` | `VoiceMixin` in the composition; `self._dictation`. |
+| `runspec_console/config.py` | `read_voice()` — the `[voice]` section (`enabled`, `language`, `model`, `model_dir`, `device`, `update_interval`). |
+| `runspec-console/pyproject.toml` | `voice = ["moonshine-voice>=0.1.5 ; python_version < '3.13'"]`, in `[all]`. |
+| `console-ui/src/components/CommandInput.tsx` | Mic button, status strip, event listeners, Ctrl+M, stop-on-send. |
+| `console-ui/src/bridge/index.ts` + `mock.ts` | `DictationStatus` / `DictationStateEvent` / `DictationTextEvent`; the three methods. |
+| `tests/test_dictation.py`, `console-ui/src/components/CommandInput.dictation.test.tsx` | Unit + component tests. |
+| `docs/console-reference.md` → `[voice]` | Operator-facing config reference. |
 
-## Packaging — the `[voice]` extra
+## Open items for the prototype → shipped
 
-PyWinRT projection for `Windows.Media.SpeechRecognition`, marker-gated to win32,
-following the `[notifications]` precedent (winrt-* ship wheels through current
-Python, no C toolchain):
-
-```toml
-voice = [
-    "winrt-runtime>=2.0 ; sys_platform == 'win32'",
-    "winrt-Windows.Foundation>=2.0 ; sys_platform == 'win32'",
-    "winrt-Windows.Foundation.Collections>=2.0 ; sys_platform == 'win32'",
-    "winrt-Windows.Media.SpeechRecognition>=2.0 ; sys_platform == 'win32'",
-    "winrt-Windows.Globalization>=2.0 ; sys_platform == 'win32'",
-]
-```
-
-The feature **reports itself unavailable** (disabled button + tooltip) until the
-extra is installed — same UX contract as `credentials`/`git-sync`/`schedule`.
-
-## Risks / things to validate before/while building
-
-1. **On-device vs the "Online speech recognition" path (PARTIALLY ANSWERED).** See
-   the policy finding at the top: on the target box Win+H/online is **policy-blocked**
-   but SAPI/Voice access (on-device) work. So the no-cloud-egress requirement is
-   satisfiable *only* by an on-device engine here. Remaining step: run
-   `scripts/speech_probe.py` to confirm whether WinRT's offline grammar path is also
-   usable or whether we commit to SAPI. We **never** silently fall back to cloud — a
-   blocked-online machine degrades the button to disabled (with tooltip) unless an
-   on-device engine answers.
-2. **Microphone privacy permission.** Windows gates mic access per app
-   (Settings → Privacy → Microphone, incl. the global "desktop apps" switch). An
-   unpackaged app inherits the desktop-apps allowance; if denied, `SpeechRecognizer`
-   raises on start — caught and surfaced as the disabled tooltip, never a crash.
-3. **AppUserModelID / identity.** `notify.py` already sets `runspec.console` as the
-   AUMID; speech needs no toast identity but we reuse the same process identity for
-   any consent prompt.
-4. **Thread/COM affinity.** WinRT async + event callbacks must not block the pywebview
-   UI thread; the worker-thread + `_dispatch`-queue design keeps recognition off it.
-   Validate that recognizer events marshal cleanly from the worker (PyWinRT delivers
-   completions on a threadpool; we only enqueue text, never touch the webview from
-   the callback).
-5. **Recognizer cold-start latency.** First `SpeechRecognizer` construction can take
-   a beat; construct lazily on first mic-button press and show a "starting…" state.
+1. **Validate on a target workstation**: PortAudio device enumeration under the
+   org's audio policy, first-run latency of `medium-streaming` on the fleet's CPUs
+   (drop to `small-streaming` via `[voice] model` if it lags), and the vendored
+   `model_dir` path end-to-end with downloads blocked.
+2. **Python 3.13** — either Moonshine publishes a 3.13 wheel or the sherpa-onnx
+   fallback backend is added behind the same `DictationSession` factory.
+3. **Windows AI Speech API** — re-check when it reaches a stable Windows App SDK:
+   if a PyWinRT projection exists and a sparse-package identity is acceptable for
+   the pywebview app, its Windows-Update-delivered model would remove the
+   vendoring step entirely.
+4. **Edge on-device Web Speech in WebView2** — a 15-minute probe from the console
+   devtools (`SpeechRecognition.available({processLocally:true, langs:['en-US']})`)
+   once Edge 150+ ships it unflagged; a zero-Python path if it works.
+5. **Remove the dormant Voice-access plumbing** (`winkeys.py`,
+   `start_voice_dictation`/`stop_voice_dictation` in the frozen JS API surface)
+   once the Moonshine path is confirmed on the fleet.
 
 ## Not built (deliberately)
 
-- **No spoken commands / agent-by-voice.** Transcript fills the box; the human sends
-  it. Keeps voice strictly below the existing autonomy/confirm gates.
+- **No spoken commands / agent-by-voice.** Transcript fills the box; the human sends.
 - **No TTS / spoken replies.** Input only.
-- **No cloud STT and no silent cloud fallback.** On-device or disabled — never
-  surprise egress. (Cloud was considered and rejected for the governance posture.)
-- **No `getUserMedia`/MediaRecorder path.** WinRT host-side capture makes browser mic
+- **No cloud STT and no silent cloud fallback.** On-device or hidden — never
+  surprise egress.
+- **No `getUserMedia`/MediaRecorder path.** Host-side capture makes browser mic
   access — and WebView2 permission handling — unnecessary.
-- **No cross-platform abstraction.** Windows-only by project decision; the module is
-  a no-op elsewhere rather than carrying a second backend.
+- **No `[voice]` Settings tab yet.** It's a config-file section (rides Config Sync
+  / the seed, so a fleet baseline can pin `model_dir`); a Settings surface is a
+  follow-up once the engine is confirmed.
 
 ## Distribution / governance
 
 Voice is a pure input convenience with **no new autonomy surface**, so it needs no
-Config-Sync-enforced policy of its own — what the agent *does* with the dictated text
-is still governed by denylist / rota / lock-suspend / confirm-gates unchanged. Orgs
-that want to withhold it simply don't ship the `[voice]` extra.
+Config-Sync-enforced policy of its own — what the agent *does* with the dictated
+text is still governed by denylist / rota / lock-suspend / confirm-gates
+unchanged. Orgs that want to withhold it simply don't ship the `[voice]` extra, or
+set `[voice] enabled = false` in the seeded `config.toml`.
+
+---
+
+## History: the Voice-access attempt (0.116.0 → removed in 0.122.0)
+
+Test on a target workstation (2026-06-23): **Win+H is disabled by org policy**
+("managed by your organisation"), but **Windows 11 Voice access works nicely and
+accurately**, with an on-device English pack already installed. Voice access is a
+system dictation app that types into whatever editable control has focus (UI
+Automation text insertion) — so dictating into the console's `<textarea>` works
+today with **no console code at all**, driven from Voice access's own bar.
+
+The shipped **Speak** button tried to make that one click: the Python host
+injected the documented wake/sleep chord (**Alt+Shift+B**; 0.117.0 briefly used
+Ctrl+Win+S, which opens legacy WSR) via `SendInput`. It **did not work**: the
+chord works from a physical keyboard but the *injected* keystroke does not wake
+Voice access — even after making the injection mimic real hardware (per-key
+events, holds, `MapVirtualKey` scan codes). The most likely cause is that Voice
+access, as an accessibility app, **ignores synthetic input** (the injected-input
+flag / UIPI barrier), which `SendInput` cannot defeat. Voice access has no
+developer API, and nothing in the 2026 Windows releases changes that (Fluid
+Dictation is Copilot+-only cleanup on top of it).
+
+Kept dormant, no UI caller: `runspec_console/winkeys.py` (the scan-code-correct
+chord injector) and the `start_voice_dictation()` / `stop_voice_dictation()`
+bridge methods (still in the frozen JS API surface). `scripts/speech_probe.py`
+(SAPI / WinRT `Windows.Media.SpeechRecognition` policy probe) is likewise
+historical — SAPI was the leading on-device candidate before Moonshine.
