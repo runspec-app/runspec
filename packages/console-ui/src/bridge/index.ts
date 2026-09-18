@@ -1650,15 +1650,23 @@ function resolveBridge(): Promise<BridgeApi> {
       if (window.pywebview?.api) { clearInterval(poll); settle(window.pywebview.api) }
     }, 50)
 
-    // After 2500 ms with no pywebview, we're in a plain browser — use mock
-    setTimeout(async () => {
-      clearInterval(poll)
-      if (!settled) {
-        settled = true
-        const { mockApi } = await import('./mock')
-        resolve(mockApi)
-      }
-    }, 2500)
+    // Fall back to the mock only in a dev build (a plain browser with no pywebview,
+    // e.g. `vite dev` opened in Chrome). In the packaged desktop app (production
+    // build) pywebview is ALWAYS present — it can just be slow to inject
+    // window.pywebview.api on a cold, AV-starved launch (the gui-scripts shortcut
+    // can take 7–10s). Falling back to the mock there binds the whole UI to fake,
+    // empty data — a blank screen while the real backend runs — so in production we
+    // keep polling for the real api instead of ever settling to the mock.
+    if (import.meta.env.DEV) {
+      setTimeout(async () => {
+        clearInterval(poll)
+        if (!settled) {
+          settled = true
+          const { mockApi } = await import('./mock')
+          resolve(mockApi)
+        }
+      }, 2500)
+    }
   })
   return _bridge
 }
@@ -1689,7 +1697,9 @@ function forwardClientError(name: string, err: unknown): void {
 // ready-probe) and, on the real pywebview path, briefly retry while the method
 // is still being attached. A method that's still absent after the api has had
 // time to settle is a genuine "not exposed" (a real version mismatch).
-const _BRIDGE_READY_RETRIES = 40   // × 75ms ≈ 3s max wait, only when racing/absent
+const _BRIDGE_READY_RETRIES = 120  // × 75ms ≈ 9s max wait, only while a method is
+                                   // still attaching (pywebview 6.x async wiring);
+                                   // generous for a cold, AV-starved shortcut launch
 const _BRIDGE_READY_DELAY_MS = 75
 
 async function resolveMethod(

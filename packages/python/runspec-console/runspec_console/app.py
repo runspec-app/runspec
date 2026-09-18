@@ -613,9 +613,34 @@ def main() -> None:
         webview.start(**start_kwargs)
     finally:
         # Flush any batched spans + metrics before the process exits (no-op when
-        # off) so a short session doesn't drop its last traces / metric export.
-        observability.shutdown()
-        observability.shutdown_metrics()
+        # off) so a short session doesn't drop its last traces / metric export —
+        # but bounded, so a slow/unreachable OTLP endpoint can't hang the close.
+        _shutdown_telemetry()
+
+
+def _shutdown_telemetry(timeout: float = 3.0) -> None:
+    """Flush + shut telemetry down on exit, bounded so a slow/unreachable OTLP
+    endpoint can't hang the app close.
+
+    ``observability.shutdown()`` force-flushes the span/metric exporters, and
+    ``force_flush`` has no timeout of its own — with the backend down it blocks on
+    the exporter's retries (~18s seen closing against a stopped Phoenix). Run the
+    flush on a daemon thread and wait only ``timeout`` seconds; whatever hasn't
+    exported by then is dropped (best-effort on exit), and the process exits
+    promptly. A no-op returns effectively instantly (telemetry disabled)."""
+    from . import observability
+
+    done = threading.Event()
+
+    def _run() -> None:
+        try:
+            observability.shutdown()
+            observability.shutdown_metrics()
+        finally:
+            done.set()
+
+    threading.Thread(target=_run, daemon=True).start()
+    done.wait(timeout)
 
 
 def _crash_log_path() -> str:

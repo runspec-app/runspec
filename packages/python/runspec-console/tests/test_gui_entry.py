@@ -122,3 +122,28 @@ def test_main_gui_lets_systemexit_through(monkeypatch):
     with pytest.raises(SystemExit) as exc:
         app.main_gui()
     assert exc.value.code == 0
+
+
+def test_shutdown_telemetry_calls_both(monkeypatch):
+    import runspec_console.observability as obs
+
+    calls: list[str] = []
+    monkeypatch.setattr(obs, "shutdown", lambda: calls.append("spans"))
+    monkeypatch.setattr(obs, "shutdown_metrics", lambda: calls.append("metrics"))
+    app._shutdown_telemetry(timeout=2.0)
+    assert "spans" in calls and "metrics" in calls
+
+
+def test_shutdown_telemetry_bounded_when_flush_hangs(monkeypatch):
+    # A slow/unreachable OTLP endpoint makes force_flush block (~18s seen closing
+    # against a stopped Phoenix); the app close must not wait it out. The bounded
+    # helper returns well before the flush would finish.
+    import time as _time
+
+    import runspec_console.observability as obs
+
+    monkeypatch.setattr(obs, "shutdown", lambda: _time.sleep(5))
+    monkeypatch.setattr(obs, "shutdown_metrics", lambda: None)
+    start = _time.perf_counter()
+    app._shutdown_telemetry(timeout=0.2)
+    assert _time.perf_counter() - start < 2.0

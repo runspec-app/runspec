@@ -8,6 +8,29 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.272.6] — 2026-09-18
+
+### Fixed
+- **Blank UI on a cold windowed (gui-script) launch.** The frontend's bridge
+  resolver fell back to the **mock API after 2500 ms** if pywebview hadn't yet
+  injected `window.pywebview.api`. On a slow, AV-starved `runspec-console-app`
+  (pythonw) shortcut launch — where injection can take 7–10 s — that timer fired
+  and bound the *whole UI to the mock's empty data*, so the window rendered blank
+  while the real backend ran (SSH-connected sound, but nothing on screen). The
+  mock fallback is now **only used in a dev build** (a plain browser with no
+  pywebview); the packaged app keeps polling for the real API however slow it is
+  to arrive. The per-method attach retry budget was also widened (~3 s → ~9 s) for
+  the same cold-launch case. (Adds the standard `vite-env.d.ts` client types so
+  `import.meta.env` is typed.)
+- **Slow shutdown (~18 s) when a telemetry backend is unreachable.** On exit the
+  app force-flushed the OTLP span/metric exporters, and `force_flush()` has no
+  timeout of its own — with the backend down (e.g. Phoenix not running) it blocked
+  on the exporter's retries, so closing the window hung for ~18 s before the
+  process exited. The flush now runs on a daemon thread bounded to ~3 s
+  (`app._shutdown_telemetry`); anything not exported by then is dropped
+  (best-effort on exit) and the app closes promptly. No-op when telemetry is off.
+
+
 ## [0.272.5] — 2026-09-18
 
 ### Fixed
