@@ -45,8 +45,8 @@ docs, Moonshine + sherpa-onnx + Desert Ant Labs repos and PyPI metadata.)
 
 | Option | Streaming | On-device | Model source | Python-reachable | Verdict |
 |---|---|---|---|---|---|
-| **Moonshine Voice** (`moonshine-voice` 0.1.5, Aug 2026) | ✅ `MicTranscriber` partials + finals, ~100 ms | ✅ CPU | `download.moonshine.ai`, **or a local dir** (`models_from`) | ✅ pip wheel, win_amd64, **Py 3.8–3.12** | **Built (this prototype)** |
-| **sherpa-onnx** (1.13.8, Sep 2026) | ✅ streaming Zipformer; also runs Moonshine + Parakeet models offline | ✅ CPU | GitHub releases / local files | ✅ wheels cp37–cp314 | **Fallback** — covers Py 3.13; more assembly (bring your own mic capture) |
+| **Moonshine Voice** (`moonshine-voice` 0.1.5, Aug 2026) | ✅ `MicTranscriber` partials + finals, ~100 ms | ✅ CPU | `download.moonshine.ai`, **or a local dir** (`models_from`) | ✅ pip wheel, `py3-none-win_amd64` (ctypes engine — any supported Python) | **Built (this prototype)** |
+| **sherpa-onnx** (1.13.8, Sep 2026) | ✅ streaming Zipformer; also runs Moonshine + Parakeet models offline | ✅ CPU | GitHub releases / local files | ✅ wheels cp37–cp314 | **Fallback** — engine diversity (Parakeet-class accuracy); more assembly (bring your own mic capture) |
 | **Windows AI Speech API** (`Microsoft.Windows.AI.Speech`, Windows App SDK **2.2 experimental 9**, Jun 2026) | ✅ `StreamingRecognition` Recognizing/Recognized | ✅ NPU **and CPU** (Build 2026) | **Windows Update "AI Components"** — org-manageable, no HF | ⚠️ needs a PyWinRT `winui3-*` projection (none for `.Speech` yet) **and package identity** (sparse MSIX) | **Watch** — the right long-term answer once stable + identity story solved |
 | **Edge on-device Web Speech API** (`processLocally`, Edge 150, Jul 2026; Chrome 139+) | ✅ `interimResults` | ✅ | Microsoft component download via `SpeechRecognition.install()` | n/a (JS in the web view) | **Cheap probe** — still behind an `edge://flags` toggle in Canary/Dev; WebView2 has never exposed Web Speech (#1613); needs a pywebview mic-permission handler |
 | **Foundry Local** (Whisper) | JS/C# only; Python path is DIY onnxruntime+transformers | ✅ | Foundry catalog (Azure CDN) | ⚠️ heavy | No |
@@ -57,8 +57,10 @@ docs, Moonshine + sherpa-onnx + Desert Ant Labs repos and PyPI metadata.)
 vendorable-without-HF, pip-installable with a Windows wheel, and drivable from
 the Python host with no new native build — and it ships its own mic capture, so
 the WebView2 microphone-permission problem never arises. MIT-licensed for the
-English streaming models. Its one gap is **Python 3.13** (no wheel yet), which is
-why sherpa-onnx stays the named fallback and the extra carries a version marker.
+English streaming models. (0.273.0 shipped the extra behind a `python_version
+< '3.13'` marker on the belief that Moonshine's wheels stopped at 3.12 — that was
+a PyPI classifier, not a constraint; the wheel is `py3-none` and installs on 3.13.
+The marker was removed in 0.273.1 after a 3.13 console showed no mic at all.)
 
 **Vendoring the model:** `moonshine-voice download --language en` on a connected
 machine, copy the model directory into the internal channel, and set
@@ -127,7 +129,7 @@ CommandInput (mic button)
 | `runspec_console/bridge_voice.py` | `VoiceMixin`: `dictation_status()`, `start_dictation()`, `stop_dictation()`; seeds keyterms from `_runnables_cache`. |
 | `runspec_console/bridge.py` | `VoiceMixin` in the composition; `self._dictation`. |
 | `runspec_console/config.py` | `read_voice()` — the `[voice]` section (`enabled`, `language`, `model`, `model_dir`, `device`, `update_interval`). |
-| `runspec-console/pyproject.toml` | `voice = ["moonshine-voice>=0.1.5 ; python_version < '3.13'"]`, in `[all]`. |
+| `runspec-console/pyproject.toml` | `voice = ["moonshine-voice>=0.1.5"]`, in `[all]`. |
 | `console-ui/src/components/CommandInput.tsx` | Mic button, status strip, event listeners, Ctrl+M, stop-on-send. |
 | `console-ui/src/bridge/index.ts` + `mock.ts` | `DictationStatus` / `DictationStateEvent` / `DictationTextEvent`; the three methods. |
 | `tests/test_dictation.py`, `console-ui/src/components/CommandInput.dictation.test.tsx` | Unit + component tests. |
@@ -139,8 +141,9 @@ CommandInput (mic button)
    org's audio policy, first-run latency of `medium-streaming` on the fleet's CPUs
    (drop to `small-streaming` via `[voice] model` if it lags), and the vendored
    `model_dir` path end-to-end with downloads blocked.
-2. **Python 3.13** — either Moonshine publishes a 3.13 wheel or the sherpa-onnx
-   fallback backend is added behind the same `DictationSession` factory.
+2. **Second engine** — if Moonshine's accuracy or licensing doesn't hold up on
+   the fleet, a sherpa-onnx backend (Parakeet / streaming Zipformer) slots in
+   behind the same `DictationSession` factory.
 3. **Windows AI Speech API** — re-check when it reaches a stable Windows App SDK:
    if a PyWinRT projection exists and a sparse-package identity is acceptable for
    the pywebview app, its Windows-Update-delivered model would remove the

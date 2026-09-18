@@ -253,7 +253,7 @@ Settings for the agent's read-only `fetch_url` web-page tool (see
 
 Settings for the chat composer's **mic button** — on-device speech-to-text via
 [Moonshine Voice](https://github.com/moonshine-ai/moonshine), installed with the
-`[voice]` extra (`pip install runspec-console[voice]`; Python 3.11–3.12 today).
+`[voice]` extra (`pip install runspec-console[voice]`).
 Recognition runs host-side in the console process — no audio leaves the machine
 and the web view never touches the microphone. Dictation only *fills* the prompt
 box; Enter still sends, so voice sits below every autonomy/confirm gate. The

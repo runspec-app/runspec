@@ -8,6 +8,21 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.273.1] — 2026-09-18
+
+### Fixed
+- **The `[voice]` extra installs on Python 3.13.** 0.273.0 gated
+  `moonshine-voice` behind `python_version < '3.13'` on the belief that its
+  wheels stopped at 3.12 — that was a PyPI *classifier*, not a constraint: the
+  wheel is `py3-none-win_amd64` (the engine loads via ctypes) with
+  `requires_python >= 3.8`, and its one compiled dependency (`google-crc32c`)
+  ships `cp313` wheels. On a 3.13 console venv `pip install runspec-console[all]`
+  therefore silently skipped the engine and the composer showed **no mic
+  button at all**. The marker is gone; `[voice]` / `[all]` now pull Moonshine on
+  every supported Python. Also: when dictation is unavailable the reason is now
+  **logged once** to `runspec-console.log` (`dictation_status` → "dictation
+  unavailable: …"), since a hidden button gives the operator nothing to go on.
+
 ## [0.273.0] — 2026-09-18
 
 ### Added
@@ -33,8 +48,9 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   installed (`dictation_status` reports the reason). New `dictation.py`
   (`DictationSession`, engine behind an injectable factory — unit-tested with no
   Moonshine/mic/model), `bridge_voice.py` `VoiceMixin` (`dictation_status` /
-  `start_dictation` / `stop_dictation`), `config.read_voice`. Python 3.11–3.12
-  only for now (Moonshine's wheels stop at 3.12; the extra carries a marker).
+  `start_dictation` / `stop_dictation`), `config.read_voice`. (The Python
+  `< 3.13` marker this entry originally described was wrong — removed in
+  0.273.1.)
   The earlier Voice-access hotkey approach stays dormant (`winkeys.py`,
   `start_voice_dictation`/`stop_voice_dictation`) pending removal. See
   `docs/design/console-voice-input.md` (rewritten with the September 2026

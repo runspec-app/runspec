@@ -439,3 +439,19 @@ def test_bridge_start_stop_round_trip(voice_bridge, monkeypatch):
     assert voice_bridge.stop_dictation() == {"ok": True, "session_id": "s2"}
     assert voice_bridge.dictation_status()["listening"] is False
     assert voice_bridge.stop_dictation() == {"ok": True, "session_id": None}
+
+
+def test_bridge_status_logs_unavailable_reason_once(voice_bridge, monkeypatch, caplog):
+    import logging
+
+    from runspec_console import bridge_voice
+
+    monkeypatch.setattr(
+        bridge_voice.dictation, "available", lambda cfg: (False, "no engine")
+    )
+    with caplog.at_level(logging.INFO, logger=bridge_voice.logger.name):
+        voice_bridge.dictation_status()
+        voice_bridge.dictation_status()
+    assert [r.getMessage() for r in caplog.records] == [
+        "dictation unavailable: no engine"
+    ]

@@ -26,6 +26,10 @@ if TYPE_CHECKING:
 
 class VoiceMixin:
     _dictation: dictation.DictationSession | None
+    # The last "unavailable" reason we logged — a hidden mic button gives the
+    # operator nothing to go on, so the reason goes to runspec-console.log once
+    # per distinct reason (the status is polled on every composer mount).
+    _dictation_reason_logged: str = ""
 
     # ── JS API ──
 
@@ -35,6 +39,9 @@ class VoiceMixin:
         ``[voice] enabled = false``, bad model name)."""
         cfg = config_mod.read_voice()
         ok, reason = dictation.available(cfg)
+        if not ok and reason != getattr(self, "_dictation_reason_logged", ""):
+            self._dictation_reason_logged = reason
+            logger.info("dictation unavailable: %s", reason)
         session = self._dictation
         model = ""
         try:
