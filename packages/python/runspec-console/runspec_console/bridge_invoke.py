@@ -433,6 +433,10 @@ class InvokeMixin:
                     console_block = self._presence_caveat()
                     memory_block = memory.build_header()
                     base_block = self._base_system()
+                    # Standing workspace guidance (how to read a spilled result
+                    # back, when to set `deliver`) — static text, cache-stable;
+                    # rides every turn because the workspace_* tools do too.
+                    workspace_block = self._workspace_guidance()
                     # Search-mode catalogue index (runnables menu + deferred
                     # built-ins menu). Byte-stable across a day's turns, so it now
                     # rides the per-turn system_override path as a TRAILING section
@@ -445,7 +449,12 @@ class InvokeMixin:
                     index_text = self._chat_index_text()
                     extra = "\n\n".join(
                         part
-                        for part in (now_block, console_block, memory_block)
+                        for part in (
+                            now_block,
+                            workspace_block,
+                            console_block,
+                            memory_block,
+                        )
                         if part
                     )
                     catalog_section = self._catalog_system_section(index_text)
@@ -469,7 +478,9 @@ class InvokeMixin:
                     # separately from "system". Computed here where the blocks
                     # already exist — no recomputation in the turn loop.
                     system_parts = {
-                        "system": len(base_block) + len(now_block),
+                        "system": len(base_block)
+                        + len(now_block)
+                        + len(workspace_block),
                         "console_context": len(console_block),
                         "memory": len(memory_block),
                     }

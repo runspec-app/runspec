@@ -33,6 +33,34 @@ DEFAULT_SYSTEM_PROMPT = (
     "first."
 )
 
+# Standing session-workspace guidance, folded into every agent turn's system
+# prompt by Bridge._workspace_guidance (chat via _spawn_chat_turn, headless via
+# _trigger_run_agent_turn) and into the console_status snapshot. It lives OUTSIDE
+# DEFAULT_SYSTEM_PROMPT on purpose: a configured ``[llm] system`` replaces that
+# prompt wholesale, but the workspace_* tools are offered regardless of persona,
+# so the model must always be told how to read a spilled result back — and that
+# the read-only reshaping tools come before the confirm-gated sandbox. Static
+# text (no ids, no dates) so the model-side prompt cache still hits.
+WORKSPACE_GUIDANCE = (
+    "## Session workspace\n"
+    "A runnable that emits more than a small page of output is **spilled** to "
+    "disk instead of inlined — its tool result is a short envelope with a "
+    "shape/head preview and a `tool-results/…` path. Use workspace_ls to see "
+    "what's there, workspace_read / workspace_head / workspace_tail to page "
+    "through a text file, workspace_grep to search one, and workspace_write to "
+    "save a distilled note. All autonomous; scoped to this session only.\n"
+    "To read a spilled **JSON** file, use workspace_json_get (one field by "
+    "dotted path / JSON Pointer, paged) — a minified JSON object is one line, "
+    "so the line tools won't help there. To summarise a spilled **text log**, "
+    "use workspace_materialize (as='digest'). Both are read-only and run "
+    "without asking; reach for run_python_sandboxed only when you need to "
+    "compute, join or transform the data, not merely to read a field of it.\n"
+    "Choose a runnable call's `deliver` from the task: `inline` to read a "
+    "result you expect to be small, `extract` to read the main text field of "
+    "a JSON document, `digest` to see why something failed (clusters a log); "
+    "otherwise leave it `auto`."
+)
+
 # Autonomy escalation order — higher = more restrictive (must check before run).
 _AUTONOMY_RANK = {"autonomous": 0, "confirm": 1, "supervised": 2, "manual": 3}
 

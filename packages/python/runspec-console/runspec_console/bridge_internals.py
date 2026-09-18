@@ -27,6 +27,7 @@ from .hosts import group_members, groups_map, host_in_profile
 
 from .bridge_const import (
     DEFAULT_SYSTEM_PROMPT,
+    WORKSPACE_GUIDANCE,
     logger,
 )
 from .bridge_utils import (
@@ -1595,24 +1596,10 @@ class InternalsMixin:
         # workspace_* tools when a spilled envelope shows up. Deliberately
         # id-free (the envelope tells you the file path each time) so the
         # cached system prefix stays stable across turns of one conversation.
-        lines.append("")
-        lines.append(
-            "Session workspace: a runnable that emits more than a small page "
-            "of output is **spilled** to disk instead of inlined — its tool "
-            "result is a short envelope with a head preview and a "
-            "``tool-results/…`` path. Use workspace_ls to see what's there, "
-            "workspace_read / workspace_head / workspace_tail to page through "
-            "a file, workspace_grep to search, and workspace_write to save "
-            "a distilled note. All autonomous; scoped to this session only."
-        )
-        lines.append(
-            "Choose a runnable call's `deliver` from the task: to read a result "
-            "use `inline` (small output) or `extract` (one field of a JSON "
-            "document); to see why something failed use `digest` (clusters a log); "
-            "otherwise leave it `auto`. To reshape a spill after the fact prefer "
-            "workspace_json_get (one field of a JSON file) or workspace_materialize "
-            "(digest a text log) over run_python_sandboxed."
-        )
+        guidance = self._workspace_guidance()
+        if guidance:
+            lines.append("")
+            lines.append(guidance)
         from . import sandbox
 
         if (
@@ -1633,6 +1620,27 @@ class InternalsMixin:
             )
 
         return "\n".join(lines)
+
+    def _workspace_guidance(self) -> str:
+        """The standing session-workspace block folded into **every** agent turn
+        (chat, trigger, schedule, portal runbook) and into the ``console_status``
+        snapshot: what a spilled envelope is, which ``workspace_*`` tools read it
+        back, when to set a runnable call's ``deliver``, and that the read-only
+        reshaping tools (``workspace_json_get`` / ``workspace_materialize``) come
+        before the confirm-gated ``run_python_sandboxed``.
+
+        Static text — no ids, no dates — so it is byte-identical across turns and
+        the model-side prompt cache still hits. Returns ``""`` when spill is
+        disabled (``[workspace] spill_threshold = 0``): with nothing ever spilled
+        the advice would only mislead. Lives here (not in the default system
+        prompt) so a configured ``[llm] system`` doesn't drop it — the tools it
+        names are offered regardless of the persona."""
+        try:
+            if not config_mod.read_workspace().get("spill_threshold", 0):
+                return ""
+        except (OSError, ValueError, TypeError):
+            return ""
+        return WORKSPACE_GUIDANCE
 
     def _presence_caveat(self) -> str:
         """The lean per-turn block folded into interactive **chat** turns, in

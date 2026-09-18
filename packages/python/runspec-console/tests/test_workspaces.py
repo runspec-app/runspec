@@ -116,6 +116,52 @@ def test_spill_output_json_object_shows_shape_not_byte_prefix(tmp_path: Path) ->
     assert (tmp_path / rel_path).read_text() == payload
 
 
+def test_spill_output_json_object_points_at_json_get_with_largest_field(
+    tmp_path: Path,
+) -> None:
+    # A minified object is one line, so the line tools can't page it. The envelope
+    # must name workspace_json_get and the dominant string field as the pointer —
+    # so the model's next call is one autonomous read, not a confirm-gated
+    # run_python_sandboxed doing json.load for the same field.
+    payload = json.dumps({"status": "ok", "body": "x" * 50_000, "note": "short"})
+    envelope, rel_path = workspaces.spill_output(tmp_path, "probe", "r1", payload)
+    assert f"workspace_json_get(path={rel_path!r}, pointer='body')" in envelope
+    assert "49 KB" in envelope  # the field's size, so the model knows it's the big one
+    assert "Prefer that over run_python_sandboxed" in envelope
+
+
+def test_spill_output_json_object_dotted_key_uses_json_pointer(tmp_path: Path) -> None:
+    # A key containing '.' can't be addressed as a dotted path — the hint spells
+    # it as a JSON Pointer so the suggested call works verbatim.
+    payload = json.dumps({"a.b": "y" * 100, "c": "z"})
+    envelope, rel_path = workspaces.spill_output(tmp_path, "probe", "r1", payload)
+    assert f"workspace_json_get(path={rel_path!r}, pointer='/a.b')" in envelope
+    got = workspaces.json_get(tmp_path, rel_path, "/a.b")
+    assert "y" * 100 in json.dumps(got)
+
+
+def test_spill_output_json_object_without_string_field_still_names_json_get(
+    tmp_path: Path,
+) -> None:
+    payload = json.dumps({"count": 3, "items": list(range(10))})
+    envelope, rel_path = workspaces.spill_output(tmp_path, "probe", "r1", payload)
+    assert "workspace_json_get" in envelope
+    assert "pointer='<dotted.path>'" in envelope
+
+
+def test_spill_output_json_array_has_no_object_hint(tmp_path: Path) -> None:
+    # An array gets the .jsonl companion + line-tool advice, not the object hint.
+    payload = json.dumps([{"a": 1}, {"a": 2}])
+    envelope, _ = workspaces.spill_output(tmp_path, "probe", "r1", payload)
+    assert "This is a JSON object" not in envelope
+    assert ".jsonl" in envelope
+
+
+def test_spill_output_text_has_no_object_hint(tmp_path: Path) -> None:
+    envelope, _ = workspaces.spill_output(tmp_path, "probe", "r1", "plain\nlines\n")
+    assert "workspace_json_get" not in envelope
+
+
 def test_spill_output_json_array_writes_jsonl_companion(tmp_path: Path) -> None:
     # A top-level JSON array gets a line-per-record .jsonl companion so the line
     # tools work on it, plus an array shape summary listing the record fields.

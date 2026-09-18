@@ -193,6 +193,10 @@ default) inlines small results and spills large ones. Anything a mode can't appl
 to falls back to `auto` with a note. To reshape a spill *after the fact*,
 `workspace_json_get` pulls one field of a JSON file and `workspace_materialize`
 digests a text log — both cheaper than reaching for the sandboxed interpreter.
+The agent is told all of this on every turn (a short standing "Session workspace"
+block in its system prompt, independent of any custom `[llm] system`), and a
+spilled JSON object's envelope names the exact `workspace_json_get` call to make
+next, so reading a spill never needs an approval.
 Two tools execute code in that workspace, inside a
 **WASM/WASI capability sandbox** (no network, no host filesystem beyond the
 workspace, no subprocess, memory + hard wall-clock limits): `run_python_sandboxed`

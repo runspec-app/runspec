@@ -2212,6 +2212,12 @@ class TriggersMixin:
         if not getattr(self, "_ai_enabled", True):
             return f"⚠ {AI_OFF_MESSAGE}"
         system = self._now_context() + "\n\n" + system
+        # Same standing workspace guidance the chat turn folds in — a headless
+        # turn's runnable output spills to its own workspace and it has the same
+        # workspace_* tools, so it needs the same reading instructions.
+        workspace_block = self._workspace_guidance()
+        if workspace_block:
+            system = system + "\n\n" + workspace_block
         # Fold the search-mode catalogue index into the system prompt as a trailing
         # section (same reasoning as the chat turn — a gateway caching only the
         # system block then caches it). Only when search mode is actually active

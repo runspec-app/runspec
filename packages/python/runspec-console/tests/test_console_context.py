@@ -29,6 +29,7 @@ def _stub(monkeypatch, *, rota, triggers, schedules, hosts=None, connected=None)
     ns._groups_map = lambda: _gm(hosts or [])
     ns._connected_cache = dict(connected or {})
     ns._lock = threading.Lock()
+    ns._workspace_guidance = types.MethodType(Bridge._workspace_guidance, ns)
     ns._console_context = types.MethodType(Bridge._console_context, ns)
     return ns
 

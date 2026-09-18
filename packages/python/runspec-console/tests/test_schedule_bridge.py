@@ -521,6 +521,7 @@ def _agent_turn_stub():
     ns = types.SimpleNamespace()
     ns._trigger_run_agent_turn = types.MethodType(Bridge._trigger_run_agent_turn, ns)
     ns._now_context = lambda: "NOW"
+    ns._workspace_guidance = lambda: ""
     # dedup mode → no catalogue index in these workspace tests.
     ns._tool_mode = lambda: "dedup"
     ns._chat_index_text = lambda: ""

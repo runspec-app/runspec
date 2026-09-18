@@ -8,6 +8,36 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.272.5] — 2026-09-18
+
+### Fixed
+- **The output-delivery guidance from 0.261.0 (#605) now actually reaches the
+  agent.** That release wrote the "how to read a spill back / when to set
+  `deliver` / prefer `workspace_json_get` + `workspace_materialize` over
+  `run_python_sandboxed`" advice into `_console_context()` — but since 0.250.0 the
+  chat turn folds the lean `_presence_caveat()` instead, and headless
+  trigger/schedule turns fold only `_base_system()`, so **no agent turn ever saw
+  it** (only the on-demand `console_status` tool did). Meanwhile the JSON-object
+  spill envelope pointed only at the line tools (`workspace_read`/`grep`/
+  `head`/`tail`, useless on a minified one-line object) and the sandbox tool's
+  description volunteered itself "to read a spilled file" — so the agent read a
+  spilled JSON with a confirm-gated `run_python_sandboxed` + `json.load` instead
+  of the free `workspace_json_get`. Three fixes: (1) a new
+  `Bridge._workspace_guidance()` (static `WORKSPACE_GUIDANCE` in `bridge_const`)
+  rides **every** turn's system prompt — chat (`_spawn_chat_turn`, after the date
+  block) and headless (`_trigger_run_agent_turn`) — and still feeds
+  `_console_context()`; cache-stable text, `""` when `[workspace]
+  spill_threshold = 0`, and outside `DEFAULT_SYSTEM_PROMPT` so a custom `[llm]
+  system` doesn't drop it. (2) A spilled JSON **object**'s envelope now names the
+  exact next call — `workspace_json_get(path=…, pointer='<largest string
+  field>')` with that field's size (`workspaces.json_object_hint`). (3)
+  `run_python_sandboxed`'s description now says it's for computing/reshaping,
+  "not merely to READ a spilled file", and names the autonomous readers. No
+  config change was ever needed — `deliver` defaults to `auto` and the tools were
+  already hot; the agent just wasn't told. Docs: `console-session-workspace.md`
+  §7 (was stale since 0.250.0), `console-agent.md`.
+
+
 ## [0.272.4] — 2026-09-17
 
 ### Fixed

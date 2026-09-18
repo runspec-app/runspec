@@ -234,6 +234,7 @@ def _spawn_stub(index_text, monkeypatch):
     s._ai_enabled = True
     s._now_context = lambda: "DATE"
     s._presence_caveat = lambda: ""
+    s._workspace_guidance = lambda: ""
     s._base_system = lambda: "BASE"
     s._chat_index_text = lambda: index_text
     s._catalog_system_section = Bridge._catalog_system_section  # staticmethod

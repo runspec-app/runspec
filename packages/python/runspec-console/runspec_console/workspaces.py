@@ -656,11 +656,46 @@ def spill_output(
             f"to {jsonl_rel} — use workspace_grep / workspace_read / workspace_head "
             f"on it to filter or page records.]"
         )
+    if isinstance(parsed, dict):
+        # A JSON object is usually minified — one giant line — so the line tools
+        # (read/grep/head/tail) can't page it. Point at the field reader instead,
+        # naming the dominant string field when there is one so the model's next
+        # call is one read, not a python round-trip through the sandbox.
+        parts.append(json_object_hint(parsed, rel_path))
     parts.append(
         f"[… {total} bytes total; use workspace_read / workspace_grep / "
         f"workspace_head / workspace_tail on {rel_path!r} to see the raw output.]"
     )
     return "\n".join(parts), rel_path
+
+
+def json_object_hint(value: dict[str, Any], rel_path: str) -> str:
+    """The envelope line that tells the model how to read a spilled JSON
+    **object** back: ``workspace_json_get`` by field, with the largest string
+    field named as the likely target (the log body / diff / document a runnable
+    wraps in a small envelope). Read-only + autonomous, so it beats a confirm-gated
+    ``run_python_sandboxed`` doing ``json.load`` for the same one field."""
+    str_fields = [(k, v) for k, v in value.items() if isinstance(v, str)]
+    if str_fields:
+        field, text = max(str_fields, key=lambda kv: len(kv[1]))
+        # A key holding a '.' can't be a dotted path — spell it as a JSON Pointer
+        # (RFC 6901 escaping) so the suggested call works verbatim.
+        pointer = (
+            "/" + field.replace("~", "~0").replace("/", "~1")
+            if ("." in field or field.startswith("/"))
+            else field
+        )
+        return (
+            f"[This is a JSON object — read one field with "
+            f"workspace_json_get(path={rel_path!r}, pointer={pointer!r}) (its "
+            f"largest text field, {human_size(len(text))}); any other field by its "
+            f"dotted path. Prefer that over run_python_sandboxed for reading it.]"
+        )
+    return (
+        f"[This is a JSON object — read one field with "
+        f"workspace_json_get(path={rel_path!r}, pointer='<dotted.path>'). Prefer "
+        f"that over run_python_sandboxed for reading it.]"
+    )
 
 
 # ── tool handlers (pure, jailed) ──────────────────────────────────────────────

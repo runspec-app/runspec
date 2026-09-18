@@ -265,12 +265,28 @@ runs hermetic: each turn only ever sees its own workspace.
   written to be self-explanatory ("the workspace is your session sandbox
   where large tool outputs get spilled — start with `workspace_ls`") and
   don't name a per-conversation path — so the prompt cache stays warm.
-- **One short line in `_console_context()`** points at the tools by name.
-  Applies to chat, triggers, and schedules (they all fold this block into
-  the per-turn `system_override`).
+- **A standing "Session workspace" block rides every turn.** `Bridge._workspace_guidance()`
+  (the static `WORKSPACE_GUIDANCE` text in `bridge_const.py`) is folded into the
+  per-turn `system_override` of the chat turn (`_spawn_chat_turn`, after the date
+  block) and of every headless trigger/schedule/portal turn
+  (`_trigger_run_agent_turn`), and into the `console_status` snapshot
+  (`_console_context()`). It says what a spill is, which `workspace_*` tools read
+  it back, that a **JSON** spill is read with `workspace_json_get` and a text log
+  summarised with `workspace_materialize` *before* reaching for the confirm-gated
+  `run_python_sandboxed`, and when to set a call's `deliver`. Static text (no ids,
+  no dates) so the prompt cache holds; `""` when `[workspace] spill_threshold = 0`.
+  It lives outside `DEFAULT_SYSTEM_PROMPT` so a configured `[llm] system` (which
+  replaces that prompt wholesale) doesn't drop it — the tools are offered regardless
+  of persona. (0.272.5 — until then the guidance PR #605 added sat only in
+  `_console_context()`, which the chat turn stopped folding in at 0.250.0 and
+  headless turns never did, so no agent turn saw it and the agent read a spilled
+  JSON object with `run_python_sandboxed` + `json.load`.)
 - **The envelope names the file path each time.** The path is right there in
   the tool result — the model doesn't need it in the system prompt to reach
-  for a file it just saw.
+  for a file it just saw. For a spilled JSON **object** the envelope also names
+  the exact next call — `workspace_json_get(path=…, pointer='<largest string
+  field>')` with that field's size — because a minified object is one line the
+  line tools (`read`/`grep`/`head`/`tail`) can't page (`workspaces.json_object_hint`).
 
 ## 8. Files touched
 
