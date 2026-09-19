@@ -150,6 +150,37 @@ class ReportingMixin:
         except Exception:  # noqa: BLE001 — auditing is best-effort
             logger.warning("could not write chat-turn audit line", exc_info=True)
 
+    def _audit_disclaimer_ack(
+        self, *, hash_: str, version: str, user: str, ts: str
+    ) -> None:
+        """Append an audit line recording a disclaimer acknowledgement — the
+        always-there local record (every platform), alongside the Windows event-log
+        entry. Written to the same tools audit log the History scanner reads, so it
+        shows up as an event without a parser change. Best-effort: a logging failure
+        must never break acknowledgement."""
+        record = {
+            "ts": ts or utils_mod._iso_now(),
+            "level": "INFO",
+            "message": f"disclaimer acknowledged by {user}",
+            "extra": {
+                "event": "disclaimer_ack",
+                "user": user,
+                "disclaimer_version": version or "",
+                "disclaimer_hash": hash_,
+            },
+        }
+        try:
+            log_dir = Path.home() / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            line = json.dumps(record, default=str) + "\n"
+            with self._audit_lock:
+                with (log_dir / self._TOOL_AUDIT_FILE).open(
+                    "a", encoding="utf-8"
+                ) as fh:
+                    fh.write(line)
+        except Exception:  # noqa: BLE001 — auditing is best-effort
+            logger.warning("could not write disclaimer audit line", exc_info=True)
+
     # Cap on rows the History tab shows. Applied newest-first, and used as the
     # early-stop target so we never read more files than needed to fill it.
     _HISTORY_CAP = 200

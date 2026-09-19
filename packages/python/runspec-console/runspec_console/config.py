@@ -15,6 +15,7 @@ RUNSPEC_CONSOLE_DIR env var (see :func:`set_app_dir`).
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import re
@@ -194,6 +195,17 @@ def seed_state_path() -> Path:
     in Config Sync's KNOWN_FILES), like the active-profile pointer and repo
     checkout paths. See `docs/design/config-seed.md`."""
     return app_dir() / "runspec_seed_state.toml"
+
+
+def disclaimer_ack_path() -> Path:
+    """Machine-local record that this operator acknowledged the AI-use disclaimer
+    (`runspec_disclaimer_ack.toml`) — the content hash + version + timestamp of the
+    wording they accepted. Personal, per-console state (like the active-profile
+    pointer and seed state), so it is **never** synced (not in Config Sync's
+    KNOWN_FILES): the acknowledgement is this machine's, not shared config. Absent
+    ⇒ never acknowledged; a stored hash that no longer matches the current wording
+    ⇒ re-prompt. See docs/design/console-disclaimer.md."""
+    return app_dir() / "runspec_disclaimer_ack.toml"
 
 
 def filters_path() -> Path:
@@ -1736,6 +1748,91 @@ def ai_enabled() -> bool:
         if isinstance(val, bool):
             return val
     return True
+
+
+# Default label on the disclaimer's acknowledge button when none is configured.
+DEFAULT_DISCLAIMER_ACK_LABEL = "I acknowledge"
+
+
+def read_disclaimer() -> dict[str, Any]:
+    """The validated `[console.disclaimer]` table — the first-use AI-notice popup.
+
+    A blocking acknowledgement notice for AI-enabled deployments that require the
+    operator to accept a usage disclaimer before using the app. Read-only from
+    config (a config seed / Config Sync ships it — there is **no** Settings editor,
+    so an operator can't click their own compliance notice off), so it rides the
+    seed and sync layers like `[console.theme]`.
+
+    Keys (all optional):
+
+    - ``enabled`` (default False): master switch. Off for a vanilla install; a
+      corporate seed sets it true where the disclaimer is required.
+    - ``title``: heading shown on the popup (default "Notice").
+    - ``text``: the disclaimer body, rendered as **markdown** (so it can link to a
+      full policy). An empty body means nothing to show, so it forces
+      ``enabled`` false regardless — a disclaimer with no wording is meaningless.
+    - ``acknowledge_label``: the accept-button label (default "I acknowledge").
+    - ``version``: an optional wording version. Bumping it (or editing ``text``)
+      re-prompts every operator, even those who acknowledged the prior wording —
+      the acknowledgement is keyed to a hash of ``text`` **and** ``version``.
+
+    Deliberately **not** in the preserve lists: a seeded value re-asserts on every
+    seed re-apply / sync pull. See docs/design/console-disclaimer.md."""
+    console = read_config().get("console")
+    raw = console.get("disclaimer") if isinstance(console, dict) else None
+    cfg = raw if isinstance(raw, dict) else {}
+    text = str(cfg.get("text") or "").strip()
+    title = str(cfg.get("title") or "").strip() or "Notice"
+    label = (
+        str(cfg.get("acknowledge_label") or "").strip() or DEFAULT_DISCLAIMER_ACK_LABEL
+    )
+    version = str(cfg.get("version") or "").strip()
+    # A body is required: an enabled disclaimer with no wording is a no-op, so we
+    # never let it block the app on empty text.
+    enabled = bool(cfg.get("enabled", False)) and bool(text)
+    return {
+        "enabled": enabled,
+        "title": title,
+        "text": text,
+        "acknowledge_label": label,
+        "version": version,
+    }
+
+
+def disclaimer_hash(text: str, version: str = "") -> str:
+    """Stable content fingerprint of a disclaimer's wording (+ optional version).
+
+    The acknowledgement is keyed to this, so any change to ``text`` or ``version``
+    yields a new hash and re-prompts. A plain sha256 over the two joined with a
+    separator that can't occur in the inputs' boundary; hex-encoded and truncated
+    to keep the stored file small (collision risk is irrelevant — this is a
+    change-detector, not a security primitive)."""
+    payload = f"{version}\x00{text}".encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()[:32]
+
+
+def read_disclaimer_ack() -> dict[str, Any]:
+    """The machine-local disclaimer acknowledgement record, or ``{}`` when the
+    operator has never acknowledged (see :func:`disclaimer_ack_path`). An
+    unparseable file reads as empty — the operator is simply re-prompted, which is
+    the safe direction."""
+    path = disclaimer_ack_path()
+    if not path.exists():
+        return {}
+    try:
+        with open(path, "rb") as f:
+            return dict(tomllib.load(f))
+    except Exception:
+        return {}
+
+
+def write_disclaimer_ack(data: dict[str, Any]) -> None:
+    """Persist the disclaimer acknowledgement atomically (temp file + os.replace)."""
+    path = disclaimer_ack_path()
+    text = tomli_w.dumps(_strip_none(data))
+    tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def confirm_notifications_enabled() -> bool:

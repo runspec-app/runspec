@@ -719,6 +719,7 @@ def record_turn(
             "runspec.turn.status": status,
         }
         attrs.update(_provenance_attrs(provenance))
+        attrs.update(_disclaimer_metric_label())
         _TURN_RUNS.add(1, attrs)
         _TURN_DURATION.record(float(duration_ms), attrs)
         for key in ("input", "output"):
@@ -818,6 +819,7 @@ def turn_span(
     if model:
         attrs["gen_ai.request.model"] = model
     attrs.update(_provenance_attrs(provenance))
+    attrs.update(_disclaimer_attrs())
     with _TRACER.start_as_current_span("runspec.agent.turn", attributes=attrs) as span:
         try:
             yield span
@@ -863,6 +865,7 @@ def begin_turn(
         if model:
             attrs["gen_ai.request.model"] = model
         attrs.update(_provenance_attrs(provenance))
+        attrs.update(_disclaimer_attrs())
         span = _TRACER.start_span("runspec.agent.turn", attributes=attrs)
         token = _otel_context.attach(_otel_trace.set_span_in_context(span))
         return _TurnHandle(span, token)
@@ -988,6 +991,66 @@ def _provenance_attrs(provenance: dict[str, Any] | None) -> dict[str, Any]:
     if provenance.get("runbook"):
         out["runspec.provenance.runbook"] = str(provenance["runbook"])
     return out
+
+
+# ── disclaimer enrichment ─────────────────────────────────────────────────────
+#
+# When telemetry is on AND an AI-use disclaimer is enabled, every agent turn's
+# span/metric carries whether the operator has acknowledged the current wording.
+# Enrichment only — telemetry is opt-in and is **not** the audit record (that's the
+# audit log + the Windows event log). The Bridge injects a provider (a closure over
+# its live disclaimer state) so this module stays decoupled and always-current; a
+# missing/failing provider yields no attributes. High-cardinality detail (the
+# acknowledgement timestamp) rides spans only, never a metric label.
+_DISCLAIMER_PROVIDER: Any = None
+
+
+def set_disclaimer_provider(provider: Any) -> None:
+    """Register (or clear, with ``None``) the callable the turn span/metric helpers
+    consult for disclaimer state. The provider takes no args and returns a dict
+    ``{state, acknowledged_at?, version?}`` or ``None``."""
+    global _DISCLAIMER_PROVIDER
+    _DISCLAIMER_PROVIDER = provider
+
+
+def _disclaimer_state() -> dict[str, Any] | None:
+    """Best-effort read of the injected disclaimer provider; ``None`` on absence or
+    any failure (never raises into a turn)."""
+    provider = _DISCLAIMER_PROVIDER
+    if provider is None:
+        return None
+    try:
+        result = provider()
+        return result if isinstance(result, dict) else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _disclaimer_attrs() -> dict[str, Any]:
+    """Span attributes for the disclaimer state: ``runspec.disclaimer.state`` plus
+    ``acknowledged_at`` / ``version`` when acknowledged. Empty when no disclaimer is
+    enabled. Structure only (no prompt/tool content), so set regardless of
+    ``capture_content``."""
+    st = _disclaimer_state()
+    if not st or not st.get("state"):
+        return {}
+    out: dict[str, Any] = {"runspec.disclaimer.state": str(st["state"])}
+    if st.get("acknowledged_at"):
+        out["runspec.disclaimer.acknowledged_at"] = str(st["acknowledged_at"])
+    if st.get("version"):
+        out["runspec.disclaimer.version"] = str(st["version"])
+    return out
+
+
+def _disclaimer_metric_label() -> dict[str, Any]:
+    """The **bounded** metric label for the disclaimer state — just the tri-state
+    (``acknowledged`` / ``pending`` / ``not_required``), which has 3 values. The
+    unbounded acknowledgement timestamp is deliberately kept off metrics (it would
+    explode the time series) and rides spans only."""
+    st = _disclaimer_state()
+    if not st or not st.get("state"):
+        return {}
+    return {"runspec.disclaimer.state": str(st["state"])}
 
 
 # ── attribute setters — guard on span is None ─────────────────────────────────

@@ -62,9 +62,10 @@ const RunbookRunModal = React.lazy(() => import('./views/RunbookRunModal').then(
 const SavedRunRunModal = React.lazy(() => import('./views/SavedRunRunModal').then(m => ({ default: m.SavedRunRunModal })))
 const SettingsDrawer = React.lazy(() => import('./components/SettingsDrawer').then(m => ({ default: m.SettingsDrawer })))
 import { CommandInput } from './components/CommandInput'
+import { DisclaimerGate } from './components/DisclaimerGate'
 import { RUNNING_STATUSES } from './components/runShared'
 import { useInFlight } from './bridge/useInFlight'
-import { bridge, type HistoryRecord, type Host, type HostProfile, type Runnable, type Runbook, type SavedRun, type RoomInfo, type BrandTheme } from './bridge'
+import { bridge, type HistoryRecord, type Host, type HostProfile, type Runnable, type Runbook, type SavedRun, type RoomInfo, type BrandTheme, type Disclaimer } from './bridge'
 import { ThemeContext, AccentContext, DEFAULT_ACCENT, UI_FONT, MONO_FONT, RADIUS, surfaces, withAlpha, textMuted, textSecondary, textFaint } from './ThemeContext'
 import {
   anyExpanded, isGroupCollapsed, loadSidebarGroups, saveSidebarGroups, setAllGroups, toggleGroupState,
@@ -285,6 +286,18 @@ export default function App() {
   // White-label theme ([console.theme]) — accent colour, watermark, sidebar brand
   // name. Read-only (set by a config seed or by hand); {} = the default look.
   const [brandTheme, setBrandTheme] = useState<BrandTheme>({})
+  // First-use AI-use disclaimer ([console.disclaimer]) — a blocking gate shown
+  // over the app until acknowledged. Read once at mount (a local backend read, no
+  // startup cost); null until it resolves, so nothing blocks the default install.
+  const [disclaimer, setDisclaimer] = useState<Disclaimer | null>(null)
+  // The operator's in-session decision, tracked separately from the fetched
+  // config so it always holds an explicit value — 'undecided' by default, never a
+  // blank/undefined that a crash or bug could leave ambiguous. It flips to
+  // 'acknowledged' only after a confirmed write; declining isn't a value here
+  // (the operator closes the app), so an un-acknowledged relaunch is 'undecided'
+  // again and the gate re-shows — the safe direction.
+  const [disclaimerDecision, setDisclaimerDecision] =
+    useState<'undecided' | 'acknowledged'>('undecided')
   // Triggers tab badge — pending human confirms + waiting (unclaimed) queue
   // conversations, so an approval or a new queue caller is visible from any tab.
   const [triggerAwaiting, setTriggerAwaiting] = useState(0)
@@ -415,6 +428,9 @@ export default function App() {
     bridge.app_title().then(t => { document.title = t }).catch(() => {})
     bridge.brand_theme().then(setBrandTheme).catch(() => {})
     bridge.ai_enabled().then(ai => setFeatures({ ai: !!ai })).catch(() => {})
+    // The blocking disclaimer gate (off by default; the backend decides whether
+    // it's needed). A failed/never-ready call leaves it null → no gate.
+    bridge.disclaimer().then(setDisclaimer).catch(() => {})
     // Always resolve the indicator — on `ok: false` (offline / private index
     // unreachable, after the backend's pip timeout) keep `latest` null so the
     // footer stops "checking…" without falsely claiming "up to date".
@@ -1598,6 +1614,13 @@ export default function App() {
           onKeyChanged={loadSshKeyAge}
         />
         </Suspense>
+        )}
+
+        {disclaimer?.needs_ack && disclaimerDecision === 'undecided' && (
+          <DisclaimerGate
+            disclaimer={disclaimer}
+            onAcknowledged={() => setDisclaimerDecision('acknowledged')}
+          />
         )}
       </ConfigProvider>
       </AccentContext.Provider>

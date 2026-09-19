@@ -250,6 +250,155 @@ class ConfigSshMixin:
             out["watermark_style"] = style
         return out
 
+    # ── first-use AI disclaimer ([console.disclaimer]) ────────────────────────
+    #
+    # A blocking acknowledgement notice for AI-enabled deployments that require it.
+    # Off for a vanilla install and hard-off when [console] ai = false (it's an
+    # AI-use notice); a config seed / Config Sync turns it on with corporate
+    # wording. Read-only from config — there is no Settings editor, so an operator
+    # can't click their own compliance notice off. See docs/design/console-disclaimer.md.
+
+    def _compute_disclaimer_state(self) -> dict[str, Any]:
+        """Resolve the disclaimer's live state from config + the machine-local
+        acknowledgement. The single source of truth behind ``disclaimer()``,
+        ``acknowledge_disclaimer()`` and the telemetry provider — kept live (no
+        cache) so a Config-Sync hot-reload of the wording flips the state
+        correctly. Never raises; a read failure resolves to "not required"."""
+        try:
+            cfg = config_mod.read_disclaimer()
+            # Hard-off when AI is disabled: a non-AI console never shows it.
+            enabled = bool(cfg["enabled"]) and bool(getattr(self, "_ai_enabled", True))
+            current_hash = (
+                config_mod.disclaimer_hash(cfg["text"], cfg["version"])
+                if enabled
+                else ""
+            )
+            ack = config_mod.read_disclaimer_ack()
+            acked_hash = str(ack.get("hash") or "")
+            acknowledged = enabled and bool(acked_hash) and acked_hash == current_hash
+            if not enabled:
+                state = "not_required"
+            elif acknowledged:
+                state = "acknowledged"
+            else:
+                state = "pending"
+            return {
+                "config": cfg,
+                "enabled": enabled,
+                "needs_ack": enabled and not acknowledged,
+                "state": state,
+                "current_hash": current_hash,
+                "acknowledged_at": (
+                    str(ack.get("acknowledged_at") or "") if acknowledged else ""
+                ),
+                "acked_version": str(ack.get("version") or "") if acknowledged else "",
+            }
+        except Exception:  # noqa: BLE001 — never let the gate computation raise
+            logger.debug("disclaimer state computation failed", exc_info=True)
+            return {
+                "config": {},
+                "enabled": False,
+                "needs_ack": False,
+                "state": "not_required",
+                "current_hash": "",
+                "acknowledged_at": "",
+                "acked_version": "",
+            }
+
+    def disclaimer(self) -> dict[str, Any]:
+        """The disclaimer popup's state for the frontend gate.
+
+        Returns ``{enabled, needs_ack, title, text, acknowledge_label, version}``.
+        The UI shows the blocking modal when ``needs_ack`` is true (enabled **and**
+        the current wording hasn't been acknowledged on this machine). ``enabled``
+        is false — and ``needs_ack`` false — for a vanilla install, when
+        ``[console.disclaimer]`` is unset/empty, or when ``[console] ai = false``.
+        Called once at mount (a local read: config + one tiny file + a hash), so it
+        never touches the network and adds nothing to startup."""
+        st = self._compute_disclaimer_state()
+        cfg = st["config"]
+        return {
+            "enabled": bool(st["enabled"]),
+            "needs_ack": bool(st["needs_ack"]),
+            "title": cfg.get("title", "Notice"),
+            "text": cfg.get("text", ""),
+            "acknowledge_label": cfg.get(
+                "acknowledge_label", config_mod.DEFAULT_DISCLAIMER_ACK_LABEL
+            ),
+            "version": cfg.get("version", ""),
+        }
+
+    def acknowledge_disclaimer(self) -> dict[str, Any]:
+        """Record that this operator accepted the current disclaimer wording.
+
+        Writes the machine-local acknowledgement (hash + version + timestamp + OS
+        user), appends a line to the console audit log (always, every platform),
+        and writes a Windows Application event-log entry (silent, best-effort,
+        Windows-only) — see docs/design/console-disclaimer.md for why the event
+        log is tamper-*evident*, not tamper-*proof*. When telemetry is configured,
+        subsequent turns carry the acknowledgement on their spans/metrics via the
+        provider. Returns ``{ok, needs_ack}``; a disabled disclaimer is a no-op."""
+        st = self._compute_disclaimer_state()
+        if not st["enabled"]:
+            return {"ok": True, "needs_ack": False}
+        cfg = st["config"]
+        ts = utils_mod._iso_now()
+        user = self._current_user()
+        version = cfg.get("version", "")
+        try:
+            config_mod.write_disclaimer_ack(
+                {
+                    "hash": st["current_hash"],
+                    "version": version,
+                    "acknowledged_at": ts,
+                    "user": user,
+                }
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "could not persist disclaimer acknowledgement", exc_info=True
+            )
+            return {"ok": False, "needs_ack": True}
+        # Audit trail (always) + Windows event log (silent, best-effort).
+        try:
+            self._audit_disclaimer_ack(
+                hash_=st["current_hash"], version=version, user=user, ts=ts
+            )
+        except Exception:  # noqa: BLE001 — auditing is best-effort
+            logger.debug("disclaimer audit-log write failed", exc_info=True)
+        try:
+            from . import eventlog
+
+            eventlog.write_application_event(
+                source=config_mod.app_slug(),
+                message=(
+                    f"AI-use disclaimer acknowledged by {user} "
+                    f"(version={version or 'none'}, hash={st['current_hash']}) at {ts}"
+                ),
+            )
+        except Exception:  # noqa: BLE001 — event-log write is best-effort
+            logger.debug("disclaimer event-log write failed", exc_info=True)
+        return {"ok": True, "needs_ack": False}
+
+    def _disclaimer_telemetry(self) -> dict[str, Any] | None:
+        """Provider for ``observability`` — the disclaimer facts to stamp on each
+        agent turn's span/metric when telemetry is on. Returns ``None`` when the
+        disclaimer isn't enabled (nothing to record). Enrichment only: telemetry is
+        opt-in and is **not** the audit record (that's the audit log + event log).
+        Never raises."""
+        try:
+            st = self._compute_disclaimer_state()
+            if not st["enabled"]:
+                return None
+            out: dict[str, Any] = {"state": st["state"]}
+            if st["acknowledged_at"]:
+                out["acknowledged_at"] = st["acknowledged_at"]
+            if st["acked_version"]:
+                out["version"] = st["acked_version"]
+            return out
+        except Exception:  # noqa: BLE001
+            return None
+
     def app_version(self) -> str:
         """The version shown in the footer — the **branded** package's when it
         resolves, else runspec-console's own. **Never blank.**

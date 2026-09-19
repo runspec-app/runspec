@@ -14,6 +14,7 @@ from __future__ import annotations
 from runspec_console.bridge import Bridge
 
 EXPECTED = {
+    "acknowledge_disclaimer",
     "add_team",
     "ai_enabled",
     "app_title",
@@ -53,6 +54,7 @@ EXPECTED = {
     "delete_trigger",
     "denylist_status",
     "dictation_status",
+    "disclaimer",
     "docs_url",
     "expand_targets",
     "generate_docs",

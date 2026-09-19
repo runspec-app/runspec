@@ -502,6 +502,10 @@ def main() -> None:
     # is agent-turn-only, so it stays gated on it.
     def _bring_up_telemetry() -> None:
         try:
+            # Let turn spans/metrics carry the disclaimer-acknowledgement state
+            # when telemetry is on (enrichment only; a no-op when the disclaimer
+            # isn't enabled or telemetry is off). Harmless to set unconditionally.
+            observability.set_disclaimer_provider(bridge._disclaimer_telemetry)
             cfg = bridge._resolve_telemetry_credentials()
             observability.init_metrics(cfg)
             if ai_on:

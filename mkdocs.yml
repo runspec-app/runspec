@@ -55,6 +55,7 @@ nav:
     - Team config — sync & rooms: console-team.md
     - Improve — evaluation & problem reports: console-improve.md
     - Evals — tool-selection regression tests: console-evals.md
+    - AI-use disclaimer: console-disclaimer.md
     - Settings & config reference: console-reference.md
   - Authoring runnables:
     - Adding your own runnables: authoring-intro.md

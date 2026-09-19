@@ -8,6 +8,49 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.274.0] — 2026-09-19
+
+### Added
+- **First-use AI-use disclaimer popup (`[console.disclaimer]`).** A blocking
+  acknowledgement notice for AI-enabled deployments that require one before the
+  app is usable — configurable wording for white-label / corporate installs.
+  **Off by default** (a vanilla install is unchanged) and **hard-off when
+  `[console] ai = false`** (it's an AI-use notice); a config seed / Config Sync
+  turns it on with corporate wording, so it rides the seed + sync layers like
+  `[console.theme]`. **Read-only from config — no Settings editor**, so an
+  operator can't click their own compliance notice off. The gate modal is
+  non-dismissable (no X, no Esc, no backdrop close) and has a single
+  **Acknowledge** button — after which the app is usable. To decline, the operator
+  closes the app the normal way (the native window close, which keeps the existing
+  `confirm_close` "are you sure?" guard); there is deliberately no in-app close
+  button, since a programmatic `window.destroy()` would bypass that guard. Keys:
+  `enabled` (default false), `title`, `text` (markdown, so it can link to a full
+  policy), `acknowledge_label`, optional `version`.
+  - **Re-acknowledge on change.** The acknowledgement is keyed to a hash of
+    `text` + `version` stored machine-locally in `runspec_disclaimer_ack.toml`
+    (never synced), so revising the wording (or bumping `version`) re-prompts
+    everyone — even operators who accepted the prior wording.
+  - **Recorded three ways.** On acknowledgement the console writes a
+    `disclaimer_ack` audit line (always, every platform) **and** — silently,
+    always, best-effort — a Windows **Application event-log** entry via
+    `eventcreate` (the native, tamper-*evident* record: a local admin can clear
+    the log, but the OS records the clear). When telemetry is configured, each
+    agent turn's span carries `runspec.disclaimer.state` (+ `acknowledged_at` /
+    `version`) and the turn metric carries the bounded `runspec.disclaimer.state`
+    label (the timestamp stays on spans only — never a metric label). Telemetry
+    is enrichment, not the record; it is opt-in and may be off.
+  - A muted caption under the button ("To decline, close the window.") points at
+    the decline path. The operator's in-session decision is tracked as an explicit
+    `'undecided'`/`'acknowledged'` state (never a blank/undefined), so a crash or
+    bug can't leave it ambiguous; an un-acknowledged relaunch re-shows the gate.
+  - Startup stays local-only (config + one small file + a hash; no network / SSH
+    / keyring) and the gate renders client-side over the already-mounted UI, so
+    launch time is unchanged.
+  - New bridge methods `disclaimer()` / `acknowledge_disclaimer()`;
+    new `runspec_console/eventlog.py`; frontend `DisclaimerGate`. See
+    `docs/console-disclaimer.md` and `docs/design/console-disclaimer.md`.
+
+
 ## [0.273.3] — 2026-09-18
 
 ### Changed

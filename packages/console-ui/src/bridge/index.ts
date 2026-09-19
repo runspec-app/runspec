@@ -350,6 +350,16 @@ export interface BrandTheme {
   watermark_style?: 'tiled' | 'banner' | 'center'  // default 'tiled'
 }
 
+// The first-use AI-use disclaimer's state for the gate modal (see bridge.disclaimer).
+export interface Disclaimer {
+  enabled: boolean
+  needs_ack: boolean
+  title: string
+  text: string           // markdown
+  acknowledge_label: string
+  version: string
+}
+
 export interface SeedApplyResult {
   ok: boolean
   applied?: boolean
@@ -1265,6 +1275,17 @@ export interface BridgeApi {
   // backend; false hides the AI surfaces here (see src/features.ts) while the
   // backend refuses every agent path. Restart to apply a config change.
   ai_enabled: () => Promise<boolean>
+  // Blocking first-use AI-use disclaimer ([console.disclaimer]). `needs_ack` is
+  // true only when it's enabled AND the current wording hasn't been acknowledged
+  // on this machine; false for a vanilla install, when unset/empty, or when
+  // [console] ai = false. Read-only from config (no Settings editor — an operator
+  // can't click their own compliance notice off). See docs/design/console-disclaimer.md.
+  disclaimer: () => Promise<Disclaimer>
+  // Record acknowledgement of the *current* wording (writes the machine-local ack
+  // + a console audit line + a Windows event-log entry; telemetry carries it too
+  // when configured). Returns { ok, needs_ack } — needs_ack stays true if the
+  // write failed, so the gate stays up.
+  acknowledge_disclaimer: () => Promise<{ ok: boolean; needs_ack: boolean }>
   app_version: () => Promise<string>
   check_for_update: () => Promise<{ ok: boolean; current: string; latest: string | null; update_available: boolean }>
   docs_url: () => Promise<string>
