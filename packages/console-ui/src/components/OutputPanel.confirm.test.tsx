@@ -35,6 +35,7 @@ vi.mock('../bridge', () => ({
 function chatBlockWithRunningTool(toolName: string): InvocationBlock {
   return {
     id: 'chat1',
+    sessionId: 's1',
     type: 'chat',
     label: 'do the thing',
     startedAt: new Date().toISOString(),
@@ -51,6 +52,7 @@ function chatBlockWithRunningTool(toolName: string): InvocationBlock {
 function ruleRunBlock(id: string): InvocationBlock {
   return {
     id,
+    sessionId: 's1',
     type: 'run',
     label: '/drain-node',
     startedAt: new Date().toISOString(),

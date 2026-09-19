@@ -38,7 +38,7 @@ const flushRaf = () => {
 
 function doneRunBlock(id: string, stdout: string): InvocationBlock {
   return {
-    id, type: 'run', label: '/dump', startedAt: new Date().toISOString(),
+    id, sessionId: 's1', type: 'run', label: '/dump', startedAt: new Date().toISOString(),
     lines: [{ id, line: stdout, stream: 'stdout' }],
     segments: [], currentText: '', done: true, exitCode: 0, durationMs: 5,
   }

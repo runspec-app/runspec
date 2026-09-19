@@ -8,6 +8,67 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.275.0] — 2026-09-19
+
+### Added
+- **Sessions — concurrent conversations in the Console.** Every conversation
+  is now a *session* and sessions run at the same time. A **chip row** beside
+  **New chat** lists them: the chats you started (**New chat** opens an
+  additional one and leaves the current one running — swap between them; each
+  has its own history, context gauge and Stop), and **one chip per trigger or
+  schedule fire** — agent-mode *and* rule-mode triggers, prompt / runbook /
+  runnable / saved-run / eval schedules. A chip shows a spinner while working,
+  an amber bell when it is waiting for your Approve / Deny, an unread dot for
+  activity in a session you are not looking at, and a dismiss `×` once
+  finished (the newest twelve finished automation sessions are kept, older
+  ones drop off). Automation sessions are **read-only** (transcript, gates,
+  Stop; "switch to a chat to talk"). Nothing is restored across a restart —
+  History still reopens a past chat, now into a new session. Backend:
+  `session.py` (`ChatSession` — an interactive session's id **is** its
+  saved-conversation id, so its workspace and transcript share it; an
+  automation session's id is the card id == the headless turn's `chat_id`),
+  JS API `new_chat_session` / `list_chat_sessions` / `select_chat_session` /
+  `close_chat_session`, an optional trailing `session_id` on `send_chat` /
+  `clear_chat` / `compact_chat` / `run_runbook`, `resume_conversation` returns
+  `session` (+ `already_open`), a `runspec:session` lifecycle event, and
+  `session` on `run_end` / `chat_usage` / `context_estimate` /
+  `chat_cleared` / `chat_compacted`. See `docs/design/console-sessions.md`.
+- **One agent-turn engine.** The interactive chat loop and the headless
+  trigger/schedule loop (two ~500-line copies that had drifted) are merged
+  into `bridge_turn.py` `_run_agent_turn(TurnSpec)`. A trigger / schedule
+  turn now gets everything a chat turn had: **tokens / cache / cost on its
+  card** (`runspec:chat_usage`), a **`run_summary` audit line** (so it shows
+  in History / Analytics), the **OTLP turn metric**, the context estimate,
+  **output-ceiling auto-continuation**, the rich `tool_end` payload
+  (`output_chars` / `truncated` / `operator_decision`), `run_end.stopped`,
+  and a `try/finally` so a raise can no longer leave the spinner up. Headless
+  tool calls now run whenever the model returns them (any `stop_reason`
+  spelling), not only on a literal `tool_use`. The confirm-gate timeout is an
+  explicit `headless=` flag on `_gated_run_tool_async` / the grouped confirm
+  (it used to be inferred from whether `stage` was passed).
+- Scheduled **eval** runs get a Schedules run card (and so a session chip).
+
+### Changed
+- **A trigger no longer locks the composer or steals Stop.** The composer's
+  Stop / Send follow the *selected* session; a running or confirm-parked
+  trigger is its own chip. **New chat** no longer clears the transcript or
+  waits on the in-flight turn. `clear_chat` (the AI-off *Clear*) replaces the
+  session with a fresh one, stopping an in-flight turn first instead of
+  blocking; `compact_chat` refuses while a turn is in flight instead of
+  blocking.
+- `[chat_history] enabled = false` no longer means "no conversation id is ever
+  minted" — the session id is minted at creation (nothing is written; the
+  empty workspace dir is swept on the next launch).
+
+### Fixed
+- A **rule-mode trigger run spilled large output into the operator's chat
+  workspace** (it registered no workspace of its own); every trigger /
+  schedule card's runs now use that card's session workspace.
+- `stop_triggers` never aborted a **scheduled** agent turn parked at the
+  confirm gate (only trigger cards) — it aborts schedule cards too.
+- Scheduled prompt / runbook turns streamed nowhere visible in the Console;
+  they now stream into their session.
+
 ## [0.274.0] — 2026-09-19
 
 ### Added

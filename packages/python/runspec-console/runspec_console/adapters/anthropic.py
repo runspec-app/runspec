@@ -27,7 +27,7 @@ _UNSET: Any = object()
 DEFAULT_MODEL = "claude-sonnet-4-6"
 # Output-token ceiling per request. A ceiling, not a target — billed only when
 # produced, so raising it costs nothing on short replies. The agentic loop
-# auto-continues past it (bridge_invoke `_agentic_chat_turn`), so this is a
+# auto-continues past it (bridge_turn `_run_agent_turn`), so this is a
 # conservative default the operator can raise via `[llm] max_tokens`.
 DEFAULT_MAX_TOKENS = 8192
 DEFAULT_SYSTEM = (

@@ -34,6 +34,7 @@ from runspec_console.adapters.base import (
     retry_delay,
 )
 from runspec_console.bridge import Bridge
+from tests.session_stub import agentic_shim, current as _S, install_sessions
 
 
 # ── pure helpers ──────────────────────────────────────────────────────────────
@@ -165,11 +166,9 @@ class _RaisingAdapter:
 
 def _stub(max_net: int = 4, max_self: int = 1):
     s = types.SimpleNamespace()
-    s._chat_lock = threading.Lock()
-    s._chat_history = []
-    s._history_turn_ids = []
-    s._excluded_turns = set()
+    s._lock = threading.Lock()
     s._chat_cancels = {}
+    install_sessions(s)
     s._config = {
         "llm": {"max_network_retries": max_net, "max_self_recoveries": max_self}
     }
@@ -182,7 +181,6 @@ def _stub(max_net: int = 4, max_self: int = 1):
     s._chat_index_text = lambda: ""
     s._messages_chars = lambda _msgs: 0
     s._trace = lambda *a, **k: None
-    s._trim_chat_history = lambda: None
     s._play_sound = lambda *a, **k: None
     s._audit_chat_turn = lambda *a, **k: None
     s._window_is_foreground = lambda: True
@@ -199,12 +197,14 @@ def _stub(max_net: int = 4, max_self: int = 1):
 
     s._dispatch = dispatch
 
-    def persist(message, assistant, tools, usage, model):
+    def persist(session, message, assistant, tools, usage, model):
         s.persisted = {"message": message, "assistant": assistant}
 
     s._persist_conversation_turn = persist
 
-    async def gated_run(tool_name, tool_input, chat_id, stage=None, on_decision=None):
+    async def gated_run(
+        tool_name, tool_input, chat_id, stage=None, on_decision=None, headless=False
+    ):
         return "ok"
 
     s._gated_run_tool_async = gated_run
@@ -213,22 +213,20 @@ def _stub(max_net: int = 4, max_self: int = 1):
     # self), same as the real attribute lookup on a Bridge instance.
     s._append_recovery_prompt = Bridge._append_recovery_prompt
     for meth in (
-        "_sync_history_tags",
-        "_visible_history",
         "_max_continuations",
         "_max_tool_rounds",
         "_max_network_retries",
         "_max_self_recoveries",
-        "_agentic_chat_turn",
     ):
         setattr(s, meth, types.MethodType(getattr(Bridge, meth), s))
+    s._agentic_chat_turn = agentic_shim(s)
     return s
 
 
 @pytest.fixture(autouse=True)
 def _no_backoff(monkeypatch):
     """Zero out the retry backoff so these tests don't actually sleep."""
-    monkeypatch.setattr("runspec_console.bridge_invoke.retry_delay", lambda *a, **k: 0)
+    monkeypatch.setattr("runspec_console.bridge_turn.retry_delay", lambda *a, **k: 0)
 
 
 ERROR = "⚠ Error:"
@@ -296,7 +294,7 @@ def test_self_recovery_reflects_and_resumes():
     # a reflection user turn was injected into the history
     assert any(
         m["role"] == "user" and "continue the task" in str(m["content"])
-        for m in s._chat_history
+        for m in _S(s).history
     )
     assert "recovered result" in "".join(s.tokens)
 

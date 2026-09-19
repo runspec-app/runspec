@@ -568,6 +568,7 @@ def test_workspace_grep_dispatch_options_and_truncation(monkeypatch, tmp_path) -
     import threading
 
     from runspec_console.bridge import Bridge
+    from tests.session_stub import install_sessions
 
     class _WsBridge:
         _run_workspace_tool = Bridge._run_workspace_tool
@@ -575,8 +576,7 @@ def test_workspace_grep_dispatch_options_and_truncation(monkeypatch, tmp_path) -
 
         def __init__(self):
             self._lock = threading.Lock()
-            self._conversation_id = "wsconv01"
-            self._workspace_by_chat = {}
+            install_sessions(self, "wsconv01")
 
     monkeypatch.setattr(
         "runspec_console.config.workspace_dir", lambda sid: tmp_path / sid

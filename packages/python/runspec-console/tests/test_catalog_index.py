@@ -14,6 +14,7 @@ import threading
 import types
 
 from runspec_console.bridge import Bridge
+from tests.session_stub import install_sessions
 
 
 class _Bridge:
@@ -245,14 +246,16 @@ def _spawn_stub(index_text, monkeypatch):
         return object()
 
     s._get_adapter = get_adapter
+    install_sessions(s)
+    s._runnables_to_tools = lambda *a, **k: []
 
-    async def fake_turn(chat_id, message, adapter, system_parts=None, index_text=""):
-        captured["message"] = message
-        captured["system_parts"] = system_parts
-        captured["index_text"] = index_text
+    async def fake_turn(spec):
+        captured["message"] = spec.message
+        captured["system_parts"] = spec.system_parts
+        captured["index_text"] = spec.index_text
         done.set()
 
-    s._agentic_chat_turn = fake_turn
+    s._run_agent_turn = fake_turn
     s._spawn_chat_turn = types.MethodType(Bridge._spawn_chat_turn, s)
     return s, captured, done
 

@@ -11,6 +11,7 @@ import threading
 
 from runspec_console import memory
 from runspec_console.bridge import Bridge
+from tests.session_stub import install_sessions
 from runspec_console.bridge_const import _ACTION_TOOL_NAMES
 
 
@@ -54,8 +55,7 @@ class _ActionBridge:
         self._credentials = []
         self._lock = threading.Lock()
         self._trigger_engine = None
-        self._conversation_id = "convact01"
-        self._workspace_by_chat = {}
+        install_sessions(self, "convact01")
         self.transfers: list = []
         self.created_schedules: list = []
         self._run_origin: dict = {}

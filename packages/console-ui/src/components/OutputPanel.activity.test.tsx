@@ -22,7 +22,7 @@ vi.mock('../bridge', () => ({
 
 function chatBlock(over: Partial<InvocationBlock> = {}): InvocationBlock {
   return {
-    id: 'c1', type: 'chat', label: 'do the thing',
+    id: 'c1', sessionId: 's1', type: 'chat', label: 'do the thing',
     startedAt: new Date().toISOString(), lines: [], segments: [],
     currentText: '', done: false, ...over,
   }

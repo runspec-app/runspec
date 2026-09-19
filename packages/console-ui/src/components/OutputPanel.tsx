@@ -482,6 +482,10 @@ export type BlockSegment =
 
 export interface InvocationBlock {
   id: string
+  // The console session this block belongs to (an interactive chat, or the
+  // trigger / schedule session whose id == the run card id). The Console shows
+  // one session's blocks at a time; see src/sessions.ts.
+  sessionId: string
   type: 'run' | 'chat'
   label: string
   startedAt: string  // ISO string captured when block is created
@@ -1997,13 +2001,19 @@ export function useInvocationBlocks() {
       setBlocks(prev => prev.map(b =>
         b.id === id ? (typeof patch === 'function' ? patch(b) : { ...b, ...patch }) : b,
       )), [])
-  // Replace the whole transcript — used to render a reopened saved conversation.
-  const hydrateBlocks = useCallback((next: InvocationBlock[]) => setBlocks(next), [])
+  // Replace a session's transcript (`sessionId` given: only that session's
+  // blocks are swapped, other sessions untouched) or the whole transcript —
+  // used to render a reopened saved conversation.
+  const hydrateBlocks = useCallback((next: InvocationBlock[], sessionId?: string) =>
+    setBlocks(prev => (sessionId ? [...prev.filter(b => b.sessionId !== sessionId), ...next] : next)), [])
+  // Drop every block of a closed / evicted session.
+  const removeSession = useCallback((sessionId: string) =>
+    setBlocks(prev => (prev.some(b => b.sessionId === sessionId) ? prev.filter(b => b.sessionId !== sessionId) : prev)), [])
   // Toggle a card's "in context" flag (the header checkbox). Local state only;
   // the actual context effect is applied by the caller (exclude → bridge call,
   // include → staged into the next chat send).
   const setBlockInContext = useCallback((id: string, inContext: boolean) =>
     setBlocks(prev => prev.map(b => (b.id === id ? { ...b, inContext } : b))), [])
 
-  return { blocks, addBlock, upsertBlock, updateBlock, clearBlocks, hydrateBlocks, setBlockInContext }
+  return { blocks, addBlock, upsertBlock, updateBlock, clearBlocks, hydrateBlocks, removeSession, setBlockInContext }
 }

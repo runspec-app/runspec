@@ -21,6 +21,7 @@ import types
 
 from runspec_console.adapters.base import ChatResponse, ToolCall
 from runspec_console.bridge import Bridge
+from tests.session_stub import agentic_shim, current as _S, install_sessions
 
 
 class _ScriptedAdapter:
@@ -61,11 +62,9 @@ class _ScriptedAdapter:
 
 def _chat_stub(max_cont: int = 3, max_tool_rounds: int | None = None):
     s = types.SimpleNamespace()
-    s._chat_lock = threading.Lock()
-    s._chat_history = []
-    s._history_turn_ids = []
-    s._excluded_turns = set()
+    s._lock = threading.Lock()
     s._chat_cancels = {}
+    install_sessions(s)
     llm: dict = {"max_continuations": max_cont}
     if max_tool_rounds is not None:
         llm["max_tool_rounds"] = max_tool_rounds
@@ -79,7 +78,6 @@ def _chat_stub(max_cont: int = 3, max_tool_rounds: int | None = None):
     s._chat_index_text = lambda: ""
     s._messages_chars = lambda _msgs: 0
     s._trace = lambda *a, **k: None
-    s._trim_chat_history = lambda: None
     s._play_sound = lambda *a, **k: None
     s._audit_chat_turn = lambda *a, **k: None
     s._window_is_foreground = lambda: True
@@ -96,27 +94,27 @@ def _chat_stub(max_cont: int = 3, max_tool_rounds: int | None = None):
 
     s._dispatch = dispatch
 
-    def persist(message, assistant, tools, usage, model):
+    def persist(session, message, assistant, tools, usage, model):
         s.persisted = {"message": message, "assistant": assistant}
 
     s._persist_conversation_turn = persist
 
     s.tool_runs = []
 
-    async def gated_run(tool_name, tool_input, chat_id, stage=None, on_decision=None):
+    async def gated_run(
+        tool_name, tool_input, chat_id, stage=None, on_decision=None, headless=False
+    ):
         s.tool_runs.append((tool_name, tool_input))
         return "ok: ran"
 
     s._gated_run_tool_async = gated_run
 
-    s._sync_history_tags = types.MethodType(Bridge._sync_history_tags, s)
-    s._visible_history = types.MethodType(Bridge._visible_history, s)
     s._max_continuations = types.MethodType(Bridge._max_continuations, s)
     s._max_tool_rounds = types.MethodType(Bridge._max_tool_rounds, s)
     s._max_network_retries = types.MethodType(Bridge._max_network_retries, s)
     s._max_self_recoveries = types.MethodType(Bridge._max_self_recoveries, s)
     s._append_recovery_prompt = Bridge._append_recovery_prompt  # @staticmethod
-    s._agentic_chat_turn = types.MethodType(Bridge._agentic_chat_turn, s)
+    s._agentic_chat_turn = agentic_shim(s)
     return s
 
 
@@ -136,7 +134,7 @@ def test_max_tokens_reply_auto_continues():
     # The model was re-prompted once to continue…
     continue_turns = [
         m
-        for m in s._chat_history
+        for m in _S(s).history
         if m["role"] == "user" and CONTINUE in str(m["content"])
     ]
     assert len(continue_turns) == 1
@@ -159,7 +157,7 @@ def test_continuation_budget_exhausted_shows_marker():
     # Exactly max_continuations re-prompts, then it gives up.
     continue_turns = [
         m
-        for m in s._chat_history
+        for m in _S(s).history
         if m["role"] == "user" and CONTINUE in str(m["content"])
     ]
     assert len(continue_turns) == 2
@@ -178,7 +176,7 @@ def test_natural_end_does_not_continue_or_mark():
 
     assert adapter.calls == 1
     assert "".join(s.tokens) == "all done"
-    assert not any(CONTINUE in str(m["content"]) for m in s._chat_history)
+    assert not any(CONTINUE in str(m["content"]) for m in _S(s).history)
     assert not any(CUT in t for t in s.tokens)
 
 
@@ -192,7 +190,7 @@ def test_custom_adapter_length_spelling_auto_continues():
     asyncio.run(s._agentic_chat_turn("chat1", "long", adapter))
 
     assert any(
-        m["role"] == "user" and CONTINUE in str(m["content"]) for m in s._chat_history
+        m["role"] == "user" and CONTINUE in str(m["content"]) for m in _S(s).history
     )
     assert "".join(s.tokens) == "part onepart two"
     assert not any(CUT in t for t in s.tokens)

@@ -109,6 +109,9 @@ body {
 .rs-host-row, .rs-group-header { transition: background var(--rs-motion), border-color var(--rs-motion); }
 .rs-host-row:hover { background: var(--rs-hover); }
 .rs-group-header:hover { background: var(--rs-hover); }
+/* Console session chips (SessionStrip): accent-neutral hover, no re-render. */
+.rs-session-chip { transition: background var(--rs-motion), border-color var(--rs-motion); }
+.rs-session-chip:hover { background: var(--rs-hover); }
 
 /* Sidebar resize handle: invisible until hovered/dragged, then a faint accent
    line shows where the draggable edge is. */

@@ -982,6 +982,25 @@ export interface TriggerCard {
 // TriggerCard shape, so one type serves both the Triggers and Schedules inboxes.
 export type RunCard = TriggerCard
 
+// ── console sessions ─────────────────────────────────────────────────────────
+// One live conversation on the backend: an interactive chat, or the read-only
+// conversation behind a trigger / schedule fire (kind 'trigger' / 'schedule').
+// The `runspec:session` event carries this shape on create / turn start
+// (state 'running', `turn` = the chat id) / turn end ('idle' for a chat, 'done'
+// for automation) / close; an eviction or close may arrive as the partial
+// `{id, state: 'closed'}`. For an automation session `id` == its run card's
+// card_id == its turn's chat id.
+export interface ChatSessionInfo {
+  id: string
+  kind: 'chat' | 'trigger' | 'schedule'
+  label: string
+  interactive: boolean
+  created_at: number   // epoch seconds
+  state: 'idle' | 'running' | 'done' | 'closed'
+  turn: string         // chat id of the turn in flight ('' when idle)
+  turns: number
+}
+
 // A parked autonomy-gate confirm — the runspec:tool_confirm event's shape, also
 // returned by get_pending_confirms for cold-start. `id` is the chat/card id; a
 // confirm whose id matches a live trigger card belongs to that card (the work
@@ -1492,13 +1511,32 @@ export interface BridgeApi {
   // The Transfer dialog defaults a local destination to it so downloads land
   // where the agent works. Creates the directory if missing.
   current_workspace_path: () => Promise<string>
-  send_chat: (message: string, invocationId?: string) => Promise<string>
+  // Start a chat turn in `sessionId` (the selected interactive session; omitted
+  // ⇒ the backend's current one). Returns the turn's chat id (== the block id).
+  // Sending to an automation session yields an error token + run_end exit 1
+  // under that chat id — the UI never does that (the composer is read-only).
+  send_chat: (message: string, invocationId?: string, sessionId?: string) => Promise<string>
   cancel_chat: (chatId: string) => Promise<void>
-  clear_chat: () => Promise<void>
+  // Replace `sessionId` (an interactive session) with a fresh, empty one — the
+  // AI-off "Clear". "New chat" uses new_chat_session instead, so the previous
+  // conversation keeps running. Also dispatches runspec:chat_cleared.
+  clear_chat: (sessionId?: string) => Promise<{ ok: boolean; session?: ChatSessionInfo; replaced?: string }>
   // Condense the live chat history in place (drop the older prefix, fold a note,
   // keep the recent tail) — frees context without losing the thread. Returns the
   // number of messages dropped. See docs/design/console-context-indicator.md.
-  compact_chat: () => Promise<{ ok: boolean; compacted: number }>
+  compact_chat: (sessionId?: string) => Promise<{ ok: boolean; compacted: number }>
+  // ── sessions ───────────────────────────────────────────────────────────────
+  // Open a fresh interactive session and make it the backend's send target; the
+  // previous session keeps running (concurrent turns).
+  new_chat_session: () => Promise<ChatSessionInfo>
+  // Every live session (interactive + automation), oldest first — cold-start seed.
+  list_chat_sessions: () => Promise<ChatSessionInfo[]>
+  // Make an interactive session the send target. Interactive ids only — the UI
+  // selects automation sessions locally and never calls this for them.
+  select_chat_session: (id: string) => Promise<{ ok: boolean; session?: ChatSessionInfo; error?: string }>
+  // Stop an in-flight turn and drop the session (an automation session: dismiss
+  // its chip). The saved conversation (History) is untouched.
+  close_chat_session: (id: string) => Promise<{ ok: boolean; error?: string }>
   // Toggle whether a completed chat turn stays in the agent's context (the
   // Console card "in context" checkbox). Reversible and non-destructive — the
   // backend keeps the messages and only filters, so re-including restores the
@@ -1513,7 +1551,10 @@ export interface BridgeApi {
   // (history rebuilt from the transcript as plain text; exact=false). On a long
   // chat the middle is condensed on resume (compacted=true; summarized=true when
   // an LLM summary was used) — the saved transcript itself is never changed.
-  resume_conversation: (id: string) => Promise<{ ok: boolean; turns?: number; kept?: number; compacted?: boolean; summarized?: boolean; exact?: boolean; error?: string }>
+  // `session` is the live session's id (== the conversation id); `already_open`
+  // means that conversation is already an open session — just select it, don't
+  // re-hydrate its blocks.
+  resume_conversation: (id: string) => Promise<{ ok: boolean; turns?: number; kept?: number; compacted?: boolean; summarized?: boolean; exact?: boolean; error?: string; session?: string; already_open?: boolean }>
   delete_conversation: (id: string) => Promise<void>
   rename_conversation: (id: string, title: string) => Promise<void>
   // ── Improve (effectiveness + problem report) ──────────────────────────────────
@@ -1573,6 +1614,7 @@ export interface BridgeApi {
     runbookId: string,
     values?: Record<string, unknown>,
     extraInstructions?: string,
+    sessionId?: string,
   ) => Promise<{ chat_id?: string; message?: string; error?: string }>
   // ── saved runs (deterministic presets) ─────────────────────────────────────
   // All saved runs with their params parsed to ArgDef[] — feeds the Forms lane,

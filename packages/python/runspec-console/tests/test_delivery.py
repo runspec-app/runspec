@@ -22,6 +22,7 @@ import pytest
 from runspec_console import config as config_mod
 from runspec_console import workspaces
 from runspec_console.bridge import Bridge
+from tests.session_stub import install_sessions
 
 # ── pure helpers ──────────────────────────────────────────────────────────────
 
@@ -163,13 +164,14 @@ class _Stub:
 
     def __init__(self, cap: int = 1_000_000) -> None:
         self._lock = threading.Lock()
-        self._conversation_id = "conv1"
+        install_sessions(self, "conv1")
         self._cap = cap
 
     def _tool_output_cap(self) -> int:
         return self._cap
 
     _finalize_tool_output = Bridge._finalize_tool_output
+    _current_workspace_root = Bridge._current_workspace_root
 
 
 @pytest.fixture()

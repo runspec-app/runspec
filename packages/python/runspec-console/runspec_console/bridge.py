@@ -44,7 +44,9 @@ from .bridge_improve import ImproveMixin
 from .bridge_evals import EvalsMixin
 from .bridge_mcp_server import McpServerMixin
 from .bridge_voice import VoiceMixin
+from .bridge_turn import TurnMixin
 from .dictation import DictationSession
+from .session import ChatSession
 
 
 class Bridge(
@@ -67,6 +69,7 @@ class Bridge(
     EvalsMixin,
     McpServerMixin,
     VoiceMixin,
+    TurnMixin,
 ):
     def __init__(self) -> None:
         self._window: Any = None
@@ -129,12 +132,23 @@ class Bridge(
         # run_summary (RUNSPEC_TRIGGER) and set the right agent flag. Absent for a
         # direct chat turn (→ agent run, no trigger). Guarded by self._lock.
         self._run_origin: dict[str, dict[str, Any]] = {}
-        # Per-turn workspace id, keyed by chat_id. Trigger/schedule handlers
-        # register e.g. {"trigger-<chat_id>"} before an isolated agent turn so
-        # _run_tool_sync can spill big outputs into that session's own
-        # workspace. Absent for a chat turn (→ falls back to _conversation_id,
-        # the chat's persistent workspace). Guarded by self._lock.
-        self._workspace_by_chat: dict[str, str] = {}
+        # Chat sessions (session.py): every conversation the console runs —
+        # concurrent interactive chats the operator swaps between, plus one
+        # read-only automation session per trigger / schedule card (id == card
+        # id == the headless turn's chat_id). Each owns its own rolling model
+        # history + lock; the registry is in-memory only (nothing survives a
+        # restart). _chat_session_id is the interactive session sends, operator
+        # runs and the workspace fallback target (set by select_chat_session /
+        # new_chat_session; minted lazily). _turn_sessions maps a live turn's
+        # chat_id → session id so tool workers resolve their workspace. All
+        # guarded by self._lock (never a session's own lock, which a running
+        # turn holds end-to-end).
+        self._sessions: dict[str, ChatSession] = {}
+        self._chat_session_id: str = ""
+        self._turn_sessions: dict[str, str] = {}
+        # Serialises saved-conversation file writes (read-modify-write) between
+        # a turn's persist and an operator run's append from the invoke worker.
+        self._conv_store_lock = threading.Lock()
         self._chat_stop = threading.Event()
         self._chat_supervisors: dict[str, threading.Thread] = {}
         # Per-room last logged connect-failure summary, so the reconnect loop logs a
@@ -218,28 +232,12 @@ class Bridge(
         # event name → monotonic ts of its last coalesced dispatch (see
         # _dispatch_coalesced). Guarded by ``self._lock``.
         self._coalesced_at: dict[str, float] = {}
-        # Persistent agent conversation so the model remembers prior turns. One
-        # rolling conversation per app session; reset via clear_chat(). The lock
-        # serialises turns so two quick sends can't interleave the history.
-        self._chat_history: list[dict[str, Any]] = []
-        # Per-message turn tag, aligned index-for-index with _chat_history: the
-        # chat_id of the turn that appended each message. Lets set_turn_included()
-        # drop a whole exchange from the model context (the Console card "in
-        # context" toggle) without deleting it — _visible_history() filters by tag,
-        # so re-including is instant. Must be sliced/reset in lockstep with
-        # _chat_history everywhere (trim/compact/clear). Guarded by _chat_lock.
-        self._history_turn_ids: list[str] = []
-        # chat_ids the operator has toggled OUT of context. Messages stay in
-        # _chat_history; _visible_history() skips them. Guarded by _chat_lock.
-        self._excluded_turns: set[str] = set()
-        self._chat_lock = threading.Lock()
-        # The saved-conversation id the current rolling chat persists to (chat
-        # history). Minted lazily on the first turn and re-minted by clear_chat();
-        # set by resume_conversation when continuing a past chat. Distinct from the
-        # per-turn chat_id (a UI correlation key). Guarded by self._chat_lock.
-        self._conversation_id: str = ""
+        # The rolling model history, per-turn tags, "in context" exclusions and
+        # the saved-conversation id all live on the ChatSession (see
+        # self._sessions above) — one per concurrent conversation.
         # chat_id → cancel Event, so a turn can be stopped mid-run (guarded by
-        # self._lock, NOT _chat_lock — cancel must fire while a turn holds that).
+        # self._lock, never a session lock — cancel must fire while a turn holds
+        # that).
         self._chat_cancels: dict[str, threading.Event] = {}
         # request_id → (chat_id, Event, {"approved", "cancelled"}) for agent
         # tool-call confirmations. chat_id lets cancel_chat wake a pending

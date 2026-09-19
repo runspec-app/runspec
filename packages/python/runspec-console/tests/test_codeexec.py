@@ -27,6 +27,7 @@ import pytest
 
 from runspec_console import codeexec, sandbox
 from runspec_console.bridge import Bridge
+from tests.session_stub import install_sessions
 from runspec_console.bridge_const import ToolCancelled
 
 _EXEC_READY = sandbox._wasmtime() is not None and sandbox.wasm_path() is not None
@@ -272,8 +273,7 @@ class _ExecBridge:
 
     def __init__(self):
         self._lock = threading.Lock()
-        self._conversation_id = "convexec01"
-        self._workspace_by_chat = {}
+        install_sessions(self, "convexec01")
 
 
 def _exec_stub(monkeypatch, tmp_path, *, code_exec=True):
@@ -313,7 +313,7 @@ def test_exec_tool_large_python_output_spills(monkeypatch, tmp_path):
     out = b._run_exec_tool("run_python_sandboxed", {"code": "print('x' * 40000)"})
     assert "Output spilled to workspace" in out
     assert "tool-results/" in out
-    files = list((tmp_path / b._conversation_id / "tool-results").glob("*"))
+    files = list((tmp_path / b._chat_session_id / "tool-results").glob("*"))
     assert len(files) == 1 and "x" * 100 in files[0].read_text()
 
 
@@ -359,7 +359,7 @@ def test_exec_tool_python_missing_code_is_directive(monkeypatch, tmp_path):
 def test_exec_tool_no_workspace_is_error(monkeypatch, tmp_path):
     # Checked before the sandbox availability gate, so it needs no binary.
     b = _exec_stub(monkeypatch, tmp_path)
-    b._conversation_id = ""
+    b._current_workspace_root = lambda chat_id="": None  # no session workspace
     out = b._run_exec_tool("run_python_sandboxed", {"code": "print(1)"})
     assert "No active session workspace" in json.loads(out)["error"]
 

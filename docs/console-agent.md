@@ -8,6 +8,30 @@ of the things that still need the Settings UI.
 
 ---
 
+## Sessions
+
+Every conversation in the Console is a **session**, and sessions run at the
+same time. The chip row beside **New chat** lists them:
+
+- **Chats** you started. **New chat** opens another one and leaves the current
+  one running — swap between them with a click; each has its own history,
+  its own context gauge and its own Stop.
+- **Trigger fires** and **schedule fires**, one chip each (agent-mode and
+  rule-mode triggers; prompt, runbook, runnable, saved-run and eval
+  schedules). They appear as they happen and never interrupt the chat you are
+  typing in. A chip shows a spinner while its run is working, an amber bell
+  when it is waiting for your Approve / Deny, and a dot when something
+  happened in it while you were looking elsewhere. Open one to read its
+  transcript, approve its gates or stop it; it is read-only otherwise ("switch
+  to a chat to talk"). Finished ones stay until you dismiss them (the newest
+  twelve are kept).
+
+Nothing is restored when the console restarts — past chats live under
+**History** and reopen into a new session. See
+`docs/design/console-sessions.md` for the design.
+
+---
+
 ## How agent actions are gated
 
 Every runnable declares an **autonomy** level in its `runspec.toml`, and the

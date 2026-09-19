@@ -538,6 +538,14 @@ the exact same `run` string + `map` table described above, so the on-disk
 
 ## 6. Headless agent turn (trigger-driven)
 
+> **0.275.0 — superseded by sessions.** The isolated loop described here
+> (`_run_isolated_agent_turn`) and the chat loop were merged into one engine
+> (`bridge_turn.py`, `_run_agent_turn(TurnSpec)`), and every trigger fire is
+> now a read-only *session* with its own chip in the Console, alongside the
+> operator's concurrent chats. The isolation guarantees below still hold (they
+> are now the session model); the "card-scoped `chat_id`" is the session id.
+> See `docs/design/console-sessions.md`.
+
 `mode = "agent"` reuses the `_agentic_chat_turn` machinery with three changes:
 
 1. **No human message** — the "user" turn is a rendered event summary plus the

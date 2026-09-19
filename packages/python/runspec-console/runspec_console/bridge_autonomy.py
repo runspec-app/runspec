@@ -801,8 +801,13 @@ class AutonomyMixin:
         chat_id: str,
         stage: Callable[[str], None] | None = None,
         on_decision: Callable[[dict[str, Any]], None] | None = None,
+        headless: bool = False,
     ) -> str:
         """Async autonomy gate used by the agentic loop.
+
+        ``headless`` selects the longer unattended confirm timeout (a trigger /
+        schedule turn — the operator may be away when it fires); explicit, so
+        it no longer has to be inferred from whether ``stage`` was passed.
 
         The UI prompt is dispatched from the event-loop thread (the same thread
         that streams tokens, which is known to reach the frontend) — only the
@@ -842,7 +847,11 @@ class AutonomyMixin:
                 if not calls:
                     return f"✗ No host in group '{group}' has '{name}'."
                 outs = await self._grouped_confirm_run_async(
-                    chat_id, calls, noun=f"group '{group}' run", stage=stage
+                    chat_id,
+                    calls,
+                    noun=f"group '{group}' run",
+                    stage=stage,
+                    headless=headless,
                 )
                 return self._format_group_output(group, name, calls, outs)
         if tool_name == "run_saved_run":
@@ -855,7 +864,11 @@ class AutonomyMixin:
                 return expanded
             sid, name, calls = expanded
             outs = await self._grouped_confirm_run_async(
-                chat_id, calls, noun=f"saved run '{sid}'", stage=stage
+                chat_id,
+                calls,
+                noun=f"saved run '{sid}'",
+                stage=stage,
+                headless=headless,
             )
             return self._format_group_output(f"saved run '{sid}'", name, calls, outs)
         decision = self._confirm_decision(tool_name, tool_input)
@@ -872,10 +885,10 @@ class AutonomyMixin:
             request_id, event, holder = self._register_confirm(
                 chat_id, tool_name, tool_input, decision
             )
-            # stage is set only on trigger/schedule turns — those wait on the
-            # longer headless timeout (the operator may be away when it fires).
+            # Trigger/schedule turns wait on the longer headless timeout (the
+            # operator may be away when it fires).
             timed_out = not await asyncio.to_thread(
-                event.wait, self._confirm_timeout_s(stage is not None)
+                event.wait, self._confirm_timeout_s(headless)
             )
             approved, edited = self._finish_confirm(request_id, holder, timed_out)
             # Stop pressed while the dialog was up: don't run, and let the loop
@@ -1703,12 +1716,11 @@ class AutonomyMixin:
             inline_max = ws_cfg.get("inline_max", inline_max)
         except (OSError, ValueError, TypeError):
             pass
-        with self._lock:
-            ws_map = getattr(self, "_workspace_by_chat", {})
-            workspace_id = ws_map.get(chat_id, "")
-        if not workspace_id:
-            workspace_id = getattr(self, "_conversation_id", "")
-        ws_root = config_mod.workspace_dir(workspace_id) if workspace_id else None
+        # The session this turn belongs to owns the spill directory: a chat's
+        # persistent conversation workspace, or a trigger/schedule card's own
+        # hermetic one — a rule-mode trigger run is a session too, so it can no
+        # longer leak into the operator's chat workspace.
+        ws_root = self._current_workspace_root(chat_id)
         inv = uuid.uuid4().hex[:12]
 
         def _auto() -> str:

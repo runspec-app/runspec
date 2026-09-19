@@ -5,6 +5,10 @@ import { bridge, type ChatConversation, type ConversationMeta, type InFlightReco
 import { useFeatures } from '../features'
 import { OutputPanel, useInvocationBlocks, type RerunData, type InvocationBlock, type BlockSegment } from '../components/OutputPanel'
 import { useIsDark, MONO_FONT, RADIUS } from '../ThemeContext'
+import { useSessions } from '../useSessions'
+import { SessionStrip } from '../components/SessionStrip'
+import { cardLabel, sessionStatus, type Session } from '../sessions'
+import { READ_ONLY_SESSION_HINT } from '../components/CommandInput'
 
 const { Text } = Typography
 
@@ -28,21 +32,29 @@ function runBodyToLines(
   return { lines, exitCode }
 }
 
-// The Console block label for a trigger card. Rule runs read best as the target
-// runnable (`detail.tool`); agent runs as "Trigger <name> · <event>".
-function triggerCardLabel(card: TriggerCard): string {
-  const mode = String(card.detail?.mode ?? 'agent')
-  if (mode === 'rule') {
-    const tool = typeof card.detail?.tool === 'string' ? card.detail.tool : ''
-    return tool ? `/${tool}` : card.summary || `Trigger ${card.trigger}`
-  }
-  return `Trigger ${card.trigger} · ${card.event_type}`
+// Schedule cards whose run is a runnable invocation (not an agent turn) render
+// as run blocks filled from the card's terminal result, like rule triggers.
+const SCHEDULE_RUN_TYPES: ReadonlySet<string> = new Set(['runnable', 'saved_run', 'eval'])
+
+// Whether a run card is a plain run (run block) or an agent turn (chat block).
+function cardIsRun(card: TriggerCard, kind: 'trigger' | 'schedule'): boolean {
+  if (kind === 'schedule') return SCHEDULE_RUN_TYPES.has(card.event_type)
+  return String(card.detail?.mode ?? 'agent') === 'rule'
+}
+
+// The Console block label for a run card. Trigger cards share the chip label
+// (`/tool` for a rule run, "Trigger <name> · <event>" for an agent run); a
+// schedule run reads best as its summary ("/backup-db on db01").
+function cardBlockLabel(card: TriggerCard, kind: 'trigger' | 'schedule'): string {
+  if (kind === 'schedule' && card.summary) return card.summary
+  return cardLabel(card, kind)
 }
 
 // Render a saved conversation's provider-agnostic transcript back into chat
 // blocks the OutputPanel can show — one block per turn (label = the user's
 // message; tool calls + the assistant's prose as segments). Read-only: every
-// block is `done`, nothing streams.
+// block is `done`, nothing streams. Every block belongs to the session whose
+// id == the conversation id (the backend resumes it under that id).
 export function conversationToBlocks(conv: ChatConversation): InvocationBlock[] {
   return (conv.turns || []).map((t, i) => {
     const startedAt = t.ts || conv.updated || new Date().toISOString()
@@ -55,6 +67,7 @@ export function conversationToBlocks(conv: ChatConversation): InvocationBlock[] 
         .map((line, j) => ({ id: `${conv.id}:${i}:${j}`, line, stream: 'stdout' as const }))
       return {
         id: `${conv.id}:${i}`,
+        sessionId: conv.id,
         type: 'run' as const,
         label: `/${t.runnable || 'run'}${t.host ? ` on ${t.host}` : ''}`,
         startedAt,
@@ -76,6 +89,7 @@ export function conversationToBlocks(conv: ChatConversation): InvocationBlock[] 
     const u = (t.usage || undefined) as Record<string, number> | undefined
     return {
       id: `${conv.id}:${i}`,
+      sessionId: conv.id,
       type: 'chat' as const,
       label: t.user || '(no message)',
       startedAt,
@@ -174,7 +188,7 @@ function InFlightStrip({ inFlight }: { inFlight: InFlightRecord[] }) {
 }
 
 export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewProps) {
-  const { blocks, addBlock, upsertBlock, updateBlock, clearBlocks, hydrateBlocks, setBlockInContext } = useInvocationBlocks()
+  const { blocks, addBlock, upsertBlock, updateBlock, clearBlocks, hydrateBlocks, removeSession, setBlockInContext } = useInvocationBlocks()
   // `[console] ai` off-switch: the Console stays (it is the output pane for every
   // run) but its chat affordances — conversation History, "Ask the assistant",
   // the include-in-context toggle — go.
@@ -196,6 +210,66 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
   // Run-card ids whose output has already been folded into a sent chat message,
   // so a ticked result rides along exactly once (not re-injected every turn).
   const stagedRef = useRef<Set<string>>(new Set())
+
+  // A trigger / schedule fired: mirror its run into the Console as a live block
+  // so all agent activity — and its Approve/Deny gate — has one home (the
+  // Console tab), rather than living only in the Triggers / Schedules tabs
+  // (hidden when AI is off, leaving a confirm-gated run unapprovable). The
+  // block is keyed by card_id, which is also the run's session id and its
+  // chat id, so the already-global streaming/confirm handlers in
+  // useInvocationBlocks attribute token/tool/run_end/tool_confirm to it, and
+  // the chip row shows it as its own read-only session. First sighting creates
+  // the block; later card events reconcile terminal state only —
+  // segments/currentText belong to the streamed handlers.
+  const applyCard = useCallback((card: TriggerCard, kind: 'trigger' | 'schedule') => {
+    if (!card?.card_id) return
+    const id = card.card_id
+    const isRun = cardIsRun(card, kind)
+    upsertBlockRef.current(id, () => ({
+      id,
+      sessionId: id,
+      type: isRun ? 'run' : 'chat',
+      label: cardBlockLabel(card, kind),
+      startedAt: new Date((card.created_at || Date.now() / 1000) * 1000).toISOString(),
+      lines: [],
+      segments: [],
+      currentText: '',
+      done: false,
+      trigger: { name: card.trigger, source: card.source },
+    }))
+    if (card.column === 'done' || card.column === 'failed') {
+      const failed = card.column === 'failed'
+      updateBlockRef.current(id, b => {
+        const patch: Partial<InvocationBlock> = { done: true, exitCode: failed ? 1 : 0 }
+        // A plain run whose output never streamed line-by-line — fill from the
+        // card's terminal result/error. Agent blocks keep their streamed
+        // segments (run_end, keyed by the same id, already marked them done).
+        if (b.type === 'run' && b.lines.length === 0) {
+          if (failed) {
+            const err = String(card.detail?.error ?? '')
+            patch.lines = err ? [{ id, line: err, stream: 'stderr' as const }] : []
+          } else {
+            const { lines, exitCode } = runBodyToLines(id, String(card.detail?.result ?? ''))
+            patch.lines = lines
+            patch.exitCode = exitCode
+          }
+        }
+        return { ...b, ...patch }
+      })
+    }
+  }, [])
+
+  // The live session list + selection (chip row). Seeds from the backend and
+  // both run boards (cold start replays every card through applyCard), folds
+  // the runspec:session / *_card events, and drops a closed session's blocks.
+  const sessionsApi = useSessions({ blocksRef, onSessionRemoved: removeSession, onCard: applyCard })
+  const { sessions, selectedId, selected, pendingConfirmIds, select, newChat, close, ensureInteractive, adopt } = sessionsApi
+  const sessionsRef = useRef(sessionsApi)
+  sessionsRef.current = sessionsApi
+  // The transcript shows the selected session's blocks only — so the activity
+  // indicator, the pending confirm gates and the composer's Stop/Send are per
+  // session by construction.
+  const visible = selectedId ? blocks.filter(b => b.sessionId === selectedId) : []
 
   // Build the context preamble from run cards the operator ticked "in context"
   // that haven't been staged yet, marking them staged. Returns '' when none —
@@ -239,14 +313,26 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
     await refreshConvs()
   }
 
-  // Reopen a saved conversation: render its transcript and resume it on the
-  // backend so the next message continues it (history rebuilt as text).
+  // Reopen a saved conversation: resume it on the backend as a session whose
+  // id == the conversation id (history rebuilt as text), render its transcript
+  // into that session and select it. Already open ⇒ just select it (its live
+  // blocks are the truth — don't re-hydrate over them).
   const openConversation = async (meta: ConversationMeta) => {
     try {
-      const conv = await bridge.load_conversation(meta.id)
-      hydrateBlocks(conversationToBlocks(conv))
       const res = await bridge.resume_conversation(meta.id)
       if (!res.ok) { message.error(res.error || 'Could not resume conversation'); return }
+      const sid = res.session || meta.id
+      if (res.already_open && sessionsRef.current.sessions.some(s => s.id === sid)) {
+        select(sid)
+        setConvOpen(false)
+        return
+      }
+      const conv = await bridge.load_conversation(meta.id)
+      hydrateBlocks(conversationToBlocks(conv).map(b => ({ ...b, sessionId: sid })), sid)
+      adopt({
+        id: sid, kind: 'chat', label: conv.title || meta.title, interactive: true,
+        created_at: Date.now() / 1000, state: 'idle', turn: '', turns: conv.turns?.length ?? 0,
+      })
       setViewing({ id: meta.id, title: conv.title || meta.title })
       setConvOpen(false)
       if (res.compacted) {
@@ -261,24 +347,49 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
 
   const deleteConversation = async (id: string) => {
     await bridge.delete_conversation(id)
-    if (viewing?.id === id) { await bridge.clear_chat(); clearBlocks(); setViewing(null) }
+    // The deleted conversation's live session (same id) goes with it.
+    if (sessionsRef.current.sessions.some(s => s.id === id)) await close(id)
+    if (viewing?.id === id) setViewing(null)
     await refreshConvs()
   }
 
-  // Reset the conversation: clear the transcript and the model's memory of
-  // prior turns (the agent chat is otherwise one rolling conversation).
+  // Open another interactive session and switch to it. The previous session
+  // keeps running (its turn, its blocks, its chip) — nothing is cleared.
   const handleNewChat = async () => {
-    await bridge.clear_chat()
-    clearBlocks()
+    await newChat()
     setViewing(null)
   }
 
-  // Tell the command bar which chat turn (if any) is in flight, so its send
-  // button can become a Stop control while the assistant is working.
-  const activeChatId = blocks.find(b => b.type === 'chat' && !b.done)?.id ?? null
+  // AI off: the Console is the run-output pane; "Clear" replaces the session
+  // (backend) and drops its blocks. Without a session, just empty the pane.
+  const handleClear = async () => {
+    const sid = selectedId
+    if (!sid) { clearBlocks(); return }
+    try {
+      const res = await bridge.clear_chat(sid)
+      removeSession(res?.replaced || sid)
+      if (res?.session) adopt(res.session)
+    } catch {
+      removeSession(sid)
+    }
+  }
+
+  // Tell the command bar which chat turn (if any) is in flight in the selected
+  // session, so its send button can become a Stop control while the assistant
+  // is working — and whether that session is a read-only automation one.
+  const activeChatId = visible.find(b => b.type === 'chat' && !b.done)?.id ?? null
+  const readOnly = !!selected && !selected.interactive
   useEffect(() => {
-    window.dispatchEvent(new CustomEvent('runspec:chat_active', { detail: { id: activeChatId } }))
-  }, [activeChatId])
+    window.dispatchEvent(new CustomEvent('runspec:chat_active', { detail: { id: activeChatId, session: selectedId, readOnly } }))
+  }, [activeChatId, selectedId, readOnly])
+
+  // Where operator work (runs, reruns, saved runs, runbooks) lands: the current
+  // interactive session, auto-created and selected when there is none.
+  const targetSession = async (): Promise<string | null> => {
+    const sid = await sessionsRef.current.ensureInteractive()
+    if (!sid) message.error('Could not open a chat session')
+    return sid
+  }
 
   // Invoked from the App-level command bar
   useEffect(() => {
@@ -286,23 +397,31 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
       const { runnable, args, commandPath = [], credentialIds } = (e as CustomEvent).detail as { runnable: Runnable; args: Record<string, unknown>; commandPath?: string[]; credentialIds?: string[] }
       const cmd = commandPath.length > 0 ? `${runnable.name} ${commandPath.join(' ')}` : runnable.name
       const label = `/${cmd} on ${runnable.host}`
+      const sessionId = await targetSession()
+      if (!sessionId) return
       const id = await bridge.invoke_runnable(runnable.host, runnable.name, args, commandPath, runnable.group, credentialIds && credentialIds.length ? credentialIds : undefined)
-      addBlockRef.current({ id, type: 'run', label, startedAt: new Date().toISOString(), lines: [], segments: [], currentText: '', done: false, rerunData: { host: runnable.host, runnable: runnable.name, args, commandPath } })
+      addBlockRef.current({ id, sessionId, type: 'run', label, startedAt: new Date().toISOString(), lines: [], segments: [], currentText: '', done: false, rerunData: { host: runnable.host, runnable: runnable.name, args, commandPath } })
       window.dispatchEvent(new CustomEvent('runspec:in_flight_updated'))
     }
     window.addEventListener('runspec:invoke_runnable', onInvoke)
     return () => window.removeEventListener('runspec:invoke_runnable', onInvoke)
   }, [])
 
-  // Chat sent from the App-level command bar
+  // Chat sent from the App-level command bar — into the selected interactive
+  // session (created if there is none). An automation session is read-only:
+  // the composer already refuses; this is the belt to that brace.
   useEffect(() => {
     const onChat = async (e: Event) => {
-      const { message } = (e as CustomEvent).detail as { message: string }
+      const { message: text } = (e as CustomEvent).detail as { message: string }
+      const sel = sessionsRef.current.selected
+      if (sel && !sel.interactive) { message.info(READ_ONLY_SESSION_HINT, 2); return }
+      const sessionId = sel?.id ?? await sessionsRef.current.newChat()
+      if (!sessionId) { message.error('Could not open a chat session'); return }
       // Fold in any ticked run-card output; the card label stays the typed
       // message so the transcript reads cleanly.
-      const outgoing = buildStagedPreambleRef.current() + message
-      const id = await bridge.send_chat(outgoing)
-      addBlockRef.current({ id, type: 'chat', label: message, startedAt: new Date().toISOString(), lines: [], segments: [], currentText: '', done: false })
+      const outgoing = buildStagedPreambleRef.current() + text
+      const id = await bridge.send_chat(outgoing, undefined, sessionId)
+      addBlockRef.current({ id, sessionId, type: 'chat', label: text, startedAt: new Date().toISOString(), lines: [], segments: [], currentText: '', done: false })
       window.dispatchEvent(new CustomEvent('runspec:in_flight_updated'))
     }
     window.addEventListener('runspec:send_chat', onChat)
@@ -317,12 +436,14 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
       const { runbookId, values, extra } = (e as CustomEvent).detail as {
         runbookId: string; values: Record<string, unknown>; extra: string
       }
-      const res = await bridge.run_runbook(runbookId, values, extra)
+      const sessionId = await targetSession()
+      if (!sessionId) return
+      const res = await bridge.run_runbook(runbookId, values, extra, sessionId)
       if (res.error || !res.chat_id) {
         message.error(res.error || 'Could not start runbook')
         return
       }
-      addBlockRef.current({ id: res.chat_id, type: 'chat', label: res.message || `$${runbookId}`, startedAt: new Date().toISOString(), lines: [], segments: [], currentText: '', done: false })
+      addBlockRef.current({ id: res.chat_id, sessionId, type: 'chat', label: res.message || `$${runbookId}`, startedAt: new Date().toISOString(), lines: [], segments: [], currentText: '', done: false })
       window.dispatchEvent(new CustomEvent('runspec:in_flight_updated'))
     }
     window.addEventListener('runspec:run_runbook', onRunRunbook)
@@ -340,6 +461,8 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
       const { id, values } = (e as CustomEvent).detail as {
         id: string; values: Record<string, unknown>
       }
+      const sessionId = await targetSession()
+      if (!sessionId) return
       const res = await bridge.run_saved_run(id, values)
       if (res.error || !res.runs?.length) {
         message.error(res.error || 'Could not start saved run')
@@ -347,7 +470,7 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
       }
       for (const run of res.runs) {
         addBlockRef.current({
-          id: run.inv_id, type: 'run',
+          id: run.inv_id, sessionId, type: 'run',
           label: `/${res.runnable} on ${run.host}`,
           startedAt: new Date().toISOString(),
           lines: [], segments: [], currentText: '', done: false,
@@ -358,70 +481,6 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
     window.addEventListener('runspec:run_saved_run', onRunSavedRun)
     return () => window.removeEventListener('runspec:run_saved_run', onRunSavedRun)
   }, [])
-
-  // post_to_chat triggers mirror their run into the Console transcript as a
-  // finished block matching the trigger mode, so a triggered run looks just
-  // like the same command run by hand — only the source differs:
-  //   kind="run"  → a standard slash-command run card (mode=rule)
-  //   kind="chat" → an agent/chat card (mode=agent)
-  // (The bridge dispatches runspec:trigger_note with id/kind/label/text.)
-  // A trigger fired: mirror its run into the Console as a live block so all agent
-  // activity — and its Approve/Deny gate — has one home (the Console tab), rather
-  // than living only in the Triggers tab (which is hidden when AI is off, leaving
-  // a confirm-gated run unapprovable). The block is keyed by card_id, which
-  // doubles as the chat_id, so the already-global streaming/confirm handlers in
-  // useInvocationBlocks attribute token/tool/run_end/tool_confirm to it. First
-  // sighting creates the block; later card events reconcile terminal state only —
-  // segments/currentText belong to the streamed handlers.
-  const applyCard = useCallback((card: TriggerCard) => {
-    if (!card?.card_id) return
-    const id = card.card_id
-    const isRule = String(card.detail?.mode ?? 'agent') === 'rule'
-    upsertBlockRef.current(id, () => ({
-      id,
-      type: isRule ? 'run' : 'chat',
-      label: triggerCardLabel(card),
-      startedAt: new Date((card.created_at || Date.now() / 1000) * 1000).toISOString(),
-      lines: [],
-      segments: [],
-      currentText: '',
-      done: false,
-      trigger: { name: card.trigger, source: card.source },
-    }))
-    if (card.column === 'done' || card.column === 'failed') {
-      const failed = card.column === 'failed'
-      updateBlockRef.current(id, b => {
-        const patch: Partial<InvocationBlock> = { done: true, exitCode: failed ? 1 : 0 }
-        // A rule run whose output never streamed line-by-line — fill from the
-        // card's terminal result/error. Agent blocks keep their streamed
-        // segments (run_end, keyed by the same id, already marked them done).
-        if (b.type === 'run' && b.lines.length === 0) {
-          if (failed) {
-            const err = String(card.detail?.error ?? '')
-            patch.lines = err ? [{ id, line: err, stream: 'stderr' as const }] : []
-          } else {
-            const { lines, exitCode } = runBodyToLines(id, String(card.detail?.result ?? ''))
-            patch.lines = lines
-            patch.exitCode = exitCode
-          }
-        }
-        return { ...b, ...patch }
-      })
-    }
-  }, [])
-
-  useEffect(() => {
-    const onCard = (e: Event) => applyCard((e as CustomEvent).detail as TriggerCard)
-    window.addEventListener('runspec:trigger_card', onCard)
-    return () => window.removeEventListener('runspec:trigger_card', onCard)
-  }, [applyCard])
-
-  // Cold start: a trigger may have fired before this view mounted (a reopened
-  // console). Replay the current board so those runs show, mirroring how the
-  // Triggers tab seeds itself.
-  useEffect(() => {
-    bridge.get_trigger_board().then(board => board.forEach(applyCard)).catch(() => {})
-  }, [applyCard])
 
   // The finished post_to_chat mirror (runspec:trigger_note). With the live block
   // already present (same id — the firing card's), fold this onto it only if it's
@@ -445,21 +504,26 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
         })
         return
       }
-      const startedAt = new Date().toISOString()
-      if (kind === 'run') {
-        const { lines, exitCode } = runBodyToLines(blockId, text || '')
-        addBlockRef.current({
-          id: blockId, type: 'run', label: label || 'trigger run',
-          startedAt, lines, segments: [], currentText: '',
-          done: true, exitCode,
-        })
-      } else {
-        addBlockRef.current({
-          id: blockId, type: 'chat', label: label || 'trigger',
-          startedAt, lines: [], segments: [{ kind: 'text', text: text || '' }],
-          currentText: '', done: true,
-        })
-      }
+      // No live session for this mirror — it lands in the current chat.
+      void (async () => {
+        const sessionId = await sessionsRef.current.ensureInteractive()
+        if (!sessionId) return
+        const startedAt = new Date().toISOString()
+        if (kind === 'run') {
+          const { lines, exitCode } = runBodyToLines(blockId, text || '')
+          addBlockRef.current({
+            id: blockId, sessionId, type: 'run', label: label || 'trigger run',
+            startedAt, lines, segments: [], currentText: '',
+            done: true, exitCode,
+          })
+        } else {
+          addBlockRef.current({
+            id: blockId, sessionId, type: 'chat', label: label || 'trigger',
+            startedAt, lines: [], segments: [{ kind: 'text', text: text || '' }],
+            currentText: '', done: true,
+          })
+        }
+      })()
     }
     window.addEventListener('runspec:trigger_note', onTriggerNote)
     return () => window.removeEventListener('runspec:trigger_note', onTriggerNote)
@@ -471,19 +535,24 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
       const { host, runnable, args, commandPath = [] } = (e as CustomEvent).detail as RerunData
       const cmd = commandPath.length > 0 ? `${runnable} ${commandPath.join(' ')}` : runnable
       const label = `/${cmd} on ${host} (rerun)`
+      const sessionId = await targetSession()
+      if (!sessionId) return
       const id = await bridge.invoke_runnable(host, runnable, args, commandPath)
-      addBlockRef.current({ id, type: 'run', label, startedAt: new Date().toISOString(), lines: [], segments: [], currentText: '', done: false, rerunData: { host, runnable, args, commandPath } })
+      addBlockRef.current({ id, sessionId, type: 'run', label, startedAt: new Date().toISOString(), lines: [], segments: [], currentText: '', done: false, rerunData: { host, runnable, args, commandPath } })
       window.dispatchEvent(new CustomEvent('runspec:in_flight_updated'))
     }
     window.addEventListener('runspec:rerun', onRerun)
     return () => window.removeEventListener('runspec:rerun', onRerun)
   }, [])
 
-  // Ask LLM from History: pendingChat prop triggers a chat send
+  // Ask LLM from History / a card's "Ask the assistant": a deliberate chat
+  // send, so it goes to the current interactive session (switching to it).
   const sendChat = async (message: string) => {
+    const sessionId = await targetSession()
+    if (!sessionId) return
     const outgoing = buildStagedPreambleRef.current() + message
-    const id = await bridge.send_chat(outgoing)
-    addBlockRef.current({ id, type: 'chat', label: message, startedAt: new Date().toISOString(), lines: [], segments: [], currentText: '', done: false })
+    const id = await bridge.send_chat(outgoing, undefined, sessionId)
+    addBlockRef.current({ id, sessionId, type: 'chat', label: message, startedAt: new Date().toISOString(), lines: [], segments: [], currentText: '', done: false })
   }
   const sendChatRef = useRef(sendChat)
   sendChatRef.current = sendChat
@@ -517,16 +586,29 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
     }
   }, [setBlockInContext])
 
+  // Chip status: a parked confirm on one of the session's blocks (or a card
+  // column that needs a human) ⇒ waiting; an in-flight block ⇒ running.
+  const statusOf = useCallback((s: Session) => sessionStatus(s, blocks, pendingConfirmIds), [blocks, pendingConfirmIds])
+  const hasBlocks = useCallback((id: string) => blocks.some(b => b.sessionId === id), [blocks])
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, gap: 8 }}>
       <InFlightStrip inFlight={inFlight} />
       <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 6 }}>
-        {viewing && (
-          <Tag color="blue" style={{ fontSize: 12, marginRight: 'auto', maxWidth: '60%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <SessionStrip
+          sessions={sessions}
+          selectedId={selectedId}
+          statusOf={statusOf}
+          hasBlocks={hasBlocks}
+          onSelect={select}
+          onClose={id => { void close(id) }}
+        />
+        {viewing && viewing.id === selectedId && (
+          <Tag color="blue" style={{ fontSize: 12, maxWidth: '40%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flexShrink: 0 }}>
             Resumed: {viewing.title} — your next message continues it
           </Tag>
         )}
-        {blocks.length > 0 && (
+        {visible.length > 0 && (
           <>
             <Button
               size="small" type="text"
@@ -551,15 +633,21 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
             </Button>
           </Tooltip>
         )}
-        {blocks.length > 0 && (
-          <Tooltip title={ai ? "Clear the transcript and the assistant's memory of this conversation" : 'Clear the run output'}>
-            <Button size="small" icon={<PlusOutlined />} onClick={handleNewChat}>
-              {ai ? 'New chat' : 'Clear'}
+        {ai ? (
+          <Tooltip title="Open another chat — this one keeps running">
+            <Button size="small" icon={<PlusOutlined />} onClick={handleNewChat} style={{ flexShrink: 0 }}>
+              New chat
+            </Button>
+          </Tooltip>
+        ) : visible.length > 0 && (
+          <Tooltip title="Clear the run output">
+            <Button size="small" icon={<PlusOutlined />} onClick={handleClear} style={{ flexShrink: 0 }}>
+              Clear
             </Button>
           </Tooltip>
         )}
       </div>
-      <OutputPanel blocks={blocks} onRerun={handleRerun} onAskLlm={ai ? handleAskLlm : undefined} onToggleContext={ai ? handleToggleContext : undefined} />
+      <OutputPanel blocks={visible} onRerun={handleRerun} onAskLlm={ai ? handleAskLlm : undefined} onToggleContext={ai ? handleToggleContext : undefined} />
 
       <Drawer
         title="Conversations"

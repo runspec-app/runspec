@@ -1,4 +1,4 @@
-import type { BridgeApi, Host, JumpHost, Runnable, HistoryRecord, Schedule, InFlightRecord, TestResult, AnalyticsData, AnalyticsBucket } from './index'
+import type { BridgeApi, ChatSessionInfo, Host, JumpHost, Runnable, HistoryRecord, Schedule, InFlightRecord, TestResult, AnalyticsData, AnalyticsBucket, TriggerCard } from './index'
 
 // 80 days ago — triggers the yellow warning state in dev mode
 let MOCK_KEY_CREATED_AT: string = new Date(Date.now() - 80 * 24 * 60 * 60 * 1000).toISOString()
@@ -620,9 +620,46 @@ let invocationCounter = 0
 // request_id → resolver, for the simulated autonomy-confirm round-trip.
 const _pendingConfirms = new Map<string, (approved: boolean) => void>()
 
-// The chat turn currently streaming, so cancel_chat can stop it (including
-// while its Approve/Deny prompt is up — the case the real bridge handles).
-let _activeChat: { id: string; cancelled: boolean } | null = null
+// Console sessions (see src/sessions.ts). Mirrors the backend registry: every
+// conversation is a session; interactive ones are the send targets, automation
+// ones (trigger / schedule fires) are read-only. In-memory, dev-only.
+const _sessions = new Map<string, ChatSessionInfo>()
+let _sessionCounter = 0
+let _currentSession: string | null = null
+const _dispatch = (event: string, detail: unknown) =>
+  window.dispatchEvent(new CustomEvent(event, { detail }))
+const _emitSession = (info: ChatSessionInfo) => _dispatch('runspec:session', { ...info })
+function _newMockSession(id?: string, label = ''): ChatSessionInfo {
+  const sid = id ?? `sess-${++_sessionCounter}`
+  const info: ChatSessionInfo = {
+    id: sid, kind: 'chat', label, interactive: true, created_at: Date.now() / 1000,
+    state: 'idle', turn: '', turns: 0,
+  }
+  _sessions.set(sid, info)
+  _currentSession = sid
+  _emitSession(info)
+  return info
+}
+function _patchSession(id: string, patch: Partial<ChatSessionInfo>): void {
+  const cur = _sessions.get(id)
+  if (!cur) return
+  const next = { ...cur, ...patch }
+  _sessions.set(id, next)
+  _emitSession(next)
+}
+function _dropSession(id: string): void {
+  if (!_sessions.delete(id)) return
+  _dispatch('runspec:session', { id, state: 'closed' })
+  if (_currentSession === id) {
+    const rest = [..._sessions.values()].filter(s => s.interactive)
+    _currentSession = rest.length ? rest[rest.length - 1].id : null
+  }
+}
+
+// Chat turns currently streaming, keyed by chat id, so cancel_chat can stop one
+// (including while its Approve/Deny prompt is up — the case the real bridge
+// handles). Several run concurrently, one per session.
+const _activeChats = new Map<string, { id: string; session: string; cancelled: boolean }>()
 
 export const mockApi: BridgeApi = {
   get_hosts: async () => MOCK_ACTIVE_PROFILE
@@ -1253,8 +1290,33 @@ export const mockApi: BridgeApi = {
     if (resolve) { _pendingConfirms.delete(requestId); resolve(approved) }
   },
 
-  clear_chat: async () => {},
-  compact_chat: async () => ({ ok: true, compacted: 0 }),
+  // AI-off "Clear": the session is replaced by a fresh one (the old turn, if
+  // any, is stopped). "New chat" uses new_chat_session instead.
+  clear_chat: async (sessionId?: string) => {
+    const replaced = sessionId ?? _currentSession ?? undefined
+    if (replaced) {
+      for (const c of _activeChats.values()) if (c.session === replaced) c.cancelled = true
+      _dropSession(replaced)
+    }
+    const session = _newMockSession()
+    _dispatch('runspec:chat_cleared', { session: session.id, replaced })
+    return { ok: true, session, replaced }
+  },
+  compact_chat: async (_sessionId?: string) => ({ ok: true, compacted: 0 }),
+  new_chat_session: async () => _newMockSession(),
+  list_chat_sessions: async () => [..._sessions.values()].sort((a, b) => a.created_at - b.created_at),
+  select_chat_session: async (id: string) => {
+    const session = _sessions.get(id)
+    if (!session) return { ok: false, error: `No such session: ${id}` }
+    if (!session.interactive) return { ok: false, error: 'Automation sessions are read-only' }
+    _currentSession = id
+    return { ok: true, session }
+  },
+  close_chat_session: async (id: string) => {
+    for (const c of _activeChats.values()) if (c.session === id) c.cancelled = true
+    _dropSession(id)
+    return { ok: true }
+  },
   set_turn_included: async (_chatId: string, included: boolean) => ({ ok: true, included }),
   list_conversations: async () => [
     { id: 'mock-conv-1', title: 'Why did the nightly job fail?', created: '2026-06-27T20:00:00Z', updated: '2026-06-27T20:05:00Z', turn_count: 3, preview: 'Three jobs errored on host db1 — all OOM kills.' },
@@ -1267,7 +1329,14 @@ export const mockApi: BridgeApi = {
       { user: 'can you restart them?', assistant: 'Restarted all three; they are healthy now.', tools: [] },
     ],
   }),
-  resume_conversation: async (_id: string) => ({ ok: true, turns: 2, kept: 2, compacted: false, summarized: false, exact: false }),
+  // A resumed conversation becomes a live session whose id == the conversation
+  // id; resuming one that's already open just reports `already_open`.
+  resume_conversation: async (id: string) => {
+    const already_open = _sessions.has(id)
+    if (!already_open) _newMockSession(id, id === 'mock-conv-2' ? 'Draft the release notes' : 'Why did the nightly job fail?')
+    else _currentSession = id
+    return { ok: true, turns: 2, kept: 2, compacted: false, summarized: false, exact: false, session: id, already_open }
+  },
   delete_conversation: async (_id: string) => {},
   rename_conversation: async (_id: string, _title: string) => {},
   run_improve_report: async (_windowDays?: number, comment?: string) => ({
@@ -1338,7 +1407,7 @@ export const mockApi: BridgeApi = {
   save_runbooks: async () => ({ ok: true, count: 0 }),
   save_runbook_entry: async () => ({ ok: true, id: '' }),
   delete_runbook: async () => ({ ok: true, removed: true }),
-  run_runbook: async (runbookId, _values, _extra) => ({ chat_id: `mock-runbook-${runbookId}`, message: `$${runbookId}` }),
+  run_runbook: async (runbookId, _values, _extra, _sessionId) => ({ chat_id: `mock-runbook-${runbookId}`, message: `$${runbookId}` }),
   get_saved_runs: async () => [
     {
       id: 'restart-web', title: 'Restart web tier', description: 'Rolling restart of nginx across the web hosts',
@@ -1358,20 +1427,41 @@ export const mockApi: BridgeApi = {
   save_saved_runs: async () => ({ ok: true, count: 0 }),
   run_saved_run: async (id, _values) => ({ id, runnable: 'mock', runs: [{ host: 'local', inv_id: `mock-saved-${id}` }] }),
   cancel_chat: async (chatId: string) => {
-    if (_activeChat && (!chatId || _activeChat.id === chatId)) {
-      _activeChat.cancelled = true
+    const targets = chatId ? [_activeChats.get(chatId)].filter(Boolean) : [..._activeChats.values()]
+    for (const active of targets) {
+      if (!active) continue
+      active.cancelled = true
       // Wake a pending confirm prompt for this turn, mirroring the real bridge.
-      const resolve = _pendingConfirms.get(`mock-${_activeChat.id}`)
-      if (resolve) { _pendingConfirms.delete(`mock-${_activeChat.id}`); resolve(false) }
+      const resolve = _pendingConfirms.get(`mock-${active.id}`)
+      if (resolve) { _pendingConfirms.delete(`mock-${active.id}`); resolve(false) }
     }
   },
 
-  send_chat: async (message, _invocationId) => {
+  send_chat: async (message, _invocationId, sessionId) => {
     const id = `chat-${++invocationCounter}`
-    _activeChat = { id, cancelled: false }
-    const dispatch = (event: string, detail: unknown) =>
-      window.dispatchEvent(new CustomEvent(event, { detail }))
+    const dispatch = _dispatch
     const delay = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
+    const session = sessionId ?? _currentSession ?? _newMockSession().id
+    const sinfo = _sessions.get(session)
+    // Sending to an automation (read-only) session: an error token + a failed
+    // run_end under the chat id, as the real bridge does.
+    if (!sinfo || !sinfo.interactive) {
+      ;(async () => {
+        await delay(10)
+        dispatch('runspec:token', { id, token: `⚠ Error: session ${session} is not an interactive chat.` })
+        dispatch('runspec:run_end', { id, session, exit_code: 1, duration_ms: 1, stopped: false })
+      })()
+      return id
+    }
+    const active = { id, session, cancelled: false }
+    _activeChats.set(id, active)
+    _patchSession(session, { state: 'running', turn: id, label: sinfo.label || message.slice(0, 40) })
+    const finish = (exit_code: number, duration_ms: number, stopped = false) => {
+      dispatch('runspec:run_end', { id, session, exit_code, duration_ms, stopped })
+      _activeChats.delete(id)
+      const cur = _sessions.get(session)
+      if (cur) _patchSession(session, { state: 'idle', turn: '', turns: cur.turns + 1 })
+    }
 
     ;(async () => {
       await delay(10)  // yield so addBlock fires before first token
@@ -1398,14 +1488,13 @@ export const mockApi: BridgeApi = {
       })
 
       // Stop pressed while the confirm dialog was up — refuse and halt.
-      if (_activeChat?.cancelled) {
+      if (active.cancelled) {
         dispatch('runspec:tool_end', {
           id, tool_name,
           output: "⏹ 'flush-dns' was not run — you stopped the assistant before approving it.",
         })
         dispatch('runspec:token', { id, token: '\n⏹ Stopped.' })
-        dispatch('runspec:run_end', { id, exit_code: 0, duration_ms: 800 })
-        _activeChat = null
+        finish(0, 800, true)
         return
       }
 
@@ -1424,12 +1513,19 @@ export const mockApi: BridgeApi = {
         await delay(14)
       }
 
-      dispatch('runspec:run_end', { id, exit_code: approved ? 0 : 1, duration_ms: 1500 })
+      finish(approved ? 0 : 1, 1500)
       dispatch('runspec:chat_usage', {
-        id, input_tokens: 1247, output_tokens: 342,
+        id, session, input_tokens: 1247, output_tokens: 342,
         cache_read_tokens: 8912, cache_creation_tokens: 0,
       })
-      _activeChat = null
+      dispatch('runspec:context_estimate', {
+        session, model: 'mock-model', window: 200000, total_tokens: 10501, cache_hit_pct: 84,
+        buckets: [
+          { key: 'system', tokens: 1200, est: true }, { key: 'tools', tokens: 6400, est: true },
+          { key: 'history', tokens: 2901, est: true },
+        ],
+        tool_mode: 'search', history_msgs: 2 * (_sessions.get(session)?.turns ?? 1),
+      })
     })()
 
     return id
@@ -1685,3 +1781,39 @@ let MOCK_TEAMS: { slug: string; name: string }[] = [
 ]
 const emitMockTeams = () =>
   window.dispatchEvent(new CustomEvent('runspec:teams', { detail: { teams: MOCK_TEAMS } }))
+
+// ── dev-only demo: a trigger fires a few seconds after load ───────────────────
+// Exercises the Console's session chip row in `npm run dev`: a trigger card
+// (triggered → running → done) streams a few tokens under its card id (== its
+// session id == its chat id) alongside whatever chat is in flight, so a second
+// chip appears, shows a spinner, gains an unread dot when another session is
+// selected, and can be dismissed once done. Never runs under vitest.
+if (import.meta.env.DEV && !import.meta.env.TEST && typeof window !== 'undefined') {
+  const delay = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
+  const demoCard = (over: Partial<TriggerCard>): TriggerCard => ({
+    card_id: 'demo-live', trigger: 'vip-outage-triage', source: 'outlook', event_type: 'new_mail',
+    summary: 'Outage on web02 — health check failing', column: 'triggered',
+    detail: { mode: 'agent' }, created_at: Date.now() / 1000, ...over,
+  })
+  ;(async () => {
+    await delay(4000)
+    const id = 'demo-live'
+    _dispatch('runspec:trigger_card', demoCard({}))
+    await delay(600)
+    _dispatch('runspec:trigger_card', demoCard({ column: 'running' }))
+    const info: ChatSessionInfo = {
+      id, kind: 'trigger', label: 'Trigger vip-outage-triage · new_mail', interactive: false,
+      created_at: Date.now() / 1000, state: 'running', turn: id, turns: 0,
+    }
+    _sessions.set(id, info)
+    _emitSession(info)
+    for (const ch of 'Checking web02… health endpoint is returning 503. Restart queued for review.') {
+      _dispatch('runspec:token', { id, token: ch })
+      await delay(25)
+    }
+    _dispatch('runspec:run_end', { id, session: id, exit_code: 0, duration_ms: 2200, stopped: false })
+    _dispatch('runspec:chat_usage', { id, session: id, input_tokens: 980, output_tokens: 60, cache_read_tokens: 0, cache_creation_tokens: 0 })
+    _dispatch('runspec:trigger_card', demoCard({ column: 'done', detail: { mode: 'agent', result: 'Restart queued for review.' } }))
+    _patchSession(id, { state: 'done', turn: '', turns: 1 })
+  })()
+}

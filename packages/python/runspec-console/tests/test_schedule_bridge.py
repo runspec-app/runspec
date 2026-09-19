@@ -21,6 +21,8 @@ import types
 import pytest
 
 from runspec_console.bridge import Bridge
+from runspec_console.bridge_turn import TurnResult
+from tests.session_stub import install_sessions
 from runspec_console.bridge_utils import _write_schedules
 
 
@@ -48,6 +50,7 @@ def _stub(tmp_path, monkeypatch, *, engine=None):
         "_record_schedule_fire",
         "_on_schedule_event",
         "_on_schedule_card",
+        "_sync_card_session",
         "get_schedule_board",
         "get_schedule_events",
     ):
@@ -55,6 +58,7 @@ def _stub(tmp_path, monkeypatch, *, engine=None):
     ns.restart_triggers = lambda: None
     ns._trigger_engine = engine
     ns._lock = threading.Lock()
+    install_sessions(ns)  # every schedule card opens a session
     ns._schedule_cards = {}
     ns._schedule_events = []
     ns.dispatched = []
@@ -535,16 +539,20 @@ def _agent_turn_stub():
     ns._get_adapter = get_adapter
     ns._lock = threading.Lock()
     ns._chat_cancels = {}
-    ns._workspace_by_chat = {}
+    install_sessions(ns)
+    ns._runnables_to_tools = lambda *a, **k: []
+    ns._filter_headless_tools = Bridge._filter_headless_tools  # staticmethod
     ns._set_run_origin = lambda *a, **k: None
     ns._clear_run_origin = lambda *a, **k: None
     ns.captured = {}
 
-    async def fake_turn(chat_id, message, adapter, **kwargs):
-        ns.captured[chat_id] = ns._workspace_by_chat.get(chat_id)
-        return "ok"
+    async def fake_turn(spec):
+        # The turn runs under the card's session — its workspace id is what
+        # the sweep keys on.
+        ns.captured[spec.chat_id] = spec.session.workspace_id
+        return TurnResult(chat_id=spec.chat_id, summary="ok")
 
-    ns._run_isolated_agent_turn = fake_turn
+    ns._run_agent_turn = fake_turn
     return ns
 
 

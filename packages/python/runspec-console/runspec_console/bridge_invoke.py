@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
-import time
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -24,7 +23,6 @@ from . import observability
 from .config import (
     write_docs_dir,
 )
-from .trace import jsonsafe_messages
 
 from .bridge_const import (
     logger,
@@ -34,15 +32,11 @@ from .bridge_const import (
     _UI_OUTPUT_LINE_CAP,
     _UI_OUTPUT_BYTE_CAP,
 )
-from .adapters.base import (
-    describe_exception,
-    is_output_truncation,
-    is_transient_model_error,
-    retry_delay,
-)
+from .bridge_turn import TurnSpec
 from .bridge_utils import (
     _iso_now,
 )
+from .session import ChatSession, new_interactive
 
 from typing import TYPE_CHECKING
 
@@ -400,21 +394,46 @@ class InvokeMixin:
 
     # ── chat ──────────────────────────────────────────────────────────────────
 
-    def send_chat(self, message: str, invocation_id: str | None = None) -> str:
-        return self._spawn_chat_turn(message)
+    def send_chat(
+        self, message: str, invocation_id: str | None = None, session_id: str = ""
+    ) -> str:
+        """Send a message to an interactive chat session (the current one when
+        ``session_id`` is empty) and return the turn's chat id. Sessions run
+        concurrently — a turn in flight on another session is untouched."""
+        return self._spawn_chat_turn(message, session_id=session_id)
 
-    def _spawn_chat_turn(self, message: str, runbook: str = "") -> str:
+    def _spawn_chat_turn(
+        self, message: str, runbook: str = "", session_id: str = ""
+    ) -> str:
         """Start an agentic chat turn on a worker thread; return its chat id.
 
         ``runbook`` (non-empty only on the run_runbook path) tags the turn's run
         provenance so every runnable the agent invokes during it is attributed to
-        the runbook in History/Analytics — direct chat leaves it unset (no origin)."""
+        the runbook in History/Analytics — direct chat leaves it unset (no origin).
+        ``session_id`` picks the interactive session (default: the current one);
+        an automation session is read-only and refused with a visible error."""
         chat_id = uuid.uuid4().hex[:12]
+        cancel = threading.Event()
         with self._lock:
-            self._chat_cancels[chat_id] = threading.Event()
+            self._chat_cancels[chat_id] = cancel
+        session = self._resolve_chat_session(session_id)
 
         def run() -> None:
             try:
+                if session is None:
+                    self._dispatch(
+                        "runspec:token",
+                        {
+                            "id": chat_id,
+                            "token": "⚠ That session is read-only (an automation "
+                            "run) — switch to a chat session to talk.",
+                        },
+                    )
+                    self._dispatch(
+                        "runspec:run_end",
+                        {"id": chat_id, "exit_code": 1, "duration_ms": 0},
+                    )
+                    return
                 try:
                     # Fold the current local date, a lean presence caveat and the
                     # pinned-memory header into this turn's system prompt via the
@@ -513,11 +532,19 @@ class InvokeMixin:
                         chat_id, trigger="", agent=True, runbook=runbook
                     )
                 try:
-                    asyncio.run(
-                        self._agentic_chat_turn(
-                            chat_id, message, adapter, system_parts, index_text
-                        )
+                    spec = TurnSpec(
+                        chat_id=chat_id,
+                        session=session,
+                        message=message,
+                        adapter=adapter,
+                        tools=self._runnables_to_tools(),
+                        kind="chat",
+                        interactive=True,
+                        cancel=cancel,
+                        system_parts=system_parts,
+                        index_text=index_text,
                     )
+                    asyncio.run(self._run_agent_turn(spec))
                 finally:
                     if runbook:
                         self._clear_run_origin(chat_id)
@@ -684,11 +711,13 @@ class InvokeMixin:
         runbook_id: str,
         values: dict[str, Any] | None = None,
         extra_instructions: str = "",
+        session_id: str = "",
     ) -> dict[str, Any]:
         """Render a runbook's body with the operator's form ``values`` (validated against
         its args), append any free-text ``extra_instructions``, and start a chat turn
-        tagged with the runbook. Returns ``{chat_id, message}`` — the rendered text the UI
-        shows as the chat block — or ``{error}`` if the runbook is unknown / values invalid."""
+        tagged with the runbook (in ``session_id``, default the current chat session).
+        Returns ``{chat_id, message}`` — the rendered text the UI shows as the chat
+        block — or ``{error}`` if the runbook is unknown / values invalid."""
         from . import memory, runbookargs
 
         if not getattr(self, "_ai_enabled", True):
@@ -706,7 +735,9 @@ class InvokeMixin:
         message = f"{body}\n\n{extra}".strip() if extra else body.strip()
         if not message:
             return {"error": "This runbook has an empty body."}
-        chat_id = self._spawn_chat_turn(message, runbook=str(runbook.get("id") or ""))
+        chat_id = self._spawn_chat_turn(
+            message, runbook=str(runbook.get("id") or ""), session_id=session_id
+        )
         return {"chat_id": chat_id, "message": message}
 
     # ── runbook docs (deterministic wiki from runbooks + hosts) ────────────────────
@@ -791,53 +822,74 @@ class InvokeMixin:
             holder["cancelled"] = True
             confirm_event.set()
 
-    def clear_chat(self) -> None:
-        """Start a fresh conversation — drop the model's memory of prior turns.
+    def clear_chat(self, session_id: str = "") -> dict[str, Any]:
+        """Reset a chat session in place: the session (the current one, or
+        ``session_id``) is replaced by a fresh one under the same chip slot —
+        the model's memory of prior turns is gone and the next turn opens a new
+        conversation file. A turn still in flight on it is stopped first (the
+        operator asked for a clean slate), never waited on.
 
-        Blocks on the conversation lock so it can't run mid-turn (a turn in
-        flight finishes against its history, then the next turn starts empty).
-
-        Also drops the active saved-conversation id, so the next turn opens a
-        fresh conversation file rather than appending to the one just left."""
-        with self._chat_lock:
-            self._chat_history = []
-            self._history_turn_ids = []
-            self._excluded_turns = set()
-            self._conversation_id = ""
+        The Console's "New chat" no longer calls this — it opens an *additional*
+        session (``new_chat_session``) and leaves the current one running; this
+        remains the AI-off "Clear" and the explicit reset."""
+        old = self._resolve_chat_session(session_id)
+        if old is None:
+            return {"ok": False, "error": "unknown or read-only session"}
+        if old.current_turn:
+            self.cancel_chat(old.current_turn)
+        fresh = new_interactive()
+        with self._lock:
+            self._sessions.pop(old.id, None)
+            self._sessions[fresh.id] = fresh
+            if self._chat_session_id == old.id:
+                self._chat_session_id = fresh.id
+            old.state = "closed"
+            old.current_turn = ""
+        self._emit_session(old)
+        self._emit_session(fresh)
         # Reset the context-window gauge — the new conversation starts empty.
-        self._dispatch("runspec:chat_cleared", {})
+        self._dispatch(
+            "runspec:chat_cleared", {"session": fresh.id, "replaced": old.id}
+        )
+        return {"ok": True, "session": fresh.to_dict(), "replaced": old.id}
 
-    def compact_chat(self) -> dict[str, Any]:
+    def compact_chat(self, session_id: str = "") -> dict[str, Any]:
         """Condense the *live* rolling chat history in place: drop the older
         prefix, fold a note summarising it into the first kept user message, and
         keep the recent tail verbatim. Same safe transformation as resume-time
         compaction (``resume_conversation``), but on the in-session history — for
         shrinking a long chat's context without losing the thread or starting
-        over. Holds the conversation lock, so it can't run mid-turn.
+        over. Refuses (rather than blocks) while a turn is in flight on that
+        session.
 
         The cut lands on a plain user message so tool_use/tool_result pairs and
         user/assistant alternation stay intact (the API requires both). Returns
         ``{ok, compacted}`` — ``compacted`` is the number of messages dropped, 0
         when there's nothing to safely compact."""
+        session = self._resolve_chat_session(session_id)
+        if session is None:
+            return {"ok": False, "compacted": 0, "error": "unknown session"}
         cfg = config_mod.read_chat_history()
         keep_recent = max(0, int(cfg.get("resume_keep_recent", 20) or 0))
         dropped_n = 0
         dropped_turns: set[str] = set()
-        with self._chat_lock:
+        if not session.lock.acquire(blocking=False):
+            return {"ok": False, "compacted": 0, "error": "a turn is in flight"}
+        try:
             # Compaction is the commit point for the current in/out state: turns
             # the operator excluded were already out of context, so physically
             # drop them here rather than fold them into the summary note (which
             # would re-inject removed content). Their cards get retired below.
-            if self._excluded_turns:
-                excluded = set(self._excluded_turns)
-                if self._drop_turns(excluded):
+            if session.excluded:
+                excluded = set(session.excluded)
+                if session.drop_turns(excluded):
                     dropped_turns |= excluded
-                self._excluded_turns = set()
-            hist = self._chat_history
-            tags = self._history_turn_ids
+                session.excluded.clear()
+            hist = session.history
+            tags = session.turn_ids
             # Need a meaningful prefix to drop beyond the kept tail.
             if len(hist) <= keep_recent + 2:
-                return self._finish_compact(dropped_turns)
+                return self._finish_compact(dropped_turns, session=session)
             cut = len(hist) - keep_recent
             while cut < len(hist) and not (
                 hist[cut].get("role") == "user"
@@ -846,18 +898,22 @@ class InvokeMixin:
                 cut += 1
             if cut <= 0 or cut >= len(hist):
                 # no clean boundary — leave it (excluded drops above still count)
-                return self._finish_compact(dropped_turns)
+                return self._finish_compact(dropped_turns, session=session)
             dropped, kept = hist[:cut], hist[cut:]
             note = self._compact_note(dropped, cfg)
             kept[0]["content"] = note + "\n\n" + kept[0]["content"]
-            self._chat_history = kept
-            self._history_turn_ids = tags[cut:]
             dropped_turns |= {t for t in tags[:cut] if t}
+            session.replace_history(kept, tags[cut:])
             dropped_n = len(dropped)
-        return self._finish_compact(dropped_turns, dropped_n)
+        finally:
+            session.lock.release()
+        return self._finish_compact(dropped_turns, dropped_n, session=session)
 
     def _finish_compact(
-        self, dropped_turns: set[str], dropped_n: int = 0
+        self,
+        dropped_turns: set[str],
+        dropped_n: int = 0,
+        session: ChatSession | None = None,
     ) -> dict[str, Any]:
         """Announce a compaction (or excluded-turn drop) and return its result.
         ``dropped_turns`` are chat_ids whose messages are now gone — the frontend
@@ -868,7 +924,11 @@ class InvokeMixin:
         if dropped_n or dropped_turns:
             self._dispatch(
                 "runspec:chat_compacted",
-                {"dropped": dropped_n, "dropped_turns": sorted(dropped_turns)},
+                {
+                    "dropped": dropped_n,
+                    "dropped_turns": sorted(dropped_turns),
+                    "session": session.id if session is not None else "",
+                },
             )
         return {"ok": True, "compacted": dropped_n}
 
@@ -907,25 +967,24 @@ class InvokeMixin:
 
     def _persist_conversation_turn(
         self,
+        session: ChatSession,
         user: str,
         assistant: str,
         tools: list[dict[str, Any]],
         usage: dict[str, int],
         model: str,
     ) -> None:
-        """Append a completed chat exchange to the active saved conversation.
+        """Append a completed chat exchange to the session's saved conversation
+        (its id — an interactive session *is* its conversation).
 
         Best-effort and gated on ``[chat_history] enabled``; a failure here never
-        breaks the chat turn. Caller holds ``self._chat_lock`` (owns
-        ``_conversation_id``). Prunes to the retention cap after writing."""
+        breaks the chat turn. Prunes to the retention cap after writing."""
         try:
             cfg = config_mod.read_chat_history()
-            if not cfg.get("enabled", True):
+            if not cfg.get("enabled", True) or not session.conversation_id:
                 return
             from . import conversations as conv
 
-            if not self._conversation_id:
-                self._conversation_id = conv.new_id()
             turn = {
                 "user": user,
                 "assistant": assistant,
@@ -936,9 +995,14 @@ class InvokeMixin:
             }
             directory = config_mod.conversations_dir()
             provider = str(self.get_config().get("llm", {}).get("provider", ""))
-            conv.append_turn(
-                directory, self._conversation_id, turn, provider=provider, model=model
-            )
+            with self._conv_store_lock:
+                conv.append_turn(
+                    directory,
+                    session.conversation_id,
+                    turn,
+                    provider=provider,
+                    model=model,
+                )
             conv.prune(
                 directory,
                 max_conversations=int(cfg.get("max_conversations", 0) or 0),
@@ -959,17 +1023,18 @@ class InvokeMixin:
         duration_ms: int,
         operator: str,
     ) -> None:
-        """Append an operator-initiated manual runnable run to the active saved
-        conversation so the operator can review its result on reopen.
+        """Append an operator-initiated manual runnable run to the current chat
+        session's saved conversation so the operator can review its result on
+        reopen.
 
         This is an **operator-only** record: it renders in the transcript but is
         **never replayed to the agent** (``resume_conversation`` rebuilds the model
-        history from :func:`conversations.chat_turns` only). Mints a conversation
+        history from :func:`conversations.chat_turns` only). Opens a chat session
         when none is active (so a run with no prior chat is still captured). This
-        runs off the invoke worker thread — unlike ``_persist_conversation_turn``
-        the caller does *not* hold ``self._chat_lock``, so take it here to serialise
-        against concurrent chat-turn writes (the store is read-modify-write). Gated
-        on ``[chat_history] enabled``; best-effort."""
+        runs off the invoke worker thread, so the store write is serialised
+        against a concurrent turn's persist by ``_conv_store_lock`` (read-modify-
+        write) — never by the session lock a running turn holds. Gated on
+        ``[chat_history] enabled``; best-effort."""
         try:
             cfg = config_mod.read_chat_history()
             if not cfg.get("enabled", True):
@@ -988,10 +1053,9 @@ class InvokeMixin:
                 "operator": operator,
                 "ts": _iso_now(),
             }
-            with self._chat_lock:
-                if not self._conversation_id:
-                    self._conversation_id = conv.new_id()
-                conv.append_turn(directory, self._conversation_id, record)
+            session = self._chat_session()
+            with self._conv_store_lock:
+                conv.append_turn(directory, session.conversation_id, record)
             conv.prune(
                 directory,
                 max_conversations=int(cfg.get("max_conversations", 0) or 0),
@@ -1150,16 +1214,36 @@ class InvokeMixin:
             rebuilt = self._flatten_turns(model_turns)
             kept = len(model_turns)
 
-        with self._chat_lock:
-            self._chat_history = rebuilt
-            # Rebuilt from a saved transcript — no live turn boundaries survive.
-            # Tag every resumed message with the neutral "" sentinel (never a real
-            # chat_id, so never in _excluded_turns → always visible); new turns get
-            # their own chat_id via _sync_history_tags. Clear prior exclusions.
-            self._history_turn_ids = [""] * len(rebuilt)
-            self._excluded_turns = set()
-            self._conversation_id = str(conversation_id)
-            self._trim_chat_history()
+        cid = str(conversation_id)
+        with self._lock:
+            existing = self._sessions.get(cid)
+        if existing is not None and existing.interactive:
+            # Already open as a session (its id is the conversation id) — just
+            # make it the send target; its live history is the truth, so nothing
+            # is rebuilt and the transcript on screen is not replaced.
+            with self._lock:
+                self._chat_session_id = cid
+            return {
+                "ok": True,
+                "turns": len(turns),
+                "kept": len(existing.history),
+                "compacted": False,
+                "summarized": False,
+                "exact": False,
+                "session": cid,
+                "already_open": True,
+            }
+        session = new_interactive(cid, label=rec.get("title") or "")
+        # Rebuilt from a saved transcript — no live turn boundaries survive.
+        # Every resumed message carries the neutral "" tag (never a real chat_id,
+        # so never excluded → always visible); new turns get their own chat_id
+        # via sync_tags.
+        session.replace_history(rebuilt)
+        session.trim()
+        with self._lock:
+            self._sessions[session.id] = session
+            self._chat_session_id = session.id
+        self._emit_session(session)
         return {
             "ok": True,
             "turns": len(turns),
@@ -1167,6 +1251,7 @@ class InvokeMixin:
             "compacted": bool(middle),
             "summarized": summarized,
             "exact": False,
+            "session": session.id,
         }
 
     def delete_conversation(self, conversation_id: str) -> None:
@@ -1183,664 +1268,21 @@ class InvokeMixin:
 
         conv.rename(config_mod.conversations_dir(), str(conversation_id), str(title))
 
-    def _trim_chat_history(self, max_messages: int = 60) -> None:
-        """Bound the rolling conversation so a long-lived session doesn't grow
-        context without limit. Trims oldest messages, then drops any leading
-        assistant / tool-result turn so the kept history still starts on a plain
-        user message — the API requires that, and it keeps tool_use/tool_result
-        pairs intact. The aligned turn-id tags are trimmed in lockstep so
-        _visible_history() stays correct. Caller must hold self._chat_lock."""
-        hist = self._chat_history
-        if len(hist) <= max_messages:
-            return
-        drop = len(hist) - max_messages
-        del hist[:drop]
-        while hist and not (
-            hist[0].get("role") == "user" and isinstance(hist[0].get("content"), str)
-        ):
-            hist.pop(0)
-            drop += 1
-        # Mirror the exact front-trim on the aligned turn-id tags.
-        del self._history_turn_ids[:drop]
-
-    def _sync_history_tags(self, chat_id: str) -> None:
-        """Tag every message appended to _chat_history during the current turn
-        with chat_id — all messages a turn appends belong to it. Pads the aligned
-        _history_turn_ids list up to the history length (earlier messages keep
-        their existing tags); truncates if it somehow ran long (e.g. after a
-        resume rebuilt the history). Caller holds self._chat_lock."""
-        tags = self._history_turn_ids
-        hist = self._chat_history
-        if len(tags) > len(hist):
-            del tags[len(hist) :]
-        while len(tags) < len(hist):
-            tags.append(chat_id)
-
-    def _visible_history(self) -> list[dict[str, Any]]:
-        """The subset of _chat_history the model actually sees — every message
-        except those belonging to turns the operator toggled OUT of context (the
-        Console card "in context" checkbox). Excluding never mutates the stored
-        history (that keeps the toggle reversible); this filtered copy is rebuilt
-        each iteration.
-
-        A turn's messages are contiguous, so dropping a whole turn by tag keeps
-        tool_use/tool_result pairs intact; we then trim any leading non-user /
-        tool-result message so the result still opens on a plain user string (the
-        API rejects a leading assistant or tool turn). Falls back to the full
-        history if filtering would leave nothing. Caller holds self._chat_lock."""
-        if not self._excluded_turns:
-            return self._chat_history
-        tags = self._history_turn_ids
-        excluded = self._excluded_turns
-        kept = [
-            msg
-            for i, msg in enumerate(self._chat_history)
-            if (tags[i] if i < len(tags) else "") not in excluded
-        ]
-        while kept and not (
-            kept[0].get("role") == "user" and isinstance(kept[0].get("content"), str)
-        ):
-            kept.pop(0)
-        return kept or self._chat_history
-
-    def _drop_turns(self, turn_ids: set[str]) -> int:
-        """Physically remove every message belonging to the given turns from
-        _chat_history (and its aligned tags), returning the count removed. Unlike
-        _visible_history()'s non-destructive filter, this is permanent — used by
-        compaction to bake in the current exclude decision. Caller holds the
-        lock."""
-        if not turn_ids:
-            return 0
-        tags = self._history_turn_ids
-        keep_hist: list[dict[str, Any]] = []
-        keep_tags: list[str] = []
-        removed = 0
-        for i, msg in enumerate(self._chat_history):
-            tag = tags[i] if i < len(tags) else ""
-            if tag in turn_ids:
-                removed += 1
-                continue
-            keep_hist.append(msg)
-            keep_tags.append(tag)
-        while keep_hist and not (
-            keep_hist[0].get("role") == "user"
-            and isinstance(keep_hist[0].get("content"), str)
-        ):
-            keep_hist.pop(0)
-            keep_tags.pop(0)
-        self._chat_history = keep_hist
-        self._history_turn_ids = keep_tags
-        return removed
-
     def set_turn_included(self, chat_id: str, included: bool) -> dict[str, Any]:
         """Toggle whether a completed chat exchange stays in the model's context
         (the Console card "in context" checkbox). Non-destructive and reversible:
-        the messages remain in _chat_history; only _visible_history()'s filter
+        the messages remain in the session history; only its visible() filter
         changes, so re-including restores the exchange on the next turn. Returns
         ``{ok, included}`` — the resulting in/out state."""
         cid = str(chat_id or "")
         if not cid:
             return {"ok": False, "included": True}
-        with self._chat_lock:
-            if included:
-                self._excluded_turns.discard(cid)
-            else:
-                self._excluded_turns.add(cid)
-            included_now = cid not in self._excluded_turns
+        session = self._session_for_turn(cid)
+        if session is None or not session.interactive:
+            return {"ok": False, "included": True}
+        with self._lock:
+            included_now = session.set_included(cid, included)
         return {"ok": True, "included": included_now}
-
-    async def _agentic_chat_turn(
-        self,
-        chat_id: str,
-        message: str,
-        adapter: Any,
-        system_parts: dict[str, int] | None = None,
-        index_text: str = "",
-    ) -> None:
-        start = time.monotonic()
-        tools = self._runnables_to_tools()
-        # ``index_text`` is the search-mode always-on menu (runnables + deferred
-        # built-ins). It is composed into the adapter's system prompt by the
-        # caller (_spawn_chat_turn → system_override), NOT folded into the
-        # messages here — so a gateway caching only the system block caches it.
-        # It reaches this loop only to size the "catalog" context bucket + the
-        # overflow figure below; empty outside search mode.
-        usage_total = {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0}
-        # For the context indicator: the *last* iteration's prompt size (not the
-        # cross-iteration sum usage_total accumulates) is the current window fill,
-        # plus the char size of the history actually sent that iteration.
-        last_usage = {"input": 0, "cache_read": 0, "cache_creation": 0}
-        last_history_chars = 0
-        last_history_msgs = 0
-        cancel = self._chat_cancels.get(chat_id) or threading.Event()
-        stopped = False
-        # Provider-agnostic transcript of this turn, accumulated across iterations
-        # for the saved-conversation store (chat history). Separate from the
-        # adapter-native `history` above, which keeps raw SDK objects that don't
-        # serialise cleanly.
-        turn_assistant_parts: list[str] = []
-        turn_tools: list[dict[str, Any]] = []
-        # How many times this turn has auto-continued after an output-ceiling
-        # cut-off (stop_reason == "max_tokens"). Bounded by _max_continuations().
-        continuations = 0
-        # How many tool-execution rounds this turn has run. Bounded independently
-        # by _max_tool_rounds() — continuations (above) do NOT draw from it, so a
-        # long cut-off reply can never starve tool use. Set when the backstop is
-        # hit, so the turn ends with a visible, resumable marker instead of silence.
-        tool_rounds = 0
-        hit_iteration_cap = False
-        # Transient model-call retries used so far this turn (a read/connect
-        # timeout, a dropped connection, a 429/5xx), bounded by
-        # _max_network_retries(); reset after any successful stream so each distinct
-        # model call gets its own budget. And self-recovery passes used so far
-        # (bounded by _max_self_recoveries()) — the catchall that hands a still-
-        # failing turn back to the agent to analyse and resume.
-        network_retries = 0
-        self_recoveries = 0
-
-        # OpenTelemetry root span for the whole turn (no-op unless [telemetry] is
-        # on). Started manually (not a `with`) so the large loop body needn't be
-        # re-indented; it stays the current span for this task, so the per-
-        # iteration LLM span and each tool span parent to it. Closed in `finally`.
-        model_name = getattr(adapter, "model", "") or ""
-        provider_name = str(
-            (config_mod.read_config().get("llm") or {}).get("provider") or ""
-        )
-        turn_span = observability.begin_turn(
-            "chat",
-            chat_id,
-            model=model_name,
-            provenance=getattr(self, "_run_origin", {}).get(chat_id),
-        )
-
-        # Hold the conversation lock for the whole turn: it both serialises
-        # concurrent sends and is the single owner of self._chat_history.
-        with self._chat_lock:
-            history = self._chat_history
-            history.append({"role": "user", "content": message})
-
-            while True:
-                # Tool rounds are the bounded budget; continuations are separate
-                # (below). Hitting this backstop stops the turn with a visible,
-                # resumable marker rather than the old silent fall-through.
-                if tool_rounds >= self._max_tool_rounds():
-                    hit_iteration_cap = True
-                    break
-                if cancel.is_set():
-                    stopped = True
-                    break
-                response: Any = None
-                assistant_text = ""  # this iteration's streamed assistant text
-                # Iteration-scoped outcome flags for the streaming call: a transient
-                # failure sets retry_iteration (re-attempt this same call); a durable
-                # or budget-exhausted failure sets errored + error_detail (recover or
-                # end). Handled just after the llm_span block below.
-                retry_iteration = False
-                errored = False
-                error_detail = ""
-                # Tag anything appended since the last iteration (the user message,
-                # a tool turn, a continuation) with this chat_id, then build the
-                # model's view from the history minus any excluded turns (the
-                # Console "in context" toggle). Excluding never mutates the stored
-                # history — _visible_history() just filters — so it's reversible.
-                self._sync_history_tags(chat_id)
-                visible = self._visible_history()
-                # The message list actually sent this iteration — the visible
-                # history verbatim. The catalogue index no longer rides here (it
-                # is in the system prompt now), so the stored history is never
-                # polluted with it and messages[0] stays the raw user turn.
-                model_messages = visible
-                # Size of the history sent this iteration (the catalog index is
-                # measured separately as its own bucket, so use the visible history
-                # — the indicator should reflect what the model actually receives).
-                last_history_chars = self._messages_chars(visible)
-                last_history_msgs = len(visible)
-                # Diagnostic: the exact message list handed to the adapter — i.e.
-                # what the console sends to the model / proxy this iteration.
-                self._trace(
-                    "model_request",
-                    {"chat_id": chat_id, "messages": jsonsafe_messages(model_messages)},
-                )
-                # Per-iteration LLM-request span (child of the turn span). No-op
-                # unless telemetry is on; held current across the streaming call so
-                # a custom adapter can enrich it via observability.set_attributes.
-                with observability.llm_span(
-                    provider=provider_name, model=model_name
-                ) as llm_span:
-                    # Capture the system prompt alongside the messages so
-                    # gen_ai.prompt still shows the search-mode catalogue index
-                    # (it moved from the first user message into the system).
-                    observability.add_prompt(
-                        model_messages, system=getattr(adapter, "system", "")
-                    )
-                    try:
-                        async for event in adapter.stream_with_tools(
-                            model_messages, tools
-                        ):
-                            if cancel.is_set():
-                                stopped = True
-                                break  # abort streaming (closes the provider stream)
-                            if event[0] == "text":
-                                assistant_text += event[1]
-                                self._dispatch(
-                                    "runspec:token", {"id": chat_id, "token": event[1]}
-                                )
-                            elif event[0] == "done":
-                                response = event[1]
-                    except Exception as exc:
-                        observability.record_exception(llm_span, exc)
-                        detail = describe_exception(exc)
-                        max_net = self._max_network_retries()
-                        # A transient blip (read/connect timeout, dropped
-                        # connection, 429/5xx) with nothing shown yet → retry the
-                        # same call after a backoff, so the turn no longer dies on a
-                        # bare, often message-less exception. Once text has streamed
-                        # we don't retry the call (that would double the reply); the
-                        # self-recovery pass below handles it instead.
-                        if (
-                            is_transient_model_error(exc)
-                            and not assistant_text.strip()
-                            and network_retries < max_net
-                        ):
-                            network_retries += 1
-                            delay = retry_delay(network_retries)
-                            logger.warning(
-                                "chat %s: transient model-stream error (%s); "
-                                "retry %d/%d in %.1fs",
-                                chat_id,
-                                detail,
-                                network_retries,
-                                max_net,
-                                delay,
-                            )
-                            self._dispatch(
-                                "runspec:token",
-                                {
-                                    "id": chat_id,
-                                    "token": (
-                                        f"\n⏳ {detail} — retrying "
-                                        f"({network_retries}/{max_net})…"
-                                    ),
-                                },
-                            )
-                            retry_iteration = True
-                        else:
-                            logger.warning(
-                                "chat %s: model-stream error (%s)", chat_id, detail
-                            )
-                            errored = True
-                            error_detail = detail
-
-                    if response is not None:
-                        u = self._usage_from_response(response)
-                        for key, value in u.items():
-                            usage_total[key] += value
-                        last_usage = {
-                            "input": u["input"],
-                            "cache_read": u["cache_read"],
-                            "cache_creation": u["cache_creation"],
-                        }
-                        observability.set_llm_response(llm_span, response, u)
-                    if assistant_text.strip():
-                        observability.add_completion(assistant_text)
-
-                # Transient failure with nothing shown yet — back off and re-attempt
-                # this same model call (no history mutation, tool_rounds unchanged).
-                if retry_iteration:
-                    await asyncio.sleep(retry_delay(network_retries))
-                    continue
-
-                # Record this iteration's assistant prose for the saved transcript.
-                if assistant_text.strip():
-                    turn_assistant_parts.append(assistant_text.strip())
-
-                # Durable / budget-exhausted model-call failure. Preserve any partial
-                # reply, then either hand the turn back to the agent to analyse and
-                # resume (the self-recovery catchall, bounded by _max_self_recoveries)
-                # or end the turn with a descriptive error — never the old bare,
-                # message-less "Error".
-                if errored:
-                    if assistant_text.strip():
-                        history.append({"role": "assistant", "content": assistant_text})
-                    if (
-                        not cancel.is_set()
-                        and self_recoveries < self._max_self_recoveries()
-                    ):
-                        self_recoveries += 1
-                        max_self = self._max_self_recoveries()
-                        logger.warning(
-                            "chat %s: self-recovery %d/%d after error (%s)",
-                            chat_id,
-                            self_recoveries,
-                            max_self,
-                            error_detail,
-                        )
-                        self._dispatch(
-                            "runspec:token",
-                            {
-                                "id": chat_id,
-                                "token": (
-                                    f"\n⚠ {error_detail}\n↻ Trying to recover "
-                                    f"({self_recoveries}/{max_self})…"
-                                ),
-                            },
-                        )
-                        self._append_recovery_prompt(history, error_detail)
-                        # Reset the per-call network budget so the recovery attempt
-                        # gets its own retries; back off to give the endpoint a
-                        # moment to settle.
-                        network_retries = 0
-                        await asyncio.sleep(retry_delay(self_recoveries, base=2.0))
-                        continue
-                    self._dispatch(
-                        "runspec:token",
-                        {"id": chat_id, "token": f"\n⚠ Error: {error_detail}"},
-                    )
-                    turn_assistant_parts.append(f"⚠ Error: {error_detail}")
-                    break
-
-                # A clean stream — reset the per-call transient-retry budget so a
-                # later blip in this turn gets its own full allowance.
-                network_retries = 0
-
-                # Persisting any clean assistant text is always safe (text-only,
-                # no tool pairing); do it whenever we're about to leave the loop.
-                if stopped:
-                    if assistant_text.strip():
-                        history.append({"role": "assistant", "content": assistant_text})
-                    break
-
-                # Read the two decisions off the response once, tolerating any
-                # adapter's spelling: tool calls run whenever present (not only on
-                # an exact stop_reason == "tool_use"), and a length cutoff is any
-                # spelling is_output_truncation() accepts (max_tokens / length / …)
-                # — so a custom adapter participates without matching one literal.
-                has_tools = response is not None and bool(response.tool_calls)
-                truncated = response is not None and is_output_truncation(
-                    response.stop_reason
-                )
-
-                # Output-ceiling cut-off: the model stopped mid-reply (no tool call,
-                # not a natural end). Auto-continue — persist the partial, ask it to
-                # pick up exactly where it left off, and loop — so a long answer
-                # streams out whole instead of being silently truncated. Append
-                # assistant+user (never re-request with a trailing assistant turn:
-                # prefill is rejected on current Claude models, and it would also
-                # make a malformed assistant/assistant pair). Bounded by
-                # _max_continuations(); the streamed tokens flow into the same chat
-                # bubble on the next iteration.
-                if (
-                    truncated
-                    and not has_tools
-                    and assistant_text.strip()
-                    and continuations < self._max_continuations()
-                ):
-                    history.append({"role": "assistant", "content": assistant_text})
-                    history.append(
-                        {
-                            "role": "user",
-                            "content": (
-                                "Your previous message was cut off at the output "
-                                "limit. Continue exactly where you left off — do "
-                                "not repeat text you already sent."
-                            ),
-                        }
-                    )
-                    continuations += 1
-                    continue
-
-                if response is None or not has_tools:
-                    # Final turn — persist the assistant's reply so the next user
-                    # message sees it (tool-calling turns are persisted below via
-                    # make_tool_turn, which already carries the assistant turn).
-                    if response is not None and assistant_text.strip():
-                        history.append({"role": "assistant", "content": assistant_text})
-                    # Still cut off at the ceiling after exhausting the continuation
-                    # budget — flag it visibly instead of ending silently
-                    # mid-sentence (mirrors the ⏹ / ⚠ inline markers).
-                    if truncated:
-                        marker = (
-                            "\n\n_(response was cut off at the output limit — "
-                            'say "continue" to finish it)_'
-                        )
-                        self._dispatch(
-                            "runspec:token", {"id": chat_id, "token": marker}
-                        )
-                        turn_assistant_parts.append(marker.strip())
-                    break
-
-                # About to act on hosts — honour a stop requested while the model
-                # was producing the tool calls, before running any of them.
-                if cancel.is_set():
-                    stopped = True
-                    if assistant_text.strip():
-                        history.append({"role": "assistant", "content": assistant_text})
-                    break
-
-                # Execute each tool call and dispatch events
-                tool_results: list[tuple[Any, str]] = []
-                for tc in response.tool_calls:
-                    self._dispatch(
-                        "runspec:tool_start",
-                        {
-                            "id": chat_id,
-                            "tool_name": tc.name,
-                            "tool_input": tc.input,
-                        },
-                    )
-                    # Capture the operator's confirm-gate decision (if the gate
-                    # fires) so it can be recorded on the saved tool entry AND
-                    # echoed into the live tool_end below — the card keeps its
-                    # "you approved / denied / edited" badge without waiting for a
-                    # History reload. The dict itself is not replayed to the agent
-                    # (the agent learns of the gate from the [gate: …] output note).
-                    gate_decision: dict[str, Any] = {}
-                    try:
-                        if cancel.is_set():
-                            # Stopped mid-batch — refuse the rest without prompting
-                            # or running, but still record a paired tool_result.
-                            output = f"⏹ '{tc.name.split('__', 1)[-1]}' was not run — you stopped the assistant."
-                        else:
-                            output = await self._gated_run_tool_async(
-                                tc.name,
-                                tc.input,
-                                chat_id,
-                                on_decision=gate_decision.update,
-                            )
-                    except Exception as exc:  # noqa: BLE001
-                        # A tool that raises must not escape the loop: that would
-                        # strand the tool_start spinner and abort the whole turn
-                        # with a bare exception. Surface it as a readable tool
-                        # result and always emit tool_end (below) so the turn can
-                        # recover or conclude cleanly.
-                        logger.exception("chat agent turn: tool %s raised", tc.name)
-                        observability.record_exception(
-                            observability.current_span(), exc
-                        )
-                        output = f"✗ '{tc.name.split('__', 1)[-1]}' failed: {exc}"
-                    self._dispatch(
-                        "runspec:tool_end",
-                        {
-                            "id": chat_id,
-                            "tool_name": tc.name,
-                            "output": output[:2000],
-                            # Full output size + truncation marker (if the result
-                            # was cut at the cap) so the tool card can flag a large
-                            # or cut-off result — the [:2000] display can't show it.
-                            "output_chars": len(output),
-                            "truncated": utils_mod.parse_truncation(output),
-                            # The operator's gate decision (approved/edited/denied)
-                            # when a confirm gate fired this call; "" for an
-                            # autonomous run. Lets the live card show the same badge
-                            # a reloaded conversation gets, so an approved action
-                            # doesn't look like it ran unsupervised in hindsight.
-                            "operator_decision": gate_decision.get("decision") or "",
-                        },
-                    )
-                    # Diagnostic: the *full* tool-result string the model will
-                    # receive (the card only shows output[:2000]). This is the
-                    # byte-for-byte content that goes into the next request.
-                    self._trace(
-                        "tool_result",
-                        {
-                            "chat_id": chat_id,
-                            "tool": tc.name,
-                            "length": len(output),
-                            "output": output,
-                        },
-                    )
-                    tool_results.append((tc, output))
-                    # Bounded copy for the saved transcript (the full output goes
-                    # to the model; the store keeps a readable excerpt). Any
-                    # operator confirm-gate decision rides along as an operator-only
-                    # annotation (ignored by the model-history rebuild).
-                    tool_rec: dict[str, Any] = {
-                        "name": tc.name,
-                        "input": tc.input,
-                        "output": output[:4000],
-                    }
-                    if gate_decision.get("decision"):
-                        tool_rec["operator_decision"] = gate_decision["decision"]
-                        if gate_decision.get("proposed_input") is not None:
-                            tool_rec["proposed_input"] = gate_decision["proposed_input"]
-                    turn_tools.append(tool_rec)
-
-                tool_rounds += 1
-                history.extend(adapter.make_tool_turn(response, tool_results))
-
-            # Hit the tool-round backstop mid-work (the model still wanted to act).
-            # Surface it visibly and invite resumption instead of stopping silently
-            # — the tool results are already in history, so a "continue" message
-            # picks the work back up (mirrors the ⏹ / cut-off inline markers).
-            if hit_iteration_cap:
-                marker = (
-                    f"\n\n_(paused after {tool_rounds} tool steps — "
-                    'say "continue" to keep going)_'
-                )
-                self._dispatch("runspec:token", {"id": chat_id, "token": marker})
-                turn_assistant_parts.append(marker.strip())
-
-            # Tag any final assistant / tool messages appended on the way out of
-            # the loop, so the aligned tags cover the whole turn before trimming.
-            self._sync_history_tags(chat_id)
-            self._trim_chat_history()
-            # Append this completed exchange to the saved conversation (chat
-            # history) — best-effort, gated on [chat_history] enabled. Inside the
-            # lock so _conversation_id stays consistent with the rolling history.
-            self._persist_conversation_turn(
-                message,
-                "\n\n".join(turn_assistant_parts),
-                turn_tools,
-                usage_total,
-                getattr(adapter, "model", "") or "",
-            )
-
-        # Close the turn span with the turn-total token usage (no-op when off).
-        observability.end_turn(turn_span, usage=usage_total)
-
-        duration_ms = int((time.monotonic() - start) * 1000)
-        # OTLP turn metric + a run_summary audit line so a chat turn is visible in
-        # metrics and in the History/Analytics stream (previously only runnable
-        # runs and built-in tool calls wrote a run_summary — a chat turn wrote
-        # none). Both best-effort; a chat turn's exit is 130 when the operator
-        # stopped it, else 0 (an in-turn model/tool error surfaces as text, not a
-        # turn-level non-zero, so it isn't distinguished here).
-        observability.record_turn(
-            kind="chat",
-            provenance=getattr(self, "_run_origin", {}).get(chat_id),
-            duration_ms=duration_ms,
-            usage=usage_total,
-            status="stopped" if stopped else "ok",
-        )
-        self._audit_chat_turn(
-            run_id=uuid.uuid4().hex,
-            chat_id=chat_id,
-            model=getattr(adapter, "model", "") or "",
-            duration_ms=duration_ms,
-            usage=usage_total,
-            stopped=stopped,
-        )
-        if stopped:
-            self._dispatch("runspec:token", {"id": chat_id, "token": "\n⏹ Stopped."})
-        self._dispatch(
-            "runspec:run_end",
-            {
-                "id": chat_id,
-                "exit_code": 0,
-                "duration_ms": duration_ms,
-                "stopped": stopped,
-            },
-        )
-        # Audio cue: "reply ready" when the agent finishes and the console isn't
-        # foreground (you're elsewhere); a quiet "stopped" cue if you halted it.
-        # Suppressed when you're watching, so a normal back-and-forth stays silent.
-        if stopped:
-            self._play_sound("completion_stopped")
-        elif not self._window_is_foreground():
-            self._play_sound("reply")
-        if any(usage_total.values()):
-            self._dispatch(
-                "runspec:chat_usage",
-                {
-                    "id": chat_id,
-                    # The model the turn ran on, so the UI can show an estimated cost.
-                    "model": getattr(adapter, "model", "") or "",
-                    # input_tokens is the uncached remainder (full price); the cached
-                    # portion is reported separately so the UI can show cache savings.
-                    "input_tokens": usage_total["input"],
-                    "output_tokens": usage_total["output"],
-                    "cache_read_tokens": usage_total["cache_read"],
-                    "cache_creation_tokens": usage_total["cache_creation"],
-                },
-            )
-        # Context-window indicator: the last iteration's prompt size is the
-        # current window fill. Split it across the buckets that built it by char
-        # share (exact total, estimated slices) — see docs/design/
-        # console-context-indicator.md.
-        last_prompt_tokens = (
-            last_usage["input"]
-            + last_usage["cache_read"]
-            + last_usage["cache_creation"]
-        )
-        if last_prompt_tokens > 0:
-            from . import memory as memory_mod
-
-            model = getattr(adapter, "model", "") or ""
-            parts = dict(system_parts or {})
-            parts["tools"] = self._messages_chars(tools)
-            parts["catalog"] = len(index_text)
-            parts["history"] = last_history_chars
-            try:
-                pins = memory_mod.pinned_count()
-            except Exception:  # noqa: BLE001 — pin count is decorative
-                pins = 0
-            self._dispatch(
-                "runspec:context_estimate",
-                {
-                    "id": chat_id,
-                    "model": model,
-                    "window": self._context_window(adapter),
-                    "total_tokens": last_prompt_tokens,
-                    "cache_hit_pct": round(
-                        100 * last_usage["cache_read"] / last_prompt_tokens
-                    ),
-                    "buckets": utils_mod.estimate_context_buckets(
-                        parts, last_prompt_tokens
-                    ),
-                    # Phase 2 levers: enough for the UI to nudge search mode, offer
-                    # live compaction, and surface a bloated pin set.
-                    "tool_mode": self._tool_mode(),
-                    "history_msgs": last_history_msgs,
-                    "memory_pins": pins,
-                    "memory_pins_shown": memory_mod.HEADER_MAX_FACTS,
-                    # Runnables past [llm] tool_index_limit — not listed in the
-                    # inline menu (still reachable via search_runnables). 0 unless
-                    # the search-mode catalog index truncated this turn.
-                    "catalog_overflow": (
-                        getattr(self, "_catalog_overflow", 0) if index_text else 0
-                    ),
-                },
-            )
 
     @staticmethod
     def _messages_chars(obj: Any) -> int:

@@ -14,12 +14,14 @@ import json
 import threading
 
 from runspec_console.bridge import Bridge
+from tests.session_stub import install_sessions
 from runspec_console.bridge_const import _AGENT_TOOL_OUTPUT_CAP
 
 
 class _AgentBridge:
     _run_tool_sync = Bridge._run_tool_sync
     _finalize_tool_output = Bridge._finalize_tool_output
+    _current_workspace_root = Bridge._current_workspace_root
     _tool_output_cap = Bridge._tool_output_cap
     # Routing helpers _run_tool_sync delegates to (per-host tool names resolve via
     # the host__name fallback under either tool_mode layout).
@@ -74,6 +76,7 @@ def _run_with_stdout(monkeypatch, line: str) -> str:
         "runspec_console.bridge_utils._paths", lambda _e: ["/opt/app/runspec"]
     )
     b = _AgentBridge(entry={"name": "local"}, cached=_cached("local"))
+    b._current_workspace_root = lambda chat_id="": None  # no session workspace
     return b._run_tool_sync("local__list-processes", {})
 
 
@@ -128,8 +131,7 @@ def _run_with_workspace(
         lambda: {"spill_threshold": 32_768, "headless_retention_days": 7},
     )
     b = _AgentBridge(entry={"name": "local"}, cached=_cached("local"))
-    b._conversation_id = conv_id
-    b._workspace_by_chat = {}
+    install_sessions(b, conv_id)
     return b._run_tool_sync("local__list-processes", {}), b
 
 
@@ -145,7 +147,7 @@ def test_output_above_threshold_spills_to_workspace(monkeypatch, tmp_path):
     assert len(out) < len(payload)  # envelope is much smaller than the raw
 
     # The raw file on disk is uncapped and complete.
-    ws = tmp_path / bridge._conversation_id / "tool-results"
+    ws = tmp_path / bridge._chat_session_id / "tool-results"
     files = list(ws.glob("*"))
     assert len(files) == 1
     assert files[0].read_text() == payload

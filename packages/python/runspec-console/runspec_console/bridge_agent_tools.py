@@ -3147,19 +3147,14 @@ class AgentToolsMixin:
         session id has been set — the tools then return a clear error rather
         than falling back to a shared / unbounded path.
 
-        ``chat_id`` (the per-turn id) picks the trigger/schedule mapping the
-        active isolated-agent turn registered; chat turns leave it empty and
-        the resolver falls back to the persistent conversation id."""
-        session_id = ""
-        if chat_id:
-            with self._lock:
-                ws_map = getattr(self, "_workspace_by_chat", {})
-                session_id = ws_map.get(chat_id, "")
-        if not session_id:
-            session_id = getattr(self, "_conversation_id", "")
-        if not session_id:
-            return None
-        return config_mod.workspace_dir(session_id)
+        ``chat_id`` (the per-turn id) resolves to the session that turn runs
+        under (a chat, or a trigger/schedule card's own session); with no turn
+        id — or an unknown one — the resolver falls back to the current
+        interactive chat session's workspace."""
+        session = self._session_for_turn(chat_id) if chat_id else None
+        if session is None:
+            session = self._chat_session()
+        return config_mod.workspace_dir(session.workspace_id)
 
     def _run_workspace_tool(
         self,

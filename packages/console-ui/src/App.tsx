@@ -79,6 +79,8 @@ type ViewKey = 'console' | 'specs' | 'history' | 'logs' | 'forms' | 'schedules' 
 // total_tokens is exact (from the model's usage); bucket tokens are estimates that
 // sum to it. See docs/design/console-context-indicator.md.
 interface ContextEstimate {
+  // The session this estimate belongs to (absent on an older backend).
+  session?: string
   model: string
   window: number
   total_tokens: number
@@ -265,11 +267,17 @@ export default function App() {
   // indicator. Updated on every runspec:room_connection flip so a room server
   // going down (or coming back) is visible without digging through Dev logs.
   const [rooms, setRooms] = useState<RoomInfo[]>([])
-  // Context-window fill of the active chat (latest turn), for the footer gauge +
-  // composition hover. Null until a chat reports usage, so the row stays hidden
-  // on non-chat tabs (mirrors the Rooms row hiding when empty). See
-  // docs/design/console-context-indicator.md.
-  const [ctx, setCtx] = useState<ContextEstimate | null>(null)
+  // Context-window fill (latest turn) per session, for the footer gauge +
+  // composition hover; the gauge shows the *selected* Console session's entry
+  // (its id rides runspec:chat_active). Empty until a chat reports usage, so
+  // the row stays hidden on non-chat tabs (mirrors the Rooms row hiding when
+  // empty). See docs/design/console-context-indicator.md.
+  const [ctxBySession, setCtxBySession] = useState<Record<string, ContextEstimate>>({})
+  const [selectedSession, setSelectedSession] = useState<string | null>(null)
+  // The selected Console session is a read-only automation one (trigger /
+  // schedule) — the composer shows a hint instead of sending.
+  const [readOnlySession, setReadOnlySession] = useState(false)
+  const ctx: ContextEstimate | null = selectedSession ? ctxBySession[selectedSession] ?? null : null
   const [inputHistory, setInputHistory] = useState<string[]>([])
   const [pendingChat, setPendingChat] = useState<string | null>(null)
   const [pendingForm, setPendingForm] = useState<PendingForm | null>(null)
@@ -485,44 +493,62 @@ export default function App() {
     // a newly added room) so the footer indicator stays live.
     const loadRooms = () => bridge.get_room_state().then(s => setRooms(s.rooms)).catch(() => {})
     loadRooms()
-    // Context-window gauge: each chat turn reports its prompt size + composition.
-    // A cleared chat resets the gauge so it doesn't show a stale fill.
+    // Context-window gauge: each chat turn reports its prompt size + composition,
+    // stamped with its session. A cleared session drops its entry so a fresh
+    // chat doesn't show the replaced one's fill; a closed session's entry goes
+    // the same way.
     const onContextEstimate = (e: Event) => {
       const d = (e as CustomEvent).detail as ContextEstimate | undefined
-      if (d && d.total_tokens > 0) setCtx(d)
+      if (d && d.total_tokens > 0 && d.session) setCtxBySession(prev => ({ ...prev, [d.session as string]: d }))
     }
-    const onChatCleared = () => setCtx(null)
+    const dropCtx = (id?: string) => {
+      if (!id) return
+      setCtxBySession(prev => { if (!(id in prev)) return prev; const next = { ...prev }; delete next[id]; return next })
+    }
+    const onChatCleared = (e: Event) => {
+      const { replaced } = ((e as CustomEvent).detail ?? {}) as { replaced?: string }
+      dropCtx(replaced)
+    }
+    const onSessionClosed = (e: Event) => {
+      const { id, state } = ((e as CustomEvent).detail ?? {}) as { id?: string; state?: string }
+      if (state === 'closed') dropCtx(id)
+    }
     // "Compact now" drops messages but there's no fresh model round-trip to
     // recompute the exact gauge until the next turn — so estimate the drop
     // immediately by scaling the History bucket (and the total) by the share of
     // messages removed, instead of leaving a stale number. The next turn's
     // context_estimate replaces this with the exact figure.
     const onCompacted = (e: Event) => {
-      const { dropped } = (e as CustomEvent).detail as { dropped?: number }
+      const { dropped, session } = (e as CustomEvent).detail as { dropped?: number; session?: string }
       const n = dropped ?? 0
-      if (n <= 0) return
-      setCtx(prev => {
-        if (!prev) return prev
+      if (n <= 0 || !session) return
+      setCtxBySession(all => {
+        const prev = all[session]
+        if (!prev) return all
         const msgs = prev.history_msgs ?? 0
-        if (msgs <= 0) return prev
+        if (msgs <= 0) return all
         const kept = Math.max(0, msgs - n)
         const ratio = kept / msgs
         const hist = prev.buckets.find(b => b.key === 'history')
         const histTokens = hist?.tokens ?? 0
         const removed = Math.round(histTokens * (1 - ratio))
-        if (removed <= 0) return { ...prev, history_msgs: kept }
+        if (removed <= 0) return { ...all, [session]: { ...prev, history_msgs: kept } }
         return {
-          ...prev,
-          total_tokens: Math.max(0, prev.total_tokens - removed),
-          history_msgs: kept,
-          buckets: prev.buckets.map(b =>
-            b.key === 'history' ? { ...b, tokens: Math.max(0, b.tokens - removed), est: true } : b
-          ),
+          ...all,
+          [session]: {
+            ...prev,
+            total_tokens: Math.max(0, prev.total_tokens - removed),
+            history_msgs: kept,
+            buckets: prev.buckets.map(b =>
+              b.key === 'history' ? { ...b, tokens: Math.max(0, b.tokens - removed), est: true } : b
+            ),
+          },
         }
       })
     }
     window.addEventListener('runspec:context_estimate', onContextEstimate)
     window.addEventListener('runspec:chat_cleared', onChatCleared)
+    window.addEventListener('runspec:session', onSessionClosed)
     window.addEventListener('runspec:chat_compacted', onCompacted)
     window.addEventListener('runspec:hosts_updated', onHostsUpdated)
     window.addEventListener('runspec:hosts_updated', loadProfiles)
@@ -541,6 +567,7 @@ export default function App() {
       window.removeEventListener('runspec:room_connection', loadRooms)
       window.removeEventListener('runspec:context_estimate', onContextEstimate)
       window.removeEventListener('runspec:chat_cleared', onChatCleared)
+      window.removeEventListener('runspec:session', onSessionClosed)
       window.removeEventListener('runspec:chat_compacted', onCompacted)
     }
   }, [])
@@ -554,7 +581,7 @@ export default function App() {
   // Live-compaction lever from the context gauge: condense the older history so
   // the next turn carries less context, without losing the thread.
   const compactChat = () => {
-    bridge.compact_chat().then(r => {
+    bridge.compact_chat(selectedSession ?? undefined).then(r => {
       if (r.compacted > 0) message.success(`Compacted ${r.compacted} older message${r.compacted === 1 ? '' : 's'} out of context.`)
       else message.info('Nothing to compact yet — the conversation is still short.')
     }).catch(() => message.error('Compaction failed.'))
@@ -655,10 +682,16 @@ export default function App() {
     window.dispatchEvent(new CustomEvent('runspec:run_runbook', { detail: { runbookId, values, extra } }))
   }
 
-  // ConsoleView broadcasts the in-flight chat turn so the command bar's send
-  // button can flip to a Stop control while the assistant is working.
+  // ConsoleView broadcasts the selected session, its in-flight chat turn (so
+  // the command bar's send button can flip to a Stop control while the
+  // assistant is working) and whether the session is read-only automation.
   useEffect(() => {
-    const onActive = (e: Event) => setActiveChatId((e as CustomEvent).detail?.id ?? null)
+    const onActive = (e: Event) => {
+      const d = ((e as CustomEvent).detail ?? {}) as { id?: string | null; session?: string | null; readOnly?: boolean }
+      setActiveChatId(d.id ?? null)
+      setSelectedSession(d.session ?? null)
+      setReadOnlySession(!!d.readOnly)
+    }
     window.addEventListener('runspec:chat_active', onActive)
     return () => window.removeEventListener('runspec:chat_active', onActive)
   }, [])
@@ -1536,6 +1569,7 @@ export default function App() {
                 onOpenSavedRun={handleOpenSavedRun}
                 onSendChat={handleSendChat}
                 activeChatId={activeChatId}
+                readOnlySession={readOnlySession}
                 onStopChat={(id) => { bridge.cancel_chat(id).catch(console.error) }}
                 history={inputHistory}
                 autoSwitch={autoSwitch}

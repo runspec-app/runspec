@@ -17,11 +17,15 @@ import { ConsoleView } from '../views/ConsoleView'
 import type { TriggerCard } from '../bridge'
 
 // The real `bridge` is a Proxy that waits on window.pywebview — replace it. The
-// Console seeds itself on mount via get_trigger_board(), which must be awaitable.
+// Console seeds itself on mount via list_chat_sessions() + both run boards,
+// which must be awaitable.
 vi.mock('../bridge', () => ({
   bridge: new Proxy({}, {
     get: (_t, p) => {
-      if (p === 'get_trigger_board') return () => Promise.resolve([])
+      if (p === 'get_trigger_board' || p === 'get_schedule_board' || p === 'list_chat_sessions' || p === 'get_pending_confirms') {
+        return () => Promise.resolve([])
+      }
+      if (p === 'close_chat_session' || p === 'select_chat_session') return () => Promise.resolve({ ok: true })
       return vi.fn()
     },
   }),
@@ -72,8 +76,8 @@ describe('trigger runs in the Console', () => {
     await act(async () => {
       emitCard(card({ card_id: 'r1', detail: { mode: 'rule', tool: 'restart' }, column: 'running' }))
     })
-    // The runnable target is the block label.
-    expect(screen.getByText('/restart')).toBeTruthy()
+    // The runnable target is the block label (and the session chip's).
+    expect(screen.getAllByText('/restart').length).toBeGreaterThanOrEqual(1)
     // A "trigger:" tag marks it as an automatic fire.
     expect(screen.getByText(/trigger: nightly/)).toBeTruthy()
 
@@ -88,7 +92,9 @@ describe('trigger runs in the Console', () => {
     await act(async () => {
       emitCard(card({ card_id: 'a1', detail: { mode: 'agent' }, column: 'triage' }))
     })
-    expect(screen.getByText(/Trigger nightly · new_mail/)).toBeTruthy()
+    // The label shows on the block and on the session chip (the fire is its own
+    // read-only session, auto-selected as nothing else is open).
+    expect(screen.getAllByText(/Trigger nightly · new_mail/).length).toBeGreaterThanOrEqual(1)
 
     await act(async () => { emitToken('a1', 'Handled '); emitToken('a1', 'the mail.'); flushRaf() })
     expect(screen.getByText(/Handled the mail\./)).toBeTruthy()

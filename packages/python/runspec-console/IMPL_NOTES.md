@@ -66,36 +66,56 @@ Scripts that prompt for confirmation will stall and time out.
 
 ## Chat / LLM (agentic loop)
 
-**Conversation memory.** The agent keeps **one rolling conversation per app
-session** in `Bridge._chat_history` — each `send_chat` appends the user message,
-the assistant reply, and any tool_use/tool_result turns, and the next message is
-sent with the full prior history (so follow-ups like "restart the first one"
-resolve). A `_chat_lock` serialises turns; `_trim_chat_history` caps the history
-to the most recent ~60 messages, dropping leading turns only down to a real user
-message so tool_use/tool_result pairs are never split. `clear_chat()` (wired to
-the Console's **New chat** button) resets it. Caching note: history sits *after*
-the tools+system cache breakpoint, so growing it doesn't invalidate the cached
-prefix.
+**Sessions (0.275.0).** Every conversation is a `ChatSession` (`session.py`):
+concurrent interactive chats the operator swaps between, plus one read-only
+automation session per trigger / schedule card (id == card id == the headless
+turn's `chat_id`). Each session owns its rolling history, per-turn tags, "in
+context" exclusions and the lock a turn holds end-to-end — so a turn on one
+session never blocks a send, a clear or a compact on another. The registry
+(`Bridge._sessions`, `_chat_session_id` = the interactive session sends and
+operator runs target, `_turn_sessions` = live turn → session) is guarded by
+`Bridge._lock`, never a session's own lock. An interactive session's id **is**
+its saved-conversation id, so its workspace (`workspace_dir(id)`) and
+transcript share it; automation sessions use `trigger-<id>` / `schedule-<id>`.
+`session.trim()` caps a history to the most recent ~60 messages, dropping
+leading turns only down to a real user message so tool_use/tool_result pairs are
+never split. **New chat** opens an *additional* session (`new_chat_session`);
+`clear_chat` replaces one with a fresh session (stopping an in-flight turn,
+never waiting). Nothing survives a restart. See `docs/design/console-sessions.md`.
+Caching note: history sits *after* the tools+system cache breakpoint, so
+growing it doesn't invalidate the cached prefix.
 
 **Stopping a turn.** `send_chat` registers a per-`chat_id` cancel `Event` in
-`_chat_cancels` (guarded by `self._lock`, *not* `_chat_lock` — cancel must fire
-while a turn holds `_chat_lock`). `cancel_chat(chat_id)` sets it; the loop checks
+`_chat_cancels` (guarded by `self._lock`, *not* the session lock — cancel must
+fire while a turn holds that). `cancel_chat(chat_id)` sets it; the loop checks
 it before each model call, while streaming (breaking the async-for closes the
 provider stream), and before running any tool — so Stop takes effect without
 further model calls or host actions. A tool already mid-execution is left to
 finish (chat-cancel ≠ runnable-cancel). On stop the partial assistant text is
 persisted (text-only, so no orphaned tool_use) and a `⏹ Stopped.` token is
 dispatched. The run() thread pops the cancel entry in a `finally`.
+`close_chat_session` is Stop + drop.
 
-`send_chat` always runs `_agentic_chat_turn`, which loops up to **10 iterations**:
+**One engine.** `send_chat` (via `_spawn_chat_turn`) and the headless
+`_trigger_run_agent_turn` both build a `TurnSpec` and run
+`bridge_turn.TurnMixin._run_agent_turn`, which loops up to
+`[llm] max_tool_rounds` tool rounds (continuations are a separate budget):
 
-1. Call `adapter.stream_with_tools(history, tools)` — yields `('text', token)` then
-   `('done', ChatResponse)`.
-2. Dispatch each `token` as `runspec:token`. On `('done', ...)`, inspect `stop_reason`.
-3. If `stop_reason == 'tool_use'`, run each `ToolCall` via `asyncio.to_thread(_run_tool_sync)`,
-   dispatch `runspec:tool_start` / `runspec:tool_end`, build the tool-result turns,
-   extend `history`, and loop.
-4. Otherwise break — model is done.
+1. Call `adapter.stream_with_tools(session.visible(), tools)` — yields
+   `('text', token)` then `('done', ChatResponse)`.
+2. Dispatch each `token` as `runspec:token`. On `('done', ...)`, read the tool
+   calls and the stop reason.
+3. If the response carries tool calls, run each via the autonomy gate
+   (`_gated_run_tool_async`, or a `TurnSpec.inline_tools` closure such as the
+   trigger draft tools), dispatch `runspec:tool_start` / `runspec:tool_end`,
+   build the tool-result turns, extend the session history, and loop.
+4. A length cut-off auto-continues (bounded); otherwise break — model is done.
+
+`_finish_turn` then reports identically for every kind of turn: the OTel turn
+span + metric, the `run_summary` audit line, `runspec:run_end` (with
+`stopped`), `runspec:chat_usage`, `runspec:context_estimate`, the
+`runspec:session` lifecycle — and, for an interactive turn only, the transcript
+persist + the reply cue.
 
 **Streaming implementation by adapter:**
 - **Anthropic / Bedrock** — `stream_with_tools()` iterates raw SSE events from the SDK

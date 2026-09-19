@@ -13,6 +13,7 @@ import threading
 import runspec_console.config as config_mod
 from runspec_console import conversations as conv
 from runspec_console.bridge import Bridge
+from tests.session_stub import current as _S, install_sessions
 
 
 # ── pure store ──────────────────────────────────────────────────────────────────
@@ -123,15 +124,13 @@ class _ConvBridge:
     rename_conversation = Bridge.rename_conversation
     _persist_conversation_turn = Bridge._persist_conversation_turn
     _persist_operator_run = Bridge._persist_operator_run
-    _trim_chat_history = Bridge._trim_chat_history
     _flatten_turns = staticmethod(Bridge._flatten_turns)
     _mechanical_resume_note = staticmethod(Bridge._mechanical_resume_note)
     _summarize_middle_turns = Bridge._summarize_middle_turns
 
     def __init__(self):
-        self._chat_lock = threading.Lock()
-        self._chat_history: list = []
-        self._conversation_id = ""
+        self._lock = threading.Lock()
+        install_sessions(self)
 
     def get_config(self):
         return {"llm": {"provider": "anthropic"}}
@@ -162,12 +161,12 @@ def test_persist_turn_writes_and_mints_id(tmp_path, monkeypatch):
     _point_store(monkeypatch, tmp_path)
     b = _ConvBridge()
     b._persist_conversation_turn(
-        "hello", "hi there", [], {"input": 1, "output": 2}, "m"
+        _S(b), "hello", "hi there", [], {"input": 1, "output": 2}, "m"
     )
-    assert b._conversation_id  # minted
+    assert b._chat_session_id  # the session id is the conversation id
     metas = b.list_conversations()
     assert len(metas) == 1 and metas[0]["title"] == "hello"
-    rec = b.load_conversation(b._conversation_id)
+    rec = b.load_conversation(b._chat_session_id)
     assert rec["turns"][0]["assistant"] == "hi there"
     assert rec["turns"][0]["usage"] == {"input": 1, "output": 2}
 
@@ -175,9 +174,8 @@ def test_persist_turn_writes_and_mints_id(tmp_path, monkeypatch):
 def test_persist_disabled_writes_nothing(tmp_path, monkeypatch):
     _point_store(monkeypatch, tmp_path, enabled=False)
     b = _ConvBridge()
-    b._persist_conversation_turn("hello", "hi", [], {}, "m")
-    assert b._conversation_id == ""  # never minted
-    assert b.list_conversations() == []
+    b._persist_conversation_turn(_S(b), "hello", "hi", [], {}, "m")
+    assert b.list_conversations() == []  # nothing written
 
 
 def test_resume_rebuilds_history_and_sets_active(tmp_path, monkeypatch):
@@ -191,12 +189,12 @@ def test_resume_rebuilds_history_and_sets_active(tmp_path, monkeypatch):
     b = _ConvBridge()
     res = b.resume_conversation(cid)
     assert res["ok"] and res["turns"] == 1 and res["exact"] is False
-    assert b._conversation_id == cid  # new turns continue this conversation
-    roles = [m["role"] for m in b._chat_history]
+    assert b._chat_session_id == cid  # new turns continue this conversation
+    roles = [m["role"] for m in _S(b).history]
     assert roles == ["user", "assistant"]
-    assert b._chat_history[0]["content"] == "run the report"
-    assert "done" in b._chat_history[1]["content"]
-    assert "[ran rep" in b._chat_history[1]["content"]  # tool folded into text
+    assert _S(b).history[0]["content"] == "run the report"
+    assert "done" in _S(b).history[1]["content"]
+    assert "[ran rep" in _S(b).history[1]["content"]  # tool folded into text
 
 
 def test_resume_missing_returns_error(tmp_path, monkeypatch):
@@ -217,8 +215,8 @@ def test_persist_operator_run_writes_and_mints_id(tmp_path, monkeypatch):
         duration_ms=7,
         operator="alice",
     )
-    assert b._conversation_id  # minted even with no prior chat
-    rec = b.load_conversation(b._conversation_id)
+    assert b._chat_session_id  # a session (== conversation) opened for it
+    rec = b.load_conversation(b._chat_session_id)
     op = rec["turns"][0]
     assert op["kind"] == "operator_run" and op["runnable"] == "deploy"
     assert op["output"] == "out" and op["operator"] == "alice"
@@ -237,7 +235,7 @@ def test_operator_run_never_replayed_to_the_agent(tmp_path, monkeypatch):
     assert len(b.load_conversation(cid)["turns"]) == 2
     # … but only the chat exchange is in the rebuilt model history.
     assert res["kept"] == 1
-    text = "\n".join(m["content"] for m in b._chat_history)
+    text = "\n".join(m["content"] for m in _S(b).history)
     assert "did it" in text
     assert "secret-deploy" not in text
 
@@ -265,8 +263,8 @@ def test_flatten_turns_skips_operator_and_denied(tmp_path):
 def test_delete_and_rename_via_bridge(tmp_path, monkeypatch):
     _point_store(monkeypatch, tmp_path)
     b = _ConvBridge()
-    b._persist_conversation_turn("q", "a", [], {}, "m")
-    cid = b._conversation_id
+    b._persist_conversation_turn(_S(b), "q", "a", [], {}, "m")
+    cid = b._chat_session_id
     b.rename_conversation(cid, "Renamed")
     assert b.load_conversation(cid)["title"] == "Renamed"
     b.delete_conversation(cid)
@@ -306,7 +304,7 @@ def test_resume_compacts_long_conversation_with_note(tmp_path, monkeypatch):
     res = b.resume_conversation(cid)
     assert res["compacted"] is True and res["summarized"] is False
     assert res["turns"] == 10 and res["kept"] == 4  # 1 opening + 3 recent
-    text = "\n".join(m["content"] for m in b._chat_history)
+    text = "\n".join(m["content"] for m in _S(b).history)
     assert "earlier turns were condensed" in text  # the mechanical note (path A)
     assert "answer 0" in text and "answer 9" in text  # opening + recent kept verbatim
     # A middle turn's answer was dropped (the note lists middle *questions* only,
@@ -320,7 +318,7 @@ def test_resume_short_conversation_not_compacted(tmp_path, monkeypatch):
     b = _ConvBridge()
     res = b.resume_conversation(cid)
     assert res["compacted"] is False and res["kept"] == 3
-    assert all("condensed" not in m["content"] for m in b._chat_history)
+    assert all("condensed" not in m["content"] for m in _S(b).history)
 
 
 def test_resume_compact_on_resume_falls_back_without_model(tmp_path, monkeypatch):
@@ -331,7 +329,7 @@ def test_resume_compact_on_resume_falls_back_without_model(tmp_path, monkeypatch
     b = _ConvBridge()
     res = b.resume_conversation(cid)
     assert res["compacted"] is True and res["summarized"] is False
-    assert any("earlier turns were condensed" in m["content"] for m in b._chat_history)
+    assert any("earlier turns were condensed" in m["content"] for m in _S(b).history)
 
 
 def test_resume_keep_first_is_tunable(tmp_path, monkeypatch):
@@ -341,7 +339,7 @@ def test_resume_keep_first_is_tunable(tmp_path, monkeypatch):
     b = _ConvBridge()
     res = b.resume_conversation(cid)
     assert res["compacted"] is True and res["kept"] == 4  # 2 opening + 2 recent
-    text = "\n".join(m["content"] for m in b._chat_history)
+    text = "\n".join(m["content"] for m in _S(b).history)
     assert "answer 0" in text and "answer 1" in text  # both opening turns verbatim
     assert "answer 2" not in text  # turn 2 fell into the condensed middle
 
@@ -352,7 +350,7 @@ def test_resume_keep_first_zero_keeps_no_opening(tmp_path, monkeypatch):
     b = _ConvBridge()
     res = b.resume_conversation(cid)
     assert res["compacted"] is True and res["kept"] == 2  # recent only
-    assert b._chat_history[0]["role"] == "user"  # still starts on a user turn
+    assert _S(b).history[0]["role"] == "user"  # still starts on a user turn
 
 
 def test_resume_history_stays_alternating_after_compaction(tmp_path, monkeypatch):
@@ -362,6 +360,6 @@ def test_resume_history_stays_alternating_after_compaction(tmp_path, monkeypatch
     cid = _seed(tmp_path, 12)
     b = _ConvBridge()
     b.resume_conversation(cid)
-    roles = [m["role"] for m in b._chat_history]
+    roles = [m["role"] for m in _S(b).history]
     assert roles[0] == "user"
     assert all(a != b2 for a, b2 in zip(roles, roles[1:]))  # strictly alternating

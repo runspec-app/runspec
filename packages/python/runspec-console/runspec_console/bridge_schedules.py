@@ -358,6 +358,35 @@ class SchedulesMixin:
         # Defence in depth — parse already refused an agent job when AI is off.
         if not getattr(self, "_ai_enabled", True):
             return {"ok": False, "reason": AI_OFF_MESSAGE}
+        # A Schedules-tab run card (and so a Console session chip) like every
+        # other scheduled fire — evals never stream, so the card carries just
+        # the outcome.
+        card_id = uuid.uuid4().hex[:12]
+        created = time.time()
+        card: dict[str, Any] = {
+            "card_id": card_id,
+            "trigger": job.id,
+            "source": "schedule",
+            "event_type": "eval",
+            "summary": f"eval: {job.eval_fixture}",
+            "column": "running",
+            "detail": {
+                "action": "eval",
+                "fixture": str(job.eval_fixture or ""),
+                "schedule_id": job.id,
+            },
+            "created_at": created,
+            "timeline": [{"ts": created, "text": "running"}],
+        }
+        self._on_schedule_card(card)
+
+        def finish(column: str, **detail: Any) -> None:
+            now = time.time()
+            card["column"] = column
+            card["detail"] = {**card["detail"], **detail}
+            card["timeline"] = [*card["timeline"], {"ts": now, "text": column}]
+            self._on_schedule_card(card)
+
         try:
             res = self.run_evals(  # type: ignore[attr-defined]
                 fixture_id=str(job.eval_fixture or ""),
@@ -367,15 +396,19 @@ class SchedulesMixin:
             )
         except Exception as exc:  # noqa: BLE001
             logger.exception("schedule: eval fixture %r failed", job.eval_fixture)
+            finish("failed", error=str(exc))
             return {"ok": False, "reason": str(exc)}
+        s = res.get("summary") or {}
         if res.get("ok"):
-            s = res.get("summary") or {}
             logger.info(
                 "schedule: eval %s → %s/%s passed",
                 job.eval_fixture,
                 s.get("passed"),
                 s.get("total"),
             )
+            finish("done", result=f"{s.get('passed')}/{s.get('total')} passed")
+        else:
+            finish("failed", error=str(res.get("error") or "eval run failed"))
         return {"ok": bool(res.get("ok")), "summary": res.get("summary")}
 
     def _invoke_scheduled_saved(self, job: Any) -> str:

@@ -19,6 +19,8 @@ describe('conversationToBlocks', () => {
     expect(b.label).toBe('do it')
     expect(b.done).toBe(true)
     expect(b.id).toBe('c1:0')
+    // Every reopened block belongs to the session whose id == the conversation id.
+    expect(blocks.every(x => x.sessionId === 'c1')).toBe(true)
     expect(b.segments[0]).toMatchObject({ kind: 'tool', entry: { name: 'deploy', output: 'ok', running: false } })
     expect(b.segments[1]).toEqual({ kind: 'text', text: 'done' })
   })

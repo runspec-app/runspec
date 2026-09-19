@@ -17,6 +17,7 @@ import threading
 import pytest
 
 from runspec_console.bridge import Bridge
+from tests.session_stub import install_sessions
 
 
 @pytest.fixture(autouse=True)
@@ -42,9 +43,12 @@ class _Bridge:
         self._pending_confirms: dict = {}
         self._pending_confirm_meta: dict = {}
         self._dispatched: list = []
+        install_sessions(self)
 
     def _dispatch(self, event, detail):
         self._dispatched.append((event, detail))
+
+    _current_workspace_root = Bridge._current_workspace_root
 
     def _notify_confirm(self, *a, **k):
         pass

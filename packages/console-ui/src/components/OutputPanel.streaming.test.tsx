@@ -55,11 +55,11 @@ function Harness({ onReady }: { onReady: (add: (b: InvocationBlock) => void) => 
 }
 
 function runBlock(id: string): InvocationBlock {
-  return { id, type: 'run', label: `/dump`, startedAt: new Date().toISOString(), lines: [], segments: [], currentText: '', done: false }
+  return { id, sessionId: 's1', type: 'run', label: `/dump`, startedAt: new Date().toISOString(), lines: [], segments: [], currentText: '', done: false }
 }
 
 function chatBlock(id: string): InvocationBlock {
-  return { id, type: 'chat', label: `ask`, startedAt: new Date().toISOString(), lines: [], segments: [], currentText: '', done: false }
+  return { id, sessionId: 's1', type: 'chat', label: `ask`, startedAt: new Date().toISOString(), lines: [], segments: [], currentText: '', done: false }
 }
 
 function emitLine(id: string, line: string, stream: 'stdout' | 'stderr' = 'stdout') {

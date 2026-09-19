@@ -29,6 +29,7 @@ from runspec_console import config as config_mod
 from runspec_console import observability as obs
 from runspec_console.adapters.base import ChatResponse, ToolCall
 from runspec_console.bridge import Bridge
+from tests.session_stub import agentic_shim, install_sessions
 
 # The SDK is a dev dependency; skip the span-tree tests cleanly if it's absent.
 _OK, _ = obs.available()
@@ -397,12 +398,9 @@ def _chat_stub():
     """A bare stub with the REAL _agentic_chat_turn + _gated_run_tool_async bound,
     so the tool span is created by production code at its real chokepoint."""
     s = types.SimpleNamespace()
-    s._chat_lock = threading.Lock()
-    s._chat_history = []
-    s._history_turn_ids = []
-    s._excluded_turns = set()
     s._chat_cancels = {}
     s._lock = threading.Lock()
+    install_sessions(s)
     s._run_origin = {}
     s._config = {"llm": {"max_continuations": 3}}
     s.tokens = []
@@ -414,7 +412,6 @@ def _chat_stub():
     s._chat_index_text = lambda: ""
     s._messages_chars = lambda _msgs: 0
     s._trace = lambda *a, **k: None
-    s._trim_chat_history = lambda: None
     s._play_sound = lambda *a, **k: None
     s._window_is_foreground = lambda: True
     s._dispatch = lambda event, payload: (
@@ -447,9 +444,6 @@ def _chat_stub():
     s._usage_from_response = Bridge._usage_from_response
     s._context_window = Bridge._context_window
     for meth in (
-        "_agentic_chat_turn",
-        "_sync_history_tags",
-        "_visible_history",
         "_max_continuations",
         "_max_tool_rounds",
         "_max_network_retries",
@@ -458,6 +452,7 @@ def _chat_stub():
     ):
         setattr(s, meth, types.MethodType(getattr(Bridge, meth), s))
     s._append_recovery_prompt = Bridge._append_recovery_prompt  # @staticmethod
+    s._agentic_chat_turn = agentic_shim(s)
     return s
 
 

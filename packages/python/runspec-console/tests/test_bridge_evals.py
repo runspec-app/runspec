@@ -595,7 +595,11 @@ def test_run_scheduled_eval_drives_run_evals(bridge, monkeypatch):
 
     monkeypatch.setattr(bridge, "run_evals", fake_run_evals)
     job = SimpleNamespace(
-        eval_fixture="linux", eval_samples=5, eval_validate=True, eval_telemetry=False
+        id="ev1",
+        eval_fixture="linux",
+        eval_samples=5,
+        eval_validate=True,
+        eval_telemetry=False,
     )
     out = bridge._run_scheduled_eval(job)
     assert out["ok"] is True and out["summary"]["passed"] == 2

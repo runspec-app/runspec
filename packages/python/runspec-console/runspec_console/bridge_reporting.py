@@ -103,14 +103,14 @@ class ReportingMixin:
         duration_ms: int,
         usage: dict[str, int] | None,
         stopped: bool,
+        error: bool = False,
     ) -> None:
-        """Append a History/Analytics run_summary line for one completed chat
-        turn. A chat turn previously wrote no run_summary (only runnable runs and
-        built-in tool calls did), so it was absent from History/Analytics and had
-        no turn-granularity record; this fills that gap alongside the OTLP turn
-        metric. ``exit_code`` is 130 when the operator stopped the turn, else 0.
-        Best-effort — a logging failure must never break the turn."""
-        exit_code = 130 if stopped else 0
+        """Append a History/Analytics run_summary line for one completed agent
+        turn — chat, trigger and schedule turns alike (the ``trigger`` field
+        carries the provenance). ``exit_code`` is 130 when the operator stopped
+        the turn, 1 when it failed outright (``error``), else 0. Best-effort — a
+        logging failure must never break the turn."""
+        exit_code = 130 if stopped else (1 if error else 0)
         with self._lock:
             origin = dict(self._run_origin.get(chat_id, {})) if chat_id else {}
         usage = usage or {}
@@ -135,7 +135,9 @@ class ReportingMixin:
         record = {
             "ts": utils_mod._iso_now(),
             "level": "INFO" if exit_code == 0 else "WARNING",
-            "message": f"chat turn ({'stopped' if stopped else 'ok'})",
+            "message": (
+                f"chat turn ({'stopped' if stopped else ('error' if error else 'ok')})"
+            ),
             "extra": extra,
         }
         try:

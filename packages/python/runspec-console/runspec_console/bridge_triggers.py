@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import threading
+
+from .bridge_turn import TurnSpec
 import time
 from collections.abc import Callable
 from datetime import datetime, timedelta
@@ -17,7 +19,6 @@ from typing import Any
 from . import active_room as active_room_mod
 from . import config as config_mod
 from . import notify
-from . import observability
 
 from .bridge_const import (
     logger,
@@ -37,11 +38,6 @@ from .bridge_helpers import (
     _RotaPresenceWatcher,
 )
 from .bridge_utils import format_result_for_room
-from .adapters.base import (
-    describe_exception,
-    is_transient_model_error,
-    retry_delay,
-)
 
 from typing import TYPE_CHECKING
 
@@ -205,7 +201,9 @@ class TriggersMixin:
             self._trigger_engine = None
             schedule_source = self._schedule_source
             self._schedule_source = None
-            card_ids = set(self._trigger_cards)
+            # Trigger *and* schedule cards — a scheduled agent turn parked at
+            # the gate must not outlive the source that fired it.
+            card_ids = set(self._trigger_cards) | set(self._schedule_cards)
         self._abort_turns(card_ids)
         if schedule_source is not None:
             schedule_source.stop()
@@ -2118,6 +2116,7 @@ class TriggersMixin:
         """Engine hook: record a card update and push it to the UI. May be called
         from a source / worker thread."""
         detail = card.to_dict()
+        self._sync_card_session("trigger", detail)
         with self._lock:
             prev = self._trigger_cards.get(detail["card_id"], {}).get("column")
             self._trigger_cards[detail["card_id"]] = detail
@@ -2166,6 +2165,7 @@ class TriggersMixin:
         plain dict (TriggerCard.to_dict() shape) built by :meth:`_invoke_scheduled`,
         so this just stores + bounds + dispatches. Kept separate from the trigger
         board so schedule runs never surface in the Triggers tab or its badge."""
+        self._sync_card_session("schedule", card)
         with self._lock:
             self._schedule_cards[card["card_id"]] = card
             if len(self._schedule_cards) > 200:
@@ -2176,6 +2176,23 @@ class TriggersMixin:
                 for old in oldest:
                     self._schedule_cards.pop(old["card_id"], None)
         self._dispatch("runspec:schedule_card", dict(card))
+
+    def _sync_card_session(self, kind: str, card: dict[str, Any]) -> None:
+        """Keep the session registry 1:1 with the run cards: the first sighting
+        of a trigger / schedule card opens its read-only session (id == card id,
+        so the card, the session and the headless turn's events share one id —
+        rule-mode runs and scheduled runnables included, which is what gives them
+        their own workspace and chip); a terminal column marks it finished."""
+        cid = str(card.get("card_id") or "")
+        if not cid:
+            return
+        with self._lock:
+            known = cid in self._sessions
+        if not known:
+            label = f"{card.get('trigger') or kind} · {card.get('event_type') or ''}"
+            self._open_automation_session(kind, cid, label.strip(" ·"))
+        if str(card.get("column") or "") in ("done", "failed"):
+            self._close_automation_session(cid)
 
     def _trigger_run_agent_turn(
         self,
@@ -2233,6 +2250,7 @@ class TriggersMixin:
             else ""
         )
         catalog_section = self._catalog_system_section(index_text)
+        system_chars = len(system)  # the catalogue is sized as its own bucket
         if catalog_section:
             system = system + "\n\n" + catalog_section
         try:
@@ -2244,46 +2262,90 @@ class TriggersMixin:
                 "⚠ No model provider configured — the trigger matched, but agent mode "
                 "needs a provider + API key in Settings to run."
             )
+        from .trigger_runner import draft_reply_schema, propose_reply_schema
+
+        # The turn runs under the card's session (opened when the card was
+        # first announced — its id is the card id). A caller with no card (a
+        # room-assigned runbook, a test) gets one opened here. Either way the
+        # session's workspace ("trigger-<id>" / "schedule-<id>") keeps spilled
+        # tool output hermetic to this run; the prefix drives the sweep's
+        # retention rule (see workspaces.sweep_orphans).
+        kind = (
+            workspace_prefix
+            if workspace_prefix in ("trigger", "schedule")
+            else "trigger"
+        )
+        session = self._session_for_turn(chat_id)
+        if session is None or session.interactive:
+            session = self._open_automation_session(kind, chat_id, message)
         cancel = threading.Event()
         with self._lock:
             self._chat_cancels[chat_id] = cancel
-            # Each isolated agent turn (trigger / schedule / room-driven) gets
-            # its own workspace so big spilled tool outputs stay hermetic to
-            # that turn — not leaking into a concurrent chat's workspace or
-            # another headless run. The prefix ("trigger-"/"schedule-") drives the
-            # sweep retention path (headless_retention_days, not the chat_history
-            # settings) and lets the sweep tell the two kinds apart. See
-            # workspaces.sweep_orphans.
-            kind = (
-                workspace_prefix
-                if workspace_prefix in ("trigger", "schedule")
-                else "trigger"
+        # A headless turn keeps every built-in inline even in search mode —
+        # action_allow can only narrow tools it can see, and the deferral
+        # meta-tools would let a turn reach around that narrowing.
+        tools = self._runnables_to_tools(allow=allowed_runnables, inline_builtins=True)
+        tools = self._filter_headless_tools(tools, action_allow)
+        if allowed_runnables and not tools:
+            # A non-empty allowlist that matched no installed runnable — the agent
+            # would run tool-less. Surface it (a config typo / a host not yet
+            # discovered) rather than silently doing nothing.
+            logger.warning(
+                "trigger agent turn: runnables allowlist %s matched no runnable",
+                allowed_runnables,
             )
-            self._workspace_by_chat[chat_id] = f"{kind}-{chat_id}"
+        # The draft tools are handled inside the turn (always confirm-gated,
+        # save-only) — offered only when the trigger enables drafting and the
+        # event carries something to reply to.
+        inline: dict[str, Any] = {}
+        if draft and reply_to:
+            tools = [*tools, draft_reply_schema()]
+
+            async def _draft(tool_input: dict[str, Any]) -> str:
+                return await self._gated_draft_reply(
+                    tool_input, chat_id, reply_to, from_mailbox, stage=stage
+                )
+
+            inline["draft_reply"] = _draft
+        if draft and room:
+            tools = [*tools, propose_reply_schema()]
+
+            async def _propose(tool_input: dict[str, Any]) -> str:
+                return await self._gated_propose_reply(
+                    tool_input, chat_id, room, stage=stage
+                )
+
+            inline["propose_reply"] = _propose
         # An agent trigger turn IS an LLM run; tag every runnable it calls with
         # the causing event source (agent=True). Direct chat turns register no
         # origin and default to the same agent=True with no trigger.
         self._set_run_origin(chat_id, trigger, agent=True)
+        spec = TurnSpec(
+            chat_id=chat_id,
+            session=session,
+            message=message,
+            adapter=adapter,
+            tools=tools,
+            kind=kind,
+            interactive=False,
+            headless_confirm=True,
+            cancel=cancel,
+            system_parts={"system": system_chars},
+            index_text=index_text,
+            record=record,
+            stage=stage,
+            inline_tools=inline,
+            # This headless path has no reply-continuation; re-running the turn
+            # (the card's Re-run / the schedule's next fire) resumes the work.
+            pause_hint="re-run to continue",
+            cutoff_hint="re-run to continue",
+        )
         try:
-            return asyncio.run(
-                self._run_isolated_agent_turn(
-                    chat_id,
-                    message,
-                    adapter,
-                    reply_to=reply_to if draft else None,
-                    room=room if draft else None,
-                    from_mailbox=from_mailbox if draft else None,
-                    allowed_runnables=allowed_runnables,
-                    action_allow=action_allow,
-                    record=record,
-                    stage=stage,
-                )
-            )
+            return asyncio.run(self._run_agent_turn(spec)).summary
         finally:
             self._clear_run_origin(chat_id)
             with self._lock:
                 self._chat_cancels.pop(chat_id, None)
-                self._workspace_by_chat.pop(chat_id, None)
 
     def _group_calls_level(self, calls: list[tuple[str, dict[str, Any]]]) -> str:
         """The autonomy a batch of calls must honour: the most restrictive across
@@ -2365,11 +2427,13 @@ class TriggersMixin:
         *,
         noun: str,
         stage: Callable[[str], None] | None = None,
+        headless: bool = False,
     ) -> list[str]:
-        """Async sibling of :meth:`_grouped_confirm_run_sync` for the chat agent
+        """Async sibling of :meth:`_grouped_confirm_run_sync` for the agent
         loop. The confirm prompt is registered on the event-loop thread (dispatch
         from a worker thread is unreliable — see :meth:`_gated_run_tool_async`);
-        only the blocking wait and the runs are offloaded."""
+        only the blocking wait and the runs are offloaded. ``headless`` selects
+        the longer unattended confirm timeout."""
         if not calls:
             return []
         level = self._group_calls_level(calls)
@@ -2386,9 +2450,8 @@ class TriggersMixin:
             request_id, event, holder = self._register_confirm(
                 chat_id, "run_group", payload, level
             )
-            # stage set → trigger turn → longer headless timeout.
             timed_out = not await asyncio.to_thread(
-                event.wait, self._confirm_timeout_s(stage is not None)
+                event.wait, self._confirm_timeout_s(headless)
             )
             approved, edited = self._finish_confirm(request_id, holder, timed_out)
             if holder.get("cancelled"):
@@ -2528,302 +2591,6 @@ class TriggersMixin:
                 or t["name"] in allow
             ]
         return tools
-
-    async def _run_isolated_agent_turn(
-        self,
-        chat_id: str,
-        message: str,
-        adapter: Any,
-        reply_to: str | None = None,
-        room: str | None = None,
-        from_mailbox: str | None = None,
-        allowed_runnables: list[str] | None = None,
-        action_allow: list[str] | None = None,
-        record: Callable[[str], None] | None = None,
-        stage: Callable[[str], None] | None = None,
-    ) -> str:
-        """A headless agent loop for a trigger card. Like _agentic_chat_turn but
-        against an isolated, throwaway history (never the shared chat) so a
-        trigger never pollutes the user's conversation. Same toolset and the same
-        autonomy gate (_gated_run_tool_async). When ``reply_to`` is set the
-        built-in draft_reply tool is offered; when ``room`` is set the chat
-        propose_reply tool is offered (both handled inline).
-
-        ``action_allow`` (non-empty) restricts the built-in action + Outlook tools
-        to that set — the operator's per-trigger choice of which actions this
-        trigger may take; runnable tools are still governed by ``allowed_runnables``.
-
-        Returns a short summary (the model's closing reply + any tool actions)
-        for display on the run card — trigger turns have no chat transcript,
-        so this is where the agent's output becomes visible."""
-        from .trigger_runner import draft_reply_schema, propose_reply_schema
-
-        start = time.monotonic()
-        # inline_builtins: a headless turn keeps every built-in inline even in
-        # search mode — action_allow can only narrow tools it can see in the
-        # list, and the deferral meta-tools (describe_tool/use_tool) would let
-        # a turn reach around that narrowing.
-        tools = self._runnables_to_tools(allow=allowed_runnables, inline_builtins=True)
-        # The search-mode catalogue index is composed into the adapter's system
-        # prompt by the caller (_trigger_run_agent_turn → system_override), not
-        # folded into the messages here — so a gateway caching only the system
-        # block caches it. Nothing to do in this loop.
-        tools = self._filter_headless_tools(tools, action_allow)
-        if allowed_runnables and not tools:
-            # A non-empty allowlist that matched no installed runnable — the agent
-            # would run tool-less. Surface it (a config typo / a host not yet
-            # discovered) rather than silently doing nothing.
-            logger.warning(
-                "trigger agent turn: runnables allowlist %s matched no runnable",
-                allowed_runnables,
-            )
-        if reply_to:
-            tools = [*tools, draft_reply_schema()]
-        if room:
-            tools = [*tools, propose_reply_schema()]
-        history: list[dict[str, Any]] = [{"role": "user", "content": message}]
-        with self._lock:
-            cancel = self._chat_cancels.get(chat_id) or threading.Event()
-        stopped = False
-        final_text = ""  # the model's last assistant message (its conclusion)
-        actions: list[str] = []  # one line per tool the agent ran
-        tool_rounds = 0  # tool-execution rounds, bounded by _max_tool_rounds()
-        hit_iteration_cap = False
-        # Transient model-call retries + self-recovery passes used this turn — same
-        # resilience as the chat loop, so a headless trigger/schedule turn no longer
-        # dies silently on a network blip. Bounded by _max_network_retries() /
-        # _max_self_recoveries().
-        network_retries = 0
-        self_recoveries = 0
-
-        # OpenTelemetry root span for this headless turn — closes the tracing gap
-        # the reactive/scheduled paths had (no-op unless [telemetry] is on). Kind
-        # is read off the run provenance ("schedule" vs a trigger name). Tool
-        # spans come for free: this loop routes through _gated_run_tool_async.
-        _origin = getattr(self, "_run_origin", {}).get(chat_id) or {}
-        _model_name = getattr(adapter, "model", "") or ""
-        _provider_name = str(
-            (config_mod.read_config().get("llm") or {}).get("provider") or ""
-        )
-        _turn_span = observability.begin_turn(
-            "schedule" if _origin.get("trigger") == "schedule" else "trigger",
-            chat_id,
-            model=_model_name,
-            provenance=_origin,
-        )
-        _turn_usage = {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0}
-
-        while True:  # bound tool rounds by _max_tool_rounds(), like the chat loop
-            if tool_rounds >= self._max_tool_rounds():
-                hit_iteration_cap = True
-                break
-            if cancel.is_set():
-                stopped = True
-                break
-            response: Any = None
-            assistant_text = ""
-            retry_iteration = False
-            errored = False
-            error_detail = ""
-            try:
-                # The catalogue index rides the system prompt now (composed by
-                # _trigger_run_agent_turn), so the messages are the isolated
-                # history verbatim — messages[0] stays the raw user turn.
-                model_messages = history
-                with observability.llm_span(
-                    provider=_provider_name, model=_model_name
-                ) as _llm_span:
-                    # Capture the system prompt too, so gen_ai.prompt still shows
-                    # the catalogue index in search mode (it lives in system now).
-                    observability.add_prompt(
-                        model_messages, system=getattr(adapter, "system", "")
-                    )
-                    async for event in adapter.stream_with_tools(model_messages, tools):
-                        if cancel.is_set():
-                            stopped = True
-                            break
-                        if event[0] == "text":
-                            assistant_text += event[1]
-                            self._dispatch(
-                                "runspec:token", {"id": chat_id, "token": event[1]}
-                            )
-                        elif event[0] == "done":
-                            response = event[1]
-                    if response is not None:
-                        _u = self._usage_from_response(response)
-                        for _k, _v in _u.items():
-                            _turn_usage[_k] += _v
-                        observability.set_llm_response(_llm_span, response, _u)
-                    if assistant_text.strip():
-                        observability.add_completion(assistant_text)
-            except Exception as exc:  # noqa: BLE001
-                observability.record_exception(observability.current_span(), exc)
-                detail = describe_exception(exc)
-                max_net = self._max_network_retries()
-                # Transient blip, nothing shown yet → retry the same call after a
-                # backoff (mirrors the chat loop). Otherwise fall through to the
-                # self-recovery / descriptive-error handling below.
-                if (
-                    is_transient_model_error(exc)
-                    and not assistant_text.strip()
-                    and network_retries < max_net
-                ):
-                    network_retries += 1
-                    logger.warning(
-                        "trigger %s: transient model-stream error (%s); retry %d/%d",
-                        chat_id,
-                        detail,
-                        network_retries,
-                        max_net,
-                    )
-                    self._dispatch(
-                        "runspec:token",
-                        {
-                            "id": chat_id,
-                            "token": (
-                                f"\n⏳ {detail} — retrying "
-                                f"({network_retries}/{max_net})…"
-                            ),
-                        },
-                    )
-                    retry_iteration = True
-                else:
-                    logger.warning(
-                        "trigger %s: model-stream error (%s)", chat_id, detail
-                    )
-                    errored = True
-                    error_detail = detail
-            if retry_iteration:
-                await asyncio.sleep(retry_delay(network_retries))
-                continue
-            # Durable / budget-exhausted failure — hand the turn back to the agent to
-            # analyse and resume (bounded by _max_self_recoveries), or end with a
-            # descriptive error instead of the old bare, message-less "Error".
-            if errored:
-                if assistant_text.strip():
-                    history.append({"role": "assistant", "content": assistant_text})
-                if (
-                    not cancel.is_set()
-                    and self_recoveries < self._max_self_recoveries()
-                ):
-                    self_recoveries += 1
-                    max_self = self._max_self_recoveries()
-                    logger.warning(
-                        "trigger %s: self-recovery %d/%d after error (%s)",
-                        chat_id,
-                        self_recoveries,
-                        max_self,
-                        error_detail,
-                    )
-                    self._dispatch(
-                        "runspec:token",
-                        {
-                            "id": chat_id,
-                            "token": (
-                                f"\n⚠ {error_detail}\n↻ Trying to recover "
-                                f"({self_recoveries}/{max_self})…"
-                            ),
-                        },
-                    )
-                    self._append_recovery_prompt(history, error_detail)
-                    network_retries = 0
-                    await asyncio.sleep(retry_delay(self_recoveries, base=2.0))
-                    continue
-                self._dispatch(
-                    "runspec:token",
-                    {"id": chat_id, "token": f"\n⚠ Error: {error_detail}"},
-                )
-                final_text = f"⚠ Error: {error_detail}"
-                break
-            network_retries = 0  # clean stream — reset the per-call retry budget
-            if stopped:
-                break
-            if (
-                response is None
-                or response.stop_reason != "tool_use"
-                or not response.tool_calls
-            ):
-                final_text = assistant_text  # closing reply, no further tools
-                break
-            if cancel.is_set():
-                stopped = True
-                break
-            tool_results: list[tuple[Any, str]] = []
-            for tc in response.tool_calls:
-                self._dispatch(
-                    "runspec:tool_start",
-                    {"id": chat_id, "tool_name": tc.name, "tool_input": tc.input},
-                )
-                try:
-                    if cancel.is_set():
-                        output = (
-                            f"⏹ '{tc.name.split('__', 1)[-1]}' was not run — stopped."
-                        )
-                    elif tc.name == "draft_reply":
-                        output = await self._gated_draft_reply(
-                            tc.input, chat_id, reply_to, from_mailbox, stage=stage
-                        )
-                    elif tc.name == "propose_reply":
-                        output = await self._gated_propose_reply(
-                            tc.input, chat_id, room, stage=stage
-                        )
-                    else:
-                        output = await self._gated_run_tool_async(
-                            tc.name, tc.input, chat_id, stage=stage
-                        )
-                except Exception as exc:  # noqa: BLE001
-                    # A tool that raises must not escape the loop — that would
-                    # leave the tool_start spinner running forever and fail the
-                    # whole card with a bare exception string. Turn it into a
-                    # readable tool result the agent can react to, and always emit
-                    # tool_end (below). The card stays alive so the turn can
-                    # recover or conclude.
-                    logger.exception("trigger agent turn: tool %s raised", tc.name)
-                    observability.record_exception(observability.current_span(), exc)
-                    output = f"✗ '{tc.name.split('__', 1)[-1]}' failed: {exc}"
-                    if stage is not None:
-                        stage("running")  # un-stick an 'awaiting_human' card
-                self._dispatch(
-                    "runspec:tool_end",
-                    {"id": chat_id, "tool_name": tc.name, "output": output[:2000]},
-                )
-                display = tc.name.split("__", 1)[-1]
-                first_line = next((ln for ln in output.splitlines() if ln.strip()), "")
-                actions.append(f"{display} → {first_line[:160]}")
-                if record is not None:
-                    record(f"{display} → {first_line[:160]}")
-                tool_results.append((tc, output))
-            tool_rounds += 1
-            history.extend(adapter.make_tool_turn(response, tool_results))
-
-        # Hit the tool-round backstop mid-work — surface it in the conclusion so
-        # the trigger/schedule run card and event log aren't silent (this headless
-        # path has no reply-continuation; re-running the turn resumes the work).
-        if hit_iteration_cap:
-            final_text = (
-                f"{final_text.rstrip()}\n\n"
-                f"_(paused after {tool_rounds} tool steps — re-run to continue)_"
-            ).strip()
-
-        # Close the turn span with the turn-total token usage (no-op when off).
-        observability.end_turn(_turn_span, usage=_turn_usage)
-
-        duration_ms = int((time.monotonic() - start) * 1000)
-        if stopped:
-            self._dispatch("runspec:token", {"id": chat_id, "token": "\n⏹ Stopped."})
-        self._dispatch(
-            "runspec:run_end",
-            {"id": chat_id, "exit_code": 0, "duration_ms": duration_ms},
-        )
-
-        parts: list[str] = []
-        if actions:
-            parts.append("\n".join(f"• {a}" for a in actions))
-        if final_text.strip():
-            parts.append(final_text.strip())
-        if stopped:
-            parts.append("⏹ Stopped.")
-        return "\n\n".join(parts)[:4000]
 
     async def _gated_draft_reply(
         self,
