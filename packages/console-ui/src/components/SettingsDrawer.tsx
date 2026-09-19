@@ -3162,7 +3162,7 @@ function CredentialsTab() {
 
 // ── Mailbox tab (the monitored mailbox; its own tab so Triggers has room) ────
 
-function MailboxesTab() {
+export function MailboxesTab() {
   const { ai } = useFeatures()
   const [form] = Form.useForm<Mailbox>()
   // Whether a [mailbox] is configured at all (the master switch). Off → save null.
@@ -3248,11 +3248,19 @@ function MailboxesTab() {
         )}
       </Text>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: enabled ? 10 : 4 }}>
         <Switch size="small" checked={enabled} onChange={setEnabled} />
         <MailOutlined style={{ color: 'var(--rs-text-muted)' }} />
         <span style={{ fontSize: 14 }}>Monitor a mailbox</span>
       </div>
+
+      {!enabled && (
+        <Text type="secondary" style={{ fontSize: 13, display: 'block', marginBottom: 10, marginLeft: 34 }}>
+          Start here &mdash; turn this on to choose the primary inbox the console watches (also
+          the room / sign-up identity). The <b>Also watch</b> list below is only for extra
+          inboxes monitored alongside it.
+        </Text>
+      )}
 
       {enabled && (
         <Form form={form} layout="vertical" size="small" style={{ marginTop: 4 }}>
@@ -3320,6 +3328,12 @@ function MailboxesTab() {
         above &mdash; e.g. your own Inbox next to a shared helpdesk mailbox. These feed
         triggers only; the mailbox above stays the room / sign-up identity.
       </Text>
+      {watches.length === 0 && (
+        <Text type="secondary" style={{ fontSize: 13, display: 'block', marginBottom: 8, fontStyle: 'italic' }}>
+          No extra mailboxes &mdash; optional. Use <b>Monitor a mailbox</b> above for the
+          primary inbox.
+        </Text>
+      )}
       {watches.map((w, i) => (
         <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 6, alignItems: 'center' }}>
           <Input
@@ -3350,7 +3364,7 @@ function MailboxesTab() {
           <Button size="small" type="text" danger onClick={() => removeWatch(i)}>Remove</Button>
         </div>
       ))}
-      <Button size="small" onClick={addWatch} style={{ marginTop: 2 }}>+ Add mailbox</Button>
+      <Button size="small" onClick={addWatch} style={{ marginTop: 2 }}>+ Add extra mailbox</Button>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 12 }}>
         <Button type="primary" size="small" loading={saving} onClick={save}>Save</Button>
