@@ -28,6 +28,7 @@ refused by ``marketplace.validate_spec``).
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 import threading
@@ -40,7 +41,7 @@ from . import bridge_utils as utils_mod
 from . import config as config_mod
 from . import hosts as hosts_mod
 from . import marketplace as mp
-from .bridge_const import logger
+from .bridge_const import _AGENT_TOOL_OUTPUT_CAP, logger
 from .procutil import no_window_kwargs
 
 if TYPE_CHECKING:
@@ -50,6 +51,8 @@ _PROBE_TIMEOUT_S = 40
 _PIP_TIMEOUT_S = 900
 _MAX_OP_LINES = 400  # pip output lines kept per target in the op record
 _METADATA_WORKERS = 8
+_MARKETPLACE_TOOL_DEFAULT_LIMIT = 15  # search_marketplace results (agent tool)
+_MARKETPLACE_TOOL_MAX_LIMIT = 50
 
 
 class MarketplaceMixin:
@@ -181,6 +184,148 @@ class MarketplaceMixin:
         """Drop the machine-local catalogue cache (the next read re-fetches)."""
         mp.CatalogCache(config_mod.marketplace_cache_path()).clear()
         self._marketplace_installed = None
+
+    # ── agent tool: read-only marketplace discovery ──
+
+    def _marketplace_agent_tools(self) -> list[dict[str, Any]]:
+        """Schema for the read-only ``search_marketplace`` tool — search the
+        package indexes' catalogue for INSTALLABLE runnable packages. Offered
+        only when ``[marketplace] enabled`` (default true); empty list when
+        disabled so a locked-down console drops it (matching the hidden tab and
+        the refused install)."""
+        if not config_mod.read_marketplace().get("enabled", True):
+            return []
+        return [
+            {
+                "name": "search_marketplace",
+                "description": (
+                    "Search the console's Marketplace catalogue — runspec "
+                    "runnable packages available from the operator's configured "
+                    "package indexes (PyPI and/or a private Nexus/Artifactory), "
+                    "that are INSTALLABLE but not necessarily installed. Use it "
+                    "to answer 'is there a runnable package for X I could add?' — "
+                    "the complement to search_runnables, which only sees what is "
+                    "already installed and runnable now. Returns one entry per "
+                    "package: name, latest version, summary, keywords, whether it "
+                    "ships a verified runspec.toml, the repo(s) it came from, doc "
+                    "and source links, and an 'installed' hint when known. "
+                    "Read-only DISCOVERY: you can recommend a package and point "
+                    "the operator to the Marketplace tab to install it — you "
+                    "cannot install it yourself. Honours the operator's hidden-"
+                    "packages list. Served from the machine-local catalogue "
+                    "cache (no network unless it's cold)."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": (
+                                "Text matched case-insensitively against each "
+                                "package's name, summary and keywords (e.g. "
+                                "'gitlab', 'tls certificate', 'jira'). Omit to "
+                                "list the whole catalogue (bounded by limit)."
+                            ),
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": (
+                                "Max packages to return (default "
+                                f"{_MARKETPLACE_TOOL_DEFAULT_LIMIT}, max "
+                                f"{_MARKETPLACE_TOOL_MAX_LIMIT})."
+                            ),
+                        },
+                    },
+                },
+            }
+        ]
+
+    def _run_marketplace_tool(self, ti: dict[str, Any]) -> str:
+        """Execute ``search_marketplace`` — read the catalogue (from cache),
+        filter by ``query``, and return a compact JSON envelope of installable
+        packages. Read-only discovery; the autonomy gate has already let it run.
+        Errors come back as ``Error: …`` strings the model can act on."""
+        cfg = config_mod.read_marketplace()
+        if not cfg.get("enabled", True):
+            return "Error: the marketplace is disabled ([marketplace] enabled = false)."
+        query = str(ti.get("query") or "").strip().lower()
+        try:
+            limit = int(ti.get("limit") or _MARKETPLACE_TOOL_DEFAULT_LIMIT)
+        except (TypeError, ValueError):
+            limit = _MARKETPLACE_TOOL_DEFAULT_LIMIT
+        limit = max(1, min(limit, _MARKETPLACE_TOOL_MAX_LIMIT))
+        try:
+            cat = self.marketplace_catalog(refresh=False)
+        except Exception as exc:  # never leak a raw traceback to the model
+            logger.debug("search_marketplace failed", exc_info=True)
+            return f"Error: could not read the marketplace catalogue: {exc}"
+        entries = cat.get("entries") or []
+
+        # Installed hint from the in-memory probe cache only — never trigger a
+        # fresh SSH fan-out from an autonomous read.
+        installed: set[str] = set()
+        probed = self._marketplace_installed
+        if isinstance(probed, dict):
+            for t in probed.get("targets") or []:
+                for name in t.get("dists") or {}:
+                    installed.add(mp.normalize_name(str(name)))
+
+        def _match(e: dict[str, Any]) -> bool:
+            if not query:
+                return True
+            hay = " ".join(
+                [
+                    str(e.get("name") or ""),
+                    str(e.get("display_name") or ""),
+                    str(e.get("summary") or ""),
+                    " ".join(str(k) for k in (e.get("keywords") or [])),
+                ]
+            ).lower()
+            return query in hay
+
+        matched = [e for e in entries if _match(e)]
+        results: list[dict[str, Any]] = []
+        for e in matched[:limit]:
+            links = e.get("links") or {}
+            repos = list(e.get("repos") or [])
+            if not repos and e.get("repo"):
+                repos = [e["repo"]]
+            results.append(
+                {
+                    "name": e.get("name"),
+                    "version": e.get("version"),
+                    "summary": e.get("summary") or "",
+                    "keywords": [str(k) for k in (e.get("keywords") or [])][:8],
+                    "verified": bool(e.get("has_runspec_toml")),
+                    "repos": repos,
+                    "docs": links.get("documentation") or links.get("homepage") or "",
+                    "source": links.get("source") or "",
+                    "requires_python": e.get("requires_python") or "",
+                    "installed": mp.normalize_name(str(e.get("name") or ""))
+                    in installed,
+                }
+            )
+        envelope = {
+            "enabled": True,
+            "count": len(results),
+            "total": len(matched),
+            "results": results,
+            "note": (
+                "Installable packages from the operator's configured indexes — "
+                "not necessarily installed. Installing is an operator action in "
+                "the console's Marketplace tab: recommend a package and point the "
+                "operator there; you cannot install it yourself. Use "
+                "search_runnables for what's already installed and runnable now."
+            ),
+        }
+        out = json.dumps(envelope, default=str)
+        # Trim results (not the note) if a large catalogue overflows the cap.
+        while len(out) > _AGENT_TOOL_OUTPUT_CAP and results:
+            results.pop()
+            envelope["count"] = len(results)
+            envelope["truncated"] = True
+            out = json.dumps(envelope, default=str)
+        return out
 
     # ── internals: repos + catalogue ──
 

@@ -101,6 +101,8 @@ class _StubBridge:
     marketplace_op = Bridge.marketplace_op
     marketplace_cancel = Bridge.marketplace_cancel
     marketplace_clear_cache = Bridge.marketplace_clear_cache
+    _marketplace_agent_tools = Bridge._marketplace_agent_tools
+    _run_marketplace_tool = Bridge._run_marketplace_tool
     _marketplace_credential_options = Bridge._marketplace_credential_options
     _marketplace_repos = Bridge._marketplace_repos
     _marketplace_auth = Bridge._marketplace_auth
@@ -342,6 +344,70 @@ def test_catalog_hides_curated_packages(app, monkeypatch):
     # a glob hides it too.
     _write_marketplace({"auto_pip": False, "hide": ["runspec-*"], "repos": repos})
     assert b.marketplace_catalog()["entries"] == []
+
+
+def test_search_marketplace_agent_tool(app, monkeypatch):
+    fetch = _CannedFetch(_nexus_routes())
+    monkeypatch.setattr(mp, "default_fetch", lambda **kw: fetch)
+    _write_marketplace(
+        {
+            "auto_pip": False,
+            "repos": [
+                {
+                    "name": "Nexus",
+                    "url": "https://nexus.corp/simple",
+                    "credential": "nexus",
+                }
+            ],
+        }
+    )
+    b = _StubBridge()
+
+    # Whole catalogue (no query), read-only discovery envelope.
+    res = json.loads(b._run_marketplace_tool({}))
+    assert res["enabled"] and res["count"] == 1 and res["total"] == 1
+    e = res["results"][0]
+    assert e["name"] == "runspec-acme" and e["version"] == "1.2.0"
+    assert e["summary"] == "Acme runnables" and e["docs"] == "https://docs.acme/runspec"
+    assert e["repos"] == ["nexus"] and isinstance(e["verified"], bool)
+    assert e["installed"] is False and "operator action" in res["note"]
+    n = len(fetch.calls)
+
+    # Query matches name/summary/keywords; a miss returns nothing (served from cache).
+    assert json.loads(b._run_marketplace_tool({"query": "acme"}))["count"] == 1
+    assert json.loads(b._run_marketplace_tool({"query": "ops"}))["count"] == 1
+    assert json.loads(b._run_marketplace_tool({"query": "zzz"}))["count"] == 0
+    assert len(fetch.calls) == n  # no re-fetch — reads the cache
+
+    # An in-memory probe (no fresh SSH) marks the package installed.
+    b._marketplace_installed = {"targets": [{"dists": {"runspec-acme": "1.1.0"}}]}
+    assert json.loads(b._run_marketplace_tool({}))["results"][0]["installed"] is True
+
+
+def test_search_marketplace_honours_hide_and_disabled(app, monkeypatch):
+    fetch = _CannedFetch(_nexus_routes())
+    monkeypatch.setattr(mp, "default_fetch", lambda **kw: fetch)
+    repos = [
+        {"name": "Nexus", "url": "https://nexus.corp/simple", "credential": "nexus"}
+    ]
+    _write_marketplace({"auto_pip": False, "hide": ["runspec-acme"], "repos": repos})
+    b = _StubBridge()
+    # A curated-out package is never recommended (hide flows through the catalogue).
+    assert json.loads(b._run_marketplace_tool({}))["count"] == 0
+
+    # Disabled: the tool is dropped from the schema and refuses if called.
+    _write_marketplace({"enabled": False})
+    b2 = _StubBridge()
+    assert b2._marketplace_agent_tools() == []
+    assert b2._run_marketplace_tool({}).startswith("Error:")
+
+
+def test_search_marketplace_tool_schema_when_enabled(app):
+    b = _StubBridge()
+    (tool,) = b._marketplace_agent_tools()
+    assert tool["name"] == "search_marketplace"
+    props = tool["input_schema"]["properties"]
+    assert set(props) == {"query", "limit"} and not tool["input_schema"].get("required")
 
 
 def test_catalog_disabled(app):

@@ -180,6 +180,42 @@ or with pip).
 
 ---
 
+## The agent and the Marketplace
+
+The chat agent can **discover** installable packages, but it cannot install
+them — installing is always an operator action on this tab.
+
+A read-only `search_marketplace` tool lets the agent search the same catalogue
+you see here for runnable packages your indexes offer that aren't installed
+yet. It's the complement to the agent's `search_runnables` (which only sees
+what's already installed): when you ask *"is there a runnable for GitLab?"* and
+nothing is installed, the agent can find `runspec-gitlab` in your index, tell
+you what it adds, and point you here to install it — rather than stopping at "I
+don't have a tool for that". Each result carries the package name, latest
+version, summary, keywords, a *verified* flag (it ships a `runspec.toml`), the
+repo(s) it came from, and doc/source links.
+
+It is **discovery only, by design**: the agent recommends, you install. That
+keeps the useful part — closing the "there's no tool for that" gap — safe and
+universal, without letting the agent run `pip install` across your fleet's
+venvs on its own.
+
+The tool:
+
+- **honours `[marketplace] hide`** — a curated-out public package is never
+  recommended, so your adapter deployment's agent points at your internal
+  wrapper, not the public one;
+- is offered only when `[marketplace] enabled` (dropped entirely when the
+  marketplace is disabled);
+- reads the machine-local catalogue **cache** (no network unless it's cold),
+  and marks a package *installed* only when a recent probe already knew — it
+  never triggers a fresh SSH sweep.
+
+There is no agent-driven install: to add a package the agent found, use the
+card here (or `pip` on the target).
+
+---
+
 ## Making your package look good on the card
 
 The card is built entirely from the package's published metadata, so a

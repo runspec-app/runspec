@@ -8,6 +8,34 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.278.0] — 2026-09-20
+
+### Added
+
+- **Agent marketplace discovery (`search_marketplace`).** A read-only,
+  autonomous built-in agent tool that searches the Marketplace catalogue —
+  runnable packages the operator's configured indexes offer that are
+  *installable but not necessarily installed* — so the chat/trigger/schedule
+  agent can answer "is there a runnable package for X I could add?" instead
+  of stopping at "I don't have a tool for that". It's the complement to
+  `search_runnables`, which only sees what's already installed. Each result
+  carries the package name, latest version, summary, keywords, whether it
+  ships a verified `runspec.toml`, the repo(s) it came from, doc/source
+  links, and an `installed` hint (from the in-memory probe cache — never a
+  fresh SSH fan-out).
+
+  **Discovery only, by deliberate design.** The agent can recommend a package
+  and point the operator to the Marketplace tab; it *cannot* install anything
+  — installing (pip across fleet venvs) stays an operator action in the UI.
+  The tool honours `[marketplace] hide` (a curated-out public package is
+  never recommended), is offered only when `[marketplace] enabled` (default
+  true) and dropped entirely when disabled, reads from the machine-local
+  catalogue cache (no network unless cold), and — being niche/heavy — sits in
+  the deferred long tail in `[llm] tool_mode = "search"` rather than the hot
+  kernel. `_MARKETPLACE_TOOL_NAMES` in `bridge_const`; `_marketplace_agent_tools`
+  / `_run_marketplace_tool` in `bridge_marketplace`.
+
+
 ## [0.277.0] — 2026-09-20
 
 ### Added

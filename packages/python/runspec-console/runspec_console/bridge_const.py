@@ -160,6 +160,19 @@ _WEB_TOOL_NAMES = frozenset({"fetch_url"})
 # search mode. Offered only when [improve] enabled (default true).
 _IMPROVE_TOOL_NAMES = frozenset({"run_improve_report"})
 
+# Read-only marketplace discovery: search the package indexes' catalogue (the
+# same entries the Marketplace tab shows) for runnable packages that are
+# INSTALLABLE but not necessarily installed — the "is there a runnable for X I
+# could add?" companion to search_runnables (which only sees what's installed).
+# Discovery only: it reads the catalogue and recommends; installing stays an
+# operator action in the Marketplace tab. Honours [marketplace] hide (via
+# marketplace_catalog) so a curated-out public package is never recommended. No
+# side effects, so the autonomy gate runs it without a prompt. Rare/niche and it
+# reads the whole catalogue, so it is NOT a hot built-in — fine deferred behind
+# describe_tool/use_tool in search mode. Offered only when [marketplace] enabled
+# (default true); dropped entirely by [marketplace] enabled = false.
+_MARKETPLACE_TOOL_NAMES = frozenset({"search_marketplace"})
+
 # Outlook Classic (desktop COM) agent tools. Reads are autonomous (no side
 # effects — local COM reads on the operator's box); draft/send are write actions
 # and prompt before running. Only offered when Outlook COM is available (Windows
@@ -322,6 +335,7 @@ _BUILTIN_TOOL_NAMES = (
     | _FILES_TOOL_NAMES
     | _WEB_TOOL_NAMES
     | _IMPROVE_TOOL_NAMES
+    | _MARKETPLACE_TOOL_NAMES
     | _ACTION_TOOL_NAMES
     | _WORKSPACE_TOOL_NAMES
     | _EXEC_TOOL_NAMES
