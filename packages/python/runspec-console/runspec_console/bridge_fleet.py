@@ -210,7 +210,9 @@ class FleetMixin:
     )
 
     def save_jump_hosts(self, hosts: list[dict[str, Any]]) -> None:
-        # Freshest on-disk entries, to carry over any keys the editor doesn't manage.
+        # Freshest on-disk entries, to carry over any keys the editor doesn't
+        # manage. load_hosts is tolerant of a corrupt file (it quarantines and
+        # returns []), so a previously-broken file can't wedge a save.
         existing = {
             str(e.get("name") or ""): e
             for e in hosts_mod.load_hosts(config_mod.hosts_path())
@@ -226,6 +228,11 @@ class FleetMixin:
             raw_paths = h.get("runspec_paths") or []
             if not raw_paths and h.get("runspec_path"):
                 raw_paths = [h["runspec_path"]]
+            # Drop blank / None rows before normalising: an empty "Add path" row in
+            # the editor arrives as null over the bridge, and a bare [null] used to
+            # be written verbatim, producing invalid TOML that wedged every later
+            # save. Keep only real, non-empty path strings.
+            raw_paths = [p for p in raw_paths if isinstance(p, str) and p.strip()]
             # Normalise filesystem paths to forward slashes for TOML storage.
             # Remote runspec paths are POSIX so this is a no-op for them;
             # identityFile on Windows benefits from the conversion.

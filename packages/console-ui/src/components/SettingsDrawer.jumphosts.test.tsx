@@ -4,17 +4,19 @@
  * search box / profile filter that flattens across groups.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, act } from '@testing-library/react'
+import { render, screen, act, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { message } from 'antd'
 
 import { SettingsDrawer, buildHostGroups, filterHosts, groupSummary } from './SettingsDrawer'
 import type { JumpHost } from '../bridge'
 
-const { getJumpHosts, getHosts, getGroups, getProfiles } = vi.hoisted(() => ({
+const { getJumpHosts, getHosts, getGroups, getProfiles, saveJumpHosts } = vi.hoisted(() => ({
   getJumpHosts: vi.fn(),
   getHosts: vi.fn(),  // must NOT be consulted — no live state on this tab
   getGroups: vi.fn(),
   getProfiles: vi.fn(),
+  saveJumpHosts: vi.fn(),
 }))
 
 vi.mock('../bridge', () => ({
@@ -25,6 +27,7 @@ vi.mock('../bridge', () => ({
       if (prop === 'get_hosts') return getHosts
       if (prop === 'get_groups') return getGroups
       if (prop === 'get_profiles') return getProfiles
+      if (prop === 'save_jump_hosts') return saveJumpHosts
       if (prop === 'get_config') return async () => ({})
       if (prop === 'config_dir') return async () => 'C:/cfg'
       return vi.fn().mockResolvedValue(undefined)
@@ -66,6 +69,7 @@ describe('Jump Hosts tab', () => {
     getHosts.mockReset().mockResolvedValue([])
     getGroups.mockReset().mockResolvedValue([{ name: 'Production', description: 'Customer-facing' }, { name: 'Staging' }])
     getProfiles.mockReset().mockResolvedValue([{ name: 'app-support' }, { name: 'devops' }])
+    saveJumpHosts.mockReset().mockResolvedValue(undefined)
   })
 
   async function openTab() {
@@ -117,5 +121,41 @@ describe('Jump Hosts tab', () => {
     expect(screen.getByText('stg-01')).toBeTruthy()
     // Managing host entries never reads live connection state.
     expect(getHosts).not.toHaveBeenCalled()
+  })
+
+  async function openEdit(user: ReturnType<typeof userEvent.setup>) {
+    await act(async () => { await user.click(screen.getByRole('button', { name: 'Open group Production' })) })
+    await act(async () => { await user.click(await screen.findByRole('button', { name: 'Edit web-01' })) })
+    await screen.findByText('Edit — web-01')
+  }
+
+  // Regression: a rejected save (e.g. the backend can't write the TOML) must
+  // surface an error and keep the modal open — it used to throw silently, so the
+  // modal never closed and gave no feedback. (The Save button being reachable is
+  // the open signal; antd keeps the closed modal's text mounted but hidden.)
+  it('keeps the edit modal open and shows an error when the save fails', async () => {
+    saveJumpHosts.mockRejectedValueOnce(new Error('Invalid value (at line 4, column 18)'))
+    const errSpy = vi.spyOn(message, 'error')
+    const user = await openTab()
+    await openEdit(user)
+
+    await act(async () => { await user.click(screen.getByRole('button', { name: /save/i })) })
+
+    expect(saveJumpHosts).toHaveBeenCalledTimes(1)
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("Couldn't save host"))
+    // Modal still open (Save button still reachable) for the operator to retry.
+    expect(screen.getByRole('button', { name: /save/i })).toBeTruthy()
+    errSpy.mockRestore()
+  })
+
+  it('closes the edit modal on a successful save', async () => {
+    const user = await openTab()
+    await openEdit(user)
+
+    await act(async () => { await user.click(screen.getByRole('button', { name: /save/i })) })
+
+    // Modal closed → the Save button leaves the accessibility tree.
+    await waitFor(() => expect(screen.queryByRole('button', { name: /save/i })).toBeNull())
+    expect(saveJumpHosts).toHaveBeenCalledTimes(1)
   })
 })

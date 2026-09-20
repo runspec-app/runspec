@@ -1946,8 +1946,12 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
   useEffect(() => () => { bridge.close_adhoc().catch(() => {}) }, [])
 
   const persist = async (next: JumpHost[]) => {
-    setHosts(next)
+    // Save first, adopt local state only on success. Optimistically setting
+    // `hosts` before the await meant a failed save (e.g. a backend TOML error)
+    // left the unsaved entry in the list — and each retry appended another copy,
+    // so a stuck save produced duplicate rows that all shared one name.
     await bridge.save_jump_hosts(next)
+    setHosts(next)
     onHostsChanged?.()
   }
 
@@ -1980,10 +1984,18 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
     // Coerce the room port, clear empty fields, and (crucially) clear removed
     // fields with `undefined` not delete — see normalizeHostForm.
     const v = normalizeHostForm(values)
-    if (editingKey === '') {
-      await persist([...hosts, v as JumpHost])
-    } else {
-      await persist(hosts.map(h => h.name === editingKey ? { ...h, ...v } : h))
+    try {
+      if (editingKey === '') {
+        await persist([...hosts, v as JumpHost])
+      } else {
+        await persist(hosts.map(h => h.name === editingKey ? { ...h, ...v } : h))
+      }
+    } catch (e) {
+      // Surface the failure and keep the modal open so the operator can fix or
+      // cancel — previously a rejected save threw here, so the modal never
+      // closed and gave no feedback about why.
+      message.error(`Couldn't save host: ${e instanceof Error ? e.message : String(e)}`)
+      return
     }
     setEditingKey(null)
     form.resetFields()
