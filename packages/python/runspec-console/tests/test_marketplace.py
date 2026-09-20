@@ -665,6 +665,51 @@ def test_build_catalog_reports_explicit_non_runnable_and_missing():
     assert [e["name"] for e in entries2] == ["plain"]
 
 
+def test_build_catalog_skips_scanned_empty_project_but_warns_when_explicit():
+    """A *scanned* name that resolves to a registered-but-empty project (the
+    squatted/typo case on public PyPI — e.g. `runspec-gtilab-core`, a misspelling
+    of `runspec-gitlab-core`, registered with no releases) is silently skipped:
+    it matches the runspec-* scan and reads back empty, but it's discovery noise,
+    not something the operator can act on. The *same* name, when the operator
+    lists it in `packages`, still warns (a typo there is worth flagging) — with no
+    double-prefixed name."""
+    routes = {
+        "https://pypi.org/simple/": (
+            200,
+            "text/html",
+            b'<a href="runspec-good/">runspec-good</a>'
+            b'<a href="runspec-gtilab-core/">runspec-gtilab-core</a>',
+        ),
+        "https://pypi.org/simple/runspec-good/": (
+            200,
+            "text/html",
+            b'<a href="../../p/runspec_good-1.0-py3-none-any.whl" data-core-metadata="true">runspec_good-1.0-py3-none-any.whl</a>',
+        ),
+        "https://pypi.org/p/runspec_good-1.0-py3-none-any.whl.metadata": (
+            200,
+            "text/plain",
+            b"Metadata-Version: 2.1\nName: runspec-good\nVersion: 1.0\nRequires-Dist: runspec\n",
+        ),
+        # Registered but no release files — a 200 project page with no wheels.
+        "https://pypi.org/simple/runspec-gtilab-core/": (200, "text/html", b""),
+    }
+    client = mp.IndexClient(CannedFetch(routes))
+    repo = mp.Repo(name="PyPI", url="https://pypi.org/simple/", source="pip")
+    entries, errors = mp.build_catalog(client, repo)
+    assert [e["name"] for e in entries] == ["runspec-good"]
+    assert errors == []  # the empty scanned project is skipped, not warned
+
+    # Named explicitly → warned (single-prefixed, no "name: name: …" doubling).
+    repo2 = mp.Repo(
+        name="PyPI",
+        url="https://pypi.org/simple/",
+        scan=False,
+        packages=["runspec-gtilab-core"],
+    )
+    _, errors2 = mp.build_catalog(client, repo2)
+    assert errors2 == ["runspec-gtilab-core: no releases in PyPI"]
+
+
 def test_client_root_error_surfaces():
     client = mp.IndexClient(CannedFetch({}))
     with pytest.raises(mp.MarketplaceError):

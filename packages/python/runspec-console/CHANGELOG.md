@@ -8,6 +8,27 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.278.2] — 2026-09-20
+
+### Fixed
+
+- **Marketplace: a scanned empty/squatted project no longer shows as a skipped
+  "package".** A name that matches the `runspec-*` scan but resolves to a
+  **registered-but-empty** project on the index — a 404, or a 200 project page
+  with no release files — is now skipped **silently** instead of landing in the
+  top "N packages skipped" warning. This is common noise on public PyPI: a
+  squatted/typo name (e.g. `runspec-gtilab-core`, a misspelling of the real
+  `runspec-gitlab-core`, registered with no uploads) appears in the index root
+  listing, matches the scan, and reads back empty — nothing installable and
+  nothing the operator can fix, so warning about it is pointless. A package the
+  operator **explicitly names** in a repo's `packages` list still warns (a typo
+  there is worth flagging). New `marketplace.EmptyProjectError` (raised for both
+  the 404 and no-releases cases); `build_catalog` carries the exception (not its
+  string) so it can tell a scanned empty project from a real read failure, and
+  suppresses the former only for scanned candidates. Also fixes the doubled
+  name in that warning (`name: name: no releases…` → `name: no releases…`).
+
+
 ## [0.278.1] — 2026-09-20
 
 ### Added
@@ -35,6 +56,7 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   MCP (e.g. `codebase-memory-mcp`) via Settings → MCP → "Install into a venv" —
   while making clear it cannot install one itself (host pip is an operator
   action).
+
 
 ## [0.278.0] — 2026-09-20
 

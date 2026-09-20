@@ -137,6 +137,13 @@ URLs, keywords), else the PEP 658 `.metadata` sidecar of the newest wheel,
 else the wheel itself (bounded by `max_wheel_bytes`), which also proves a
 bundled `runspec.toml`. Candidates are read in parallel.
 
+A scanned name that turns out to be a **registered-but-empty** project — no
+releases, or a name that 404s — is skipped **silently** (it's discovery noise
+you can't install or fix, e.g. a squatted/typo `runspec-*` name someone
+registered on PyPI with no uploads). Only a name you list **explicitly** in a
+repo's `packages` shows up in the top "N packages skipped" note when it can't be
+read, so a typo you typed is still flagged.
+
 ### What counts as a runnable package
 
 A distribution is listed when its `Requires-Dist` names `runspec` outside

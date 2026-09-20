@@ -115,6 +115,17 @@ class MarketplaceError(Exception):
     """A marketplace operation that could not be completed (network, parse, …)."""
 
 
+class EmptyProjectError(MarketplaceError):
+    """A candidate name resolves to no installable package on the index — a 404
+    (not on this index) or a registered-but-empty project (a 200 project page
+    with no release files). Common as harmless scan noise: a squatted/typo name
+    on public PyPI (e.g. a misspelling of a real ``runspec-*`` package) is
+    registered with no uploads, so it appears in the index root listing, matches
+    the ``runspec-*`` scan, and reads back empty. :func:`build_catalog` skips such
+    a **scanned** candidate silently (nothing to install, nothing the operator
+    can fix), but still surfaces it when the operator named it in ``packages``."""
+
+
 # --------------------------------------------------------------------------- #
 # Names + versions (stdlib re-implementation of the bits of `packaging` we need)
 # --------------------------------------------------------------------------- #
@@ -1027,7 +1038,7 @@ class IndexClient:
             auth=repo.auth,
         )
         if status == 404:
-            raise MarketplaceError(f"{name}: not in {repo.name}")
+            raise EmptyProjectError(f"{name}: not in {repo.name}")
         if status != 200:
             raise MarketplaceError(f"{name}: {repo.name} returned HTTP {status}")
         page = parse_project_page(body, ctype, url)
@@ -1111,7 +1122,7 @@ class IndexClient:
             page["files"], page["versions"], include_prerelease=self.include_prerelease
         )
         if latest is None or file is None:
-            raise MarketplaceError(f"{name}: no releases in {repo.name}")
+            raise EmptyProjectError(f"{name}: no releases in {repo.name}")
         if meta is None:
             meta = self._metadata_from_file(repo, name, file)
         meta.setdefault("versions", list(page["versions"]))
@@ -1277,7 +1288,7 @@ def build_catalog(
     fetch_one: Callable[[str], dict[str, Any]] | None = None,
     parallel: Callable[
         [list[str], Callable[[str], dict[str, Any]]],
-        list[tuple[str, dict[str, Any] | None, str | None]],
+        list[tuple[str, dict[str, Any] | None, Exception | None]],
     ]
     | None = None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
@@ -1295,13 +1306,13 @@ def build_catalog(
 
     def _run_seq(
         ns: list[str], f: Callable[[str], dict[str, Any]]
-    ) -> list[tuple[str, dict[str, Any] | None, str | None]]:
-        out: list[tuple[str, dict[str, Any] | None, str | None]] = []
+    ) -> list[tuple[str, dict[str, Any] | None, Exception | None]]:
+        out: list[tuple[str, dict[str, Any] | None, Exception | None]] = []
         for n in ns:
             try:
                 out.append((n, f(n), None))
             except Exception as e:  # one bad package never sinks the repo
-                out.append((n, None, str(e)))
+                out.append((n, None, e))
         return out
 
     results = (parallel or _run_seq)(names, read)
@@ -1309,7 +1320,18 @@ def build_catalog(
     errors: list[str] = []
     for name, meta, err in results:
         if meta is None:
-            errors.append(f"{name}: {err}")
+            # A scanned candidate that resolves to nothing installable — a 404 or
+            # a registered-but-empty project (a squatted/typo name on public PyPI
+            # matching the runspec-* scan reads back empty) — is discovery noise,
+            # not something the operator can act on, so skip it silently. Keep the
+            # warning when the operator named it in `packages` (a typo/empty is
+            # worth flagging there), and for every other read failure (a real
+            # network/parse problem). A str err (a `parallel` on the old contract)
+            # never matches, so it degrades to the warning.
+            if isinstance(err, EmptyProjectError) and name not in explicit:
+                continue
+            msg = str(err) if err is not None else "could not be read"
+            errors.append(msg if msg.startswith(f"{name}:") else f"{name}: {msg}")
             continue
         meta.setdefault("name", name)
         if is_runnable(meta, exclude) or (not require_runspec and name in explicit):

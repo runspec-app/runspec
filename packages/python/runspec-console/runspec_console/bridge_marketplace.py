@@ -414,8 +414,8 @@ class MarketplaceMixin:
 
         def _parallel(
             names: list[str], read: Callable[[str], dict[str, Any]]
-        ) -> list[tuple[str, dict[str, Any] | None, str | None]]:
-            out: list[tuple[str, dict[str, Any] | None, str | None]] = []
+        ) -> list[tuple[str, dict[str, Any] | None, Exception | None]]:
+            out: list[tuple[str, dict[str, Any] | None, Exception | None]] = []
             if not names:
                 return out
             with ThreadPoolExecutor(
@@ -427,7 +427,10 @@ class MarketplaceMixin:
                     try:
                         out.append((n, fut.result(), None))
                     except Exception as exc:  # one package never sinks the repo
-                        out.append((n, None, str(exc)))
+                        # Carry the exception (not its str) so build_catalog can
+                        # tell a scanned empty/typo project (EmptyProjectError —
+                        # skipped silently) from a real read failure (warned).
+                        out.append((n, None, exc))
             return out
 
         for repo in repos:
