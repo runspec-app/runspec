@@ -1353,6 +1353,51 @@ jobs:
           PYTHONPATH: .
         run: pytest
 
+  # The console test suite otherwise only ever runs on Linux, so Windows-specific
+  # test assumptions drift silently (they surfaced ~two dozen failures on a first
+  # manual Windows run: Path.home() reads USERPROFILE not HOME, the NUL device's
+  # isatty() is True, git-bash puts sh/awk on PATH so POSIX-only tests must skip
+  # on win32, native path separators). This job runs the same suite on Windows —
+  # under **git-bash** on purpose, the environment that surfaced those issues (so
+  # the sh/awk-present skip-guards are actually exercised) — so it can't regress
+  # unnoticed. Mirrors console-test's install (source tree + PYTHONPATH, no
+  # `pip install -e .` — see that job) plus pywin32 + keyring so the Windows code
+  # paths (Outlook availability, credential keychain) run for real. See
+  # docs/design/console-pre-publish-testing.md.
+  console-test-windows:
+    name: runspec-console test (windows)
+    needs: changes
+    if: needs.changes.outputs.console == 'true'
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: packages/python/runspec-console
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      # Install into a real venv, not the base setup-python: on Windows a base
+      # install puts python.exe in the install root but console scripts in a
+      # separate Scripts\ dir, whereas a venv co-locates them (as every real
+      # console install does) — the local-venv discovery + marketplace probe
+      # rely on runspec.exe sitting next to python.exe. pywin32 + keyring so the
+      # Windows-only code paths (Outlook availability, credential keychain) run.
+      - name: Install test deps
+        shell: bash
+        run: |
+          python -m venv .venv-ci
+          .venv-ci/Scripts/python -m pip install -e ../runspec
+          .venv-ci/Scripts/python -m pip install pytest anthropic paramiko cryptography tomli-w dulwich pywebview pywin32 keyring
+
+      - name: Run tests
+        shell: bash
+        env:
+          PYTHONPATH: .
+        run: .venv-ci/Scripts/python -m pytest
+
   console-ui:
     name: console-ui (frontend)
     needs: changes
@@ -2320,7 +2365,7 @@ jobs:
 
   ci:
     name: CI
-    needs: [python-quality, python-test, node, linux-quality, linux-test, linux-core-quality, linux-core-test, jsm-quality, jsm-test, snow-quality, snow-test, logops-quality, logops-test, logops-core-quality, logops-core-test, playbook-quality, playbook-test, claude-quality, claude-test, windows-quality, windows-unit, windows-smoke, o365-quality, o365-test, console-quality, console-test, console-ui, console-smoke, console-app-smoke, webops, webops-core-quality, webops-core-test, fs-core-quality, fs-core-test, fs-quality, fs-test, gitlab-core-quality, gitlab-core-test, gitlab-quality, gitlab-test, jira-core-quality, jira-core-test, jira-quality, jira-test, confluence-core-quality, confluence-core-test, confluence-quality, confluence-test, docs-check]
+    needs: [python-quality, python-test, node, linux-quality, linux-test, linux-core-quality, linux-core-test, jsm-quality, jsm-test, snow-quality, snow-test, logops-quality, logops-test, logops-core-quality, logops-core-test, playbook-quality, playbook-test, claude-quality, claude-test, windows-quality, windows-unit, windows-smoke, o365-quality, o365-test, console-quality, console-test, console-test-windows, console-ui, console-smoke, console-app-smoke, webops, webops-core-quality, webops-core-test, fs-core-quality, fs-core-test, fs-quality, fs-test, gitlab-core-quality, gitlab-core-test, gitlab-quality, gitlab-test, jira-core-quality, jira-core-test, jira-quality, jira-test, confluence-core-quality, confluence-core-test, confluence-quality, confluence-test, docs-check]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -2363,6 +2408,7 @@ jobs:
           check "o365-test"       "${{ needs.o365-test.result }}"
           check "console-quality" "${{ needs.console-quality.result }}"
           check "console-test"    "${{ needs.console-test.result }}"
+          check "console-test-windows" "${{ needs.console-test-windows.result }}"
           check "console-ui"      "${{ needs.console-ui.result }}"
           check "console-smoke"   "${{ needs.console-smoke.result }}"
           check "console-app-smoke" "${{ needs.console-app-smoke.result }}"

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Modal, Input, Select, Typography, Tag, message } from 'antd'
 import type { ArgDef, Runbook } from '../bridge'
-import { ArgInput } from './FormsView'
+import { ArgInput } from './formsShared'
 import { MONO_FONT } from '../ThemeContext'
 
 const { Text } = Typography

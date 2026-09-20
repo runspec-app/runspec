@@ -8,6 +8,7 @@ rename), with the store pointed at a tmp dir.
 
 from __future__ import annotations
 
+import itertools
 import threading
 
 import runspec_console.config as config_mod
@@ -34,7 +35,16 @@ def test_append_creates_then_appends_and_titles(tmp_path):
     assert [t["user"] for t in rec["turns"]] == ["first question", "second question"]
 
 
-def test_list_meta_newest_first_with_preview(tmp_path):
+def test_list_meta_newest_first_with_preview(tmp_path, monkeypatch):
+    # list_meta sorts by the `updated` ISO timestamp. Windows' coarse
+    # datetime.now() resolution can hand two back-to-back appends the same
+    # timestamp, making the newest-first order a tie (flaky). Drive `_now` from a
+    # monotonic clock so the two conversations get strictly increasing, valid ISO
+    # timestamps and the ordering is deterministic on every platform.
+    clock = itertools.count()
+    monkeypatch.setattr(
+        conv, "_now", lambda: f"2026-01-01T00:00:00.{next(clock):06d}+00:00"
+    )
     a = conv.new_id()
     b = conv.new_id()
     conv.append_turn(tmp_path, a, _turn("older", "old answer"))

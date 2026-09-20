@@ -42,6 +42,7 @@ from typing import Any
 
 from . import config, gitsync
 from .bridge_const import ToolCancelled
+from .tomlsafe import basic_string, load_table_array
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -68,12 +69,9 @@ def available() -> bool:
 
 
 def load_repos(path: Path) -> list[dict[str, Any]]:
-    """The ``[[repo]]`` entries in ``path`` (``[]`` when the file is absent)."""
-    if not path.exists():
-        return []
-    with open(path, "rb") as fh:
-        data = tomllib.load(fh)
-    return data.get("repo", [])
+    """The ``[[repo]]`` entries in ``path`` (``[]`` when the file is absent or
+    malformed — a corrupt registry is quarantined, never fatal)."""
+    return load_table_array(path, "repo", log=logger)
 
 
 def normalise_repos(repos: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -108,13 +106,13 @@ def save_repos(path: Path, repos: list[dict[str, Any]]) -> None:
     lines: list[str] = []
     for r in normalise_repos(repos):
         lines.append("[[repo]]")
-        lines.append(f'name = "{r["name"]}"')
-        lines.append(f'url = "{r["url"]}"')
-        lines.append(f'ref = "{r["ref"]}"')
+        lines.append(f"name = {basic_string(r['name'])}")
+        lines.append(f"url = {basic_string(r['url'])}")
+        lines.append(f"ref = {basic_string(r['ref'])}")
         if r.get("credential_id"):
-            lines.append(f'credential_id = "{r["credential_id"]}"')
+            lines.append(f"credential_id = {basic_string(r['credential_id'])}")
         if r.get("description"):
-            lines.append(f'description = "{r["description"]}"')
+            lines.append(f"description = {basic_string(r['description'])}")
         lines.append("")
     path.write_text("\n".join(lines), encoding="utf-8")
 

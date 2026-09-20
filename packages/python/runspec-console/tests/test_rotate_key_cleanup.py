@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -31,7 +32,15 @@ from runspec_console.bridge_utils import DEFAULT_KEY_MARKER, key_marker
 
 _SH = shutil.which("sh")
 _AWK = shutil.which("awk")
-needs_sh = pytest.mark.skipif(not (_SH and _AWK), reason="needs sh + awk")
+# The prune command is a POSIX sh/awk script run against a remote host's
+# authorized_keys. git-bash *provides* sh + awk on Windows, so `which` finds them
+# and the run proceeds under MinGW path translation, which mangles the temp/HOME
+# paths and fails. This is a Linux-remote-host feature — skip the shell-execution
+# tests on Windows (the pure-Python command-builder tests below still run).
+needs_sh = pytest.mark.skipif(
+    sys.platform == "win32" or not (_SH and _AWK),
+    reason="needs POSIX sh + awk (skipped on Windows)",
+)
 
 
 @pytest.fixture(autouse=True)

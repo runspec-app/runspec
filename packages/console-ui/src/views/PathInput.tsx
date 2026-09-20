@@ -102,7 +102,8 @@ export function PathInput({ host, value, placeholder, dirsOnly, error, onChange,
     <>
       <div style={{ display: 'flex', gap: 6 }}>
         <AutoComplete
-          size="small"
+          // No `size` here: antd ignores it (and warns) when a customize input
+          // child is supplied — the child <input> carries `ant-input-sm` itself.
           value={value ?? ''}
           options={options}
           onSearch={handleSearch}

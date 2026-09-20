@@ -12,9 +12,19 @@ from __future__ import annotations
 
 import os
 import stat
+import sys
 from pathlib import Path
 
+import pytest
+
 from runspec_console.executor import run_local
+
+# The fake runnable is a `#!/usr/bin/env bash` script executed directly; Windows'
+# CreateProcess can't run a shell script (WinError 193), and the cred-env channel
+# these cover is exercised on the (Linux/remote) execution path. Skip on Windows.
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32", reason="executes a POSIX shell-script runnable"
+)
 
 
 def _make_fake_runnable(tmp_path: Path, name: str, body: str) -> str:

@@ -33,4 +33,15 @@ if (typeof window !== 'undefined') {
     }
     ;(window as unknown as { ResizeObserver: unknown }).ResizeObserver = ResizeObserverStub
   }
+
+  // jsdom implements getComputedStyle(elt) but throws a noisy "Not implemented:
+  // window.getComputedStyle(elt, pseudoElt)" when a pseudo-element arg is passed —
+  // which antd's scrollbar measurement (rc-util measureScrollbarSize) does every
+  // time a Modal / Drawer / portal with a scroll-locker mounts. It's harmless
+  // (the measurement just reads a width jsdom reports as 0) but floods stderr and
+  // buries real output. Wrap the real implementation to ignore the pseudo-element
+  // arg so the call resolves instead of throwing.
+  const realGetComputedStyle = window.getComputedStyle.bind(window)
+  window.getComputedStyle = ((elt: Element) =>
+    realGetComputedStyle(elt)) as typeof window.getComputedStyle
 }

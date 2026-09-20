@@ -5,7 +5,7 @@ import { VoiceConfig, VoiceDevice, bridge, type JumpHost, type LocalVenvConfig, 
 import { CopyKeyModal } from '../views/CopyKeyModal'
 import { CopyKeyAllModal } from '../views/CopyKeyAllModal'
 import { PathInput } from '../views/PathInput'
-import { credEnvNames, initialFormValues } from '../views/FormsView'
+import { credEnvNames, initialFormValues } from '../views/formsShared'
 import { runnableHidden } from '../toolVisibility'
 import {
   commandPathOptions, CredentialsSection, effectiveArgsForPath, RunnableArgsBlock,

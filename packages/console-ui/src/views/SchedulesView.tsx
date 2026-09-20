@@ -7,7 +7,7 @@ import { useFeatures, visibleScheduleActions } from '../features'
 import { RunInbox } from '../components/RunInbox'
 import { EventLog } from '../components/EventLog'
 import { SoundSelect } from '../components/SoundSelect'
-import { initialFormValues } from './FormsView'
+import { initialFormValues } from './formsShared'
 import { RunbookField } from './RunbookRunModal'
 import {
   ArgFieldRow, commandPathOptions, CredentialsSection, effectiveArgsForPath,

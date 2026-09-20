@@ -63,6 +63,26 @@ def _start_static_server(dist: Path) -> int:
         def log_message(self, *_: object) -> None:
             pass  # silence request logs
 
+        def copyfile(self, source: object, outputfile: object) -> None:
+            # The webview routinely aborts an asset request mid-transfer — it
+            # cancels a fetch, navigates, or reloads (more visible now that the
+            # UI code-splits into several chunks). Python's http.server doesn't
+            # catch the client disconnect, so socketserver dumps a full
+            # ConnectionAbortedError/reset/broken-pipe traceback for what is
+            # entirely benign. Swallow just those so startup output stays clean.
+            try:
+                super().copyfile(source, outputfile)  # type: ignore[arg-type]
+            except (ConnectionError, BrokenPipeError):
+                pass
+
+        def handle_one_request(self) -> None:
+            # Same benign client-abort can land while writing headers/status, not
+            # only in copyfile — keep those out of the log too.
+            try:
+                super().handle_one_request()
+            except (ConnectionError, BrokenPipeError):
+                self.close_connection = True
+
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         port = s.getsockname()[1]
@@ -371,9 +391,11 @@ def _ensure_std_streams() -> None:
     TTY detection — runspec core's ``parse()`` (``sys.stdin.isatty()``), colorama,
     rich, argparse — then dies with ``'NoneType' object has no attribute
     'isatty'`` before the window ever appears. Point each *missing* stream at
-    ``os.devnull`` (a real file object whose ``isatty()`` is ``False``). Only
-    touches a stream that is actually ``None``, so it is a no-op for the console
-    script / a real terminal, and covers every launch path (``main_gui``,
+    ``os.devnull`` (a real file object, so ``.isatty()`` returns cleanly — ``False``
+    on POSIX; on Windows NUL is a ``FILE_TYPE_CHAR`` device so it may be ``True``,
+    which is harmless: the point is the call no longer raises). Only touches a
+    stream that is actually ``None``, so it is a no-op for the console script / a
+    real terminal, and covers every launch path (``main_gui``,
     ``pythonw -m runspec_console``)."""
     sink_w = None
     for name in ("stdout", "stderr"):

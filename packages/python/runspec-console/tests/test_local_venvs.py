@@ -180,9 +180,13 @@ def test_save_local_venv_config_rejects_bad_input(app):
             b.save_local_venv_config(bad)  # type: ignore[arg-type]
 
 
-def test_realpath_key_is_used(tmp_path):
+def test_realpath_key_is_used(tmp_path, monkeypatch):
     # A relative-vs-absolute spelling of the same file dedupes.
     v = _make_venv(tmp_path / "venvs" / "ops", windows=False)
+    # os.path.relpath uses cwd as the base; on Windows CI the temp dir and the
+    # repo checkout can be on different drives (C: vs D:), and cross-drive relpath
+    # raises. Anchor cwd to tmp_path so the relative spelling is valid everywhere.
+    monkeypatch.chdir(tmp_path)
     rel = os.path.relpath(v)
     out = hosts_mod.resolve_local_venvs([], own_path=v)
     out2 = hosts_mod.resolve_local_venvs([str(tmp_path / "venvs" / "*")], own_path=rel)

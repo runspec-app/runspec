@@ -7,7 +7,7 @@
 import { type CSSProperties, type ReactNode } from 'react'
 import { Collapse, Form, Segmented, Select, Space, Switch, Tag, Tooltip, Typography } from 'antd'
 import type { ArgDef, Credential, Host, Runnable } from '../bridge'
-import { ArgInput, bindingsForArgs, credEnvNames, partitionArgs, TruncatedText } from './FormsView'
+import { ArgInput, bindingsForArgs, credEnvNames, partitionArgs, TruncatedText } from './formsShared'
 
 const { Text } = Typography
 

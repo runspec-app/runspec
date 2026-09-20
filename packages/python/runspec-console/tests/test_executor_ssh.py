@@ -282,6 +282,9 @@ def test_ssh_config_applies_hostname_user_port_identity(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     monkeypatch.setenv("HOME", str(tmp_path))
+    # ~/.ssh/config is resolved via expanduser("~"), which on Windows reads
+    # USERPROFILE, not HOME — set both so the temp config is the one consulted.
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     with patch("paramiko.SSHClient") as MockClient:
         _make_ssh_client("myalias", None, {"use_ssh_config": True})
     kwargs = MockClient.return_value.connect.call_args.kwargs

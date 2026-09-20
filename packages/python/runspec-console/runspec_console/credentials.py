@@ -46,15 +46,14 @@ The key material stays on disk (the paths are metadata); only an optional key
 
 from __future__ import annotations
 
+import logging
 import re
-import sys
 from pathlib import Path
 from typing import Any
 
-if sys.version_info >= (3, 11):
-    import tomllib
-else:
-    import tomli as tomllib
+from .tomlsafe import basic_string, load_table_array
+
+logger = logging.getLogger(__name__)
 
 # Keyring service namespace; every credential's secret is stored under (SERVICE, id).
 KEYRING_SERVICE = "runspec-console"
@@ -163,11 +162,9 @@ def env_vars_for(entry: dict[str, Any], secret: str | None) -> dict[str, str]:
 
 
 def load_credentials(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    with open(path, "rb") as fh:
-        data = tomllib.load(fh)
-    return data.get("credential", [])
+    # A malformed file must never crash the app — this is read on the startup
+    # path (Bridge.__init__ -> _reload_credentials). Quarantine-and-continue.
+    return load_table_array(path, "credential", log=logger)
 
 
 def save_credentials(path: Path, entries: list[dict[str, Any]]) -> None:
@@ -189,9 +186,8 @@ def save_credentials(path: Path, entries: list[dict[str, Any]]) -> None:
 
 
 def _toml_str(v: str) -> str:
-    """Escape a string as a TOML basic string literal (mirrors filters_store)."""
-    escaped = v.replace("\\", "\\\\").replace('"', '\\"')
-    return f'"{escaped}"'
+    """Escape a string as a TOML basic string literal (shared audited serializer)."""
+    return basic_string(v)
 
 
 # ── keyring (secret values) ────────────────────────────────────────────────────

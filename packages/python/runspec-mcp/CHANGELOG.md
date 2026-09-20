@@ -2,6 +2,18 @@
 
 All notable changes to `runspec-mcp` are documented here.
 
+## [0.1.2]
+
+Sync the vendored `configmerge` copy with runspec-console, fixing the
+`test_configmerge_parity` drift:
+
+- Add `runspec_evals.toml` (`("suite", "name")`) to `COLLECTION_FILES` so the
+  eval-suite registry (runspec-console 0.245.0) merges by identity like the other
+  synced collection files instead of being deep-overlaid.
+
+No API change; this only re-aligns the vendored pure helpers with their source
+of truth.
+
 ## [0.1.1]
 
 Sync the vendored `configmerge` copy with runspec-console, fixing the

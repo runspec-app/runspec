@@ -15,6 +15,8 @@ import logging
 import threading
 import time
 
+import pytest
+
 from runspec_console.bridge import Bridge
 from runspec_console.bridge_const import ToolCancelled, _CANCEL_KEY
 from runspec_console.bridge_utils import _parse_log_text
@@ -23,6 +25,16 @@ from runspec_console.bridge_utils import _parse_log_text
 # this name in bridge_const.py), so caplog captures the built-in-tool log lines
 # under it.
 _BRIDGE_LOGGER = "runspec_console.bridge_const"
+
+
+@pytest.fixture(autouse=True)
+def _isolate_home(monkeypatch, tmp_path):
+    """Point the home dir at the per-test tmp_path. The audit log lands in
+    ``Path.home()/logs``; on Windows ``Path.home()`` reads ``USERPROFILE`` (not
+    ``HOME``), so a test that only set ``HOME`` wrote to the real home and the
+    read-back missed. Setting both isolates it cross-platform."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
 
 
 class _Stub:

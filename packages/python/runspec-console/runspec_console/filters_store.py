@@ -25,14 +25,13 @@ this mirrors the hosts file exactly.
 
 from __future__ import annotations
 
-import sys
+import logging
 from pathlib import Path
 from typing import Any
 
-if sys.version_info >= (3, 11):
-    import tomllib
-else:
-    import tomli as tomllib
+from .tomlsafe import basic_string, load_table_array
+
+logger = logging.getLogger(__name__)
 
 # The fields persisted for a filter, in write order. Everything is a string;
 # unknown keys are dropped on save so the file stays to schema.
@@ -40,11 +39,9 @@ _FIELDS = ("name", "pipeline", "description", "param_label")
 
 
 def load_filters(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    with open(path, "rb") as fh:
-        data = tomllib.load(fh)
-    return data.get("filter", [])
+    # A malformed file must never crash the app — this is read on the startup
+    # path (Bridge.__init__ -> _reload_filters). Quarantine-and-continue.
+    return load_table_array(path, "filter", log=logger)
 
 
 def save_filters(path: Path, filters: list[dict[str, Any]]) -> None:
@@ -65,7 +62,7 @@ def _toml_str(v: str) -> str:
     """Escape a string as a TOML basic string literal.
 
     Pipelines routinely contain ``"`` and ``\\`` (sed/awk), both of which need
-    escaping for the file to read back byte-for-byte.
+    escaping for the file to read back byte-for-byte. Delegates to the shared
+    audited serializer (also escapes control chars).
     """
-    escaped = v.replace("\\", "\\\\").replace('"', '\\"')
-    return f'"{escaped}"'
+    return basic_string(v)

@@ -19,6 +19,14 @@ from runspec_console.bridge import Bridge
 def _stub(monkeypatch, *, rota, triggers, schedules, hosts=None, connected=None):
     monkeypatch.setattr(cfg, "read_rota", lambda: rota)
     monkeypatch.setattr(cfg, "read_triggers", lambda: triggers)
+    # On Windows (pywin32 present) Outlook COM is available, so _console_context
+    # folds in the real monitored-mailbox line and the context is never empty —
+    # the tests here control rota/triggers/schedules, not ambient Outlook state.
+    # Force it off so they're deterministic cross-platform (no test asserts the
+    # mailbox line is present).
+    from runspec_console.sources import outlook as _outlook
+
+    monkeypatch.setattr(_outlook, "outlook_available", lambda: False)
     ns = types.SimpleNamespace()
     ns._read_schedules = lambda: schedules
     ns._hosts = hosts or []  # for _run_status_tool's denylist pointer

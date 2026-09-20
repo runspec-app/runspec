@@ -29,23 +29,25 @@ Two pieces, deliberately split (mirrors groups vs repo-paths):
 
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 from typing import Any
+
+from .tomlsafe import basic_string, load_table_array
 
 if sys.version_info >= (3, 11):
     import tomllib
 else:
     import tomli as tomllib
 
+logger = logging.getLogger(__name__)
+
 
 def load_profiles(path: Path) -> list[dict[str, Any]]:
-    """The ``[[profile]]`` entries in ``path`` (``[]`` when the file is absent)."""
-    if not path.exists():
-        return []
-    with open(path, "rb") as fh:
-        data = tomllib.load(fh)
-    return data.get("profile", [])
+    """The ``[[profile]]`` entries in ``path`` (``[]`` when the file is absent or
+    malformed — a corrupt registry is quarantined, never fatal)."""
+    return load_table_array(path, "profile", log=logger)
 
 
 def save_profiles(path: Path, profiles: list[dict[str, Any]]) -> None:
@@ -54,9 +56,9 @@ def save_profiles(path: Path, profiles: list[dict[str, Any]]) -> None:
     lines: list[str] = []
     for p in normalise_profiles(profiles):
         lines.append("[[profile]]")
-        lines.append(f'name = "{p["name"]}"')
+        lines.append(f"name = {basic_string(p['name'])}")
         if p.get("description"):
-            lines.append(f'description = "{p["description"]}"')
+            lines.append(f"description = {basic_string(p['description'])}")
         lines.append("")
     path.write_text("\n".join(lines), encoding="utf-8")
 

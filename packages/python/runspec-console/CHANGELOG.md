@@ -8,6 +8,76 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.276.2] — 2026-09-20
+
+### Fixed
+
+- **A malformed config file must never crash the app on launch.** The
+  `runspec_hosts.toml` hardening in 0.276.1 fixed one file, but the *same*
+  crash-on-corrupt exposure lived in every other hand-rolled loader —
+  `runspec_filters.toml` and `runspec_credentials.toml` are also read on the
+  launch path (`Bridge.__init__ → _reload_filters/_reload_credentials`), and
+  `runspec_groups.toml` / `runspec_profiles.toml` / `runspec_repos.toml` /
+  `runspec_self_service.toml` on their feature paths. All now
+  **quarantine-and-continue**: a malformed file is moved aside to a timestamped
+  `.corrupt-*` sidecar (the operator's data preserved) and the loader returns
+  `[]`, so the next save writes a clean file and startup proceeds.
+- **One audited TOML serializer.** The read (quarantine) and write (escaping)
+  helpers, previously copy-pasted and divergent across files (a couple of them
+  interpolating values straight into an f-string, which emits invalid TOML for
+  any value carrying `"`/`\`/newline and a Python `repr` for a null), are now a
+  single `runspec_console/tomlsafe.py` — `basic_string` / `dump_scalar`
+  (control chars escaped as `\uXXXX`, a `None` becomes `""` not `[None]`),
+  `quarantine_corrupt`, and `load_table_array`. `hosts` / `filters` /
+  `credentials` / `groups` / `profiles` / `repos` / `self_service` / `config`
+  all route through it.
+
+### Testing
+
+- **Config boundary tests (no mocks).** `tests/test_config_resilience.py`
+  round-trips the awkward shapes the TS editor emits (null/empty elements,
+  quotes, backslashes/Windows paths, unicode) through the *real*
+  serializer/loader for every collection file, and sweeps every launch-read
+  loader with a corrupt file to prove it quarantines instead of raising. Closes
+  the Python⇄TypeScript seam that let the launch-breaker through.
+- **`scripts/test_pack.py`** — one command that aggregates the whole pre-publish
+  pack (per-package `ruff`/`mypy`/`pytest`, the frontends' `typecheck`/`test`/
+  `build`, and the docs-drift guard), exiting non-zero on any failure. Mirrors
+  the exact set of packages CI gates (so it doesn't flag the console's
+  intentionally-untyped debt). See `docs/design/console-pre-publish-testing.md`.
+- **Windows test-hygiene fixes.** The console suite is Linux-CI-only; its first
+  Windows run surfaced 23 failures, none a real product bug — POSIX-only tests
+  (`test_rotate_key_cleanup`, `test_cred_env_exec`) that git-bash's `sh`/`awk`
+  let run under MinGW, tests that set `HOME` but not `USERPROFILE` (which is what
+  `Path.home()`/`expanduser("~")` read on Windows — `test_disclaimer`,
+  `test_executor_ssh`, `test_builtin_tool_tracking`), tests that read the real
+  `~/logs` fallback (`test_analytics`), a test asserting the off-Windows sound
+  branch, a `_console_context` test that picked up the live Outlook mailbox, and
+  a `_ensure_std_streams` test asserting `isatty() is False` where Windows' NUL
+  device (a `FILE_TYPE_CHAR`) returns `True`. All are now guarded / isolated so
+  they pass on both platforms (the product code was already correct).
+
+### Frontend
+
+- **Effective `FormsView` code-splitting.** `App.tsx` lazy-loads `FormsView`, but
+  five eager modules (`CommandInput`, `SettingsDrawer`, `RunnableAction`,
+  `RunbookRunModal`, `SchedulesView`) statically imported helpers *and* the
+  `ArgInput`/`TruncatedText` components from it, pinning the whole heavy view into
+  the main chunk (the bundler's `INEFFECTIVE_DYNAMIC_IMPORT` warning). Those
+  shared helpers + light input components moved to a new `views/formsShared.tsx`
+  that the eager modules import instead; `FormsView` re-exports them for its
+  colocated tests. The warning is gone and `FormsView` now splits into its own
+  ~21 kB (6 kB gzip) chunk.
+- **Cleaner test + startup output.** The vitest setup now stubs
+  `getComputedStyle(elt, pseudoElt)` (jsdom throws on the pseudo-element arg that
+  antd's scrollbar measurement passes, flooding stderr on every Modal/Drawer
+  test) and `PathInput` drops the redundant `size` prop antd warns about when a
+  customize input child is used. And the desktop app's static file server now
+  swallows the benign client-abort errors (`ConnectionAbortedError` / reset /
+  broken-pipe) the webview raises when it cancels an asset request mid-load —
+  Python's `http.server` used to dump a full traceback for each, which was
+  alarming on a cold first launch (more visible now the UI code-splits).
+
 ## [0.276.1] — 2026-09-20
 
 ### Fixed

@@ -23,23 +23,19 @@ on a host entry still narrows this set per queue.
 
 from __future__ import annotations
 
-import sys
+import logging
 from pathlib import Path
 from typing import Any
 
-if sys.version_info >= (3, 11):
-    import tomllib
-else:
-    import tomli as tomllib
+from .tomlsafe import basic_string, load_table_array
+
+logger = logging.getLogger(__name__)
 
 
 def load_self_service(path: Path) -> list[dict[str, Any]]:
-    """The ``[[self_service]]`` entries in ``path`` (``[]`` when the file is absent)."""
-    if not path.exists():
-        return []
-    with open(path, "rb") as fh:
-        data = tomllib.load(fh)
-    return data.get("self_service", [])
+    """The ``[[self_service]]`` entries in ``path`` (``[]`` when the file is absent
+    or malformed — a corrupt registry is quarantined, never fatal)."""
+    return load_table_array(path, "self_service", log=logger)
 
 
 def save_self_service(path: Path, entries: list[dict[str, Any]]) -> None:
@@ -48,9 +44,9 @@ def save_self_service(path: Path, entries: list[dict[str, Any]]) -> None:
     lines: list[str] = []
     for e in normalise_self_service(entries):
         lines.append("[[self_service]]")
-        lines.append(f'name = "{e["name"]}"')
+        lines.append(f"name = {basic_string(e['name'])}")
         if e.get("description"):
-            lines.append(f'description = "{e["description"]}"')
+            lines.append(f"description = {basic_string(e['description'])}")
         lines.append("")
     path.write_text("\n".join(lines), encoding="utf-8")
 

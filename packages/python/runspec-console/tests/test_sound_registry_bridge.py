@@ -4,6 +4,8 @@ methods under test (no pywebview/COM), mirroring test_action_tools.py."""
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from runspec_console import config, sounds_registry
@@ -124,6 +126,10 @@ def test_delete_sound_leaves_external_file_untouched(store, tmp_path):
     assert external.exists()  # a referenced-in-place file is never deleted
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="asserts the off-Windows branch (preview available on Windows)",
+)
 def test_preview_sound_never_raises_off_windows(store):
     # No-op off Windows (available() is False), but must not raise.
     assert _SoundBridge().preview_sound("confirm") is False

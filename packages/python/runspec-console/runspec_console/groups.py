@@ -21,23 +21,19 @@ the other collection files (hosts/filters/credentials/runbooks).
 
 from __future__ import annotations
 
-import sys
+import logging
 from pathlib import Path
 from typing import Any
 
-if sys.version_info >= (3, 11):
-    import tomllib
-else:
-    import tomli as tomllib
+from .tomlsafe import basic_string, load_table_array
+
+logger = logging.getLogger(__name__)
 
 
 def load_groups(path: Path) -> list[dict[str, Any]]:
-    """The ``[[group]]`` entries in ``path`` (``[]`` when the file is absent)."""
-    if not path.exists():
-        return []
-    with open(path, "rb") as fh:
-        data = tomllib.load(fh)
-    return data.get("group", [])
+    """The ``[[group]]`` entries in ``path`` (``[]`` when the file is absent or
+    malformed — a corrupt registry is quarantined, never fatal)."""
+    return load_table_array(path, "group", log=logger)
 
 
 def save_groups(path: Path, groups: list[dict[str, Any]]) -> None:
@@ -46,9 +42,9 @@ def save_groups(path: Path, groups: list[dict[str, Any]]) -> None:
     lines: list[str] = []
     for g in normalise_groups(groups):
         lines.append("[[group]]")
-        lines.append(f'name = "{g["name"]}"')
+        lines.append(f"name = {basic_string(g['name'])}")
         if g.get("description"):
-            lines.append(f'description = "{g["description"]}"')
+            lines.append(f"description = {basic_string(g['description'])}")
         lines.append("")
     path.write_text("\n".join(lines), encoding="utf-8")
 

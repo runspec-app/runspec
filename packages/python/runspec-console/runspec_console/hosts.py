@@ -41,56 +41,25 @@ from __future__ import annotations
 import glob as _glob
 import logging
 import os
-import sys
-import time
 from pathlib import Path
 from typing import Any
 
-if sys.version_info >= (3, 11):
-    import tomllib
-else:
-    import tomli as tomllib
+from .tomlsafe import basic_string, dump_scalar, load_table_array, quarantine_corrupt
 
 logger = logging.getLogger(__name__)
 
 
 def _quarantine_corrupt(path: Path, err: Exception) -> None:
-    """Move an unreadable hosts file aside so it stops crashing every read.
-
-    The operator's data is preserved (renamed to a timestamped ``.corrupt-*``
-    sidecar, not deleted) and the next save writes a clean file in its place.
-    """
-    stamp = time.strftime("%Y%m%d-%H%M%S")
-    backup = path.with_name(f"{path.name}.corrupt-{stamp}")
-    i = 1
-    while backup.exists():
-        backup = path.with_name(f"{path.name}.corrupt-{stamp}-{i}")
-        i += 1
-    try:
-        path.replace(backup)
-        logger.error("hosts file %s was invalid (%s); moved to %s", path, err, backup)
-    except OSError:
-        logger.error(
-            "hosts file %s was invalid (%s) and could not be moved aside",
-            path,
-            err,
-            exc_info=True,
-        )
+    """Move an unreadable hosts file aside so it stops crashing every read
+    (thin wrapper over the shared :func:`tomlsafe.quarantine_corrupt`)."""
+    quarantine_corrupt(path, err, log=logger)
 
 
 def load_hosts(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    try:
-        with open(path, "rb") as fh:
-            data = tomllib.load(fh)
-    except (tomllib.TOMLDecodeError, OSError, ValueError) as e:
-        # A malformed hosts file must never crash the app or block launch — this
-        # runs on the startup path (Bridge.__init__ -> _reload_hosts). Quarantine
-        # it and start with no configured hosts rather than raising.
-        _quarantine_corrupt(path, e)
-        return []
-    return data.get("host", [])
+    # A malformed hosts file must never crash the app or block launch — this runs
+    # on the startup path (Bridge.__init__ -> _reload_hosts). Quarantine it and
+    # start with no configured hosts rather than raising.
+    return load_table_array(path, "host", log=logger)
 
 
 def save_hosts(path: Path, hosts: list[dict[str, Any]]) -> None:
@@ -311,43 +280,13 @@ def resolve_local_venvs(globs: list[str], *, own_path: str) -> list[str]:
     return out
 
 
-# TOML basic-string escapes (see the TOML spec). Anything else below 0x20 (plus
-# DEL) is emitted as \uXXXX so the written file always re-parses.
-_TOML_STR_ESCAPES = {
-    "\\": "\\\\",
-    '"': '\\"',
-    "\n": "\\n",
-    "\r": "\\r",
-    "\t": "\\t",
-    "\b": "\\b",
-    "\f": "\\f",
-}
-
-
 def _toml_string(s: str) -> str:
-    out: list[str] = []
-    for ch in s:
-        esc = _TOML_STR_ESCAPES.get(ch)
-        if esc is not None:
-            out.append(esc)
-        elif ord(ch) < 0x20 or ord(ch) == 0x7F:
-            out.append(f"\\u{ord(ch):04X}")
-        else:
-            out.append(ch)
-    return '"' + "".join(out) + '"'
+    """A quoted TOML basic string (shared audited serializer)."""
+    return basic_string(s)
 
 
 def _toml_value(v: Any) -> str:
-    # bool must precede int — bool is an int subclass.
-    if isinstance(v, bool):
-        return "true" if v else "false"
-    if isinstance(v, list):
-        return "[" + ", ".join(_toml_value(x) for x in v) + "]"
-    if isinstance(v, str):
-        return _toml_string(v)
-    if isinstance(v, (int, float)):
-        return str(v)
-    # None or any other non-TOML value has no valid scalar form — emit an empty
-    # string rather than a Python repr (`None`, `[None]`) that corrupts the file
-    # and wedges every later load_hosts / save_jump_hosts.
-    return '""'
+    """A TOML scalar/list value; ``None`` (or any non-TOML value) becomes ``""``
+    rather than a Python ``repr`` that would corrupt the file and wedge every
+    later ``load_hosts`` / ``save_jump_hosts`` (shared audited serializer)."""
+    return dump_scalar(v)

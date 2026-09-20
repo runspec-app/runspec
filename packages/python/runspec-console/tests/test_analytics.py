@@ -325,7 +325,23 @@ def _make_bridge():
     return b
 
 
-class TestCollectLocal(unittest.TestCase):
+class _IsolatedHome(unittest.TestCase):
+    """Base that points Path.home() at an empty dir. ``_collect_host_records``
+    also scans ``Path.home()/logs`` as a fallback; on a real dev machine (and
+    especially Windows, where ``Path.home()`` reads ``USERPROFILE``) that dir
+    holds accumulated records that skew the exact counts these tests assert."""
+
+    def setUp(self) -> None:
+        self._home = TemporaryDirectory()
+        self._home_patch = patch(
+            "pathlib.Path.home", return_value=Path(self._home.name)
+        )
+        self._home_patch.start()
+        self.addCleanup(self._home_patch.stop)
+        self.addCleanup(self._home.cleanup)
+
+
+class TestCollectLocal(_IsolatedHome):
     def test_local_logs_tagged_with_group(self) -> None:
         b = _make_bridge()
         with TemporaryDirectory() as td:
@@ -559,7 +575,7 @@ class TestParseGzip(unittest.TestCase):
         self.assertEqual(recs[0]["runnable"], "backup")
 
 
-class TestPerInvocationDiscovery(unittest.TestCase):
+class TestPerInvocationDiscovery(_IsolatedHome):
     def _venv(self, td: str, files: dict[str, str]) -> dict:
         venv = Path(td) / "ops-tools"
         (venv / "bin").mkdir(parents=True)

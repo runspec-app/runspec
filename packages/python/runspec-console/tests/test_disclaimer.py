@@ -213,6 +213,9 @@ def test_disclaimer_frontend_shape(monkeypatch, tmp_path):
 def test_acknowledge_writes_audit_line(monkeypatch, tmp_path):
     _enable(monkeypatch, tmp_path, text="Careful.", version="7")
     monkeypatch.setenv("HOME", str(tmp_path))
+    # Path.home() reads USERPROFILE on Windows, not HOME — set both so the audit
+    # log lands in tmp_path/logs on every platform.
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     _mk_bridge(user="Alice").acknowledge_disclaimer()
     log = tmp_path / "logs" / ReportingMixin._TOOL_AUDIT_FILE
     assert log.exists()

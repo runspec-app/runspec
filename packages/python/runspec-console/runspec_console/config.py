@@ -33,6 +33,8 @@ if sys.version_info >= (3, 11):
 else:
     import tomli as tomllib
 
+from .tomlsafe import basic_string, dump_scalar
+
 logger = logging.getLogger(__name__)
 
 # Serialises every read-modify-write of config.toml so concurrent Settings-tab
@@ -2171,29 +2173,16 @@ def _toml_str(v: str) -> str:
     TOML basic strings (double-quoted) recognise backslash escapes — meaning
     a Windows path like ``C:\\Program Files\\PuTTY\\plink.exe`` written
     verbatim is invalid TOML (``\\P`` is not a recognised escape) and
-    ``tomllib`` will refuse to read the file back. Escape ``\\`` / ``"`` and the
-    common control chars (so a multiline ``rules`` string survives) before
-    wrapping in quotes, so the round-trip preserves the original string.
+    ``tomllib`` will refuse to read the file back. Delegates to the shared
+    audited serializer (escapes ``\\`` / ``"`` and every control char) so the
+    round-trip preserves the original string.
     """
-    escaped = (
-        v.replace("\\", "\\\\")
-        .replace('"', '\\"')
-        .replace("\n", "\\n")
-        .replace("\r", "\\r")
-        .replace("\t", "\\t")
-    )
-    return f'"{escaped}"'
+    return basic_string(v)
 
 
 def _toml_scalar(v: Any) -> str:
     """Render a scalar (or list of scalars) as a TOML value."""
-    if isinstance(v, str):
-        return _toml_str(v)
-    if isinstance(v, bool):
-        return "true" if v else "false"
-    if isinstance(v, list):
-        return "[" + ", ".join(_toml_scalar(x) for x in v) + "]"
-    return str(v)
+    return dump_scalar(v)
 
 
 def _triggers_to_toml(triggers: list[dict[str, Any]]) -> str:

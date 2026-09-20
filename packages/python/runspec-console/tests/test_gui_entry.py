@@ -27,7 +27,11 @@ def test_ensure_std_streams_replaces_none(monkeypatch):
 
     for stream in (sys.stdout, sys.stderr, sys.stdin):
         assert stream is not None
-        assert stream.isatty() is False  # the exact call that used to blow up
+        # The exact call that used to blow up on None must now just work. The
+        # value is platform-dependent (POSIX /dev/null → False; on Windows NUL is
+        # a FILE_TYPE_CHAR device, so isatty() is True) — the contract is that it
+        # returns a bool without raising, not a specific value.
+        assert isinstance(stream.isatty(), bool)
 
 
 def test_ensure_std_streams_leaves_real_streams(monkeypatch):
