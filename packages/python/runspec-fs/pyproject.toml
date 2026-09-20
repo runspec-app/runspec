@@ -4,9 +4,10 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-fs"
-version = "0.4.0"
+version = "0.4.1"
 requires-python = ">=3.10"
 description = "Filesystem runnable for runspec — read and manipulate local/remote filesystems, ported from the Filesystem MCP server"
+readme = "README.md"
 keywords = ["runspec", "runnable", "filesystem", "mcp"]
 dependencies = [
     # 0.44.0 surfaces inherited args on each leaf subcommand's MCP tool via

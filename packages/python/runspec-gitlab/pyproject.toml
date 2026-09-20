@@ -4,9 +4,10 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-gitlab"
-version = "0.2.0"
+version = "0.2.1"
 requires-python = ">=3.10"
 description = "GitLab read runnable for runspec — issues, merge requests, pipelines, and repository reads, ported from the GitLab MCP server"
+readme = "README.md"
 keywords = ["runspec", "runnable", "gitlab", "mcp"]
 dependencies = [
     # 0.44.0 surfaces inherited args (the global --env) on each leaf subcommand's

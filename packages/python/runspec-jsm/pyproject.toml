@@ -4,9 +4,10 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-jsm"
-version = "0.1.0"
+version = "0.1.1"
 requires-python = ">=3.10"
 description = "Jira Service Management (Data Center) service-desk runnables for runspec"
+readme = "README.md"
 keywords = ["runspec", "runnable", "jira", "service-management", "itsm"]
 dependencies = [
     "runspec>=0.27.0",

@@ -2,6 +2,16 @@
 
 All notable changes to `runspec-gitlab` are documented here.
 
+## [0.2.1] — 2026-09-20
+
+### Changed
+
+- **Packaging metadata for the runspec-console Marketplace.** Add a README
+  (rendered in the Marketplace card's Details view) and publish `keywords`
+  and Documentation / Source / Changelog / Issues project URLs, so the
+  package's Marketplace card shows a description, tags and links. No
+  runnable, argument, or behaviour changes.
+
 ## [0.2.0]
 
 Reconciled the verb set against GitLab's canonical MCP tool registry

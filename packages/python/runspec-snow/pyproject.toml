@@ -4,9 +4,10 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-snow"
-version = "0.1.0"
+version = "0.1.1"
 requires-python = ">=3.10"
 description = "ServiceNow ITSM runnables for runspec"
+readme = "README.md"
 keywords = ["runspec", "runnable", "servicenow", "itsm"]
 dependencies = [
     "runspec>=0.27.0",

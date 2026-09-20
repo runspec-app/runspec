@@ -2,6 +2,16 @@
 
 All notable changes to `runspec-jira` are documented here.
 
+## [0.3.1] — 2026-09-20
+
+### Changed
+
+- **Packaging metadata for the runspec-console Marketplace.** Add a README
+  (rendered in the Marketplace card's Details view) and publish `keywords`
+  and Documentation / Source / Changelog / Issues project URLs, so the
+  package's Marketplace card shows a description, tags and links. No
+  runnable, argument, or behaviour changes.
+
 ## [0.3.0] — 2026-08-07
 
 Add an optional `--jira-pat` secret arg (a `password`-typed inherited global) for

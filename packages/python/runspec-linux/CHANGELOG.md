@@ -1,5 +1,15 @@
 # runspec-linux Changelog
 
+## [0.13.3] — 2026-09-20
+
+### Changed
+
+- **Packaging metadata for the runspec-console Marketplace.** Add a README
+  (rendered in the Marketplace card's Details view) and publish `keywords`
+  and Documentation / Source / Changelog / Issues project URLs, so the
+  package's Marketplace card shows a description, tags and links. No
+  runnable, argument, or behaviour changes.
+
 ## [0.13.2] — 2026-09-17
 
 ### Fixed

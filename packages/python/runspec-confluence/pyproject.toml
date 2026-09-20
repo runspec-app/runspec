@@ -4,9 +4,10 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-confluence"
-version = "0.6.0"
+version = "0.6.1"
 requires-python = ">=3.10"
 description = "Confluence runnable for runspec — pages, search, comments, labels, and restrictions (Cloud + Server/Data Center)"
+readme = "README.md"
 keywords = ["runspec", "runnable", "confluence", "atlassian"]
 dependencies = [
     # 0.44.0 surfaces inherited args (the global --env) on each leaf subcommand's

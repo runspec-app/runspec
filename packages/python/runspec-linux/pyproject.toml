@@ -4,9 +4,10 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-linux"
-version = "0.13.2"
+version = "0.13.3"
 requires-python = ">=3.10"
 description = "Linux system admin runnables for runspec"
+readme = "README.md"
 keywords = ["runspec", "runnable", "linux", "sysadmin", "ops", "ssh", "venv"]
 dependencies = [
     "runspec>=0.50.1",

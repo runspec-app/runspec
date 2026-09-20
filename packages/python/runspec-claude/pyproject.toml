@@ -4,9 +4,10 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-claude"
-version = "0.1.0"
+version = "0.1.1"
 requires-python = ">=3.10"
 description = "Drive the Claude Code CLI (`claude`) headlessly as a runspec runnable"
+readme = "README.md"
 keywords = ["runspec", "runnable", "claude-code", "agent"]
 dependencies = [
     # 0.44.0 surfaces inherited global args (model, permission-mode, …) on each

@@ -4,9 +4,10 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-jira"
-version = "0.3.0"
+version = "0.3.1"
 requires-python = ">=3.10"
 description = "Full-featured Jira runnable for runspec — issues, search, transitions, links, worklogs, projects, users, and service desk (Cloud + Server/Data Center)"
+readme = "README.md"
 keywords = ["runspec", "runnable", "jira", "atlassian", "service-desk"]
 dependencies = [
     # 0.44.0 surfaces inherited args (the global --env) on each leaf subcommand's
