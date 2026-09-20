@@ -252,6 +252,17 @@ export interface McpCredentialOption {
   label: string
   kind: string
 }
+// Result of mcp_install_venv (install a stdio MCP server into a dedicated venv).
+export interface McpInstallResult {
+  ok: boolean
+  error?: string
+  server?: string
+  command?: string
+  venv?: string
+  status?: McpStatus
+  scripts?: string[]  // when the launcher wasn't found: the venv's console scripts
+  output?: string
+}
 // The console's *own* MCP server ([mcp_server]) — an external coding agent
 // (Claude Code) connects to it. Off by default; localhost-only. (Named Own* to
 // avoid clashing with the client-side McpServer* interfaces above.)
@@ -1622,6 +1633,11 @@ export interface BridgeApi {
   mcp_status: () => Promise<McpStatus>
   mcp_reload: () => Promise<McpStatus>
   mcp_credential_options: () => Promise<McpCredentialOption[]>
+  // One-click: install a pip-distributed stdio MCP server into a dedicated venv
+  // (under app-data mcp-venvs/, not the console's own) and wire it as a
+  // [[mcp.servers]] stdio entry. On a launcher-not-found result, `scripts` lists
+  // the venv's console scripts so the operator can retry with the right command.
+  mcp_install_venv: (payload: { name: string; package: string; command?: string; autonomy?: string }) => Promise<McpInstallResult>
   // The console's own MCP server ([mcp_server]) — get/save the settings and read
   // live status (running/url/auth/tool count). save restarts the server to apply.
   get_mcp_server_config: () => Promise<OwnMcpServerConfig>

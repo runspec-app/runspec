@@ -2806,13 +2806,25 @@ function SelfServiceTab() {
 
 interface RepoFormValues { name: string; url: string; ref?: string; credential_id?: string; description?: string; path?: string }
 
-function ReposTab() {
+const GRAPH_MCP_NOTE_KEY = 'repos:graph-mcp-note-dismissed'
+
+export function ReposTab() {
+  const { ai } = useFeatures()
   const [repos, setRepos] = useState<Repo[]>([])
   const [creds, setCreds] = useState<Credential[]>([])
   const [engineMissing, setEngineMissing] = useState(false)
   const [editingKey, setEditingKey] = useState<string | null>(null)
   const [syncing, setSyncing] = useState<string | null>(null)
   const [form] = Form.useForm<RepoFormValues>()
+  // A one-time nudge (per browser) that a code-graph MCP helps on large repos.
+  // localStorage is a per-viewer convenience — never fatal if it's unavailable.
+  const [graphNoteDismissed, setGraphNoteDismissed] = useState(() => {
+    try { return localStorage.getItem(GRAPH_MCP_NOTE_KEY) === '1' } catch { return false }
+  })
+  const dismissGraphNote = () => {
+    try { localStorage.setItem(GRAPH_MCP_NOTE_KEY, '1') } catch { /* private mode / blocked */ }
+    setGraphNoteDismissed(true)
+  }
 
   const reload = useCallback(() => bridge.get_repos().then(setRepos), [])
   useEffect(() => {
@@ -2889,6 +2901,21 @@ function ReposTab() {
         <Alert type="warning" showIcon style={{ marginBottom: 12 }}
           message="Git engine not installed"
           description={<span style={{ fontSize: 13 }}>Install the optional <code>git-sync</code> extra to clone/read repos.</span>} />
+      )}
+
+      {ai && !graphNoteDismissed && (
+        <Alert type="info" showIcon closable onClose={dismissGraphNote} style={{ marginBottom: 12 }}
+          message="Large codebase? A code-graph MCP can speed the agent up"
+          description={
+            <span style={{ fontSize: 13 }}>
+              On a big repo the agent explores by grep&nbsp;+&nbsp;read — many round-trips and a lot of tokens for structural
+              questions (“who calls X”, “what does this service look like”). A <strong>local code-graph MCP</strong> server
+              (e.g.&nbsp;<a href="https://pypi.org/project/codebase-memory-mcp/" target="_blank" rel="noreferrer">codebase-memory-mcp</a>)
+              indexes the repo once into a persisted local index and answers those from pre-computed edges — no network,
+              opt-in. Wire one up under <strong>Settings&nbsp;→&nbsp;MCP</strong>. See <code>docs/console-mcp.md</code> →
+              “Code-graph MCP for large repos”.
+            </span>
+          } />
       )}
 
       <Modal
@@ -5352,6 +5379,11 @@ export function McpTab() {
   const [callTimeout, setCallTimeout] = useState(60)
   const [connectTimeout, setConnectTimeout] = useState(20)
   const [busy, setBusy] = useState(false)
+  // "Install into a venv" one-click state.
+  const [installOpen, setInstallOpen] = useState(false)
+  const [installing, setInstalling] = useState(false)
+  const [installForm] = Form.useForm<{ name: string; package: string; command?: string; autonomy: string }>()
+  const [installScripts, setInstallScripts] = useState<string[]>([])
   // Last-persisted timeouts, so a blur only re-saves when a value actually
   // changed (the number inputs persist on blur, not per keystroke).
   const savedTimeouts = useRef({ call: 60, connect: 20 })
@@ -5448,6 +5480,35 @@ export function McpTab() {
   }
   const reconnect = async () => { setBusy(true); try { setStatus(await bridge.mcp_reload()) } finally { setBusy(false) } }
 
+  const openInstall = () => {
+    setInstallScripts([])
+    installForm.resetFields()
+    installForm.setFieldsValue({ autonomy: 'confirm' })
+    setInstallOpen(true)
+  }
+  const runInstall = async () => {
+    const v = await installForm.validateFields()
+    setInstalling(true); setInstallScripts([])
+    try {
+      const res = await bridge.mcp_install_venv({
+        name: v.name.trim(), package: v.package.trim(),
+        command: (v.command || '').trim(), autonomy: v.autonomy,
+      })
+      if (res.ok) {
+        message.success(`Installed and wired up "${res.server}"`)
+        setInstallOpen(false)
+        loadCfg(); setStatus(res.status ?? status)
+      } else {
+        // A launcher-not-found result lists the venv's scripts so the operator
+        // can retry with the right command instead of guessing.
+        if (res.scripts?.length) setInstallScripts(res.scripts)
+        message.error(res.error || 'Install failed')
+      }
+    } catch (e) {
+      message.error(String((e as Error)?.message || e))
+    } finally { setInstalling(false) }
+  }
+
   const isRemote = draft.transport === 'http' || draft.transport === 'sse'
   const editingName = editing !== null && editing >= 0 ? servers[editing]?.name : ''
 
@@ -5478,9 +5539,57 @@ export function McpTab() {
         </Text>
         <Space>
           <Button size="small" icon={<ReloadOutlined />} loading={busy} onClick={reconnect}>Reconnect</Button>
+          <Tooltip title="Install a pip-distributed stdio MCP server into its own venv (kept out of the console's) and wire it up automatically">
+            <Button size="small" icon={<DownloadOutlined />} onClick={openInstall}>Install into a venv…</Button>
+          </Tooltip>
           <Button size="small" type="primary" icon={<PlusOutlined />} onClick={startAdd}>Add</Button>
         </Space>
       </div>
+
+      <Modal
+        open={installOpen}
+        title="Install a stdio MCP server into a venv"
+        okText={installing ? 'Installing…' : 'Install'}
+        okButtonProps={{ loading: installing, icon: <DownloadOutlined /> }}
+        cancelButtonProps={{ disabled: installing }}
+        maskClosable={false}
+        onCancel={() => setInstallOpen(false)}
+        onOk={runInstall}
+        width={620}
+      >
+        <Text type="secondary" style={{ fontSize: 13 }}>
+          Creates a <strong>dedicated venv</strong> (under the app-data <code>mcp-venvs/</code> dir, not the console's own
+          environment), <code>pip install</code>s the package into it, and adds a <code>stdio</code> server pointing at its
+          launcher. Handy for a code-graph server on a large repo — see <code>docs/console-mcp.md</code>.
+        </Text>
+        <Form form={installForm} layout="vertical" size="small" style={{ marginTop: 12 }} disabled={installing}>
+          <Form.Item name="name" label="Server name" rules={[{ required: true, message: 'Required' }]}
+            tooltip="How this server appears in the list; its tools become mcp_<name>_<tool>.">
+            <Input placeholder="codebase-graph" style={{ fontFamily: MONO_FONT }} />
+          </Form.Item>
+          <Form.Item name="package" label="Pip package" rules={[{ required: true, message: 'Required' }]}
+            tooltip="A plain named package from your configured index (a version/[extras] is fine). No URLs, paths, or options.">
+            <Input placeholder="codebase-memory-mcp" style={{ fontFamily: MONO_FONT }} autoComplete="off" />
+          </Form.Item>
+          <Form.Item name="command" label="Launcher command (optional)"
+            tooltip="The console-script the server ships. Leave blank to use the package's name — set it only if the install reports the launcher wasn't found.">
+            <Input placeholder="(defaults to the package name)" style={{ fontFamily: MONO_FONT }} autoComplete="off" />
+          </Form.Item>
+          <Form.Item name="autonomy" label="Autonomy"
+            tooltip="How this server's tools are gated. A code-graph server's queries are reads, but the same setting also covers its indexer (write) tools — confirm is safest.">
+            <Select options={[
+              { value: 'confirm', label: 'confirm — ask before each call (default)' },
+              { value: 'autonomous', label: 'autonomous — run its tools without asking' },
+              { value: 'manual', label: 'manual — human-only, never auto-run' },
+            ]} />
+          </Form.Item>
+        </Form>
+        {installScripts.length > 0 && (
+          <Alert type="warning" showIcon style={{ marginTop: 4 }}
+            message="Installed, but the launcher wasn't found"
+            description={<span style={{ fontSize: 13 }}>The venv provides: {installScripts.map(s => <code key={s} style={{ marginRight: 6 }}>{s}</code>)}. Set <strong>Launcher command</strong> to the right one and install again.</span>} />
+        )}
+      </Modal>
 
       {status && !status.available && (
         <Alert type="info" showIcon style={{ marginBottom: 12 }} message="MCP support not installed"

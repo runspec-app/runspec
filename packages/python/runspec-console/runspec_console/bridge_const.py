@@ -30,7 +30,13 @@ DEFAULT_SYSTEM_PROMPT = (
     "an existing one over improvising. When a correction you were just given "
     "would apply again next time, offer to capture it with save_runbook — "
     "the operator approves every save, so propose rather than ask permission "
-    "first."
+    "first.\n\n"
+    "If you find yourself doing a lot of grep/read exploration on a large "
+    "repository, suggest the operator install a local code-graph MCP server "
+    '(e.g. codebase-memory-mcp) via Settings → MCP → "Install into a venv" — '
+    "it answers structural questions from a persisted local index far more "
+    "cheaply. You cannot install it yourself; that stays an operator action in "
+    "the UI. Recommend it, don't attempt it."
 )
 
 # Standing session-workspace guidance, folded into every agent turn's system

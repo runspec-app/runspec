@@ -9,12 +9,13 @@ import userEvent from '@testing-library/user-event'
 
 import { McpTab } from './SettingsDrawer'
 
-const { getMcpConfig, saveMcpConfig, mcpStatus, mcpReload, mcpCredentialOptions } = vi.hoisted(() => ({
+const { getMcpConfig, saveMcpConfig, mcpStatus, mcpReload, mcpCredentialOptions, mcpInstallVenv } = vi.hoisted(() => ({
   getMcpConfig: vi.fn(),
   saveMcpConfig: vi.fn(),
   mcpStatus: vi.fn(),
   mcpReload: vi.fn(),
   mcpCredentialOptions: vi.fn(),
+  mcpInstallVenv: vi.fn(),
 }))
 
 vi.mock('../bridge', () => ({
@@ -27,6 +28,7 @@ vi.mock('../bridge', () => ({
         if (prop === 'mcp_status') return mcpStatus
         if (prop === 'mcp_reload') return mcpReload
         if (prop === 'mcp_credential_options') return mcpCredentialOptions
+        if (prop === 'mcp_install_venv') return mcpInstallVenv
         return vi.fn()
       },
     },
@@ -58,6 +60,44 @@ describe('McpTab', () => {
     mcpReload.mockReset().mockResolvedValue(STATUS)
     mcpCredentialOptions.mockReset().mockResolvedValue([{ id: 'svc', label: 'Service', kind: 'token' }])
     saveMcpConfig.mockReset().mockResolvedValue(STATUS)
+    mcpInstallVenv.mockReset().mockResolvedValue({ ok: true, server: 'codebase-graph', command: '/x/mcp-venvs/codebase-graph/bin/codebase-memory-mcp', status: STATUS })
+  })
+
+  it('installs a stdio MCP server into a venv from the dialog', async () => {
+    render(<McpTab />)
+    await screen.findByText('files')
+    const user = userEvent.setup()
+    await act(async () => { await user.click(screen.getByRole('button', { name: /Install into a venv/ })) })
+    // Fill the server name + pip package and install.
+    const name = await screen.findByPlaceholderText('codebase-graph')
+    const pkg = screen.getByPlaceholderText('codebase-memory-mcp')
+    await act(async () => {
+      await user.type(name, 'codebase-graph')
+      await user.type(pkg, 'codebase-memory-mcp')
+    })
+    await act(async () => { await user.click(screen.getByRole('button', { name: /Install$/ })) })
+    await waitFor(() => expect(mcpInstallVenv).toHaveBeenCalled())
+    const payload = mcpInstallVenv.mock.calls[0][0]
+    expect(payload).toMatchObject({ name: 'codebase-graph', package: 'codebase-memory-mcp', autonomy: 'confirm' })
+    // On success it reloads the config so the new server shows up.
+    await waitFor(() => expect(getMcpConfig.mock.calls.length).toBeGreaterThan(1))
+  })
+
+  it('surfaces the venv scripts when the launcher is not found', async () => {
+    mcpInstallVenv.mockReset().mockResolvedValue({ ok: false, error: "the launcher 'wrong' isn't in the venv", scripts: ['codebase-memory-mcp', 'cmm'] })
+    render(<McpTab />)
+    await screen.findByText('files')
+    const user = userEvent.setup()
+    await act(async () => { await user.click(screen.getByRole('button', { name: /Install into a venv/ })) })
+    await act(async () => {
+      await user.type(await screen.findByPlaceholderText('codebase-graph'), 'x')
+      await user.type(screen.getByPlaceholderText('codebase-memory-mcp'), 'some-pkg')
+      await user.click(screen.getByRole('button', { name: /Install$/ }))
+    })
+    await waitFor(() => expect(mcpInstallVenv).toHaveBeenCalled())
+    // The venv's available scripts are shown so the operator can retry.
+    await screen.findByText(/Installed, but the launcher wasn't found/)
+    await screen.findByText('cmm')
   })
 
   it('loads config + status and renders per-server connection state', async () => {

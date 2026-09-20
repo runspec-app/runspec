@@ -61,6 +61,15 @@ def test_default_points_the_agent_at_runbooks():
     assert "save_runbook" in text
 
 
+def test_default_nudges_toward_a_code_graph_mcp_but_not_self_install():
+    """On a big repo the agent should recommend a local code-graph MCP via the
+    Settings UI, while making clear it can't install one itself."""
+    text = _stub({})._base_system()
+    assert "codebase-memory-mcp" in text
+    assert "Install into a venv" in text
+    assert "cannot install it yourself" in text
+
+
 def test_default_system_prompt_is_the_base_default():
     """The Settings pre-fill reads exactly what an unset [llm] system runs."""
     assert Bridge.default_system_prompt(object()) == DEFAULT_SYSTEM_PROMPT

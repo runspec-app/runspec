@@ -8,6 +8,34 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.278.1] — 2026-09-20
+
+### Added
+
+- **Repos: a nudge toward a code-graph MCP for large codebases.** The Repos tab
+  now shows a dismissible note (AI-on only, persisted per browser) explaining that
+  on a big repo the agent's grep + read exploration is expensive, and a **local
+  code-graph MCP** server (e.g. `codebase-memory-mcp`) can answer structural
+  questions ("who calls X") from a persisted local index instead — opt-in, no
+  egress. See the new `docs/console-mcp.md` → "Code-graph MCP for large repos".
+- **MCP: install a stdio server into a dedicated venv (one-click).** Settings →
+  MCP → **Install into a venv…** takes a server name + a pip package (+ optional
+  launcher command / autonomy), creates a venv under the app-data `mcp-venvs/`
+  dir — **outside** the console's own environment, so a heavy MCP dependency
+  never pollutes it — `pip install`s the package, resolves the launcher, and wires
+  it up as a `stdio` `[[mcp.servers]]` entry. Generic: works for any
+  pip-distributed stdio MCP server, not just a code-graph one. A launcher-not-found
+  install lists the venv's console scripts so the operator can retry with the right
+  command; the package spec is validated to a plain named spec (no URLs/paths/
+  options) before it reaches pip. New `mcp_venv.py` (pure paths) + bridge
+  `mcp_install_venv`. See `docs/design/repo-codebase-graph.md` for the rationale.
+- **Agent awareness of the code-graph MCP install path.** The base system prompt
+  now tells the agent that, on a large repo where its grep/read exploration is
+  getting expensive, it can *recommend* the operator install a local code-graph
+  MCP (e.g. `codebase-memory-mcp`) via Settings → MCP → "Install into a venv" —
+  while making clear it cannot install one itself (host pip is an operator
+  action).
+
 ## [0.278.0] — 2026-09-20
 
 ### Added
@@ -34,7 +62,6 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   the deferred long tail in `[llm] tool_mode = "search"` rather than the hot
   kernel. `_MARKETPLACE_TOOL_NAMES` in `bridge_const`; `_marketplace_agent_tools`
   / `_run_marketplace_tool` in `bridge_marketplace`.
-
 
 ## [0.277.0] — 2026-09-20
 

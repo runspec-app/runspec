@@ -2742,6 +2742,132 @@ class AgentToolsMixin:
         )
         return self.mcp_reload()
 
+    def mcp_install_venv(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Install a pip-distributed **stdio** MCP server into a dedicated venv and
+        wire it as a ``[[mcp.servers]]`` entry — the Settings → MCP one-click.
+
+        Generic: it works for any pip package that publishes a stdio MCP launcher
+        (a code-graph server for large repos is the motivating case — see
+        ``docs/console-mcp.md``). The venv lives under ``{app_dir}/mcp-venvs/<slug>``,
+        **outside** the console's own environment, so a heavy MCP dependency never
+        pollutes it. Steps: create the venv (reused if present, so a re-install
+        upgrades), ``pip install`` the package, resolve the launcher (the given
+        ``command`` or the package's base name), then add/replace the server and
+        reconnect. Blocking — the tab shows a spinner, like ``sync_repo``.
+
+        Returns ``{ok, server, command, venv, status}`` on success. On a package
+        that installed but whose launcher couldn't be found, returns ``ok=False``
+        with ``scripts`` (the console scripts the venv *does* have) so the operator
+        can retry with the right ``command``. Never raises into the UI — every
+        failure is a ``{ok: False, error}`` the tab shows.
+        """
+        import subprocess
+
+        from . import mcp_venv
+
+        data = dict(payload or {})
+        name = str(data.get("name") or "").strip()
+        package = str(data.get("package") or "").strip()
+        command = str(data.get("command") or "").strip()
+        autonomy = str(data.get("autonomy") or "confirm").strip().lower()
+        if not name:
+            return {"ok": False, "error": "A server name is required."}
+        if not package:
+            return {"ok": False, "error": "A pip package is required."}
+        if not mcp_venv.is_safe_package_spec(package):
+            return {
+                "ok": False,
+                "error": "The package must be a plain named pip spec — no URLs, "
+                "paths, spaces, or options.",
+            }
+        if autonomy not in ("confirm", "autonomous", "manual"):
+            autonomy = "confirm"
+
+        venv = mcp_venv.venv_dir(config_mod.app_dir(), name)
+        py = mcp_venv.venv_python(venv)
+        try:
+            if not py.exists():
+                venv.parent.mkdir(parents=True, exist_ok=True)
+                r = subprocess.run(
+                    [sys.executable, "-m", "venv", str(venv)],
+                    capture_output=True,
+                    text=True,
+                    timeout=180,
+                )
+                if r.returncode != 0 or not py.exists():
+                    detail = (r.stderr or r.stdout or "").strip()[-500:]
+                    return {
+                        "ok": False,
+                        "error": f"Could not create the venv: {detail}",
+                    }
+            r = subprocess.run(
+                [str(py), "-m", "pip", "install", "--upgrade", package],
+                capture_output=True,
+                text=True,
+                timeout=1200,
+            )
+        except subprocess.TimeoutExpired:
+            return {"ok": False, "error": "Install timed out."}
+        except OSError as exc:
+            return {"ok": False, "error": f"Install failed: {exc}"}
+
+        output = ((r.stdout or "") + (r.stderr or "")).strip()
+        if r.returncode != 0:
+            return {
+                "ok": False,
+                "error": f"pip install failed: {output[-800:]}",
+                "output": output[-4000:],
+            }
+
+        cmd = command or mcp_venv.default_command(package)
+        launcher = mcp_venv.launcher_path(venv, cmd) if cmd else None
+        if launcher is None or not launcher.exists():
+            return {
+                "ok": False,
+                "error": (
+                    f"Installed, but the launcher {cmd!r} isn't in the venv — set "
+                    "the command to the server's launcher and retry."
+                    if cmd
+                    else "Installed, but couldn't guess the launcher — set the command."
+                ),
+                "scripts": mcp_venv.installed_scripts(venv),
+                "output": output[-4000:],
+            }
+
+        cfg = config_mod.read_mcp()
+        servers = [
+            s
+            for s in (cfg.get("servers") or [])
+            if str(s.get("name") or "").strip() != name
+        ]
+        servers.append(
+            {
+                "name": name,
+                "transport": "stdio",
+                "command": str(launcher),
+                "autonomy": autonomy,
+                "enabled": True,
+            }
+        )
+        try:
+            status = self.save_mcp_config(
+                {
+                    "enabled": cfg.get("enabled", True),
+                    "call_timeout": cfg.get("call_timeout"),
+                    "connect_timeout": cfg.get("connect_timeout"),
+                    "servers": servers,
+                }
+            )
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc), "output": output[-4000:]}
+        return {
+            "ok": True,
+            "server": name,
+            "command": str(launcher),
+            "venv": str(venv),
+            "status": status,
+        }
+
     def mcp_credential_options(self) -> list[dict[str, Any]]:
         """The named credentials available to bind to an MCP server, as
         ``[{id, label, kind}]`` (no secrets) — the data a future Settings-tab

@@ -1015,6 +1015,7 @@ export const mockApi: BridgeApi = {
     { name: 'search', transport: 'http', connected: false, tool_count: 0, error: 'connection refused', credential: 'svc-prod', proxy: 'http://proxy.corp:8080' },
   ] }),
   mcp_reload: async () => ({ available: true, started: true, tool_count: 3, servers: [] }),
+  mcp_install_venv: async (payload) => { console.log('[mock] mcp_install_venv', payload); return { ok: true, server: payload.name, command: `/mock/mcp-venvs/${payload.name}/bin/${payload.package}`, venv: `/mock/mcp-venvs/${payload.name}`, status: { available: true, started: true, tool_count: 3, servers: [] } } },
   mcp_credential_options: async () => [
     { id: 'svc-prod', label: 'Service account (prod)', kind: 'userpass' },
     { id: 'jira-pat', label: 'Jira PAT', kind: 'token' },

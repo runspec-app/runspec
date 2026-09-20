@@ -198,3 +198,65 @@ counts, so it knows the tools exist. Programmatically, the bridge exposes
 count, and any connect error) and `mcp_reload()` (reconnect after editing
 `[mcp]`). A server that is slow or down at launch simply lands disconnected and
 shows in the status — it never blocks the console from starting.
+
+## Code-graph MCP for large repos
+
+The **Repos** feature (Settings → Repos) gives the agent on-disk checkouts and
+the `repo_*` tools, but code exploration there is a stateless grep + read loop:
+`repo_grep` re-walks the tree on every call, `repo_read` is a bounded file read.
+On a **large** codebase, answering a structural question ("who calls X", "what's
+the blast radius of changing Y", "what does this service look like") is many tool
+round-trips and a lot of tokens.
+
+A **local code-graph MCP server** targets exactly this: it parses the repo once,
+resolves symbols, and stores functions / calls / imports as a graph, then answers
+structural questions from pre-computed edges. The response scales with the
+*answer* size, not the codebase size — so on a big repo it can replace a long
+grep/read chain with a single sub-kilobyte call, while staying fully **local**
+(no network, no API keys for code). It's **opt-in** and complementary to the
+built-in `repo_*` tools — its tools appear alongside them as
+`mcp_<server>_<tool>`, through the same autonomy gate.
+
+One evaluated example is **`codebase-memory-mcp`** (MIT, stdio, a persisted
+SQLite index in `~/.cache`, with a file-change watcher so an uncommitted
+`repo_write` edit re-indexes). See `docs/design/repo-codebase-graph.md` for the
+evaluation, a Graphify contrast, and the deeper "incorporate it" direction.
+
+### Wire it up
+
+**One-click (recommended):** Settings → MCP → **Install into a venv…**. Give it a
+server name and the pip package (`codebase-memory-mcp`); the console creates a
+**dedicated venv** (kept out of the console's own environment, under the app-data
+`mcp-venvs/` dir), `pip install`s the package into it, and adds a `stdio`
+`[[mcp.servers]]` entry whose `command` points at the venv's launcher. Save →
+`mcp_reload` connects it. This is a generic installer — it works for any
+pip-distributed stdio MCP server, not just this one.
+
+**By hand:** put the launcher on `PATH` (`pip install codebase-memory-mcp`) and
+add the entry yourself:
+
+```toml
+[[mcp.servers]]
+name      = "codebase-graph"
+transport = "stdio"
+command   = "codebase-memory-mcp"
+autonomy  = "confirm"      # its query tools are reads; set "autonomous" to auto-run them
+enabled   = true
+```
+
+Then, in chat, have the agent index the checkout once (the path is
+`{app_dir}/repos/<name>`; `repo_status` lists the registered repos) and ask a
+structural question — it will use the graph tools instead of the grep loop.
+
+### Things to know
+
+- **Autonomy is per server, not per tool.** A code-graph server usually mixes
+  read tools (queries) with write tools (`index_repository` / `delete_project`),
+  but they share one `autonomy` setting. `confirm` gates all of them; `autonomous`
+  auto-runs all of them. (The built-in `repo_*` tools have a proper read/write
+  split; an external server can't express that yet.)
+- **Index footprint.** A persisted graph is tens of MB per repo — fine for a few,
+  a real budget for a fleet operator with many registered repos.
+- **Supply chain.** A third-party binary reads all of your code. Pick a local,
+  no-telemetry server, and treat installing one as the opt-in decision it is —
+  the console never bundles or auto-installs one for you.
