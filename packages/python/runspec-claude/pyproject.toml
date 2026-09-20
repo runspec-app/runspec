@@ -7,11 +7,18 @@ name = "runspec-claude"
 version = "0.1.0"
 requires-python = ">=3.10"
 description = "Drive the Claude Code CLI (`claude`) headlessly as a runspec runnable"
+keywords = ["runspec", "runnable", "claude-code", "agent"]
 dependencies = [
     # 0.44.0 surfaces inherited global args (model, permission-mode, …) on each
     # leaf subcommand's MCP tool, so the console agent can set them per call.
     "runspec>=0.44.0",
 ]
+
+[project.urls]
+Documentation = "https://runspec.app/"
+Source        = "https://github.com/jasonfinestone/runspec/tree/main/packages/python/runspec-claude"
+Changelog     = "https://github.com/jasonfinestone/runspec/blob/main/packages/python/runspec-claude/CHANGELOG.md"
+Issues        = "https://github.com/jasonfinestone/runspec/issues"
 
 [project.scripts]
 # Entry point name MUST match the runnable name. Deliberately `claude-run`, not

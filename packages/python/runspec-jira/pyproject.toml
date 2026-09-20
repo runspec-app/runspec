@@ -7,12 +7,19 @@ name = "runspec-jira"
 version = "0.3.0"
 requires-python = ">=3.10"
 description = "Full-featured Jira runnable for runspec — issues, search, transitions, links, worklogs, projects, users, and service desk (Cloud + Server/Data Center)"
+keywords = ["runspec", "runnable", "jira", "atlassian", "service-desk"]
 dependencies = [
     # 0.44.0 surfaces inherited args (the global --env) on each leaf subcommand's
     # MCP tool via `runspec serve`.
     "runspec>=0.44.0",
     "runspec-jira-core>=0.3.0",
 ]
+
+[project.urls]
+Documentation = "https://runspec.app/"
+Source        = "https://github.com/jasonfinestone/runspec/tree/main/packages/python/runspec-jira"
+Changelog     = "https://github.com/jasonfinestone/runspec/blob/main/packages/python/runspec-jira/CHANGELOG.md"
+Issues        = "https://github.com/jasonfinestone/runspec/issues"
 
 [project.scripts]
 # Entry point name MUST match the runnable name in runspec.toml (`jira`).

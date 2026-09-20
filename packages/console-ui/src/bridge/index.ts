@@ -1256,6 +1256,169 @@ export interface DenylistHostStatus {
   rules?: DenylistRule[]
 }
 
+
+// ── Marketplace (runspec runnable packages from package indexes) ─────────────
+// One package index the marketplace reads. `source: "pip"` rows are derived
+// from the console venv's pip configuration (index-url / extra-index-url) and
+// are read-only in the UI; `source: "config"` rows are [[marketplace.repos]].
+export interface MarketplaceRepo {
+  id: string
+  name: string
+  url: string
+  enabled: boolean
+  scan: boolean
+  packages: string[]
+  patterns: string[]
+  credential: string
+  pip_arg: 'auto' | 'none' | 'index-url' | 'extra-index-url'
+  trusted_host: string
+  tags: string[]
+  source: 'config' | 'pip'
+  pip_role: '' | 'index' | 'extra'
+  is_pypi: boolean
+}
+
+export interface MarketplaceConfig {
+  enabled: boolean
+  auto_pip: boolean
+  repos: MarketplaceRepo[]           // effective: declared + pip-derived
+  declared_repos: MarketplaceRepo[]  // the [[marketplace.repos]] entries only
+  patterns: string[]
+  exclude: string[]
+  require_runspec: boolean
+  include_prerelease: boolean
+  cache_ttl: number
+  timeout: number
+  max_index_bytes: number
+  max_wheel_bytes: number
+  ca_bundle: string | null
+  tls_verify: boolean
+  pip_sources: string[]
+  credential_options: McpCredentialOption[]
+  cache_path: string
+}
+
+// What save_marketplace_config takes: the editable subset (declared repos only).
+export interface MarketplaceConfigInput {
+  enabled?: boolean
+  auto_pip?: boolean
+  repos?: Partial<MarketplaceRepo>[]
+  patterns?: string[]
+  exclude?: string[]
+  require_runspec?: boolean
+  include_prerelease?: boolean
+  cache_ttl?: number
+  timeout?: number
+  ca_bundle?: string | null
+  tls_verify?: boolean
+}
+
+export interface MarketplaceEntry {
+  name: string
+  display_name: string
+  version: string
+  versions: string[]
+  summary: string
+  description: string
+  description_truncated: boolean
+  description_content_type: string
+  keywords: string[]
+  links: { documentation?: string; homepage?: string; source?: string; changelog?: string; issues?: string }
+  requires_python: string
+  requires_dist: string[]
+  license: string
+  author: string
+  upload_time: string
+  has_runspec_toml: boolean
+  metadata_source: string
+  repo: string        // the repo id the entry was read from
+  repo_name: string
+  repo_url: string
+  repos: string[]     // every repo id that carries the package
+  newest_elsewhere?: { repo: string; version: string }
+}
+
+export interface MarketplaceRepoStatus {
+  id: string
+  name: string
+  url: string
+  source: 'config' | 'pip'
+  scan: boolean
+  packages: string[]
+  count: number
+  fetched_at: number | null
+  stale: boolean
+  error: string | null
+}
+
+export interface MarketplaceCatalog {
+  enabled: boolean
+  entries: MarketplaceEntry[]
+  repos: MarketplaceRepoStatus[]
+  errors: string[]
+}
+
+// A venv a package can be installed into: the console's own venv / a local
+// venv_globs match (`local: true`) or a fleet host's runspec_paths venv.
+export interface MarketplaceTarget {
+  id: string          // `${host}::${path}`
+  host: string
+  venv: string
+  path: string
+  python: string
+  runspec_path: string
+  local: boolean
+  connected: boolean
+}
+
+export interface MarketplaceInstalledTarget extends MarketplaceTarget {
+  ok: boolean
+  error: string | null
+  owner: string          // POSIX owner of the venv (blank on Windows / unknown)
+  user: string           // the user the probe ran as
+  python_version: string
+  dists: Record<string, string>  // normalised name → installed version
+}
+
+export interface MarketplaceInstalled {
+  targets: MarketplaceInstalledTarget[]
+  probed_at: number
+}
+
+export interface MarketplaceOpTarget {
+  id: string
+  run_as?: string
+  become_method?: 'sudo' | 'su'
+}
+
+export interface MarketplaceOpPayload {
+  package: string
+  targets: MarketplaceOpTarget[]
+  upgrade?: boolean
+  reinstall?: boolean
+  pre?: boolean
+  repo?: string
+}
+
+export interface MarketplaceOpResult {
+  target: string
+  host: string
+  venv: string
+  ok: boolean
+  exit_code: number | null
+  summary: string
+  lines?: string[]
+  skipped: boolean
+}
+
+export interface MarketplaceOpRecord {
+  op: string
+  action: 'install' | 'uninstall'
+  package: string
+  status: 'running' | 'finished' | 'cancelled'
+  results: MarketplaceOpResult[]
+}
+
 export interface BridgeApi {
   get_hosts: () => Promise<Host[]>
   // Disable / re-enable runnables across fleet hosts (a kill switch). Edits each
@@ -1386,6 +1549,19 @@ export interface BridgeApi {
   // Agent-tool visibility ([tool_visibility] in config.toml). get returns the
   // two hide lists; save validates + persists them (raises on bad input) — the
   // lists ride Config Sync / the config seed.
+  // Marketplace — runspec runnable packages from package indexes (pip config +
+  // [[marketplace.repos]]), installable into local + fleet venvs. Long ops
+  // return {op} and stream runspec:marketplace_progress / _done events.
+  get_marketplace_config: () => Promise<MarketplaceConfig>
+  save_marketplace_config: (section: MarketplaceConfigInput) => Promise<MarketplaceConfig>
+  marketplace_catalog: (refresh?: boolean) => Promise<MarketplaceCatalog>
+  marketplace_targets: () => Promise<MarketplaceTarget[]>
+  marketplace_installed: (refresh?: boolean) => Promise<MarketplaceInstalled>
+  marketplace_install: (payload: MarketplaceOpPayload) => Promise<{ op: string; targets: string[] }>
+  marketplace_uninstall: (payload: MarketplaceOpPayload) => Promise<{ op: string; targets: string[] }>
+  marketplace_op: (op: string) => Promise<MarketplaceOpRecord | null>
+  marketplace_cancel: (op: string) => Promise<boolean>
+  marketplace_clear_cache: () => Promise<void>
   get_tool_visibility: () => Promise<ToolVisibility>
   save_tool_visibility: (payload: ToolVisibility) => Promise<ToolVisibility>
   // Canonical host-group registry (runspec_groups.toml) — the controlled

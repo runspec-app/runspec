@@ -70,6 +70,7 @@ TOML_FENCE = re.compile(r"```toml\n(.*?)```", re.S)
 #   local                      → console `config.toml` ([local] venv_globs auto-discovery)
 #   gateway                    → runspec-mcp `runspec_mcp.toml` ([gateway] settings)
 #   tool_visibility            → console `config.toml` ([tool_visibility] hide lists)
+#   marketplace                → console `config.toml` ([marketplace] + [[marketplace.repos]] indexes)
 #   improve                    → console `config.toml` ([improve] evaluation feature)
 #   eval                       → console eval fixture ([[eval]] tool-selection cases)
 #   suite                      → console `runspec_evals.toml` ([[suite]] fixture store)
@@ -108,6 +109,7 @@ NON_RUNSPEC_SECTIONS = {
     "sound",
     "chat_history",
     "workspace",
+    "marketplace",
     "sandbox",
     "plugins",
     "telemetry",

@@ -3,6 +3,7 @@ import { ConfigProvider, Badge, theme, Button, Tooltip, Tag, Dropdown, Spin, Pop
 import {
   ThunderboltOutlined,
   AppstoreOutlined,
+  AppstoreAddOutlined,
   FormOutlined,
   HistoryOutlined,
   CalendarOutlined,
@@ -47,6 +48,7 @@ const HistoryView = React.lazy(() => import('./views/HistoryView').then(m => ({ 
 const LogsView = React.lazy(() => import('./views/LogsView').then(m => ({ default: m.LogsView })))
 const TriggersView = React.lazy(() => import('./views/TriggersView').then(m => ({ default: m.TriggersView })))
 const FormsView = React.lazy(() => import('./views/FormsView').then(m => ({ default: m.FormsView })))
+const MarketplaceView = React.lazy(() => import('./views/MarketplaceView').then(m => ({ default: m.MarketplaceView })))
 const ImproveView = React.lazy(() => import('./views/ImproveView').then(m => ({ default: m.ImproveView })))
 const EvalsView = React.lazy(() => import('./views/EvalsView').then(m => ({ default: m.EvalsView })))
 const SchedulesView = React.lazy(() => import('./views/SchedulesView').then(m => ({ default: m.SchedulesView })))
@@ -73,7 +75,7 @@ import {
 } from './sidebarGroups'
 import { FeaturesContext, AI_ONLY_VIEWS, visibleNavTabs, type Features } from './features'
 
-type ViewKey = 'console' | 'specs' | 'history' | 'logs' | 'forms' | 'schedules' | 'triggers' | 'rota' | 'analytics' | 'improve' | 'evals' | 'dev'
+type ViewKey = 'console' | 'specs' | 'history' | 'logs' | 'forms' | 'marketplace' | 'schedules' | 'triggers' | 'rota' | 'analytics' | 'improve' | 'evals' | 'dev'
 
 // Context-window fill of the active chat's latest turn (runspec:context_estimate).
 // total_tokens is exact (from the model's usage); bucket tokens are estimates that
@@ -822,6 +824,7 @@ export default function App() {
     { key: 'evals'     as ViewKey, label: 'Evals',     icon: <ExperimentOutlined /> },
     { key: 'specs'     as ViewKey, label: 'Specs',     icon: <AppstoreOutlined /> },
     { key: 'forms'     as ViewKey, label: 'Forms',     icon: <FormOutlined /> },
+    { key: 'marketplace' as ViewKey, label: 'Marketplace', icon: <AppstoreAddOutlined /> },
     {
       key: 'schedules' as ViewKey,
       label: 'Schedules',
@@ -1501,6 +1504,7 @@ export default function App() {
                     <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin size="large" /></div>}>
                       {view === 'forms'     && <FormsView runnables={runnables} hosts={hosts} selectedHost={selectedHost} activeScope={activeScope} onRunRunnable={handleRunRunnable} pendingForm={pendingForm} onPendingFormClear={() => setPendingForm(null)} runbooks={runbooks} onOpenRunbook={handleOpenRunbook} savedRuns={savedRuns} onOpenSavedRun={handleOpenSavedRun} />}
                       {view === 'schedules' && <SchedulesView hosts={hosts} runnables={runnables} selectedHost={selectedHost} />}
+                      {view === 'marketplace' && <MarketplaceView hosts={hosts} onOpenSettings={() => setSettingsOpen(true)} />}
                       {aiEnabled && view === 'improve' && <ImproveView active={view === 'improve'} />}
                       {aiEnabled && view === 'evals'   && <EvalsView active={view === 'evals'} />}
                       {view === 'rota'      && <RotaView />}

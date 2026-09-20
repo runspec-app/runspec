@@ -7,6 +7,7 @@ name = "runspec-fs"
 version = "0.4.0"
 requires-python = ">=3.10"
 description = "Filesystem runnable for runspec — read and manipulate local/remote filesystems, ported from the Filesystem MCP server"
+keywords = ["runspec", "runnable", "filesystem", "mcp"]
 dependencies = [
     # 0.44.0 surfaces inherited args on each leaf subcommand's MCP tool via
     # `runspec serve`; fs has no globals, but the floor keeps serve behaviour
@@ -14,6 +15,12 @@ dependencies = [
     "runspec>=0.44.0",
     "runspec-fs-core>=0.3.0",
 ]
+
+[project.urls]
+Documentation = "https://runspec.app/"
+Source        = "https://github.com/jasonfinestone/runspec/tree/main/packages/python/runspec-fs"
+Changelog     = "https://github.com/jasonfinestone/runspec/blob/main/packages/python/runspec-fs/CHANGELOG.md"
+Issues        = "https://github.com/jasonfinestone/runspec/issues"
 
 [project.scripts]
 # Entry point name MUST match the runnable name in runspec.toml (`filesystem`).

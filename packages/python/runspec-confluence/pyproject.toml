@@ -7,6 +7,7 @@ name = "runspec-confluence"
 version = "0.6.0"
 requires-python = ">=3.10"
 description = "Confluence runnable for runspec — pages, search, comments, labels, and restrictions (Cloud + Server/Data Center)"
+keywords = ["runspec", "runnable", "confluence", "atlassian"]
 dependencies = [
     # 0.44.0 surfaces inherited args (the global --env) on each leaf subcommand's
     # MCP tool via `runspec serve`.
@@ -15,6 +16,12 @@ dependencies = [
     # to return a materialised page — behaviour the search-text/get-space-pages verbs rely on.
     "runspec-confluence-core>=0.6.0",
 ]
+
+[project.urls]
+Documentation = "https://runspec.app/"
+Source        = "https://github.com/jasonfinestone/runspec/tree/main/packages/python/runspec-confluence"
+Changelog     = "https://github.com/jasonfinestone/runspec/blob/main/packages/python/runspec-confluence/CHANGELOG.md"
+Issues        = "https://github.com/jasonfinestone/runspec/issues"
 
 [project.scripts]
 # Entry point name MUST match the runnable name in runspec.toml (`confluence`).

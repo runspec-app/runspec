@@ -36,6 +36,7 @@ to read, seed, or sync them directly. All files are plain TOML.
 | `runspec_repos.toml` | Agent-accessible repo registry | Yes (checkout paths are machine-local) | Settings → Repos |
 | `runspec_self_service.toml` | Room self-service catalogue | Yes | Settings → Self-Service |
 | `runspec_memory.toml` | Agent memory | No — machine-local | Agent (`remember`) |
+| `marketplace_cache.json` | [Marketplace](console-marketplace.md) catalogue cache | No — machine-local | Marketplace tab |
 | `conversations/`, `workspaces/`, `repos/`, `improve/` | Chat history, session scratch, repo checkouts, [Improve](console-improve.md) reports | No | — |
 
 "Synced" means the file participates in [Config Sync](console-team.md) and
@@ -247,6 +248,27 @@ Settings for the agent's read-only `fetch_url` web-page tool (see
 | `timeout` | 20 | Seconds before a single fetch is aborted |
 | `max_bytes` | 2000000 | Cap on bytes downloaded per fetch |
 | `ca_bundle` | — | Path to a private-CA bundle for internal HTTPS hosts |
+| `tls_verify` | `true` | Set `false` to skip TLS verification (TLS-intercepting proxies) |
+
+## `[marketplace]` {#marketplace}
+
+Settings for the [Marketplace tab](console-marketplace.md) — the package
+indexes it reads and how it lists / installs runnable packages. Declared
+indexes are `[[marketplace.repos]]` tables (keys documented on that page).
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | `true` | Show the tab; `false` also refuses every marketplace call |
+| `auto_pip` | `true` | Derive repos from this venv's pip config (`index-url` / `extra-index-url` in `pip.ini` / `pip.conf` / `PIP_*` env; pypi.org when nothing sets one) |
+| `patterns` | `["runspec-*"]` | Name globs a scanned index project must match (a repo's own `patterns` overrides) |
+| `exclude` | the runspec library + apps | Distributions that depend on `runspec` but are not runnable packages — never listed |
+| `require_runspec` | `true` | Only list distributions that depend on `runspec` (or carry the `runspec-runnable` keyword); `false` lists every explicitly named `packages` entry regardless |
+| `include_prerelease` | `false` | Offer pre-release versions |
+| `cache_ttl` | 86400 | Seconds a fetched catalogue is reused before the indexes are re-read (Refresh forces it) |
+| `timeout` | 20 | Seconds before one index fetch is aborted |
+| `max_index_bytes` | 134217728 | Cap on one index page (pypi.org's root listing is ~45 MB) |
+| `max_wheel_bytes` | 20971520 | Largest wheel downloaded to read metadata when an index publishes no PEP 658 sidecar |
+| `ca_bundle` | — | Path to a private-CA bundle for internal index hosts |
 | `tls_verify` | `true` | Set `false` to skip TLS verification (TLS-intercepting proxies) |
 
 ## `[voice]` — dictation into the prompt box {#voice}

@@ -7,12 +7,19 @@ name = "runspec-linux"
 version = "0.13.2"
 requires-python = ">=3.10"
 description = "Linux system admin runnables for runspec"
+keywords = ["runspec", "runnable", "linux", "sysadmin", "ops", "ssh", "venv"]
 dependencies = [
     "runspec>=0.50.1",
     "runspec-linux-core>=0.6.2",
     "runspec-webops-core>=0.3.0",
     "runspec-fs-core>=0.3.0",
 ]
+
+[project.urls]
+Documentation = "https://runspec.app/"
+Source        = "https://github.com/jasonfinestone/runspec/tree/main/packages/python/runspec-linux"
+Changelog     = "https://github.com/jasonfinestone/runspec/blob/main/packages/python/runspec-linux/CHANGELOG.md"
+Issues        = "https://github.com/jasonfinestone/runspec/issues"
 
 [project.scripts]
 system-info       = "runspec_linux.system_info:main_system_info"

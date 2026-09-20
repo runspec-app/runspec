@@ -44,6 +44,7 @@ from .bridge_improve import ImproveMixin
 from .bridge_evals import EvalsMixin
 from .bridge_mcp_server import McpServerMixin
 from .bridge_voice import VoiceMixin
+from .bridge_marketplace import MarketplaceMixin
 from .bridge_turn import TurnMixin
 from .dictation import DictationSession
 from .session import ChatSession
@@ -69,6 +70,7 @@ class Bridge(
     EvalsMixin,
     McpServerMixin,
     VoiceMixin,
+    MarketplaceMixin,
     TurnMixin,
 ):
     def __init__(self) -> None:
@@ -183,6 +185,12 @@ class Bridge(
         # can await a transfer's outcome. Bounded; oldest entries are evicted.
         self._recent_transfer_results: dict[str, dict[str, Any]] = {}
         self._connected_cache: dict[str, bool] = {}  # host name → last known state
+        # Marketplace tab: serialises catalogue reads (so two tab mounts don't
+        # double-fetch a 45 MB index), holds the running / recent install ops,
+        # and memoises the last installed-state probe (see bridge_marketplace).
+        self._marketplace_lock = threading.Lock()
+        self._marketplace_ops: dict[str, dict[str, Any]] = {}
+        self._marketplace_installed: dict[str, Any] | None = None
         # Debounce gate for the host_up/host_down + room_up/room_down audio cues:
         # first observation silent, flips cue, per-key cooldown so a flapping
         # host can't become a metronome. See sounds.ConnectionCueGate.

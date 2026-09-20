@@ -52,6 +52,7 @@ nav:
     - Runbooks: console-runbooks.md
     - Saved runs: console-saved-runs.md
     - Forms & credentials: console-forms.md
+    - Marketplace — install runnable packages: console-marketplace.md
     - Team config — sync & rooms: console-team.md
     - Improve — evaluation & problem reports: console-improve.md
     - Evals — tool-selection regression tests: console-evals.md

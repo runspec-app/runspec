@@ -7,12 +7,19 @@ name = "runspec-gitlab"
 version = "0.2.0"
 requires-python = ">=3.10"
 description = "GitLab read runnable for runspec — issues, merge requests, pipelines, and repository reads, ported from the GitLab MCP server"
+keywords = ["runspec", "runnable", "gitlab", "mcp"]
 dependencies = [
     # 0.44.0 surfaces inherited args (the global --env) on each leaf subcommand's
     # MCP tool via `runspec serve`.
     "runspec>=0.44.0",
     "runspec-gitlab-core>=0.2.0",
 ]
+
+[project.urls]
+Documentation = "https://runspec.app/"
+Source        = "https://github.com/jasonfinestone/runspec/tree/main/packages/python/runspec-gitlab"
+Changelog     = "https://github.com/jasonfinestone/runspec/blob/main/packages/python/runspec-gitlab/CHANGELOG.md"
+Issues        = "https://github.com/jasonfinestone/runspec/issues"
 
 [project.scripts]
 # Entry point name MUST match the runnable name in runspec.toml (`gitlab`).

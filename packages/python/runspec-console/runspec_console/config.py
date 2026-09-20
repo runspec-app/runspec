@@ -413,6 +413,153 @@ def read_web() -> dict[str, Any]:
     }
 
 
+def read_marketplace() -> dict[str, Any]:
+    """The ``[marketplace]`` settings for the Marketplace tab, with defaults.
+
+    - ``enabled`` (default true): master switch — false hides the tab and makes
+      every marketplace bridge method refuse.
+    - ``auto_pip`` (default true): derive index repos from the console venv's
+      own pip configuration (``pip.ini`` / ``pip.conf`` / ``PIP_INDEX_URL`` /
+      ``PIP_EXTRA_INDEX_URL``) — a console pointed at a private index gets a
+      marketplace for it with no further config. pip's default pypi.org counts
+      when nothing sets an index.
+    - ``repos`` (``[[marketplace.repos]]``): declared indexes — ``name``,
+      ``url`` (a simple-API root or the index base), ``enabled``, ``scan``
+      (list the root index and keep names matching ``patterns``; default true),
+      ``packages`` (explicit names, read even when not scanning), ``patterns``
+      (name globs, default ``["runspec-*"]``), ``credential`` (a Credentials id
+      for Basic auth — the secret stays in the keychain), ``pip_arg``
+      (``auto`` / ``none`` / ``index-url`` / ``extra-index-url``: how the repo
+      is handed to the target's ``pip install``), ``trusted_host``, ``tags``.
+    - ``patterns`` (default ``["runspec-*"]``): the default scan globs.
+    - ``exclude`` (default the runspec library + apps): distributions that
+      depend on ``runspec`` but are not runnable packages — never listed.
+    - ``require_runspec`` (default true): only list distributions that depend on
+      ``runspec`` (or carry the ``runspec-runnable`` keyword). False lists every
+      explicitly named ``packages`` entry regardless.
+    - ``include_prerelease`` (default false): consider pre-release versions.
+    - ``cache_ttl`` (seconds, default 86400): how long a fetched catalogue is
+      reused before the tab re-reads the indexes (Refresh forces it).
+    - ``timeout`` / ``max_index_bytes`` / ``max_wheel_bytes``: bounds on one
+      index fetch (pypi.org's root listing is ~45 MB; a wheel is downloaded only
+      when an index publishes no PEP 658 metadata).
+    - ``ca_bundle`` / ``tls_verify``: mirror the ``[web]`` / Config-Sync HTTPS
+      knobs for a private-CA / TLS-intercepting index host.
+    """
+    from . import marketplace as mp
+
+    raw = read_config().get("marketplace")
+    cfg = dict(raw) if isinstance(raw, dict) else {}
+
+    def _strs(key: str, default: list[str]) -> list[str]:
+        v = cfg.get(key)
+        if not isinstance(v, list):
+            return list(default)
+        return [str(x).strip() for x in v if str(x).strip()]
+
+    repos_raw = cfg.get("repos")
+    repos = (
+        [r for r in repos_raw if isinstance(r, dict)]
+        if isinstance(repos_raw, list)
+        else []
+    )
+    ca = str(cfg.get("ca_bundle") or "").strip()
+    return {
+        "enabled": bool(cfg.get("enabled", True)),
+        "auto_pip": bool(cfg.get("auto_pip", True)),
+        "repos": repos,
+        "patterns": _strs("patterns", list(mp.DEFAULT_PATTERNS)),
+        "exclude": _strs("exclude", list(mp.DEFAULT_EXCLUDE)),
+        "require_runspec": bool(cfg.get("require_runspec", True)),
+        "include_prerelease": bool(cfg.get("include_prerelease", False)),
+        "cache_ttl": max(0.0, float(cfg.get("cache_ttl", mp.DEFAULT_CACHE_TTL_S) or 0)),
+        "timeout": max(
+            1.0, float(cfg.get("timeout", mp.DEFAULT_TIMEOUT_S) or mp.DEFAULT_TIMEOUT_S)
+        ),
+        "max_index_bytes": max(
+            1,
+            int(
+                cfg.get("max_index_bytes", mp.DEFAULT_MAX_INDEX_BYTES)
+                or mp.DEFAULT_MAX_INDEX_BYTES
+            ),
+        ),
+        "max_wheel_bytes": max(
+            1,
+            int(
+                cfg.get("max_wheel_bytes", mp.DEFAULT_MAX_WHEEL_BYTES)
+                or mp.DEFAULT_MAX_WHEEL_BYTES
+            ),
+        ),
+        "ca_bundle": ca or None,
+        "tls_verify": bool(cfg.get("tls_verify", True)),
+    }
+
+
+def write_marketplace(section: dict[str, Any] | None) -> None:
+    """Replace the ``[marketplace]`` table in config.toml, writing only the
+    non-default keys (an all-defaults section round-trips to no block at all).
+    Every other config section is preserved."""
+    from . import marketplace as mp
+
+    sec = dict(section or {})
+
+    def mutate(cfg: dict[str, Any]) -> None:
+        table: dict[str, Any] = {}
+        if sec.get("enabled") is False:
+            table["enabled"] = False
+        if sec.get("auto_pip") is False:
+            table["auto_pip"] = False
+        patterns = [
+            str(p).strip() for p in (sec.get("patterns") or []) if str(p).strip()
+        ]
+        if patterns and patterns != list(mp.DEFAULT_PATTERNS):
+            table["patterns"] = patterns
+        if "exclude" in sec and isinstance(sec.get("exclude"), list):
+            exclude = [str(p).strip() for p in sec["exclude"] if str(p).strip()]
+            if exclude != list(mp.DEFAULT_EXCLUDE):
+                table["exclude"] = exclude
+        if sec.get("require_runspec") is False:
+            table["require_runspec"] = False
+        if sec.get("include_prerelease") is True:
+            table["include_prerelease"] = True
+        ttl = sec.get("cache_ttl")
+        if ttl is not None and float(ttl) != float(mp.DEFAULT_CACHE_TTL_S):
+            table["cache_ttl"] = float(ttl)
+        for key, default in (
+            ("timeout", mp.DEFAULT_TIMEOUT_S),
+            ("max_index_bytes", mp.DEFAULT_MAX_INDEX_BYTES),
+            ("max_wheel_bytes", mp.DEFAULT_MAX_WHEEL_BYTES),
+        ):
+            v = sec.get(key)
+            if v is not None and float(v) != float(default):
+                table[key] = type(default)(v)
+        ca = str(sec.get("ca_bundle") or "").strip()
+        if ca:
+            table["ca_bundle"] = ca
+        if sec.get("tls_verify") is False:
+            table["tls_verify"] = False
+        repos = []
+        for r in sec.get("repos") or []:
+            if not isinstance(r, dict):
+                continue
+            repo = mp.repo_from_dict(r)
+            if repo is not None:
+                repos.append(mp.repo_to_dict(repo))
+        if repos:
+            table["repos"] = repos
+        if table:
+            cfg["marketplace"] = table
+        else:
+            cfg.pop("marketplace", None)
+
+    update_config(mutate)
+
+
+def marketplace_cache_path() -> Path:
+    """The machine-local catalogue cache (never synced)."""
+    return app_dir() / "marketplace_cache.json"
+
+
 def read_voice() -> dict[str, Any]:
     """The ``[voice]`` settings for in-app dictation (the composer's mic button,
     Moonshine Voice via the ``[voice]`` extra), with defaults.

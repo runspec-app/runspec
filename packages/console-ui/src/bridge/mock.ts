@@ -1,4 +1,4 @@
-import type { BridgeApi, ChatSessionInfo, Host, JumpHost, Runnable, HistoryRecord, Schedule, InFlightRecord, TestResult, AnalyticsData, AnalyticsBucket, TriggerCard } from './index'
+import type { BridgeApi, ChatSessionInfo, MarketplaceRepo, MarketplaceEntry, MarketplaceTarget, MarketplaceInstalledTarget, MarketplaceOpRecord, MarketplaceOpPayload, MarketplaceOpResult, Host, JumpHost, Runnable, HistoryRecord, Schedule, InFlightRecord, TestResult, AnalyticsData, AnalyticsBucket, TriggerCard } from './index'
 
 // 80 days ago — triggers the yellow warning state in dev mode
 let MOCK_KEY_CREATED_AT: string = new Date(Date.now() - 80 * 24 * 60 * 60 * 1000).toISOString()
@@ -661,6 +661,65 @@ function _dropSession(id: string): void {
 // handles). Several run concurrently, one per session.
 const _activeChats = new Map<string, { id: string; session: string; cancelled: boolean }>()
 
+
+// ── Marketplace fixtures ──
+const MOCK_MARKET_REPOS: MarketplaceRepo[] = [
+  { id: 'nexus', name: 'Nexus', url: 'https://nexus.example.com/repository/pypi-all/simple/', enabled: true, scan: true, packages: ['acme-ops'], patterns: [], credential: 'svc-prod', pip_arg: 'auto', trusted_host: '', tags: ['internal'], source: 'config', pip_role: 'index', is_pypi: false },
+  { id: 'pypi', name: 'PyPI', url: 'https://pypi.org/simple/', enabled: true, scan: true, packages: [], patterns: [], credential: '', pip_arg: 'auto', trusted_host: '', tags: ['pip-config'], source: 'pip', pip_role: 'extra', is_pypi: true },
+]
+
+const MOCK_MARKET_ENTRIES: MarketplaceEntry[] = [
+  { name: 'runspec-linux', display_name: 'runspec-linux', version: '0.13.2', versions: ['0.13.2', '0.13.1', '0.13.0'], summary: 'Linux system admin runnables for runspec', description: '# runspec-linux\n\n31 Linux system-admin runnables — services, logs, network, packages, venvs, cron, filesystem and the cross-platform web/TLS probes.\n\n- `system-info`, `disk-usage`, `check-memory`\n- `restart-service`, `journalctl`\n- `create-venv`, `install-into-venv`', description_truncated: false, description_content_type: 'text/markdown', keywords: ['runspec', 'linux', 'ops'], links: { documentation: 'https://jasonfinestone.github.io/runspec/', source: 'https://github.com/jasonfinestone/runspec', changelog: 'https://github.com/jasonfinestone/runspec/blob/main/packages/python/runspec-linux/CHANGELOG.md' }, requires_python: '>=3.10', requires_dist: ['runspec>=0.50.1', 'runspec-linux-core>=0.6.2', 'runspec-webops-core>=0.3.0', 'runspec-fs-core>=0.3.0'], license: 'MIT', author: '', upload_time: '2026-09-17T23:06:09Z', has_runspec_toml: false, metadata_source: 'pypi-json', repo: 'pypi', repo_name: 'PyPI', repo_url: 'https://pypi.org/simple/', repos: ['pypi'] },
+  { name: 'runspec-windows', display_name: 'runspec-windows', version: '0.9.0', versions: ['0.9.0', '0.8.0'], summary: 'Windows system admin + cross-platform web/TLS/API runnables for runspec', description: 'Windows system admin runnables (services, event log, registry, scheduled tasks) plus the cross-platform web/TLS probes.', description_truncated: false, description_content_type: 'text/markdown', keywords: ['runspec', 'windows'], links: { documentation: 'https://jasonfinestone.github.io/runspec/' }, requires_python: '>=3.10', requires_dist: ['runspec>=0.50.1', 'runspec-webops-core>=0.3.0'], license: 'MIT', author: '', upload_time: '2026-09-10T10:00:00Z', has_runspec_toml: false, metadata_source: 'pypi-json', repo: 'pypi', repo_name: 'PyPI', repo_url: 'https://pypi.org/simple/', repos: ['pypi'] },
+  { name: 'runspec-jira', display_name: 'runspec-jira', version: '0.3.0', versions: ['0.3.0'], summary: 'Full-featured Jira runnable for runspec — issues, search, transitions, comments, service desk, attachments', description: '', description_truncated: false, description_content_type: '', keywords: ['runspec', 'jira', 'atlassian'], links: {}, requires_python: '>=3.10', requires_dist: ['runspec>=0.50.1', 'runspec-jira-core>=0.3.0'], license: '', author: '', upload_time: '2026-08-01T10:00:00Z', has_runspec_toml: false, metadata_source: 'pypi-json', repo: 'pypi', repo_name: 'PyPI', repo_url: 'https://pypi.org/simple/', repos: ['pypi'] },
+  { name: 'acme-ops', display_name: 'acme-ops', version: '2.4.0', versions: ['2.4.0', '2.3.1'], summary: 'Acme internal ops runnables (deploy, rotate secrets, drain node)', description: 'Internal. Wraps runspec-linux-core with Acme defaults.', description_truncated: false, description_content_type: 'text/markdown', keywords: ['acme', 'internal'], links: { documentation: 'https://wiki.example.com/acme-ops' }, requires_python: '>=3.11', requires_dist: ['runspec>=0.50', 'runspec-linux-core'], license: 'Proprietary', author: 'Acme Platform', upload_time: '2026-09-18T08:00:00Z', has_runspec_toml: true, metadata_source: 'wheel', repo: 'nexus', repo_name: 'Nexus', repo_url: 'https://nexus.example.com/repository/pypi-all/simple/', repos: ['nexus'] },
+]
+
+const MOCK_MARKET_TARGETS: MarketplaceTarget[] = [
+  { id: 'local::C:\\venvs\\console', host: 'local', venv: 'console', path: 'C:\\venvs\\console', python: 'C:\\venvs\\console\\Scripts\\python.exe', runspec_path: 'C:\\venvs\\console\\Scripts\\runspec.exe', local: true, connected: true },
+  { id: 'local::C:\\venvs\\ops-tools', host: 'local', venv: 'ops-tools', path: 'C:\\venvs\\ops-tools', python: 'C:\\venvs\\ops-tools\\Scripts\\python.exe', runspec_path: 'C:\\venvs\\ops-tools\\Scripts\\runspec.exe', local: true, connected: true },
+  { id: 'prod-1::/opt/venvs/ops', host: 'prod-1', venv: 'ops', path: '/opt/venvs/ops', python: '/opt/venvs/ops/bin/python', runspec_path: '/opt/venvs/ops/bin/runspec', local: false, connected: true },
+  { id: 'prod-2::/opt/venvs/ops', host: 'prod-2', venv: 'ops', path: '/opt/venvs/ops', python: '/opt/venvs/ops/bin/python', runspec_path: '/opt/venvs/ops/bin/runspec', local: false, connected: false },
+]
+
+const MOCK_MARKET_INSTALLED: MarketplaceInstalledTarget[] = [
+  { ...MOCK_MARKET_TARGETS[0], ok: true, error: null, owner: '', user: 'jason', python_version: '3.12.4', dists: { runspec: '0.51.0', 'runspec-windows': '0.9.0', 'runspec-jira': '0.2.0' } },
+  { ...MOCK_MARKET_TARGETS[1], ok: true, error: null, owner: '', user: 'jason', python_version: '3.12.4', dists: { runspec: '0.50.1' } },
+  { ...MOCK_MARKET_TARGETS[2], ok: true, error: null, owner: 'svc-ops', user: 'jason', python_version: '3.11.9', dists: { runspec: '0.50.1', 'runspec-linux': '0.13.1', 'acme-ops': '2.4.0' } },
+  { ...MOCK_MARKET_TARGETS[3], ok: false, error: 'host not connected', owner: '', user: '', python_version: '', dists: {} },
+]
+
+const MOCK_MARKET_OPS = new Map<string, MarketplaceOpRecord>()
+
+function mockMarketplaceOp(action: 'install' | 'uninstall', payload: MarketplaceOpPayload) {
+  const op = Math.random().toString(16).slice(2, 14)
+  const rec: MarketplaceOpRecord = { op, action, package: payload.package, status: 'running', results: [] }
+  MOCK_MARKET_OPS.set(op, rec)
+  console.log('[mock] marketplace_' + action, payload)
+  let delay = 200
+  for (const t of payload.targets) {
+    const target = MOCK_MARKET_TARGETS.find(x => x.id === t.id)!
+    setTimeout(() => window.dispatchEvent(new CustomEvent('runspec:marketplace_progress', { detail: { op, phase: 'start', target: t.id, host: target.host, venv: target.venv, action } })), delay)
+    const lines = action === 'install'
+      ? [`Collecting ${payload.package}`, `  Downloading ${payload.package.replace(/-/g, '_')}-1.0.0-py3-none-any.whl (42 kB)`, `Installing collected packages: ${payload.package}`, `Successfully installed ${payload.package}-1.0.0`]
+      : [`Found existing installation: ${payload.package} 1.0.0`, `Uninstalling ${payload.package}-1.0.0:`, `  Successfully uninstalled ${payload.package}-1.0.0`]
+    lines.forEach((line, i) => setTimeout(() => window.dispatchEvent(new CustomEvent('runspec:marketplace_progress', { detail: { op, phase: 'line', target: t.id, line } })), delay + 250 * (i + 1)))
+    delay += 250 * (lines.length + 1)
+    const ok = target.venv !== 'ops-tools'
+    setTimeout(() => {
+      const res: MarketplaceOpResult = { target: t.id, host: target.host, venv: target.venv, ok, exit_code: ok ? 0 : 1, summary: ok ? lines[lines.length - 1] : 'ERROR: No matching distribution found', skipped: false }
+      rec.results.push(res)
+      window.dispatchEvent(new CustomEvent('runspec:marketplace_progress', { detail: { op, phase: 'done', target: t.id, ok, exit_code: res.exit_code, summary: res.summary } }))
+    }, delay)
+    delay += 100
+  }
+  setTimeout(() => {
+    rec.status = 'finished'
+    window.dispatchEvent(new CustomEvent('runspec:marketplace_done', { detail: { op, action, package: payload.package, status: 'finished', results: rec.results } }))
+  }, delay + 100)
+  return Promise.resolve({ op, targets: payload.targets.map(t => t.id) })
+}
+
 export const mockApi: BridgeApi = {
   get_hosts: async () => MOCK_ACTIVE_PROFILE
     ? MOCK_HOSTS.filter(h => h.name === 'local' || (h.profiles ?? []).includes(MOCK_ACTIVE_PROFILE))
@@ -817,6 +876,57 @@ export const mockApi: BridgeApi = {
     console.log('[mock] save_local_venv_config', globs)
     return { globs, own_venv: 'C:/venvs/console/Scripts/runspec.exe', resolved: [{ path: 'C:/venvs/console/Scripts/runspec.exe', venv_name: 'console' }] }
   },
+
+
+  // ── Marketplace ──
+  get_marketplace_config: async () => ({
+    enabled: true,
+    auto_pip: true,
+    repos: [...MOCK_MARKET_REPOS],
+    declared_repos: MOCK_MARKET_REPOS.filter(r => r.source === 'config'),
+    patterns: ['runspec-*'],
+    exclude: ['runspec', 'runspec-console', 'runspec-mcp', 'runspec-room', 'runspec-registry'],
+    require_runspec: true,
+    include_prerelease: false,
+    cache_ttl: 86400,
+    timeout: 20,
+    max_index_bytes: 134217728,
+    max_wheel_bytes: 20971520,
+    ca_bundle: null,
+    tls_verify: true,
+    pip_sources: ['C:\\Users\\jason\\AppData\\Roaming\\pip\\pip.ini'],
+    credential_options: [{ id: 'svc-prod', label: 'Nexus', kind: 'userpass' }],
+    cache_path: 'C:\\Users\\jason\\AppData\\Roaming\\runspec-console\\marketplace_cache.json',
+  }),
+  save_marketplace_config: async (section) => {
+    console.log('[mock] save_marketplace_config', section)
+    return mockApi.get_marketplace_config()
+  },
+  marketplace_catalog: async (refresh) => {
+    console.log('[mock] marketplace_catalog', refresh)
+    await new Promise(r => setTimeout(r, refresh ? 800 : 150))
+    return {
+      enabled: true,
+      entries: MOCK_MARKET_ENTRIES,
+      repos: MOCK_MARKET_REPOS.map(r => ({
+        id: r.id, name: r.name, url: r.url, source: r.source, scan: r.scan, packages: r.packages,
+        count: MOCK_MARKET_ENTRIES.filter(e => e.repos.includes(r.id)).length,
+        fetched_at: Date.now() / 1000 - 3600, stale: false, error: r.id === 'nexus' ? null : null,
+      })),
+      errors: [],
+    }
+  },
+  marketplace_targets: async () => MOCK_MARKET_TARGETS,
+  marketplace_installed: async (refresh) => {
+    console.log('[mock] marketplace_installed', refresh)
+    await new Promise(r => setTimeout(r, 300))
+    return { targets: MOCK_MARKET_INSTALLED, probed_at: Date.now() / 1000 }
+  },
+  marketplace_install: async (payload) => mockMarketplaceOp('install', payload),
+  marketplace_uninstall: async (payload) => mockMarketplaceOp('uninstall', payload),
+  marketplace_op: async (op) => MOCK_MARKET_OPS.get(op) ?? null,
+  marketplace_cancel: async (op) => { console.log('[mock] marketplace_cancel', op); return true },
+  marketplace_clear_cache: async () => { console.log('[mock] marketplace_clear_cache') },
 
   get_tool_visibility: async () => ({ hidden_from_agent: ['get-alerts'], hidden_from_all: ['flush-dns'] }),
   save_tool_visibility: async (payload) => {

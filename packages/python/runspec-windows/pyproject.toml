@@ -7,11 +7,19 @@ name = "runspec-windows"
 version = "0.9.0"
 requires-python = ">=3.10"
 description = "Windows system admin + cross-platform web/TLS/API runnables for runspec"
+readme = "README.md"
+keywords = ["runspec", "runnable", "windows", "sysadmin", "ops", "tls"]
 dependencies = [
     "runspec>=0.44.0",
     "runspec-webops-core>=0.3.0",
     "runspec-fs-core>=0.3.0",
 ]
+
+[project.urls]
+Documentation = "https://runspec.app/"
+Source        = "https://github.com/jasonfinestone/runspec/tree/main/packages/python/runspec-windows"
+Changelog     = "https://github.com/jasonfinestone/runspec/blob/main/packages/python/runspec-windows/CHANGELOG.md"
+Issues        = "https://github.com/jasonfinestone/runspec/issues"
 
 [project.optional-dependencies]
 # Microsoft 365 / Graph runnables moved to the standalone `runspec-o365` package

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { Drawer, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Empty, Table, Slider, Progress } from 'antd'
 import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, RightOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined, SearchOutlined, SoundOutlined } from '@ant-design/icons'
-import { VoiceConfig, VoiceDevice, bridge, type JumpHost, type LocalVenvConfig, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SeedStatus, type SeedOverride, type SeedApplyResult, type Runbook, type RunbookStep, type SavedRun, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost, type McpServer, type McpHeaderCredential, type McpStatus, type McpServerStatus, type McpCredentialOption, type ToolVisibility, type NamedSound } from '../bridge'
+import { VoiceConfig, VoiceDevice, bridge, type JumpHost, type LocalVenvConfig, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SeedStatus, type SeedOverride, type SeedApplyResult, type Runbook, type RunbookStep, type SavedRun, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost, type McpServer, type McpHeaderCredential, type McpStatus, type McpServerStatus, type McpCredentialOption, type ToolVisibility, type NamedSound, type MarketplaceConfig, type MarketplaceConfigInput, type MarketplaceRepo } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
 import { CopyKeyAllModal } from '../views/CopyKeyAllModal'
 import { PathInput } from '../views/PathInput'
@@ -2948,6 +2948,213 @@ function ReposTab() {
   )
 }
 
+// ── Marketplace tab ─────────────────────────────────────────────────────────
+
+interface MarketRepoFormValues {
+  name: string
+  url: string
+  scan?: boolean
+  packages?: string
+  patterns?: string
+  credential?: string
+  pip_arg?: MarketplaceRepo['pip_arg']
+  trusted_host?: string
+  tags?: string
+}
+
+const PIP_ARG_OPTIONS = [
+  { value: 'auto', label: 'auto — from where the repo came from' },
+  { value: 'none', label: "none — rely on the target's own pip config" },
+  { value: 'index-url', label: '--index-url (this is the primary index)' },
+  { value: 'extra-index-url', label: '--extra-index-url (an additional index)' },
+]
+
+const splitList = (v?: string) => (v || '').split(/[\s,]+/).map(x => x.trim()).filter(Boolean)
+
+export function MarketplaceTab() {
+  const [cfg, setCfg] = useState<MarketplaceConfig | null>(null)
+  const [editingKey, setEditingKey] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [form] = Form.useForm<MarketRepoFormValues>()
+
+  const reload = useCallback(() => bridge.get_marketplace_config().then(setCfg).catch(e => message.error(e instanceof Error ? e.message : 'Could not read marketplace config')), [])
+  useEffect(() => { reload() }, [reload])
+
+  const persist = async (patch: Partial<MarketplaceConfigInput>) => {
+    if (!cfg) return
+    setSaving(true)
+    try {
+      const next = await bridge.save_marketplace_config({
+        enabled: cfg.enabled, auto_pip: cfg.auto_pip, patterns: cfg.patterns, exclude: cfg.exclude,
+        require_runspec: cfg.require_runspec, include_prerelease: cfg.include_prerelease, cache_ttl: cfg.cache_ttl,
+        timeout: cfg.timeout, ca_bundle: cfg.ca_bundle, tls_verify: cfg.tls_verify,
+        repos: cfg.declared_repos,
+        ...patch,
+      })
+      setCfg(next)
+      window.dispatchEvent(new CustomEvent('runspec:marketplace_config_changed', { detail: {} }))
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : 'Could not save marketplace config')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const startAdd = () => { form.resetFields(); form.setFieldsValue({ scan: true, pip_arg: 'auto' }); setEditingKey('') }
+  const startEdit = (r: MarketplaceRepo) => {
+    form.setFieldsValue({
+      name: r.name, url: r.url, scan: r.scan, packages: r.packages.join(', '), patterns: r.patterns.join(', '),
+      credential: r.credential || undefined, pip_arg: r.pip_arg, trusted_host: r.trusted_host, tags: r.tags.join(', '),
+    })
+    setEditingKey(r.id)
+  }
+  const cancel = () => { setEditingKey(null); form.resetFields() }
+
+  const saveRepo = async () => {
+    if (!cfg) return
+    const v = await form.validateFields()
+    const next: Partial<MarketplaceRepo> = {
+      name: v.name.trim(), url: v.url.trim(), enabled: true, scan: v.scan !== false,
+      packages: splitList(v.packages), patterns: splitList(v.patterns), credential: v.credential || '',
+      pip_arg: v.pip_arg || 'auto', trusted_host: (v.trusted_host || '').trim(), tags: splitList(v.tags),
+    }
+    const declared = cfg.declared_repos
+    let repos: Partial<MarketplaceRepo>[]
+    if (editingKey === '') {
+      if (declared.some(r => r.name.toLowerCase() === next.name!.toLowerCase())) { message.error('A repo with that name already exists'); return }
+      repos = [...declared, next]
+    } else {
+      repos = declared.map(r => (r.id === editingKey ? { ...r, ...next } : r))
+    }
+    await persist({ repos })
+    setEditingKey(null); form.resetFields()
+  }
+
+  const toggleRepo = (r: MarketplaceRepo, enabled: boolean) => persist({ repos: cfg!.declared_repos.map(x => (x.id === r.id ? { ...x, enabled } : x)) })
+  const removeRepo = (r: MarketplaceRepo) => persist({ repos: cfg!.declared_repos.filter(x => x.id !== r.id) })
+  const clearCache = async () => { await bridge.marketplace_clear_cache(); message.success('Catalogue cache cleared — the Marketplace tab re-reads the indexes on its next open.') }
+
+  if (!cfg) return <Text type="secondary">Loading…</Text>
+  const isEditing = editingKey !== null
+  const pipRepos = cfg.repos.filter(r => r.source === 'pip')
+  const credLabel = (id: string) => cfg.credential_options.find(c => c.id === id)?.label
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 12 }}>
+        <Text type="secondary" style={{ fontSize: 13 }}>
+          Package indexes the <strong>Marketplace</strong> tab reads. Every distribution that depends on <code>runspec</code> (or carries the <code>runspec-runnable</code> keyword) is listed as an installable runnable package; <code>*-core</code> libraries and the console itself are not. Saved to <code>[marketplace]</code> in <code>config.toml</code>; rides Config Sync.
+        </Text>
+        <Button size="small" icon={<PlusOutlined />} onClick={startAdd} disabled={isEditing}>Add repo</Button>
+      </div>
+
+      <Space direction="vertical" size={6} style={{ marginBottom: 14 }}>
+        <span>
+          <Switch size="small" checked={cfg.enabled} loading={saving} onChange={v => persist({ enabled: v })} />
+          <span style={{ marginLeft: 8 }}>Show the Marketplace tab</span>
+        </span>
+        <span>
+          <Switch size="small" checked={cfg.auto_pip} loading={saving} onChange={v => persist({ auto_pip: v })} />
+          <span style={{ marginLeft: 8 }}>Also read the indexes this venv's pip is configured with</span>
+          {cfg.pip_sources.length > 0 && <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>({cfg.pip_sources.join(', ')})</Text>}
+        </span>
+        <span>
+          <Switch size="small" checked={cfg.include_prerelease} loading={saving} onChange={v => persist({ include_prerelease: v })} />
+          <span style={{ marginLeft: 8 }}>Offer pre-release versions</span>
+        </span>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+          <span>Re-read indexes after</span>
+          <InputNumber size="small" min={0} step={3600} value={Math.round(cfg.cache_ttl / 3600)} onChange={v => { if (v !== null) persist({ cache_ttl: v * 3600 }) }} addonAfter="h" style={{ width: 110 }} aria-label="cache ttl hours" />
+          <Button size="small" onClick={clearCache}>Clear catalogue cache</Button>
+        </span>
+      </Space>
+
+      {pipRepos.length > 0 && (
+        <>
+          <Divider style={{ margin: '10px 0' }} orientation="left" orientationMargin={0}><span style={{ fontSize: 12 }}>From pip configuration</span></Divider>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 12 }}>
+            {pipRepos.map(r => (
+              <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: RADIUS.sm, border: '1px solid var(--rs-border)' }}>
+                <Text style={{ fontFamily: MONO_FONT, fontSize: 13, minWidth: 90, flexShrink: 0 }}>{r.name}</Text>
+                <Tag style={{ margin: 0, fontSize: 11 }}>{r.pip_role === 'extra' ? 'extra-index-url' : 'index-url'}</Tag>
+                {r.is_pypi && <Tag color="blue" style={{ margin: 0, fontSize: 11 }}>public</Tag>}
+                <Text type="secondary" style={{ fontFamily: MONO_FONT, fontSize: 12, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.url}</Text>
+                <Tooltip title="Declare this index below to customise it (name, explicit packages, credential…) — a declared repo with the same URL takes over.">
+                  <Button type="text" size="small" icon={<EditOutlined />} disabled={isEditing} onClick={() => { startAdd(); form.setFieldsValue({ name: r.name, url: r.url }) }} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
+                </Tooltip>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      <Divider style={{ margin: '10px 0' }} orientation="left" orientationMargin={0}><span style={{ fontSize: 12 }}>Declared repos</span></Divider>
+      {cfg.declared_repos.length === 0 && editingKey === null && (
+        <Text type="secondary" style={{ fontSize: 13 }}>No declared repos. {pipRepos.length ? 'The pip-configured indexes above are used.' : 'Add one (a private Nexus / Artifactory / devpi index or pypi.org).'}</Text>
+      )}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+        {cfg.declared_repos.map(r => (
+          <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: RADIUS.sm, border: '1px solid var(--rs-border)', opacity: r.enabled ? 1 : 0.6 }}>
+            <Switch size="small" checked={r.enabled} disabled={isEditing || saving} onChange={v => toggleRepo(r, v)} aria-label={`enable ${r.name}`} />
+            <Text style={{ fontFamily: MONO_FONT, fontSize: 13, minWidth: 90, flexShrink: 0 }}>{r.name}</Text>
+            {r.scan ? <Tag style={{ margin: 0, fontSize: 11 }}>scan {(r.patterns.length ? r.patterns : cfg.patterns).join(' ')}</Tag> : <Tag style={{ margin: 0, fontSize: 11 }}>no scan</Tag>}
+            {r.packages.length > 0 && <Tag color="blue" style={{ margin: 0, fontSize: 11 }}>{r.packages.length} named</Tag>}
+            {r.credential && <Tag color="gold" style={{ margin: 0, fontSize: 11 }} title={credLabel(r.credential)}>auth: {credLabel(r.credential) || r.credential}</Tag>}
+            {r.pip_arg !== 'auto' && <Tag style={{ margin: 0, fontSize: 11 }}>{r.pip_arg}</Tag>}
+            <Text type="secondary" style={{ fontFamily: MONO_FONT, fontSize: 12, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.url}</Text>
+            <Button type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(r)} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
+            <Popconfirm title={`Remove ${r.name}?`} onConfirm={() => removeRepo(r)} okText="Remove" cancelText="Cancel" placement="left">
+              <Button type="text" size="small" icon={<DeleteOutlined />} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} danger />
+            </Popconfirm>
+          </div>
+        ))}
+      </div>
+
+      <Modal
+        open={editingKey !== null}
+        title={editingKey === '' ? 'New package index' : 'Edit package index'}
+        width={680}
+        onCancel={cancel}
+        onOk={saveRepo}
+        okText="Save"
+        maskClosable={false}
+        okButtonProps={{ icon: <CheckOutlined />, loading: saving }}
+        cancelButtonProps={{ icon: <CloseOutlined /> }}
+      >
+        <Form form={form} layout="vertical" size="small">
+          <Form.Item name="name" label="Name" rules={[{ required: true, message: 'Required' }]} tooltip="How the repo is labelled on cards and in the filter.">
+            <Input placeholder="Nexus" style={{ fontFamily: MONO_FONT }} />
+          </Form.Item>
+          <Form.Item name="url" label="Index URL" rules={[{ required: true, message: 'Required' }]} tooltip="The simple-API root (…/simple/) or the index base URL. Same value as pip's index-url.">
+            <Input placeholder="https://nexus.example.com/repository/pypi-all/simple/" autoComplete="off" style={{ fontFamily: MONO_FONT }} />
+          </Form.Item>
+          <Form.Item name="scan" label="Scan the whole index" valuePropName="checked" tooltip="List every project in the index and keep the ones matching the name patterns. Fine for a private index; pypi.org's listing is ~45 MB and takes a few seconds, once per cache period.">
+            <Switch size="small" />
+          </Form.Item>
+          <Form.Item name="patterns" label="Name patterns" tooltip={`Globs a scanned name must match (default: ${cfg.patterns.join(', ')}). Comma or space separated.`}>
+            <Input placeholder={cfg.patterns.join(', ')} style={{ fontFamily: MONO_FONT }} />
+          </Form.Item>
+          <Form.Item name="packages" label="Named packages" tooltip="Packages to read even when not scanning / not matching the patterns. Comma or space separated.">
+            <Input placeholder="acme-ops, acme-deploy" style={{ fontFamily: MONO_FONT }} />
+          </Form.Item>
+          <Form.Item name="credential" label="Credential" tooltip="A Credentials-tab entry (username + password, or a token) sent as HTTP Basic auth when reading the index and carried to pip on install. Only the id is stored here.">
+            <Select allowClear placeholder="None (anonymous)" options={cfg.credential_options.map(c => ({ value: c.id, label: `${c.label} (${c.kind})` }))} />
+          </Form.Item>
+          <Form.Item name="pip_arg" label="Hand to pip as" tooltip="How the target venv's pip is pointed at this index on install. 'auto' derives it from the pip config role (a pip-configured primary index → --index-url, an extra → --extra-index-url, pypi.org → nothing).">
+            <Select options={PIP_ARG_OPTIONS} />
+          </Form.Item>
+          <Form.Item name="trusted_host" label="Trusted host" tooltip="Set to the index's host name to pass --trusted-host (pip skips TLS verification for it).">
+            <Input placeholder="nexus.example.com" style={{ fontFamily: MONO_FONT }} />
+          </Form.Item>
+          <Form.Item name="tags" label="Tags" tooltip="Free-form labels for organising repos (comma or space separated).">
+            <Input placeholder="internal, prod" />
+          </Form.Item>
+        </Form>
+      </Modal>
+    </div>
+  )
+}
+
 // ── Credentials tab ─────────────────────────────────────────────────────────
 
 const KIND_OPTIONS = [
@@ -5698,6 +5905,7 @@ export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, co
           ...(SHOW_HELPDESK_ROOMS ? [{ key: 'selfService', label: 'Self-Service', children: <SelfServiceTab /> }] : []),
           { key: 'filters',   label: 'Filters',    children: <FiltersTab /> },
           { key: 'repos',     label: 'Repos',      children: <ReposTab /> },
+          { key: 'marketplace', label: 'Marketplace', children: <MarketplaceTab /> },
           { key: 'credentials', label: 'Credentials', children: <CredentialsTab /> },
           { key: 'mcp',       label: 'MCP',        children: <McpTab /> },
           { key: 'mcpServer', label: 'MCP Server', children: <McpServerTab /> },

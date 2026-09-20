@@ -12,9 +12,9 @@ import {
   AI_OFF_HIDDEN_SCHEDULE_ACTIONS, DEFAULT_FEATURES,
 } from './features'
 
-const NAV = ['console', 'history', 'logs', 'analytics', 'improve', 'evals', 'specs', 'forms', 'schedules', 'triggers', 'rota', 'dev']
+const NAV = ['console', 'history', 'logs', 'analytics', 'improve', 'evals', 'specs', 'forms', 'marketplace', 'schedules', 'triggers', 'rota', 'dev']
   .map(key => ({ key }))
-const SETTINGS = ['ssh', 'llm', 'jumpHosts', 'localVenvs', 'agentTools', 'runbooks', 'savedRuns', 'selfService', 'filters', 'repos', 'credentials', 'denylist', 'mcp', 'mcpServer', 'configSync', 'mailbox', 'teams', 'sounds', 'voice', 'chatHistory', 'telemetry']
+const SETTINGS = ['ssh', 'llm', 'jumpHosts', 'localVenvs', 'agentTools', 'runbooks', 'savedRuns', 'selfService', 'filters', 'repos', 'marketplace', 'credentials', 'denylist', 'mcp', 'mcpServer', 'configSync', 'mailbox', 'teams', 'sounds', 'voice', 'chatHistory', 'telemetry']
   .map(key => ({ key }))
 const ACTIONS = ['runnable', 'saved_run', 'prompt', 'runbook', 'eval', 'event'].map(value => ({ value }))
 
@@ -32,7 +32,7 @@ describe('features — AI off', () => {
 
   it('hides Improve, Evals, Triggers and Rota; the Console (run output) tab stays', () => {
     const keys = visibleNavTabs(NAV, off).map(t => t.key)
-    expect(keys).toEqual(['console', 'history', 'logs', 'analytics', 'specs', 'forms', 'schedules', 'dev'])
+    expect(keys).toEqual(['console', 'history', 'logs', 'analytics', 'specs', 'forms', 'marketplace', 'schedules', 'dev'])
     for (const k of ['improve', 'evals', 'triggers', 'rota']) expect(keys).not.toContain(k)
     expect([...AI_ONLY_VIEWS]).toEqual(['improve', 'evals'])
     expect([...AI_OFF_HIDDEN_VIEWS]).toEqual(['triggers', 'rota'])
@@ -45,7 +45,7 @@ describe('features — AI off', () => {
     // when AI is off. Tool visibility (agentTools) stays too — its globs filter
     // the MCP server's published tool list (+ Forms/catalogs via "hide
     // everywhere"), so it is meaningful with no embedded agent.
-    expect(keys).toEqual(['ssh', 'jumpHosts', 'localVenvs', 'agentTools', 'savedRuns', 'selfService', 'filters', 'repos', 'credentials', 'denylist', 'mcpServer', 'configSync', 'mailbox', 'teams', 'sounds', 'telemetry'])
+    expect(keys).toEqual(['ssh', 'jumpHosts', 'localVenvs', 'agentTools', 'savedRuns', 'selfService', 'filters', 'repos', 'marketplace', 'credentials', 'denylist', 'mcpServer', 'configSync', 'mailbox', 'teams', 'sounds', 'telemetry'])
     expect(AI_ONLY_SETTINGS.has('agentTools')).toBe(false)
     expect(AI_ONLY_SETTINGS.has('voice')).toBe(true)
   })

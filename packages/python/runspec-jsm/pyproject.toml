@@ -7,10 +7,17 @@ name = "runspec-jsm"
 version = "0.1.0"
 requires-python = ">=3.10"
 description = "Jira Service Management (Data Center) service-desk runnables for runspec"
+keywords = ["runspec", "runnable", "jira", "service-management", "itsm"]
 dependencies = [
     "runspec>=0.27.0",
     "httpx",
 ]
+
+[project.urls]
+Documentation = "https://runspec.app/"
+Source        = "https://github.com/jasonfinestone/runspec/tree/main/packages/python/runspec-jsm"
+Changelog     = "https://github.com/jasonfinestone/runspec/blob/main/packages/python/runspec-jsm/CHANGELOG.md"
+Issues        = "https://github.com/jasonfinestone/runspec/issues"
 
 [project.scripts]
 jsm-raise-request      = "runspec_jsm.tickets:main_raise_request"

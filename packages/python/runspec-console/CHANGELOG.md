@@ -8,6 +8,58 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.276.0] — 2026-09-20
+
+### Added
+- **Marketplace tab — install runnable packages into any venv.** A new
+  top-level **Marketplace** tab lists runspec runnable packages as cards
+  (summary, keyword tags, Docs / Home / Source / Changelog links, a Details
+  view with the README and dependency list) and shows **where each is
+  installed** — one chip per venv, green when current, orange `↑` when the
+  index has a newer version. **Install… / Update… / Uninstall…** open a target
+  picker over the console's own venv, every `[local] venv_globs` match and
+  each connected fleet host's `runspec_paths` venvs, with a specific version
+  / force-reinstall option and a per-venv **Run as** (pre-filled from the
+  venv's owner when it differs from the SSH login user, escalating with
+  `sudo -n -u` / `su` exactly as `install-into-venv` does). pip's output
+  streams live per target; a finished install kicks a discovery refresh so
+  the new runnables reach Forms and the agent without a restart. Only named
+  package specs are ever passed to pip (a URL / path / option is refused).
+- **Catalogue generated from package indexes, not curated.** With
+  `[marketplace] auto_pip` (default on) the console reads its own venv's pip
+  configuration (`pip.ini` / `pip.conf` at global / user / venv scope +
+  `PIP_INDEX_URL` / `PIP_EXTRA_INDEX_URL`) and turns `index-url` and every
+  `extra-index-url` into a repo — a console pointed at a private Nexus /
+  Artifactory / devpi index gets a marketplace for it with no further
+  config; pypi.org when nothing sets one. `[[marketplace.repos]]` declares
+  indexes explicitly (`name`, `url`, `scan`, `packages`, `patterns`,
+  `credential` — a Credentials id sent as HTTP Basic auth and carried to pip
+  as `PIP_INDEX_URL` / `PIP_EXTRA_INDEX_URL` in the environment, never argv —
+  `pip_arg`, `trusted_host`, `tags`), editable in **Settings → Marketplace**
+  and riding Config Sync / the config seed. A repo **scan** streams the
+  index's root listing through the `runspec-*` name patterns (pypi.org's
+  ~45 MB / ~900 k-project root takes a few seconds, once per `cache_ttl`,
+  default 24 h); each candidate's metadata is read in parallel in three tiers
+  — pypi.org JSON API → the newest wheel's PEP 658 `.metadata` sidecar → the
+  wheel itself (bounded), which also proves a bundled `runspec.toml`
+  (**verified** tag). A distribution is listed when its `Requires-Dist` names
+  `runspec` (outside an extra) or its keywords include `runspec-runnable`,
+  and never when it is in `exclude` (the `runspec` library, `runspec-console`,
+  `runspec-mcp`, `runspec-room`, `runspec-registry` by default) — so the
+  console itself and the `*-core` logic packages don't appear. Stdlib-only
+  core in `marketplace.py` (pip config chain, PEP 503/691 simple-API +
+  pypi JSON clients, PEP 440 ordering, pip command builders, the installed
+  probe); I/O + fan-out in `bridge_marketplace.py` (`MarketplaceMixin`).
+  JS API `get_marketplace_config` / `save_marketplace_config` /
+  `marketplace_catalog` / `marketplace_targets` / `marketplace_installed` /
+  `marketplace_install` / `marketplace_uninstall` / `marketplace_op` /
+  `marketplace_cancel` / `marketplace_clear_cache`; events
+  `runspec:marketplace_progress` / `runspec:marketplace_done`. Config
+  `config.read_marketplace` / `write_marketplace`; the catalogue cache
+  (`marketplace_cache.json`) is machine-local. See
+  `docs/console-marketplace.md` + the `[marketplace]` rows in
+  `docs/console-reference.md`.
+
 ## [0.275.0] — 2026-09-19
 
 ### Added
