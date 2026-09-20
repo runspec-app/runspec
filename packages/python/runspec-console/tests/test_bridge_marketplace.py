@@ -317,6 +317,33 @@ def test_catalog_reads_caches_refreshes_and_falls_back_stale(app, monkeypatch):
     assert not config_mod.marketplace_cache_path().exists()
 
 
+def test_catalog_hides_curated_packages(app, monkeypatch):
+    fetch = _CannedFetch(_nexus_routes())
+    monkeypatch.setattr(mp, "default_fetch", lambda **kw: fetch)
+    repos = [
+        {"name": "Nexus", "url": "https://nexus.corp/simple", "credential": "nexus"}
+    ]
+    _write_marketplace({"auto_pip": False, "hide": ["runspec-acme"], "repos": repos})
+    b = _StubBridge()
+
+    cat = b.marketplace_catalog()
+    assert [e["name"] for e in cat["entries"]] == []  # hidden by name
+    assert cat["repos"][0]["count"] == 0  # the count reflects visible packages
+    assert b.get_marketplace_config()["hide"] == ["runspec-acme"]
+    n = len(fetch.calls)
+
+    # hide is a read-time filter over the cached catalogue: change the list and
+    # the package reappears without a re-fetch.
+    _write_marketplace({"auto_pip": False, "hide": ["runspec-nope"], "repos": repos})
+    cat2 = b.marketplace_catalog()
+    assert [e["name"] for e in cat2["entries"]] == ["runspec-acme"]
+    assert len(fetch.calls) == n  # served from cache, no new fetch
+
+    # a glob hides it too.
+    _write_marketplace({"auto_pip": False, "hide": ["runspec-*"], "repos": repos})
+    assert b.marketplace_catalog()["entries"] == []
+
+
 def test_catalog_disabled(app):
     _write_marketplace({"enabled": False})
     b = _StubBridge()

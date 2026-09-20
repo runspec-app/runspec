@@ -674,6 +674,20 @@ def is_runnable(
     return requires_runspec(meta)
 
 
+def is_hidden(name: str, patterns: tuple[str, ...] | list[str]) -> bool:
+    """Whether a package ``name`` should be hidden from the catalogue by the
+    ``[marketplace] hide`` globs. Unlike :data:`DEFAULT_EXCLUDE` (which marks
+    non-runnable distributions), ``hide`` curates *runnable* packages an
+    operator/adapter doesn't want offered — e.g. a public package superseded by
+    an internal wrapper. Matching is case-insensitive on the PEP 503-normalised
+    name, so ``-``/``_`` differences don't matter and a glob works
+    (``runspec-jira``, ``runspec-*``)."""
+    n = normalize_name(name)
+    if not n:
+        return False
+    return any(fnmatch.fnmatchcase(n, normalize_name(p)) for p in patterns if p)
+
+
 _URL_LABELS = {
     "documentation": ("documentation", "docs", "doc"),
     "homepage": ("homepage", "home", "home-page", "website", "home page"),

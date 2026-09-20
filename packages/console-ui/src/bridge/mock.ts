@@ -886,6 +886,7 @@ export const mockApi: BridgeApi = {
     declared_repos: MOCK_MARKET_REPOS.filter(r => r.source === 'config'),
     patterns: ['runspec-*'],
     exclude: ['runspec', 'runspec-console', 'runspec-mcp', 'runspec-room', 'runspec-registry'],
+    hide: [],
     require_runspec: true,
     include_prerelease: false,
     cache_ttl: 86400,

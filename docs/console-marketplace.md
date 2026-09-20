@@ -152,6 +152,32 @@ out on their own.
 The console itself is deliberately not a marketplace entry: it is installed
 per machine, not into a fleet venv.
 
+### Hiding packages (adapter / white-label deployments)
+
+`[marketplace] hide` is a list of **name globs** of runnable packages to drop
+from the catalogue — a curation knob for a deployment that ships **internal
+wrappers** and doesn't want the public package offered alongside them, where
+showing both would lead to the wrong install:
+
+```toml
+[marketplace]
+hide = ["runspec-jira", "runspec-confluence", "runspec-snow", "runspec-gitlab"]
+```
+
+A hidden package never appears — no card, no search hit, and it isn't counted
+in a repo's total. Matching is case-insensitive on the normalised name and
+glob-capable (`runspec-*`). It is **additive** (unlike `exclude`, which lists
+the non-runnable library/apps): the defaults are untouched, so hiding a public
+package can't accidentally un-hide the console or the other apps. The list
+lives in `config.toml`, so it rides [Config Sync](console-team.md) and the
+package [config seed](white-label.md) — your adapter package ships one
+versioned list and every console honours it. Edit it in **Settings →
+Marketplace → Hidden packages**, or seed it.
+
+`hide` only affects what the Marketplace *offers*; a hidden package that is
+already installed stays installed (manage it with your internal package's card
+or with pip).
+
 ---
 
 ## Making your package look good on the card

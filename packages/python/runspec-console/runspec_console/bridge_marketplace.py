@@ -260,6 +260,7 @@ class MarketplaceMixin:
         repos = [
             r for r in self._marketplace_repos(cfg, resolve_auth=True) if r.enabled
         ]
+        hide = cfg.get("hide") or []
         client: mp.IndexClient | None = None
         repo_rows: list[dict[str, Any]] = []
         merged: dict[str, dict[str, Any]] = {}
@@ -333,6 +334,11 @@ class MarketplaceMixin:
                     status="error" if row["error"] else "done",
                     count=len(entries),
                 )
+            # Hide curated-out packages (the [marketplace] hide globs) — cached
+            # in full so toggling the list takes effect without a re-fetch, but
+            # never surfaced (no card, no search, not in the repo count).
+            if hide:
+                entries = [e for e in entries if not mp.is_hidden(e["name"], hide)]
             row["count"] = len(entries)
             for err in repo_errors:
                 errors.append(f"{repo.name}: {err}")

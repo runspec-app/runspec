@@ -1285,6 +1285,7 @@ export interface MarketplaceConfig {
   declared_repos: MarketplaceRepo[]  // the [[marketplace.repos]] entries only
   patterns: string[]
   exclude: string[]
+  hide: string[]                     // name globs of runnable packages to hide from the catalogue
   require_runspec: boolean
   include_prerelease: boolean
   cache_ttl: number
@@ -1305,6 +1306,7 @@ export interface MarketplaceConfigInput {
   repos?: Partial<MarketplaceRepo>[]
   patterns?: string[]
   exclude?: string[]
+  hide?: string[]
   require_runspec?: boolean
   include_prerelease?: boolean
   cache_ttl?: number

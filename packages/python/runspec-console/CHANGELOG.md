@@ -8,6 +8,26 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.277.0] — 2026-09-20
+
+### Added
+
+- **Marketplace: hide packages by name (`[marketplace] hide`).** A list of
+  name globs of runnable packages to drop from the Marketplace catalogue —
+  a curation knob for an adapter / white-label deployment that ships
+  internal wrappers and doesn't want the public package offered alongside
+  them (e.g. `hide = ["runspec-jira", "runspec-confluence", "runspec-snow",
+  "runspec-gitlab"]`). A hidden package never appears — no card, no search
+  hit, not in a repo's count. **Additive** and glob-capable (unlike
+  `exclude`, so it can't un-hide the library/apps), matched
+  case-insensitively on the normalised name, and applied as a read-time
+  filter so toggling it needs no cache refresh. Lives in `config.toml`, so
+  it rides Config Sync / the config seed (one versioned list, honoured
+  fleet-wide). Edit it in **Settings → Marketplace → Hidden packages** or
+  seed it. `config.read_marketplace`/`write_marketplace` gain `hide`;
+  `marketplace.is_hidden`; `bridge_marketplace._read_catalog` filters it.
+  See `docs/console-marketplace.md` → "Hiding packages".
+
 ## [0.276.2] — 2026-09-20
 
 ### Fixed

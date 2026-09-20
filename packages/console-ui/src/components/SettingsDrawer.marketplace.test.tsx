@@ -31,7 +31,7 @@ const PYPI = { id: 'pypi', name: 'PyPI', url: 'https://pypi.org/simple/', enable
 
 const CFG = {
   enabled: true, auto_pip: true, repos: [NEXUS, PYPI], declared_repos: [NEXUS],
-  patterns: ['runspec-*'], exclude: ['runspec'], require_runspec: true, include_prerelease: false,
+  patterns: ['runspec-*'], exclude: ['runspec'], hide: [], require_runspec: true, include_prerelease: false,
   cache_ttl: 86400, timeout: 20, max_index_bytes: 1, max_wheel_bytes: 1, ca_bundle: null, tls_verify: true,
   pip_sources: ['/etc/pip.conf'], credential_options: [{ id: 'svc', label: 'Service', kind: 'userpass' }], cache_path: '/x',
 }
@@ -88,5 +88,18 @@ describe('MarketplaceTab', () => {
     const user = userEvent.setup()
     await act(async () => { await user.click(screen.getByRole('button', { name: /Clear catalogue cache/ })) })
     await waitFor(() => expect(clearCache).toHaveBeenCalled())
+  })
+
+  it('persists the hidden-packages globs on blur', async () => {
+    render(<MarketplaceTab />)
+    await screen.findByText('Nexus')
+    const user = userEvent.setup()
+    const box = screen.getByLabelText('Hidden packages')
+    await act(async () => {
+      await user.type(box, 'runspec-jira, runspec-confluence')
+      await user.tab()  // blur commits
+    })
+    await waitFor(() => expect(saveCfg).toHaveBeenCalled())
+    expect(saveCfg.mock.calls[saveCfg.mock.calls.length - 1][0].hide).toEqual(['runspec-jira', 'runspec-confluence'])
   })
 })

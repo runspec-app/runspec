@@ -436,6 +436,13 @@ def read_marketplace() -> dict[str, Any]:
     - ``patterns`` (default ``["runspec-*"]``): the default scan globs.
     - ``exclude`` (default the runspec library + apps): distributions that
       depend on ``runspec`` but are not runnable packages — never listed.
+    - ``hide`` (default ``[]``): name globs of **runnable** packages to hide
+      from the catalogue — a curation knob for an adapter / white-label deploy
+      that ships internal wrappers and doesn't want the public package offered
+      too (e.g. ``["runspec-jira", "runspec-confluence"]``). Additive and
+      glob-capable (``runspec-*``); matched case-insensitively on the
+      normalised name. Rides Config Sync / the config seed like the rest of
+      ``[marketplace]``, so the adapter distributes one versioned list.
     - ``require_runspec`` (default true): only list distributions that depend on
       ``runspec`` (or carry the ``runspec-runnable`` keyword). False lists every
       explicitly named ``packages`` entry regardless.
@@ -472,6 +479,7 @@ def read_marketplace() -> dict[str, Any]:
         "repos": repos,
         "patterns": _strs("patterns", list(mp.DEFAULT_PATTERNS)),
         "exclude": _strs("exclude", list(mp.DEFAULT_EXCLUDE)),
+        "hide": _strs("hide", []),
         "require_runspec": bool(cfg.get("require_runspec", True)),
         "include_prerelease": bool(cfg.get("include_prerelease", False)),
         "cache_ttl": max(0.0, float(cfg.get("cache_ttl", mp.DEFAULT_CACHE_TTL_S) or 0)),
@@ -520,6 +528,9 @@ def write_marketplace(section: dict[str, Any] | None) -> None:
             exclude = [str(p).strip() for p in sec["exclude"] if str(p).strip()]
             if exclude != list(mp.DEFAULT_EXCLUDE):
                 table["exclude"] = exclude
+        hide = [str(p).strip() for p in (sec.get("hide") or []) if str(p).strip()]
+        if hide:
+            table["hide"] = hide
         if sec.get("require_runspec") is False:
             table["require_runspec"] = False
         if sec.get("include_prerelease") is True:

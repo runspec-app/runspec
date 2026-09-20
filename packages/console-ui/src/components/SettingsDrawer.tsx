@@ -2998,6 +2998,7 @@ export function MarketplaceTab() {
     try {
       const next = await bridge.save_marketplace_config({
         enabled: cfg.enabled, auto_pip: cfg.auto_pip, patterns: cfg.patterns, exclude: cfg.exclude,
+        hide: cfg.hide,
         require_runspec: cfg.require_runspec, include_prerelease: cfg.include_prerelease, cache_ttl: cfg.cache_ttl,
         timeout: cfg.timeout, ca_bundle: cfg.ca_bundle, tls_verify: cfg.tls_verify,
         repos: cfg.declared_repos,
@@ -3080,6 +3081,26 @@ export function MarketplaceTab() {
           <Button size="small" onClick={clearCache}>Clear catalogue cache</Button>
         </span>
       </Space>
+
+      <div style={{ marginTop: 12, marginBottom: 4, maxWidth: 620 }}>
+        <div style={{ fontSize: 13, marginBottom: 2 }}>Hidden packages</div>
+        <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 6 }}>
+          Name globs of runnable packages to hide from the catalogue — for a deployment that ships internal wrappers and doesn't want the public package offered alongside them (e.g. <code>runspec-jira</code>, <code>runspec-*</code>). Comma or space separated; rides Config Sync / the config seed.
+        </Typography.Paragraph>
+        <Input.TextArea
+          key={cfg.hide.join(' ')}
+          defaultValue={cfg.hide.join(', ')}
+          autoSize={{ minRows: 1, maxRows: 4 }}
+          placeholder="runspec-jira, runspec-confluence"
+          disabled={saving}
+          aria-label="Hidden packages"
+          style={{ fontFamily: MONO_FONT }}
+          onBlur={e => {
+            const next = splitList(e.target.value)
+            if (JSON.stringify(next) !== JSON.stringify(cfg.hide)) persist({ hide: next })
+          }}
+        />
+      </div>
 
       {pipRepos.length > 0 && (
         <>

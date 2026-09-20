@@ -317,6 +317,16 @@ def test_is_runnable_rules():
     assert not mp.is_runnable({"name": "runspec-console", "has_runspec_toml": True})
 
 
+def test_is_hidden_globs_and_normalisation():
+    assert mp.is_hidden("runspec-jira", ["runspec-jira"])
+    assert mp.is_hidden("runspec_jira", ["runspec-jira"])  # name normalisation
+    assert mp.is_hidden("RunSpec-Jira", ["runspec-jira"])  # case-insensitive
+    assert mp.is_hidden("runspec-jira", ["runspec-*"])  # glob
+    assert not mp.is_hidden("runspec-linux", ["runspec-jira", "runspec-snow"])
+    assert not mp.is_hidden("runspec-jira", [])
+    assert not mp.is_hidden("", ["runspec-*"])
+
+
 def test_project_links_from_pypi_json_dict_and_homepage():
     meta = {
         "project_urls": {

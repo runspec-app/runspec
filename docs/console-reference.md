@@ -262,6 +262,7 @@ indexes are `[[marketplace.repos]]` tables (keys documented on that page).
 | `auto_pip` | `true` | Derive repos from this venv's pip config (`index-url` / `extra-index-url` in `pip.ini` / `pip.conf` / `PIP_*` env; pypi.org when nothing sets one) |
 | `patterns` | `["runspec-*"]` | Name globs a scanned index project must match (a repo's own `patterns` overrides) |
 | `exclude` | the runspec library + apps | Distributions that depend on `runspec` but are not runnable packages — never listed |
+| `hide` | `[]` | Name globs of **runnable** packages to hide from the catalogue (additive; `runspec-*`) — for an adapter deployment that ships internal wrappers, so the public package isn't offered too. See [Marketplace → Hiding packages](console-marketplace.md#hiding-packages-adapter-white-label-deployments) |
 | `require_runspec` | `true` | Only list distributions that depend on `runspec` (or carry the `runspec-runnable` keyword); `false` lists every explicitly named `packages` entry regardless |
 | `include_prerelease` | `false` | Offer pre-release versions |
 | `cache_ttl` | 86400 | Seconds a fetched catalogue is reused before the indexes are re-read (Refresh forces it) |
