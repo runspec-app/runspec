@@ -190,6 +190,53 @@ describe('MarketplaceView', () => {
     expect(uninstall.mock.calls[0][0].targets).toEqual([{ id: 'web-01::/opt/venvs/ops', run_as: 'svc', become_method: 'sudo' }])
   })
 
+  it('shows the active host-profile cue only when a profile is active', async () => {
+    const { rerender } = render(<MarketplaceView hosts={HOSTS} />)
+    await screen.findByText('runspec-linux')
+    await waitFor(() => expect(installed).toHaveBeenCalled())
+    // "All hosts" (no profile) → no scoping cue.
+    expect(screen.queryByText(/profile:/)).toBeNull()
+    // A named profile → the cue names it (so a not-installed chip is understood
+    // as "not in this profile", not "missing").
+    rerender(<MarketplaceView hosts={HOSTS} activeProfile="ops" />)
+    expect(await screen.findByText('profile: ops')).toBeTruthy()
+  })
+
+  it('re-probes the venvs when the window regains focus and the probe is stale', async () => {
+    installed.mockReset().mockResolvedValue({ ...INSTALLED, probed_at: Date.now() / 1000 - 999 })
+    render(<MarketplaceView hosts={HOSTS} />)
+    await screen.findByText('runspec-linux')
+    await waitFor(() => expect(installed).toHaveBeenCalled())
+    const before = installed.mock.calls.length
+    await act(async () => { window.dispatchEvent(new Event('focus')) })
+    await waitFor(() => expect(installed.mock.calls.length).toBeGreaterThan(before))
+  })
+
+  it('does not re-probe on focus when the probe is fresh', async () => {
+    render(<MarketplaceView hosts={HOSTS} />)  // INSTALLED.probed_at is ~now
+    await screen.findByText('runspec-linux')
+    await waitFor(() => expect(installed).toHaveBeenCalled())
+    const before = installed.mock.calls.length
+    await act(async () => { window.dispatchEvent(new Event('focus')) })
+    // Give any errant probe a tick to fire, then assert it didn't.
+    await act(async () => { await new Promise(r => setTimeout(r, 0)) })
+    expect(installed.mock.calls.length).toBe(before)
+  })
+
+  it('summarises + scroll-boxes the install chips when a package is on many venvs', async () => {
+    const many = Array.from({ length: 8 }, (_, i) =>
+      target({ id: `h${i}::/opt/v`, host: `h${i}`, venv: 'v', dists: { 'runspec-linux': i === 0 ? '0.13.1' : '0.13.2' } }),
+    )
+    installed.mockReset().mockResolvedValue({ probed_at: Date.now() / 1000, targets: many })
+    render(<MarketplaceView hosts={HOSTS} />)
+    await screen.findByText('runspec-linux')
+    await waitFor(() => expect(installed).toHaveBeenCalled())
+    // A count summary (8 venvs, 1 of them outdated → "1 to update").
+    expect(await screen.findByText(/Installed on 8 venvs · 1 to update/)).toBeTruthy()
+    // The chips still render (one per venv) inside the scroll box.
+    expect(screen.getByText(/h0\/v 0\.13\.1 ↑/)).toBeTruthy()
+  })
+
   it('shows the off notice when the marketplace is disabled', async () => {
     catalog.mockResolvedValue({ enabled: false, entries: [], repos: [], errors: [] })
     render(<MarketplaceView hosts={HOSTS} />)

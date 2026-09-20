@@ -104,6 +104,12 @@ const STATE_COLOR: Record<InstallState, string> = {
   absent: 'default', current: 'green', outdated: 'orange', newer: 'purple', unknown: 'default',
 }
 
+// Above this many install chips the card would grow unbounded (a package on 70
+// hosts), so the chip row gets a fixed-height scroll box + a count summary and
+// the cards stay a uniform height in the grid.
+const INSTALL_CHIPS_SCROLL_AT = 6
+const INSTALL_CHIPS_MAX_H = 96  // ~4 rows of chips, then scroll
+
 // ── cards ──────────────────────────────────────────────────────────────────
 
 function PackageCard({ entry, states, onInstall, onUninstall, onDetails }: {
@@ -163,16 +169,37 @@ function PackageCard({ entry, states, onInstall, onUninstall, onDetails }: {
           {links.changelog && <Link href={links.changelog} target="_blank" rel="noreferrer"><HistoryOutlined /> Changelog</Link>}
         </div>
       )}
-      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center', marginTop: 2 }}>
-        {installedRows.length === 0
-          ? <Text style={{ fontSize: 11, color: textMuted(isDark) }}>Not installed on any venv</Text>
-          : installedRows.map(s => (
-            <Tooltip key={s.target.id} title={`${s.target.path} — ${s.state === 'outdated' ? `${s.installed} → ${entry.version} available` : s.state}`}>
-              <Tag color={STATE_COLOR[s.state]} style={{ fontSize: 11, margin: 0, fontFamily: MONO_FONT }}>
-                {s.target.host}/{s.target.venv} {s.installed}{s.state === 'outdated' ? ' ↑' : ''}
-              </Tag>
-            </Tooltip>
-          ))}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 2 }}>
+        {installedRows.length === 0 ? (
+          <Text style={{ fontSize: 11, color: textMuted(isDark) }}>Not installed on any venv</Text>
+        ) : (
+          <>
+            {installedRows.length > INSTALL_CHIPS_SCROLL_AT && (
+              <Text style={{ fontSize: 11, color: textMuted(isDark) }}>
+                Installed on {installedRows.length} venvs
+                {anyOutdated ? ` · ${installedRows.filter(s => s.state === 'outdated').length} to update` : ''}
+              </Text>
+            )}
+            <div
+              style={{
+                display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'flex-start',
+                // Past the threshold, box + scroll so a package on many hosts
+                // doesn't stretch the card out of line with its neighbours.
+                maxHeight: installedRows.length > INSTALL_CHIPS_SCROLL_AT ? INSTALL_CHIPS_MAX_H : undefined,
+                overflowY: installedRows.length > INSTALL_CHIPS_SCROLL_AT ? 'auto' : undefined,
+              }}
+            >
+              {/* Outdated chips first, so what needs updating is visible without scrolling. */}
+              {[...installedRows].sort((a, b) => (a.state === 'outdated' ? 0 : 1) - (b.state === 'outdated' ? 0 : 1)).map(s => (
+                <Tooltip key={s.target.id} title={`${s.target.path} — ${s.state === 'outdated' ? `${s.installed} → ${entry.version} available` : s.state}`}>
+                  <Tag color={STATE_COLOR[s.state]} style={{ fontSize: 11, margin: 0, fontFamily: MONO_FONT }}>
+                    {s.target.host}/{s.target.venv} {s.installed}{s.state === 'outdated' ? ' ↑' : ''}
+                  </Tag>
+                </Tooltip>
+              ))}
+            </div>
+          </>
+        )}
       </div>
       <div style={{ display: 'flex', gap: 6, rowGap: 6, marginTop: 4, alignItems: 'center', flexWrap: 'wrap' }}>
         <Button size="small" type={anyInstalled && !anyOutdated ? 'default' : 'primary'} icon={<DownloadOutlined />} onClick={onInstall}>
@@ -450,7 +477,11 @@ function OpModal({ entry, action, states, onClose, onFinished }: {
 
 // ── the view ───────────────────────────────────────────────────────────────
 
-export function MarketplaceView({ hosts, onOpenSettings }: { hosts: Host[]; onOpenSettings?: () => void }) {
+// Re-probe on window focus only when the last probe is older than this — the
+// probe is an SSH fan-out, so we don't want to fire it on every focus flip.
+const PROBE_STALE_S = 20
+
+export function MarketplaceView({ hosts, onOpenSettings, activeProfile }: { hosts: Host[]; onOpenSettings?: () => void; activeProfile?: string }) {
   const isDark = useIsDark()
   const [catalog, setCatalog] = useState<MarketplaceCatalog | null>(null)
   const [loading, setLoading] = useState(true)
@@ -498,6 +529,30 @@ export function MarketplaceView({ hosts, onOpenSettings }: { hosts: Host[]; onOp
     return () => window.removeEventListener('runspec:marketplace_done', onDone)
   }, [probe])
 
+  // Auto-refresh the installed probe when the tab/window regains focus, so the
+  // per-venv chips can't silently show a stale result after the operator was
+  // away (installs happen on the host between visits, or a profile was switched
+  // elsewhere). Throttled to a stale probe only, and never while one's running —
+  // read live state through refs so the listener isn't re-subscribed each probe.
+  const installedRef = useRef(installed)
+  const probingRef = useRef(probing)
+  useEffect(() => { installedRef.current = installed }, [installed])
+  useEffect(() => { probingRef.current = probing }, [probing])
+  useEffect(() => {
+    const maybeProbe = () => {
+      if (document.visibilityState === 'hidden' || probingRef.current) return
+      const at = installedRef.current?.probed_at
+      if (at && Date.now() / 1000 - at < PROBE_STALE_S) return
+      probe(true)
+    }
+    window.addEventListener('focus', maybeProbe)
+    document.addEventListener('visibilitychange', maybeProbe)
+    return () => {
+      window.removeEventListener('focus', maybeProbe)
+      document.removeEventListener('visibilitychange', maybeProbe)
+    }
+  }, [probe])
+
   const statesFor = useCallback((e: MarketplaceEntry) => targetStates(e, installed), [installed])
   const entries = catalog?.entries ?? []
   const filtered = useMemo(() => filterEntries(entries, { search, repo, scope }, statesFor), [entries, search, repo, scope, statesFor])
@@ -537,6 +592,11 @@ export function MarketplaceView({ hosts, onOpenSettings }: { hosts: Host[]; onOp
           </Tooltip>
         ))}
         {installed && <span>venvs probed {ago(installed.probed_at)} · {installed.targets.filter(t => t.ok).length}/{installed.targets.length} reachable</span>}
+        {activeProfile && (
+          <Tooltip title={`Install state covers only the venvs in the active host profile "${activeProfile}". A runnable installed on a host outside this profile shows as "not installed" until you switch to a profile that includes it (or pick "All hosts").`}>
+            <Tag style={{ fontSize: 11, margin: 0 }}>profile: {activeProfile}</Tag>
+          </Tooltip>
+        )}
         {catalog?.errors?.length ? (
           <Tooltip title={<div style={{ whiteSpace: 'pre-wrap', fontFamily: MONO_FONT, fontSize: 11 }}>{catalog.errors.join('\n')}</div>}>
             <Tag color="gold" style={{ fontSize: 11, margin: 0 }}>{catalog.errors.length} package{catalog.errors.length === 1 ? '' : 's'} skipped</Tag>

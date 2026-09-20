@@ -1504,7 +1504,7 @@ export default function App() {
                     <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin size="large" /></div>}>
                       {view === 'forms'     && <FormsView runnables={runnables} hosts={hosts} selectedHost={selectedHost} activeScope={activeScope} onRunRunnable={handleRunRunnable} pendingForm={pendingForm} onPendingFormClear={() => setPendingForm(null)} runbooks={runbooks} onOpenRunbook={handleOpenRunbook} savedRuns={savedRuns} onOpenSavedRun={handleOpenSavedRun} />}
                       {view === 'schedules' && <SchedulesView hosts={hosts} runnables={runnables} selectedHost={selectedHost} />}
-                      {view === 'marketplace' && <MarketplaceView hosts={hosts} onOpenSettings={() => setSettingsOpen(true)} />}
+                      {view === 'marketplace' && <MarketplaceView hosts={hosts} activeProfile={activeProfile} onOpenSettings={() => setSettingsOpen(true)} />}
                       {aiEnabled && view === 'improve' && <ImproveView active={view === 'improve'} />}
                       {aiEnabled && view === 'evals'   && <EvalsView active={view === 'evals'} />}
                       {view === 'rota'      && <RotaView />}

@@ -8,6 +8,40 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.278.4] — 2026-09-20
+
+### Changed
+
+- **Marketplace: a package installed on many venvs no longer stretches its
+  card.** The per-venv "installed" chips used to render one chip per venv with
+  no bound, so a runnable on (say) 70 hosts produced a card many times taller
+  than its neighbours and broke the grid. Past `INSTALL_CHIPS_SCROLL_AT` (6)
+  venvs the chips now sit in a **fixed-height scroll box** (~4 rows, then
+  scroll) under a one-line **"Installed on N venvs · M to update"** summary, so
+  every card stays a uniform height. Outdated chips are floated to the front, so
+  what needs updating is visible without scrolling. Frontend-only
+  (`MarketplaceView` `PackageCard`).
+
+
+## [0.278.3] — 2026-09-20
+
+### Changed
+
+- **Marketplace: the installed-state chips are now clearly profile-scoped, and
+  auto-refresh when you return to the app.** The per-venv "installed" chips come
+  from probing the venvs in the **active host profile**, cached in memory — so a
+  runnable installed on a host outside the active profile silently read as "not
+  installed" with no cue why. Now: (1) when a host profile is active the status
+  line shows a **`profile: <name>`** tag whose tooltip explains the install state
+  covers only that profile's venvs (switch profile / pick "All hosts" to see the
+  rest); (2) the probe **auto-refreshes on window focus** when it's stale (older
+  than 20s) and no probe is already running — so coming back after installing on
+  a host, or switching profiles in another window, updates the chips without a
+  manual Refresh. Frontend-only (`MarketplaceView` gains an `activeProfile` prop
+  from `App`); the probe is still an SSH fan-out, so the focus refresh is
+  throttled and never fires while one's in flight.
+
+
 ## [0.278.2] — 2026-09-20
 
 ### Fixed
