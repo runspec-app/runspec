@@ -8,6 +8,16 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.276.1] — 2026-09-20
+
+### Fixed
+
+- **Marketplace card overflow when a package is installed.** The card's
+  action row didn't wrap, so once a package was installed the wider button
+  set (Install / reinstall… + Uninstall… + Details) spilled past the card's
+  right edge on a narrow card. The row now wraps (`flex-wrap`), keeping the
+  buttons inside the card.
+
 ## [0.276.0] — 2026-09-20
 
 ### Added

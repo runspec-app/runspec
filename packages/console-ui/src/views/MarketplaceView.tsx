@@ -174,7 +174,7 @@ function PackageCard({ entry, states, onInstall, onUninstall, onDetails }: {
             </Tooltip>
           ))}
       </div>
-      <div style={{ display: 'flex', gap: 6, marginTop: 4, alignItems: 'center' }}>
+      <div style={{ display: 'flex', gap: 6, rowGap: 6, marginTop: 4, alignItems: 'center', flexWrap: 'wrap' }}>
         <Button size="small" type={anyInstalled && !anyOutdated ? 'default' : 'primary'} icon={<DownloadOutlined />} onClick={onInstall}>
           {anyOutdated ? 'Update…' : anyInstalled ? 'Install / reinstall…' : 'Install…'}
         </Button>
