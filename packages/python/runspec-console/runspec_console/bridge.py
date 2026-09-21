@@ -304,10 +304,24 @@ class Bridge(
         # host or PyPI index reachable. A no-op unless the seed's version changed
         # (re-assert-on-upgrade); never fatal — a broken seed must not stop the
         # console starting. See docs/design/config-seed.md.
+        self._seed_last_error = ""
         try:
-            self.seed_apply()
+            seed_res = self.seed_apply()
         except Exception:
+            self._seed_last_error = "config seed apply crashed (see log)"
             logger.warning("config seed apply at startup failed", exc_info=True)
+        else:
+            # seed_apply returns {ok: False} (it doesn't raise) when a bundled
+            # file is malformed — which aborts the *whole* seed. Log it instead
+            # of silently discarding the result and leaving a fresh install
+            # unconfigured with no trace. Surfaced in seed_status too.
+            if not seed_res.get("ok", True):
+                logger.error("config seed not applied — %s", seed_res.get("error"))
+        # Warn on typo'd keys in the ad-hoc config.toml sections that have no
+        # dedicated reader ([ssh]/[refresh]) — otherwise a misspelled key is
+        # valid TOML and silently ignored. Warn-only; never blocks startup.
+        for _w in config_mod.validate_config(self.get_config()):
+            logger.warning("config.toml: %s", _w)
         # The AI off-switch (`[console] ai`), read once — after the seed so a
         # seeded value applies on first launch — and held for the whole session:
         # every agent surface (chat, triggers, schedules, evals, improve, the

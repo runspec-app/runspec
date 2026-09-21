@@ -3738,7 +3738,7 @@ interface SyncFormValues {
   backups_keep?: number
 }
 
-function ConfigSyncTab() {
+export function ConfigSyncTab() {
   const [form] = Form.useForm<SyncFormValues>()
   const [cfg, setCfg] = useState<SyncConfig | null>(null)
   const [creds, setCreds] = useState<Credential[]>([])
@@ -3974,6 +3974,22 @@ function ConfigSyncTab() {
       <Text type="secondary" style={{ fontSize: 13, display: 'block', margin: '4px 0 10px' }}>
         Baseline config <strong>bundled inside this install's package</strong> — applied automatically on launch when the package version changes, so a fresh or air-gapped machine is configured with no repo or index reachable. It's the lowest layer: a git pull above and your own edits always win (except the keys you protect above).
       </Text>
+      {seed?.error && (
+        <Alert
+          type="error"
+          showIcon
+          style={{ marginBottom: 10 }}
+          message="Config seed failed to apply"
+          description={
+            <span style={{ fontSize: 13 }}>
+              A malformed bundled file aborts the whole seed, so this install
+              wasn't configured from the package. Fix the file in the package and
+              reinstall, then re-apply.<br />
+              <code style={{ fontSize: 12 }}>{seed.error}</code>
+            </span>
+          }
+        />
+      )}
       {seed?.available ? (
         <>
           <Text type="secondary" style={{ fontSize: 13, display: 'block' }}>

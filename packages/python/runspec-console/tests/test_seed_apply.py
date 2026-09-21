@@ -27,6 +27,7 @@ class _SeedBridge:
     """Borrows the real seed/apply machinery; stubs the app-lifecycle reactions."""
 
     seed_apply = Bridge.seed_apply
+    _run_seed_apply = Bridge._run_seed_apply
     seed_status = Bridge.seed_status
     _seed_overrides = Bridge._seed_overrides
     _seed_declared_preserve = Bridge._seed_declared_preserve
@@ -342,3 +343,36 @@ def test_malformed_seed_aborts(monkeypatch, tmp_path):
     # nothing was written / stamped
     assert cfg.read_config()["llm"]["provider"] == "existing"
     assert cfg.read_seed_state() == {}
+
+
+def test_malformed_seed_error_surfaces_in_status(monkeypatch, tmp_path):
+    # A single malformed bundled file aborts the whole seed — that failure must
+    # be visible (Settings → Config Sync panel reads seed_status), not silent.
+    _wire(
+        monkeypatch,
+        tmp_path,
+        {"runspec_repos.toml": [b'[[repo]]not-a-newline\nurl = ""\n']},
+        {"jason-console": "1.0.0"},
+    )
+    b = _SeedBridge()
+    b.seed_apply()
+    st = b.seed_status()
+    assert "not valid TOML" in st["error"]
+    assert st["available"] is True  # discover found the file; it just won't parse
+
+
+def test_seed_status_error_clears_after_a_clean_apply(monkeypatch, tmp_path):
+    b = _SeedBridge()
+    # First: a malformed seed records an error.
+    _wire(monkeypatch, tmp_path, {"config.toml": [b"= bad"]}, {"jason-console": "1"})
+    b.seed_apply()
+    assert b.seed_status()["error"]
+    # Then a good seed applies cleanly and the error clears.
+    _wire(
+        monkeypatch,
+        tmp_path,
+        {"config.toml": [b'[llm]\nprovider = "mycorp"\n']},
+        {"jason-console": "2"},
+    )
+    b.seed_apply()
+    assert b.seed_status()["error"] == ""

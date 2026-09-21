@@ -1207,6 +1207,21 @@ class FleetMixin:
         }
 
     def seed_apply(self, force: bool = False) -> dict[str, Any]:
+        """Apply the bundled package config seed and record the outcome.
+
+        Thin wrapper over :meth:`_run_seed_apply` that stores the last error
+        (``""`` on success) on ``self._seed_last_error``, so a failed apply is
+        visible in :meth:`seed_status` (the Settings → Config Sync panel) and can
+        be logged at startup, instead of being silently discarded. A single
+        malformed bundled file aborts the whole apply, which used to leave a
+        fresh install unconfigured with no trace of why."""
+        result = self._run_seed_apply(force)
+        self._seed_last_error = (
+            "" if result.get("ok", True) else str(result.get("error") or "")
+        )
+        return result
+
+    def _run_seed_apply(self, force: bool = False) -> dict[str, Any]:
         """Apply the baseline config bundled in the deployment package.
 
         Discovers seed config contributed by installed distributions
@@ -1314,6 +1329,9 @@ class FleetMixin:
             "last_applied": str(state.get("last_applied", "")),
             "pending": bool(stamp) and stamp != applied,
             "overrides": self._seed_overrides(_fetched),
+            # The last apply error (from startup or a UI re-apply), so a malformed
+            # bundled file surfaces in the panel instead of vanishing.
+            "error": getattr(self, "_seed_last_error", ""),
         }
 
     def _seed_overrides(self, fetched: dict[str, list[bytes]]) -> list[dict[str, Any]]:

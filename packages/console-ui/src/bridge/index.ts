@@ -348,6 +348,9 @@ export interface SeedStatus {
   last_applied: string
   pending: boolean
   overrides?: SeedOverride[]
+  // The last seed-apply error (a malformed bundled file aborts the whole seed);
+  // empty when the last apply succeeded. Shown in the Config seed panel.
+  error?: string
 }
 
 // Validated white-label theme (`[console.theme]`). Every field optional; an

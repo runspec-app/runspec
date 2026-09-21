@@ -2085,6 +2085,63 @@ def theme_config() -> dict[str, Any]:
     return {}
 
 
+# config.toml sections we check for typo'd keys. Most sections have a dedicated
+# read_* reader that validates itself; these are the ad-hoc ones read inline via
+# `.get(...)` with no reader, where a misspelled key ([ssh] proxxy) is valid TOML
+# and silently ignored — both at runtime and in any validator-based seed check.
+# Each maps a section to its full recognised key set (see ssh_pool.pool_settings /
+# refresh_settings + executor._make_ssh_client). WARN-ONLY + additive: a section
+# not listed here is never checked (so a newer seed/synced config can't false-warn
+# on an older console), and an unknown key is reported, never rejected — forward
+# compatibility beats strictness for a distributed config. Extend by adding a
+# section's key set here.
+_SECTION_KEYS: dict[str, frozenset[str]] = {
+    "ssh": frozenset(
+        {
+            "pool",
+            "keepalive",
+            "max_sessions",
+            "idle_ttl",
+            "max_concurrent",
+            "backoff_base",
+            "backoff_max",
+            "connect_retries",
+            "connect_retry_delay",
+            "connect_timeout",
+            "user",
+            "identityFile",
+            "binary",
+            "proxy",
+            "use_ssh_config",
+            "rotate_retries",
+            "rotate_jitter",
+        }
+    ),
+    "refresh": frozenset({"workers", "interval", "jitter", "discovery_interval"}),
+}
+
+
+def validate_config(cfg: dict[str, Any]) -> list[str]:
+    """Warnings for unknown keys in the schema-covered config.toml sections.
+
+    Covers the ad-hoc sections (``[ssh]``, ``[refresh]``) that are read inline
+    with ``.get`` and have no dedicated ``read_*`` reader, so a typo'd key would
+    otherwise be silently ignored. Returns one human-readable warning per unknown
+    key. **Warn-only and additive** — an unlisted section is skipped and an
+    unknown key is reported, never rejected, so a newer seed/synced config on an
+    older console is not broken. Never raises.
+    """
+    warnings: list[str] = []
+    for section, known in _SECTION_KEYS.items():
+        table = cfg.get(section)
+        if not isinstance(table, dict):
+            continue
+        for key in table:
+            if key not in known:
+                warnings.append(f"[{section}] unknown key {key!r} (ignored)")
+    return warnings
+
+
 def valid_accent(value: Any) -> str | None:
     """Return ``value`` if it's a hex colour (``#rgb`` / ``#rrggbb``), else None.
 
