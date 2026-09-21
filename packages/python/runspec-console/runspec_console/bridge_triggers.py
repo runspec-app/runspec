@@ -67,6 +67,7 @@ class TriggersMixin:
 
         from . import sources  # noqa: F401 — registers built-in event sources
         from .config import (
+            read_automation,
             read_mailbox,
             read_triggers,
             read_watches,
@@ -119,6 +120,10 @@ class TriggersMixin:
             handler=handler,
             on_card=self._on_trigger_card,
             on_event=self._on_trigger_event,
+            # The worker-pool size for concurrent trigger/schedule fires
+            # ([automation] max_workers; default 2). Each fire holds a worker for
+            # its whole run, so a busy console raises this to run more at once.
+            max_workers=read_automation()["max_workers"],
             clock_ok=self._build_clock_ok(),
             lock_ok=self._build_lock_ok(),
             # The chat source is owned by the always-on supervisor (start_chat),

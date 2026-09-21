@@ -212,6 +212,14 @@ flags such an entry as `missing`.
 Connection pooling, timeouts, proxies, and the background refresh cadence —
 documented with the fleet setup in [Hosts & fleet](console-hosts.md#ssh-tuning).
 
+## `[automation]`
+
+The trigger/schedule engine's execution pool.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `max_workers` | 2 | Concurrent trigger/schedule fires (clamped 1–32). Each fire holds a worker for its whole run, so a busy console — several triggers matching at once, or a burst of scheduled jobs — raises this to run more in parallel. Per-trigger serialisation (one in-flight run per trigger name) is unaffected. Mirrors `[refresh] workers` for the fleet sweep |
+
 ## `[workspace]`
 
 | Key | Default | Meaning |

@@ -152,6 +152,43 @@ class TestReadMailbox(unittest.TestCase):
         )
 
 
+class TestReadAutomation(unittest.TestCase):
+    """[automation] max_workers — the trigger/schedule engine's pool size."""
+
+    def _read(self, raw: dict):
+        import runspec_console.config as cfg
+
+        orig = cfg.read_config
+        cfg.read_config = lambda: raw
+        try:
+            return cfg.read_automation()
+        finally:
+            cfg.read_config = orig
+
+    def test_default_is_two(self) -> None:
+        # Absent / empty / non-dict all fall back to the historical default of 2.
+        self.assertEqual(self._read({})["max_workers"], 2)
+        self.assertEqual(self._read({"automation": {}})["max_workers"], 2)
+        self.assertEqual(self._read({"automation": "nope"})["max_workers"], 2)
+
+    def test_honours_a_positive_value(self) -> None:
+        self.assertEqual(
+            self._read({"automation": {"max_workers": 8}})["max_workers"], 8
+        )
+
+    def test_clamps_to_range(self) -> None:
+        # Floor 1 (never zero/negative → a dead pool), ceiling 32.
+        self.assertEqual(
+            self._read({"automation": {"max_workers": 0}})["max_workers"], 2
+        )
+        self.assertEqual(
+            self._read({"automation": {"max_workers": -5}})["max_workers"], 1
+        )
+        self.assertEqual(
+            self._read({"automation": {"max_workers": 999}})["max_workers"], 32
+        )
+
+
 class TestWriteMailbox(unittest.TestCase):
     """write_mailbox replaces [mailbox] (or drops it), preserving the rest."""
 

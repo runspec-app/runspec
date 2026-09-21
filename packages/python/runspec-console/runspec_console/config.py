@@ -415,6 +415,24 @@ def read_web() -> dict[str, Any]:
     }
 
 
+def read_automation() -> dict[str, Any]:
+    """The ``[automation]`` settings for the trigger/schedule engine, with defaults.
+
+    ``max_workers`` (default 2, clamped 1–32) — the size of the thread pool the
+    :class:`~runspec_console.triggers.TriggerEngine` runs trigger and schedule
+    fires on. Each fire (an agent turn or a runnable run) holds a worker for its
+    whole duration, so on a busy console — several triggers matching at once, or a
+    burst of scheduled jobs — the default of 2 serialises everything past the
+    second. Raise it to run more concurrently; per-trigger serialisation (one
+    in-flight run per trigger name) is unaffected. Mirrors the ``[refresh]
+    workers`` knob for the fleet sweep."""
+    raw = read_config().get("automation")
+    cfg = dict(raw) if isinstance(raw, dict) else {}
+    return {
+        "max_workers": min(32, max(1, int(cfg.get("max_workers", 2) or 2))),
+    }
+
+
 def read_marketplace() -> dict[str, Any]:
     """The ``[marketplace]`` settings for the Marketplace tab, with defaults.
 

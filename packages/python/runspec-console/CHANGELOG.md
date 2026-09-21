@@ -8,6 +8,22 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.279.0] — 2026-09-21
+
+### Added
+
+- **`[automation] max_workers` — size the trigger/schedule engine's pool.** The
+  `TriggerEngine`'s thread pool was hardcoded to 2 workers, so on a busy console
+  — several triggers matching at once, or a burst of scheduled jobs — everything
+  past the second fire serialised until a worker freed up. The pool size is now
+  read from `[automation] max_workers` in `config.toml` (default 2, clamped
+  1–32) and threaded into the engine at `start_triggers`. Each fire still holds a
+  worker for its whole run and per-trigger serialisation (one in-flight run per
+  trigger name) is unchanged — this only lifts the fleet-wide concurrency cap.
+  Mirrors the `[refresh] workers` knob for the fleet sweep. New
+  `config.read_automation()`.
+
+
 ## [0.278.4] — 2026-09-20
 
 ### Changed
