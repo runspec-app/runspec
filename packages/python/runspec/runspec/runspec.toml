@@ -73,28 +73,30 @@ check = {type = "flag", description = "Verify the stub is up to date; do not wri
 off   = {type = "flag", description = "Remove the stub, restoring the default Any-typed arg access.",   default = false}
 
 [runspec.commands.emit]
-description = "Emit orchestration job definitions from installed runnables (Rundeck job JSON)"
+description = "Emit orchestration artefacts from installed runnables (Rundeck job JSON / Ansible modules)"
 autonomy    = "autonomous"
 
 examples = [
   {cmd = "runspec emit --rundeck",                            description = "Write a Rundeck job JSON per runnable to jobs/"},
   {cmd = "runspec emit --rundeck --venv /opt/app/.venv",      description = "Invoke via that venv's bin/ in the job scripts"},
   {cmd = "runspec emit --rundeck --node-filter 'tags: web'",  description = "Dispatch to a node set (random subset=1 load-balance)"},
-  {cmd = "runspec emit --rundeck --runnable deploy",          description = "Emit only the 'deploy' runnable"},
+  {cmd = "runspec emit --ansible --venv /opt/app/.venv",      description = "Write an Ansible module per runnable to library/"},
+  {cmd = "runspec emit --ansible --runnable deploy",          description = "Emit only the 'deploy' runnable"},
   {cmd = "runspec emit --rundeck --check",                    description = "Verify emitted jobs are up to date (CI); no write"},
   {cmd = "runspec emit --rundeck --stdout | rd jobs load -F json -p prod", description = "Pipe the combined job array straight to rd"},
 ]
 
 [runspec.commands.emit.args]
-rundeck     = {type = "flag", description = "Emit Rundeck job definitions (JSON)", default = false}
-venv        = {type = "str",  description = "Venv whose bin/ holds the runnable binaries (job script invocation path)", required = false}
-output-dir  = {type = "str",  description = "Directory to write jobs into (default: {git_root}/jobs)", short = "-d", required = false}
+rundeck     = {type = "flag", description = "Emit Rundeck job definitions (JSON) to jobs/", default = false}
+ansible     = {type = "flag", description = "Emit Ansible modules (Python) to library/", default = false}
+venv        = {type = "str",  description = "Venv whose bin/ holds the runnable binaries (invocation path)", required = false}
+output-dir  = {type = "str",  description = "Directory to write into (default: {git_root}/jobs or /library)", short = "-d", required = false}
 runnable    = {type = "str",  description = "Emit only this runnable", short = "-r", required = false}
 group       = {type = "str",  description = "Rundeck job group (default: runspec)", required = false}
 node-filter = {type = "str",  description = "Rundeck node filter; enables orchestrator random-subset=1 load-balancing", required = false}
 project     = {type = "str",  description = "Rundeck project name (used for stable job UUIDs)", required = false}
 check       = {type = "flag", description = "Verify emitted files are up to date; write nothing. Exit 1 if stale (CI).", default = false}
-stdout      = {type = "flag", description = "Print the combined JSON array to stdout instead of writing files", default = false}
+stdout      = {type = "flag", description = "Rundeck: print the combined JSON array to stdout instead of writing files", default = false}
 
 [runspec.commands.test]
 description = "Smoke-test installed runnables: spec smoke + entry-point --help"

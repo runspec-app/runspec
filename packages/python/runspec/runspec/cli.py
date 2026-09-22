@@ -5,8 +5,9 @@ Commands:
     runspec init   [--name <name>] [--lang python|typescript|javascript]
                    [--example] [--write-project] [--project-dir <path>]
     runspec local  [--format text|json|mcp|openai|anthropic] [--runnable <name>]
-    runspec emit   --rundeck [--venv <path>] [--output-dir <dir>] [--runnable <name>]
-                   [--group <g>] [--node-filter <f>] [--project <p>] [--check] [--stdout]
+    runspec emit   (--rundeck | --ansible) [--venv <path>] [--output-dir <dir>]
+                   [--runnable <name>] [--group <g>] [--node-filter <f>] [--project <p>]
+                   [--check] [--stdout]
     runspec test   [--format text|json] [--runnable <name>]
     runspec serve
     runspec jump   [--list-jump-hosts] [<jump_host> [<tool>] [-- tool-args...]]
@@ -234,43 +235,61 @@ def cmd_stubs(args: list[str]) -> None:
     print(f"✓  Wrote {rel} ({n} runnable{'s' if n != 1 else ''} typed).")
 
 
-def _rundeck_meta(source: str, runnable: str) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Read the raw `[config.meta.rundeck]` and `[<runnable>.meta.rundeck]` tables
-    from a runnable's `runspec.toml`.
+def _emit_meta(source: str, runnable: str, key: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Read the raw `[config.meta.<key>]` and `[<runnable>.meta.<key>]` tables from
+    a runnable's `runspec.toml`.
 
     Runnable-level `meta` is a pass-through the loader drops from the normalised
     spec (loader `_normalise_script`), so the emitter reads it straight from the
-    raw TOML — keeping every Rundeck-specific setting out of the core spec."""
+    raw TOML — keeping every platform-specific setting out of the core spec."""
     try:
         raw = _load_toml_file(Path(source))
     except Exception:
         return {}, {}
     config_meta = (raw.get("config", {}) or {}).get("meta", {}) or {}
     runnable_meta = (raw.get(runnable, {}) or {}).get("meta", {}) or {}
-    return (config_meta.get("rundeck", {}) or {}, runnable_meta.get("rundeck", {}) or {})
+    return (config_meta.get(key, {}) or {}, runnable_meta.get(key, {}) or {})
+
+
+def _resolve_invocation(runnable: str, cli_venv: str | None, config_meta: dict[str, Any], runnable_meta: dict[str, Any]) -> tuple[str, bool]:
+    """Resolve the binary the emitted artefact invokes for a runnable.
+
+    Precedence for the venv: CLI flag > `[<runnable>.meta.*].venv` >
+    `[config.meta.*].venv`. Returns `({venv}/bin/{runnable}` or the bare name,
+    venv_missing)."""
+    venv = cli_venv or runnable_meta.get("venv") or config_meta.get("venv")
+    if venv:
+        return f"{str(venv).rstrip('/')}/bin/{runnable}", False
+    return runnable, True
+
+
+def _emit_output_dir(parsed: Any, default: str) -> Path:
+    """The output directory for an emit target: `--output-dir` or `{git_root}/<default>`."""
+    override = parsed.get("output-dir").value
+    return Path(override) if override else _project_root() / default
 
 
 def cmd_emit(args: list[str]) -> None:
-    """Emit orchestration job definitions from the installed runnables.
+    """Emit orchestration artefacts from the installed runnables.
 
-    Currently supports ``--rundeck`` (Rundeck job JSON, one file per leaf
-    command under ``{project_root}/jobs/``). Per-runnable settings (venv, node
-    filter, schedule, notifications, orchestrator) come from a
-    ``[<runnable>.meta.rundeck]`` table (project defaults in
-    ``[config.meta.rundeck]``); a few project-wide flags override. Mirrors
-    ``cmd_stubs``: same discovery, a ``--check`` drift guard, and a pure render
-    module (``rundeckgen``) that owns no I/O.
+    Targets: ``--rundeck`` (Rundeck job JSON under ``{project_root}/jobs/``) and
+    ``--ansible`` (Ansible module ``.py`` files under ``{project_root}/library/``).
+    Per-runnable settings come from a ``[<runnable>.meta.<target>]`` table
+    (project defaults in ``[config.meta.<target>]``); a few project-wide flags
+    override. Mirrors ``cmd_stubs``: same discovery, a ``--check`` drift guard,
+    and pure render modules (``rundeckgen`` / ``ansiblegen``) that own no I/O.
     """
-    from runspec.inference import infer_script
     from runspec.parser import parse as _parse
 
     parsed = _parse(script_name="runspec", argv=["emit"] + args, config_path=_CLI_CONFIG)
 
-    if not parsed.rundeck.value:
-        print("✗  Specify an emit target: --rundeck")
+    targets = [t for t, on in (("rundeck", parsed.rundeck.value), ("ansible", parsed.ansible.value)) if on]
+    if not targets:
+        print("✗  Specify an emit target: --rundeck and/or --ansible")
         sys.exit(1)
-
-    from runspec import rundeckgen
+    if len(targets) > 1 and parsed.get("output-dir").value:
+        print("✗  --output-dir applies to a single target — run --rundeck and --ansible separately.")
+        sys.exit(1)
 
     discovered = _deduplicate(_discover_installed())
     runnable_filter = parsed.runnable.value
@@ -283,6 +302,17 @@ def cmd_emit(args: list[str]) -> None:
         print("or run 'pip install -e .' from your project directory.")
         sys.exit(1)
 
+    if "rundeck" in targets:
+        _emit_rundeck(discovered, parsed)
+    if "ansible" in targets:
+        _emit_ansible(discovered, parsed)
+
+
+def _emit_rundeck(discovered: list[dict[str, Any]], parsed: Any) -> None:
+    """Render + write (or check / stdout) the Rundeck job JSON per runnable."""
+    from runspec import rundeckgen
+    from runspec.inference import infer_script
+
     cli_opts = {
         "venv": parsed.venv.value,
         "group": parsed.group.value,
@@ -291,53 +321,79 @@ def cmd_emit(args: list[str]) -> None:
     }
 
     all_jobs: list[dict[str, Any]] = []
-    files: dict[str, list[dict[str, Any]]] = {}
+    files: dict[str, str] = {}
     missing_venv = False
     for item in discovered:
         runnable = item["runnable"]
-        config_meta, runnable_meta = _rundeck_meta(item["source"], runnable)
+        config_meta, runnable_meta = _emit_meta(item["source"], runnable, "rundeck")
         settings = rundeckgen.merge_settings(runnable, cli_opts, config_meta, runnable_meta)
         if settings["venv"] is None:
             missing_venv = True
         inferred = infer_script(item["spec"], item.get("config_autonomy") or "confirm")
         for job in rundeckgen.render_runnable(runnable, inferred, settings):
             all_jobs.append(job)
-            files[rundeckgen.job_filename(job["name"])] = [job]
+            files[rundeckgen.job_filename(job["name"])] = rundeckgen.dumps([job])
 
-    # Stdout mode: one combined JSON array for `| rd jobs load -F json`.
-    output_dir = parsed.get("output-dir").value
     if parsed.stdout.value:
         sys.stdout.write(rundeckgen.dumps(all_jobs))
         return
 
-    root = _project_root()
-    out_dir = Path(output_dir) if output_dir else root / "jobs"
+    out_dir = _emit_output_dir(parsed, "jobs")
+    _write_or_check(out_dir, files, parsed.check.value, target="rundeck", noun="job file")
+    if not parsed.check.value and missing_venv:
+        print("ℹ  No venv resolved for some runnables — job scripts invoke the bare")
+        print("   binary name (relies on PATH). Pass --venv or set meta.rundeck.venv.")
 
-    if parsed.check.value:
+
+def _emit_ansible(discovered: list[dict[str, Any]], parsed: Any) -> None:
+    """Render + write (or check) an Ansible module `.py` per leaf command."""
+    from runspec import ansiblegen
+    from runspec.inference import infer_script
+
+    files: dict[str, str] = {}
+    missing_venv = False
+    for item in discovered:
+        runnable = item["runnable"]
+        config_meta, runnable_meta = _emit_meta(item["source"], runnable, "ansible")
+        invocation, venv_missing = _resolve_invocation(runnable, parsed.venv.value, config_meta, runnable_meta)
+        missing_venv = missing_venv or venv_missing
+        inferred = infer_script(item["spec"], item.get("config_autonomy") or "confirm")
+        files.update(ansiblegen.render_runnable(runnable, inferred, invocation))
+
+    out_dir = _emit_output_dir(parsed, "library")
+    _write_or_check(out_dir, files, parsed.check.value, target="ansible", noun="module")
+    if not parsed.check.value and missing_venv:
+        print("ℹ  No venv resolved for some runnables — modules invoke the bare")
+        print("   binary name (relies on PATH). Pass --venv or set meta.ansible.venv.")
+
+
+def _write_or_check(out_dir: Path, files: dict[str, str], check: bool, *, target: str, noun: str) -> None:
+    """Shared writer for an emit target: `--check` compares, otherwise writes.
+
+    `files` maps output file name → its full text content."""
+    root = _project_root()
+    rel = out_dir.relative_to(root) if out_dir.is_relative_to(root) else out_dir
+
+    if check:
         stale: list[str] = []
-        for fname, jobs in sorted(files.items()):
-            target = out_dir / fname
-            content = rundeckgen.dumps(jobs)
-            existing = target.read_text(encoding="utf-8") if target.exists() else None
+        for fname, content in sorted(files.items()):
+            target_path = out_dir / fname
+            existing = target_path.read_text(encoding="utf-8") if target_path.exists() else None
             if existing != content:
                 stale.append(fname + (" (missing)" if existing is None else " (out of date)"))
-        rel = out_dir.relative_to(root) if out_dir.is_relative_to(root) else out_dir
         if stale:
-            print(f"✗  {rel} is out of date — run 'runspec emit --rundeck':")
+            print(f"✗  {rel} is out of date — run 'runspec emit --{target}':")
             for s in stale:
                 print(f"     {s}")
             sys.exit(1)
-        print(f"✓  {rel} is up to date ({len(files)} job file{'s' if len(files) != 1 else ''}).")
+        plural = "s" if len(files) != 1 else ""
+        print(f"✓  {rel} is up to date ({len(files)} {noun}{plural}).")
         return
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    rel = out_dir.relative_to(root) if out_dir.is_relative_to(root) else out_dir
-    for fname, jobs in sorted(files.items()):
-        (out_dir / fname).write_text(rundeckgen.dumps(jobs), encoding="utf-8")
+    for fname, content in sorted(files.items()):
+        (out_dir / fname).write_text(content, encoding="utf-8")
         print(f"Wrote {rel}/{fname}")
-    if missing_venv:
-        print("ℹ  No venv resolved for some runnables — job scripts invoke the bare")
-        print("   binary name (relies on PATH). Pass --venv or set meta.rundeck.venv.")
 
 
 def cmd_test(args: list[str]) -> None:

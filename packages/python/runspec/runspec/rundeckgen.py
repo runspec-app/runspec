@@ -29,7 +29,9 @@ import re
 import uuid
 from typing import Any
 
-from runspec.inference import infer_arg
+# Re-exported so `rundeckgen.expand_leaves` / `rundeckgen.secret_env_var` keep
+# working; the generic implementations live in `emitutil` (shared with ansiblegen).
+from runspec.emitutil import expand_leaves, secret_env_var
 
 # Fixed namespace so a job's UUID is a stable function of (project, group, job
 # name) — re-emitting and re-importing then *updates* the same Rundeck job
@@ -56,61 +58,9 @@ def rd_env_var(name: str) -> str:
     return "RD_OPTION_" + re.sub(r"[^A-Za-z0-9]", "_", name).upper()
 
 
-def secret_env_var(runnable: str, name: str) -> str:
-    """The runspec secret channel var for an arg — `RUNSPEC_<RUNNABLE>_ARG_<NAME>`.
-
-    Mirrors `parser._apply_env` / `serve._env_key`: keyed on the top-level
-    runnable name (the entry point), not the leaf command, with hyphens →
-    underscores and uppercased."""
-    r = runnable.upper().replace("-", "_")
-    n = name.upper().replace("-", "_")
-    return f"RUNSPEC_{r}_ARG_{n}"
-
-
 def job_filename(job_name: str) -> str:
     """Per-job output file name."""
     return f"{job_name}.json"
-
-
-# ── leaf expansion ────────────────────────────────────────────────────────────
-
-
-def expand_leaves(runnable: str, script: dict[str, Any]) -> list[dict[str, Any]]:
-    """Flatten a runnable's subcommand tree into one entry per leaf command.
-
-    A runnable with no `commands` yields a single leaf (itself). Otherwise one
-    leaf per fully-pathed command, with args = the root (global) args merged
-    with each command's own args along the path, child overriding parent on a
-    name clash — the same inheritance `parser._resolve_subcommand` applies at
-    runtime. Args are run through `infer_arg` so inferred types are reflected.
-
-    Each entry: `{name, description, command_path, args}` where `name` is the
-    serve-style leaf id (`cron_add`) and `command_path` the tokens to append
-    after the runnable binary (`["add"]`).
-    """
-    root_desc = script.get("description") or ""
-    leaves: list[dict[str, Any]] = []
-
-    def walk(node: dict[str, Any], path: list[str], merged: dict[str, Any]) -> None:
-        args = dict(merged)
-        args.update(node.get("args", {}))
-        commands = node.get("commands") or {}
-        if not commands:
-            name = "_".join([runnable, *path]) if path else runnable
-            leaves.append(
-                {
-                    "name": name,
-                    "description": node.get("description") or root_desc,
-                    "command_path": list(path),
-                    "args": {k: infer_arg(v) for k, v in args.items()},
-                }
-            )
-            return
-        for cmd_name, cmd_node in commands.items():
-            walk(cmd_node, [*path, cmd_name], args)
-
-    walk(script, [], {})
-    return leaves
 
 
 # ── option rendering ──────────────────────────────────────────────────────────

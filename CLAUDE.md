@@ -429,11 +429,19 @@ the custom `register_type` names demonstrated in the docs.)
   (`| rd jobs load -F json`). Pure `rundeckgen.py` + `cli.cmd_emit`; needs the
   runnable/config-level `meta` pass-through added to the schema in 0.52.0. See
   `docs/rundeck.md`, `docs/design/emit-ansible-rundeck.md`. Node port follows.
-- `runspec emit --ansible` — emit an Ansible module Python file per
-  runnable to `library/{runnable}.py`. Generates `DOCUMENTATION`,
-  `argument_spec`, and subprocess invocation from `runspec.toml`. Full
-  AAP survey form and ansible-lint compatibility. See
-  `docs/design/emit-ansible-rundeck.md`.
+- `runspec emit --ansible` — **shipped** (0.53.0). The second `emit` target:
+  writes an Ansible module `.py` per **leaf command** to `library/{module}.py`
+  at the git root (subcommands flatten like `serve`; hyphens → underscores for a
+  valid module name). Generates `DOCUMENTATION`/`EXAMPLES`/`RETURN` (drives the
+  AAP survey form + ansible-lint + IDE), an `argument_spec`
+  (`str`/`int`/`float`/`flag→bool`/`path`/`choice→str`+`choices`/`rest→list`),
+  and a constant body that rebuilds argv from `module.params` + shells out;
+  `password` → a `no_log` param on the runspec secret channel (never argv);
+  `changed`-key idempotency + `check_mode`; injects `RUNSPEC_AUTONOMY=autonomous`.
+  venv from `[<runnable>.meta.ansible]` / `[config.meta.ansible]` / `--venv`;
+  `--check` CI drift. Pure `ansiblegen.py` + `cli._emit_ansible`; shared
+  leaf-expansion/secret helpers factored to `emitutil.py` (reused by rundeckgen).
+  See `docs/ansible.md`, `docs/design/emit-ansible-rundeck.md`. Node port follows.
 - `runspec push --rundeck` — future: POST job YAMLs to Rundeck REST API
   (`/api/v*/project/{project}/jobs/import`) with an API token. Deferred
   until file emit is in production use.

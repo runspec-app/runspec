@@ -7,6 +7,30 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.53.0] — 2026-09-22
+
+### Added
+- **`runspec emit --ansible` — generate an Ansible module per runnable.** The
+  second `emit` target (after `--rundeck`), it writes a per-**leaf-command**
+  Ansible module `.py` to `{git_root}/library/` (subcommands flatten like
+  `runspec serve` — `cron_add.py`, `cron_list.py`). Each module carries
+  `DOCUMENTATION` / `EXAMPLES` / `RETURN` blocks (which drive the **AAP survey
+  form**, ansible-lint, and IDE support), an `argument_spec` built from the args
+  (`str`/`int`/`float`/`flag→bool`/`path`/`choice→str`+`choices`/`rest→list`),
+  and a small constant body that rebuilds the CLI from `module.params` and shells
+  out to the runnable. **`password` args** become `no_log` params passed through
+  the runspec secret channel env var (`RUNSPEC_<RUNNABLE>_ARG_<NAME>`), never on
+  the command line. **Idempotency:** a runnable whose JSON stdout carries a
+  `changed` key drives Ansible's `changed`; `check_mode` short-circuits to
+  `changed=false`. The module injects `RUNSPEC_AUTONOMY=autonomous` so a
+  `confirm` runnable runs non-interactively. Per-runnable `venv` comes from
+  `[<runnable>.meta.ansible]` (project default `[config.meta.ansible]`) or
+  `--venv`. `--check` guards drift in CI. Pure generator in `ansiblegen.py`;
+  CLI in `cli._emit_ansible`. See `docs/ansible.md`.
+- **Shared `emitutil`** module — the platform-agnostic leaf-expansion and secret
+  env-var helpers now live in `emitutil.py`, reused by both `rundeckgen` and
+  `ansiblegen` (re-exported from `rundeckgen` for back-compat).
+
 ## [0.52.0] — 2026-09-22
 
 ### Added
