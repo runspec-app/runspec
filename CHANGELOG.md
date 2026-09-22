@@ -7,6 +7,29 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [node-0.39.0] — 2026-09-22
+
+### Added
+- **`runspec emit` in the Node pack — Rundeck jobs + Ansible modules at parity
+  with Python 0.52.0/0.53.0.** `runspec emit --rundeck` writes a Rundeck job
+  JSON per **leaf command** to `jobs/`, and `runspec emit --ansible` writes an
+  Ansible module `.py` per leaf command to `library/` (subcommands flatten like
+  `runspec serve`). Shared leaf-expansion + secret-env helpers live in
+  `src/emitutil.ts`; pure generators in `src/rundeckgen.ts` / `src/ansiblegen.ts`;
+  the thin CLI (`cmdEmit`) owns discovery + disk I/O. Rundeck: Bash **script
+  step** rebuilding the CLI from `RD_OPTION_*` env vars, `password` → a **secure
+  option** on the runspec secret channel (never on argv), `--node-filter` →
+  orchestrator **random subset=1**, schedule + notifications from
+  `[<runnable>.meta.rundeck]`, and a **stable UUIDv5** (RFC 4122, implemented on
+  `crypto` — no new dependency; byte-identical to Python's). Ansible:
+  `DOCUMENTATION`/`EXAMPLES`/`RETURN` (AAP survey form), an `argument_spec`,
+  `no_log` secrets via the env channel, `changed`-key idempotency + `check_mode`,
+  and `RUNSPEC_AUTONOMY=autonomous`. `--check` (CI drift) + `--stdout` (Rundeck).
+  Per-runnable `venv` from `[<runnable>.meta.ansible|rundeck]` /
+  `[config.meta.*]` / `--venv`. Node discovers from the nearest `runspec.toml`
+  (single-project), and the output directory defaults under that config's
+  directory. See `docs/rundeck.md`, `docs/ansible.md`.
+
 ## [0.53.0] — 2026-09-22
 
 ### Added

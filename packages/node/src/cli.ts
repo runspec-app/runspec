@@ -7,7 +7,10 @@ import * as logs from './logs';
 import { loadRaw } from './loader';
 import { inferScript } from './inference';
 import { parse } from './parser';
-import type { ScriptSpec, ArgSpec } from './models';
+import { parse as parseTOML } from 'smol-toml';
+import * as rundeckgen from './rundeckgen';
+import * as ansiblegen from './ansiblegen';
+import type { ScriptSpec, ArgSpec, ParsedArgs } from './models';
 
 const _CLI_CONFIG = path.join(__dirname, 'runspec.toml');
 
@@ -34,6 +37,7 @@ export function main(): void {
   const commands: Record<string, (args: string[]) => void | Promise<void>> = {
     init: cmdInit,
     local: cmdLocal,
+    emit: cmdEmit,
     test: cmdTest,
     bin: cmdBin,
     logs: cmdLogs,
@@ -585,6 +589,169 @@ function emitAll(discovered: Array<{ source: string; runnable: string; spec: Scr
   return Object.fromEntries(tools.map((t) => [t['name'], t]));
 }
 
+// ── emit (Rundeck jobs / Ansible modules) ───────────────────────────────────────
+
+/** Read the raw `[config.meta.<key>]` and `[<runnable>.meta.<key>]` tables from a
+ *  runnable's runspec.toml. Runnable-level `meta` is dropped by `normaliseScript`,
+ *  so the emitter reads it straight from the raw TOML. */
+function emitMeta(source: string, runnable: string, key: string): [Record<string, unknown>, Record<string, unknown>] {
+  let raw: Record<string, unknown>;
+  try {
+    raw = parseTOML(fs.readFileSync(source, 'utf-8')) as Record<string, unknown>;
+  } catch {
+    return [{}, {}];
+  }
+  const asObj = (v: unknown): Record<string, unknown> => (v && typeof v === 'object' ? (v as Record<string, unknown>) : {});
+  const configMeta = asObj(asObj(raw['config'])['meta']);
+  const runnableMeta = asObj(asObj(raw[runnable])['meta']);
+  return [asObj(configMeta[key]), asObj(runnableMeta[key])];
+}
+
+/** The binary an emitted artefact invokes: `{venv}/bin/{runnable}` or the bare
+ *  name (relies on PATH). Precedence: CLI flag > runnable meta > config meta. */
+function resolveInvocation(
+  runnable: string,
+  cliVenv: string | undefined,
+  configMeta: Record<string, unknown>,
+  runnableMeta: Record<string, unknown>,
+): [string, boolean] {
+  const venv = cliVenv ?? runnableMeta['venv'] ?? configMeta['venv'];
+  if (venv) return [`${String(venv).replace(/\/+$/, '')}/bin/${runnable}`, false];
+  return [runnable, true];
+}
+
+function emitOutputDir(parsed: ParsedArgs, def: string): string {
+  const override = parsed['output_dir'] as string | undefined;
+  if (override) return path.resolve(override);
+  const { configPath } = findConfig(process.cwd());
+  return path.join(path.dirname(configPath), def);
+}
+
+/** Shared writer for an emit target: `--check` compares, otherwise writes.
+ *  `files` maps output file name → its full text content. */
+function writeOrCheck(outDir: string, files: Record<string, string>, check: boolean, target: string, noun: string): void {
+  const rel = path.relative(process.cwd(), outDir) || outDir;
+  const names = Object.keys(files).sort();
+
+  if (check) {
+    const stale: string[] = [];
+    for (const fname of names) {
+      let existing: string | null = null;
+      try {
+        existing = fs.readFileSync(path.join(outDir, fname), 'utf-8');
+      } catch {
+        existing = null;
+      }
+      if (existing !== files[fname]) stale.push(fname + (existing === null ? ' (missing)' : ' (out of date)'));
+    }
+    if (stale.length) {
+      console.log(`✗  ${rel} is out of date — run 'runspec emit --${target}':`);
+      for (const s of stale) console.log(`     ${s}`);
+      process.exit(1);
+    }
+    console.log(`✓  ${rel} is up to date (${names.length} ${noun}${names.length !== 1 ? 's' : ''}).`);
+    return;
+  }
+
+  fs.mkdirSync(outDir, { recursive: true });
+  for (const fname of names) {
+    fs.writeFileSync(path.join(outDir, fname), files[fname], 'utf-8');
+    console.log(`Wrote ${rel}/${fname}`);
+  }
+}
+
+function configAutonomyOf(source: string): string {
+  try {
+    return loadRaw(source).config.autonomyDefault || 'confirm';
+  } catch {
+    return 'confirm';
+  }
+}
+
+function emitRundeck(discovered: Array<{ source: string; runnable: string; spec: ScriptSpec }>, parsed: ParsedArgs): void {
+  const cliOpts: rundeckgen.RundeckCliOpts = {
+    venv: parsed['venv'] as string | undefined,
+    group: parsed['group'] as string | undefined,
+    nodeFilter: parsed['node_filter'] as string | undefined,
+    project: parsed['project'] as string | undefined,
+  };
+
+  const allJobs: Record<string, unknown>[] = [];
+  const files: Record<string, string> = {};
+  let missingVenv = false;
+  for (const item of discovered) {
+    const [configMeta, runnableMeta] = emitMeta(item.source, item.runnable, 'rundeck');
+    const settings = rundeckgen.mergeSettings(item.runnable, cliOpts, configMeta, runnableMeta);
+    if (settings.venv === undefined || settings.venv === null) missingVenv = true;
+    const inferred = inferScript(item.spec, configAutonomyOf(item.source));
+    for (const job of rundeckgen.renderRunnable(item.runnable, inferred, settings)) {
+      allJobs.push(job);
+      files[rundeckgen.jobFilename(job['name'] as string)] = rundeckgen.dumps([job]);
+    }
+  }
+
+  if (parsed['stdout']) {
+    process.stdout.write(rundeckgen.dumps(allJobs));
+    return;
+  }
+
+  const outDir = emitOutputDir(parsed, 'jobs');
+  writeOrCheck(outDir, files, Boolean(parsed['check']), 'rundeck', 'job file');
+  if (!parsed['check'] && missingVenv) {
+    console.log('ℹ  No venv resolved for some runnables — job scripts invoke the bare');
+    console.log('   binary name (relies on PATH). Pass --venv or set meta.rundeck.venv.');
+  }
+}
+
+function emitAnsible(discovered: Array<{ source: string; runnable: string; spec: ScriptSpec }>, parsed: ParsedArgs): void {
+  const files: Record<string, string> = {};
+  let missingVenv = false;
+  for (const item of discovered) {
+    const [configMeta, runnableMeta] = emitMeta(item.source, item.runnable, 'ansible');
+    const [invocation, venvMissing] = resolveInvocation(item.runnable, parsed['venv'] as string | undefined, configMeta, runnableMeta);
+    missingVenv = missingVenv || venvMissing;
+    const inferred = inferScript(item.spec, configAutonomyOf(item.source));
+    Object.assign(files, ansiblegen.renderRunnable(item.runnable, inferred, invocation));
+  }
+
+  const outDir = emitOutputDir(parsed, 'library');
+  writeOrCheck(outDir, files, Boolean(parsed['check']), 'ansible', 'module');
+  if (!parsed['check'] && missingVenv) {
+    console.log('ℹ  No venv resolved for some runnables — modules invoke the bare');
+    console.log('   binary name (relies on PATH). Pass --venv or set meta.ansible.venv.');
+  }
+}
+
+/** Emit orchestration artefacts from the local runnables (Rundeck job JSON /
+ *  Ansible modules). Mirrors the pure render + thin-CLI split used by `local`. */
+function cmdEmit(args: string[]): void {
+  const parsed = parse({ scriptName: 'runspec', argv: ['emit', ...args], configPath: _CLI_CONFIG });
+
+  const targets: string[] = [];
+  if (parsed['rundeck']) targets.push('rundeck');
+  if (parsed['ansible']) targets.push('ansible');
+  if (targets.length === 0) {
+    console.log('✗  Specify an emit target: --rundeck and/or --ansible');
+    process.exit(1);
+  }
+  if (targets.length > 1 && parsed['output_dir']) {
+    console.log('✗  --output-dir applies to a single target — run --rundeck and --ansible separately.');
+    process.exit(1);
+  }
+
+  let discovered = discoverLocal();
+  const runnableFilter = parsed['runnable'] as string | undefined;
+  if (runnableFilter) discovered = discovered.filter((d) => d.runnable === runnableFilter);
+
+  if (discovered.length === 0) {
+    console.log('No runnables found. Add a runnable to runspec.toml, or run from a directory that contains one.');
+    process.exit(1);
+  }
+
+  if (targets.includes('rundeck')) emitRundeck(discovered, parsed);
+  if (targets.includes('ansible')) emitAnsible(discovered, parsed);
+}
+
 function printLocalText(discovered: Array<{ source: string; runnable: string; spec: ScriptSpec }>): void {
   const bySource: Record<string, Array<{ runnable: string; spec: ScriptSpec }>> = {};
   for (const item of discovered) {
@@ -981,6 +1148,7 @@ Usage:
 Commands:
   init        Create runspec.toml and a code stub
   local       List runnables and emit tool schemas
+  emit        Emit Rundeck job JSON / Ansible modules from runnables
   test        Smoke-test every runnable: spec smoke + entry-point --help (CI gate)
   bin         Generate a venv-shaped bin/ so a controller can run this folder
   logs        View, status, prune, or compact per-invocation audit logs
@@ -994,6 +1162,7 @@ Examples:
   runspec init --example
   runspec local
   runspec local --format mcp
+  runspec emit --rundeck
   runspec test
   runspec bin
   runspec logs deploy
@@ -1026,6 +1195,29 @@ Examples:
   runspec local --format mcp
   runspec local --format mcp --script deploy
   runspec local --format json`,
+
+    emit: `runspec emit — Emit orchestration artefacts from runnables
+
+  Generates one artefact per leaf command (subcommands flatten like serve).
+
+Options:
+  --rundeck      Emit Rundeck job definitions (JSON) to jobs/
+  --ansible      Emit Ansible modules (Python) to library/
+  --venv         Venv whose bin/ holds the runnable binaries (invocation path)
+  -d, --output-dir  Directory to write into (default: <config dir>/jobs or /library)
+  -r, --runnable    Emit only this runnable
+  --group        Rundeck job group (default: runspec)
+  --node-filter  Rundeck node filter; enables orchestrator random-subset=1 load-balancing
+  --project      Rundeck project name (used for stable job UUIDs)
+  --check        Verify emitted files are up to date; write nothing. Exit 1 if stale
+  --stdout       Rundeck: print the combined JSON array instead of writing files
+
+Examples:
+  runspec emit --rundeck --venv /opt/app/.venv
+  runspec emit --rundeck --node-filter 'tags: web'
+  runspec emit --ansible --venv /opt/app/.venv
+  runspec emit --rundeck --check
+  runspec emit --rundeck --stdout | rd jobs load -F json -p prod`,
 
     test: `runspec test — Smoke-test every runnable in this folder (CI gate)
 

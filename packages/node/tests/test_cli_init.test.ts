@@ -180,10 +180,10 @@ test('check command is no longer available', () => {
   expect(stdout).toContain('Unknown command');
 });
 
-test('emit command is no longer available', () => {
+test('emit command requires a target', () => {
   const dir = tmpDir();
   const { stdout } = runCLI(dir, ['emit']);
-  expect(stdout).toContain('Unknown command');
+  expect(stdout).toContain('Specify an emit target');
 });
 
 test('jump command requires a host', () => {

@@ -229,7 +229,7 @@ npm run typecheck
 ```
 
 Node mirrors the Python public API: `parse()`, `loadSpec()`, `registerType()`, `getLogger()`.
-CLI commands: `init`, `local`, `jump`, `serve` (renamed in 0.8.0 to mirror Python).
+CLI commands: `init`, `local`, `emit`, `jump`, `serve` (renamed in 0.8.0 to mirror Python).
 `[config.logging]` implemented in 0.9.0 — runnables call `getLogger(name)` from `runspec-node`.
 Extra fields (0.10.0): `logger.info('msg', { user_id: '42' })` — `error` key extracts an Error; all other keys appear under `"extra"` in the JSON log.
 Console routing (0.11.0) mirrors Python: INFO → stdout; WARNING+ → stderr with level prefix. No `level` knob. `[config.logging]` auto-adds a `--debug` flag (`RUNSPEC_ARG_DEBUG=1`) that flips DEBUG on everywhere — stdout *and* the audit file (the file defaults to INFO, same as stdout, so external library DEBUG noise stays out of the log).
@@ -472,6 +472,21 @@ uid to the effective user; `enforce_run_as` (`"error"` default / `"warn"` /
 `"off"`, per-runnable → `[config]` → library default) drives the reaction.
 No-op when `run_as` is empty or `process.geteuid` is undefined (Windows), and
 skipped by `loadSpec`.
+
+**Node parity — `emit` (node-0.39.0):** `runspec emit --rundeck` / `--ansible`
+are now in the Node pack at parity with Python 0.52.0/0.53.0. Shared
+leaf-expansion + secret-env helpers in `packages/node/src/emitutil.ts`; pure
+generators `rundeckgen.ts` / `ansiblegen.ts`; thin `cmdEmit` in `cli.ts` owns
+discovery + writes (`--check` drift, `--stdout` for Rundeck). Same artefacts as
+Python — Rundeck script-step jobs (secure options + `RD_OPTION_*`,
+orchestrator subset=1, schedule/notifications from `meta.rundeck`, stable
+**UUIDv5 via `crypto`** matching Python byte-for-byte) and Ansible modules
+(`DOCUMENTATION`/`argument_spec`, `no_log` secrets, `changed`/`check_mode`,
+`RUNSPEC_AUTONOMY=autonomous`). Differences from Python are the Node discovery
+model (nearest `runspec.toml`, single project) and the output dir defaulting
+under the config's directory (Node has no git-root helper). `meta.rundeck` /
+`meta.ansible` read from raw TOML (runnable-level `meta` is dropped by
+`normaliseScript`, same as Python).
 
 Build order: `emit --rundeck` first (current platform), `emit --ansible`
 second (migration target), `push --rundeck` last (CI/CD automation).
