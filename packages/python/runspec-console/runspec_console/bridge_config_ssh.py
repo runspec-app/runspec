@@ -671,11 +671,20 @@ class ConfigSshMixin:
             new_s["max_concurrent"],
         ):
             old_pool = self._ssh_pool
+            old_adhoc = self._adhoc_pool
             self._ssh_pool = self._build_ssh_pool()
+            # Rebuild the ad-hoc pool off the (possibly toggled) fleet pool so the
+            # two stay consistent — it's gated on the fleet pool existing.
+            self._adhoc_pool = self._build_adhoc_pool()
             if old_pool is not None:
                 old_pool.close_all()
-        elif self._ssh_pool is not None:
-            self._ssh_pool.update_settings(new_s)
+            if old_adhoc is not None:
+                old_adhoc.close_all()
+        else:
+            if self._ssh_pool is not None:
+                self._ssh_pool.update_settings(new_s)
+            if self._adhoc_pool is not None:
+                self._adhoc_pool.update_settings(new_s)
 
     def _generate_keypair_to_path(self, dest: Path) -> dict[str, Any]:
         """Write a new ed25519 key pair to dest (OpenSSH PEM + PPK v2). Does not touch config."""

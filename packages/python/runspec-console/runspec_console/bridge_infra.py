@@ -77,6 +77,21 @@ class InfraMixin:
             on_event=self._on_pool_event,
         )
 
+    def _build_adhoc_pool(self) -> Any:
+        """Construct the bounded ad-hoc SSH pool from current ``[ssh]`` config.
+
+        Gated on the fleet pool being enabled: the ad-hoc pool shares the same
+        ``[ssh]`` tunables and, for a via-jump target, tunnels through the fleet
+        pool's warm jump transport (``open_direct_tcpip``). Returns None when
+        pooling is off — the ad-hoc path then falls back to connect-per-call.
+        """
+        if self._ssh_pool is None:
+            return None
+        from .ssh_pool import AdhocConnectionPool, pool_settings
+
+        settings = pool_settings(self.get_config().get("ssh"))
+        return AdhocConnectionPool(settings=settings, on_event=self._on_pool_event)
+
     def _on_pool_event(self, detail: dict[str, Any]) -> None:
         """Surface a pool-lifecycle event in the Dev tab's ``ssh`` category.
 
@@ -90,6 +105,9 @@ class InfraMixin:
 
     def _close_ssh_pool(self) -> None:
         self.close_adhoc()
+        adhoc_pool = self._adhoc_pool
+        if adhoc_pool is not None:
+            adhoc_pool.close_all()
         pool = self._ssh_pool
         if pool is not None:
             pool.close_all()

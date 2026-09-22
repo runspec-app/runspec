@@ -38,6 +38,8 @@ DEFAULT_BACKOFF_MAX = 300  # s; per-host backoff cap
 DEFAULT_CONNECT_RETRIES = 1  # inline retries on a *transient* handshake failure
 DEFAULT_CONNECT_RETRY_DELAY = 1.0  # s base delay between inline handshake retries
 
+DEFAULT_ADHOC_MAX_CONNS = 8  # max warm ad-hoc transports kept at once (LRU-evicted)
+
 DEFAULT_REFRESH_INTERVAL = 30  # s between refresh cycles
 DEFAULT_REFRESH_JITTER = 3  # +/- s of per-host start jitter
 DEFAULT_REFRESH_WORKERS_FLOOR = 16  # min bounded workers for the refresh fan-out
@@ -137,10 +139,19 @@ class PooledConnection:
     connection).
     """
 
-    def __init__(self, client: Any, max_sessions: int, clock: Callable[[], float]):
+    def __init__(
+        self,
+        client: Any,
+        max_sessions: int,
+        clock: Callable[[], float],
+        on_close: Callable[[], None] | None = None,
+    ):
         self._client = client
         self._sessions = threading.BoundedSemaphore(max_sessions)
         self._clock = clock
+        # Optional teardown run alongside the client close (e.g. releasing a
+        # pooled jump channel that tunnels an ad-hoc target). Never raises.
+        self._on_close = on_close
         self.last_used = clock()
 
     def is_alive(self, idle_ttl: int) -> bool:
@@ -304,6 +315,11 @@ class PooledConnection:
             self._client.close()
         except Exception:
             pass
+        if self._on_close is not None:
+            try:
+                self._on_close()
+            except Exception:
+                pass
 
 
 class SSHConnectionPool:
@@ -708,5 +724,196 @@ class SSHConnectionPool:
         need nothing here either: they alter the connection key, so the next use
         opens a fresh transport and the stale one is reaped.
         """
+        with self._map_lock:
+            self._settings = settings
+
+
+def adhoc_key_label(key: tuple) -> str:
+    """Human-readable ``user@host:port`` (``via <jump>``) label for an ad-hoc key,
+    for Dev-tab pool events. Never carries a secret — the key holds no password."""
+    jump, user, host, port, _identity = key
+    who = f"{user}@{host}" if user else host
+    label = f"{who}:{port}" if port and int(port) != 22 else who
+    return f"{label} via {jump}" if jump else label
+
+
+class AdhocConnectionPool:
+    """Bounded, idle-evicting pool of reused SSH connections to *ad-hoc* hosts.
+
+    Ad-hoc hosts (not in ``runspec_hosts.toml``) back the built-in file tools'
+    ad-hoc source path (``download_file`` / ``relay_file`` / a pooled relay). The
+    main :class:`SSHConnectionPool` is fleet-scoped (one long-lived transport per
+    configured host); this parallel pool gives the same warm-transport reuse to
+    targets that come and go, keyed by the resolved
+    ``(jump, user, host, port, identity)`` rather than a host name.
+
+    Two things make ad-hoc different from the fleet pool, and shape this class:
+
+    * **Credentials.** An ad-hoc target may authenticate with a per-call password
+      (a Credentials-tab secret resolved fresh at call time, or a typed one). The
+      pool never stores it: the caller passes a ``connect`` closure that captures
+      the secret, and the pool invokes it **only** when there is no live transport
+      for the key — then discards it. A reused transport is already authenticated,
+      so no secret is touched. Nothing secret is ever held on the pool itself.
+    * **Lifecycle.** Ad-hoc targets are unbounded in principle, so the pool is
+      capped at ``max_conns`` with least-recently-used eviction, plus the same
+      per-cycle idle reaping as the fleet pool — an ad-hoc target can't leak a
+      standing connection forever.
+
+    A ``connect`` closure returns ``(client, on_close)`` where ``on_close`` (or
+    ``None``) is extra teardown run when the transport is closed — used to release
+    a pooled jump ``direct-tcpip`` channel that tunnels a via-jump target.
+    """
+
+    def __init__(
+        self,
+        *,
+        settings: dict[str, Any],
+        clock: Callable[[], float] = time.monotonic,
+        max_conns: int = DEFAULT_ADHOC_MAX_CONNS,
+        on_event: Callable[[dict[str, Any]], None] | None = None,
+    ):
+        self._settings = settings
+        self._clock = clock
+        self._max_conns = max(1, int(max_conns))
+        self._on_event = on_event
+        self._conns: dict[tuple, PooledConnection] = {}
+        self._locks: dict[tuple, threading.Lock] = {}
+        self._map_lock = threading.Lock()
+
+    def _event(self, level: str, message: str) -> None:
+        if self._on_event is None:
+            return
+        try:
+            self._on_event({"level": level, "logger": "ssh.adhoc", "message": message})
+        except Exception:
+            pass
+
+    def _host_lock(self, key: tuple) -> threading.Lock:
+        with self._map_lock:
+            lock = self._locks.get(key)
+            if lock is None:
+                lock = threading.Lock()
+                self._locks[key] = lock
+            return lock
+
+    def acquire(
+        self, key: tuple, connect: Callable[[], tuple[Any, Callable[[], None] | None]]
+    ) -> PooledConnection:
+        """Return a live pooled connection for ``key``, reusing a warm transport
+        when one exists and building one via ``connect`` otherwise.
+
+        ``connect`` is called only on a miss (no live transport) and its result is
+        the sole thing retained — the closure itself, and any secret it captured,
+        are dropped once the transport is established.
+        """
+        idle_ttl = self._settings["idle_ttl"]
+
+        # Fast path: a live connection, no per-host lock needed.
+        with self._map_lock:
+            conn = self._conns.get(key)
+        if conn is not None and conn.is_alive(idle_ttl):
+            self._event(
+                "DEBUG", f"reusing ad-hoc SSH connection to {adhoc_key_label(key)}"
+            )
+            return conn
+
+        with self._host_lock(key):
+            # Re-check under the lock — another thread may have just connected.
+            with self._map_lock:
+                conn = self._conns.get(key)
+            if conn is not None and conn.is_alive(idle_ttl):
+                self._event(
+                    "DEBUG", f"reusing ad-hoc SSH connection to {adhoc_key_label(key)}"
+                )
+                return conn
+            had_dead = conn is not None
+            if conn is not None:
+                conn.close()
+                with self._map_lock:
+                    self._conns.pop(key, None)
+
+            client, on_close = connect()
+            keepalive = self._settings["keepalive"]
+            if keepalive:
+                try:
+                    transport = client.get_transport()
+                    if transport is not None:
+                        transport.set_keepalive(keepalive)
+                except Exception:
+                    pass
+            conn = PooledConnection(
+                client, self._settings["max_sessions"], self._clock, on_close=on_close
+            )
+            with self._map_lock:
+                self._conns[key] = conn
+            self._event(
+                "INFO" if had_dead else "DEBUG",
+                f"reconnected to ad-hoc host {adhoc_key_label(key)} (previous transport dropped)"
+                if had_dead
+                else f"opened ad-hoc SSH connection to {adhoc_key_label(key)}",
+            )
+            self._evict_over_cap(keep=key)
+            return conn
+
+    def _evict_over_cap(self, keep: tuple) -> None:
+        """Close least-recently-used transports beyond ``max_conns`` (never
+        ``keep``, the one just handed out). Keeps ad-hoc reuse from accumulating
+        an unbounded set of standing connections."""
+        victims: list[tuple[tuple, PooledConnection]] = []
+        with self._map_lock:
+            excess = len(self._conns) - self._max_conns
+            if excess <= 0:
+                return
+            for k, c in sorted(self._conns.items(), key=lambda kv: kv[1].last_used):
+                if excess <= 0:
+                    break
+                if k == keep:
+                    continue
+                victims.append((k, c))
+                self._conns.pop(k, None)
+                excess -= 1
+        for k, c in victims:
+            c.close()
+            self._event(
+                "DEBUG",
+                f"evicted ad-hoc SSH connection to {adhoc_key_label(k)} (over cap)",
+            )
+
+    def drop(self, key: tuple) -> None:
+        """Close and evict one ad-hoc transport (e.g. after it died at use time)."""
+        with self._map_lock:
+            conn = self._conns.pop(key, None)
+        if conn is not None:
+            conn.close()
+
+    def reap(self) -> int:
+        """Close ad-hoc transports idle beyond ``idle_ttl``; returns the count.
+        Called once per refresh cycle, alongside the fleet pool's reap."""
+        idle_ttl = self._settings["idle_ttl"]
+        if not idle_ttl:
+            return 0
+        with self._map_lock:
+            stale = [k for k, c in self._conns.items() if not c.is_alive(idle_ttl)]
+            dropped = [self._conns.pop(k) for k in stale]
+        for key, conn in zip(stale, dropped):
+            conn.close()
+            self._event(
+                "DEBUG", f"reaped idle ad-hoc SSH connection to {adhoc_key_label(key)}"
+            )
+        return len(dropped)
+
+    def close_all(self) -> None:
+        """Close every ad-hoc transport — app shutdown / pool rebuild."""
+        with self._map_lock:
+            conns = list(self._conns.values())
+            self._conns.clear()
+        for c in conns:
+            c.close()
+
+    def update_settings(self, settings: dict[str, Any]) -> None:
+        """Apply new behavioural tunables (keepalive / idle_ttl / max_sessions)
+        to the live ad-hoc pool without dropping connections — mirrors
+        :meth:`SSHConnectionPool.update_settings`."""
         with self._map_lock:
             self._settings = settings

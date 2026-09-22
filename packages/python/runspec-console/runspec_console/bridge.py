@@ -268,6 +268,11 @@ class Bridge(
         # shared by every SSH path (refresh, discovery, history, logs,
         # invocation). None when [ssh] pool = false (legacy connect-per-call).
         self._ssh_pool: Any = self._build_ssh_pool()
+        # Parallel bounded pool for *ad-hoc* SSH targets (not in the fleet) — the
+        # persistent backing for the built-in file tools' ad-hoc source path so a
+        # repeat download/relay reuses a warm transport instead of handshaking per
+        # call. None when pooling is off (falls back to connect-per-call).
+        self._adhoc_pool: Any = self._build_adhoc_pool()
         # Rota "Take a break": an in-memory return time. While set, the rota gate
         # treats automation as outside-hours; it auto-resumes once `now` passes it
         # (the gate evaluates `now` live) and self-clears. Held only in memory so a

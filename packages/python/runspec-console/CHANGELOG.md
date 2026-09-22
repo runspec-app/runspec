@@ -8,6 +8,35 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.280.0] — 2026-09-22
+
+### Changed
+
+- **Ad-hoc built-in-tool SSH targets now reuse a warm pooled transport.** The
+  agent's built-in file tools (`download_file` / `relay_file`) are fast against
+  fleet hosts because they flow through the persistent `SSHConnectionPool`, but
+  an **ad-hoc** target (`source_target`, optionally via `source_via`) bypassed
+  the pool: `_open_source_conn`'s ad-hoc branch opened **and closed** a fresh
+  `_make_ssh_client` on every call, paying a full SSH handshake each time — the
+  un-pooled path behind "the built-in tools feel slower than Forms/agent runs".
+  A new bounded `AdhocConnectionPool` (`ssh_pool.py`) now backs that path: a
+  repeat ad-hoc read against the same target reuses a warm transport over a fresh
+  channel instead of re-handshaking. It is keyed by the resolved
+  `(jump, user, host, port, identity)`, bounded to 8 warm transports with
+  least-recently-used eviction, and idle-reaped each refresh cycle alongside the
+  fleet pool, so ad-hoc targets can't leak standing connections. A **via-jump**
+  target tunnels through the fleet pool's warm jump transport
+  (`open_direct_tcpip`) rather than a fresh jump client, its `direct-tcpip`
+  channel released when the target transport is torn down. **Credentials** are
+  honoured without persisting a secret: the pool builds a transport from a
+  per-call `connect` closure only on a miss and then discards it — a reused
+  transport is already authenticated, so no secret is stored on the pool. The
+  relay/unsaved-host **browser** keeps its own dialog-scoped cache
+  (`_adhoc_conns` / `close_adhoc`) unchanged via a `pooled=False` opt-out;
+  `run_remote` / Forms are byte-identical. Gated on `[ssh] pool` like the fleet
+  pool. See `docs/design/ssh-connection-pool.md` → "Follow-up: ad-hoc targets".
+
+
 ## [0.279.0] — 2026-09-21
 
 ### Added

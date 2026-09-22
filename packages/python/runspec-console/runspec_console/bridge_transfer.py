@@ -640,7 +640,11 @@ class TransferMixin:
         return result
 
     def _open_source_conn(
-        self, source: dict[str, Any], password: str | None, cfg: dict[str, Any] | None
+        self,
+        source: dict[str, Any],
+        password: str | None,
+        cfg: dict[str, Any] | None,
+        pooled: bool = True,
     ) -> tuple[Any, Callable[[], tuple[Any, Callable[[], None]]], Callable[[], None]]:
         """Open a relay source — a configured host, or an ad-hoc host reached via
         a configured jump (key/agent first, then ``password``).
@@ -653,6 +657,13 @@ class TransferMixin:
           caller drives ``channel`` and must call ``chan_release()`` when done
           (on the pooled path it frees a session slot; the transport stays warm).
         * ``release`` — tears down ``sftp`` and the transport/tunnel.
+
+        ``pooled`` routes an **ad-hoc** target through the persistent
+        :class:`AdhocConnectionPool` (when it exists) so repeat built-in-tool
+        reads reuse a warm transport; here ``release`` frees the pooled sftp slot
+        and leaves the transport for the next call. The relay/unsaved *browser*
+        passes ``pooled=False`` to keep its own dialog-scoped cache (torn down by
+        ``close_adhoc``) unchanged. A configured host always uses the fleet pool.
         """
         if source.get("kind") == "host":
             entry = self._host_entry(source["host"])
@@ -683,6 +694,16 @@ class TransferMixin:
         port = int(source.get("port") or 22)
         user = source.get("user") or ""
         jump = source.get("jump")
+
+        # Persistent ad-hoc pool: reuse a warm transport for a repeat call to the
+        # same target instead of handshaking per call. Only for the built-in-tool
+        # path (pooled=True) and only when pooling is on; the browse dialog opts
+        # out to keep its own cache/cleanup semantics.
+        adhoc_pool = getattr(self, "_adhoc_pool", None) if pooled else None
+        if adhoc_pool is not None:
+            return self._open_adhoc_pooled(
+                adhoc_pool, target, port, user, jump, password, cfg
+            )
 
         # Jumpless: connect straight to the target through the **same** builder
         # every configured host uses, so it inherits the ``[ssh] proxy`` (HTTP
@@ -771,6 +792,96 @@ class TransferMixin:
                     pass
 
         return sftp, adhoc_session_factory, release
+
+    def _open_adhoc_pooled(
+        self,
+        adhoc_pool: Any,
+        target: str,
+        port: int,
+        user: str,
+        jump: str | None,
+        password: str | None,
+        cfg: dict[str, Any] | None,
+    ) -> tuple[Any, Callable[[], tuple[Any, Callable[[], None]]], Callable[[], None]]:
+        """Open an ad-hoc source through the persistent :class:`AdhocConnectionPool`.
+
+        The ``connect`` closure below is what actually handshakes the target — it
+        captures ``password`` and is invoked by the pool **only** on a miss, then
+        discarded, so the secret never persists on the pool (it lives no longer
+        than an ordinary local). A reused warm transport is already authenticated,
+        so a repeat call touches no secret at all.
+
+        Returns the same ``(sftp, session_factory, release)`` triple as the
+        connect-per-call path, but ``release`` frees the pooled sftp *slot* and
+        leaves the transport warm; ``session_factory`` opens each filter channel
+        on that same transport.
+        """
+        key = (str(jump or ""), str(user or ""), target, int(port), "")
+
+        def connect() -> tuple[Any, Callable[[], None] | None]:
+            if not jump:
+                from .executor import _make_ssh_client
+
+                ssh_target = f"{user}@{target}" if user else target
+                if port and port != 22:
+                    ssh_target = f"{ssh_target}:{port}"
+                client = _make_ssh_client(
+                    ssh_target, None, cfg, password=password or None
+                )
+                return client, None
+
+            # Via jump: tunnel a direct-tcpip channel through the fleet pool's warm
+            # jump transport, then SSH to the target over it. The jump channel is
+            # released when this transport is closed/reaped (on_close).
+            import paramiko
+
+            from .executor import _apply_host_key_policy
+
+            jump_entry = self._host_entry(jump)
+            if jump_entry is None or not jump_entry.get("ssh"):
+                raise OSError(f"jump host {jump} is not reachable")
+            chan, chan_release, jump_client = self._jump_channel(
+                jump_entry, target, port, cfg
+            )
+            client = paramiko.SSHClient()
+            _apply_host_key_policy(client, cfg or {})
+            try:
+                client.connect(
+                    hostname=target,
+                    port=port,
+                    username=user or None,
+                    password=password or None,
+                    sock=chan,
+                    allow_agent=True,
+                    look_for_keys=True,
+                    timeout=float((cfg or {}).get("connect_timeout", 10)),
+                )
+            except Exception:
+                chan_release()
+                if jump_client is not None:
+                    jump_client.close()
+                raise
+
+            def on_close() -> None:
+                chan_release()
+                if jump_client is not None:
+                    try:
+                        jump_client.close()
+                    except Exception:
+                        pass
+
+            return client, on_close
+
+        conn = adhoc_pool.acquire(key, connect)
+        sftp, sftp_release = conn.open_sftp()
+
+        def session_factory() -> tuple[Any, Callable[[], None]]:
+            # A fresh exec channel on the *same* warm transport; its release frees
+            # a session slot, leaving the transport pooled. Captures the pooled
+            # connection, never the secret.
+            return conn.open_session()
+
+        return sftp, session_factory, sftp_release
 
     def _jump_channel(
         self,
@@ -1386,7 +1497,12 @@ class TransferMixin:
             "port": port,
         }
         # Browsing only needs the sftp; the exec session_factory is for filters.
-        sftp, _session_factory, release = self._open_source_conn(source, password, cfg)
+        # pooled=False keeps this a dedicated dialog-scoped connection cached in
+        # _adhoc_conns and torn down by close_adhoc — not shared with the
+        # persistent ad-hoc pool the built-in file tools use.
+        sftp, _session_factory, release = self._open_source_conn(
+            source, password, cfg, pooled=False
+        )
         with self._lock:
             old = self._adhoc_conns.get(key)
             self._adhoc_conns[key] = {

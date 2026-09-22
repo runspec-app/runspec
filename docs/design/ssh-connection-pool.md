@@ -239,6 +239,52 @@ the console itself placed:
 Verified by `test_rotate_key_cleanup.py`, which runs the generated command
 through a real `sh`/`awk` against a seeded `authorized_keys`.
 
+## Follow-up: ad-hoc targets (runspec-console 0.280.0)
+
+The pool above is fleet-scoped — one long-lived transport per host in
+`runspec_hosts.toml`. The agent's built-in file tools can also read from an
+**ad-hoc** SSH host that is *not* in the fleet (`download_file` / `relay_file`
+with `source_target`, optionally via a configured `source_via` jump). That path
+(`bridge_transfer._open_source_conn`, `kind == "adhoc"`) never went through the
+pool: it built a fresh `executor._make_ssh_client` and its `release` **closed**
+the client, so every ad-hoc `download_file` / `relay_file` paid a full handshake.
+This is the un-pooled path behind the "built-in tools feel slower than
+Forms/agent runs" feedback (feedback item #13).
+
+0.280.0 adds a parallel **`AdhocConnectionPool`** (`ssh_pool.py`) that gives
+ad-hoc targets the same warm-transport reuse, without disturbing the fleet pool
+or `run_remote` / Forms:
+
+- **Keying / lifecycle.** Ad-hoc hosts aren't in a config file, so the sub-pool
+  keys by the *resolved* `(jump, user, host, port, identity)` rather than a host
+  name. Ad-hoc targets are unbounded in principle, so it is capped
+  (`DEFAULT_ADHOC_MAX_CONNS = 8`) with **least-recently-used eviction** and is
+  **idle-reaped every refresh cycle** alongside the fleet pool — an ad-hoc target
+  can't leak a standing connection forever. It reuses the fleet pool's
+  `PooledConnection` (channel semaphore, `is_alive`, keepalive).
+- **Credentials, no stored secret.** An ad-hoc target may auth with a per-call
+  password (a Credentials-tab secret resolved fresh at call time, or a typed
+  one). The pool never holds it: the caller passes a `connect` closure that
+  captures the secret, and the pool invokes it **only on a miss** (no live
+  transport) and then discards it. A reused transport is already authenticated,
+  so a repeat call touches no secret — nothing secret is retained on the pool
+  (`test_adhoc_pool.py::test_password_not_retained_on_pool`).
+- **Jump.** A via-jump target tunnels a `direct-tcpip` channel through the
+  **fleet pool's warm jump transport** (`open_direct_tcpip`) rather than opening
+  a fresh jump client; that channel is released via a `PooledConnection.on_close`
+  hook when the target transport is closed/reaped.
+- **Scope.** Only the built-in-tool path routes through the sub-pool
+  (`_open_source_conn(..., pooled=True)`, the default). The relay/unsaved-host
+  **browser** (`_get_adhoc_sftp` / `list_dir_unsaved`) passes `pooled=False`,
+  keeping its own dialog-scoped `_adhoc_conns` cache and `close_adhoc` teardown
+  exactly as before. Gated on `[ssh] pool` like the fleet pool (built off it, so
+  `pool = false` ⇒ connect-per-call as before).
+
+Verified by `test_adhoc_pool.py`: reuse (a second ad-hoc built-in call
+handshakes once, not twice), reconnect on a dead transport, LRU eviction, idle
+reap, teardown, the via-jump `open_direct_tcpip` tunnel + channel release, the
+browse `pooled=False` opt-out, and no-secret-retained.
+
 ## Acceptance criteria (from #104)
 
 - [x] ≤1 new handshake / host / cycle in steady state (pool: ~0 after warm-up).

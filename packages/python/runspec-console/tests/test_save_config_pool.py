@@ -41,7 +41,9 @@ class _SaveStub:
         self._old = old_cfg
         self._adapter = "cached-adapter"
         self._ssh_pool = _FakePool()
+        self._adhoc_pool = _FakePool()
         self.built: list[_FakePool] = []
+        self.built_adhoc: list[_FakePool] = []
 
     def get_config(self) -> dict[str, Any]:
         return self._old
@@ -49,6 +51,11 @@ class _SaveStub:
     def _build_ssh_pool(self) -> _FakePool:
         p = _FakePool()
         self.built.append(p)
+        return p
+
+    def _build_adhoc_pool(self) -> _FakePool:
+        p = _FakePool()
+        self.built_adhoc.append(p)
         return p
 
     def restart_chat(self) -> None:
@@ -118,6 +125,9 @@ def test_tunable_change_updates_in_place():
     assert stub.built == []
     assert stub._ssh_pool.closed is False
     assert stub._ssh_pool.updated_with["keepalive"] == 60
+    # The ad-hoc pool tracks the fleet pool: updated in place, not rebuilt.
+    assert stub.built_adhoc == []
+    assert stub._adhoc_pool.updated_with["keepalive"] == 60
 
 
 # ── rebuild cases (the only times connections drop) ───────────────────────────
@@ -138,10 +148,15 @@ def test_max_concurrent_change_rebuilds():
 def test_rebuild_closes_old_pool():
     stub = _SaveStub({"ssh": {"pool": True}})
     old_pool = stub._ssh_pool
+    old_adhoc = stub._adhoc_pool
     with patch(NORM, side_effect=lambda s: s), patch(WRITE):
         stub.save_config({"ssh": {"pool": False}})
     assert old_pool.closed is True
     assert stub._ssh_pool is not old_pool
+    # The ad-hoc pool is rebuilt and its old instance closed alongside the fleet pool.
+    assert old_adhoc.closed is True
+    assert stub._adhoc_pool is not old_adhoc
+    assert len(stub.built_adhoc) == 1
 
 
 # ── [llm] system equal to the built-in default is not persisted ──────────────

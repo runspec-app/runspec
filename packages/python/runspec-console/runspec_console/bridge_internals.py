@@ -1042,6 +1042,8 @@ class InternalsMixin:
         # — no separate timer thread).
         if self._ssh_pool is not None:
             self._ssh_pool.reap()
+        if self._adhoc_pool is not None:
+            self._adhoc_pool.reap()
 
     def _check_connected(
         self, host: dict[str, Any], *, ssh_cfg: dict[str, Any] | None = None
