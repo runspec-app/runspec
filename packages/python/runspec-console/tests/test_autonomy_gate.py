@@ -62,6 +62,11 @@ class _StubBridge:
     _coerce_run_args = staticmethod(Bridge._coerce_run_args)
     _confirm_decision = Bridge._confirm_decision
     _confirm_card_view = Bridge._confirm_card_view
+    # Pre-gate command/arg validation for run_runnable (search mode).
+    _group_fanout_calls = Bridge._group_fanout_calls
+    _preflight_run_runnable = Bridge._preflight_run_runnable
+    _preflight_validate = Bridge._preflight_validate
+    _node_at = staticmethod(Bridge._node_at)
     _register_confirm = Bridge._register_confirm
     _finish_confirm = Bridge._finish_confirm
     get_pending_confirms = Bridge.get_pending_confirms
@@ -301,6 +306,44 @@ def test_supervised_also_prompts():
 def test_resolve_unknown_id_is_noop():
     b = _StubBridge(_runnable())
     b.resolve_tool_confirmation("does-not-exist", True)  # must not raise
+
+
+# ── pre-gate command/arg validation (search-mode run_runnable) ─────────────────
+
+
+def _subcmd_runnable(autonomy="confirm"):
+    return [
+        {
+            "host": "local",
+            "name": "svc",
+            "autonomy": autonomy,
+            "args": [],
+            "commands": {"restart": {"args": []}, "status": {"args": []}},
+        }
+    ]
+
+
+def test_preflight_run_runnable_flags_unknown_command():
+    b = _StubBridge(_subcmd_runnable())
+    err = b._preflight_run_runnable({"id": "svc", "command": "bogus"})
+    assert err and "unknown command 'bogus'" in err
+
+
+def test_preflight_run_runnable_passes_valid_command():
+    b = _StubBridge(_subcmd_runnable())
+    assert b._preflight_run_runnable({"id": "svc", "command": "restart"}) is None
+
+
+def test_run_runnable_unknown_command_bounces_before_confirm():
+    # A confirm-autonomy subcommand runnable invoked with an unknown verb must be
+    # rejected in-turn, BEFORE the operator is asked to approve a call that can
+    # only error — and without registering or dispatching any confirmation.
+    b = _StubBridge(_subcmd_runnable("confirm"))
+    out = b._gated_run_tool("run_runnable", {"id": "svc", "command": "bogus"}, "chat1")
+    assert "unknown command 'bogus'" in out
+    assert "restart" in out and "status" in out
+    assert b._pending_confirms == {}  # no confirm was registered
+    assert b._dispatched == []  # nothing was shown to the operator
 
 
 # ── async gate (the path the agentic loop actually uses) ───────────────────────

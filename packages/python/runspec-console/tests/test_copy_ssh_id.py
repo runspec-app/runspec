@@ -114,6 +114,7 @@ class _StubBridge:
     _local_host_entry = Bridge._local_host_entry
     _host_entry = Bridge._host_entry
     _public_key_for = Bridge._public_key_for
+    _effective_ssh_user = staticmethod(Bridge._effective_ssh_user)
     _push_key_over_password = Bridge._push_key_over_password
     copy_ssh_id = Bridge.copy_ssh_id
 
@@ -263,6 +264,60 @@ def test_auth_failure_is_friendly(tmp_path):
     assert "authentication failed" in res["message"].lower()
     assert FakeSSHClient.instances[-1].exec_commands == []  # nothing executed
     assert "h1" not in bridge._connected_cache
+
+
+def test_no_username_is_a_clear_error_before_connecting(tmp_path):
+    # No user@ on the host and no global [ssh] user → the connection would fall
+    # back to the local login name and fail as a baffling "wrong password". Catch
+    # it up front with an actionable message and never attempt the connection.
+    key = tmp_path / "id"
+    _write_key(key)
+    bridge = _StubBridge(
+        {"ssh": {"identityFile": str(key)}},  # no global user
+        [{"name": "h1", "ssh": "h1"}],  # no user@ on the host
+    )
+
+    res = bridge.copy_ssh_id("h1", "pw")
+
+    assert res["ok"] is False
+    assert "username" in res["message"].lower()
+    assert FakeSSHClient.instances == []  # never attempted a connection
+
+
+def test_use_ssh_config_skips_the_username_precheck(tmp_path, monkeypatch):
+    # With ~/.ssh/config enabled a `User` directive may supply the username, so
+    # the up-front check is skipped and the connection is attempted (succeeds).
+    monkeypatch.setenv("HOME", str(tmp_path))  # no real ~/.ssh/config in the test
+    key = tmp_path / "id"
+    _write_key(key)
+    bridge = _StubBridge(
+        {"ssh": {"identityFile": str(key), "use_ssh_config": True}},
+        [{"name": "h1", "ssh": "h1"}],  # no explicit user
+        probe_result=True,
+    )
+
+    res = bridge.copy_ssh_id("h1", "pw")
+
+    assert res["ok"] is True
+    assert FakeSSHClient.instances  # the connection was attempted, not pre-blocked
+
+
+def test_auth_failure_names_missing_username(tmp_path, monkeypatch):
+    # use_ssh_config on (pre-check skipped) but no user resolved anywhere and auth
+    # fails → the message blames the missing username, not the password.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    key = tmp_path / "id"
+    _write_key(key)
+    FakeSSHClient.next_connect_exc = paramiko.AuthenticationException("nope")
+    bridge = _StubBridge(
+        {"ssh": {"identityFile": str(key), "use_ssh_config": True}},
+        [{"name": "h1", "ssh": "h1"}],
+    )
+
+    res = bridge.copy_ssh_id("h1", "pw")
+
+    assert res["ok"] is False
+    assert "username" in res["message"].lower()
 
 
 def test_nonzero_push_exit_reports_error(tmp_path):

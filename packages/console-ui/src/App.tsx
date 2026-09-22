@@ -419,7 +419,7 @@ export default function App() {
       } else {
         setSshKeyAgeDays(null)
       }
-    })
+    }).catch(() => setSshKeyAgeDays(null))  // a cold-launch bridge reject must not blank the app
   }
 
   useEffect(() => { loadSshKeyAge() }, [])
@@ -459,8 +459,8 @@ export default function App() {
     bridge.get_hosts().then(hs => {
       setHosts(hs)
       setSelectedHost(hs[0]?.name ?? '')
-    })
-    const onHostsUpdated = () => bridge.get_hosts().then(setHosts)
+    }).catch(() => {})  // a cold-launch bridge reject must not blank the app
+    const onHostsUpdated = () => bridge.get_hosts().then(setHosts).catch(() => {})
     // Host-profile switcher: load the registry + the active selection, and keep
     // them fresh as the registry changes (Settings edits / Config Sync pulls).
     const loadProfiles = () => {
@@ -1461,7 +1461,7 @@ export default function App() {
                 {viewsVisited.current.has('history') && (
                   <div className="rs-view" style={{ display: view === 'history' ? 'block' : 'none', flex: 1, overflow: 'auto' }}>
                     <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin size="large" /></div>}>
-                      <HistoryView search={historySearch} onSearchChange={setHistorySearch} onRerun={handleHistoryRerun} onAskLlm={aiEnabled ? handleAskLlm : undefined} activeScope={activeScope} onScopeToggle={handleScopeToggle} selectedHost={selectedHost} active={view === 'history'} />
+                      <HistoryView search={historySearch} onSearchChange={setHistorySearch} onRerun={handleHistoryRerun} onAskLlm={aiEnabled ? handleAskLlm : undefined} activeScope={activeScope} onScopeToggle={handleScopeToggle} active={view === 'history'} />
                     </Suspense>
                   </div>
                 )}
@@ -1645,6 +1645,7 @@ export default function App() {
           onClose={() => setSettingsOpen(false)}
           connectedHosts={hosts.filter(h => h.connected && h.name !== 'local' && h.role !== undefined).map(h => h.name)}
           allRemoteHosts={hosts.filter(h => h.name !== 'local' && h.role !== undefined).map(h => h.name)}
+          activeProfile={activeProfile}
           onHostsChanged={() => {
             bridge.get_hosts().then(setHosts)
             bridge.get_runnables('all').then(setRunnables)

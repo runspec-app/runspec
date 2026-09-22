@@ -232,25 +232,19 @@ interface HistoryViewProps {
   onAskLlm?: (text: string) => void
   activeScope: string[]
   onScopeToggle: (group: string) => void
-  selectedHost: string
   active: boolean
 }
 
-export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeScope, onScopeToggle, selectedHost, active }: HistoryViewProps) {
+export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeScope, onScopeToggle, active }: HistoryViewProps) {
   const [records, setRecords] = useState<HistoryRecord[]>([])
   const [loading, setLoading] = useState(false)
-  // History is scoped to the host selected in the sidebar — clicking a host
-  // drives History (and Analytics) for it. One host per read keeps each fetch a
-  // single SSH round-trip instead of a fleet-wide fan-out that hangs on a slow
-  // or offline host.
+  // History spans the whole fleet — the local host plus every connected remote —
+  // so automated runs (scheduled/trigger runnable runs on their own targets, and
+  // agent/trigger/schedule turns logged on the console host) surface regardless
+  // of the sidebar selection. The Host column filter narrows within the set.
   const [hostColumnFilter, setHostColumnFilter] = useState<string[]>([])
   const [expandedKeys, setExpandedKeys] = useState<string[]>([])
   const [fullLogRecord, setFullLogRecord] = useState<HistoryRecord | null>(null)
-
-  // Switching host drops the old host's rows, so we never briefly show another
-  // host's runs and the reload below shows the spinner instead of stale data.
-  // Returning to the same host keeps its rows, so the tab re-shows instantly.
-  useEffect(() => { setRecords([]) }, [selectedHost])
 
   // The view stays mounted across tab switches (App toggles display), so records
   // persist — returning shows the last data instantly. Reads only happen while
@@ -260,16 +254,20 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
   // poll (25 s) catches anything the event path misses (a run on another venv,
   // a missed event). The spinner shows on the first (re)load only.
   useEffect(() => {
-    if (!selectedHost || !active) return
+    if (!active) return
     let cancelled = false
     let debounce: ReturnType<typeof setTimeout> | undefined
 
-    // Spinner shows only here (showSpinner=true is passed once, on mount/host
-    // change, while records is empty); silent polls and event refetches pass
-    // false so they never flash it.
+    // History is host-agnostic: it reads across the local host plus every
+    // connected remote (get_history_all) so automated runs — scheduled/trigger
+    // runnable runs on their own target hosts, and agent/trigger/schedule turns
+    // logged on the console host — show up regardless of the sidebar selection.
+    // (Disconnected remotes are skipped backend-side so an offline host can't
+    // hang the read.) Not scoped to selectedHost, so switching hosts doesn't
+    // re-fan-out; the Host column filter narrows within the loaded set.
     const fetch = (showSpinner: boolean) => {
       if (showSpinner) setLoading(true)
-      return bridge.get_history(selectedHost)
+      return bridge.get_history_all()
         .then(r => { if (!cancelled) setRecords(r) })
         .catch(() => {})
         .finally(() => { if (!cancelled) setLoading(false) })
@@ -292,7 +290,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       if (debounce) clearTimeout(debounce)
       window.removeEventListener('runspec:run_end', onRunEnd)
     }
-  }, [selectedHost, active])
+  }, [active])
 
   const filtered = useMemo(() => {
     if (!search) return records
@@ -319,6 +317,10 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
     {
       title: 'Runnable',
       key: 'runnable',
+      // Bounded width + ellipsis so a wide window doesn't dump all the slack into
+      // this (the only unsized) column, cramping the fixed-content ones.
+      width: 280,
+      ellipsis: true,
       render: (_: unknown, r: HistoryRecord) => (
         <span style={{ fontFamily: MONO_FONT, fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
           <span><span style={{ color: 'var(--rs-text-muted)' }}>{r.group}/</span>{r.runnable}</span>

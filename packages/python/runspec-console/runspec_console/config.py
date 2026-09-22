@@ -1953,6 +1953,11 @@ def read_disclaimer() -> dict[str, Any]:
     - ``version``: an optional wording version. Bumping it (or editing ``text``)
       re-prompts every operator, even those who acknowledged the prior wording —
       the acknowledgement is keyed to a hash of ``text`` **and** ``version``.
+    - ``always_show`` (default False): re-show the notice on **every** app launch,
+      ignoring the stored acknowledgement. The acknowledgement is still recorded
+      (so it isn't lost), but the gate re-appears each launch — the once-per-launch
+      behaviour some deployments want for a standing compliance reminder. (An
+      in-session acknowledgement still dismisses it for that session.)
 
     Deliberately **not** in the preserve lists: a seeded value re-asserts on every
     seed re-apply / sync pull. See docs/design/console-disclaimer.md."""
@@ -1974,6 +1979,7 @@ def read_disclaimer() -> dict[str, Any]:
         "text": text,
         "acknowledge_label": label,
         "version": version,
+        "always_show": bool(cfg.get("always_show", False)),
     }
 
 

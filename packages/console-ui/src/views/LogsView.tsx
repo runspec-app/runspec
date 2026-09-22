@@ -197,7 +197,10 @@ function StreamDrawer({ target, onClose }: { target: ViewTarget | null; onClose:
     <Drawer
       open={!!target}
       onClose={onClose}
-      width={680}
+      // Audit log lines run very long (JSON records, tracebacks); give the reader
+      // most of the window rather than a fixed narrow panel. Capped so it never
+      // exceeds the viewport on a small screen.
+      width={Math.min(1400, Math.max(680, window.innerWidth - 120))}
       title={target ? <span style={{ fontFamily: MONO_FONT }}>{target.group}/{target.runnable} — merged stream</span> : ''}
     >
       {loading ? (

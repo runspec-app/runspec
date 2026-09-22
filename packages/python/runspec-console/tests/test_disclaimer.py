@@ -46,6 +46,7 @@ def test_read_disclaimer_default_disabled(monkeypatch, tmp_path):
         "text": "",
         "acknowledge_label": "I acknowledge",
         "version": "",
+        "always_show": False,
     }
 
 
@@ -176,6 +177,33 @@ def test_reprompt_when_version_bumped(monkeypatch, tmp_path):
         }
     )
     assert b.disclaimer()["needs_ack"] is True
+
+
+def test_always_show_reprompts_after_acknowledgement(monkeypatch, tmp_path):
+    # always_show re-shows the notice every launch even once acknowledged.
+    _cfg_path(monkeypatch, tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    cfg.write_config(
+        {
+            "console": {
+                "disclaimer": {
+                    "enabled": True,
+                    "text": "Standing reminder.",
+                    "always_show": True,
+                }
+            }
+        }
+    )
+    b = _mk_bridge()
+    assert b.disclaimer()["needs_ack"] is True
+    # Acknowledging dismisses it for the session (needs_ack False in the response,
+    # which the frontend uses to close the modal) and still records the ack…
+    res = b.acknowledge_disclaimer()
+    assert res == {"ok": True, "needs_ack": False}
+    assert cfg.read_disclaimer_ack().get("hash")  # the ack was still written
+    # …but a fresh state read (i.e. the next launch) re-shows it despite the ack.
+    assert b.disclaimer()["needs_ack"] is True
+    assert b._compute_disclaimer_state()["state"] == "pending"
 
 
 def test_hard_off_when_ai_disabled(monkeypatch, tmp_path):

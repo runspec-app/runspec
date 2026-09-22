@@ -428,24 +428,38 @@ def test_finished_automation_sessions_are_capped():
     assert closed == ["c0", "c1", "c2"]
 
 
-def test_stop_triggers_aborts_schedule_cards_too():
+def test_stop_triggers_spares_running_turns_wakes_only_gate_parked():
+    # A trigger/schedule save calls restart_triggers → stop_triggers. It must
+    # wake turns parked at the autonomy gate (so the executor teardown doesn't
+    # strand them) WITHOUT cancelling an in-flight fire that's actively running —
+    # the silent mid-run kill reported from the field.
     ns = types.SimpleNamespace()
     ns._lock = threading.Lock()
     ns._trigger_engine = None
     ns._schedule_source = None
-    ns._trigger_cards = {"t1": {}}
-    ns._schedule_cards = {"s1": {}}
+    ns._trigger_cards = {"t_parked": {}, "t_running": {}}
+    ns._schedule_cards = {"s_running": {}}
     ns._chat_cancels = {
-        "t1": threading.Event(),
-        "s1": threading.Event(),
-        "chat": threading.Event(),
+        "t_parked": threading.Event(),  # a trigger turn blocked at the gate
+        "t_running": threading.Event(),  # a trigger turn actively running
+        "s_running": threading.Event(),  # a schedule turn actively running
+        "chat": threading.Event(),  # an interactive chat turn
     }
-    ns._pending_confirms = {}
+    # Only the parked turn has a pending confirm registered.
+    parked_event = threading.Event()
+    parked_holder = {"cancelled": False}
+    ns._pending_confirms = {"req-1": ("t_parked", parked_event, parked_holder)}
     ns._abort_turns = types.MethodType(Bridge._abort_turns, ns)
     ns.stop_triggers = types.MethodType(Bridge.stop_triggers, ns)
     ns.stop_triggers()
-    assert ns._chat_cancels["t1"].is_set() and ns._chat_cancels["s1"].is_set()
-    assert not ns._chat_cancels["chat"].is_set()  # a chat turn is untouched
+    # The gate-parked turn is woken (cancel flag set + its confirm resolved)…
+    assert ns._chat_cancels["t_parked"].is_set()
+    assert parked_holder["cancelled"] and parked_event.is_set()
+    # …but actively-running trigger/schedule turns are NOT cancelled (the fix)…
+    assert not ns._chat_cancels["t_running"].is_set()
+    assert not ns._chat_cancels["s_running"].is_set()
+    # …and a chat turn is never the engine's to stop.
+    assert not ns._chat_cancels["chat"].is_set()
 
 
 def test_set_turn_included_resolves_the_owning_session():

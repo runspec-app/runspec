@@ -1314,6 +1314,10 @@ const BlockCard = memo(function BlockCard({
 
   const args = block.rerunData?.args ?? {}
   const hasArgs = Object.keys(args).length > 0
+  // A subcommand runnable's intent lives in its verb path, not in --flag args, so
+  // a verb-only run (e.g. `service restart`) has no args. Offer Edit-&-rerun when
+  // there are args OR a command path, else the pencil never shows for subcommands.
+  const canEditInForm = hasArgs || (block.rerunData?.commandPath?.length ?? 0) > 0
 
   // Total output size — the heaviness proxy for the deferred render. Only summed
   // once the block is done (short-circuits while streaming, so no per-frame O(n)).
@@ -1575,7 +1579,7 @@ const BlockCard = memo(function BlockCard({
         })()}
         {block.done && block.rerunData && onRerun && (
           <Fragment>
-            {hasArgs && (
+            {canEditInForm && (
               <Tooltip title="Edit in a form & rerun — opens the run dialog pre-filled with these values">
                 <EditOutlined
                   onClick={editInForm}

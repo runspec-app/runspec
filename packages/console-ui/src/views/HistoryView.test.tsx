@@ -10,15 +10,15 @@ import userEvent from '@testing-library/user-event'
 import { HistoryView } from './HistoryView'
 import type { HistoryRecord } from '../bridge'
 
-const { getHistory, logsView } = vi.hoisted(() => ({
-  getHistory: vi.fn(),
+const { getHistoryAll, logsView } = vi.hoisted(() => ({
+  getHistoryAll: vi.fn(),
   logsView: vi.fn(),
 }))
 
 vi.mock('../bridge', () => ({
   bridge: new Proxy({}, {
     get: (_t, p) => {
-      if (p === 'get_history') return getHistory
+      if (p === 'get_history_all') return getHistoryAll
       if (p === 'logs_view') return logsView
       return vi.fn()
     },
@@ -36,11 +36,11 @@ function rec(over: Partial<HistoryRecord> = {}): HistoryRecord {
 
 const PROPS = {
   search: '', onSearchChange: () => {}, activeScope: [],
-  onScopeToggle: () => {}, selectedHost: 'local', active: true,
+  onScopeToggle: () => {}, active: true,
 }
 
 beforeEach(() => {
-  getHistory.mockReset().mockResolvedValue([rec()])
+  getHistoryAll.mockReset().mockResolvedValue([rec()])
   logsView.mockReset().mockResolvedValue({ ok: true, records: [] })
 })
 
@@ -50,15 +50,15 @@ describe('HistoryView', () => {
   it('renders rows after the first fetch', async () => {
     render(<HistoryView {...PROPS} />)
     expect(await screen.findByText('backup')).toBeTruthy()
-    expect(getHistory).toHaveBeenCalledWith('local')
-    expect(getHistory).toHaveBeenCalledTimes(1)
+    expect(getHistoryAll).toHaveBeenCalledWith()
+    expect(getHistoryAll).toHaveBeenCalledTimes(1)
   })
 
   it('refetches (once, debounced) on a runspec:run_end event', async () => {
     vi.useFakeTimers()
     render(<HistoryView {...PROPS} />)
     await act(async () => { await Promise.resolve() })   // flush first fetch
-    expect(getHistory).toHaveBeenCalledTimes(1)
+    expect(getHistoryAll).toHaveBeenCalledTimes(1)
 
     // A burst of run_end events collapses into a single debounced refetch.
     await act(async () => {
@@ -66,26 +66,26 @@ describe('HistoryView', () => {
       window.dispatchEvent(new CustomEvent('runspec:run_end'))
       await vi.advanceTimersByTimeAsync(800)
     })
-    expect(getHistory).toHaveBeenCalledTimes(2)
+    expect(getHistoryAll).toHaveBeenCalledTimes(2)
   })
 
   it('does not poll within the (slowed) fallback window absent an event', async () => {
     vi.useFakeTimers()
     render(<HistoryView {...PROPS} />)
     await act(async () => { await Promise.resolve() })
-    expect(getHistory).toHaveBeenCalledTimes(1)
+    expect(getHistoryAll).toHaveBeenCalledTimes(1)
     // Advance well past the old 8s cadence but under the new 25s poll — no refetch.
     await act(async () => { await vi.advanceTimersByTimeAsync(20000) })
-    expect(getHistory).toHaveBeenCalledTimes(1)
+    expect(getHistoryAll).toHaveBeenCalledTimes(1)
   })
 
   it('does not refetch when the search prop changes (client-side filter only)', async () => {
     const { rerender } = render(<HistoryView {...PROPS} />)
     await screen.findByText('backup')
-    expect(getHistory).toHaveBeenCalledTimes(1)
+    expect(getHistoryAll).toHaveBeenCalledTimes(1)
     rerender(<HistoryView {...PROPS} search="nomatch" />)
     await waitFor(() => expect(screen.queryByText('backup')).toBeNull())
-    expect(getHistory).toHaveBeenCalledTimes(1)   // no new fetch on filter
+    expect(getHistoryAll).toHaveBeenCalledTimes(1)   // no new fetch on filter
   })
 
   it('opens the full-log drill via logs_view when a row is expanded', async () => {

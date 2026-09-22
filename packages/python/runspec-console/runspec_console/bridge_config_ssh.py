@@ -275,7 +275,17 @@ class ConfigSshMixin:
             )
             ack = config_mod.read_disclaimer_ack()
             acked_hash = str(ack.get("hash") or "")
-            acknowledged = enabled and bool(acked_hash) and acked_hash == current_hash
+            # always_show: re-prompt every launch regardless of the stored ack.
+            # The record is still kept (acknowledge_disclaimer writes it), but the
+            # gate treats the operator as un-acknowledged so it re-shows. The
+            # frontend's in-session decision still dismisses it for that session.
+            always_show = bool(cfg.get("always_show", False))
+            acknowledged = (
+                enabled
+                and not always_show
+                and bool(acked_hash)
+                and acked_hash == current_hash
+            )
             if not enabled:
                 state = "not_required"
             elif acknowledged:
@@ -820,6 +830,19 @@ class ConfigSshMixin:
         idf = (cfg.get("ssh") or {}).get("identityFile", "")
         return self._public_key_for(idf)
 
+    @staticmethod
+    def _effective_ssh_user(entry: dict[str, Any], global_ssh: dict[str, Any]) -> str:
+        """The SSH username that will actually be used for ``entry``, resolved the
+        way ``_make_ssh_client`` resolves it: the ``user@`` of the host's ssh
+        string, else the global ``[ssh] user``. Empty when neither is set — in
+        which case paramiko falls back to the local OS login name (and, if
+        ``use_ssh_config`` is enabled, ``~/.ssh/config`` may still supply one).
+        Used to give a clear "no username" diagnostic instead of a misleading
+        "check the password" on a copy-key auth failure."""
+        ssh_str = str(entry.get("ssh") or "").strip()
+        host_user = ssh_str.split("@", 1)[0].strip() if "@" in ssh_str else ""
+        return host_user or str(global_ssh.get("user") or "").strip()
+
     def _push_key_over_password(
         self, entry: dict[str, Any], password: str, global_ssh: dict[str, Any]
     ) -> dict[str, Any]:
@@ -846,6 +869,24 @@ class ConfigSshMixin:
             )
             return {"ok": False, "error": error}
         public_key = key_res["public_key"]
+
+        # No SSH username anywhere → the connection would fall back to this
+        # machine's local login name and the remote would reject it as an auth
+        # failure, which reads as "wrong password" and is baffling to debug. Catch
+        # it up front with an actionable message — unless ~/.ssh/config is enabled,
+        # where a `User` directive may still supply one (let it try, then the
+        # auth-failure handler below gives the same hint if it really was missing).
+        if not self._effective_ssh_user(entry, global_ssh) and not global_ssh.get(
+            "use_ssh_config"
+        ):
+            return {
+                "ok": False,
+                "error": (
+                    "No SSH username is set for this host. Set one — edit the host "
+                    "as user@hostname, or set a default under [ssh] user — before "
+                    "copying the key."
+                ),
+            }
 
         # Same idempotent push the key-rotation path uses (grep -qF || append).
         # public_key is single-quote-wrapped; an OpenSSH key contains no quotes.
@@ -876,6 +917,17 @@ class ConfigSshMixin:
         try:
             client = _make_ssh_client(entry["ssh"], None, global_ssh, password=password)
         except paramiko.AuthenticationException:
+            # With no username configured, the likely cause isn't the password —
+            # the connection used this machine's local login name. Say so.
+            if not self._effective_ssh_user(entry, global_ssh):
+                return {
+                    "ok": False,
+                    "error": (
+                        "Authentication failed, and no SSH username is set for this "
+                        "host — the connection used your local login name. Set a "
+                        "username (user@hostname, or a default [ssh] user) and retry."
+                    ),
+                }
             return {"ok": False, "error": "Authentication failed — check the password."}
         except paramiko.BadHostKeyException:
             return {
@@ -1094,6 +1146,23 @@ class ConfigSshMixin:
             message = f"Could not copy the key to any of the {len(per_host)} host(s)."
         return {"ok": ok_n > 0, "per_host": per_host, "message": message}
 
+    @staticmethod
+    def _cleanup_staged_rotation(new_path: Path) -> None:
+        """Best-effort removal of the staged rotation key files (``.new``,
+        ``.new.ppk``, ``.new.pub``). A successful commit renames them onto the
+        canonical key, so this is a no-op then; on any failure return (e.g. one
+        host's banner blip aborting the commit) it clears the litter that used to
+        be left behind on disk."""
+        for p in (new_path, Path(str(new_path) + ".ppk"), Path(str(new_path) + ".pub")):
+            try:
+                p.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError:
+                logger.debug(
+                    "could not remove staged rotation file %s", p, exc_info=True
+                )
+
     def rotate_ssh_key(self) -> dict[str, Any]:
         """Safely rotate the SSH key: generate new, push to all remote hosts using the
         old key, verify the new key works, then swap. Active sessions stay alive
@@ -1107,11 +1176,32 @@ class ConfigSshMixin:
                 "per_host": [],
                 "message": "Rotation already in progress",
             }
+        # Rotation must see the whole fleet: a scoped host profile hides its
+        # out-of-profile hosts (they hold no standing connection), so those hosts
+        # would be skipped, keep only the OLD key, and be locked out the moment the
+        # new key commits. Only allow it under the built-in All hosts scope.
+        active_profile = self._active_profile_name()
+        if active_profile:
+            return {
+                "ok": False,
+                "committed": False,
+                "public_key": "",
+                "key_path": "",
+                "per_host": [],
+                "message": (
+                    f"Key rotation needs the All hosts profile active (currently "
+                    f"'{active_profile}'). A scoped profile would orphan its "
+                    f"out-of-profile hosts on the old key. Switch to All hosts and "
+                    f"retry. (Copy key to hosts still works for a selection.)"
+                ),
+            }
         self._rotating = True
         try:
             return self._do_rotate_ssh_key()
         finally:
             self._rotating = False
+            # Never leave staged .new* key files behind on a failed/aborted rotate.
+            self._cleanup_staged_rotation(config_mod.app_dir() / "runspec_ed25519.new")
 
     def _rotate_emit(self, level: str, message: str) -> None:
         """Surface a rotation-progress line in the Dev tab's ``ssh`` category so a

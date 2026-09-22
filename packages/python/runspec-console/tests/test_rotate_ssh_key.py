@@ -56,6 +56,8 @@ class _StubBridge:
     _rotate_ssh_run = Bridge._rotate_ssh_run
     _rotate_push_verify_one = Bridge._rotate_push_verify_one
     _do_rotate_ssh_key = Bridge._do_rotate_ssh_key
+    _active_profile_name = Bridge._active_profile_name
+    _cleanup_staged_rotation = staticmethod(Bridge._cleanup_staged_rotation)
     rotate_ssh_key = Bridge.rotate_ssh_key
 
 
@@ -174,6 +176,45 @@ def test_connected_host_push_fail_still_blocks(tmp_path, monkeypatch):
     )
     # A connected host failing keeps the old key active.
     assert canonical.read_bytes() == old_bytes
+
+
+def test_rotation_refused_under_a_scoped_profile(tmp_path, monkeypatch):
+    # A scoped host profile hides its out-of-profile hosts, which would be orphaned
+    # on the old key if we committed. Rotation must refuse until All hosts is active.
+    hosts = [{"name": "alive", "ssh": "user@alive"}]
+    bridge, key_dir, canonical = _setup(tmp_path, monkeypatch, hosts, {"alive": True})
+    monkeypatch.setattr(bridge, "_active_profile_name", lambda: "prod")
+
+    old_bytes = canonical.read_bytes()
+    result = bridge.rotate_ssh_key()
+
+    assert result["ok"] is False and result["committed"] is False
+    assert "All hosts" in result["message"] and "prod" in result["message"]
+    # Old key untouched and nothing was staged (we returned before generating).
+    assert canonical.read_bytes() == old_bytes
+    assert not list(key_dir.glob("runspec_ed25519.new*"))
+
+
+def test_failed_rotation_cleans_up_staged_key_files(tmp_path, monkeypatch):
+    # One host failing to verify aborts the commit. The staged .new/.new.ppk/.new.pub
+    # files must not be left behind on disk (the reported "strange state").
+    hosts = [
+        {"name": "alive", "ssh": "user@alive"},
+        {"name": "broken", "ssh": "user@broken"},
+    ]
+    bridge, key_dir, canonical = _setup(
+        tmp_path, monkeypatch, hosts, {"alive": True, "broken": True}
+    )
+    monkeypatch.setattr(
+        executor, "ssh_run", _make_ssh_run({"user@broken": "verify_fail"})
+    )
+
+    result = bridge.rotate_ssh_key()
+
+    assert result["committed"] is False
+    assert canonical.exists()  # old key still active
+    # No staged rotation litter left behind.
+    assert not list(key_dir.glob("runspec_ed25519.new*"))
 
 
 def test_per_host_override_skipped(tmp_path, monkeypatch):

@@ -90,4 +90,15 @@ describe('SshTab rotation progress bar', () => {
       expect(screen.queryByText(/Pushing .* verifying/)).toBeNull(),
     )
   })
+
+  it('disables Rotate under a scoped host profile', async () => {
+    // A scoped profile would orphan its out-of-profile hosts, so rotation is only
+    // offered under All hosts; here the button is present but disabled.
+    render(<SshTab connectedHosts={['prod-1']} allRemoteHosts={['prod-1']} activeProfile="prod" />)
+    const btn = await screen.findByRole('button', { name: /rotate key/i })
+    expect((btn as HTMLButtonElement).disabled).toBe(true)
+    // No confirm action is reachable while it's gated.
+    expect(screen.queryByRole('button', { name: /^rotate$/i })).toBeNull()
+    expect(rotateSshKey).not.toHaveBeenCalled()
+  })
 })

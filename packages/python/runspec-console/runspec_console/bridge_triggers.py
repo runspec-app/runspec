@@ -196,20 +196,29 @@ class TriggersMixin:
         # needed — and restart_triggers() re-runs this once the window is up.
 
     def stop_triggers(self) -> None:
-        # Wake only *trigger* turns parked at the gate (ids that are trigger
-        # cards) so the engine's workers aren't stuck in event.wait() when we tear
-        # the executor down — without disturbing an in-flight chat turn (restart
-        # is also used by the enable/disable toggle). The chat source is not the
+        # Wake only trigger/schedule turns *parked at the autonomy gate* (blocked
+        # in event.wait() awaiting an operator decision), so tearing the executor
+        # down doesn't strand them — WITHOUT cancelling a turn that is actively
+        # running (streaming / executing a tool). restart_triggers() runs on every
+        # trigger/schedule save and the enable/disable toggle, so broadcasting the
+        # cancel to every card here silently killed an in-flight fire mid-run when
+        # the operator edited a trigger. A running turn is not registered in
+        # _pending_confirms, so intersecting with it excludes running turns while
+        # still freeing the parked ones. (True shutdown still cancels everything —
+        # _abort_all_turns, registered at atexit.) The chat source is not the
         # engine's to stop — it runs always-on (see start_chat/stop_chat).
         with self._lock:
             engine = self._trigger_engine
             self._trigger_engine = None
             schedule_source = self._schedule_source
             self._schedule_source = None
-            # Trigger *and* schedule cards — a scheduled agent turn parked at
-            # the gate must not outlive the source that fired it.
-            card_ids = set(self._trigger_cards) | set(self._schedule_cards)
-        self._abort_turns(card_ids)
+            trig_sched = set(self._trigger_cards) | set(self._schedule_cards)
+            # A turn is in _pending_confirms only while blocked at the gate; a
+            # running turn isn't, so this is exactly the gate-parked subset.
+            parked = {
+                cid for cid, _ev, _holder in self._pending_confirms.values()
+            } & trig_sched
+        self._abort_turns(parked)
         if schedule_source is not None:
             schedule_source.stop()
         if engine is not None:

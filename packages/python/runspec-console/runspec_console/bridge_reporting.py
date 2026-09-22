@@ -317,7 +317,13 @@ class ReportingMixin:
         """History across every host — local plus *connected* remotes — newest
         first. Disconnected remotes are skipped so a slow/offline host can't hang
         the read (the History tab uses this so a run shows up regardless of which
-        host it ran on; per-host scoping stays for Forms/Logs/etc.)."""
+        host it ran on; per-host scoping stays for Forms/Logs/etc.).
+
+        The connected remotes are read **concurrently** (bounded by ``[refresh]
+        workers``, the same cap every fleet sweep uses), so the History tab doesn't
+        wait on a serial chain of SSH reads on a large fleet — one slow host adds
+        its own latency, not the sum of all of them. Each host's read is isolated
+        so one failure never sinks the rest."""
         with self._lock:
             remotes = list(self._hosts)
             connected = dict(self._connected_cache)
@@ -325,12 +331,25 @@ class ReportingMixin:
         names += [
             h["name"] for h in remotes if h.get("name") and connected.get(h["name"])
         ]
-        records: list[dict[str, Any]] = []
-        for name in names:
+
+        def _read_one(name: str) -> list[dict[str, Any]]:
             try:
-                records.extend(self.get_history(name))
+                return self.get_history(name)
             except Exception:
                 logger.exception("history: read failed for host %s", name)
+                return []
+
+        records: list[dict[str, Any]] = []
+        if len(names) <= 1:
+            records = _read_one(names[0]) if names else []
+        else:
+            from concurrent.futures import ThreadPoolExecutor
+
+            with ThreadPoolExecutor(
+                max_workers=min(self._fanout_workers(), len(names))
+            ) as ex:
+                for chunk in ex.map(_read_one, names):
+                    records.extend(chunk)
         records.sort(key=lambda r: r.get("ts", ""), reverse=True)
         return records[:300]
 

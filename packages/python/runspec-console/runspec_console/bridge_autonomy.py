@@ -797,6 +797,36 @@ class AutonomyMixin:
         edited = holder.get("edited_input") if holder["approved"] else None
         return holder["approved"], edited
 
+    def _preflight_run_runnable(self, tool_input: dict[str, Any]) -> str | None:
+        """Validate a (search-mode) single ``run_runnable`` call against the cached
+        spec BEFORE the confirm gate. Returns an agent-readable error string to
+        short-circuit the turn, or ``None`` to proceed to the gate.
+
+        It resolves ``{id, host}`` and the command path exactly as ``_run_tool_sync``
+        does at dispatch, then runs the same ``_preflight_validate`` — hoisted
+        ahead of the gate so the agent naming an unknown subcommand (or a bad arg)
+        is bounced in-turn, instead of the operator being asked to approve a call
+        that can only error. Pure and cheap (in-memory cache reads only): it
+        registers no confirm and runs nothing, so the confirm gate itself is
+        entirely untouched. Mirrors ``use_tool``'s pre-gate preflight above.
+
+        Only reached when ``tool_name == "run_runnable"`` — i.e. search tool-mode.
+        The dedup/per_host modes name the tool after the runnable and defer command
+        validation to core, so they keep their existing post-gate behaviour."""
+        ti = dict(tool_input or {})
+        resolved = self._resolve_id_host(
+            str(ti.get("id") or ""), str(ti.get("host") or "")
+        )
+        if isinstance(resolved, str):
+            return resolved  # unknown/ambiguous runnable or host — a routing error
+        _host, _runnable, cached_r = resolved
+        call_args = self._coerce_run_args(ti.get("args"))
+        # `deliver` is an output-shaping directive, not a runnable arg — drop a
+        # misplaced one so preflight doesn't flag it as unknown (matches dispatch).
+        call_args.pop("deliver", None)
+        command_path = _command_path(ti)
+        return self._preflight_validate(cached_r, command_path, call_args)
+
     async def _gated_run_tool_async(
         self,
         tool_name: str,
@@ -857,6 +887,11 @@ class AutonomyMixin:
                     headless=headless,
                 )
                 return self._format_group_output(group, name, calls, outs)
+            # A single (non-group) run: validate command/args before gating so an
+            # unknown subcommand or bad arg is bounced in-turn, not after approval.
+            preflight = self._preflight_run_runnable(tool_input)
+            if preflight is not None:
+                return preflight
         if tool_name == "run_saved_run":
             # A saved run expands to concrete host__runnable calls and rides the
             # same grouped-confirm machinery as a group fan-out — the gate then
@@ -1262,6 +1297,11 @@ class AutonomyMixin:
                     chat_id, calls, noun=f"group '{group}' run"
                 )
                 return self._format_group_output(group, name, calls, outs)
+            # A single (non-group) run: validate command/args before gating so an
+            # unknown subcommand or bad arg is bounced in-turn, not after approval.
+            preflight = self._preflight_run_runnable(tool_input)
+            if preflight is not None:
+                return preflight
         if tool_name == "run_saved_run":
             # Same interception as the async gate: gate on the underlying
             # runnable(s), one grouped confirm, no blanket action-tool prompt.

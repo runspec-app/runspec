@@ -123,6 +123,7 @@ class _StubBridge:
         pass
 
     _public_key_for = Bridge._public_key_for
+    _effective_ssh_user = staticmethod(Bridge._effective_ssh_user)
     _push_key_over_password = Bridge._push_key_over_password
     copy_ssh_id_all = Bridge.copy_ssh_id_all
 

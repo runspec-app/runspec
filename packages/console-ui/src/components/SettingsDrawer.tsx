@@ -32,6 +32,9 @@ interface SettingsDrawerProps {
   allRemoteHosts?: string[]
   onHostsChanged?: () => void
   onKeyChanged?: () => void
+  // The active host profile ('' = All hosts). Key rotation is only offered under
+  // All hosts — a scoped profile would orphan its out-of-profile hosts.
+  activeProfile?: string
 }
 
 const PROVIDER_MODELS: Record<string, string> = {
@@ -689,7 +692,7 @@ function keyAgeDays(createdAt: string | null): number | null {
   return Math.floor((Date.now() - new Date(createdAt).getTime()) / (1000 * 60 * 60 * 24))
 }
 
-export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [] }: { onKeyChanged?: () => void; connectedHosts?: string[]; allRemoteHosts?: string[] }) {
+export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [], activeProfile = '' }: { onKeyChanged?: () => void; connectedHosts?: string[]; allRemoteHosts?: string[]; activeProfile?: string }) {
   const [form] = Form.useForm()
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -1052,7 +1055,17 @@ export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [] 
             </Button>
           </Popconfirm>
         )}
-        {keyPath && (
+        {keyPath && activeProfile ? (
+          // A scoped host profile hides its out-of-profile hosts, which would be
+          // orphaned on the old key. Offer rotation only under All hosts.
+          <Tooltip title={`Switch to the All hosts profile to rotate — the '${activeProfile}' profile hides its out-of-profile hosts, which would be left on the old key. (Copy key to hosts still works for a selection.)`}>
+            <span style={{ display: 'inline-block', cursor: 'not-allowed' }}>
+              <Button size="small" icon={<KeyOutlined />} disabled style={{ pointerEvents: 'none' }}>
+                Rotate key
+              </Button>
+            </span>
+          </Tooltip>
+        ) : keyPath && (
           <Popconfirm
             title="Rotate SSH key?"
             icon={disconnected.length > 0 ? <KeyOutlined style={{ color: '#fa8c16' }} /> : undefined}
@@ -6036,7 +6049,7 @@ export function VoiceTab() {
   )
 }
 
-export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, connectedHosts, allRemoteHosts }: SettingsDrawerProps) {
+export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, connectedHosts, allRemoteHosts, activeProfile }: SettingsDrawerProps) {
   // `[console] ai` off-switch: the agent tabs (Model / API, Runbooks, MCP
   // client, Chat History) are hidden; MCP Server, Telemetry and Tool visibility
   // stay (the last filters the MCP server's published tool list, so it is
@@ -6051,7 +6064,7 @@ export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, co
         size="small"
         tabPosition="left"
         items={visibleSettingsTabs([
-          { key: 'ssh',       label: 'SSH',        children: <SshTab onKeyChanged={onKeyChanged} connectedHosts={connectedHosts} allRemoteHosts={allRemoteHosts} /> },
+          { key: 'ssh',       label: 'SSH',        children: <SshTab onKeyChanged={onKeyChanged} connectedHosts={connectedHosts} allRemoteHosts={allRemoteHosts} activeProfile={activeProfile} /> },
           { key: 'llm',       label: 'Model / API',  children: <LlmTab /> },
           { key: 'jumpHosts', label: 'Jump Hosts',  children: <JumpHostsTab onHostsChanged={onHostsChanged} /> },
           { key: 'localVenvs', label: 'Local venvs', children: <LocalVenvsTab /> },

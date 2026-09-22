@@ -583,7 +583,12 @@ def _parse_log_by_run_id(
             "exitCode": extra.get("exit_code", 0),
             "durationMs": extra.get("duration_ms", 0),
             "ts": ts_raw,
-            "args": extra.get("args", {}),
+            # The core runnable engine records args under `invocation_args`
+            # (password-typed args deliberately excluded — never audited); the
+            # console's own synthetic audit records use `args`. Read the engine
+            # key first so a runnable run's History row carries its args (and
+            # Edit-&-rerun pre-fills), falling back to the synthetic `args`.
+            "args": extra.get("invocation_args") or extra.get("args", {}),
             "argSources": extra.get("arg_sources", {}),
             # Subcommand path (empty for a plain runnable) — needed so a History
             # rerun reconstructs the original subcommand invocation.
@@ -637,7 +642,12 @@ def _parse_log_sequential(
                 "exitCode": extra.get("exit_code", 0),
                 "durationMs": extra.get("duration_ms", 0),
                 "ts": ts_raw,
-                "args": extra.get("args", {}),
+                # The core runnable engine records args under `invocation_args`
+                # (password-typed args deliberately excluded — never audited); the
+                # console's own synthetic audit records use `args`. Read the engine
+                # key first so a runnable run's History row carries its args (and
+                # Edit-&-rerun pre-fills), falling back to the synthetic `args`.
+                "args": extra.get("invocation_args") or extra.get("args", {}),
                 "argSources": extra.get("arg_sources", {}),
                 "logLines": lines,
                 "initiatedBy": "llm" if extra.get("agent") else "user",

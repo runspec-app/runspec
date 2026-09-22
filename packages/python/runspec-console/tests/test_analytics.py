@@ -133,6 +133,31 @@ class TestParserIncludeExtra(unittest.TestCase):
         # reconstruct the original subcommand invocation.
         self.assertEqual(rec["commandPath"], ["sub"])
 
+    def test_args_come_from_invocation_args(self) -> None:
+        """A real runnable run records args under `invocation_args` (the engine
+        key), with no `args` key. The History record must surface them so the row
+        shows the args and Edit-&-rerun pre-fills."""
+        line = json.dumps(
+            {
+                "ts": "2026-07-22T10:00:00+00:00",
+                "level": "INFO",
+                "logger": "runspec.runsummary",
+                "message": "run completed",
+                "extra": {
+                    "event": "run_summary",
+                    "run_id": "r1",
+                    "runnable": "backup",
+                    "exit_code": 0,
+                    "duration_ms": 12,
+                    "invocation_args": {"env": "prod", "keep": "7"},
+                    "arg_sources": {"env": "cli", "keep": "cli"},
+                    # deliberately no "args" key — the engine never writes one
+                },
+            }
+        )
+        rec = _parse_log_text("backup", line, "local")[0]
+        self.assertEqual(rec["args"], {"env": "prod", "keep": "7"})
+
     def test_command_path_defaults_empty(self) -> None:
         rec = _parse_log_text("backup", _summary_line(run_id="r1"), "local")[0]
         self.assertEqual(rec["commandPath"], [])
@@ -358,6 +383,38 @@ class TestCollectLocal(_IsolatedHome):
         self.assertEqual(len(recs), 1)
         self.assertEqual(recs[0]["group"], "ops-tools")
         self.assertIn("extra", recs[0])  # rich fields retained
+
+
+class TestGetHistoryAll(unittest.TestCase):
+    def test_concurrent_merge_skips_disconnected_and_isolates_failures(self) -> None:
+        # get_history_all fans out across local + connected remotes concurrently.
+        # A disconnected remote is never read; one host's failure is isolated; the
+        # merged result is newest-first.
+        b = _make_bridge()
+        b._hosts = [
+            {"name": "prod-1", "ssh": "u@h1"},
+            {"name": "prod-2", "ssh": "u@h2"},  # connected but will raise
+            {"name": "prod-3", "ssh": "u@h3"},  # disconnected → must be skipped
+        ]
+        b._connected_cache = {"prod-1": True, "prod-2": True, "prod-3": False}
+
+        def fake_get_history(name, runnable=None):
+            if name == "local":
+                return [{"host": "local", "ts": "2026-01-01T00:00:00"}]
+            if name == "prod-1":
+                return [{"host": "prod-1", "ts": "2026-03-01T00:00:00"}]
+            if name == "prod-2":
+                raise RuntimeError("boom")  # isolated, must not sink the read
+            raise AssertionError(f"disconnected host {name} must not be read")
+
+        with (
+            patch.object(b, "get_history", side_effect=fake_get_history),
+            patch.object(b, "get_config", return_value={}),
+        ):
+            out = b.get_history_all()
+
+        # prod-1 (Mar) before local (Jan); prod-2's failure isolated; prod-3 skipped.
+        self.assertEqual([r["host"] for r in out], ["prod-1", "local"])
 
 
 class TestGetAnalyticsRemote(unittest.TestCase):
