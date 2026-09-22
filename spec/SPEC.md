@@ -58,6 +58,7 @@ Project-wide defaults. All fields are optional.
 | `version` | string | `"1"` | runspec spec version |
 | `logging` | table | — | Logging configuration. See [Logging](#logging). |
 | `runspec_env` | string | — | Path to a `.runspec_env` file. Relative paths resolve from `sys.prefix`. Per-runnable `runspec_env` wins. |
+| `meta` | table | — | Project-wide developer-defined metadata. Pass-through — runspec never interprets it. Orchestration emitters read project defaults here (e.g. `[config.meta.rundeck]` for `runspec emit --rundeck`). |
 
 ### Virtual Environment Identity
 
@@ -401,7 +402,14 @@ become_method   = "sudo"                                  # optional, default "s
 become_flags    = "-H"                                    # optional
 examples        = [...]                                   # optional, see Examples
 runspec_env     = "/path/to/.runspec_env"                 # optional, see .runspec_env File
+meta            = { ... }                                 # optional, developer-defined pass-through
 ```
+
+`meta` is a runnable-level pass-through table (parallel to arg-level `meta`):
+runspec never interprets it. It is where orchestration emitters read
+per-runnable settings — e.g. `[<name>.meta.rundeck]` for `runspec emit
+--rundeck` (venv, node filter, schedule, notifications). Project-wide defaults
+go under `[config.meta.rundeck]`.
 
 ### `examples`
 

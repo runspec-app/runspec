@@ -75,6 +75,7 @@ nav:
     - MCP server → runnable: mcp-to-runnable.md
     - Jump hosts: jump-hosts.md
     - Claude Code across your fleet: mcp.md
+    - Rundeck jobs: rundeck.md
     - Denylist: denylist.md
   - Distribution:
     - White-label walkthrough: white-label.md

@@ -13,6 +13,7 @@ examples = [
   {cmd = "runspec init",                   description = "Scaffold a new runnable in this directory"},
   {cmd = "runspec local",                  description = "Discover and validate runnables"},
   {cmd = "runspec test",                   description = "Smoke-test every installed runnable (CI gate)"},
+  {cmd = "runspec emit --rundeck",         description = "Emit Rundeck job definitions (JSON) per runnable"},
   {cmd = "runspec serve",                  description = "Start the MCP stdio server"},
   {cmd = "runspec jump user@host",          description = "List tools available on a remote host"},
   {cmd = "runspec env",                    description = "Show the resolved .runspec_env file"},
@@ -70,6 +71,30 @@ examples = [
 [runspec.commands.stubs.args]
 check = {type = "flag", description = "Verify the stub is up to date; do not write. Exit 1 if stale.", default = false}
 off   = {type = "flag", description = "Remove the stub, restoring the default Any-typed arg access.",   default = false}
+
+[runspec.commands.emit]
+description = "Emit orchestration job definitions from installed runnables (Rundeck job JSON)"
+autonomy    = "autonomous"
+
+examples = [
+  {cmd = "runspec emit --rundeck",                            description = "Write a Rundeck job JSON per runnable to jobs/"},
+  {cmd = "runspec emit --rundeck --venv /opt/app/.venv",      description = "Invoke via that venv's bin/ in the job scripts"},
+  {cmd = "runspec emit --rundeck --node-filter 'tags: web'",  description = "Dispatch to a node set (random subset=1 load-balance)"},
+  {cmd = "runspec emit --rundeck --runnable deploy",          description = "Emit only the 'deploy' runnable"},
+  {cmd = "runspec emit --rundeck --check",                    description = "Verify emitted jobs are up to date (CI); no write"},
+  {cmd = "runspec emit --rundeck --stdout | rd jobs load -F json -p prod", description = "Pipe the combined job array straight to rd"},
+]
+
+[runspec.commands.emit.args]
+rundeck     = {type = "flag", description = "Emit Rundeck job definitions (JSON)", default = false}
+venv        = {type = "str",  description = "Venv whose bin/ holds the runnable binaries (job script invocation path)", required = false}
+output-dir  = {type = "str",  description = "Directory to write jobs into (default: {git_root}/jobs)", short = "-d", required = false}
+runnable    = {type = "str",  description = "Emit only this runnable", short = "-r", required = false}
+group       = {type = "str",  description = "Rundeck job group (default: runspec)", required = false}
+node-filter = {type = "str",  description = "Rundeck node filter; enables orchestrator random-subset=1 load-balancing", required = false}
+project     = {type = "str",  description = "Rundeck project name (used for stable job UUIDs)", required = false}
+check       = {type = "flag", description = "Verify emitted files are up to date; write nothing. Exit 1 if stale (CI).", default = false}
+stdout      = {type = "flag", description = "Print the combined JSON array to stdout instead of writing files", default = false}
 
 [runspec.commands.test]
 description = "Smoke-test installed runnables: spec smoke + entry-point --help"

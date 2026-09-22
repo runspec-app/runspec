@@ -5,6 +5,8 @@ Commands:
     runspec init   [--name <name>] [--lang python|typescript|javascript]
                    [--example] [--write-project] [--project-dir <path>]
     runspec local  [--format text|json|mcp|openai|anthropic] [--runnable <name>]
+    runspec emit   --rundeck [--venv <path>] [--output-dir <dir>] [--runnable <name>]
+                   [--group <g>] [--node-filter <f>] [--project <p>] [--check] [--stdout]
     runspec test   [--format text|json] [--runnable <name>]
     runspec serve
     runspec jump   [--list-jump-hosts] [<jump_host> [<tool>] [-- tool-args...]]
@@ -63,6 +65,7 @@ def main() -> None:
         "init": cmd_init,
         "local": cmd_local,
         "stubs": cmd_stubs,
+        "emit": cmd_emit,
         "test": cmd_test,
         "serve": cmd_serve,
         "jump": cmd_jump,
@@ -229,6 +232,112 @@ def cmd_stubs(args: list[str]) -> None:
     target.write_text(content, encoding="utf-8")
     n = content.count("@overload") - 1
     print(f"✓  Wrote {rel} ({n} runnable{'s' if n != 1 else ''} typed).")
+
+
+def _rundeck_meta(source: str, runnable: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Read the raw `[config.meta.rundeck]` and `[<runnable>.meta.rundeck]` tables
+    from a runnable's `runspec.toml`.
+
+    Runnable-level `meta` is a pass-through the loader drops from the normalised
+    spec (loader `_normalise_script`), so the emitter reads it straight from the
+    raw TOML — keeping every Rundeck-specific setting out of the core spec."""
+    try:
+        raw = _load_toml_file(Path(source))
+    except Exception:
+        return {}, {}
+    config_meta = (raw.get("config", {}) or {}).get("meta", {}) or {}
+    runnable_meta = (raw.get(runnable, {}) or {}).get("meta", {}) or {}
+    return (config_meta.get("rundeck", {}) or {}, runnable_meta.get("rundeck", {}) or {})
+
+
+def cmd_emit(args: list[str]) -> None:
+    """Emit orchestration job definitions from the installed runnables.
+
+    Currently supports ``--rundeck`` (Rundeck job JSON, one file per leaf
+    command under ``{project_root}/jobs/``). Per-runnable settings (venv, node
+    filter, schedule, notifications, orchestrator) come from a
+    ``[<runnable>.meta.rundeck]`` table (project defaults in
+    ``[config.meta.rundeck]``); a few project-wide flags override. Mirrors
+    ``cmd_stubs``: same discovery, a ``--check`` drift guard, and a pure render
+    module (``rundeckgen``) that owns no I/O.
+    """
+    from runspec.inference import infer_script
+    from runspec.parser import parse as _parse
+
+    parsed = _parse(script_name="runspec", argv=["emit"] + args, config_path=_CLI_CONFIG)
+
+    if not parsed.rundeck.value:
+        print("✗  Specify an emit target: --rundeck")
+        sys.exit(1)
+
+    from runspec import rundeckgen
+
+    discovered = _deduplicate(_discover_installed())
+    runnable_filter = parsed.runnable.value
+    if runnable_filter:
+        discovered = [d for d in discovered if d["runnable"] == runnable_filter]
+
+    if not discovered:
+        print("No runspec-aware runnables found in this environment.")
+        print("Install a package that declares 'runspec' as a dependency,")
+        print("or run 'pip install -e .' from your project directory.")
+        sys.exit(1)
+
+    cli_opts = {
+        "venv": parsed.venv.value,
+        "group": parsed.group.value,
+        "node_filter": parsed.get("node-filter").value,
+        "project": parsed.project.value,
+    }
+
+    all_jobs: list[dict[str, Any]] = []
+    files: dict[str, list[dict[str, Any]]] = {}
+    missing_venv = False
+    for item in discovered:
+        runnable = item["runnable"]
+        config_meta, runnable_meta = _rundeck_meta(item["source"], runnable)
+        settings = rundeckgen.merge_settings(runnable, cli_opts, config_meta, runnable_meta)
+        if settings["venv"] is None:
+            missing_venv = True
+        inferred = infer_script(item["spec"], item.get("config_autonomy") or "confirm")
+        for job in rundeckgen.render_runnable(runnable, inferred, settings):
+            all_jobs.append(job)
+            files[rundeckgen.job_filename(job["name"])] = [job]
+
+    # Stdout mode: one combined JSON array for `| rd jobs load -F json`.
+    output_dir = parsed.get("output-dir").value
+    if parsed.stdout.value:
+        sys.stdout.write(rundeckgen.dumps(all_jobs))
+        return
+
+    root = _project_root()
+    out_dir = Path(output_dir) if output_dir else root / "jobs"
+
+    if parsed.check.value:
+        stale: list[str] = []
+        for fname, jobs in sorted(files.items()):
+            target = out_dir / fname
+            content = rundeckgen.dumps(jobs)
+            existing = target.read_text(encoding="utf-8") if target.exists() else None
+            if existing != content:
+                stale.append(fname + (" (missing)" if existing is None else " (out of date)"))
+        rel = out_dir.relative_to(root) if out_dir.is_relative_to(root) else out_dir
+        if stale:
+            print(f"✗  {rel} is out of date — run 'runspec emit --rundeck':")
+            for s in stale:
+                print(f"     {s}")
+            sys.exit(1)
+        print(f"✓  {rel} is up to date ({len(files)} job file{'s' if len(files) != 1 else ''}).")
+        return
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    rel = out_dir.relative_to(root) if out_dir.is_relative_to(root) else out_dir
+    for fname, jobs in sorted(files.items()):
+        (out_dir / fname).write_text(rundeckgen.dumps(jobs), encoding="utf-8")
+        print(f"Wrote {rel}/{fname}")
+    if missing_venv:
+        print("ℹ  No venv resolved for some runnables — job scripts invoke the bare")
+        print("   binary name (relies on PATH). Pass --venv or set meta.rundeck.venv.")
 
 
 def cmd_test(args: list[str]) -> None:

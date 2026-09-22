@@ -417,10 +417,18 @@ the custom `register_type` names demonstrated in the docs.)
 **Next:** Config-file value fallback (third tier in value resolution, currently "design for now").
 
 **Queued:**
-- `runspec emit --rundeck` — emit a Rundeck job YAML per runnable to
-  `jobs/{runnable}.yaml` at the git root. Always uses a Bash script step
-  (not exec) so flag args can be conditionally included. Output goes to
-  file; user uploads via Rundeck UI. See `docs/design/emit-ansible-rundeck.md`.
+- `runspec emit --rundeck` — **shipped** (0.52.0). Emits a Rundeck job
+  **JSON** (stdlib only, no YAML dep) per **leaf command** to
+  `jobs/{job}.json` at the git root, targeting Rundeck 4.17.6. Always a Bash
+  **script step** (not exec) rebuilding the CLI from `RD_OPTION_*` env vars so
+  flag args are conditional; `password` → a Rundeck **secure option** injected
+  on the runspec secret channel (never on argv); `--node-filter` adds
+  orchestrator **random subset=1** load-balancing; schedule + notifications
+  from `[<runnable>.meta.rundeck]` (project defaults `[config.meta.rundeck]`);
+  stable uuid5 so re-import updates in place; `--check` (CI drift) + `--stdout`
+  (`| rd jobs load -F json`). Pure `rundeckgen.py` + `cli.cmd_emit`; needs the
+  runnable/config-level `meta` pass-through added to the schema in 0.52.0. See
+  `docs/rundeck.md`, `docs/design/emit-ansible-rundeck.md`. Node port follows.
 - `runspec emit --ansible` — emit an Ansible module Python file per
   runnable to `library/{runnable}.py`. Generates `DOCUMENTATION`,
   `argument_spec`, and subprocess invocation from `runspec.toml`. Full

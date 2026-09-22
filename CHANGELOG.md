@@ -7,6 +7,35 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.52.0] — 2026-09-22
+
+### Added
+- **`runspec emit --rundeck` — generate Rundeck job definitions (JSON) from
+  runnables.** Makes `runspec.toml` the single source of truth for a Rundeck
+  fleet: one job per **leaf command** (a runnable with subcommands flattens like
+  `runspec serve` — `cron_add`, `cron_list`), written to `{git_root}/jobs/` (or
+  `--output-dir`, or `--stdout` to pipe the combined array into `rd jobs load -F
+  json`). Targets Rundeck 4.17.6; emits **JSON** (stdlib only, no YAML
+  dependency). Each job runs one Bash **script step** that rebuilds the CLI from
+  `RD_OPTION_*` env vars — named args guarded non-empty, `flag` args wrapped in
+  a `"true"` test, positionals in `position` order, `rest` word-split after
+  `--`. Type mapping: `int`/`float` → validating `regex`; `choice`/`flag` →
+  `values` + `enforced`; **`password` → a Rundeck secure option (`secure`,
+  `valueExposed`) injected via the runspec secret channel
+  (`RUNSPEC_<RUNNABLE>_ARG_<NAME>`), never on the command line.** Opt-in node
+  dispatch: a `--node-filter` (or `meta.rundeck.node_filter`) adds an
+  orchestrator **random subset = 1** for load-balancing across a node set;
+  `schedule` (Quartz crontab) and `notification` (email/webhook) come from
+  `meta.rundeck`. Jobs carry a **stable UUID** (uuid5 of project/group/name) so
+  re-emit + re-import updates in place. A `--check` mode guards drift in CI.
+  Pure generator in `rundeckgen.py`; CLI in `cli.cmd_emit`. See
+  `docs/rundeck.md`.
+- **Runnable- and config-level `meta` pass-through.** `[<runnable>.meta.…]` and
+  `[config.meta.…]` are now schema-valid free-form metadata tables (parallel to
+  the existing arg-level `meta`) — runspec never interprets them. This is where
+  orchestration emitters read their settings (e.g. `[<runnable>.meta.rundeck]`).
+  Backward-compatible: no existing file relied on these being rejected.
+
 ## [0.51.2] — 2026-09-16
 
 ### Fixed
