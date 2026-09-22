@@ -286,6 +286,10 @@ export interface OwnMcpServerStatus {
   tools: number
   builtins?: number
   tool_style?: string
+  // Tools dropped at the last tools/list because their inputSchema was invalid
+  // draft 2020-12 (so the Anthropic API would 400 the whole list). Surfaced so a
+  // drop is visible in the UI, not just in runspec-console.log.
+  invalid_tools?: { name: string; reason: string }[]
 }
 
 // Settings → Config Sync. Where to pull the console's config files from (a git

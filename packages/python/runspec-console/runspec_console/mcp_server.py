@@ -79,6 +79,32 @@ def sanitize_tool_name(name: str) -> str:
     return (out[:_MAX_TOOL_NAME] or "tool").strip("_") or "tool"
 
 
+def _coerce_bound(value: Any) -> int | float | None:
+    """A ``range`` bound as a JSON-Schema number, or ``None`` when it isn't one.
+
+    ``minimum``/``maximum`` MUST be numbers under draft 2020-12; a string (a
+    mis-authored ``range = ["1", "9"]``, or a range on a non-numeric arg) makes
+    the schema invalid, and one bad tool schema is rejected by the Anthropic API
+    for the **whole** ``tools`` array (``tools.N.custom.input_schema: ... must
+    match JSON Schema draft 2020-12``), so a connecting agent can't see any tool.
+    A numeric string is coerced (the constraint is preserved); a ``bool`` or a
+    non-numeric value yields ``None`` so the caller drops the bound entirely."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return value
+    if isinstance(value, str):
+        s = value.strip()
+        try:
+            return int(s)
+        except ValueError:
+            try:
+                return float(s)
+            except ValueError:
+                return None
+    return None
+
+
 def _arg_property(arg: dict[str, Any]) -> dict[str, Any]:
     """One discovered arg → a JSON-Schema property. Mirrors
     ``catalog.arg_to_property`` but kept local so this module has no import cycle."""
@@ -97,7 +123,11 @@ def _arg_property(arg: dict[str, Any]) -> dict[str, Any]:
         prop["enum"] = list(arg["options"])
     rng = arg.get("range")
     if isinstance(rng, (list, tuple)) and len(rng) == 2:
-        prop["minimum"], prop["maximum"] = rng[0], rng[1]
+        # Only emit numeric bounds — a non-numeric range would make the tool
+        # schema invalid draft 2020-12 and take down the whole published list.
+        lo, hi = _coerce_bound(rng[0]), _coerce_bound(rng[1])
+        if lo is not None and hi is not None:
+            prop["minimum"], prop["maximum"] = lo, hi
     return prop
 
 
@@ -119,6 +149,57 @@ def _input_schema(args: list[dict[str, Any]]) -> dict[str, Any]:
     if required:
         schema["required"] = required
     return schema
+
+
+def schema_invalidity(schema: dict[str, Any]) -> str:
+    """``""`` if ``schema`` is a valid JSON Schema draft 2020-12, else a one-line
+    reason. Used as a **publish-time backstop**: the Anthropic API rejects the
+    *entire* ``tools`` array if any one tool's ``input_schema`` is invalid (``400
+    tools.N.custom.input_schema: ... must match JSON Schema draft 2020-12``), so a
+    single malformed runnable makes a connecting agent see *no* tools at all —
+    with no hint which runnable is at fault. Validating here lets the server drop
+    (and name) just the offender and publish the rest.
+
+    Delegates to the stdlib-only :func:`runspec.schemacheck.schema_issue` (core is
+    a hard dependency of this package, so it is always importable and needs no
+    extra — unlike ``jsonschema``, which only ships with the ``mcp`` extra and so
+    is absent from the test env). It covers exactly the keywords the console emits
+    and agrees with a real draft-2020-12 validator on them. A missing/old core
+    (``< 0.54.0``, no ``schemacheck``) falls back to ``""`` — never over-filter."""
+    try:
+        from runspec.schemacheck import schema_issue
+    except Exception:  # pragma: no cover — core >= 0.54.0 always has schemacheck
+        return ""
+    return schema_issue(schema)
+
+
+def drop_invalid_tools(
+    candidates: list[tuple[str, str | None, dict[str, Any]]],
+) -> tuple[list[tuple[str, str | None, dict[str, Any]]], list[dict[str, str]]]:
+    """Split ``(name, description, schema)`` tool candidates into the publishable
+    ones and a list of ``{"name", "reason"}`` records for those dropped (invalid
+    draft 2020-12 — see :func:`schema_invalidity`). Logs each drop.
+
+    The ``invalid`` records are surfaced in :meth:`ConsoleMcpServer.status` (and so
+    in the Settings → MCP Server tab) so a dropped tool is **not** a silent failure
+    the operator can only find in ``runspec-console.log`` — they see which runnable
+    couldn't be published, and why, in the UI."""
+    valid: list[tuple[str, str | None, dict[str, Any]]] = []
+    invalid: list[dict[str, str]] = []
+    for name, description, schema in candidates:
+        reason = schema_invalidity(schema)
+        if reason:
+            invalid.append({"name": name, "reason": reason})
+            logger.warning(
+                "mcp_server: not publishing tool %r — its inputSchema is not valid "
+                "JSON Schema draft 2020-12 (%s). Fix that runnable's arg spec; the "
+                "rest of the tool list is unaffected.",
+                name,
+                reason,
+            )
+        else:
+            valid.append((name, description, schema))
+    return valid, invalid
 
 
 @dataclass
@@ -444,6 +525,10 @@ class _State:
     token: str | None = None
     registry: dict[str, ExecTool] = field(default_factory=dict)
     builtin_names: set[str] = field(default_factory=set)
+    # Tools dropped at the last tools/list because their schema was invalid draft
+    # 2020-12 ([{"name", "reason"}]) — surfaced in status() so it isn't a silent
+    # failure the operator can only find in the log.
+    invalid_tools: list[dict[str, str]] = field(default_factory=list)
 
 
 class ConsoleMcpServer:
@@ -514,6 +599,7 @@ class ConsoleMcpServer:
                 "tools": len(s.registry),
                 "builtins": len(s.builtin_names),
                 "tool_style": self._tool_style,
+                "invalid_tools": list(s.invalid_tools),
             }
 
     def _build_registry(self, default_autonomy: str | None) -> dict[str, ExecTool]:
@@ -665,22 +751,28 @@ class ConsoleMcpServer:
             with self._lock:
                 self._state.registry = registry
                 self._state.builtin_names = {b["name"] for b in builtins}
-            tools = [
-                types.Tool(
-                    name=t.name,
-                    description=t.description or None,
-                    input_schema=t.input_schema,
-                )
-                for t in registry.values()
+            # Publish-time backstop: drop (and name) any tool whose schema isn't
+            # valid draft 2020-12 so one malformed runnable can't make the whole
+            # `tools` array 400 for a connecting agent (see `schema_invalidity`).
+            # The dropped set is recorded on the state → status() → the Settings
+            # tab, so it's a visible failure, not a log-only one.
+            candidates: list[tuple[str, str | None, dict[str, Any]]] = [
+                (t.name, t.description, t.input_schema) for t in registry.values()
             ]
-            tools += [
-                types.Tool(
-                    name=b["name"],
-                    description=b.get("description") or None,
-                    input_schema=b.get("input_schema")
-                    or {"type": "object", "properties": {}},
+            candidates += [
+                (
+                    b["name"],
+                    b.get("description"),
+                    b.get("input_schema") or {"type": "object", "properties": {}},
                 )
                 for b in builtins
+            ]
+            valid, invalid = drop_invalid_tools(candidates)
+            with self._lock:
+                self._state.invalid_tools = invalid
+            tools = [
+                types.Tool(name=name, description=desc or None, input_schema=schema)
+                for name, desc, schema in valid
             ]
             return types.ListToolsResult(tools=tools)
 

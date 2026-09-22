@@ -93,4 +93,15 @@ describe('McpServerTab', () => {
     expect(await screen.findByText('http://127.0.0.1:8765/mcp')).toBeTruthy()
     expect(screen.getByText(/7 tool\(s\)/)).toBeTruthy()
   })
+
+  it('surfaces dropped-tool warnings from status (not a silent log-only failure)', async () => {
+    statusFn.mockResolvedValue({
+      ...OFF, running: true, url: 'http://127.0.0.1:8765/mcp', tools: 5,
+      invalid_tools: [{ name: 'internal-metric', reason: "'9' is not of type 'number'" }],
+    })
+    await act(async () => { render(<McpServerTab />) })
+    expect(await screen.findByText(/1 runnable\(s\) not published/)).toBeTruthy()
+    expect(screen.getByText('internal-metric')).toBeTruthy()
+    expect(screen.getByText(/is not of type 'number'/)).toBeTruthy()
+  })
 })

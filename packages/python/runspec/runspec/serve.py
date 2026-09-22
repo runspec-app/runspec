@@ -151,10 +151,41 @@ def serve() -> None:
             arg_specs[flat_name] = arg_spec
             exec_specs[flat_name] = exec_spec
 
+    # Publish-time backstop: drop (and name on stderr) any tool whose inputSchema
+    # isn't valid draft 2020-12. The Anthropic API rejects the WHOLE tools array
+    # over one bad schema, so a single malformed runnable would otherwise make a
+    # connecting agent see no tools at all. Dropping just the offender keeps the
+    # rest usable; the stderr line (MCP hosts capture a server's stderr to their
+    # log) names the runnable + reason to fix.
+    _drop_invalid_schemas(tools, arg_specs, exec_specs)
+
     # Single-package venvs use that package's [config] name; multi-package
     # venvs fall back to the venv directory name to avoid arbitrary choice.
     server_config = next(iter(configs_by_source.values())) if len(configs_by_source) == 1 else {}
     _mcp_loop(tools, arg_specs, exec_specs, _server_name(server_config))
+
+
+def _drop_invalid_schemas(
+    tools: dict[str, dict[str, Any]],
+    arg_specs: dict[str, dict[str, Any]],
+    exec_specs: dict[str, dict[str, Any]],
+) -> None:
+    """Remove any tool whose ``inputSchema`` is invalid draft 2020-12 from all
+    three maps in place, warning on stderr for each (see :mod:`runspec.schemacheck`
+    and the backstop rationale at the call site)."""
+    from runspec.schemacheck import schema_issue
+
+    for flat_name in list(tools):
+        reason = schema_issue(tools[flat_name].get("inputSchema") or {})
+        if not reason:
+            continue
+        sys.stderr.write(
+            f"runspec serve: not publishing '{flat_name}' — its inputSchema is not valid JSON Schema draft 2020-12 ({reason}). Fix that runnable's arg spec; the rest of the tools are unaffected.\n"
+        )
+        sys.stderr.flush()
+        tools.pop(flat_name, None)
+        arg_specs.pop(flat_name, None)
+        exec_specs.pop(flat_name, None)
 
 
 # ── MCP loop ──────────────────────────────────────────────────────────────────

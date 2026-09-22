@@ -8,6 +8,28 @@ from __future__ import annotations
 from runspec.cli import _build_schema
 
 
+def test_numeric_range_emits_minimum_maximum():
+    script = {"autonomy": "confirm", "args": {"workers": {"type": "int", "range": [1, 32]}}}
+    prop = _build_schema("run", script, "mcp")["inputSchema"]["properties"]["workers"]
+    assert prop["minimum"] == 1 and prop["maximum"] == 32
+
+
+def test_string_range_is_coerced_to_numbers():
+    # A mis-authored range = ["1", "9"] must not emit string minimum/maximum —
+    # that's invalid draft 2020-12 and gets the whole tool list rejected. Numeric
+    # strings are coerced so the constraint survives.
+    script = {"autonomy": "confirm", "args": {"lvl": {"type": "int", "range": ["1", "9"]}}}
+    prop = _build_schema("run", script, "mcp")["inputSchema"]["properties"]["lvl"]
+    assert prop["minimum"] == 1 and prop["maximum"] == 9
+    assert isinstance(prop["minimum"], int) and isinstance(prop["maximum"], int)
+
+
+def test_non_numeric_range_drops_the_bounds():
+    script = {"autonomy": "confirm", "args": {"tag": {"type": "str", "range": ["a", "z"]}}}
+    prop = _build_schema("run", script, "mcp")["inputSchema"]["properties"]["tag"]
+    assert "minimum" not in prop and "maximum" not in prop
+
+
 def _script(output=None, **kwargs):
     base = {"autonomy": "confirm", "args": {}}
     if output is not None:

@@ -39,6 +39,31 @@ _TYPE_MAP = {
 }
 
 
+def _coerce_bound(value: Any) -> int | float | None:
+    """A ``range`` bound as a JSON-Schema number, or ``None`` when it isn't one.
+
+    ``minimum``/``maximum`` must be numbers under draft 2020-12; a string bound (a
+    mis-authored ``range``, or a range on a non-numeric arg) makes the schema
+    invalid, which the Anthropic API rejects for the *whole* published tool list.
+    A numeric string is coerced (the constraint survives); anything else yields
+    ``None`` so the caller drops the bound. Kept local to match
+    ``mcp_server._coerce_bound`` without coupling the two modules."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return value
+    if isinstance(value, str):
+        s = value.strip()
+        try:
+            return int(s)
+        except ValueError:
+            try:
+                return float(s)
+            except ValueError:
+                return None
+    return None
+
+
 def arg_to_property(arg: dict[str, Any]) -> dict[str, Any]:
     """One discovered ArgDef → a JSON-Schema property for the visitor form."""
     prop: dict[str, Any] = {"type": _TYPE_MAP.get(str(arg.get("type")), "string")}
@@ -50,7 +75,9 @@ def arg_to_property(arg: dict[str, Any]) -> dict[str, Any]:
         prop["enum"] = list(arg["options"])
     rng = arg.get("range")
     if isinstance(rng, (list, tuple)) and len(rng) == 2:
-        prop["minimum"], prop["maximum"] = rng[0], rng[1]
+        lo, hi = _coerce_bound(rng[0]), _coerce_bound(rng[1])
+        if lo is not None and hi is not None:
+            prop["minimum"], prop["maximum"] = lo, hi
     ui = arg.get("ui")
     # A multi-value choice presents as an array-of-enum with a "multiselect" hint,
     # so the room form can render a real multi-select (each item still validated

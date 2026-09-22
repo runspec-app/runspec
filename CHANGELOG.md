@@ -7,6 +7,33 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.54.0] — 2026-09-22
+
+### Added
+- **`runspec serve` isolates an invalid tool schema instead of blanking the whole
+  list.** An MCP client (Claude Code) forwards every tool's `inputSchema` to the
+  model provider, and the Anthropic API rejects the **entire** `tools` array if
+  any one is invalid draft 2020-12 (`400 tools.N.custom.input_schema: JSON schema
+  is invalid. It must match JSON Schema draft 2020-12`) — so a single malformed
+  runnable made a connecting agent see *no* tools at all, with no hint which one.
+  `runspec serve` now validates each tool's schema at publish time and **drops
+  just the offender**, writing a stderr line (which MCP hosts capture to their
+  log) naming the runnable + reason; the rest of the tools publish normally. New
+  stdlib-only `runspec.schemacheck` (`schema_issue` / `drop_invalid_tools`) — the
+  core library keeps its zero-runtime-dependency contract, so it can't use
+  `jsonschema`; the check covers exactly the keywords runspec emits (numeric
+  bounds, length keywords, `pattern`, tuple `items`, `type`) and agrees with a
+  real draft-2020-12 validator on them.
+
+### Fixed
+- **Non-numeric `range` bounds no longer emit an invalid schema.** A tool schema
+  whose `minimum`/`maximum` came from a string `range` (`range = ["1", "9"]`, or
+  a range on a non-numeric arg) is invalid draft 2020-12. `_arg_to_json_schema`
+  now coerces a numeric string bound (`"9"` → `9`, so the constraint survives)
+  and drops a bound that isn't a number, keeping the runnable usable rather than
+  dropped by the backstop above.
+
+
 ## [node-0.39.0] — 2026-09-22
 
 ### Added

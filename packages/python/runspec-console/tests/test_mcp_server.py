@@ -64,6 +64,87 @@ def test_flat_runnable_one_tool_password_omitted_required_set():
     assert registry["greet"] is t
 
 
+def test_numeric_range_becomes_minimum_maximum():
+    r = _runnable(
+        "svc",
+        autonomy="autonomous",
+        args=[{"name": "workers", "type": "int", "default": 4, "range": [1, 32]}],
+    )
+    prop = m.build_tools([r])[0][0].input_schema["properties"]["workers"]
+    assert prop["minimum"] == 1 and prop["maximum"] == 32
+
+
+def test_string_range_is_coerced_not_left_as_string():
+    # A mis-authored range = ["1", "9"] (or a range on a non-numeric arg) must not
+    # emit string minimum/maximum — that is invalid JSON Schema draft 2020-12, and
+    # the Anthropic API rejects the WHOLE published tool list over one bad schema
+    # (`tools.N.custom.input_schema: ... must match JSON Schema draft 2020-12`),
+    # so a connecting agent (Claude Code) sees no tools at all. Numeric strings are
+    # coerced so the bound still applies.
+    r = _runnable(
+        "svc",
+        autonomy="autonomous",
+        args=[{"name": "level", "type": "int", "range": ["1", "9"]}],
+    )
+    prop = m.build_tools([r])[0][0].input_schema["properties"]["level"]
+    assert prop["minimum"] == 1 and prop["maximum"] == 9
+    assert isinstance(prop["minimum"], int) and isinstance(prop["maximum"], int)
+
+
+def test_schema_invalidity_flags_string_bounds_and_bad_pattern():
+    # Delegates to the stdlib runspec.schemacheck (core is a hard dep, so no extra
+    # needed) — catches the same constructs the Anthropic API rejects: string
+    # numeric bounds, an invalid regex pattern, a draft-04-style tuple `items`.
+    # A valid schema returns "".
+    assert m.schema_invalidity({"type": "object", "properties": {}}) == ""
+    assert m.schema_invalidity(
+        {"type": "object", "properties": {"n": {"type": "integer", "minimum": "9"}}}
+    )
+    assert m.schema_invalidity(
+        {"type": "object", "properties": {"x": {"type": "string", "pattern": "[a-z"}}}
+    )
+    assert m.schema_invalidity(
+        {"type": "object", "properties": {"x": {"type": "array", "items": [{}]}}}
+    )
+
+
+def test_drop_invalid_tools_partitions_and_records(caplog):
+    # The publish-time backstop: an invalid tool schema is dropped (and named, both
+    # in a warning AND in the returned records the status surfaces) so one bad
+    # runnable can't 400 the WHOLE published tool list.
+    import logging
+
+    candidates = [
+        ("ok", "d", {"type": "object", "properties": {}}),
+        (
+            "bad",
+            "d",
+            {
+                "type": "object",
+                "properties": {"n": {"type": "integer", "minimum": "9"}},
+            },
+        ),
+    ]
+    with caplog.at_level(logging.WARNING):
+        valid, invalid = m.drop_invalid_tools(candidates)
+    assert [c[0] for c in valid] == ["ok"]
+    assert invalid == [{"name": "bad", "reason": invalid[0]["reason"]}]
+    assert "bad" in invalid[0]["reason"] or "9" in invalid[0]["reason"]
+    assert "bad" in caplog.text and "draft 2020-12" in caplog.text
+
+
+def test_non_numeric_range_drops_the_bounds():
+    # A range whose bounds aren't numbers at all can't constrain a schema; drop
+    # them rather than emit an invalid one that breaks the whole tool list.
+    r = _runnable(
+        "svc",
+        autonomy="autonomous",
+        args=[{"name": "tag", "type": "str", "range": ["a", "z"]}],
+    )
+    prop = m.build_tools([r])[0][0].input_schema["properties"]["tag"]
+    assert "minimum" not in prop and "maximum" not in prop
+
+
 def test_per_arg_autonomy_escalates():
     r = _runnable(
         "svc",

@@ -2,6 +2,16 @@
 
 All notable changes to `runspec-mcp` are documented here.
 
+## [0.1.3]
+
+Isolate an invalid tool schema instead of blanking the whole fleet list. The
+Anthropic API rejects the entire `tools` array over one invalid `inputSchema`
+(`400 tools.N.custom.input_schema: ... must match JSON Schema draft 2020-12`), so
+a single malformed runnable on any host made Claude Code see no fleet tools at
+all. The catalog now drops (and logs) just the offending tool via
+`runspec.schemacheck.schema_issue`, keeping the rest of the fleet usable.
+Requires `runspec >= 0.54.0` (which adds `runspec.schemacheck`).
+
 ## [0.1.2]
 
 Sync the vendored `configmerge` copy with runspec-console, fixing the

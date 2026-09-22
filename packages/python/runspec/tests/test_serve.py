@@ -146,6 +146,24 @@ def test_tools_list_shape():
     assert "tools" in resp["result"]
 
 
+def test_drop_invalid_schemas_removes_only_the_offender(capsys):
+    # A single runnable with an invalid schema must not take the list down: it is
+    # dropped from all three maps (with a stderr warning) and the rest survive.
+    from runspec.serve import _drop_invalid_schemas
+
+    tools = {
+        "ok": {"name": "ok", "inputSchema": {"type": "object", "properties": {}}},
+        "bad": {"name": "bad", "inputSchema": {"type": "object", "properties": {"n": {"type": "integer", "minimum": "9"}}}},
+    }
+    arg_specs = {"ok": {}, "bad": {}}
+    exec_specs = {"ok": {"command": None}, "bad": {"command": None}}
+    _drop_invalid_schemas(tools, arg_specs, exec_specs)
+    assert set(tools) == {"ok"}
+    assert set(arg_specs) == {"ok"} and set(exec_specs) == {"ok"}
+    err = capsys.readouterr().err
+    assert "bad" in err and "draft 2020-12" in err
+
+
 # ── _dispatch ─────────────────────────────────────────────────────────────────
 
 

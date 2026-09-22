@@ -234,6 +234,10 @@ export default function App() {
     window.addEventListener('mouseup', onUp)
   }
   const [settingsOpen, setSettingsOpen] = useState(false)
+  // When a warning deep-links into Settings (e.g. the MCP-server badge), which
+  // tab to open on. Cleared on close so an ordinary open keeps its last tab.
+  const [settingsTab, setSettingsTab] = useState<string | undefined>(undefined)
+  const openSettings = (tab?: string) => { setSettingsTab(tab); setSettingsOpen(true) }
   // Mount the (lazy, large) Settings drawer on its first open and keep it mounted
   // after, so open/close still animates and its tab state survives — it just
   // stays out of the initial bundle until you first open Settings.
@@ -250,6 +254,12 @@ export default function App() {
   const [transferOpen, setTransferOpen] = useState(false)
   const [copyKeyHost, setCopyKeyHost] = useState<string | null>(null)
   const [sshKeyAgeDays, setSshKeyAgeDays] = useState<number | null>(null)
+  // Tools the console's own MCP server couldn't publish (invalid draft-2020-12
+  // schema — see mcp_server_status). Drives the gear badge; a newly-broken
+  // runnable also raises a one-time toast (mcpInvalidSeen tracks what we've
+  // already flagged so a steady state doesn't re-toast every poll).
+  const [mcpInvalidTools, setMcpInvalidTools] = useState<{ name: string; reason: string }[]>([])
+  const mcpInvalidSeen = useRef<Set<string>>(new Set())
   const [runnables, setRunnables] = useState<Runnable[]>([])
   const [runnablesLoading, setRunnablesLoading] = useState(true)
   // Fleet-discovery readiness — drives the "discovering N/M hosts…" indicator
@@ -423,6 +433,36 @@ export default function App() {
   }
 
   useEffect(() => { loadSshKeyAge() }, [])
+
+  // Poll the console's own MCP server for tools it had to drop (invalid schema).
+  // A dropped tool is otherwise a silent failure — the operator never sees the
+  // log. This drives the gear badge (below) and toasts once per newly-broken
+  // runnable, pointing at Settings → MCP Server for the name + reason.
+  useEffect(() => {
+    const load = () => {
+      bridge.mcp_server_status().then(st => {
+        const invalid = st?.invalid_tools ?? []
+        setMcpInvalidTools(invalid)
+        const fresh = invalid.filter(t => !mcpInvalidSeen.current.has(t.name))
+        if (fresh.length) {
+          message.warning({
+            key: 'mcp-invalid-tools',
+            content: `${fresh.length} runnable${fresh.length === 1 ? '' : 's'} couldn't be published to the MCP server (invalid tool schema). Open Settings → MCP Server.`,
+            duration: 8,
+            onClick: () => openSettings('mcpServer'),
+            style: { cursor: 'pointer' },
+          })
+        }
+        // Track the current broken set: a recovered runnable is forgotten so a
+        // later re-break toasts again.
+        mcpInvalidSeen.current = new Set(invalid.map(t => t.name))
+      }).catch(() => {})
+    }
+    load()
+    const t = setInterval(load, 6000)
+    return () => clearInterval(t)
+  }, [])
+
   useEffect(() => { if (view === 'analytics') setAnalyticsVisited(true) }, [view])
   // An AI-only tab can't stay selected once the flag resolves to off.
   useEffect(() => { if (!aiEnabled && AI_ONLY_VIEWS.has(view)) setView('console') }, [aiEnabled, view])
@@ -1428,9 +1468,17 @@ export default function App() {
                 <Tooltip title="Transfer files (SFTP) — download, upload, fan-out, or relay between hosts">
                   <Button type="text" size="small" icon={<SwapOutlined />} onClick={() => setTransferOpen(true)} style={{ color: iconCol }} />
                 </Tooltip>
-                <Tooltip title={sshKeyAgeDays !== null && sshKeyAgeDays >= 75 ? `SSH key ${sshKeyAgeDays}d old — rotation recommended` : 'Settings'}>
-                  <Badge dot={sshKeyAgeDays !== null && sshKeyAgeDays >= 75} color="orange" offset={[-4, 4]}>
-                    <Button type="text" size="small" icon={<SettingOutlined />} onClick={() => setSettingsOpen(true)} style={{ color: iconCol }} />
+                <Tooltip title={
+                  mcpInvalidTools.length > 0
+                    ? `${mcpInvalidTools.length} runnable(s) not published to the MCP server — invalid tool schema. Open Settings → MCP Server.`
+                    : sshKeyAgeDays !== null && sshKeyAgeDays >= 75 ? `SSH key ${sshKeyAgeDays}d old — rotation recommended` : 'Settings'
+                }>
+                  <Badge
+                    dot={mcpInvalidTools.length > 0 || (sshKeyAgeDays !== null && sshKeyAgeDays >= 75)}
+                    color={mcpInvalidTools.length > 0 ? 'red' : 'orange'}
+                    offset={[-4, 4]}
+                  >
+                    <Button type="text" size="small" icon={<SettingOutlined />} onClick={() => openSettings(mcpInvalidTools.length > 0 ? 'mcpServer' : undefined)} style={{ color: iconCol }} />
                   </Badge>
                 </Tooltip>
               </div>
@@ -1642,7 +1690,8 @@ export default function App() {
         <Suspense fallback={null}>
         <SettingsDrawer
           open={settingsOpen}
-          onClose={() => setSettingsOpen(false)}
+          initialTab={settingsTab}
+          onClose={() => { setSettingsOpen(false); setSettingsTab(undefined) }}
           connectedHosts={hosts.filter(h => h.connected && h.name !== 'local' && h.role !== undefined).map(h => h.name)}
           allRemoteHosts={hosts.filter(h => h.name !== 'local' && h.role !== undefined).map(h => h.name)}
           activeProfile={activeProfile}

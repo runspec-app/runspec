@@ -8,6 +8,50 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.280.1] — 2026-09-22
+
+### Fixed
+
+- **MCP server: a confirm-gated tool call now shows an Approve/Deny card even
+  with `[console] ai = false`.** When an external agent (Claude Code) called a
+  `confirm`/`supervised` tool over the console's own MCP server, the parked
+  confirm was registered under a fixed `__mcp_server__` chat id that had no
+  session and no transcript block — so the Approve/Deny prompt rendered nowhere,
+  and the call silently timed out. It was worst with AI off, where there is no
+  chat session for it to fall back on. Each gated MCP call now mints its own
+  **visible Console run card** (`card_id` == the confirm chat id == the run
+  `inv_id`), so the gate, the streamed output and the run's completion all attach
+  to one read-only block in the always-present Console tab; the operator approves
+  it whether or not AI is enabled. Concurrent MCP confirms no longer collide on
+  the shared id either. (`bridge_mcp_server._mcp_gate_with_card` /
+  `_mcp_server_card`.)
+- **MCP server: one malformed runnable can no longer blank the *entire*
+  published tool list.** The Anthropic API validates every tool's `input_schema`
+  as JSON Schema draft 2020-12 and rejects the **whole** `tools` array if any one
+  is invalid (`API Error: 400 tools.N.custom.input_schema: JSON schema is
+  invalid. It must match JSON Schema draft 2020-12`) — so a single bad runnable
+  made a connecting agent (Claude Code) see *no* tools at all, with no hint which
+  runnable was at fault. `runspec serve` on the console now **validates each
+  tool's schema at publish time** (`mcp_server.schema_invalidity`, via the
+  stdlib-only `runspec.schemacheck` — no extra needed) and **drops just the
+  offender** so
+  the rest of the list publishes. The dropped tools (name + reason) are surfaced
+  **in the UI**, not just in `runspec-console.log`, so it isn't a silent failure:
+  Settings → MCP Server shows a warning listing each unpublishable runnable and
+  why; the **Settings gear grows a red badge** while any tool is unpublished (and
+  clicking it deep-links straight to the MCP Server tab); and a newly-broken
+  runnable raises a **one-time toast**. (If your agent was seeing no tools, these
+  now name the culprit.) `mcp_server_status()` gained an `invalid_tools` field;
+  `SettingsDrawer` gained an `initialTab` prop for the deep-link.
+- **MCP server / room catalog: numeric-string / non-numeric `range` bounds are
+  coerced or dropped.** A secondary hardening: a tool `inputSchema` whose
+  `minimum`/`maximum` came from a string `range` (`range = ["1", "9"]`, or a
+  range on a non-numeric arg) is invalid draft 2020-12. `mcp_server._arg_property`
+  and `catalog.arg_to_property` now coerce a numeric string bound (`"9"` → `9`,
+  so the constraint survives) and drop one that isn't a number — keeping such a
+  runnable *usable* rather than dropped by the backstop above.
+
+
 ## [0.280.0] — 2026-09-22
 
 ### Changed

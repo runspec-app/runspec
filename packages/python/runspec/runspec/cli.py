@@ -1422,6 +1422,27 @@ def _build_schema(name: str, script: dict[str, Any], fmt: str) -> dict[str, Any]
     return schema
 
 
+def _coerce_bound(value: Any) -> int | float | None:
+    """A ``range`` bound as a JSON-Schema number, or ``None`` when it isn't one.
+    ``minimum``/``maximum`` must be numbers under draft 2020-12; a numeric string
+    is coerced (the constraint survives), a ``bool`` or non-numeric value drops the
+    bound so a malformed range can't invalidate the whole schema."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return value
+    if isinstance(value, str):
+        s = value.strip()
+        try:
+            return int(s)
+        except ValueError:
+            try:
+                return float(s)
+            except ValueError:
+                return None
+    return None
+
+
 def _arg_to_json_schema(arg: dict[str, Any]) -> dict[str, Any]:
     """Convert a runspec arg spec to a JSON Schema property."""
     type_map = {
@@ -1454,9 +1475,14 @@ def _arg_to_json_schema(arg: dict[str, Any]) -> dict[str, Any]:
         prop["enum"] = arg["options"]
 
     if arg.get("range"):
-        min_val, max_val = arg["range"]
-        prop["minimum"] = min_val
-        prop["maximum"] = max_val
+        min_val, max_val = _coerce_bound(arg["range"][0]), _coerce_bound(arg["range"][1])
+        # Only emit numeric bounds — a non-numeric range (a mis-authored
+        # range = ["1", "9"], or a range on a non-numeric arg) is invalid draft
+        # 2020-12 and would get the whole tool list rejected. A numeric string is
+        # coerced so the constraint survives; a non-number drops the bound.
+        if min_val is not None and max_val is not None:
+            prop["minimum"] = min_val
+            prop["maximum"] = max_val
 
     if arg.get("pattern"):
         prop["pattern"] = arg["pattern"]

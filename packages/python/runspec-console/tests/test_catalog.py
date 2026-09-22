@@ -83,6 +83,25 @@ def test_arg_to_property_passes_ui_hint_as_x_ui():
     assert "x-ui" not in arg_to_property({"type": "str"})
 
 
+def test_arg_to_property_numeric_range_becomes_bounds():
+    prop = arg_to_property({"type": "int", "range": [1, 32]})
+    assert prop["minimum"] == 1 and prop["maximum"] == 32
+
+
+def test_arg_to_property_string_range_is_coerced():
+    # A mis-authored string range must not emit string minimum/maximum — that is
+    # invalid JSON Schema draft 2020-12 (rejected by the Anthropic API for the
+    # whole tool list). Numeric strings coerce so the bound survives.
+    prop = arg_to_property({"type": "int", "range": ["1", "9"]})
+    assert prop["minimum"] == 1 and prop["maximum"] == 9
+    assert isinstance(prop["minimum"], int) and isinstance(prop["maximum"], int)
+
+
+def test_arg_to_property_non_numeric_range_is_dropped():
+    prop = arg_to_property({"type": "str", "range": ["a", "z"]})
+    assert "minimum" not in prop and "maximum" not in prop
+
+
 def test_arg_to_property_multiselect_choice_becomes_array_of_enum():
     # A `multiple` choice → an array-of-enum with a multiselect hint, so the room
     # renders a real multi-select and each item is validated against `options`.

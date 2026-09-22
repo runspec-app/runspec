@@ -35,6 +35,9 @@ interface SettingsDrawerProps {
   // The active host profile ('' = All hosts). Key rotation is only offered under
   // All hosts — a scoped profile would orphan its out-of-profile hosts.
   activeProfile?: string
+  // Which tab to open on — set when a warning deep-links in (e.g. the MCP-server
+  // badge → 'mcpServer'). Undefined keeps the last-viewed tab.
+  initialTab?: string
 }
 
 const PROVIDER_MODELS: Record<string, string> = {
@@ -5878,6 +5881,30 @@ export function McpServerTab() {
 
       <Divider style={{ margin: '14px 0' }} />
       <Typography.Paragraph style={{ fontSize: 13, marginBottom: 6 }}><strong>Status</strong></Typography.Paragraph>
+      {status?.invalid_tools && status.invalid_tools.length > 0 && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 10 }}
+          message={`${status.invalid_tools.length} runnable(s) not published — invalid tool schema`}
+          description={
+            <div style={{ fontSize: 13 }}>
+              <div style={{ marginBottom: 6 }}>
+                Their <code>inputSchema</code> isn't valid JSON Schema draft 2020-12, so they're
+                dropped to keep the rest of the tool list usable (otherwise the connecting agent
+                would get <em>no</em> tools at all). Fix the arg spec on each:
+              </div>
+              <ul style={{ margin: 0, paddingLeft: 18 }}>
+                {status.invalid_tools.map(t => (
+                  <li key={t.name}>
+                    <code>{t.name}</code> — {t.reason}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          }
+        />
+      )}
       {status?.running ? (
         <Space direction="vertical" size={2}>
           <Space><Tag color="green">running</Tag><Typography.Text style={{ fontFamily: MONO_FONT, fontSize: 13 }}>{status.url}</Typography.Text></Space>
@@ -6049,12 +6076,16 @@ export function VoiceTab() {
   )
 }
 
-export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, connectedHosts, allRemoteHosts, activeProfile }: SettingsDrawerProps) {
+export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, connectedHosts, allRemoteHosts, activeProfile, initialTab }: SettingsDrawerProps) {
   // `[console] ai` off-switch: the agent tabs (Model / API, Runbooks, MCP
   // client, Chat History) are hidden; MCP Server, Telemetry and Tool visibility
   // stay (the last filters the MCP server's published tool list, so it is
   // meaningful with no embedded agent).
   const features = useFeatures()
+  // Controlled tab so a deep-link (initialTab, e.g. the MCP-server badge) can jump
+  // straight to the right tab on open; otherwise it keeps the last-viewed tab.
+  const [activeTab, setActiveTab] = useState('ssh')
+  useEffect(() => { if (open && initialTab) setActiveTab(initialTab) }, [open, initialTab])
   return (
     <Drawer title="Settings" placement="right" width="min(96vw, 1040px)" open={open} onClose={onClose}>
       {/* With AI off ([console] ai = false) the agent Settings tabs are simply
@@ -6063,6 +6094,8 @@ export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, co
       <Tabs
         size="small"
         tabPosition="left"
+        activeKey={activeTab}
+        onChange={setActiveTab}
         items={visibleSettingsTabs([
           { key: 'ssh',       label: 'SSH',        children: <SshTab onKeyChanged={onKeyChanged} connectedHosts={connectedHosts} allRemoteHosts={allRemoteHosts} activeProfile={activeProfile} /> },
           { key: 'llm',       label: 'Model / API',  children: <LlmTab /> },

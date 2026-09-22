@@ -4,11 +4,11 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-console"
-version = "0.280.0"
+version = "0.280.1"
 requires-python = ">=3.11"
 dependencies = [
     "pywebview>=5.0",
-    "runspec>=0.42.0",
+    "runspec>=0.54.0",
     "pywin32>=306 ; sys_platform == 'win32'",
     "cryptography>=42.0",
     "paramiko>=3.0",

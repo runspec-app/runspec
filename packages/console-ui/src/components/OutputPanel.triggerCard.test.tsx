@@ -65,6 +65,8 @@ const emitEnd = (id: string, exit_code = 0) =>
   window.dispatchEvent(new CustomEvent('runspec:run_end', { detail: { id, exit_code, duration_ms: 5 } }))
 const emitNote = (detail: { id: string; kind: string; label?: string; text?: string }) =>
   window.dispatchEvent(new CustomEvent('runspec:trigger_note', { detail }))
+const emitConfirm = (detail: Record<string, unknown>) =>
+  window.dispatchEvent(new CustomEvent('runspec:tool_confirm', { detail }))
 
 function mount() {
   render(<ConsoleView inFlight={[]} />)
@@ -112,5 +114,28 @@ describe('trigger runs in the Console', () => {
     // a second block.
     await act(async () => { emitNote({ id: 'r2', kind: 'run', label: 'backup', text: 'done: 3 files' }) })
     expect(screen.getAllByText(/done: 3 files/).length).toBe(1)
+  })
+
+  // The console MCP server surfaces a parked confirm as a source="mcp" run card
+  // (detail.mode="rule") keyed by card_id == the confirm's chat id, so an external
+  // agent's confirm-gated call gets a visible Approve/Deny in the Console tab —
+  // the home it lacked (worst of all with [console] ai = false). This locks in the
+  // exact card+confirm contract bridge_mcp_server produces.
+  it('renders Approve/Deny on an MCP-server run card parked for approval', async () => {
+    mount()
+    await act(async () => {
+      emitCard(card({
+        card_id: 'm1', source: 'mcp', event_type: 'request',
+        detail: { mode: 'rule', runnable: 'drain-node' }, column: 'awaiting_human',
+      }))
+    })
+    await act(async () => {
+      emitConfirm({
+        id: 'm1', request_id: 'req-m1', tool_name: 'drain-node', tool_input: { node: 'n1' },
+        display_name: 'drain-node', display_input: { node: 'n1' }, autonomy: 'confirm',
+      })
+    })
+    expect(screen.getByRole('button', { name: /approve & run/i })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /^deny$/i })).toBeTruthy()
   })
 })

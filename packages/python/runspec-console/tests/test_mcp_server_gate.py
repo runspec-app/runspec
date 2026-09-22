@@ -16,6 +16,29 @@ from runspec_console.bridge_mcp_server import McpServerMixin
 from runspec_console.mcp_server import ExecTool
 
 
+class _CardPrimitives:
+    """The card / session / dispatch primitives ``_mcp_gate_with_card`` and
+    ``_mcp_server_card`` touch — a gated MCP call now surfaces a visible Console
+    card so its confirm has a home even with ``[console] ai = false``."""
+
+    def _init_cards(self):
+        self._lock = threading.Lock()
+        self._trigger_cards: dict = {}
+        self.cards: list[tuple] = []  # (event_name, payload) dispatched
+
+    def _dispatch(self, event, payload):
+        self.cards.append((event, dict(payload)))
+
+    def _sync_card_session(self, kind, card):
+        pass
+
+    def _evict_trigger_cards(self, keep_id):
+        pass
+
+    def card_columns(self):
+        return [p.get("column") for e, p in self.cards if e == "runspec:trigger_card"]
+
+
 def _tool(name="greet", autonomy="autonomous", command_path=None):
     return ExecTool(
         name=name,
@@ -29,12 +52,13 @@ def _tool(name="greet", autonomy="autonomous", command_path=None):
     )
 
 
-class FakeBridge(McpServerMixin):
+class FakeBridge(_CardPrimitives, McpServerMixin):
     """McpServerMixin + just the gate/exec primitives it calls."""
 
     def __init__(
         self, *, approve=True, edited=None, cancelled=False, answer=True, scoped=None
     ):
+        self._init_cards()
         self._approve = approve
         self._edited = edited
         self._cancelled = cancelled
@@ -43,6 +67,7 @@ class FakeBridge(McpServerMixin):
         self.runs: list[tuple] = []
         self.registered: list[tuple] = []
         self.credential_ids_seen: list = []
+        self.inv_ids_seen: list = []
 
     # credential scope (server-side auto-apply) ----------------------------
     def _reload_credentials(self):
@@ -91,6 +116,7 @@ class FakeBridge(McpServerMixin):
         **kw,
     ):
         self.credential_ids_seen.append(credential_ids)
+        self.inv_ids_seen.append(kw.get("inv_id"))
         self.runs.append(
             (host, runnable, dict(args), tuple(command_path or []), trigger)
         )
@@ -118,6 +144,7 @@ def test_autonomous_runs_and_returns_output():
     assert "ran greet" in text
     assert b.registered == []  # autonomous → no confirm raised
     assert b.runs and b.runs[0][1] == "greet" and b.runs[0][4] == "mcp"
+    assert b.card_columns() == []  # nothing to approve → no card
 
 
 def test_confirm_approved_runs():
@@ -126,6 +153,21 @@ def test_confirm_approved_runs():
     assert is_error is False
     assert b.registered and b.registered[0][3] == "confirm"
     assert b.runs  # ran after approval
+    # A visible Console card is raised for the gate and driven to completion.
+    assert b.card_columns() == ["awaiting_human", "running", "done"]
+    # The confirm is registered under the card id (its home), not a fixed sentinel.
+    chat_id = b.registered[0][0]
+    card_id = b.cards[0][1]["card_id"]
+    assert chat_id == card_id and chat_id != "__mcp_server__"
+
+
+def test_confirm_gate_run_streams_into_its_card():
+    # The approved run is invoked with inv_id == card_id so its output/run_end
+    # route to the card's Console run block.
+    b = FakeBridge(approve=True, answer=True)
+    b._mcp_server_execute(_tool(autonomy="confirm"), {"a": 1})
+    card_id = b.cards[0][1]["card_id"]
+    assert b.inv_ids_seen and b.inv_ids_seen[0] == card_id
 
 
 def test_confirm_edited_input_is_used():
@@ -140,6 +182,8 @@ def test_confirm_declined_does_not_run():
     assert is_error is True
     assert "declined" in text.lower()
     assert b.runs == []
+    # The card is raised then finalised to failed (no dangling "waiting" card).
+    assert b.card_columns() == ["awaiting_human", "failed"]
 
 
 def test_scoped_credentials_are_passed_to_invoke():
@@ -238,15 +282,18 @@ def test_confirm_timeout_returns_resumable_and_does_not_run():
     assert is_error is False  # resumable, not an error
     assert "awaiting operator approval" in text.lower()
     assert b.runs == []  # nothing ran (no orphan execution)
+    # The parked card is finalised (failed) so it doesn't dangle at "waiting".
+    assert b.card_columns() == ["awaiting_human", "failed"]
 
 
 # ── built-in agent tools over MCP (opt-in) ───────────────────────────────────────
 
 
-class BuiltinBridge(McpServerMixin):
+class BuiltinBridge(_CardPrimitives, McpServerMixin):
     """McpServerMixin + the built-in dispatch primitives it reuses."""
 
     def __init__(self, *, autonomy="autonomous", approve=True, answer=True):
+        self._init_cards()
         self._autonomy = autonomy
         self._approve = approve
         self._answer = answer
@@ -318,6 +365,8 @@ def test_builtin_confirm_parks_then_runs(monkeypatch):
     assert is_error is False
     assert b.registered and b.registered[0][2] == "confirm"
     assert b.ran and b.ran[0][0] == "remember"
+    # A visible card is raised for the built-in's gate and finalised to done.
+    assert b.card_columns() == ["awaiting_human", "running", "done"]
 
 
 def test_builtin_not_in_allowlist_is_refused(monkeypatch):

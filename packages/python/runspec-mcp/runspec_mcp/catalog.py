@@ -19,6 +19,7 @@ when the set actually changes.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import shlex
 import subprocess
@@ -29,6 +30,8 @@ from typing import Any
 
 from .config import FleetConfig, local_runspec_paths
 from .hosts import venv_name
+
+logger = logging.getLogger("runspec-mcp.catalog")
 
 # Runnables that are infrastructure, never surfaced as fleet tools.
 _SELF_EXCLUDE = frozenset({"runspec-console", "runspec-mcp"})
@@ -178,6 +181,30 @@ def _build_host_tools(host: dict[str, Any], runspec_path: str, items: list[dict[
     return tools
 
 
+def _drop_invalid_schemas(registry: dict[str, Tool]) -> dict[str, Tool]:
+    """Drop (and log) any tool whose ``inputSchema`` isn't valid draft 2020-12.
+
+    The Anthropic API rejects the WHOLE ``tools`` array over one bad schema (``400
+    tools.N.custom.input_schema: ... must match JSON Schema draft 2020-12``), so a
+    single malformed runnable on any fleet host would otherwise make Claude Code
+    see no fleet tools at all. Dropping just the offender keeps the rest usable;
+    the log line names the tool + reason to fix it at the source."""
+    from runspec.schemacheck import schema_issue
+
+    keep: dict[str, Tool] = {}
+    for name, tool in registry.items():
+        reason = schema_issue((tool.schema or {}).get("inputSchema") or {})
+        if reason:
+            logger.warning(
+                "not publishing tool %r — its inputSchema is not valid JSON Schema draft 2020-12 (%s); the rest of the fleet's tools are unaffected.",
+                name,
+                reason,
+            )
+            continue
+        keep[name] = tool
+    return keep
+
+
 def _namespace(tools: list[Tool], multi_host: bool, venvs_per_host: dict[str, int]) -> dict[str, Tool]:
     """Assign each tool its final, collision-free MCP name.
 
@@ -288,7 +315,7 @@ class Catalog:
                 )
             )
 
-        registry = _namespace(all_tools, multi_host, venvs_per_host)
+        registry = _drop_invalid_schemas(_namespace(all_tools, multi_host, venvs_per_host))
         new_sig = _signature(registry)
         with self._lock:
             changed = new_sig != _signature(self._tools)

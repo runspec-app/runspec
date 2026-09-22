@@ -1036,7 +1036,7 @@ export const mockApi: BridgeApi = {
     }
   },
   mcp_server_status: async () => ({
-    running: false, error: '', host: '127.0.0.1', port: 8765, url: '', auth: false, tools: 0, builtins: 0, tool_style: 'leaf',
+    running: false, error: '', host: '127.0.0.1', port: 8765, url: '', auth: false, tools: 0, builtins: 0, tool_style: 'leaf', invalid_tools: [],
   }),
   mcp_server_start: async () => ({
     running: false, error: '', host: '127.0.0.1', port: 8765, url: '', auth: false, tools: 0,

@@ -23,6 +23,8 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
+import uuid
 from typing import TYPE_CHECKING, Any
 
 from . import config as config_mod
@@ -33,7 +35,10 @@ if TYPE_CHECKING:
 
 # A stable, non-chat "chat id" so parked MCP confirms route through the same UI
 # event path (and cancel_chat) as the agent's own gate without colliding with a
-# real conversation id.
+# real conversation id. NOTE: each parked MCP call now gets its OWN per-call card
+# id (see :meth:`_mcp_gate_with_card`) so the confirm has a visible home — this
+# constant survives only as the workspace/chat id for exposed built-in tool runs
+# that need one.
 _MCP_SERVER_CHAT_ID = "__mcp_server__"
 _DISCOVERY_FILE = "runspec_mcp_server.json"
 
@@ -72,28 +77,25 @@ class McpServerMixin:
                 True,
             )
 
-        if level in ("confirm", "supervised"):
-            request_id, event, holder = self._register_confirm(
-                _MCP_SERVER_CHAT_ID, display, args, level
-            )
-            bound = self._mcp_server_confirm_wait()
-            approved_in_time = event.wait(timeout=bound)
-            approved, edited = self._finish_confirm(
-                request_id, holder, timed_out=not approved_in_time
-            )
-            if not approved_in_time:
+        card_id, approved, args, timed_out = self._mcp_gate_with_card(
+            display=display,
+            args=args,
+            level=level,
+            runnable=tool.runnable,
+            host=host or tool.host,
+        )
+        if not approved:
+            if timed_out:
                 return (
-                    f"⏳ Awaiting operator approval in the console (request "
-                    f"{request_id[:8]}). Approve it there, then call this tool "
-                    "again to run it.",
+                    f"⏳ Awaiting operator approval in the console. Approve "
+                    f"'{display}' there, then call this tool again to run it.",
                     False,
                 )
-            if holder.get("cancelled") or not approved:
-                return (f"Operator declined '{display}'.", True)
-            if isinstance(edited, dict):
-                args = edited
+            return (f"Operator declined '{display}'.", True)
 
-        return self._mcp_server_run_blocking(tool, args, command_path, host)
+        return self._mcp_server_run_blocking(
+            tool, args, command_path, host, card_id=card_id
+        )
 
     # -- built-in agent tools (opt-in: [mcp_server] expose_builtins) ---------
 
@@ -139,31 +141,163 @@ class McpServerMixin:
                 "console.",
                 True,
             )
-        if level in ("confirm", "supervised"):
-            request_id, event, holder = self._register_confirm(
-                _MCP_SERVER_CHAT_ID, name, args, level
-            )
-            approved_in_time = event.wait(timeout=self._mcp_server_confirm_wait())
-            approved, edited = self._finish_confirm(
-                request_id, holder, timed_out=not approved_in_time
-            )
-            if not approved_in_time:
+        card_id, approved, args, timed_out = self._mcp_gate_with_card(
+            display=name, args=args, level=level, runnable=name, host=""
+        )
+        if not approved:
+            if timed_out:
                 return (
-                    f"⏳ Awaiting operator approval in the console (request "
-                    f"{request_id[:8]}). Approve it there, then call this tool "
-                    "again to run it.",
+                    f"⏳ Awaiting operator approval in the console. Approve "
+                    f"'{name}' there, then call this tool again to run it.",
                     False,
                 )
-            if holder.get("cancelled") or not approved:
-                return (f"Operator declined '{name}'.", True)
-            if isinstance(edited, dict):
-                args = edited
+            return (f"Operator declined '{name}'.", True)
         try:
             text = self._run_tool_sync(name, args, _MCP_SERVER_CHAT_ID)
         except Exception as exc:  # noqa: BLE001
             logger.warning("mcp_server builtin %s failed", name, exc_info=True)
+            if card_id:
+                self._mcp_server_card(
+                    card_id, runnable=name, column="failed", error=str(exc)
+                )
             return (f"'{name}' failed: {exc}", True)
+        if card_id:
+            self._mcp_server_card(
+                card_id, runnable=name, column="done", result=str(text)
+            )
         return (str(text), False)
+
+    def _mcp_gate_with_card(
+        self,
+        *,
+        display: str,
+        args: dict[str, Any],
+        level: str,
+        runnable: str,
+        host: str,
+    ) -> tuple[str | None, bool, dict[str, Any], bool]:
+        """Gate a ``confirm``/``supervised`` MCP call behind a **visible** Console
+        card, returning ``(card_id, approved, args, timed_out)``.
+
+        Without a card the parked confirm had no home: its chat id was a fixed
+        sentinel with no session/block, so the Approve/Deny prompt never rendered
+        anywhere — worst of all with ``[console] ai = false``, where there is no
+        chat session to fall back on. Each gated call now mints its own card
+        (``card_id`` == the confirm chat id == the run inv_id) that surfaces as a
+        read-only run block in the always-present Console tab, so the operator can
+        approve it whether or not AI is enabled.
+
+        For an ``autonomous`` call there is nothing to approve — no card is made
+        (``card_id`` is ``None``) and the caller runs it straight through, as
+        before. ``args`` comes back with any operator edit applied."""
+        if level not in ("confirm", "supervised"):
+            return None, True, args, False
+        card_id = uuid.uuid4().hex[:12]
+        self._mcp_server_card(
+            card_id,
+            runnable=runnable,
+            args=args,
+            host=host,
+            column="awaiting_human",
+            note="awaiting operator approval",
+        )
+        request_id, event, holder = self._register_confirm(
+            card_id, display, args, level
+        )
+        approved_in_time = event.wait(timeout=self._mcp_server_confirm_wait())
+        approved, edited = self._finish_confirm(
+            request_id, holder, timed_out=not approved_in_time
+        )
+        if not approved_in_time:
+            self._mcp_server_card(
+                card_id,
+                runnable=runnable,
+                column="failed",
+                error="No operator response — the agent may call again to retry.",
+                note="expired (no response)",
+            )
+            return card_id, False, args, True
+        if holder.get("cancelled") or not approved:
+            self._mcp_server_card(
+                card_id,
+                runnable=runnable,
+                column="failed",
+                error="Operator declined this call.",
+                note="declined",
+            )
+            return card_id, False, args, False
+        if isinstance(edited, dict):
+            args = edited
+        self._mcp_server_card(
+            card_id,
+            runnable=runnable,
+            args=args,
+            column="running",
+            note="approved — running",
+        )
+        return card_id, True, args, False
+
+    def _mcp_server_card(
+        self,
+        card_id: str,
+        *,
+        runnable: str,
+        args: dict[str, Any] | None = None,
+        host: str | None = None,
+        column: str,
+        result: str | None = None,
+        error: str | None = None,
+        note: str | None = None,
+    ) -> None:
+        """Create/advance the Console card for one MCP-server tool call and push it
+        to the UI. Keyed by ``card_id`` (== the confirm chat id == the run inv_id),
+        so the parked gate, any streamed output and ``run_end`` all attach to the
+        one read-only run block on the Console tab.
+
+        Reuses the trigger inbox card shape — ``source="mcp"`` and
+        ``detail.mode="rule"`` mark it a plain run (a run block, not an agent
+        turn). Stored on the trigger board so a UI reload mid-approval replays it
+        (the gate's own cold-start seed is :meth:`get_pending_confirms`)."""
+        now = time.time()
+        with self._lock:
+            card = self._trigger_cards.get(card_id)
+            if card is None:
+                card = {
+                    "card_id": card_id,
+                    "trigger": runnable,
+                    "source": "mcp",
+                    "event_type": "request",
+                    "summary": f"/{runnable}" + (f" on {host}" if host else ""),
+                    "column": column,
+                    "detail": {
+                        "mode": "rule",
+                        "runnable": runnable,
+                        "args": dict(args or {}),
+                        "host": host or "",
+                    },
+                    "created_at": now,
+                    "timeline": [],
+                }
+                self._trigger_cards[card_id] = card
+            card["column"] = column
+            detail = card["detail"]
+            if args is not None:
+                detail["args"] = dict(args)
+            if host is not None:
+                detail["host"] = host
+            if result is not None:
+                detail["result"] = result
+            if error is not None:
+                detail["error"] = error
+            if note:
+                card["timeline"].append({"ts": now, "text": note})
+            self._evict_trigger_cards(card_id)
+            snapshot = dict(card)
+        # Keep the backend session registry 1:1 with the card (so list_chat_sessions
+        # replays it), then push the card — the frontend derives the read-only
+        # session + block from this event.
+        self._sync_card_session("trigger", snapshot)
+        self._dispatch("runspec:trigger_card", snapshot)
 
     def _mcp_server_confirm_wait(self) -> float:
         """The bounded confirm wait: the smaller of ``[mcp_server] confirm_wait``
@@ -205,11 +339,16 @@ class McpServerMixin:
         args: dict[str, Any],
         command_path: list[str] | None = None,
         host: str | None = None,
+        card_id: str | None = None,
     ) -> tuple[str, bool]:
         """Run the runnable via :meth:`invoke_runnable` and block for its output +
         exit code (invoke_runnable is fire-and-stream; we join on run_end).
         ``command_path`` is the resolved subcommand and ``host`` the resolved target
         (both default to the tool's own, for ``leaf`` style).
+
+        ``card_id`` (set for a gated call) is passed as the run's ``inv_id`` so the
+        streamed output / ``run_end`` route into the confirm card's run block, and
+        the card is finalised to ``done``/``failed`` from the exit code.
 
         In-scope credentials are applied server-side (see
         :meth:`_mcp_server_scoped_credential_ids`) — the client supplies no
@@ -240,17 +379,33 @@ class McpServerMixin:
                 group=tool.group or None,
                 credential_ids=credential_ids or None,
                 trigger="mcp",
+                inv_id=card_id,
                 on_progress=on_progress,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "mcp_server run of %s failed to start", tool.name, exc_info=True
             )
+            if card_id:
+                self._mcp_server_card(
+                    card_id,
+                    runnable=tool.runnable,
+                    column="failed",
+                    error=f"Failed to start: {exc}",
+                )
             return (f"Failed to start '{tool.runnable}': {exc}", True)
 
         done.wait()
         text = "\n".join(state["lines"]).strip() or "(no output)"
         exit_code = state["exit"] if state["exit"] is not None else -1
+        if card_id:
+            self._mcp_server_card(
+                card_id,
+                runnable=tool.runnable,
+                column="done" if exit_code == 0 else "failed",
+                result=text,
+                **({} if exit_code == 0 else {"error": text or f"exit {exit_code}"}),
+            )
         if exit_code != 0:
             return (f"{text}\n\n[exit code {exit_code}]", True)
         return (text, False)

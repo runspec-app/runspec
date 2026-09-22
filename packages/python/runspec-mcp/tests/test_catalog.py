@@ -49,6 +49,25 @@ def test_single_host_bare_names(monkeypatch):
     assert "greeter" in names
 
 
+def test_invalid_schema_tool_is_dropped_not_the_whole_list(monkeypatch):
+    # A runnable whose emitted inputSchema is invalid draft 2020-12 (here an arg
+    # with a pattern that won't compile) is dropped from the catalog so it can't
+    # 400 the whole tools/list; its siblings survive.
+    items = [
+        {"runnable": "ok", "config_autonomy": "confirm", "spec": {"description": "ok", "autonomy": "autonomous", "args": {}}},
+        {"runnable": "broken", "config_autonomy": "confirm", "spec": {"description": "bad", "autonomy": "autonomous", "args": {"name": {"type": "str", "pattern": "[a-z"}}}},
+    ]
+    cat = _catalog(
+        [{"name": "box", "runspec_paths": ["/v/env-a/bin/runspec"]}],
+        monkeypatch,
+        items_by_host={"box": items},
+    )
+    cat.refresh()
+    names = {t.name for t in cat.tools()}
+    assert "ok" in names
+    assert "broken" not in names
+
+
 def test_multi_host_prefixed(monkeypatch):
     cat = _catalog(
         [
