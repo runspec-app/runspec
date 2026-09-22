@@ -54,8 +54,31 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [0.280.0] — 2026-09-22
 
+### Added
+
+- **`[console.disclaimer] always_show` — re-show the AI-use notice on every
+  launch.** The first-use disclaimer gate is acknowledged once and then stays
+  dismissed. The new opt-in `always_show` (default `false`) re-shows it on
+  **every** app launch — the standing compliance reminder some deployments want.
+  The acknowledgement is still recorded (so it isn't lost) and an in-session
+  acknowledge still dismisses the modal for that session; only a fresh launch
+  re-shows it. Config-only, consistent with the rest of `[console.disclaimer]`
+  (no Settings editor), so it rides the config seed / Config Sync.
+  `config.read_disclaimer` gains the key and
+  `bridge_config_ssh._compute_disclaimer_state` treats the operator as
+  un-acknowledged each launch when it's set. See `docs/console-disclaimer.md` and
+  `docs/design/console-disclaimer.md`.
+
 ### Changed
 
+- **Fleet History reads run concurrently.** `get_history_all` read the local host
+  plus every connected remote serially, so the (now host-agnostic) History tab
+  waited on the sum of every host's SSH latency — on a large fleet (e.g. 70 hosts)
+  each refresh was slow. The per-host reads now fan out across the bounded
+  `[refresh] workers` pool (with `[ssh] max_concurrent` throttling handshakes
+  underneath), so the tab waits on the slowest host, not the sum. Each read stays
+  isolated (one failure returns empty, never sinks the rest), disconnected remotes
+  are skipped, and the newest-first ordering + 300-row cap are unchanged.
 - **Ad-hoc built-in-tool SSH targets now reuse a warm pooled transport.** The
   agent's built-in file tools (`download_file` / `relay_file`) are fast against
   fleet hosts because they flow through the persistent `SSHConnectionPool`, but
@@ -79,6 +102,59 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   (`_adhoc_conns` / `close_adhoc`) unchanged via a `pooled=False` opt-out;
   `run_remote` / Forms are byte-identical. Gated on `[ssh] pool` like the fleet
   pool. See `docs/design/ssh-connection-pool.md` → "Follow-up: ad-hoc targets".
+
+### Fixed
+
+- **History tab spans the whole fleet and records real args.** The view read
+  `get_history(selectedHost)`, so automated runs on other hosts —
+  scheduled/trigger runnable runs, and agent/trigger/schedule turns logged on the
+  console host — were dropped whenever they weren't the selected host. It now reads
+  `get_history_all()` (local + connected remotes, disconnected skipped), and the
+  Host column filters within that set. Runnable runs also showed no args (so
+  Edit-&-rerun from History opened empty): the parser read a non-existent `args`
+  key instead of the core engine's `invocation_args` (password args still
+  excluded — never audited). The Runnable column gained a bounded width + ellipsis
+  so a wide window no longer cramps the fixed-content columns.
+- **A startup render crash no longer leaves a blank white screen.** There was no
+  React error boundary anywhere, so a single throw during a cold pywebview launch
+  (a child rendering against half-loaded data, or a mount-time bridge call
+  rejecting) unmounted the whole tree to a void — recoverable only by a manual
+  reload. An app-level `ErrorBoundary` above `<App/>` now catches the throw and
+  shows a recoverable panel with a Reload button (which re-runs against the
+  now-settled bridge) and best-effort-forwards the crash to the backend log; the
+  two unguarded mount-time bridge calls (`get_hosts`, `get_config`) are guarded so
+  a cold-launch reject there is swallowed rather than left unhandled.
+- **Edit-&-rerun pencil shows on subcommand Console cards.** The pencil on a plain
+  run card was gated on the run having `--flag` args, but a subcommand runnable's
+  intent lives in its verb path (e.g. `service restart`), so a verb-only run had no
+  args and only "Rerun with same args" showed. The pencil now appears when there
+  are args **or** a command path, matching the chat tool-call pencil.
+- **Saving a trigger/schedule no longer cancels an in-flight fire.** Editing and
+  saving a trigger ran `restart_triggers` → `stop_triggers`, which broadcast the
+  autonomy-gate cancel to **every** trigger and schedule card — including cards
+  whose turn was actively streaming/executing — killing a running agent fire
+  mid-run. The abort set is now narrowed to the gate-parked subset (turns
+  registered in `_pending_confirms`), so a save wakes only turns blocked at the
+  confirm gate and leaves running ones untouched. True shutdown (`_abort_all_turns`
+  at exit) is unaffected.
+- **`run_runnable` is validated before the confirm gate (search mode).** An agent
+  call with an unknown subcommand or a bad arg raised a confirm prompt for a call
+  that could only error — approving it just surfaced the "unknown command" message
+  afterwards. The existing preflight validation is now hoisted ahead of the gate
+  (a new `_preflight_run_runnable` resolving `{id, host}` + the command path exactly
+  as dispatch does), so an invalid single run is bounced in-turn with no confirm
+  registered and nothing shown to the operator. The confirm gate itself is
+  untouched; dedup/per_host keep deferring command validation to core.
+- **SSH copy-key and key rotation hardened.** Copy-key now resolves the effective
+  username the way `_make_ssh_client` does and refuses up front with an actionable
+  message when none is set, instead of silently falling back to this machine's
+  local login name and surfacing a baffling "Authentication failed — check the
+  password". Key rotation cleans up its staged `runspec_ed25519.new*` files in a
+  `finally` (a single host's banner blip used to abort the commit and orphan them
+  on disk), and is refused unless the **All hosts** profile is active — a scoped
+  profile would skip and orphan out-of-profile hosts on the old key when the new
+  one commits; the Settings SSH tab disables the Rotate button with an explanatory
+  tooltip under a scoped profile.
 
 
 ## [0.279.0] — 2026-09-21

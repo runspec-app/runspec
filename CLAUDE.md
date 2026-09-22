@@ -402,17 +402,31 @@ core before logops). Note `spec.<arg>` is an `Arg`; read `spec.<arg>.value` for
 the coerced value — an unset optional is then a real `None`.
 
 **Docs drift checks.** `scripts/check_docs.py` guards the MkDocs site against
-drift and runs in CI (`docs-check` job, gated by a `docs` paths filter) and
-optionally via `.pre-commit-config.yaml`. Three checks: (1) **version-sync** —
-each package manifest version must have a matching `CHANGELOG.md` entry
-(`## [x]` for Python, `## [node-x]` for Node); (2) **toml-examples** — every
-runspec ` ```toml ` block in `docs/` validates against
-`schema/runspec.schema.json`; (3) **format-reference** — the arg-field and type
-tables in `docs/format.md` must match the schema. Practical upshot: when you
-add or change a format field/type, update `schema/runspec.schema.json` and the
-`docs/format.md` tables in the same change, and add a CHANGELOG entry for any
-version bump — or `docs-check` fails. (`KNOWN_CUSTOM_TYPES` in the script lists
-the custom `register_type` names demonstrated in the docs.)
+drift and runs in CI (`docs-check` job, gated by a `docs` paths filter that
+includes `packages/**`) and optionally via `.pre-commit-config.yaml`. Four
+checks: (1) **version-sync** — every package manifest version must have a
+matching `## [..]` changelog entry: the core lib + Node pack check the repo-root
+`CHANGELOG.md` (`## [x]` / `## [node-x]`), and every other package (console,
+integration packs, cores) checks its **own sibling `CHANGELOG.md`** with a bare
+`## [x]` token (auto-discovered; `console-ui` and archived `registry` have no
+release line and are skipped); (2)
+**changelog-updated** — a branch that changes a package's shipping source
+(`.py`/`.ts`/`.tsx`/… outside `tests/`) must also update that package's
+`CHANGELOG.md`, so a code change can't ship undocumented the way `always_show`
+once did; it's git-diff based (branch vs. the merge-base with its base ref) and
+skips cleanly when no base is resolvable (e.g. a local run on `main`). New
+packages are auto-discovered; the console frontend (`packages/console-ui`) maps
+to the `runspec-console` changelog, and `ROOT_CHANGELOG_PKGS` / `CHANGELOG_ALIASES`
+/ `CHANGELOG_IGNORE` wire the exceptions (an un-wired package trips the check
+rather than passing silently); (3) **toml-examples** — every runspec ` ```toml `
+block in `docs/` validates against `schema/runspec.schema.json`; (4)
+**format-reference** — the arg-field and type tables in `docs/format.md` must
+match the schema. Practical upshot: when you change a package's code, add a
+CHANGELOG entry (and bump the version) in the same branch; and when you add or
+change a format field/type, update `schema/runspec.schema.json` and the
+`docs/format.md` tables in the same change — or `docs-check` fails.
+(`KNOWN_CUSTOM_TYPES` in the script lists the custom `register_type` names
+demonstrated in the docs.)
 
 **Next:** Config-file value fallback (third tier in value resolution, currently "design for now").
 

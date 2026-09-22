@@ -165,6 +165,10 @@ jobs:
               - 'scripts/check_docs.py'
               - 'packages/python/runspec/pyproject.toml'
               - 'packages/node/package.json'
+              # Package source, so the changelog-updated check runs whenever a
+              # package's shipping code changes (it verifies a matching CHANGELOG
+              # update — see scripts/check_docs.py).
+              - 'packages/**'
               - '.github/workflows/ci.yml'
 
   # ── Python ──────────────────────────────────────────────────────────────────
@@ -2352,6 +2356,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Full history so the changelog-updated check can diff this branch
+          # against its base (merge-base of the PR base ref and HEAD).
+          fetch-depth: 0
 
       - uses: actions/setup-python@v7
         with:
@@ -2361,6 +2369,10 @@ jobs:
         run: pip install jsonschema
 
       - name: Check docs are in sync with the source of truth
+        env:
+          # The PR's base commit (empty on push events, where the check falls
+          # back to origin/main); makes the branch diff exact.
+          DOCS_CHECK_BASE: ${{ github.event.pull_request.base.sha }}
         run: python scripts/check_docs.py
 
   ci:

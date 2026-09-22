@@ -19,6 +19,10 @@ white-label / corporate install.
   out.
 - If you **revise the wording** (or bump `version`), everyone is re-prompted —
   even operators who accepted the previous wording.
+- With **`always_show`** on, the notice re-appears on **every launch** — a
+  standing compliance reminder rather than a one-time acknowledgement. The
+  acknowledgement is still recorded each time, and acknowledging dismisses it for
+  the rest of that session; only the next launch re-shows it.
 
 ## Configuration
 
@@ -35,6 +39,7 @@ details.
 """
 acknowledge_label = "I acknowledge"
 version = "2024-06"
+always_show = false
 ```
 
 | Key | Default | Meaning |
@@ -44,6 +49,7 @@ version = "2024-06"
 | `text` | — | The disclaimer body, rendered as **markdown** (so it can link to a full policy). An empty body disables the popup — a disclaimer with no wording is a no-op. |
 | `acknowledge_label` | `I acknowledge` | Label on the accept button. |
 | `version` | — | Optional wording version. Bumping it re-prompts everyone even if `text` is unchanged. |
+| `always_show` | `false` | Re-show the notice on **every** launch, ignoring the stored acknowledgement (a standing compliance reminder). The acknowledgement is still recorded, and acknowledging dismisses it for that session. |
 
 Because it lives in `config.toml`, it distributes through **Config Sync** and the
 **config seed** like `[console.theme]` — a corporate seed ships `enabled = true`

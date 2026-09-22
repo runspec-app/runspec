@@ -32,4 +32,4 @@ repos:
         language: python
         additional_dependencies: [jsonschema]
         pass_filenames: false
-        files: '^(docs/|schema/runspec\.schema\.json|spec/SPEC\.md|CHANGELOG\.md|scripts/check_docs\.py|packages/python/runspec/pyproject\.toml|packages/node/package\.json)'
+        files: '^(docs/|schema/runspec\.schema\.json|spec/SPEC\.md|CHANGELOG\.md|scripts/check_docs\.py|packages/)'

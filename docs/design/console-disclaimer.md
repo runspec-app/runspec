@@ -34,6 +34,7 @@ details.
 """
 acknowledge_label = "I acknowledge"
 version = "2024-06"
+always_show = false
 ```
 
 - `enabled` (default `false`) — master switch.
@@ -43,6 +44,8 @@ version = "2024-06"
 - `acknowledge_label` — the accept-button label (default `I acknowledge`).
 - `version` — optional wording version; bumping it re-prompts everyone even if
   `text` is unchanged.
+- `always_show` (default `false`) — re-show the notice on **every** launch,
+  ignoring the stored acknowledgement (see "Always-show" below).
 
 **Read-only from config — there is no Settings editor.** That's the point: an
 operator must not be able to click their own compliance notice off. (They can edit
@@ -67,6 +70,18 @@ and the active-profile pointer).
 current wording's hash differs from the stored one, so a revised disclaimer (or a
 bumped `version`) re-consents every operator, including those who accepted the
 prior wording.
+
+**Always-show.** With `always_show = true`, `_compute_disclaimer_state` treats the
+operator as un-acknowledged on **every** launch regardless of the stored ack — the
+state resolves to `pending` (so `needs_ack` is true) even when the current hash
+matches the record. This is the standing-compliance-reminder case: a deployment
+that wants the notice each time the app opens, not just once per wording change.
+The acknowledgement is **still recorded** on the click (the record isn't lost, and
+the audit/event-log/telemetry layers below still fire), and the frontend's
+in-session decision still flips to `'acknowledged'` and dismisses the modal for
+that session — only the next fresh launch re-reads `pending` and re-shows it. The
+gate is unchanged: the backend simply keeps returning `needs_ack: true`, so no
+frontend logic knows about `always_show`.
 
 ## The gate
 
