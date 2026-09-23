@@ -638,6 +638,15 @@ def main() -> None:
         prof("webview.start() — loading the frontend bundle")
         webview.start(**start_kwargs)
     finally:
+        # Stop the console's own MCP server first, while the interpreter is fully
+        # alive, so its background uvicorn loop is drained + closed rather than
+        # abandoned mid-serve at teardown (the "Task was destroyed but it is
+        # pending!" noise). Bounded (graceful uvicorn shutdown + a join timeout);
+        # a no-op when the server was never started.
+        try:
+            bridge._mcp_server.shutdown()
+        except Exception:  # noqa: BLE001 — best-effort on exit
+            pass
         # Flush any batched spans + metrics before the process exits (no-op when
         # off) so a short session doesn't drop its last traces / metric export —
         # but bounded, so a slow/unreachable OTLP endpoint can't hang the close.

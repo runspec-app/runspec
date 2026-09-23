@@ -576,6 +576,34 @@ class _State:
     invalid_tools: list[dict[str, str]] = field(default_factory=list)
 
 
+def _drain_loop(loop: Any) -> None:
+    """Cancel every still-pending task on ``loop``, let the cancellations settle,
+    then close it — so a stopped server's background loop is torn down cleanly
+    instead of being garbage-collected with live tasks (which makes the interpreter
+    log "Task was destroyed but it is pending!"). Best-effort; never raises.
+    A no-op on an already-closed loop (safe to call twice)."""
+    import asyncio
+
+    if loop.is_closed():
+        return
+    try:
+        pending = [t for t in asyncio.all_tasks(loop) if not t.done()]
+        for task in pending:
+            task.cancel()
+        if pending:
+            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+    except Exception:  # noqa: BLE001 — cleanup at teardown must never raise
+        pass
+    try:
+        loop.run_until_complete(loop.shutdown_asyncgens())
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        loop.close()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 class ConsoleMcpServer:
     """Hosts the console's fleet as a streamable-HTTP MCP server on a background
     loop thread. Constructed cheaply; ``start()`` does the SDK import + serve.
@@ -729,6 +757,21 @@ class ConsoleMcpServer:
         with self._lock:
             self._state.running = False
 
+    def shutdown(self, timeout: float = 4.0) -> None:
+        """Stop the server and wait (bounded) for its loop thread to unwind, so the
+        console's exit doesn't abandon the background event loop with pending tasks
+        (the "Task was destroyed but it is pending!" noise at interpreter teardown).
+
+        No-op when the server was never started / already stopped. Called from
+        ``app.py`` on window close; ``stop()`` signals uvicorn's graceful shutdown
+        (bounded by ``timeout_graceful_shutdown``), then ``_run``'s finally drains +
+        closes the loop, and this join waits for that."""
+        t = self._thread
+        if t is None or not t.is_alive():
+            return
+        self.stop()
+        t.join(timeout)
+
     def restart(self) -> None:
         """Stop the current server (if any) and start fresh from current config —
         used when the Settings tab saves ``[mcp_server]``. Best-effort; a rebind
@@ -746,6 +789,7 @@ class ConsoleMcpServer:
     def _run(self) -> None:
         import asyncio
 
+        loop: Any = None  # set once created, so the finally can drain + close it
         try:
             import uvicorn
 
@@ -761,6 +805,10 @@ class ConsoleMcpServer:
                 port=self._state.port,
                 log_level="warning",
                 lifespan="on",
+                # Bound the graceful shutdown so `stop()` returns promptly even
+                # while an MCP client (Claude Code) holds the streamable-HTTP
+                # connection open — otherwise closing the console would block on it.
+                timeout_graceful_shutdown=2,
             )
             self._uvicorn = uvicorn.Server(config)
             with self._lock:
@@ -782,6 +830,14 @@ class ConsoleMcpServer:
                 self._state.error = str(exc) or exc.__class__.__name__
             logger.warning("console MCP server stopped: %s", exc, exc_info=True)
         finally:
+            # Cancel whatever the ASGI/streamable-HTTP session layer left scheduled
+            # and close the loop, so shutting the console down doesn't abandon this
+            # background loop with pending tasks — the interpreter would otherwise
+            # print "Task was destroyed but it is pending!" for each at teardown.
+            if loop is not None:
+                _drain_loop(loop)
+            with self._lock:
+                self._state.running = False
             self._loop = None
             self._session = None
 

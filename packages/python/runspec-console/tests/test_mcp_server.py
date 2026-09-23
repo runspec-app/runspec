@@ -225,6 +225,62 @@ def _server(brand_name=None):
     )
 
 
+def test_drain_loop_cancels_pending_tasks_and_closes():
+    # The shutdown-noise fix: a stopped server's background loop must be drained +
+    # closed so pending tasks aren't GC'd while live ("Task was destroyed but it is
+    # pending!"). _drain_loop cancels everything and closes the loop.
+    import asyncio
+
+    loop = asyncio.new_event_loop()
+
+    async def _never():
+        await asyncio.sleep(3600)
+
+    task = loop.create_task(_never())  # scheduled but never run → pending
+    m._drain_loop(loop)
+    assert task.done()  # cancelled
+    assert loop.is_closed()
+
+
+def test_drain_loop_tolerates_empty_and_double_close():
+    import asyncio
+
+    loop = asyncio.new_event_loop()
+    m._drain_loop(loop)  # no tasks
+    assert loop.is_closed()
+    m._drain_loop(loop)  # already closed — must not raise
+
+
+def test_shutdown_is_noop_without_a_running_thread():
+    # Never started (no thread) → returns immediately, no error.
+    _server().shutdown(timeout=0.1)
+
+
+def test_shutdown_signals_uvicorn_and_joins():
+    import threading
+
+    srv = _server()
+
+    class _Uv:
+        should_exit = False
+
+    srv._uvicorn = _Uv()
+    joined: dict = {}
+
+    class _FakeThread:
+        def is_alive(self):
+            return True
+
+        def join(self, timeout=None):
+            joined["timeout"] = timeout
+
+    srv._thread = _FakeThread()  # type: ignore[assignment]
+    srv.shutdown(timeout=1.5)
+    assert srv._uvicorn.should_exit is True  # stop() signalled uvicorn
+    assert joined["timeout"] == 1.5  # …and we joined the loop thread, bounded
+    assert isinstance(threading.current_thread(), threading.Thread)  # sanity
+
+
 def test_resolve_brand_name_defaults_to_runspec_console():
     # no resolver, empty brand, and a failing resolver all fall back
     assert _server()._resolve_brand_name() == "runspec-console"

@@ -8,6 +8,26 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.280.3] — 2026-09-23
+
+### Fixed
+
+- **MCP server: no more `Task was destroyed but it is pending!` on console
+  shutdown.** The console's own MCP server runs uvicorn on a background
+  event-loop thread, but the app's exit path only *signalled* it (`stop()` sets
+  `should_exit`) and never waited for the loop to unwind — so after an external
+  agent (Claude Code) had used it, closing the console abandoned that loop
+  mid-serve and the interpreter printed the warning once per still-pending task
+  (the streamable-HTTP session layer). Now the server is **shut down cleanly**:
+  `app.py` calls a new bounded `ConsoleMcpServer.shutdown()` on window close (and
+  the `atexit` hook uses it as a backstop) which signals uvicorn's graceful
+  shutdown — now bounded by `timeout_graceful_shutdown` so it returns promptly
+  even while a client holds the connection open — then joins the thread; the
+  server thread's `finally` **drains (cancels + awaits) any pending tasks and
+  closes the loop** (`mcp_server._drain_loop`). Cosmetic-only (the runs
+  themselves were unaffected), but the noise is gone.
+
+
 ## [0.280.2] — 2026-09-23
 
 ### Fixed

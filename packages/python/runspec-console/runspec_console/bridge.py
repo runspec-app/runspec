@@ -350,8 +350,11 @@ class Bridge(
         atexit.register(self.stop_triggers)  # quit any source pump threads cleanly
         # Close any live MCP client sessions (terminating stdio subprocesses).
         atexit.register(self._mcp.stop)
-        # Stop the console's own MCP server (shut its uvicorn loop down).
-        atexit.register(self._mcp_server.stop)
+        # Stop the console's own MCP server and wait (bounded) for its loop thread
+        # to unwind — `stop()` alone only signals uvicorn, leaving the background
+        # loop to be torn down mid-serve with pending tasks ("Task was destroyed
+        # but it is pending!"). `shutdown()` joins so the loop is drained + closed.
+        atexit.register(self._mcp_server.shutdown)
         # Unblock any in-flight turn parked at the autonomy gate so closing the
         # app can't hang waiting to join a worker stuck in event.wait(). Registered
         # last so it runs first (LIFO) — before concurrent.futures joins workers.
