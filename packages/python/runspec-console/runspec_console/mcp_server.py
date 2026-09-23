@@ -398,6 +398,83 @@ def _free_key(base: str, taken: set[str]) -> str:
     return key
 
 
+def _node_at_path(node: dict[str, Any], path: tuple[str, ...]) -> dict[str, Any]:
+    """Descend ``node['commands']`` following ``path`` (each element a subcommand
+    name), returning the leaf node. Falls back to the deepest node reached if a
+    segment can't be matched (so a caller always gets a dict)."""
+    cur = node
+    for seg in path:
+        commands = cur.get("commands")
+        if not isinstance(commands, dict):
+            return cur
+        nxt = None
+        for sub in commands.values():
+            if isinstance(sub, dict) and str(sub.get("name") or "") == seg:
+                nxt = sub
+                break
+        if nxt is None:
+            return cur
+        cur = nxt
+    return cur
+
+
+def _command_own_args(
+    node: dict[str, Any],
+) -> list[tuple[str, list[dict[str, Any]]]]:
+    """Each callable subcommand path (space-joined) paired with **that command's
+    own args** — its effective args minus the runnable's root/global args (already
+    shown at the top level) and minus ``password`` args. Empty for a flat
+    (no-subcommand) runnable.
+
+    In ``runnable`` (Per-runnable) style the collapsed tool otherwise advertises
+    only the globals plus a ``command`` enum, so an agent can't see what each verb
+    takes and drops per-command args (the reported "missing args" on a subcommand
+    runnable). This lets ``_collapse_runnable`` surface them."""
+    root_names = {
+        str(a.get("name") or "")
+        for a in (node.get("args") or [])
+        if str(a.get("type")) != "password"
+    }
+    details: list[tuple[str, list[dict[str, Any]]]] = []
+    for path, _autonomy in _command_leaves(node):
+        if not path:
+            continue  # the root itself — its args are the globals, already shown
+        leaf = _node_at_path(node, path)
+        own = [
+            a
+            for a in (leaf.get("args") or [])
+            if str(a.get("type")) != "password"
+            and str(a.get("name") or "")
+            and str(a.get("name")) not in root_names
+        ]
+        details.append((" ".join(path), own))
+    return details
+
+
+def _describe_commands(
+    command_args: list[tuple[str, list[dict[str, Any]]]], *, max_chars: int = 1500
+) -> str:
+    """A compact 'set ``command`` to one of …' block for a ``runnable``-style
+    tool's description, naming each subcommand and its own args (required marked),
+    so an agent knows which args go with which ``command``. Bounded so a runnable
+    with very many verbs can't bloat the tool list."""
+    lines = [
+        "Set `command` to one of the subcommands below, then pass that "
+        "subcommand's own arguments alongside it:"
+    ]
+    for cmd, own in command_args:
+        parts = [
+            (f"{n} (required)" if a.get("required") else n)
+            for a in own
+            if (n := str(a.get("name") or ""))
+        ]
+        lines.append(f"• {cmd} — {', '.join(parts) if parts else '(no arguments)'}")
+    block = "\n".join(lines)
+    if len(block) > max_chars:
+        block = block[:max_chars].rstrip() + "\n• … (call fewer verbs at a time)"
+    return block
+
+
 def _collapse_runnable(entries: list[dict[str, Any]]) -> ExecTool | None:
     """One whole runnable — **every copy of it** — → a single ExecTool. The
     subcommand is chosen at call time via a ``command`` argument, and when the
@@ -456,9 +533,41 @@ def _collapse_runnable(entries: list[dict[str, Any]]) -> ExecTool | None:
             "description": "Fleet host to run on.",
         }
         schema.setdefault("required", []).append(host_key)
+    # Advertise each subcommand's own args. Without this the collapsed schema is
+    # just the globals + a `command` enum, so an agent can see the verb list but
+    # not what each verb takes — and drops per-command args (the reported "missing
+    # args" on a subcommand runnable). Union the per-command args into `properties`
+    # (kept optional — they're command-scoped, not globally required — and tagged in
+    # their description with which command(s) they belong to) and add a compact
+    # per-command summary to the tool description. resolve_call already accepts
+    # these at call time; this only makes them discoverable.
+    description = str(node.get("description") or "")
+    command_args = _command_own_args(node) if options else []
+    if command_args:
+        props = schema.setdefault("properties", {})
+        arg_commands: dict[str, list[str]] = {}
+        for cmd, own in command_args:
+            for arg in own:
+                aname = str(arg.get("name") or "")
+                if not aname or aname in (command_key, host_key):
+                    continue
+                arg_commands.setdefault(aname, [])
+                if cmd and cmd not in arg_commands[aname]:
+                    arg_commands[aname].append(cmd)
+                if aname not in props:  # never overwrite a real global/selector
+                    props[aname] = _arg_property(arg)
+        for aname, cmds in arg_commands.items():
+            prop = props.get(aname)
+            if not (cmds and isinstance(prop, dict)):
+                continue
+            tag = f"(command: {', '.join(cmds)})"
+            existing = str(prop.get("description") or "").strip()
+            prop["description"] = f"{existing} {tag}".strip()
+        block = _describe_commands(command_args)
+        description = f"{description}\n\n{block}".strip()
     return ExecTool(
         name=sanitize_tool_name(name),
-        description=str(node.get("description") or ""),
+        description=description,
         input_schema=schema,
         host=hosts[0] if hosts else str(node.get("host") or ""),
         # No group: a collapsed tool spans venvs/hosts, so the venv is resolved per
@@ -604,6 +713,40 @@ def _drain_loop(loop: Any) -> None:
         pass
 
 
+class _ShutdownNoiseFilter(logging.Filter):
+    """Drops uvicorn's *expected* force-cancel records — **only while the console
+    is intentionally stopping its own MCP server** (a Settings save/restart or app
+    exit). When a client (Claude Code) holds the streamable-HTTP stream open at that
+    moment, uvicorn hits its ``timeout_graceful_shutdown`` deadline, force-cancels
+    the stream and logs an ERROR "Cancel N running task(s), timeout graceful
+    shutdown exceeded" plus an "Exception in ASGI application" ``CancelledError`` —
+    alarming but harmless (the restart is working as intended).
+
+    Scoped by an ``is_stopping`` predicate so nothing is hidden during normal
+    serving: a genuine ASGI error while the server is up still logs. A filter must
+    never raise, so any hiccup passes the record through."""
+
+    def __init__(self, is_stopping: Callable[[], bool]) -> None:
+        super().__init__()
+        self._is_stopping = is_stopping
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            if not self._is_stopping():
+                return True
+            msg = str(record.getMessage())
+            if "timeout graceful shutdown exceeded" in msg:
+                return False
+            exc = record.exc_info[1] if record.exc_info else None
+            import asyncio
+
+            if isinstance(exc, asyncio.CancelledError) and "ASGI application" in msg:
+                return False
+        except Exception:  # noqa: BLE001 — a log filter must never raise
+            return True
+        return True
+
+
 class ConsoleMcpServer:
     """Hosts the console's fleet as a streamable-HTTP MCP server on a background
     loop thread. Constructed cheaply; ``start()`` does the SDK import + serve.
@@ -656,6 +799,23 @@ class ConsoleMcpServer:
         # loop + the most-recently-seen client session (captured during a request).
         self._loop: Any = None
         self._session: Any = None
+        # Set while we intentionally stop/restart the server, so the log filter can
+        # quiet uvicorn's expected force-cancel noise (and only then).
+        self._stopping = False
+        self._log_filter: Any = None
+
+    def _install_shutdown_log_filter(self) -> None:
+        """Attach the shutdown-noise filter to uvicorn's error logger once, so a
+        Settings save/restart or app exit with a live client doesn't spew uvicorn's
+        graceful-shutdown force-cancel ERRORs. Best-effort; idempotent."""
+        if self._log_filter is not None:
+            return
+        try:
+            flt = _ShutdownNoiseFilter(lambda: self._stopping)
+            logging.getLogger("uvicorn.error").addFilter(flt)
+            self._log_filter = flt
+        except Exception:  # noqa: BLE001 — logging setup must never break serving
+            pass
 
     # -- introspection -------------------------------------------------------
 
@@ -745,12 +905,17 @@ class ConsoleMcpServer:
             self._state.token = cfg.get("token") or None
             self._default_autonomy = cfg.get("default_autonomy") or None
             self._tool_style = cfg.get("tool_style") or "leaf"
+        self._stopping = False  # a fresh serve is not a shutdown
         self._thread = threading.Thread(
             target=self._run, name="mcp-server", daemon=True
         )
         self._thread.start()
 
     def stop(self) -> None:
+        # Flag the intentional stop *before* signalling uvicorn, so the shutdown
+        # log filter quiets the graceful-shutdown force-cancel ERRORs a live client
+        # provokes (the restart/exit is working as intended).
+        self._stopping = True
         uv = self._uvicorn
         if uv is not None:
             uv.should_exit = True
@@ -793,6 +958,7 @@ class ConsoleMcpServer:
         try:
             import uvicorn
 
+            self._install_shutdown_log_filter()
             server = self._build_server()
             app = server.streamable_http_app(
                 streamable_http_path="/mcp", host=self._state.host

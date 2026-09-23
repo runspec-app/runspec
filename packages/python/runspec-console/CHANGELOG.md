@@ -8,6 +8,38 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.280.5] — 2026-09-23
+
+### Fixed
+
+- **`tool_style = "runnable"` (Per-runnable) now advertises each subcommand's own
+  args**, so an external agent (Claude Code) knows what each verb takes instead of
+  guessing and dropping args (the reported "first attempt missed 2 args" on a
+  subcommand runnable). The collapsed tool previously carried only the runnable's
+  global args plus a `command` enum — the per-verb args were accepted at call time
+  but never *advertised*, so the model couldn't see them. `_collapse_runnable` now
+  folds each subcommand's own args into the tool `inputSchema` (kept optional —
+  they're command-scoped, not globally required — and each tagged in its
+  description with the command(s) it belongs to) and appends a compact
+  "Set `command` to one of … " per-verb arg summary to the tool description. A
+  real global is never overwritten by a same-named subcommand arg, and the schema
+  stays valid draft 2020-12. Flat (no-subcommand) runnables are unchanged. Note:
+  the MCP server does **not** expose the search/describe meta-tools, so "Expose
+  built-in tools" was never what supplied the missing arg detail — this is.
+  (`mcp_server._command_own_args`/`_describe_commands`.)
+
+- **A Settings → MCP Server save/restart (or app exit) no longer spews uvicorn's
+  graceful-shutdown force-cancel ERRORs** (`Cancel N running task(s), timeout
+  graceful shutdown exceeded` + an `Exception in ASGI application`
+  `CancelledError`) when an MCP client held the streamable-HTTP stream open at that
+  moment. The restart was always working — uvicorn just logs loudly when it
+  force-cancels a still-open stream at the 2 s graceful deadline. A scoped
+  `logging` filter on `uvicorn.error` drops exactly those two expected records
+  **only while the console is intentionally stopping its own server** (a
+  `_stopping` flag set in `stop()`); a genuine ASGI error during normal serving is
+  never hidden. (`mcp_server._ShutdownNoiseFilter`.)
+
+
 ## [0.280.4] — 2026-09-23
 
 ### Fixed

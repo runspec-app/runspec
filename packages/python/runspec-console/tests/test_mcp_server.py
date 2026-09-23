@@ -559,3 +559,137 @@ def test_runnable_style_dedups_across_venvs_no_venv_prefix():
     # picking the local host resolves it; the venv is chosen by the executor
     host, _path, _lvl, _args, err = t.resolve_call({"host": "local"})
     assert err == "" and host == "local"
+
+
+# ── runnable-style per-command arg detail (0.280.5) ──────────────────────────────
+
+
+def test_runnable_style_advertises_per_command_args():
+    # The reported gap: in `runnable` style a subcommand runnable's tool schema was
+    # just the globals + a `command` enum — the model couldn't see that `hello`
+    # takes `name`, so it dropped the arg. Now each verb's own args are folded into
+    # `properties` (optional, tagged with the command) and the description names them.
+    t = m.build_tools([_greeter()], style="runnable")[0][0]
+    props = t.input_schema["properties"]
+    # `hello`'s own arg is now discoverable…
+    assert "name" in props
+    assert "(command: hello)" in props["name"]["description"]
+    # …but stays OPTIONAL at the top level (it's command-scoped, not global).
+    assert "name" not in t.input_schema.get("required", [])
+    # globals + selector are still present and unchanged
+    assert "verbose" in props and "command" in props
+    # the description spells out which verb takes what
+    assert "Set `command`" in t.description
+    assert "hello — name (required)" in t.description
+    assert "bye — (no arguments)" in t.description
+    # still valid draft 2020-12 (no duplicate required, real schema)
+    assert m.schema_invalidity(t.input_schema) == ""
+
+
+def test_runnable_style_flat_runnable_has_no_command_block():
+    # A runnable with no subcommands is unaffected: all its args are already in the
+    # schema, so there's nothing to fold and no "Set `command`" block appears.
+    flat = _runnable(
+        "echo",
+        host="local",
+        description="Echo a value.",
+        args=[{"name": "value", "type": "str", "required": True}],
+    )
+    t = m.build_tools([flat], style="runnable")[0][0]
+    assert "value" in t.input_schema["properties"]
+    assert "Set `command`" not in t.description
+    assert t.description == "Echo a value."
+
+
+def test_runnable_style_shared_arg_lists_both_commands():
+    # An arg two verbs share is folded once, its description naming both commands.
+    a = _runnable(
+        "add", host="local", args=[{"name": "path", "type": "str", "required": True}]
+    )
+    b = _runnable(
+        "rm", host="local", args=[{"name": "path", "type": "str", "required": True}]
+    )
+    parent = _runnable(
+        "fsx", host="local", requireCommand=True, commands={"add": a, "rm": b}
+    )
+    t = m.build_tools([parent], style="runnable")[0][0]
+    desc = t.input_schema["properties"]["path"]["description"]
+    assert "add" in desc and "rm" in desc
+
+
+def test_runnable_style_command_arg_does_not_shadow_global():
+    # A subcommand arg that shares a name with a real global must NOT overwrite the
+    # global's property (first-seen/global wins); only the description is unaffected.
+    child = _runnable(
+        "go",
+        host="local",
+        args=[
+            {"name": "verbose", "type": "str", "required": True}
+        ],  # clashes w/ global flag
+    )
+    parent = _runnable(
+        "gr",
+        host="local",
+        requireCommand=True,
+        args=[{"name": "verbose", "type": "flag", "required": False, "default": False}],
+        commands={"go": child},
+    )
+    t = m.build_tools([parent], style="runnable")[0][0]
+    # the global `verbose` (boolean flag) is preserved, not replaced by the str arg
+    assert t.input_schema["properties"]["verbose"]["type"] == "boolean"
+
+
+# ── shutdown-noise log filter (0.280.5) ──────────────────────────────────────────
+
+
+def _record(msg, exc=None):
+    import logging
+
+    return logging.LogRecord(
+        name="uvicorn.error",
+        level=logging.ERROR,
+        pathname=__file__,
+        lineno=1,
+        msg=msg,
+        args=(),
+        exc_info=(type(exc), exc, None) if exc is not None else None,
+    )
+
+
+def test_shutdown_noise_filter_drops_only_while_stopping():
+    import asyncio
+
+    stopping = {"v": False}
+    flt = m._ShutdownNoiseFilter(lambda: stopping["v"])
+
+    cancel_line = _record(
+        "Cancel 1 running task(s), timeout graceful shutdown exceeded"
+    )
+    asgi_line = _record(
+        "Exception in ASGI application",
+        exc=asyncio.CancelledError(
+            "Task cancelled, timeout graceful shutdown exceeded"
+        ),
+    )
+    # Not stopping → everything passes (a real ASGI error is never hidden).
+    assert flt.filter(cancel_line) is True
+    assert flt.filter(asgi_line) is True
+
+    # Stopping → the two expected force-cancel records are dropped…
+    stopping["v"] = True
+    assert flt.filter(cancel_line) is False
+    assert flt.filter(asgi_line) is False
+    # …but an unrelated error still logs, even mid-stop.
+    assert flt.filter(_record("something actually broke")) is True
+    # …and an ASGI record whose cause is NOT a cancellation still logs.
+    assert (
+        flt.filter(_record("Exception in ASGI application", exc=ValueError("x")))
+        is True
+    )
+
+
+def test_stop_sets_stopping_flag():
+    srv = _server()
+    assert srv._stopping is False
+    srv.stop()  # no uvicorn/thread — just flips the flag + marks not-running
+    assert srv._stopping is True
