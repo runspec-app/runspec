@@ -8,6 +8,44 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.281.0] — 2026-09-23
+
+### Fixed
+
+- **Intermittent blank window / "The console hit a snag while loading." on cold
+  startup is fixed at the root.** Since the frontend was code-split into ~18 lazy
+  chunks (0.271.0 / 0.272.0), a cold launch could throw `failed to fetch
+  dynamically imported module` and blank the window (or fail the first Settings
+  click), clearing on a reload / second start. Cause: the built `dist/` was served
+  by a **single-threaded** `HTTPServer` while the heavy background bring-up
+  (telemetry / MCP / **wasmtime** sandbox warm) ran on threads started *before* the
+  window — holding the GIL exactly while the webview fetched the chunk graph and
+  starving the server, so a chunk fetch aborted. The user preference was
+  reliability over startup speed, so the fix removes the failure class rather than
+  papering over it, in four layers:
+  - **One app bundle.** `vite.config.ts` disables code-splitting
+    (`rollupOptions.output.codeSplitting: false`) so there are **no on-demand
+    chunks that can fail to fetch**. `React.lazy`/`<Suspense>` stay in the source
+    and keep their lazy-*mount* benefit (a tab instantiates only on first visit);
+    only the runtime *fetch* is gone. Trades a larger first-paint parse for
+    reliability.
+  - **Concurrent asset server.** `app.py` `_start_static_server` now uses
+    `ThreadingHTTPServer` (+ `daemon_threads`), so a slow/aborted transfer never
+    head-of-line-blocks the others.
+  - **Deferred bring-up via a readiness handshake.** The telemetry / MCP / sandbox
+    bring-up no longer runs before the window; it starts only when the frontend
+    calls the new `notify_frontend_ready` bridge method (App's mount effect) — a
+    successful bridge call that *proves* the JS API is wired, so it can't
+    reintroduce the JS-API race that reverted the 0.271.2 timing change. A daemon
+    `threading.Timer` (`FRONTEND_READY_FALLBACK_S`) is a guaranteed floor and the
+    window `shown` event a backstop; all three funnel through one lock-guarded
+    once-trigger.
+  - **Self-healing `ErrorBoundary`.** A transient module-load error (`… dynamically
+    imported module` / `Importing a module script failed` / `ChunkLoadError`)
+    auto-reloads **once** (guarded by `sessionStorage` and cleared on a healthy
+    mount, so it can never loop); any other crash still shows the manual panel.
+
+
 ## [0.280.5] — 2026-09-23
 
 ### Fixed

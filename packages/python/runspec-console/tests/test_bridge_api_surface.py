@@ -150,6 +150,7 @@ EXPECTED = {
     "mcp_start",
     "mcp_status",
     "new_chat_session",
+    "notify_frontend_ready",
     "open_devtools",
     "open_docs",
     "open_putty_url",

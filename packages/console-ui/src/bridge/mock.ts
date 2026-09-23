@@ -1667,6 +1667,7 @@ export const mockApi: BridgeApi = {
   log_client_error: async (context, message): Promise<void> => {
     console.error('[mock] log_client_error', context, message)
   },
+  notify_frontend_ready: async (): Promise<void> => {},
 
   // ── event triggers ─────────────────────────────────────────────────────────
   list_triggers: async () => ({

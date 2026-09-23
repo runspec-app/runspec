@@ -53,6 +53,34 @@ class InfraMixin:
             window.events.closed += self._on_window_closed
         except Exception:
             logger.debug("could not hook window 'closed' event", exc_info=True)
+        # Backstop for the deferred background bring-up (telemetry / MCP / sandbox):
+        # the frontend calls notify_frontend_ready() once React mounts, but if that
+        # never lands, the window 'shown' event also releases it. The daemon Timer in
+        # app.main() is the guaranteed floor; all three funnel through the same
+        # once-guarded _on_frontend_ready. Best-effort across pywebview versions.
+        try:
+            window.events.shown += lambda *_: self._release_frontend_ready()
+        except Exception:
+            logger.debug("could not hook window 'shown' event", exc_info=True)
+
+    def _release_frontend_ready(self) -> None:
+        """Fire the app.py-supplied bring-up trigger (once-guarded there). No-op
+        until app.main() wires ``_on_frontend_ready``. Never raises into a caller."""
+        cb = getattr(self, "_on_frontend_ready", None)
+        if cb is None:
+            return
+        try:
+            cb()
+        except Exception:  # noqa: BLE001 — a backstop must never wedge the caller
+            logger.debug("frontend-ready bring-up trigger failed", exc_info=True)
+
+    def notify_frontend_ready(self) -> None:
+        """Called by the UI once React has mounted (a successful bridge call, which
+        also proves the JS API is wired). Releases the deferred telemetry / MCP /
+        sandbox bring-up so that GIL-holding work runs strictly *after* first paint
+        — never contending with the webview loading the app bundle on a cold launch.
+        Best-effort and idempotent (the trigger it fires is once-guarded)."""
+        self._release_frontend_ready()
 
     # Guards _on_window_closed so the teardown runs once even though the same
     # handler is reachable from the 'closed' event and, as a backstop, atexit.

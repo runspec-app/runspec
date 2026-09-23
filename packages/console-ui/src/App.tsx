@@ -434,6 +434,17 @@ export default function App() {
 
   useEffect(() => { loadSshKeyAge() }, [])
 
+  // First paint is done — tell the backend it's safe to start its heavy
+  // telemetry / MCP / sandbox bring-up now (it was deferred so that GIL-holding
+  // work never contends with the webview loading the app bundle on a cold launch).
+  // A successful call also proves the JS API is wired. Fire-and-forget. Clearing
+  // the ErrorBoundary reload guard on a healthy mount lets a future transient
+  // load error auto-reload once again (see components/ErrorBoundary.tsx).
+  useEffect(() => {
+    bridge.notify_frontend_ready().catch(() => {})
+    try { sessionStorage.removeItem('rs-chunk-reload') } catch { /* ignore */ }
+  }, [])
+
   // Poll the console's own MCP server for tools it had to drop (invalid schema).
   // A dropped tool is otherwise a silent failure — the operator never sees the
   // log. This drives the gear badge (below) and toasts once per newly-broken

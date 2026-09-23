@@ -1949,6 +1949,10 @@ export interface BridgeApi {
   // Record a frontend error in the Python log file (so it isn't trapped in the
   // web view console). Best-effort; the proxy forwards uncaught bridge errors here.
   log_client_error: (context: string, message: string, detail?: unknown) => Promise<void>
+  // Signal (once React has mounted) that first paint is done, so the backend can
+  // start its heavy telemetry / MCP / sandbox bring-up without contending with the
+  // webview loading the app bundle. Fire-and-forget from App's mount effect.
+  notify_frontend_ready: () => Promise<void>
 }
 
 declare global {

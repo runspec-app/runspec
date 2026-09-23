@@ -17,11 +17,18 @@ import logging
 import os
 import sys
 import threading
-from http.server import HTTPServer, SimpleHTTPRequestHandler
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
+
+# How long to wait for the frontend to signal it has mounted
+# (bridge.notify_frontend_ready) before starting the heavy background bring-up
+# anyway. A guaranteed floor so a frontend that never signals (crashed pre-mount,
+# an older bundle) still gets telemetry / MCP. Comfortably above a worst-case cold
+# mount — the bridge already tolerates ~7–10 s AV-starved launches.
+FRONTEND_READY_FALLBACK_S = 8.0
 
 
 def _resolve_debug(dev: bool, devtools_arg: bool) -> bool:
@@ -87,7 +94,13 @@ def _start_static_server(dist: Path) -> int:
         s.bind(("127.0.0.1", 0))
         port = s.getsockname()[1]
 
-    server = HTTPServer(("127.0.0.1", port), _Handler)
+    # ThreadingHTTPServer, not the single-threaded HTTPServer: the webview fetches
+    # the app's assets concurrently, so one slow/aborted transfer must not
+    # head-of-line-block the others on a single request thread (a cold-launch
+    # starvation that could abort an asset fetch and blank the window).
+    # daemon_threads so a client holding a connection open never delays exit.
+    server = ThreadingHTTPServer(("127.0.0.1", port), _Handler)
+    server.daemon_threads = True
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
     return port
@@ -594,16 +607,31 @@ def main() -> None:
         for target in (_bring_up_telemetry, _bring_up_mcp, _warm_sandbox):
             threading.Thread(target=target, daemon=True).start()
 
-    # Start telemetry / MCP / sandbox on background threads before the window is
-    # created. 0.271.2 tried starting them just before webview.start() to keep
-    # create_window() uncontended, but a profiled launch showed WebView2 init does
-    # NOT release the GIL enough to overlap: the same CPU-bound import/setup work
-    # simply reappeared inside webview.start() (no net gain), and worse, contending
-    # during the frontend's load/mount sometimes lost the JS-API wiring race and
-    # left the window blank. Starting here keeps the window content reliable; the
-    # ~200 ms won by threading (vs the pre-0.271.1 synchronous bring-up) stays.
-    _start_background_bring_up()
-    prof("telemetry + MCP + sandbox threads started")
+    # Defer the heavy telemetry / MCP / sandbox bring-up until the frontend signals
+    # it has mounted (bridge.notify_frontend_ready → _on_frontend_ready), so this
+    # GIL-holding work never contends with the webview fetching + parsing the app
+    # bundle on a cold launch — the starvation that could abort the load and blank
+    # the window. Unlike 0.271.2's wall-clock retiming (reverted in 0.271.3 for the
+    # JS-API wiring race), this fires only AFTER a successful bridge call, which
+    # proves the JS API is wired — so it can't reintroduce that race. A daemon Timer
+    # is the guaranteed floor if the frontend never signals; the window `shown`
+    # event (wired in bridge.set_window) is a backstop. All paths funnel through one
+    # lock-guarded once-trigger.
+    _bring_up_lock = threading.Lock()
+    _brought_up = {"done": False}
+
+    def _trigger_bring_up_once() -> None:
+        with _bring_up_lock:
+            if _brought_up["done"]:
+                return
+            _brought_up["done"] = True
+        _start_background_bring_up()
+        prof("telemetry + MCP + sandbox threads started (after frontend ready)")
+
+    bridge._on_frontend_ready = _trigger_bring_up_once
+    _bring_up_timer = threading.Timer(FRONTEND_READY_FALLBACK_S, _trigger_bring_up_once)
+    _bring_up_timer.daemon = True
+    _bring_up_timer.start()
 
     if dev:
         url = f"http://localhost:{port}"
