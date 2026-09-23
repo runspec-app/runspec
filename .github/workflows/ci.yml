@@ -54,6 +54,8 @@ jobs:
       fs-core: ${{ steps.filter.outputs.fs-core }}
       gitlab: ${{ steps.filter.outputs.gitlab }}
       gitlab-core: ${{ steps.filter.outputs.gitlab-core }}
+      rundeck: ${{ steps.filter.outputs.rundeck }}
+      rundeck-core: ${{ steps.filter.outputs.rundeck-core }}
       jira: ${{ steps.filter.outputs.jira }}
       jira-core: ${{ steps.filter.outputs.jira-core }}
       confluence: ${{ steps.filter.outputs.confluence }}
@@ -141,6 +143,13 @@ jobs:
               - '.github/workflows/ci.yml'
             gitlab-core:
               - 'packages/python/runspec-gitlab-core/**'
+              - '.github/workflows/ci.yml'
+            rundeck:
+              - 'packages/python/runspec-rundeck/**'
+              - 'packages/python/runspec-rundeck-core/**'
+              - '.github/workflows/ci.yml'
+            rundeck-core:
+              - 'packages/python/runspec-rundeck-core/**'
               - '.github/workflows/ci.yml'
             jira:
               - 'packages/python/runspec-jira/**'
@@ -1954,6 +1963,166 @@ jobs:
           print('Wheel contents OK')
           "
 
+  # ── runspec-rundeck-core ─────────────────────────────────────────────────────
+
+  rundeck-core-quality:
+    name: "rundeck-core quality / ${{ matrix.check }}"
+    needs: changes
+    if: needs.changes.outputs.rundeck-core == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [lint, format]
+    defaults:
+      run:
+        working-directory: packages/python/runspec-rundeck-core
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Lint
+        if: matrix.check == 'lint'
+        run: ruff check .
+
+      - name: Format check
+        if: matrix.check == 'format'
+        run: ruff format --check .
+
+  rundeck-core-test:
+    name: runspec-rundeck-core test
+    needs: changes
+    if: needs.changes.outputs.rundeck-core == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/python/runspec-rundeck-core
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Type check
+        run: mypy runspec_rundeck_core/
+
+      - name: Run tests
+        run: pytest
+
+      - name: Build wheel
+        run: |
+          pip install build
+          python -m build --wheel
+
+      - name: Wheel smoke test
+        run: |
+          python -m venv /tmp/smoke-core
+          /tmp/smoke-core/bin/pip install dist/*.whl
+          # The split's contract: importable helpers, but no runspec dependency,
+          # no runspec.toml, and no console scripts — so it surfaces no runnables.
+          /tmp/smoke-core/bin/python -c "
+          import importlib.metadata as m
+          from runspec_rundeck_core import sync_target, config_from_env
+          reqs = m.requires('runspec-rundeck-core') or []
+          assert not any(r.split()[0].lower().startswith('runspec') for r in reqs), f'core must not depend on runspec: {reqs}'
+          eps = m.entry_points()
+          scripts = [e.name for e in eps.select(group='console_scripts') if e.value.startswith('runspec_rundeck_core')]
+          assert not scripts, f'core must not ship console scripts: {scripts}'
+          print('core surface OK — importable, zero runnables')
+          "
+
+  # ── runspec-rundeck ──────────────────────────────────────────────────────────
+
+  rundeck-quality:
+    name: "rundeck quality / ${{ matrix.check }}"
+    needs: changes
+    if: needs.changes.outputs.rundeck == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [lint, format]
+    defaults:
+      run:
+        working-directory: packages/python/runspec-rundeck
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        # runspec-rundeck-core isn't published yet — install it from the sibling
+        # source so the runspec-rundeck deps resolve locally.
+        run: |
+          pip install -e ../runspec-rundeck-core
+          pip install -e ".[dev]"
+
+      - name: Lint
+        if: matrix.check == 'lint'
+        run: ruff check .
+
+      - name: Format check
+        if: matrix.check == 'format'
+        run: ruff format --check .
+
+  rundeck-test:
+    name: runspec-rundeck test
+    needs: changes
+    if: needs.changes.outputs.rundeck == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/python/runspec-rundeck
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        # runspec-rundeck-core and runspec are installed from sibling source so
+        # the runspec-rundeck deps resolve locally against this checkout.
+        run: |
+          pip install -e ../runspec-rundeck-core
+          pip install -e ../runspec
+          pip install -e ".[dev]"
+
+      - name: Run tests
+        run: pytest
+
+      - name: Build wheel
+        run: |
+          pip install build
+          python -m build --wheel
+
+      - name: Wheel smoke test
+        run: |
+          python -m venv /tmp/smoke
+          # Install the unpublished core dependency first, then the wheel under test.
+          /tmp/smoke/bin/pip install ../runspec-rundeck-core
+          /tmp/smoke/bin/pip install dist/*.whl
+          /tmp/smoke/bin/rundeck --help
+          /tmp/smoke/bin/python -c "
+          from importlib.resources import files
+          pkg = files('runspec_rundeck')
+          assert (pkg / 'runspec.toml').is_file(), 'runspec.toml missing from wheel'
+          from runspec_rundeck import main
+          print('Wheel contents OK')
+          "
+
   # ── runspec-o365 ─────────────────────────────────────────────────────────────
 
   o365-quality:
@@ -2377,7 +2546,7 @@ jobs:
 
   ci:
     name: CI
-    needs: [python-quality, python-test, node, linux-quality, linux-test, linux-core-quality, linux-core-test, jsm-quality, jsm-test, snow-quality, snow-test, logops-quality, logops-test, logops-core-quality, logops-core-test, playbook-quality, playbook-test, claude-quality, claude-test, windows-quality, windows-unit, windows-smoke, o365-quality, o365-test, console-quality, console-test, console-test-windows, console-ui, console-smoke, console-app-smoke, webops, webops-core-quality, webops-core-test, fs-core-quality, fs-core-test, fs-quality, fs-test, gitlab-core-quality, gitlab-core-test, gitlab-quality, gitlab-test, jira-core-quality, jira-core-test, jira-quality, jira-test, confluence-core-quality, confluence-core-test, confluence-quality, confluence-test, docs-check]
+    needs: [python-quality, python-test, node, linux-quality, linux-test, linux-core-quality, linux-core-test, jsm-quality, jsm-test, snow-quality, snow-test, logops-quality, logops-test, logops-core-quality, logops-core-test, playbook-quality, playbook-test, claude-quality, claude-test, windows-quality, windows-unit, windows-smoke, o365-quality, o365-test, console-quality, console-test, console-test-windows, console-ui, console-smoke, console-app-smoke, webops, webops-core-quality, webops-core-test, fs-core-quality, fs-core-test, fs-quality, fs-test, gitlab-core-quality, gitlab-core-test, gitlab-quality, gitlab-test, rundeck-core-quality, rundeck-core-test, rundeck-quality, rundeck-test, jira-core-quality, jira-core-test, jira-quality, jira-test, confluence-core-quality, confluence-core-test, confluence-quality, confluence-test, docs-check]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -2435,6 +2604,10 @@ jobs:
           check "gitlab-core-test"    "${{ needs.gitlab-core-test.result }}"
           check "gitlab-quality"  "${{ needs.gitlab-quality.result }}"
           check "gitlab-test"     "${{ needs.gitlab-test.result }}"
+          check "rundeck-core-quality" "${{ needs.rundeck-core-quality.result }}"
+          check "rundeck-core-test"    "${{ needs.rundeck-core-test.result }}"
+          check "rundeck-quality" "${{ needs.rundeck-quality.result }}"
+          check "rundeck-test"    "${{ needs.rundeck-test.result }}"
           check "jira-core-quality" "${{ needs.jira-core-quality.result }}"
           check "jira-core-test"    "${{ needs.jira-core-test.result }}"
           check "jira-quality"    "${{ needs.jira-quality.result }}"

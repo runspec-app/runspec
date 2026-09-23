@@ -1,0 +1,76 @@
+#:schema https://runspec.app/runspec.schema.json
+
+# runspec-rundeck — sync your venv's runnables to Rundeck as jobs.
+#
+# A JVM-free replacement for `rd jobs load` for CI: `sync` discovers every
+# runnable in the venv, emits a Rundeck job per leaf command (via
+# `runspec emit --rundeck`), and imports them into a project over the Rundeck
+# REST API. Idempotent by the emitted UUID (create-when-missing,
+# update-when-present, rename-safe); `--prune` removes jobs a runnable no longer
+# emits. `push` imports pre-emitted `jobs/*.json`; `list` reads a project's jobs.
+#
+# Auth is env-var first — RUNDECK_URL / RUNDECK_TOKEN / RUNDECK_PROJECT, with
+# RUNDECK_<ENV>_* prefixes selected by --env (dev/uat/prod, or regional labels
+# like prod-eu). A CI matrix runs one invocation per instance. The --token
+# password arg is the runspec-console secret channel (never on the command line).
+
+[config]
+autonomy-default = "confirm"
+
+[config.logging]
+store = "per-run"
+
+[rundeck]
+description = "Sync runspec runnables to Rundeck as jobs, or import/list job definitions over the REST API"
+output = "json"
+require-command = true
+examples = [
+  {cmd = "rundeck sync --project ops", description = "Emit every runnable in the venv and import into the 'ops' project"},
+  {cmd = "rundeck sync --project ops --prune", description = "Sync and delete jobs a runnable no longer emits"},
+  {cmd = "rundeck sync --project ops --env prod-eu", description = "Sync to the prod-eu instance (RUNDECK_PROD_EU_* vars)"},
+  {cmd = "rundeck push jobs/greeter.json --project ops", description = "Import an already-emitted job file"},
+  {cmd = "rundeck list --project ops", description = "List the jobs currently defined in a project"},
+]
+
+# ── global args (inherited by every verb) ──────────────────────────────────────
+[rundeck.args]
+env = {type = "str", short = "-e", required = false, description = "Instance label selecting RUNDECK_<ENV>_* vars (e.g. dev, prod, prod-eu)"}
+url = {type = "str", required = false, description = "Rundeck base URL (overrides RUNDECK_URL)"}
+token = {type = "password", required = false, description = "Rundeck API token (overrides RUNDECK_TOKEN; via the runspec secret channel, never the CLI)"}
+project = {type = "str", short = "-p", required = false, description = "Target project (overrides RUNDECK_PROJECT)"}
+api-version = {type = "int", required = false, description = "Rundeck REST API version (default 41; raise for newer servers)"}
+ca-bundle = {type = "path", required = false, description = "PEM bundle to verify TLS against a private CA / intercepting proxy"}
+proxy = {type = "str", short = "-x", required = false, description = "HTTP proxy URL for egress (else the machine proxy env is honoured)"}
+insecure = {type = "flag", default = false, description = "Skip TLS verification (ignored when --ca-bundle is set)"}
+
+# ── sync: discover → emit → import ─────────────────────────────────────────────
+[rundeck.commands.sync]
+description = "Emit a Rundeck job per runnable in the venv and import them into the project"
+[rundeck.commands.sync.args]
+runnable = {type = "str", short = "-r", required = false, description = "Only sync this one runnable (default: every runnable in the venv)"}
+all = {type = "flag", default = false, description = "Include hidden (discoverable = false) runnables"}
+prune = {type = "flag", default = false, description = "Delete jobs in the managed group(s) that no runnable emits any more"}
+create-project = {type = "flag", default = false, description = "Create the project first if it does not exist"}
+group = {type = "str", required = false, description = "Rundeck group for the jobs (overrides meta.rundeck.group; default 'runspec')"}
+node-filter = {type = "str", required = false, description = "Node filter for the jobs (adds orchestrator subset=1 load-balancing)"}
+venv = {type = "str", required = false, description = "Venv path on the Rundeck node the job scripts invoke (overrides meta.rundeck.venv)"}
+dupe-option = {type = "choice", options = ["update", "create", "skip"], default = "update", description = "How to handle an existing job with the same UUID"}
+uuid-option = {type = "choice", options = ["preserve", "remove"], default = "preserve", description = "Keep the emitted UUID (preserve) or let Rundeck assign one"}
+
+# ── push: import pre-emitted job files ─────────────────────────────────────────
+[rundeck.commands.push]
+description = "Import already-emitted Rundeck job JSON into the project"
+[rundeck.commands.push.args]
+path = {type = "path", position = 1, required = true, description = "A job JSON file, or a directory whose *.json are all imported (e.g. jobs/)"}
+prune = {type = "flag", default = false, description = "Delete jobs in --group that are not in the imported set (requires --group)"}
+group = {type = "str", required = false, description = "Group to scope --prune to"}
+create-project = {type = "flag", default = false, description = "Create the project first if it does not exist"}
+dupe-option = {type = "choice", options = ["update", "create", "skip"], default = "update", description = "How to handle an existing job with the same UUID"}
+uuid-option = {type = "choice", options = ["preserve", "remove"], default = "preserve", description = "Keep the emitted UUID (preserve) or let Rundeck assign one"}
+
+# ── list: read a project's jobs ────────────────────────────────────────────────
+[rundeck.commands.list]
+description = "List the jobs defined in a project (optionally scoped to a group)"
+autonomy = "autonomous"
+[rundeck.commands.list.args]
+group = {type = "str", required = false, description = "Only list jobs under this group path"}

@@ -48,6 +48,160 @@ curl -H "X-Rundeck-Auth-Token: $TOKEN" -H "Content-Type: application/json" \
 > (derived from project + group + job name), so re-emitting and re-importing
 > **updates** the same job in place rather than creating a duplicate.
 
+## Syncing jobs with `runspec-rundeck`
+
+`runspec emit --rundeck` writes files; the separate
+[`runspec-rundeck`](https://pypi.org/project/runspec-rundeck/) package pushes
+them to a live instance over the REST API — a **JVM-free replacement for
+`rd jobs load`** you can drop into a CI publish stage, with no Java on the
+runner.
+
+```bash
+pip install runspec-rundeck
+```
+
+| Command | Autonomy | What it does |
+|---|---|---|
+| `rundeck sync` | confirm | Discover every runnable in the venv, emit a job per leaf command, and import them into a project |
+| `rundeck push` | confirm | Import already-emitted `jobs/*.json` (or a whole `jobs/` directory) |
+| `rundeck list` | autonomous | List a project's jobs |
+
+`sync` is the headline verb. It runs `runspec emit --rundeck --stdout` in its own
+venv (so it sees exactly the runnables installed alongside it), skips hidden
+(`discoverable = false`) helpers, and imports the rest with
+`dupeOption=update&uuidOption=preserve` — **create-when-missing,
+update-when-present, rename-safe**, because identity is the emitted UUID.
+
+```bash
+export RUNDECK_URL=https://rundeck.example.com
+export RUNDECK_TOKEN=…            # a Rundeck API token
+rundeck sync --project ops
+```
+
+Because a publish stage re-emits every run, the platform's jobs stay in lockstep
+with the installed runnables — arguments included. `sync` covers **every runnable
+in the venv** by default; `--runnable <name>` scopes it to one.
+
+### Pruning removed runnables
+
+Import never deletes, so `--prune` removes jobs in the managed group whose UUID
+wasn't in this push — a runnable removed from the venv has its job cleaned up:
+
+```bash
+rundeck sync --project ops --prune
+```
+
+Prune is scoped to the groups the pushed jobs declare, so it never touches jobs
+the sync doesn't own.
+
+### Environments and regions
+
+Auth is environment-variable first, with `RUNDECK_<ENV>_*` prefixes selected by
+`--env` — a free-form label, so it carries `dev`/`uat`/`prod` **and** regional
+labels like `prod-eu`:
+
+```bash
+export RUNDECK_PROD_EU_URL=https://rundeck.eu.example.com
+export RUNDECK_PROD_EU_TOKEN=…
+rundeck sync --env prod-eu --project ops
+```
+
+Run one invocation per instance from a CI matrix. UUIDs only need to be unique
+*within* an instance, so the same emitted jobs push cleanly to every separate
+instance. For private-CA or proxied instances, `--ca-bundle` / `--proxy` /
+`--insecure` and the `--token` password arg (the runspec-console secret channel)
+override the environment.
+
+A GitHub Actions publish stage, one job per instance:
+
+```yaml
+publish-rundeck:
+  strategy:
+    matrix:
+      target: [uat, prod-eu, prod-us]
+  steps:
+    - run: pip install ./dist/*.whl runspec-rundeck
+    - run: rundeck sync --env ${{ matrix.target }} --project ops --prune
+      env:
+        RUNDECK_UAT_URL: ${{ vars.RUNDECK_UAT_URL }}
+        RUNDECK_UAT_TOKEN: ${{ secrets.RUNDECK_UAT_TOKEN }}
+        RUNDECK_PROD_EU_URL: ${{ vars.RUNDECK_PROD_EU_URL }}
+        RUNDECK_PROD_EU_TOKEN: ${{ secrets.RUNDECK_PROD_EU_TOKEN }}
+        # …one URL/TOKEN pair per target…
+```
+
+### Corporate wrapper: bake in instances, regions, and fan-out
+
+`runspec-rundeck-core` holds all the logic with **no runspec dependency**, so a
+private package can import it, hard-code your instance topology (URLs, proxy,
+projects), and expose `--region` / `--env` that resolve to a concrete instance —
+plus an optional fan-out that pushes to every matching instance in one run. Only
+the generic `runspec-rundeck` is published; your topology stays in your package.
+This is the same split the rest of the ecosystem uses (`runspec-jsm` /
+`runspec-snow` bake in a service-desk id; here you bake in a fleet).
+
+A minimal `mycorp-rundeck` wrapper — `cli.py` resolves a baked map and fans out
+with the core `sync_target`:
+
+```python
+import runspec as rs
+from runspec_rundeck_core import config_from_env, sync_target
+from runspec_rundeck.emit import discover_visibility, emit_jobs, filter_visible
+
+# Your instance topology — the one thing a wrapper adds. Secrets stay in the
+# environment / keychain; only URLs and projects are baked in.
+INSTANCES = {
+    ("eu", "prod"): {"url": "https://rundeck.eu.example.com", "project": "ops"},
+    ("us", "prod"): {"url": "https://rundeck.us.example.com", "project": "ops"},
+    ("eu", "uat"):  {"url": "https://rundeck-uat.eu.example.com", "project": "ops"},
+}
+PROXY = "http://proxy.example.com:8080"   # corporate egress, baked in
+
+
+def targets(region, env):
+    """One concrete pair, or every matching instance when either is 'all'."""
+    if region == "all" or env == "all":
+        return [(r, e) for (r, e) in INSTANCES if region in (r, "all") and env in (e, "all")]
+    return [(region, env)]
+
+
+def main():
+    spec = rs.parse("rundeck")
+    jobs = _emit_visible(spec)                       # emit once, reuse per instance
+    results = []
+    for r, e in targets(spec.region.value, spec.env.value):
+        inst = INSTANCES[(r, e)]
+        cfg = config_from_env(               # token/CA from the env; the rest baked
+            f"{r}-{e}", url=inst["url"], project=inst["project"], proxy=PROXY,
+        )
+        results.append(sync_target(cfg, jobs, prune=bool(spec.prune.value)))
+    ok = all(x.ok for x in results)
+    print({"ok": ok, "instances": len(results)})
+
+
+def _emit_visible(spec):
+    jobs = emit_jobs("ops", venv=spec.venv.value)
+    names, hidden = discover_visibility()
+    kept, _dropped = filter_visible(jobs, names, hidden)
+    return kept
+```
+
+Its `runspec.toml` adds the two targeting args on top of the standard ones:
+
+```toml
+[rundeck]
+description = "Sync runnables to our Rundeck fleet"
+
+[rundeck.args]
+region = {type = "choice", options = ["eu", "us", "all"], description = "Region to target"}
+env = {type = "choice", options = ["uat", "prod", "all"], description = "Environment to target"}
+```
+
+`--region all` / `--env all` fans out to every matching instance behind one
+command; a concrete pair targets one. Because the core stays single-target
+(`sync_target`), the wrapper owns only the map and the loop — everything else
+(emit, UUID identity, prune) comes from the published packages.
+
 ## What's in a job
 
 Every job runs a single Bash **script step** — never a plain `exec`/command
