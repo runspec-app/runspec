@@ -37,6 +37,15 @@ def test_bad_pattern_is_flagged():
     assert schema_issue(_obj({"type": "string", "pattern": "[a-z][a-z0-9-]+"})) == ""
 
 
+def test_duplicate_required_is_flagged():
+    # draft 2020-12 requires unique `required` entries; the Anthropic API rejects a
+    # duplicate (`["host","host"] has non-unique elements`) — the runnable-style
+    # host/command-selector collision bug.
+    assert "required has duplicate entries" in schema_issue({"type": "object", "properties": {"host": {"type": "string"}}, "required": ["host", "host"]})
+    # a unique required list is fine
+    assert schema_issue({"type": "object", "properties": {"a": {"type": "string"}, "b": {"type": "string"}}, "required": ["a", "b"]}) == ""
+
+
 def test_tuple_items_is_flagged():
     # draft-04-style tuple `items` (an array) is invalid in 2020-12.
     assert "items must be a schema" in schema_issue(_obj({"type": "array", "items": [{"type": "string"}]}))

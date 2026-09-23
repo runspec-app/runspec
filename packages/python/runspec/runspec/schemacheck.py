@@ -96,6 +96,10 @@ def schema_issue(schema: Any, path: str = "") -> str:
         req = schema["required"]
         if not isinstance(req, list) or not all(isinstance(x, str) for x in req):
             return f"{path}required must be an array of strings"
+        # draft 2020-12 requires unique `required` entries; the Anthropic API
+        # rejects a duplicate (``["host","host"] has non-unique elements``).
+        if len(req) != len(set(req)):
+            return f"{path}required has duplicate entries: {req}"
 
     props = schema.get("properties")
     if isinstance(props, dict):

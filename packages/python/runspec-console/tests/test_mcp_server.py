@@ -361,6 +361,61 @@ def test_runnable_style_default_autonomy_floors_each_command():
     assert t.command_autonomy["bye"] == "confirm"
 
 
+def test_runnable_style_host_selector_renamed_when_runnable_has_host_arg():
+    # A runnable that declares its own `host` arg, discovered on >1 host, must NOT
+    # collide with the injected fleet-host selector: colliding overwrote the real
+    # arg AND put "host" in `required` twice — invalid draft 2020-12
+    # (`["host","host"] has non-unique elements`), which 400s the whole tool list.
+    a = _runnable(
+        "cert",
+        host="web1",
+        autonomy="autonomous",
+        args=[{"name": "host", "type": "str", "required": True}],
+    )
+    b = _runnable(
+        "cert",
+        host="web2",
+        autonomy="autonomous",
+        args=[{"name": "host", "type": "str", "required": True}],
+    )
+    t = m.build_tools([a, b], style="runnable")[0][0]
+    props = t.input_schema["properties"]
+    # the runnable's own `host` arg is preserved (a plain string, no fleet enum)…
+    assert "enum" not in props["host"]
+    # …and the fleet selector lives under a renamed, non-colliding key.
+    assert t.host_key == "_host"
+    assert sorted(props["_host"]["enum"]) == ["web1", "web2"]
+    # `required` has no duplicate → the schema is valid draft 2020-12.
+    req = t.input_schema.get("required", [])
+    assert len(req) == len(set(req))
+    assert m.schema_invalidity(t.input_schema) == ""
+    # resolve_call reads the fleet target from `_host` and leaves the real arg.
+    host, _path, _lvl, args, err = t.resolve_call(
+        {"_host": "web2", "host": "example.com"}
+    )
+    assert err == "" and host == "web2" and args == {"host": "example.com"}
+
+
+def test_runnable_style_command_selector_renamed_when_runnable_has_command_arg():
+    # Same collision for a runnable that declares its own `command` arg + subcommands.
+    child = _runnable("run", host="local", autonomy="confirm")
+    parent = _runnable(
+        "tool",
+        host="local",
+        requireCommand=True,
+        args=[{"name": "command", "type": "str", "required": True}],
+        commands={"run": child},
+    )
+    t = m.build_tools([parent], style="runnable")[0][0]
+    assert t.command_key == "_command"
+    assert "command" in t.input_schema["properties"]  # the real arg survives
+    req = t.input_schema.get("required", [])
+    assert len(req) == len(set(req))
+    assert m.schema_invalidity(t.input_schema) == ""
+    _host, path, _lvl, args, err = t.resolve_call({"_command": "run", "command": "x"})
+    assert err == "" and path == ["run"] and args == {"command": "x"}
+
+
 def test_leaf_style_resolve_call_is_passthrough():
     # a plain (no-subcommand) runnable in leaf style: resolve_call returns its fixed
     # host/command_path/autonomy unchanged, args untouched.

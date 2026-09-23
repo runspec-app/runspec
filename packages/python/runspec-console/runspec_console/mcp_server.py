@@ -160,12 +160,25 @@ def schema_invalidity(schema: dict[str, Any]) -> str:
     with no hint which runnable is at fault. Validating here lets the server drop
     (and name) just the offender and publish the rest.
 
-    Delegates to the stdlib-only :func:`runspec.schemacheck.schema_issue` (core is
-    a hard dependency of this package, so it is always importable and needs no
-    extra — unlike ``jsonschema``, which only ships with the ``mcp`` extra and so
-    is absent from the test env). It covers exactly the keywords the console emits
-    and agrees with a real draft-2020-12 validator on them. A missing/old core
-    (``< 0.54.0``, no ``schemacheck``) falls back to ``""`` — never over-filter."""
+    Prefers the **full** draft-2020-12 metaschema check via ``jsonschema`` — which
+    ships transitively with the ``mcp`` extra, so it is present wherever this server
+    actually runs, and matches what the Anthropic API rejects most closely (e.g. a
+    non-unique ``required`` array — the ``runnable``-style ``["host","host"]`` bug —
+    which the conservative stdlib check below does not catch). Falls back to the
+    stdlib-only :func:`runspec.schemacheck.schema_issue` when ``jsonschema`` isn't
+    importable (the test env, which installs no ``mcp`` extra); that covers the
+    keywords the console emits. If neither is available, returns ``""`` — never
+    over-filter."""
+    try:
+        from jsonschema import Draft202012Validator
+
+        try:
+            Draft202012Validator.check_schema(schema)
+            return ""
+        except Exception as exc:  # noqa: BLE001 — any metaschema failure ⇒ a reason
+            return str(exc).splitlines()[0] if str(exc) else exc.__class__.__name__
+    except Exception:  # jsonschema absent (no mcp extra) — fall back to stdlib
+        pass
     try:
         from runspec.schemacheck import schema_issue
     except Exception:  # pragma: no cover — core >= 0.54.0 always has schemacheck
@@ -230,6 +243,13 @@ class ExecTool:
     # chosen at call time via a `host` argument (empty ⇒ the fixed `host` is used).
     host_options: list[str] = field(default_factory=list)
     host_required: bool = False
+    # The argument names the injected command/host *selectors* live under. Normally
+    # ``"command"``/``"host"``, but renamed (``_command``/``_host``…) when the
+    # runnable already declares an arg of that name — otherwise the selector would
+    # overwrite the real arg's property AND duplicate it in ``required`` (invalid
+    # draft 2020-12, which the Anthropic API rejects for the whole tools array).
+    command_key: str = "command"
+    host_key: str = "host"
 
     def schema(self) -> dict[str, Any]:
         return {
@@ -254,7 +274,7 @@ class ExecTool:
         args = dict(arguments or {})
         host = self.host
         if self.host_options:
-            chosen = str(args.pop("host", "") or "").strip()
+            chosen = str(args.pop(self.host_key, "") or "").strip()
             if not chosen:
                 if self.host_required:
                     return (
@@ -262,8 +282,8 @@ class ExecTool:
                         [],
                         self.autonomy,
                         args,
-                        f"'{self.runnable}' runs on multiple hosts — set 'host'. "
-                        f"Options: {', '.join(self.host_options)}.",
+                        f"'{self.runnable}' runs on multiple hosts — set "
+                        f"'{self.host_key}'. Options: {', '.join(self.host_options)}.",
                     )
                 host = self.host_options[0]
             elif chosen not in self.host_options:
@@ -279,7 +299,7 @@ class ExecTool:
                 host = chosen
         if not self.command_options:
             return host, list(self.command_path), self.autonomy, args, ""
-        command = str(args.pop("command", "") or "").strip()
+        command = str(args.pop(self.command_key, "") or "").strip()
         if not command:
             if self.command_required:
                 return (
@@ -367,6 +387,17 @@ def _command_leaves(
     return [(prefix, autonomy)]
 
 
+def _free_key(base: str, taken: set[str]) -> str:
+    """A property name based on ``base`` that isn't already in ``taken`` — ``base``
+    itself, else ``_base``, ``__base``, … (mirrors the agent-side ``_host``/``__host``
+    rename). Used so an injected ``command``/``host`` selector never collides with a
+    runnable's own same-named arg."""
+    key = base
+    while key in taken:
+        key = "_" + key
+    return key
+
+
 def _collapse_runnable(entries: list[dict[str, Any]]) -> ExecTool | None:
     """One whole runnable — **every copy of it** — → a single ExecTool. The
     subcommand is chosen at call time via a ``command`` argument, and when the
@@ -398,21 +429,33 @@ def _collapse_runnable(entries: list[dict[str, Any]]) -> ExecTool | None:
     # simple as a leaf tool — no host arg).
     host_options = hosts if len(hosts) > 1 else []
     schema = _input_schema(args)
+    # The command/host selectors are injected under a name that doesn't collide with
+    # the runnable's own args (a runnable may declare its own `host`/`command` arg —
+    # e.g. cert-check). Colliding would overwrite the real arg's property AND put the
+    # name in `required` twice, which is invalid draft 2020-12 (`["host","host"] has
+    # non-unique elements`) and makes the Anthropic API reject the whole tools array.
+    taken = set(schema.get("properties", {}).keys())
+    command_key = "command"
+    host_key = "host"
     if options:
-        schema.setdefault("properties", {})["command"] = {
+        command_key = _free_key("command", taken)
+        taken.add(command_key)
+        schema.setdefault("properties", {})[command_key] = {
             "type": "string",
             "enum": options,
             "description": "Subcommand to run.",
         }
         if command_required:
-            schema.setdefault("required", []).append("command")
+            schema.setdefault("required", []).append(command_key)
     if host_options:
-        schema.setdefault("properties", {})["host"] = {
+        host_key = _free_key("host", taken)
+        taken.add(host_key)
+        schema.setdefault("properties", {})[host_key] = {
             "type": "string",
             "enum": host_options,
             "description": "Fleet host to run on.",
         }
-        schema.setdefault("required", []).append("host")
+        schema.setdefault("required", []).append(host_key)
     return ExecTool(
         name=sanitize_tool_name(name),
         description=str(node.get("description") or ""),
@@ -430,6 +473,8 @@ def _collapse_runnable(entries: list[dict[str, Any]]) -> ExecTool | None:
         command_required=command_required,
         host_options=host_options,
         host_required=bool(host_options),
+        command_key=command_key,
+        host_key=host_key,
     )
 
 

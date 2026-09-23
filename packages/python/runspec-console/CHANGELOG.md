@@ -8,6 +8,36 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.280.2] — 2026-09-23
+
+### Fixed
+
+- **MCP server (`tool_style = "runnable"`): a runnable that declares its own
+  `host` or `command` arg no longer 400s the whole tool list.** In `runnable`
+  style the console injects a fleet-`host` selector (when a runnable is on >1
+  host) and a `command` subcommand selector. When the runnable *already* had an
+  arg of that name, the injected selector overwrote the real arg's property **and**
+  added the name to `required` a second time — producing `required: ["host",
+  "host"]`, which is invalid JSON Schema draft 2020-12 (`… has non-unique
+  elements`). The Anthropic API rejects the **entire** `tools` array over it, so a
+  connecting agent (Claude Code) got a `400 tools.N.custom.input_schema` and saw
+  *no* tools — and, because the backstop's conservative stdlib check didn't catch
+  a duplicate `required`, nothing was dropped or logged. Now the selector is
+  injected under a **non-colliding key** (`host` → `_host`/`__host`…, `command`
+  → `_command`…, mirroring the agent-side rename), so the runnable's own arg is
+  preserved *and* the schema stays valid; `resolve_call` reads the fleet target /
+  subcommand from the renamed key. (`mcp_server._collapse_runnable` / `_free_key`;
+  new `ExecTool.command_key`/`host_key`.) `leaf` style was never affected (it
+  injects no selectors).
+- **The publish-time schema backstop now catches the full construct set.**
+  `mcp_server.schema_invalidity` prefers the complete draft-2020-12 metaschema
+  check via `jsonschema` (present wherever the server runs — it ships with the
+  `mcp` extra), which matches what the Anthropic API rejects (including the
+  non-unique `required` above), and falls back to the stdlib `runspec.schemacheck`
+  only when `jsonschema` is absent (the test env). So even a construct the source
+  fix doesn't pre-empt is dropped-and-named in the UI instead of blanking the list.
+
+
 ## [0.280.1] — 2026-09-22
 
 ### Fixed

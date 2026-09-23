@@ -7,6 +7,18 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.55.0] — 2026-09-23
+
+### Fixed
+- **`runspec.schemacheck` now flags a non-unique `required` array.** Draft
+  2020-12 requires `required` entries to be unique, and the Anthropic API rejects
+  a duplicate (`["host","host"] has non-unique elements`) — which 400s the whole
+  `tools` array. The conservative stdlib checker previously passed it, so
+  `runspec serve` / the `runspec-mcp` gateway (and the console's stdlib fallback)
+  couldn't catch that class. `schema_issue` now reports it, so a tool carrying it
+  is dropped-and-named rather than silently taking the list down.
+
+
 ## [0.54.0] — 2026-09-22
 
 ### Added
