@@ -445,6 +445,18 @@ const MOCK_HISTORY: HistoryRecord[] = [
       { ts: new Date(Date.now() - 172803000).toISOString(), level: 'INFO', message: 'no files older than 14 days found' },
     ],
   },
+  {
+    id: '7', runnable: 'chat', group: '', host: 'local', operator: 'Jason Finestone', runAs: '',
+    exitCode: 0, durationMs: 4120, ts: new Date(Date.now() - 5400000).toISOString(),
+    initiatedBy: 'llm', kind: 'agent',
+    args: {}, logLines: [],
+  },
+  {
+    id: '8', runnable: 'outlook_inbox', group: '', host: 'local', operator: 'Jason Finestone', runAs: '',
+    exitCode: 0, durationMs: 210, ts: new Date(Date.now() - 5350000).toISOString(),
+    initiatedBy: 'llm', kind: 'tool',
+    args: { limit: '10' }, logLines: [],
+  },
 ]
 
 // ── Analytics mock ──────────────────────────────────────────────────────────

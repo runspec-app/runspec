@@ -168,6 +168,47 @@ def test_refresh_does_not_start_before_window():
     assert b._refresh_started is True
 
 
+def test_window_close_tears_down_background_subsystems_once():
+    """The 'closed' handler must stop the sources (email pump + scheduler),
+    chat, MCP client/server and SSH pools *now* — not defer to atexit, which can
+    run too late to unwedge a hung close — and be idempotent."""
+    b = _make_bridge()
+    calls: list[str] = []
+    with (
+        patch.object(Bridge, "stop_chat", lambda self: calls.append("chat")),
+        patch.object(Bridge, "stop_triggers", lambda self: calls.append("triggers")),
+        patch.object(Bridge, "_close_ssh_pool", lambda self: calls.append("ssh")),
+        patch.object(b._mcp, "stop", lambda: calls.append("mcp")),
+        patch.object(b._mcp_server, "stop", lambda: calls.append("mcp-server")),
+    ):
+        b._on_window_closed()
+        assert set(calls) == {"chat", "triggers", "ssh", "mcp", "mcp-server"}
+        assert "triggers" in calls  # the email pump is stopped on close
+        # A second close (event + atexit backstop both fire) is a no-op.
+        calls.clear()
+        b._on_window_closed()
+        assert calls == []
+
+
+def test_window_close_teardown_is_best_effort():
+    """A raising teardown step must not stop the others or wedge the close."""
+    b = _make_bridge()
+    calls: list[str] = []
+
+    def boom(self):
+        raise RuntimeError("nope")
+
+    with (
+        patch.object(Bridge, "stop_chat", boom),
+        patch.object(Bridge, "stop_triggers", lambda self: calls.append("triggers")),
+        patch.object(Bridge, "_close_ssh_pool", lambda self: calls.append("ssh")),
+        patch.object(b._mcp, "stop", lambda: calls.append("mcp")),
+        patch.object(b._mcp_server, "stop", lambda: calls.append("mcp-server")),
+    ):
+        b._on_window_closed()  # must not raise
+    assert "triggers" in calls and "ssh" in calls  # later steps still ran
+
+
 def test_pool_debug_events_gated_behind_dev_mode():
     """Chatty DEBUG pool rows (reuse / reap) only reach the Dev tab under --dev;
     INFO/WARNING (reconnect / backoff) always do."""

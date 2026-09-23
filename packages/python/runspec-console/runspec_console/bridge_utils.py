@@ -482,6 +482,34 @@ def _summary_extra(extra: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _entry_extra(entry: dict[str, Any]) -> dict[str, Any]:
+    """The record's ``extra`` as a dict, tolerating anything else.
+
+    A run_summary line normally carries an ``extra`` object, but a foreign
+    ``*.log`` swept up by the broad ``*.log`` glob (or a hand-edited/truncated
+    line) may have no ``extra`` key, an explicit ``extra: null``, or a non-object
+    ``extra``. ``entry.get("extra", {})`` returns the default only for a *missing*
+    key — an explicit ``null`` comes back as ``None`` and the subsequent
+    ``.get("run_id")`` raised ``AttributeError``, crashing the whole read (History
+    swallows it per host, so a new/foreign host silently dropped all its rows).
+    Always hand back a real dict."""
+    extra = entry.get("extra")
+    return extra if isinstance(extra, dict) else {}
+
+
+def _record_kind(extra: dict[str, Any]) -> str:
+    """Classify a run_summary record for the History "Kind" facet.
+
+    ``runnable`` — a real runnable run (the core engine's audit line, no
+    ``builtin`` flag). ``agent`` — a whole chat/trigger/schedule agent *turn*
+    (``builtin`` + ``tool == "chat"``). ``tool`` — a single built-in agent
+    tool call (``builtin``, any other tool). Lets the UI keep runnable runs and
+    agent turns visible while filtering the noisier per-tool-call rows."""
+    if not extra.get("builtin"):
+        return "runnable"
+    return "agent" if extra.get("tool") == "chat" else "tool"
+
+
 def _parse_log(
     log_file: Path, host: str, include_extra: bool = False
 ) -> list[dict[str, Any]]:
@@ -518,15 +546,20 @@ def _parse_log_text(
         if not raw.strip():
             continue
         try:
-            entries.append(json.loads(raw))
+            obj = json.loads(raw)
         except json.JSONDecodeError:
             continue
+        # Only object records are runspec log lines. A foreign ``*.log`` swept up
+        # by the ``*.log`` glob can hold a bare JSON scalar/array per line; those
+        # aren't records and calling ``.get`` on them would crash the parser.
+        if isinstance(obj, dict):
+            entries.append(obj)
 
     if not entries:
         return []
 
     # Detect run_id presence — check first record that has extra.run_id
-    has_run_id = any(e.get("extra", {}).get("run_id") for e in entries)
+    has_run_id = any(_entry_extra(e).get("run_id") for e in entries)
     if has_run_id:
         return _parse_log_by_run_id(name, entries, host, include_extra=include_extra)
     return _parse_log_sequential(name, entries, host, include_extra=include_extra)
@@ -539,7 +572,7 @@ def _parse_log_by_run_id(
     # Preserve insertion order of run_ids so history is chronological
     groups: dict[str, dict[str, Any]] = {}  # run_id → {lines, summary, exc}
     for entry in entries:
-        extra = entry.get("extra", {})
+        extra = _entry_extra(entry)
         run_id = extra.get("run_id")
         if not run_id:
             continue
@@ -564,7 +597,7 @@ def _parse_log_by_run_id(
         summary_entry = g["summary"]
         if summary_entry is None:
             continue  # in-progress run — no summary yet
-        extra = summary_entry.get("extra", {})
+        extra = _entry_extra(summary_entry)
         # Attribution comes from the record, not the filename — robust to
         # per-invocation filenames; `name` (filename stem) is only a fallback.
         runnable = extra.get("runnable") or name
@@ -600,6 +633,9 @@ def _parse_log_by_run_id(
             "trigger": extra.get("trigger", "") or "",
             # The saved runbook that drove the run ("" otherwise) — History "Runbook" column.
             "runbook": extra.get("runbook", "") or "",
+            # "runnable" | "agent" | "tool" — lets History keep runnable runs and
+            # agent turns visible while filtering the noisier per-tool-call rows.
+            "kind": _record_kind(extra),
         }
         exc = g["exc"]
         if exc:
@@ -624,7 +660,7 @@ def _parse_log_sequential(
     records: list[dict[str, Any]] = []
     lines: list[dict[str, Any]] = []
     for entry in entries:
-        extra = entry.get("extra", {})
+        extra = _entry_extra(entry)
         if extra.get("event") == "run_summary":
             ts_raw = entry.get("ts", "")
             runnable = extra.get("runnable") or name
@@ -653,6 +689,7 @@ def _parse_log_sequential(
                 "initiatedBy": "llm" if extra.get("agent") else "user",
                 "trigger": extra.get("trigger", "") or "",
                 "runbook": extra.get("runbook", "") or "",
+                "kind": _record_kind(extra),
             }
             if include_extra:
                 record["extra"] = _summary_extra(extra)

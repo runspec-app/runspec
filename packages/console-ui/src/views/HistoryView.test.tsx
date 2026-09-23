@@ -88,6 +88,42 @@ describe('HistoryView', () => {
     expect(getHistoryAll).toHaveBeenCalledTimes(1)   // no new fetch on filter
   })
 
+  it('shows only runnable runs by default and reveals agent/tool rows via the toggle', async () => {
+    getHistoryAll.mockResolvedValue([
+      rec({ id: 'r-run', runnable: 'backup' }),
+      rec({ id: 'r-turn', runnable: 'chat', kind: 'agent' }),
+      rec({ id: 'r-tool', runnable: 'outlook_inbox', kind: 'tool' }),
+    ])
+    render(<HistoryView {...PROPS} />)
+    // Default 'Runnables' view: only the runnable run; agent turn + tool hidden.
+    expect(await screen.findByText('backup')).toBeTruthy()
+    expect(screen.queryByText('chat')).toBeNull()
+    expect(screen.queryByText('outlook_inbox')).toBeNull()
+
+    const user = userEvent.setup()
+    // Each toggle advertises its folded-away count and reveals only that kind.
+    await act(async () => { await user.click(screen.getByText(/Agent \(1\)/)) })
+    expect(await screen.findByText('chat')).toBeTruthy()
+    expect(screen.queryByText('backup')).toBeNull()
+
+    await act(async () => { await user.click(screen.getByText(/Tools \(1\)/)) })
+    expect(await screen.findByText('outlook_inbox')).toBeTruthy()
+    expect(screen.queryByText('chat')).toBeNull()
+  })
+
+  it('shows a Run by column distinguishing agent from operator runs', async () => {
+    getHistoryAll.mockResolvedValue([
+      rec({ id: 'r-user', runnable: 'backup', initiatedBy: 'user' }),
+      rec({ id: 'r-agent', runnable: 'deploy', initiatedBy: 'llm' }),
+    ])
+    render(<HistoryView {...PROPS} />)
+    await screen.findByText('backup')
+    // Both the 'agent' and 'user' run-by labels render (the agent indicator is no
+    // longer buried at the end of the ellipsized Runnable cell).
+    expect(screen.getByText('agent')).toBeTruthy()
+    expect(screen.getByText('user')).toBeTruthy()
+  })
+
   it('opens the full-log drill via logs_view when a row is expanded', async () => {
     logsView.mockResolvedValue({ ok: true, records: [{ ts: '2026-06-03T14:22:01+00:00', level: 'INFO', message: 'hello world' }] })
     render(<HistoryView {...PROPS} onRerun={() => {}} />)

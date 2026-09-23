@@ -1,10 +1,33 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Table, Tag, Typography, Button, Tooltip, message, Input, Drawer, Spin, Empty, Alert } from 'antd'
-import { RedoOutlined, CopyOutlined, RobotOutlined, SearchOutlined, EditOutlined, ClockCircleOutlined, ProfileOutlined } from '@ant-design/icons'
+import { Table, Tag, Typography, Button, Tooltip, message, Input, Drawer, Spin, Empty, Alert, Segmented } from 'antd'
+import { RedoOutlined, CopyOutlined, RobotOutlined, UserOutlined, SearchOutlined, EditOutlined, ClockCircleOutlined, ProfileOutlined } from '@ant-design/icons'
 import type { ColumnType } from 'antd/es/table'
 import { bridge, type HistoryRecord, type HistoryLogLine, type LogViewResult } from '../bridge'
 import { LogStream } from '../components/LogStream'
-import { MONO_FONT, RADIUS } from '../ThemeContext'
+import { MONO_FONT, RADIUS, useAccent } from '../ThemeContext'
+
+// A History row is one of three kinds. Runnable runs are the real run history;
+// whole agent turns and individual built-in tool calls (outlook_inbox, a memory
+// tool, …) are agent activity the operator can fold away. Default view shows
+// *only* runnable runs (see KIND_VIEWS / the Segmented toggle).
+type RecordKind = 'runnable' | 'agent' | 'tool'
+type KindView = 'runnables' | 'agent' | 'tools' | 'all'
+const recordKind = (r: HistoryRecord): RecordKind => r.kind ?? 'runnable'
+const KIND_VIEWS: { label: string; value: KindView }[] = [
+  { label: 'Runnables', value: 'runnables' },
+  { label: 'Agent', value: 'agent' },
+  { label: 'Tools', value: 'tools' },
+  { label: 'All', value: 'all' },
+]
+// Which record kind each non-"all" view keeps.
+const VIEW_KIND: Record<Exclude<KindView, 'all'>, RecordKind> = {
+  runnables: 'runnable',
+  agent: 'agent',
+  tools: 'tool',
+}
+function matchesKindView(r: HistoryRecord, view: KindView): boolean {
+  return view === 'all' || recordKind(r) === VIEW_KIND[view]
+}
 
 const { Title, Text } = Typography
 
@@ -209,7 +232,9 @@ function RunLogDrawer({ record, onClose }: { record: HistoryRecord | null; onClo
     <Drawer
       open={!!record}
       onClose={onClose}
-      width={680}
+      // Match the Logs tab's merged-stream drawer: a wide, responsive panel so a
+      // full log isn't crammed into a narrow 680px column on a large window.
+      width={Math.min(1400, Math.max(680, window.innerWidth - 120))}
       title={record ? <span style={{ fontFamily: MONO_FONT }}>/{record.runnable} — full log ({(record.runId ?? '').slice(0, 8)})</span> : ''}
     >
       {loading ? (
@@ -245,6 +270,10 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
   const [hostColumnFilter, setHostColumnFilter] = useState<string[]>([])
   const [expandedKeys, setExpandedKeys] = useState<string[]>([])
   const [fullLogRecord, setFullLogRecord] = useState<HistoryRecord | null>(null)
+  // Which kinds to show. Default 'runnables' keeps History to actual runnable
+  // runs, folding agent turns and per-tool-call rows away behind the toggle.
+  const [kindView, setKindView] = useState<KindView>('runnables')
+  const accent = useAccent()
 
   // The view stays mounted across tab switches (App toggles display), so records
   // persist — returning shows the last data instantly. Reads only happen while
@@ -293,16 +322,30 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
   }, [active])
 
   const filtered = useMemo(() => {
-    if (!search) return records
+    const byKind = records.filter(r => matchesKindView(r, kindView))
+    if (!search) return byKind
     const q = search.toLowerCase()
-    return records.filter(r =>
+    return byKind.filter(r =>
       r.runnable.toLowerCase().includes(q) ||
       r.group.toLowerCase().includes(q) ||
       r.host.toLowerCase().includes(q) ||
       r.operator.toLowerCase().includes(q) ||
       r.runAs.toLowerCase().includes(q)
     )
-  }, [records, search])
+  }, [records, search, kindView])
+
+  // How many agent-turn / tool-call rows the default view is folding away —
+  // surfaced as a count on each toggle so their absence is never silent
+  // (addresses "History shows built-in tools too": kept but one click to reveal).
+  const kindCounts = useMemo(() => {
+    const c = { agent: 0, tool: 0 }
+    for (const r of records) {
+      const k = recordKind(r)
+      if (k === 'agent') c.agent++
+      else if (k === 'tool') c.tool++
+    }
+    return c
+  }, [records])
 
   const facets = useMemo(() => ({
     hosts: [...new Set(records.map(r => r.host))],
@@ -318,25 +361,61 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       title: 'Runnable',
       key: 'runnable',
       // Bounded width + ellipsis so a wide window doesn't dump all the slack into
-      // this (the only unsized) column, cramping the fixed-content ones.
+      // this (the only unsized) column, cramping the fixed-content ones. The
+      // status indicators are front-loaded (before the ellipsis) so they're never
+      // truncated, and the name carries a hover tooltip with its full text — the
+      // ellipsis alone hid whether a long-named run was on a schedule/agent.
       width: 280,
       ellipsis: true,
-      render: (_: unknown, r: HistoryRecord) => (
-        <span style={{ fontFamily: MONO_FONT, fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-          <span><span style={{ color: 'var(--rs-text-muted)' }}>{r.group}/</span>{r.runnable}</span>
-          {r.trigger === 'schedule' && (
-            <Tooltip title="Ran on a schedule">
-              <ClockCircleOutlined style={{ color: 'var(--rs-text-muted)', fontSize: 13 }} />
+      render: (_: unknown, r: HistoryRecord) => {
+        const kind = recordKind(r)
+        const full = `${r.group ? r.group + '/' : ''}${r.runnable}`
+        return (
+          <span style={{ fontFamily: MONO_FONT, fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+            {r.trigger === 'schedule' && (
+              <Tooltip title="Ran on a schedule">
+                <ClockCircleOutlined style={{ color: 'var(--rs-text-muted)', fontSize: 13, flex: '0 0 auto' }} />
+              </Tooltip>
+            )}
+            {kind !== 'runnable' && (
+              <Tag color={kind === 'agent' ? 'geekblue' : 'default'} style={{ margin: 0, flex: '0 0 auto', fontSize: 11, lineHeight: '16px', padding: '0 5px' }}>
+                {kind === 'agent' ? 'agent turn' : 'tool'}
+              </Tag>
+            )}
+            <Tooltip title={full}>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {r.group && <span style={{ color: 'var(--rs-text-muted)' }}>{r.group}/</span>}{r.runnable}
+              </span>
             </Tooltip>
-          )}
-          {r.initiatedBy === 'llm' && (
-            <Tooltip title="Triggered by the assistant">
-              <RobotOutlined style={{ color: 'var(--rs-accent)', fontSize: 13 }} />
-            </Tooltip>
-          )}
-        </span>
-      ),
+          </span>
+        )
+      },
       sorter: (a, b) => `${a.group}/${a.runnable}`.localeCompare(`${b.group}/${b.runnable}`),
+    },
+    {
+      // Dedicated column so "run by agent vs operator" is always visible — the
+      // old inline robot icon lived at the end of the ellipsized Runnable cell
+      // and was the first thing truncated on a narrow window (the reported
+      // "can't see if run by agent or user").
+      title: 'Run by',
+      key: 'runBy',
+      width: 100,
+      render: (_: unknown, r: HistoryRecord) => r.initiatedBy === 'llm' ? (
+        <Tooltip title="Triggered by the assistant">
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: accent }}>
+            <RobotOutlined style={{ fontSize: 13 }} />agent
+          </span>
+        </Tooltip>
+      ) : (
+        <Tooltip title="Run by an operator">
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: 'var(--rs-text-muted)' }}>
+            <UserOutlined style={{ fontSize: 13 }} />user
+          </span>
+        </Tooltip>
+      ),
+      filters: [{ text: 'Agent', value: 'llm' }, { text: 'User', value: 'user' }],
+      onFilter: (value, record) => (record.initiatedBy ?? 'user') === value,
+      filteredValue: [],
     },
     {
       title: 'Group',
@@ -421,7 +500,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       sorter: (a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime(),
       defaultSortOrder: 'descend',
     },
-  ], [groups, runbooks, hosts, operators, runAsUsers, hostColumnFilter, activeScope, onScopeToggle])
+  ], [groups, runbooks, hosts, operators, runAsUsers, hostColumnFilter, activeScope, onScopeToggle, accent])
 
   return (
     <div>
@@ -434,6 +513,17 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
           allowClear
           style={{ maxWidth: 400 }}
         />
+        <Tooltip title="Runnables = actual runnable runs (the default). Agent = whole chat/trigger/schedule turns. Tools = individual built-in agent tool calls (Outlook, memory, …).">
+          <Segmented
+            size="small"
+            value={kindView}
+            onChange={v => setKindView(v as KindView)}
+            options={KIND_VIEWS.map(o => {
+              const n = o.value === 'agent' ? kindCounts.agent : o.value === 'tools' ? kindCounts.tool : 0
+              return n > 0 ? { ...o, label: `${o.label} (${n})` } : o
+            })}
+          />
+        </Tooltip>
       </div>
       <Table
         dataSource={filtered}

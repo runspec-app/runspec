@@ -8,6 +8,55 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.280.4] — 2026-09-23
+
+### Fixed
+
+- **History read no longer crashes on a foreign/malformed `*.log` (and stops
+  dropping a new host's rows).** Since History fans out across every connected
+  host (`get_history_all`), a brand-new host with no runspec runs yet can still
+  have some other `.log` in `~/logs`/a venv `logs/` dir, swept up by the broad
+  `*.log` glob. A bare JSON scalar/array line, or a record with `extra: null`,
+  hit `entry.get("extra", {}).get(...)` — which returns `None` for an explicit
+  `null`, so `.get` raised `AttributeError` and crashed the parse. `get_history`
+  swallows the per-host failure, so the symptom was that host silently dropping
+  all its history plus a traceback in the log. The parser now skips non-object
+  lines and treats a non-dict `extra` as empty (`bridge_utils._entry_extra`).
+
+- **The app now exits when the window is closed instead of hanging "still
+  monitoring email" until Ctrl+C.** Source teardown (the Outlook email pump + the
+  scheduler, plus chat, the MCP client/server and the SSH pools) was only wired
+  to `atexit`, which runs during interpreter finalisation — too late to unwind
+  the Outlook COM apartment cleanly, which could keep pywebview's GUI loop from
+  returning. Teardown now runs on the window `closed` event
+  (`Bridge._on_window_closed`, idempotent + best-effort; the `atexit` hooks stay
+  as a backstop), so the email pump stops the moment the window closes, and
+  `app.main()` force-exits once the GUI loop returns as a final backstop against
+  any straggling thread.
+
+- **Startup COM race hardened.** A one-off startup error — `cannot import name
+  '_get_good_object' from partially initialized module win32com.client` — came
+  from the Outlook pump thread and an `outlook_*` agent-tool call first-importing
+  `win32com.client` concurrently. `app.main()` now imports it once on the main
+  thread at startup (Windows only, best-effort) so the lazy setup completes
+  single-threaded.
+
+### Changed
+
+- **History shows only runnable runs by default; agent activity folds away.** A
+  `Runnables` / `Agent` / `Tools` / `All` toggle (default `Runnables`) keeps the
+  view to actual runnable runs, folding whole agent turns and the finer-grained
+  built-in tool-call rows (`outlook_*`, memory tools, …) behind the toggle, each
+  labelled with its hidden count. Backed by a new `kind`
+  (`runnable`/`agent`/`tool`) field on each history record.
+- **History: "Run by" is its own column** (agent vs operator), so it's no longer
+  the first thing truncated at the end of the ellipsized Runnable column; the
+  Runnable name front-loads its schedule/kind indicators and carries a full-text
+  hover tooltip.
+- **History: the "View full log" drawer is now a wide, responsive panel**,
+  matching the Logs tab's merged-stream drawer instead of a fixed narrow 680px.
+
+
 ## [0.280.3] — 2026-09-23
 
 ### Fixed

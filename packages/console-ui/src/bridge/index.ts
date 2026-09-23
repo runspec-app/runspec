@@ -579,6 +579,7 @@ export interface HistoryRecord {
   initiatedBy?: 'llm' | 'user'      // 'llm' when triggered by the agentic chat loop
   trigger?: string                   // event source that caused the run ("schedule"/…), "" = interactive/manual
   runbook?: string                     // saved runbook that drove the run (RUNSPEC_RUNBOOK), "" = not a runbook run
+  kind?: 'runnable' | 'agent' | 'tool' // 'runnable' run, whole 'agent' turn, or a single built-in 'tool' call
 }
 
 // A schedule (Schedules tab). When it fires it either emits a matchable event

@@ -492,6 +492,16 @@ def main() -> None:
     # stable runspec identity in the Action Center.
     notify.set_app_id()
 
+    # Import the win32com machinery once, here on the main thread, before any
+    # worker touches COM. The Outlook source pump imports ``win32com.client`` from
+    # its own thread, and a chat/trigger turn calling an ``outlook_*`` tool imports
+    # it from another; when both first-import concurrently, pywin32's lazy setup
+    # races and raises "cannot import name '_get_good_object' from partially
+    # initialized module win32com.client" (the one-off COM error seen at startup).
+    # A single main-thread import fully initialises the module so later imports
+    # just find it cached.
+    _preimport_com()
+
     bridge = Bridge()
     bridge.set_debug(debug_enabled)
     prof("Bridge() constructed")
@@ -651,6 +661,45 @@ def main() -> None:
         # off) so a short session doesn't drop its last traces / metric export —
         # but bounded, so a slow/unreachable OTLP endpoint can't hang the close.
         _shutdown_telemetry()
+    # The GUI loop has returned — the window is closed and the background
+    # subsystems were already stopped on the 'closed' event (Bridge.
+    # _on_window_closed). Force the process to exit as a hard backstop so a stray
+    # library/daemon thread that ignored its stop signal can't leave the app
+    # running in the background (the reported "doesn't shut down, still monitoring
+    # email until Ctrl+C"). Every app thread is a daemon and teardown + the
+    # telemetry flush have already run, so nothing is lost.
+    _force_exit()
+
+
+def _preimport_com() -> None:
+    """Initialise pywin32's COM client on the main thread (Windows only).
+
+    Forces the ``win32com.client`` lazy setup to complete single-threaded so the
+    Outlook pump thread and an ``outlook_*`` agent-tool call can't race it into
+    the partially-initialised-module import error. Best-effort: a no-op off
+    Windows or when pywin32 isn't installed."""
+    if sys.platform != "win32":
+        return
+    try:
+        import pythoncom  # noqa: F401
+        import win32com.client  # noqa: F401
+    except Exception:  # noqa: BLE001 — pywin32 optional; never fatal at startup
+        logger.debug("win32com pre-import skipped (pywin32 unavailable)", exc_info=True)
+
+
+def _force_exit(code: int = 0) -> None:
+    """Guarantee the process exits once the GUI loop has returned.
+
+    ``os._exit`` skips the rest of interpreter finalisation — including the join
+    of any thread still ignoring its stop signal — which is exactly what a desktop
+    app wants on close. Teardown (``_on_window_closed``) and the telemetry flush
+    have already run by the time this is reached. Best-effort stream flush first."""
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+    except Exception:  # noqa: BLE001
+        pass
+    os._exit(code)
 
 
 def _shutdown_telemetry(timeout: float = 3.0) -> None:

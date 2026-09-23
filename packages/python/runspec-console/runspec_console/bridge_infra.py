@@ -54,10 +54,38 @@ class InfraMixin:
         except Exception:
             logger.debug("could not hook window 'closed' event", exc_info=True)
 
+    # Guards _on_window_closed so the teardown runs once even though the same
+    # handler is reachable from the 'closed' event and, as a backstop, atexit.
+    _bg_torn_down = False
+
     def _on_window_closed(self, *_args: Any) -> None:
-        """Window-close handler: leave the room cleanly so the supervisor thread
-        doesn't keep reconnecting after the UI is gone."""
-        self.stop_chat()
+        """Window-close handler: tear the background subsystems down **now**,
+        on the close event, instead of leaving it to the atexit hooks.
+
+        The atexit teardown only runs once pywebview's GUI loop has returned and
+        the interpreter starts finalising — but the Outlook COM pump owns an STA
+        apartment bound to the singleton ``Outlook.Application`` and can stop that
+        loop from unwinding cleanly, so the app was seen to hang after the window
+        was closed, still "monitoring email", until Ctrl+C. Stopping the sources
+        here — while this event thread is healthy and before the loop unwinds —
+        stops the email pump immediately and tears the COM apartment down in
+        order. Each step is idempotent (the atexit hooks stay registered as a
+        backstop) and best-effort: a raise here must never wedge the close."""
+        with self._lock:
+            if self._bg_torn_down:
+                return
+            self._bg_torn_down = True
+        for label, teardown in (
+            ("chat", self.stop_chat),  # leave the room; stop its reconnect loop
+            ("triggers", self.stop_triggers),  # stop the email pump + scheduler
+            ("mcp-client", self._mcp.stop),
+            ("mcp-server", self._mcp_server.stop),
+            ("ssh-pool", self._close_ssh_pool),
+        ):
+            try:
+                teardown()
+            except Exception:
+                logger.debug("shutdown: %s teardown failed", label, exc_info=True)
 
     def _build_ssh_pool(self) -> Any:
         """Construct the SSH connection pool from current ``[ssh]`` config.
