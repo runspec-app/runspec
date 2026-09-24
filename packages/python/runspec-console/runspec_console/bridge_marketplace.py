@@ -48,6 +48,12 @@ if TYPE_CHECKING:
     from .bridge import Bridge  # noqa: F401
 
 _PROBE_TIMEOUT_S = 40
+# How long a per-target installed-probe row stays fresh. The Marketplace tab
+# refreshes on focus/connect/install; within this window a refresh reuses each
+# already-probed target's row and re-SSHes only stale or newly-connected ones,
+# so the "installed per venv" read is fast and stays accurate. Install/uninstall
+# and clear-cache drop the cache so a real change forces a fresh probe.
+_PROBE_TTL_S = 60.0
 _PIP_TIMEOUT_S = 900
 _MAX_OP_LINES = 400  # pip output lines kept per target in the op record
 _METADATA_WORKERS = 8
@@ -104,7 +110,7 @@ class MarketplaceMixin:
                 raise ValueError(f"Two repos point at the same index: {root}")
             seen.add(root)
         config_mod.write_marketplace(sec)
-        self._marketplace_installed = None
+        self._invalidate_installed()
         return self.get_marketplace_config()
 
     def marketplace_catalog(self, refresh: bool = False) -> dict[str, Any]:
@@ -131,10 +137,19 @@ class MarketplaceMixin:
         """What each connected target has installed: ``{targets: [{…target,
         ok, error, owner, user, python_version, dists: {name: version}}],
         probed_at}``. ``dists`` is filtered to the marketplace's name patterns,
-        the cached catalogue's names and ``runspec`` itself. Cached in memory
-        until an install/uninstall or ``refresh``."""
+        the cached catalogue's names and ``runspec`` itself.
+
+        Repeat opens within ``_PROBE_TTL_S`` return the assembled result with no
+        work; past that (or on ``refresh``) the probe re-runs but reuses each
+        still-fresh target's cached row, so a focus/connect refresh re-SSHes only
+        stale or newly-connected targets. Install/uninstall + clear-cache force a
+        fresh probe."""
         cached = self._marketplace_installed
-        if cached is not None and not refresh:
+        if (
+            cached is not None
+            and not refresh
+            and (time.time() - float(cached.get("probed_at", 0.0))) < _PROBE_TTL_S
+        ):
             return cached
         result = self._probe_targets()
         self._marketplace_installed = result
@@ -183,7 +198,15 @@ class MarketplaceMixin:
     def marketplace_clear_cache(self) -> None:
         """Drop the machine-local catalogue cache (the next read re-fetches)."""
         mp.CatalogCache(config_mod.marketplace_cache_path()).clear()
+        self._invalidate_installed()
+
+    def _invalidate_installed(self) -> None:
+        """Drop the assembled installed result and every per-target probe row, so
+        the next read re-probes. Called on install/uninstall, clear-cache, and a
+        marketplace-config change (its patterns re-filter which dists are kept)."""
         self._marketplace_installed = None
+        with self._marketplace_probe_lock:
+            self._marketplace_probe_cache.clear()
 
     # ── agent tool: read-only marketplace discovery ──
 
@@ -645,6 +668,8 @@ class MarketplaceMixin:
         def _keep(name: str) -> bool:
             return name in known or any(fnmatch.fnmatchcase(name, p) for p in patterns)
 
+        now = time.time()
+
         def _one(t: dict[str, Any]) -> dict[str, Any]:
             row = dict(t)
             row.update(
@@ -660,6 +685,27 @@ class MarketplaceMixin:
             if not t.get("connected"):
                 row["error"] = "host not connected"
                 return row
+            # Reuse a recent successful probe for this target so a refresh only
+            # re-SSHes stale or newly-connected targets. The install state (dists,
+            # owner) is carried from the cached row; the live target fields
+            # (connected/path/python) come from `t`.
+            key = str(t.get("id"))
+            with self._marketplace_probe_lock:
+                hit = self._marketplace_probe_cache.get(key)
+            if hit is not None and (now - hit[0]) < _PROBE_TTL_S and hit[1].get("ok"):
+                fresh = dict(hit[1])
+                fresh.update(row)  # live target fields win; keep cached probe result
+                fresh["dists"] = hit[1].get("dists", {})
+                fresh.update(
+                    {
+                        "ok": True,
+                        "error": None,
+                        "owner": hit[1].get("owner", ""),
+                        "user": hit[1].get("user", ""),
+                        "python_version": hit[1].get("python_version", ""),
+                    }
+                )
+                return fresh
             try:
                 code, out = self._run_on_target(
                     t, mp.probe_argv(str(t["python"])), timeout=_PROBE_TIMEOUT_S
@@ -678,6 +724,8 @@ class MarketplaceMixin:
             row["dists"] = {
                 n: v for n, v in (data.get("dists") or {}).items() if _keep(n)
             }
+            with self._marketplace_probe_lock:
+                self._marketplace_probe_cache[key] = (now, dict(row))
             return row
 
         workers_fn = getattr(self, "_fanout_workers", None)
@@ -892,7 +940,7 @@ class MarketplaceMixin:
         finally:
             record["status"] = "cancelled" if cancel.is_set() else "finished"
             record["finished_at"] = time.time()
-            self._marketplace_installed = None
+            self._invalidate_installed()
             dispatch = getattr(self, "_dispatch", None)
             if callable(dispatch):
                 try:

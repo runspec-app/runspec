@@ -1455,8 +1455,14 @@ export interface BridgeApi {
   discovery_state: () => Promise<{ ready: boolean; done: number; total: number }>
   get_history: (host: string, runnable?: string) => Promise<HistoryRecord[]>
   // History across every host (local + connected remotes) — the History tab uses
-  // this so a run shows up regardless of which host it ran on.
-  get_history_all: () => Promise<HistoryRecord[]>
+  // this so a run shows up regardless of which host it ran on. `since_days` bounds
+  // the read to the last N days (default 7 backend-side; 0 = all); only real
+  // runnable runs are returned and the heavy logLines are dropped (fetch them on
+  // expand via get_run_detail) so the fleet-wide payload stays small.
+  get_history_all: (since_days?: number) => Promise<HistoryRecord[]>
+  // Heavy per-run detail (the recorded log lines) for one run, fetched on demand
+  // when a History row is expanded — get_history_all ships slim rows without them.
+  get_run_detail: (host: string, run_id: string) => Promise<{ logLines: HistoryLogLine[] }>
   get_schedules: () => Promise<Schedule[]>
   get_config: () => Promise<Record<string, unknown>>
   config_dir: () => Promise<string>

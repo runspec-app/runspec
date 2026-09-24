@@ -43,6 +43,42 @@ class ReportingMixin:
     # change. Attribution comes from the record body (extra.runnable = the tool
     # label), not the filename.
     _TOOL_AUDIT_FILE = "runspec-console-tools.log"
+    # Every tools-audit file shares this stem (the active log plus its ``.1.log``
+    # rollover). History reads only real runnable runs, and this log holds none
+    # (every line here is a built-in tool call / agent turn), so History skips
+    # the whole stem — see _history_files. Only Analytics reads it.
+    _TOOL_AUDIT_STEM = "runspec-console-tools"
+    # Cap the tools audit log so it can't grow without bound (it used to only
+    # grow, and — because the parse cache keys on (mtime, size) — every appended
+    # line invalidated it). At the cap the active file rolls to ``<stem>.1.log``
+    # (a single backup, overwritten each roll), bounding the audit to ~2×cap.
+    # ``.1.log`` keeps the ``*.log`` suffix Analytics globs, and shares the stem
+    # History skips.
+    _TOOL_AUDIT_MAX_BYTES = 5 * 1024 * 1024
+
+    def _append_tool_audit(self, record: dict[str, Any]) -> None:
+        """Append one JSON line to the tools audit log, rolling the file over at
+        ``_TOOL_AUDIT_MAX_BYTES``. Shared by the built-in-tool / chat-turn /
+        disclaimer writers. Best-effort: a logging failure must never break the
+        caller (a tool result, a turn, or an acknowledgement)."""
+        try:
+            log_dir = Path.home() / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            path = log_dir / self._TOOL_AUDIT_FILE
+            line = json.dumps(record, default=str) + "\n"
+            with self._audit_lock:
+                try:
+                    if (
+                        path.exists()
+                        and path.stat().st_size > self._TOOL_AUDIT_MAX_BYTES
+                    ):
+                        path.replace(path.with_name(f"{self._TOOL_AUDIT_STEM}.1.log"))
+                except OSError:
+                    pass  # a rollover failure must not drop the append
+                with path.open("a", encoding="utf-8") as fh:
+                    fh.write(line)
+        except Exception:  # noqa: BLE001 — auditing is best-effort
+            logger.warning("could not write tools audit line", exc_info=True)
 
     def _audit_builtin_tool(
         self,
@@ -83,17 +119,7 @@ class ReportingMixin:
             "message": f"{label} ({outcome})",
             "extra": extra,
         }
-        try:
-            log_dir = Path.home() / "logs"
-            log_dir.mkdir(parents=True, exist_ok=True)
-            line = json.dumps(record, default=str) + "\n"
-            with self._audit_lock:
-                with (log_dir / self._TOOL_AUDIT_FILE).open(
-                    "a", encoding="utf-8"
-                ) as fh:
-                    fh.write(line)
-        except Exception:  # noqa: BLE001 — auditing is best-effort
-            logger.warning("could not write built-in tool audit line", exc_info=True)
+        self._append_tool_audit(record)
 
     def _audit_chat_turn(
         self,
@@ -140,17 +166,7 @@ class ReportingMixin:
             ),
             "extra": extra,
         }
-        try:
-            log_dir = Path.home() / "logs"
-            log_dir.mkdir(parents=True, exist_ok=True)
-            line = json.dumps(record, default=str) + "\n"
-            with self._audit_lock:
-                with (log_dir / self._TOOL_AUDIT_FILE).open(
-                    "a", encoding="utf-8"
-                ) as fh:
-                    fh.write(line)
-        except Exception:  # noqa: BLE001 — auditing is best-effort
-            logger.warning("could not write chat-turn audit line", exc_info=True)
+        self._append_tool_audit(record)
 
     def _audit_disclaimer_ack(
         self, *, hash_: str, version: str, user: str, ts: str
@@ -171,30 +187,37 @@ class ReportingMixin:
                 "disclaimer_hash": hash_,
             },
         }
-        try:
-            log_dir = Path.home() / "logs"
-            log_dir.mkdir(parents=True, exist_ok=True)
-            line = json.dumps(record, default=str) + "\n"
-            with self._audit_lock:
-                with (log_dir / self._TOOL_AUDIT_FILE).open(
-                    "a", encoding="utf-8"
-                ) as fh:
-                    fh.write(line)
-        except Exception:  # noqa: BLE001 — auditing is best-effort
-            logger.warning("could not write disclaimer audit line", exc_info=True)
+        self._append_tool_audit(record)
 
     # Cap on rows the History tab shows. Applied newest-first, and used as the
     # early-stop target so we never read more files than needed to fill it.
     _HISTORY_CAP = 200
 
+    @staticmethod
+    def _since_date(since_days: int | None) -> str | None:
+        """UTC date (``YYYY-MM-DD``) ``since_days`` days back inclusive of today,
+        or ``None`` for no window (``since_days`` falsy / <= 0). Matches the
+        Analytics window semantics so History and Analytics agree on "last 7d"."""
+        if not since_days or since_days <= 0:
+            return None
+        from datetime import timezone
+
+        d = datetime.now(timezone.utc) - timedelta(days=max(0, since_days - 1))
+        return d.date().isoformat()
+
     def get_history(
-        self, host: str, runnable: str | None = None
+        self, host: str, runnable: str | None = None, since_days: int | None = None
     ) -> list[dict[str, Any]]:
+        """Per-host run history, newest first. ``since_days`` bounds the read to
+        the last N days (``None`` = no window — the default kept for the
+        Forms/Logs callers); ``get_history_all`` passes the History tab's window
+        so a first visit reads only a week of logs."""
         entry = self._host_entry(host)
         if entry is None:
             return []
+        since_date = self._since_date(since_days)
         if entry.get("ssh"):
-            return self._get_remote_history(entry, runnable)
+            return self._get_remote_history(entry, runnable, since_date)
         paths = utils_mod._paths(entry)
         globs = _log_globs(runnable)
         # Scan every venv's logs dir (tagged with its venv group) AND ~/logs. A
@@ -213,9 +236,17 @@ class ReportingMixin:
         dir_groups.append((Path.home() / "logs", fallback_group))
 
         files = self._history_files(dir_groups, globs)
+        live = {str(p) for p, *_ in files}  # prune against the full set, not the window
+        if since_date:
+            # Drop files whose newest content predates the window. A per-run /
+            # single / archive file's mtime is >= its newest run's ts, so an
+            # mtime older than the cutoff can't hold an in-window run.
+            files = [f for f in files if _mtime_iso(f[1])[:10] >= since_date]
         records = self._read_newest(files, host)
         records.sort(key=lambda r: r.get("ts", ""), reverse=True)
-        self._prune_history_cache({str(p) for p, *_ in files})
+        self._prune_history_cache(live)
+        if since_date:
+            records = [r for r in records if r.get("ts", "")[:10] >= since_date]
         return records[: self._HISTORY_CAP]
 
     # ── bounded newest-first history read (local) ──────────────────────────────
@@ -239,6 +270,15 @@ class ReportingMixin:
             for pat in globs:
                 for f in log_dir.glob(pat):
                     if f in seen_files:
+                        continue
+                    # The synthetic tools audit log (and its ``.1.log`` rollover)
+                    # holds only built-in tool calls / agent turns — never a
+                    # runnable run — so History skips it. This also spares the
+                    # biggest, most-churned local file from being parsed (and
+                    # from thrashing the (mtime,size) parse cache) on every read;
+                    # Analytics reads it through its own path. Only bites the
+                    # broad ``*.log`` sweep — a runnable-scoped glob never matches.
+                    if f.name.startswith(self._TOOL_AUDIT_STEM):
                         continue
                     try:
                         st = f.stat()
@@ -313,11 +353,42 @@ class ReportingMixin:
             for k in stale:
                 del self._history_parse_cache[k]
 
-    def get_history_all(self) -> list[dict[str, Any]]:
+    # Default History window: a first visit reads only the last week of logs so
+    # the tab loads fast; the tab's range selector overrides it (0 / None = all).
+    _HISTORY_DEFAULT_DAYS = 7
+
+    @staticmethod
+    def _slim_history_row(r: dict[str, Any]) -> dict[str, Any]:
+        """A History row without the heavy per-run fields (``logLines``, the
+        structured ``exception`` frames, analytics-only ``extra``). Every column
+        and searched field is kept; the expanded row fetches the log on demand
+        via :meth:`get_run_detail`, so the fleet-wide bulk payload stays small.
+
+        Returns a **copy** — never mutates the parse-cached record (Forms/Logs
+        read the same cached dicts through ``get_history`` and still need them
+        whole)."""
+        out = {
+            k: v for k, v in r.items() if k not in ("logLines", "exception", "extra")
+        }
+        out["logLines"] = []  # keep the shape (the frontend types logLines required)
+        return out
+
+    def get_history_all(
+        self, since_days: int | None = _HISTORY_DEFAULT_DAYS
+    ) -> list[dict[str, Any]]:
         """History across every host — local plus *connected* remotes — newest
         first. Disconnected remotes are skipped so a slow/offline host can't hang
         the read (the History tab uses this so a run shows up regardless of which
         host it ran on; per-host scoping stays for Forms/Logs/etc.).
+
+        ``since_days`` bounds every host's read to the last N days (default 7 —
+        the tab's range selector passes 30/90/0, where 0/None means "all") so a
+        first visit is a week of logs, not the whole audit trail.
+
+        Only real **runnable runs** are returned: built-in tool calls and agent
+        turns live in the tools audit log, which the read already skips — the
+        ``kind`` filter here is a belt-and-suspenders guarantee. The heavy per-run
+        fields are dropped (see :meth:`_slim_history_row`).
 
         The connected remotes are read **concurrently** (bounded by ``[refresh]
         workers``, the same cap every fleet sweep uses), so the History tab doesn't
@@ -334,7 +405,7 @@ class ReportingMixin:
 
         def _read_one(name: str) -> list[dict[str, Any]]:
             try:
-                return self.get_history(name)
+                return self.get_history(name, since_days=since_days)
             except Exception:
                 logger.exception("history: read failed for host %s", name)
                 return []
@@ -351,7 +422,28 @@ class ReportingMixin:
                 for chunk in ex.map(_read_one, names):
                     records.extend(chunk)
         records.sort(key=lambda r: r.get("ts", ""), reverse=True)
-        return records[:300]
+        records = [r for r in records if r.get("kind", "runnable") == "runnable"]
+        return [self._slim_history_row(r) for r in records[:300]]
+
+    def get_run_detail(self, host: str, run_id: str) -> dict[str, Any]:
+        """Heavy per-run detail (the recorded ``logLines``) for one run, fetched
+        on demand when a History row is expanded — ``get_history_all`` ships slim
+        rows, so this fills in the log for just the one run the operator opened.
+
+        Cheap: the local read is served from the warm (mtime,size) parse cache,
+        and a connected remote from the short-TTL remote-history cache the bulk
+        read just populated — so expanding a row is not a fresh SSH round-trip in
+        the common case. Empty when the run isn't found (aged out of the window /
+        pruned) or ``run_id`` is blank (a legacy no-run_id log)."""
+        if not run_id:
+            return {"logLines": []}
+        try:
+            for r in self.get_history(host):  # no window — find the run regardless
+                if r.get("runId") == run_id:
+                    return {"logLines": r.get("logLines", [])}
+        except Exception:
+            logger.exception("history: run-detail read failed for %s/%s", host, run_id)
+        return {"logLines": []}
 
     def _remote_log_dirs(
         self, entry: dict[str, Any], rp: str, timeout: int = 30
@@ -399,7 +491,52 @@ class ReportingMixin:
             self._remote_logdir_cache[rp] = dirs
         return dirs
 
+    # A connected remote's stream+parse is reused within this window so the
+    # History tab's 25 s poll (and its run_end refetch) doesn't re-SSH every host
+    # every time. Busted on run completion (_invalidate_remote_history) so a
+    # just-finished run still shows promptly; ``_HISTORY_CAP``-bounded, so the
+    # cache holds at most a few hundred small records per host.
+    _REMOTE_HISTORY_TTL = 15.0
+
+    def _invalidate_remote_history(self, host: str | None = None) -> None:
+        """Drop the cached remote-history read for ``host`` (or all hosts) so the
+        next read re-streams — called when a run completes so History is fresh."""
+        cache = getattr(self, "_remote_history_cache", None)
+        if cache is None:
+            return
+        with self._remote_history_lock:
+            if host is None:
+                cache.clear()
+            else:
+                for k in [k for k in cache if k[0] == host]:
+                    del cache[k]
+
     def _get_remote_history(
+        self,
+        entry: dict[str, Any],
+        runnable: str | None,
+        since_date: str | None = None,
+    ) -> list[dict[str, Any]]:
+        import time
+
+        # Reuse a recent stream+parse for this (host, runnable) — the window is
+        # applied *after* the cache so the bulk read (windowed) and get_run_detail
+        # (unwindowed) share one entry. A miss-race just re-reads (same result).
+        cache_key = (entry.get("name", ""), runnable or "")
+        now = time.monotonic()
+        with self._remote_history_lock:
+            cached = self._remote_history_cache.get(cache_key)
+        if cached is not None and (now - cached[0]) < self._REMOTE_HISTORY_TTL:
+            records = cached[1]
+        else:
+            records = self._read_remote_history(entry, runnable)
+            with self._remote_history_lock:
+                self._remote_history_cache[cache_key] = (now, records)
+        if since_date:
+            records = [r for r in records if r.get("ts", "")[:10] >= since_date]
+        return records[: self._HISTORY_CAP]
+
+    def _read_remote_history(
         self, entry: dict[str, Any], runnable: str | None
     ) -> list[dict[str, Any]]:
         ssh = entry["ssh"]

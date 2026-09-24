@@ -263,6 +263,14 @@ class InvokeMixin:
             def on_done(exit_code: int, duration_ms: int) -> None:
                 with self._lock:
                     self._in_flight.pop(inv_id, None)
+                # A run just finished on this host → its run_summary is now on
+                # disk, so drop the cached remote-history read for the host and
+                # the History tab's run_end refetch re-streams fresh (local isn't
+                # cached at this layer, so it's already live). getattr-guarded so
+                # the invoke path tolerates a stub bridge without the reporting mixin.
+                invalidate = getattr(self, "_invalidate_remote_history", None)
+                if callable(invalidate):
+                    invalidate(host)
                 self._dispatch(
                     "runspec:run_end",
                     {"id": inv_id, "exit_code": exit_code, "duration_ms": duration_ms},

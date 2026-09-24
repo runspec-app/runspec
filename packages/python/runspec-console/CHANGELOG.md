@@ -8,6 +8,53 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.282.0] — 2026-09-24
+
+### Changed
+
+- **History is back to runnable runs + initiator, and loads fast.** The tab's
+  `Runnables / Agent / Tools / All` segmented filter (added in 0.280.4) is gone:
+  History now shows only real **runnable runs** with a **Run by** (operator vs
+  assistant) column and the schedule / runbook provenance markers, as it did
+  before. Whole agent turns and individual built-in tool calls are agent
+  activity, not runs, and are kept out of History entirely — they remain in
+  Analytics. Enforced at the source: `get_history_all` returns only
+  `kind == "runnable"` records, and the synthetic tools audit log (the only place
+  built-in/agent records live) is skipped by the History read outright rather
+  than parsed-then-filtered.
+- **Default 7-day window.** History reads only the last week of logs on a first
+  visit, with a range selector (7d / 30d / 90d / All) mirroring the Analytics
+  tab. `get_history_all(since_days=7)` threads the window through the local file
+  read (skipping files whose mtime predates the window) and the remote stream, so
+  first-visit load is a week of logs, not the whole audit trail. Analytics is
+  unchanged (it already takes a window) and inherits the shared read-path fixes.
+
+### Fixed
+
+- **History load is much faster and the expand behaviour is robust.**
+  - The tab no longer parses the ever-growing `runspec-console-tools.log` on every
+    open (it holds no runnable runs); that file also had no bound, so — because
+    the parse cache keys on `(mtime, size)` — every chat turn / tool call
+    invalidated it and forced a full re-parse. It's now **capped and rolled over**
+    (`<stem>.1.log`, one backup) and **skipped by History** entirely.
+  - Connected remotes are **cached with a short TTL** (`_REMOTE_HISTORY_TTL`), so
+    the tab's 25 s poll and its run_end refetch don't re-SSH + re-parse every host
+    every time; a completed run invalidates its host's cache so it still shows
+    promptly.
+  - The bulk payload is **slimmed** — the heavy per-run `logLines` / structured
+    traceback are dropped from the fleet-wide list and fetched on demand for a
+    single run when its row is expanded (new `get_run_detail`), so an expanded row
+    fetches just that run rather than the whole set arriving up front.
+  - Row keys are now **host-inclusive** (`host:id`), ruling out any cross-host id
+    collision that could expand the wrong row or re-expand on collapse.
+- **Marketplace "installed per venv" reads are faster and stay accurate.** The
+  installed probe now caches **per target** (keyed by `host::venv-root`) with a
+  60 s TTL and an assembled-result TTL, so a focus / connect refresh re-SSHes only
+  stale or newly-connected venvs instead of fanning out across the whole fleet on
+  every refresh. Install / uninstall, clear-cache, and a marketplace-config change
+  drop the cache so a real change still forces a fresh probe.
+
+
 ## [0.281.0] — 2026-09-23
 
 ### Fixed

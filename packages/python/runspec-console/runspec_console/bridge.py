@@ -191,6 +191,14 @@ class Bridge(
         self._marketplace_lock = threading.Lock()
         self._marketplace_ops: dict[str, dict[str, Any]] = {}
         self._marketplace_installed: dict[str, Any] | None = None
+        # Per-target installed-probe cache: target id → (wall_ts, ok-row). The
+        # probe fan-out reuses a target's row within _PROBE_TTL_S, so the
+        # Marketplace tab's frequent focus/connect refreshes re-SSH only stale or
+        # newly connected targets — not the whole fleet — while the assembled
+        # result (_marketplace_installed) serves repeat opens instantly. Cleared
+        # on install/uninstall + clear-cache (a real change → force a fresh probe).
+        self._marketplace_probe_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+        self._marketplace_probe_lock = threading.Lock()
         # Debounce gate for the host_up/host_down + room_up/room_down audio cues:
         # first observation silent, flips cue, per-key cooldown so a flapping
         # host can't become a metronome. See sounds.ConnectionCueGate.
@@ -201,6 +209,16 @@ class Bridge(
         # for the session — they don't move). Avoids guessing the dir from the
         # binary path, which is wrong for pipx / ~/.local / system installs.
         self._remote_logdir_cache: dict[str, list[str]] = {}
+        # Remote History read cache: (host, runnable) → (monotonic_ts, records).
+        # The History tab polls; a connected remote's stream+parse is reused
+        # within _REMOTE_HISTORY_TTL so idle polls don't re-SSH every host.
+        # Busted on run completion (_invalidate_remote_history) so a just-ended
+        # run still shows promptly. Guarded by its own lock (the SSH read runs
+        # outside it — a miss-race just re-reads, same result).
+        self._remote_history_cache: dict[
+            tuple[str, str], tuple[float, list[dict[str, Any]]]
+        ] = {}
+        self._remote_history_lock = threading.Lock()
         # History parse cache: log-file path str → (mtime, size, records). The
         # History tab re-reads on an interval; immutable files (compacted
         # archives, completed per-run files) are parsed once and reused, so a

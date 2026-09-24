@@ -398,7 +398,7 @@ class TestGetHistoryAll(unittest.TestCase):
         ]
         b._connected_cache = {"prod-1": True, "prod-2": True, "prod-3": False}
 
-        def fake_get_history(name, runnable=None):
+        def fake_get_history(name, runnable=None, since_days=None):
             if name == "local":
                 return [{"host": "local", "ts": "2026-01-01T00:00:00"}]
             if name == "prod-1":

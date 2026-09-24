@@ -777,7 +777,11 @@ export const mockApi: BridgeApi = {
   },
 
   get_history: async (_host, _runnable) => MOCK_HISTORY,
-  get_history_all: async () => MOCK_HISTORY,
+  get_history_all: async (_since_days) => MOCK_HISTORY,
+  get_run_detail: async (_host, run_id) => {
+    const r = MOCK_HISTORY.find(h => h.runId === run_id)
+    return { logLines: r?.logLines ?? [] }
+  },
 
   get_schedules: async () => MOCK_SCHEDULES,
 

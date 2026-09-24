@@ -1,7 +1,8 @@
 /**
- * HistoryView data loading: renders rows after the first fetch, refreshes on a
- * debounced runspec:run_end event (not on every keystroke), and slows its
- * fallback poll now that the backend read is cheap.
+ * HistoryView data loading: renders rows after the first fetch (bounded to the
+ * default 7-day window), refreshes on a debounced runspec:run_end event (not on
+ * every keystroke), refetches when the range changes, and fetches a run's log
+ * lines on demand when its row is expanded.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, act, waitFor } from '@testing-library/react'
@@ -10,8 +11,9 @@ import userEvent from '@testing-library/user-event'
 import { HistoryView } from './HistoryView'
 import type { HistoryRecord } from '../bridge'
 
-const { getHistoryAll, logsView } = vi.hoisted(() => ({
+const { getHistoryAll, getRunDetail, logsView } = vi.hoisted(() => ({
   getHistoryAll: vi.fn(),
+  getRunDetail: vi.fn(),
   logsView: vi.fn(),
 }))
 
@@ -19,6 +21,7 @@ vi.mock('../bridge', () => ({
   bridge: new Proxy({}, {
     get: (_t, p) => {
       if (p === 'get_history_all') return getHistoryAll
+      if (p === 'get_run_detail') return getRunDetail
       if (p === 'logs_view') return logsView
       return vi.fn()
     },
@@ -41,17 +44,27 @@ const PROPS = {
 
 beforeEach(() => {
   getHistoryAll.mockReset().mockResolvedValue([rec()])
+  getRunDetail.mockReset().mockResolvedValue({ logLines: [] })
   logsView.mockReset().mockResolvedValue({ ok: true, records: [] })
 })
 
 afterEach(() => { vi.useRealTimers() })
 
 describe('HistoryView', () => {
-  it('renders rows after the first fetch', async () => {
+  it('renders rows after the first fetch (default 7-day window)', async () => {
     render(<HistoryView {...PROPS} />)
     expect(await screen.findByText('backup')).toBeTruthy()
-    expect(getHistoryAll).toHaveBeenCalledWith()
+    expect(getHistoryAll).toHaveBeenCalledWith(7)
     expect(getHistoryAll).toHaveBeenCalledTimes(1)
+  })
+
+  it('refetches with the selected window when the range changes', async () => {
+    render(<HistoryView {...PROPS} />)
+    await screen.findByText('backup')
+    expect(getHistoryAll).toHaveBeenCalledWith(7)
+    const user = userEvent.setup()
+    await act(async () => { await user.click(screen.getByText('30d')) })
+    await waitFor(() => expect(getHistoryAll).toHaveBeenCalledWith(30))
   })
 
   it('refetches (once, debounced) on a runspec:run_end event', async () => {
@@ -88,29 +101,6 @@ describe('HistoryView', () => {
     expect(getHistoryAll).toHaveBeenCalledTimes(1)   // no new fetch on filter
   })
 
-  it('shows only runnable runs by default and reveals agent/tool rows via the toggle', async () => {
-    getHistoryAll.mockResolvedValue([
-      rec({ id: 'r-run', runnable: 'backup' }),
-      rec({ id: 'r-turn', runnable: 'chat', kind: 'agent' }),
-      rec({ id: 'r-tool', runnable: 'outlook_inbox', kind: 'tool' }),
-    ])
-    render(<HistoryView {...PROPS} />)
-    // Default 'Runnables' view: only the runnable run; agent turn + tool hidden.
-    expect(await screen.findByText('backup')).toBeTruthy()
-    expect(screen.queryByText('chat')).toBeNull()
-    expect(screen.queryByText('outlook_inbox')).toBeNull()
-
-    const user = userEvent.setup()
-    // Each toggle advertises its folded-away count and reveals only that kind.
-    await act(async () => { await user.click(screen.getByText(/Agent \(1\)/)) })
-    expect(await screen.findByText('chat')).toBeTruthy()
-    expect(screen.queryByText('backup')).toBeNull()
-
-    await act(async () => { await user.click(screen.getByText(/Tools \(1\)/)) })
-    expect(await screen.findByText('outlook_inbox')).toBeTruthy()
-    expect(screen.queryByText('chat')).toBeNull()
-  })
-
   it('shows a Run by column distinguishing agent from operator runs', async () => {
     getHistoryAll.mockResolvedValue([
       rec({ id: 'r-user', runnable: 'backup', initiatedBy: 'user' }),
@@ -118,10 +108,23 @@ describe('HistoryView', () => {
     ])
     render(<HistoryView {...PROPS} />)
     await screen.findByText('backup')
-    // Both the 'agent' and 'user' run-by labels render (the agent indicator is no
-    // longer buried at the end of the ellipsized Runnable cell).
+    // Both the 'agent' and 'user' run-by labels render (the initiator indicator
+    // is a dedicated column, not buried at the end of the ellipsized Runnable cell).
     expect(screen.getByText('agent')).toBeTruthy()
     expect(screen.getByText('user')).toBeTruthy()
+  })
+
+  it('fetches and shows the run log lines on demand when a row is expanded', async () => {
+    getRunDetail.mockResolvedValue({
+      logLines: [{ ts: '2026-06-03T14:22:05+00:00', level: 'INFO', message: 'fetched line' }],
+    })
+    render(<HistoryView {...PROPS} onRerun={() => {}} />)
+    const user = userEvent.setup()
+    const expandBtn = await screen.findByLabelText(/Expand row/i)
+    await act(async () => { await user.click(expandBtn) })
+    // Expanding fetches just this run's log (the bulk payload ships slim rows).
+    await waitFor(() => expect(getRunDetail).toHaveBeenCalledWith('local', 'run-1'))
+    expect(await screen.findByText('fetched line')).toBeTruthy()
   })
 
   it('opens the full-log drill via logs_view when a row is expanded', async () => {

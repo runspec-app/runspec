@@ -86,6 +86,7 @@ EXPECTED = {
     "get_repos",
     "get_room_hosts",
     "get_room_state",
+    "get_run_detail",
     "get_runbooks",
     "get_runnables",
     "get_saved_runs",

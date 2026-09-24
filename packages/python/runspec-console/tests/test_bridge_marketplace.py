@@ -50,6 +50,8 @@ class _StubBridge:
         self._marketplace_lock = threading.Lock()
         self._marketplace_ops: dict[str, dict] = {}
         self._marketplace_installed = None
+        self._marketplace_probe_cache: dict[str, tuple[float, dict]] = {}
+        self._marketplace_probe_lock = threading.Lock()
         self._credentials: list[dict] = []
         self.dispatched: list[tuple[str, dict]] = []
         self.ssh_calls: list[tuple[str, str]] = []
@@ -101,6 +103,7 @@ class _StubBridge:
     marketplace_op = Bridge.marketplace_op
     marketplace_cancel = Bridge.marketplace_cancel
     marketplace_clear_cache = Bridge.marketplace_clear_cache
+    _invalidate_installed = Bridge._invalidate_installed
     _marketplace_agent_tools = Bridge._marketplace_agent_tools
     _run_marketplace_tool = Bridge._run_marketplace_tool
     _marketplace_credential_options = Bridge._marketplace_credential_options

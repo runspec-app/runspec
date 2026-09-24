@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Table, Tag, Typography, Button, Tooltip, message, Input, Drawer, Spin, Empty, Alert, Segmented } from 'antd'
 import { RedoOutlined, CopyOutlined, RobotOutlined, UserOutlined, SearchOutlined, EditOutlined, ClockCircleOutlined, ProfileOutlined } from '@ant-design/icons'
 import type { ColumnType } from 'antd/es/table'
@@ -6,28 +6,24 @@ import { bridge, type HistoryRecord, type HistoryLogLine, type LogViewResult } f
 import { LogStream } from '../components/LogStream'
 import { MONO_FONT, RADIUS, useAccent } from '../ThemeContext'
 
-// A History row is one of three kinds. Runnable runs are the real run history;
-// whole agent turns and individual built-in tool calls (outlook_inbox, a memory
-// tool, …) are agent activity the operator can fold away. Default view shows
-// *only* runnable runs (see KIND_VIEWS / the Segmented toggle).
-type RecordKind = 'runnable' | 'agent' | 'tool'
-type KindView = 'runnables' | 'agent' | 'tools' | 'all'
-const recordKind = (r: HistoryRecord): RecordKind => r.kind ?? 'runnable'
-const KIND_VIEWS: { label: string; value: KindView }[] = [
-  { label: 'Runnables', value: 'runnables' },
-  { label: 'Agent', value: 'agent' },
-  { label: 'Tools', value: 'tools' },
-  { label: 'All', value: 'all' },
+// History shows real runnable runs only, with who initiated each (operator vs the
+// assistant). Whole agent turns and individual built-in tool calls are agent
+// activity, not runs — the backend (get_history_all) returns only runnable runs
+// and keeps them out of History; they remain in Analytics.
+
+// A row's stable key. The record id is md5(run_id + runnable); History merges
+// records across hosts, so prefix the host to rule out any cross-host id
+// collision expanding the wrong row.
+const rowKeyOf = (r: HistoryRecord): string => `${r.host}:${r.id}`
+
+// Read window (days) — bounds the backend read so a first visit is quick. 7d is
+// the default; 0 means "all". Mirrors the Analytics tab's range control.
+const RANGE_OPTIONS = [
+  { label: '7d', value: 7 },
+  { label: '30d', value: 30 },
+  { label: '90d', value: 90 },
+  { label: 'All', value: 0 },
 ]
-// Which record kind each non-"all" view keeps.
-const VIEW_KIND: Record<Exclude<KindView, 'all'>, RecordKind> = {
-  runnables: 'runnable',
-  agent: 'agent',
-  tools: 'tool',
-}
-function matchesKindView(r: HistoryRecord, view: KindView): boolean {
-  return view === 'all' || recordKind(r) === VIEW_KIND[view]
-}
 
 const { Title, Text } = Typography
 
@@ -67,14 +63,18 @@ function formatLogsAsText(record: HistoryRecord, logLines: HistoryLogLine[]): st
 
 interface ExpandedRunProps {
   record: HistoryRecord
+  // Log lines for this run, fetched on demand when the row expands — the bulk
+  // History payload omits them (see get_run_detail). `logsLoading` is true while
+  // that fetch is in flight.
+  logLines: HistoryLogLine[]
+  logsLoading: boolean
   onRerun?: (record: HistoryRecord) => void
   onAskLlm?: (text: string) => void
   onViewFullLog?: (record: HistoryRecord) => void
 }
 
-function ExpandedRun({ record, onRerun, onAskLlm, onViewFullLog }: ExpandedRunProps) {
+function ExpandedRun({ record, logLines, logsLoading, onRerun, onAskLlm, onViewFullLog }: ExpandedRunProps) {
   const args = record.args ?? {}
-  const logLines = record.logLines ?? []
   const hasArgs = Object.keys(args).length > 0
 
   // Edit-and-rerun opens the Forms run dialog pre-filled with this run's values
@@ -187,7 +187,9 @@ function ExpandedRun({ record, onRerun, onAskLlm, onViewFullLog }: ExpandedRunPr
               )}
             </div>
           )}
-          {logLines.length === 0
+          {logsLoading
+            ? <Spin size="small" />
+            : logLines.length === 0
             ? <span style={{ color: '#555' }}>no log lines</span>
             : logLines.map((line, i) => <LogLine key={i} line={line} />)
           }
@@ -270,9 +272,13 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
   const [hostColumnFilter, setHostColumnFilter] = useState<string[]>([])
   const [expandedKeys, setExpandedKeys] = useState<string[]>([])
   const [fullLogRecord, setFullLogRecord] = useState<HistoryRecord | null>(null)
-  // Which kinds to show. Default 'runnables' keeps History to actual runnable
-  // runs, folding agent turns and per-tool-call rows away behind the toggle.
-  const [kindView, setKindView] = useState<KindView>('runnables')
+  // Read window in days (0 = all) — bounds the backend read so a first visit is
+  // quick. Changing it refetches (see the effect's deps).
+  const [sinceDays, setSinceDays] = useState(7)
+  // Per-run log lines fetched lazily when a row expands (the bulk payload ships
+  // slim rows), keyed by rowKeyOf(r); detailLoading tracks the in-flight fetch.
+  const [details, setDetails] = useState<Record<string, HistoryLogLine[]>>({})
+  const [detailLoading, setDetailLoading] = useState<Record<string, boolean>>({})
   const accent = useAccent()
 
   // The view stays mounted across tab switches (App toggles display), so records
@@ -296,7 +302,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
     // re-fan-out; the Host column filter narrows within the loaded set.
     const fetch = (showSpinner: boolean) => {
       if (showSpinner) setLoading(true)
-      return bridge.get_history_all()
+      return bridge.get_history_all(sinceDays)
         .then(r => { if (!cancelled) setRecords(r) })
         .catch(() => {})
         .finally(() => { if (!cancelled) setLoading(false) })
@@ -319,33 +325,32 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       if (debounce) clearTimeout(debounce)
       window.removeEventListener('runspec:run_end', onRunEnd)
     }
-  }, [active])
+  }, [active, sinceDays])
+
+  // Fetch a run's log lines the first time its row is expanded — the bulk payload
+  // omits them (get_run_detail). Cached by rowKeyOf so a re-expand never refetches;
+  // a run with no run_id (legacy log) has no fetchable detail.
+  const fetchDetail = (record: HistoryRecord) => {
+    const key = rowKeyOf(record)
+    if (!record.runId || details[key] !== undefined || detailLoading[key]) return
+    setDetailLoading(d => ({ ...d, [key]: true }))
+    bridge.get_run_detail(record.host, record.runId)
+      .then(res => setDetails(d => ({ ...d, [key]: res.logLines ?? [] })))
+      .catch(() => setDetails(d => ({ ...d, [key]: [] })))
+      .finally(() => setDetailLoading(d => { const n = { ...d }; delete n[key]; return n }))
+  }
 
   const filtered = useMemo(() => {
-    const byKind = records.filter(r => matchesKindView(r, kindView))
-    if (!search) return byKind
+    if (!search) return records
     const q = search.toLowerCase()
-    return byKind.filter(r =>
+    return records.filter(r =>
       r.runnable.toLowerCase().includes(q) ||
       r.group.toLowerCase().includes(q) ||
       r.host.toLowerCase().includes(q) ||
       r.operator.toLowerCase().includes(q) ||
       r.runAs.toLowerCase().includes(q)
     )
-  }, [records, search, kindView])
-
-  // How many agent-turn / tool-call rows the default view is folding away —
-  // surfaced as a count on each toggle so their absence is never silent
-  // (addresses "History shows built-in tools too": kept but one click to reveal).
-  const kindCounts = useMemo(() => {
-    const c = { agent: 0, tool: 0 }
-    for (const r of records) {
-      const k = recordKind(r)
-      if (k === 'agent') c.agent++
-      else if (k === 'tool') c.tool++
-    }
-    return c
-  }, [records])
+  }, [records, search])
 
   const facets = useMemo(() => ({
     hosts: [...new Set(records.map(r => r.host))],
@@ -368,7 +373,6 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       width: 280,
       ellipsis: true,
       render: (_: unknown, r: HistoryRecord) => {
-        const kind = recordKind(r)
         const full = `${r.group ? r.group + '/' : ''}${r.runnable}`
         return (
           <span style={{ fontFamily: MONO_FONT, fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
@@ -376,11 +380,6 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
               <Tooltip title="Ran on a schedule">
                 <ClockCircleOutlined style={{ color: 'var(--rs-text-muted)', fontSize: 13, flex: '0 0 auto' }} />
               </Tooltip>
-            )}
-            {kind !== 'runnable' && (
-              <Tag color={kind === 'agent' ? 'geekblue' : 'default'} style={{ margin: 0, flex: '0 0 auto', fontSize: 11, lineHeight: '16px', padding: '0 5px' }}>
-                {kind === 'agent' ? 'agent turn' : 'tool'}
-              </Tag>
             )}
             <Tooltip title={full}>
               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -513,32 +512,40 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
           allowClear
           style={{ maxWidth: 400 }}
         />
-        <Tooltip title="Runnables = actual runnable runs (the default). Agent = whole chat/trigger/schedule turns. Tools = individual built-in agent tool calls (Outlook, memory, …).">
+        <Tooltip title="How far back to load. A shorter window loads faster; widen it to see older runs.">
           <Segmented
             size="small"
-            value={kindView}
-            onChange={v => setKindView(v as KindView)}
-            options={KIND_VIEWS.map(o => {
-              const n = o.value === 'agent' ? kindCounts.agent : o.value === 'tools' ? kindCounts.tool : 0
-              return n > 0 ? { ...o, label: `${o.label} (${n})` } : o
-            })}
+            value={sinceDays}
+            onChange={v => setSinceDays(v as number)}
+            options={RANGE_OPTIONS}
           />
         </Tooltip>
       </div>
       <Table
         dataSource={filtered}
         columns={columns}
-        rowKey="id"
+        rowKey={rowKeyOf}
         size="small"
         loading={loading && records.length === 0}
         pagination={{ pageSize: 50, showSizeChanger: true }}
         onChange={(_, filters) => setHostColumnFilter((filters['host'] as string[]) || [])}
         expandable={{
-          expandedRowRender: (record) => (
-            <ExpandedRun record={record} onRerun={onRerun} onAskLlm={onAskLlm} onViewFullLog={setFullLogRecord} />
-          ),
+          expandedRowRender: (record) => {
+            const key = rowKeyOf(record)
+            return (
+              <ExpandedRun
+                record={record}
+                logLines={details[key] ?? []}
+                logsLoading={!!detailLoading[key]}
+                onRerun={onRerun}
+                onAskLlm={onAskLlm}
+                onViewFullLog={setFullLogRecord}
+              />
+            )
+          },
           rowExpandable: () => true,
           expandedRowKeys: expandedKeys,
+          onExpand: (expanded, record) => { if (expanded) fetchDetail(record) },
           onExpandedRowsChange: (keys) => setExpandedKeys(keys as string[]),
         }}
       />

@@ -45,7 +45,10 @@ class _Stub:
     _builtin_tool_host = staticmethod(Bridge._builtin_tool_host)
     _builtin_tool_args = staticmethod(Bridge._builtin_tool_args)
     _audit_builtin_tool = Bridge._audit_builtin_tool
+    _append_tool_audit = Bridge._append_tool_audit
     _TOOL_AUDIT_FILE = Bridge._TOOL_AUDIT_FILE
+    _TOOL_AUDIT_STEM = Bridge._TOOL_AUDIT_STEM
+    _TOOL_AUDIT_MAX_BYTES = Bridge._TOOL_AUDIT_MAX_BYTES
     _current_user = staticmethod(lambda: "tester")
 
     def __init__(self):
