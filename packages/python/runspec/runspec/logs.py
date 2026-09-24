@@ -129,6 +129,52 @@ def _runnable_of(path: Path) -> str:
     return path.name[:-7] if path.name.endswith(".log.gz") else path.name[:-4]
 
 
+# ── public classification (shared filename grammar) ──────────────────────────
+#
+# The console lists log files over a shell command and classifies them itself,
+# so it needs the same grammar as prune/compact/status without spawning a remote
+# `runspec` process. These are the public face of the private regex helpers
+# above — the single source of truth for "what kind of log file is this / which
+# runnable owns it".
+
+
+def classify_name(name: str) -> str:
+    """Classify a log *filename*: ``"per_run"`` / ``"archive"`` / ``"single"``.
+
+    ``per_run`` and ``archive`` are the *managed* files prune/compact act on; a
+    ``single`` ``{runnable}.log`` is the active single-mode file, never managed.
+    """
+    if _ARCHIVE_RE.search(name):
+        return "archive"
+    if _PER_RUN_RE.search(name):
+        return "per_run"
+    return "single"
+
+
+def runnable_of(name: str) -> str:
+    """The runnable a log *filename* belongs to (strip the per-run/archive tail)."""
+    return _runnable_of(Path(name))
+
+
+def scope_dirs(scope: str | None, *, destructive: bool) -> list[Path] | None:
+    """Resolve a ``--scope`` choice to a concrete ``dirs`` list, or ``None`` for
+    the :func:`log_dirs` union.
+
+    ``"venv"`` → ``[{sys.prefix}/logs]`` (this venv's own dir); ``"home"`` →
+    ``[~/logs]`` (the shared home fallback); ``"all"`` → ``None`` (both, via
+    ``log_dirs()``). When unset, **destructive** ops (prune/compact) default to
+    ``venv`` — they never touch the shared ``~/logs`` unless asked — while reads
+    (status/view) default to the informative union.
+    """
+    if scope == "venv":
+        return [Path(sys.prefix) / "logs"]
+    if scope == "home":
+        return [Path.home() / "logs"]
+    if scope == "all":
+        return None
+    return [Path(sys.prefix) / "logs"] if destructive else None
+
+
 def _read_lines(path: Path) -> list[str]:
     """JSON-line records from a log file, transparently decompressing .gz."""
     try:

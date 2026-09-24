@@ -270,3 +270,56 @@ class TestCompact:
         payload = json.loads(buf.getvalue())
         assert payload["compacted"] == 1
         assert payload["archives"][0]["archive"].endswith(".log.gz")
+
+
+# ── classification + scope (shared with the console; the venv-scoping fix) ─────
+
+
+class TestClassify:
+    def test_classify_name(self):
+        assert logs.classify_name("deploy.20260101T100000Z.abcd1234.log") == "per_run"
+        assert logs.classify_name("deploy.archive.20260101.log") == "archive"
+        assert logs.classify_name("deploy.archive.20260101.log.gz") == "archive"
+        assert logs.classify_name("deploy.log") == "single"
+        # a runnable whose own name contains a dot is not mistaken for a per-run file
+        assert logs.classify_name("deploy.web.log") == "single"
+
+    def test_runnable_of(self):
+        assert logs.runnable_of("deploy.20260101T100000Z.abcd1234.log") == "deploy"
+        assert logs.runnable_of("deploy.archive.20260101.log.gz") == "deploy"
+        assert logs.runnable_of("deploy.log") == "deploy"
+        assert logs.runnable_of("deploy.web.log") == "deploy.web"
+
+
+class TestScopeDirs:
+    def test_explicit_scopes(self, monkeypatch, tmp_path):
+        venv, home = tmp_path / "venv", tmp_path / "home"
+        monkeypatch.setattr(logs.sys, "prefix", str(venv))
+        monkeypatch.setattr(logs.Path, "home", classmethod(lambda cls: home))
+        assert logs.scope_dirs("venv", destructive=True) == [venv / "logs"]
+        assert logs.scope_dirs("home", destructive=True) == [home / "logs"]
+        assert logs.scope_dirs("all", destructive=True) is None
+
+    def test_default_destructive_is_venv_only(self, monkeypatch, tmp_path):
+        # The data-loss fix: a bare prune/compact defaults to this venv's own dir,
+        # never the shared ~/logs.
+        monkeypatch.setattr(logs.sys, "prefix", str(tmp_path / "venv"))
+        assert logs.scope_dirs(None, destructive=True) == [tmp_path / "venv" / "logs"]
+
+    def test_default_read_is_union(self):
+        # Reads (status/view) stay informative — the log_dirs() union.
+        assert logs.scope_dirs(None, destructive=False) is None
+
+    def test_default_prune_leaves_shared_home_untouched(self, monkeypatch, tmp_path):
+        # End-to-end regression: two venvs share ~/logs; a default-scope prune on
+        # venv A must not delete venv B's files that live in the shared home dir.
+        venv_a, home = tmp_path / "venvA", tmp_path / "home"
+        (venv_a / "logs").mkdir(parents=True)
+        (home / "logs").mkdir(parents=True)
+        monkeypatch.setattr(logs.sys, "prefix", str(venv_a))
+        monkeypatch.setattr(logs.Path, "home", classmethod(lambda cls: home))
+        own = _write_run(venv_a / "logs", "a", "r1", "20260101T100000Z", _summary("r1", "a", ts="2026-01-01T10:00:00+00:00"), age_days=30)
+        shared = _write_run(home / "logs", "b", "r2", "20260101T100000Z", _summary("r2", "b", ts="2026-01-01T10:00:00+00:00"), age_days=30)
+        logs.prune(None, dirs=logs.scope_dirs(None, destructive=True), older_than=timedelta(days=7), out=io.StringIO())
+        assert not own.exists()  # this venv's old file is pruned
+        assert shared.exists()  # the shared ~/logs file (another venv's) is untouched

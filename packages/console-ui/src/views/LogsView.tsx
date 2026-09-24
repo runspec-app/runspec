@@ -16,6 +16,11 @@ import { MONO_FONT } from '../ThemeContext'
 
 const { Title, Text } = Typography
 
+// The backend surfaces the shared home fallback (~/logs) as its own inventory
+// entry under this sentinel group id — never folded into a venv, so a per-venv
+// prune can't touch it. Distinguished in the UI so it reads as "shared", not a venv.
+const HOME_GROUP = '~/logs'
+
 function humanSize(n: number | undefined): string {
   if (!n) return '0 B'
   const units = ['B', 'KB', 'MB', 'GB', 'TB']
@@ -332,6 +337,11 @@ export function LogsView({ selectedHost, activeScope, active }: LogsViewProps) {
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
               <FolderOutlined style={{ color: 'var(--rs-text-muted)' }} />
               <Text strong style={{ fontFamily: MONO_FONT }}>{v.group}</Text>
+              {v.group === HOME_GROUP && (
+                <Tooltip title="The shared home fallback dir (~/logs) — used when a venv's own logs dir isn't writable. Not a venv: pruning here affects only ~/logs, never a venv's logs.">
+                  <Tag>shared</Tag>
+                </Tooltip>
+              )}
               {v.ok ? (
                 <Text type="secondary" style={{ fontSize: 13 }}>
                   {v.total_files ?? 0} file(s), {humanSize(v.total_bytes)}

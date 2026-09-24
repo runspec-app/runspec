@@ -186,8 +186,9 @@ examples = [
   {cmd = "runspec logs status",                          description = "Per-runnable file count + disk usage inventory"},
   {cmd = "runspec logs status --json",                   description = "Inventory as JSON (consumed by the console Logs tab)"},
   {cmd = "runspec logs compact --older-than 7d --gzip",  description = "Roll runs older than 7 days into a gzip archive"},
-  {cmd = "runspec logs prune --older-than 90d",          description = "Delete files older than 90 days"},
+  {cmd = "runspec logs prune --older-than 90d",          description = "Delete files older than 90 days (this venv's logs only)"},
   {cmd = "runspec logs prune deploy --max-files 50 --dry-run", description = "Preview keeping only the newest 50 files"},
+  {cmd = "runspec logs prune --older-than 90d --scope home",   description = "Prune the shared ~/logs fallback instead of this venv's dir"},
 ]
 
 [runspec.commands.logs.args]
@@ -203,3 +204,4 @@ max-files      = {type = "int",  description = "Keep only the newest N files per
 max-total-size = {type = "str",  description = "Cap total managed size; delete oldest over budget (prune), e.g. 5GB", required = false}
 gzip           = {type = "flag", description = "Gzip the archive (compact)", default = false}
 dry-run        = {type = "flag", description = "Show what would change without deleting/archiving (prune/compact)", default = false}
+scope          = {options = ["venv", "home", "all"], description = "Which logs dir(s) to act on: 'venv' ({sys.prefix}/logs, this venv's own), 'home' (~/logs, the shared home fallback), or 'all' (both). Default: prune/compact act on 'venv' only — never the shared ~/logs; status/view show 'all'.", required = false}

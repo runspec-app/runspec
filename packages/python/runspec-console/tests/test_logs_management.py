@@ -1,16 +1,19 @@
 """
 test_logs_management.py — the Logs tab's bridge surface.
 
-Covers the four bridge methods (logs_status / logs_view / logs_prune /
-logs_compact) plus the _run_logs dispatcher that drives `runspec logs --json`
-against each venv: argv construction, JSON parsing, per-venv group tagging,
-policy guards, and the local-subprocess vs remote-SSH split.
+Covers logs_status (now a single directory listing per host — local scandir or
+one remote `find` — classified in-process via runspec.logs, with a separate
+~/logs "home" entry), and logs_view / logs_prune / logs_compact argv (now
+`--scope`-routed so a per-venv op touches only that venv's dir), plus the
+_run_logs local-subprocess vs remote-SSH split.
 """
 
 from __future__ import annotations
 
 import json
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from runspec_console.bridge import Bridge
@@ -56,52 +59,104 @@ class TestVenvResolution(unittest.TestCase):
         )
         self.assertEqual(b._venv_path("prod-1", "nope"), "")
 
-
-class TestLogsStatus(unittest.TestCase):
-    def test_parses_and_tags_group(self) -> None:
+    def test_scope_for_routes_venv_and_home(self) -> None:
         b = _make_bridge()
-        b._hosts = [_local_entry()]
-        payload = {
-            "dirs": ["/opt/venvs/ops-tools/logs"],
-            "runnables": [
-                {
-                    "runnable": "backup",
-                    "per_run_files": 3,
-                    "archives": 1,
-                    "total_bytes": 900,
-                    "oldest": "2026-01-01T00:00:00Z",
-                    "newest": "2026-06-01T00:00:00Z",
-                }
-            ],
-            "total_bytes": 900,
-            "total_files": 4,
-        }
-        with patch.object(
-            b, "_run_logs", return_value=(0, json.dumps(payload), "")
-        ) as m:
-            out = b.logs_status("ws")
-        self.assertEqual(len(out), 1)
-        self.assertTrue(out[0]["ok"])
-        self.assertEqual(out[0]["group"], "ops-tools")
-        self.assertEqual(out[0]["total_files"], 4)
-        # argv: logs status --json (no runnable filter)
-        self.assertEqual(m.call_args.args[2], ["logs", "status", "--json"])
+        b._hosts = [_remote_entry()]
+        self.assertEqual(
+            b._scope_for("prod-1", "deploy-core"),
+            ("/opt/venvs/deploy-core/bin/runspec", "venv"),
+        )
+        # the home sentinel routes to the primary venv's binary + --scope home
+        self.assertEqual(
+            b._scope_for("prod-1", "~/logs"),
+            ("/opt/venvs/deploy-core/bin/runspec", "home"),
+        )
 
-    def test_runnable_filter_in_argv(self) -> None:
-        b = _make_bridge()
-        b._hosts = [_local_entry()]
-        with patch.object(b, "_run_logs", return_value=(0, "{}", "")) as m:
-            b.logs_status("ws", runnable="backup")
-        self.assertEqual(m.call_args.args[2], ["logs", "status", "backup", "--json"])
 
-    def test_error_surfaced_per_venv(self) -> None:
+class TestLogsStatusLocal(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.venv_logs = root / "venvs" / "ops-tools" / "logs"
+        self.venv_logs.mkdir(parents=True)
+        (root / "venvs" / "ops-tools" / "bin").mkdir(parents=True)
+        self.rp = str(root / "venvs" / "ops-tools" / "bin" / "runspec")
+        self.nohome = root / "nohome"  # a home with no logs dir
+        self.b = _make_bridge()
+        self.b._hosts = [{"name": "ws", "runspec_paths": [self.rp]}]
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    @staticmethod
+    def _write(d: Path, name: str) -> None:
+        d.mkdir(parents=True, exist_ok=True)
+        (d / name).write_text("{}\n", encoding="utf-8")
+
+    def test_groups_by_runnable_and_excludes_single_mode(self) -> None:
+        self._write(self.venv_logs, "backup.20260101T100000Z.aaaaaaaa.log")
+        self._write(self.venv_logs, "backup.20260201T100000Z.bbbbbbbb.log")
+        self._write(self.venv_logs, "backup.archive.20260101.log")
+        self._write(self.venv_logs, "deploy.20260101T100000Z.cccccccc.log")
+        self._write(self.venv_logs, "backup.log")  # single-mode active — never counted
+        with patch.object(Path, "home", return_value=self.nohome):
+            out = self.b.logs_status("ws")
+        self.assertEqual([e["group"] for e in out], ["ops-tools"])  # no home entry
+        entry = out[0]
+        self.assertTrue(entry["ok"])
+        self.assertEqual(entry["dirs"], [str(self.venv_logs)])
+        rns = {r["runnable"]: r for r in entry["runnables"]}
+        self.assertEqual(rns["backup"]["per_run_files"], 2)
+        self.assertEqual(rns["backup"]["archives"], 1)
+        self.assertEqual(rns["deploy"]["per_run_files"], 1)
+        self.assertEqual(
+            entry["total_files"], 4
+        )  # 4 managed files; single-mode excluded
+
+    def test_home_entry_only_when_home_has_logs(self) -> None:
+        self._write(self.venv_logs, "backup.20260101T100000Z.aaaaaaaa.log")
+        home = Path(self.tmp.name) / "home"
+        self._write(home / "logs", "other.20260101T100000Z.dddddddd.log")
+        with patch.object(Path, "home", return_value=home):
+            out = self.b.logs_status("ws")
+        self.assertEqual([e["group"] for e in out], ["ops-tools", "~/logs"])
+        home_entry = out[1]
+        self.assertEqual(home_entry["dirs"], ["~/logs"])
+        self.assertEqual([r["runnable"] for r in home_entry["runnables"]], ["other"])
+
+    def test_runnable_filter(self) -> None:
+        self._write(self.venv_logs, "backup.20260101T100000Z.aaaaaaaa.log")
+        self._write(self.venv_logs, "deploy.20260101T100000Z.cccccccc.log")
+        with patch.object(Path, "home", return_value=self.nohome):
+            out = self.b.logs_status("ws", runnable="backup")
+        self.assertEqual([r["runnable"] for r in out[0]["runnables"]], ["backup"])
+
+
+class TestLogsStatusRemote(unittest.TestCase):
+    def test_one_find_per_host_parsed_into_scopes(self) -> None:
         b = _make_bridge()
-        b._hosts = [_local_entry()]
-        with patch.object(b, "_run_logs", return_value=(1, "", "boom")):
-            out = b.logs_status("ws")
-        self.assertFalse(out[0]["ok"])
-        self.assertEqual(out[0]["error"], "boom")
-        self.assertEqual(out[0]["group"], "ops-tools")
+        b._hosts = [_remote_entry()]
+        framed = (
+            "\x00RSSCOPE:deploy-core\n"
+            "backup.20260101T100000Z.aaaaaaaa.log\t100\t1700000000.0\n"
+            "backup.archive.20260101.log\t50\t1700000100.0\n"
+            "\x00RSSCOPE:~/logs\n"
+            "other.20260201T100000Z.bbbbbbbb.log\t20\t1700000200.0\n"
+        )
+        with patch.object(b, "_ssh_run", return_value=(0, framed, "")) as m:
+            out = b.logs_status("prod-1")
+        self.assertEqual([e["group"] for e in out], ["deploy-core", "~/logs"])
+        deploy = out[0]["runnables"][0]
+        self.assertEqual(
+            (deploy["runnable"], deploy["per_run_files"], deploy["archives"]),
+            ("backup", 1, 1),
+        )
+        self.assertEqual(out[1]["runnables"][0]["runnable"], "other")
+        # ONE ssh round-trip for the whole host (not one per venv), scoping both dirs
+        self.assertEqual(m.call_count, 1)
+        script = m.call_args.args[1]
+        self.assertIn("/opt/venvs/deploy-core/logs", script)
+        self.assertIn("$HOME/logs", script)
 
 
 class TestLogsPrune(unittest.TestCase):
@@ -113,7 +168,7 @@ class TestLogsPrune(unittest.TestCase):
         self.assertFalse(out["ok"])
         m.assert_not_called()  # never shells out without a policy
 
-    def test_builds_argv_and_parses_result(self) -> None:
+    def test_builds_argv_with_venv_scope(self) -> None:
         b = _make_bridge()
         b._hosts = [_local_entry()]
         result = {"dry_run": True, "count": 2, "freed_bytes": 200, "deleted": []}
@@ -121,12 +176,20 @@ class TestLogsPrune(unittest.TestCase):
             b, "_run_logs", return_value=(0, json.dumps(result), "")
         ) as m:
             out = b.logs_prune("ws", "ops-tools", older_than="90d", dry_run=True)
-        argv = m.call_args.args[2]
         self.assertEqual(
-            argv, ["logs", "prune", "--older-than", "90d", "--dry-run", "--json"]
+            m.call_args.args[2],
+            [
+                "logs",
+                "prune",
+                "--older-than",
+                "90d",
+                "--dry-run",
+                "--scope",
+                "venv",
+                "--json",
+            ],
         )
         self.assertTrue(out["ok"])
-        self.assertEqual(out["group"], "ops-tools")
         self.assertEqual(out["count"], 2)
 
     def test_apply_omits_dry_run_flag(self) -> None:
@@ -136,9 +199,30 @@ class TestLogsPrune(unittest.TestCase):
             b.logs_prune(
                 "ws", "ops-tools", runnable="backup", max_files=50, dry_run=False
             )
-        argv = m.call_args.args[2]
         self.assertEqual(
-            argv, ["logs", "prune", "backup", "--max-files", "50", "--json"]
+            m.call_args.args[2],
+            [
+                "logs",
+                "prune",
+                "backup",
+                "--max-files",
+                "50",
+                "--scope",
+                "venv",
+                "--json",
+            ],
+        )
+
+    def test_home_scope_prunes_home_via_primary_venv(self) -> None:
+        b = _make_bridge()
+        b._hosts = [_local_entry()]
+        with patch.object(b, "_run_logs", return_value=(0, "{}", "")) as m:
+            b.logs_prune("ws", "~/logs", older_than="90d", dry_run=False)
+        # routed through the primary venv's binary, scoped to ~/logs
+        self.assertEqual(m.call_args.args[1], "/opt/venvs/ops-tools/bin/runspec")
+        self.assertEqual(
+            m.call_args.args[2],
+            ["logs", "prune", "--older-than", "90d", "--scope", "home", "--json"],
         )
 
     def test_unknown_venv(self) -> None:
@@ -146,6 +230,17 @@ class TestLogsPrune(unittest.TestCase):
         b._hosts = [_local_entry()]
         out = b.logs_prune("ws", "missing", older_than="7d")
         self.assertFalse(out["ok"])
+
+    def test_scope_arg_error_hints_upgrade(self) -> None:
+        # An old remote runspec fails --scope safely; the error points at the fix.
+        b = _make_bridge()
+        b._hosts = [_local_entry()]
+        with patch.object(
+            b, "_run_logs", return_value=(2, "", "unknown argument: --scope")
+        ):
+            out = b.logs_prune("ws", "ops-tools", older_than="7d")
+        self.assertFalse(out["ok"])
+        self.assertIn("0.56", out["error"])
 
 
 class TestLogsCompact(unittest.TestCase):
@@ -157,7 +252,7 @@ class TestLogsCompact(unittest.TestCase):
         self.assertFalse(out["ok"])
         m.assert_not_called()
 
-    def test_builds_argv(self) -> None:
+    def test_builds_argv_with_scope(self) -> None:
         b = _make_bridge()
         b._hosts = [_local_entry()]
         with patch.object(
@@ -166,16 +261,25 @@ class TestLogsCompact(unittest.TestCase):
             out = b.logs_compact(
                 "ws", "ops-tools", older_than="7d", gzip=True, dry_run=False
             )
-        argv = m.call_args.args[2]
         self.assertEqual(
-            argv, ["logs", "compact", "--older-than", "7d", "--gzip", "--json"]
+            m.call_args.args[2],
+            [
+                "logs",
+                "compact",
+                "--older-than",
+                "7d",
+                "--gzip",
+                "--scope",
+                "venv",
+                "--json",
+            ],
         )
         self.assertTrue(out["ok"])
         self.assertEqual(out["compacted"], 1)
 
 
 class TestLogsView(unittest.TestCase):
-    def test_parses_json_lines(self) -> None:
+    def test_parses_json_lines_with_scope(self) -> None:
         b = _make_bridge()
         b._hosts = [_local_entry()]
         lines = "\n".join(
@@ -185,8 +289,10 @@ class TestLogsView(unittest.TestCase):
             out = b.logs_view("ws", "ops-tools", "backup", since="1h")
         self.assertTrue(out["ok"])
         self.assertEqual(len(out["records"]), 2)
-        argv = m.call_args.args[2]
-        self.assertEqual(argv, ["logs", "backup", "--json", "--since", "1h"])
+        self.assertEqual(
+            m.call_args.args[2],
+            ["logs", "backup", "--json", "--scope", "venv", "--since", "1h"],
+        )
 
     def test_unknown_venv(self) -> None:
         b = _make_bridge()
@@ -211,7 +317,6 @@ class TestRunLogsDispatch(unittest.TestCase):
                 timeout=30,
             )
         self.assertEqual(code, 0)
-        # command is the path + args joined, shell-quoted
         self.assertEqual(
             m.call_args.args[1], "/opt/venvs/deploy-core/bin/runspec logs status --json"
         )

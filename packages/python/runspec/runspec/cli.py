@@ -864,6 +864,7 @@ def cmd_logs(args: list[str]) -> None:
             since = _logs.parse_duration(parsed.since.value) if parsed.since.value else None
             _logs.view(
                 runnable,
+                dirs=_logs.scope_dirs(parsed.scope.value, destructive=False),
                 since=since,
                 run=parsed.run.value,
                 user=parsed.user.value,
@@ -871,10 +872,15 @@ def cmd_logs(args: list[str]) -> None:
                 follow=parsed.follow.value,
             )
         elif verb == "status":
-            _logs.status(runnable, as_json=parsed.json.value)
+            _logs.status(
+                runnable,
+                dirs=_logs.scope_dirs(parsed.scope.value, destructive=False),
+                as_json=parsed.json.value,
+            )
         elif verb == "prune":
             _logs.prune(
                 runnable,
+                dirs=_logs.scope_dirs(parsed.scope.value, destructive=True),
                 older_than=_logs.parse_duration(parsed.older_than.value) if parsed.older_than.value else None,
                 max_files=parsed.max_files.value,
                 max_total_size=_logs.parse_size(parsed.max_total_size.value) if parsed.max_total_size.value else None,
@@ -887,6 +893,7 @@ def cmd_logs(args: list[str]) -> None:
                 sys.exit(1)
             _logs.compact(
                 runnable,
+                dirs=_logs.scope_dirs(parsed.scope.value, destructive=True),
                 older_than=_logs.parse_duration(parsed.older_than.value),
                 gzip_=parsed.gzip.value,
                 dry_run=parsed.dry_run.value,

@@ -7,11 +7,14 @@ instance, so ``self`` carries all shared state.
 from __future__ import annotations
 
 import json
+import os
+import shlex
 import threading
 from datetime import datetime, timedelta
-from pathlib import Path
+from pathlib import Path, PurePath, PurePosixPath
 from typing import Any
 
+from runspec import logs as core_logs
 
 from . import bridge_utils as utils_mod
 from . import hosts as hosts_mod
@@ -32,6 +35,11 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .bridge import Bridge  # noqa: F401
+
+# Sentinel "group" id for the shared home fallback dir (~/logs). It's not a venv,
+# so it can't collide with a venv name (which is a directory basename). The Logs
+# tab shows it as its own entry; prune/compact/view route it to `--scope home`.
+_HOME_SCOPE = "~/logs"
 
 
 class ReportingMixin:
@@ -448,47 +456,22 @@ class ReportingMixin:
     def _remote_log_dirs(
         self, entry: dict[str, Any], rp: str, timeout: int = 30
     ) -> list[str]:
-        """Real log directories for one remote venv, asked of the remote runspec.
+        """Log directories for one remote venv — **path-derived, no remote runspec**.
 
-        ``logs status --json`` reports ``log_dirs()`` — the actual dirs the Logs
-        tab reads — so History/Analytics don't guess the dir from the binary
-        path (which is wrong for pipx / ~/.local / system installs, where the
-        runnable's ``sys.prefix`` isn't ``{rp}/../..``). Falls back to the
-        path-derived dir plus ``$HOME/logs``. Cached per venv path for the
-        session (only when the query actually resolved, so a transient failure
-        doesn't pin the fallback)."""
-        from pathlib import PurePosixPath
-        import shlex
-
+        Returns ``[{venv}/logs (path-derived from rp), $HOME/logs]``. This used to
+        run ``runspec logs status --json`` per venv (a full remote Python
+        cold-start) to report ``log_dirs()`` exactly — right for pipx/~/.local
+        installs whose ``sys.prefix`` isn't ``{rp}/../..``, but those N×M
+        cold-starts dominated History/Analytics first-open latency. Path-derivation
+        is correct for the standard venv layout (``{venv}/bin/runspec`` →
+        ``{venv}/logs``), and ``$HOME/logs`` still catches fallback logs; only a
+        non-standard install's *own* dir can be missed. Cached per venv path
+        (``timeout`` is unused now, kept for signature compatibility)."""
         cached = self._remote_logdir_cache.get(rp)
         if cached is not None:
             return cached
-
-        dirs: list[str] = []
-
-        def _add(d: str) -> None:
-            if d and d not in dirs:
-                dirs.append(d)
-
-        resolved = False
-        cmd = " ".join(shlex.quote(p) for p in [rp, "logs", "status", "--json"])
-        try:
-            code, out, _ = self._ssh_run(
-                entry["ssh"],
-                cmd,
-                identity_file=entry.get("identityFile"),
-                timeout=timeout,
-            )
-            if code == 0 and out.strip():
-                for d in json.loads(out).get("dirs", []):
-                    _add(str(d))
-                resolved = True
-        except Exception:
-            logger.debug("remote log-dir query failed for %s", rp, exc_info=True)
-        _add(str(PurePosixPath(rp).parent.parent / "logs"))  # path-derived fallback
-        _add("$HOME/logs")
-        if resolved:
-            self._remote_logdir_cache[rp] = dirs
+        dirs = [str(PurePosixPath(rp).parent.parent / "logs"), "$HOME/logs"]
+        self._remote_logdir_cache[rp] = dirs
         return dirs
 
     # A connected remote's stream+parse is reused within this window so the
@@ -510,6 +493,11 @@ class ReportingMixin:
             else:
                 for k in [k for k in cache if k[0] == host]:
                     del cache[k]
+            # A completed run also makes any cached analytics stale — clear the
+            # (small) analytics cache wholesale so the next open recomputes.
+            analytics = getattr(self, "_analytics_cache", None)
+            if analytics is not None:
+                analytics.clear()
 
     def _get_remote_history(
         self,
@@ -590,6 +578,16 @@ class ReportingMixin:
 
     # ── analytics ─────────────────────────────────────────────────────────────
 
+    # Newest-N per-run files streamed per host for analytics — bounds a busy
+    # host's payload (the date window trims further). Generous: normal fleets are
+    # well under it; it only caps a pathological host.
+    _ANALYTICS_FILE_CAP = 5000
+    # Analytics result reuse window. The tab re-runs its scan on a 45 s poll and
+    # on every scope/filter change; within this TTL a repeat request for the same
+    # (hosts, window, runnable) is served from the last result instead of
+    # re-streaming every host. Busted on run completion (_invalidate_remote_history).
+    _ANALYTICS_TTL = 30.0
+
     def _collect_host_records(
         self, entry: dict[str, Any], runnable: str | None
     ) -> list[dict[str, Any]]:
@@ -610,49 +608,53 @@ class ReportingMixin:
         if entry.get("ssh"):
             ssh = entry["ssh"]
             idf = entry.get("identityFile")
-            # Ask the remote runspec for each venv's real log dirs (same as
-            # History) so non-standard installs aren't missed, tagging each dir
-            # with that venv's group.
-            remote_dir_groups: list[tuple[str, str]] = []
+            # Every distinct dir across all venvs (path-derived + the shared
+            # $HOME/logs), streamed in **one** SSH exec — not one exec per dir,
+            # which was the per-dir round-trip that made Analytics slow. Capped to
+            # the newest ~N files so a busy host's payload is bounded (Analytics
+            # windows by date anyway). Records are tagged with the primary venv's
+            # group (best-effort — the framed stream doesn't carry the source dir,
+            # same as History's _read_remote_history).
+            dirs: list[str] = []
             for rp in paths:
                 if not rp:
                     continue
-                group = PurePosixPath(rp).parent.parent.name
                 for d in self._remote_log_dirs(entry, rp):
-                    remote_dir_groups.append((d, group))
-            seen_remote: set[str] = set()
-            for log_dir, group in remote_dir_groups:
-                if log_dir in seen_remote:
-                    continue
-                seen_remote.add(log_dir)
-                script = _remote_log_script(log_dir, runnable)
-                code, stdout, stderr = self._ssh_run(
-                    ssh, script, identity_file=idf, timeout=45
-                )
-                if code != 0 and not stdout:
-                    raise RuntimeError(stderr.strip() or f"ssh exit {code}")
-                current_name: str | None = None
-                current_lines: list[str] = []
+                    if d not in dirs:
+                        dirs.append(d)
+            if not dirs:
+                dirs = ["$HOME/logs"]
+            group = (
+                PurePosixPath(paths[0]).parent.parent.name if paths and paths[0] else ""
+            )
+            script = _remote_log_script(dirs, runnable, limit=self._ANALYTICS_FILE_CAP)
+            code, stdout, stderr = self._ssh_run(
+                ssh, script, identity_file=idf, timeout=45
+            )
+            if code != 0 and not stdout:
+                raise RuntimeError(stderr.strip() or f"ssh exit {code}")
+            current_name: str | None = None
+            current_lines: list[str] = []
 
-                def _flush(group: str = group) -> None:
-                    if current_name is not None:
-                        for rec in _parse_log_text(
-                            current_name,
-                            "\n".join(current_lines),
-                            entry["name"],
-                            include_extra=True,
-                        ):
-                            rec["group"] = group
-                            records.append(rec)
+            def _flush() -> None:
+                if current_name is not None:
+                    for rec in _parse_log_text(
+                        current_name,
+                        "\n".join(current_lines),
+                        entry["name"],
+                        include_extra=True,
+                    ):
+                        rec["group"] = group
+                        records.append(rec)
 
-                for line in stdout.splitlines():
-                    if line.startswith("\x00RUNSPEC_LOG:"):
-                        _flush()
-                        current_name = line[len("\x00RUNSPEC_LOG:") :]
-                        current_lines = []
-                    else:
-                        current_lines.append(line)
-                _flush()
+            for line in stdout.splitlines():
+                if line.startswith("\x00RUNSPEC_LOG:"):
+                    _flush()
+                    current_name = line[len("\x00RUNSPEC_LOG:") :]
+                    current_lines = []
+                else:
+                    current_lines.append(line)
+            _flush()
             return records
 
         # Local host (distinct Path var — `log_dir` above is a str for the
@@ -693,6 +695,7 @@ class ReportingMixin:
         run_summary fields. Heavy work (parsing, SSH) happens here so the
         frontend can re-filter the compact ``buckets`` instantly.
         """
+        import time
         from datetime import timezone
 
         if not hosts or "all" in hosts:
@@ -701,6 +704,24 @@ class ReportingMixin:
             ]
         else:
             target_names = list(hosts)
+
+        # Skip disconnected remotes — a down/slow host otherwise burns the full
+        # TCP + banner connect timeout (10s + 30s) in the join, which is the
+        # "fast on a few hosts, then a minute" stall. `local` is always readable.
+        with self._lock:
+            connected = dict(self._connected_cache)
+        target_names = [
+            n for n in target_names if n == "local" or connected.get(n, False)
+        ]
+
+        # Serve a recent identical scan (same hosts/window/runnable) from cache so
+        # the 45 s poll and rapid filter changes don't re-stream every host.
+        cache_key = (tuple(target_names), int(since_days), runnable or "")
+        now_mono = time.monotonic()
+        with self._remote_history_lock:
+            hit = self._analytics_cache.get(cache_key)
+        if hit is not None and (now_mono - hit[0]) < self._ANALYTICS_TTL:
+            return hit[1]
 
         entries: list[dict[str, Any]] = []
         for name in target_names:
@@ -738,9 +759,15 @@ class ReportingMixin:
         # Window filter (UTC day, inclusive lower bound)
         in_window = [r for r in all_records if r.get("ts", "")[:10] >= since]
 
-        return _aggregate_analytics(
+        result = _aggregate_analytics(
             in_window, since, until, partial=bool(errors), errors=errors
         )
+        # Cache only a clean (non-partial) result — a partial one should re-try
+        # next open rather than pin a host's transient failure for the whole TTL.
+        if not errors:
+            with self._remote_history_lock:
+                self._analytics_cache[cache_key] = (now_mono, result)
+        return result
 
     # ── logs management ───────────────────────────────────────────────────────
     #
@@ -752,40 +779,208 @@ class ReportingMixin:
     def logs_status(
         self, host: str, runnable: str | None = None
     ) -> list[dict[str, Any]]:
-        """Per-venv per-runnable log inventory for a host (read-only).
+        """Per-scope per-runnable log inventory for a host (read-only).
 
-        Returns one dict per venv: ``{group, ok, dirs, runnables, total_bytes,
-        total_files}`` (or ``{group, ok: False, error}`` on failure). Drives
-        ``runspec logs status --json``.
+        One entry per venv (its own ``{sys.prefix}/logs``), plus a single
+        ``~/logs`` "home" entry when the shared fallback dir holds any logs. Each
+        is ``{group, ok, dirs, runnables, total_bytes, total_files}`` (or
+        ``{group, ok: False, error}`` on failure).
+
+        Built from **one directory listing per host** — a local ``scandir`` or a
+        single ``find`` over SSH — and classified in-process via ``runspec.logs``.
+        Replaces the old per-venv ``runspec logs status --json`` call, which
+        cold-started a full remote ``runspec`` process per venv (serially) and
+        made this tab slow out of all proportion to the tiny data it reports.
         """
-        argv = ["logs", "status"]
-        if runnable:
-            argv.append(runnable)
-        argv.append("--json")
-
+        scopes = self._log_scopes(host)
+        if not scopes:
+            return []
+        entry = self._host_entry(host)
+        is_remote = entry is not None and bool(entry.get("ssh"))
+        try:
+            if entry is not None and entry.get("ssh"):
+                rows_by_group = self._remote_log_listing(entry, scopes)
+            else:
+                rows_by_group = self._local_log_listing(scopes)
+        except Exception as exc:  # noqa: BLE001 — one bad listing shouldn't blank the tab
+            logger.exception("logs_status: listing failed for %s", host)
+            return [
+                {"group": g, "ok": False, "error": str(exc)}
+                for (g, kind, _rp) in scopes
+                if kind != "home"
+            ]
         out: list[dict[str, Any]] = []
-        for group, rp in self._venvs(host):
-            code, stdout, stderr = self._run_logs(host, rp, argv, timeout=30)
-            if code != 0 and not stdout.strip():
-                out.append(
-                    {
-                        "group": group,
-                        "ok": False,
-                        "error": stderr.strip() or f"exit {code}",
-                    }
-                )
-                continue
-            try:
-                payload = json.loads(stdout)
-            except json.JSONDecodeError:
-                out.append(
-                    {"group": group, "ok": False, "error": "unparseable status output"}
-                )
-                continue
-            payload["group"] = group
-            payload["ok"] = True
-            out.append(payload)
+        for group, kind, rp in scopes:
+            rows = rows_by_group.get(group, [])
+            if kind == "home" and not rows:
+                continue  # only surface ~/logs when the shared fallback holds logs
+            # Mirror the listing's own path handling: the display dir is native
+            # for the local host, POSIX for a remote fleet host.
+            dir_display = (
+                "~/logs"
+                if kind == "home"
+                else str(self._venv_logdir(rp, remote=is_remote))
+            )
+            out.append(self._build_status_entry(group, [dir_display], rows, runnable))
         return out
+
+    # ── log inventory internals (one listing per host, no remote runspec) ────────
+
+    @staticmethod
+    def _venv_logdir(rp: str, *, remote: bool = True) -> PurePath:
+        """A venv's own logs dir, path-derived from its runspec binary:
+        ``{venv}/bin/runspec`` → ``{venv}/logs`` (== ``{sys.prefix}/logs``).
+
+        Remote fleet paths are always POSIX (SSH), so parse them with
+        ``PurePosixPath``. The **local** host's path is native — parse it with
+        ``Path`` so a Windows console derives ``C:\\…\\logs`` instead of
+        collapsing to a bare ``logs`` (a backslash path is a single segment to
+        ``PurePosixPath``, so ``.parent.parent`` would drop to ``.``)."""
+        base: PurePath = PurePosixPath(rp) if remote else Path(rp)
+        return base.parent.parent / "logs"
+
+    def _log_scopes(self, host: str) -> list[tuple[str, str, str]]:
+        """``[(group, kind, rp)]`` for the Logs tab: one per venv (kind
+        ``"venv"``) then the shared home fallback (kind ``"home"``,
+        ``_HOME_SCOPE``, driven by the primary venv's binary). Empty when the host
+        has no venvs."""
+        venvs = self._venvs(host)
+        scopes: list[tuple[str, str, str]] = [(g, "venv", rp) for g, rp in venvs]
+        if venvs:
+            scopes.append((_HOME_SCOPE, "home", venvs[0][1]))
+        return scopes
+
+    def _local_log_listing(
+        self, scopes: list[tuple[str, str, str]]
+    ) -> dict[str, list[tuple[str, int, float]]]:
+        """In-process listing of each scope's dir on the local host — no subprocess."""
+        out: dict[str, list[tuple[str, int, float]]] = {}
+        for group, kind, rp in scopes:
+            d = (
+                Path.home() / "logs"
+                if kind == "home"
+                else Path(rp).parent.parent / "logs"
+            )
+            rows: list[tuple[str, int, float]] = []
+            try:
+                with os.scandir(d) as it:
+                    for e in it:
+                        n = e.name
+                        if not (n.endswith(".log") or n.endswith(".log.gz")):
+                            continue
+                        try:
+                            if not e.is_file():
+                                continue
+                            st = e.stat()
+                        except OSError:
+                            continue
+                        rows.append((n, st.st_size, st.st_mtime))
+            except OSError:
+                pass  # missing/unreadable dir → empty inventory for this scope
+            out[group] = rows
+        return out
+
+    def _remote_log_listing(
+        self, entry: dict[str, Any], scopes: list[tuple[str, str, str]]
+    ) -> dict[str, list[tuple[str, int, float]]]:
+        """One SSH ``find`` over every scope's dir, framed per scope — no remote
+        ``runspec`` process. ``-printf '%f\\t%s\\t%T@'`` gives basename, size and
+        mtime; classification happens in the console (``runspec.logs``)."""
+        blocks: list[str] = []
+        for group, kind, rp in scopes:
+            dshell = (
+                '"$HOME/logs"'
+                if kind == "home"
+                else shlex.quote(str(self._venv_logdir(rp)))
+            )
+            blocks.append(
+                "printf '\\x00RSSCOPE:%s\\n' " + shlex.quote(group) + "; "
+                "find " + dshell + " -maxdepth 1 -type f "
+                r"\( -name '*.log' -o -name '*.log.gz' \) "
+                "-printf '%f\\t%s\\t%T@\\n' 2>/dev/null"
+            )
+        script = "; ".join(blocks)
+        _, stdout, _ = self._ssh_run(
+            entry["ssh"], script, identity_file=entry.get("identityFile"), timeout=30
+        )
+        out: dict[str, list[tuple[str, int, float]]] = {
+            g: [] for (g, _k, _rp) in scopes
+        }
+        current: str | None = None
+        for line in stdout.splitlines():
+            if line.startswith("\x00RSSCOPE:"):
+                current = line[len("\x00RSSCOPE:") :]
+                out.setdefault(current, [])
+                continue
+            if current is None:
+                continue
+            parts = line.split("\t")
+            if len(parts) != 3:
+                continue
+            name, size_s, mtime_s = parts
+            try:
+                out[current].append((name, int(size_s), float(mtime_s)))
+            except ValueError:
+                continue
+        return out
+
+    def _build_status_entry(
+        self,
+        group: str,
+        dirs: list[str],
+        rows: list[tuple[str, int, float]],
+        runnable: str | None,
+    ) -> dict[str, Any]:
+        """Fold a scope's ``(name, size, mtime)`` rows into the status shape the
+        Logs tab renders. Single-mode ``{runnable}.log`` files are never counted
+        (only per-run files and archives — same as ``runspec logs status``)."""
+        per: dict[str, dict[str, Any]] = {}
+        for name, size, mtime in rows:
+            kind = core_logs.classify_name(name)
+            if kind == "single":
+                continue
+            rn = core_logs.runnable_of(name)
+            if runnable and rn != runnable:
+                continue
+            r = per.setdefault(
+                rn,
+                {
+                    "runnable": rn,
+                    "per_run_files": 0,
+                    "archives": 0,
+                    "total_bytes": 0,
+                    "_o": None,
+                    "_n": None,
+                },
+            )
+            if kind == "archive":
+                r["archives"] += 1
+            else:
+                r["per_run_files"] += 1
+            r["total_bytes"] += size
+            if r["_o"] is None or mtime < r["_o"]:
+                r["_o"] = mtime
+            if r["_n"] is None or mtime > r["_n"]:
+                r["_n"] = mtime
+        runnables = [
+            {
+                "runnable": r["runnable"],
+                "per_run_files": r["per_run_files"],
+                "archives": r["archives"],
+                "total_bytes": r["total_bytes"],
+                "oldest": _mtime_iso(r["_o"]) if r["_o"] is not None else None,
+                "newest": _mtime_iso(r["_n"]) if r["_n"] is not None else None,
+            }
+            for r in sorted(per.values(), key=lambda x: x["runnable"])
+        ]
+        return {
+            "group": group,
+            "ok": True,
+            "dirs": dirs,
+            "runnables": runnables,
+            "total_bytes": sum(r["total_bytes"] for r in runnables),
+            "total_files": sum(r["per_run_files"] + r["archives"] for r in runnables),
+        }
 
     def logs_view(
         self,
@@ -802,10 +997,10 @@ class ReportingMixin:
         (timestamp-sorted, archives included). Drives ``runspec logs <runnable>
         --json``.
         """
-        rp = self._venv_path(host, group)
+        rp, scope = self._scope_for(host, group)
         if not rp:
             return {"ok": False, "error": f"no venv '{group}' on {host}", "records": []}
-        argv = ["logs", runnable, "--json"]
+        argv = ["logs", runnable, "--json", "--scope", scope]
         if since:
             argv += ["--since", since]
         if user:
@@ -850,7 +1045,7 @@ class ReportingMixin:
                 "ok": False,
                 "error": "prune needs at least one policy (--older-than / --max-files / --max-total-size)",
             }
-        rp = self._venv_path(host, group)
+        rp, scope = self._scope_for(host, group)
         if not rp:
             return {"ok": False, "error": f"no venv '{group}' on {host}"}
         argv = ["logs", "prune"]
@@ -864,6 +1059,12 @@ class ReportingMixin:
             argv += ["--max-total-size", max_total_size]
         if dry_run:
             argv.append("--dry-run")
+        # Scope the delete to just this entry's dir (a venv's own {sys.prefix}/logs,
+        # or ~/logs for the home entry) — never both — so pruning one venv can't
+        # delete another venv's files in the shared ~/logs. Needs runspec >= 0.56
+        # on the host; an older one fails the arg safely (no deletion, see
+        # _logs_action's hint).
+        argv += ["--scope", scope]
         argv.append("--json")
         return self._logs_action(host, rp, group, argv, timeout=120)
 
@@ -883,7 +1084,7 @@ class ReportingMixin:
         """
         if not older_than:
             return {"ok": False, "error": "compact requires --older-than (e.g. 7d)"}
-        rp = self._venv_path(host, group)
+        rp, scope = self._scope_for(host, group)
         if not rp:
             return {"ok": False, "error": f"no venv '{group}' on {host}"}
         argv = ["logs", "compact"]
@@ -894,6 +1095,7 @@ class ReportingMixin:
             argv.append("--gzip")
         if dry_run:
             argv.append("--dry-run")
+        argv += ["--scope", scope]  # this entry's dir only (see logs_prune)
         argv.append("--json")
         return self._logs_action(host, rp, group, argv, timeout=180)
 
@@ -903,11 +1105,18 @@ class ReportingMixin:
         """Run a prune/compact action and merge its JSON result with {group, ok}."""
         code, stdout, stderr = self._run_logs(host, rp, argv, timeout=timeout)
         if code != 0 and not stdout.strip():
-            return {
-                "group": group,
-                "ok": False,
-                "error": stderr.strip() or f"exit {code}",
-            }
+            err = stderr.strip() or f"exit {code}"
+            # A pre-0.56 runspec on the host doesn't know --scope and fails the arg
+            # (safely — nothing deleted). Point the operator at the fix rather than
+            # leaving a cryptic "unknown argument" (and never fall back to an
+            # unscoped prune, which is the data-loss bug we're fixing).
+            if "scope" in err.lower():
+                err += (
+                    " — the runspec on this host is likely older than 0.56, which "
+                    "can't scope a prune to one venv; upgrade it to prune from the "
+                    "console."
+                )
+            return {"group": group, "ok": False, "error": err}
         try:
             payload = json.loads(stdout)
         except json.JSONDecodeError:
@@ -926,6 +1135,21 @@ class ReportingMixin:
     def _venv_path(self, host: str, group: str) -> str:
         """Resolve a host+venv group to its runspec binary path, or ''."""
         return next((rp for g, rp in self._venvs(host) if g == group), "")
+
+    def _scope_for(self, host: str, group: str) -> tuple[str, str]:
+        """Resolve a Logs-tab ``group`` to ``(runspec_path, scope)`` for a scoped
+        ``runspec logs`` call.
+
+        A venv group → that venv's binary + ``--scope venv`` (acts on
+        ``{sys.prefix}/logs`` only — never the shared ~/logs, so pruning one venv
+        can't delete another's files). The ``_HOME_SCOPE`` entry → the primary
+        venv's binary + ``--scope home`` (acts on ~/logs only). ``("", "")`` when
+        the group can't be resolved.
+        """
+        if group == _HOME_SCOPE:
+            venvs = self._venvs(host)
+            return (venvs[0][1], "home") if venvs else ("", "")
+        return (self._venv_path(host, group), "venv")
 
     def _run_logs(
         self, host: str, rp: str, argv: list[str], timeout: int

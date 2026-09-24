@@ -219,6 +219,12 @@ class Bridge(
             tuple[str, str], tuple[float, list[dict[str, Any]]]
         ] = {}
         self._remote_history_lock = threading.Lock()
+        # Analytics result cache: (hosts, since_days, runnable) → (monotonic_ts,
+        # result). The Analytics tab re-scans on a 45s poll + every filter change;
+        # a repeat within _ANALYTICS_TTL is served from here instead of
+        # re-streaming every host. Guarded by _remote_history_lock; busted on run
+        # completion alongside the history cache.
+        self._analytics_cache: dict[tuple[Any, ...], tuple[float, dict[str, Any]]] = {}
         # History parse cache: log-file path str → (mtime, size, records). The
         # History tab re-reads on an interval; immutable files (compacted
         # archives, completed per-run files) are parsed once and reused, so a

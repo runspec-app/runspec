@@ -7,6 +7,29 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.56.0] — 2026-09-24
+
+### Fixed
+
+- **`runspec logs prune` / `compact` no longer delete another venv's logs.**
+  `log_dirs()` returns both `{sys.prefix}/logs` (a venv's own dir) and the shared
+  `~/logs` fallback (used when a venv dir isn't writable, where *every* venv's
+  logs comingle), and prune/compact deleted by age across **both** with no way to
+  scope — so pruning one venv also deleted files another venv had written to
+  `~/logs`. The destructive verbs now **default to `{sys.prefix}/logs` only** and
+  never touch the shared `~/logs` unless asked.
+
+### Added
+
+- **`runspec logs --scope venv|home|all`.** Chooses which logs dir(s) a verb acts
+  on: `venv` (`{sys.prefix}/logs`), `home` (`~/logs`), or `all` (both). Destructive
+  verbs (`prune`/`compact`) default to `venv`; reads (`status`/`view`) default to
+  `all`. `--scope all` restores the pre-0.56 prune/compact behaviour.
+- **Public `runspec.logs.classify_name(name)` / `runnable_of(name)`** — the log
+  filename grammar (per-run / archive / single, and the owning runnable) as public
+  helpers, so a caller (e.g. the runspec-console Logs tab) can inventory log files
+  it lists over a shell command without spawning a `runspec` process per venv.
+
 ## [0.55.0] — 2026-09-23
 
 ### Fixed

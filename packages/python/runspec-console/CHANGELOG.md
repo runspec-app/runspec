@@ -8,6 +8,43 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.283.0] — 2026-09-24
+
+### Fixed
+
+- **Per-venv log prune no longer deletes another venv's logs, and the Logs tab
+  loads in one round-trip.** Two long-standing problems in the oldest log paths:
+  - **Data loss:** a per-venv Prune ran `runspec logs prune` from that venv, whose
+    `log_dirs()` spans both `{venv}/logs` **and** the shared `~/logs` — so it also
+    deleted files another venv had written to `~/logs`. Prune/compact/inventory
+    are now **scoped**: a venv entry acts on `{venv}/logs` only (`--scope venv`),
+    and the shared `~/logs` is a **separate "shared" entry** in the Logs tab
+    (`--scope home`), never folded into a venv. Needs `runspec >= 0.56` on the
+    host; an older one fails the scoped call safely (nothing deleted) and the
+    console says to upgrade.
+  - **Speed:** the Logs tab ran a full `runspec logs status` (a remote Python
+    cold-start) **per venv, serially** — ~40s for a few files. It now takes **one
+    directory listing per host** (a local scandir, or a single `find` over SSH),
+    classified in-process via `runspec.logs`. The `~/logs` double-count under
+    every venv is gone.
+- **Analytics is much faster and no longer stalls on a down host.** It now reads
+  **one combined, newest-N-capped stream per host** (was one uncapped SSH stream
+  per directory), **caches** each result briefly (keyed by hosts/window/runnable;
+  busted on run completion), and **skips disconnected hosts** (a down/slow remote
+  used to burn the full connect timeout in the join — the "fast on a few hosts,
+  then a minute" stall).
+- **History first-open no longer pays a per-venv cold-start.** Remote log-dir
+  resolution is now path-derived (`{venv}/logs` + `$HOME/logs`) instead of a
+  `runspec logs status` call per venv.
+- **Windows: the Logs tab shows the local venv's real logs directory.** The
+  displayed dir for the local host is now derived with the native path type
+  (remote fleet paths stay POSIX). A local Windows path was being parsed as
+  POSIX, so `{venv}\bin\runspec` collapsed to a bare `logs` instead of
+  `{venv}\logs`.
+
+Requires `runspec >= 0.56` (adds `runspec logs --scope`).
+
+
 ## [0.282.0] — 2026-09-24
 
 ### Changed

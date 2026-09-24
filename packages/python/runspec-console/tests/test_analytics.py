@@ -432,15 +432,18 @@ class TestGetAnalyticsRemote(unittest.TestCase):
             "runspec_paths": ["/opt/v/bin/runspec"],
         }
         b._hosts = [good_entry, bad_entry]
+        # Both are connected, so both are attempted; prod-2 then fails mid-read →
+        # partial. (A *disconnected* host is skipped before the read — see
+        # test_skips_disconnected_hosts.)
+        b._connected_cache = {"prod-1": True, "prod-2": True}
 
         framed = "\x00RUNSPEC_LOG:backup\n" + _summary_line(
             run_id="r1", runnable="backup", ts=now
         )
 
         def fake_ssh_run(ssh, *a, **kw):
-            # The record lives only in the venv logs dir; the `logs status` query
-            # and the $HOME/logs scan return nothing (so the same record isn't
-            # double-counted now that the scan covers several dirs).
+            # One combined stream per host now (dirs path-derived, no `logs status`
+            # cold-start). The record lives in the venv logs dir.
             script = a[0] if a else ""
             if ssh == "u@h1":
                 return (0, framed, "") if "/opt/v/logs/*.log" in script else (0, "", "")
@@ -467,6 +470,7 @@ class TestGetAnalyticsRemote(unittest.TestCase):
             "runspec_paths": ["/opt/v/bin/runspec"],
         }
         b._hosts = [entry]
+        b._connected_cache = {"prod-1": True}
         framed = "\x00RUNSPEC_LOG:backup\n" + _summary_line(run_id="r1", ts=old)
         with (
             patch("runspec_console.executor.ssh_run", return_value=(0, framed, "")),
@@ -474,6 +478,28 @@ class TestGetAnalyticsRemote(unittest.TestCase):
         ):
             out = b.get_analytics(["prod-1"], since_days=30)
         self.assertEqual(out["totalRuns"], 0)
+
+    def test_skips_disconnected_hosts(self) -> None:
+        # A disconnected remote is never read — so a down/slow host can't burn the
+        # connect timeout in the join. It's simply absent from the scan.
+        b = _make_bridge()
+        entry = {
+            "name": "prod-1",
+            "ssh": "u@h1",
+            "runspec_paths": ["/opt/v/bin/runspec"],
+        }
+        b._hosts = [entry]
+        b._connected_cache = {"prod-1": False}
+        with (
+            patch(
+                "runspec_console.executor.ssh_run",
+                side_effect=AssertionError("must not read a disconnected host"),
+            ),
+            patch.object(b, "get_config", return_value={}),
+        ):
+            out = b.get_analytics(["prod-1"], since_days=30)
+        self.assertEqual(out["totalRuns"], 0)
+        self.assertFalse(out["partial"])  # skipped, not failed
 
 
 # ── 4. Per-invocation files (store="per-run") ────────────────────────────────
@@ -718,56 +744,32 @@ class TestPerInvocationDiscovery(_IsolatedHome):
 
 
 class TestRemoteHistoryDirs(unittest.TestCase):
-    """Remote History asks the remote runspec for its real log dirs (via `logs
-    status --json`) instead of guessing {rp}/../../logs — that guess is wrong for
-    pipx / ~/.local / system installs, where the Logs tab still finds the run
-    (it uses the runnable's real sys.prefix) but History missed it."""
+    """Remote History/Analytics resolve a venv's log dirs by PATH
+    ({rp}/../../logs + $HOME/logs) — no per-venv `runspec logs status` cold-start
+    (which dominated first-open latency). Correct for the standard venv layout;
+    $HOME/logs still catches fallback logs."""
 
-    def test_remote_history_uses_dirs_from_logs_status(self) -> None:
+    def test_path_derived_dirs_no_status_call(self) -> None:
         b = _make_bridge()
         entry = {"name": "prod", "ssh": "u@h", "runspec_paths": ["/opt/v/bin/runspec"]}
         b._hosts = [entry]
-        captured: dict[str, str] = {}
-        framed = "\x00RUNSPEC_LOG:backup\n" + _summary_line(
-            run_id="r1", runnable="backup"
-        )
-        # A non-standard install whose real dirs are nowhere near {rp}/../../logs.
-        status = json.dumps({"dirs": ["/weird/pipx/logs", "/home/u/logs"]})
-
-        def fake_ssh_run(ssh, command, **kw):
-            if "logs status --json" in command:
-                return (0, status, "")
-            captured["script"] = command  # the cat scan
-            return (0, framed, "")
-
-        with patch.object(b, "_ssh_run", side_effect=fake_ssh_run):
-            recs = b.get_history("prod", "backup")
-        # The scan targets the dirs the remote reported, not the path guess.
-        self.assertIn("/weird/pipx/logs", captured["script"])
-        self.assertIn("/home/u/logs", captured["script"])
-        self.assertEqual(len(recs), 1)
-
-    def test_remote_history_falls_back_when_status_unavailable(self) -> None:
-        # Old runspec without `logs status --json` → fall back to the path guess
-        # plus $HOME/logs so History still works.
-        b = _make_bridge()
-        entry = {"name": "prod", "ssh": "u@h", "runspec_paths": ["/opt/v/bin/runspec"]}
-        b._hosts = [entry]
-        captured: dict[str, str] = {}
+        calls: list[str] = []
         framed = "\x00RUNSPEC_LOG:backup\n" + _summary_line(
             run_id="r1", runnable="backup"
         )
 
         def fake_ssh_run(ssh, command, **kw):
-            if "logs status --json" in command:
-                return (2, "", "no such command")  # unsupported
-            captured["script"] = command
+            calls.append(command)
             return (0, framed, "")
 
         with patch.object(b, "_ssh_run", side_effect=fake_ssh_run):
             recs = b.get_history("prod", "backup")
-        self.assertIn("/opt/v/logs", captured["script"])
-        self.assertIn("$HOME/logs", captured["script"])
+        # Exactly one SSH call — the log stream — with NO `runspec logs status`
+        # cold-start, and it targets the path-derived dirs.
+        self.assertEqual(len(calls), 1)
+        self.assertNotIn("logs status", calls[0])
+        self.assertIn("/opt/v/logs", calls[0])
+        self.assertIn("$HOME/logs", calls[0])
         self.assertEqual(len(recs), 1)
 
 

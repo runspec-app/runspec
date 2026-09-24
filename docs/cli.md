@@ -608,6 +608,20 @@ runspec logs prune deploy --max-files 50 --dry-run     # preview keeping newest 
 runspec logs prune --max-total-size 5GB                # cap total size (oldest deleted first)
 ```
 
+**Which directory** — `--scope`. runspec reads logs from two places: `{sys.prefix}/logs`
+(this venv's own dir) and, only when the venv dir isn't writable, `~/logs` (the
+running user's home fallback, shared by every venv that fell back there). To avoid
+one venv's prune deleting another venv's files in that shared `~/logs`, the
+destructive verbs are **venv-scoped by default**: `prune`/`compact` act on
+`{sys.prefix}/logs` only unless you widen them. `status`/`view` still show the
+union. Override with `--scope`:
+
+```bash
+runspec logs prune --older-than 90d                # this venv's dir only (default)
+runspec logs prune --older-than 90d --scope home   # the shared ~/logs fallback only
+runspec logs prune --older-than 90d --scope all    # both (the pre-0.56 behaviour)
+```
+
 Add `--json` to either verb (with or without `--dry-run`) to get a structured
 result object instead of text — what the console parses to render a preview and
 then the applied outcome.
