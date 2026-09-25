@@ -180,6 +180,54 @@ argues for user cron over the tempting `systemctl --user` timer alternative:
   hand-randomize the schedule minute (the console already does this for its
   schedules — carry the convention over).
 
+## Console relationship — managed outside, observed inside
+
+The cron scheduler is **managed outside** runspec-console and **observed inside**
+it:
+
+- **Manage — standalone.** Shared schedules are created / reconciled by the
+  scheduler's own CLI (`add` / `sync` / `remove` / `list`) on the host, or over
+  SSH by whatever provisions the fleet (config management). The console's
+  **Schedules tab is not wired to it** — that tab stays the console's own local,
+  console-fired schedules (`sources.schedule`), which run only while the console
+  is open and are per-operator.
+- **Observe — via History.** Because a cron-fired run writes to the per-venv runs
+  index, it surfaces in the console's **History tab** (locally and over SSH),
+  including the live "Running now" strip and prune-provenance — so the fleet's
+  shared schedules are *visible* in the console without the console *managing*
+  them or holding any secret.
+
+**Why not the personal Schedules tab.** A console→scheduler delegation was built
+and removed (console 0.162.0 → 0.163.0; [`venv-scheduler.md`](venv-scheduler.md) →
+"Decision: console delegation removed"): grafting shared, host-owned schedules
+onto the single-user, personal Schedules tab fought its grain, and — the deciding
+factor — it made the console route an *operator's* selected credentials onto a
+shared host. Credentials stay keychain-only in the console, never shipped
+anywhere.
+
+**Envisioned future — a separate "Shared schedules" section, `run_as` = the venv
+owner.** The natural console home for this is a **distinct section** (not the
+personal Schedules tab) that reads and edits a host's cron shared-schedules over
+SSH, with **`run_as` pinned to the venv owner** — the service account that owns
+the venv (e.g. from `create-venv --run-as`). That pin is the key that makes
+console management safe where the original delegation was not:
+
+- The console never chooses an arbitrary `run_as` and never ships secrets — a
+  shared schedule runs as the venv's *own* owner, whose credentials are
+  provisioned out of band into that owner's `RUNSPEC_ENV_FILE` (v1's external
+  secret distribution). The console manages only the **non-secret** schedule
+  definition (cron + runnable + args) on the venv owner's crontab, exactly what
+  `runspec-scheduler sync` already writes.
+- So it needs **no shared/central credential store** and reintroduces none of the
+  operator-credential routing that removed the first attempt — it is a management
+  surface over the standalone cron backend, scoped to the one account that already
+  owns the venv.
+
+This is **not in v1** (v1 is standalone CLI/SSH + observe-via-History). It lands
+only after the cron backend is validated in the wild, and it builds on the pieces
+already shipped: `runspec-scheduler` CRUD over SSH for management, the runs index
+for the fleet view.
+
 ## Non-goals for v1
 
 Deferred deliberately, each with a clear later home:
