@@ -112,6 +112,14 @@ drives it.
 
 ## Future direction — a standalone, shared scheduler
 
+> **Chosen v1 execution model:** see [`cron-scheduler.md`](cron-scheduler.md) —
+> a **user-crontab backend** (a translator, not a daemon) replaces the
+> APScheduler + `systemctl --user` process below, reusing this package's config /
+> timing / `RUNSPEC_ENV_FILE` core. It sidesteps the systemd/lingering fragility
+> (worst on the CentOS 7 majority) and the shared-credential blast radius, and
+> leans on the runs index for observability. `systemctl --user` timers become the
+> v2 backend as the fleet reaches RHEL 9.
+
 The natural home for "shared, always-on, cross-host" scheduling is a **standalone
 service**, not the single-user console:
 
