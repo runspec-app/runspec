@@ -7,6 +7,27 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.58.1] — 2026-09-25
+
+### Fixed
+
+- **Runs-index liveness check no longer terminates live processes on Windows
+  (`runsdb`).** The pid-liveness probe fell back to `os.kill(pid, 0)` when it had
+  no `/proc` start token — which is *always* the case on Windows (no `/proc`). On
+  Windows `os.kill(pid, sig)` is not a no-op signal: CPython maps any signal other
+  than `CTRL_C_EVENT`/`CTRL_BREAK_EVENT` to `TerminateProcess(handle, sig)`, so
+  `os.kill(pid, 0)` **killed** the process (exit code 0) instead of probing it.
+  Because every reader that passes `live=True` runs this check against the `pid` of
+  each `running` row, a "what's running" read on a Windows host terminated the live
+  process behind each row — including the console's own process (whose row carries
+  its live pid) and any in-flight runnable, and, on pid reuse, whatever unrelated
+  process now held that pid. The fallback is now a non-destructive existence probe
+  (`_pid_exists`): POSIX keeps `os.kill(pid, 0)`; Windows uses `OpenProcess`
+  (`_win_pid_exists`), failing **safe** (any probe error assumes alive, so a live
+  run is never dropped and nothing is ever killed — an unreapable orphan is bounded
+  by the `_reap` max-age ceiling). No effect on Linux/macOS, where `os.kill(pid, 0)`
+  was always the correct non-destructive check.
+
 ## [0.58.0] — 2026-09-25
 
 ### Added

@@ -1,5 +1,16 @@
 [config.logging]
 
+# The console is a long-lived *application*, not a runnable invocation — it calls
+# runspec.parse("runspec-console") once at startup for arg-parsing + logging and
+# then stays resident for the whole session. With the runs index on (the default)
+# that would write a `running` row for the console's own pid that only finalizes
+# in atexit — which the app deliberately skips (os._exit on shutdown) — so the
+# console would show as perpetually "running" in the History tab's live strip.
+# Opt the console's own process out of the runs index; runnables launched *by* the
+# console still index normally (each has its own [config]).
+[config.history]
+db = false
+
 [runspec-console]
 description = "Desktop console for runspec — run, schedule and monitor runnables"
 autonomy    = "confirm"

@@ -414,10 +414,25 @@ class TestDbRowToRunning(unittest.TestCase):
 
 
 def _write_running(
-    logs: Path, run_id: str, runnable: str, *, alive: bool = True
+    logs: Path,
+    run_id: str,
+    runnable: str,
+    *,
+    alive: bool = True,
+    pid: int | None = None,
+    proc_start: str | None = None,
 ) -> None:
     """A ``running`` row (begin_run only, no finalize). ``alive`` uses our own live
-    pid + proc_start token; otherwise a dead pid so the liveness filter drops it."""
+    pid + proc_start token; otherwise a dead pid so the liveness filter drops it.
+    ``pid``/``proc_start`` override both — e.g. a *different* live process
+    (``os.getppid()``) to model a real runnable, which runs in its own process, not
+    the console's."""
+    the_pid = pid if pid is not None else (os.getpid() if alive else 999999999)
+    the_tok = (
+        proc_start
+        if proc_start is not None
+        else (runsdb.proc_start_token() if alive else "")
+    )
     runsdb.begin_run(
         logs,
         {
@@ -427,9 +442,9 @@ def _write_running(
             "start_ts": "2026-09-25T10:00:00+00:00",
             "user": "alice",
             "agent": False,
-            "pid": os.getpid() if alive else 999999999,
+            "pid": the_pid,
             "host": runsdb._hostname(),
-            "proc_start": runsdb.proc_start_token() if alive else "",
+            "proc_start": the_tok,
             "log_file": f"{runnable}.x.{run_id}.log",
             "args": {"t": "prod"},
         },
@@ -454,13 +469,48 @@ class TestRunningRunsLocal(unittest.TestCase):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
             tmp = Path(d)
             rp, logs = _venv_with_db(tmp, "v1")
-            _write_running(logs, "live-1", "backup")
+            # A real runnable runs in its own process, not the console's — model
+            # that with a live *non-self* pid (our parent), so the own-pid filter
+            # (which drops the console's own row) doesn't swallow it.
+            ppid = os.getppid()
+            _write_running(
+                logs,
+                "live-1",
+                "backup",
+                pid=ppid,
+                proc_start=runsdb._read_proc_start(ppid),
+            )
             rows = self._run(self._bridge_for(tmp, [rp]), tmp)
             row = next(r for r in rows if r["runId"] == "live-1")
             self.assertEqual(row["runnable"], "backup")
             self.assertEqual(row["group"], "v1")
-            self.assertEqual(row["pid"], os.getpid())
+            self.assertEqual(row["pid"], ppid)
             self.assertTrue(row["startTs"])
+
+    def test_console_own_process_excluded(self) -> None:
+        # The console calls runspec.parse("runspec-console") in its own process, so
+        # a stale self-row (a prior version wrote one before we set
+        # [config.history] db=false) carries the console's own pid. It must never
+        # list itself as "running" — the live read drops pid == os.getpid().
+        import tempfile
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
+            tmp = Path(d)
+            rp, logs = _venv_with_db(tmp, "v1")
+            _write_running(
+                logs, "self-1", "runspec-console"
+            )  # default pid = os.getpid()
+            _write_running(
+                logs,
+                "other",
+                "backup",
+                pid=os.getppid(),
+                proc_start=runsdb._read_proc_start(os.getppid()),
+            )
+            rows = self._run(self._bridge_for(tmp, [rp]), tmp)
+            ids = {r["runId"] for r in rows}
+            self.assertNotIn("self-1", ids)  # the console's own row is filtered
+            self.assertIn("other", ids)  # a real runnable still shows
 
     def test_finished_row_not_running(self) -> None:
         import tempfile
@@ -568,6 +618,30 @@ class TestDbRunningCmd(unittest.TestCase):
         self.assertIn("~/logs", cmd)
         # The running snippet has no `since` window (unlike db_read_cmd).
         self.assertIn("limit", cmd)
+
+    def test_snippet_is_windows_safe(self) -> None:
+        # The remote liveness probe must never os.kill(pid, 0) on a Windows fleet
+        # host — that terminates the process there. It routes through an OpenProcess
+        # probe (win_alive) guarded by os.name == "nt".
+        snip = bridge_utils._DB_RUNNING_SNIPPET
+        self.assertIn("def win_alive(", snip)
+        self.assertIn('os.name == "nt"', snip)
+        self.assertIn("OpenProcess", snip)
+
+
+class TestConsoleOptsOutOfRunsIndex(unittest.TestCase):
+    def test_runspec_toml_disables_own_history_db(self) -> None:
+        # The console is a long-lived app, not a run — it must opt its own process
+        # out of the runs index so it doesn't self-register a perpetual `running`
+        # row (parse("runspec-console") + the atexit-skipping os._exit shutdown).
+        try:
+            import tomllib as toml_reader
+        except ModuleNotFoundError:  # py3.10
+            import tomli as toml_reader  # type: ignore[no-redef]
+
+        here = Path(bridge_utils.__file__).parent / "runspec.toml"
+        data = toml_reader.loads(here.read_text(encoding="utf-8"))
+        self.assertEqual(data.get("config", {}).get("history", {}).get("db"), False)
 
 
 if __name__ == "__main__":

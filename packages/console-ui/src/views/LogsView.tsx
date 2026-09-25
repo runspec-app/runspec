@@ -250,12 +250,12 @@ function ShareLogsModal({ target, onClose, onApplied }: {
       ]}
     >
       <Text type="secondary" style={{ fontSize: 13 }}>
-        Runs <Text code>share-venv-logs</Text> on <Text code>{host}</Text> to set{' '}
-        <Text code>{venv}</Text>'s <Text code>logs/</Text> dir to <Text code>2775</Text>{' '}
-        (setgid + group-writable), so the per-venv runs index and the audit logs are
-        writable across a shared console group — the repair for a venv not built with{' '}
-        <Text code>create-venv --group</Text>. Needs runspec-linux in that venv; escalates
-        to the venv owner over SSH when the login user can't write it.
+        Sets <Text code>{venv}</Text>'s <Text code>logs/</Text> dir on <Text code>{host}</Text>{' '}
+        to <Text code>2775</Text> (setgid + group-writable), so the per-venv runs index and
+        the audit logs are writable across a shared console group — the repair for a venv not
+        built with <Text code>create-venv --group</Text>. Runs <Text code>chmod</Text> directly
+        (no runspec-linux needed); if the venv is owned by another user it escalates through
+        its own <Text code>share-venv-logs</Text> when present.
       </Text>
       <Form layout="vertical" style={{ marginTop: 16 }}>
         <Form.Item

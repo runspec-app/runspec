@@ -96,6 +96,47 @@ class TestReapAndLiveness:
         assert r["status"] == "crashed"
 
 
+class TestPidLiveness:
+    """The non-destructive existence probe behind reaping/liveness, and the
+    Windows guard. ``os.kill(pid, 0)`` is a harmless existence probe on POSIX, but
+    on Windows CPython maps it to ``TerminateProcess`` — it would *kill* the pid in
+    every ``running`` row (the live console, an in-flight runnable) — so the
+    Windows branch must never reach ``os.kill``."""
+
+    def test_posix_probe_own_pid_alive(self):
+        # Empty proc_start token → the existence-probe fallback; our own pid lives.
+        assert runsdb._pid_alive(os.getpid(), "") is True
+
+    def test_posix_probe_dead_pid(self):
+        assert runsdb._pid_alive(999999999, "") is False
+
+    def test_falsey_pid_never_alive(self):
+        assert runsdb._pid_alive(0, "") is False
+        assert runsdb._pid_alive(None, "tok") is False
+
+    def test_windows_probe_never_calls_os_kill(self, monkeypatch):
+        # Regression guard: on Windows the fallback routes through _win_pid_exists
+        # (OpenProcess), never os.kill (which terminates the process on Windows).
+        # `_on_windows` is patched rather than `os.name` — flipping os.name would
+        # make pathlib pick WindowsPath and break unrelated code under test.
+        seen: list[int] = []
+        monkeypatch.setattr(runsdb, "_on_windows", lambda: True)
+        monkeypatch.setattr(runsdb.os, "kill", lambda *a, **k: pytest.fail("os.kill must not run on Windows"))
+        monkeypatch.setattr(runsdb, "_win_pid_exists", lambda pid: seen.append(pid) or True)
+        assert runsdb._pid_alive(4321, "") is True  # empty token → probe path
+        assert seen == [4321]
+
+    def test_windows_liveness_filter_is_non_destructive(self, logs_dir, monkeypatch):
+        # End-to-end: a running_only live read on a simulated Windows host must not
+        # invoke the destructive os.kill for a row's pid, and keeps a live row.
+        monkeypatch.setattr(runsdb, "_on_windows", lambda: True)
+        monkeypatch.setattr(runsdb.os, "kill", lambda *a, **k: pytest.fail("liveness filter killed a pid"))
+        monkeypatch.setattr(runsdb, "_win_pid_exists", lambda pid: True)  # process exists
+        runsdb.begin_run(logs_dir, _row(run_id="win", pid=4321, proc_start=""))
+        shown = runsdb.list_runs(logs_dir, running_only=True, live=True)
+        assert any(r["run_id"] == "win" for r in shown)
+
+
 class TestPrune:
     def test_max_rows_keeps_newest(self, logs_dir):
         for i in range(5):

@@ -8,6 +8,53 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.289.0] — 2026-09-25
+
+### Fixed
+
+- **History tab no longer crashes/quits the console, and the console stops
+  listing itself as "running".** Two coupled regressions from the 0.287.0 live
+  "Running now" strip, both on Windows:
+  - The strip's `get_running_runs` was the first reader to run the runs-index
+    liveness check with `live=True`; on Windows that check called
+    `os.kill(pid, 0)`, which is **not** a probe there — it terminates the process.
+    So opening History **killed** the live process behind each `running` row —
+    including the console's own — which surfaced as the native "Do you really want
+    to quit?" prompt that reappeared on every 25 s poll. The real fix is in core
+    `runspec` 0.58.1 (non-destructive `OpenProcess` probe on Windows); the console
+    now **requires `runspec >= 0.58.1`**. The remote running-runs snippet
+    (`bridge_utils`) got the same Windows-safe guard for a Windows fleet host.
+  - The console self-registered a `running` row for its own long-lived process
+    (it calls `runspec.parse("runspec-console")` at startup, and the runs index
+    defaults on), so it showed as perpetually "running now". It now opts its own
+    process out of the runs index (`[config.history] db = false` in the console's
+    `runspec.toml`), and the live read also drops any local row whose pid is the
+    console's own — clearing a stale self-row a prior version left behind.
+  Runnables launched *by* the console still index and appear normally.
+- **Logs tab: View and Prune/Compact worked again on venvs with an older runspec,
+  and errors are now surfaced instead of swallowed.** `runspec` prints
+  argument/coercion errors to **stdout** with a non-zero exit, so a venv whose
+  runspec predates 0.56.0 (no `--scope`, which the console always passes) failed
+  every Logs-tab operation — and the console hid it: Prune showed a generic
+  "unparseable result output" and View silently returned an empty pane ("View
+  isn't working on any logs"). Now: Prune/Compact surface the real CLI message
+  plus an upgrade hint (never an unscoped fallback — that's the data-loss bug
+  `--scope` fixed), and View (read-only) **retries without `--scope`** so it works
+  on an older-runspec venv too. Result parsing also tolerates a stray leading
+  stdout line.
+- **"Make logs shared" no longer requires runspec-linux in the venv.** It now runs
+  `chmod 2775` / `chgrp` on the venv's `logs/` dir **directly** — for a venv the
+  operator owns (the common case) that needs no runnable and no sudo, so you no
+  longer have to install runspec-linux (and its 35 runnables) into every venv just
+  to share a logs dir. If the venv is owned by another user it still escalates
+  through that venv's own `share-venv-logs` when present; a service-account venv
+  without it now returns an actionable message (rebuild with `create-venv
+  --group`, run as the owner, or chmod manually) rather than failing opaquely.
+- **Analytics: removed the redundant "All hosts" picker.** The Analytics drawer is
+  a per-host drill scoped to the sidebar-selected host, so its own host multi-select
+  duplicated that selection — it now always follows the sidebar host.
+
+
 ## [0.288.0] — 2026-09-25
 
 ### Added

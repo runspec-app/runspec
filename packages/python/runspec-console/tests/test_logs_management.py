@@ -242,6 +242,36 @@ class TestLogsPrune(unittest.TestCase):
         self.assertFalse(out["ok"])
         self.assertIn("0.56", out["error"])
 
+    def test_stdout_scope_error_is_surfaced(self) -> None:
+        # The user's real case: runspec prints arg errors to STDOUT (exit 1), not
+        # stderr, so the old `code != 0 and not stdout` guard never fired and the
+        # console showed a generic "unparseable result output". Surface the real
+        # message (+ the upgrade hint), never "unparseable".
+        b = _make_bridge()
+        b._hosts = [_local_entry()]
+        stdout = "✗  Unknown argument: --scope\n   Valid options: --dry-run, --json\n"
+        with patch.object(b, "_run_logs", return_value=(1, stdout, "")):
+            out = b.logs_prune("ws", "ops-tools", older_than="7d")
+        self.assertFalse(out["ok"])
+        self.assertIn("Unknown argument: --scope", out["error"])
+        self.assertIn("0.56", out["error"])
+        self.assertNotIn("unparseable", out["error"].lower())
+
+    def test_result_line_found_past_leading_noise(self) -> None:
+        # A stray non-JSON line before the result (e.g. a config routing an INFO
+        # line to stdout) must not mask a valid JSON result.
+        b = _make_bridge()
+        b._hosts = [_local_entry()]
+        stdout = (
+            "INFO starting\n"
+            + json.dumps({"dry_run": True, "count": 3, "freed_bytes": 9, "deleted": []})
+            + "\n"
+        )
+        with patch.object(b, "_run_logs", return_value=(0, stdout, "")):
+            out = b.logs_prune("ws", "ops-tools", older_than="7d", dry_run=True)
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["count"], 3)
+
 
 class TestLogsCompact(unittest.TestCase):
     def test_requires_older_than(self) -> None:
@@ -299,6 +329,36 @@ class TestLogsView(unittest.TestCase):
         b._hosts = [_local_entry()]
         out = b.logs_view("ws", "missing", "backup")
         self.assertFalse(out["ok"])
+        self.assertEqual(out["records"], [])
+
+    def test_retries_unscoped_when_scope_rejected(self) -> None:
+        # An old venv rejects --scope (a ✗ error on stdout, exit 1). View is
+        # read-only, so it retries WITHOUT --scope rather than showing an empty
+        # pane (the "View isn't working on any logs" report).
+        b = _make_bridge()
+        b._hosts = [_local_entry()]
+        rec = json.dumps({"ts": "2026-06-01", "message": "hi"})
+        results = [
+            (1, "✗  Unknown argument: --scope\n", ""),  # scoped attempt fails
+            (0, rec + "\n", ""),  # unscoped retry succeeds
+        ]
+        with patch.object(b, "_run_logs", side_effect=results) as m:
+            out = b.logs_view("ws", "ops-tools", "backup")
+        self.assertTrue(out["ok"])
+        self.assertEqual(len(out["records"]), 1)
+        self.assertEqual(m.call_count, 2)
+        self.assertNotIn(
+            "--scope", m.call_args_list[1].args[2]
+        )  # retry dropped --scope
+
+    def test_view_surfaces_error_when_both_attempts_fail(self) -> None:
+        b = _make_bridge()
+        b._hosts = [_local_entry()]
+        fail = (1, "✗  boom on stdout\n", "")
+        with patch.object(b, "_run_logs", side_effect=[fail, fail]):
+            out = b.logs_view("ws", "ops-tools", "backup")
+        self.assertFalse(out["ok"])
+        self.assertIn("boom on stdout", out["error"])
         self.assertEqual(out["records"], [])
 
 
@@ -380,51 +440,72 @@ class TestShareLogsCmd(unittest.TestCase):
 class TestShareVenvLogs(unittest.TestCase):
     """The share_venv_logs bridge method (Make logs shared button)."""
 
-    def test_remote_direct_ok(self) -> None:
+    def test_remote_direct_chmod_no_runnable(self) -> None:
+        # The common case — a venv the operator owns. Runs chmod/chgrp directly:
+        # no runspec-linux / share-venv-logs in the venv, no sudo.
         b = _make_bridge()
         b._hosts = [_remote_entry()]
-        ok_json = json.dumps(
-            {"logs_dir": "/opt/venvs/deploy-core/logs", "mode": "2775", "shared": True}
-        )
-        with patch.object(b, "_ssh_run", return_value=(0, ok_json, "")) as m:
+        with patch.object(b, "_ssh_run", return_value=(0, "", "")) as m:
             res = b.share_venv_logs("prod-1", "deploy-core", "consoles")
         self.assertTrue(res["ok"])
         self.assertEqual(res["as_user"], "")  # direct run, no escalation
         cmd = m.call_args.args[1]
-        # Derives {venv}/bin/share-venv-logs and runs it against {venv} with the group.
-        self.assertIn("/opt/venvs/deploy-core/bin/share-venv-logs", cmd)
-        self.assertIn("--venv /opt/venvs/deploy-core", cmd)
-        self.assertIn("--group consoles", cmd)
+        self.assertIn("mkdir -p /opt/venvs/deploy-core/logs", cmd)
+        self.assertIn("chgrp consoles /opt/venvs/deploy-core/logs", cmd)
+        self.assertIn("chmod 2775 /opt/venvs/deploy-core/logs", cmd)
+        self.assertNotIn("share-venv-logs", cmd)  # no runnable dependency
 
-    def test_remote_missing_runnable(self) -> None:
+    def test_remote_omits_chgrp_when_no_group(self) -> None:
         b = _make_bridge()
         b._hosts = [_remote_entry()]
-        with patch.object(
-            b, "_ssh_run", return_value=(66, "share-venv-logs not found", "")
-        ):
+        with patch.object(b, "_ssh_run", return_value=(0, "", "")) as m:
             res = b.share_venv_logs("prod-1", "deploy-core")
-        self.assertFalse(res["ok"])
-        self.assertIn("runspec-linux", res["error"])
+        self.assertTrue(res["ok"])
+        cmd = m.call_args.args[1]
+        self.assertIn("chmod 2775", cmd)
+        self.assertNotIn("chgrp", cmd)
 
-    def test_remote_escalates_on_permission_denied(self) -> None:
+    def test_permission_denied_without_runnable_gives_hint(self) -> None:
+        # A venv owned by another user with no share-venv-logs to escalate through:
+        # direct chmod is refused and nothing can escalate → an actionable message,
+        # never an opaque failure (and never an unscoped/unsafe fallback).
         b = _make_bridge()
         b._hosts = [_remote_entry()]
-        # First (direct) run is refused; the escalated retry returns the =====AS marker.
         results = [
             (
                 1,
                 "",
                 "chmod: changing permissions of '/opt/venvs/deploy-core/logs': Operation not permitted",
             ),
-            (0, "=====AS svc\n" + json.dumps({"shared": True}), ""),
+            (1, "", ""),  # [ -x .../share-venv-logs ] → not present
+        ]
+        with patch.object(b, "_ssh_run", side_effect=results):
+            res = b.share_venv_logs("prod-1", "deploy-core", "consoles")
+        self.assertFalse(res["ok"])
+        self.assertIn("create-venv --group", res["error"])
+
+    def test_remote_escalates_via_runnable_when_present(self) -> None:
+        # Direct chmod refused, but the venv *has* share-venv-logs → escalate through
+        # it (a venv binary, covered by the scoped sudoers grant), stripping the
+        # =====AS marker so the UI can show who it ran as.
+        b = _make_bridge()
+        b._hosts = [_remote_entry()]
+        results = [
+            (
+                1,
+                "",
+                "chmod: changing permissions of '/opt/venvs/deploy-core/logs': Operation not permitted",
+            ),
+            (0, "", ""),  # [ -x .../share-venv-logs ] → present
+            (0, "=====AS svc\n" + json.dumps({"shared": True}), ""),  # escalation
         ]
         with patch.object(b, "_ssh_run", side_effect=results) as m:
             res = b.share_venv_logs("prod-1", "deploy-core", "consoles")
         self.assertTrue(res["ok"])
         self.assertEqual(res["as_user"], "svc")
-        self.assertEqual(m.call_count, 2)
-        # The second call is the escalation command (sudo -u owner probe).
-        self.assertIn('sudo -n -u "$o" "$sv" --help', m.call_args_list[1].args[1])
+        self.assertEqual(m.call_count, 3)
+        # The third call is the runnable escalation (sudo -u owner probe).
+        self.assertIn('sudo -n -u "$o" "$sv" --help', m.call_args_list[2].args[1])
 
     def test_unknown_venv(self) -> None:
         b = _make_bridge()
@@ -433,30 +514,32 @@ class TestShareVenvLogs(unittest.TestCase):
         self.assertFalse(res["ok"])
         self.assertIn("no venv", res["error"])
 
-    def test_local_uses_subprocess(self) -> None:
+    def test_local_uses_subprocess_shell(self) -> None:
+        import shlex
+
         b = _make_bridge()
         b._hosts = [_local_entry()]
 
         class _Proc:
             returncode = 0
-            stdout = json.dumps({"shared": True})
+            stdout = ""
             stderr = ""
 
-        with (
-            patch("os.path.exists", return_value=True),
-            patch("subprocess.run", return_value=_Proc()) as m,
-        ):
+        with patch("subprocess.run", return_value=_Proc()) as m:
             res = b.share_venv_logs("ws", "ops-tools", "consoles")
         self.assertTrue(res["ok"])
-        # The local host uses native paths (Path, not PurePosixPath), so build the
-        # expected argv the same way the code does rather than hardcoding POSIX
-        # separators — otherwise this asserts backslashes on a Windows runner.
-        venv_path = str(Path("/opt/venvs/ops-tools/bin/runspec").parent.parent)
-        sv_bin = str(Path(venv_path) / "bin" / "share-venv-logs")
+        argv = m.call_args.args[0]
         self.assertEqual(
-            m.call_args.args[0],
-            [sv_bin, "--venv", venv_path, "--group", "consoles"],
+            argv[:2], ["sh", "-c"]
+        )  # direct chmod via a shell, no runnable
+        # Build the expected fragment the way the code does (shlex.quote + native
+        # Path) so it doesn't assume POSIX separators on a Windows runner.
+        logdir = shlex.quote(
+            str(Path("/opt/venvs/ops-tools/bin/runspec").parent.parent / "logs")
         )
+        self.assertIn(f"chmod 2775 {logdir}", argv[2])
+        self.assertIn(f"chgrp consoles {logdir}", argv[2])
+        self.assertNotIn("share-venv-logs", argv[2])
 
 
 if __name__ == "__main__":

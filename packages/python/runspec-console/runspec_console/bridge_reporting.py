@@ -709,7 +709,13 @@ class ReportingMixin:
     def _db_running_local(self, log_dir: Path) -> list[dict[str, Any]]:
         """Genuinely-live running rows from one venv's ``runspec_runs.db``
         (in-process, ``mode=ro``, ``live=True`` so a dead-pid row on this host is
-        dropped), or ``[]`` when the DB is absent / unreadable."""
+        dropped), or ``[]`` when the DB is absent / unreadable.
+
+        The console's **own** process is excluded (``pid == os.getpid()``): a
+        long-lived app that runs in the console's venv isn't an in-flight "run",
+        and it must never list *itself* as running. Newer consoles opt out at the
+        source (``[config.history] db = false`` in the console's runspec.toml), but
+        this also drops a stale self-row a prior version left in the index."""
         try:
             from runspec import runsdb
         except Exception:
@@ -717,9 +723,14 @@ class ReportingMixin:
         try:
             if not runsdb.db_path(log_dir).exists():
                 return []
-            return runsdb.list_runs(
-                log_dir, running_only=True, live=True, limit=self._RUNNING_CAP
-            )
+            own_pid = os.getpid()
+            return [
+                r
+                for r in runsdb.list_runs(
+                    log_dir, running_only=True, live=True, limit=self._RUNNING_CAP
+                )
+                if r.get("pid") != own_pid
+            ]
         except Exception:
             return []
 
@@ -1167,23 +1178,26 @@ class ReportingMixin:
         return out
 
     def share_venv_logs(self, host: str, venv: str, group: str = "") -> dict[str, Any]:
-        """Make a venv's ``logs/`` dir group-shared — the console side of the
-        Phase 2 fix-perms repair (design §14). Runs the runspec-linux
-        ``share-venv-logs`` runnable in the venv (``{sys.prefix}/logs`` → ``2775``
-        setgid, + optional ``chgrp``), so the per-venv runs index
-        (``runspec_runs.db``) and the audit logs become writable across a shared
-        console group — the repair for a venv not built with ``create-venv --group``.
+        """Make a venv's ``logs/`` dir group-shared (``2775`` setgid + optional
+        ``chgrp``) so the per-venv runs index (``runspec_runs.db``) and the audit
+        logs become writable across a shared console group — the repair for a venv
+        not built with ``create-venv --group``.
 
-        ``venv`` is the Logs-tab scope label (its runspec binary is resolved via
-        ``_venvs``); ``group`` is the optional Unix group to ``chgrp`` to (empty ⇒
-        keep the current group). The binary is run directly and, on a *permission
-        denied* refusal (a venv owned by a service account), re-run **escalated** to
-        the venv owner (else root) via ``sudo -n`` — the same SSH-as-owner channel
-        the denylist writes use (see ``bridge_utils.share_logs_cmd``). Requires
-        runspec-linux in that venv; returns a clear message when it's absent.
+        Does the ``chmod``/``chgrp`` **directly** — *no runspec-linux needed*. The
+        common case is a venv the operator owns, where a plain ``chmod 2775`` needs
+        no sudo and no runnable (installing runspec-linux, and its 35 runnables,
+        into every venv just to share logs is exactly what we're avoiding). Only when
+        a direct run is refused *permission denied* (a venv owned by a service
+        account) does it fall back to escalating through the venv's own
+        ``share-venv-logs`` binary **if present** — a venv binary, so it's covered by
+        the ``enable-passwordless-sudo scoped`` grant, whereas a raw ``chmod`` via
+        sudo would need the broader ``all`` grant. A service-account venv with no such
+        binary returns a clear, actionable message rather than failing opaquely.
 
-        Returns ``{ok, venv, group, as_user, output}`` on success, else
-        ``{ok: False, venv, group, error}``."""
+        ``venv`` is the Logs-tab scope label (its runspec binary resolves the path
+        via ``_venvs``); ``group`` is the optional Unix group to ``chgrp`` to (empty
+        ⇒ keep the current group). Returns ``{ok, venv, group, as_user, output}`` on
+        success, else ``{ok: False, venv, group, error}``."""
         import shlex
         import subprocess
 
@@ -1202,49 +1216,74 @@ class ReportingMixin:
 
         is_remote = bool(entry and entry.get("ssh"))
         logdir = self._venv_logdir(rp, remote=is_remote)  # {venv}/logs
+        logdir_s = str(logdir)
         venv_path = str(logdir.parent)  # {venv}
         sv_bin = str(logdir.parent / "bin" / "share-venv-logs")
-        missing = "share-venv-logs not found in this venv — install runspec-linux there"
 
-        try:
+        # The direct repair — create, (optionally) chgrp, then chmod 2775 — as the
+        # login user. No runnable, and no sudo when the operator owns the venv.
+        d = shlex.quote(logdir_s)
+        parts = [f"mkdir -p {d}"]
+        if g:
+            parts.append(f"chgrp {shlex.quote(g)} {d}")
+        parts.append(f"chmod 2775 {d}")
+        direct = " && ".join(parts)
+
+        def _sh(cmd: str, timeout: int = 30) -> tuple[int, str, str]:
             if is_remote:
                 assert entry is not None
-                ssh, idf = entry.get("ssh"), entry.get("identityFile")
-                direct = (
-                    "sv=" + shlex.quote(sv_bin) + "; "
-                    '[ -x "$sv" ] || { echo ' + shlex.quote(missing) + "; exit 66; }; "
-                    'exec "$sv" --venv '
-                    + shlex.quote(venv_path)
-                    + (" --group " + shlex.quote(g) if g else "")
+                return self._ssh_run(
+                    entry.get("ssh"),
+                    cmd,
+                    identity_file=entry.get("identityFile"),
+                    timeout=timeout,
                 )
-                code, out, err = self._ssh_run(
-                    ssh, direct, identity_file=idf, timeout=30
+            proc = subprocess.run(
+                ["sh", "-c", cmd],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                **no_window_kwargs(),
+            )
+            return proc.returncode, proc.stdout, proc.stderr
+
+        try:
+            code, out, err = _sh(direct)
+            as_user = ""
+            if code != 0 and utils_mod.looks_permission_denied(
+                f"{out or ''}\n{err or ''}"
+            ):
+                # Owned by another user. Escalate through the venv's own
+                # share-venv-logs (covered by the scoped sudoers grant) if present;
+                # a raw chmod via sudo would need the broader `all` grant.
+                sv_exists = (
+                    _sh(f"[ -x {shlex.quote(sv_bin)} ]", timeout=15)[0] == 0
+                    if is_remote
+                    else os.path.exists(sv_bin)
                 )
-                as_user = ""
-                if code == 66:
-                    return {"ok": False, "venv": venv, "group": g, "error": missing}
-                if code != 0 and utils_mod.looks_permission_denied(
-                    f"{out or ''}\n{err or ''}"
-                ):
-                    code, out, err = self._ssh_run(
-                        ssh,
-                        utils_mod.share_logs_cmd(sv_bin, venv_path, g),
-                        identity_file=idf,
-                        timeout=30,
-                    )
+                if sv_exists:
+                    code, out, err = _sh(utils_mod.share_logs_cmd(sv_bin, venv_path, g))
                     as_user, out = utils_mod.split_denylist_as(out or "")
-            else:
-                if not os.path.exists(sv_bin):
-                    return {"ok": False, "venv": venv, "group": g, "error": missing}
-                argv = [sv_bin, "--venv", venv_path] + (["--group", g] if g else [])
-                proc = subprocess.run(
-                    argv,
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                    **no_window_kwargs(),
-                )
-                code, out, err, as_user = proc.returncode, proc.stdout, proc.stderr, ""
+                else:
+                    return {
+                        "ok": False,
+                        "venv": venv,
+                        "group": g,
+                        "error": (
+                            f"{logdir_s} is owned by another user, and this venv has no "
+                            "share-venv-logs binary to escalate through. Rebuild the venv "
+                            "with `create-venv --group` (shares logs at build time), run "
+                            f"the console as the venv's owner, or `chmod 2775 {logdir_s}` "
+                            "manually as its owner."
+                        ),
+                    }
+        except FileNotFoundError:
+            return {
+                "ok": False,
+                "venv": venv,
+                "group": g,
+                "error": "no POSIX shell available — sharing a venv's logs dir is a Linux/macOS operation",
+            }
         except Exception as exc:  # noqa: BLE001 — surface any failure as a result, never raise into the UI
             return {"ok": False, "venv": venv, "group": g, "error": str(exc)}
 
@@ -1255,7 +1294,7 @@ class ReportingMixin:
                 "venv": venv,
                 "group": g,
                 "as_user": as_user,
-                "output": body,
+                "output": body or f"shared {logdir_s} (2775 setgid)",
             }
         return {
             "ok": False,
@@ -1441,29 +1480,47 @@ class ReportingMixin:
         rp, scope = self._scope_for(host, group)
         if not rp:
             return {"ok": False, "error": f"no venv '{group}' on {host}", "records": []}
-        argv = ["logs", runnable, "--json", "--scope", scope]
-        if since:
-            argv += ["--since", since]
-        if user:
-            argv += ["--user", user]
-        if run:
-            argv += ["--run", run]
-        code, stdout, stderr = self._run_logs(host, rp, argv, timeout=45)
-        if code != 0 and not stdout.strip():
-            return {
-                "ok": False,
-                "error": stderr.strip() or f"exit {code}",
-                "records": [],
-            }
+
+        def _run(with_scope: bool) -> tuple[int, str, str]:
+            argv = ["logs", runnable, "--json"]
+            if with_scope:
+                argv += ["--scope", scope]
+            if since:
+                argv += ["--since", since]
+            if user:
+                argv += ["--user", user]
+            if run:
+                argv += ["--run", run]
+            return self._run_logs(host, rp, argv, timeout=45)
+
+        code, stdout, stderr = _run(with_scope=True)
+        # View is read-only and --scope only narrows which dir is read, so a venv
+        # whose runspec predates 0.56.0 (rejecting --scope — it prints a ✗ error to
+        # stdout, exit 1) can safely be retried without it (reads all this host's
+        # dirs) rather than leaving the pane empty. Prune/compact never do this —
+        # an unscoped delete is the data-loss bug --scope fixed.
+        if code != 0:
+            code, stdout, stderr = _run(with_scope=False)
+
         records: list[dict[str, Any]] = []
         for line in stdout.splitlines():
             line = line.strip()
             if not line:
                 continue
             try:
-                records.append(json.loads(line))
+                rec = json.loads(line)
             except json.JSONDecodeError:
-                continue
+                continue  # skip a ✗ error / non-JSON line
+            if isinstance(rec, dict):
+                records.append(rec)
+        if code != 0 and not records:
+            # Still failing after the unscoped retry — surface the real message
+            # (runspec prints errors to stdout), not a silently-empty pane.
+            return {
+                "ok": False,
+                "error": stdout.strip() or stderr.strip() or f"exit {code}",
+                "records": [],
+            }
         return {"ok": True, "records": records}
 
     def logs_prune(
@@ -1543,28 +1600,41 @@ class ReportingMixin:
     def _logs_action(
         self, host: str, rp: str, group: str, argv: list[str], timeout: int
     ) -> dict[str, Any]:
-        """Run a prune/compact action and merge its JSON result with {group, ok}."""
+        """Run a prune/compact action and merge its JSON result with {group, ok}.
+
+        ``runspec logs --json`` emits the result as a single JSON-object line, so
+        scan for it (last line first) rather than parsing all of stdout — a config
+        that routes an INFO line to stdout mustn't mask a valid result. When no
+        JSON result is found the run failed: **runspec prints argument/coercion
+        errors to stdout with a non-zero exit** (not stderr), so surface that text
+        instead of a generic "unparseable" — the old ``code != 0 and not stdout``
+        guard never fired (stdout held the ``✗`` error), so the real, actionable
+        message was swallowed."""
         code, stdout, stderr = self._run_logs(host, rp, argv, timeout=timeout)
-        if code != 0 and not stdout.strip():
-            err = stderr.strip() or f"exit {code}"
-            # A pre-0.56 runspec on the host doesn't know --scope and fails the arg
-            # (safely — nothing deleted). Point the operator at the fix rather than
-            # leaving a cryptic "unknown argument" (and never fall back to an
-            # unscoped prune, which is the data-loss bug we're fixing).
-            if "scope" in err.lower():
-                err += (
-                    " — the runspec on this host is likely older than 0.56, which "
-                    "can't scope a prune to one venv; upgrade it to prune from the "
-                    "console."
-                )
-            return {"group": group, "ok": False, "error": err}
-        try:
-            payload = json.loads(stdout)
-        except json.JSONDecodeError:
-            return {"group": group, "ok": False, "error": "unparseable result output"}
-        payload["group"] = group
-        payload["ok"] = True
-        return payload
+        for line in reversed(stdout.splitlines()):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict):
+                payload["group"] = group
+                payload["ok"] = True
+                return payload
+        err = stdout.strip() or stderr.strip() or f"exit {code}"
+        # A venv whose runspec predates 0.56.0 rejects --scope (which the console
+        # always passes so a prune can't delete another venv's ~/logs). Never fall
+        # back to an unscoped prune (that's the data-loss bug --scope fixed) — point
+        # the operator at upgrading runspec in that venv instead.
+        if "scope" in err.lower():
+            err += (
+                " — this venv's runspec is older than 0.56.0 (no --scope), so the "
+                "console can't scope a prune/compact to just this venv; upgrade "
+                "runspec in this venv to run it from the console."
+            )
+        return {"group": group, "ok": False, "error": err}
 
     def _venvs(self, host: str) -> list[tuple[str, str]]:
         """(group, runspec_path) for every venv on a host."""

@@ -43,7 +43,6 @@ export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsVi
   // Fetch-scope filters — changing these refetches (server recomputes
   // percentiles + the daily series for the new scope).
   const [sinceDays, setSinceDays] = useState(30)
-  const [hostFilter, setHostFilter] = useState<string[]>([])
   const [runnableFilter, setRunnableFilter] = useState<string | undefined>(undefined)
 
   // Client-side filters — applied instantly over the `buckets` grain.
@@ -57,10 +56,11 @@ export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsVi
   useEffect(() => {
     let cancelled = false
     let inFlight = false
-    // Scoped to the host selected in the sidebar (same model as History) so a
-    // load is one host's scan, not a fleet-wide fan-out. The Host filter still
-    // lets you opt into comparing specific hosts on demand.
-    const hostsArg = hostFilter.length > 0 ? hostFilter : selectedHost ? [selectedHost] : []
+    // Analytics is a per-host drill off the Logs tab, so the host IS the sidebar
+    // selection (same model as History) — one host's scan, not a fleet-wide
+    // fan-out. There's deliberately no separate host picker here; it duplicated
+    // the sidebar selection.
+    const hostsArg = selectedHost ? [selectedHost] : []
     // The view stays mounted across tab switches (App keeps it alive once first
     // opened), so `data` persists — returning shows the dashboard instantly.
     // Poll only while visible so a hidden tab isn't running the 45 s fleet scan
@@ -81,7 +81,7 @@ export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsVi
     load()
     const id = setInterval(load, 45000)
     return () => { cancelled = true; clearInterval(id) }
-  }, [sinceDays, hostFilter, runnableFilter, selectedHost, active])
+  }, [sinceDays, runnableFilter, selectedHost, active])
 
   // activeScope (sidebar group tags) acts as an implicit group filter when the
   // view's own group filter is empty.
@@ -144,12 +144,6 @@ export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsVi
           options={RANGE_OPTIONS}
           value={sinceDays}
           onChange={(v) => setSinceDays(v as number)}
-        />
-        <Select
-          mode="multiple" allowClear placeholder="All hosts"
-          style={{ minWidth: 160 }} value={hostFilter} onChange={setHostFilter}
-          options={dims.hosts.map(h => ({ label: h, value: h }))}
-          maxTagCount="responsive"
         />
         <Select
           mode="multiple" allowClear placeholder={activeScope.length ? `scope: ${activeScope.join(', ')}` : 'All groups'}

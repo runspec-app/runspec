@@ -133,15 +133,32 @@ def _read_proc_start(pid: int) -> str:
 def _pid_alive(pid: int | None, proc_start: str | None) -> bool:
     """Is the process that wrote a ``running`` row still alive *on this host*?
 
-    ``/proc``-based when we have a start token (guards PID reuse); else a bare
-    ``os.kill(pid, 0)`` existence check. Only meaningful for rows whose ``host``
-    is this host — the caller filters on that."""
+    ``/proc``-based when we have a start token (guards PID reuse); else a
+    non-destructive existence probe. Only meaningful for rows whose ``host`` is
+    this host — the caller filters on that."""
     if not pid:
         return False
     if proc_start:
         return _read_proc_start(int(pid)) == proc_start
+    return _pid_exists(int(pid))
+
+
+def _pid_exists(pid: int) -> bool:
+    """Non-destructive "does this PID exist" probe.
+
+    POSIX uses ``os.kill(pid, 0)`` — the signal-0 no-op that just checks
+    permission/existence. **Windows must not**: CPython maps ``os.kill(pid, sig)``
+    for any ``sig`` other than ``CTRL_C_EVENT``/``CTRL_BREAK_EVENT`` to
+    ``TerminateProcess(handle, sig)``, so ``os.kill(pid, 0)`` *kills* the process
+    (with exit code 0) instead of probing it. That turned this liveness check —
+    which runs against the ``pid`` of every ``running`` row, including the live
+    console's own row and any in-flight runnable — into a process killer on
+    Windows. There it probes with ``OpenProcess`` instead (Windows has no
+    ``/proc``, so ``proc_start`` is always empty and this branch is always taken)."""
+    if _on_windows():
+        return _win_pid_exists(pid)
     try:
-        os.kill(int(pid), 0)
+        os.kill(pid, 0)
         return True
     except ProcessLookupError:
         return False
@@ -149,6 +166,60 @@ def _pid_alive(pid: int | None, proc_start: str | None) -> bool:
         return True  # exists, owned by someone else
     except (OSError, ValueError):
         return False
+
+
+def _on_windows() -> bool:
+    """True on Windows, where ``os.kill`` terminates rather than probes — so
+    liveness must go through :func:`_win_pid_exists`. Indirected (not an inline
+    ``os.name`` test) so it is patchable without mutating the global ``os.name``
+    (which would flip ``pathlib`` to ``WindowsPath`` and break unrelated code)."""
+    return os.name == "nt"
+
+
+def _win_pid_exists(pid: int) -> bool:
+    """Windows PID existence via ``OpenProcess`` — never ``os.kill`` (which on
+    Windows terminates the process). True when the process exists (including an
+    access-denied open — it exists, owned by another user), False only when it
+    demonstrably does not (``ERROR_INVALID_PARAMETER``). Fails **safe**: any probe
+    error assumes alive, so a liveness check can never wrongly drop a live run nor
+    (the original defect) act destructively; an unreapable orphan is instead
+    bounded by the max-age ceiling in :func:`_reap`."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        ERROR_INVALID_PARAMETER = 87
+        STILL_ACTIVE = 259
+
+        # ``WinDLL`` / ``get_last_error`` are Windows-only (absent from the Linux
+        # typeshed), so reach them via getattr to keep mypy clean on every host.
+        win_dll = getattr(ctypes, "WinDLL", None)
+        get_last_error = getattr(ctypes, "get_last_error", None)
+        if win_dll is None or get_last_error is None:
+            return True  # not really Windows — assume alive (never destructive)
+
+        k32 = win_dll("kernel32", use_last_error=True)
+        k32.OpenProcess.restype = wintypes.HANDLE
+        k32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        k32.GetExitCodeProcess.restype = wintypes.BOOL
+        k32.GetExitCodeProcess.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+        k32.CloseHandle.argtypes = (wintypes.HANDLE,)
+
+        handle = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            # No such process → dead; any other failure (e.g. access denied) means
+            # the process exists, so assume alive.
+            return bool(get_last_error() != ERROR_INVALID_PARAMETER)
+        try:
+            code = wintypes.DWORD()
+            if k32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return bool(code.value == STILL_ACTIVE)
+            return True
+        finally:
+            k32.CloseHandle(handle)
+    except Exception:
+        return True  # never destructive, never wrongly-dead
 
 
 # ── connection (chmod-before-WAL, WAL, busy_timeout, incremental auto-vacuum) ────

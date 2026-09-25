@@ -346,11 +346,30 @@ def proc_start(pid):
         return tail[19] if len(tail) > 19 else ""
     except Exception:
         return ""
+def win_alive(pid):
+    # Windows OpenProcess probe — os.kill(pid, 0) on Windows is TerminateProcess
+    # (it would KILL the process), so a Windows fleet host must never take that
+    # path. Fails safe (assume alive) so a probe error is never destructive.
+    try:
+        import ctypes
+        k = ctypes.WinDLL("kernel32", use_last_error=True)
+        k.OpenProcess.restype = ctypes.c_void_p
+        k.OpenProcess.argtypes = (ctypes.c_uint, ctypes.c_int, ctypes.c_uint)
+        h = k.OpenProcess(0x1000, 0, int(pid))
+        if not h:
+            return ctypes.get_last_error() != 87  # 87 = ERROR_INVALID_PARAMETER → dead
+        k.CloseHandle.argtypes = (ctypes.c_void_p,)
+        k.CloseHandle(h)
+        return True
+    except Exception:
+        return True
 def alive(pid, tok):
     if not pid:
         return False
     if tok:
         return proc_start(pid) == tok
+    if os.name == "nt":
+        return win_alive(pid)
     try:
         os.kill(int(pid), 0)
         return True
