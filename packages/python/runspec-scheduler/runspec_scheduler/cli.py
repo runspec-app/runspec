@@ -159,6 +159,16 @@ def _cmd_run_now(spec: rs.RunSpec) -> None:
     sys.exit(0 if result.returncode == 0 else 1)
 
 
+def _cmd_sync(spec: rs.RunSpec) -> None:
+    from .cronsync import sync
+
+    result = sync(_cfg_path(spec), dry_run=bool(spec.dry_run.value))
+    payload = result.to_dict()
+    _emit(payload)
+    if not payload["ok"]:
+        sys.exit(1)
+
+
 def _cmd_install_service(spec: rs.RunSpec) -> None:
     from .service import install_service
 
@@ -183,8 +193,10 @@ def main() -> None:
         _cmd_list(spec)
     elif command == "run-now":
         _cmd_run_now(spec)
+    elif command == "sync":
+        _cmd_sync(spec)
     elif command == "install-service":
         _cmd_install_service(spec)
     else:  # pragma: no cover - require-command makes this unreachable
-        _emit({"error": "no command — try: run, add, remove, list, run-now, install-service"})
+        _emit({"error": "no command — try: sync, add, remove, list, run-now, run, install-service"})
         sys.exit(2)

@@ -1,12 +1,14 @@
 # Cron-backed shared scheduler (v1)
 
-> **Status: planned — the chosen v1 execution model for a shared scheduler.**
-> Supersedes the long-running daemon in
-> [`venv-scheduler.md`](venv-scheduler.md) as the execution backend. The
-> `runspec-scheduler` package's reusable core (config, timing, `RUNSPEC_ENV_FILE`
-> credential mechanism) is kept; the **APScheduler + `systemctl --user` daemon is
-> replaced by a translator that writes the OS user's crontab**, so there is no
-> long-running process of ours to install, supervise, or upgrade.
+> **Status: shipping — the cron backend (`runspec-scheduler sync`) landed
+> additively in `runspec-scheduler` 0.2.0** (`cronsync` module); the daemon
+> (`run` / `install-service`) stays for now and is removed once the cron backend
+> is validated in the wild. The chosen v1 execution model for a shared scheduler,
+> superseding the long-running daemon in [`venv-scheduler.md`](venv-scheduler.md).
+> The package's reusable core (config, timing, `RUNSPEC_ENV_FILE` credential
+> mechanism) is kept; the **APScheduler + `systemctl --user` daemon is replaced by
+> a translator that writes the OS user's crontab**, so there is no long-running
+> process of ours to install, supervise, or upgrade.
 
 ## Problem (recap)
 
