@@ -487,15 +487,31 @@ def prune(
     targets = plan_prune(dirs, runnable, older_than=older_than, max_files=max_files, max_total_size=max_total_size)
     freed = 0
     deleted: list[dict[str, Any]] = []
+    pruned_by_dir: dict[Path, list[str]] = {}
     for f in targets:
         size = f.stat().st_size
         if not dry_run:
             f.unlink(missing_ok=True)
+            pruned_by_dir.setdefault(f.parent, []).append(f.name)
         freed += size
         deleted.append({"path": str(f), "bytes": size})
         if not as_json:
             verb = "would delete" if dry_run else "deleted"
             out.write(f"{verb}  {f}  ({size} bytes)\n")
+    # §8.1: stamp the runs index for the files just deleted, so a surviving row
+    # whose log we removed can say when/by whom (turning a bare "file not found" on
+    # expand into "log pruned by X on Y — record retained"). Best-effort, after the
+    # unlink so a DB hiccup never strands the delete.
+    if pruned_by_dir:
+        with contextlib.suppress(Exception):
+            import getpass
+
+            from . import runsdb
+
+            who = getpass.getuser()
+            ts = datetime.now(timezone.utc).isoformat()
+            for d, names in pruned_by_dir.items():
+                runsdb.mark_log_pruned(d, names, pruned_by=who, pruned_at=ts)
     if as_json:
         out.write(json.dumps({"dry_run": dry_run, "count": len(targets), "freed_bytes": freed, "deleted": deleted}) + "\n")
     else:
@@ -586,6 +602,14 @@ def compact(
 
         for s in sources:
             s.unlink(missing_ok=True)
+        # §8.1: the content moved into the archive (it wasn't deleted), so repoint
+        # the runs-index rows from each per-run file to the archive rather than
+        # marking them pruned — keeps per-log fetch and a later prune-stamp match
+        # working. Best-effort. (target.parent == the sources' dir == archive dir.)
+        with contextlib.suppress(Exception):
+            from . import runsdb
+
+            runsdb.repoint_logs(target.parent, {s.name: target.name for s in sources})
         archives.append({"archive": str(target), "count": len(sources), "sources": [str(s) for s in sources]})
         compacted += len(sources)
         if not as_json:

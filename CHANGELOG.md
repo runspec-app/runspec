@@ -7,6 +7,49 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.58.0] — 2026-09-25
+
+### Added
+
+- **Log-prune provenance in the runs index (`runspec_runs.db`; design §8.1).**
+  A DB row **outlives its log file on purpose** — the DB is a bounded index, logs
+  prune on their own `runspec logs prune` schedule — so "row present, log file
+  gone" is normal, not a fault. The index now records *why* the log is missing:
+  two additive nullable columns `log_pruned_at` (ISO-8601 UTC) and `log_pruned_by`
+  (the OS user that ran the prune), so a reader can turn a bare "file not found" on
+  expand into "log pruned by `alice` on 2026-09-20 — record retained". They
+  describe the **log file's availability**, never the run outcome (which stays
+  `status`).
+- **Stamped at the one place a log dies — `runspec logs prune`.** Right after each
+  `unlink`, a best-effort `UPDATE` stamps every row in that dir's DB whose
+  `log_file` matches the deleted basename (an archive backing several `run_id`s
+  stamps them all). Living in core means both a direct-CLI prune and the console's
+  shell-out prune stamp for free. It runs *after* the unlink and never raises, so a
+  locked/unwritable DB can never strand the delete.
+- **`compact` repoints instead of pruning.** Folding per-run files into a dated
+  archive moves the content rather than deleting it, so that path **repoints** the
+  affected rows' `log_file` to the archive name (keeping per-log fetch and a later
+  prune-stamp match working) — only real deletion sets `log_pruned_at`.
+
+### Changed
+
+- **Schema `user_version` 1 → 2 (additive, forward/backward-compatible).**
+  `ALTER TABLE ADD COLUMN` is metadata-only; a v1 DB gains the columns on the next
+  read-write open (a `PRAGMA table_info` guard), existing rows read `NULL`, and
+  older readers ignore the new columns. `reindex` is **prune-path-owned-column
+  safe** — `log_pruned_*` are excluded from its UPSERT set, so rebuilding a row
+  from a surviving `run_summary` never nulls its stamp. New best-effort
+  `runsdb.mark_log_pruned` / `runsdb.repoint_logs`. `runspec history list --json`
+  surfaces the two columns.
+
+### Fixed
+
+- **`serve.py` type-narrowing under mypy 1.19.** `_server_name` returned `Any`
+  because mypy 1.19 stopped narrowing `config.get("name")` through
+  `if name and isinstance(name, str)`; reordered to `isinstance(name, str) and
+  name`. (Pre-existing on the type-check gate; unrelated to the runs index, folded
+  in to keep CI green.)
+
 ## [0.57.1] — 2026-09-25
 
 ### Fixed

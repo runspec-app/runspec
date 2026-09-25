@@ -526,7 +526,9 @@ def _find_script(name: str, scripts_dir: Path) -> list[str] | None:
 def _server_name(config: dict[str, Any]) -> str:
     """Agent name: explicit config name, or the venv directory name."""
     name = config.get("name")
-    if name and isinstance(name, str):
+    # isinstance first so mypy narrows the Any from config.get to str inside the
+    # branch (mypy 1.19 stopped narrowing through `name and isinstance(...)`).
+    if isinstance(name, str) and name:
         return name
     return Path(sys.prefix).name
 

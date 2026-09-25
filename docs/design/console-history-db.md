@@ -386,7 +386,8 @@ The schema in [§5](#5-schema) already carries what it needs (`runnable`, `statu
    on `runspec logs prune` (a v1 → v2 additive column bump), and the console shows
    "log pruned by X on Y" when an expanded row's log is gone. Core stamping is
    independent (it can ship in any `runspec` minor); the display rides phase 3's
-   read swap.
+   read swap. **(core implemented — `runspec` 0.58.0: schema v2 + stamp-on-prune +
+   repoint-on-compact + reindex-safe; the console display is the next slice.)**
 5. **Scheduler** reads the table for overlap-detection (when that work is picked
    up).
 

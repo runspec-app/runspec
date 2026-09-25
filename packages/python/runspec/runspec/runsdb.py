@@ -36,7 +36,10 @@ from pathlib import Path
 from typing import Any
 
 DB_NAME = "runspec_runs.db"
-_SCHEMA_VERSION = 1
+# v2 (§8.1): + log_pruned_at / log_pruned_by. Additive, forward/backward-
+# compatible — ALTER TABLE ADD COLUMN is metadata-only, existing rows read NULL,
+# older readers ignore the new columns.
+_SCHEMA_VERSION = 2
 _BUSY_TIMEOUT_MS = 2000
 
 _COLUMNS = (
@@ -83,7 +86,11 @@ CREATE TABLE IF NOT EXISTS runs (
   host         TEXT,
   proc_start   TEXT,
   log_file     TEXT,
-  args         TEXT
+  args         TEXT,
+  -- §8.1 log-prune provenance: the log FILE's availability (never the run
+  -- outcome — that stays `status`). NULL log_pruned_at = the log file is present.
+  log_pruned_at TEXT,
+  log_pruned_by TEXT
 );
 CREATE INDEX IF NOT EXISTS runs_start_ts ON runs (start_ts);
 CREATE INDEX IF NOT EXISTS runs_status   ON runs (status);
@@ -175,13 +182,28 @@ def _connect(path: Path, *, readonly: bool = False) -> sqlite3.Connection | None
             con.execute("PRAGMA auto_vacuum=INCREMENTAL")  # before first table write
         con.execute("PRAGMA journal_mode=WAL")
         con.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
-        con.executescript(_DDL)
+        con.executescript(_DDL)  # CREATE TABLE IF NOT EXISTS — fresh DBs get every column
+        _migrate(con)  # add columns an older DB predates (v1 → v2)
         con.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
         return con
     except sqlite3.Error:
         return None
     except OSError:
         return None
+
+
+def _migrate(con: sqlite3.Connection) -> None:
+    """Apply additive column adds an existing DB predates — the forward/backward-
+    compatible half of a schema bump. v1 → v2 (§8.1): ``log_pruned_at`` /
+    ``log_pruned_by``. ``ALTER TABLE ADD COLUMN`` is metadata-only (no table
+    rewrite); a fresh DB already has them via ``_DDL`` so this is a no-op there.
+    Best-effort — a migration failure never blocks the write (the DB is a derived
+    index; worst case it is rebuilt via :func:`reindex`)."""
+    with contextlib.suppress(sqlite3.Error):
+        have = {r[1] for r in con.execute("PRAGMA table_info(runs)").fetchall()}
+        for col in ("log_pruned_at", "log_pruned_by"):
+            if col not in have:
+                con.execute(f"ALTER TABLE runs ADD COLUMN {col} TEXT")
 
 
 def _ensure_group_writable(path: Path, fresh: bool) -> None:
@@ -493,6 +515,75 @@ def _summary_start_ts(rec: dict[str, Any]) -> str:
             dt = datetime.fromisoformat(end)
             return (dt - _ms(dur)).isoformat()
     return end if isinstance(end, str) else _now_iso()
+
+
+# ── prune provenance (§8.1): the log FILE's availability, not the run outcome ────
+
+
+def mark_log_pruned(
+    log_dir: Path,
+    log_files: list[str] | tuple[str, ...],
+    *,
+    pruned_by: str,
+    pruned_at: str | None = None,
+) -> int:
+    """Stamp every row whose ``log_file`` matches a just-deleted file basename with
+    when (``log_pruned_at``, ISO-8601 UTC) and by whom (``log_pruned_by``, the OS
+    user that ran the prune) its log was pruned — so the console can say "log pruned
+    by X on Y" for a row that outlived its log file (a normal state: the DB is a
+    bounded index, logs prune on their own schedule). An archive backing several
+    ``run_id``s stamps **all** rows matching its basename.
+
+    Best-effort → 0 on any failure, and it runs *after* the ``unlink`` so a locked/
+    unwritable DB can never strand the delete (§7). Returns rows stamped."""
+    names = [n for n in log_files if n]
+    if not names:
+        return 0
+    ts = pruned_at or _now_iso()
+    try:
+        con = _connect(db_path(log_dir))
+        if con is None:
+            return 0
+        try:
+            n = 0
+            for name in names:
+                cur = con.execute(
+                    "UPDATE runs SET log_pruned_at=?, log_pruned_by=? WHERE log_file=?",
+                    (ts, pruned_by, name),
+                )
+                n += max(0, cur.rowcount or 0)
+            con.commit()
+            return n
+        finally:
+            con.close()
+    except Exception:
+        return 0
+
+
+def repoint_logs(log_dir: Path, moves: dict[str, str]) -> int:
+    """Repoint rows' ``log_file`` from an old basename to a new one — used by
+    ``compact``, which folds per-run files into a dated archive: the content
+    survives under a new name, so the row is **not** marked pruned (§8.1), just
+    repointed, keeping both the per-log fetch and a future prune-stamp match working
+    across the compaction. Best-effort → 0 on failure. Returns rows repointed."""
+    pairs = [(new, old) for old, new in moves.items() if old and new and old != new]
+    if not pairs:
+        return 0
+    try:
+        con = _connect(db_path(log_dir))
+        if con is None:
+            return 0
+        try:
+            n = 0
+            for new, old in pairs:
+                cur = con.execute("UPDATE runs SET log_file=? WHERE log_file=?", (new, old))
+                n += max(0, cur.rowcount or 0)
+            con.commit()
+            return n
+        finally:
+            con.close()
+    except Exception:
+        return 0
 
 
 # ── small helpers ────────────────────────────────────────────────────────────────

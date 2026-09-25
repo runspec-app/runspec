@@ -8,12 +8,12 @@ import json
 import os
 import time
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
-from runspec import logs
+from runspec import logs, runsdb
 
 # ── fixtures / builders ───────────────────────────────────────────────────────
 
@@ -323,3 +323,61 @@ class TestScopeDirs:
         logs.prune(None, dirs=logs.scope_dirs(None, destructive=True), older_than=timedelta(days=7), out=io.StringIO())
         assert not own.exists()  # this venv's old file is pruned
         assert shared.exists()  # the shared ~/logs file (another venv's) is untouched
+
+
+class TestPruneProvenanceIntegration:
+    """§8.1 end-to-end: prune stamps the runs index (log_pruned_at/by) for the row
+    whose file it deleted; compact repoints the row instead (content survives)."""
+
+    def _index_row(self, d: Path, run_id: str, runnable: str, log_file: str) -> None:
+        # A recent start_ts (within the DB's 90-day ring) so the row survives
+        # finish_run's maintenance and outlives its log file — the whole point of
+        # the stamp. The log FILE ages independently (age_days below) to be prunable.
+        start_ts = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
+        runsdb.begin_run(
+            d,
+            {
+                "run_id": run_id,
+                "runnable": runnable,
+                "status": "running",
+                "start_ts": start_ts,
+                "log_file": log_file,
+                "pid": 0,
+                "host": "h",
+                "proc_start": "",
+            },
+        )
+        runsdb.finish_run(d, run_id, exit_code=0, duration_ms=1, status="completed")
+
+    def test_prune_stamps_the_runs_index(self, tmp_path):
+        d = tmp_path / "logs"
+        d.mkdir()
+        p = _write_run(d, "backup", "r1", "20260101T000000Z", _summary("r1", "backup", ts="2026-01-01T00:00:00+00:00"), age_days=30)
+        self._index_row(d, "r1", "backup", p.name)
+        logs.prune("backup", dirs=[d], older_than=timedelta(days=7), out=io.StringIO())
+        assert not p.exists()  # the log file was pruned…
+        r = runsdb.list_runs(d, live=False)[0]
+        assert r["log_pruned_at"]  # …and the surviving row records when…
+        assert r["log_pruned_by"]  # …and by whom (the OS user running the prune)
+
+    def test_dry_run_prune_leaves_the_stamp_unset(self, tmp_path):
+        d = tmp_path / "logs"
+        d.mkdir()
+        p = _write_run(d, "backup", "r1", "20260101T000000Z", _summary("r1", "backup", ts="2026-01-01T00:00:00+00:00"), age_days=30)
+        self._index_row(d, "r1", "backup", p.name)
+        logs.prune("backup", dirs=[d], older_than=timedelta(days=7), dry_run=True, out=io.StringIO())
+        assert p.exists()  # nothing deleted…
+        assert runsdb.list_runs(d, live=False)[0]["log_pruned_at"] is None  # …so no stamp
+
+    def test_compact_repoints_the_runs_index(self, tmp_path):
+        d = tmp_path / "logs"
+        d.mkdir()
+        p = _write_run(d, "backup", "r1", "20260101T000000Z", _summary("r1", "backup", ts="2026-01-01T00:00:00+00:00"), age_days=30)
+        self._index_row(d, "r1", "backup", p.name)
+        logs.compact("backup", dirs=[d], older_than=timedelta(days=7), out=io.StringIO())
+        assert not p.exists()  # folded into the archive
+        archive = d / f"backup.archive.{datetime.now(timezone.utc).strftime('%Y%m%d')}.log"
+        assert archive.exists()
+        r = runsdb.list_runs(d, live=False)[0]
+        assert r["log_file"] == archive.name  # repointed to the archive…
+        assert r["log_pruned_at"] is None  # …not marked pruned (the content survives)

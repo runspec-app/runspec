@@ -9,6 +9,7 @@ read, and the best-effort "never raises" contract.
 from __future__ import annotations
 
 import os
+import sqlite3
 import stat as statmod
 from pathlib import Path
 
@@ -197,3 +198,74 @@ class TestPermsAndBestEffort:
 
     def test_mode_ro_read_of_missing_db_is_empty(self, tmp_path):
         assert runsdb.list_runs(tmp_path / "no-logs-here") == []
+
+
+class TestPruneProvenance:
+    """§8.1 — the log FILE's availability (log_pruned_at/by), stamped by the prune
+    path so a row that outlives its log file can say when/by-whom, not the run
+    outcome (which stays `status`)."""
+
+    def test_fresh_db_has_prune_columns_null(self, logs_dir):
+        runsdb.begin_run(logs_dir, _row(log_file="backup.x.r1.log"))
+        r = runsdb.list_runs(logs_dir, live=False)[0]
+        # v2 columns exist on a fresh DB and read NULL (log present).
+        assert r["log_pruned_at"] is None
+        assert r["log_pruned_by"] is None
+
+    def test_mark_log_pruned_stamps_matching_rows(self, logs_dir):
+        runsdb.begin_run(logs_dir, _row(run_id="r1", log_file="backup.x.r1.log"))
+        runsdb.begin_run(logs_dir, _row(run_id="r2", log_file="other.x.r2.log"))
+        n = runsdb.mark_log_pruned(logs_dir, ["backup.x.r1.log"], pruned_by="bob", pruned_at="2026-09-20T00:00:00+00:00")
+        assert n == 1
+        by_id = {r["run_id"]: r for r in runsdb.list_runs(logs_dir, live=False)}
+        assert by_id["r1"]["log_pruned_by"] == "bob"
+        assert by_id["r1"]["log_pruned_at"] == "2026-09-20T00:00:00+00:00"
+        assert by_id["r2"]["log_pruned_at"] is None  # a different file — untouched
+
+    def test_mark_log_pruned_stamps_all_rows_sharing_a_basename(self, logs_dir):
+        # An archive backing several run_ids → all rows matching its basename.
+        for rid in ("r1", "r2"):
+            runsdb.begin_run(logs_dir, _row(run_id=rid, log_file="backup.archive.20260920.log"))
+        assert runsdb.mark_log_pruned(logs_dir, ["backup.archive.20260920.log"], pruned_by="svc") == 2
+
+    def test_mark_log_pruned_empty_is_noop(self, logs_dir):
+        runsdb.begin_run(logs_dir, _row(log_file="backup.x.r1.log"))
+        assert runsdb.mark_log_pruned(logs_dir, [], pruned_by="bob") == 0
+
+    def test_repoint_logs_updates_log_file_without_marking_pruned(self, logs_dir):
+        runsdb.begin_run(logs_dir, _row(run_id="r1", log_file="backup.x.r1.log"))
+        n = runsdb.repoint_logs(logs_dir, {"backup.x.r1.log": "backup.archive.20260925.log"})
+        assert n == 1
+        r = runsdb.list_runs(logs_dir, live=False)[0]
+        assert r["log_file"] == "backup.archive.20260925.log"
+        assert r["log_pruned_at"] is None  # a compact move is not a prune
+
+    def test_reindex_preserves_the_prune_stamp(self, logs_dir):
+        # A pruned-log row reindexed from a surviving summary keeps its stamp — the
+        # log_pruned_* columns are prune-path-owned and excluded from the reindex
+        # UPSERT (they're not in _COLUMNS), else the reindex would null them.
+        runsdb.begin_run(logs_dir, _row(run_id="r1", runnable="backup", log_file="backup.x.r1.log"))
+        runsdb.finish_run(logs_dir, "r1", exit_code=0, duration_ms=5, status="completed")
+        runsdb.mark_log_pruned(logs_dir, ["backup.x.r1.log"], pruned_by="bob", pruned_at="2026-09-20T00:00:00+00:00")
+        runsdb.reindex(
+            logs_dir,
+            [{"run_id": "r1", "runnable": "backup", "duration_ms": 5, "exit_code": 0, "ts": "2026-09-25T10:00:00+00:00"}],
+        )
+        r = runsdb.list_runs(logs_dir, live=False)[0]
+        assert r["log_pruned_by"] == "bob"  # survived the reindex UPSERT
+        assert r["log_pruned_at"] == "2026-09-20T00:00:00+00:00"
+
+    def test_migration_adds_columns_to_a_v1_db(self, logs_dir):
+        # Simulate a pre-0.58 (v1) DB: the runs table without the prune columns.
+        # A read-write open (mark_log_pruned) must ALTER them in, then stamp.
+        db = runsdb.db_path(logs_dir)
+        con = sqlite3.connect(str(db))
+        con.execute("CREATE TABLE runs (run_id TEXT PRIMARY KEY, runnable TEXT NOT NULL, status TEXT NOT NULL, start_ts TEXT NOT NULL, log_file TEXT)")
+        con.execute("INSERT INTO runs (run_id, runnable, status, start_ts, log_file) VALUES ('r1','backup','completed','2026-09-25T10:00:00+00:00','backup.x.r1.log')")
+        con.execute("PRAGMA user_version=1")
+        con.commit()
+        con.close()
+        n = runsdb.mark_log_pruned(logs_dir, ["backup.x.r1.log"], pruned_by="bob", pruned_at="2026-09-20T00:00:00+00:00")
+        assert n == 1  # migration added the columns, so the UPDATE matched
+        r = runsdb.list_runs(logs_dir, live=False)[0]
+        assert r["log_pruned_by"] == "bob"
