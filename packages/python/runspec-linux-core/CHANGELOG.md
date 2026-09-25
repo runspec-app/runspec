@@ -1,6 +1,22 @@
 # runspec-linux-core Changelog
 
-## [0.6.2] — 2026-09-17
+## [0.7.0] — 2026-09-25
+
+### Added
+
+- **`share_venv_logs(venv, *, group=None, run_as=None, become_method="sudo")`** —
+  the repair path for a venv **not** built by `create-venv --group` (hand-made or
+  legacy). Sets `<venv>/logs` to `2775` (setgid + group-writable) so new files —
+  including the per-venv runs index `runspec_runs.db` and the audit-log files —
+  inherit the directory's group and can be written across a shared console group,
+  and, with `group`, `chgrp`s the `logs/` **directory** to it. The chgrp is on the
+  directory only (not `-R`): `logs/` already holds per-run files owned by *other*
+  users (a `run_as="root"` runnable leaves root-owned logs there) which a non-root
+  caller can't chgrp, and the setgid bit means only new files need the group. This
+  is exactly what `create_venv` does at build time, applied to an existing venv
+  without recreating it. Raises `ValueError` for a bad group name or a `<venv>`
+  that isn't a directory, `CommandError` on a failed step. Backs the new
+  `share-venv-logs` runnable in `runspec-linux`.
 
 ### Fixed
 

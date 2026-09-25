@@ -805,6 +805,42 @@ options     = ["sudo", "su"]
 default     = "sudo"
 description = "How to escalate to run-as: sudo (passwordless, -n) or su"
 
+[share-venv-logs]
+serve       = ["local"]
+description = "Make an existing venv's logs/ dir shared (2775 + setgid, optional chgrp) so the per-venv runs DB and audit logs are writable across a console group — the repair for a venv not built with create-venv --group"
+autonomy    = "confirm"
+output      = "json"
+
+examples = [
+  {cmd = "share-venv-logs --venv /opt/venvs/app",                            description = "Make /opt/venvs/app/logs group-writable + setgid (keeps its current group)"},
+  {cmd = "share-venv-logs --venv /opt/venvs/app --group consoles",           description = "...and chgrp the logs dir to the shared 'consoles' group"},
+  {cmd = "share-venv-logs --venv /opt/venvs/app --group consoles --run-as svc", description = "Run as the service account that owns the venv (via sudo -n -u)"},
+]
+
+[share-venv-logs.args.venv]
+type        = "path"
+ui          = "directory"
+short       = "-v"
+description = "Path to the existing venv whose logs/ dir should be made shared"
+
+[share-venv-logs.args.group]
+type        = "str"
+short       = "-g"
+description = "Optional shared group to chgrp the logs/ dir to (e.g. consoles), so every connected console can read/write. Omit to keep the current group"
+required    = false
+
+[share-venv-logs.args.run-as]
+type        = "str"
+short       = "-u"
+description = "Service account that owns the venv (escalates via sudo/su); empty = the SSH login user"
+required    = false
+
+[share-venv-logs.args.become-method]
+type        = "choice"
+options     = ["sudo", "su"]
+default     = "sudo"
+description = "How to escalate to run-as: sudo (passwordless, -n) or su"
+
 # ── Web / TLS probes (runspec-webops-core; cross-platform, read-only) ──────────
 
 [cert-check]

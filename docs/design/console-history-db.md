@@ -90,7 +90,7 @@ Writability is two separate concerns; only one is core's to do.
 
 | Concern | Owner | How |
 |---|---|---|
-| The **dir** is setgid + group-owned + group-writable (privileged, one-time) | `runspec-linux` + console | `create-venv --group` (exists); a **repair path** for legacy/hand-made venvs — a `runspec-linux` runnable (or `create-venv --fix-perms`) that sets `logs/` `2775` + chgrp as owner/root, surfaced from the console as a one-click **"Make logs shared"** action over SSH-as-owner (reusing the `sudo -n -u <owner>` escalation the denylist writes use) |
+| The **dir** is setgid + group-owned + group-writable (privileged, one-time) | `runspec-linux` + console | `create-venv --group` (exists); a **repair path** for legacy/hand-made venvs — the `runspec-linux` **`share-venv-logs`** runnable (shipped in 0.14.0) sets `logs/` `2775` + optional chgrp as owner/root, to be surfaced from the console as a one-click **"Make logs shared"** action over SSH-as-owner (reusing the `sudo -n -u <owner>` escalation the denylist writes use — phase 3) |
 | Each **writer** creates its files group-writable (per-write, unprivileged) | core `runspec` | on first create, `chmod 0o664` the DB **before** entering WAL (so SQLite makes the `-wal`/`-shm` sidecars group-writable to match — see §12); also heal an owned, non-group-writable DB on open; create `logs/` if absent. (`umask` alone can't do this — it only *clears* bits, never adds group-write.) |
 
 Core deliberately does **not** try to `chmod`/`chgrp` the dir itself: it usually
@@ -370,8 +370,12 @@ The schema in [§5](#5-schema) already carries what it needs (`runnable`, `statu
    `[config.history] db` (default on), after the §12 validation. Ships in a
    `runspec` minor; no format change (no `spec/SPEC.md` touch), so this is
    core-internal. **(implemented — `runspec` 0.57.0.)**
-2. **`runspec-linux` fix-perms** repair path (+ confirm `create-venv --group`
-   covers the DB, which it does via the setgid dir).
+2. **`runspec-linux` fix-perms** repair path — the **`share-venv-logs`** runnable
+   (`runspec-linux` 0.14.0 / `runspec-linux-core` 0.7.0): sets an existing venv's
+   `logs/` to `2775` + setgid (+ optional chgrp) so the DB and logs are
+   group-writable, without recreating the venv. (`create-venv --group` already
+   covers the DB for a fresh venv, via the setgid dir.) **(implemented — the
+   runnable; the console "Make logs shared" one-click surfacing is phase 3.)**
 3. **Console read swap** — History/Logs read the DB with log-parse fallback; the
    live "running" view; the "Make logs shared" action.
 4. **Log-prune provenance** (§8.1) — core stamps `log_pruned_at` / `log_pruned_by`

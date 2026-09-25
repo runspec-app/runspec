@@ -1,5 +1,21 @@
 # runspec-linux Changelog
 
+## [0.14.0] — 2026-09-25
+
+### Added
+
+- **`share-venv-logs` — make an existing venv's `logs/` dir shared.** The repair
+  path for a venv that wasn't created with `create-venv --group` (hand-made or
+  legacy): sets `<venv>/logs` to `2775` (setgid + group-writable) and, with
+  `--group`, `chgrp`s the `logs/` dir, so the per-venv runs index
+  (`runspec_runs.db`, `runspec` 0.57.0) and the audit-log files are writable by
+  every console / service account in a shared group. Takes the same per-invocation
+  `--run-as` / `--become-method` escalation as the other venv runnables (empty =
+  the SSH login user), `autonomy = "confirm"`. Thin wrapper over the new
+  `runspec_linux_core.share_venv_logs`; core pin bumped to `>=0.7.0`.
+  (`create-venv --group` already sets this up at build time — this brings a
+  pre-existing venv up to the same state without recreating it.)
+
 ## [0.13.3] — 2026-09-20
 
 ### Changed

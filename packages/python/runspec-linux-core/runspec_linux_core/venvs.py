@@ -115,6 +115,54 @@ def create_venv(
     }
 
 
+def share_venv_logs(
+    venv: str,
+    *,
+    group: str | None = None,
+    run_as: str | None = None,
+    become_method: str = "sudo",
+) -> dict:
+    """Make an existing venv's ``logs/`` dir shared — the repair path for a venv
+    **not** built by ``create-venv --group`` (hand-made or legacy).
+
+    Sets ``<venv>/logs`` to ``2775`` (setgid + group-writable) so new files —
+    including the per-venv runs index ``runspec_runs.db`` and the audit-log
+    files — inherit the directory's group and can be written by every console /
+    service account in a shared group. When ``group`` is given it also
+    ``chgrp``s the ``logs/`` **directory** to it.
+
+    The chgrp is on the directory only, **not** ``-R``: ``logs/`` already holds
+    per-run files owned by *other* users (a ``run_as="root"`` runnable leaves
+    root-owned logs there), which a non-root caller can't chgrp — and the setgid
+    bit means only *new* files need the group anyway (the DB is created fresh).
+    ``create-venv --group`` does exactly this at build time; this brings a
+    pre-existing venv up to the same state without recreating it. With
+    ``run_as`` every step runs as that user (the venv's owner).
+
+    Raises ValueError if ``group`` is malformed or ``<venv>`` isn't an existing
+    directory, CommandError on a failed step.
+    """
+    if group is not None:
+        _validate_name(group, "group")
+    if not _dir_exists_as(venv, run_as, become_method):
+        raise ValueError(f"not a directory: {venv!r} (point at an existing venv)")
+
+    logs_dir = os.path.join(venv, "logs")
+    _check(_run(build_become(["mkdir", "-p", logs_dir], run_as, become_method)), "logs dir", run_as)
+    if group:
+        _check(_run(build_become(["chgrp", group, logs_dir], run_as, become_method)), "chgrp logs", run_as)
+    _check(_run(build_become(["chmod", "2775", logs_dir], run_as, become_method)), "chmod logs", run_as)
+
+    return {
+        "venv": venv,
+        "logs_dir": logs_dir,
+        "group": group or "",
+        "run_as": run_as or "",
+        "mode": "2775",
+        "shared": True,
+    }
+
+
 def install_into_venv(
     venv: str,
     packages: str = "",
@@ -344,3 +392,8 @@ def configure_pip(
 def _path_exists_as(path: str, run_as: str | None, become_method: str) -> bool:
     """True if ``path`` exists from the run-as user's view (``test -e``)."""
     return _run(build_become(["test", "-e", path], run_as, become_method)).returncode == 0
+
+
+def _dir_exists_as(path: str, run_as: str | None, become_method: str) -> bool:
+    """True if ``path`` is a directory from the run-as user's view (``test -d``)."""
+    return _run(build_become(["test", "-d", path], run_as, become_method)).returncode == 0

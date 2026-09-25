@@ -70,12 +70,19 @@ connectivity and inventories its runnables. Ask the agent:
 If a host doesn't have runspec yet, [`runspec-linux`](https://pypi.org/project/runspec-linux/)
 (installed on any already-connected host, or locally) provides agent-drivable
 bootstrap runnables — `which` (find an interpreter), `create-venv`,
-`configure-pip` (private index), and `install-into-venv`:
+`configure-pip` (private index), `install-into-venv`, and `share-venv-logs`:
 
 > Create a venv at /opt/venvs/ops on app-01 owned by the svc-ops account, configure it for our internal PyPI mirror, and install runspec and runspec-linux into it.
 
 Each step is confirm-gated. Then add the new venv's
 `/opt/venvs/ops/bin/runspec` to the host's `runspec_paths`.
+
+`create-venv --group consoles` makes the venv's `logs/` dir group-shared
+(`2775` + setgid), so every connected console can read/write it — and the
+per-venv run-index DB (`runspec_runs.db`) that lands there. For a venv that
+already exists but wasn't built that way, `share-venv-logs --venv <path>
+--group consoles` brings just its `logs/` dir up to the same state without
+recreating the venv (add `--run-as <owner>` for a service-account venv).
 
 ### Copy your SSH key to the fleet
 

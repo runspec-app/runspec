@@ -2,7 +2,7 @@ import json
 import sys
 
 import runspec as rs
-from runspec_linux_core import configure_pip, create_venv, install_into_venv
+from runspec_linux_core import configure_pip, create_venv, install_into_venv, share_venv_logs
 from runspec_linux_core.errors import CommandError
 
 
@@ -50,6 +50,25 @@ def main_install_into_venv() -> None:
         sys.exit(1)
     except Exception as e:
         # Includes ValueError (bad package name / missing venv / nothing to install).
+        print(json.dumps({"error": str(e)}))
+        sys.exit(1)
+
+
+def main_share_venv_logs() -> None:
+    spec = rs.parse("share-venv-logs")
+    try:
+        result = share_venv_logs(
+            str(spec.venv.value),
+            group=spec.group.value or None,
+            run_as=spec.run_as.value or None,
+            become_method=spec.become_method.value,
+        )
+        print(json.dumps(result))
+    except CommandError as e:
+        print(json.dumps({"venv": str(spec.venv.value), "shared": False, "error": str(e)}))
+        sys.exit(1)
+    except Exception as e:
+        # Includes ValueError (bad venv path / group name).
         print(json.dumps({"error": str(e)}))
         sys.exit(1)
 

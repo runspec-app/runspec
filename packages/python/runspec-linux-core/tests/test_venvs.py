@@ -101,6 +101,93 @@ def test_create_venv_raises_on_failure(monkeypatch: pytest.MonkeyPatch) -> None:
         venvs.create_venv(sys.executable, "/opt/v1")
 
 
+# ── share_venv_logs (repair a legacy venv's logs/ perms) ───────────────────────
+
+
+def test_share_venv_logs_builds_commands(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _record(monkeypatch)  # default stub: `test -d` returns 0
+
+    result = venvs.share_venv_logs("/opt/v1")
+
+    # Verify the venv is a dir, then mkdir -p logs, then chmod 2775 logs. No chgrp
+    # without a group; the chmod is the last step.
+    assert calls == [
+        ["test", "-d", "/opt/v1"],
+        ["mkdir", "-p", "/opt/v1/logs"],
+        ["chmod", "2775", "/opt/v1/logs"],
+    ]
+    assert result == {
+        "venv": "/opt/v1",
+        "logs_dir": "/opt/v1/logs",
+        "group": "",
+        "run_as": "",
+        "mode": "2775",
+        "shared": True,
+    }
+
+
+def test_share_venv_logs_with_group_chgrps_dir_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _record(monkeypatch)
+
+    venvs.share_venv_logs("/opt/v1", group="consoles")
+
+    # chgrp targets the logs *directory* only — never `-R` (logs/ holds per-run
+    # files owned by other users a non-root caller can't chgrp; setgid covers new
+    # files). Order: test -d, mkdir, chgrp, chmod.
+    assert calls == [
+        ["test", "-d", "/opt/v1"],
+        ["mkdir", "-p", "/opt/v1/logs"],
+        ["chgrp", "consoles", "/opt/v1/logs"],
+        ["chmod", "2775", "/opt/v1/logs"],
+    ]
+    assert not any(c[:2] == ["chgrp", "-R"] for c in calls)
+
+
+def test_share_venv_logs_run_as_escalates_every_step(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _record(monkeypatch)
+
+    venvs.share_venv_logs("/opt/v1", group="consoles", run_as="svc")
+
+    for cmd in calls:
+        assert cmd[:4] == ["sudo", "-n", "-u", "svc"]
+    assert ["sudo", "-n", "-u", "svc", "chgrp", "consoles", "/opt/v1/logs"] in calls
+    assert ["sudo", "-n", "-u", "svc", "chmod", "2775", "/opt/v1/logs"] in calls
+
+
+def test_share_venv_logs_rejects_missing_venv(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(argv: list[str]) -> subprocess.CompletedProcess:
+        calls.append(argv)
+        return _completed(returncode=1)  # `test -d` fails → not a directory
+
+    monkeypatch.setattr(venvs, "_run", fake_run)
+
+    with pytest.raises(ValueError):
+        venvs.share_venv_logs("/opt/nope")
+    # Bailed after the probe — no mkdir/chmod attempted.
+    assert calls == [["test", "-d", "/opt/nope"]]
+
+
+def test_share_venv_logs_rejects_bad_group(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _record(monkeypatch)
+    with pytest.raises(ValueError):
+        venvs.share_venv_logs("/opt/v1", group="bad group")
+    # Group is validated before any subprocess runs (not even the `test -d` probe).
+    assert calls == []
+
+
+def test_share_venv_logs_raises_on_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_run(argv: list[str]) -> subprocess.CompletedProcess:
+        if argv[:2] == ["test", "-d"]:
+            return _completed(returncode=0)  # dir exists…
+        return _completed("", returncode=1, stderr="boom")  # …but a step fails
+
+    monkeypatch.setattr(venvs, "_run", fake_run)
+    with pytest.raises(CommandError):
+        venvs.share_venv_logs("/opt/v1")
+
+
 # ── install_into_venv ─────────────────────────────────────────────────────────
 
 
