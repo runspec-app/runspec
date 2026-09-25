@@ -136,6 +136,7 @@ EXPECTED = {
     "logs_prune",
     "logs_status",
     "logs_view",
+    "share_venv_logs",
     "manage_denylist",
     "marketplace_cancel",
     "marketplace_catalog",

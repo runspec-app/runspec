@@ -930,6 +930,19 @@ export interface LogStatusVenv {
   total_files?: number
 }
 
+// "Make logs shared": ran the runspec-linux share-venv-logs runnable to set the
+// venv's logs/ dir 2775 + setgid (+ optional chgrp), so the runs DB + audit logs
+// are group-writable. as_user is "" for a direct run, else the owner/root the
+// repair escalated to over SSH.
+export interface ShareLogsResult {
+  ok: boolean
+  venv: string
+  group?: string
+  as_user?: string
+  output?: string                  // set when ok
+  error?: string                   // set when !ok
+}
+
 export interface LogPruneResult {
   group: string
   ok: boolean
@@ -1943,6 +1956,7 @@ export interface BridgeApi {
   logs_view: (host: string, group: string, runnable: string, since?: string, user?: string, run?: string) => Promise<LogViewResult>
   logs_prune: (host: string, group: string, runnable?: string, olderThan?: string, maxFiles?: number, maxTotalSize?: string, dryRun?: boolean) => Promise<LogPruneResult>
   logs_compact: (host: string, group: string, runnable?: string, olderThan?: string, gzip?: boolean, dryRun?: boolean) => Promise<LogCompactResult>
+  share_venv_logs: (host: string, venv: string, group?: string) => Promise<ShareLogsResult>
   generate_ssh_key: () => Promise<{ ok: boolean; public_key: string; key_path: string; committed: boolean; per_host: RotateHostResult[]; message: string }>
   rotate_ssh_key: () => Promise<{ ok: boolean; committed: boolean; public_key: string; key_path: string; per_host: RotateHostResult[]; message: string }>
   get_public_key: () => Promise<{ ok: boolean; public_key: string; message: string }>

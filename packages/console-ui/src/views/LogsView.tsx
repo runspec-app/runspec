@@ -5,7 +5,7 @@ import {
 } from 'antd'
 import {
   ReloadOutlined, DeleteOutlined, InboxOutlined, EyeOutlined, FolderOutlined,
-  BarChartOutlined,
+  BarChartOutlined, ShareAltOutlined,
 } from '@ant-design/icons'
 import type { ColumnType } from 'antd/es/table'
 import {
@@ -205,6 +205,72 @@ function MaintenanceModal({ target, onClose, onApplied }: MaintModalProps) {
   )
 }
 
+// ── make-logs-shared modal (surfaces the Phase 2 share-venv-logs runnable) ────
+
+interface ShareTarget { host: string; venv: string }
+
+function ShareLogsModal({ target, onClose, onApplied }: {
+  target: ShareTarget | null
+  onClose: () => void
+  onApplied: (actedHost: string) => void
+}) {
+  const [group, setGroup] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => { setGroup(''); setError(null); setBusy(false) }, [target])
+
+  if (!target) return null
+  const { host, venv } = target
+
+  const apply = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      const r = await bridge.share_venv_logs(host, venv, group.trim() || undefined)
+      if (!r.ok) { setError(r.error || 'Could not make logs shared.'); return }
+      const via = r.as_user ? ` (as ${r.as_user})` : ''
+      message.success(`${venv}: logs dir made shared${via}`)
+      onApplied(host); onClose()
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Modal
+      open
+      title="Make logs shared"
+      onCancel={onClose}
+      footer={[
+        <Button key="cancel" onClick={onClose} disabled={busy}>Cancel</Button>,
+        <Button key="apply" type="primary" loading={busy} onClick={apply}>Make shared</Button>,
+      ]}
+    >
+      <Text type="secondary" style={{ fontSize: 13 }}>
+        Runs <Text code>share-venv-logs</Text> on <Text code>{host}</Text> to set{' '}
+        <Text code>{venv}</Text>'s <Text code>logs/</Text> dir to <Text code>2775</Text>{' '}
+        (setgid + group-writable), so the per-venv runs index and the audit logs are
+        writable across a shared console group — the repair for a venv not built with{' '}
+        <Text code>create-venv --group</Text>. Needs runspec-linux in that venv; escalates
+        to the venv owner over SSH when the login user can't write it.
+      </Text>
+      <Form layout="vertical" style={{ marginTop: 16 }}>
+        <Form.Item
+          label="Group (optional)"
+          help="Unix group to chgrp the logs/ dir to, e.g. consoles. Leave blank to keep the current group."
+          style={{ marginBottom: 8 }}
+        >
+          <Input value={group} onChange={e => setGroup(e.target.value)} placeholder="consoles" style={{ maxWidth: 200, fontFamily: MONO_FONT }} />
+        </Form.Item>
+      </Form>
+      {error && <Alert type="error" showIcon style={{ marginTop: 8 }} message={error} />}
+    </Modal>
+  )
+}
+
 // ── merged-stream viewer ──────────────────────────────────────────────────────
 
 interface ViewTarget { host: string; group: string; runnable: string }
@@ -258,6 +324,7 @@ export function LogsView({ selectedHost, activeScope, active }: LogsViewProps) {
   const [venvs, setVenvs] = useState<LogStatusVenv[]>([])
   const [loading, setLoading] = useState(false)
   const [maintTarget, setMaintTarget] = useState<MaintTarget | null>(null)
+  const [shareTarget, setShareTarget] = useState<ShareTarget | null>(null)
   const [viewTarget, setViewTarget] = useState<ViewTarget | null>(null)
   const [analyticsOpen, setAnalyticsOpen] = useState(false)
 
@@ -382,6 +449,13 @@ export function LogsView({ selectedHost, activeScope, active }: LogsViewProps) {
               <div style={{ flex: 1 }} />
               {v.ok && (
                 <>
+                  {v.group !== HOME_GROUP && (
+                    <Tooltip title="Make this venv's logs/ dir group-shared (2775 + setgid) so the runs index and audit logs are writable across the console group — the repair for a venv not built with create-venv --group">
+                      <Button size="small" icon={<ShareAltOutlined />} onClick={() => setShareTarget({ host, venv: v.group })}>
+                        Make shared…
+                      </Button>
+                    </Tooltip>
+                  )}
                   <Button size="small" icon={<InboxOutlined />} onClick={() => setMaintTarget({ host, group: v.group, verb: 'compact' })}>
                     Compact…
                   </Button>
@@ -413,6 +487,11 @@ export function LogsView({ selectedHost, activeScope, active }: LogsViewProps) {
         // Refresh only when the host that was acted on is still the one in view,
         // so a mid-modal host switch can't paint the acted host's inventory under
         // a different host's title.
+        onApplied={(actedHost) => { if (actedHost === host) refresh() }}
+      />
+      <ShareLogsModal
+        target={shareTarget}
+        onClose={() => setShareTarget(null)}
         onApplied={(actedHost) => { if (actedHost === host) refresh() }}
       />
       <StreamDrawer target={viewTarget} onClose={() => setViewTarget(null)} />

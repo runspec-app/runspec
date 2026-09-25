@@ -345,5 +345,119 @@ class TestRunLogsDispatch(unittest.TestCase):
         )
 
 
+class TestShareLogsCmd(unittest.TestCase):
+    """The escalation command builder for 'Make logs shared' (bridge_utils)."""
+
+    def test_share_logs_cmd_shape(self) -> None:
+        from runspec_console import bridge_utils
+
+        cmd = bridge_utils.share_logs_cmd(
+            "/opt/venvs/deploy-core/bin/share-venv-logs",
+            "/opt/venvs/deploy-core",
+            "consoles",
+        )
+        # Runs the venv binary (grant-covered) as the owner, else root; probes with
+        # --help (harmless) exactly like the denylist probes with `deny list`.
+        self.assertIn('sudo -n -u "$o" "$sv" --help', cmd)
+        self.assertIn(
+            'exec sudo -n -u "$o" "$sv" --venv /opt/venvs/deploy-core --group consoles',
+            cmd,
+        )
+        self.assertIn('elif sudo -n "$sv" --help', cmd)
+        self.assertIn(
+            bridge_utils.DENYLIST_AS_MARKER, cmd
+        )  # =====AS marker for split_denylist_as
+        self.assertIn("exit 77", cmd)
+
+    def test_share_logs_cmd_omits_group_when_blank(self) -> None:
+        from runspec_console import bridge_utils
+
+        cmd = bridge_utils.share_logs_cmd("/v/bin/share-venv-logs", "/v", "")
+        self.assertIn("--venv /v", cmd)
+        self.assertNotIn("--group", cmd)
+
+
+class TestShareVenvLogs(unittest.TestCase):
+    """The share_venv_logs bridge method (Make logs shared button)."""
+
+    def test_remote_direct_ok(self) -> None:
+        b = _make_bridge()
+        b._hosts = [_remote_entry()]
+        ok_json = json.dumps(
+            {"logs_dir": "/opt/venvs/deploy-core/logs", "mode": "2775", "shared": True}
+        )
+        with patch.object(b, "_ssh_run", return_value=(0, ok_json, "")) as m:
+            res = b.share_venv_logs("prod-1", "deploy-core", "consoles")
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["as_user"], "")  # direct run, no escalation
+        cmd = m.call_args.args[1]
+        # Derives {venv}/bin/share-venv-logs and runs it against {venv} with the group.
+        self.assertIn("/opt/venvs/deploy-core/bin/share-venv-logs", cmd)
+        self.assertIn("--venv /opt/venvs/deploy-core", cmd)
+        self.assertIn("--group consoles", cmd)
+
+    def test_remote_missing_runnable(self) -> None:
+        b = _make_bridge()
+        b._hosts = [_remote_entry()]
+        with patch.object(
+            b, "_ssh_run", return_value=(66, "share-venv-logs not found", "")
+        ):
+            res = b.share_venv_logs("prod-1", "deploy-core")
+        self.assertFalse(res["ok"])
+        self.assertIn("runspec-linux", res["error"])
+
+    def test_remote_escalates_on_permission_denied(self) -> None:
+        b = _make_bridge()
+        b._hosts = [_remote_entry()]
+        # First (direct) run is refused; the escalated retry returns the =====AS marker.
+        results = [
+            (
+                1,
+                "",
+                "chmod: changing permissions of '/opt/venvs/deploy-core/logs': Operation not permitted",
+            ),
+            (0, "=====AS svc\n" + json.dumps({"shared": True}), ""),
+        ]
+        with patch.object(b, "_ssh_run", side_effect=results) as m:
+            res = b.share_venv_logs("prod-1", "deploy-core", "consoles")
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["as_user"], "svc")
+        self.assertEqual(m.call_count, 2)
+        # The second call is the escalation command (sudo -u owner probe).
+        self.assertIn('sudo -n -u "$o" "$sv" --help', m.call_args_list[1].args[1])
+
+    def test_unknown_venv(self) -> None:
+        b = _make_bridge()
+        b._hosts = [_remote_entry()]
+        res = b.share_venv_logs("prod-1", "nope")
+        self.assertFalse(res["ok"])
+        self.assertIn("no venv", res["error"])
+
+    def test_local_uses_subprocess(self) -> None:
+        b = _make_bridge()
+        b._hosts = [_local_entry()]
+
+        class _Proc:
+            returncode = 0
+            stdout = json.dumps({"shared": True})
+            stderr = ""
+
+        with (
+            patch("os.path.exists", return_value=True),
+            patch("subprocess.run", return_value=_Proc()) as m,
+        ):
+            res = b.share_venv_logs("ws", "ops-tools", "consoles")
+        self.assertTrue(res["ok"])
+        # The local host uses native paths (Path, not PurePosixPath), so build the
+        # expected argv the same way the code does rather than hardcoding POSIX
+        # separators — otherwise this asserts backslashes on a Windows runner.
+        venv_path = str(Path("/opt/venvs/ops-tools/bin/runspec").parent.parent)
+        sv_bin = str(Path(venv_path) / "bin" / "share-venv-logs")
+        self.assertEqual(
+            m.call_args.args[0],
+            [sv_bin, "--venv", venv_path, "--group", "consoles"],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

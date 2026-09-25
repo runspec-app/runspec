@@ -8,6 +8,32 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.285.0] — 2026-09-25
+
+### Added
+
+- **"Make logs shared" — a one-click Logs-tab repair (runs-index Phase 3, part 1).**
+  Each venv scope in the Logs tab gains a **Make shared…** button (with an optional
+  Unix-group field) that runs the runspec-linux `share-venv-logs` runnable on the
+  host to set that venv's `logs/` dir to `2775` (setgid + group-writable, + optional
+  `chgrp`) — so the per-venv runs index (`runspec_runs.db`, `runspec` 0.57.0) and the
+  audit logs become writable across a shared console group, without recreating the
+  venv. It's the repair for a venv not built with `create-venv --group`.
+- The binary is run over the host's SSH connection and, on a *permission-denied*
+  refusal (a venv owned by a service account), **re-run escalated to the venv owner
+  (else root) via `sudo -n`** — the same SSH-as-owner channel the denylist writes
+  use (`bridge.share_venv_logs` → `bridge_utils.share_logs_cmd`, mirroring
+  `denylist_escalation_cmd`; the tier used is surfaced as `(as <user>)`). The
+  `~/logs` home entry has no button (it's always writable by its owner); a venv
+  without runspec-linux reports a clear "install runspec-linux there" message.
+- `looks_permission_denied` now also matches **EPERM** ("Operation not permitted",
+  what `chmod`/`chgrp` print) as well as EACCES, so the repair escalates on a
+  pre-existing but unowned `logs/` dir — where `mkdir -p` is a no-op and only the
+  `chmod` fails — not just on an unwritable parent.
+
+The DB-backed History/Logs read and the live "what's running" view (the rest of
+Phase 3) are a follow-up.
+
 ## [0.284.0] — 2026-09-25
 
 ### Changed

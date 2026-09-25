@@ -1345,6 +1345,11 @@ export const mockApi: BridgeApi = {
     archives: [{ archive: `/opt/venvs/${group}/logs/backup.archive.20260604.log.gz`, count: 30, sources: [] }],
   }),
 
+  share_venv_logs: async (_host, venv, group) => ({
+    ok: true, venv, group: group || '', as_user: 'svc',
+    output: JSON.stringify({ venv: `/opt/venvs/${venv}`, logs_dir: `/opt/venvs/${venv}/logs`, group: group || '', mode: '2775', shared: true }),
+  }),
+
   get_public_key: async () => ({
     ok: true,
     public_key: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockPublicKeyForDevModeonlyrunspec-console',

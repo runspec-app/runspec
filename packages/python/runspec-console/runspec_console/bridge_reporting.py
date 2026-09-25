@@ -863,6 +863,105 @@ class ReportingMixin:
             out.append(self._build_status_entry(group, [dir_display], rows, runnable))
         return out
 
+    def share_venv_logs(self, host: str, venv: str, group: str = "") -> dict[str, Any]:
+        """Make a venv's ``logs/`` dir group-shared — the console side of the
+        Phase 2 fix-perms repair (design §14). Runs the runspec-linux
+        ``share-venv-logs`` runnable in the venv (``{sys.prefix}/logs`` → ``2775``
+        setgid, + optional ``chgrp``), so the per-venv runs index
+        (``runspec_runs.db``) and the audit logs become writable across a shared
+        console group — the repair for a venv not built with ``create-venv --group``.
+
+        ``venv`` is the Logs-tab scope label (its runspec binary is resolved via
+        ``_venvs``); ``group`` is the optional Unix group to ``chgrp`` to (empty ⇒
+        keep the current group). The binary is run directly and, on a *permission
+        denied* refusal (a venv owned by a service account), re-run **escalated** to
+        the venv owner (else root) via ``sudo -n`` — the same SSH-as-owner channel
+        the denylist writes use (see ``bridge_utils.share_logs_cmd``). Requires
+        runspec-linux in that venv; returns a clear message when it's absent.
+
+        Returns ``{ok, venv, group, as_user, output}`` on success, else
+        ``{ok: False, venv, group, error}``."""
+        import shlex
+        import subprocess
+
+        from .procutil import no_window_kwargs
+
+        g = (group or "").strip()
+        entry = self._host_entry(host)
+        rp = next((p for lbl, p in self._venvs(host) if lbl == venv), "")
+        if not rp:
+            return {
+                "ok": False,
+                "venv": venv,
+                "group": g,
+                "error": f"no venv '{venv}' on {host}",
+            }
+
+        is_remote = bool(entry and entry.get("ssh"))
+        logdir = self._venv_logdir(rp, remote=is_remote)  # {venv}/logs
+        venv_path = str(logdir.parent)  # {venv}
+        sv_bin = str(logdir.parent / "bin" / "share-venv-logs")
+        missing = "share-venv-logs not found in this venv — install runspec-linux there"
+
+        try:
+            if is_remote:
+                assert entry is not None
+                ssh, idf = entry.get("ssh"), entry.get("identityFile")
+                direct = (
+                    "sv=" + shlex.quote(sv_bin) + "; "
+                    '[ -x "$sv" ] || { echo ' + shlex.quote(missing) + "; exit 66; }; "
+                    'exec "$sv" --venv '
+                    + shlex.quote(venv_path)
+                    + (" --group " + shlex.quote(g) if g else "")
+                )
+                code, out, err = self._ssh_run(
+                    ssh, direct, identity_file=idf, timeout=30
+                )
+                as_user = ""
+                if code == 66:
+                    return {"ok": False, "venv": venv, "group": g, "error": missing}
+                if code != 0 and utils_mod.looks_permission_denied(
+                    f"{out or ''}\n{err or ''}"
+                ):
+                    code, out, err = self._ssh_run(
+                        ssh,
+                        utils_mod.share_logs_cmd(sv_bin, venv_path, g),
+                        identity_file=idf,
+                        timeout=30,
+                    )
+                    as_user, out = utils_mod.split_denylist_as(out or "")
+            else:
+                if not os.path.exists(sv_bin):
+                    return {"ok": False, "venv": venv, "group": g, "error": missing}
+                argv = [sv_bin, "--venv", venv_path] + (["--group", g] if g else [])
+                proc = subprocess.run(
+                    argv,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    **no_window_kwargs(),
+                )
+                code, out, err, as_user = proc.returncode, proc.stdout, proc.stderr, ""
+        except Exception as exc:  # noqa: BLE001 — surface any failure as a result, never raise into the UI
+            return {"ok": False, "venv": venv, "group": g, "error": str(exc)}
+
+        body = (out or "").strip() or (err or "").strip() or f"exit {code}"
+        if code == 0:
+            return {
+                "ok": True,
+                "venv": venv,
+                "group": g,
+                "as_user": as_user,
+                "output": body,
+            }
+        return {
+            "ok": False,
+            "venv": venv,
+            "group": g,
+            "as_user": as_user,
+            "error": body,
+        }
+
     # ── log inventory internals (one listing per host, no remote runspec) ────────
 
     @staticmethod

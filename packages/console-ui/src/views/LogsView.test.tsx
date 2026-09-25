@@ -4,19 +4,23 @@
  * failed prune/compact inside the modal rather than only as a toast.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 
 import { LogsView } from './LogsView'
 
-const { logsStatus, logsPrune } = vi.hoisted(() => ({
+const { logsStatus, logsPrune, shareVenvLogs } = vi.hoisted(() => ({
   logsStatus: vi.fn(),
   logsPrune: vi.fn(),
+  shareVenvLogs: vi.fn(),
 }))
 
 vi.mock('../bridge', () => ({
   bridge: new Proxy({}, {
     get: (_t, p) =>
-      p === 'logs_status' ? logsStatus : p === 'logs_prune' ? logsPrune : vi.fn(),
+      p === 'logs_status' ? logsStatus
+      : p === 'logs_prune' ? logsPrune
+      : p === 'share_venv_logs' ? shareVenvLogs
+      : vi.fn(),
   }),
 }))
 
@@ -41,6 +45,7 @@ beforeEach(() => {
     },
   ])
   logsPrune.mockReset()
+  shareVenvLogs.mockReset()
 })
 
 describe('LogsView', () => {
@@ -78,5 +83,25 @@ describe('LogsView', () => {
 
     // The error is shown in the modal (an Alert), not swallowed into a toast.
     expect(await screen.findByText(/upgrade runspec to 0\.56/)).toBeTruthy()
+  })
+
+  it('offers "Make shared" on a venv entry (not ~/logs) and calls share_venv_logs', async () => {
+    shareVenvLogs.mockResolvedValue({ ok: true, venv: 'ops-tools', group: 'consoles', as_user: 'svc', output: '{}' })
+    render(<LogsView {...PROPS} />)
+    await screen.findByText('ops-tools')
+
+    // The button is on the venv entry only — never the per-user ~/logs home entry
+    // (which is always writable by its owner, so there's nothing to share).
+    const buttons = screen.getAllByRole('button', { name: /Make shared/ })
+    expect(buttons).toHaveLength(1)
+
+    fireEvent.click(buttons[0])
+    expect(await screen.findByText('Make logs shared')).toBeTruthy()
+
+    // Optional Unix group, then apply → the runnable runs against this venv.
+    fireEvent.change(screen.getByPlaceholderText('consoles'), { target: { value: 'consoles' } })
+    fireEvent.click(screen.getByRole('button', { name: /^Make shared$/ }))
+
+    await waitFor(() => expect(shareVenvLogs).toHaveBeenCalledWith('local', 'ops-tools', 'consoles'))
   })
 })
