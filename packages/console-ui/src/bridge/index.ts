@@ -582,6 +582,31 @@ export interface HistoryRecord {
   kind?: 'runnable' | 'agent' | 'tool' // 'runnable' run, whole 'agent' turn, or a single built-in 'tool' call
 }
 
+// One in-flight run from the per-venv runs index — the History tab's live
+// "Running now" strip (get_running_runs). Fleet-wide and index-sourced: every
+// connected host's running rows, whoever launched them (this console, a bare CLI
+// run, the scheduler, another console), liveness-filtered so a crashed row never
+// shows. Distinct from InFlightRecord, which is only what this console launched
+// (and carries a Cancel). A running run has no exit/duration yet, so it carries
+// startTs + pid and the strip ticks the elapsed time from startTs client-side.
+export interface RunningRun {
+  id: string
+  runId: string
+  runnable: string
+  group: string      // venv the run's index lives in
+  host: string
+  operator: string   // who launched it ("" when unknown)
+  runAs: string      // OS user it executes as
+  startTs: string    // ISO start — the strip ticks elapsed from this
+  pid: number
+  args: Record<string, unknown>
+  commandPath?: string[]             // subcommand path ([] for a plain runnable)
+  initiatedBy?: 'llm' | 'user'      // 'llm' when launched by the agentic loop
+  trigger?: string                   // event source that caused the run ("schedule"/…), "" = interactive
+  runbook?: string                   // saved runbook that drove the run, "" otherwise
+  autonomy?: string
+}
+
 // A schedule (Schedules tab). When it fires it either emits a matchable event
 // (action 'event') that source="schedule" triggers pick up like mail, runs a
 // runnable directly (action 'runnable'), runs an agent turn on a fixed prompt
@@ -1485,6 +1510,13 @@ export interface BridgeApi {
   // Heavy per-run detail (the recorded log lines) for one run, fetched on demand
   // when a History row is expanded — the bulk read ships slim rows without them.
   get_run_detail: (host: string, run_id: string) => Promise<{ logLines: HistoryLogLine[] }>
+  // Live "what's running" across the fleet — the in-flight runs the per-venv runs
+  // index holds, newest-started first, for the History tab's "Running now" strip.
+  // Fleet-wide and index-sourced (every connected host's running rows, whoever
+  // launched them), liveness-filtered so a crashed run never shows; index-only, so
+  // a venv without the index contributes nothing (a running run has no run_summary
+  // to log-parse yet). Distinct from get_in_flight (this console's own launches).
+  get_running_runs: () => Promise<RunningRun[]>
   get_schedules: () => Promise<Schedule[]>
   get_config: () => Promise<Record<string, unknown>>
   config_dir: () => Promise<string>

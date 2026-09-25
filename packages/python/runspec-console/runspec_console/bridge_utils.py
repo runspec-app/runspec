@@ -321,6 +321,82 @@ def db_read_cmd(
     return f"{shlex.quote(python_path)} -c {shlex.quote(_DB_READ_SNIPPET)} {shlex.quote(arg)}"
 
 
+# ── live "what's running" read: running rows + pid-liveness, on the remote host ──
+# The finished-history snippet above filters `status != 'running'`; this one is its
+# mirror for the live view (Phase 3 part 2b). It selects the `running` rows and, on
+# the remote host that owns the pids, applies the same liveness filter
+# runsdb.list_runs(live=True) does — pid alive (proc_start-guarded, /proc field 22)
+# for a row whose `host` is this host, other-host rows passed through unchecked
+# (mirroring runsdb._liveness_filter) — so a crashed/orphaned row never reads as
+# running. Raw rows only; the console maps them via db_row_to_running (one tested
+# place, as with the finished read).
+_DB_RUNNING_SNIPPET = r"""
+import json, os, socket, sqlite3, sys
+a = json.loads(sys.argv[1])
+limit = int(a.get("limit") or 200)
+try:
+    host = socket.gethostname()
+except Exception:
+    host = ""
+def proc_start(pid):
+    try:
+        with open("/proc/%d/stat" % int(pid), encoding="ascii", errors="replace") as fh:
+            data = fh.read()
+        tail = data[data.rfind(")") + 1:].split()
+        return tail[19] if len(tail) > 19 else ""
+    except Exception:
+        return ""
+def alive(pid, tok):
+    if not pid:
+        return False
+    if tok:
+        return proc_start(pid) == tok
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except Exception:
+        return False
+out = {}
+for d in a.get("dirs", []):
+    db = os.path.join(os.path.expanduser(d), "runspec_runs.db")
+    e = {"has_db": os.path.exists(db), "rows": []}
+    if e["has_db"]:
+        try:
+            con = sqlite3.connect("file:%s?mode=ro" % db, uri=True, timeout=2.0)
+            con.row_factory = sqlite3.Row
+            rows = con.execute("SELECT * FROM runs WHERE status='running' ORDER BY start_ts DESC LIMIT ?", (limit,)).fetchall()
+            con.close()
+            keep = []
+            for r in rows:
+                rr = {k: r[k] for k in r.keys()}
+                if rr.get("host") == host and not alive(rr.get("pid"), rr.get("proc_start")):
+                    continue  # dead pid on this host — not really running
+                keep.append(rr)
+            e["rows"] = keep
+        except Exception as ex:
+            e["error"] = str(ex); e["rows"] = []
+    out[d] = e
+sys.stdout.write(json.dumps(out))
+"""
+
+
+def db_running_cmd(python_path: str, dirs: list[str], limit: int) -> str:
+    """The command to read *live* (running) rows from the per-venv runs index on a
+    remote host — ``{python} -c <snippet> <json-arg>`` (stdlib ``sqlite3``,
+    ``mode=ro``, no runspec import). Unlike :func:`db_read_cmd` (finished history)
+    this selects ``status='running'`` rows and applies the same pid-liveness filter
+    ``runsdb.list_runs(live=True)`` does — on the remote host, which owns the pids —
+    so a crashed/orphaned row never reads as running. ``dirs`` are the venv logs
+    dirs (+ ``~/logs``); the snippet expands ``~`` and keys its JSON by the input
+    dir."""
+    arg = json.dumps({"dirs": list(dirs), "limit": int(limit)})
+    return f"{shlex.quote(python_path)} -c {shlex.quote(_DB_RUNNING_SNIPPET)} {shlex.quote(arg)}"
+
+
 # The historic SSH key comment. ``key_marker()`` returns the live one (the
 # white-label package name); this default is what an unbranded install uses and
 # what keys pushed before the marker followed the package name carry. Never
@@ -665,6 +741,50 @@ def db_row_to_record(row: dict[str, Any], group: str, host: str) -> dict[str, An
         # The index only holds real runnable runs (core's configure_logging/atexit
         # hooks; chat turns write run_summary via the console, not the core DB path).
         "kind": "runnable",
+    }
+
+
+def db_row_to_running(row: dict[str, Any], group: str, host: str) -> dict[str, Any]:
+    """Map a raw ``runspec_runs.db`` ``running`` row → the RunningRun shape the
+    History tab's live "Running now" strip renders (Phase 3 part 2b).
+
+    Distinct from :func:`db_row_to_record` (a finished HistoryRecord): a running
+    run has no exit code, end ts or duration yet, so this carries ``startTs`` +
+    ``pid`` and lets the frontend tick the elapsed time from ``startTs`` — honest
+    and self-updating without a re-fetch. ``id`` is the same
+    ``md5(run_id+runnable)[:12]`` a finished row gets, so a run that completes
+    mid-view keeps a stable identity across the running/finished lists. ``args`` is
+    stored as a JSON string in the index."""
+    run_id = str(row.get("run_id") or "")
+    runnable = str(row.get("runnable") or "")
+    stable_id = hashlib.md5((run_id + runnable).encode()).hexdigest()[:12]
+    args = row.get("args")
+    if isinstance(args, str):
+        try:
+            args = json.loads(args) if args.strip() else {}
+        except (ValueError, TypeError):
+            args = {}
+    if not isinstance(args, dict):
+        args = {}
+    command = str(row.get("command") or "")
+    return {
+        "id": stable_id,
+        "runId": run_id,
+        "runnable": runnable,
+        "group": group,
+        "host": host,
+        "operator": row.get("user") or "",
+        "runAs": row.get("user_target") or "",
+        "startTs": str(row.get("start_ts") or ""),
+        "pid": int(row.get("pid") or 0),
+        "args": args,
+        "commandPath": command.split() if command else [],
+        "initiatedBy": "llm" if row.get("agent") else "user",
+        "trigger": str(row.get("trigger") or ""),
+        # Phase 1's index column is `skill` (pre-runbook-rename); it holds the
+        # runbook id the run carried.
+        "runbook": str(row.get("skill") or row.get("runbook") or ""),
+        "autonomy": str(row.get("autonomy") or ""),
     }
 
 

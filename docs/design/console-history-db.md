@@ -377,7 +377,11 @@ The schema in [§5](#5-schema) already carries what it needs (`runnable`, `statu
    covers the DB for a fresh venv, via the setgid dir.) **(implemented — the
    runnable; the console "Make logs shared" one-click surfacing is phase 3.)**
 3. **Console read swap** — History/Logs read the DB with log-parse fallback; the
-   live "running" view; the "Make logs shared" action.
+   live "running" view; the "Make logs shared" action. **(implemented, in slices:
+   the "Make logs shared" one-click action — `runspec-console` 0.285.0; the
+   History read swap with per-venv log-parse fallback — 0.286.0; the live
+   "Running now" strip — 0.287.0, via `get_running_runs`, reading `running` rows
+   with pid-liveness resolved on the owning host per §9.)**
 4. **Log-prune provenance** (§8.1) — core stamps `log_pruned_at` / `log_pruned_by`
    on `runspec logs prune` (a v1 → v2 additive column bump), and the console shows
    "log pruned by X on Y" when an expanded row's log is gone. Core stamping is

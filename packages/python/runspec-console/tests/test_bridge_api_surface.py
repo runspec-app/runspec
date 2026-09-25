@@ -89,6 +89,7 @@ EXPECTED = {
     "get_room_state",
     "get_run_detail",
     "get_runbooks",
+    "get_running_runs",
     "get_runnables",
     "get_saved_runs",
     "get_schedule_board",

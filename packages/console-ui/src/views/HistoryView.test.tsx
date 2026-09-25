@@ -10,13 +10,14 @@ import { render, screen, act, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { HistoryView } from './HistoryView'
-import type { HistoryRecord } from '../bridge'
+import type { HistoryRecord, RunningRun } from '../bridge'
 
-const { historyTargets, getHistorySlim, getRunDetail, logsView } = vi.hoisted(() => ({
+const { historyTargets, getHistorySlim, getRunDetail, logsView, getRunningRuns } = vi.hoisted(() => ({
   historyTargets: vi.fn(),
   getHistorySlim: vi.fn(),
   getRunDetail: vi.fn(),
   logsView: vi.fn(),
+  getRunningRuns: vi.fn(),
 }))
 
 vi.mock('../bridge', () => ({
@@ -26,6 +27,7 @@ vi.mock('../bridge', () => ({
       if (p === 'get_history_slim') return getHistorySlim
       if (p === 'get_run_detail') return getRunDetail
       if (p === 'logs_view') return logsView
+      if (p === 'get_running_runs') return getRunningRuns
       return vi.fn()
     },
   }),
@@ -37,6 +39,14 @@ function rec(over: Partial<HistoryRecord> = {}): HistoryRecord {
     host: 'local', operator: 'alice', runAs: 'root', exitCode: 0,
     durationMs: 1200, ts: '2026-06-03T14:22:01+00:00', args: {}, logLines: [],
     ...over,
+  }
+}
+
+function running(over: Partial<RunningRun> = {}): RunningRun {
+  return {
+    id: 'live1', runId: 'live-1', runnable: 'db-migrate', group: 'core',
+    host: 'prod-1', operator: 'svc', runAs: 'svc', startTs: new Date(Date.now() - 5000).toISOString(),
+    pid: 4242, args: {}, ...over,
   }
 }
 
@@ -52,6 +62,7 @@ beforeEach(() => {
   getHistorySlim.mockReset().mockResolvedValue([rec()])
   getRunDetail.mockReset().mockResolvedValue({ logLines: [] })
   logsView.mockReset().mockResolvedValue({ ok: true, records: [] })
+  getRunningRuns.mockReset().mockResolvedValue([])   // nothing running by default → no strip
 })
 
 afterEach(() => { vi.useRealTimers() })
@@ -168,5 +179,21 @@ describe('HistoryView', () => {
     await act(async () => { await user.click(viewBtn) })
     await waitFor(() => expect(logsView).toHaveBeenCalledWith('local', 'ops-tools', 'backup', undefined, undefined, 'run-1'))
     expect(await screen.findByText('hello world')).toBeTruthy()
+  })
+
+  it('shows the Running-now strip for live runs (fleet-wide get_running_runs)', async () => {
+    getRunningRuns.mockResolvedValue([running({ runnable: 'db-migrate' }), running({ id: 'live2', runId: 'live-2', runnable: 'backup', host: 'local' })])
+    render(<HistoryView {...PROPS} />)
+    // The strip header counts the live runs and each run's name renders in it.
+    expect(await screen.findByText('2 running now')).toBeTruthy()
+    expect(screen.getByText('db-migrate')).toBeTruthy()
+    expect(getRunningRuns).toHaveBeenCalled()
+  })
+
+  it('hides the Running-now strip when nothing is running', async () => {
+    getRunningRuns.mockResolvedValue([])
+    render(<HistoryView {...PROPS} />)
+    await screen.findByText('backup')          // history loaded
+    expect(screen.queryByText(/running now/)).toBeNull()
   })
 })

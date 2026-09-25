@@ -349,5 +349,209 @@ class TestDbReadCmd(unittest.TestCase):
         self.assertIn("2026-09-18T00:00:00+00:00", cmd)
 
 
+# ── Phase 3 part 2b: the live "Running now" read ────────────────────────────────
+
+
+class TestDbRowToRunning(unittest.TestCase):
+    def test_maps_running_shape(self) -> None:
+        r = bridge_utils.db_row_to_running(
+            _db_row(
+                run_id="live-1",
+                runnable="db-migrate",
+                status="running",
+                exit_code=None,
+                end_ts=None,
+                duration_ms=None,
+                command="db migrate",
+                agent=1,
+                skill="nightly",
+                trigger="schedule",
+                pid=4242,
+            ),
+            "v1",
+            "prod-1",
+        )
+        self.assertEqual(r["id"], hashlib.md5(b"live-1db-migrate").hexdigest()[:12])
+        self.assertEqual(r["runId"], "live-1")
+        self.assertEqual(r["runnable"], "db-migrate")
+        self.assertEqual(r["group"], "v1")
+        self.assertEqual(r["host"], "prod-1")
+        self.assertEqual(r["startTs"], "2026-09-25T09:59:59+00:00")  # start_ts, not end
+        self.assertEqual(r["pid"], 4242)
+        self.assertEqual(r["commandPath"], ["db", "migrate"])
+        self.assertEqual(r["initiatedBy"], "llm")  # agent flag
+        self.assertEqual(r["runbook"], "nightly")  # index `skill` column
+        self.assertEqual(r["trigger"], "schedule")
+        self.assertEqual(r["args"], {"target": "prod"})
+        # A running run has no finished-run fields — the strip renders elapsed from
+        # startTs instead, so these must be absent (not a false exit 0 / 0ms).
+        self.assertNotIn("exitCode", r)
+        self.assertNotIn("durationMs", r)
+        self.assertNotIn("ts", r)
+
+    def test_bad_args_json_is_empty(self) -> None:
+        r = bridge_utils.db_row_to_running(
+            _db_row(status="running", args="not json"), "core", "local"
+        )
+        self.assertEqual(r["args"], {})
+
+
+def _write_running(
+    logs: Path, run_id: str, runnable: str, *, alive: bool = True
+) -> None:
+    """A ``running`` row (begin_run only, no finalize). ``alive`` uses our own live
+    pid + proc_start token; otherwise a dead pid so the liveness filter drops it."""
+    runsdb.begin_run(
+        logs,
+        {
+            "run_id": run_id,
+            "runnable": runnable,
+            "status": "running",
+            "start_ts": "2026-09-25T10:00:00+00:00",
+            "user": "alice",
+            "agent": False,
+            "pid": os.getpid() if alive else 999999999,
+            "host": runsdb._hostname(),
+            "proc_start": runsdb.proc_start_token() if alive else "",
+            "log_file": f"{runnable}.x.{run_id}.log",
+            "args": {"t": "prod"},
+        },
+    )
+
+
+class TestRunningRunsLocal(unittest.TestCase):
+    def _bridge_for(self, tmp: Path, rps: list[str]):
+        b = _make_bridge()
+        b._hosts = [{"name": "ws", "runspec_paths": rps}]
+        return b
+
+    def _run(self, b, tmp: Path):
+        home = tmp / "home"
+        home.mkdir(exist_ok=True)
+        with patch.object(Path, "home", return_value=home):
+            return b._running_runs_host("ws")
+
+    def test_live_running_row_appears(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
+            tmp = Path(d)
+            rp, logs = _venv_with_db(tmp, "v1")
+            _write_running(logs, "live-1", "backup")
+            rows = self._run(self._bridge_for(tmp, [rp]), tmp)
+            row = next(r for r in rows if r["runId"] == "live-1")
+            self.assertEqual(row["runnable"], "backup")
+            self.assertEqual(row["group"], "v1")
+            self.assertEqual(row["pid"], os.getpid())
+            self.assertTrue(row["startTs"])
+
+    def test_finished_row_not_running(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
+            tmp = Path(d)
+            rp, logs = _venv_with_db(tmp, "v1")
+            _write_db_run(logs, "done-1", "backup")  # begin + finish → completed
+            rows = self._run(self._bridge_for(tmp, [rp]), tmp)
+            self.assertNotIn("done-1", {r["runId"] for r in rows})
+
+    def test_dead_pid_row_dropped(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
+            tmp = Path(d)
+            rp, logs = _venv_with_db(tmp, "v1")
+            _write_running(logs, "dead-1", "backup", alive=False)
+            # runsdb.list_runs(running_only=True, live=True) liveness-filters a dead
+            # pid on this host, so the orphan never reads as running.
+            rows = self._run(self._bridge_for(tmp, [rp]), tmp)
+            self.assertNotIn("dead-1", {r["runId"] for r in rows})
+
+    def test_no_db_is_empty(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
+            tmp = Path(d)
+            rp, _logs = _venv_with_db(tmp, "v1")  # logs dir but no DB written
+            rows = self._run(self._bridge_for(tmp, [rp]), tmp)
+            self.assertEqual(rows, [])  # index-only — no log-parse for running
+
+
+class TestRunningRunsRemote(unittest.TestCase):
+    def _bridge(self):
+        b = _make_bridge()
+        b._hosts = [
+            {
+                "name": "prod-1",
+                "ssh": "u@h1",
+                "runspec_paths": ["/opt/venvs/v1/bin/runspec"],
+            }
+        ]
+        return b
+
+    def test_reads_running_over_ssh(self) -> None:
+        b = self._bridge()
+        payload = {
+            "/opt/venvs/v1/logs": {
+                "has_db": True,
+                "rows": [_db_row(run_id="rlive", runnable="backup", status="running")],
+            },
+            "~/logs": {"has_db": False, "rows": []},
+        }
+
+        def ssh(_t, cmd, **kw):
+            # The running read uses the running snippet (selects status='running').
+            self.assertIn("runspec_runs.db", cmd)
+            self.assertIn("running", cmd)
+            return (0, json.dumps(payload), "")
+
+        with patch.object(b, "_ssh_run", side_effect=ssh):
+            rows = b._running_runs_host("prod-1")
+        row = next(r for r in rows if r["runId"] == "rlive")
+        self.assertEqual(row["group"], "v1")
+        self.assertEqual(row["runnable"], "backup")
+
+    def test_snippet_failure_is_empty(self) -> None:
+        b = self._bridge()
+
+        def ssh(_t, cmd, **kw):
+            return (0, "not json", "")  # unparseable → [] (best-effort, never raises)
+
+        with patch.object(b, "_ssh_run", side_effect=ssh):
+            self.assertEqual(b._running_runs_host("prod-1"), [])
+
+
+class TestGetRunningRunsAggregation(unittest.TestCase):
+    def test_merges_targets_newest_started_first(self) -> None:
+        b = _make_bridge()
+
+        def per_host(name: str):
+            if name == "local":
+                return [{"runId": "a", "startTs": "2026-09-25T10:00:00+00:00"}]
+            return [{"runId": "b", "startTs": "2026-09-25T12:00:00+00:00"}]
+
+        with (
+            patch.object(b, "history_targets", return_value=["local", "prod-1"]),
+            patch.object(b, "_running_runs_host", side_effect=per_host),
+        ):
+            rows = b.get_running_runs()
+        # newest-started first (b at 12:00 before a at 10:00)
+        self.assertEqual([r["runId"] for r in rows], ["b", "a"])
+
+
+class TestDbRunningCmd(unittest.TestCase):
+    def test_builds_running_snippet_command(self) -> None:
+        cmd = bridge_utils.db_running_cmd(
+            "/opt/venvs/v1/bin/python", ["/opt/venvs/v1/logs", "~/logs"], 200
+        )
+        self.assertIn("/opt/venvs/v1/bin/python", cmd)
+        self.assertIn("-c", cmd)
+        self.assertIn("runspec_runs.db", cmd)
+        self.assertIn("mode=ro", cmd)
+        self.assertIn("~/logs", cmd)
+        # The running snippet has no `since` window (unlike db_read_cmd).
+        self.assertIn("limit", cmd)
+
+
 if __name__ == "__main__":
     unittest.main()

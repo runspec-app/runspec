@@ -1,4 +1,4 @@
-import type { BridgeApi, ChatSessionInfo, MarketplaceRepo, MarketplaceEntry, MarketplaceTarget, MarketplaceInstalledTarget, MarketplaceOpRecord, MarketplaceOpPayload, MarketplaceOpResult, Host, JumpHost, Runnable, HistoryRecord, Schedule, InFlightRecord, TestResult, AnalyticsData, AnalyticsBucket, TriggerCard } from './index'
+import type { BridgeApi, ChatSessionInfo, MarketplaceRepo, MarketplaceEntry, MarketplaceTarget, MarketplaceInstalledTarget, MarketplaceOpRecord, MarketplaceOpPayload, MarketplaceOpResult, Host, JumpHost, Runnable, HistoryRecord, RunningRun, Schedule, InFlightRecord, TestResult, AnalyticsData, AnalyticsBucket, TriggerCard } from './index'
 
 // 80 days ago — triggers the yellow warning state in dev mode
 let MOCK_KEY_CREATED_AT: string = new Date(Date.now() - 80 * 24 * 60 * 60 * 1000).toISOString()
@@ -788,6 +788,21 @@ export const mockApi: BridgeApi = {
     const r = MOCK_HISTORY.find(h => h.runId === run_id)
     return { logLines: r?.logLines ?? [] }
   },
+  get_running_runs: async (): Promise<RunningRun[]> => [
+    {
+      id: 'run-live-1', runId: 'live-1', runnable: 'db-migrate', group: 'platform-core',
+      host: 'prod-1', operator: 'Scheduled Task', runAs: 'svc-runner',
+      startTs: new Date(Date.now() - 42000).toISOString(), pid: 20481,
+      args: { database: 'orders' }, commandPath: ['db', 'migrate'],
+      initiatedBy: 'user', trigger: 'schedule', autonomy: 'autonomous',
+    },
+    {
+      id: 'run-live-2', runId: 'live-2', runnable: 'backup', group: 'ops-tools',
+      host: 'local', operator: 'Jason Finestone', runAs: 'DESKTOP\\jason',
+      startTs: new Date(Date.now() - 8000).toISOString(), pid: 6620,
+      args: { source: 'C:/Users/jason/documents' }, initiatedBy: 'llm', autonomy: 'confirm',
+    },
+  ],
 
   get_schedules: async () => MOCK_SCHEDULES,
 

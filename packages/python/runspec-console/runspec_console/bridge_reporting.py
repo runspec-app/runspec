@@ -200,6 +200,9 @@ class ReportingMixin:
     # Cap on rows the History tab shows. Applied newest-first, and used as the
     # early-stop target so we never read more files than needed to fill it.
     _HISTORY_CAP = 200
+    # Cap on live "running now" rows read per host. A fleet rarely has many
+    # concurrent in-flight runs; this only bounds a pathological host.
+    _RUNNING_CAP = 200
 
     @staticmethod
     def _since_date(since_days: int | None) -> str | None:
@@ -639,6 +642,127 @@ class ReportingMixin:
         records = [r for r in records if r.get("kind", "runnable") == "runnable"]
         records.sort(key=lambda r: r.get("ts", ""), reverse=True)
         return [self._slim_history_row(r) for r in records[: self._HISTORY_CAP]]
+
+    # ── live "what's running" (the History tab's Running-now strip, part 2b) ────
+
+    def get_running_runs(self) -> list[dict[str, Any]]:
+        """Live "what's running" across the fleet — the in-flight runs the per-venv
+        runs index holds, newest-started first, for the History tab's "Running now"
+        strip (Phase 3 part 2b).
+
+        Fleet-wide and index-sourced: every connected host's ``running`` rows
+        (whoever launched them — this console, a bare CLI run, the scheduler,
+        another console), liveness-filtered so a crashed/orphaned row never shows as
+        running. Distinct from :meth:`get_in_flight`, which is only the invocations
+        *this* console launched (and which carries a Cancel).
+
+        **Index-only, by design:** a running run has no ``run_summary`` line yet
+        (that's written at exit), so a log parse can't surface it — a venv without a
+        (populated) runs index simply contributes nothing here. Same host set as
+        :meth:`history_targets` (local + connected remotes), read concurrently so a
+        slow host adds its own latency, not the sum of all of them."""
+        names = self.history_targets()
+
+        def _read_one(name: str) -> list[dict[str, Any]]:
+            try:
+                return self._running_runs_host(name)
+            except Exception:
+                logger.exception("running: read failed for host %s", name)
+                return []
+
+        rows: list[dict[str, Any]] = []
+        if len(names) <= 1:
+            rows = _read_one(names[0]) if names else []
+        else:
+            from concurrent.futures import ThreadPoolExecutor
+
+            with ThreadPoolExecutor(
+                max_workers=min(self._fanout_workers(), len(names))
+            ) as ex:
+                for chunk in ex.map(_read_one, names):
+                    rows.extend(chunk)
+        rows.sort(key=lambda r: r.get("startTs", ""), reverse=True)
+        return rows
+
+    def _running_runs_host(self, host: str) -> list[dict[str, Any]]:
+        """One host's live running rows from the per-venv runs index — a local
+        in-process ``runsdb`` read, or one ``{venv}/bin/python -c`` query over SSH —
+        mapped to the RunningRun shape. ``[]`` when the host has no index / can't be
+        read; never a log-parse (a running run has no run_summary to parse)."""
+        entry = self._host_entry(host)
+        if entry is None:
+            return []
+        if entry.get("ssh"):
+            return self._running_runs_remote(entry)
+        rows: list[dict[str, Any]] = []
+        seen: set[Path] = set()
+        for log_dir, group in self._history_db_dir_groups(entry):
+            if log_dir in seen:
+                continue
+            seen.add(log_dir)
+            rows.extend(
+                utils_mod.db_row_to_running(r, group, host)
+                for r in self._db_running_local(log_dir)
+            )
+        return rows
+
+    def _db_running_local(self, log_dir: Path) -> list[dict[str, Any]]:
+        """Genuinely-live running rows from one venv's ``runspec_runs.db``
+        (in-process, ``mode=ro``, ``live=True`` so a dead-pid row on this host is
+        dropped), or ``[]`` when the DB is absent / unreadable."""
+        try:
+            from runspec import runsdb
+        except Exception:
+            return []
+        try:
+            if not runsdb.db_path(log_dir).exists():
+                return []
+            return runsdb.list_runs(
+                log_dir, running_only=True, live=True, limit=self._RUNNING_CAP
+            )
+        except Exception:
+            return []
+
+    def _running_runs_remote(self, entry: dict[str, Any]) -> list[dict[str, Any]]:
+        """Remote counterpart: one ``{venv}/bin/python -c`` query (stdlib
+        ``sqlite3``, ``mode=ro``, no remote runspec) reads every venv's index for
+        ``running`` rows with pid-liveness applied *on the remote host* (which owns
+        the pids — see ``bridge_utils.db_running_cmd``). ``[]`` on any failure — the
+        live view is best-effort telemetry and never blocks the tab."""
+        ssh = entry["ssh"]
+        idf = entry.get("identityFile")
+        host = entry["name"]
+        paths = [rp for rp in utils_mod._paths(entry) if rp]
+        if not paths:
+            return []
+        primary_group = PurePosixPath(paths[0]).parent.parent.name
+        dir_group: dict[str, str] = {}
+        dirs: list[str] = []
+        for rp in paths:
+            vd = str(PurePosixPath(rp).parent.parent / "logs")
+            if vd not in dir_group:
+                dir_group[vd] = PurePosixPath(rp).parent.parent.name
+                dirs.append(vd)
+        if "~/logs" not in dir_group:
+            dir_group["~/logs"] = primary_group
+            dirs.append("~/logs")
+        sv_python = str(PurePosixPath(paths[0]).parent / "python")
+        cmd = utils_mod.db_running_cmd(sv_python, dirs, self._RUNNING_CAP)
+        try:
+            _, out, _ = self._ssh_run(ssh, cmd, identity_file=idf, timeout=20)
+            results = json.loads(out) if out.strip() else {}
+        except Exception:
+            return []
+        if not isinstance(results, dict):
+            return []
+        rows: list[dict[str, Any]] = []
+        for d in dirs:
+            res = results.get(d) if isinstance(results.get(d), dict) else {}
+            g = dir_group.get(d, primary_group)
+            rows.extend(
+                utils_mod.db_row_to_running(r, g, host) for r in (res.get("rows") or [])
+            )
+        return rows
 
     def get_run_detail(self, host: str, run_id: str) -> dict[str, Any]:
         """Heavy per-run detail (the recorded ``logLines``) for one run, fetched

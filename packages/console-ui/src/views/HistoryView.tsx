@@ -2,9 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 import { Table, Tag, Typography, Button, Tooltip, message, Input, Drawer, Spin, Empty, Alert, Segmented } from 'antd'
 import { RedoOutlined, CopyOutlined, RobotOutlined, UserOutlined, SearchOutlined, EditOutlined, ClockCircleOutlined, ProfileOutlined } from '@ant-design/icons'
 import type { ColumnType } from 'antd/es/table'
-import { bridge, type HistoryRecord, type HistoryLogLine, type LogViewResult } from '../bridge'
+import { bridge, type HistoryRecord, type HistoryLogLine, type LogViewResult, type RunningRun } from '../bridge'
 import { LogStream } from '../components/LogStream'
-import { MONO_FONT, RADIUS, useAccent } from '../ThemeContext'
+import { MONO_FONT, RADIUS, useAccent, withAlpha } from '../ThemeContext'
 
 // History shows real runnable runs only, with who initiated each (operator vs the
 // assistant). Whole agent turns and individual built-in tool calls are agent
@@ -35,6 +35,18 @@ type HostFetch = { status: 'loading' | 'done' | 'error'; ms?: number; count?: nu
 const MERGED_CAP = 500
 const fmtMs = (ms?: number): string => (ms == null ? '—' : ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`)
 const slowMs = (ms?: number): boolean => (ms ?? 0) >= 1500
+
+// Elapsed since an ISO start, ticked client-side by the Running-now strip so a
+// live run's timer counts up without a re-fetch. "—" for an unparseable ts.
+const fmtElapsed = (startTs: string, now: number): string => {
+  const start = new Date(startTs).getTime()
+  if (!start || Number.isNaN(start)) return '—'
+  const s = Math.max(0, Math.floor((now - start) / 1000))
+  if (s < 60) return `${s}s`
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m}m ${s % 60}s`
+  return `${Math.floor(m / 60)}h ${m % 60}m`
+}
 
 const SOURCE_BADGE: Record<string, { label: string; color: string; title: string }> = {
   env:          { label: 'env',      color: 'blue',    title: 'Value came from an environment variable' },
@@ -261,6 +273,81 @@ function RunLogDrawer({ record, onClose }: { record: HistoryRecord | null; onClo
   )
 }
 
+// Live "Running now" strip pinned above the History table — the in-flight runs
+// the per-venv runs index holds across the fleet (get_running_runs), whoever
+// launched them. Rendered only when something is running (the parent gates on
+// rows.length), and it owns a 1 s tick so each run's elapsed time counts up
+// without a re-fetch; the row set itself refreshes on History's 25 s poll and the
+// debounced run_end. A finished/crashed run drops off (the backend liveness-
+// filters and only reports genuinely-live rows).
+function RunningNowStrip({ rows, accent }: { rows: RunningRun[]; accent: string }) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [])
+  return (
+    <div
+      style={{
+        marginBottom: 12,
+        padding: '8px 12px',
+        background: withAlpha(accent, 0.06),
+        border: `1px solid ${withAlpha(accent, 0.35)}`,
+        borderRadius: RADIUS.sm,
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: 8,
+        alignItems: 'center',
+      }}
+    >
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: accent, fontSize: 12, fontWeight: 600 }}>
+        <span className="rs-pulse" style={{ width: 7, height: 7, borderRadius: '50%', background: accent, display: 'inline-block' }} />
+        {rows.length} running now
+      </span>
+      {rows.map(r => {
+        const argStr = Object.entries(r.args ?? {}).map(([k, v]) => `--${k}=${String(v)}`).join(' ')
+        const tip = [
+          `${r.group ? r.group + '/' : ''}${r.runnable} on ${r.host}`,
+          `started ${new Date(r.startTs).toLocaleString()}`,
+          r.operator ? `by ${r.operator}` : '',
+          r.runAs ? `as ${r.runAs}` : '',
+          r.pid ? `pid ${r.pid}` : '',
+          argStr,
+        ].filter(Boolean).join('\n')
+        return (
+          <Tooltip key={`${r.host}:${r.id}`} title={<span style={{ whiteSpace: 'pre-line' }}>{tip}</span>}>
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                fontSize: 12,
+                fontFamily: MONO_FONT,
+                color: 'var(--rs-text-secondary)',
+                border: '1px solid var(--rs-border)',
+                borderRadius: 4,
+                padding: '1px 8px',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {r.trigger === 'schedule' && <ClockCircleOutlined style={{ color: 'var(--rs-text-muted)', fontSize: 12 }} />}
+              {r.initiatedBy === 'llm'
+                ? <RobotOutlined style={{ color: accent, fontSize: 12 }} />
+                : <UserOutlined style={{ color: 'var(--rs-text-muted)', fontSize: 12 }} />}
+              <span>
+                {r.group && <span style={{ color: 'var(--rs-text-muted)' }}>{r.group}/</span>}
+                {r.runnable}
+              </span>
+              <Tag style={{ margin: 0, fontSize: 11, lineHeight: '16px', padding: '0 5px' }}>{r.host}</Tag>
+              <span style={{ color: accent }}>{fmtElapsed(r.startTs, now)}</span>
+            </span>
+          </Tooltip>
+        )
+      })}
+    </div>
+  )
+}
+
 interface HistoryViewProps {
   search: string
   onSearchChange: (s: string) => void
@@ -293,6 +380,11 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
   // slim rows), keyed by rowKeyOf(r); detailLoading tracks the in-flight fetch.
   const [details, setDetails] = useState<Record<string, HistoryLogLine[]>>({})
   const [detailLoading, setDetailLoading] = useState<Record<string, boolean>>({})
+  // Live "what's running" across the fleet (get_running_runs) — the strip above
+  // the table. Refreshed on the same cadence as the history read below (initial +
+  // 25 s poll + debounced run_end), so it costs no extra timer; the strip itself
+  // ticks the per-run elapsed time.
+  const [running, setRunning] = useState<RunningRun[]>([])
   const accent = useAccent()
 
   // The view stays mounted across tab switches (App toggles display), so records
@@ -312,7 +404,16 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
     let cancelled = false
     let debounce: ReturnType<typeof setTimeout> | undefined
 
+    // Fleet-wide live running rows — one call (not per-host), tolerant of the
+    // mock/proxy returning a non-array. Shares runLoad's cadence.
+    const loadRunning = () => {
+      Promise.resolve(bridge.get_running_runs())
+        .then(rows => { if (!cancelled) setRunning(Array.isArray(rows) ? rows : []) })
+        .catch(() => { if (!cancelled) setRunning([]) })
+    }
+
     const runLoad = async (showSpinner: boolean) => {
+      loadRunning()
       if (showSpinner) { setLoading(true); setRecordsByHost({}) }
       let hosts: string[]
       try { hosts = await bridge.history_targets() } catch { hosts = ['local'] }
@@ -568,6 +669,10 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
           />
         </Tooltip>
       </div>
+      {/* Live "Running now" strip — in-flight runs from the runs index (see
+          RunningNowStrip). Shown only when something is running so it stays
+          unobtrusive; pinned above the finished-runs table. */}
+      {running.length > 0 && <RunningNowStrip rows={running} accent={accent} />}
       {/* Per-host fetch strip — one chip per host with its run count and fetch
           time (amber when slow, red on error), so a slow SSH connection or an
           offline host is visible instead of hiding in one fleet-wide spinner.

@@ -8,6 +8,37 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.287.0] — 2026-09-25
+
+### Added
+
+- **A live "Running now" strip on the History tab (runs-index Phase 3, part 2b).**
+  The History tab now pins a compact strip above the finished-runs table showing
+  the **in-flight** runs across the fleet — every connected host's `running` rows
+  from the per-venv runs index (`runspec_runs.db`), whoever launched them (this
+  console, a bare CLI run, the scheduler, another console). Each chip shows the
+  runnable (with its venv), host, who ran it (operator vs the assistant), a
+  schedule badge, and a **live elapsed timer that counts up client-side** (ticked
+  once a second, no re-fetch). The strip is shown only when something is running,
+  so it stays unobtrusive. New bridge method **`get_running_runs()`** (fleet-wide,
+  reads the same host set as `history_targets` concurrently); the frontend folds
+  the fetch into History's existing 25 s poll + debounced `run_end`, so it adds no
+  new timer.
+- **Liveness, so nothing ever reads as running forever.** A running row is shown
+  only if its process is genuinely alive: the local read uses
+  `runsdb.list_runs(running_only=True, live=True)`; the remote read applies the
+  same pid-liveness check (`proc_start`-guarded `/proc` / `os.kill`, host-matched —
+  mirroring `runsdb._liveness_filter`) **on the remote host that owns the pids**,
+  via a stdlib-`sqlite3` `{venv}/bin/python -c` query (`mode=ro`, no remote runspec
+  import). A crashed/orphaned row is filtered out.
+- **Index-only, by design.** A running run has no `run_summary` line yet (that's
+  written at exit), so a log parse can't surface it — a venv without a populated
+  index simply contributes nothing to the strip (there is nothing to fall back
+  to). Distinct from `get_in_flight`, which is only the invocations *this* console
+  launched (and which carries a Cancel); `get_running_runs` is the fleet-wide view
+  from the index.
+
+
 ## [0.286.0] — 2026-09-25
 
 ### Changed
