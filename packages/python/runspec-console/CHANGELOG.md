@@ -8,9 +8,23 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
-## [0.287.0] — 2026-09-25
+## [0.288.0] — 2026-09-25
 
 ### Added
+
+- **History shows *why* a log is missing (runs-index Phase 4, console — pairs with
+  `runspec` 0.58.0).** A runs-index row outlives its log file on purpose (the DB
+  is a bounded index; logs prune on their own schedule), so expanding an older row
+  whose log has been pruned used to show a bare "no log lines". The expand panel
+  now reads **"log pruned by X on Y — record retained"** when the row carries the
+  new `log_pruned_at` / `log_pruned_by` stamp (design §8.1). The two columns are
+  mapped in `bridge_utils.db_row_to_record` → `logPrunedAt` / `logPrunedBy` on the
+  `HistoryRecord` (the DB read already `SELECT *`s them, so they flow through both
+  the local in-process and remote `{venv}/bin/python -c` read paths for free; a
+  pre-0.58 DB lacking the columns reads `""` = not pruned). A pruned-log row also
+  **skips the `get_run_detail` fetch** — there is no file to read, and the note is
+  driven by the record itself. Log-parse rows never carry the stamp (a present log
+  has a file to parse), so the note is DB-read-only, as intended.
 
 - **A live "Running now" strip on the History tab (runs-index Phase 3, part 2b).**
   The History tab now pins a compact strip above the finished-runs table showing

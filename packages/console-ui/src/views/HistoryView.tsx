@@ -208,7 +208,11 @@ function ExpandedRun({ record, logLines, logsLoading, onRerun, onAskLlm, onViewF
               )}
             </div>
           )}
-          {logsLoading
+          {record.logPrunedAt
+            ? <span style={{ color: 'var(--rs-text-muted)' }}>
+                log pruned by {record.logPrunedBy || 'unknown'} on {new Date(record.logPrunedAt).toLocaleDateString()} — record retained
+              </span>
+            : logsLoading
             ? <Spin size="small" />
             : logLines.length === 0
             ? <span style={{ color: '#555' }}>no log lines</span>
@@ -480,7 +484,9 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
   // a run with no run_id (legacy log) has no fetchable detail.
   const fetchDetail = (record: HistoryRecord) => {
     const key = rowKeyOf(record)
-    if (!record.runId || details[key] !== undefined || detailLoading[key]) return
+    // A pruned-log row has no file to read — the note is driven by logPrunedAt on
+    // the record itself, so skip the (pointless) get_run_detail fetch.
+    if (!record.runId || record.logPrunedAt || details[key] !== undefined || detailLoading[key]) return
     setDetailLoading(d => ({ ...d, [key]: true }))
     bridge.get_run_detail(record.host, record.runId)
       .then(res => setDetails(d => ({ ...d, [key]: res.logLines ?? [] })))

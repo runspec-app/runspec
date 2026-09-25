@@ -738,6 +738,13 @@ def db_row_to_record(row: dict[str, Any], group: str, host: str) -> dict[str, An
         # Phase 1's index column is `skill` (pre-runbook-rename); it holds the
         # runbook id the run_summary carried.
         "runbook": str(row.get("skill") or row.get("runbook") or ""),
+        # §8.1 log-prune provenance (runspec 0.58.0): when this run's log file was
+        # pruned and by whom — "" when the log is still present (or a pre-0.58 DB
+        # without the columns). Lets the History expand panel say "log pruned by X
+        # on Y — record retained" instead of a bare "no log lines" for a row whose
+        # log outlived its file. .get tolerates a v1 remote DB that lacks them.
+        "logPrunedAt": row.get("log_pruned_at") or "",
+        "logPrunedBy": row.get("log_pruned_by") or "",
         # The index only holds real runnable runs (core's configure_logging/atexit
         # hooks; chat turns write run_summary via the console, not the core DB path).
         "kind": "runnable",

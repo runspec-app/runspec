@@ -391,6 +391,9 @@ const MOCK_HISTORY: HistoryRecord[] = [
     id: '2', runnable: 'log-rotate', group: 'platform-core', host: 'prod-1', operator: 'Scheduled Task', runAs: 'svc-runner',
     exitCode: 0, durationMs: 812, ts: new Date(Date.now() - 7200000).toISOString(),
     trigger: 'schedule',
+    // Its log file has since been pruned (older than the log-retention window),
+    // but the runs-index row survives — the expand panel shows the prune note.
+    logPrunedAt: new Date(Date.now() - 86400000).toISOString(), logPrunedBy: 'svc-runner',
     args: { keep: '7' },
     argSources: { keep: 'env' },
     logLines: [

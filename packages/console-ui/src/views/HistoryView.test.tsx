@@ -196,4 +196,19 @@ describe('HistoryView', () => {
     await screen.findByText('backup')          // history loaded
     expect(screen.queryByText(/running now/)).toBeNull()
   })
+
+  it('shows a prune note (and skips the log fetch) for a pruned-log row', async () => {
+    getHistorySlim.mockResolvedValue([
+      rec({ runId: 'run-pruned', logPrunedAt: '2026-09-20T00:00:00+00:00', logPrunedBy: 'svc-runner' }),
+    ])
+    render(<HistoryView {...PROPS} onRerun={() => {}} />)
+    const user = userEvent.setup()
+    const expandBtn = await screen.findByLabelText(/Expand row/i)
+    await act(async () => { await user.click(expandBtn) })
+    // The expand panel says why the log is gone (by whom) instead of "no log lines"…
+    const note = await screen.findByText(/log pruned by svc-runner/i)
+    expect(note.textContent).toMatch(/record retained/i)
+    // …and never fetches a log that isn't there.
+    expect(getRunDetail).not.toHaveBeenCalled()
+  })
 })

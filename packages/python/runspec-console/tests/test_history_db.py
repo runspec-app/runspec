@@ -100,6 +100,23 @@ class TestDbRowToRecord(unittest.TestCase):
         r = bridge_utils.db_row_to_record(_db_row(args="not json"), "core", "local")
         self.assertEqual(r["args"], {})
 
+    def test_maps_log_prune_provenance(self) -> None:
+        # §8.1: a row whose log file was pruned carries when/by-whom (runspec 0.58.0).
+        r = bridge_utils.db_row_to_record(
+            _db_row(log_pruned_at="2026-09-20T00:00:00+00:00", log_pruned_by="alice"),
+            "core",
+            "local",
+        )
+        self.assertEqual(r["logPrunedAt"], "2026-09-20T00:00:00+00:00")
+        self.assertEqual(r["logPrunedBy"], "alice")
+
+    def test_log_prune_absent_maps_empty(self) -> None:
+        # A present log (or a pre-0.58 remote DB lacking the columns) → the raw row
+        # has no log_pruned_* keys, so the mapper reads "" (not pruned).
+        r = bridge_utils.db_row_to_record(_db_row(), "core", "local")
+        self.assertEqual(r["logPrunedAt"], "")
+        self.assertEqual(r["logPrunedBy"], "")
+
 
 def _venv_with_db(tmp: Path, name: str) -> tuple[str, Path]:
     """A venv tree ({venv}/bin/runspec + {venv}/logs) — returns (rp, logs_dir)."""

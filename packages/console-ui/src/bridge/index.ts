@@ -580,6 +580,12 @@ export interface HistoryRecord {
   trigger?: string                   // event source that caused the run ("schedule"/…), "" = interactive/manual
   runbook?: string                     // saved runbook that drove the run (RUNSPEC_RUNBOOK), "" = not a runbook run
   kind?: 'runnable' | 'agent' | 'tool' // 'runnable' run, whole 'agent' turn, or a single built-in 'tool' call
+  // §8.1 log-prune provenance (from the runs index, runspec 0.58.0): when/by-whom
+  // this run's log file was pruned. "" = log present. A DB row outlives its log
+  // file on purpose, so a set logPrunedAt turns a bare "no log lines" on expand
+  // into "log pruned by X on Y — record retained".
+  logPrunedAt?: string
+  logPrunedBy?: string
 }
 
 // One in-flight run from the per-venv runs index — the History tab's live
