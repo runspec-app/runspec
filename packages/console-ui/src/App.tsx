@@ -7,7 +7,6 @@ import {
   FormOutlined,
   HistoryOutlined,
   CalendarOutlined,
-  BarChartOutlined,
   BulbOutlined,
   ExperimentOutlined,
   SunOutlined,
@@ -54,8 +53,9 @@ const EvalsView = React.lazy(() => import('./views/EvalsView').then(m => ({ defa
 const SchedulesView = React.lazy(() => import('./views/SchedulesView').then(m => ({ default: m.SchedulesView })))
 const RotaView = React.lazy(() => import('./views/RotaView').then(m => ({ default: m.RotaView })))
 const DevView = React.lazy(() => import('./views/DevView').then(m => ({ default: m.DevView })))
-// @ant-design/plots is heavy and only the Analytics tab needs it.
-const AnalyticsView = React.lazy(() => import('./views/AnalyticsView').then(m => ({ default: m.AnalyticsView })))
+// Analytics is no longer a top-level tab — it's a per-host drawer off the Logs
+// tab (LogsView lazy-loads it there, keeping the heavy @ant-design/plots chunk
+// out of the initial bundle just the same).
 // Modals + the (large) Settings drawer — mounted only once their open state trips.
 const TransferModal = React.lazy(() => import('./views/TransferModal').then(m => ({ default: m.TransferModal })))
 const CopyKeyModal = React.lazy(() => import('./views/CopyKeyModal').then(m => ({ default: m.CopyKeyModal })))
@@ -75,7 +75,7 @@ import {
 } from './sidebarGroups'
 import { FeaturesContext, AI_ONLY_VIEWS, visibleNavTabs, type Features } from './features'
 
-type ViewKey = 'console' | 'specs' | 'history' | 'logs' | 'forms' | 'marketplace' | 'schedules' | 'triggers' | 'rota' | 'analytics' | 'improve' | 'evals' | 'dev'
+type ViewKey = 'console' | 'specs' | 'history' | 'logs' | 'forms' | 'marketplace' | 'schedules' | 'triggers' | 'rota' | 'improve' | 'evals' | 'dev'
 
 // Context-window fill of the active chat's latest turn (runspec:context_estimate).
 // total_tokens is exact (from the model's usage); bucket tokens are estimates that
@@ -176,9 +176,6 @@ export default function App() {
   // mount-time value otherwise).
   const viewRef = useRef(view)
   useEffect(() => { viewRef.current = view }, [view])
-  // Analytics is lazy-loaded; mount it on first visit, then keep it mounted so
-  // its scanned data survives tab switches (without eager-loading the chunk).
-  const [analyticsVisited, setAnalyticsVisited] = useState(false)
   const [isDark, setIsDark] = useState(() => localStorage.getItem('theme') !== 'light')
   const [autoSwitch, setAutoSwitch] = useState(() => localStorage.getItem('autoSwitch') !== 'false')
   // Which sidebar host groups are collapsed: a per-group override map plus the
@@ -246,8 +243,8 @@ export default function App() {
   // The lazy always-mounted tab views (Triggers/History/Logs/Specs) mount on
   // first visit and stay mounted after (display toggle), so their fetched data +
   // pending-approval state survive tab switches — but they stay out of the
-  // first-paint bundle until then. Mirrors the settingsVisited / analyticsVisited
-  // latch; a ref (not state) since latching never needs to force a re-render (the
+  // first-paint bundle until then. Mirrors the settingsVisited latch; a ref (not
+  // state) since latching never needs to force a re-render (the
   // `view` state change that reveals a tab already triggers one).
   const viewsVisited = useRef<Set<string>>(new Set(['console']))
   viewsVisited.current.add(view)
@@ -474,7 +471,6 @@ export default function App() {
     return () => clearInterval(t)
   }, [])
 
-  useEffect(() => { if (view === 'analytics') setAnalyticsVisited(true) }, [view])
   // An AI-only tab can't stay selected once the flag resolves to off.
   useEffect(() => { if (!aiEnabled && AI_ONLY_VIEWS.has(view)) setView('console') }, [aiEnabled, view])
 
@@ -870,7 +866,6 @@ export default function App() {
     },
     { key: 'history'   as ViewKey, label: 'History',   icon: <HistoryOutlined /> },
     { key: 'logs'      as ViewKey, label: 'Logs',      icon: <FileTextOutlined /> },
-    { key: 'analytics' as ViewKey, label: 'Analytics', icon: <BarChartOutlined /> },
     { key: 'improve'   as ViewKey, label: 'Improve',   icon: <BulbOutlined /> },
     { key: 'evals'     as ViewKey, label: 'Evals',     icon: <ExperimentOutlined /> },
     { key: 'specs'     as ViewKey, label: 'Specs',     icon: <AppstoreOutlined /> },
@@ -1535,18 +1530,6 @@ export default function App() {
                     </Suspense>
                   </div>
                 )}
-                {/* Analytics is lazy-loaded (heavy plots chunk). Mount it on first
-                    visit, then keep it mounted (display toggle) so its scanned data
-                    survives tab switches and it doesn't re-run the fleet scan on
-                    every return; its poll is gated on `active` so it only runs
-                    while visible. */}
-                {analyticsVisited && (
-                  <div className="rs-view" style={{ display: view === 'analytics' ? 'block' : 'none', flex: 1, overflow: 'auto' }}>
-                    <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin size="large" /></div>}>
-                      <AnalyticsView selectedHost={selectedHost} activeScope={activeScope} active={view === 'analytics'} />
-                    </Suspense>
-                  </div>
-                )}
                 {/* Specs is a full-height master/detail inspector — its own flex
                     block (not the shared overflow:auto one) so each pane scrolls
                     independently. Lazy-loaded, so it mounts on first visit and
@@ -1558,7 +1541,7 @@ export default function App() {
                     </Suspense>
                   </div>
                 )}
-                {view !== 'console' && view !== 'triggers' && view !== 'history' && view !== 'analytics' && view !== 'logs' && view !== 'specs' && (
+                {view !== 'console' && view !== 'triggers' && view !== 'history' && view !== 'logs' && view !== 'specs' && (
                   <div className="rs-view" style={{ flex: 1, overflow: 'auto' }}>
                     <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin size="large" /></div>}>
                       {view === 'forms'     && <FormsView runnables={runnables} hosts={hosts} selectedHost={selectedHost} activeScope={activeScope} onRunRunnable={handleRunRunnable} pendingForm={pendingForm} onPendingFormClear={() => setPendingForm(null)} runbooks={runbooks} onOpenRunbook={handleOpenRunbook} savedRuns={savedRuns} onOpenSavedRun={handleOpenSavedRun} />}

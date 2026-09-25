@@ -778,6 +778,12 @@ export const mockApi: BridgeApi = {
 
   get_history: async (_host, _runnable) => MOCK_HISTORY,
   get_history_all: async (_since_days) => MOCK_HISTORY,
+  history_targets: async () => {
+    const hosts = [...new Set(MOCK_HISTORY.map(h => h.host))]
+    return ['local', ...hosts.filter(h => h !== 'local')]
+  },
+  get_history_slim: async (host, _since_days) =>
+    MOCK_HISTORY.filter(h => h.host === host).map(({ logLines: _l, ...r }) => ({ ...r, logLines: [] })),
   get_run_detail: async (_host, run_id) => {
     const r = MOCK_HISTORY.find(h => h.runId === run_id)
     return { logLines: r?.logLines ?? [] }

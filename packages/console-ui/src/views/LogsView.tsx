@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
 import {
   Table, Tag, Typography, Button, Tooltip, message, Modal, Drawer,
   Input, InputNumber, Switch, Form, Empty, Spin, Alert, Popconfirm,
 } from 'antd'
 import {
   ReloadOutlined, DeleteOutlined, InboxOutlined, EyeOutlined, FolderOutlined,
+  BarChartOutlined,
 } from '@ant-design/icons'
 import type { ColumnType } from 'antd/es/table'
 import {
@@ -14,11 +15,21 @@ import {
 import { LogStream } from '../components/LogStream'
 import { MONO_FONT } from '../ThemeContext'
 
+// Analytics is a per-host drill off the Logs tab (not a standalone tab): the
+// operator opens a host's disk usage here, then its run analytics in a drawer,
+// which reuses the SSH connection the Logs read just warmed. Lazy so the heavy
+// @ant-design/plots chunk only loads when the drawer is first opened.
+const AnalyticsView = lazy(() =>
+  import('./AnalyticsView').then(m => ({ default: m.AnalyticsView })),
+)
+
 const { Title, Text } = Typography
 
-// The backend surfaces the shared home fallback (~/logs) as its own inventory
-// entry under this sentinel group id — never folded into a venv, so a per-venv
-// prune can't touch it. Distinguished in the UI so it reads as "shared", not a venv.
+// The backend surfaces the per-user home fallback dir (~/logs) as its own
+// inventory entry under this sentinel group id — never folded into a venv, so a
+// per-venv prune can't touch it. It's personal to the login user on this host
+// (used when a venv's own logs dir isn't writable); the venv dirs are the ones a
+// shared venv's users all write to. Badged "home" in the UI, not "shared".
 const HOME_GROUP = '~/logs'
 
 function humanSize(n: number | undefined): string {
@@ -57,7 +68,10 @@ interface MaintTarget {
 interface MaintModalProps {
   target: MaintTarget | null
   onClose: () => void
-  onApplied: () => void
+  // Passes the host that was actually acted on (frozen at modal open), so the
+  // parent refreshes that host's inventory — not whatever host the sidebar
+  // happens to show now (which could differ if it was switched mid-modal).
+  onApplied: (actedHost: string) => void
 }
 
 function MaintenanceModal({ target, onClose, onApplied }: MaintModalProps) {
@@ -67,6 +81,10 @@ function MaintenanceModal({ target, onClose, onApplied }: MaintModalProps) {
   const [gzip, setGzip] = useState(true)
   const [busy, setBusy] = useState(false)
   const [preview, setPreview] = useState<string | null>(null)
+  // Surfaced *inside* the modal (not just a toast) so a failure — most often an
+  // older remote runspec that can't scope the prune — is visible next to the
+  // button, instead of the modal appearing to "do nothing".
+  const [error, setError] = useState<string | null>(null)
 
   // Reset form whenever a fresh target opens the modal.
   useEffect(() => {
@@ -75,6 +93,7 @@ function MaintenanceModal({ target, onClose, onApplied }: MaintModalProps) {
     setMaxTotalSize('')
     setGzip(true)
     setPreview(null)
+    setError(null)
     setBusy(false)
   }, [target])
 
@@ -88,28 +107,30 @@ function MaintenanceModal({ target, onClose, onApplied }: MaintModalProps) {
 
   const run = async (dryRun: boolean) => {
     setBusy(true)
+    setError(null)
+    setPreview(null)
     try {
       if (verb === 'prune') {
         const r = await bridge.logs_prune(host, group, runnable, olderThan.trim() || undefined, maxFiles ?? undefined, maxTotalSize.trim() || undefined, dryRun)
-        if (!r.ok) { message.error(r.error || 'prune failed'); return }
+        if (!r.ok) { setError(r.error || 'Prune failed.'); return }
         if (dryRun) {
           setPreview(`${r.count ?? 0} file(s) would be deleted — ${humanSize(r.freed_bytes)} freed.`)
         } else {
           message.success(`Deleted ${r.count ?? 0} file(s) — ${humanSize(r.freed_bytes)} freed`)
-          onApplied(); onClose()
+          onApplied(host); onClose()
         }
       } else {
         const r = await bridge.logs_compact(host, group, runnable, olderThan.trim() || undefined, gzip, dryRun)
-        if (!r.ok) { message.error(r.error || 'compact failed'); return }
+        if (!r.ok) { setError(r.error || 'Compact failed.'); return }
         if (dryRun) {
           setPreview(`${r.compacted ?? 0} file(s) would roll into ${r.archives?.length ?? 0} archive(s).`)
         } else {
           message.success(`Compacted ${r.compacted ?? 0} file(s) into ${r.archives?.length ?? 0} archive(s)`)
-          onApplied(); onClose()
+          onApplied(host); onClose()
         }
       }
     } catch (e) {
-      message.error(String(e))
+      setError(String(e))
     } finally {
       setBusy(false)
     }
@@ -171,6 +192,9 @@ function MaintenanceModal({ target, onClose, onApplied }: MaintModalProps) {
 
       {preview && (
         <Alert type="info" showIcon style={{ marginTop: 8 }} message={preview} />
+      )}
+      {error && (
+        <Alert type="error" showIcon style={{ marginTop: 8 }} message={error} />
       )}
       {!hasPolicy && (
         <Text type="secondary" style={{ fontSize: 12 }}>
@@ -235,6 +259,7 @@ export function LogsView({ selectedHost, activeScope, active }: LogsViewProps) {
   const [loading, setLoading] = useState(false)
   const [maintTarget, setMaintTarget] = useState<MaintTarget | null>(null)
   const [viewTarget, setViewTarget] = useState<ViewTarget | null>(null)
+  const [analyticsOpen, setAnalyticsOpen] = useState(false)
 
   const host = selectedHost || 'local'
 
@@ -248,7 +273,9 @@ export function LogsView({ selectedHost, activeScope, active }: LogsViewProps) {
 
   // Switching host drops the old host's venvs so a switch never briefly shows
   // another host's inventory (and the spinner shows while the new one loads).
-  useEffect(() => { setVenvs([]) }, [host])
+  // Also close the per-host Analytics drawer so it can't show the old host's
+  // charts under the new host.
+  useEffect(() => { setVenvs([]); setAnalyticsOpen(false) }, [host])
 
   // The view stays mounted across tab switches (App toggles display), so venvs
   // persist — returning shows the inventory instantly. The logs_status SSH call
@@ -322,6 +349,9 @@ export function LogsView({ selectedHost, activeScope, active }: LogsViewProps) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
         <Title level={5} style={{ margin: 0 }}>Logs — {host}</Title>
         <Button size="small" icon={<ReloadOutlined />} onClick={refresh} loading={loading}>Refresh</Button>
+        <Tooltip title="Run analytics for this host — charts, success rate, durations and top runnables, scanned over the connection this tab just warmed">
+          <Button size="small" icon={<BarChartOutlined />} onClick={() => setAnalyticsOpen(true)}>Analytics</Button>
+        </Tooltip>
         <Text type="secondary" style={{ fontSize: 13 }}>
           Per-invocation audit logs ({'store = "per-run"'}) — view, compact, and prune per venv.
         </Text>
@@ -338,8 +368,8 @@ export function LogsView({ selectedHost, activeScope, active }: LogsViewProps) {
               <FolderOutlined style={{ color: 'var(--rs-text-muted)' }} />
               <Text strong style={{ fontFamily: MONO_FONT }}>{v.group}</Text>
               {v.group === HOME_GROUP && (
-                <Tooltip title="The shared home fallback dir (~/logs) — used when a venv's own logs dir isn't writable. Not a venv: pruning here affects only ~/logs, never a venv's logs.">
-                  <Tag>shared</Tag>
+                <Tooltip title="Your home log dir (~/logs) — the per-user fallback runspec writes to when a venv's own logs dir isn't writable. Personal to your login on this host (the venv dirs above are the shared ones); pruning here affects only ~/logs.">
+                  <Tag>home</Tag>
                 </Tooltip>
               )}
               {v.ok ? (
@@ -377,8 +407,31 @@ export function LogsView({ selectedHost, activeScope, active }: LogsViewProps) {
         ))
       )}
 
-      <MaintenanceModal target={maintTarget} onClose={() => setMaintTarget(null)} onApplied={refresh} />
+      <MaintenanceModal
+        target={maintTarget}
+        onClose={() => setMaintTarget(null)}
+        // Refresh only when the host that was acted on is still the one in view,
+        // so a mid-modal host switch can't paint the acted host's inventory under
+        // a different host's title.
+        onApplied={(actedHost) => { if (actedHost === host) refresh() }}
+      />
       <StreamDrawer target={viewTarget} onClose={() => setViewTarget(null)} />
+
+      <Drawer
+        open={analyticsOpen}
+        onClose={() => setAnalyticsOpen(false)}
+        // Match the merged-stream drawer's wide, responsive panel — the dashboard
+        // needs the room for its chart grid.
+        width={Math.min(1500, Math.max(720, window.innerWidth - 80))}
+        title={<span>Analytics — {host}</span>}
+        // Unmount on close so the plots chunk isn't kept live in the background,
+        // and a reopen re-scans fresh.
+        destroyOnClose
+      >
+        <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 60 }}><Spin /></div>}>
+          <AnalyticsView selectedHost={host} activeScope={activeScope} active={analyticsOpen} />
+        </Suspense>
+      </Drawer>
     </div>
   )
 }

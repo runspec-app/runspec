@@ -8,6 +8,42 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.284.0] — 2026-09-25
+
+### Changed
+
+- **History loads incrementally, host by host — one slow host no longer blocks
+  the whole tab.** The tab used a single fleet-wide `get_history_all` that joined
+  on the slowest connected host before showing anything. It now reads each host
+  on its own (`history_targets` → a `get_history_slim` per host) and renders each
+  host's runs the moment they arrive, so a slow or offline host adds only its own
+  latency. A **per-host fetch strip** below the search box shows each host's run
+  count and fetch time (amber when slow, red on error) — so a slow SSH connection
+  is visible instead of hidden inside one spinner. A failing host is isolated: the
+  rest still render, and it's flagged in the strip.
+- **Analytics moved from a top-level tab into a per-host drill on the Logs tab.**
+  Open a host's disk usage on the Logs tab, then its run analytics from the
+  **Analytics** button there — the dashboard reuses the SSH connection the Logs
+  read just warmed (the standalone tab paid a cold connection unless you'd visited
+  Logs for that host first). The heavy charts chunk still loads lazily, only when
+  the drawer is first opened.
+
+### Fixed
+
+- **The `~/logs` entry on the Logs tab is badged "home", not "shared".** `~/logs`
+  is the per-user home fallback (written to when a venv's own logs dir isn't
+  writable); the venv dirs are the shared ones. The old "shared" badge was
+  inverted. Tooltip corrected to match.
+- **A failed prune/compact now shows the reason inside the modal, not just as a
+  toast.** Most often this is a remote host still on `runspec < 0.56` that can't
+  scope the delete (it fails safely — nothing deleted); the modal used to look
+  like it "did nothing." The error is now an alert next to the buttons.
+- **Prune/compact refreshes the host it acted on.** The post-apply refresh closed
+  over the *current* sidebar host, so switching hosts while the modal was open
+  could repaint the acted host's inventory under a different host's title. It now
+  refreshes only when the acted host is still the one in view.
+
+
 ## [0.283.0] — 2026-09-24
 
 ### Fixed

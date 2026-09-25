@@ -417,6 +417,50 @@ class TestGetHistoryAll(unittest.TestCase):
         self.assertEqual([r["host"] for r in out], ["prod-1", "local"])
 
 
+class TestHistoryTargets(unittest.TestCase):
+    def test_local_first_then_connected_remotes_only(self) -> None:
+        # The History tab fetches these one at a time: local always leads, only
+        # connected remotes follow (a disconnected one is skipped so it can't
+        # hang the tab), and a stray 'local' host entry never duplicates.
+        b = _make_bridge()
+        b._hosts = [
+            {"name": "prod-1", "ssh": "u@h1"},
+            {"name": "prod-2", "ssh": "u@h2"},  # disconnected → excluded
+            {"name": "local"},  # must not duplicate the synthetic local
+        ]
+        b._connected_cache = {"prod-1": True, "prod-2": False}
+        self.assertEqual(b.history_targets(), ["local", "prod-1"])
+
+
+class TestGetHistorySlim(unittest.TestCase):
+    def test_slims_and_keeps_runnable_runs_only(self) -> None:
+        # One host's rows: slim (heavy fields dropped, logLines shape kept empty),
+        # runnable runs only (an agent turn is dropped), window threaded through.
+        b = _make_bridge()
+        rows = [
+            {
+                "host": "local",
+                "ts": "2026-03-01T00:00:00",
+                "kind": "runnable",
+                "logLines": [{"ts": "x", "level": "INFO", "message": "hi"}],
+                "extra": {"a": 1},
+            },
+            {
+                "host": "local",
+                "ts": "2026-02-01T00:00:00",
+                "kind": "agent",
+                "logLines": [],
+            },
+        ]
+        with patch.object(b, "get_history", return_value=rows) as m:
+            out = b.get_history_slim("local", since_days=7)
+        m.assert_called_once_with("local", since_days=7)
+        self.assertEqual(len(out), 1)  # the agent turn is dropped
+        self.assertEqual(out[0]["logLines"], [])  # heavy lines stripped, shape kept
+        self.assertNotIn("extra", out[0])  # analytics-only field stripped
+        self.assertEqual(out[0]["host"], "local")
+
+
 class TestGetAnalyticsRemote(unittest.TestCase):
     def test_remote_merge_and_partial(self) -> None:
         b = _make_bridge()

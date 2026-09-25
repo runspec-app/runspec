@@ -27,6 +27,15 @@ const RANGE_OPTIONS = [
 
 const { Title, Text } = Typography
 
+// Per-host fetch state for the strip below the search box — makes a slow or
+// offline host visible instead of hiding inside one fleet-wide spinner.
+type HostFetch = { status: 'loading' | 'done' | 'error'; ms?: number; count?: number; error?: string }
+// Cap the merged, sorted table so a large fleet (each host caps its own read)
+// can't build an unbounded row list; the table paginates within this.
+const MERGED_CAP = 500
+const fmtMs = (ms?: number): string => (ms == null ? '—' : ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`)
+const slowMs = (ms?: number): boolean => (ms ?? 0) >= 1500
+
 const SOURCE_BADGE: Record<string, { label: string; color: string; title: string }> = {
   env:          { label: 'env',      color: 'blue',    title: 'Value came from an environment variable' },
   runspec_env:  { label: '.env',     color: 'purple',  title: 'Value came from the .runspec_env file' },
@@ -263,7 +272,12 @@ interface HistoryViewProps {
 }
 
 export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeScope, onScopeToggle, active }: HistoryViewProps) {
-  const [records, setRecords] = useState<HistoryRecord[]>([])
+  // History reads one host at a time (local + every connected remote) and merges
+  // the results, so each host renders as it arrives. recordsByHost holds each
+  // host's slim rows; hostStatus/targets drive the per-host fetch strip.
+  const [recordsByHost, setRecordsByHost] = useState<Record<string, HistoryRecord[]>>({})
+  const [hostStatus, setHostStatus] = useState<Record<string, HostFetch>>({})
+  const [targets, setTargets] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
   // History spans the whole fleet — the local host plus every connected remote —
   // so automated runs (scheduled/trigger runnable runs on their own targets, and
@@ -283,39 +297,63 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
 
   // The view stays mounted across tab switches (App toggles display), so records
   // persist — returning shows the last data instantly. Reads only happen while
-  // visible. The backend read is now cheap (bounded newest-N + mtime cache), so
-  // the primary refresh is event-driven: a completed run fires runspec:run_end,
-  // and a debounced silent refetch pulls just the changed file. A slow fallback
-  // poll (25 s) catches anything the event path misses (a run on another venv,
-  // a missed event). The spinner shows on the first (re)load only.
+  // visible. History reads the local host plus every *connected* remote, but
+  // **one host at a time** (history_targets → a get_history_slim per host),
+  // rendering each host's runs the moment they arrive: a slow or offline host
+  // adds its own latency, never the whole view's (the old single get_history_all
+  // joined on the slowest host before showing anything). Each host's fetch time
+  // is surfaced in the per-host strip below the search box. Automated runs
+  // (scheduled/trigger runs on their own targets, agent/trigger/schedule turns on
+  // the console host) still surface regardless of the sidebar selection; the Host
+  // column filter narrows within the merged set. Primary refresh is event-driven
+  // (run_end, debounced); a 25 s poll catches anything the event path misses.
   useEffect(() => {
     if (!active) return
     let cancelled = false
     let debounce: ReturnType<typeof setTimeout> | undefined
 
-    // History is host-agnostic: it reads across the local host plus every
-    // connected remote (get_history_all) so automated runs — scheduled/trigger
-    // runnable runs on their own target hosts, and agent/trigger/schedule turns
-    // logged on the console host — show up regardless of the sidebar selection.
-    // (Disconnected remotes are skipped backend-side so an offline host can't
-    // hang the read.) Not scoped to selectedHost, so switching hosts doesn't
-    // re-fan-out; the Host column filter narrows within the loaded set.
-    const fetch = (showSpinner: boolean) => {
-      if (showSpinner) setLoading(true)
-      return bridge.get_history_all(sinceDays)
-        .then(r => { if (!cancelled) setRecords(r) })
-        .catch(() => {})
-        .finally(() => { if (!cancelled) setLoading(false) })
+    const runLoad = async (showSpinner: boolean) => {
+      if (showSpinner) { setLoading(true); setRecordsByHost({}) }
+      let hosts: string[]
+      try { hosts = await bridge.history_targets() } catch { hosts = ['local'] }
+      if (cancelled) return
+      setTargets(hosts)
+      if (showSpinner) {
+        setHostStatus(Object.fromEntries(hosts.map(h => [h, { status: 'loading' as const }])))
+      }
+      // Drop any host that's no longer a target (disconnected since last load) so
+      // its stale rows don't linger in the merge.
+      setRecordsByHost(prev => {
+        const next: Record<string, HistoryRecord[]> = {}
+        for (const h of hosts) if (prev[h]) next[h] = prev[h]
+        return next
+      })
+      if (hosts.length === 0) { setLoading(false); return }
+      let pending = hosts.length
+      for (const name of hosts) {
+        const t0 = performance.now()
+        bridge.get_history_slim(name, sinceDays)
+          .then(rows => {
+            if (cancelled) return
+            setRecordsByHost(prev => ({ ...prev, [name]: rows }))
+            setHostStatus(prev => ({ ...prev, [name]: { status: 'done', ms: Math.round(performance.now() - t0), count: rows.length } }))
+          })
+          .catch(e => {
+            if (cancelled) return
+            setHostStatus(prev => ({ ...prev, [name]: { status: 'error', ms: Math.round(performance.now() - t0), error: String(e) } }))
+          })
+          .finally(() => { if (!cancelled) { pending -= 1; if (pending === 0) setLoading(false) } })
+      }
     }
 
-    fetch(true)
-    const id = setInterval(() => fetch(false), 25000)
+    runLoad(true)
+    const id = setInterval(() => runLoad(false), 25000)
 
     // A run just ended → its run_summary is now on disk. Debounce so a burst of
     // events (a group fan-out) triggers a single refetch. Never shows a spinner.
     const onRunEnd = () => {
       if (debounce) clearTimeout(debounce)
-      debounce = setTimeout(() => { if (!cancelled) fetch(false) }, 750)
+      debounce = setTimeout(() => { if (!cancelled) runLoad(false) }, 750)
     }
     window.addEventListener('runspec:run_end', onRunEnd)
 
@@ -326,6 +364,15 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       window.removeEventListener('runspec:run_end', onRunEnd)
     }
   }, [active, sinceDays])
+
+  // Merge every host's slim rows into one newest-first list (capped so a large
+  // fleet can't build an unbounded table). Recomputes as each host resolves.
+  const records = useMemo<HistoryRecord[]>(() => {
+    const all: HistoryRecord[] = []
+    for (const rows of Object.values(recordsByHost)) all.push(...rows)
+    all.sort((a, b) => (a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0))
+    return all.length > MERGED_CAP ? all.slice(0, MERGED_CAP) : all
+  }, [recordsByHost])
 
   // Fetch a run's log lines the first time its row is expanded — the bulk payload
   // omits them (get_run_detail). Cached by rowKeyOf so a re-expand never refetches;
@@ -521,6 +568,33 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
           />
         </Tooltip>
       </div>
+      {/* Per-host fetch strip — one chip per host with its run count and fetch
+          time (amber when slow, red on error), so a slow SSH connection or an
+          offline host is visible instead of hiding in one fleet-wide spinner.
+          Only shown when reading more than the local host. */}
+      {targets.length > 1 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12, alignItems: 'center' }}>
+          <Text type="secondary" style={{ fontSize: 12 }}>Per-host fetch:</Text>
+          {targets.map(name => {
+            const s = hostStatus[name]
+            const st = s?.status ?? 'loading'
+            const colour = st === 'error' ? '#ff4d4f'
+              : st === 'loading' ? 'var(--rs-text-faint)'
+              : slowMs(s?.ms) ? '#faad14' : 'var(--rs-text-muted)'
+            const detail = st === 'loading' ? '…' : st === 'error' ? 'failed' : `${s?.count ?? 0}·${fmtMs(s?.ms)}`
+            const tip = st === 'error' ? (s?.error || 'fetch failed')
+              : st === 'loading' ? 'fetching…'
+              : `${s?.count ?? 0} run(s) in ${fmtMs(s?.ms)}${slowMs(s?.ms) ? ' — slow' : ''}`
+            return (
+              <Tooltip key={name} title={tip}>
+                <span style={{ fontSize: 12, fontFamily: MONO_FONT, color: colour, border: '1px solid var(--rs-border)', borderRadius: 4, padding: '1px 6px', whiteSpace: 'nowrap' }}>
+                  {name} <span style={{ opacity: 0.7 }}>{detail}</span>
+                </span>
+              </Tooltip>
+            )
+          })}
+        </div>
+      )}
       <Table
         dataSource={filtered}
         columns={columns}

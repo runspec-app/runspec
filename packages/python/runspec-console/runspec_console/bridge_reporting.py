@@ -433,6 +433,45 @@ class ReportingMixin:
         records = [r for r in records if r.get("kind", "runnable") == "runnable"]
         return [self._slim_history_row(r) for r in records[:300]]
 
+    def history_targets(self) -> list[str]:
+        """Ordered hosts the History tab queries one-by-one: ``local`` first,
+        then every *connected* remote (disconnected remotes are skipped, same
+        rule as :meth:`get_history_all`).
+
+        The tab fetches these with per-host :meth:`get_history_slim` calls so it
+        can render each host's runs the moment they arrive and show a per-host
+        timing row — one slow/offline host no longer blocks the whole view (the
+        old ``get_history_all`` joined on the slowest host before returning
+        anything)."""
+        with self._lock:
+            remotes = list(self._hosts)
+            connected = dict(self._connected_cache)
+        names = ["local"]
+        for h in remotes:
+            name = h.get("name")
+            if name and name != "local" and connected.get(name):
+                names.append(name)
+        return names
+
+    def get_history_slim(
+        self, host: str, since_days: int | None = _HISTORY_DEFAULT_DAYS
+    ) -> list[dict[str, Any]]:
+        """One host's slim, runnable-only history rows — the per-host unit the
+        History tab fetches (via :meth:`history_targets`) so it can render each
+        host incrementally instead of waiting on the whole fleet.
+
+        Same row shape and filtering as :meth:`get_history_all` (runnable runs
+        only, heavy per-run fields dropped — see :meth:`_slim_history_row`), just
+        scoped to one host. Reuses :meth:`get_history`, so the full parse-cached
+        rows still back :meth:`get_run_detail` (row-expand stays a cache hit —
+        the slim shape is only what crosses to the frontend)."""
+        rows = self.get_history(host, since_days=since_days)
+        return [
+            self._slim_history_row(r)
+            for r in rows
+            if r.get("kind", "runnable") == "runnable"
+        ]
+
     def get_run_detail(self, host: str, run_id: str) -> dict[str, Any]:
         """Heavy per-run detail (the recorded ``logLines``) for one run, fetched
         on demand when a History row is expanded — ``get_history_all`` ships slim
