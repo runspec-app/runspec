@@ -8,6 +8,32 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.286.0] — 2026-09-25
+
+### Changed
+
+- **History reads the per-venv runs index where present (runs-index Phase 3, part 2a).**
+  The per-host History read (`get_history_slim`, the path the History tab fetches
+  via `history_targets`) now queries the venv's `runspec_runs.db` (`runspec`
+  0.57.0) — an **indexed read** — instead of streaming and parsing the JSON-lines
+  logs, so a remote host's listing is one small `SELECT` over SSH rather than a
+  log stream. Local venvs read the DB in-process via `runsdb.list_runs`; remote
+  venvs read it with a single `{venv}/bin/python -c` stdlib-`sqlite3` query
+  (`mode=ro`, **no remote runspec import**, design §9).
+- **Logs stay the source of truth — no run is ever hidden.** The read is a
+  **per-venv union**: a venv with a populated index uses it; any venv without one
+  (or with an empty/corrupt DB, or on a host with no index at all) is **log-parsed
+  exactly as before**. A best-effort-dropped index row is still recovered by the
+  log parse (and permanently by `runspec history reindex`).
+- The DB rows map to the **identical `HistoryRecord` shape** a log parse produces
+  (same `id = md5(run_id+runnable)` so a DB row and a parsed row collapse to one),
+  so the frontend is unchanged. The full `get_history` + `get_run_detail`
+  (row-expand) stay log-parse-based, so expanding a row still fetches its
+  `logLines` from the file (the index carries none). `get_history_all` and the
+  Analytics scan are unchanged in this part.
+
+The live "what's running" view (running rows) is part 2b.
+
 ## [0.285.0] — 2026-09-25
 
 ### Added

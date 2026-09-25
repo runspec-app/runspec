@@ -7,6 +7,20 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.57.1] — 2026-09-25
+
+### Fixed
+
+- **Runs index (`runspec_runs.db`) write path crashed on Windows.**
+  `runsdb._ensure_group_writable` called `os.getuid()` — which doesn't exist on
+  Windows — guarded only by `contextlib.suppress(OSError)` (an `AttributeError`
+  isn't an `OSError`). On a fresh DB create that `AttributeError` escaped `_connect`
+  and was swallowed by `begin_run`'s best-effort guard, so the `running` start row
+  was never written and `finish_run`'s fallback insert recorded an **empty
+  runnable**. The group-writable `chmod` is POSIX-only (no group bit / uid on
+  Windows), so it is now skipped there (`hasattr(os, "getuid")` guard). Surfaced by
+  the console's Windows CI exercising `begin_run`; core CI runs on Linux only.
+
 ## [0.57.0] — 2026-09-25
 
 ### Added

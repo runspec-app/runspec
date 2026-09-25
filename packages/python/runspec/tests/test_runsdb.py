@@ -178,6 +178,17 @@ class TestPermsAndBestEffort:
             if p.exists():
                 assert p.stat().st_mode & statmod.S_IWGRP, f"{p.name} not group-writable"
 
+    def test_begin_run_survives_without_getuid(self, logs_dir, monkeypatch):
+        # Windows has no os.getuid; the group-writable chmod is POSIX-only and must
+        # be skipped, not crash the fresh-DB create in begin_run. Before the guard,
+        # os.getuid() raised AttributeError (not caught by suppress(OSError)), so the
+        # start row was dropped and finish_run's fallback recorded an empty runnable.
+        monkeypatch.delattr(runsdb.os, "getuid", raising=False)
+        runsdb.begin_run(logs_dir, _row(run_id="w1", runnable="backup"))
+        runsdb.finish_run(logs_dir, "w1", exit_code=0, duration_ms=1, status="completed")
+        r = [x for x in runsdb.list_runs(logs_dir, live=False) if x["run_id"] == "w1"][0]
+        assert r["runnable"] == "backup"  # start row landed → runnable preserved
+
     def test_best_effort_on_unwritable_never_raises(self):
         # No exception must escape into the run for an unwritable location.
         runsdb.begin_run(Path("/proc/nonexistent-runsdb"), _row())

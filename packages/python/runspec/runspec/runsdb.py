@@ -187,7 +187,14 @@ def _connect(path: Path, *, readonly: bool = False) -> sqlite3.Connection | None
 def _ensure_group_writable(path: Path, fresh: bool) -> None:
     """chmod the DB 0664 on create, or heal an owned DB that isn't group-writable
     yet (e.g. written by a pre-index runspec). Best-effort; a file we don't own
-    can't be chmod'd and doesn't need to be (the creator already did)."""
+    can't be chmod'd and doesn't need to be (the creator already did).
+
+    POSIX-only: there is no group-write bit or ``os.getuid`` on Windows, so this
+    is a no-op there. (Without the guard ``os.getuid()`` raised ``AttributeError``
+    — not caught by ``suppress(OSError)`` — which broke ``begin_run`` on a fresh
+    Windows DB and dropped the start row.)"""
+    if not hasattr(os, "getuid"):
+        return
     with contextlib.suppress(OSError):
         st = path.stat()
         # group-write bit missing (or a fresh file), and we own it → make it 0664

@@ -274,6 +274,53 @@ def _remote_log_script(
     return f"for f in {patterns}; do {body}done 2>/dev/null"
 
 
+# ── DB-backed History read: a standalone stdlib program (no runspec import) ──────
+# Runs as `{venv}/bin/python -c <this> <json-arg>` on the host (design §9). It reads
+# each venv's runspec_runs.db in mode=ro (sees uncheckpointed WAL rows cross-process,
+# per docs §12) and emits, per input dir, {has_db, rows} — finished runs only, newest
+# first, windowed. Keyed by the *input* dir string (so the console maps a row back to
+# its venv group), but opened via expanduser so "~/logs" resolves on the host. Raw
+# rows only; the console maps them to the HistoryRecord shape via db_row_to_record,
+# so the shape logic lives in one tested place, not duplicated in this snippet.
+_DB_READ_SNIPPET = r"""
+import json, os, sqlite3, sys
+a = json.loads(sys.argv[1])
+since = a.get("since")
+limit = int(a.get("limit") or 500)
+out = {}
+for d in a.get("dirs", []):
+    db = os.path.join(os.path.expanduser(d), "runspec_runs.db")
+    e = {"has_db": os.path.exists(db), "rows": []}
+    if e["has_db"]:
+        try:
+            con = sqlite3.connect("file:%s?mode=ro" % db, uri=True, timeout=2.0)
+            con.row_factory = sqlite3.Row
+            q = "SELECT * FROM runs WHERE status != 'running'"
+            pr = []
+            if since:
+                q += " AND start_ts >= ?"; pr.append(since)
+            q += " ORDER BY start_ts DESC LIMIT ?"; pr.append(limit)
+            e["rows"] = [{k: r[k] for k in r.keys()} for r in con.execute(q, pr).fetchall()]
+            con.close()
+        except Exception as ex:
+            e["error"] = str(ex); e["rows"] = []
+    out[d] = e
+sys.stdout.write(json.dumps(out))
+"""
+
+
+def db_read_cmd(
+    python_path: str, dirs: list[str], since: str | None, limit: int
+) -> str:
+    """The command to read the per-venv runs index on a remote host —
+    ``{python} -c <snippet> <json-arg>`` (stdlib ``sqlite3`` only, ``mode=ro``, no
+    runspec import). ``dirs`` are the venv logs dirs (+ ``~/logs``); the snippet
+    expands ``~`` and keys its JSON result by the input dir. ``since`` is an ISO
+    lower bound on ``start_ts``."""
+    arg = json.dumps({"dirs": list(dirs), "since": since, "limit": int(limit)})
+    return f"{shlex.quote(python_path)} -c {shlex.quote(_DB_READ_SNIPPET)} {shlex.quote(arg)}"
+
+
 # The historic SSH key comment. ``key_marker()`` returns the live one (the
 # white-label package name); this default is what an unbranded install uses and
 # what keys pushed before the marker followed the package name carry. Never
@@ -563,6 +610,62 @@ def _record_kind(extra: dict[str, Any]) -> str:
     if not extra.get("builtin"):
         return "runnable"
     return "agent" if extra.get("tool") == "chat" else "tool"
+
+
+def db_row_to_record(row: dict[str, Any], group: str, host: str) -> dict[str, Any]:
+    """Map a raw ``runspec_runs.db`` row → the HistoryRecord shape :func:`_parse_log`
+    emits, so History reads identically whether a row came from the runs index or a
+    log parse (Phase 1 mapped the DB columns 1:1 from the ``run_summary`` fields).
+
+    The index doesn't store the heavy per-run ``logLines`` (fetched on expand via
+    ``get_run_detail``, which log-parses), so they're ``[]`` — matching the slim
+    shape the History tab already ships. ``group`` is the venv the DB lives in.
+    ``exit_code`` is NULL for a reaped ``crashed`` row, so it maps to non-zero
+    (reads as failed, never a false success). ``args`` is stored as a JSON string."""
+    run_id = str(row.get("run_id") or "")
+    runnable = str(row.get("runnable") or "")
+    stable_id = hashlib.md5((run_id + runnable).encode()).hexdigest()[:12]
+    status = str(row.get("status") or "")
+    exit_code = row.get("exit_code")
+    if exit_code is None:
+        exit_code = 0 if status == "completed" else 1  # crashed/running → non-zero
+    args = row.get("args")
+    if isinstance(args, str):
+        try:
+            args = json.loads(args) if args.strip() else {}
+        except (ValueError, TypeError):
+            args = {}
+    if not isinstance(args, dict):
+        args = {}
+    command = str(row.get("command") or "")
+    return {
+        "id": stable_id,
+        "runId": run_id,
+        "runnable": runnable,
+        "group": group,
+        "host": host,
+        "operator": row.get("user") or "",
+        "runAs": row.get("user_target") or "",
+        "exitCode": int(exit_code),
+        "durationMs": int(row.get("duration_ms") or 0),
+        # The record's ts is the run_summary (end) ts; the index stores it as
+        # end_ts, falling back to start_ts for a row that lost its finalize.
+        "ts": str(row.get("end_ts") or row.get("start_ts") or ""),
+        "args": args,
+        "argSources": {},
+        # DB stores the subcommand path space-joined; split back to the list a
+        # History rerun reconstructs the invocation from.
+        "commandPath": command.split() if command else [],
+        "logLines": [],
+        "initiatedBy": "llm" if row.get("agent") else "user",
+        "trigger": str(row.get("trigger") or ""),
+        # Phase 1's index column is `skill` (pre-runbook-rename); it holds the
+        # runbook id the run_summary carried.
+        "runbook": str(row.get("skill") or row.get("runbook") or ""),
+        # The index only holds real runnable runs (core's configure_logging/atexit
+        # hooks; chat turns write run_summary via the console, not the core DB path).
+        "kind": "runnable",
+    }
 
 
 def _parse_log(

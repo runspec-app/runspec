@@ -462,15 +462,183 @@ class ReportingMixin:
 
         Same row shape and filtering as :meth:`get_history_all` (runnable runs
         only, heavy per-run fields dropped — see :meth:`_slim_history_row`), just
-        scoped to one host. Reuses :meth:`get_history`, so the full parse-cached
-        rows still back :meth:`get_run_detail` (row-expand stays a cache hit —
-        the slim shape is only what crosses to the frontend)."""
+        scoped to one host.
+
+        Reads the per-venv **runs index** (``runspec_runs.db``) where present — an
+        indexed query instead of a full log scan — falling back to the log parse
+        for any venv without a (populated) DB, and entirely to the log parse when
+        no venv has one (or the DB read fails). The full :meth:`get_history` +
+        :meth:`get_run_detail` stay log-parse-based, so a row-expand still fetches
+        ``logLines`` from the file (the index carries none)."""
+        try:
+            recs = self._slim_history_db(host, since_days)
+            if recs is not None:
+                return recs
+        except Exception:
+            logger.exception(
+                "history: DB slim read failed for %s; using log parse", host
+            )
         rows = self.get_history(host, since_days=since_days)
         return [
             self._slim_history_row(r)
             for r in rows
             if r.get("kind", "runnable") == "runnable"
         ]
+
+    def _history_db_dir_groups(self, entry: dict[str, Any]) -> list[tuple[Path, str]]:
+        """``(logs Path, venv group)`` per venv + the ``~/logs`` home dir — the
+        same set :meth:`get_history`'s local read scans, reused to split the read
+        per venv into "read its DB" vs "log-parse it"."""
+        paths = utils_mod._paths(entry)
+        groups: list[tuple[Path, str]] = [
+            (Path(rp).parent.parent / "logs", hosts_mod.venv_name(rp))
+            for rp in paths
+            if rp
+        ]
+        fallback_group = hosts_mod.venv_name(paths[0]) if paths and paths[0] else ""
+        groups.append((Path.home() / "logs", fallback_group))
+        return groups
+
+    def _db_records_local(
+        self, log_dir: Path, group: str, since_date: str | None, host: str
+    ) -> list[dict[str, Any]] | None:
+        """Finished-run records from one venv's ``runspec_runs.db`` (in-process,
+        ``mode=ro``), or ``None`` when the DB is absent / empty / unreadable — so
+        the caller log-parses that dir instead and never hides a run the logs
+        still hold (best-effort index writes can lag). ``running`` rows are left
+        to the live view (part 2b); History shows finished outcomes."""
+        try:
+            from runspec import runsdb
+        except Exception:
+            return None
+        try:
+            if not runsdb.db_path(log_dir).exists():
+                return None
+            since_iso = f"{since_date}T00:00:00+00:00" if since_date else None
+            rows = runsdb.list_runs(
+                log_dir, since=since_iso, limit=self._HISTORY_CAP, live=False
+            )
+            if not rows:
+                return None
+            return [
+                utils_mod.db_row_to_record(r, group, host)
+                for r in rows
+                if r.get("status") != "running"
+            ]
+        except Exception:
+            return None
+
+    def _slim_history_db(
+        self, host: str, since_days: int | None
+    ) -> list[dict[str, Any]] | None:
+        """Slim, runnable-only History rows read from the per-venv runs index where
+        present, log-parsing any venv without one. Returns ``None`` to signal "no
+        DB path taken here" so :meth:`get_history_slim` uses the full log-parse read
+        (a remote host — the remote DB read is part 2a's follow-on stage — or no
+        venv had a usable DB)."""
+        entry = self._host_entry(host)
+        if entry is None:
+            return []
+        if entry.get("ssh"):
+            return self._slim_history_db_remote(entry, since_days)
+        since_date = self._since_date(since_days)
+        records: list[dict[str, Any]] = []
+        fallback_groups: list[tuple[Path, str]] = []
+        used_db = False
+        seen: set[Path] = set()
+        for log_dir, group in self._history_db_dir_groups(entry):
+            if log_dir in seen:
+                continue
+            seen.add(log_dir)
+            db_recs = self._db_records_local(log_dir, group, since_date, host)
+            if db_recs is None:
+                fallback_groups.append((log_dir, group))
+            else:
+                used_db = True
+                records.extend(db_recs)
+        if not used_db:
+            return None  # nothing indexed → let the caller log-parse the whole host
+        if fallback_groups:
+            files = self._history_files(fallback_groups, _log_globs(None))
+            if since_date:
+                files = [f for f in files if _mtime_iso(f[1])[:10] >= since_date]
+            parsed = self._read_newest(files, host)
+            if since_date:
+                parsed = [r for r in parsed if r.get("ts", "")[:10] >= since_date]
+            records.extend(parsed)
+        records = [r for r in records if r.get("kind", "runnable") == "runnable"]
+        records.sort(key=lambda r: r.get("ts", ""), reverse=True)
+        return [self._slim_history_row(r) for r in records[: self._HISTORY_CAP]]
+
+    def _slim_history_db_remote(
+        self, entry: dict[str, Any], since_days: int | None
+    ) -> list[dict[str, Any]] | None:
+        """Remote counterpart of the local DB read: one ``{venv}/bin/python -c``
+        query (stdlib ``sqlite3``, ``mode=ro``, no remote runspec) reads every venv's
+        ``runspec_runs.db`` in one round-trip; venvs with a populated index use it,
+        and any venv without one is log-parsed inline (its dir streamed) so no run is
+        hidden. Returns ``None`` — meaning "no index here" → :meth:`get_history_slim`
+        uses the existing full remote log-parse — when nothing is indexed or the
+        query fails, so a host without the DB behaves exactly as before."""
+        ssh = entry["ssh"]
+        idf = entry.get("identityFile")
+        host = entry["name"]
+        paths = [rp for rp in utils_mod._paths(entry) if rp]
+        if not paths:
+            return None
+        since_date = self._since_date(since_days)
+        since_iso = f"{since_date}T00:00:00+00:00" if since_date else None
+        primary_group = PurePosixPath(paths[0]).parent.parent.name
+
+        dir_group: dict[str, str] = {}
+        dirs: list[str] = []
+        for rp in paths:
+            vd = str(PurePosixPath(rp).parent.parent / "logs")
+            if vd not in dir_group:
+                dir_group[vd] = PurePosixPath(rp).parent.parent.name
+                dirs.append(vd)
+        if "~/logs" not in dir_group:
+            dir_group["~/logs"] = primary_group
+            dirs.append("~/logs")
+
+        sv_python = str(PurePosixPath(paths[0]).parent / "python")
+        cmd = utils_mod.db_read_cmd(sv_python, dirs, since_iso, self._HISTORY_CAP)
+        try:
+            _, out, _ = self._ssh_run(ssh, cmd, identity_file=idf, timeout=20)
+            results = json.loads(out) if out.strip() else {}
+        except Exception:
+            return None  # snippet unavailable / bad output → full log-parse fallback
+        if not isinstance(results, dict):
+            return None
+
+        records: list[dict[str, Any]] = []
+        fallback_dirs: list[str] = []
+        used_db = False
+        for d in dirs:
+            res = results.get(d) if isinstance(results.get(d), dict) else {}
+            rows = res.get("rows") or []
+            if res.get("has_db") and rows:
+                used_db = True
+                g = dir_group.get(d, primary_group)
+                records.extend(utils_mod.db_row_to_record(r, g, host) for r in rows)
+            else:
+                fallback_dirs.append(d)  # no DB (or empty) → log-parse, never hide
+        if not used_db:
+            return None  # nothing indexed remotely → existing full remote log-parse
+        if fallback_dirs:
+            script = _remote_log_script(
+                fallback_dirs, None, limit=self._HISTORY_CAP + 50
+            )
+            try:
+                _, stdout, _ = self._ssh_run(ssh, script, identity_file=idf, timeout=20)
+                records.extend(self._parse_remote_stream(stdout, host, primary_group))
+            except Exception:
+                logger.exception(
+                    "history: remote DB fallback parse failed for %s", host
+                )
+        records = [r for r in records if r.get("kind", "runnable") == "runnable"]
+        records.sort(key=lambda r: r.get("ts", ""), reverse=True)
+        return [self._slim_history_row(r) for r in records[: self._HISTORY_CAP]]
 
     def get_run_detail(self, host: str, run_id: str) -> dict[str, Any]:
         """Heavy per-run detail (the recorded ``logLines``) for one run, fetched
@@ -592,6 +760,18 @@ class ReportingMixin:
         # framed stream doesn't carry the source dir; correct in the common
         # single-venv case). Lets History's "View full log" drill resolve a venv.
         group = PurePosixPath(paths[0]).parent.parent.name if paths and paths[0] else ""
+        records = self._parse_remote_stream(stdout, entry["name"], group)
+        records.sort(key=lambda r: r.get("ts", ""), reverse=True)
+        return records[: self._HISTORY_CAP]
+
+    def _parse_remote_stream(
+        self, stdout: str, host: str, group: str
+    ) -> list[dict[str, Any]]:
+        """Parse a ``_remote_log_script`` framed stream (a ``\\x00RUNSPEC_LOG:<name>``
+        line per file) into HistoryRecords, tagging each with ``group`` — best-effort,
+        since the frame carries a filename, not the source venv, so a multi-venv
+        host's rows share the primary venv's group (as this read always has). Shared
+        by the full remote read and the DB path's per-venv log-parse fallback."""
         records: list[dict[str, Any]] = []
         current_name: str | None = None
         current_lines: list[str] = []
@@ -599,7 +779,7 @@ class ReportingMixin:
         def _flush() -> None:
             if current_name is not None:
                 for rec in _parse_log_text(
-                    current_name, "\n".join(current_lines), entry["name"]
+                    current_name, "\n".join(current_lines), host
                 ):
                     rec["group"] = group
                     records.append(rec)
@@ -612,8 +792,7 @@ class ReportingMixin:
             else:
                 current_lines.append(line)
         _flush()
-        records.sort(key=lambda r: r.get("ts", ""), reverse=True)
-        return records[: self._HISTORY_CAP]
+        return records
 
     # ── analytics ─────────────────────────────────────────────────────────────
 
