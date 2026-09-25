@@ -7,7 +7,38 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [0.56.0] — 2026-09-24
+## [0.57.0] — 2026-09-25
+
+### Added
+
+- **Per-venv runs index (`runspec_runs.db`) — Phase 1 (core write path).** Core
+  now writes a lifecycle row to a small SQLite index at the start of every
+  invocation (`status = running`) and finalizes it at exit
+  (`completed`/`failed` + exit code + duration), giving an *indexed* run history
+  and a live "what's running" view without parsing log files. It's a **derived
+  index over the audit logs** — the JSON-lines logs stay the source of truth, and
+  `runspec history reindex` rebuilds the DB from them.
+  - Lives **in the run's log dir** (`{sys.prefix}/logs/runspec_runs.db`, falling
+    back to `~/logs` exactly as the log file does), so it rides the `2775` setgid
+    shared-logs dir `create-venv --group` sets up. Core `chmod 0o664`s the DB
+    **before** entering WAL so SQLite makes the `-wal`/`-shm` sidecars
+    group-writable too (multi-writer shared venvs); group ownership comes from the
+    setgid dir.
+  - **Best-effort and never fatal** — WAL + `busy_timeout`; a busy, locked, or
+    unwritable DB never fails or delays a run. **Orphan-safe** — a row a crash left
+    `running` is reaped to `crashed` by pid-liveness (guarded against PID reuse) or
+    a max-age ceiling, and reads liveness-filter, so nothing ever *reads* as
+    running forever. **Bounded** — slim rows + a ring-buffer prune (age + row cap)
+    on the finalize path + `auto_vacuum=INCREMENTAL`.
+  - Configured by **`[config.history]`** (`db` default true; `retention_days` 90,
+    `max_rows` 50000, `max_run_hours` 24); set `db = false` to skip it. Follows the
+    audit-log coverage (writes when `[config.logging]` is configured).
+  - New **`runspec history`** command — `list` (default) / `running` / `prune` /
+    `reindex` / `reap`, with `--runnable`/`--status`/`--since`/`--failed`/`--limit`/
+    `--json`/`--scope`.
+  - New module `runspec/runsdb.py`; public helper `runspec.logs.read_run_summaries`
+    (the reindex source). Design: `docs/design/console-history-db.md`. The console
+    read layer (History/Logs reading the index) is a later phase.
 
 ### Fixed
 

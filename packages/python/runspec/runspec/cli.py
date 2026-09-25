@@ -72,6 +72,7 @@ def main() -> None:
         "jump": cmd_jump,
         "env": cmd_env,
         "logs": cmd_logs,
+        "history": cmd_history,
         "deny": cmd_deny,
     }
 
@@ -902,6 +903,99 @@ def cmd_logs(args: list[str]) -> None:
     except ValueError as exc:
         print(f"✗  {exc}")
         sys.exit(1)
+
+
+_HISTORY_MARK = {"completed": "✓", "failed": "✗", "crashed": "‼", "running": "▶"}
+
+
+def _print_history_table(rows: list[dict[str, Any]]) -> None:
+    if not rows:
+        print("(no runs in the index)")
+        return
+    for r in rows:
+        ts = (r.get("start_ts") or "")[:19].replace("T", " ")
+        status = r.get("status") or ""
+        name = f"{r.get('runnable') or ''} {r.get('command') or ''}".strip()
+        dur = r.get("duration_ms")
+        dur_s = f"{dur / 1000:.2f}s" if isinstance(dur, int) else "—"
+        who = f"{r.get('user') or ''}@{r.get('host') or ''}"
+        exit_part = "" if status == "running" else f" exit={r.get('exit_code')}"
+        print(f"{_HISTORY_MARK.get(status, '·')} {ts}  {status:9} {dur_s:>8}  {name}{exit_part}  [{who}]")
+
+
+def cmd_history(args: list[str]) -> None:
+    """Query or maintain the per-venv runs index (runspec_runs.db)."""
+    from datetime import datetime, timezone
+
+    from runspec.parser import parse as _parse
+
+    parsed = _parse(script_name="runspec", argv=["history"] + args, config_path=_CLI_CONFIG)
+
+    from runspec import logs as _logs
+    from runspec import runsdb
+
+    verb = (parsed.verb.value or "list").lower()
+    if verb not in ("list", "running", "prune", "reindex", "reap"):
+        print(f"✗  Unknown history verb: {verb} (list / running / prune / reindex / reap)")
+        sys.exit(1)
+
+    # Reads span every logs dir by default (scope_dirs → None ⇒ log_dirs());
+    # prune/reindex/reap default to this venv's own dir.
+    destructive = verb in ("prune", "reindex", "reap")
+    dirs = _logs.scope_dirs(parsed.scope.value, destructive=destructive)
+    if dirs is None:
+        dirs = _logs.log_dirs()
+
+    if verb in ("list", "running"):
+        limit = parsed.limit.value or 50
+        since_iso = None
+        if parsed.since.value:
+            since_iso = (datetime.now(timezone.utc) - _logs.parse_duration(parsed.since.value)).isoformat()
+        rows: list[dict[str, Any]] = []
+        for d in dirs:
+            rows.extend(
+                runsdb.list_runs(
+                    d,
+                    since=since_iso,
+                    status=parsed.status.value,
+                    runnable=parsed.runnable.value,
+                    limit=limit,
+                    running_only=(verb == "running"),
+                )
+            )
+        if parsed.failed.value:
+            rows = [r for r in rows if r.get("status") in ("failed", "crashed")]
+        rows.sort(key=lambda r: r.get("start_ts") or "", reverse=True)
+        rows = rows[:limit]
+        if parsed.json.value:
+            for r in rows:
+                print(json.dumps(r, default=str))
+        else:
+            _print_history_table(rows)
+        return
+
+    if verb == "prune":
+        retention_days = 0
+        if parsed.older_than.value:
+            retention_days = max(0, int(_logs.parse_duration(parsed.older_than.value).total_seconds() // 86400))
+        max_rows = parsed.max_rows.value or 0
+        if not retention_days and not max_rows:
+            print("✗  prune needs --older-than (day-granular) and/or --max-rows")
+            sys.exit(1)
+        total = sum(runsdb.prune_now(d, retention_days=retention_days, max_rows=max_rows) for d in dirs)
+        print(f"✓  pruned {total} row(s) from the runs index")
+        return
+
+    if verb == "reap":
+        total = sum(runsdb.reap_now(d) for d in dirs)
+        print(f"✓  reaped {total} orphaned 'running' row(s) → crashed")
+        return
+
+    # reindex — rebuild each dir's index from its run_summary audit records.
+    total = 0
+    for d in dirs:
+        total += runsdb.reindex(d, _logs.read_run_summaries([d]))
+    print(f"✓  reindexed {total} run(s) into the runs index")
 
 
 def cmd_init(args: list[str]) -> None:

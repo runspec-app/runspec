@@ -93,6 +93,7 @@ def configure_logging(
     skill: str = "",
     command_path: list[str] | None = None,
     invocation_args: dict[str, Any] | None = None,
+    history_cfg: dict[str, Any] | None = None,
 ) -> None:
     """
     Configure root logger from normalised [config.logging].
@@ -211,7 +212,12 @@ def configure_logging(
     # controls in [config.logging]; set `summary = false` to drop the record.
     write_record = bool(log_cfg.get("summary", True))
     write_console = bool(log_cfg.get("summary_console", False))
-    if write_record or write_console:
+    # The runs index (runspec_runs.db) is a derived index over the audit log, so
+    # it follows the same coverage: it writes when logging is configured, gated by
+    # [config.history] db (default true, best-effort). See runsdb.py / the design
+    # doc docs/design/console-history-db.md.
+    write_history = bool((history_cfg or {}).get("db", True))
+    if write_record or write_console or write_history:
         user, user_target = _get_invoker()
         _summary_state = {
             "counter": counter,
@@ -236,8 +242,15 @@ def configure_logging(
             "invocation_args": invocation_args or {},
             "write_record": write_record,
             "write_console": write_console,
+            # runs-index (runspec_runs.db) — db_dir/history_cfg are what the atexit
+            # finalize needs; the start row is written just below.
+            "write_history": write_history,
+            "history_cfg": history_cfg or {},
+            "db_dir": log_dir,
         }
         atexit.register(_emit_run_summary)
+        if write_history:
+            _begin_history_row(_summary_state, log_dir, log_path.name)
 
     # Tee sys.stdout so print() calls also land in the file audit log.
     # Handlers above captured the real sys.stdout reference before this swap.
@@ -609,9 +622,45 @@ def _format_summary_line(state: dict[str, Any], duration_ms: int, exit_code: int
     return f"runspec: {runnable} completed in {secs:.2f}s — {events}{user_part}"
 
 
+def _begin_history_row(state: dict[str, Any], log_dir: Path, log_file: str) -> None:
+    """Write the ``running`` row to the per-venv runs index at run start.
+
+    Best-effort and fully isolated (a runsdb import or write failure never
+    affects the run or the rest of logging). The row is finalized by
+    :func:`_emit_run_summary` at exit; an orphaned row (crash/SIGKILL — no atexit)
+    is reaped by pid-liveness later. See runsdb.py."""
+    with contextlib.suppress(Exception):
+        import socket
+
+        from . import runsdb
+
+        runsdb.begin_run(
+            log_dir,
+            {
+                "run_id": state["run_id"],
+                "runnable": state["runnable"],
+                "command": " ".join(state["command_path"]),
+                "status": "running",
+                "start_ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "user": state["user"],
+                "user_target": state["user_target"],
+                "agent": state["agent"],
+                "trigger": state["trigger"],
+                "skill": state.get("skill", ""),
+                "autonomy": state["autonomy"],
+                "pid": os.getpid(),
+                "host": socket.gethostname(),
+                "proc_start": runsdb.proc_start_token(),
+                "log_file": log_file,
+                "args": {k: v["value"] for k, v in state.get("invocation_args", {}).items()},
+            },
+        )
+
+
 def _emit_run_summary() -> None:
-    """atexit hook — emit the summary record to the file (gated by `summary`)
-    and, when `summary_console` is on, one human-readable line to stderr."""
+    """atexit hook — emit the summary record to the file (gated by `summary`),
+    finalize the runs-index row (gated by `write_history`), and, when
+    `summary_console` is on, one human-readable line to stderr."""
     state = _summary_state
     if state is None or state["emitted"]:
         return
@@ -648,6 +697,22 @@ def _emit_run_summary() -> None:
                     "invocation_args": {k: v["value"] for k, v in invocation_args.items()},
                     "arg_sources": {k: v["source"] for k, v in invocation_args.items()},
                 },
+            )
+
+    # Finalize the runs-index row (running → completed/failed + exit code +
+    # duration), then its opportunistic maintenance (reap orphans + ring-prune).
+    # Best-effort and isolated — never affects the run or the rest of exit.
+    if state.get("write_history"):
+        with contextlib.suppress(Exception):
+            from . import runsdb
+
+            runsdb.finish_run(
+                state["db_dir"],
+                state.get("run_id") or "",
+                exit_code=exit_code,
+                duration_ms=duration_ms,
+                status="failed" if (state["exception"] or exit_code != 0) else "completed",
+                cfg=state.get("history_cfg") or {},
             )
 
     # Human-readable echo — opt-in (`summary_console`). Stays on stderr so it

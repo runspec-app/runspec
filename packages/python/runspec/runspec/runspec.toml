@@ -18,6 +18,7 @@ examples = [
   {cmd = "runspec jump user@host",          description = "List tools available on a remote host"},
   {cmd = "runspec env",                    description = "Show the resolved .runspec_env file"},
   {cmd = "runspec logs deploy",            description = "View merged per-invocation logs for a runnable"},
+  {cmd = "runspec history",                description = "Recent runs from the venv's runs index (+ what's running)"},
   {cmd = "runspec deny add --runnable deploy", description = "Disable a runnable in this venv (kill switch)"},
 ]
 
@@ -205,3 +206,29 @@ max-total-size = {type = "str",  description = "Cap total managed size; delete o
 gzip           = {type = "flag", description = "Gzip the archive (compact)", default = false}
 dry-run        = {type = "flag", description = "Show what would change without deleting/archiving (prune/compact)", default = false}
 scope          = {options = ["venv", "home", "all"], description = "Which logs dir(s) to act on: 'venv' ({sys.prefix}/logs, this venv's own), 'home' (~/logs, the shared home fallback), or 'all' (both). Default: prune/compact act on 'venv' only — never the shared ~/logs; status/view show 'all'.", required = false}
+
+[runspec.commands.history]
+description = "Query or maintain the per-venv runs index (runspec_runs.db)"
+autonomy    = "autonomous"
+
+examples = [
+  {cmd = "runspec history",                                    description = "Recent runs, newest first"},
+  {cmd = "runspec history running",                            description = "What's running right now (live, pid-checked)"},
+  {cmd = "runspec history list --runnable deploy --limit 20",  description = "Recent runs of one runnable"},
+  {cmd = "runspec history list --failed --json",               description = "Failed/crashed runs as JSON lines (for jq)"},
+  {cmd = "runspec history prune --older-than 30d",             description = "Drop index rows older than 30 days (this venv)"},
+  {cmd = "runspec history reindex",                            description = "Rebuild the index from the audit logs"},
+  {cmd = "runspec history reap",                               description = "Mark crashed any 'running' row whose process is gone"},
+]
+
+[runspec.commands.history.args]
+verb       = {type = "str", description = "list (default) / running / prune / reindex / reap", position = 1, required = false}
+runnable   = {type = "str", description = "Filter to one runnable (list)", required = false}
+status     = {options = ["running", "completed", "failed", "crashed"], description = "Filter by status (list)", required = false}
+since      = {type = "str", description = "Only runs newer than this, e.g. 1h, 7d (list)", required = false}
+limit      = {type = "int", description = "Max rows to show (list / running)", default = 50}
+failed     = {type = "flag", description = "Only failed/crashed runs (list)", default = false}
+older-than = {type = "str", description = "Age threshold for prune (day-granular), e.g. 30d, 90d", required = false}
+max-rows   = {type = "int", description = "Keep only the newest N rows (prune)", required = false}
+json       = {type = "flag", description = "Emit JSON lines instead of a table (list / running)", default = false}
+scope      = {options = ["venv", "home", "all"], description = "Which logs dir(s): 'venv' ({sys.prefix}/logs), 'home' (~/logs), or 'all'. Reads default to all; prune/reindex/reap default to 'venv'.", required = false}

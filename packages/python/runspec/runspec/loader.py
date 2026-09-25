@@ -55,7 +55,33 @@ def _normalise_config(raw: dict[str, Any]) -> dict[str, Any]:
         "name": raw.get("name"),
         "version": str(raw.get("version", "1")),
         "logging": _normalise_logging(raw.get("logging")),
+        "history": _normalise_history(raw.get("history")),
         "runspec_env": raw.get("runspec_env"),
+    }
+
+
+def _normalise_history(raw: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Normalise [config.history]. Returns None if the section is absent.
+
+    Controls the per-venv runs index (`runspec_runs.db`) — a derived index over
+    the audit log that core writes at run start/finalize so the console History /
+    Logs tabs read an indexed query instead of parsing files, and get a live
+    "what's running" view. See docs/design/console-history-db.md.
+
+    `db` (default true) writes the index; set false to skip it (History falls back
+    to parsing the audit logs). `retention_days` (90) / `max_rows` (50000) bound
+    the ring-buffer prune that keeps the file small; `max_run_hours` (24) is the
+    orphan age ceiling for reaping a `running` row a crash left behind. A `None`
+    section still means "on with defaults" — the write is best-effort, so it never
+    affects a run.
+    """
+    if raw is None:
+        return None
+    return {
+        "db": bool(raw.get("db", True)),
+        "retention_days": int(raw.get("retention_days", 90)),
+        "max_rows": int(raw.get("max_rows", 50000)),
+        "max_run_hours": int(raw.get("max_run_hours", 24)),
     }
 
 

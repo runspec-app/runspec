@@ -1,10 +1,11 @@
 # Run-index DB — a shared per-venv SQLite runs table (`runspec_runs.db`)
 
-> **Status: proposed.** This is the agreed design for a per-venv SQLite index of
+> **Status: in progress.** The agreed design for a per-venv SQLite index of
 > runnable runs, written by core `runspec`, read by the runspec-console History /
-> Logs tabs and (later) the standalone scheduler. No code yet — this doc is the
-> reviewable spec. Implementation is core-first, behind the validation in
-> [§12](#12-validate-before-committing-the-write-path).
+> Logs tabs and (later) the standalone scheduler. **Phase 1 (core write path)** is
+> implemented in the PR that carries this revision, after the §12 validation; the
+> remaining phases — including the §8.1 log-prune provenance added in this
+> revision — are the reviewable spec for the follow-up work.
 
 ## 1. Problem
 
@@ -90,7 +91,7 @@ Writability is two separate concerns; only one is core's to do.
 | Concern | Owner | How |
 |---|---|---|
 | The **dir** is setgid + group-owned + group-writable (privileged, one-time) | `runspec-linux` + console | `create-venv --group` (exists); a **repair path** for legacy/hand-made venvs — a `runspec-linux` runnable (or `create-venv --fix-perms`) that sets `logs/` `2775` + chgrp as owner/root, surfaced from the console as a one-click **"Make logs shared"** action over SSH-as-owner (reusing the `sudo -n -u <owner>` escalation the denylist writes use) |
-| Each **writer** creates its files group-writable (per-write, unprivileged) | core `runspec` | write the DB + let SQLite create sidecars under a group-writable mode (`0o664` / `umask 002`); create `logs/` if absent |
+| Each **writer** creates its files group-writable (per-write, unprivileged) | core `runspec` | on first create, `chmod 0o664` the DB **before** entering WAL (so SQLite makes the `-wal`/`-shm` sidecars group-writable to match — see §12); also heal an owned, non-group-writable DB on open; create `logs/` if absent. (`umask` alone can't do this — it only *clears* bits, never adds group-write.) |
 
 Core deliberately does **not** try to `chmod`/`chgrp` the dir itself: it usually
 runs as a non-owner with no right to, and a silent failure there is worse than not
@@ -140,7 +141,8 @@ CREATE INDEX IF NOT EXISTS runs_runnable ON runs (runnable);
 
 Columns map 1:1 to today's `run_summary` fields, so `reindex` is a direct
 translation. Schema evolves **additively** (`ALTER TABLE ADD COLUMN` guarded by a
-`schema_version` set via `PRAGMA user_version`); no destructive migrations.
+`schema_version` set via `PRAGMA user_version`); no destructive migrations — the
+§8.1 log-prune-provenance columns are the first such addition (a v1 → v2 delta).
 
 ## 6. Orphans — nothing reads as "running forever"
 
@@ -201,10 +203,70 @@ Independent of log pruning (rows outlive logs on purpose), three mechanisms stac
 > `runspec history reindex` bridges them.
 
 So you can keep, say, 90 days / 50k rows in the DB while logs prune at 7 days —
-expanding an older row then says "log pruned, summary only". Explicit control via
+expanding an older row then says **when and by whom** the log was pruned (§8.1),
+not a bare "file not found". Explicit control via
 `runspec history prune --older-than … / --max-rows …` (and a Logs-tab button) sits
 on top of the automatic ring. Reaped `crashed` rows are ordinary finished rows and
 age out the same way.
+
+### 8.1 Prune provenance — why the log is missing
+
+Because a DB row **outlives its log file on purpose** (rows are the bounded index;
+logs prune on their own schedule), "row present, log file gone" is a *normal,
+expected* state — not a fault. Today the console would try to fetch the log lines
+on expand and get a bare "file not found"; instead the row should say *when* the
+log was pruned and *by whom*, turning a blank gap into "log pruned by `alice` on
+2026-09-20 — record retained".
+
+**Schema delta (additive, v1 → v2).** Two nullable columns describe the *log
+file's* availability — never the run outcome, which `status` still owns:
+
+```sql
+ALTER TABLE runs ADD COLUMN log_pruned_at TEXT;   -- ISO-8601 UTC; NULL = log present
+ALTER TABLE runs ADD COLUMN log_pruned_by TEXT;   -- OS user that ran the prune
+```
+
+`ALTER TABLE ADD COLUMN` is metadata-only (no table rewrite); existing rows read
+`NULL` and older readers ignore the new columns, so it is a clean forward/backward-
+compatible bump of `PRAGMA user_version` (1 → 2), applied on open when a column is
+absent (a `PRAGMA table_info(runs)` guard). Because the DB is a derived index, a
+botched migration is never data loss — worst case it is rebuilt via `reindex`.
+
+**Where it's stamped — core, at the one place a log dies.** `runspec logs prune`
+deletes the file (`logs.py::prune` → `f.unlink(...)`). Right after the unlink, a
+**best-effort** update stamps any row in that dir's DB that points at the file:
+
+```sql
+UPDATE runs SET log_pruned_at = ?, log_pruned_by = ? WHERE log_file = ?;  -- basename match
+```
+
+- Living in **core** means both a direct-CLI `runspec logs prune` and the
+  console's shell-out prune (`runspec logs prune --scope venv`, 0.56.0) stamp for
+  free — no console-side logic.
+- `log_pruned_by` is the **OS user running the prune** (`getpass.getuser()`),
+  meaningful on the shared `2775` dir where different service accounts prune.
+- An archive/rotated file backing several `run_id`s stamps **all** rows whose
+  `log_file` matches its basename.
+- It is **best-effort and non-fatal**, like every other DB write here (§7): a
+  locked/unwritable DB never blocks the prune, and the stamp runs *after* the
+  unlink so a DB hiccup can never strand the delete.
+
+**`compact` moves, it doesn't delete.** `logs.py::compact` folds per-run files into
+a dated archive, so the content still exists under a new name. That path
+**repoints** the affected rows' `log_file` to the archive (so per-log fetch keeps
+working) rather than marking them pruned; only real deletion sets `log_pruned_at`.
+
+**`reindex` must not clobber the stamp.** `reindex` UPSERTs from surviving
+`run_summary` records; a pruned log has no record to rebuild from, so `log_pruned_*`
+are **prune-path-owned** and excluded from the reindex UPSERT column set (otherwise
+a row it touches would have its stamp nulled).
+
+**Visibility needs DB retention ≥ log retention.** The note only shows while the
+row outlives its log file — i.e. the DB ring (`retention_days` / `max_rows`, §10)
+must be at least as generous as the `runspec logs prune` age. If the row is itself
+ring-pruned there is simply no row (fine — the note is a bonus for that window).
+`runspec history list --json` surfaces the two columns so the console read (§14)
+renders them with no extra query.
 
 ## 9. Read path — no cold-start
 
@@ -246,20 +308,28 @@ core skip the DB entirely (History falls back to the log-parse read).
 | `runspec history reindex` | confirm | rebuild the DB from the log summaries |
 | `runspec history reap` | confirm | force an orphan sweep |
 
-## 12. Validate before committing the write path
+## 12. Validation — done (informs §4.1 / §9)
 
-One part has real teeth and is validated empirically **before** core starts
-writing the DB on every run:
+A throwaway multi-process harness on a `2775` setgid dir settled the two parts
+with teeth **before** core started writing the DB. Results:
 
-- **WAL read-visibility** under concurrent writes — confirm a `mode=ro` reader (or
-  a normal reader) sees the latest committed-but-not-checkpointed rows across
-  processes, and pick the reader open mode accordingly.
-- **Shared-venv sidecar permissions** — confirm `-wal` / `-shm` created by writer
-  A in the `2775` setgid `logs/` dir are writable by writer B (group + mode), on a
-  service-account-owned venv (`create-venv --run-as`).
+- **Reader open mode → `mode=ro`.** A separate-process `file:{db}?mode=ro` reader
+  *does* see rows another process committed to the WAL but hasn't checkpointed
+  (so the console's `{venv}/bin/python -c` read uses `mode=ro` — read-only, no
+  lock contention, no accidental writes).
+- **Group-writability → `chmod 0o664` *before* WAL, not `umask`.** SQLite creates
+  the DB `0644` and `umask` only *clears* bits, so it never adds group-write. But
+  `chmod 0o664` the main DB **before** `PRAGMA journal_mode=WAL` makes SQLite
+  create the `-wal`/`-shm` sidecars group-writable to match (verified: all three
+  `g+w`); doing it *after* the sidecars exist leaves them `0644`. So core chmods
+  the DB before WAL on create (one chmod, no per-sidecar work) and group
+  *ownership* comes from the setgid dir.
+- **Concurrent writers under `busy_timeout` → clean** (0 errors, all rows land),
+  confirming the best-effort multi-writer model.
 
-A throwaway multi-process harness on a setgid dir settles both; the result decides
-the reader open mode and any explicit `chmod` of the sidecars.
+(The sandbox is single-user, so the perms *mechanics* — mode bits + setgid
+ownership propagation — were validated rather than two literal OS users; the
+chmod-before-WAL rule is OS-level and user-independent.)
 
 ## 13. Scheduler reconciliation
 
@@ -289,19 +359,27 @@ The schema in [§5](#5-schema) already carries what it needs (`runnable`, `statu
 - A **"Make logs shared"** action (Logs tab / Settings) runs the `runspec-linux`
   fix-perms repair over SSH-as-owner for venvs not created with `--group`.
 - Per-log fetch is unchanged in spirit — a row's `run_id` + `log_file` fetch the
-  one file on expand (today's `get_run_detail` / `logs_view`).
+  one file on expand (today's `get_run_detail` / `logs_view`). When the file is
+  gone and `log_pruned_at` is set (§8.1), the expand panel shows "log pruned by
+  `<user>` on `<date>` — record retained" in place of a fetch error, so a
+  deliberately-pruned log reads as expected rather than broken.
 
 ## 15. Rollout / phasing
 
 1. **Core write + schema + lifecycle + orphans + reindex + prune**, behind
-   `[config.history] db` (default on), after the [§12](#12-validate-before-committing-the-write-path)
-   validation. Ships in a `runspec` minor; no format change (no `spec/SPEC.md`
-   touch), so this is core-internal.
+   `[config.history] db` (default on), after the §12 validation. Ships in a
+   `runspec` minor; no format change (no `spec/SPEC.md` touch), so this is
+   core-internal. **(implemented — `runspec` 0.57.0.)**
 2. **`runspec-linux` fix-perms** repair path (+ confirm `create-venv --group`
    covers the DB, which it does via the setgid dir).
 3. **Console read swap** — History/Logs read the DB with log-parse fallback; the
    live "running" view; the "Make logs shared" action.
-4. **Scheduler** reads the table for overlap-detection (when that work is picked
+4. **Log-prune provenance** (§8.1) — core stamps `log_pruned_at` / `log_pruned_by`
+   on `runspec logs prune` (a v1 → v2 additive column bump), and the console shows
+   "log pruned by X on Y" when an expanded row's log is gone. Core stamping is
+   independent (it can ship in any `runspec` minor); the display rides phase 3's
+   read swap.
+5. **Scheduler** reads the table for overlap-detection (when that work is picked
    up).
 
 Each phase is independently shippable: core writing the DB harms nothing on its

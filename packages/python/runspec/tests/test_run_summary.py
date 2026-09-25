@@ -221,7 +221,9 @@ class TestExceptionCapture:
 
     def test_structured_record_written_even_without_summary(self, tmp_path, capsys):
         # The decoupling fix: with summary OFF the exception must still reach the file.
-        configure_logging(_cfg(summary=False), runnable_name="nosum")
+        # Disable the runs index too so this tests summary in isolation — with
+        # history on (the default) the state is kept alive for the DB finalize.
+        configure_logging(_cfg(summary=False), runnable_name="nosum", history_cfg={"db": False})
         assert ls._summary_state is None  # summary genuinely disabled
         try:
             raise ValueError("invalid quality 200")
@@ -377,9 +379,11 @@ class TestExcStructuredHelpers:
 
 class TestDisable:
     def test_summary_false_in_config_disables_record(self, tmp_path):
-        # summary=False drops the audit record; with console off (default) the
-        # whole hook is inactive.
-        configure_logging(_cfg(summary=False), runnable_name="x")
+        # summary=False drops the audit record; with console off (default) and the
+        # runs index off, the whole hook is inactive. (History on — the default —
+        # keeps the state alive for the DB finalize; that path is covered in the
+        # runsdb tests.)
+        configure_logging(_cfg(summary=False), runnable_name="x", history_cfg={"db": False})
         assert ls._summary_state is None
 
     def test_summary_console_active_even_when_record_off(self, tmp_path, capsys):
@@ -474,3 +478,57 @@ class TestInvoker:
         summary = next(s for s in lines if s["logger"] == "runspec.runsummary")
         assert summary["extra"]["user"] == "alice"
         assert summary["extra"]["user_target"] == "root"
+
+
+# ── runs index (runspec_runs.db) lifecycle hook ──────────────────────────────
+
+
+class TestRunsIndexHook:
+    """configure_logging writes the start row; _emit_run_summary finalizes it.
+    (The runsdb module itself is covered in test_runsdb.py.)"""
+
+    def test_begin_writes_running_then_finish_completes(self, tmp_path):
+        from runspec import runsdb
+
+        configure_logging(_cfg(summary=True), runnable_name="demo", history_cfg={"db": True})
+        logs_dir = tmp_path / "logs"
+        rows = runsdb.list_runs(logs_dir, live=False)
+        assert rows and rows[0]["runnable"] == "demo" and rows[0]["status"] == "running"
+        run_id = rows[0]["run_id"]
+
+        _emit_run_summary()
+        done = next(r for r in runsdb.list_runs(logs_dir, live=False) if r["run_id"] == run_id)
+        assert done["status"] == "completed" and done["exit_code"] == 0
+        assert isinstance(done["duration_ms"], int)
+
+    def test_failure_finalizes_as_failed(self, tmp_path):
+        from runspec import runsdb
+
+        configure_logging(_cfg(summary=True), runnable_name="boom", history_cfg={"db": True})
+        try:
+            raise RuntimeError("nope")
+        except RuntimeError:
+            sys.excepthook(*sys.exc_info())
+        _emit_run_summary()
+        r = runsdb.list_runs(tmp_path / "logs", live=False)[0]
+        assert r["status"] == "failed" and r["exit_code"] == 1
+
+    def test_history_off_writes_no_row(self, tmp_path):
+        from runspec import runsdb
+
+        configure_logging(_cfg(summary=True), runnable_name="demo", history_cfg={"db": False})
+        assert runsdb.list_runs(tmp_path / "logs", live=False) == []
+
+    def test_history_on_by_default_even_when_summary_off(self, tmp_path):
+        # Runs index defaults on; a run with summary off (and no [config.history])
+        # still gets a row — the state is kept alive for the DB finalize.
+        from runspec import runsdb
+
+        configure_logging(_cfg(summary=False), runnable_name="demo")
+        rows = runsdb.list_runs(tmp_path / "logs", live=False)
+        assert rows and rows[0]["runnable"] == "demo"
+        # …but the run_summary audit record is still suppressed.
+        _emit_run_summary()
+        log_path = tmp_path / "logs" / "demo.log"
+        lines = [json.loads(x) for x in log_path.read_text().splitlines()] if log_path.exists() else []
+        assert not any(x.get("logger") == "runspec.runsummary" for x in lines)

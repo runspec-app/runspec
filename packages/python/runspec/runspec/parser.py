@@ -292,6 +292,7 @@ def _parse_impl(
             skill=skill,
             command_path=command_path,
             invocation_args=invocation_args,
+            history_cfg=config.get("history"),
         )
     except ValueError as e:
         raise errors.RunSpecError(str(e)) from e

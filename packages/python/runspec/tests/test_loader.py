@@ -43,6 +43,34 @@ description = "hi"
         assert result["config"]["version"] == "1"
         assert result["config"]["lang"] is None
 
+    def test_history_absent_is_none(self, tmp_path):
+        # No [config.history] → None; configure_logging treats None as "on with
+        # defaults" (the runs index is opt-out, not opt-in).
+        p = tmp_path / "runspec.toml"
+        p.write_text("[greet]\ndescription = 'hi'\n")
+        assert load_raw(p)["config"]["history"] is None
+
+    def test_history_section_normalised(self, tmp_path):
+        p = tmp_path / "runspec.toml"
+        p.write_text("""
+[config.history]
+db = false
+retention_days = 30
+max_rows = 1000
+max_run_hours = 6
+
+[greet]
+description = "hi"
+""")
+        hist = load_raw(p)["config"]["history"]
+        assert hist == {"db": False, "retention_days": 30, "max_rows": 1000, "max_run_hours": 6}
+
+    def test_history_defaults_within_section(self, tmp_path):
+        p = tmp_path / "runspec.toml"
+        p.write_text("[config.history]\nretention_days = 7\n\n[greet]\ndescription = 'hi'\n")
+        hist = load_raw(p)["config"]["history"]
+        assert hist == {"db": True, "retention_days": 7, "max_rows": 50000, "max_run_hours": 24}
+
     def test_multiple_runnables(self, tmp_path):
         p = tmp_path / "runspec.toml"
         p.write_text("""

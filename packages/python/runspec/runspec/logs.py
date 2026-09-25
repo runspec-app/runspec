@@ -241,6 +241,30 @@ def collect_records(
     return parsed
 
 
+def read_run_summaries(dirs: Iterable[Path]) -> list[dict[str, Any]]:
+    """Every ``run_summary`` record across all log files in ``dirs``, flattened to
+    one dict per run (the record's ``extra`` merged with the top-level ``ts``).
+
+    The rebuild source for the runs index — ``runsdb.reindex`` maps these 1:1.
+    Reads all runnables' files (unlike :func:`collect_records`, which is scoped to
+    one), transparently decompressing archives.
+    """
+    out: list[dict[str, Any]] = []
+    for d in dirs:
+        if not d.is_dir():
+            continue
+        for f in sorted(d.glob("*.log")) + sorted(d.glob("*.log.gz")):
+            for ln in _read_lines(f):
+                try:
+                    rec = json.loads(ln)
+                except json.JSONDecodeError:
+                    continue
+                extra = rec.get("extra") if isinstance(rec.get("extra"), dict) else {}
+                if extra.get("event") == "run_summary" and extra.get("run_id"):
+                    out.append({**extra, "ts": rec.get("ts")})
+    return out
+
+
 def _format_line(rec: dict[str, Any], user_of_run: dict[str, str]) -> str:
     extra = rec.get("extra", {}) if isinstance(rec.get("extra"), dict) else {}
     rid = extra.get("run_id", "")
