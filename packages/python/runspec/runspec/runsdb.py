@@ -320,12 +320,20 @@ def finish_run(
     duration_ms: int,
     status: str,
     cfg: dict[str, Any] | None = None,
+    runnable: str = "",
+    command: str = "",
 ) -> None:
     """Finalize a row (``completed``/``failed`` + exit code + duration) via UPSERT
     keyed on ``run_id`` — correct whether or not the start row landed. Then run the
     opportunistic maintenance (reap orphans + ring-prune) on the same connection,
     since the run's work is already done so exit-path latency is harmless.
-    Best-effort throughout."""
+    Best-effort throughout.
+
+    ``runnable``/``command`` are recorded on the **fallback INSERT** (when no start
+    row exists — begin_run lost its race, or the index was unwritable/contended at
+    start). Without them that row lands nameless, and the console History read maps
+    a DB row's ``runnable`` with no filename fallback, so it renders as
+    ``<venv>/`` with a blank name."""
     with contextlib.suppress(Exception):
         con = _connect(db_path(log_dir))
         if con is None:
@@ -337,11 +345,13 @@ def finish_run(
                 (status, exit_code, end_ts, duration_ms, run_id),
             )
             if con.total_changes == 0:
-                # No start row (begin_run lost its race / was disabled) — record a
-                # finished row directly so history is still complete.
+                # No start row (begin_run lost its race / was disabled / the index
+                # was unwritable at start) — record a finished row directly so
+                # history is still complete, carrying the runnable name + command
+                # so the row is never nameless.
                 con.execute(
-                    "INSERT OR IGNORE INTO runs (run_id, runnable, status, exit_code, start_ts, end_ts, duration_ms) VALUES (?,?,?,?,?,?,?)",
-                    (run_id, "", status, exit_code, end_ts, end_ts, duration_ms),
+                    "INSERT OR IGNORE INTO runs (run_id, runnable, command, status, exit_code, start_ts, end_ts, duration_ms) VALUES (?,?,?,?,?,?,?,?)",
+                    (run_id, runnable or "", command or "", status, exit_code, end_ts, end_ts, duration_ms),
                 )
             con.commit()
             _maintain(con, cfg or {})

@@ -68,6 +68,24 @@ class TestLifecycle:
         rows = {r["run_id"]: r for r in runsdb.list_runs(logs_dir, live=False)}
         assert rows["r-late"]["status"] == "failed"
 
+    def test_finish_without_begin_records_runnable_name(self, logs_dir):
+        # The fallback INSERT (no start row — begin_run lost its race or the index
+        # was unwritable at start) must carry the runnable name + command; else the
+        # console History read (no filename fallback on a DB row) shows "<venv>/"
+        # with a blank name.
+        runsdb.finish_run(
+            logs_dir,
+            "r-fb",
+            exit_code=0,
+            duration_ms=7,
+            status="completed",
+            runnable="system-info",
+            command="disk usage",
+        )
+        r = {x["run_id"]: x for x in runsdb.list_runs(logs_dir, live=False)}["r-fb"]
+        assert r["runnable"] == "system-info"
+        assert r["command"] == "disk usage"
+
 
 class TestReapAndLiveness:
     def test_dead_pid_reaps_to_crashed(self, logs_dir):

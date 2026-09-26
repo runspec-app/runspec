@@ -8,10 +8,11 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 
 import { LogsView } from './LogsView'
 
-const { logsStatus, logsPrune, shareVenvLogs } = vi.hoisted(() => ({
+const { logsStatus, logsPrune, shareVenvLogs, venvOwner } = vi.hoisted(() => ({
   logsStatus: vi.fn(),
   logsPrune: vi.fn(),
   shareVenvLogs: vi.fn(),
+  venvOwner: vi.fn(),
 }))
 
 vi.mock('../bridge', () => ({
@@ -20,6 +21,7 @@ vi.mock('../bridge', () => ({
       p === 'logs_status' ? logsStatus
       : p === 'logs_prune' ? logsPrune
       : p === 'share_venv_logs' ? shareVenvLogs
+      : p === 'venv_owner' ? venvOwner
       : vi.fn(),
   }),
 }))
@@ -46,6 +48,9 @@ beforeEach(() => {
   ])
   logsPrune.mockReset()
   shareVenvLogs.mockReset()
+  // Default: no owner pre-fill (owner empty) so "Run as" stays blank unless a test
+  // opts in — keeps the existing arg assertions stable.
+  venvOwner.mockReset().mockResolvedValue({ ok: true, owner: '', self: 'operator' })
 })
 
 describe('LogsView', () => {
@@ -98,10 +103,46 @@ describe('LogsView', () => {
     fireEvent.click(buttons[0])
     expect(await screen.findByText('Make logs shared')).toBeTruthy()
 
-    // Optional Unix group, then apply → the runnable runs against this venv.
+    // Optional Unix group, then apply → shares this venv (no "Run as" here — the
+    // owner pre-fill is empty in this test, so it runs as the login user).
     fireEvent.change(screen.getByPlaceholderText('consoles'), { target: { value: 'consoles' } })
     fireEvent.click(screen.getByRole('button', { name: /^Make shared$/ }))
 
-    await waitFor(() => expect(shareVenvLogs).toHaveBeenCalledWith('local', 'ops-tools', 'consoles'))
+    await waitFor(() => expect(shareVenvLogs).toHaveBeenCalledWith('local', 'ops-tools', 'consoles', undefined))
+  })
+
+  it('pre-fills "Run as" with the venv owner and passes it to share_venv_logs', async () => {
+    // Owner differs from the login user → the field pre-fills with the owner and
+    // the share escalates to it.
+    venvOwner.mockResolvedValue({ ok: true, owner: 'svc', self: 'operator' })
+    shareVenvLogs.mockResolvedValue({ ok: true, venv: 'ops-tools', group: '', as_user: 'svc', output: '{}' })
+    render(<LogsView {...PROPS} />)
+    await screen.findByText('ops-tools')
+
+    fireEvent.click(screen.getAllByRole('button', { name: /Make shared/ })[0])
+    await screen.findByText('Make logs shared')
+    await waitFor(() =>
+      expect((screen.getByPlaceholderText('(yourself)') as HTMLInputElement).value).toBe('svc'),
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /^Make shared$/ }))
+    await waitFor(() => expect(shareVenvLogs).toHaveBeenCalledWith('local', 'ops-tools', undefined, 'svc'))
+  })
+
+  it('surfaces a share warning and keeps the modal open when the console user cannot write', async () => {
+    venvOwner.mockResolvedValue({ ok: true, owner: 'svc', self: 'operator' })
+    shareVenvLogs.mockResolvedValue({
+      ok: true, venv: 'ops-tools', group: 'consoles', as_user: 'svc', output: '{}',
+      warning: "Shared, but operator isn't in group 'consoles', so runs will still log to ~/logs.",
+    })
+    render(<LogsView {...PROPS} />)
+    await screen.findByText('ops-tools')
+    fireEvent.click(screen.getAllByRole('button', { name: /Make shared/ })[0])
+    await screen.findByText('Make logs shared')
+    fireEvent.click(screen.getByRole('button', { name: /^Make shared$/ }))
+    // The share applied, but the warning is shown and the modal stays open so the
+    // operator can act on it.
+    expect(await screen.findByText(/still log to ~\/logs/)).toBeTruthy()
+    expect(screen.getByText('Make logs shared')).toBeTruthy()
   })
 })

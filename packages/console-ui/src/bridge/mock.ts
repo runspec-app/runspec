@@ -1353,20 +1353,22 @@ export const mockApi: BridgeApi = {
     })),
   }),
 
-  logs_prune: async (_host, group, _runnable, _olderThan, _maxFiles, _maxTotalSize, dryRun = true) => ({
+  logs_prune: async (_host, group, _runnable, _olderThan, _maxFiles, _maxTotalSize, dryRun = true, _runAs) => ({
     group, ok: true, dry_run: dryRun, count: 12, freed_bytes: 1_572_864,
     deleted: Array.from({ length: 12 }, (_v, i) => ({ path: `/opt/venvs/${group}/logs/backup.2026010${i}T100000Z.${i}abcd.log`, bytes: 131_072 })),
   }),
 
-  logs_compact: async (_host, group, _runnable, _olderThan, _gzip = true, dryRun = true) => ({
+  logs_compact: async (_host, group, _runnable, _olderThan, _gzip = true, dryRun = true, _runAs) => ({
     group, ok: true, dry_run: dryRun, compacted: 30,
     archives: [{ archive: `/opt/venvs/${group}/logs/backup.archive.20260604.log.gz`, count: 30, sources: [] }],
   }),
 
-  share_venv_logs: async (_host, venv, group) => ({
-    ok: true, venv, group: group || '', as_user: 'svc',
+  share_venv_logs: async (_host, venv, group, runAs) => ({
+    ok: true, venv, group: group || '', as_user: runAs || '',
     output: JSON.stringify({ venv: `/opt/venvs/${venv}`, logs_dir: `/opt/venvs/${venv}/logs`, group: group || '', mode: '2775', shared: true }),
   }),
+
+  venv_owner: async (_host, group) => ({ ok: true, owner: group === '~/logs' ? '' : 'svc', self: 'operator' }),
 
   get_public_key: async () => ({
     ok: true,

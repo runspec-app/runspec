@@ -713,6 +713,11 @@ def _emit_run_summary() -> None:
                 duration_ms=duration_ms,
                 status="failed" if (state["exception"] or exit_code != 0) else "completed",
                 cfg=state.get("history_cfg") or {},
+                # Carry the name + command so a fallback INSERT (no start row —
+                # begin_run lost its race or the index was unwritable at start) is
+                # never nameless in History.
+                runnable=state["runnable"],
+                command=" ".join(state["command_path"]),
             )
 
     # Human-readable echo — opt-in (`summary_console`). Stays on stderr so it

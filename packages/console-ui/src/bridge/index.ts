@@ -972,6 +972,10 @@ export interface ShareLogsResult {
   as_user?: string
   output?: string                  // set when ok
   error?: string                   // set when !ok
+  // Set (ok=true) when the share applied but the console's own user still can't
+  // write the dir — its runs' logs will fall back to ~/logs until that user joins
+  // the dir's group. Names the fix.
+  warning?: string
 }
 
 export interface LogPruneResult {
@@ -1992,9 +1996,13 @@ export interface BridgeApi {
   // ── logs management ──────────────────────────────────────────────────────
   logs_status: (host: string, runnable?: string) => Promise<LogStatusVenv[]>
   logs_view: (host: string, group: string, runnable: string, since?: string, user?: string, run?: string) => Promise<LogViewResult>
-  logs_prune: (host: string, group: string, runnable?: string, olderThan?: string, maxFiles?: number, maxTotalSize?: string, dryRun?: boolean) => Promise<LogPruneResult>
-  logs_compact: (host: string, group: string, runnable?: string, olderThan?: string, gzip?: boolean, dryRun?: boolean) => Promise<LogCompactResult>
-  share_venv_logs: (host: string, venv: string, group?: string) => Promise<ShareLogsResult>
+  logs_prune: (host: string, group: string, runnable?: string, olderThan?: string, maxFiles?: number, maxTotalSize?: string, dryRun?: boolean, runAs?: string) => Promise<LogPruneResult>
+  logs_compact: (host: string, group: string, runnable?: string, olderThan?: string, gzip?: boolean, dryRun?: boolean, runAs?: string) => Promise<LogCompactResult>
+  share_venv_logs: (host: string, venv: string, group?: string, runAs?: string) => Promise<ShareLogsResult>
+  // Owner of a venv's dir — pre-fills the "Run as" field on the destructive Logs
+  // actions (prune/compact/share). `self` is the effective (login/SSH) user, so the
+  // UI can tell whether escalation is even needed. Empty owner for the ~/logs scope.
+  venv_owner: (host: string, group: string) => Promise<{ ok: boolean; owner: string; self: string; error?: string }>
   generate_ssh_key: () => Promise<{ ok: boolean; public_key: string; key_path: string; committed: boolean; per_host: RotateHostResult[]; message: string }>
   rotate_ssh_key: () => Promise<{ ok: boolean; committed: boolean; public_key: string; key_path: string; per_host: RotateHostResult[]; message: string }>
   get_public_key: () => Promise<{ ok: boolean; public_key: string; message: string }>

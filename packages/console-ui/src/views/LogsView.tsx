@@ -85,8 +85,15 @@ function MaintenanceModal({ target, onClose, onApplied }: MaintModalProps) {
   // older remote runspec that can't scope the prune — is visible next to the
   // button, instead of the modal appearing to "do nothing".
   const [error, setError] = useState<string | null>(null)
+  // Escalate the (destructive) action to the venv's owner via sudo — the fix for a
+  // service-account-owned venv the login user can't prune. Pre-filled with the
+  // owner (editable); blank = run as yourself. Not offered for the ~/logs scope
+  // (the operator's own dir — nothing to escalate).
+  const [runAs, setRunAs] = useState('')
 
-  // Reset form whenever a fresh target opens the modal.
+  // Reset form whenever a fresh target opens the modal, and pre-fill "Run as" with
+  // the venv owner when it differs from the login user (so escalation is actually
+  // needed).
   useEffect(() => {
     setOlderThan(target?.verb === 'compact' ? '7d' : '')
     setMaxFiles(null)
@@ -95,10 +102,19 @@ function MaintenanceModal({ target, onClose, onApplied }: MaintModalProps) {
     setPreview(null)
     setError(null)
     setBusy(false)
+    setRunAs('')
+    if (!target || target.group === '~/logs') return
+    let cancelled = false
+    // Promise.resolve tolerates a mock/proxy returning a non-promise.
+    Promise.resolve(bridge.venv_owner(target.host, target.group))
+      .then(r => { if (!cancelled && r?.ok && r.owner && r.owner !== r.self) setRunAs(r.owner) })
+      .catch(() => {})
+    return () => { cancelled = true }
   }, [target])
 
   if (!target) return null
   const { host, group, runnable, verb } = target
+  const isHome = group === '~/logs'
 
   const scopeLabel = runnable ? `${group}/${runnable}` : `${group} (all runnables)`
   const hasPolicy = verb === 'compact'
@@ -111,7 +127,7 @@ function MaintenanceModal({ target, onClose, onApplied }: MaintModalProps) {
     setPreview(null)
     try {
       if (verb === 'prune') {
-        const r = await bridge.logs_prune(host, group, runnable, olderThan.trim() || undefined, maxFiles ?? undefined, maxTotalSize.trim() || undefined, dryRun)
+        const r = await bridge.logs_prune(host, group, runnable, olderThan.trim() || undefined, maxFiles ?? undefined, maxTotalSize.trim() || undefined, dryRun, runAs.trim() || undefined)
         if (!r.ok) { setError(r.error || 'Prune failed.'); return }
         if (dryRun) {
           setPreview(`${r.count ?? 0} file(s) would be deleted — ${humanSize(r.freed_bytes)} freed.`)
@@ -120,7 +136,7 @@ function MaintenanceModal({ target, onClose, onApplied }: MaintModalProps) {
           onApplied(host); onClose()
         }
       } else {
-        const r = await bridge.logs_compact(host, group, runnable, olderThan.trim() || undefined, gzip, dryRun)
+        const r = await bridge.logs_compact(host, group, runnable, olderThan.trim() || undefined, gzip, dryRun, runAs.trim() || undefined)
         if (!r.ok) { setError(r.error || 'Compact failed.'); return }
         if (dryRun) {
           setPreview(`${r.compacted ?? 0} file(s) would roll into ${r.archives?.length ?? 0} archive(s).`)
@@ -183,10 +199,20 @@ function MaintenanceModal({ target, onClose, onApplied }: MaintModalProps) {
             <Form.Item label="Keep newest N files" help="Per runnable (optional)" style={{ marginBottom: 16 }}>
               <InputNumber value={maxFiles} onChange={v => setMaxFiles(v)} min={0} placeholder="50" style={{ width: 160 }} />
             </Form.Item>
-            <Form.Item label="Max total size" help="Delete oldest over budget — e.g. 5GB (optional)" style={{ marginBottom: 8 }}>
+            <Form.Item label="Max total size" help="Delete oldest over budget — e.g. 5GB (optional)" style={{ marginBottom: 16 }}>
               <Input value={maxTotalSize} onChange={e => setMaxTotalSize(e.target.value)} placeholder="5GB" style={{ maxWidth: 160 }} />
             </Form.Item>
           </>
+        )}
+
+        {!isHome && (
+          <Form.Item
+            label="Run as"
+            help="Escalate to this OS user via sudo (pre-filled with the venv's owner) — for a venv you don't own. Blank runs as you."
+            style={{ marginBottom: 8 }}
+          >
+            <Input value={runAs} onChange={e => setRunAs(e.target.value)} placeholder="(yourself)" style={{ maxWidth: 200, fontFamily: MONO_FONT }} />
+          </Form.Item>
         )}
       </Form>
 
@@ -215,10 +241,25 @@ function ShareLogsModal({ target, onClose, onApplied }: {
   onApplied: (actedHost: string) => void
 }) {
   const [group, setGroup] = useState('')
+  const [runAs, setRunAs] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Set when the share applied but the console's own user still can't write the
+  // dir (it isn't in the group) — shown so the "why do logs still go to ~/logs?"
+  // gap is visible at share time rather than discovered later.
+  const [warning, setWarning] = useState<string | null>(null)
 
-  useEffect(() => { setGroup(''); setError(null); setBusy(false) }, [target])
+  // Pre-fill "Run as" with the venv owner when it isn't the login user, so a venv
+  // owned by a service account is shared by escalating to that owner via sudo.
+  useEffect(() => {
+    setGroup(''); setRunAs(''); setError(null); setWarning(null); setBusy(false)
+    if (!target) return
+    let cancelled = false
+    Promise.resolve(bridge.venv_owner(target.host, target.venv))
+      .then(r => { if (!cancelled && r?.ok && r.owner && r.owner !== r.self) setRunAs(r.owner) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [target])
 
   if (!target) return null
   const { host, venv } = target
@@ -226,12 +267,20 @@ function ShareLogsModal({ target, onClose, onApplied }: {
   const apply = async () => {
     setBusy(true)
     setError(null)
+    setWarning(null)
     try {
-      const r = await bridge.share_venv_logs(host, venv, group.trim() || undefined)
+      const r = await bridge.share_venv_logs(host, venv, group.trim() || undefined, runAs.trim() || undefined)
       if (!r.ok) { setError(r.error || 'Could not make logs shared.'); return }
       const via = r.as_user ? ` (as ${r.as_user})` : ''
       message.success(`${venv}: logs dir made shared${via}`)
-      onApplied(host); onClose()
+      onApplied(host)  // the share applied — refresh the inventory
+      if (r.warning) {
+        // Applied, but the console's user can't write it yet — keep the modal open
+        // with the warning so the operator acts on it (add the user to the group).
+        setWarning(r.warning)
+      } else {
+        onClose()
+      }
     } catch (e) {
       setError(String(e))
     } finally {
@@ -254,19 +303,27 @@ function ShareLogsModal({ target, onClose, onApplied }: {
         to <Text code>2775</Text> (setgid + group-writable), so the per-venv runs index and
         the audit logs are writable across a shared console group — the repair for a venv not
         built with <Text code>create-venv --group</Text>. Runs <Text code>chmod</Text> directly
-        (no runspec-linux needed); if the venv is owned by another user it escalates through
-        its own <Text code>share-venv-logs</Text> when present.
+        (no runspec-linux needed); for a venv owned by another user, set <Text code>Run as</Text>{' '}
+        to escalate via sudo. It also repairs the existing index file's group so writes succeed.
       </Text>
       <Form layout="vertical" style={{ marginTop: 16 }}>
         <Form.Item
           label="Group (optional)"
           help="Unix group to chgrp the logs/ dir to, e.g. consoles. Leave blank to keep the current group."
-          style={{ marginBottom: 8 }}
+          style={{ marginBottom: 16 }}
         >
           <Input value={group} onChange={e => setGroup(e.target.value)} placeholder="consoles" style={{ maxWidth: 200, fontFamily: MONO_FONT }} />
         </Form.Item>
+        <Form.Item
+          label="Run as"
+          help="Escalate to this OS user via sudo (pre-filled with the venv's owner) — for a venv you don't own. Blank runs as you."
+          style={{ marginBottom: 8 }}
+        >
+          <Input value={runAs} onChange={e => setRunAs(e.target.value)} placeholder="(yourself)" style={{ maxWidth: 200, fontFamily: MONO_FONT }} />
+        </Form.Item>
       </Form>
       {error && <Alert type="error" showIcon style={{ marginTop: 8 }} message={error} />}
+      {warning && <Alert type="warning" showIcon style={{ marginTop: 8 }} message="Shared, with a caveat" description={warning} />}
     </Modal>
   )
 }

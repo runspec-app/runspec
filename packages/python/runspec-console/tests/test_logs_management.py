@@ -272,6 +272,14 @@ class TestLogsPrune(unittest.TestCase):
         self.assertTrue(out["ok"])
         self.assertEqual(out["count"], 3)
 
+    def test_run_as_threaded_to_run_logs(self) -> None:
+        # Prune-as-owner passes run_as down to _run_logs (which prepends sudo -n -u).
+        b = _make_bridge()
+        b._hosts = [_local_entry()]
+        with patch.object(b, "_run_logs", return_value=(0, "{}", "")) as m:
+            b.logs_prune("ws", "ops-tools", older_than="7d", run_as="svc")
+        self.assertEqual(m.call_args.kwargs.get("run_as"), "svc")
+
 
 class TestLogsCompact(unittest.TestCase):
     def test_requires_older_than(self) -> None:
@@ -381,6 +389,43 @@ class TestRunLogsDispatch(unittest.TestCase):
             m.call_args.args[1], "/opt/venvs/deploy-core/bin/runspec logs status --json"
         )
         self.assertEqual(m.call_args.args[0], "u@h1")
+
+    def test_run_as_prepends_sudo_remote(self) -> None:
+        # Prune-as-owner: `sudo -n -u <owner> <venv>/bin/runspec …` (a venv binary,
+        # so the scoped sudoers grant covers it).
+        b = _make_bridge()
+        b._hosts = [_remote_entry()]  # ssh = u@h1 → effective user "u"
+        with (
+            patch("runspec_console.executor.ssh_run", return_value=(0, "{}", "")) as m,
+            patch.object(b, "get_config", return_value={}),
+        ):
+            b._run_logs(
+                "prod-1",
+                "/opt/venvs/deploy-core/bin/runspec",
+                ["logs", "prune", "--json"],
+                timeout=30,
+                run_as="svc",
+            )
+        self.assertEqual(
+            m.call_args.args[1],
+            "sudo -n -u svc /opt/venvs/deploy-core/bin/runspec logs prune --json",
+        )
+
+    def test_run_as_self_no_sudo(self) -> None:
+        b = _make_bridge()
+        b._hosts = [_remote_entry()]  # effective user "u"
+        with (
+            patch("runspec_console.executor.ssh_run", return_value=(0, "{}", "")) as m,
+            patch.object(b, "get_config", return_value={}),
+        ):
+            b._run_logs(
+                "prod-1",
+                "/opt/venvs/deploy-core/bin/runspec",
+                ["logs", "status", "--json"],
+                timeout=30,
+                run_as="u",
+            )
+        self.assertNotIn("sudo", m.call_args.args[1])
 
     def test_local_uses_subprocess(self) -> None:
         b = _make_bridge()
@@ -498,13 +543,15 @@ class TestShareVenvLogs(unittest.TestCase):
             ),
             (0, "", ""),  # [ -x .../share-venv-logs ] → present
             (0, "=====AS svc\n" + json.dumps({"shared": True}), ""),  # escalation
+            (0, "", ""),  # post-share `[ -w logs ]` writability probe → writable
         ]
         with patch.object(b, "_ssh_run", side_effect=results) as m:
             res = b.share_venv_logs("prod-1", "deploy-core", "consoles")
         self.assertTrue(res["ok"])
         self.assertEqual(res["as_user"], "svc")
-        self.assertEqual(m.call_count, 3)
-        # The third call is the runnable escalation (sudo -u owner probe).
+        self.assertEqual(res["warning"], "")  # the console user can write → no warning
+        self.assertEqual(m.call_count, 4)  # chmod-probe, escalation, writability probe
+        # The runnable escalation is the third call (sudo -u owner probe).
         self.assertIn('sudo -n -u "$o" "$sv" --help', m.call_args_list[2].args[1])
 
     def test_unknown_venv(self) -> None:
@@ -540,6 +587,88 @@ class TestShareVenvLogs(unittest.TestCase):
         self.assertIn(f"chmod 2775 {logdir}", argv[2])
         self.assertIn(f"chgrp consoles {logdir}", argv[2])
         self.assertNotIn("share-venv-logs", argv[2])
+
+    def test_run_as_escalates_and_repairs_index(self) -> None:
+        # Pre-filled owner (Run as) → the whole repair runs `sudo -n -u <owner>
+        # sh -c`, working wherever the operator has passwordless sudo (not only where
+        # the venv ships share-venv-logs), and it also repairs the existing
+        # runspec_runs.db so a group member's writes to the index succeed after.
+        b = _make_bridge()
+        b._hosts = [_remote_entry()]  # ssh = u@h1 → effective user "u"
+        with patch.object(b, "_ssh_run", return_value=(0, "", "")) as m:
+            res = b.share_venv_logs("prod-1", "deploy-core", "consoles", run_as="svc")
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["as_user"], "svc")
+        # Two calls: the escalated chmod, then the writability probe (as the login
+        # user). No runnable dance.
+        self.assertEqual(m.call_count, 2)
+        cmd = m.call_args_list[0].args[1]  # the escalated chmod
+        self.assertIn("sudo -n -u svc sh -c", cmd)
+        self.assertIn("chmod 2775", cmd)
+        self.assertIn("runspec_runs.db", cmd)  # existing-index perms repair
+        self.assertEqual(res["warning"], "")  # probe returned writable
+
+    def test_run_as_self_does_not_escalate(self) -> None:
+        # Running as the SSH login user needs no sudo (a grant to run as yourself
+        # you likely don't have would fail spuriously).
+        b = _make_bridge()
+        b._hosts = [_remote_entry()]  # ssh = u@h1 → effective user "u"
+        with patch.object(b, "_ssh_run", return_value=(0, "", "")) as m:
+            res = b.share_venv_logs("prod-1", "deploy-core", "consoles", run_as="u")
+        self.assertTrue(res["ok"])
+        self.assertNotIn("sudo", m.call_args.args[1])
+
+    def test_run_as_sudo_refused_hints(self) -> None:
+        b = _make_bridge()
+        b._hosts = [_remote_entry()]
+        with patch.object(
+            b, "_ssh_run", return_value=(1, "", "sudo: a password is required")
+        ):
+            res = b.share_venv_logs("prod-1", "deploy-core", "consoles", run_as="svc")
+        self.assertFalse(res["ok"])
+        self.assertEqual(res["as_user"], "svc")
+        self.assertIn("sudo -n -u svc", res["error"])
+
+    def test_warns_when_console_user_cannot_write_after_escalated_share(self) -> None:
+        # The chmod succeeds (as the owner), but the console's own user isn't in the
+        # dir's group, so its runs' logs would still fall back to ~/logs. The share
+        # succeeds *with a warning* naming the fix (the "shared but still ~/logs"
+        # surprise, surfaced at share time).
+        b = _make_bridge()
+        b._hosts = [_remote_entry()]  # ssh = u@h1 → effective user "u"
+        results = [
+            (0, "", ""),  # escalated chmod succeeds
+            (1, "", ""),  # `[ -w logs ]` as user "u" → NOT writable
+        ]
+        with patch.object(b, "_ssh_run", side_effect=results):
+            res = b.share_venv_logs("prod-1", "deploy-core", "consoles", run_as="svc")
+        self.assertTrue(res["ok"])  # the share itself applied
+        self.assertIn("~/logs", res["warning"])
+        self.assertIn("consoles", res["warning"])  # names the group to join
+        self.assertIn("u", res["warning"])  # names the console user
+
+
+class TestVenvOwner(unittest.TestCase):
+    def test_remote_stats_owner(self) -> None:
+        b = _make_bridge()
+        b._hosts = [_remote_entry()]  # ssh = u@h1
+        with patch.object(b, "_ssh_run", return_value=(0, "svc\n", "")) as m:
+            res = b.venv_owner("prod-1", "deploy-core")
+        self.assertEqual(res, {"ok": True, "owner": "svc", "self": "u"})
+        self.assertIn("stat -c %U", m.call_args.args[1])
+
+    def test_home_scope_has_no_owner(self) -> None:
+        b = _make_bridge()
+        b._hosts = [_remote_entry()]
+        res = b.venv_owner("prod-1", "~/logs")
+        self.assertEqual(res["owner"], "")
+        self.assertTrue(res["ok"])
+
+    def test_unknown_venv(self) -> None:
+        b = _make_bridge()
+        b._hosts = [_remote_entry()]
+        res = b.venv_owner("prod-1", "missing")
+        self.assertFalse(res["ok"])
 
 
 if __name__ == "__main__":

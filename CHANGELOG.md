@@ -7,6 +7,17 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.58.2] — 2026-09-26
+
+### Fixed
+
+- **Runs-index fallback row is no longer nameless.** When a run finalizes without
+  a start row (`begin_run` lost its race, or the index was unwritable/contended at
+  start), `finish_run` inserted the row with an empty `runnable` — so the console
+  History read (which maps a DB row's `runnable` with no filename fallback) showed
+  it as `<venv>/` with a blank name. `finish_run` now takes the `runnable` +
+  `command` (both known at exit) and records them on that fallback INSERT.
+
 ## [0.58.1] — 2026-09-25
 
 ### Fixed

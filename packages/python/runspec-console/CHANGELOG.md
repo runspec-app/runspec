@@ -8,6 +8,41 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.290.0] — 2026-09-26
+
+### Added
+
+- **Logs tab: "Run as" on Prune, Compact and Make-shared — operate on a
+  service-account-owned venv.** The destructive Logs actions gain a **Run as**
+  field pre-filled with the venv's owner (new `venv_owner` bridge method:
+  `stat -c %U` remote / `Path.owner()` local) and editable to another user. Prune
+  and Compact escalate `sudo -n -u <owner> {venv}/bin/runspec logs …` — the venv
+  binary is covered by the `enable-passwordless-sudo scoped` grant, so it needs no
+  broad grant. "Make shared" escalates the `chmod`/`chgrp` via `sudo -n -u <owner>
+  sh -c …`, so it now works wherever the operator has passwordless sudo for the
+  owner (not only where the venv ships `share-venv-logs`). Running as the login
+  user needs no sudo (no escalation is applied). A refused sudo surfaces a clear
+  hint.
+
+### Fixed
+
+- **"Make shared" also repairs the existing `runspec_runs.db` perms.** A plain
+  `chmod 2775` on the dir doesn't touch files already inside, so a pre-existing
+  index owned by another user stayed unwritable and new runs couldn't record into
+  it. Sharing now also `chmod g+rw` / `chgrp`s the existing index (best-effort) so
+  a group member's writes succeed after.
+- **"Make shared" now warns when the console's user still can't write the dir.**
+  A read-only runnable like `system-info` runs as the *invoking* (SSH/login) user,
+  so its logs only land in the venv when that user is in the shared dir's group —
+  otherwise they fall back to `~/logs`. After an escalated share the console probes
+  writability **as that user** and, when it fails, returns a warning naming the
+  user and the group to add them to (the "I shared it but logs still go to ~/logs"
+  surprise, surfaced at share time rather than discovered later).
+- History rows for runs whose index entry landed via the fallback path no longer
+  show a blank runnable name (`<venv>/`) — see core `runspec` 0.58.2; the console
+  now requires `runspec >= 0.58.2`.
+
+
 ## [0.289.0] — 2026-09-25
 
 ### Fixed
