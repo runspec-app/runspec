@@ -58,7 +58,7 @@ def _verb_kwargs(spec: rs.RunSpec) -> dict[str, Any]:
     if command == "list-directory-with-sizes":
         return {"path": str(spec.path.value), "sort_by": spec.sort_by.value}
     if command == "directory-size":
-        return {"path": str(spec.path.value), "limit": spec.limit.value, "depth": spec.depth.value}
+        return {"path": str(spec.path.value), "limit": spec.limit.value, "depth": spec.depth.value, "cross_mounts": spec.cross_mounts.value}
     if command == "directory-tree":
         return {"path": str(spec.path.value), "exclude": spec.exclude.value or None}
     if command == "search-files":

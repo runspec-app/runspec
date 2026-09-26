@@ -2,13 +2,19 @@
 diagnostics (traceroute, route table, socket summary, DNS config) for tracing
 where an app's connectivity breaks."""
 
+import json
+import os
 import re
 import shutil
 import socket
 import subprocess
 import time
 
-from runspec_linux_core.errors import ToolNotFoundError
+from runspec_linux_core._paths import which
+from runspec_linux_core.errors import CommandError, ToolNotFoundError
+
+#: Where the kernel exposes per-interface attributes (speed, driver, device link).
+SYS_CLASS_NET = "/sys/class/net"
 
 
 def ping_host(host: str, count: int = 4) -> dict:
@@ -205,6 +211,75 @@ def route_table() -> dict:
         raise ToolNotFoundError("ip not available (iproute2)")
     result = subprocess.run(["ip", "route"], capture_output=True, text=True)
     return {"routes": _parse_ip_route(result.stdout)}
+
+
+def network_interfaces(physical_only: bool = False) -> dict:
+    """List network interfaces (``ip -json address``): state, MAC address, MTU,
+    bridge/bond ``master`` and IPv4/IPv6 addresses, plus link speed and driver
+    for physical cards (from ``/sys/class/net``).
+
+    ``physical`` is true for an interface backed by a hardware device; loopback,
+    bridges, bonds, VLANs, veth pairs and tunnels are virtual. ``physical_only``
+    drops the virtual ones — container and Kubernetes hosts carry many veth links.
+    An address has ``dynamic: true`` when it came from DHCP or SLAAC.
+
+    Raises ToolNotFoundError if ``ip`` is not installed, CommandError if it fails.
+    """
+    ip = which("ip")
+    if not ip:
+        raise ToolNotFoundError("ip not available (iproute2)")
+    result = subprocess.run([ip, "-json", "address", "show"], capture_output=True, text=True)
+    if result.returncode != 0:
+        raise CommandError(result.stderr.strip() or f"ip exited {result.returncode}")
+    try:
+        links = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise CommandError(f"ip printed output that isn't JSON (iproute2 may be too old for -json): {exc}") from exc
+    # Some iproute2 versions emit empty objects in the list; skip anything unnamed.
+    interfaces = [_interface_row(link) for link in links if link.get("ifname")]
+    if physical_only:
+        interfaces = [row for row in interfaces if row["physical"]]
+    return {"interfaces": interfaces}
+
+
+def _sysfs_attr(name: str, attr: str) -> str | None:
+    try:
+        with open(os.path.join(SYS_CLASS_NET, name, attr)) as f:
+            return f.read().strip()
+    except OSError:
+        return None  # absent, or unreadable (speed raises EINVAL on a down link)
+
+
+def _interface_row(link: dict) -> dict:
+    name = link["ifname"]
+    physical = os.path.exists(os.path.join(SYS_CLASS_NET, name, "device"))
+    addresses = []
+    for addr in link.get("addr_info", []):
+        if not addr.get("local"):
+            continue
+        entry = {"family": addr.get("family"), "address": addr["local"], "prefix": addr.get("prefixlen"), "scope": addr.get("scope")}
+        if addr.get("dynamic"):
+            entry["dynamic"] = True
+        addresses.append(entry)
+    row: dict = {
+        "name": name,
+        "state": link.get("operstate"),
+        "physical": physical,
+        "type": link.get("link_type"),
+        "mac": link.get("address") if link.get("link_type") == "ether" else None,
+        "mtu": link.get("mtu"),
+        "master": link.get("master"),
+        "addresses": addresses,
+    }
+    if physical:
+        speed = _sysfs_attr(name, "speed")
+        mbps = int(speed) if speed and speed.lstrip("-").isdigit() else -1
+        row["speed_mbps"] = mbps if mbps > 0 else None  # the kernel reports -1 with no link
+        try:
+            row["driver"] = os.path.basename(os.readlink(os.path.join(SYS_CLASS_NET, name, "device", "driver")))
+        except OSError:
+            row["driver"] = None
+    return {key: value for key, value in row.items() if value is not None}
 
 
 def _parse_ss_summary(output: str) -> dict:

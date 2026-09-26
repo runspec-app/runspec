@@ -110,7 +110,7 @@ hidden from the agent is not published here either).
 A fleet of multi-verb runnables can expose a **lot** of leaf tools: `jira` alone
 flattens to ~37 (`jira_get-issue`, `jira_create-issue`, …), `confluence` ~20,
 `gitlab` ~17 — and **every host** the runnable is installed on multiplies that
-again (5 hosts × `runspec-linux`'s ~31 runnables = a lot). Serve-identical, that's
+again (5 hosts × `runspec-linux`'s ~57 runnables = a lot). Serve-identical, that's
 how `runspec serve` presents them — but some MCP clients struggle with hundreds of
 tools in one list. `tool_style` picks the shape:
 
@@ -127,7 +127,7 @@ distinct runnable *name*:
   by the executor at run time).
 - **Hosts** → the same runnable discovered on several hosts is **one** tool with a
   `host` enum argument (required when it's on >1 host; absent for a single-host
-  runnable). So 5 hosts × 31 runnables is ~31 tools, not ~155.
+  runnable). So 5 hosts × 57 runnables is ~57 tools, not ~285.
 - **Venvs / packages** → a cross-platform runnable that ships in more than one
   package (e.g. the web/TLS/`which` runnables in both `runspec-windows` locally and
   `runspec-linux` on the fleet, discovered under different venvs/groups) collapses

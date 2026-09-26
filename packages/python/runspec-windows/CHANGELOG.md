@@ -1,5 +1,16 @@
 # runspec-windows Changelog
 
+## [0.10.0] — 2026-09-26
+
+### Changed
+
+- **`filesystem directory-size` stays on one volume.** A volume mounted at a folder
+  below the path, or a junction onto another volume, is now listed with
+  `skipped_mount: true` and counted in `skipped_mounts` instead of being measured.
+  The new `--cross-mounts` flag measures it too. The same change in the Linux pack
+  stops a scan of `/` from counting `/proc`.
+- Requires `runspec-fs-core >= 0.4.0`.
+
 ## [0.9.0] — 2026-09-17
 
 ### Added — `directory-size` verb on the folded `filesystem` runnable

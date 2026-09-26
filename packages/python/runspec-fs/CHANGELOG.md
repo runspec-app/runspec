@@ -1,5 +1,17 @@
 # runspec-fs Changelog
 
+## [0.5.0] — 2026-09-26
+
+### Changed
+
+- **`filesystem directory-size` stays on one filesystem** (like `du -x`). Pointed
+  at `/`, it walked `/proc` and every other mount, counting `/proc/kcore`
+  (~128 TiB) into the total. A subdirectory on another filesystem is now listed
+  with `skipped_mount: true` and counted in `skipped_mounts`. The new
+  `--cross-mounts` flag measures other mounted filesystems too; kernel virtual
+  filesystems (`/proc`, `/sys`, `/dev`) are never measured.
+- Requires `runspec-fs-core >= 0.4.0`.
+
 ## [0.4.1] — 2026-09-20
 
 ### Changed

@@ -1,9 +1,13 @@
 """Directory helpers against real trees under tmp_path."""
 
+import os
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+from runspec_fs_core import _mounts, dirs
 from runspec_fs_core.dirs import (
     create_directory,
     directory_size,
@@ -181,3 +185,71 @@ def test_directory_size_limit_caps_each_level(tmp_path: Path) -> None:
     assert top["size"] == 1 + 2 + 3 + 4  # total spans all children
     assert len(top["children"]) == 2  # but the breakdown is capped per level
     assert top["children"][0]["name"] == "c3"  # largest kept
+
+
+# ── Mount boundary ─────────────────────────────────────────────────────────────
+
+
+def _mount_other_filesystem(monkeypatch: pytest.MonkeyPatch, target: Path, fstype: str) -> None:
+    """Make ``target`` look like the mount point of a separate ``fstype`` filesystem:
+    a different device from its parent, listed in the mount table."""
+    real_stat = os.stat
+
+    def fake_stat(path, *args, **kwargs):  # type: ignore[no-untyped-def]
+        st = real_stat(path, *args, **kwargs)
+        if os.fspath(path) == str(target):
+            return SimpleNamespace(st_mode=st.st_mode, st_dev=st.st_dev + 1)
+        return st
+
+    monkeypatch.setattr(dirs.os, "stat", fake_stat)
+    table = {"/": "ext4", os.path.realpath(target): fstype}
+    monkeypatch.setattr(_mounts, "read_mount_types", lambda *a, **k: table)
+
+
+def _mounted_tree(tmp_path: Path) -> Path:
+    (tmp_path / "local.bin").write_bytes(b"x" * 100)
+    (tmp_path / "other").mkdir()
+    (tmp_path / "other" / "far.bin").write_bytes(b"x" * 1000)
+    return tmp_path
+
+
+def test_directory_size_stays_on_one_filesystem_by_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = _mounted_tree(tmp_path)
+    _mount_other_filesystem(monkeypatch, root / "other", "ext4")
+    out = directory_size(root)
+    assert out["total_size"] == 100
+    assert out["skipped_mounts"] == 1
+    other = next(e for e in out["entries"] if e["name"] == "other")
+    assert other["size"] == 0 and other["skipped_mount"] is True
+
+
+def test_directory_size_cross_mounts_enters_a_real_filesystem(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = _mounted_tree(tmp_path)
+    _mount_other_filesystem(monkeypatch, root / "other", "nfs4")
+    out = directory_size(root, cross_mounts=True)
+    assert out["total_size"] == 1100
+    assert "skipped_mounts" not in out
+    assert all("skipped_mount" not in e for e in out["entries"])
+
+
+def test_directory_size_never_enters_a_virtual_filesystem(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = _mounted_tree(tmp_path)
+    _mount_other_filesystem(monkeypatch, root / "other", "proc")
+    out = directory_size(root, cross_mounts=True)
+    assert out["total_size"] == 100
+    assert out["skipped_mounts"] == 1
+
+
+def test_directory_size_counts_mounts_skipped_below_the_breakdown_depth(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "a").mkdir()
+    deep = _mounted_tree(tmp_path / "a")
+    _mount_other_filesystem(monkeypatch, deep / "other", "ext4")
+    out = directory_size(tmp_path)  # depth 1: "other" sits below the breakdown
+    assert out["total_size"] == 100
+    assert out["skipped_mounts"] == 1
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux") or not os.path.ismount("/proc"), reason="needs a Linux /proc mount")
+def test_directory_size_refuses_a_virtual_root() -> None:
+    with pytest.raises(ValueError, match="virtual filesystem"):
+        directory_size("/proc")

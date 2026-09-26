@@ -65,6 +65,14 @@ def test_verb_kwargs_directory_size() -> None:
     spec = h.expect_ok(["directory-size", "--path", "sub", "--limit", "5", "--depth", "3"])
     kw = _verb_kwargs(spec)
     assert kw["path"].endswith("sub") and kw["limit"] == 5 and kw["depth"] == 3
+    assert kw["cross_mounts"] is False  # one filesystem by default, like du -x
+    h.close()
+
+
+def test_verb_kwargs_directory_size_cross_mounts() -> None:
+    h = _harness()
+    spec = h.expect_ok(["directory-size", "--path", "sub", "--cross-mounts"])
+    assert _verb_kwargs(spec)["cross_mounts"] is True
     h.close()
 
 

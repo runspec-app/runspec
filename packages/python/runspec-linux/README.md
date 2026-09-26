@@ -22,11 +22,11 @@ pip install runspec-linux
 
 | Group | Runnables |
 |---|---|
-| System | `system-info`, `disk-usage`, `check-memory`, `cpu-info`, `pressure` |
+| System | `system-info`, `disk-usage`, `block-devices`, `check-memory`, `cpu-info`, `pressure` |
 | Processes | `list-processes` |
 | Services | `list-services`, `check-service`, `restart-service`, `service-detail`, `failed-units` |
 | Logs | `tail-log`, `search-log`, `journalctl` |
-| Network | `ping-host`, `check-port`, `show-connections`, `trace-route`, `route-table`, `socket-stats`, `dns-config`, `open-ports` |
+| Network | `network-interfaces`, `ping-host`, `check-port`, `show-connections`, `trace-route`, `route-table`, `socket-stats`, `dns-config`, `open-ports` |
 | Kernel params | `get-sysctl`, `set-sysctl` |
 | Files | `find-large-files`, `backup-files`, `owning-package` |
 | Sessions | `last-logins`, `who` |

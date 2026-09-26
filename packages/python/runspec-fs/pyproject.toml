@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-fs"
-version = "0.4.1"
+version = "0.5.0"
 requires-python = ">=3.10"
 description = "Filesystem runnable for runspec — read and manipulate local/remote filesystems, ported from the Filesystem MCP server"
 readme = "README.md"
@@ -14,7 +14,7 @@ dependencies = [
     # `runspec serve`; fs has no globals, but the floor keeps serve behaviour
     # consistent with the other subcommand runnables.
     "runspec>=0.44.0",
-    "runspec-fs-core>=0.3.0",
+    "runspec-fs-core>=0.4.0",
 ]
 
 [project.urls]

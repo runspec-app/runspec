@@ -15,6 +15,8 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from runspec_fs_core._mounts import MountGuard
+
 
 def _as_path(path: str | os.PathLike[str]) -> Path:
     return Path(path).expanduser()
@@ -94,8 +96,11 @@ def _measure_dir(
     depth: int,
     limit: int,
     errors: list[int],
+    guard: MountGuard,
+    dev: int,
 ) -> tuple[int, list[dict[str, Any]] | None, int]:
-    """Recursively measure ``root``. Returns ``(total, entries, child_count)``.
+    """Recursively measure ``root``, which is on device ``dev``. Returns
+    ``(total, entries, child_count)``.
 
     ``total`` is the sum of the sizes of every regular file beneath ``root``
     (recursive, symlinks never followed so a link target is never double-counted
@@ -106,7 +111,9 @@ def _measure_dir(
     ``depth`` remains. When ``depth < 1`` only the total is needed, so ``entries``
     is ``None`` (the full subtree is still walked to sum the total). Unreadable
     entries (permissions, races) are skipped and tallied in ``errors[0]`` rather
-    than aborting — essential when scanning system directories as a non-root user."""
+    than aborting — essential when scanning system directories as a non-root user.
+    A subdirectory the ``guard`` won't enter (another filesystem, or a virtual
+    one) counts as 0 and is listed with ``skipped_mount: true``."""
     total = 0
     entries: list[dict[str, Any]] = []
     try:
@@ -116,6 +123,7 @@ def _measure_dir(
         return 0, ([] if depth >= 1 else None), 0
     with scan:
         for entry in scan:
+            skipped_mount = False
             try:
                 if entry.is_symlink():
                     etype = "symlink"
@@ -123,7 +131,14 @@ def _measure_dir(
                     child_entries = None
                 elif entry.is_dir(follow_symlinks=False):
                     etype = "directory"
-                    size, child_entries, _ = _measure_dir(Path(entry.path), depth - 1, limit, errors)
+                    # os.stat, not entry.stat(): a Windows DirEntry's st_dev is
+                    # always 0, and following resolves a folder-mounted volume to
+                    # the volume behind it (a non-symlink POSIX dir stats the same).
+                    child_dev = os.stat(entry.path).st_dev
+                    if guard.enter(entry.path, child_dev, dev):
+                        size, child_entries, _ = _measure_dir(Path(entry.path), depth - 1, limit, errors, guard, child_dev)
+                    else:
+                        size, child_entries, skipped_mount = 0, None, True
                 else:
                     etype = "file"
                     size = entry.stat(follow_symlinks=False).st_size
@@ -142,6 +157,8 @@ def _measure_dir(
                 }
                 if child_entries:  # a subdirectory's breakdown, while depth remains
                     rec["children"] = child_entries
+                if skipped_mount:
+                    rec["skipped_mount"] = True
                 entries.append(rec)
 
     if depth < 1:
@@ -156,9 +173,10 @@ def directory_size(
     *,
     limit: int = 20,
     depth: int = 1,
+    cross_mounts: bool = False,
 ) -> dict[str, Any]:
     """Report the recursive total size of each child of a directory, largest
-    first — the "what's using the disk here" view (like ``du -d<depth> | sort``).
+    first — the "what's using the disk here" view (like ``du -x -d<depth> | sort``).
 
     Unlike ``list_directory_with_sizes`` (which reports 0 for a directory entry),
     each subdirectory's ``size`` is the total of every file beneath it, so an
@@ -172,15 +190,25 @@ def directory_size(
     each level; ``limit <= 0`` returns all). Unreadable entries (permissions,
     races) are skipped and counted under ``skipped`` rather than failing the scan.
 
+    The scan stays on the filesystem ``path`` is on (like ``du -x``) unless
+    ``cross_mounts`` is set; kernel virtual filesystems (``/proc``, ``/sys``,
+    ``/dev`` …) are never scanned either way, so a scan of ``/`` can't count
+    ``/proc/kcore`` (~128 TiB). A subdirectory not entered for either reason
+    counts as 0, is listed with ``skipped_mount: true``, and is tallied in
+    ``skipped_mounts``. Raises ``ValueError`` when ``path`` itself is on a
+    virtual filesystem.
+
     Returns ``{path, total_size, total_mb, entry_count, entries:
-    [{name, path, type, size, size_mb, children?}], skipped?}``.
+    [{name, path, type, size, size_mb, children?, skipped_mount?}], skipped?,
+    skipped_mounts?}``.
     """
     p = _as_path(path)
     if not p.is_dir():
         raise NotADirectoryError(f"not a directory: {p}")
+    guard = MountGuard(p, cross_mounts=cross_mounts)
 
     errors = [0]
-    total, entries, child_count = _measure_dir(p, max(1, depth), limit, errors)
+    total, entries, child_count = _measure_dir(p, max(1, depth), limit, errors, guard, os.stat(p).st_dev)
     result: dict[str, Any] = {
         "path": str(p),
         "total_size": total,
@@ -190,6 +218,8 @@ def directory_size(
     }
     if errors[0]:
         result["skipped"] = errors[0]
+    if guard.skipped_mounts:
+        result["skipped_mounts"] = guard.skipped_mounts
     return result
 
 

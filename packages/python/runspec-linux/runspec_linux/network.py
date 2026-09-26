@@ -5,6 +5,7 @@ import runspec as rs
 from runspec_linux_core import (
     check_port,
     dns_config,
+    network_interfaces,
     ping_host,
     route_table,
     show_connections,
@@ -75,6 +76,16 @@ def main_dns_config() -> None:
     rs.parse("dns-config")
     try:
         print(json.dumps(dns_config()))
+    except Exception as e:
+        print(json.dumps({"error": str(e)}))
+        sys.exit(1)
+
+
+def main_network_interfaces() -> None:
+    spec = rs.parse("network-interfaces")
+    physical_only = spec.physical.value
+    try:
+        print(json.dumps(network_interfaces(physical_only=physical_only)))
     except Exception as e:
         print(json.dumps({"error": str(e)}))
         sys.exit(1)

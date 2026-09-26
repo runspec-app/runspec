@@ -45,7 +45,7 @@ def run_verb(verb: str, kwargs: dict[str, Any]) -> dict[str, Any]:
     if verb == "list-directory-with-sizes":
         return list_directory_with_sizes(kwargs["path"], sort_by=kwargs["sort_by"])
     if verb == "directory-size":
-        return directory_size(kwargs["path"], limit=kwargs["limit"], depth=kwargs["depth"])
+        return directory_size(kwargs["path"], limit=kwargs["limit"], depth=kwargs["depth"], cross_mounts=kwargs.get("cross_mounts", False))
     if verb == "directory-tree":
         return directory_tree(kwargs["path"], exclude=kwargs.get("exclude"))
     if verb == "search-files":

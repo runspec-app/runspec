@@ -55,7 +55,7 @@ Install-and-go packs give the agent real capabilities on day one:
 | Package | What you get |
 |---|---|
 | [`runspec-windows`](https://pypi.org/project/runspec-windows/) | 43 runnables: Windows system administration, Microsoft 365 (Outlook, Teams, Calendar, OneDrive), and web/TLS diagnostics. Installed automatically with the console on Windows. |
-| [`runspec-linux`](https://pypi.org/project/runspec-linux/) | 31 runnables: Linux administration, package management, Python venv bootstrap, and the same web/TLS diagnostics. |
+| [`runspec-linux`](https://pypi.org/project/runspec-linux/) | 57 runnables: Linux administration, package management, Python venv bootstrap, and the same web/TLS diagnostics. |
 | [`runspec-jsm`](https://pypi.org/project/runspec-jsm/) | Jira Service Management: raise, comment, transition, discover request types. |
 | [`runspec-snow`](https://pypi.org/project/runspec-snow/) | ServiceNow ITSM: create, comment, state changes, catalog discovery. |
 | [`runspec-logops`](https://pypi.org/project/runspec-logops/) | Log triage: cluster errors into bounded digests, map traces to source. |

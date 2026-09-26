@@ -1,5 +1,39 @@
 # runspec-linux Changelog
 
+## [0.15.0] — 2026-09-26
+
+### Added
+
+- **`block-devices`** — list disks and what is on them (`lsblk`): each disk with
+  its partitions, LVM volumes and mounts nested under `children`, with size,
+  SSD-vs-spinning (`rotational`), transport (sata/nvme/usb), model, serial,
+  filesystem, label, UUID and mount points. `--all` includes loop devices.
+  Autonomous. Thin wrapper over the new `runspec_linux_core.block_devices`.
+- **`network-interfaces`** — list network interfaces (`ip -json address` plus
+  `/sys/class/net`): state, MAC address, MTU, bridge/bond master and IPv4/IPv6
+  addresses (with `dynamic` for DHCP/SLAAC), plus link speed and driver for
+  physical cards. `--physical` hides loopback, bridges, bonds, VLANs, veth pairs
+  and tunnels, which clutter a container or Kubernetes host. Autonomous. Thin
+  wrapper over the new `runspec_linux_core.network_interfaces`.
+
+Together they answer the questions you ask before (re)installing a host — SSD or
+spinning disk, which disk is which, the NIC MACs for DHCP reservations — without
+reading `/sys` by hand.
+
+### Changed
+
+- **`find-large-files` and `filesystem directory-size` stay on one filesystem.**
+  Pointed at `/`, both walked into `/proc` and every other mount, so
+  `find-large-files` ranked `/proc/kcore` (a ~128 TiB virtual file) as the largest
+  file on the host. Both now stay on the filesystem the path is on (like
+  `find -xdev` / `du -x`). The new `--cross-mounts` flag includes other mounted
+  filesystems; kernel virtual filesystems (`/proc`, `/sys`, `/dev`) are never
+  scanned. Directories not entered are counted in `skipped_mounts`.
+- **`find-large-files` prints a report object** instead of a bare list:
+  `{path, min_mb, files, match_count, skipped_mounts?}` (`files` is the old list).
+  A missing `--path` is an error (exit 1) rather than an empty result.
+- Requires `runspec-linux-core >= 0.8.0` and `runspec-fs-core >= 0.4.0`.
+
 ## [0.14.0] — 2026-09-25
 
 ### Added

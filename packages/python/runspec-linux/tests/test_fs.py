@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import json
 import subprocess
+from pathlib import Path
 
 import pytest
+import runspec as rs
 
 from runspec_linux.fs import _dispatch, cli
 
@@ -60,3 +62,17 @@ def test_run_as_worker_builds_sudo_command(monkeypatch: pytest.MonkeyPatch) -> N
     assert argv[-2:] == ["-m", "runspec_linux.fs._worker"]
     assert json.loads(captured["input"]) == {"verb": "list-directory", "kwargs": {"path": "/tmp"}}
     assert json.loads(out) == {"ok": True}
+
+
+def test_dispatch_directory_size_forwards_cross_mounts(monkeypatch, tmp_path) -> None:
+    seen: list[bool] = []
+    monkeypatch.setattr(_dispatch, "directory_size", lambda path, *, limit, depth, cross_mounts: seen.append(cross_mounts) or {})
+    _dispatch.run_verb("directory-size", {"path": str(tmp_path), "limit": 20, "depth": 1, "cross_mounts": True})
+    _dispatch.run_verb("directory-size", {"path": str(tmp_path), "limit": 20, "depth": 1})
+    assert seen == [True, False]
+
+
+def test_directory_size_declares_cross_mounts() -> None:
+    toml = Path(cli.__file__).resolve().parent.parent / "runspec.toml"
+    assert rs.parse("filesystem", ["directory-size", "--path", "."], config_path=toml).cross_mounts.value is False
+    assert rs.parse("filesystem", ["directory-size", "--path", ".", "--cross-mounts"], config_path=toml).cross_mounts.value is True

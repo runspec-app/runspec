@@ -1,5 +1,23 @@
 # runspec-fs-core Changelog
 
+## [0.4.0] — 2026-09-26
+
+### Changed
+
+- **`directory_size` stays on one filesystem**, like `du -x`, instead of recursing
+  across every mount below `path`. A scan of `/` walked `/proc` and counted
+  `/proc/kcore` (~128 TiB) into the total. A subdirectory on another filesystem
+  now counts as 0, is listed with `skipped_mount: true`, and is tallied in the new
+  `skipped_mounts`.
+- **New `cross_mounts=True`** measures other mounted filesystems too (a separate
+  disk, a network share). Kernel virtual filesystems (`proc`, `sysfs`,
+  `devtmpfs`, `cgroup2` …) are never measured, and a `path` on one raises
+  `ValueError`. On Windows, a volume mounted at a folder, or a junction onto
+  another volume, counts as another filesystem.
+- The guard is `runspec_fs_core._mounts`, a byte-for-byte twin of
+  `runspec_linux_core._mounts` (each core stays dependency-free) kept identical by
+  a parity test.
+
 ## [0.3.0] — 2026-09-17
 
 Add **`directory_size`** — the recursive folder-size helper for disk-usage

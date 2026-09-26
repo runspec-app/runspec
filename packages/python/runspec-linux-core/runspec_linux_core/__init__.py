@@ -31,7 +31,7 @@ from runspec_linux_core.cron import (
     validate_schedule,
 )
 from runspec_linux_core.errors import CommandError, LinuxCoreError, ToolNotFoundError
-from runspec_linux_core.files import backup_files, find_large_files
+from runspec_linux_core.files import backup_files, find_large_files, find_large_files_report
 from runspec_linux_core.investigate import (
     failed_units,
     open_ports,
@@ -43,6 +43,7 @@ from runspec_linux_core.nc import nc_send
 from runspec_linux_core.network import (
     check_port,
     dns_config,
+    network_interfaces,
     ping_host,
     route_table,
     show_connections,
@@ -62,7 +63,7 @@ from runspec_linux_core.power import reboot_host
 from runspec_linux_core.security import last_logins, who
 from runspec_linux_core.services import check_service, list_services, restart_service
 from runspec_linux_core.sudoers import enable_passwordless_sudo
-from runspec_linux_core.system import check_memory, disk_usage, list_processes, system_info
+from runspec_linux_core.system import block_devices, check_memory, disk_usage, list_processes, system_info
 from runspec_linux_core.venvs import configure_pip, create_venv, install_into_venv, share_venv_logs
 
 __all__ = [
@@ -80,6 +81,7 @@ __all__ = [
     # system
     "system_info",
     "disk_usage",
+    "block_devices",
     "check_memory",
     "list_processes",
     # services
@@ -98,6 +100,7 @@ __all__ = [
     "route_table",
     "socket_stats",
     "dns_config",
+    "network_interfaces",
     # perf tuning & analysis
     "get_sysctl",
     "set_sysctl",
@@ -110,6 +113,7 @@ __all__ = [
     "failed_units",
     # files
     "find_large_files",
+    "find_large_files_report",
     "backup_files",
     # security
     "last_logins",

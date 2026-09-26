@@ -1,5 +1,44 @@
 # runspec-linux-core Changelog
 
+## [0.8.0] — 2026-09-26
+
+### Added
+
+- **`block_devices(include_loop=False)`** — the disk inventory behind the new
+  `block-devices` runnable. Runs `lsblk --json` and returns a tree: each disk
+  with its partitions, LVM volumes and crypt/RAID layers under `children`, with
+  size, `rotational` (the kernel's SSD-vs-spinning flag), transport, model,
+  serial, filesystem, label, UUID and mount points. Normalises both the typed JSON
+  of util-linux >= 2.33 and the all-strings output of older versions, and falls
+  back from the `MOUNTPOINTS` column (>= 2.37) to `MOUNTPOINT`. Loop devices are
+  hidden unless `include_loop`.
+- **`network_interfaces(physical_only=False)`** — the NIC inventory behind the new
+  `network-interfaces` runnable, from `ip -json address` plus `/sys/class/net`:
+  state, MAC, MTU, bridge/bond `master`, and IPv4/IPv6 addresses (`dynamic` for
+  DHCP/SLAAC), plus link speed and driver for physical cards. `physical` marks an
+  interface backed by hardware; `physical_only` drops loopback, bridges, bonds,
+  VLANs, veth pairs and tunnels, which clutter a container or Kubernetes host.
+- **`find_large_files_report(search_path, min_mb, limit, *, cross_mounts=False)`**
+  — `find_large_files` as a report: `{path, min_mb, files, match_count,
+  skipped_mounts?}`, where `match_count` counts matches before `limit`.
+
+### Changed
+
+- **`find_large_files` stays on one filesystem.** It recursed across every mount
+  below `search_path`, so a scan of `/` walked `/proc` and ranked `/proc/kcore`
+  (a ~128 TiB virtual file) as the largest file on the host. It now behaves like
+  `find -xdev`. `cross_mounts=True` opts back into other mounted filesystems (a
+  separate disk, a network share), but kernel virtual filesystems (`proc`,
+  `sysfs`, `devtmpfs`, `cgroup2` …) are never scanned. They are recognised from
+  `/proc/self/mountinfo`, then `/proc/mounts`, then the `/proc` / `/sys` / `/dev`
+  paths. The guard is `runspec_linux_core._mounts`, a byte-for-byte twin of
+  `runspec_fs_core._mounts` (each core stays dependency-free) kept identical by a
+  parity test.
+- **A bad `search_path` is an error.** A missing path raises `FileNotFoundError`
+  and a file raises `NotADirectoryError`; both used to return an empty list,
+  indistinguishable from "no large files". A path on a virtual filesystem raises
+  `ValueError`.
+
 ## [0.7.0] — 2026-09-25
 
 ### Added

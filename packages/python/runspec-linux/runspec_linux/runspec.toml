@@ -21,6 +21,18 @@ description = "Report disk usage for all mounted filesystems"
 autonomy  = "autonomous"
 output    = "json"
 
+[block-devices]
+serve       = ["local"]
+description = "List disks and what is on them (lsblk): each disk with its partitions, LVM volumes and mounts nested under children. Shows size, SSD vs spinning disk (rotational: false means SSD/NVMe; virtual disks often report true), transport (sata/nvme/usb), model, serial, filesystem, label, UUID and mount points."
+autonomy    = "autonomous"
+output      = "json"
+
+[block-devices.args.all]
+type        = "flag"
+short       = "-a"
+description = "Also list loop devices (snap and squashfs images), which are hidden by default"
+default     = false
+
 [check-memory]
 serve     = ["local"]
 description = "Report RAM and swap usage in megabytes"
@@ -284,7 +296,7 @@ description = "Filter connections by state"
 
 [find-large-files]
 serve       = ["local"]
-description = "Find files larger than a threshold in a directory tree"
+description = "Find files larger than a threshold in a directory tree, largest first. Stays on the filesystem the path is on (like find -xdev): mount points not entered are counted in skipped_mounts (pass --cross-mounts to search other mounted filesystems too); kernel virtual filesystems (/proc, /sys, /dev) are never searched. Returns {path, min_mb, files, match_count, skipped_mounts?}."
 autonomy    = "autonomous"
 output      = "json"
 
@@ -303,6 +315,11 @@ type        = "int"
 short       = "-n"
 description = "Maximum number of results to return (sorted by size, largest first)"
 default     = 20
+
+[find-large-files.args.cross-mounts]
+type        = "flag"
+description = "Also search other mounted filesystems below the path (a separate disk, a network share). Off by default, like find -xdev. Kernel virtual filesystems (/proc, /sys, /dev) are never searched either way."
+default     = false
 
 [backup-files]
 serve       = ["local"]
@@ -1345,6 +1362,18 @@ description = "Show the host's DNS configuration: nameservers, search domains, a
 autonomy    = "autonomous"
 output      = "json"
 
+[network-interfaces]
+serve       = ["local"]
+description = "List network interfaces (ip addr + /sys/class/net): state, MAC address, MTU, bridge/bond master and IPv4/IPv6 addresses (dynamic: true for DHCP/SLAAC), plus link speed and driver for physical network cards. physical is false for loopback, bridges, bonds, VLANs, veth pairs and tunnels."
+autonomy    = "autonomous"
+output      = "json"
+
+[network-interfaces.args.physical]
+type        = "flag"
+short       = "-p"
+description = "Only physical network cards: hides loopback, bridges, bonds, VLANs, veth pairs and tunnels (useful on container and Kubernetes hosts)"
+default     = false
+
 # ── Filesystem (folded from runspec-fs; backed by runspec-fs-core) ─────────────
 # The filesystem is part of the OS, so the Linux pack ships the `filesystem` runnable
 # directly. One verb per Filesystem MCP tool; `runspec serve` re-expands each
@@ -1410,12 +1439,13 @@ path = {type = "path", required = true, description = "Directory to list"}
 sort-by = {type = "choice", options = ["name", "size"], default = "name", description = "Sort order (size is descending)"}
 
 [filesystem.commands.directory-size]
-description = "Report the recursive total size of each immediate child of a directory, largest first — find which folder is eating a drive (like `du -d1 | sort`). Unlike list-directory-with-sizes (which shows 0 for a folder), each subdirectory's size is the total of everything beneath it; drill into the biggest to trace disk usage."
+description = "Report the recursive total size of each immediate child of a directory, largest first — find which folder is eating a drive (like `du -d1 | sort`). Unlike list-directory-with-sizes (which shows 0 for a folder), each subdirectory's size is the total of everything beneath it; drill into the biggest to trace disk usage. Stays on the filesystem the path is on (like `du -x`): another mounted filesystem below it is listed with skipped_mount and counted in skipped_mounts (pass --cross-mounts to measure it too); kernel virtual filesystems (/proc, /sys, /dev) are never measured."
 autonomy = "autonomous"
 [filesystem.commands.directory-size.args]
 path = {type = "path", ui = "directory", required = true, description = "Directory to measure"}
 limit = {type = "int", short = "-n", default = 20, description = "Return only the N largest children, biggest first (0 = all)"}
 depth = {type = "int", short = "-d", default = 1, description = "Break down this many directory levels deep in one call (1 = immediate children only; like du -d<depth>). Each --limit caps every level."}
+cross-mounts = {type = "flag", default = false, description = "Also measure other mounted filesystems below the path (a separate disk, a network share). Off by default, like du -x. Kernel virtual filesystems (/proc, /sys, /dev) are never measured either way."}
 
 [filesystem.commands.directory-tree]
 description = "Return a recursive JSON tree of a directory"
