@@ -378,6 +378,14 @@ class TurnMixin(_Base):
                                         "runspec:token",
                                         {"id": chat_id, "token": event[1]},
                                     )
+                                elif event[0] == "thinking":
+                                    # Reasoning summary (the anthropic built-in
+                                    # with thinking_display = "summarized"): shown
+                                    # live in the activity bar, not the transcript.
+                                    self._dispatch(
+                                        "runspec:thinking",
+                                        {"id": chat_id, "text": event[1]},
+                                    )
                                 elif event[0] == "done":
                                     response = event[1]
                         except Exception as exc:  # noqa: BLE001

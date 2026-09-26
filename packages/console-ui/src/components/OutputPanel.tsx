@@ -674,6 +674,12 @@ function activeActivity(block: InvocationBlock): { label: string; tool?: string;
   return { label: 'Working…' }
 }
 
+// The last non-empty line of a streamed reasoning summary, trimmed for the bar.
+export function lastLine(text: string): string {
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
+  return lines.length ? lines[lines.length - 1] : ''
+}
+
 // A sticky bottom activity bar shown while a turn is in flight. Long turns with
 // many tool cards push the card's own spinner far above the fold; this keeps a
 // live "still working" signal — the current step + elapsed time — pinned at the
@@ -687,6 +693,20 @@ function ActivityIndicator({ block, onClick }: { block: InvocationBlock; onClick
     return () => clearInterval(t)
   }, [])
   const act = activeActivity(block)
+  // Reasoning summaries (runspec:thinking — sent by the anthropic built-in with
+  // [llm] thinking_display = "summarized"). Shown only while the turn is between
+  // steps; a new step (a tool starting, text streaming) starts a fresh summary.
+  const [thinking, setThinking] = useState('')
+  useEffect(() => {
+    const onThinking = (e: Event) => {
+      const d = (e as CustomEvent<{ id: string; text: string }>).detail
+      if (d?.id === block.id && d.text) setThinking(t => (t + d.text).slice(-400))
+    }
+    window.addEventListener('runspec:thinking', onThinking)
+    return () => window.removeEventListener('runspec:thinking', onThinking)
+  }, [block.id])
+  useEffect(() => { setThinking('') }, [act.label, act.tool])
+  const thinkingLine = act.label === 'Working…' ? lastLine(thinking) : ''
   const secs = Math.max(0, Math.floor((Date.now() - new Date(block.startedAt).getTime()) / 1000))
   const elapsed = secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m ${secs % 60}s`
   return (
@@ -702,7 +722,10 @@ function ActivityIndicator({ block, onClick }: { block: InvocationBlock; onClick
           }}
         >
           <LoadingOutlined style={{ color: 'var(--rs-accent)', fontSize: 13 }} spin />
-          <Text style={{ fontSize: 13, color: c.dim, flexShrink: 0 }}>{act.label}</Text>
+          <Text style={{ fontSize: 13, color: c.dim, flexShrink: 0 }}>{thinkingLine ? 'Thinking…' : act.label}</Text>
+          {thinkingLine && (
+            <Text ellipsis style={{ fontSize: 12, color: c.dim, maxWidth: 360 }}>{thinkingLine}</Text>
+          )}
           {act.tool && (
             <Text code style={{ fontSize: 12, flexShrink: 0 }}>{act.tool}</Text>
           )}

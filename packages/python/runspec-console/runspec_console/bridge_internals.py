@@ -1253,6 +1253,13 @@ class InternalsMixin:
             "langserve",
         }:
             kwargs["effort"] = effort
+        # Built-in `anthropic`-only extras (direct Claude API): 1h prompt cache,
+        # refusal fallbacks, thinking summaries. Forwarded only to that provider so
+        # bedrock / langserve / plugin adapters never see them.
+        if provider == "anthropic":
+            for key in ("cache_ttl", "fallbacks", "thinking_display"):
+                if str(llm_cfg.get(key) or "").strip():
+                    kwargs[key] = str(llm_cfg[key])
         # LangServe-only knobs — describe the gateway's input/output shape and
         # where max_tokens / effort land. Only forwarded when set (and only
         # meaningful to the langserve adapter), so other providers never see them.

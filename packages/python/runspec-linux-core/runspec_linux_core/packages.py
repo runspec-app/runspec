@@ -97,12 +97,18 @@ def _validate_packages(packages: str) -> list[str]:
     return names
 
 
-def list_packages(name_filter: str | None = None, limit: int = 100) -> dict:
+def list_packages(name_filter: str | None = None, limit: int = 100, reason: bool = False) -> dict:
     """Return installed packages (name + version), optionally filtered by substring.
 
     Read-only. Results are sorted by name and capped at ``limit``; ``total`` is
-    the count before the cap. Raises ToolNotFoundError if no package manager is
-    present, or CommandError if the query command fails.
+    the count before the cap. With ``reason`` each row also carries
+    ``installed``: ``"manual"`` (asked for by name) or ``"auto"`` (pulled in as a
+    dependency) — the flag autoremove goes by, so a manual package is never
+    autoremoved however old. It comes from ``apt-mark showmanual``, ``pacman
+    -Qqe``, ``dnf repoquery --userinstalled`` or ``zypper packages
+    --userinstalled``; it is ``null`` on yum or when that query fails. Raises
+    ToolNotFoundError if no package manager is present, or CommandError if the
+    query command fails.
     """
     mgr = detect_manager()
     if mgr == "apt-get":
@@ -123,7 +129,37 @@ def list_packages(name_filter: str | None = None, limit: int = 100) -> dict:
         rows = [r for r in rows if needle in r["name"].lower()]
     rows.sort(key=lambda r: r["name"])
     total = len(rows)
-    return {"manager": mgr, "total": total, "count": min(total, limit), "packages": rows[:limit]}
+    rows = rows[:limit]
+    if reason:
+        manual = _manual_packages(mgr)
+        for row in rows:
+            row["installed"] = None if manual is None else ("manual" if row["name"] in manual else "auto")
+    return {"manager": mgr, "total": total, "count": min(total, limit), "packages": rows}
+
+
+def _manual_packages(mgr: str) -> set[str] | None:
+    """Names of the packages installed by request rather than as a dependency.
+
+    ``None`` when the manager can't say (yum) or the query fails, so a caller
+    reports "unknown" instead of guessing.
+    """
+    if mgr == "apt-get":
+        cmd = ["apt-mark", "showmanual"]
+    elif mgr == "pacman":
+        cmd = ["pacman", "-Qqe"]
+    elif mgr == "dnf":
+        cmd = ["dnf", "-q", "repoquery", "--userinstalled", "--qf", "%{name}\n"]
+    elif mgr == "zypper":
+        run = _run(["zypper", "--non-interactive", "packages", "--userinstalled"])
+        if run.returncode != 0:
+            return None
+        return {row["name"] for row in _parse_zypper_packages(run.stdout)}
+    else:
+        return None
+    run = _run(cmd)
+    if run.returncode != 0:
+        return None
+    return {line.strip() for line in run.stdout.splitlines() if line.strip()}
 
 
 def list_upgrades(refresh: bool = True) -> dict:
@@ -272,6 +308,23 @@ def autoremove_packages(purge: bool = False, dry_run: bool = False) -> dict:
     result["removed"] = True
     result["output"] = _tail(run.stdout)
     return result
+
+
+def list_autoremovable(purge: bool = False) -> dict:
+    """List what ``autoremove_packages`` would remove, removing nothing.
+
+    Read-only and needs no root (apt's simulation, dnf repoquery, zypper's
+    package list and pacman's orphan query all run unprivileged). ``purge``
+    matters only on apt, where the simulation then shows purges. Returns
+    ``{manager, purged, count, packages}``. Raises CommandError on yum, which
+    can't list candidates without removing them, or if the listing fails.
+    """
+    mgr = detect_manager()
+    if mgr == "yum":
+        raise CommandError("yum can't list autoremove candidates without removing them")
+    purged = purge and mgr in _PURGE_CMDS
+    candidates = _autoremove_candidates(mgr, purged)
+    return {"manager": mgr, "purged": purged, "count": len(candidates), "packages": candidates}
 
 
 def _autoremove_candidates(mgr: str, purge: bool) -> list[dict]:

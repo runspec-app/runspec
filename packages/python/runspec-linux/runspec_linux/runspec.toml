@@ -483,6 +483,11 @@ short       = "-n"
 description = "Maximum number of packages to return (sorted by name)"
 default     = 100
 
+[list-packages.args.reason]
+type        = "flag"
+description = "Also say whether each package was installed by name (manual) or as a dependency (auto) — autoremove only ever removes auto packages"
+default     = false
+
 [list-upgrades]
 serve       = ["local"]
 description = "List packages with an available upgrade (refreshes the package index first)"
@@ -531,6 +536,17 @@ type        = "flag"
 description = "Also delete the packages' configuration files (apt purge / pacman -Rn; a plain remove on dnf/yum/zypper)"
 default     = false
 
+[list-autoremovable]
+serve       = ["local"]
+description = "List the packages autoremove-packages would remove (read-only preview; not supported on yum)"
+autonomy    = "autonomous"
+output      = "json"
+
+[list-autoremovable.args.purge]
+type        = "flag"
+description = "Preview a purge (apt shows config files would go too)"
+default     = false
+
 [autoremove-packages]
 serve       = ["local"]
 description = "Remove packages nothing depends on any more, e.g. old kernels (apt autoremove and equivalents; needs root)"
@@ -545,7 +561,7 @@ default     = false
 
 [autoremove-packages.args.dry-run]
 type        = "flag"
-description = "Only list what would be removed; remove nothing (not supported on yum)"
+description = "Only list what would be removed; remove nothing (not supported on yum). list-autoremovable does the same without needing approval"
 default     = false
 
 # ── Power ─────────────────────────────────────────────────────────────────────

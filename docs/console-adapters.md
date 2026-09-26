@@ -193,6 +193,23 @@ short-lived corporate tokens), `base_url`, `model`, `system`, and `max_tokens`
 (for `anthropic` / `bedrock` / `langserve` and any adapter that declares it).
 `[llm] max_continuations` is read by the loop, not the adapter.
 
+### Built-in `anthropic` extras: `cache_ttl`, `fallbacks`, `thinking_display`
+
+Three `[llm]` keys are forwarded **only** to the built-in `anthropic` provider
+(the direct Claude API) and applied in `adapters/anthropic.py`, not in the shared
+`base` helpers — so the `bedrock` / `langserve` built-ins and plugin adapters
+never see them, and each is off unless set:
+
+- `cache_ttl = "1h"` — every prompt-cache breakpoint gets a 1-hour TTL.
+- `fallbacks = "default"` — server-side refusal fallback on Fable 5.x / Opus 5.x
+  (beta `server-side-fallback-2026-07-01`, sent via `client.beta.messages`).
+  Tool calls from a declined attempt are discarded at the stream's `fallback`
+  block, and the declined attempt's non-text blocks are not echoed back.
+- `thinking_display = "summarized"` — adds `display` to an adaptive `thinking`
+  request; `thinking_delta`s are yielded as `("thinking", text)` stream events,
+  which the agent loop forwards as `runspec:thinking` for the activity bar. A
+  custom adapter may yield the same event to get the same UI.
+
 ### `effort` — reasoning effort (adaptive extended thinking)
 
 `[llm] effort` sets how hard the model thinks before it answers — Anthropic

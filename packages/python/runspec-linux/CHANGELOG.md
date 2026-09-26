@@ -1,5 +1,21 @@
 # runspec-linux Changelog
 
+## [0.17.0] — 2026-09-26
+
+### Added
+
+- **`list-autoremovable`** (autonomous, no root) previews what
+  `autoremove-packages` would remove, so an agent can check the list without an
+  approval prompt. `--purge` previews a purge. Not supported on yum.
+- **`list-packages --reason`** says whether each package was installed by name
+  (`manual`) or as a dependency (`auto`). Autoremove only removes `auto`
+  packages, so this answers "why isn't this old kernel an autoremove
+  candidate?" instead of leaving it to a guess.
+
+### Changed
+
+- Requires `runspec-linux-core >= 0.11.0`.
+
 ## [0.16.0] — 2026-09-26
 
 ### Added

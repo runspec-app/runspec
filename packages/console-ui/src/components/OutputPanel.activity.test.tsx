@@ -54,3 +54,35 @@ describe('OutputPanel activity indicator', () => {
     expect(screen.queryByText('Working…')).toBeNull()
   })
 })
+
+describe('OutputPanel activity indicator — thinking summaries', () => {
+  it('shows the latest reasoning line from runspec:thinking while between steps', async () => {
+    const { act } = await import('@testing-library/react')
+    render(<OutputPanel blocks={[chatBlock()]} />)
+    act(() => {
+      window.dispatchEvent(new CustomEvent('runspec:thinking', { detail: { id: 'c1', text: 'Listing kernels.\nChecking /boot usage' } }))
+    })
+    expect(screen.getByText('Thinking…')).toBeTruthy()
+    expect(screen.getByText('Checking /boot usage')).toBeTruthy()
+  })
+
+  it('ignores thinking for another turn and yields to a running tool', async () => {
+    const { act } = await import('@testing-library/react')
+    render(<OutputPanel blocks={[chatBlock({ segments: [runningTool] })]} />)
+    act(() => {
+      window.dispatchEvent(new CustomEvent('runspec:thinking', { detail: { id: 'c1', text: 'planning' } }))
+      window.dispatchEvent(new CustomEvent('runspec:thinking', { detail: { id: 'other', text: 'elsewhere' } }))
+    })
+    expect(screen.queryByText('Thinking…')).toBeNull()
+    expect(screen.getByText('Running')).toBeTruthy()
+    expect(screen.queryByText('elsewhere')).toBeNull()
+  })
+})
+
+describe('lastLine', () => {
+  it('returns the last non-empty trimmed line', async () => {
+    const { lastLine } = await import('./OutputPanel')
+    expect(lastLine('a\n  b  \n\n')).toBe('b')
+    expect(lastLine('')).toBe('')
+  })
+})

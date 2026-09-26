@@ -49,6 +49,9 @@ class AnthropicAdapter(ModelAdapter):
         max_tokens: int = DEFAULT_MAX_TOKENS,
         effort: str = "",
         model_limits: dict[str, Any] | None = None,
+        cache_ttl: str = "",
+        fallbacks: str = "",
+        thinking_display: str = "",
     ) -> None:
         """
         Args:
@@ -73,11 +76,29 @@ class AnthropicAdapter(ModelAdapter):
             model_limits: The ``[llm.model_limits]`` table (model-id substring →
                 capability fields) used by ``capabilities()``; this adapter also
                 fills unset numeric limits from the Models API when reachable.
+            cache_ttl: Prompt-cache lifetime (``[llm] cache_ttl``) — "" / "5m"
+                (default) or "1h". The 1-hour cache survives an operator pausing
+                at a confirm card; it costs more to write (2x vs 1.25x base).
+            fallbacks: Refusal fallback (``[llm] fallbacks``) — "" (off) or
+                "default": on a model whose safety classifiers can decline (Fable
+                5.x, Opus 5.x) the API re-runs a declined request on Anthropic's
+                recommended model in the same call. Claude API only (beta
+                ``server-side-fallback-2026-07-01``); ignored on other models.
+            thinking_display: ``thinking.display`` (``[llm] thinking_display``) —
+                "" (the model's default, usually "omitted") or "summarized" to
+                stream readable reasoning summaries, surfaced as ``("thinking",
+                text)`` events. Only sent when thinking is on.
         """
         self.model = model
         self.system = system
         self.max_tokens = int(max_tokens) or DEFAULT_MAX_TOKENS
         self._effort = effort_level(effort)
+        self._cache_ttl = "1h" if str(cache_ttl or "").strip().lower() == "1h" else ""
+        self._fallbacks = (
+            "default" if str(fallbacks or "").strip().lower() == "default" else ""
+        )
+        display = str(thinking_display or "").strip().lower()
+        self._thinking_display = display if display in ("summarized", "omitted") else ""
         # [llm.model_limits] table for the default capabilities() lookup, plus a
         # cache of the (best-effort) Models API enrichment — see capabilities().
         self._model_limits = model_limits or {}
@@ -180,6 +201,31 @@ class AnthropicAdapter(ModelAdapter):
             self._model_info_cache = None
         return self._model_info_cache
 
+    def _shape_request(self, kwargs: dict[str, Any]) -> None:
+        """Apply thinking/effort and prompt caching, then this adapter's opt-in
+        extras (``cache_ttl``, ``thinking_display``, ``fallbacks``). The extras
+        live here, not in the shared ``base`` helpers, so the bedrock / langserve
+        built-ins and plugin adapters are unaffected."""
+        apply_thinking(kwargs, self._effort, self._base_caps(), self.model)
+        apply_prompt_caching(kwargs)
+        if self._cache_ttl:
+            _set_cache_ttl(kwargs, self._cache_ttl)
+        thinking = kwargs.get("thinking")
+        if (
+            self._thinking_display
+            and isinstance(thinking, dict)
+            and thinking.get("type") == "adaptive"
+        ):
+            kwargs["thinking"] = {**thinking, "display": self._thinking_display}
+        if self._fallbacks and _supports_fallbacks(self.model):
+            kwargs["betas"] = [_FALLBACK_BETA]
+            kwargs["extra_body"] = {"fallbacks": self._fallbacks}
+
+    def _messages_api(self, kwargs: dict[str, Any]) -> Any:
+        """The beta namespace when a beta is requested (fallbacks), else the
+        stable one — ``betas`` is only accepted under ``client.beta``."""
+        return self.client.beta.messages if "betas" in kwargs else self.client.messages
+
     async def chat(
         self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
     ) -> ChatResponse:
@@ -192,9 +238,8 @@ class AnthropicAdapter(ModelAdapter):
         )
         if tools:
             kwargs["tools"] = tools
-        apply_thinking(kwargs, self._effort, self._base_caps(), self.model)
-        apply_prompt_caching(kwargs)
-        response = await self.client.messages.create(**kwargs)
+        self._shape_request(kwargs)
+        response = await self._messages_api(kwargs).create(**kwargs)
         text = next(
             (block.text for block in response.content if hasattr(block, "text")), None
         )
@@ -222,9 +267,8 @@ class AnthropicAdapter(ModelAdapter):
         )
         if tools:
             kwargs["tools"] = tools
-        apply_thinking(kwargs, self._effort, self._base_caps(), self.model)
-        apply_prompt_caching(kwargs)
-        async with self.client.messages.stream(**kwargs) as stream:
+        self._shape_request(kwargs)
+        async with self._messages_api(kwargs).stream(**kwargs) as stream:
             async for token in stream.text_stream:
                 yield token
 
@@ -242,17 +286,20 @@ class AnthropicAdapter(ModelAdapter):
         )
         if tools:
             kwargs["tools"] = tools
-        apply_thinking(kwargs, self._effort, self._base_caps(), self.model)
-        apply_prompt_caching(kwargs)
+        self._shape_request(kwargs)
         # Collect tool input JSON chunks indexed by content-block position
         tool_map: dict[int, dict[str, Any]] = {}
         stop_reason = "end_turn"
-        async with self.client.messages.stream(**kwargs) as stream:
+        async with self._messages_api(kwargs).stream(**kwargs) as stream:
             async for event in stream:
                 ev_type = getattr(event, "type", None)
                 if ev_type == "content_block_start":
                     cb = getattr(event, "content_block", None)
-                    if cb and getattr(cb, "type", None) == "tool_use":
+                    if cb and getattr(cb, "type", None) == "fallback":
+                        # A refusal fallback: tool calls from the declined
+                        # attempt must not run (and aren't echoed back).
+                        tool_map.clear()
+                    elif cb and getattr(cb, "type", None) == "tool_use":
                         tool_map[event.index] = {
                             "id": cb.id,
                             "name": cb.name,
@@ -263,6 +310,9 @@ class AnthropicAdapter(ModelAdapter):
                     if d:
                         if getattr(d, "type", None) == "text_delta":
                             yield ("text", d.text)
+                        elif getattr(d, "type", None) == "thinking_delta":
+                            if getattr(d, "thinking", ""):
+                                yield ("thinking", d.thinking)
                         elif getattr(d, "type", None) == "input_json_delta":
                             if event.index in tool_map:
                                 tool_map[event.index]["json"] += d.partial_json
@@ -291,7 +341,7 @@ class AnthropicAdapter(ModelAdapter):
         self, response: ChatResponse, results: list[tuple[ToolCall, str]]
     ) -> list[dict[str, Any]]:
         return [
-            {"role": "assistant", "content": response._raw.content},
+            {"role": "assistant", "content": _echo_content(response._raw.content)},
             {
                 "role": "user",
                 "content": [
@@ -300,3 +350,74 @@ class AnthropicAdapter(ModelAdapter):
                 ],
             },
         ]
+
+
+# ── opt-in request extras (see AnthropicAdapter._shape_request) ────────────────
+
+_FALLBACK_BETA = "server-side-fallback-2026-07-01"
+# Model families whose safety classifiers can decline a request and which accept
+# server-side fallbacks. Matched as a substring so dated / Bedrock-style ids work;
+# every other model is sent no fallbacks field (it would be rejected).
+_FALLBACK_MODEL_FAMILIES = ("claude-fable-5", "claude-opus-5", "claude-mythos-5")
+
+
+def _supports_fallbacks(model: str) -> bool:
+    m = (model or "").lower()
+    return any(family in m for family in _FALLBACK_MODEL_FAMILIES)
+
+
+def _with_ttl(block: Any, ttl: str) -> Any:
+    if isinstance(block, dict) and isinstance(block.get("cache_control"), dict):
+        return {**block, "cache_control": {**block["cache_control"], "ttl": ttl}}
+    return block
+
+
+def _set_cache_ttl(kwargs: dict[str, Any], ttl: str) -> None:
+    """Give every cache breakpoint ``apply_prompt_caching`` placed the same TTL.
+
+    Rebuilds only the lists holding a marker (tools, system blocks, and the
+    marked message's content), so the caller's history is never mutated. One TTL
+    for all breakpoints also satisfies the API rule that a longer TTL may not
+    follow a shorter one."""
+    if isinstance(kwargs.get("tools"), list):
+        kwargs["tools"] = [_with_ttl(t, ttl) for t in kwargs["tools"]]
+    if isinstance(kwargs.get("system"), list):
+        kwargs["system"] = [_with_ttl(b, ttl) for b in kwargs["system"]]
+    messages = kwargs.get("messages")
+    if isinstance(messages, list):
+        out = []
+        for msg in messages:
+            content = msg.get("content") if isinstance(msg, dict) else None
+            if isinstance(content, list) and any(
+                isinstance(b, dict) and "cache_control" in b for b in content
+            ):
+                msg = {**msg, "content": [_with_ttl(b, ttl) for b in content]}
+            out.append(msg)
+        kwargs["messages"] = out
+
+
+# Block types from a declined attempt that must not be echoed back after a
+# mid-output fallback (text before the boundary is fine to keep).
+_PRE_FALLBACK_DROP = {"thinking", "redacted_thinking", "tool_use", "server_tool_use"}
+
+
+def _echo_content(content: Any) -> Any:
+    """The assistant content to send back next turn.
+
+    Unchanged unless a refusal fallback happened mid-output: then everything the
+    declined model produced before the last ``fallback`` block except its text is
+    dropped, as the API requires."""
+    if not isinstance(content, list):
+        return content
+    types = [
+        getattr(b, "type", None) or (b.get("type") if isinstance(b, dict) else None)
+        for b in content
+    ]
+    if "fallback" not in types:
+        return content
+    boundary = len(types) - 1 - types[::-1].index("fallback")
+    return [
+        b
+        for i, (b, t) in enumerate(zip(content, types, strict=True))
+        if i >= boundary or t == "text"
+    ]

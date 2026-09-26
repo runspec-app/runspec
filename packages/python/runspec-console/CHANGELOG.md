@@ -8,6 +8,35 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.295.0] — 2026-09-26
+
+### Added
+
+- **Built-in `anthropic` provider extras** — three opt-in `[llm]` keys for the
+  direct Claude API, applied only in `adapters/anthropic.py` (never forwarded to
+  `bedrock` / `langserve` / plugin adapters, so a gateway setup is unaffected):
+  - **`cache_ttl = "1h"`** — the prompt cache survives an operator pausing at a
+    confirm card or between prompts (the default 5-minute cache expires, so the
+    next turn re-sent the whole tool list + history at full price).
+  - **`fallbacks = "default"`** — server-side refusal fallback on Fable 5.x /
+    Opus 5.x: a request their safety classifiers decline is re-run on
+    Anthropic's recommended model in the same call instead of the turn ending.
+    Tool calls from the declined attempt never run, and its non-text blocks
+    aren't echoed back.
+  - **`thinking_display = "summarized"`** — readable reasoning summaries; the
+    latest line shows in the Console's activity bar ("Thinking… checking /boot
+    usage") while the agent works, via a new `runspec:thinking` event.
+
+### Fixed
+
+- **`[llm] effort = off` no longer breaks Claude Opus 5.5.** The thinking
+  defaults are matched by model-id substring, and `claude-opus-5` is a substring
+  of `claude-opus-5-5`, so Opus 5.5 was treated as Opus 5 and sent
+  `thinking={"type": "disabled"}`. Opus 5.5 rejects that at every effort level
+  (400). It now gets its own entry and, like Fable, falls back to `effort=low`
+  with a one-time log line; set `[llm] effort` explicitly to choose a depth.
+  Named efforts were unaffected.
+
 ## [0.294.0] — 2026-09-26
 
 ### Changed

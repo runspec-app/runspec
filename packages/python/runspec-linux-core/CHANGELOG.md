@@ -1,5 +1,20 @@
 # runspec-linux-core Changelog
 
+## [0.11.0] — 2026-09-26
+
+### Added
+
+- **`list_packages(..., reason=True)`** adds `installed` to each row:
+  `"manual"` (installed by name) or `"auto"` (pulled in as a dependency). That
+  flag is what autoremove goes by, so a manual package is never autoremoved
+  however old it is. Read from `apt-mark showmanual`, `pacman -Qqe`, `dnf
+  repoquery --userinstalled` or `zypper packages --userinstalled`; `null` on
+  yum or when that query fails. Off by default, so a plain listing still runs
+  one query.
+- **`list_autoremovable(purge=False)`** lists what `autoremove_packages` would
+  remove without removing anything, and needs no root. Refused on yum, which
+  can't list candidates without removing them.
+
 ## [0.10.0] — 2026-09-26
 
 ### Added

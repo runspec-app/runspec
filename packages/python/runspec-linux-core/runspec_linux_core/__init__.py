@@ -54,6 +54,7 @@ from runspec_linux_core.packages import (
     autoremove_packages,
     detect_manager,
     install_package,
+    list_autoremovable,
     list_packages,
     list_upgrades,
     remove_package,
@@ -137,6 +138,7 @@ __all__ = [
     "install_package",
     "remove_package",
     "autoremove_packages",
+    "list_autoremovable",
     # power
     "reboot_host",
     # sudoers

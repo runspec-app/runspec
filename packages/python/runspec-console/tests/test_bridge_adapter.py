@@ -305,3 +305,24 @@ def test_builtin_kwargs_factory_forwards_nothing_extra():
         bridge._get_adapter()
     _, kwargs = load.call_args
     assert "tenant_id" not in kwargs
+
+
+def test_anthropic_extras_threaded_only_to_anthropic():
+    # cache_ttl / fallbacks / thinking_display belong to the direct-API built-in;
+    # a gateway (langserve) or plugin adapter must never be handed them.
+    extras = {
+        "cache_ttl": "1h",
+        "fallbacks": "default",
+        "thinking_display": "summarized",
+    }
+    cfg = {"llm": {"provider": "anthropic", "base_url": "https://x", **extras}}
+    with patch(LOAD, return_value="ADAPTER") as load:
+        _StubBridge(cfg)._get_adapter()
+    _, kwargs = load.call_args
+    assert {k: kwargs[k] for k in extras} == extras
+
+    cfg = {"llm": {"provider": "langserve", "base_url": "https://x", **extras}}
+    with patch(LOAD, return_value="ADAPTER") as load:
+        _StubBridge(cfg)._get_adapter()
+    _, kwargs = load.call_args
+    assert not set(extras) & set(kwargs)

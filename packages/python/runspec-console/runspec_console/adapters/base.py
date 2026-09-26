@@ -177,14 +177,17 @@ def capabilities_from_limits(
 #   • Opus/Sonnet/Haiku 4.x — omitting means no extended thinking (off is off).
 #   • Sonnet 5 / Opus 5     — omitting runs adaptive thinking at effort HIGH, but
 #                             they accept an explicit disable, so `off` sends it.
-#   • Fable                 — also defaults thinking on, but REJECTS an explicit
+#   • Fable / Opus 5.5      — also default thinking on, but REJECT an explicit
 #                             disable, so `off` falls back to the lowest effort.
+#                             (Opus 5.5 needs its own key: "claude-opus-5" is a
+#                             substring of "claude-opus-5-5".)
 _ANTHROPIC_THINKING_DEFAULTS: dict[str, dict[str, Any]] = {
     "claude-opus-4": {"thinking_default_on": False, "thinking_disable": True},
     "claude-sonnet-4": {"thinking_default_on": False, "thinking_disable": True},
     "claude-haiku-4": {"thinking_default_on": False, "thinking_disable": True},
     "claude-sonnet-5": {"thinking_default_on": True, "thinking_disable": True},
     "claude-opus-5": {"thinking_default_on": True, "thinking_disable": True},
+    "claude-opus-5-5": {"thinking_default_on": True, "thinking_disable": False},
     "claude-fable": {"thinking_default_on": True, "thinking_disable": False},
 }
 
@@ -604,7 +607,7 @@ def apply_thinking(
       * the model defaults thinking on and accepts an explicit disable
         (``thinking_disable`` true — Sonnet 5, Opus 5) → send
         ``thinking={"type": "disabled"}`` so ``off`` is genuinely off.
-      * the model defaults thinking on but rejects the disable (Fable) → fall back
+      * the model defaults thinking on but rejects the disable (Fable, Opus 5.5) → fall back
         to ``effort="low"`` (the cheapest honest setting) and log once, since a
         disable would 400.
 

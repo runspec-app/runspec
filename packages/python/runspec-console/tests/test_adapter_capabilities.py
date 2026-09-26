@@ -190,6 +190,22 @@ def test_thinking_base_opus_5_defaults_on_accepts_disable():
     assert caps.thinking_default_on is True and caps.thinking_disable is True
 
 
+def test_thinking_base_opus_5_5_rejects_disable():
+    # "claude-opus-5" is a substring of "claude-opus-5-5"; the longer key must win,
+    # or `effort = off` sends a disable Opus 5.5 answers with a 400.
+    for model in ("claude-opus-5-5", "anthropic.claude-opus-5-5"):
+        caps = _caps(model)
+        assert caps.thinking_default_on is True and caps.thinking_disable is False
+
+
+def test_apply_thinking_off_opus_5_5_falls_back_to_low():
+    base_mod._THINKING_FALLBACK_LOGGED.discard("claude-opus-5-5")
+    kw: dict[str, Any] = {}
+    apply_thinking(kw, "off", _caps("claude-opus-5-5"), "claude-opus-5-5")
+    assert kw["thinking"] == {"type": "adaptive"}
+    assert kw["output_config"] == {"effort": "low"}
+
+
 def test_thinking_base_fable_defaults_on_rejects_disable():
     caps = _caps("claude-fable-5-1")
     assert caps.thinking_default_on is True and caps.thinking_disable is False

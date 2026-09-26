@@ -259,3 +259,59 @@ def test_autoremove_listing_failure_raises(monkeypatch: pytest.MonkeyPatch) -> N
     _recorder(monkeypatch, "apt-get", {"apt-get -s": _completed("", returncode=100, stderr="locked")})
     with pytest.raises(CommandError, match="locked"):
         core.autoremove_packages()
+
+
+# ── list_packages(reason=True) ────────────────────────────────────────────────
+
+
+def test_list_packages_reason_marks_manual_and_auto(monkeypatch: pytest.MonkeyPatch) -> None:
+    _recorder(
+        monkeypatch,
+        "apt-get",
+        {
+            "dpkg-query -W": _completed("linux-image-7.0.4\t7.0.4-1\nlinux-image-7.0.13\t7.0.13-1\n"),
+            "apt-mark showmanual": _completed("linux-image-7.0.4\nvim\n"),
+        },
+    )
+    rows = core.list_packages(name_filter="linux-image", reason=True)["packages"]
+    assert rows == [
+        {"name": "linux-image-7.0.13", "version": "7.0.13-1", "installed": "auto"},
+        {"name": "linux-image-7.0.4", "version": "7.0.4-1", "installed": "manual"},
+    ]
+
+
+def test_list_packages_reason_unknown_when_query_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    _recorder(
+        monkeypatch,
+        "pacman",
+        {"pacman -Q": _completed("htop 3.0-1\n"), "pacman -Qqe": _completed("", returncode=1)},
+    )
+    assert core.list_packages(reason=True)["packages"][0]["installed"] is None
+
+
+def test_list_packages_reason_unknown_on_yum(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _recorder(monkeypatch, "yum", {"rpm -qa": _completed("htop\t3.0-1\n")})
+    assert core.list_packages(reason=True)["packages"][0]["installed"] is None
+    assert len(calls) == 1
+
+
+def test_list_packages_without_reason_runs_one_query(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _recorder(monkeypatch, "apt-get", {"dpkg-query -W": _completed("vim\t2\n")})
+    assert "installed" not in core.list_packages()["packages"][0]
+    assert len(calls) == 1
+
+
+# ── list_autoremovable ────────────────────────────────────────────────────────
+
+
+def test_list_autoremovable_only_lists(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _recorder(monkeypatch, "apt-get", {"apt-get -s": _completed(APT_SIM)})
+    result = core.list_autoremovable(purge=True)
+    assert calls == [["apt-get", "-s", "autoremove", "--purge"]]
+    assert result["count"] == 2 and result["purged"] is True and "removed" not in result
+
+
+def test_list_autoremovable_refuses_yum(monkeypatch: pytest.MonkeyPatch) -> None:
+    _recorder(monkeypatch, "yum")
+    with pytest.raises(CommandError, match="yum"):
+        core.list_autoremovable()
