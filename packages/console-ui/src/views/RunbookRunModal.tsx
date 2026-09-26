@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Modal, Input, Select, Typography, Tag, message } from 'antd'
 import type { ArgDef, Runbook } from '../bridge'
-import { ArgInput } from './formsShared'
+import { ArgGrid, ArgInput, DefaultArgsCollapse, TruncatedText, argSpansRow, partitionArgs } from './formsShared'
 import { MONO_FONT } from '../ThemeContext'
 
 const { Text } = Typography
@@ -71,6 +71,67 @@ export function RunbookField({ arg, hostNames, value, error, onChange }: {
   return <ArgInput arg={arg} host="" runnable="" value={value} error={error} onChange={onChange} />
 }
 
+// The dialog width the Forms tab uses: roomy enough for a two-column grid, wider
+// still (3+ columns) when there are many params.
+export function paramModalWidth(count: number): string {
+  return count > 6 ? 'min(1160px, 96vw)' : 'min(860px, 94vw)'
+}
+
+// One param in the Forms-tab row shape: name + type/required tags on one line, the
+// description on its own truncated line (hover for the full text), then the field.
+export function ParamRow({ arg, hostNames, value, error, onChange }: {
+  arg: ArgDef
+  hostNames: string[]
+  value: unknown
+  error?: string
+  onChange: (v: unknown) => void
+}) {
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
+        <Text code style={{ fontSize: 13 }}>{arg.name}</Text>
+        <Tag style={{ fontSize: 11, margin: 0 }}>{arg.ui === 'host' ? 'host' : arg.type}</Tag>
+        {arg.required
+          ? <Tag color="orange" style={{ fontSize: 11, margin: 0 }}>required</Tag>
+          : <Text type="secondary" style={{ fontSize: 11 }}>optional</Text>}
+      </div>
+      {arg.description && (
+        <TruncatedText text={arg.description} style={{ fontSize: 12, marginBottom: 5, color: 'var(--rs-text-secondary)' }} />
+      )}
+      <RunbookField arg={arg} hostNames={hostNames} value={value} error={error} onChange={onChange} />
+      {error && <Text style={{ fontSize: 12, color: '#ff4d4f' }}>{error}</Text>}
+    </div>
+  )
+}
+
+// The params laid out like a Forms-tab group: defaulted params folded into a
+// collapsed "Default arguments" section, the rest in the responsive multi-column
+// grid (wide controls span the row).
+export function ParamGrid({ args, hostNames, values, errors, onChange }: {
+  args: ArgDef[]
+  hostNames: string[]
+  values: Record<string, unknown>
+  errors: Record<string, string>
+  onChange: (name: string, v: unknown) => void
+}) {
+  const { visible, defaulted } = partitionArgs(args)
+  const cell = (a: ArgDef) => (
+    <div key={a.name} style={{ minWidth: 0, ...(argSpansRow(a) ? { gridColumn: '1 / -1' } : {}) }}>
+      <ParamRow arg={a} hostNames={hostNames} value={values[a.name]} error={errors[a.name]} onChange={v => onChange(a.name, v)} />
+    </div>
+  )
+  return (
+    <>
+      {defaulted.length > 0 && (
+        <DefaultArgsCollapse count={defaulted.length}>
+          <ArgGrid>{defaulted.map(cell)}</ArgGrid>
+        </DefaultArgsCollapse>
+      )}
+      {visible.length > 0 && <ArgGrid>{visible.map(cell)}</ArgGrid>}
+    </>
+  )
+}
+
 export function RunbookRunModal({ runbook, hostNames, onClose, onRun }: RunbookRunModalProps) {
   const [values, setValues] = useState<Record<string, unknown>>({})
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -117,7 +178,7 @@ export function RunbookRunModal({ runbook, hostNames, onClose, onRun }: RunbookR
       onCancel={onClose}
       onOk={submit}
       okText="Run runbook"
-      width={560}
+      width={paramModalWidth(args.length)}
       title={`Runbook: ${runbook.title || runbook.id}`}
     >
       {runbook.symptom && (
@@ -131,20 +192,7 @@ export function RunbookRunModal({ runbook, hostNames, onClose, onRun }: RunbookR
         </Text>
       )}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-        {args.map(a => (
-          <div key={a.name}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
-              <Text code style={{ fontSize: 13 }}>{a.name}</Text>
-              <Tag style={{ fontSize: 11, margin: 0 }}>{a.ui === 'host' ? 'host' : a.type}</Tag>
-              {a.required
-                ? <Tag color="orange" style={{ fontSize: 11, margin: 0 }}>required</Tag>
-                : <Text type="secondary" style={{ fontSize: 11 }}>optional</Text>}
-              {a.description && <Text type="secondary" style={{ fontSize: 12 }}>{a.description}</Text>}
-            </div>
-            <RunbookField arg={a} hostNames={hostNames} value={values[a.name]} error={errors[a.name]} onChange={v => change(a.name, v)} />
-            {errors[a.name] && <Text style={{ fontSize: 12, color: '#ff4d4f' }}>{errors[a.name]}</Text>}
-          </div>
-        ))}
+        <ParamGrid args={args} hostNames={hostNames} values={values} errors={errors} onChange={change} />
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
             <Text style={{ fontSize: 13 }}>Additional instructions</Text>

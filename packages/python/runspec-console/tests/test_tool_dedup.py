@@ -68,6 +68,7 @@ class _Bridge:
     _runnables_to_tools = Bridge._runnables_to_tools
     _visible_runnables = Bridge._visible_runnables
     _resolve_tool_target = Bridge._resolve_tool_target
+    _fallback_for_host = Bridge._fallback_for_host
     _effective_tool_autonomy = Bridge._effective_tool_autonomy
     _run_tool_sync = Bridge._run_tool_sync
 
@@ -242,6 +243,15 @@ def test_resolve_dedup_falls_back_to_configured_cold_host():
     host, name, cached, key = b._resolve_tool_target("fleet__ping", {"host": "cold"})
     assert (host, name, key) == ("cold", "ping", "host")
     assert cached["host"] == "cold"  # synthesized for the cold host
+
+
+def test_resolve_dedup_discovered_host_without_runnable_errors():
+    """A discovered host that lacks the runnable errors instead of borrowing a
+    warm host's definition — that ran a binary not installed there (exit 127)."""
+    b = _Bridge([_rn("new", "ping"), _rn("old", "other")])
+    out = b._resolve_tool_target("fleet__ping", {"host": "old"})
+    assert isinstance(out, str)
+    assert "not installed on 'old'" in out and "Available on: new" in out
 
 
 def test_resolve_dedup_falls_back_to_explicit_host__name():

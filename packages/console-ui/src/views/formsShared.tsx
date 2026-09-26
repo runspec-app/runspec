@@ -8,8 +8,9 @@
 // now live here — a light module the eager consumers import — so FormsView is
 // reached only via the dynamic import and actually code-splits. FormsView re-exports
 // the public helpers for the colocated tests.
-import { type CSSProperties } from 'react'
+import { type CSSProperties, type ReactNode } from 'react'
 import {
+  Collapse,
   ColorPicker,
   DatePicker,
   Input,
@@ -19,6 +20,7 @@ import {
   Switch,
   TimePicker,
   Tooltip,
+  Typography,
 } from 'antd'
 import { InfoCircleOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
@@ -437,5 +439,44 @@ export function filterSavedRuns(savedRuns: SavedRun[], search: string): SavedRun
     (s.description ?? '').toLowerCase().includes(low) ||
     (s.runnable ?? '').toLowerCase().includes(low) ||
     (s.target ?? '').toLowerCase().includes(low)
+  )
+}
+
+// ── shared run-form layout (Forms tab, runbook + saved-run dialogs) ───────────
+
+// Responsive multi-column layout for a group of arg rows: fills as many ~260px
+// columns as the (dynamically sized) dialog allows — 3+ when wide — and
+// collapses to one when narrow. `auto-fit` stretches the items to fill the row
+// when there are only a few, so a short form doesn't leave empty tracks.
+// `align-items: start` so a taller field (a grown textarea) doesn't stretch its
+// row-mates.
+export function ArgGrid({ children }: { children: ReactNode }) {
+  return (
+    <div style={{
+      display: 'grid',
+      gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
+      gap: 14, alignItems: 'start',
+    }}>
+      {children}
+    </div>
+  )
+}
+
+
+// The defaulted/optional args of a group, folded into a section that is
+// collapsed by default (no defaultActiveKey) so the form leads with the required
+// fields. `ghost` keeps it visually light, matching the flat layout.
+export function DefaultArgsCollapse({ count, children }: { count: number; children: ReactNode }) {
+  return (
+    <Collapse
+      size="small"
+      ghost
+      style={{ marginLeft: -8, marginRight: -8 }}
+      items={[{
+        key: 'defaults',
+        label: <Typography.Text type="secondary" style={{ fontSize: 12 }}>Default arguments ({count})</Typography.Text>,
+        children,
+      }]}
+    />
   )
 }

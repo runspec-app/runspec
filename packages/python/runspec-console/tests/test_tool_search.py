@@ -93,6 +93,8 @@ class _Bridge:
     _deferred_builtin_tools = Bridge._deferred_builtin_tools
     _builtin_meta_tools = Bridge._builtin_meta_tools
     _resolve_tool_target = Bridge._resolve_tool_target
+    _fallback_for_host = Bridge._fallback_for_host
+    _arg_hosts = staticmethod(Bridge._arg_hosts)
     _effective_tool_autonomy = Bridge._effective_tool_autonomy
     _confirm_decision = Bridge._confirm_decision
     _run_tool_sync = Bridge._run_tool_sync
@@ -649,6 +651,34 @@ def test_resolve_id_host_falls_back_to_configured_cold_host():
     assert cached_r["host"] == "cold"  # synthesized for the cold host
     # A host that isn't configured at all still errors.
     assert isinstance(b._resolve_id_host("fleet__ping", "nowhere"), str)
+
+
+def test_resolve_id_host_discovered_host_without_runnable_errors():
+    """A host that HAS been discovered but doesn't carry the runnable (an older
+    install) must error clearly, not borrow a warm host's definition and run a
+    binary that isn't there (exit 127)."""
+    b = _Bridge([_rn("new", "list-autoremovable"), _rn("old", "system-info")])
+    out = b._resolve_id_host("fleet__list-autoremovable", "old")
+    assert isinstance(out, str)
+    assert "not installed on 'old'" in out and "Available on: new" in out
+
+
+def test_search_row_marks_args_only_some_hosts_have():
+    """Hosts can run different versions of one package: an arg only a newer copy
+    declares is marked with the hosts that take it, and a rep lacking it still
+    lists it (from another host's copy)."""
+    base = {"name": "filter", "type": "str"}
+    reason = {"name": "reason", "type": "flag"}
+    b = _Bridge(
+        [
+            _rn("old", "list-packages", args=[dict(base)]),
+            _rn("new", "list-packages", args=[dict(base), dict(reason)]),
+        ]
+    )
+    row = b._search_runnables("list-packages")["results"][0]
+    args = {a["name"]: a for a in row["args"]}
+    assert "only_on_hosts" not in args["filter"]
+    assert args["reason"]["only_on_hosts"] == ["new"]
 
 
 # ── args coercion (models sometimes emit `args` as a string) ──────────────────

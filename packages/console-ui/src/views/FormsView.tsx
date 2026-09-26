@@ -10,7 +10,9 @@ import { runnableHidden } from '../toolVisibility'
 // without pinning this heavy view into the main chunk — App.tsx React.lazy-loads
 // FormsView, so nothing else may statically import from it.
 import {
+  ArgGrid,
   ArgInput,
+  DefaultArgsCollapse,
   TruncatedText,
   argNeedsValue,
   argSpansRow,
@@ -57,24 +59,6 @@ function AutonomyTag({ level }: { level?: string }) {
     <Tooltip title={`autonomy: ${level || 'confirm'}`}>
       <Tag color={color} style={{ fontSize: 11, margin: 0 }}>{label}</Tag>
     </Tooltip>
-  )
-}
-
-// Responsive multi-column layout for a group of arg rows: fills as many ~260px
-// columns as the (dynamically sized) dialog allows — 3+ when wide — and
-// collapses to one when narrow. `auto-fit` stretches the items to fill the row
-// when there are only a few, so a short form doesn't leave empty tracks.
-// `align-items: start` so a taller field (a grown textarea) doesn't stretch its
-// row-mates.
-function ArgGrid({ children }: { children: ReactNode }) {
-  return (
-    <div style={{
-      display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
-      gap: 14, alignItems: 'start',
-    }}>
-      {children}
-    </div>
   )
 }
 
@@ -139,24 +123,6 @@ function ArgRow({ arg, host, runnable, runAs, group, value, error, onChange, bin
       <ArgInput arg={arg} host={host} runnable={runnable} runAs={runAs} group={group} value={value} error={error} onChange={onChange} binding={binding} />
       {error && <Text style={{ fontSize: 12, color: '#ff4d4f' }}>{error}</Text>}
     </div>
-  )
-}
-
-// The defaulted/optional args of a group, folded into a section that is
-// collapsed by default (no defaultActiveKey) so the form leads with the required
-// fields. `ghost` keeps it visually light, matching the flat layout.
-function DefaultArgsCollapse({ count, children }: { count: number; children: ReactNode }) {
-  return (
-    <Collapse
-      size="small"
-      ghost
-      style={{ marginLeft: -8, marginRight: -8 }}
-      items={[{
-        key: 'defaults',
-        label: <Text type="secondary" style={{ fontSize: 12 }}>Default arguments ({count})</Text>,
-        children,
-      }]}
-    />
   )
 }
 

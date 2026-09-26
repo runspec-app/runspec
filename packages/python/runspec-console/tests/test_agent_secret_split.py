@@ -24,6 +24,7 @@ class _AgentBridge:
     # Routing helpers _run_tool_sync delegates to. The host__name tool names below
     # resolve via the per-host fallback under either layout.
     _resolve_tool_target = Bridge._resolve_tool_target
+    _fallback_for_host = Bridge._fallback_for_host
     _tool_mode = Bridge._tool_mode
     _dedup_tool_name = Bridge._dedup_tool_name
     _dedup_tool_aliases = Bridge._dedup_tool_aliases

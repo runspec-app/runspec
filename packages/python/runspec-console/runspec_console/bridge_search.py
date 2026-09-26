@@ -472,18 +472,14 @@ class SearchMixin:
         if host not in hosts:
             # The runnable isn't in the warm/in-profile cache for this host, but
             # automation reaches any *configured* host on demand (execution
-            # lazy-connects — see invoke_runnable). If the chosen host is
-            # configured at all, synthesize its cached entry from a warm host's
-            # definition (a fleet-wide runnable has the same interface across
-            # hosts, so this arg schema is correct for preflight/autonomy) and
-            # let execution open the connection. Only a runnable installed on no
-            # warm host still dead-ends here.
-            if host in self._configured_host_names():
-                return host, name, {**matches[0], "host": host}
-            return (
-                f"Error: host '{host}' does not have '{name}'. "
-                f"Options: {', '.join(hosts)}."
-            )
+            # lazy-connects — see invoke_runnable). A host that hasn't been
+            # discovered yet borrows a warm host's definition; one that *has*
+            # been discovered and doesn't carry the runnable errors instead of
+            # running a binary that isn't installed there.
+            fallback = self._fallback_for_host(host, name, hosts, matches[0])
+            if isinstance(fallback, str):
+                return fallback
+            return host, name, fallback
         cached_r = next(r for r in matches if r.get("host", "local") == host)
         return host, name, cached_r
 
@@ -679,6 +675,23 @@ class SearchMixin:
                 out[" ".join(path)] = rows
         return out, False
 
+    @staticmethod
+    def _arg_hosts(records: list[dict[str, Any]]) -> dict[str, list[str]]:
+        """Map each top-level arg name to the hosts whose copy declares it.
+
+        A runnable collapsed across hosts can be at different versions on each
+        (an older install lacks a newer arg); an arg missing from any host's copy
+        is marked ``only_on_hosts`` in the search row so the agent doesn't pass
+        it where it will bounce on "unknown argument(s)"."""
+        out: dict[str, list[str]] = {}
+        for r in records:
+            h = str(r.get("host", "local"))
+            for a in r.get("args") or []:
+                n = str(a.get("name") or "") if isinstance(a, dict) else ""
+                if n and h not in out.setdefault(n, []):
+                    out[n].append(h)
+        return out
+
     def _search_runnables(
         self, query: str, host: str = "", group: str = "", limit: int = 10
     ) -> dict[str, Any]:
@@ -707,9 +720,10 @@ class SearchMixin:
             key = str(r.get("name") or "")
             g = groups.get(key)
             if g is None:
-                g = {"rep": r, "hosts": [], "groups": []}
+                g = {"rep": r, "hosts": [], "groups": [], "records": []}
                 groups[key] = g
                 order.append(key)
+            g["records"].append(r)
             grp = str(r.get("group") or "")
             if grp and grp not in g["groups"]:
                 g["groups"].append(grp)
@@ -780,7 +794,18 @@ class SearchMixin:
                     continue
             else:
                 sc = 1.0  # browse: everything qualifies equally
-            scored.append((sc, name, {"rep": rep, "hosts": hosts, "group": grp}))
+            scored.append(
+                (
+                    sc,
+                    name,
+                    {
+                        "rep": rep,
+                        "hosts": hosts,
+                        "group": grp,
+                        "records": groups[key]["records"],
+                    },
+                )
+            )
         # Highest score first; stable by name for ties (deterministic output).
         scored.sort(key=lambda t: (-t[0], t[1]))
         truncated = len(scored) > limit
@@ -788,12 +813,25 @@ class SearchMixin:
         for _sc, name, info in scored[:limit]:
             rep = info["rep"]
             arg_rows: list[dict[str, Any]] = []
-            for a in rep.get("args") or []:
-                if str(a.get("type")) == "password":
-                    continue  # secrets never travel inline
-                row = {"name": a.get("name"), "required": bool(a.get("required"))}
-                row.update(arg_to_property(a))  # type, enum, default, min/max, desc
-                arg_rows.append(row)
+            arg_hosts = self._arg_hosts(info["records"])
+            seen_args: set[str] = set()
+            # The rep's args first, then any a different host's copy adds — hosts
+            # can run different versions of the same package, so the collapsed
+            # row must not claim every host takes an arg only some copies know.
+            for rec in [rep, *info["records"]]:
+                for a in rec.get("args") or []:
+                    aname = str(a.get("name") or "")
+                    if not aname or aname in seen_args:
+                        continue
+                    seen_args.add(aname)
+                    if str(a.get("type")) == "password":
+                        continue  # secrets never travel inline
+                    row = {"name": a.get("name"), "required": bool(a.get("required"))}
+                    row.update(arg_to_property(a))  # type, enum, default, min/max
+                    only = arg_hosts.get(aname, [])
+                    if len(only) < len(info["hosts"]):
+                        row["only_on_hosts"] = only
+                    arg_rows.append(row)
             entry: dict[str, Any] = {
                 "id": self._dedup_tool_name(rep),
                 "name": name,

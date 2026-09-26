@@ -5097,15 +5097,12 @@ class AgentToolsMixin:
                     f"argument. Options: {', '.join(hosts)}."
                 )
         if host not in hosts:
-            # Same fallback as _resolve_id_host: a configured-but-cold host is a
-            # valid target (execution lazy-connects), so reuse a warm host's
-            # definition with the host swapped rather than dead-ending. Only a
-            # host not configured at all still errors.
-            if host in self._configured_host_names():
-                return host, name, {**matches[0], "host": host}, host_key
-            return (
-                f"Error: host '{host}' does not have '{name}'. "
-                f"Options: {', '.join(hosts)}."
-            )
+            # Same fallback as _resolve_id_host: a configured host that hasn't
+            # been discovered borrows a warm host's definition (execution
+            # lazy-connects); a discovered host lacking it errors clearly.
+            fallback = self._fallback_for_host(host, name, hosts, matches[0])
+            if isinstance(fallback, str):
+                return fallback
+            return host, name, fallback, host_key
         cached_r = next((r for r in matches if r.get("host") == host), None)
         return host, name, cached_r, host_key

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Modal, Typography, Tag, message } from 'antd'
 import type { ArgDef, SavedRun } from '../bridge'
-import { RunbookField } from './RunbookRunModal'
+import { ParamGrid, paramModalWidth } from './RunbookRunModal'
 import { MONO_FONT } from '../ThemeContext'
 
 const { Text } = Typography
@@ -79,7 +79,7 @@ export function SavedRunRunModal({ savedRun, hostNames, onClose, onRun }: SavedR
       onCancel={onClose}
       onOk={submit}
       okText="Run"
-      width={560}
+      width={paramModalWidth(params.length)}
       title={`Saved run: ${savedRun.title || savedRun.id}`}
     >
       {savedRun.description && (
@@ -117,20 +117,7 @@ export function SavedRunRunModal({ savedRun, hostNames, onClose, onRun }: SavedR
       </div>
       {params.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          {params.map(a => (
-            <div key={a.name}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
-                <Text code style={{ fontSize: 13 }}>{a.name}</Text>
-                <Tag style={{ fontSize: 11, margin: 0 }}>{a.ui === 'host' ? 'host' : a.type}</Tag>
-                {a.required
-                  ? <Tag color="orange" style={{ fontSize: 11, margin: 0 }}>required</Tag>
-                  : <Text type="secondary" style={{ fontSize: 11 }}>optional</Text>}
-                {a.description && <Text type="secondary" style={{ fontSize: 12 }}>{a.description}</Text>}
-              </div>
-              <RunbookField arg={a} hostNames={hostNames} value={values[a.name]} error={errors[a.name]} onChange={v => change(a.name, v)} />
-              {errors[a.name] && <Text style={{ fontSize: 12, color: '#ff4d4f' }}>{errors[a.name]}</Text>}
-            </div>
-          ))}
+          <ParamGrid args={params} hostNames={hostNames} values={values} errors={errors} onChange={change} />
         </div>
       )}
     </Modal>

@@ -585,6 +585,33 @@ class InternalsMixin:
         lazy-connects), matching the "automation reaches any host" invariant."""
         return {str(h.get("name")) for h in self._all_host_entries()}
 
+    def _fallback_for_host(
+        self, host: str, name: str, hosts: list[str], template: dict[str, Any]
+    ) -> dict[str, Any] | str:
+        """Resolve a runnable on a host whose cache doesn't list it.
+
+        A configured host that has **not been discovered** (out of the active
+        profile, not yet probed, discovery failed) is a valid target: execution
+        lazy-connects, so borrow a warm host's definition with the host swapped.
+        A host that **has** been discovered and simply doesn't carry the runnable
+        is not — borrowing there runs a binary that isn't installed (exit 127,
+        "No such file or directory"), so say so and name where it is. Returns the
+        synthesized cache entry, or an error string the agent can act on."""
+        options = ", ".join(hosts)
+        if host not in self._configured_host_names():
+            return f"Error: host '{host}' does not have '{name}'. Options: {options}."
+        with self._lock:
+            discovered = any(
+                r.get("host", "local") == host for r in self._runnables_cache
+            )
+        if discovered:
+            return (
+                f"Error: '{name}' is not installed on '{host}' (its runnables "
+                f"were discovered and '{name}' is not among them — it may need "
+                f"installing or upgrading there). Available on: {options}."
+            )
+        return {**template, "host": host}
+
     def _active_profile_name(self) -> str:
         """The machine-local active host profile (``""`` = the built-in *All hosts*
         scope, i.e. no filter). See ``docs/design/host-profiles.md``."""

@@ -54,6 +54,7 @@ class _StubBridge:
     _declared_arg_name_set = staticmethod(Bridge._declared_arg_name_set)
     _host_selector_key = Bridge._host_selector_key
     _resolve_tool_target = Bridge._resolve_tool_target
+    _fallback_for_host = Bridge._fallback_for_host
     _effective_tool_autonomy = Bridge._effective_tool_autonomy
     # run_runnable resolution path
     _runnables_for_id = Bridge._runnables_for_id

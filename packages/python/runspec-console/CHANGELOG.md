@@ -8,6 +8,32 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.296.1] — 2026-09-26
+
+### Fixed
+
+- **The runbook and saved-run dialogs now lay parameters out like the Forms
+  tab.** They still used the old single-column layout — each description
+  printed beside the parameter name and dominated the row, and the dialog was
+  a fixed 560px. They now share the Forms layout: a responsive multi-column
+  grid, the description on its own truncated line (hover for the full text),
+  defaulted parameters folded into *Default arguments*, and the Forms dialog
+  widths. `ArgGrid` / `DefaultArgsCollapse` moved to `formsShared` so the three
+  forms render from one set of components.
+- **Running a runnable on a host that doesn't have it now says so.** Targeting
+  a host whose runnables had been discovered, but which lacks this one (e.g. an
+  older install), borrowed another host's definition and ran it anyway — the
+  agent got `exit 127: No such file or directory` instead of a reason. The
+  borrow is now only for configured hosts not yet discovered (out of profile,
+  not probed yet); a discovered host lacking the runnable returns "not
+  installed on `<host>` … Available on: …" (`_fallback_for_host`, shared by the
+  dedup and search-mode resolvers).
+- **Search rows mark arguments only some hosts' copies take.** A runnable
+  collapsed across hosts showed one host's arguments, so with different package
+  versions across the fleet the agent was told about an arg an older host then
+  rejected ("unknown argument(s)"). Each arg missing from any host's copy now
+  carries `only_on_hosts`, and args only a newer copy declares are listed too.
+
 ## [0.296.0] — 2026-09-26
 
 ### Added
