@@ -2,6 +2,26 @@
 
 All notable changes to `runspec-jira` are documented here.
 
+## [0.4.0] — 2026-09-26
+
+### Added
+
+- **Request types by name** — `create-request --project HR --request-type "New
+  starter" --values '{"Summary": …, "Office": "Leeds"}'` raises a request in one
+  call (fields keyed by name or portal label, plain values; ids and wire shapes
+  resolved by the core), `update-request --key HR-9 --values …` edits one the
+  same way, and `describe-request-types --project …` lists the forms when an
+  agent needs them. A wrong field or option returns the request type's field list.
+- **Project admin verbs** — `list-project-roles`, `get-role-members`,
+  `add-to-role`, `remove-from-role`, `list-customers`, `add-customers`,
+  `remove-customers`, `list-organizations`, `add-to-organization`, and
+  `check-user-access` (licence + roles + findings in one call). Reads are
+  `autonomous`, changes `confirm`.
+
+### Changed
+
+- Requires `runspec-jira-core >= 0.4.0`.
+
 ## [0.3.1] — 2026-09-20
 
 ### Changed

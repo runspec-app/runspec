@@ -33,6 +33,9 @@ pip install runspec-jira
 | Fields / users | `search-fields`, `get-user-profile`, `search-assignable-users` |
 | Watchers | `get-watchers`, `add-watcher`, `remove-watcher` |
 | Service desk | `list-request-types`, `list-request-type-fields`, `raise-request`, `get-request` |
+| Request types by name | `create-request`, `update-request`, `describe-request-types` — one call, friendly field names |
+| Project admin | `list-project-roles`, `get-role-members`, `add-to-role`, `remove-from-role`, `check-user-access` |
+| Customers | `list-customers`, `add-customers`, `remove-customers`, `list-organizations`, `add-to-organization` |
 | Attachments | `list-attachments`, `download-attachments`, `add-attachment`, `remove-attachment` |
 
 ## Auth — env vars only
@@ -72,6 +75,62 @@ from runspec_jira_core import config_from_env, build_client, get_issue
 cfg = config_from_env(env="prod")
 issue = get_issue(cfg, "OPS-42")
 ```
+
+### Raising and editing requests in one call
+
+`raise-request` needs a request type id and a JSON object keyed by
+`customfield_*` ids in JSM's wire shapes, so an agent first calls
+`list-request-types` and `list-request-type-fields`. `create-request` /
+`update-request` skip that — name the project and request type, key fields by
+name or portal label, and pass plain values:
+
+```
+jira create-request --project HR --request-type "New starter" \
+  --values '{"Summary": "Welcome Sam", "Office": "Leeds", "Equipment": ["Laptop"], "Location": "UK > Leeds"}'
+jira update-request --key HR-42 --values '{"Office": "London"}'
+```
+
+A wrong field or option comes back with the closest match and the request type's
+full field list, so a second attempt is right without a discovery call.
+
+### A department package with typed verbs
+
+For the handful of projects a department uses every day, generate one typed verb
+per request type into your own wrapper package, so the agent sees each form as
+the tool's input schema (options as `choice`, required fields marked) and raises
+in one call with no discovery at all. Other projects stay reachable through the
+generic verbs above.
+
+```
+python -m runspec_jira_core.codegen --runnable mydept \
+  --project HR --project PAY --project FAC --project IT --project SEC --project PROC \
+  --toml mydept/runspec.toml --manifest mydept/jsm_request_types.json
+```
+
+This splices `[mydept.commands.raise-hr-new-starter]`-style tables between
+markers in your `runspec.toml` (hand-written verbs outside the markers are kept)
+and writes a manifest to ship as package data. `--request-type '*laptop*'`
+narrows the set; `--check` in CI fails when a form changed in Jira. Dispatch:
+
+```python
+from importlib.resources import files
+from runspec_jira_core import load_manifest, manifest_arg_names, run_generated_command, update_request, manifest_signatures
+
+MANIFEST = load_manifest(files("mydept") / "jsm_request_types.json")
+
+def dispatch(spec, cfg):
+    cmd = spec.runspec_command
+    if cmd in MANIFEST["commands"]:
+        values = {name: spec.get(name).value for name in manifest_arg_names(MANIFEST, cmd)}
+        return run_generated_command(cfg, MANIFEST, cmd, values, on_behalf_of=spec.get("on-behalf-of").value)
+    if cmd == "update-request":  # edits resolve offline for the generated types
+        return update_request(cfg, spec.key.value, spec.values.value, signatures=manifest_signatures(MANIFEST))
+    ...
+```
+
+Request type and option ids differ between instances: when `--env` points at an
+instance other than the one the manifest was generated from, the raise is
+re-resolved by project + request type name.
 
 ## Development
 

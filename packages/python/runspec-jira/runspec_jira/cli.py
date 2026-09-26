@@ -22,15 +22,21 @@ from runspec_jira_core import (
     JiraError,
     add_attachment,
     add_comment,
+    add_customers,
+    add_to_organization,
+    add_to_role,
     add_watcher,
     add_worklog,
     assign_issue,
+    check_user_access,
     config_from_env,
     create_customer_request,
     create_issue,
     create_issue_link,
     create_remote_issue_link,
+    create_request,
     delete_issue,
+    describe_request_types,
     download_attachments,
     edit_comment,
     get_all_projects,
@@ -41,16 +47,22 @@ from runspec_jira_core import (
     get_project_issue_types,
     get_project_issues,
     get_request,
+    get_role_members,
     get_user_profile,
     get_watchers,
     get_worklog,
     jql_search,
     link_to_epic,
     list_attachments,
+    list_customers,
+    list_organizations,
+    list_project_roles,
     list_request_type_fields,
     list_request_types,
     list_transitions,
     remove_attachment,
+    remove_customers,
+    remove_from_role,
     remove_issue_link,
     remove_watcher,
     search_assignable_users,
@@ -58,6 +70,7 @@ from runspec_jira_core import (
     search_projects,
     transition_issue,
     update_issue,
+    update_request,
 )
 
 
@@ -195,6 +208,37 @@ def _dispatch(spec: rs.RunSpec, config: JiraConfig) -> Any:
         )
     if command == "get-request":
         return get_request(config, spec.issue_id_or_key.value)
+
+    # ── request types by name (one-call raise / edit) ──
+    if command == "describe-request-types":
+        sigs = describe_request_types(config, spec.project.value, request_types=spec.request_type.value or None)
+        return [sig.to_dict() for sig in sigs]
+    if command == "create-request":
+        return create_request(config, spec.project.value, spec.request_type.value, spec.values.value, on_behalf_of=spec.on_behalf_of.value)
+    if command == "update-request":
+        return update_request(config, spec.key.value, spec.values.value)
+
+    # ── project admin ──
+    if command == "list-project-roles":
+        return list_project_roles(config, spec.project.value)
+    if command == "get-role-members":
+        return get_role_members(config, spec.project.value, spec.role.value)
+    if command == "add-to-role":
+        return add_to_role(config, spec.project.value, spec.role.value, users=spec.user.value or (), groups=spec.group.value or ())
+    if command == "remove-from-role":
+        return remove_from_role(config, spec.project.value, spec.role.value, users=spec.user.value or (), groups=spec.group.value or ())
+    if command == "list-customers":
+        return list_customers(config, spec.project.value, query=spec.query.value, limit=spec.limit.value)
+    if command == "add-customers":
+        return add_customers(config, spec.project.value, spec.user.value)
+    if command == "remove-customers":
+        return remove_customers(config, spec.project.value, spec.user.value)
+    if command == "list-organizations":
+        return list_organizations(config, spec.project.value)
+    if command == "add-to-organization":
+        return add_to_organization(config, spec.organization.value, spec.user.value, project=spec.project.value, create=spec.create.value)
+    if command == "check-user-access":
+        return check_user_access(config, spec.user.value, project=spec.project.value)
 
     # ── attachments ──
     if command == "list-attachments":

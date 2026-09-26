@@ -2,6 +2,52 @@
 
 All notable changes to `runspec-jira-core` are documented here.
 
+## [0.4.0] — 2026-09-26
+
+JSM project admin helpers and **request-type signatures** — raise or edit a
+service desk request in one call by project + request type *name*, with friendly
+field keys, instead of three discovery round trips.
+
+### Added
+
+- **Request-type signatures** (`requesttypes.py`): `describe_request_types(cfg,
+  projects, request_types=None)` turns each request type of the given projects
+  (keys or names) into a `RequestTypeSig` — fields with a slug `name`, portal
+  `label`, `field_id`, `required`, a normalised `kind` and the allowed `options`
+  (with ids), plus `json_schema()`. Fields are only fetched for the request types
+  that match; results are cached in-process for an hour
+  (`clear_signature_cache()`).
+- **One-call create / update**: `create_request(cfg, project, request_type,
+  values)` and `update_request(cfg, issue_key, values)` accept values keyed by
+  field name, portal label or field id and coerce plain values into JSM's wire
+  shapes (select → `{"id"}`, multiselect, cascade `"Parent > Child"`, user →
+  `{"name"}` on DC / `{"accountId"}` on Cloud, dates, labels). An unknown field
+  or option, or a missing required field, raises `JiraError` with close matches
+  **and the request type's field list**, so the next attempt is right.
+  `build_field_values` is the pure resolver; `create_request_from_signature`
+  raises from a pre-built signature with a single POST.
+- **Generated department verbs** (`codegen.py`): `python -m
+  runspec_jira_core.codegen --runnable <name> --project … --toml … --manifest …`
+  splices one typed `raise-<project>-<request type>` verb per request type into a
+  wrapper package's `runspec.toml` (select → `choice` with options, `required`
+  copied, date pickers) between markers, and writes a JSON manifest.
+  `--check` exits 1 when either is stale. At runtime (`manifest.py`) `run_generated_command`
+  raises from the manifest with one POST, re-resolving by name when the config
+  targets a different instance (ids differ between dev/uat/prod).
+  `load_manifest` / `manifest_signatures` / `manifest_arg_names` support the
+  wrapper's dispatch.
+- **Project roles** (`roles.py`): `list_project_roles`, `get_role_members`,
+  `add_to_role`, `remove_from_role` — roles by name or id, users and groups,
+  idempotent (reports who was already a member / not a member).
+- **Customers and organizations** (`customers.py`): `list_customers`,
+  `add_customers`, `remove_customers`, `list_organizations`,
+  `add_to_organization` (optionally `create=True` and link to a `project`) — all
+  addressed by project key or name.
+- **`check_user_access(cfg, user, project=None)`**: active flag, groups,
+  application roles (JSM licence), every project role held directly or via a
+  group, `is_agent` / `is_customer`, and plain-language `findings`.
+- `list_service_desks` / `resolve_service_desk` — project key or name → service desk.
+
 ## [0.3.0] — 2026-08-07
 
 `config_from_env` gains a keyword-only `personal_token_override` — when set it is

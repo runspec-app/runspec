@@ -84,3 +84,6 @@ def install(monkeypatch):
         return jira, sd, made
 
     return _install
+
+
+from tests.rest_fake import rest  # noqa: E402,F401  (fixture for the raw-REST helper tests)

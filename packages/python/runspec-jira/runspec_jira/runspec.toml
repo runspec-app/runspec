@@ -35,6 +35,8 @@ examples = [
   {cmd = "jira create-issue --project PROJ --summary 'Fix login' --issue-type Bug", description = "Create an issue"},
   {cmd = "jira transition-issue --key PROJ-1 --status Done", description = "Move an issue to a status"},
   {cmd = "jira list-request-types --service-desk-id 5", description = "List a service desk's request types"},
+  {cmd = "jira create-request --project HR --request-type 'New starter' --values '{\"summary\": \"Welcome Sam\", \"Office\": \"Leeds\"}'", description = "Raise a request by name in one call"},
+  {cmd = "jira check-user-access --user jbloggs --project HR", description = "Why can't this user work the HR queue?"},
 ]
 
 # ── global args (inherited by every verb) ──────────────────────────────────
@@ -300,6 +302,108 @@ description = "Fetch a customer request by issue id or key"
 autonomy = "autonomous"
 [jira.commands.get-request.args]
 issue-id-or-key = {type = "str", required = true, description = "Request issue id or key"}
+
+# ── request types by name (one-call raise / edit) ──────────────────────────
+
+[jira.commands.describe-request-types]
+description = "Describe the request types of one or more service desk projects: each type's fields with names, portal labels, required, kind and allowed options. Only needed when unsure of a field name — create-request/update-request errors already list the fields."
+autonomy = "autonomous"
+[jira.commands.describe-request-types.args]
+project = {type = "str", multiple = true, required = true, description = "Project key or name (repeat for several)"}
+request-type = {type = "str", multiple = true, required = false, description = "Only these request types — id or name glob, e.g. '*laptop*' (repeat)"}
+
+[jira.commands.create-request]
+description = "Raise a service desk request in ONE call by project + request type NAME. --values is a JSON object keyed by field name or portal label with plain values (option labels, usernames, 'Parent > Child' for cascades); ids and wire shapes are resolved for you. A wrong field or option returns the request type's field list."
+autonomy = "confirm"
+[jira.commands.create-request.args]
+project = {type = "str", required = true, description = "Project key or name"}
+request-type = {type = "str", required = true, description = "Request type name (or id)"}
+values = {type = "str", required = true, description = "JSON object of field: value, e.g. '{\"summary\": \"New laptop\", \"Office\": \"Leeds\"}'"}
+on-behalf-of = {type = "str", required = false, description = "Raise on behalf of this customer (username)"}
+
+[jira.commands.update-request]
+description = "Edit a service desk request's fields in ONE call. --values is a JSON object keyed by field name or portal label (same keys as create-request); only the given fields change."
+autonomy = "confirm"
+[jira.commands.update-request.args]
+key = {type = "str", required = true, description = "Request issue key, e.g. HR-123"}
+values = {type = "str", required = true, description = "JSON object of field: value"}
+
+# ── project admin: roles, customers, organizations, access ──────────────────
+
+[jira.commands.list-project-roles]
+description = "List a project's roles (id + name)"
+autonomy = "autonomous"
+[jira.commands.list-project-roles.args]
+project = {type = "str", required = true, description = "Project key"}
+
+[jira.commands.get-role-members]
+description = "List the direct user and group members of a project role"
+autonomy = "autonomous"
+[jira.commands.get-role-members.args]
+project = {type = "str", required = true, description = "Project key"}
+role = {type = "str", required = true, description = "Role name (e.g. 'Service Desk Team') or id"}
+
+[jira.commands.add-to-role]
+description = "Add users and/or groups to a project role (idempotent — reports who was already a member)"
+autonomy = "confirm"
+[jira.commands.add-to-role.args]
+project = {type = "str", required = true, description = "Project key"}
+role = {type = "str", required = true, description = "Role name (e.g. 'Service Desk Team') or id"}
+user = {type = "str", multiple = true, required = false, description = "Username (Data Center) / accountId (Cloud) — repeat"}
+group = {type = "str", multiple = true, required = false, description = "Group name — repeat"}
+
+[jira.commands.remove-from-role]
+description = "Remove users and/or groups from a project role (idempotent)"
+autonomy = "confirm"
+[jira.commands.remove-from-role.args]
+project = {type = "str", required = true, description = "Project key"}
+role = {type = "str", required = true, description = "Role name or id"}
+user = {type = "str", multiple = true, required = false, description = "Username / accountId — repeat"}
+group = {type = "str", multiple = true, required = false, description = "Group name — repeat"}
+
+[jira.commands.list-customers]
+description = "List a service desk project's customers"
+autonomy = "autonomous"
+[jira.commands.list-customers.args]
+project = {type = "str", required = true, description = "Project key or name"}
+query = {type = "str", required = false, description = "Filter by name / username / email"}
+limit = {type = "int", default = 50, description = "Max customers to return"}
+
+[jira.commands.add-customers]
+description = "Add existing users as customers of a service desk project"
+autonomy = "confirm"
+[jira.commands.add-customers.args]
+project = {type = "str", required = true, description = "Project key or name"}
+user = {type = "str", multiple = true, required = true, description = "Username / accountId — repeat"}
+
+[jira.commands.remove-customers]
+description = "Remove customers from a service desk project"
+autonomy = "confirm"
+[jira.commands.remove-customers.args]
+project = {type = "str", required = true, description = "Project key or name"}
+user = {type = "str", multiple = true, required = true, description = "Username / accountId — repeat"}
+
+[jira.commands.list-organizations]
+description = "List JSM organizations — all, or only those linked to a project"
+autonomy = "autonomous"
+[jira.commands.list-organizations.args]
+project = {type = "str", required = false, description = "Project key or name"}
+
+[jira.commands.add-to-organization]
+description = "Add users to a JSM organization; optionally create it (--create) and link it to a project (--project)"
+autonomy = "confirm"
+[jira.commands.add-to-organization.args]
+organization = {type = "str", required = true, description = "Organization name or id"}
+user = {type = "str", multiple = true, required = true, description = "Username / accountId — repeat"}
+project = {type = "str", required = false, description = "Also link the organization to this project's service desk"}
+create = {type = "flag", default = false, description = "Create the organization when it doesn't exist"}
+
+[jira.commands.check-user-access]
+description = "One-call access check for a user: active, groups, licences (JSM agent licence), and — with --project — every project role held directly or via a group, is_agent / is_customer, and plain-language findings"
+autonomy = "autonomous"
+[jira.commands.check-user-access.args]
+user = {type = "str", required = true, description = "Username (Data Center) / accountId (Cloud)"}
+project = {type = "str", required = false, description = "Project key to check roles on"}
 
 # ── attachments ────────────────────────────────────────────────────────────
 

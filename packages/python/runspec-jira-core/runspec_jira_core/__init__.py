@@ -27,6 +27,13 @@ from runspec_jira_core.client import (
 )
 from runspec_jira_core.comments import add_comment, edit_comment
 from runspec_jira_core.config import VALID_ENVS, JiraConfig, config_from_env
+from runspec_jira_core.customers import (
+    add_customers,
+    add_to_organization,
+    list_customers,
+    list_organizations,
+    remove_customers,
+)
 from runspec_jira_core.errors import JiraError
 from runspec_jira_core.fields import search_fields
 from runspec_jira_core.issues import (
@@ -43,6 +50,12 @@ from runspec_jira_core.links import (
     link_to_epic,
     remove_issue_link,
 )
+from runspec_jira_core.manifest import (
+    load_manifest,
+    manifest_arg_names,
+    manifest_signatures,
+    run_generated_command,
+)
 from runspec_jira_core.projects import (
     get_all_projects,
     get_create_fields,
@@ -50,15 +63,30 @@ from runspec_jira_core.projects import (
     get_project_issue_types,
     search_projects,
 )
+from runspec_jira_core.requesttypes import (
+    FieldSig,
+    Option,
+    RequestTypeSig,
+    build_field_values,
+    clear_signature_cache,
+    create_request,
+    create_request_from_signature,
+    describe_request_types,
+    find_request_type,
+    update_request,
+)
+from runspec_jira_core.roles import add_to_role, get_role_members, list_project_roles, remove_from_role
 from runspec_jira_core.search import get_project_issues, jql_search
 from runspec_jira_core.servicedesk import (
     create_customer_request,
     get_request,
     list_request_type_fields,
     list_request_types,
+    list_service_desks,
+    resolve_service_desk,
 )
 from runspec_jira_core.transitions import list_transitions, transition_issue
-from runspec_jira_core.users import get_user_profile, search_assignable_users
+from runspec_jira_core.users import check_user_access, get_user_profile, search_assignable_users
 from runspec_jira_core.watchers import add_watcher, get_watchers, remove_watcher
 from runspec_jira_core.worklog import add_worklog, get_worklog
 
@@ -107,6 +135,18 @@ __all__ = [
     # users
     "get_user_profile",
     "search_assignable_users",
+    "check_user_access",
+    # project roles
+    "list_project_roles",
+    "get_role_members",
+    "add_to_role",
+    "remove_from_role",
+    # JSM customers / organizations
+    "list_customers",
+    "add_customers",
+    "remove_customers",
+    "list_organizations",
+    "add_to_organization",
     # watchers
     "get_watchers",
     "add_watcher",
@@ -116,6 +156,24 @@ __all__ = [
     "list_request_type_fields",
     "create_customer_request",
     "get_request",
+    "list_service_desks",
+    "resolve_service_desk",
+    # request-type signatures (one-call create / update)
+    "Option",
+    "FieldSig",
+    "RequestTypeSig",
+    "describe_request_types",
+    "find_request_type",
+    "build_field_values",
+    "create_request",
+    "create_request_from_signature",
+    "update_request",
+    "clear_signature_cache",
+    # generated per-department verbs (see runspec_jira_core.codegen)
+    "load_manifest",
+    "manifest_signatures",
+    "manifest_arg_names",
+    "run_generated_command",
     # attachments
     "list_attachments",
     "download_attachments",

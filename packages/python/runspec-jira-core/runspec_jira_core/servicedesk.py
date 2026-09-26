@@ -13,6 +13,7 @@ from typing import Any
 from runspec_jira_core.client import build_servicedesk, parse_json_arg, translate_errors
 from runspec_jira_core.config import JiraConfig
 from runspec_jira_core.errors import JiraError
+from runspec_jira_core.resolve import suggest
 
 
 def _sd_id(config: JiraConfig, service_desk_id: str | None) -> str:
@@ -72,3 +73,51 @@ def create_customer_request(
 def get_request(config: JiraConfig, issue_id_or_key: str) -> Any:
     """Fetch a customer request by issue id or key."""
     return build_servicedesk(config).get_customer_request(issue_id_or_key)
+
+
+# ── project → service desk resolution ────────────────────────────────────────
+
+SD_API = "rest/servicedeskapi"
+
+
+def sd_get_all(sd: Any, path: str, *, params: dict[str, Any] | None = None, page: int = 50) -> list[Any]:
+    """GET every page of a paged ``servicedeskapi`` collection (``values`` + ``isLastPage``)."""
+    out: list[Any] = []
+    start = 0
+    while True:
+        body = sd.get(path, params={**(params or {}), "start": start, "limit": page}, headers=sd.experimental_headers) or {}
+        if not isinstance(body, dict):
+            return out
+        values = body.get("values") or []
+        out.extend(values)
+        if body.get("isLastPage", True) or not values:
+            return out
+        start += len(values)
+
+
+@translate_errors
+def list_service_desks(config: JiraConfig) -> list[dict[str, Any]]:
+    """List every service desk as ``{id, projectKey, projectName, projectId}``."""
+    sd = build_servicedesk(config)
+    return [{k: desk.get(k) for k in ("id", "projectId", "projectKey", "projectName")} for desk in sd_get_all(sd, f"{SD_API}/servicedesk")]
+
+
+def match_service_desk(desks: list[dict[str, Any]], project: str) -> dict[str, Any]:
+    """Pick the service desk for ``project`` — a project key, project name, or service desk id.
+
+    Matching is case-insensitive. An unknown project raises :class:`JiraError`
+    naming the closest keys/names so the caller can correct it in one step.
+    """
+    wanted = project.strip().casefold()
+    for field in ("projectKey", "projectName", "id"):
+        for desk in desks:
+            if str(desk.get(field) or "").casefold() == wanted:
+                return desk
+    names = [str(d.get("projectKey")) for d in desks] + [str(d.get("projectName")) for d in desks]
+    raise JiraError(f"No service desk project {project!r}{suggest(project, names)}")
+
+
+@translate_errors
+def resolve_service_desk(config: JiraConfig, project: str) -> dict[str, Any]:
+    """Resolve a project key or name (or service desk id) to its service desk record."""
+    return match_service_desk(list_service_desks(config), project)

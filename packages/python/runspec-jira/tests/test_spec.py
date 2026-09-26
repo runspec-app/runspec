@@ -35,6 +35,11 @@ VALUES = {
     "dest": "/tmp/out",
     "file": "/tmp/f.txt",
     "attachment-id": "10500",
+    "request-type": "New starter",
+    "values": "{}",
+    "role": "Service Desk Team",
+    "group": "hr-agents",
+    "organization": "Payroll",
 }
 
 
