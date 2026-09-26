@@ -636,6 +636,28 @@ A typical nightly cron line:
 Archives stay JSON-lines (gzipped), so `runspec logs <runnable>` and the
 console's History/Analytics keep reading them after compaction.
 
+**Sharing the dir across accounts** — `runspec logs share` (POSIX). When more
+than one account writes into a venv (a console operator plus the service account
+a `run_as` runnable runs as), they must all be able to write the runs index
+(`runspec_runs.db`) and audit logs into the *same* dir. `share` makes that dir
+group-writable in one command:
+
+```bash
+runspec logs share --group consoles   # chmod 2775 (setgid) + chgrp to `consoles`
+runspec logs share                     # group-writable + setgid, group unchanged
+runspec logs share --group consoles --scope home   # share the ~/logs fallback instead
+```
+
+For each targeted dir it ensures the dir exists, `chmod`s it `2775`
+(group-writable **and setgid**, so new files inherit the dir's group), optionally
+`chgrp`s it to `--group`, and repairs the existing `runspec_runs.db` (`chgrp` +
+`chmod 664`) — a dir `chmod` never touches a file already inside it. Scoping
+matches `prune`/`compact`: an unset `--scope` is this venv's dir only. It is
+**sudo-free** like the rest of the core CLI — it changes only what the invoking
+user may change — so if you don't own the dir, run it as the owner yourself:
+`sudo -u <owner> {venv}/bin/runspec logs share --group consoles`. Add the accounts
+to the group first, or a non-member still falls back to `~/logs`.
+
 ---
 
 ## Bash and shell runnables

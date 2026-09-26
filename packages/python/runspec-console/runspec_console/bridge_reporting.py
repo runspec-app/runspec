@@ -1244,35 +1244,31 @@ class ReportingMixin:
     def share_venv_logs(
         self, host: str, venv: str, group: str = "", run_as: str = ""
     ) -> dict[str, Any]:
-        """Make a venv's ``logs/`` dir group-shared (``2775`` setgid + optional
-        ``chgrp``) so the per-venv runs index (``runspec_runs.db``) and the audit
-        logs become writable across a shared console group — the repair for a venv
-        not built with ``create-venv --group``.
+        """Make a venv's ``logs/`` dir group-shared so the per-venv runs index
+        (``runspec_runs.db``) and the audit logs become writable across a shared
+        console group — the repair for a venv not built with ``create-venv
+        --group``.
 
-        Does the ``chmod``/``chgrp`` **directly** — *no runspec-linux needed*. For a
-        venv the operator owns a plain ``chmod 2775`` needs no sudo and no runnable.
-        For a venv owned by **another user**, pass ``run_as`` (the "Run as" field,
-        pre-filled with the owner via :meth:`venv_owner`) and the whole repair runs
-        ``sudo -n -u <run_as> sh -c …`` — so it works wherever the operator has
-        passwordless sudo for that user, not only where the venv has a
-        ``share-venv-logs`` binary. It also **repairs the existing
-        ``runspec_runs.db``** (``chmod g+rw`` + ``chgrp``): a plain dir chmod doesn't
-        touch files already inside, so without this a pre-existing index owned by
-        another user stays unwritable and new runs can't record into it. When no
-        ``run_as`` is given and the direct run is refused, it still falls back to the
-        venv's own ``share-venv-logs`` (scoped-sudo-covered) if present.
+        Drives the core CLI's own **``runspec logs share --scope venv``**
+        (runspec ``>= 0.58.3``): it ``chmod``s the dir ``2775`` (setgid),
+        optionally ``chgrp``s it to ``group``, and repairs the existing
+        ``runspec_runs.db`` (a dir chmod doesn't touch files already inside it).
+        Going through the venv's ``runspec`` binary — rather than a raw
+        ``chmod``/``chgrp`` shell — means escalation to the venv's owner rides the
+        **scoped** ``sudo -n -u <owner> {venv}/bin/runspec logs …`` grant
+        (``enable-passwordless-sudo scoped``), never the broad ``all`` grant a bare
+        ``chmod`` would need; and it drops the ``runspec-linux`` dependency
+        entirely. For a venv the operator owns it needs no sudo at all. Pass
+        ``run_as`` (the "Run as" field, pre-filled with the owner via
+        :meth:`venv_owner`) for a venv owned by another user.
 
-        ``group`` is the optional Unix group to ``chgrp`` to (empty ⇒ keep current).
-        Returns ``{ok, venv, group, as_user, output}`` on success, else
-        ``{ok: False, venv, group, error}``."""
-        import subprocess
-
-        from .procutil import no_window_kwargs
-
+        ``group`` is the optional Unix group to ``chgrp`` to (empty ⇒ keep
+        current). Returns ``{ok, venv, group, as_user, output, warning}`` on
+        success, else ``{ok: False, venv, group, error}``."""
         g = (group or "").strip()
         who = (run_as or "").strip()
         entry = self._host_entry(host)
-        rp = next((p for lbl, p in self._venvs(host) if lbl == venv), "")
+        rp = self._venv_path(host, venv)
         if not rp:
             return {
                 "ok": False,
@@ -1284,118 +1280,60 @@ class ReportingMixin:
         is_remote = bool(entry and entry.get("ssh"))
         logdir = self._venv_logdir(rp, remote=is_remote)  # {venv}/logs
         logdir_s = str(logdir)
-        venv_path = str(logdir.parent)  # {venv}
-        sv_bin = str(logdir.parent / "bin" / "share-venv-logs")
-        d = shlex.quote(logdir_s)
-        db = shlex.quote(str(logdir / "runspec_runs.db"))
-
-        # Create + (optionally) chgrp + chmod 2775 the dir, then best-effort make the
-        # existing runspec_runs.db group-writable too — chmod on the dir doesn't
-        # touch files already in it. The `&& { …; true; }` keeps the db repair from
-        # failing the whole share; overall exit reflects the dir chmod.
-        dir_chain = [f"mkdir -p {d}"]
-        if g:
-            dir_chain.append(f"chgrp {shlex.quote(g)} {d}")
-        dir_chain.append(f"chmod 2775 {d}")
-        db_fix = f"chmod g+rw {db} 2>/dev/null" + (
-            f"; chgrp {shlex.quote(g)} {db} 2>/dev/null" if g else ""
-        )
-        repair = (
-            " && ".join(dir_chain) + f" && {{ [ -e {db} ] && {{ {db_fix}; }}; true; }}"
-        )
-
         me = self._effective_user(entry)
         escalate = bool(who) and who != me
 
-        def _run(script: str, as_user: str, timeout: int = 30) -> tuple[int, str, str]:
-            if as_user:
-                if is_remote:
-                    assert entry is not None
-                    cmd = (
-                        f"sudo -n -u {shlex.quote(as_user)} sh -c {shlex.quote(script)}"
-                    )
-                    return self._ssh_run(
-                        entry["ssh"],
-                        cmd,
-                        identity_file=entry.get("identityFile"),
-                        timeout=timeout,
-                    )
-                argv = ["sudo", "-n", "-u", as_user, "sh", "-c", script]
-            elif is_remote:
-                assert entry is not None
-                return self._ssh_run(
-                    entry["ssh"],
-                    script,
-                    identity_file=entry.get("identityFile"),
-                    timeout=timeout,
-                )
-            else:
-                argv = ["sh", "-c", script]
-            proc = subprocess.run(
-                argv,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                **no_window_kwargs(),
-            )
-            return proc.returncode, proc.stdout, proc.stderr
-
-        escalated = escalate  # did the chmod run as someone other than the runner?
+        # `runspec logs share --scope venv` acts on this venv's own {sys.prefix}/logs
+        # only (never the shared ~/logs). `_run_logs` handles local/remote + the
+        # `sudo -n -u <who>` escalation (the venv binary is scoped-sudoers-covered).
+        argv = ["logs", "share", "--scope", "venv"]
+        if g:
+            argv += ["--group", g]
+        argv.append("--json")
         try:
-            code, out, err = _run(repair, who if escalate else "")
-            as_user = who if (escalate and code == 0) else ""
-            if (
-                code != 0
-                and not escalate
-                and utils_mod.looks_permission_denied(f"{out or ''}\n{err or ''}")
-            ):
-                # No run-as chosen and the direct run was refused. Fall back to the
-                # venv's own share-venv-logs (scoped-sudo-covered) if present.
-                sv_exists = (
-                    _run(f"[ -x {shlex.quote(sv_bin)} ]", "", timeout=15)[0] == 0
-                    if is_remote
-                    else os.path.exists(sv_bin)
-                )
-                if sv_exists:
-                    escalated = True  # runs the chmod as the owner via sudo
-                    code, out, err = _run(
-                        utils_mod.share_logs_cmd(sv_bin, venv_path, g), ""
-                    )
-                    as_user, out = utils_mod.split_denylist_as(out or "")
-                else:
-                    return {
-                        "ok": False,
-                        "venv": venv,
-                        "group": g,
-                        "error": (
-                            f'{logdir_s} is owned by another user. Set "Run as" to that '
-                            "owner to escalate (needs passwordless sudo for it), rebuild the "
-                            f"venv with `create-venv --group`, or `chmod 2775 {logdir_s}` "
-                            "manually as its owner."
-                        ),
-                    }
-        except FileNotFoundError:
-            return {
-                "ok": False,
-                "venv": venv,
-                "group": g,
-                "error": "no POSIX shell available — sharing a venv's logs dir is a Linux/macOS operation",
-            }
+            code, stdout, stderr = self._run_logs(
+                host, rp, argv, timeout=30, run_as=who
+            )
         except Exception as exc:  # noqa: BLE001 — surface any failure as a result, never raise into the UI
             return {"ok": False, "venv": venv, "group": g, "error": str(exc)}
 
-        body = (out or "").strip() or (err or "").strip() or f"exit {code}"
-        if code == 0:
-            # When the chmod ran as the owner (escalated), the console's own
-            # (SSH/login) user — the one runnables actually run as — may still not
-            # be in the dir's group, so its runs' logs would silently fall back to
-            # ~/logs. Probe writability *as that user* and warn, since that's the
-            # #1 "I shared it but logs still land in ~/logs" surprise. A non-
-            # escalated share was done *by* that user, so it can already write.
+        # `runspec logs share --json` emits one `{"shared": [...]}` object line;
+        # scan for it (last line first) so an INFO line routed to stdout can't mask
+        # it, and require the `shared` key so an old core silently *viewing* a
+        # runnable named "share" (its behaviour for the unknown verb) can't look
+        # like success.
+        payload: dict[str, Any] | None = None
+        for line in reversed(stdout.splitlines()):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(obj, dict) and isinstance(obj.get("shared"), list):
+                payload = obj
+                break
+
+        if payload is not None:
+            shared = payload["shared"]
+            first = shared[0] if shared else {}
+            bits = ["2775 setgid"]
+            if g:
+                bits.append(f"group {g}")
+            if any(s.get("db_repaired") for s in shared):
+                bits.append("runs index repaired")
+            output = f"shared {first.get('dir', logdir_s)} ({', '.join(bits)})"
+            # When the share ran as the owner (escalated), the console's own (SSH/
+            # login) user — the one runnables actually run as — may still not be in
+            # the dir's group, so its runs' logs would silently fall back to ~/logs.
+            # Probe writability *as that user* and warn — the #1 "I shared it but
+            # logs still land in ~/logs" surprise. A non-escalated share was done
+            # *by* that user, so it can already write.
             warning = ""
-            if escalated:
+            if escalate:
                 try:
-                    if _run(f"[ -w {d} ]", "", timeout=15)[0] != 0:
+                    if not self._probe_writable(host, entry, logdir_s):
                         eff = me or "the console's user"
                         grp = f"group '{g}'" if g else "the logs dir's group"
                         warning = (
@@ -1409,24 +1347,82 @@ class ReportingMixin:
                 "ok": True,
                 "venv": venv,
                 "group": g,
-                "as_user": as_user,
-                "output": body or f"shared {logdir_s} (2775 setgid)",
+                "as_user": who if escalate else "",
+                "output": output,
                 "warning": warning,
             }
-        if escalate and (
-            utils_mod.looks_permission_denied(body) or "sudo" in body.lower()
-        ):
-            body += (
-                f" — passwordless sudo to run as {who} (sudo -n -u {who}) was refused; "
-                f"grant it or share {logdir_s} as {who} manually."
-            )
+
+        # No `shared` payload ⇒ the run failed. runspec prints arg/coercion errors
+        # to stdout with a non-zero exit (not stderr), so surface that text.
+        err = stdout.strip() or stderr.strip() or f"exit {code}"
+        perm = utils_mod.looks_permission_denied(err)
+        if escalate and (perm or "sudo" in err.lower()):
+            return {
+                "ok": False,
+                "venv": venv,
+                "group": g,
+                "as_user": who,
+                "error": (
+                    f"{err} — passwordless sudo to run as {who} (sudo -n -u {who}) was "
+                    f"refused; grant it or share {logdir_s} as {who} manually."
+                ),
+            }
+        if not escalate and perm:
+            return {
+                "ok": False,
+                "venv": venv,
+                "group": g,
+                "error": (
+                    f'{logdir_s} is owned by another user. Set "Run as" to that owner '
+                    "to escalate (needs passwordless sudo for it), rebuild the venv with "
+                    f"`create-venv --group`, or `chmod 2775 {logdir_s}` manually as its owner."
+                ),
+            }
+        # Otherwise the verb/arg wasn't understood: a venv whose runspec predates
+        # 0.58.3 has no `logs share`. Point the operator at upgrading rather than a
+        # silent no-op.
         return {
             "ok": False,
             "venv": venv,
             "group": g,
             "as_user": who if escalate else "",
-            "error": body,
+            "error": (
+                f"{err} — this venv's runspec has no `logs share` (needs runspec >= "
+                f"0.58.3); upgrade runspec in this venv, or share {logdir_s} manually "
+                "as its owner."
+            ),
         }
+
+    def _probe_writable(
+        self, host: str, entry: dict[str, Any] | None, logdir_s: str
+    ) -> bool:
+        """True if the console's own (effective) user can write ``logdir_s`` — a
+        ``[ -w dir ]`` test run **as that user** (never ``run_as``). Used to warn
+        when an escalated share left the login user unable to write (because it
+        isn't in the dir's group)."""
+        script = f"[ -w {shlex.quote(logdir_s)} ]"
+        if entry and entry.get("ssh"):
+            return (
+                self._ssh_run(
+                    entry["ssh"],
+                    script,
+                    identity_file=entry.get("identityFile"),
+                    timeout=15,
+                )[0]
+                == 0
+            )
+        import subprocess
+
+        from .procutil import no_window_kwargs
+
+        proc = subprocess.run(
+            ["sh", "-c", script],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            **no_window_kwargs(),
+        )
+        return proc.returncode == 0
 
     # ── log inventory internals (one listing per host, no remote runspec) ────────
 

@@ -23,7 +23,9 @@ from __future__ import annotations
 import contextlib
 import gzip
 import json
+import os
 import re
+import shutil
 import sys
 import time
 from collections.abc import Iterable
@@ -620,6 +622,64 @@ def compact(
     elif not plan:
         out.write("nothing to compact.\n")
     return compacted
+
+
+def share(
+    dirs: Iterable[Path] | None = None,
+    *,
+    group: str | None = None,
+    as_json: bool = False,
+    out: TextIO | None = None,
+) -> list[dict[str, Any]]:
+    """Make each logs dir writable by a shared Unix group, so several accounts
+    (e.g. a console operator plus the service account a ``run_as`` runnable runs
+    as) can write the per-venv runs index and audit logs into the *same* dir.
+
+    For each dir: ensure it exists, ``chmod 2775`` (group-writable **and setgid**,
+    so files created in it inherit the dir's group), optionally ``chgrp`` it to
+    ``group``, and repair the existing ``runspec_runs.db`` (``chgrp`` + ``chmod
+    664``). A dir ``chmod`` never touches a file already inside it, so without the
+    repair a group member still couldn't write an index a non-member created.
+
+    **POSIX only** — setgid + group ownership are POSIX concepts, so this raises
+    ``ValueError`` on a non-POSIX host. It is *sudo-free*: it changes only what the
+    invoking user is allowed to change, so escalation — running it as the dir's
+    owner (``sudo -u <owner> {venv}/bin/runspec logs share``) — is the caller's
+    job. A ``chmod``/``chgrp`` the caller isn't permitted to make raises
+    ``OSError``. Returns a per-dir result list.
+    """
+    if not hasattr(os, "getuid"):  # Windows — no setgid / group-writable model
+        raise ValueError("`runspec logs share` applies to POSIX hosts only (setgid + group permissions)")
+    from . import runsdb
+
+    targets = list(dirs) if dirs is not None else log_dirs()
+    out = out or sys.stdout
+    results: list[dict[str, Any]] = []
+    for d in targets:
+        d.mkdir(parents=True, exist_ok=True)
+        if group:
+            shutil.chown(d, group=group)
+        os.chmod(d, 0o2775)
+        # A dir chmod leaves files already inside untouched, so repair the runs
+        # index's group access too — else a group member's writes to an index
+        # another account created still fail. Best-effort: it may not exist yet, or
+        # be owned by another user this caller can't chmod.
+        db = runsdb.db_path(d)
+        db_repaired = False
+        if db.exists():
+            with contextlib.suppress(OSError):
+                if group:
+                    shutil.chown(db, group=group)
+                os.chmod(db, 0o664)
+                db_repaired = True
+        results.append({"dir": str(d), "group": group or "", "mode": "2775", "db_repaired": db_repaired})
+        if not as_json:
+            g = f" (group {group})" if group else ""
+            extra = " + runs index" if db_repaired else ""
+            out.write(f"shared {d}{g} — 2775 setgid{extra}\n")
+    if as_json:
+        out.write(json.dumps({"shared": results}) + "\n")
+    return results
 
 
 def _line_ts(line: str) -> str:

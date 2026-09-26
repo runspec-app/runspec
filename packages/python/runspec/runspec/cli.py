@@ -848,9 +848,9 @@ def cmd_logs(args: list[str]) -> None:
 
     from runspec import logs as _logs
 
-    # `runspec logs status|prune|compact [runnable]` vs `runspec logs <runnable>`.
+    # `runspec logs status|prune|compact|share [runnable]` vs `runspec logs <runnable>`.
     target: str | None = parsed.target.value
-    if target in ("status", "prune", "compact"):
+    if target in ("status", "prune", "compact", "share"):
         verb = target
         runnable: str | None = parsed.runnable.value
     else:
@@ -900,7 +900,18 @@ def cmd_logs(args: list[str]) -> None:
                 dry_run=parsed.dry_run.value,
                 as_json=parsed.json.value,
             )
-    except ValueError as exc:
+        elif verb == "share":
+            # Make the logs dir group-writable so a shared console group + the
+            # service account a `run_as` runnable runs as can both write the runs
+            # index. Defaults (unset --scope) to this venv's own dir only.
+            _logs.share(
+                dirs=_logs.scope_dirs(parsed.scope.value, destructive=True),
+                group=parsed.group.value or None,
+                as_json=parsed.json.value,
+            )
+    except (ValueError, OSError) as exc:
+        # OSError covers share's chmod/chgrp on a dir the caller can't change (run
+        # it as the owner) — a clean ✗ line, not a traceback.
         print(f"✗  {exc}")
         sys.exit(1)
 

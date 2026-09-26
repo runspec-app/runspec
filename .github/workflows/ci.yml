@@ -1461,7 +1461,14 @@ jobs:
           python-version: "3.12"
 
       - name: Install test + Windows deps
-        run: pip install pytest anthropic paramiko cryptography tomli-w pywin32 "winrt-runtime>=2.0" "winrt-Windows.Foundation>=2.0" "winrt-Windows.Foundation.Collections>=2.0" "winrt-Windows.UI.Notifications>=2.0" "winrt-Windows.UI.Notifications.Management>=2.0" "winrt-Windows.ApplicationModel>=2.0"
+        # The core `runspec` is a runtime dep of runspec_console (bridge_reporting
+        # imports `runspec.logs` at module load), so install it from the sibling
+        # path first — mirroring console-test / console-test-windows. Without it the
+        # trigger tests fail collection with ModuleNotFoundError: No module named
+        # 'runspec'.
+        run: |
+          pip install -e ../runspec
+          pip install pytest anthropic paramiko cryptography tomli-w pywin32 "winrt-runtime>=2.0" "winrt-Windows.Foundation>=2.0" "winrt-Windows.Foundation.Collections>=2.0" "winrt-Windows.UI.Notifications>=2.0" "winrt-Windows.UI.Notifications.Management>=2.0" "winrt-Windows.ApplicationModel>=2.0"
 
       - name: Run trigger tests (Windows branches)
         env:

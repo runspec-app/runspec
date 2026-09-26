@@ -8,6 +8,29 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.291.0] — 2026-09-26
+
+### Changed
+
+- **"Make shared" now drives the core CLI's `runspec logs share`** (runspec
+  0.58.3+) instead of composing a raw `mkdir`/`chgrp`/`chmod 2775` shell. The
+  behaviour is unchanged — `chmod 2775` (setgid) on the venv's `logs/` dir, an
+  optional `chgrp` to the chosen group, and a best-effort perms repair of the
+  existing `runspec_runs.db` — but going through the venv's own `runspec` binary
+  means an escalated share (`sudo -n -u <owner> {venv}/bin/runspec logs share`)
+  rides the **scoped** `enable-passwordless-sudo scoped` grant, exactly like
+  Prune/Compact already do, rather than needing the broad `all` grant a bare
+  `chmod`/`chgrp` via sudo requires. This also generalizes the direct-`chmod`
+  approach shipped in 0.290.0 into one governed core command (`bridge_reporting.
+  share_venv_logs` now calls `_run_logs` with `logs share --scope venv --json`).
+  The post-share writability probe and its "shared, but you still log to ~/logs"
+  warning are kept. A venv whose `runspec` predates 0.58.3 (no `logs share`) now
+  gets a clear "upgrade runspec in this venv" message rather than a silent no-op.
+  The dead `bridge_utils.share_logs_cmd` (the old runspec-linux `share-venv-logs`
+  escalation builder) is removed; `split_denylist_as` stays (the denylist tool
+  uses it). Requires `runspec >= 0.58.3`.
+
+
 ## [0.290.0] — 2026-09-26
 
 ### Added

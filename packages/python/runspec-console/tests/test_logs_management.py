@@ -450,109 +450,98 @@ class TestRunLogsDispatch(unittest.TestCase):
         )
 
 
-class TestShareLogsCmd(unittest.TestCase):
-    """The escalation command builder for 'Make logs shared' (bridge_utils)."""
-
-    def test_share_logs_cmd_shape(self) -> None:
-        from runspec_console import bridge_utils
-
-        cmd = bridge_utils.share_logs_cmd(
-            "/opt/venvs/deploy-core/bin/share-venv-logs",
-            "/opt/venvs/deploy-core",
-            "consoles",
-        )
-        # Runs the venv binary (grant-covered) as the owner, else root; probes with
-        # --help (harmless) exactly like the denylist probes with `deny list`.
-        self.assertIn('sudo -n -u "$o" "$sv" --help', cmd)
-        self.assertIn(
-            'exec sudo -n -u "$o" "$sv" --venv /opt/venvs/deploy-core --group consoles',
-            cmd,
-        )
-        self.assertIn('elif sudo -n "$sv" --help', cmd)
-        self.assertIn(
-            bridge_utils.DENYLIST_AS_MARKER, cmd
-        )  # =====AS marker for split_denylist_as
-        self.assertIn("exit 77", cmd)
-
-    def test_share_logs_cmd_omits_group_when_blank(self) -> None:
-        from runspec_console import bridge_utils
-
-        cmd = bridge_utils.share_logs_cmd("/v/bin/share-venv-logs", "/v", "")
-        self.assertIn("--venv /v", cmd)
-        self.assertNotIn("--group", cmd)
-
-
 class TestShareVenvLogs(unittest.TestCase):
-    """The share_venv_logs bridge method (Make logs shared button)."""
+    """The share_venv_logs bridge method (Make logs shared button) — now drives
+    the core CLI's own `runspec logs share --scope venv --json` (runspec 0.58.3+)
+    through _run_logs, so it needs no runspec-linux and its escalation rides the
+    scoped `sudo -n -u <owner> {venv}/bin/runspec …` grant (never a raw chmod)."""
 
-    def test_remote_direct_chmod_no_runnable(self) -> None:
-        # The common case — a venv the operator owns. Runs chmod/chgrp directly:
-        # no runspec-linux / share-venv-logs in the venv, no sudo.
+    @staticmethod
+    def _shared(
+        dir_="/opt/venvs/deploy-core/logs", group="consoles", db_repaired=False
+    ):
+        return (
+            0,
+            json.dumps(
+                {
+                    "shared": [
+                        {
+                            "dir": dir_,
+                            "group": group,
+                            "mode": "2775",
+                            "db_repaired": db_repaired,
+                        }
+                    ]
+                }
+            ),
+            "",
+        )
+
+    def test_remote_direct_no_escalation(self) -> None:
+        # The common case — a venv the operator owns. Runs `runspec logs share`
+        # directly: no sudo, no raw chmod, no runspec-linux runnable.
         b = _make_bridge()
         b._hosts = [_remote_entry()]
-        with patch.object(b, "_ssh_run", return_value=(0, "", "")) as m:
+        with patch.object(b, "_ssh_run", return_value=self._shared()) as m:
             res = b.share_venv_logs("prod-1", "deploy-core", "consoles")
         self.assertTrue(res["ok"])
         self.assertEqual(res["as_user"], "")  # direct run, no escalation
         cmd = m.call_args.args[1]
-        self.assertIn("mkdir -p /opt/venvs/deploy-core/logs", cmd)
-        self.assertIn("chgrp consoles /opt/venvs/deploy-core/logs", cmd)
-        self.assertIn("chmod 2775 /opt/venvs/deploy-core/logs", cmd)
-        self.assertNotIn("share-venv-logs", cmd)  # no runnable dependency
+        self.assertIn("/opt/venvs/deploy-core/bin/runspec logs share", cmd)
+        self.assertIn("--scope venv", cmd)
+        self.assertIn("--group consoles", cmd)
+        self.assertIn("--json", cmd)
+        self.assertNotIn("sudo", cmd)
+        self.assertNotIn("chmod", cmd)  # no raw shell
+        self.assertNotIn("share-venv-logs", cmd)  # no runspec-linux runnable
 
-    def test_remote_omits_chgrp_when_no_group(self) -> None:
+    def test_remote_omits_group_when_no_group(self) -> None:
         b = _make_bridge()
         b._hosts = [_remote_entry()]
-        with patch.object(b, "_ssh_run", return_value=(0, "", "")) as m:
+        with patch.object(b, "_ssh_run", return_value=self._shared(group="")) as m:
             res = b.share_venv_logs("prod-1", "deploy-core")
         self.assertTrue(res["ok"])
         cmd = m.call_args.args[1]
-        self.assertIn("chmod 2775", cmd)
-        self.assertNotIn("chgrp", cmd)
+        self.assertIn("logs share --scope venv", cmd)
+        self.assertNotIn("--group", cmd)
 
-    def test_permission_denied_without_runnable_gives_hint(self) -> None:
-        # A venv owned by another user with no share-venv-logs to escalate through:
-        # direct chmod is refused and nothing can escalate → an actionable message,
-        # never an opaque failure (and never an unscoped/unsafe fallback).
+    def test_reports_index_repair_in_output(self) -> None:
+        # db_repaired in the payload → surfaced in the human output line.
         b = _make_bridge()
         b._hosts = [_remote_entry()]
-        results = [
-            (
-                1,
-                "",
-                "chmod: changing permissions of '/opt/venvs/deploy-core/logs': Operation not permitted",
-            ),
-            (1, "", ""),  # [ -x .../share-venv-logs ] → not present
-        ]
-        with patch.object(b, "_ssh_run", side_effect=results):
-            res = b.share_venv_logs("prod-1", "deploy-core", "consoles")
-        self.assertFalse(res["ok"])
-        self.assertIn("create-venv --group", res["error"])
-
-    def test_remote_escalates_via_runnable_when_present(self) -> None:
-        # Direct chmod refused, but the venv *has* share-venv-logs → escalate through
-        # it (a venv binary, covered by the scoped sudoers grant), stripping the
-        # =====AS marker so the UI can show who it ran as.
-        b = _make_bridge()
-        b._hosts = [_remote_entry()]
-        results = [
-            (
-                1,
-                "",
-                "chmod: changing permissions of '/opt/venvs/deploy-core/logs': Operation not permitted",
-            ),
-            (0, "", ""),  # [ -x .../share-venv-logs ] → present
-            (0, "=====AS svc\n" + json.dumps({"shared": True}), ""),  # escalation
-            (0, "", ""),  # post-share `[ -w logs ]` writability probe → writable
-        ]
-        with patch.object(b, "_ssh_run", side_effect=results) as m:
+        with patch.object(b, "_ssh_run", return_value=self._shared(db_repaired=True)):
             res = b.share_venv_logs("prod-1", "deploy-core", "consoles")
         self.assertTrue(res["ok"])
-        self.assertEqual(res["as_user"], "svc")
-        self.assertEqual(res["warning"], "")  # the console user can write → no warning
-        self.assertEqual(m.call_count, 4)  # chmod-probe, escalation, writability probe
-        # The runnable escalation is the third call (sudo -u owner probe).
-        self.assertIn('sudo -n -u "$o" "$sv" --help', m.call_args_list[2].args[1])
+        self.assertIn("runs index", res["output"])
+
+    def test_old_core_without_share_verb_hints_upgrade(self) -> None:
+        # A venv whose runspec predates 0.58.3 has no `logs share` — its stdout
+        # carries no {"shared": …} payload, so surface an upgrade hint (never a
+        # silent no-op / unsafe fallback).
+        b = _make_bridge()
+        b._hosts = [_remote_entry()]
+        with patch.object(
+            b, "_ssh_run", return_value=(1, "✗  unknown argument: --group", "")
+        ):
+            res = b.share_venv_logs("prod-1", "deploy-core", "consoles")
+        self.assertFalse(res["ok"])
+        self.assertIn("0.58.3", res["error"])
+
+    def test_permission_denied_without_run_as_gives_hint(self) -> None:
+        # A venv owned by another user, no Run as → the direct share is refused;
+        # point at setting Run as (never an unsafe fallback).
+        b = _make_bridge()
+        b._hosts = [_remote_entry()]
+        denied = (
+            1,
+            "",
+            "✗  [Errno 1] Operation not permitted: '/opt/venvs/deploy-core/logs'",
+        )
+        with patch.object(b, "_ssh_run", return_value=denied):
+            res = b.share_venv_logs("prod-1", "deploy-core", "consoles")
+        self.assertFalse(res["ok"])
+        self.assertIn("owned by another user", res["error"])
+        self.assertIn("Run as", res["error"])
 
     def test_unknown_venv(self) -> None:
         b = _make_bridge()
@@ -561,61 +550,69 @@ class TestShareVenvLogs(unittest.TestCase):
         self.assertFalse(res["ok"])
         self.assertIn("no venv", res["error"])
 
-    def test_local_uses_subprocess_shell(self) -> None:
-        import shlex
-
+    def test_local_uses_run_logs_subprocess(self) -> None:
         b = _make_bridge()
         b._hosts = [_local_entry()]
 
         class _Proc:
             returncode = 0
-            stdout = ""
+            stdout = json.dumps(
+                {
+                    "shared": [
+                        {
+                            "dir": "/opt/venvs/ops-tools/logs",
+                            "group": "consoles",
+                            "mode": "2775",
+                            "db_repaired": False,
+                        }
+                    ]
+                }
+            )
             stderr = ""
 
         with patch("subprocess.run", return_value=_Proc()) as m:
             res = b.share_venv_logs("ws", "ops-tools", "consoles")
         self.assertTrue(res["ok"])
         argv = m.call_args.args[0]
-        self.assertEqual(
-            argv[:2], ["sh", "-c"]
-        )  # direct chmod via a shell, no runnable
-        # Build the expected fragment the way the code does (shlex.quote + native
-        # Path) so it doesn't assume POSIX separators on a Windows runner.
-        logdir = shlex.quote(
-            str(Path("/opt/venvs/ops-tools/bin/runspec").parent.parent / "logs")
-        )
-        self.assertIn(f"chmod 2775 {logdir}", argv[2])
-        self.assertIn(f"chgrp consoles {logdir}", argv[2])
-        self.assertNotIn("share-venv-logs", argv[2])
+        # _run_logs shells out [rp, logs, share, …] directly — no `sh -c`, no chmod.
+        self.assertIn("logs", argv)
+        self.assertIn("share", argv)
+        self.assertIn("--group", argv)
+        self.assertNotIn("chmod", " ".join(argv))
 
-    def test_run_as_escalates_and_repairs_index(self) -> None:
-        # Pre-filled owner (Run as) → the whole repair runs `sudo -n -u <owner>
-        # sh -c`, working wherever the operator has passwordless sudo (not only where
-        # the venv ships share-venv-logs), and it also repairs the existing
-        # runspec_runs.db so a group member's writes to the index succeed after.
+    def test_run_as_escalates_via_scoped_sudo(self) -> None:
+        # Pre-filled owner (Run as) → `runspec logs share` runs `sudo -n -u
+        # <owner>` (the venv binary is covered by the scoped grant, no broad `all`),
+        # then a writability probe runs as the login user.
         b = _make_bridge()
         b._hosts = [_remote_entry()]  # ssh = u@h1 → effective user "u"
-        with patch.object(b, "_ssh_run", return_value=(0, "", "")) as m:
+        results = [
+            self._shared(db_repaired=True),  # the escalated share
+            (0, "", ""),  # writability probe (as login user) → writable
+        ]
+        with patch.object(b, "_ssh_run", side_effect=results) as m:
             res = b.share_venv_logs("prod-1", "deploy-core", "consoles", run_as="svc")
         self.assertTrue(res["ok"])
         self.assertEqual(res["as_user"], "svc")
-        # Two calls: the escalated chmod, then the writability probe (as the login
-        # user). No runnable dance.
-        self.assertEqual(m.call_count, 2)
-        cmd = m.call_args_list[0].args[1]  # the escalated chmod
-        self.assertIn("sudo -n -u svc sh -c", cmd)
-        self.assertIn("chmod 2775", cmd)
-        self.assertIn("runspec_runs.db", cmd)  # existing-index perms repair
+        self.assertEqual(m.call_count, 2)  # share, then writability probe
+        share_cmd = m.call_args_list[0].args[1]
+        self.assertIn(
+            "sudo -n -u svc /opt/venvs/deploy-core/bin/runspec logs share", share_cmd
+        )
         self.assertEqual(res["warning"], "")  # probe returned writable
+        # The second call is the `[ -w <logdir> ]` probe, run WITHOUT sudo.
+        probe_cmd = m.call_args_list[1].args[1]
+        self.assertIn("-w", probe_cmd)
+        self.assertNotIn("sudo", probe_cmd)
 
     def test_run_as_self_does_not_escalate(self) -> None:
-        # Running as the SSH login user needs no sudo (a grant to run as yourself
-        # you likely don't have would fail spuriously).
+        # Running as the SSH login user needs no sudo (and no writability probe).
         b = _make_bridge()
         b._hosts = [_remote_entry()]  # ssh = u@h1 → effective user "u"
-        with patch.object(b, "_ssh_run", return_value=(0, "", "")) as m:
+        with patch.object(b, "_ssh_run", return_value=self._shared()) as m:
             res = b.share_venv_logs("prod-1", "deploy-core", "consoles", run_as="u")
         self.assertTrue(res["ok"])
+        self.assertEqual(m.call_count, 1)  # not escalated ⇒ no probe
         self.assertNotIn("sudo", m.call_args.args[1])
 
     def test_run_as_sudo_refused_hints(self) -> None:
@@ -630,14 +627,14 @@ class TestShareVenvLogs(unittest.TestCase):
         self.assertIn("sudo -n -u svc", res["error"])
 
     def test_warns_when_console_user_cannot_write_after_escalated_share(self) -> None:
-        # The chmod succeeds (as the owner), but the console's own user isn't in the
+        # The share succeeds (as the owner), but the console's own user isn't in the
         # dir's group, so its runs' logs would still fall back to ~/logs. The share
         # succeeds *with a warning* naming the fix (the "shared but still ~/logs"
         # surprise, surfaced at share time).
         b = _make_bridge()
         b._hosts = [_remote_entry()]  # ssh = u@h1 → effective user "u"
         results = [
-            (0, "", ""),  # escalated chmod succeeds
+            self._shared(),  # escalated share succeeds
             (1, "", ""),  # `[ -w logs ]` as user "u" → NOT writable
         ]
         with patch.object(b, "_ssh_run", side_effect=results):

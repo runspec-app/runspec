@@ -264,6 +264,33 @@ runspec logs prune   --older-than 90d          # delete old files
 Schedule `compact`/`prune` from cron or a systemd timer so retention is
 automatic. See the shared-venv deployment guide for copy-paste schedules.
 
+### Sharing the logs dir across accounts (`runspec logs share`)
+
+When several accounts write into one venv — a console operator plus the service
+account a `run_as` runnable runs as — they all need to write the per-venv runs
+index (`runspec_runs.db`) and audit logs into the *same* dir. `runspec logs
+share` makes that dir group-writable in one command (**POSIX only**):
+
+```bash
+runspec logs share --group consoles   # chmod 2775 (setgid) + chgrp to `consoles`
+runspec logs share                     # just make it group-writable + setgid, group unchanged
+```
+
+For each targeted dir it: ensures it exists, `chmod`s it `2775` (group-writable
+**and setgid**, so files created in it inherit the dir's group), optionally
+`chgrp`s it to `--group`, and repairs the existing `runspec_runs.db` (`chgrp` +
+`chmod 664`) — a dir `chmod` never touches a file already inside it, so without
+the repair a group member still couldn't write an index a non-member created.
+Like `prune`/`compact`, an unset `--scope` acts on this venv's own dir only
+(`{sys.prefix}/logs`); `--scope home`/`all` target the shared `~/logs`/both.
+
+It is **sudo-free**, like the rest of the core CLI: it changes only what the
+invoking user is allowed to change, so if you don't own the dir, escalate to its
+owner yourself — `sudo -u <owner> {venv}/bin/runspec logs share --group consoles`.
+(This is exactly what the runspec-console "Make shared" button runs for you.) A
+non-member of the group still logs to `~/logs`, so add the accounts to the group
+first.
+
 ---
 
 ## Run summary

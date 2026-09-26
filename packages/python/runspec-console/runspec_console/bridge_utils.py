@@ -433,12 +433,12 @@ _PERMISSION_DENIED_RE = re.compile(
 def looks_permission_denied(text: str) -> bool:
     """True when a failed reply is a filesystem permission refusal — a
     ``runspec deny`` write (the 0.51.2+ one-line message *or* an older core's
-    traceback) *or* a ``share-venv-logs`` ``chmod``/``chgrp`` on a venv the login
-    user doesn't own. Covers both EACCES ("Permission denied"/Errno 13, e.g. a
-    file write) and **EPERM** ("Operation not permitted", what ``chmod``/``chgrp``
-    print) so the "Make logs shared" repair escalates on a pre-existing but
-    unowned ``logs/`` dir (where ``mkdir -p`` is a no-op and only the chmod
-    fails), not just on an unwritable parent."""
+    traceback) *or* a ``runspec logs share`` ``chmod``/``chgrp`` on a venv the
+    login user doesn't own. Covers both EACCES ("Permission denied"/Errno 13, e.g.
+    a file write) and **EPERM** ("Operation not permitted", what ``chmod``/``chgrp``
+    print) so the "Make logs shared" repair distinguishes an unowned ``logs/`` dir
+    (set "Run as" to escalate) from an old-core failure, not just an unwritable
+    parent."""
     return bool(_PERMISSION_DENIED_RE.search(text or ""))
 
 
@@ -491,54 +491,6 @@ def split_denylist_as(out: str) -> tuple[str, str]:
     if first.startswith(DENYLIST_AS_MARKER):
         return first[len(DENYLIST_AS_MARKER) :].strip(), rest
     return "", out or ""
-
-
-# ── "Make logs shared": escalate the share-venv-logs runnable to the venv owner ──
-
-
-def share_logs_cmd(sv_bin: str, venv: str, group: str) -> str:
-    """POSIX shell re-running the runspec-linux ``share-venv-logs`` runnable
-    **escalated** to the venv owner (else root) — the console's "Make logs shared"
-    repair (design §14), mirroring :func:`denylist_escalation_cmd`.
-
-    ``sv_bin`` is ``{venv}/bin/share-venv-logs``. Being a venv binary it is covered
-    by the ``enable-passwordless-sudo scoped`` grant; run **as the owner** it does
-    the ``mkdir``/``chgrp``/``chmod 2775`` on the owner's own ``logs/`` with no
-    further sudo (raw ``mkdir``/``chmod`` via sudo would need the broader ``all``
-    grant — which is why the repair is a runnable, not inline shell). Two tiers,
-    probed with ``share-venv-logs --help`` (harmless, exits 0, exercises exactly the
-    grant the real run needs — the analogue of the denylist's read-only ``deny list``
-    probe):
-
-    1. the venv root's **owner** (``stat -c %U``) when it isn't the login user and
-       ``sudo -n -u <owner>`` is permitted;
-    2. else **root** via ``sudo -n``;
-    3. else exit 77 with a one-line explanation (``-n`` never prompts).
-
-    The chosen tier is announced as ``=====AS <user>`` (:data:`DENYLIST_AS_MARKER`)
-    for the caller to strip via :func:`split_denylist_as`. ``group`` is the optional
-    Unix group to ``chgrp`` the ``logs/`` dir to (empty ⇒ no ``--group``). Only
-    reached after a direct run refused *permission denied*, so ``sv_bin`` is known
-    executable."""
-    sv = shlex.quote(sv_bin)
-    run = '"$sv" --venv ' + shlex.quote(venv)
-    if group:
-        run += " --group " + shlex.quote(group)
-    m = DENYLIST_AS_MARKER
-    return (
-        f"sv={sv}; "
-        'r=$(dirname "$(dirname "$sv")"); '
-        'o=$(stat -c %U "$r" 2>/dev/null || stat -f %Su "$r" 2>/dev/null); '
-        "me=$(id -un 2>/dev/null); "
-        'if [ -n "$o" ] && [ "$o" != "$me" ] '
-        '&& sudo -n -u "$o" "$sv" --help >/dev/null 2>&1; then '
-        f'echo "{m}$o"; exec sudo -n -u "$o" {run}; '
-        'elif sudo -n "$sv" --help >/dev/null 2>&1; then '
-        f'echo "{m}root"; exec sudo -n {run}; '
-        'else echo "cannot escalate: the venv root $r is owned by ${o:-?} and '
-        "passwordless sudo (as ${o:-the owner} or root) was refused — grant it, "
-        f'or run: sudo -u ${{o:-<owner>}} {run}" >&2; exit 77; fi'
-    )
 
 
 DEFAULT_KEY_MARKER = "runspec-console"

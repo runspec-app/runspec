@@ -7,6 +7,31 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.58.3] — 2026-09-26
+
+### Added
+
+- **`runspec logs share` — make a venv's logs dir group-writable (POSIX).** A new
+  verb on `runspec logs` so a shared console group plus the service account a
+  `run_as` runnable runs as can write the per-venv runs index (`runspec_runs.db`)
+  and audit logs into the *same* dir. For each targeted dir it ensures the dir
+  exists, `chmod`s it `2775` (group-writable **and setgid**, so files created in
+  it inherit the dir's group), optionally `chgrp`s it to `--group`, and repairs
+  the existing `runspec_runs.db` (`chgrp` + `chmod 664`) — a dir `chmod` never
+  touches a file already inside it, so without the repair a group member still
+  couldn't write an index a non-member created. Scoping mirrors prune/compact:
+  unset `--scope` acts on this venv's own dir only (`{sys.prefix}/logs`), never
+  the shared `~/logs`; `--scope home`/`all` target the fallback/both. **POSIX
+  only** (setgid + group ownership are POSIX concepts — a `ValueError` on a
+  non-POSIX host) and **sudo-free** like the rest of the core CLI: it changes
+  only what the invoking user may change, so escalation (running it as the dir's
+  owner, `sudo -u <owner> {venv}/bin/runspec logs share`) is the caller's job.
+  This generalizes what the console shipped in 0.290.0 as a raw `chmod`/`chgrp`
+  shell: a venv binary is scoped-sudoers-friendly (no broad `all` grant needed),
+  and direct-CLI users get the same one-command share without an Ansible/
+  `runspec-linux` dependency. New `runspec.logs.share`; `runspec logs share
+  [--group NAME] [--scope venv|home|all] [--json]`.
+
 ## [0.58.2] — 2026-09-26
 
 ### Fixed

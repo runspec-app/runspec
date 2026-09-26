@@ -381,3 +381,110 @@ class TestPruneProvenanceIntegration:
         r = runsdb.list_runs(d, live=False)[0]
         assert r["log_file"] == archive.name  # repointed to the archive…
         assert r["log_pruned_at"] is None  # …not marked pruned (the content survives)
+
+
+class TestShare:
+    """`runspec logs share`: make a logs dir group-writable (POSIX) so several
+    accounts can write the same runs index + audit logs."""
+
+    def test_chmods_dir_to_2775_setgid(self, tmp_path):
+        d = tmp_path / "logs"
+        d.mkdir()
+        logs.share([d], out=io.StringIO())
+        # group-writable + setgid (so files created here inherit the dir's group)
+        assert d.stat().st_mode & 0o7777 == 0o2775
+
+    def test_creates_dir_if_missing(self, tmp_path):
+        d = tmp_path / "venv" / "logs"  # neither the dir nor its parent exists yet
+        logs.share([d], out=io.StringIO())
+        assert d.is_dir()
+        assert d.stat().st_mode & 0o7777 == 0o2775
+
+    def test_repairs_existing_runs_index_perms(self, tmp_path):
+        # A dir chmod never touches a file already inside it, so an index another
+        # account created with restrictive perms is repaired to group-writable.
+        d = tmp_path / "logs"
+        d.mkdir()
+        db = runsdb.db_path(d)
+        db.write_bytes(b"")
+        os.chmod(db, 0o600)
+        results = logs.share([d], out=io.StringIO())
+        assert db.stat().st_mode & 0o777 == 0o664
+        assert results[0]["db_repaired"] is True
+
+    def test_no_index_no_repair(self, tmp_path):
+        d = tmp_path / "logs"
+        d.mkdir()
+        results = logs.share([d], out=io.StringIO())
+        assert results[0]["db_repaired"] is False
+
+    def test_chgrp_dir_and_index_when_group_given(self, tmp_path, monkeypatch):
+        # chgrp needs a real group + privilege, so record the calls instead.
+        d = tmp_path / "logs"
+        d.mkdir()
+        db = runsdb.db_path(d)
+        db.write_bytes(b"")
+        calls: list[tuple[Path, str | None]] = []
+        monkeypatch.setattr(logs.shutil, "chown", lambda p, group=None: calls.append((Path(p), group)))
+        logs.share([d], group="consoles", out=io.StringIO())
+        assert (d, "consoles") in calls  # the dir…
+        assert (db, "consoles") in calls  # …and the runs index inside it
+
+    def test_no_chgrp_when_group_omitted(self, tmp_path, monkeypatch):
+        d = tmp_path / "logs"
+        d.mkdir()
+        calls: list[object] = []
+        monkeypatch.setattr(logs.shutil, "chown", lambda *a, **k: calls.append((a, k)))
+        logs.share([d], out=io.StringIO())
+        assert calls == []  # group left unchanged when --group is not given
+
+    def test_json_output_shape(self, tmp_path, monkeypatch):
+        # Monkeypatch chown: a real chgrp needs the group to exist on the box (it
+        # won't on a CI runner), and here we're asserting the JSON shape — that the
+        # group arg is echoed into the payload — not the chown itself.
+        monkeypatch.setattr(logs.shutil, "chown", lambda *a, **k: None)
+        d = tmp_path / "logs"
+        d.mkdir()
+        buf = io.StringIO()
+        logs.share([d], group="consoles", as_json=True, out=buf)
+        payload = json.loads(buf.getvalue())
+        assert payload["shared"][0]["dir"] == str(d)
+        assert payload["shared"][0]["group"] == "consoles"
+        assert payload["shared"][0]["mode"] == "2775"
+
+    def test_posix_gate_refuses_on_non_posix(self, tmp_path, monkeypatch):
+        # No os.getuid ⇒ a non-POSIX host ⇒ refuse rather than pretend to share.
+        monkeypatch.delattr(logs.os, "getuid", raising=False)
+        with pytest.raises(ValueError, match="POSIX"):
+            logs.share([tmp_path / "logs"])
+
+    def test_scope_default_is_this_venv(self, tmp_path, monkeypatch):
+        # `runspec logs share` with no --scope shares this venv's own dir only.
+        venv = tmp_path / "venv"
+        monkeypatch.setattr(logs.sys, "prefix", str(venv))
+        results = logs.share(dirs=logs.scope_dirs(None, destructive=True), out=io.StringIO())
+        assert results[0]["dir"] == str(venv / "logs")
+        assert (venv / "logs").is_dir()
+
+    def test_cli_share_verb_dispatches(self, monkeypatch):
+        # The `share` verb + `--group`/`--json` args parse and reach logs.share.
+        from runspec import cli
+
+        seen: dict[str, object] = {}
+        monkeypatch.setattr(logs, "share", lambda *, dirs, group, as_json: seen.update(group=group, as_json=as_json))
+        cli.cmd_logs(["share", "--group", "consoles", "--json"])
+        assert seen == {"group": "consoles", "as_json": True}
+
+    def test_cli_share_permission_error_is_clean(self, monkeypatch, capsys):
+        # A chmod the caller can't make surfaces as a clean ✗ line + exit 1, not a
+        # traceback (the console reads that stdout to decide "set Run as").
+        from runspec import cli
+
+        def boom(**_kwargs):
+            raise PermissionError("[Errno 1] Operation not permitted: '/opt/venv/logs'")
+
+        monkeypatch.setattr(logs, "share", boom)
+        with pytest.raises(SystemExit) as exc:
+            cli.cmd_logs(["share", "--group", "consoles"])
+        assert exc.value.code == 1
+        assert "✗" in capsys.readouterr().out

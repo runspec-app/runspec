@@ -176,7 +176,7 @@ format    = {type = "choice", description = "Output format when listing", option
 tool-args = {type = "rest",   description = "Args passed to the remote tool"}
 
 [runspec.commands.logs]
-description = "View, status, prune, or compact per-invocation audit logs (store = 'per-run')"
+description = "View, status, prune, compact, or share per-invocation audit logs (store = 'per-run')"
 autonomy    = "autonomous"
 
 examples = [
@@ -190,22 +190,24 @@ examples = [
   {cmd = "runspec logs prune --older-than 90d",          description = "Delete files older than 90 days (this venv's logs only)"},
   {cmd = "runspec logs prune deploy --max-files 50 --dry-run", description = "Preview keeping only the newest 50 files"},
   {cmd = "runspec logs prune --older-than 90d --scope home",   description = "Prune the shared ~/logs fallback instead of this venv's dir"},
+  {cmd = "runspec logs share --group consoles",          description = "Make this venv's logs dir group-writable (POSIX; setgid + chgrp)"},
 ]
 
 [runspec.commands.logs.args]
-target         = {type = "str",  description = "Runnable to view, or a verb: 'status' / 'prune' / 'compact'", position = 1, required = false}
+target         = {type = "str",  description = "Runnable to view, or a verb: 'status' / 'prune' / 'compact' / 'share'", position = 1, required = false}
 runnable       = {type = "str",  description = "Runnable to status/prune/compact (default: all in the venv)", position = 2, required = false}
 follow         = {type = "flag", description = "Live tail across invocations (view)", short = "-f", default = false}
 since          = {type = "str",  description = "Only show records newer than this (view), e.g. 1h, 30m, 7d", required = false}
 user           = {type = "str",  description = "Only show runs launched by this user (view)", short = "-u", required = false}
 run            = {type = "str",  description = "Only show one invocation by run_id (view)", required = false}
-json           = {type = "flag", description = "Emit JSON instead of formatted text (view / status / prune / compact)", default = false}
+json           = {type = "flag", description = "Emit JSON instead of formatted text (view / status / prune / compact / share)", default = false}
 older-than     = {type = "str",  description = "Age threshold for prune/compact, e.g. 7d, 90d, 24h", required = false}
 max-files      = {type = "int",  description = "Keep only the newest N files per runnable (prune)", required = false}
 max-total-size = {type = "str",  description = "Cap total managed size; delete oldest over budget (prune), e.g. 5GB", required = false}
 gzip           = {type = "flag", description = "Gzip the archive (compact)", default = false}
 dry-run        = {type = "flag", description = "Show what would change without deleting/archiving (prune/compact)", default = false}
-scope          = {options = ["venv", "home", "all"], description = "Which logs dir(s) to act on: 'venv' ({sys.prefix}/logs, this venv's own), 'home' (~/logs, the shared home fallback), or 'all' (both). Default: prune/compact act on 'venv' only — never the shared ~/logs; status/view show 'all'.", required = false}
+scope          = {options = ["venv", "home", "all"], description = "Which logs dir(s) to act on: 'venv' ({sys.prefix}/logs, this venv's own), 'home' (~/logs, the shared home fallback), or 'all' (both). Default: prune/compact/share act on 'venv' only — never the shared ~/logs; status/view show 'all'.", required = false}
+group          = {type = "str",  description = "Unix group to chgrp the logs dir + runs index to (share; POSIX only). Default: leave the group unchanged, just make it group-writable + setgid.", required = false}
 
 [runspec.commands.history]
 description = "Query or maintain the per-venv runs index (runspec_runs.db)"
