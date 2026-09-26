@@ -8,6 +8,8 @@ Commands:
     runspec emit   (--rundeck | --ansible) [--venv <path>] [--output-dir <dir>]
                    [--runnable <name>] [--group <g>] [--node-filter <f>] [--project <p>]
                    [--check] [--stdout]
+    runspec rebrand <wheel|requirement> --name <dist> [--rename-dep OLD=NEW ...]
+                   [--set-version <v>] [--out <dir>]
     runspec test   [--format text|json] [--runnable <name>]
     runspec serve
     runspec jump   [--list-jump-hosts] [<jump_host> [<tool>] [-- tool-args...]]
@@ -67,6 +69,7 @@ def main() -> None:
         "local": cmd_local,
         "stubs": cmd_stubs,
         "emit": cmd_emit,
+        "rebrand": cmd_rebrand,
         "test": cmd_test,
         "serve": cmd_serve,
         "jump": cmd_jump,
@@ -84,6 +87,36 @@ def main() -> None:
     # Each handler is responsible for parsing its own args.
     # --help is intercepted inside parse() (parser.py) via the spec.
     commands[command](rest)
+
+
+def cmd_rebrand(args: list[str]) -> None:
+    """Republish a wheel under a new distribution name (see runspec/rebrand.py)."""
+    from runspec.parser import parse as _parse
+    from runspec.rebrand import RebrandError, parse_renames, rebrand
+
+    parsed = _parse(script_name="runspec", argv=["rebrand"] + args, config_path=_CLI_CONFIG)
+    try:
+        result = rebrand(
+            parsed.source.value,
+            parsed.name.value,
+            Path(parsed.out.value),
+            rename_deps=parse_renames(list(parsed.rename_dep.value or [])),
+            new_version=parsed.set_version.value,
+        )
+    except RebrandError as exc:
+        print(f"✗  {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"✓  {result.old_name} {result.version} → {result.new_name} {result.version}")
+    print(f"   wrote {result.output}")
+    for old, new in result.renamed_deps:
+        print(f"   dependency {old} → {new}")
+    if result.unused_renames:
+        print(f"   (not a dependency of {result.old_name}, left alone: {', '.join(result.unused_renames)})")
+    if result.runspec_tomls and not result.requires_runspec:
+        print("   ⚠ ships runspec.toml but doesn't require runspec — `runspec local` won't discover it", file=sys.stderr)
+    elif result.runspec_tomls:
+        print(f"   runnables: {', '.join(result.runspec_tomls)}")
 
 
 def cmd_local(args: list[str]) -> None:

@@ -32,7 +32,9 @@ def _row(**over):
         "runnable": "backup",
         "command": "",
         "status": "running",
-        "start_ts": "2026-09-25T10:00:00+00:00",
+        # "now", not a fixed date: the reaper crashes running rows older than
+        # max_run_hours, so a hard-coded timestamp turns into a failure a day later.
+        "start_ts": runsdb._now_iso(),
         "user": "alice",
         "agent": False,
         "trigger": "",

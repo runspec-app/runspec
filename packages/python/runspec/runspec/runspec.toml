@@ -99,6 +99,23 @@ project     = {type = "str",  description = "Rundeck project name (used for stab
 check       = {type = "flag", description = "Verify emitted files are up to date; write nothing. Exit 1 if stale (CI).", default = false}
 stdout      = {type = "flag", description = "Rundeck: print the combined JSON array to stdout instead of writing files", default = false}
 
+[runspec.commands.rebrand]
+description = "Republish a runnable package wheel under your own distribution name (private index / Nexus)"
+autonomy    = "confirm"
+
+examples = [
+  {cmd = "runspec rebrand runspec-linux==0.14.0 --name mycorp-linux",  description = "Download from pip's configured index and write dist/mycorp_linux-0.14.0-*.whl"},
+  {cmd = "runspec rebrand runspec_windows-0.9.0-py3-none-any.whl --name mycorp-windows", description = "Rebrand a wheel already on disk"},
+  {cmd = "runspec rebrand runspec-linux --name mycorp-linux --rename-dep runspec-linux-core=mycorp-linux-core", description = "Latest release, re-pointing a core dependency at your rebranded core"},
+]
+
+[runspec.commands.rebrand.args]
+source      = {type = "str",  description = "A .whl path, or a requirement to download (e.g. runspec-linux==0.14.0)", position = 1}
+name        = {type = "str",  description = "New distribution name (e.g. mycorp-linux)", short = "-n"}
+rename-dep  = {type = "str",  description = "OLD=NEW: re-point a dependency at another rebranded package (repeatable)", multiple = true, required = false}
+set-version = {type = "str",  description = "Override the version (default: keep upstream's — recommended)", required = false}
+out         = {type = "str",  description = "Output directory", short = "-o", default = "dist"}
+
 [runspec.commands.test]
 description = "Smoke-test installed runnables: spec smoke + entry-point --help"
 autonomy    = "autonomous"

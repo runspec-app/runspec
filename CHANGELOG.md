@@ -7,6 +7,25 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.59.0] — 2026-09-26
+
+### Added
+
+- **`runspec rebrand` — republish a runnable package under your own name.**
+  Takes a published wheel (a `.whl` path, or a requirement such as
+  `runspec-linux==0.14.0` downloaded with pip's own index config) and writes a
+  copy distributed as your name (`mycorp-linux`) for a private index such as
+  Nexus. Only packaging metadata changes — the `*.dist-info`/`*.data` directory
+  names, `METADATA` `Name` (optionally `Version` via `--set-version`), and any
+  `Requires-Dist` re-pointed with repeatable `--rename-dep OLD=NEW` (specifier,
+  extras and markers kept) — and `RECORD` is regenerated with valid hashes.
+  Code, `runspec.toml`, entry points and the import package are byte-identical,
+  so discovery sees the same runnables and a new upstream release is mirrored
+  by re-running it (e.g. from a scheduled CI job). Shipped in the core library
+  so it reaches locked-down machines through the same index as runspec itself.
+  Stdlib only (`runspec/rebrand.py`); Python-only (packaging tool, no Node
+  counterpart). See `docs/white-label-runnables.md`.
+
 ## [0.58.3] — 2026-09-26
 
 ### Added

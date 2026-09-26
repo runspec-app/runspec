@@ -549,6 +549,34 @@ the file format and matching rules.
 
 ---
 
+## `runspec rebrand`
+
+Republish a runnable package wheel under **your own distribution name** — for a
+private index such as Nexus — without changing a line of it. Only packaging
+metadata is rewritten (distribution name, `*.dist-info` directory, re-pointed
+dependencies, `RECORD` hashes); code, `runspec.toml`, entry points and the
+import package stay byte-identical.
+
+```bash
+runspec rebrand runspec-linux==0.14.0 --name mycorp-linux          # download via pip's index config
+runspec rebrand runspec_windows-0.9.0-py3-none-any.whl --name mycorp-windows
+runspec rebrand runspec-linux --name mycorp-linux \
+    --rename-dep runspec-linux-core=mycorp-linux-core -o dist/     # re-point a core dependency
+```
+
+| Option | Meaning |
+|---|---|
+| `<source>` | A `.whl` path, or a requirement to `pip download` (no deps, wheels only) |
+| `--name`, `-n` | New distribution name |
+| `--rename-dep OLD=NEW` | Re-point a dependency (repeatable; one that doesn't apply is reported and ignored) |
+| `--set-version` | Override the version — normally leave upstream's |
+| `--out`, `-o` | Output directory (default `dist`) |
+
+See [White-label runnable packages](white-label-runnables.md) for the full
+workflow, including a scheduled CI job that mirrors each new upstream release.
+
+---
+
 ## `runspec logs`
 
 View, prune, and compact per-invocation audit logs — the read and maintenance

@@ -354,3 +354,9 @@ Launch on a clean machine (or a fresh `%APPDATA%` by temporarily renaming
   version, and the git layer configured.
 - [ ] The in-app Documentation link opens your docs; the footer update check
   names your package.
+
+---
+
+The runnable packs (`runspec-linux`, `runspec-windows`, …) are branded
+differently — republished unchanged under your own name rather than wrapped.
+See [White-label runnable packages](white-label-runnables.md).

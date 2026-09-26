@@ -80,6 +80,7 @@ nav:
     - Denylist: denylist.md
   - Distribution:
     - White-label walkthrough: white-label.md
+    - White-label runnable packages: white-label-runnables.md
     - Custom model adapters: console-adapters.md
     - Telemetry — OpenTelemetry tracing: console-telemetry.md
     - Telemetry for a custom adapter: console-adapter-telemetry.md
