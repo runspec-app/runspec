@@ -8,6 +8,24 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.292.0] — 2026-09-26
+
+### Changed
+
+- **`runspec-windows` is now an optional extra: `runspec-console[windows]`.**
+  It used to be a hard dependency on Windows, so every console venv held the
+  upstream package — which made it impossible for a white-label console to ship
+  a rebranded copy (`runspec rebrand` → `mycorp-windows`): the two own the same
+  files and commands and can't share a venv. The console never imports it (its
+  runnables are only discovered), so nothing inside the console changes.
+  **Fresh installs:** `pip install "runspec-console[windows]"` to get the Windows
+  runnables as before, or install `runspec-windows` (or your rebranded copy)
+  from the Marketplace. **Existing installs:** upgrading doesn't remove an
+  installed `runspec-windows`. `windows` is deliberately not part of `[all]`,
+  which is the feature aggregate white-label packages depend on. See
+  `docs/white-label-runnables.md` → "White-label consoles".
+
+
 ## [0.291.0] — 2026-09-26
 
 ### Changed

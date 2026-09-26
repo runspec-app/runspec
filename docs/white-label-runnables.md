@@ -149,35 +149,65 @@ instead of taking the latest if you want to promote releases deliberately.
 
 ---
 
+## White-label consoles
+
+A [white-label console](white-label.md) can carry your rebranded Windows pack
+instead of the upstream one, and keep it updated from its own Marketplace.
+
+**Depend on the copy, not the `[windows]` extra.** `runspec-console` ships the
+Windows runnables as an optional extra, `runspec-console[windows]` (0.292.0+),
+so a wrapper that leaves it out gets no upstream copy. `[all]` doesn't include
+it either. Depend on your copy instead, with a lower bound only so the
+Marketplace can move it forward independently of the console:
+
+```toml
+[project]
+name = "mycorp-console"
+dependencies = [
+    "runspec-console[all]>=0.292.0",
+    "mycorp-windows>=0.10.0 ; sys_platform == 'win32'",
+]
+```
+
+(Or leave it out and let operators install it from the Marketplace.)
+
+Don't rebrand `runspec-console` itself: the console looks itself up by
+distribution name (discovery self-exclusion, config-seed detection, the update
+check), so brand it with a wrapper.
+
+**Point the Marketplace at your index only.** Ship this in the console's
+[config seed](white-label.md) so every install offers your copies and never
+the public packages:
+
+```toml
+[marketplace]
+auto_pip = false          # don't derive repos from pip config (pypi.org by default)
+
+[[marketplace.repos]]
+name     = "nexus"
+url      = "https://nexus.mycorp.example/repository/pypi-group/simple"
+scan     = false          # read exactly the packages below
+packages = ["mycorp-windows", "mycorp-linux"]
+pip_arg  = "index-url"    # installs resolve through this index
+```
+
+Use the **group** URL, not the hosted repo alone: installing `mycorp-windows`
+also pulls `runspec`, `runspec-webops-core` and `runspec-fs-core` (or your
+rebranded cores), which the group serves through its PyPI proxy. The installed
+and update chips match by distribution name, so `mycorp-windows` shows as
+installed on every venv that has it and offers each new version your mirror
+job publishes. If you keep `auto_pip` on, add
+`hide = ["runspec-linux", "runspec-windows"]` so operators aren't offered both
+names.
+
+---
+
 ## Things to know
 
 **Install one or the other, never both, in a venv.** The copy and the
 upstream package own the same files (`runspec_linux/…`) and the same commands.
 pip will install both without complaint, but uninstalling either removes the
 shared files, and two versions overwrite each other. Choose one name per venv.
-
-**runspec-console already depends on `runspec-windows`** (on Windows), so the
-console's *own* venv always has the upstream package — the same code your copy
-carries. Install `mycorp-windows` on the fleet hosts the console reaches, not
-into the console venv. Don't rebrand `runspec-console` itself to get around
-this: the console looks itself up by distribution name (discovery self-exclusion,
-config-seed detection, the update check), so brand it with a
-[wrapper](white-label.md) instead.
-
-**The Marketplace.** A rebranded copy is a normal runnable package, so the
-console's Marketplace finds it once your index is a repo — list it explicitly
-if its name doesn't match the scan patterns, and hide the upstream names so
-operators aren't offered both:
-
-```toml
-[marketplace]
-hide = ["runspec-linux", "runspec-windows"]
-
-[[marketplace.repos]]
-name     = "nexus"
-url      = "https://nexus.mycorp.example/repository/pypi-internal/simple"
-packages = ["mycorp-linux", "mycorp-windows"]
-```
 
 **What stays upstream-branded.** The long description (README), summary and
 project URLs are carried over verbatim — they still say *runspec-linux* and

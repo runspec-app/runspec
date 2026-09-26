@@ -9,15 +9,17 @@ can also reach runnables on remote hosts over SSH.
 ## Install
 
 ```
-pip install runspec-console
+pip install runspec-console              # add [windows] on Windows for the runnable pack
 runspec-console
 ```
 
-On **Windows**, installing the console automatically pulls in
+On **Windows**, `pip install "runspec-console[windows]"` also installs
 [`runspec-windows`](https://pypi.org/project/runspec-windows/), so its Windows
-system-administration and cross-platform web/TLS runnables appear in the UI with
-no extra step. The dependency is gated to `sys_platform == "win32"`, so it's
-skipped on macOS/Linux. The Microsoft 365 runnables are **not** pulled in
+system-administration and cross-platform web/TLS runnables appear in the UI. The
+extra is gated to `sys_platform == "win32"`, so it's a no-op on macOS/Linux, and
+it's not part of `[all]`. It's an extra rather than a dependency so a white-label
+console can ship a rebranded copy instead (see the runspec docs, "White-label
+runnable packages"). The Microsoft 365 runnables are **not** pulled in
 automatically — see below.
 
 To add more runnables, just `pip install` the package that provides them into

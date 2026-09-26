@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-console"
-version = "0.291.0"
+version = "0.292.0"
 requires-python = ">=3.11"
 dependencies = [
     "pywebview>=5.0",
@@ -13,14 +13,6 @@ dependencies = [
     "cryptography>=42.0",
     "paramiko>=3.0",
     "tomli-w>=1.0",  # config.toml serialisation (valid TOML for nested/array tables)
-    # Surfaces the Windows system-admin + cross-platform web/TLS runnables in the
-    # console UI automatically (discovered via `runspec local`). Windows-only —
-    # the marker keeps it off non-Windows installs and CI. The Microsoft 365 /
-    # Graph runnables are NOT pulled in (they moved to the standalone
-    # `runspec-o365` package, which the console deliberately does not depend on so
-    # a Graph-blocked fleet doesn't carry unusable tools — `pip install
-    # runspec-o365` to opt in).
-    "runspec-windows>=0.5.0 ; sys_platform == 'win32'",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -112,10 +104,20 @@ notifications = [
     "winrt-Windows.UI.Notifications.Management>=2.0 ; sys_platform == 'win32'",
     "winrt-Windows.ApplicationModel>=2.0 ; sys_platform == 'win32'",
 ]
+# The Windows system-admin + cross-platform web/TLS runnables (runspec-windows),
+# surfaced in the UI by discovery. An extra, not a hard dependency, so a
+# white-label package can ship a rebranded copy (`runspec rebrand` →
+# mycorp-windows) instead: both own the same files, so they can't share a venv.
+# Windows-only via the marker. Deliberately NOT in `all` below — `all` is the
+# feature aggregate white-label packages depend on, and a runnable pack in it
+# would pull the upstream copy back in. Microsoft 365 / Graph runnables live in
+# the separate, opt-in runspec-o365.
+windows = ["runspec-windows>=0.5.0 ; sys_platform == 'win32'"]
 # Convenience aggregate: every runtime feature extra in one name, so a downstream
 # project can depend on `runspec-console[all]` and not track new extras itself.
 # Recursive self-reference (resolved by pip/poetry); excludes `dev`. Win32-only
 # deps inside `notifications` keep their markers, so `[all]` is safe on any OS.
+# The `windows` runnable pack is not included — see its comment above.
 all = [
     "runspec-console[anthropic,openai,bedrock,langserve,credentials,git-sync,notifications,schedule,otel,mcp,voice]",
 ]

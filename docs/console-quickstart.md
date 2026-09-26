@@ -39,14 +39,14 @@ console's runnable catalogue, so keeping it separate keeps it deliberate:
 ```
 python -m venv %USERPROFILE%\runspec-console-venv
 %USERPROFILE%\runspec-console-venv\Scripts\activate
-pip install "runspec-console[anthropic]"
+pip install "runspec-console[anthropic,windows]"
 ```
 
 (macOS/Linux: `python3 -m venv ~/runspec-console-venv && source
-~/runspec-console-venv/bin/activate` and the same `pip install`.)
+~/runspec-console-venv/bin/activate` and `pip install "runspec-console[anthropic]"`.)
 
-The `[anthropic]` extra installs the Claude adapter. Other extras you can add
-now or later:
+The `[anthropic]` extra installs the Claude adapter; `[windows]` adds the
+Windows runnable pack (see below). Other extras you can add now or later:
 
 | Extra | What it enables |
 |---|---|
@@ -61,11 +61,13 @@ now or later:
 pip install "runspec-console[all]"
 ```
 
-On **Windows**, installing the console automatically pulls in
+On **Windows**, the `[windows]` extra installs
 [`runspec-windows`](https://pypi.org/project/runspec-windows/), so ~40 system
-administration, Microsoft 365, and web/TLS diagnostic runnables are available
-in the UI immediately — the agent has real tools to work with out of the box.
-On Linux, `pip install runspec-linux` gives you the equivalent pack (31
+administration and web/TLS diagnostic runnables are available in the UI
+immediately — the agent has real tools to work with out of the box. (`[all]`
+doesn't include it; add `windows` alongside. You can also install it later from
+the **Marketplace** tab.)
+On Linux, `pip install runspec-linux` gives you the equivalent pack (57
 runnables).
 
 ---
@@ -86,7 +88,7 @@ No configuration is needed for the first start. You'll see:
   [Automation](console-automation.md);
 - **History** — past runs and conversations.
 
-Open **Forms** and you'll already see the runnables from `runspec-windows`
+Open **Forms** and you'll see the runnables from `runspec-windows`
 (or whatever runspec packages are installed in the environment). The console
 lists whatever `runspec local` discovers: any installed package that ships a
 `runspec.toml`. There is no registry and no filesystem scanning — `pip

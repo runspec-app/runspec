@@ -59,6 +59,8 @@ description = "MyCorp operations console"
 requires-python = ">=3.11"
 dependencies = [
     "runspec-console[credentials,git-sync,schedule,notifications]>=0.174.0",
+    # Windows runnables: add "runspec-console[windows]" for the upstream pack, or
+    # depend on your rebranded copy — see white-label-runnables.md.
     "httpx>=0.27",                     # your gateway client's deps
 ]
 
