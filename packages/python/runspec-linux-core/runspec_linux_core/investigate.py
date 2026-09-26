@@ -15,6 +15,7 @@ real tools.
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -153,10 +154,38 @@ def open_ports(proto: str = "tcp", *, run_as: str | None = None, become_method: 
         check_become_error("open ports", result.stderr, run_as)
 
     rows = _parse_ss_listening(result.stdout)
-    out = {"proto": proto, "count": len(rows), "listeners": rows}
+    out: dict = {"proto": proto, "count": len(rows), "listeners": rows}
     if run_as:
         out["run_as"] = run_as
+    hint = _ports_hint(rows, run_as)
+    if hint:
+        out["hint"] = hint
     return out
+
+
+def _probe_is_root(run_as: str | None) -> bool:
+    if run_as:
+        return run_as == "root"
+    geteuid = getattr(os, "geteuid", None)
+    return geteuid is not None and geteuid() == 0
+
+
+def _ports_hint(rows: list[dict], run_as: str | None) -> str | None:
+    """Say so when owning processes are missing because the probe wasn't root.
+
+    ``ss -p`` only reports processes the caller may inspect, so an unprivileged
+    probe returns most listeners with an empty ``processes`` list — easy to
+    misread as "nothing owns this port" and to guess the owner from the number.
+    """
+    if _probe_is_root(run_as):
+        return None
+    missing = sum(1 for r in rows if not r["processes"])
+    if not missing:
+        return None
+    return (
+        f"{missing} of {len(rows)} listeners have no owning process because ss only shows other users' "
+        "processes to root — an empty list does not mean nothing owns the port. Re-run with --sudo to see them."
+    )
 
 
 def owning_package(path: str) -> dict:

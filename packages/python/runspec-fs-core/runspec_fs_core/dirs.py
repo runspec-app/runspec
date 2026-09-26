@@ -91,11 +91,34 @@ def list_directory_with_sizes(
     }
 
 
+#: How many unreadable directory paths ``directory_size`` names in its result.
+UNREADABLE_SAMPLE = 10
+
+
+class _ScanErrors:
+    """Tally of entries a size scan couldn't read, plus the first few
+    directories it couldn't open (so the caller can say *where* totals are short)."""
+
+    def __init__(self) -> None:
+        self.count = 0
+        self.unreadable_dirs: list[str] = []
+
+    def dir_denied(self, path: Path) -> None:
+        self.count += 1
+        if len(self.unreadable_dirs) < UNREADABLE_SAMPLE:
+            self.unreadable_dirs.append(str(path))
+
+
+def _running_as_root() -> bool:
+    geteuid = getattr(os, "geteuid", None)
+    return geteuid is not None and geteuid() == 0
+
+
 def _measure_dir(
     root: Path,
     depth: int,
     limit: int,
-    errors: list[int],
+    errors: _ScanErrors,
     guard: MountGuard,
     dev: int,
 ) -> tuple[int, list[dict[str, Any]] | None, int]:
@@ -110,8 +133,10 @@ def _measure_dir(
     children; a subdirectory carries its own breakdown under ``children`` while
     ``depth`` remains. When ``depth < 1`` only the total is needed, so ``entries``
     is ``None`` (the full subtree is still walked to sum the total). Unreadable
-    entries (permissions, races) are skipped and tallied in ``errors[0]`` rather
+    entries (permissions, races) are skipped and tallied in ``errors`` rather
     than aborting — essential when scanning system directories as a non-root user.
+    A directory that can't be opened at all returns a child count of ``-1`` so
+    the caller can flag its record ``unreadable`` (its size is a floor of 0).
     A subdirectory the ``guard`` won't enter (another filesystem, or a virtual
     one) counts as 0 and is listed with ``skipped_mount: true``."""
     total = 0
@@ -119,11 +144,12 @@ def _measure_dir(
     try:
         scan = os.scandir(root)
     except OSError:
-        errors[0] += 1
-        return 0, ([] if depth >= 1 else None), 0
+        errors.dir_denied(root)
+        return 0, ([] if depth >= 1 else None), -1
     with scan:
         for entry in scan:
             skipped_mount = False
+            unreadable = False
             try:
                 if entry.is_symlink():
                     etype = "symlink"
@@ -136,7 +162,8 @@ def _measure_dir(
                     # the volume behind it (a non-symlink POSIX dir stats the same).
                     child_dev = os.stat(entry.path).st_dev
                     if guard.enter(entry.path, child_dev, dev):
-                        size, child_entries, _ = _measure_dir(Path(entry.path), depth - 1, limit, errors, guard, child_dev)
+                        size, child_entries, child_n = _measure_dir(Path(entry.path), depth - 1, limit, errors, guard, child_dev)
+                        unreadable = child_n < 0
                     else:
                         size, child_entries, skipped_mount = 0, None, True
                 else:
@@ -144,7 +171,7 @@ def _measure_dir(
                     size = entry.stat(follow_symlinks=False).st_size
                     child_entries = None
             except OSError:
-                errors[0] += 1
+                errors.count += 1
                 continue
             total += size
             if depth >= 1:
@@ -159,6 +186,8 @@ def _measure_dir(
                     rec["children"] = child_entries
                 if skipped_mount:
                     rec["skipped_mount"] = True
+                if unreadable:
+                    rec["unreadable"] = True
                 entries.append(rec)
 
     if depth < 1:
@@ -188,7 +217,12 @@ def directory_size(
     Symlinks are not followed. ``total_size`` is the true total of everything
     scanned even when ``entries`` is truncated to the top ``limit`` (which caps
     each level; ``limit <= 0`` returns all). Unreadable entries (permissions,
-    races) are skipped and counted under ``skipped`` rather than failing the scan.
+    races) are skipped and counted under ``skipped`` rather than failing the scan;
+    a directory that couldn't be opened is listed with ``unreadable: true`` (its
+    size a floor of 0), the first few such paths are named in ``unreadable``, and
+    a ``hint`` says totals are incomplete and to re-run as root — so a scan of
+    ``/`` as a normal user can't silently under-report (e.g. Docker volumes under
+    ``/var/lib/docker`` counted as 0).
 
     The scan stays on the filesystem ``path`` is on (like ``du -x``) unless
     ``cross_mounts`` is set; kernel virtual filesystems (``/proc``, ``/sys``,
@@ -199,15 +233,15 @@ def directory_size(
     virtual filesystem.
 
     Returns ``{path, total_size, total_mb, entry_count, entries:
-    [{name, path, type, size, size_mb, children?, skipped_mount?}], skipped?,
-    skipped_mounts?}``.
+    [{name, path, type, size, size_mb, children?, skipped_mount?, unreadable?}],
+    skipped?, unreadable?, hint?, skipped_mounts?}``.
     """
     p = _as_path(path)
     if not p.is_dir():
         raise NotADirectoryError(f"not a directory: {p}")
     guard = MountGuard(p, cross_mounts=cross_mounts)
 
-    errors = [0]
+    errors = _ScanErrors()
     total, entries, child_count = _measure_dir(p, max(1, depth), limit, errors, guard, os.stat(p).st_dev)
     result: dict[str, Any] = {
         "path": str(p),
@@ -216,8 +250,16 @@ def directory_size(
         "entry_count": child_count,
         "entries": entries or [],
     }
-    if errors[0]:
-        result["skipped"] = errors[0]
+    if errors.count:
+        result["skipped"] = errors.count
+        if errors.unreadable_dirs:
+            result["unreadable"] = errors.unreadable_dirs
+        if not _running_as_root():
+            how = "as root (the runnable's --run-as root, or sudo)" if hasattr(os, "geteuid") else "elevated (as Administrator)"
+            result["hint"] = (
+                f"{errors.count} entr{'y' if errors.count == 1 else 'ies'} could not be read (permission denied), so these totals "
+                f"are a lower bound — sizes under unreadable directories count as 0. Re-run {how} for complete totals."
+            )
     if guard.skipped_mounts:
         result["skipped_mounts"] = guard.skipped_mounts
     return result

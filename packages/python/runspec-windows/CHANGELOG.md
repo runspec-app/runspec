@@ -1,5 +1,13 @@
 # runspec-windows Changelog
 
+## [0.10.1] — 2026-09-26
+
+### Changed
+
+- Requires `runspec-fs-core >= 0.5.0`: `filesystem directory-size` flags
+  unreadable folders and adds a `hint` to re-run elevated when its totals are
+  incomplete.
+
 ## [0.10.0] — 2026-09-26
 
 ### Changed

@@ -84,3 +84,40 @@ def test_owning_package_dpkg(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     out = investigate.owning_package("/usr/bin/ls")
     assert out == {"path": "/usr/bin/ls", "owned": True, "package": "coreutils", "manager": "dpkg"}
+
+
+_SS_MIXED = (
+    "State  Recv-Q Send-Q Local Address:Port Peer Address:Port Process\n"
+    "LISTEN 0      511    0.0.0.0:80         0.0.0.0:*\n"
+    "LISTEN 0      128    0.0.0.0:22         0.0.0.0:*\n"
+    'LISTEN 0      128    127.0.0.1:8765     0.0.0.0:*         users:(("console-room",pid=991,fd=5))\n'
+)
+
+
+def _stub_ss(monkeypatch: pytest.MonkeyPatch, stdout: str) -> None:
+    monkeypatch.setattr(investigate.shutil, "which", lambda _: "/usr/bin/ss")
+    monkeypatch.setattr(investigate.subprocess, "run", lambda argv, **kw: subprocess.CompletedProcess(argv, 0, stdout=stdout, stderr=""))
+
+
+def test_open_ports_hints_when_unprivileged_probe_misses_owners(monkeypatch: pytest.MonkeyPatch) -> None:
+    _stub_ss(monkeypatch, _SS_MIXED)
+    monkeypatch.setattr(investigate.os, "geteuid", lambda: 1000, raising=False)
+    out = investigate.open_ports("tcp")
+    assert out["hint"].startswith("2 of 3 listeners have no owning process")
+    assert "--sudo" in out["hint"]
+
+
+def test_open_ports_no_hint_as_root_or_escalated(monkeypatch: pytest.MonkeyPatch) -> None:
+    _stub_ss(monkeypatch, _SS_MIXED)
+    monkeypatch.setattr(investigate.os, "geteuid", lambda: 0, raising=False)
+    assert "hint" not in investigate.open_ports("tcp")
+    monkeypatch.setattr(investigate.os, "geteuid", lambda: 1000, raising=False)
+    assert "hint" not in investigate.open_ports("tcp", run_as="root")
+    # escalating to a non-root user still can't see everyone's processes
+    assert "hint" in investigate.open_ports("tcp", run_as="deploy")
+
+
+def test_open_ports_no_hint_when_every_owner_is_known(monkeypatch: pytest.MonkeyPatch) -> None:
+    _stub_ss(monkeypatch, 'State Recv-Q Send-Q Local Peer Process\nLISTEN 0 1 127.0.0.1:8765 0.0.0.0:* users:(("console-room",pid=991,fd=5))\n')
+    monkeypatch.setattr(investigate.os, "geteuid", lambda: 1000, raising=False)
+    assert "hint" not in investigate.open_ports("tcp")

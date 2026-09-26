@@ -253,3 +253,80 @@ def test_directory_size_counts_mounts_skipped_below_the_breakdown_depth(tmp_path
 def test_directory_size_refuses_a_virtual_root() -> None:
     with pytest.raises(ValueError, match="virtual filesystem"):
         directory_size("/proc")
+
+
+def _deny_scandir(monkeypatch: pytest.MonkeyPatch, denied: Path) -> None:
+    """Make ``os.scandir`` refuse ``denied`` the way a root-owned 0700 dir does
+    for a normal user (tests may run as root, where chmod wouldn't block)."""
+    real = os.scandir
+
+    def fake(path):  # type: ignore[no-untyped-def]
+        if Path(path) == denied:
+            raise PermissionError(13, "Permission denied", str(path))
+        return real(path)
+
+    monkeypatch.setattr(dirs.os, "scandir", fake)
+
+
+def test_directory_size_flags_unreadable_dirs_with_a_hint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "ok").mkdir()
+    (tmp_path / "ok" / "f").write_text("x" * 10)
+    locked = tmp_path / "var" / "docker"
+    locked.mkdir(parents=True)
+    (locked / "volume").write_text("x" * 1000)
+    _deny_scandir(monkeypatch, locked)
+    monkeypatch.setattr(dirs, "_running_as_root", lambda: False)
+
+    out = directory_size(tmp_path, depth=2)
+
+    assert out["skipped"] == 1
+    assert out["unreadable"] == [str(locked)]
+    assert "lower bound" in out["hint"] and "root" in out["hint"]
+    var = next(e for e in out["entries"] if e["name"] == "var")
+    # the denied dir is still listed (size a floor of 0) and flagged
+    assert var["children"] == [{"name": "docker", "path": str(locked), "type": "directory", "size": 0, "size_mb": 0.0, "unreadable": True}]
+
+
+def test_directory_size_flags_denied_child_at_top_level(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    locked = tmp_path / "private"
+    locked.mkdir()
+    _deny_scandir(monkeypatch, locked)
+    monkeypatch.setattr(dirs, "_running_as_root", lambda: False)
+    out = directory_size(tmp_path)
+    rec = next(e for e in out["entries"] if e["name"] == "private")
+    assert rec["unreadable"] is True and rec["size"] == 0
+
+
+def test_directory_size_no_hint_as_root_or_when_clean(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "f").write_text("x")
+    clean = directory_size(tmp_path)
+    assert "hint" not in clean and "unreadable" not in clean and "skipped" not in clean
+
+    locked = tmp_path / "private"
+    locked.mkdir()
+    _deny_scandir(monkeypatch, locked)
+    monkeypatch.setattr(dirs, "_running_as_root", lambda: True)
+    as_root = directory_size(tmp_path)
+    assert as_root["skipped"] == 1 and as_root["unreadable"] == [str(locked)]
+    assert "hint" not in as_root
+
+
+def test_directory_size_caps_the_unreadable_sample(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    for i in range(dirs.UNREADABLE_SAMPLE + 5):
+        (tmp_path / f"d{i:02d}").mkdir()
+    monkeypatch.setattr(dirs.os, "scandir", _raising_for_children(tmp_path))
+    monkeypatch.setattr(dirs, "_running_as_root", lambda: False)
+    out = directory_size(tmp_path)
+    assert out["skipped"] == dirs.UNREADABLE_SAMPLE + 5
+    assert len(out["unreadable"]) == dirs.UNREADABLE_SAMPLE
+
+
+def _raising_for_children(root: Path):  # type: ignore[no-untyped-def]
+    real = os.scandir
+
+    def fake(path):  # type: ignore[no-untyped-def]
+        if Path(path) != root:
+            raise PermissionError(13, "Permission denied", str(path))
+        return real(path)
+
+    return fake

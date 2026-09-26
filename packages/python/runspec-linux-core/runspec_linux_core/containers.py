@@ -12,11 +12,26 @@ import shutil
 import subprocess
 
 from runspec_linux_core.become import build_become, check_become_error
-from runspec_linux_core.errors import ToolNotFoundError
+from runspec_linux_core.errors import CommandError, ToolNotFoundError
 
 
 def _docker_available() -> bool:
     return shutil.which("docker") is not None
+
+
+def _check_docker_error(what: str, stderr: str, run_as: str | None) -> None:
+    """Raise :class:`CommandError` for a failed ``docker`` command.
+
+    An unescalated call refused by the daemon socket (root-owned, or limited to
+    the ``docker`` group) gets an actionable message naming the fix, so the
+    caller retries escalated instead of reporting "no containers". Anything else
+    goes through :func:`check_become_error` (passwordless-sudo hint when escalated).
+    """
+    err = stderr.strip()
+    low = err.lower()
+    if not run_as and "permission denied" in low and "docker" in low:
+        raise CommandError(f"{what}: {err} — this user can't reach the Docker socket. Re-run with --sudo (or --run-as a user in the docker group), or add this user to the docker group.")
+    check_become_error(what, stderr, run_as)
 
 
 def list_containers(include_all: bool = False, *, run_as: str | None = None, become_method: str = "sudo") -> list[dict]:
@@ -40,7 +55,7 @@ def list_containers(include_all: bool = False, *, run_as: str | None = None, bec
 
     result = subprocess.run(build_become(cmd, run_as, become_method), capture_output=True, text=True)
     if result.returncode != 0:
-        check_become_error("list containers", result.stderr, run_as)
+        _check_docker_error("list containers", result.stderr, run_as)
 
     rows = []
     for line in result.stdout.strip().splitlines():
@@ -72,8 +87,9 @@ def container_logs(container: str, lines: int = 50, *, run_as: str | None = None
 
     argv = build_become(["docker", "logs", "--tail", str(lines), container], run_as, become_method)
     result = subprocess.run(argv, capture_output=True, text=True)
-    if run_as and result.returncode != 0:
-        check_become_error("container logs", result.stderr, run_as)
+    if result.returncode != 0 and (run_as or "permission denied" in result.stderr.lower()):
+        # Escalation failures, and a refused Docker socket, are errors — not log lines.
+        _check_docker_error("container logs", result.stderr, run_as)
     # docker logs writes to stderr by default
     output = result.stderr if result.stderr else result.stdout
     output_lines = output.strip().splitlines()
@@ -95,7 +111,7 @@ def restart_container(container: str, *, run_as: str | None = None, become_metho
 
     result = subprocess.run(build_become(["docker", "restart", container], run_as, become_method), capture_output=True, text=True)
     if result.returncode != 0:
-        check_become_error("restart container", result.stderr, run_as)
+        _check_docker_error("restart container", result.stderr, run_as)
     out = {"container": container, "restarted": True}
     if run_as:
         out["run_as"] = run_as

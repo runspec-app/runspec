@@ -1,5 +1,24 @@
 # runspec-linux-core Changelog
 
+## [0.9.0] — 2026-09-26
+
+### Added
+
+- **`open_ports` flags owners it couldn't see.** `ss -p` only reports other
+  users' processes to root, so an unprivileged probe returned most listeners
+  with an empty `processes` list, which is easy to misread as "nothing owns this
+  port". When the probe didn't run as root and any owner is missing, the
+  result now carries a `hint` ("N of M listeners have no owning process …
+  Re-run with --sudo"). No hint as root, via `run_as="root"`, or when every
+  owner is known.
+- **Docker socket permission errors name the fix.** `list_containers`,
+  `container_logs` and `restart_container` turn an unescalated "permission
+  denied … docker.sock" into a `CommandError` that says to re-run with
+  `--sudo`, use `--run-as` with a docker-group user, or add the user to the
+  docker group. `container_logs` now raises on that error instead of returning
+  the daemon's refusal as log lines. Escalated failures keep the existing
+  passwordless-sudo message.
+
 ## [0.8.0] — 2026-09-26
 
 ### Added

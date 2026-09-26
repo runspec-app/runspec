@@ -1,5 +1,15 @@
 # runspec-linux Changelog
 
+## [0.15.1] — 2026-09-26
+
+### Changed
+
+- Requires `runspec-linux-core >= 0.9.0` and `runspec-fs-core >= 0.5.0` so an
+  upgrade picks up the permission hints: `open-ports` says when owning
+  processes are hidden (re-run with `--sudo`), the container runnables name the
+  fix for a Docker-socket permission error, and `filesystem directory-size`
+  flags unreadable directories and says its totals are a lower bound.
+
 ## [0.15.0] — 2026-09-26
 
 ### Added

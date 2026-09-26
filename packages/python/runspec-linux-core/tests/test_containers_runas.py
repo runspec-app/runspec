@@ -66,3 +66,39 @@ def test_restart_container_run_as_passwordless_hint(monkeypatch: pytest.MonkeyPa
     _stub(monkeypatch, rc=1, stderr="sudo: a terminal is required")
     with pytest.raises(Exception, match="passwordless sudo is not configured for run-as 'svc'"):
         containers.restart_container("web", run_as="svc")
+
+
+_SOCKET_DENIED = "permission denied while trying to connect to the docker API at unix:///var/run/docker.sock"
+
+
+def test_list_containers_socket_denied_suggests_sudo(monkeypatch: pytest.MonkeyPatch) -> None:
+    _stub(monkeypatch, rc=1, stderr=_SOCKET_DENIED)
+    with pytest.raises(containers.CommandError, match="Re-run with --sudo") as err:
+        containers.list_containers(include_all=True)
+    assert "docker.sock" in str(err.value)
+
+
+def test_container_logs_socket_denied_is_an_error_not_log_lines(monkeypatch: pytest.MonkeyPatch) -> None:
+    _stub(monkeypatch, rc=1, stderr=_SOCKET_DENIED)
+    with pytest.raises(containers.CommandError, match="--sudo"):
+        containers.container_logs("web")
+
+
+def test_container_logs_other_failure_still_returned_as_lines(monkeypatch: pytest.MonkeyPatch) -> None:
+    # unchanged: an unescalated non-permission failure keeps the old behaviour
+    _stub(monkeypatch, rc=1, stderr="Error: No such container: web")
+    assert containers.container_logs("web")["lines"] == ["Error: No such container: web"]
+
+
+def test_restart_container_socket_denied_suggests_sudo(monkeypatch: pytest.MonkeyPatch) -> None:
+    _stub(monkeypatch, rc=1, stderr=_SOCKET_DENIED)
+    with pytest.raises(containers.CommandError, match="docker group"):
+        containers.restart_container("web")
+
+
+def test_escalated_socket_denied_keeps_the_generic_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    # escalated already → "re-run with --sudo" would be wrong advice
+    _stub(monkeypatch, rc=1, stderr=_SOCKET_DENIED)
+    with pytest.raises(containers.CommandError) as err:
+        containers.list_containers(run_as="deploy")
+    assert "--sudo" not in str(err.value)

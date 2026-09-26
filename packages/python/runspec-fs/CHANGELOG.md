@@ -1,5 +1,13 @@
 # runspec-fs Changelog
 
+## [0.5.1] — 2026-09-26
+
+### Changed
+
+- Requires `runspec-fs-core >= 0.5.0`: `directory-size` flags unreadable
+  directories (`unreadable: true`, an `unreadable` path list) and adds a `hint`
+  that its totals are a lower bound when run without root.
+
 ## [0.5.0] — 2026-09-26
 
 ### Changed

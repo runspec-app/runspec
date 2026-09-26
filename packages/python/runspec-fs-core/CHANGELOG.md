@@ -1,5 +1,19 @@
 # runspec-fs-core Changelog
 
+## [0.5.0] — 2026-09-26
+
+### Added
+
+- **`directory_size` says when its totals are incomplete.** A scan as a normal
+  user used to skip unreadable directories silently, reporting only a
+  `skipped` count, so a scan of `/` could miss most of the disk without it
+  showing (e.g. Docker volumes under `/var/lib/docker` counted as 0). Now a
+  directory that couldn't be opened is listed with `unreadable: true` (its size
+  a floor of 0), the first 10 such paths are named in a top-level
+  `unreadable` list, and a `hint` says the totals are a lower bound and to
+  re-run as root (`--run-as root`), or elevated on Windows. No hint when the
+  scan already ran as root.
+
 ## [0.4.0] — 2026-09-26
 
 ### Changed
