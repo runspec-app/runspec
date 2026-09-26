@@ -460,6 +460,11 @@ export interface RerunData {
 
 export interface ToolCallEntry {
   name: string
+  // The model's tool-call id (runspec:tool_start/tool_end `call_id`). Pairs a
+  // result with *its* card when several same-name calls run concurrently (the
+  // agent loop runs independent runnable calls in parallel). Absent on older
+  // backends and on reopened transcripts.
+  callId?: string
   input: Record<string, unknown>
   output?: string
   running: boolean
@@ -474,6 +479,47 @@ export interface ToolCallEntry {
   // rendered as a badge on a reopened conversation. Operator-only — not sent to
   // the model. 'denied' means the call never ran.
   operatorDecision?: 'approved' | 'edited' | 'denied'
+}
+
+export interface ToolEndDetail {
+  call_id?: string
+  tool_name: string
+  output: string
+  output_chars?: number
+  truncated?: { orig_len: number; cap: number } | null
+  operator_decision?: 'approved' | 'edited' | 'denied' | ''
+}
+
+/**
+ * Apply a runspec:tool_end to a block's segments: finish exactly ONE running
+ * tool card. With a `call_id`, that's the card started with the same id; without
+ * one (an older backend), the first running card with the same name. Matching
+ * every running same-name card — the old behaviour — was harmless while tool
+ * calls ran one at a time, but with concurrent calls the first result to land
+ * would have finished all of them with its output.
+ */
+export function finishToolSegment(segments: BlockSegment[], detail: ToolEndDetail, now: number = Date.now()): BlockSegment[] {
+  const { call_id, tool_name, output, output_chars, truncated, operator_decision } = detail
+  const idx = segments.findIndex(seg =>
+    seg.kind === 'tool' && seg.entry.running && (
+      call_id && seg.entry.callId ? seg.entry.callId === call_id : seg.entry.name === tool_name
+    ))
+  if (idx < 0) return segments
+  const seg = segments[idx]
+  if (seg.kind !== 'tool') return segments
+  const durationMs = seg.entry.startedAt ? now - seg.entry.startedAt : undefined
+  // Keep the confirm-gate badge on the live card (the backend sends the
+  // decision on tool_end) so an approved/denied action stays marked as gated
+  // instead of reverting to look like an autonomous run. "" = the gate never
+  // fired, so leave any existing value untouched.
+  const done: BlockSegment = {
+    ...seg,
+    entry: {
+      ...seg.entry, output, running: false, durationMs, outputChars: output_chars, truncated: truncated ?? null,
+      ...(operator_decision ? { operatorDecision: operator_decision } : {}),
+    },
+  }
+  return [...segments.slice(0, idx), done, ...segments.slice(idx + 1)]
 }
 
 export type BlockSegment =
@@ -1859,40 +1905,25 @@ export function useInvocationBlocks() {
       // already applies; both flush() and the setBlocks below are functional
       // updaters, so flush's drain runs before this reads b.currentText.
       flush()
-      const { id, tool_name, tool_input } = (e as CustomEvent).detail as {
-        id: string; tool_name: string; tool_input: Record<string, unknown>
+      const { id, call_id, tool_name, tool_input } = (e as CustomEvent).detail as {
+        id: string; call_id?: string; tool_name: string; tool_input: Record<string, unknown>
       }
       setBlocks(prev => prev.map(b => {
         if (b.id !== id) return b
         const newSegs: BlockSegment[] = [
           ...b.segments,
           ...(b.currentText ? [{ kind: 'text' as const, text: b.currentText }] : []),
-          { kind: 'tool' as const, entry: { name: tool_name, input: tool_input, running: true, startedAt: Date.now() } },
+          { kind: 'tool' as const, entry: { name: tool_name, ...(call_id ? { callId: call_id } : {}), input: tool_input, running: true, startedAt: Date.now() } },
         ]
         return { ...b, segments: newSegs, currentText: '' }
       }))
     }
 
     const onToolEnd = (e: Event) => {
-      const { id, tool_name, output, output_chars, truncated, operator_decision } = (e as CustomEvent).detail as {
-        id: string; tool_name: string; output: string
-        output_chars?: number; truncated?: { orig_len: number; cap: number } | null
-        operator_decision?: 'approved' | 'edited' | 'denied' | ''
-      }
+      const detail = (e as CustomEvent).detail as ToolEndDetail & { id: string }
       setBlocks(prev => prev.map(b => {
-        if (b.id !== id) return b
-        const newSegs = b.segments.map(seg => {
-          if (seg.kind === 'tool' && seg.entry.name === tool_name && seg.entry.running) {
-            const durationMs = seg.entry.startedAt ? Date.now() - seg.entry.startedAt : undefined
-            // Keep the confirm-gate badge on the live card (the backend sends the
-            // decision on tool_end) so an approved/denied action stays marked as
-            // gated instead of reverting to look like an autonomous run. "" = the
-            // gate never fired, so leave any existing value untouched.
-            return { ...seg, entry: { ...seg.entry, output, running: false, durationMs, outputChars: output_chars, truncated: truncated ?? null, ...(operator_decision ? { operatorDecision: operator_decision } : {}) } }
-          }
-          return seg
-        })
-        return { ...b, segments: newSegs }
+        if (b.id !== detail.id) return b
+        return { ...b, segments: finishToolSegment(b.segments, detail) }
       }))
     }
 

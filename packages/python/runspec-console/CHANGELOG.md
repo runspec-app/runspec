@@ -8,6 +8,37 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.293.0] — 2026-09-26
+
+### Added
+
+- **Independent tool calls from one model response run concurrently.** The
+  agent loop ran every tool call in a response one after another, so an
+  inventory asking for the same read-only runnable on five hosts took five
+  times as long as it needed to (the agent would say "running in parallel"
+  and wasn't). Parallel-safe calls now run together with `asyncio.gather`,
+  capped by the new `[llm] max_parallel_tools` (default 8, clamped 1–32;
+  `1` restores strictly sequential execution). Eligible calls
+  (`Bridge._parallel_safe_call`): runnable runs (`run_runnable`, or a
+  dedup/per_host runnable tool) the autonomy gate would let through without
+  asking, plus read-only `search_runnables`/`describe_runnable`. Everything
+  else runs alone, in order, as a barrier between batches:
+  - confirm/supervised calls, so the operator still answers one prompt at a time;
+  - built-in and MCP tools, since several write shared console state
+    (e.g. `remember` rewrites the memory file);
+  - group and saved-run fan-outs, which already run in parallel inside;
+  - inline tools, and any call whose decision can't be computed.
+
+  Results are recorded and returned to the model in the order it asked,
+  whatever order they finished in, and a raising call still yields its
+  error without sinking its siblings.
+- **`runspec:tool_start` / `runspec:tool_end` carry `call_id`** (the model's
+  tool-call id). The frontend pairs each result with its own card
+  (`OutputPanel.finishToolSegment`). It used to finish *every* running card
+  with the same tool name, which would have stamped the first concurrent
+  result onto all of them. Without a `call_id` (an older backend) it now
+  finishes only the first running same-name card.
+
 ## [0.292.0] — 2026-09-26
 
 ### Changed
@@ -24,7 +55,6 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   installed `runspec-windows`. `windows` is deliberately not part of `[all]`,
   which is the feature aggregate white-label packages depend on. See
   `docs/white-label-runnables.md` → "White-label consoles".
-
 
 ## [0.291.0] — 2026-09-26
 

@@ -274,6 +274,49 @@ class AutonomyMixin:
             return "manual"
         return level  # confirm / supervised → needs a prompt
 
+    def _parallel_safe_call(self, tool_name: str, tool_input: dict[str, Any]) -> bool:
+        """True when this call may run concurrently with its siblings in the same
+        model response (``bridge_turn`` batches these with ``asyncio.gather``).
+
+        Deliberately narrow: only **runnable executions the gate would run without
+        asking** (``run_runnable`` or a dedup/per_host runnable tool, decision
+        "run") and the read-only discovery meta-tools. Runnable runs are separate
+        processes on the hosts — the same shape ``_run_calls_parallel`` already
+        runs concurrently for a group fan-out. Everything else is a barrier that
+        runs alone, in order:
+
+        * confirm/supervised calls — the operator answers one prompt at a time,
+          and the frontend matches a confirm to its card by tool name;
+        * built-in and MCP tools — several write shared console state
+          (``remember`` rewrites the memory file; runbook/config saves), so two at
+          once could lose an update;
+        * group / saved-run fan-outs — already parallel inside, with their own
+          grouped confirm;
+        * anything whose decision can't be computed (fail safe: sequential).
+        """
+        if tool_name in _READONLY_META:
+            return True
+        if (
+            tool_name in _BUILTIN_TOOL_NAMES
+            or tool_name in ("use_tool", "describe_tool", "run_saved_run")
+            or (
+                getattr(self, "_mcp", None) is not None and self._is_mcp_tool(tool_name)
+            )
+        ):
+            return False
+        try:
+            if (
+                tool_name == "run_runnable"
+                and self._group_fanout_calls(tool_input) is not None
+            ):
+                return False
+            return self._confirm_decision(tool_name, tool_input) == "run"
+        except Exception:  # noqa: BLE001 — classification must never break a turn
+            logger.debug(
+                "parallel classification failed for %s", tool_name, exc_info=True
+            )
+            return False
+
     def _register_confirm(
         self, chat_id: str, tool_name: str, tool_input: dict[str, Any], level: str
     ) -> tuple[str, threading.Event, dict[str, Any]]:

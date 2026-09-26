@@ -443,6 +443,12 @@ _SPILL_ENVELOPE_HEAD_BYTES = 4_096
 # long reply can never starve tool use. (Was a shared ``range(10)`` for both.)
 _MAX_AGENT_ITERATIONS = 25
 
+# Parallel-safe tool calls from one model response (independent runnable runs,
+# read-only discovery) run concurrently up to this many at once — ``[llm]
+# max_parallel_tools`` overrides (1 = sequential). The SSH pool's own per-host
+# ``[ssh] max_concurrent`` still bounds connections underneath.
+_DEFAULT_PARALLEL_TOOLS = 8
+
 # Default wall-clock ceiling (seconds) for a ``run_python`` subprocess and the
 # default row cap for a ``run_sql`` result. Timeout is operator-overridable via
 # ``[workspace] exec_timeout``; the row cap via the tool's ``max_rows`` arg.

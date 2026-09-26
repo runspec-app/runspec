@@ -1636,7 +1636,8 @@ export const mockApi: BridgeApi = {
       // prompt the user before running it.
       const tool_name = 'local__flush-dns'
       const tool_input = { scope: 'system' }
-      dispatch('runspec:tool_start', { id, tool_name, tool_input })
+      const call_id = `toolu-${id}`
+      dispatch('runspec:tool_start', { id, call_id, tool_name, tool_input })
 
       const request_id = `mock-${id}`
       const approved = await new Promise<boolean>(resolve => {
@@ -1649,7 +1650,7 @@ export const mockApi: BridgeApi = {
       // Stop pressed while the confirm dialog was up — refuse and halt.
       if (active.cancelled) {
         dispatch('runspec:tool_end', {
-          id, tool_name,
+          id, call_id, tool_name,
           output: "⏹ 'flush-dns' was not run — you stopped the assistant before approving it.",
         })
         dispatch('runspec:token', { id, token: '\n⏹ Stopped.' })
@@ -1660,7 +1661,7 @@ export const mockApi: BridgeApi = {
       const output = approved
         ? 'flushing system DNS cache…\nDNS cache flushed'
         : "✗ The user declined to run 'flush-dns' (autonomy = confirm)."
-      dispatch('runspec:tool_end', { id, tool_name, output })
+      dispatch('runspec:tool_end', { id, call_id, tool_name, output })
       await delay(150)
 
       // Phase 2: stream follow-up text reflecting the decision

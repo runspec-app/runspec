@@ -554,12 +554,18 @@ class TurnMixin(_Base):
                             )
                         break
 
-                    tool_results: list[tuple[Any, str]] = []
-                    for tc in response.tool_calls:
+                    async def _exec_call(tc: Any) -> tuple[str, dict[str, Any]]:
+                        """Run one tool call end to end — tool_start, the autonomy
+                        gate + execution, tool_end, trace — and return its output
+                        and the operator's gate decision (if the gate fired).
+                        Safe to run several at once for parallel-safe calls: the
+                        events carry ``call_id`` so each card pairs with its own
+                        result."""
                         self._dispatch(
                             "runspec:tool_start",
                             {
                                 "id": chat_id,
+                                "call_id": tc.id,
                                 "tool_name": tc.name,
                                 "tool_input": tc.input,
                             },
@@ -599,6 +605,7 @@ class TurnMixin(_Base):
                             "runspec:tool_end",
                             {
                                 "id": chat_id,
+                                "call_id": tc.id,
                                 "tool_name": tc.name,
                                 "output": output[:2000],
                                 "output_chars": len(output),
@@ -616,6 +623,49 @@ class TurnMixin(_Base):
                                 "output": output,
                             },
                         )
+                        return output, gate_decision
+
+                    # Independent runnable runs (and read-only discovery) from one
+                    # response run concurrently — they're separate processes on the
+                    # hosts; a sequential loop made a 5-host inventory 5× slower.
+                    # Anything that may prompt the operator or touch shared console
+                    # state is a barrier that runs alone, so relative order between
+                    # gated and ungated calls is preserved (see _parallel_safe_call).
+                    calls = list(response.tool_calls)
+                    outcomes: list[tuple[str, dict[str, Any]] | None] = [None] * len(
+                        calls
+                    )
+                    max_parallel = self._max_parallel_tools()
+                    limiter = asyncio.Semaphore(max_parallel)
+
+                    async def _limited(i: int) -> None:
+                        async with limiter:
+                            outcomes[i] = await _exec_call(calls[i])
+
+                    batch: list[int] = []
+                    for i, tc in enumerate(calls):
+                        if (
+                            max_parallel > 1
+                            and tc.name not in spec.inline_tools
+                            and self._parallel_safe_call(tc.name, tc.input)
+                        ):
+                            batch.append(i)
+                            continue
+                        if batch:
+                            await asyncio.gather(*(_limited(j) for j in batch))
+                            batch = []
+                        outcomes[i] = await _exec_call(tc)
+                    if batch:
+                        await asyncio.gather(*(_limited(j) for j in batch))
+
+                    # Record in the model's original order — tool results must pair
+                    # with their tool_use blocks, and the transcript/actions read in
+                    # the order the model asked, whatever order they finished in.
+                    tool_results: list[tuple[Any, str]] = []
+                    for tc, outcome in zip(calls, outcomes):
+                        assert outcome is not None
+                        output, gate_decision = outcome
+                        display = tc.name.split("__", 1)[-1]
                         tool_results.append((tc, output))
                         tool_rec: dict[str, Any] = {
                             "name": tc.name,

@@ -27,6 +27,7 @@ from .bridge_const import (
     _AGENT_TOOL_OUTPUT_CAP,
     _EXEC_MAX_ROWS,
     _HOT_BUILTIN_NAMES,
+    _DEFAULT_PARALLEL_TOOLS,
     _MAX_AGENT_ITERATIONS,
     _SPILL_ENVELOPE_HEAD_BYTES,
 )
@@ -287,6 +288,22 @@ class AgentToolsMixin:
         except (TypeError, ValueError):
             return _MAX_AGENT_ITERATIONS
         return n if n >= 1 else _MAX_AGENT_ITERATIONS
+
+    def _max_parallel_tools(self) -> int:
+        """How many parallel-safe tool calls from one model response run at once,
+        from ``[llm] max_parallel_tools`` (default ``_DEFAULT_PARALLEL_TOOLS``,
+        clamped 1–32; ``1`` restores strictly sequential execution). Only
+        runnable runs the gate lets through unprompted, and read-only discovery,
+        are eligible — see ``_parallel_safe_call``."""
+        try:
+            n = int(
+                self.get_config()
+                .get("llm", {})
+                .get("max_parallel_tools", _DEFAULT_PARALLEL_TOOLS)
+            )
+        except (TypeError, ValueError):
+            return _DEFAULT_PARALLEL_TOOLS
+        return max(1, min(32, n))
 
     def _max_network_retries(self) -> int:
         """How many times a single model call (the streaming request) may be

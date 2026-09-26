@@ -79,6 +79,8 @@ class _Stub:
     _trace = Bridge._trace
     cancel_chat = Bridge.cancel_chat
     _max_tool_rounds = Bridge._max_tool_rounds
+    _max_parallel_tools = Bridge._max_parallel_tools
+    _parallel_safe_call = Bridge._parallel_safe_call
     _max_continuations = Bridge._max_continuations
     _max_network_retries = Bridge._max_network_retries
     _max_self_recoveries = Bridge._max_self_recoveries

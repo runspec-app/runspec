@@ -215,6 +215,8 @@ def _stub(max_net: int = 4, max_self: int = 1):
     for meth in (
         "_max_continuations",
         "_max_tool_rounds",
+        "_max_parallel_tools",
+        "_parallel_safe_call",
         "_max_network_retries",
         "_max_self_recoveries",
     ):
