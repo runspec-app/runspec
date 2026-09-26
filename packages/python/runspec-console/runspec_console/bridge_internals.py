@@ -1194,10 +1194,15 @@ class InternalsMixin:
         }
         return [{"value": p, "label": labels.get(p, p)} for p in available_providers()]
 
-    def _get_adapter(self, system_override: str | None = None) -> Any:
+    def _get_adapter(
+        self, system_override: str | None = None, model_override: str | None = None
+    ) -> Any:
         # A system_override (used by trigger turns) builds a one-off adapter with
         # that system prompt — never served from / written to the shared cache.
-        if system_override is None and self._adapter is not None:
+        # A model_override (a trigger's own `model`) swaps only the model id — same
+        # provider, key and settings — and is likewise one-off.
+        one_off = system_override is not None or bool(model_override)
+        if not one_off and self._adapter is not None:
             return self._adapter
         # AI off-switch: never build an adapter (nor import plugin modules) —
         # every caller treats None as "no model"; the user-facing surfaces word
@@ -1221,6 +1226,8 @@ class InternalsMixin:
             kwargs["system"] = llm_cfg["system"]
         if system_override is not None:
             kwargs["system"] = system_override  # trigger rules win for this turn
+        if model_override:
+            kwargs["model"] = model_override  # a trigger's own model for this turn
         if llm_cfg.get("aws_region"):
             kwargs["aws_region"] = llm_cfg["aws_region"]
         if llm_cfg.get("base_url"):
@@ -1307,7 +1314,7 @@ class InternalsMixin:
 
         declared = adapter_config_keys(provider)
         for key, value in llm_cfg.items():
-            if key in kwargs or key in ("provider", "system"):
+            if key in kwargs or key in ("provider", "system", "utility_model"):
                 continue
             if key in declared:
                 kwargs[key] = value
@@ -1342,9 +1349,22 @@ class InternalsMixin:
         # When a key-vending command is configured, don't cache the adapter — the
         # adapter's own TTL controls refresh. Static-key configs cache as before.
         # A system_override adapter is one-off and never cached.
-        if system_override is None and not llm_cfg.get("api_key_command"):
+        if not one_off and not llm_cfg.get("api_key_command"):
             self._adapter = adapter
         return adapter
+
+    def _utility_adapter(self) -> Any:
+        """Adapter for the console's own background model calls — conversation
+        compaction summaries and the Improve synthesis — which don't need the chat
+        model. ``[llm] utility_model`` (e.g. ``"claude-haiku-4-5"``) runs them on a
+        cheaper model; unset, they use the ``[llm]`` model as before."""
+        try:
+            utility = str(self.get_config().get("llm", {}).get("utility_model") or "")
+        except Exception:  # noqa: BLE001 — config trouble → the normal adapter
+            utility = ""
+        if utility.strip():
+            return self._get_adapter(model_override=utility.strip())
+        return self._get_adapter()
 
     @staticmethod
     def _apply_capabilities(adapter: Any, explicit_max_tokens: bool = True) -> None:

@@ -10,6 +10,7 @@ import {
 } from '@ant-design/icons'
 import { bridge, type TriggerSourceInfo, type Host, type Runnable, type ArgDef } from '../bridge'
 import { SoundSelect } from './SoundSelect'
+import { ModelSelect } from './ModelSelect'
 import { MONO_FONT, RADIUS } from '../ThemeContext'
 import { useFeatures } from '../features'
 
@@ -75,6 +76,9 @@ interface TriggerForm {
   // Optional attention cue played when the trigger fires (a named sound id or a
   // built-in cue). Empty = no sound.
   sound?: string
+  // Optional model for this trigger's LLM work (agent turn / rule pre-turn).
+  // Empty = the [llm] model.
+  model?: string
 }
 
 export const triggerToForm = (t: Record<string, unknown>): TriggerForm => {
@@ -117,6 +121,7 @@ export const triggerToForm = (t: Record<string, unknown>): TriggerForm => {
     reply_draft: !!reply.draft,
     reply_style: reply.style ? String(reply.style) : '',
     sound: typeof t.sound === 'string' ? t.sound : '',
+    model: typeof t.model === 'string' ? t.model : '',
   }
 }
 
@@ -137,6 +142,8 @@ export const formToTrigger = (v: TriggerForm): Record<string, unknown> => {
     reply: { draft: !!v.reply_draft, style: (v.reply_style ?? '').trim() },
     // Optional attention cue on fire (blank is dropped by the backend cleaner).
     sound: (v.sound ?? '').trim(),
+    // Optional per-trigger model (blank = the [llm] model; dropped by the cleaner).
+    model: (v.model ?? '').trim(),
   }
   // Only an explicit override crosses the bridge; 'default' omits the key so the
   // trigger inherits the mailbox default.
@@ -739,6 +746,12 @@ export function TriggersEditor({
           {(ai || mode === 'agent') && (
             <Form.Item name="mode" label="Mode">
               <Segmented options={[{ label: 'Agent', value: 'agent' }, { label: 'Rule (fixed run)', value: 'rule' }]} />
+            </Form.Item>
+          )}
+          {ai && (
+            <Form.Item name="model" label="Model (optional)"
+              help="Run this trigger's assistant work — the agent turn, or a rule's pre-turn — on a different model, e.g. a cheaper one for routine triage. Blank = the model set in Settings → Model / API.">
+              <ModelSelect />
             </Form.Item>
           )}
 

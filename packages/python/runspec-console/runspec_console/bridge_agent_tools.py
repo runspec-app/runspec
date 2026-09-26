@@ -4613,6 +4613,7 @@ class AgentToolsMixin:
             "eval_validate",
             "eval_telemetry",
             "sound",
+            "model",
         ):
             if ti.get(key) is not None:
                 data[key] = ti[key]

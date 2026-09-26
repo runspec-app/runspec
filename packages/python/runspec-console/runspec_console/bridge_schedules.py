@@ -483,6 +483,19 @@ class SchedulesMixin:
         title = runbook.get("title") or runbook.get("id")
         return f"Runbook '{title}' — follow these steps now using your tools:\n\n{body}"
 
+    @staticmethod
+    def _scheduled_agent_model(job: Any) -> str:
+        """The model for a prompt/runbook schedule's turn: the schedule's own
+        ``model``, else (runbook action) the runbook's ``model``, else "" (the
+        ``[llm]`` model)."""
+        own = str(getattr(job, "model", "") or "").strip()
+        if own or getattr(job, "action", "") != "runbook":
+            return own
+        from . import memory
+
+        runbook = memory.load_runbook(str(getattr(job, "runbook", "") or "")) or {}
+        return str(runbook.get("model") or "").strip()
+
     def _invoke_scheduled_agent(self, job: Any) -> str:
         """Run a prompt/runbook schedule as a headless **agent turn** and return its
         card id (``""`` on failure). Builds a Schedules-tab run card up front, then
@@ -549,6 +562,7 @@ class SchedulesMixin:
                     stage=stage,
                     trigger="schedule",
                     workspace_prefix="schedule",
+                    model=self._scheduled_agent_model(job),
                 )
             except Exception:
                 logger.exception("schedule: agent turn failed for %r", job.id)

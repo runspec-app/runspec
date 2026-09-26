@@ -55,6 +55,7 @@ export interface Runbook {
   symptom: string          // "when to use" — shown in the menu + editor
   steps: RunbookStep[]     // ordered steps; rendered to numbered prose at run time
   tags: string[]
+  model?: string           // the runbook's own model for its agent turn ("" = the [llm] model)
   updated?: string
   args: ArgDef[]           // parsed param defs — the run modal renders these
   argsRaw?: Record<string, unknown>  // stored [runbook.args] table (faithful editor round-trip)
@@ -665,6 +666,8 @@ export interface Schedule {
   // Optional attention cue played when the schedule fires (a named sound id or a
   // built-in cue). Empty/absent = no sound.
   sound?: string
+  // action "prompt" / "runbook": optional model for the agent turn (blank = [llm] model).
+  model?: string
   nextRun?: string
 }
 

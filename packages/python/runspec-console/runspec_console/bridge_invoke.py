@@ -411,13 +411,14 @@ class InvokeMixin:
         return self._spawn_chat_turn(message, session_id=session_id)
 
     def _spawn_chat_turn(
-        self, message: str, runbook: str = "", session_id: str = ""
+        self, message: str, runbook: str = "", session_id: str = "", model: str = ""
     ) -> str:
         """Start an agentic chat turn on a worker thread; return its chat id.
 
         ``runbook`` (non-empty only on the run_runbook path) tags the turn's run
         provenance so every runnable the agent invokes during it is attributed to
         the runbook in History/Analytics — direct chat leaves it unset (no origin).
+        ``model`` (a runbook's own model) runs this one turn on that model.
         ``session_id`` picks the interactive session (default: the current one);
         an automation session is read-only and refused with a visible error."""
         chat_id = uuid.uuid4().hex[:12]
@@ -491,9 +492,11 @@ class InvokeMixin:
                     if catalog_section:
                         system_body += "\n\n" + catalog_section
                     adapter = (
-                        self._get_adapter(system_override=system_body)
+                        self._get_adapter(
+                            system_override=system_body, **utils_mod.model_kw(model)
+                        )
                         if (extra or catalog_section)
-                        else self._get_adapter()
+                        else self._get_adapter(**utils_mod.model_kw(model))
                     )
                     # Char counts of the system-prompt buckets, for the context
                     # indicator's composition breakdown. The date block is tiny
@@ -586,6 +589,7 @@ class InvokeMixin:
                 "steps": memory.normalize_runbook_steps(s),
                 "tags": list(s.get("tags", []) or []),
                 "discoverable": list(s.get("discoverable", []) or []),
+                "model": str(s.get("model") or ""),
                 "updated": s.get("updated", ""),
                 "argsRaw": raw,
             }
@@ -654,6 +658,8 @@ class InvokeMixin:
             ]
             if aud:
                 entry["discoverable"] = aud
+            if str(r.get("model") or "").strip():
+                entry["model"] = str(r["model"]).strip()
             normalised.append(entry)
         memory.save_runbooks(normalised)
         return {"ok": True, "count": len(normalised)}
@@ -702,6 +708,8 @@ class InvokeMixin:
             tags=[str(t).strip() for t in (entry.get("tags") or []) if str(t).strip()],
             args=raw or None,
             discoverable=discoverable,
+            # Present → set/clear the runbook's model; absent → keep the stored one.
+            model=str(entry.get("model") or "") if "model" in entry else None,
         )
         return {"ok": True, "id": sid}
 
@@ -744,7 +752,10 @@ class InvokeMixin:
         if not message:
             return {"error": "This runbook has an empty body."}
         chat_id = self._spawn_chat_turn(
-            message, runbook=str(runbook.get("id") or ""), session_id=session_id
+            message,
+            runbook=str(runbook.get("id") or ""),
+            session_id=session_id,
+            model=str(runbook.get("model") or ""),
         )
         return {"chat_id": chat_id, "message": message}
 
@@ -1147,7 +1158,7 @@ class InvokeMixin:
         try:
             from . import conversations as conv
 
-            adapter = self._get_adapter()
+            adapter = self._utility_adapter()
             if adapter is None:
                 return ""
             prompt = (

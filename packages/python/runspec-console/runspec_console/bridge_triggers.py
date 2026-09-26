@@ -37,6 +37,7 @@ from .bridge_helpers import (
     _classify_room_connection,
     _RotaPresenceWatcher,
 )
+from . import bridge_utils as utils_mod
 from .bridge_utils import format_result_for_room
 
 from typing import TYPE_CHECKING
@@ -1061,6 +1062,8 @@ class TriggersMixin:
                 draft=False,
                 record=record,
                 trigger="portal-runbook",
+                # The runbook's own model, when it sets one.
+                **_runbook_model(runbook),
             )
         except Exception as exc:  # noqa: BLE001 — surface failure to the visitor
             logger.exception("portal: enacting runbook %r failed", label)
@@ -1761,6 +1764,7 @@ class TriggersMixin:
             "rules",
             "pre_turn",
             "sound",
+            "model",
         ):
             val = str(trigger.get(key) or "").strip()
             if val:
@@ -2224,6 +2228,7 @@ class TriggersMixin:
         stage: Callable[[str], None] | None = None,
         trigger: str = "",
         workspace_prefix: str = "trigger",
+        model: str = "",
     ) -> str:
         """BridgeOps: run an isolated headless agent turn for a trigger card.
 
@@ -2268,7 +2273,9 @@ class TriggersMixin:
         if catalog_section:
             system = system + "\n\n" + catalog_section
         try:
-            adapter = self._get_adapter(system_override=system)
+            adapter = self._get_adapter(
+                system_override=system, **utils_mod.model_kw(model)
+            )
         except Exception as exc:  # noqa: BLE001 — surface, don't crash the worker
             return f"⚠ Trigger could not run: {exc}"
         if adapter is None:
@@ -2499,7 +2506,7 @@ class TriggersMixin:
             self._clear_run_origin(chat_id)
 
     def _trigger_run_pre_turn(
-        self, chat_id: str, instructions: str, event_text: str
+        self, chat_id: str, instructions: str, event_text: str, model: str = ""
     ) -> dict[str, Any]:
         """BridgeOps: one headless LLM extract step ahead of a rule action.
 
@@ -2515,7 +2522,9 @@ class TriggersMixin:
         if not getattr(self, "_ai_enabled", True):
             return {}
         try:
-            adapter = self._get_adapter(system_override=system)
+            adapter = self._get_adapter(
+                system_override=system, **utils_mod.model_kw(model)
+            )
         except Exception:  # noqa: BLE001
             logger.debug("pre-turn: adapter unavailable", exc_info=True)
             return {}
@@ -2762,3 +2771,9 @@ class TriggersMixin:
             "to": info.get("to", ""),
             "subject": info.get("subject", ""),
         }
+
+
+def _runbook_model(runbook: dict[str, Any]) -> dict[str, str]:
+    """``{"model": ...}`` when the runbook names its own model, else ``{}``."""
+    model = str(runbook.get("model") or "").strip()
+    return {"model": model} if model else {}

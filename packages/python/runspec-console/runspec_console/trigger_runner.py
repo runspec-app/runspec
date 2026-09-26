@@ -58,6 +58,7 @@ class BridgeOps(Protocol):
         record: Callable[[str], None] | None = None,
         stage: Callable[[str], None] | None = None,
         trigger: str = "",
+        model: str = "",
     ) -> str:
         """Run an isolated, headless agent turn under ``chat_id`` (the card id),
         with ``system`` as its system prompt and ``message`` as the sole user
@@ -113,7 +114,7 @@ class BridgeOps(Protocol):
         ...
 
     def run_pre_turn(
-        self, chat_id: str, instructions: str, event_text: str
+        self, chat_id: str, instructions: str, event_text: str, model: str = ""
     ) -> dict[str, Any]:
         """One headless LLM extract step: interpret the event per ``instructions``
         and return a flat ``{param: value}`` dict (exposed to the action maps under
@@ -316,7 +317,12 @@ def make_handler(
             payload: dict[str, Any] = dict(event.payload)
             if trigger.pre_turn.strip():
                 card.move(Column.TRIAGE)
-                llm = ops.run_pre_turn(card.id, trigger.pre_turn, render_event(event))
+                llm = ops.run_pre_turn(
+                    card.id,
+                    trigger.pre_turn,
+                    render_event(event),
+                    **({"model": trigger.model} if trigger.model else {}),
+                )
                 if llm:
                     payload["_llm"] = llm
                     card.log("pre-turn extracted: " + ", ".join(sorted(llm)))
@@ -451,6 +457,8 @@ def make_handler(
             record=card.log,  # per-tool/gate steps onto the card timeline
             stage=lambda col: card.move(col),  # awaiting_human → running stages
             trigger=event.source,  # provenance recorded on each runnable the agent runs
+            # The trigger's own model, when set; otherwise the [llm] model.
+            **({"model": trigger.model} if trigger.model else {}),
         )
         # The agent's reply + any actions land on the card — a trigger turn has no
         # chat transcript, so this is where its output is visible.

@@ -184,7 +184,13 @@ def capabilities_from_limits(
 _ANTHROPIC_THINKING_DEFAULTS: dict[str, dict[str, Any]] = {
     "claude-opus-4": {"thinking_default_on": False, "thinking_disable": True},
     "claude-sonnet-4": {"thinking_default_on": False, "thinking_disable": True},
-    "claude-haiku-4": {"thinking_default_on": False, "thinking_disable": True},
+    # Haiku 4.x takes only the older budget_tokens thinking and rejects `effort`,
+    # so the adaptive thinking/effort request is never sent to it.
+    "claude-haiku-4": {
+        "thinking_default_on": False,
+        "thinking_disable": True,
+        "adaptive_thinking": False,
+    },
     "claude-sonnet-5": {"thinking_default_on": True, "thinking_disable": True},
     "claude-opus-5": {"thinking_default_on": True, "thinking_disable": True},
     "claude-opus-5-5": {"thinking_default_on": True, "thinking_disable": False},

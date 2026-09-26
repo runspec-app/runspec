@@ -8,6 +8,33 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.296.0] — 2026-09-26
+
+### Added
+
+- **Choose the model per trigger, schedule and runbook.** A cheap model for
+  routine automation, a more capable one where success matters most. Only the
+  model id changes (same provider, key and settings); blank = the `[llm] model`.
+  - **Triggers:** a `model` field (trigger editor → *Model (optional)*) for the
+    agent-mode turn or a rule trigger's pre-turn.
+  - **Schedules:** `model` on a *prompt* / *runbook* schedule.
+  - **Runbooks:** `model` on the `[[runbook]]` entry (Settings → Runbooks), used
+    whenever the runbook starts its own turn — the `$` menu, a runbook schedule
+    (the schedule's own model wins) or a room request. The agent's
+    `save_runbook` keeps an existing runbook's model rather than dropping it.
+  - **`[llm] utility_model`** (Settings → Model / API → *Background model*) runs
+    the console's housekeeping calls — chat compaction summaries and Improve
+    synthesis — on a cheaper model.
+  - Each override builds a one-off adapter; the cached chat adapter is untouched.
+
+### Fixed
+
+- **Claude Haiku 4.x no longer fails when `[llm] effort` is set.** Haiku only
+  supports the older `budget_tokens` thinking and rejects `effort`, but the
+  console sent it adaptive thinking + effort. Its built-in capability default is
+  now `adaptive_thinking = false`, so no thinking/effort field is sent (an
+  `[llm.model_limits]` entry can still turn it back on).
+
 ## [0.295.0] — 2026-09-26
 
 ### Added

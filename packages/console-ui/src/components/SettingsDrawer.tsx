@@ -13,6 +13,7 @@ import {
   type Target,
 } from '../views/RunnableAction'
 import { MONO_FONT, RADIUS, useAccent, withAlpha } from '../ThemeContext'
+import { ModelSelect } from './ModelSelect'
 import { useFeatures, visibleSettingsTabs } from '../features'
 
 const { Text, Link } = Typography
@@ -61,7 +62,7 @@ const BUILTIN_PROVIDER_OPTIONS = [
 // keys (api_key_ttl_ms number, tools_in_config bool) are handled separately in
 // handleSave. Anything not listed here still survives a Save untouched.
 const MANAGED_LLM_STR_KEYS = [
-  'provider', 'api_key', 'model', 'base_url', 'aws_region', 'system', 'tool_mode',
+  'provider', 'api_key', 'model', 'utility_model', 'base_url', 'aws_region', 'system', 'tool_mode',
   'api_key_command', 'auth_header', 'auth_scheme', 'input_messages_key',
   'input_tools_key', 'aws_access_key', 'aws_secret_key', 'aws_session_token',
 ] as const
@@ -408,6 +409,7 @@ export function LlmTab() {
         provider: p,
         api_key: (llm.api_key as string) ?? '',
         model: modelVal,
+        utility_model: (llm.utility_model as string) ?? '',
         base_url: (llm.base_url as string) ?? '',
         aws_region: (llm.aws_region as string) ?? '',
         system: ((llm.system as string) ?? '').trim() || dflt,
@@ -448,6 +450,7 @@ export function LlmTab() {
         provider: v.provider ?? '',
         api_key: v.api_key ?? '',
         model: v.model ?? '',
+        utility_model: v.utility_model ?? '',
         base_url: v.base_url ?? '',
         aws_region: v.aws_region ?? '',
         // Equal to the built-in default ⇒ not a customisation: drop the key so
@@ -536,6 +539,16 @@ export function LlmTab() {
                   showSearch
                   allowClear
                   placeholder={models.length ? 'Select a model' : 'Add a model above first'}
+                  options={models.map(m => ({ value: m, label: m }))}
+                  style={{ fontFamily: MONO_FONT }}
+                />
+              </Form.Item>
+              <Form.Item name="utility_model" label="Background model (optional)"
+                help="Used for the console's own housekeeping calls — chat compaction summaries and Improve report synthesis — which don't need the chat model. Pick a cheaper one (e.g. claude-haiku-4-5). Blank = the Model above.">
+                <Select
+                  showSearch
+                  allowClear
+                  placeholder="Same as Model"
                   options={models.map(m => ({ value: m, label: m }))}
                   style={{ fontFamily: MONO_FONT }}
                 />
@@ -4127,6 +4140,7 @@ interface RunbookFormValues {
   title: string
   symptom?: string
   tags?: string[]
+  model?: string
   steps: RunbookStep[]
   args?: RunbookArgRow[]
 }
@@ -4223,7 +4237,7 @@ function RunbooksTab() {
   const startAdd = () => { form.resetFields(); form.setFieldsValue({ args: [], steps: [{ text: '' }] }); setEditingKey('') }
   const startEdit = (s: Runbook) => {
     form.setFieldsValue({
-      id: s.id, title: s.title, symptom: s.symptom, tags: s.tags ?? [],
+      id: s.id, title: s.title, symptom: s.symptom, tags: s.tags ?? [], model: s.model ?? '',
       steps: stepsToRows(s.steps), args: argsRawToRows(s.argsRaw),
     })
     setEditingKey(s.id)
@@ -4252,6 +4266,7 @@ function RunbooksTab() {
       symptom: (values.symptom ?? '').trim(),
       steps,
       tags: values.tags ?? [],
+      model: (values.model ?? '').trim(),
       argsRaw: rowsToArgsRaw(values.args),
     }
     const res = await bridge.save_runbook_entry(edited as unknown as Runbook)
@@ -4325,6 +4340,10 @@ function RunbooksTab() {
           </Form.Item>
           <Form.Item name="tags" label="Tags">
             <Select mode="tags" placeholder="logs, relay" tokenSeparators={[',']} />
+          </Form.Item>
+          <Form.Item name="model" label="Model (optional)"
+            help="Run this runbook on a specific model — e.g. a more capable one for an urgent multi-step fix, a cheaper one for a routine check. Applies when the runbook starts its own turn (the $ menu, a schedule, a room request); a schedule's own model wins. Blank = the model set under Model / API.">
+            <ModelSelect />
           </Form.Item>
           <Divider style={{ margin: '8px 0' }} orientation="left" plain>Steps</Divider>
           <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 8 }}>

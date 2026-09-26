@@ -56,6 +56,11 @@ text = "Re-run http-check and confirm 200s before resolving."
 host = { type = "choice", options = ["web-01", "web-02"], description = "Node to act on" }
 ```
 
+A runbook can also set its own `model` (e.g. `model = "claude-opus-5-5"` for an
+urgent multi-step fix, a cheap model for a routine check) — used whenever the
+runbook starts its own turn; see
+[automation](console-automation.md#choosing-the-model-per-trigger-schedule-or-runbook).
+
 Steps are an ordered `[[runbook.step]]` array — each step its own block with the
 prose the agent follows (`text`) and an optional short `title`. This keeps the
 file readable and diffable in your Config-Sync repo instead of one long quoted

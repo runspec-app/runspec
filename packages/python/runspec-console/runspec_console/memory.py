@@ -335,6 +335,7 @@ def save_runbook(
     tags: list[str] | tuple[str, ...] = (),
     args: dict[str, Any] | None = None,
     discoverable: list[str] | tuple[str, ...] | None = None,
+    model: str | None = None,
 ) -> str:
     """Create or replace a runbook by id (slugified from title when blank). Returns
     the id. ``steps`` is the body/prompt the agent follows (free text naming which
@@ -384,6 +385,14 @@ def save_runbook(
         entry["discoverable"] = aud
     with _LOCK:
         rows = _load(runbooks_path(), "runbook")
+        # The runbook's own model (e.g. Opus for a critical multi-step fix, Haiku
+        # for a routine check). ``None`` keeps whatever is stored, so a save that
+        # doesn't know about it (the agent's save_runbook) never drops it.
+        if model is None:
+            prior = next((r for r in rows if r.get("id") == runbook_id), {})
+            model = str(prior.get("model") or "")
+        if model.strip():
+            entry["model"] = model.strip()
         rows = [s for s in rows if s.get("id") != runbook_id]
         rows.append(entry)
         _save(runbooks_path(), "runbook", rows)

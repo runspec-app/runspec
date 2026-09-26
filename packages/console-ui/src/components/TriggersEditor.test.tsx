@@ -182,3 +182,16 @@ describe('run-target picker helpers', () => {
     expect(argsForRun('', runnables)).toEqual([])
   })
 })
+
+describe('trigger model', () => {
+  it('round-trips a per-trigger model and trims it', () => {
+    const form = triggerToForm({ name: 't', source: 'outlook', event: 'new_mail', model: 'claude-haiku-4-5' })
+    expect(form.model).toBe('claude-haiku-4-5')
+    const out = formToTrigger({ ...form, model: ' claude-opus-5-5 ' })
+    expect(out.model).toBe('claude-opus-5-5')
+  })
+
+  it('defaults to no model', () => {
+    expect(triggerToForm({ name: 't', source: 'outlook', event: 'new_mail' }).model).toBe('')
+  })
+})

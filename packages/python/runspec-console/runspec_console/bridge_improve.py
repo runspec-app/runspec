@@ -190,7 +190,7 @@ class ImproveMixin:
 
             report["synthesis_error"] = AI_OFF_MESSAGE
             return report
-        adapter = self._get_adapter()
+        adapter = self._utility_adapter()  # type: ignore[attr-defined]
         if adapter is None:
             report["synthesis_error"] = (
                 "No model provider is configured — set one in Settings → LLM to "

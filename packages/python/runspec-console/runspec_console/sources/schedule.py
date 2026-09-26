@@ -181,6 +181,9 @@ class ScheduleJob:
     # sound id, a bundled cue name, or a full token. Best-effort + Windows-only;
     # never affects whether the action runs. Resolved via sounds.play_identifier.
     sound: str = ""
+    # action == "prompt" / "runbook" — optional model id for the agent turn (e.g. a
+    # cheap "claude-haiku-4-5" for a routine check). Empty = the [llm] model.
+    model: str = ""
 
 
 def _parse_every(every: str) -> dict[str, int]:
@@ -383,6 +386,7 @@ def parse_schedule_entry(
         eval_validate=eval_validate,
         eval_telemetry=eval_telemetry,
         sound=str(data.get("sound") or "").strip(),
+        model=str(data.get("model") or "").strip(),
     )
 
 

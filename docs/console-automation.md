@@ -260,6 +260,33 @@ Schedules tab where you can pause, edit, or delete it.
 
 ---
 
+## Choosing the model per trigger, schedule or runbook
+
+By default every assistant turn uses the `[llm] model`. Automation can pick its
+own — a cheap, fast model for routine work, a more capable one where success
+matters most. Pick it from your **Available models** list (Settings → Model /
+API); blank means the `[llm] model`. Only the model changes — the provider, key,
+effort and other `[llm]` settings stay the same.
+
+| Where | Field | Applies to |
+|---|---|---|
+| Trigger | **Model (optional)** in the trigger editor (`model` in `runspec_triggers.toml`) | An agent-mode trigger's turn, or a rule trigger's pre-turn extract step |
+| Schedule | **Model (optional)** for a *prompt* or *runbook* schedule (`model` on the `[[schedule]]` entry) | That scheduled agent turn |
+| Runbook | **Model (optional)** in Settings → Runbooks (`model` on the `[[runbook]]` entry) | Any turn the runbook starts itself: the `$` menu, a runbook schedule, a room request |
+| Settings | **Background model** (`[llm] utility_model`) | The console's own housekeeping: chat compaction summaries and Improve report synthesis |
+
+A runbook schedule uses the schedule's own model if set, else the runbook's,
+else the `[llm] model`. A runbook the agent follows *inside* a chat turn
+(`run_runbook`) runs on that turn's model — a turn can't change model midway.
+
+A cheap model does fine on narrow, single-step work (a routine check, extracting
+a hostname from an alert). Multi-step work that must find runnables, choose
+subcommands and chain calls is where a stronger model earns its cost. The Evals
+tab compares models on the same suite without running anything.
+
+On Claude Haiku 4.x the console sends no thinking/effort (Haiku only supports the
+older thinking format), so `[llm] effort` is simply ignored for it.
+
 ## Rota — working hours for automation
 
 Because automated runs still need a human for confirmations, the **Rota** tab

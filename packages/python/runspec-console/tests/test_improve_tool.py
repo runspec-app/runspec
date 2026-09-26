@@ -33,6 +33,7 @@ class _Stub:
     delete_improve_report = Bridge.delete_improve_report
     improve_mailto = Bridge.improve_mailto
     synthesize_improve_report = Bridge.synthesize_improve_report
+    _utility_adapter = Bridge._utility_adapter
     _build_improve_report = Bridge._build_improve_report
     _improve_catalog_rows = Bridge._improve_catalog_rows
     _gather_improve_conversations = Bridge._gather_improve_conversations

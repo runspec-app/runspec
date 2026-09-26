@@ -1293,3 +1293,10 @@ def parse_truncation(output: str) -> dict[str, int] | None:
     if not m:
         return None
     return {"orig_len": int(m.group(1)), "cap": int(m.group(2))}
+
+
+def model_kw(model: str | None) -> dict[str, str]:
+    """``{"model_override": model}`` only when a per-trigger / schedule / runbook
+    model is set, so the common call stays ``_get_adapter(system_override=...)``."""
+    model = str(model or "").strip()
+    return {"model_override": model} if model else {}

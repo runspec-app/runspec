@@ -142,6 +142,7 @@ class _BridgeTriggerOps:
         record: Any = None,
         stage: Any = None,
         trigger: str = "",
+        model: str = "",
     ) -> str:
         return self._bridge._trigger_run_agent_turn(
             chat_id,
@@ -156,6 +157,7 @@ class _BridgeTriggerOps:
             record=record,
             stage=stage,
             trigger=trigger,
+            model=model,
         )
 
     def queue_mailbox_for(self, payload: dict[str, Any]) -> str:
@@ -188,9 +190,11 @@ class _BridgeTriggerOps:
         return self._bridge._run_rule_group(chat_id, calls, trigger=trigger)
 
     def run_pre_turn(
-        self, chat_id: str, instructions: str, event_text: str
+        self, chat_id: str, instructions: str, event_text: str, model: str = ""
     ) -> dict[str, Any]:
-        return self._bridge._trigger_run_pre_turn(chat_id, instructions, event_text)
+        return self._bridge._trigger_run_pre_turn(
+            chat_id, instructions, event_text, model=model
+        )
 
     def expand_targets(self, run: str) -> list[str]:
         return self._bridge.expand_targets(run)

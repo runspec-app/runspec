@@ -291,6 +291,10 @@ class Trigger:
     # a full "sound:"/"synth:"/"system:"/"file:" token. Best-effort + Windows-only,
     # so it never affects whether the action runs; resolved via sounds.play_identifier.
     sound: str = ""
+    # Optional model id for this trigger's LLM work (the agent-mode turn, or a rule
+    # trigger's pre_turn extract step) — e.g. a cheap "claude-haiku-4-5" for simple
+    # triage. Empty = the [llm] model. Same provider/key; only the model changes.
+    model: str = ""
 
     # Compiled match patterns, filled in __post_init__.
     _patterns: dict[str, re.Pattern[str]] = field(default_factory=dict, repr=False)
@@ -509,6 +513,7 @@ class Trigger:
             claim=claim,
             claim_folder=claim_folder,
             sound=str(data.get("sound") or "").strip(),
+            model=str(data.get("model") or "").strip(),
         )
 
     def matches(self, event: Event) -> bool:

@@ -7,6 +7,7 @@ import { useFeatures, visibleScheduleActions } from '../features'
 import { RunInbox } from '../components/RunInbox'
 import { EventLog } from '../components/EventLog'
 import { SoundSelect } from '../components/SoundSelect'
+import { ModelSelect } from '../components/ModelSelect'
 import { initialFormValues } from './formsShared'
 import { RunbookField } from './RunbookRunModal'
 import {
@@ -245,6 +246,7 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
       runbook: editing.runbook ?? undefined,
       saved_run: editing.saved_run ?? undefined,
       sound: editing.sound ?? '',
+      model: editing.model ?? '',
       fields: Object.entries(editing.fields ?? {}).map(([key, value]) => ({ key, value })),
     }
     form.setFieldsValue(fv)
@@ -429,6 +431,9 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
     // Optional attention cue on fire (any action). Omit the key when unset.
     const sound = String(values.sound ?? '').trim()
     if (sound) base.sound = sound
+    // Optional model for a prompt/runbook agent turn. Omit the key when unset.
+    const model = String(values.model ?? '').trim()
+    if (model && (action === 'prompt' || action === 'runbook')) base.model = model
 
     setSubmitting(true)
     try {
@@ -748,6 +753,13 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
               />
             )}
           </>
+        )}
+
+        {(action === 'prompt' || action === 'runbook') && (
+          <Form.Item name="model" label="Model (optional)"
+            help="Run this scheduled agent turn on a different model, e.g. a cheaper one for a routine check. Blank = the model set in Settings → Model / API.">
+            <ModelSelect />
+          </Form.Item>
         )}
 
         <Form.Item name="sound" label="Play a sound (optional)"

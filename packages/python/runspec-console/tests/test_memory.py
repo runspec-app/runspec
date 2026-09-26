@@ -1022,3 +1022,14 @@ def test_agent_create_requires_title_and_steps(tmp_path, monkeypatch):
     assert b._run_memory_tool(
         "save_runbook", {"title": "Fresh", "steps": "1. do it"}
     ).startswith("Saved runbook")
+
+
+def test_runbook_model_is_stored_and_survives_a_save_that_omits_it(mem):
+    mem.save_runbook("fix", title="Fix it", steps="do it", model="claude-opus-5-5")
+    assert mem.load_runbook("fix")["model"] == "claude-opus-5-5"
+    # The agent's save_runbook doesn't know about model: None keeps it.
+    mem.save_runbook("fix", title="Fix it", steps="do it better")
+    assert mem.load_runbook("fix")["model"] == "claude-opus-5-5"
+    # An explicit blank clears it.
+    mem.save_runbook("fix", title="Fix it", steps="x", model="")
+    assert "model" not in mem.load_runbook("fix")
