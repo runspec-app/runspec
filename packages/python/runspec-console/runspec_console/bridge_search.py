@@ -82,11 +82,11 @@ class SearchMixin:
                         },
                         "host": {
                             "type": "string",
-                            "description": "Optional: only runnables available on this host.",
+                            "description": "Optional: only runnables available on this host, or on any host in this host group.",
                         },
                         "group": {
                             "type": "string",
-                            "description": "Optional: only runnables from this package/folder.",
+                            "description": "Optional: only runnables from this package/venv (e.g. 'linux-utils'). Not a host group — to filter by host group, pass its name as host.",
                         },
                     },
                     "required": ["query"],
@@ -744,6 +744,21 @@ class SearchMixin:
         ]
         bm25 = bm25f_scores(query, docs)
 
+        # A host GROUP name is accepted wherever a host is: `host` naming a group
+        # (not a literal host) keeps rows available on any member. And `group`
+        # naming no package but a host group is the agent's natural mix-up (the
+        # two share a word) — treat it as that host group rather than return
+        # nothing, which is what sent the agent searching twice.
+        package_groups = {g for info in groups.values() for g in info["groups"]}
+        host_members: set[str] | None = None
+        host_groups = self._search_host_groups()
+        if host and host in host_groups and not self._is_literal_host(host):
+            host_members = host_groups[host]
+            host = ""
+        if group and group not in package_groups and group in host_groups:
+            host_members = (host_members or set()) | host_groups[group]
+            group = ""
+
         scored: list[tuple[float, str, dict[str, Any]]] = []
         for idx, key in enumerate(order):
             name = key
@@ -752,6 +767,8 @@ class SearchMixin:
             rep = groups[key]["rep"]
             hosts = groups[key]["hosts"]
             if host and host not in hosts:
+                continue
+            if host_members is not None and not host_members.intersection(hosts):
                 continue
             # Membership, not equality: a collapsed row spans every venv the
             # runnable ships in, so filtering by any one of them must find it.
@@ -967,6 +984,25 @@ class SearchMixin:
                 entry["tags"] = tags
             rows.append(entry)
         return rows, truncated
+
+    def _search_host_groups(self) -> dict[str, set[str]]:
+        """``{host group: {member hosts}}`` for the search filters; empty when the
+        registry can't be read (search must never fail on it)."""
+        try:
+            return {
+                str(g): {str(h) for h in members}
+                for g, members in (self._groups_map() or {}).items()
+            }
+        except Exception:  # noqa: BLE001
+            logger.debug("host groups unavailable for search", exc_info=True)
+            return {}
+
+    def _is_literal_host(self, name: str) -> bool:
+        """A real host of that name wins over a same-named group (as in fan-out)."""
+        try:
+            return self._host_entry(name) is not None
+        except Exception:  # noqa: BLE001
+            return False
 
     def _run_search_tool(self, ti: dict[str, Any]) -> str:
         """Execute the ``search_runnables`` meta-tool → JSON string for the agent."""

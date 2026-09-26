@@ -127,9 +127,13 @@ audit trail — with the bound fields badged "from *credential*".
 
 ### Credentials and the agent
 
-In-scope credentials (matched by host/runnable pattern) apply to agent-driven
-runs automatically: bound arguments are filled, `password`-typed arguments
-are removed from the agent's tool schema entirely (the model can neither see
+In-scope credentials apply to agent-driven runs automatically. A credential is
+in scope when its host/runnable patterns match, or, if it has **no** scope at
+all, only where the runnable declares it: an argument whose `env` is one of the
+credential's env var names, or an argument its `username_arg`/`secret_arg`
+binds. An unscoped credential is never sent to every host; set
+`scope_hosts = ["*"]` if you really want that. For in-scope credentials: bound
+arguments are filled, `password`-typed arguments are removed from the agent's tool schema entirely (the model can neither see
 nor supply them), and the same name-derived env vars are set. The agent can
 pick a credential by id when several match — it only ever handles ids, never
 secret values. Credentials also survive `sudo` for runnables that declare

@@ -18,8 +18,14 @@ A credential entry (metadata)::
   username        = "svc_runner"        # non-secret; applied to username_arg
   username_arg    = "service-username"  # runnable arg that gets the username (plain)
   secret_arg      = "user-password"     # runnable arg that gets the secret (env channel)
-  scope_hosts     = ["prod-*"]          # fnmatch patterns; empty = any host
-  scope_runnables = ["deploy", "db-*"]  # fnmatch patterns; empty = any runnable
+  scope_hosts     = ["prod-*"]          # fnmatch patterns
+  scope_runnables = ["deploy", "db-*"]  # fnmatch patterns
+
+Auto-apply (agent / MCP server): a credential with any scope applies where both
+lists match (an empty list on one side matches anything; ``["*"]`` = everywhere).
+A credential with **no** scope applies only where a runnable declares it — an arg
+``env`` equal to one of its env var names, or an arg its ``username_arg`` /
+``secret_arg`` binds (``Bridge._scoped_credentials``).
 
 The secret for ``id = "svc-prod"`` is stored under keyring service
 ``runspec-console``. ``secret_arg`` / ``username_arg`` are how a credential binds

@@ -1,5 +1,22 @@
 # runspec-linux Changelog
 
+## [0.16.0] — 2026-09-26
+
+### Added
+
+- **`autoremove-packages`** (confirm, runs as root) removes packages nothing
+  depends on any more — `apt autoremove` and its dnf/yum/zypper/pacman
+  equivalents. The typical use is clearing old kernels out of a full `/boot`:
+  apt keeps the running kernel and the newest ones. `--dry-run` only lists
+  what would go (not supported on yum), and `--purge` also deletes the removed
+  packages' configuration files. The result lists every package it removed.
+- **`remove-package --purge`** also deletes the packages' configuration files
+  (`apt purge` / `pacman -Rn`; a plain remove on dnf/yum/zypper).
+
+### Changed
+
+- Requires `runspec-linux-core >= 0.10.0`.
+
 ## [0.15.1] — 2026-09-26
 
 ### Changed

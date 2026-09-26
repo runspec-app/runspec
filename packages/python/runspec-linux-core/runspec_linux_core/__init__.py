@@ -51,6 +51,7 @@ from runspec_linux_core.network import (
     trace_route,
 )
 from runspec_linux_core.packages import (
+    autoremove_packages,
     detect_manager,
     install_package,
     list_packages,
@@ -135,6 +136,7 @@ __all__ = [
     "upgrade_packages",
     "install_package",
     "remove_package",
+    "autoremove_packages",
     # power
     "reboot_host",
     # sudoers

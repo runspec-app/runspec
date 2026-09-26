@@ -224,9 +224,12 @@ agent. You never hand a credential to the MCP client, and the client never sees 
 secret:
 
 - Credentials are matched to a run by their **scope** (`scope_hosts` /
-  `scope_runnables` globs, set in Settings → Credentials; an empty scope matches
-  everything). Every in-scope credential for the `(host, runnable)` is applied
-  server-side, its secret read from the OS keychain at run time.
+  `scope_runnables` globs, set in Settings → Credentials). A credential with **no
+  scope** matches only runnables that declare it — an arg `env` equal to one of
+  its env var names, or an arg its `username_arg`/`secret_arg` binds — never every
+  runnable; `scope_hosts = ["*"]` makes it apply everywhere on purpose. Every
+  in-scope credential for the `(host, runnable)` is applied server-side, its
+  secret read from the OS keychain at run time.
 - **Both delivery channels fire.** The **name-derived env vars** (a `Jira`
   userpass credential → `JIRA_USERNAME`/`JIRA_PASSWORD`; a `Deploy` token →
   `DEPLOY_TOKEN`/`DEPLOY_PAT`) for runnables that read the environment, **and**
@@ -237,7 +240,8 @@ secret:
   can neither see nor supply them — the console fills them from the credential.
 
 To make a credential available to MCP runs, scope it to the host(s)/runnable(s) it
-should serve (or leave the scope empty to apply it everywhere). A runnable with no
+should serve (`["*"]` applies it everywhere; an empty scope only reaches runnables
+that declare its env vars or bound args). A runnable with no
 matching credential simply runs without one (and fails auth if it needed it).
 
 Two deliberate limits versus the in-console chat agent:

@@ -253,15 +253,94 @@ class InternalsMixin:
             return True
         return any(fnmatch.fnmatchcase(value, p) for p in pats)
 
+    @staticmethod
+    def _has_scope(entry: dict[str, Any]) -> bool:
+        """True when a credential names at least one scope pattern (host or
+        runnable). ``["*"]`` counts — it's how an operator deliberately says
+        "everywhere"."""
+        return any(
+            str(p).strip()
+            for key in ("scope_hosts", "scope_runnables")
+            for p in (entry.get(key) or [])
+        )
+
+    def _declared_interface(
+        self, host: str, runnable: str
+    ) -> tuple[set[str], set[str]]:
+        """``(env var names, arg names)`` the runnable declares on ``host``, across
+        every subcommand — what an unscoped credential is matched against."""
+        envs: set[str] = set()
+        names: set[str] = set()
+
+        def walk(node: dict[str, Any]) -> None:
+            for a in node.get("args") or []:
+                if not isinstance(a, dict):
+                    continue
+                if a.get("name"):
+                    names.add(str(a["name"]))
+                env = a.get("env")
+                for e in [env] if isinstance(env, str) else list(env or []):
+                    if str(e).strip():
+                        envs.add(str(e).strip().upper())
+            for sub in (node.get("commands") or {}).values():
+                if isinstance(sub, dict):
+                    walk(sub)
+
+        for r in list(getattr(self, "_runnables_cache", []) or []):
+            if r.get("name") == runnable and (r.get("host") or "local") == host:
+                walk(r)
+        return envs, names
+
+    @staticmethod
+    def _declared_use(entry: dict[str, Any], envs: set[str], names: set[str]) -> bool:
+        """True when the runnable's own interface asks for this credential: an
+        arg ``env`` equal to one of the credential's name-derived env vars, or an
+        arg the credential binds via ``username_arg``/``secret_arg``."""
+        from . import credentials as cred
+
+        wanted = {
+            n.upper()
+            for n in cred.env_var_names(
+                str(entry.get("label", "")), str(entry.get("kind", ""))
+            )
+        }
+        if wanted & envs:
+            return True
+        return any(
+            str(entry.get(k) or "").strip() in names
+            for k in ("username_arg", "secret_arg")
+            if str(entry.get(k) or "").strip()
+        )
+
     def _scoped_credentials(self, host: str, runnable: str) -> list[dict[str, Any]]:
-        """In-scope credentials for ``(host, runnable)`` — both scope lists must
-        match (an empty scope list matches anything). Reads the cache as-is."""
-        return [
-            c
-            for c in self._credentials
-            if self._scope_matches(c.get("scope_hosts"), host)
-            and self._scope_matches(c.get("scope_runnables"), runnable)
-        ]
+        """Credentials that auto-apply to ``(host, runnable)``.
+
+        * **Scoped** (either scope list non-empty): both lists must match — an
+          empty list on one side matches anything, so ``scope_hosts=["web-*"]``
+          alone means "every runnable on web hosts". ``["*"]`` = everywhere, on
+          purpose.
+        * **Unscoped** (both lists empty): applies only where the runnable
+          *declares* it — an arg ``env`` equal to one of the credential's env var
+          names, or an arg its ``username_arg``/``secret_arg`` binds. It used to
+          mean "every runnable on every host", which sent a credential made for
+          one tool (or for the console itself) to every host in the fleet.
+
+        Explicit selection (Forms picks, an agent ``credential_id``) is handled by
+        the callers and is unaffected. Reads the cache as-is."""
+        out: list[dict[str, Any]] = []
+        interface: tuple[set[str], set[str]] | None = None
+        for c in self._credentials:
+            if self._has_scope(c):
+                if self._scope_matches(
+                    c.get("scope_hosts"), host
+                ) and self._scope_matches(c.get("scope_runnables"), runnable):
+                    out.append(c)
+                continue
+            if interface is None:
+                interface = self._declared_interface(host, runnable)
+            if self._declared_use(c, *interface):
+                out.append(c)
+        return out
 
     @staticmethod
     def _declared_arg_names(

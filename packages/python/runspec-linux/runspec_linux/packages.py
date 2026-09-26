@@ -3,6 +3,7 @@ import sys
 
 import runspec as rs
 from runspec_linux_core import (
+    autoremove_packages,
     install_package,
     list_packages,
     list_upgrades,
@@ -64,11 +65,24 @@ def main_remove_package() -> None:
     spec = rs.parse("remove-package")
     package = spec.package.value
     try:
-        print(json.dumps(remove_package(package)))
+        print(json.dumps(remove_package(package, purge=spec.purge.value)))
     except CommandError as e:
         print(json.dumps({"package": package, "removed": False, "error": str(e)}))
         sys.exit(1)
     except Exception as e:
         # Includes ValueError (bad name) and ToolNotFoundError (no package manager).
+        print(json.dumps({"error": str(e)}))
+        sys.exit(1)
+
+
+def main_autoremove_packages() -> None:
+    spec = rs.parse("autoremove-packages")
+    try:
+        print(json.dumps(autoremove_packages(purge=spec.purge.value, dry_run=spec.dry_run.value)))
+    except CommandError as e:
+        print(json.dumps({"removed": False, "error": str(e)}))
+        sys.exit(1)
+    except Exception as e:
+        # Includes ToolNotFoundError (no package manager).
         print(json.dumps({"error": str(e)}))
         sys.exit(1)

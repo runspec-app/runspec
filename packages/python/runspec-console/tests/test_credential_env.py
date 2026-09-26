@@ -128,6 +128,9 @@ class _EnvBridge:
     _credential_env = Bridge._credential_env
     _scoped_credentials = Bridge._scoped_credentials
     _scope_matches = staticmethod(Bridge._scope_matches)
+    _has_scope = staticmethod(Bridge._has_scope)
+    _declared_use = staticmethod(Bridge._declared_use)
+    _declared_interface = Bridge._declared_interface
     _credential_entry = Bridge._credential_entry
     _apply_selected_credentials = Bridge._apply_selected_credentials
 

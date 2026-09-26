@@ -135,3 +135,127 @@ def test_list_packages_raises_on_failure(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(pkg, "_run", lambda cmd: _completed("", returncode=2, stderr="boom"))
     with pytest.raises(CommandError):
         core.list_packages()
+
+
+# ── remove_package --purge ────────────────────────────────────────────────────
+
+
+def _recorder(monkeypatch: pytest.MonkeyPatch, mgr: str, outputs: dict | None = None) -> list[list[str]]:
+    """Stub the manager + subprocess layer; record each argv and answer by its first two words."""
+    calls: list[list[str]] = []
+    monkeypatch.setattr(pkg, "detect_manager", lambda: mgr)
+
+    def run(cmd: list[str]) -> subprocess.CompletedProcess:
+        calls.append(cmd)
+        return (outputs or {}).get(" ".join(cmd[:2]), _completed())
+
+    monkeypatch.setattr(pkg, "_run", run)
+    return calls
+
+
+def test_remove_package_purge_on_apt(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _recorder(monkeypatch, "apt-get")
+    result = core.remove_package("htop vim", purge=True)
+    assert calls == [["apt-get", "purge", "-y", "htop", "vim"]]
+    assert result["purged"] is True and result["removed"] is True
+
+
+def test_remove_package_default_is_plain_remove(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _recorder(monkeypatch, "pacman")
+    assert core.remove_package("htop")["purged"] is False
+    assert calls == [["pacman", "-R", "--noconfirm", "htop"]]
+
+
+def test_remove_package_purge_on_pacman(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _recorder(monkeypatch, "pacman")
+    core.remove_package("htop", purge=True)
+    assert calls == [["pacman", "-Rn", "--noconfirm", "htop"]]
+
+
+def test_remove_package_purge_is_a_plain_remove_on_rpm(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _recorder(monkeypatch, "dnf")
+    assert core.remove_package("htop", purge=True)["purged"] is False
+    assert calls == [["dnf", "remove", "-y", "htop"]]
+
+
+# ── autoremove_packages ───────────────────────────────────────────────────────
+
+APT_SIM = (
+    "Reading package lists...\nThe following packages will be REMOVED:\n  linux-image-7.0.4+deb14-amd64\nRemv linux-image-7.0.4+deb14-amd64 [7.0.4-1]\nPurg linux-headers-7.0.4+deb14-amd64 [7.0.4-1]\n"
+)
+
+
+def test_parse_apt_simulate() -> None:
+    assert pkg._parse_apt_simulate(APT_SIM) == [
+        {"name": "linux-image-7.0.4+deb14-amd64", "version": "7.0.4-1"},
+        {"name": "linux-headers-7.0.4+deb14-amd64", "version": "7.0.4-1"},
+    ]
+
+
+def test_parse_zypper_packages() -> None:
+    out = "S  | Repository | Name   | Version | Arch\n---+------------+--------+---------+-------\ni  | repo-oss   | libfoo | 1.2-3   | x86_64\ni+ | repo-oss   | bar    | 4.5     | noarch\n"
+    assert pkg._parse_zypper_packages(out) == [
+        {"name": "libfoo", "version": "1.2-3"},
+        {"name": "bar", "version": "4.5"},
+    ]
+
+
+def test_autoremove_dry_run_lists_without_removing(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _recorder(monkeypatch, "apt-get", {"apt-get -s": _completed(APT_SIM)})
+    result = core.autoremove_packages(purge=True, dry_run=True)
+    assert calls == [["apt-get", "-s", "autoremove", "--purge"]]
+    assert result["dry_run"] is True and result["removed"] is False and result["purged"] is True
+    assert result["count"] == 2
+
+
+def test_autoremove_apt_real_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _recorder(monkeypatch, "apt-get", {"apt-get -s": _completed(APT_SIM)})
+    result = core.autoremove_packages()
+    assert calls == [["apt-get", "-s", "autoremove"], ["apt-get", "autoremove", "-y"]]
+    assert result["removed"] is True and result["count"] == 2 and result["purged"] is False
+
+
+def test_autoremove_nothing_to_do_runs_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _recorder(monkeypatch, "apt-get", {"apt-get -s": _completed("Reading package lists...\n")})
+    result = core.autoremove_packages(purge=True)
+    assert calls == [["apt-get", "-s", "autoremove", "--purge"]]
+    assert result["count"] == 0 and result["removed"] is False
+
+
+def test_autoremove_pacman_removes_listed_orphans(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _recorder(monkeypatch, "pacman", {"pacman -Qdt": _completed("libfoo 1.0-1\n")})
+    core.autoremove_packages(purge=True)
+    assert calls[-1] == ["pacman", "-Rns", "--noconfirm", "libfoo"]
+
+
+def test_autoremove_pacman_no_orphans_is_not_an_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _recorder(monkeypatch, "pacman", {"pacman -Qdt": _completed("", returncode=1)})
+    assert core.autoremove_packages()["count"] == 0
+    assert len(calls) == 1
+
+
+def test_autoremove_zypper_removes_unneeded(monkeypatch: pytest.MonkeyPatch) -> None:
+    table = "S | Repository | Name | Version | Arch\ni | oss | libfoo | 1 | x86_64\n"
+    calls = _recorder(monkeypatch, "zypper", {"zypper --non-interactive": _completed(table)})
+    core.autoremove_packages()
+    assert calls[-1] == ["zypper", "--non-interactive", "remove", "libfoo"]
+
+
+def test_autoremove_yum_refuses_dry_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _recorder(monkeypatch, "yum")
+    with pytest.raises(CommandError, match="dry run unsupported"):
+        core.autoremove_packages(dry_run=True)
+    assert calls == []
+
+
+def test_autoremove_yum_real_run_has_no_list(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _recorder(monkeypatch, "yum")
+    result = core.autoremove_packages()
+    assert calls == [["yum", "autoremove", "-y"]]
+    assert result["packages"] is None and result["removed"] is True
+
+
+def test_autoremove_listing_failure_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    _recorder(monkeypatch, "apt-get", {"apt-get -s": _completed("", returncode=100, stderr="locked")})
+    with pytest.raises(CommandError, match="locked"):
+        core.autoremove_packages()

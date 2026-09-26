@@ -870,6 +870,27 @@ class AutonomyMixin:
         command_path = _command_path(ti)
         return self._preflight_validate(cached_r, command_path, call_args)
 
+    def _preflight_group_run(
+        self, tool_input: dict[str, Any], calls: list[tuple[str, dict[str, Any]]]
+    ) -> str | None:
+        """Validate a group fan-out ``run_runnable`` once per member BEFORE it fans
+        out — the same ``_preflight_run_runnable`` a single-host call gets. The
+        fan-out path used to skip it, so a bad arg (or ``command``/``credential_id``
+        misplaced inside ``args``) was never bounced back to the agent and only
+        failed — or silently worked by accident — on each host. Members can run
+        different versions, so each distinct host is checked; the first error is
+        returned, naming the host. Pure cache reads; runs nothing."""
+        seen: set[str] = set()
+        for call_name, _ in calls:
+            member = call_name.split("__", 1)[0]
+            if member in seen:
+                continue
+            seen.add(member)
+            error = self._preflight_run_runnable({**tool_input, "host": member})
+            if error:
+                return f"✗ Not run on any host — {member}: {error}"
+        return None
+
     async def _gated_run_tool_async(
         self,
         tool_name: str,
@@ -922,6 +943,9 @@ class AutonomyMixin:
                 group, name, calls = fan
                 if not calls:
                     return f"✗ No host in group '{group}' has '{name}'."
+                preflight = self._preflight_group_run(tool_input, calls)
+                if preflight is not None:
+                    return preflight
                 outs = await self._grouped_confirm_run_async(
                     chat_id,
                     calls,
@@ -1336,6 +1360,9 @@ class AutonomyMixin:
                 group, name, calls = fan
                 if not calls:
                     return f"✗ No host in group '{group}' has '{name}'."
+                preflight = self._preflight_group_run(tool_input, calls)
+                if preflight is not None:
+                    return preflight
                 outs = self._grouped_confirm_run_sync(
                     chat_id, calls, noun=f"group '{group}' run"
                 )

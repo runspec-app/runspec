@@ -100,6 +100,12 @@ def test_remove_package_requires_a_manager(monkeypatch: pytest.MonkeyPatch) -> N
         core.remove_package("htop")
 
 
+def test_autoremove_packages_requires_a_manager(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("runspec_linux_core.packages.shutil.which", lambda _: None)
+    with pytest.raises(ToolNotFoundError):
+        core.autoremove_packages()
+
+
 def test_reboot_host_requires_a_tool(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("runspec_linux_core.power.which", lambda _: None)
     with pytest.raises(ToolNotFoundError):

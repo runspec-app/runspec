@@ -3397,7 +3397,7 @@ function CredentialsTab() {
                 </div>
                 <Divider style={{ margin: '4px 0 12px' }} />
                 <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
-                  Binding (agent only) — which runnable arguments these values fill for agent-driven runs, and where the credential may be applied (glob patterns; blank = any). The Forms path uses the env vars above, not these.
+                  Binding (agent only) — which runnable arguments these values fill for agent-driven runs, and where the credential may be applied (glob patterns). With both scopes blank it applies only to runnables that declare its env vars or the arguments above; use * to apply everywhere. The Forms path uses the env vars above, not these.
                 </Text>
                 <Form.Item name="username_arg" label="Username → argument" tooltip="Runnable arg name that receives the username (passed normally).">
                   <Input placeholder="service-username" style={{ fontFamily: MONO_FONT }} autoComplete="off" />

@@ -106,6 +106,8 @@ class _Bridge:
     _node_at = staticmethod(Bridge._node_at)
     _preflight_validate = Bridge._preflight_validate
     _search_runnables = Bridge._search_runnables
+    _search_host_groups = Bridge._search_host_groups
+    _is_literal_host = Bridge._is_literal_host
     _command_arg_rows = staticmethod(Bridge._command_arg_rows)
     _search_runbooks = Bridge._search_runbooks
     _score_runbook = staticmethod(Bridge._score_runbook)
@@ -117,6 +119,9 @@ class _Bridge:
     # dispatch collaborators (no-ops with empty credentials)
     _scoped_credentials = Bridge._scoped_credentials
     _scope_matches = staticmethod(Bridge._scope_matches)
+    _has_scope = staticmethod(Bridge._has_scope)
+    _declared_use = staticmethod(Bridge._declared_use)
+    _declared_interface = Bridge._declared_interface
     _credential_entry = Bridge._credential_entry
     _unknown_credential_error = Bridge._unknown_credential_error
     _apply_credentials = Bridge._apply_credentials
@@ -1008,3 +1013,56 @@ def test_search_is_a_constant_small_tool_block(capsys):
             f"\n    dedup    : {len(dedup):>4} tools  {sizes['dedup']:>8} json bytes"
             f"\n    search   : {len(search):>4} tools  {sizes['search']:>8} json bytes\n"
         )
+
+
+# ── host groups in the search filters ──────────────────────────────────────
+
+
+def _grouped_search(query, host_groups, literal_hosts=(), **kw):
+    runnables = [
+        _rn("web-1", "disk-usage", group="linux-utils"),
+        _rn("db-1", "pg-dump", group="linux-utils"),
+        _rn("laptop", "flush-dns", group="windows"),
+    ]
+    b = _Bridge(runnables)
+    b._groups_map = lambda: host_groups
+    b._host_entry = lambda name: {"name": name} if name in literal_hosts else None
+    return [r["id"] for r in b._search_runnables(query, **kw)["results"]]
+
+
+def test_host_filter_accepts_a_host_group_name():
+    ids = _grouped_search(
+        "", {"Linux Servers": ["web-1", "db-1"]}, host="Linux Servers"
+    )
+    assert sorted(ids) == ["disk-usage", "pg-dump"]
+
+
+def test_group_filter_naming_a_host_group_is_read_as_one():
+    # The agent's natural mix-up: `group` is the package filter, but it passed
+    # the host group's name and used to get zero results.
+    ids = _grouped_search(
+        "", {"Linux Servers": ["web-1", "db-1"]}, group="Linux Servers"
+    )
+    assert sorted(ids) == ["disk-usage", "pg-dump"]
+
+
+def test_package_group_filter_still_wins_over_a_same_named_host_group():
+    ids = _grouped_search("", {"windows": ["web-1"]}, group="windows")
+    assert ids == ["flush-dns"]
+
+
+def test_a_literal_host_wins_over_a_same_named_host_group():
+    ids = _grouped_search(
+        "", {"web-1": ["db-1"]}, literal_hosts=("web-1",), host="web-1"
+    )
+    assert ids == ["disk-usage"]
+
+
+def test_unreadable_host_groups_never_sink_search():
+    b = _Bridge([_rn("web-1", "disk-usage")])
+
+    def boom():
+        raise RuntimeError("registry unreadable")
+
+    b._groups_map = boom
+    assert [r["id"] for r in b._search_runnables("disk")["results"]] == ["disk-usage"]

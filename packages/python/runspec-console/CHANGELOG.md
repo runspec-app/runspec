@@ -8,6 +8,46 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.294.0] — 2026-09-26
+
+### Changed
+
+- **An unscoped credential no longer goes to every host.** A credential with
+  empty `scope_hosts` and `scope_runnables` used to match every runnable on
+  every host, so the agent and the console's MCP server injected its
+  name-derived env vars into every run across the fleet. In a real run this
+  sent an API key saved without a scope to five hosts, in each remote command
+  line. `Bridge._scoped_credentials` now applies an **unscoped** credential only
+  where the runnable **declares** it: an arg `env` equal to one of the
+  credential's env var names (aliases included), or an arg its
+  `username_arg`/`secret_arg` binds. This is the same rule `runspec-mcp` already
+  uses.
+  - Scoped credentials behave as before, and `scope_hosts = ["*"]` restores
+    "everywhere" deliberately.
+  - Explicit selection (a Forms pick, an agent `credential_id`) is unaffected.
+  - **Upgrade note:** a credential you left unscoped *for* a runnable that reads
+    an undeclared env var (e.g. `runspec-jsm` reading `JSM_USER`) stops
+    auto-applying to the agent. Give it a scope (`scope_runnables = ["jsm-*"]`)
+    or `["*"]`.
+
+### Fixed
+
+- **`search_runnables` understands host groups.** Its `group` filter means the
+  package or venv (`linux-utils`), so an agent passing a host group name
+  (`group="Linux Servers"`) got zero results and had to search again. Now a
+  host-group name passed as `host` keeps rows available on any member, and a
+  `group` value that names no package but does name a host group is read as that
+  host group. A literal host still wins over a same-named group, a package still
+  wins over a same-named host group, and the parameter descriptions say which is
+  which.
+- **Group fan-out validates its arguments before running.** A `run_runnable`
+  whose `host` is a host group skipped the pre-run argument check a single-host
+  call gets. A bad argument, or `command`/`credential_id` misplaced inside
+  `args`, was never bounced back to the agent. It only failed on each host, or
+  worked by accident. The call is now checked against each member host's spec
+  first (`_preflight_group_run`); the first error comes back naming the host,
+  and nothing runs.
+
 ## [0.293.0] — 2026-09-26
 
 ### Added

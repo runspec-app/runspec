@@ -1,5 +1,23 @@
 # runspec-linux-core Changelog
 
+## [0.10.0] — 2026-09-26
+
+### Added
+
+- **`autoremove_packages(purge=False, dry_run=False)`** removes packages
+  nothing depends on any more: `apt-get autoremove` (with `--purge`), dnf/yum
+  `autoremove`, zypper's `--unneeded` packages, or pacman orphans (`-Qdt`). It
+  lists the candidates first and returns them as `packages` (name + version),
+  so a caller sees exactly what went; `dry_run` stops after the list, and
+  nothing runs when the list is empty. On Debian/Ubuntu apt keeps the running
+  kernel and the newest ones, which makes this the safe way to clear old
+  kernels out of a full `/boot`. yum can't list candidates without removing
+  them, so `dry_run` is refused there and a real run returns `packages: null`.
+- **`remove_package(packages, purge=False)`**: `purge` also deletes the
+  packages' configuration files (`apt-get purge`, `pacman -Rn`). dnf, yum and
+  zypper have no separate purge mode, so there it stays a plain remove. The
+  result gains a `purged` field saying whether purge applied.
+
 ## [0.9.0] — 2026-09-26
 
 ### Added

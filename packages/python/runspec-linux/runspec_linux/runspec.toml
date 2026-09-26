@@ -526,6 +526,28 @@ type        = "str"
 short       = "-p"
 description = "Package name to remove (space-separated for several)"
 
+[remove-package.args.purge]
+type        = "flag"
+description = "Also delete the packages' configuration files (apt purge / pacman -Rn; a plain remove on dnf/yum/zypper)"
+default     = false
+
+[autoremove-packages]
+serve       = ["local"]
+description = "Remove packages nothing depends on any more, e.g. old kernels (apt autoremove and equivalents; needs root)"
+autonomy    = "confirm"
+output      = "json"
+run_as      = "root"
+
+[autoremove-packages.args.purge]
+type        = "flag"
+description = "Also delete the removed packages' configuration files (apt --purge / pacman -n)"
+default     = false
+
+[autoremove-packages.args.dry-run]
+type        = "flag"
+description = "Only list what would be removed; remove nothing (not supported on yum)"
+default     = false
+
 # ── Power ─────────────────────────────────────────────────────────────────────
 
 [reboot-host]

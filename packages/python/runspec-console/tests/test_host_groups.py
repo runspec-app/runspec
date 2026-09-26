@@ -192,3 +192,56 @@ def test_grouped_confirm_run_sync_manual_refuses_whole_group():
     )
     assert len(out) == 2
     assert all("manual-only" in line for line in out)
+
+
+# ── group fan-out is validated before it fans out ───────────────────────────
+
+
+def _preflight_stub(errors_by_host):
+    seen: list[str] = []
+
+    def preflight(ti):
+        seen.append(ti["host"])
+        return errors_by_host.get(ti["host"])
+
+    ns = types.SimpleNamespace(_preflight_run_runnable=preflight)
+    ns._preflight_group_run = types.MethodType(Bridge._preflight_group_run, ns)
+    return ns, seen
+
+
+CALLS = [("h1__cron", {}), ("h2__cron", {}), ("h1__cron", {})]
+
+
+def test_group_preflight_checks_each_member_once_and_passes_clean_calls():
+    ns, seen = _preflight_stub({})
+    assert ns._preflight_group_run({"id": "cron", "host": "Prod"}, CALLS) is None
+    assert seen == ["h1", "h2"]
+
+
+def test_group_preflight_bounces_before_anything_runs_and_names_the_host():
+    ns, _ = _preflight_stub({"h2": "unknown argument(s): command"})
+    out = ns._preflight_group_run(
+        {"id": "cron", "host": "Prod", "args": {"command": "list"}}, CALLS
+    )
+    assert out == "✗ Not run on any host — h2: unknown argument(s): command"
+
+
+def test_gated_group_run_is_bounced_by_preflight(monkeypatch):
+    ran: list = []
+    ns = _stub(
+        _groups_map=lambda: {"Prod": ["h1"]},
+        _host_entry=lambda h: None,
+        _runnables_for_id=lambda rid: [{"host": "h1", "name": "cron"}],
+        _preflight_run_runnable=lambda ti: "unknown argument(s): command",
+        _grouped_confirm_run_sync=lambda *a, **k: ran.append(a) or ["ran"],
+    )
+    ns._preflight_group_run = types.MethodType(Bridge._preflight_group_run, ns)
+    ns._unwrap_use_tool = lambda ti: ti
+    out = Bridge._gated_run_tool(
+        ns,
+        "run_runnable",
+        {"id": "cron", "host": "Prod", "args": {"command": "list"}},
+        "c",
+    )
+    assert out.startswith("✗ Not run on any host — h1:")
+    assert ran == []

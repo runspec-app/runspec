@@ -31,7 +31,7 @@ pip install runspec-linux
 | Files | `find-large-files`, `backup-files`, `owning-package` |
 | Sessions | `last-logins`, `who` |
 | Containers | `list-containers`, `container-logs`, `restart-container` |
-| Packages | `list-packages`, `list-upgrades`, `upgrade-packages`, `install-package`, `remove-package` |
+| Packages | `list-packages`, `list-upgrades`, `upgrade-packages`, `install-package`, `remove-package`, `autoremove-packages` |
 | Power | `reboot-host` |
 | Sudo bootstrap | `enable-passwordless-sudo` |
 | Python venvs | `create-venv`, `install-into-venv`, `configure-pip` |

@@ -1,9 +1,9 @@
-"""Package-manager helpers: detect the distro's manager, then list/upgrade/install/remove.
+"""Package-manager helpers: detect the distro's manager, then list/upgrade/install/remove/autoremove.
 
 Supports the common Linux families: Debian/Ubuntu (``apt-get`` + ``dpkg``),
 RHEL/Fedora (``dnf``/``yum`` + ``rpm``), SUSE (``zypper`` + ``rpm``), and Arch
 (``pacman``). The read operations (list installed, list upgrades) return plain
-data; the write operations (upgrade, install, remove) need root and raise
+data; the write operations (upgrade, install, remove, autoremove) need root and raise
 ``CommandError`` when the underlying command exits non-zero (for example when
 run as an unprivileged user). ``ToolNotFoundError`` is raised when no supported
 package manager is on PATH.
@@ -42,6 +42,13 @@ _REMOVE_CMDS = {
     "yum": ["yum", "remove", "-y"],
     "zypper": ["zypper", "--non-interactive", "remove"],
     "pacman": ["pacman", "-R", "--noconfirm"],
+}
+# Purge also deletes the packages' configuration files. Only apt and pacman
+# have a separate mode for it; rpm-based managers already drop unmodified
+# config files on remove (and keep edited ones as ``.rpmsave`` either way).
+_PURGE_CMDS = {
+    "apt-get": ["apt-get", "purge", "-y"],
+    "pacman": ["pacman", "-Rn", "--noconfirm"],
 }
 
 # A conservative package-token shape: starts alphanumeric, then the punctuation
@@ -193,20 +200,102 @@ def install_package(packages: str) -> dict:
     return {"manager": mgr, "packages": names, "installed": True, "output": _tail(result.stdout)}
 
 
-def remove_package(packages: str) -> dict:
+def remove_package(packages: str, purge: bool = False) -> dict:
     """Remove one or more packages (space-separated). Needs root.
 
-    Returns ``{manager, packages, removed: True, output}``. Raises ValueError on
-    an empty/invalid name, ToolNotFoundError if no package manager is present, or
-    CommandError if the remove command fails.
+    ``purge`` also deletes their configuration files (``apt-get purge``,
+    ``pacman -Rn``). dnf/yum/zypper have no separate purge mode, so there it is
+    a plain remove and ``purged`` comes back False.
+
+    Returns ``{manager, packages, removed: True, purged, output}``. Raises
+    ValueError on an empty/invalid name, ToolNotFoundError if no package manager
+    is present, or CommandError if the remove command fails.
     """
     names = _validate_packages(packages)
     mgr = detect_manager()
-    cmd = [*_REMOVE_CMDS[mgr], *names]
+    purged = purge and mgr in _PURGE_CMDS
+    cmd = [*(_PURGE_CMDS[mgr] if purged else _REMOVE_CMDS[mgr]), *names]
     result = _run(cmd)
     if result.returncode != 0:
         raise CommandError(result.stderr.strip() or " ".join(cmd) + " failed")
-    return {"manager": mgr, "packages": names, "removed": True, "output": _tail(result.stdout)}
+    return {"manager": mgr, "packages": names, "removed": True, "purged": purged, "output": _tail(result.stdout)}
+
+
+def autoremove_packages(purge: bool = False, dry_run: bool = False) -> dict:
+    """Remove packages nothing depends on any more (apt-get autoremove and friends). Needs root.
+
+    The candidates are listed first and returned as ``packages``, so the caller
+    sees exactly what went (or, with ``dry_run``, what would go). Nothing runs
+    when there are no candidates. On Debian/Ubuntu apt keeps the running kernel
+    and the newest ones, so old kernels are removed and the booted one never is.
+
+    Per manager: apt-get ``autoremove`` (``--purge`` with ``purge``); dnf/yum
+    ``autoremove``; zypper removes its ``--unneeded`` packages; pacman removes
+    orphans (``-Qdt``, with ``-n`` for ``purge``). ``purge`` only changes apt
+    and pacman (``purged`` says whether it applied). yum can't list candidates
+    without removing them, so ``dry_run`` is refused there and a real run
+    returns ``packages: null``.
+
+    Returns ``{manager, dry_run, purged, count, packages, removed, output}``.
+    Raises ToolNotFoundError if no package manager is present, or CommandError
+    if listing or removing fails.
+    """
+    mgr = detect_manager()
+    purged = purge and mgr in _PURGE_CMDS
+    if mgr == "yum" and dry_run:
+        raise CommandError("yum can't list autoremove candidates without removing them; dry run unsupported")
+
+    candidates = None if mgr == "yum" else _autoremove_candidates(mgr, purged)
+    result = {
+        "manager": mgr,
+        "dry_run": dry_run,
+        "purged": purged,
+        "count": None if candidates is None else len(candidates),
+        "packages": candidates,
+        "removed": False,
+        "output": [],
+    }
+    if dry_run or candidates == []:
+        return result
+
+    if mgr == "apt-get":
+        cmd = ["apt-get", "autoremove", "-y", *(["--purge"] if purged else [])]
+    elif mgr in ("dnf", "yum"):
+        cmd = [mgr, "autoremove", "-y"]
+    elif mgr == "zypper":
+        cmd = ["zypper", "--non-interactive", "remove", *[c["name"] for c in candidates or []]]
+    else:  # pacman
+        cmd = ["pacman", "-Rns" if purged else "-Rs", "--noconfirm", *[c["name"] for c in candidates or []]]
+    run = _run(cmd)
+    if run.returncode != 0:
+        raise CommandError(run.stderr.strip() or " ".join(cmd) + " failed")
+    result["removed"] = True
+    result["output"] = _tail(run.stdout)
+    return result
+
+
+def _autoremove_candidates(mgr: str, purge: bool) -> list[dict]:
+    """List what an autoremove would take, as ``{name, version}`` rows."""
+    if mgr == "apt-get":
+        cmd = ["apt-get", "-s", "autoremove", *(["--purge"] if purge else [])]
+        run = _run(cmd)
+        _check(run, " ".join(cmd))
+        return _parse_apt_simulate(run.stdout)
+    if mgr == "dnf":
+        cmd = ["dnf", "-q", "repoquery", "--unneeded", "--qf", "%{name}\t%{version}-%{release}\n"]
+        run = _run(cmd)
+        _check(run, " ".join(cmd))
+        return _parse_two_col(run.stdout)
+    if mgr == "zypper":
+        cmd = ["zypper", "--non-interactive", "packages", "--unneeded"]
+        run = _run(cmd)
+        _check(run, " ".join(cmd))
+        return _parse_zypper_packages(run.stdout)
+    # pacman: `-Qdt` exits 1 with no output when there are no orphans.
+    run = _run(["pacman", "-Qdt"])
+    if run.returncode != 0 and run.stdout.strip():
+        raise CommandError(run.stderr.strip() or "pacman -Qdt failed")
+    return _parse_pacman_q(run.stdout)
 
 
 def _check(result: subprocess.CompletedProcess[str], label: str) -> None:
@@ -276,6 +365,27 @@ def _parse_zypper_updates(output: str) -> list[dict]:
         if len(cols) < 6 or cols[0] != "v":
             continue
         rows.append({"name": cols[2], "current": cols[3], "candidate": cols[4]})
+    return rows
+
+
+def _parse_apt_simulate(output: str) -> list[dict]:
+    """Parse ``apt-get -s`` removal lines: ``Remv name [version]`` / ``Purg name [version]``."""
+    rows = []
+    for line in output.splitlines():
+        m = re.match(r"(?:Remv|Purg)\s+(\S+)(?:\s+\[([^\]]*)\])?", line)
+        if m:
+            rows.append({"name": m.group(1), "version": (m.group(2) or "").strip()})
+    return rows
+
+
+def _parse_zypper_packages(output: str) -> list[dict]:
+    """Parse ``zypper packages`` table rows: ``S | Repository | Name | Version | Arch``."""
+    rows = []
+    for line in output.splitlines():
+        cols = [c.strip() for c in line.split("|")]
+        if len(cols) < 5 or cols[0] not in ("i", "i+"):
+            continue
+        rows.append({"name": cols[2], "version": cols[3]})
     return rows
 
 
