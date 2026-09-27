@@ -30,6 +30,7 @@ from .config import (
 
 from .bridge_const import (
     logger,
+    CURRENT_CALL_ID,
     _AUTONOMY_RANK,
     _CANCEL_KEY,
     _CONFIRM_VERBS,
@@ -340,6 +341,7 @@ class AutonomyMixin:
         # (card_tool), so a wrapped/deferred save reads "save", not "run".
         confirm_verb = _CONFIRM_VERBS.get(card_tool, _CONFIRM_VERB_DEFAULT)
         request_id = uuid.uuid4().hex
+        call_id = CURRENT_CALL_ID.get()
         event = threading.Event()
         # ``edited_input`` (Phase: editable confirmations) carries an operator-edited
         # tool_input back from the UI — None means "run as proposed".
@@ -359,6 +361,7 @@ class AutonomyMixin:
                 "display_input": card_input,
                 "autonomy": level,
                 "confirm_verb": confirm_verb,
+                "call_id": call_id,
                 "created_at": time.time(),
             }
         logger.info(
@@ -378,6 +381,7 @@ class AutonomyMixin:
                 "display_input": card_input,
                 "autonomy": level,
                 "confirm_verb": confirm_verb,
+                "call_id": call_id,
             },
         )
         self._notify_confirm(card_tool, card_input, level)

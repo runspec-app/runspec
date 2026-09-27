@@ -104,6 +104,32 @@ describe('OutputPanel autonomy-gate confirm', () => {
     expect(screen.getByText(/node = "n1"/)).toBeTruthy()
   })
 
+  it('puts the gate on the card with the matching call id, not the first same-name card', () => {
+    // Two run_runnable cards running at once (search mode: every runnable call
+    // is run_runnable). Name-only matching put the gate on BOTH — visibly on the
+    // earlier (top) card. With call_id, only the gated call's own card shows it.
+    const block = chatBlockWithRunningTool('run_runnable')
+    block.segments = [
+      { kind: 'tool', entry: { name: 'run_runnable', callId: 'call_a', input: { id: 'disk-usage' }, running: true } },
+      { kind: 'tool', entry: { name: 'run_runnable', callId: 'call_b', input: { id: 'drain-node' }, running: true } },
+    ]
+    const { container } = render(<OutputPanel blocks={[block]} />)
+    fireConfirm({
+      id: 'chat1',
+      request_id: 'req-1',
+      call_id: 'call_b',
+      tool_name: 'run_runnable',
+      tool_input: { id: 'drain-node' },
+      display_name: 'drain-node',
+      autonomy: 'confirm',
+    })
+    const approves = screen.getAllByRole('button', { name: /approve & run/i })
+    expect(approves).toHaveLength(1)
+    // …and it's inside the second (bottom) card's block, after the first card.
+    const text = container.textContent ?? ''
+    expect(text.indexOf('disk-usage')).toBeLessThan(text.indexOf('Approve'))
+  })
+
   it('falls back to a card-level gate when the confirm matches no running segment', () => {
     // Historically (0.91.0) a confirm whose tool_name didn't match the running
     // segment rendered nothing — wedging the run with no way to approve. The

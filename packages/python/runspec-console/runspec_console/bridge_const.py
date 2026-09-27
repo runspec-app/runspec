@@ -6,9 +6,19 @@ circular dependency (bridge.py imports the mixins; the mixins import this).
 
 from __future__ import annotations
 
+import contextvars
 import logging
 
 logger = logging.getLogger(__name__)
+
+# The model's tool-call id for the call currently being executed. Set per call by
+# the agent loop (bridge_turn._exec_call) and read by _register_confirm, so the
+# confirm event names the exact card it belongs to. Matching by tool name alone
+# put the gate on every running card with that name — in search mode every
+# runnable call is `run_runnable`, so a gate could land on an earlier card.
+CURRENT_CALL_ID: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "runspec_current_call_id", default=""
+)
 
 _CANCEL_KEY = "__cancel_event__"  # key in _in_flight dicts, not surfaced to JS
 

@@ -12,7 +12,7 @@ vi.mock('../bridge', () => ({
   bridge: new Proxy({}, { get: () => vi.fn() }),
 }))
 
-import { finishToolSegment } from './OutputPanel'
+import { confirmOwnsSegment, finishToolSegment } from './OutputPanel'
 import type { BlockSegment } from './OutputPanel'
 
 const running = (name: string, callId?: string, startedAt = 1000): BlockSegment => ({
@@ -59,5 +59,25 @@ describe('finishToolSegment', () => {
   it('leaves segments untouched when nothing matches', () => {
     const segs: BlockSegment[] = [{ kind: 'text', text: 'hi' }, running('a', 't1')]
     expect(finishToolSegment(segs, { call_id: 'zz', tool_name: 'a', output: 'x' })).toBe(segs)
+  })
+})
+
+describe('confirmOwnsSegment', () => {
+  const pc = { request_id: 'r', id: 'c', tool_name: 'run_runnable', tool_input: {}, autonomy: 'confirm' }
+  const entry = (over: Record<string, unknown>) => ({ name: 'run_runnable', input: {}, running: true, ...over })
+
+  it('matches by call id when both sides have one', () => {
+    expect(confirmOwnsSegment({ ...pc, call_id: 'b' }, entry({ callId: 'b' }))).toBe(true)
+    expect(confirmOwnsSegment({ ...pc, call_id: 'b' }, entry({ callId: 'a' }))).toBe(false)
+  })
+
+  it('falls back to the tool name without a call id (older backend)', () => {
+    expect(confirmOwnsSegment(pc, entry({ callId: 'a' }))).toBe(true)
+    expect(confirmOwnsSegment(pc, entry({ name: 'other' }))).toBe(false)
+  })
+
+  it('never claims a finished card or a missing confirm', () => {
+    expect(confirmOwnsSegment({ ...pc, call_id: 'b' }, entry({ callId: 'b', running: false }))).toBe(false)
+    expect(confirmOwnsSegment(null, entry({}))).toBe(false)
   })
 })

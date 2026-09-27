@@ -6,7 +6,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent, act } from '@testing-library/react'
 
-import { SessionStrip } from './SessionStrip'
+import { SessionStrip, partitionSessions, VISIBLE_AUTOMATION } from './SessionStrip'
 import type { Session, SessionStatus } from '../sessions'
 
 const sess = (over: Partial<Session>): Session => ({
@@ -86,5 +86,47 @@ describe('SessionStrip', () => {
     const ok = await screen.findByRole('button', { name: 'Close' })
     await act(async () => { fireEvent.click(ok) })
     expect(onClose).toHaveBeenCalledWith('c1')
+  })
+})
+
+describe('SessionStrip overflow', () => {
+  // A burst of trigger runs (an over-active mail trigger) — newest last.
+  const burst = (n: number, state: Session['state'] = 'done') =>
+    Array.from({ length: n }, (_, i) =>
+      sess({ id: `t${i}`, kind: 'trigger', interactive: false, label: `Trigger mail · ${i}`, createdAt: 100 + i, state }))
+
+  it('keeps chats, the selection and waiting runs inline; newest automation fills the rest', () => {
+    const list = [sess({ id: 'c1' }), ...burst(10)]
+    const status = (s: Session): SessionStatus => (s.id === 't0' ? 'waiting' : s.interactive ? 'idle' : 'done')
+    const { inline, overflow } = partitionSessions(list, status, 't1')
+    const ids = inline.map(s => s.id)
+    expect(ids).toContain('c1')
+    expect(ids).toContain('t0') // waiting — never hidden in a menu
+    expect(ids).toContain('t1') // selected
+    // Plus the newest VISIBLE_AUTOMATION of the rest, in the list's order.
+    expect(ids.filter(id => !['c1', 't0', 't1'].includes(id))).toEqual(['t6', 't7', 't8', 't9'])
+    expect(overflow.map(s => s.id)).toEqual(['t5', 't4', 't3', 't2'])
+    expect(inline.length + overflow.length).toBe(list.length)
+  })
+
+  it('shows a +N more menu that selects a run or closes all finished ones', async () => {
+    const list = [sess({ id: 'c1' }), ...burst(VISIBLE_AUTOMATION + 3)]
+    const { onSelect, onClose } = renderStrip(list, {}, { selectedId: 'c1' })
+    expect(screen.getAllByTestId('session-chip')).toHaveLength(1 + VISIBLE_AUTOMATION)
+    const more = screen.getByTestId('session-overflow')
+    expect(more.textContent).toContain('+3 more')
+
+    await act(async () => { fireEvent.click(more) })
+    await act(async () => { fireEvent.click(await screen.findByText('Trigger mail · 1')) })
+    expect(onSelect).toHaveBeenCalledWith('t1')
+
+    await act(async () => { fireEvent.click(more) })
+    await act(async () => { fireEvent.click(await screen.findByText('Close 3 finished')) })
+    expect(onClose.mock.calls.map(c => c[0]).sort()).toEqual(['t0', 't1', 't2'])
+  })
+
+  it('shows no overflow control when everything fits', () => {
+    renderStrip([sess({ id: 'c1' }), ...burst(VISIBLE_AUTOMATION)], {})
+    expect(screen.queryByTestId('session-overflow')).toBeNull()
   })
 })

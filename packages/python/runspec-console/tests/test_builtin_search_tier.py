@@ -409,6 +409,30 @@ def test_register_confirm_keeps_raw_name_displays_inner():
     assert detail["display_input"] == {"path": "x.md"}
 
 
+def test_register_confirm_carries_the_current_call_id():
+    """The confirm names the exact tool call it gates (set per call by the agent
+    loop), so the UI puts Approve/Deny on that card — not on every running card
+    that shares the tool name (every search-mode runnable call is run_runnable)."""
+    from runspec_console.bridge_const import CURRENT_CALL_ID
+
+    stub = _RegisterStub()
+    token = CURRENT_CALL_ID.set("toolu_b")
+    try:
+        rid, _ev, _h = stub._register_confirm(
+            "chat1", "use_tool", {"name": "create_document", "input": {}}, "confirm"
+        )
+    finally:
+        CURRENT_CALL_ID.reset(token)
+    (_event, detail) = stub.events[0]
+    assert detail["call_id"] == "toolu_b"
+    assert stub._pending_confirm_meta[rid]["call_id"] == "toolu_b"
+    # Outside a tool call (rule runs, gates with no agent call) it's empty.
+    stub._register_confirm(
+        "chat1", "use_tool", {"name": "create_document", "input": {}}, "confirm"
+    )
+    assert stub.events[1][1]["call_id"] == ""
+
+
 # ── fail-closed dispatch + autonomy registration ──────────────────────────────
 
 

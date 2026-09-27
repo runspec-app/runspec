@@ -8,6 +8,24 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.296.2] — 2026-09-27
+
+### Fixed
+
+- **An Approve/Deny gate sits on the card of the call it gates.** The confirm
+  event named only the tool, and the UI put the gate on every running card with
+  that name — in search mode every runnable call is `run_runnable`, so with more
+  than one running the gate showed on an earlier (top) card too. The event now
+  carries the tool call's `call_id` (set per call by the agent loop via
+  `bridge_const.CURRENT_CALL_ID`, also on the cold-start pending-confirm seed),
+  and the UI pairs by it (`confirmOwnsSegment`), falling back to the name for an
+  older backend.
+- **A burst of trigger runs no longer overruns the session chip row.** Chats,
+  the selected session and anything waiting for your input always show; beyond
+  those only the newest four automation runs get a chip, and the rest fold into
+  a **+N more** menu that selects any of them or closes all finished ones in one
+  click (`SessionStrip.partitionSessions`).
+
 ## [0.296.1] — 2026-09-26
 
 ### Fixed

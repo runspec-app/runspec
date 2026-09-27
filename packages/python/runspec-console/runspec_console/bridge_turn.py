@@ -37,7 +37,7 @@ from .adapters.base import (
     is_transient_model_error,
     retry_delay,
 )
-from .bridge_const import logger
+from .bridge_const import CURRENT_CALL_ID, logger
 from .session import (
     ChatSession,
     new_automation,
@@ -584,6 +584,10 @@ class TurnMixin(_Base):
                         # tool_end so the card keeps its badge.
                         gate_decision: dict[str, Any] = {}
                         inline = spec.inline_tools.get(tc.name)
+                        # Gathered calls each run in their own task (their own
+                        # context copy), so this names *this* call to any confirm
+                        # it raises.
+                        call_token = CURRENT_CALL_ID.set(str(tc.id or ""))
                         try:
                             if cancel.is_set():
                                 output = f"⏹ '{display}' was not run — you stopped the assistant."
@@ -609,6 +613,8 @@ class TurnMixin(_Base):
                             output = f"✗ '{display}' failed: {exc}"
                             if spec.stage is not None:
                                 spec.stage("running")  # un-stick an awaiting card
+                        finally:
+                            CURRENT_CALL_ID.reset(call_token)
                         self._dispatch(
                             "runspec:tool_end",
                             {

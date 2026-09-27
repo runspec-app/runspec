@@ -4,11 +4,15 @@
  * kind, an ellipsised label (monospace for automation), a running spinner, an
  * amber bell while the run waits for the operator, an unread dot for activity
  * in a session that isn't selected, and a dismiss × once it's finished.
- * Overflow scrolls horizontally. Pure presentation: state comes from
+ * The row stays bounded: every chat, the selected session and anything waiting
+ * on the operator always show, plus the newest few automation runs; the rest
+ * fold into a "+N more" menu (a busy trigger can fire dozens of runs) that also
+ * clears the finished ones in one click. Pure presentation: state comes from
  * useSessions + sessionStatus.
  */
-import { Button, Popconfirm, Spin, Tooltip } from 'antd'
-import { BellOutlined, ClockCircleOutlined, CloseOutlined, LoadingOutlined, MessageOutlined, ThunderboltOutlined } from '@ant-design/icons'
+import { Button, Dropdown, Popconfirm, Spin, Tooltip } from 'antd'
+import type { MenuProps } from 'antd'
+import { BellOutlined, ClockCircleOutlined, CloseOutlined, DownOutlined, LoadingOutlined, MessageOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import { useIsDark, useAccent, textColor, textMuted, textSecondary, surfaces, withAlpha, MONO_FONT, RADIUS } from '../ThemeContext'
 import type { Session, SessionStatus } from '../sessions'
 
@@ -40,11 +44,72 @@ const STATUS_TIP: Record<SessionStatus, string> = {
   done: 'Finished',
 }
 
+// Automation chips shown before the rest fold into the overflow menu.
+export const VISIBLE_AUTOMATION = 4
+
+/**
+ * Split sessions into the chips shown inline and the overflow menu. Always
+ * inline: interactive chats, the selected session, and any session waiting on
+ * the operator (an Approve/Deny must never hide in a menu). Other automation:
+ * the newest `max` inline, the rest overflow (newest first). Inline keeps the
+ * list's own order so chips don't jump around.
+ */
+export function partitionSessions(
+  sessions: Session[],
+  statusOf: (s: Session) => SessionStatus,
+  selectedId: string | null,
+  max = VISIBLE_AUTOMATION,
+): { inline: Session[]; overflow: Session[] } {
+  const pinned = (s: Session) => s.interactive || s.id === selectedId || statusOf(s) === 'waiting'
+  const rest = sessions.filter(s => !pinned(s)).sort((a, b) => b.createdAt - a.createdAt)
+  const shown = new Set(rest.slice(0, max).map(s => s.id))
+  return {
+    inline: sessions.filter(s => pinned(s) || shown.has(s.id)),
+    overflow: rest.slice(max),
+  }
+}
+
 export function SessionStrip({ sessions, selectedId, statusOf, hasBlocks, onSelect, onClose }: SessionStripProps) {
   const isDark = useIsDark()
   const accent = useAccent()
   const sf = surfaces(isDark)
   if (sessions.length === 0) return null
+  const { inline, overflow } = partitionSessions(sessions, statusOf, selectedId)
+  const finishedOverflow = overflow.filter(s => {
+    const st = statusOf(s)
+    return st === 'idle' || st === 'done'
+  })
+  const overflowItems: MenuProps['items'] = [
+    ...overflow.map(s => {
+      const Icon = KIND_ICON[s.kind] ?? MessageOutlined
+      const status = statusOf(s)
+      return {
+        key: s.id,
+        icon: <Icon style={{ fontSize: 12 }} />,
+        label: (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, maxWidth: 360 }}>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: MONO_FONT, fontSize: 12 }}>
+              {s.label || s.kind}
+            </span>
+            {status === 'running' && <LoadingOutlined spin style={{ fontSize: 11 }} />}
+            {s.unread && <span aria-label="unread" style={{ width: 6, height: 6, borderRadius: 3, background: accent, flexShrink: 0 }} />}
+          </span>
+        ),
+        title: `${s.label} — ${STATUS_TIP[status]}`,
+      }
+    }),
+    ...(finishedOverflow.length > 0
+      ? [
+          { type: 'divider' as const },
+          { key: '__close_finished', icon: <CloseOutlined style={{ fontSize: 11 }} />, label: `Close ${finishedOverflow.length} finished` },
+        ]
+      : []),
+  ]
+  const onOverflowClick: MenuProps['onClick'] = ({ key }) => {
+    if (key === '__close_finished') finishedOverflow.forEach(s => onClose(s.id))
+    else onSelect(String(key))
+  }
+  const overflowUnread = overflow.some(s => s.unread)
 
   return (
     <div
@@ -57,7 +122,7 @@ export function SessionStrip({ sessions, selectedId, statusOf, hasBlocks, onSele
         padding: '2px 0',
       }}
     >
-      {sessions.map(s => {
+      {inline.map(s => {
         const status = statusOf(s)
         const selected = s.id === selectedId
         const Icon = KIND_ICON[s.kind] ?? MessageOutlined
@@ -140,6 +205,20 @@ export function SessionStrip({ sessions, selectedId, statusOf, hasBlocks, onSele
           </div>
         )
       })}
+      {overflow.length > 0 && (
+        <Dropdown menu={{ items: overflowItems, onClick: onOverflowClick }} trigger={['click']} placement="bottomRight">
+          <Button
+            size="small"
+            data-testid="session-overflow"
+            aria-label={`${overflow.length} more sessions`}
+            style={{ flexShrink: 0, height: 24, fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+          >
+            +{overflow.length} more
+            {overflowUnread && <span aria-label="unread in overflow" style={{ width: 6, height: 6, borderRadius: 3, background: accent }} />}
+            <DownOutlined style={{ fontSize: 10 }} />
+          </Button>
+        </Dropdown>
+      )}
     </div>
   )
 }

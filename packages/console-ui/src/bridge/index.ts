@@ -1085,6 +1085,9 @@ export interface PendingConfirm {
   display_name?: string
   display_input?: Record<string, unknown>
   autonomy: string
+  // The gated tool call's id — pairs the gate with exactly its card (several
+  // same-name cards can be running). Absent on older backends.
+  call_id?: string
   created_at?: number
 }
 

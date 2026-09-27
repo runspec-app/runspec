@@ -641,7 +641,7 @@ interface OutputPanelProps {
   onToggleContext?: (id: string, inContext: boolean) => void
 }
 
-interface PendingConfirm {
+export interface PendingConfirm {
   request_id: string
   id: string          // chat block this confirm belongs to
   tool_name: string   // full host__tool name, matches the tool segment's entry.name
@@ -657,6 +657,22 @@ interface PendingConfirm {
   // older backend that didn't send it (falls back to "run").
   confirm_verb?: string
   autonomy: string
+  // The gated tool call's id (runspec:tool_confirm `call_id`). Absent on older
+  // backends and on gates with no agent tool call (rule runs).
+  call_id?: string
+}
+
+/**
+ * Does this pending confirm belong to this tool card? By call id when both
+ * sides carry one — several cards with the same tool name can be running (in
+ * search mode every runnable call is `run_runnable`), and name-only matching put
+ * the Approve/Deny gate on the wrong (earlier) card. Falls back to the tool
+ * name for an older backend. Only a running card can own a gate.
+ */
+export function confirmOwnsSegment(pc: PendingConfirm | null | undefined, entry: ToolCallEntry): boolean {
+  if (!pc || !entry.running) return false
+  if (pc.call_id && entry.callId) return pc.call_id === entry.callId
+  return pc.tool_name === entry.name
 }
 
 // What the currently-active block is doing right now, for the sticky footer:
@@ -773,11 +789,12 @@ export function OutputPanel({ blocks, onRerun, onAskLlm, onToggleContext }: Outp
 
   useEffect(() => {
     const onToolConfirm = (e: Event) => {
-      const { id, request_id, tool_name, tool_input, display_name, display_input, confirm_verb, autonomy } = (e as CustomEvent).detail as {
+      const { id, request_id, tool_name, tool_input, display_name, display_input, confirm_verb, autonomy, call_id } = (e as CustomEvent).detail as {
         id: string; request_id: string; tool_name: string; tool_input: Record<string, unknown>
         display_name?: string; display_input?: Record<string, unknown>; confirm_verb?: string; autonomy: string
+        call_id?: string
       }
-      setPendingConfirms(prev => ({ ...prev, [id]: { request_id, id, tool_name, tool_input: tool_input ?? {}, display_name, display_input, confirm_verb, autonomy } }))
+      setPendingConfirms(prev => ({ ...prev, [id]: { request_id, id, tool_name, tool_input: tool_input ?? {}, display_name, display_input, confirm_verb, autonomy, ...(call_id ? { call_id } : {}) } }))
     }
     // Authoritative "this gate finished" from the backend (approved / denied /
     // timed out) — request-id-precise so a late signal can't clear a newer gate
@@ -1246,30 +1263,21 @@ export function ChatTranscript({
         seg.kind === 'text' ? (
           <Markdown key={i} color={c.text}>{seg.text}</Markdown>
         ) : (
-          <ToolCallBlock
-            key={i}
-            entry={seg.entry}
-            awaiting={
-              pendingConfirm && pendingConfirm.tool_name === seg.entry.name && seg.entry.running
-                ? pendingConfirm.autonomy
-                : null
-            }
-            resolved={
-              pendingConfirm && pendingConfirm.tool_name === seg.entry.name && seg.entry.running && pendingConfirm.display_name
-                ? { name: pendingConfirm.display_name, input: pendingConfirm.display_input ?? {} }
-                : null
-            }
-            verb={
-              pendingConfirm && pendingConfirm.tool_name === seg.entry.name && seg.entry.running
-                ? pendingConfirm.confirm_verb
-                : undefined
-            }
-            editable={
-              !!pendingConfirm && pendingConfirm.tool_name === seg.entry.name && seg.entry.running
-                && (pendingConfirm.display_name ?? pendingConfirm.tool_name) === pendingConfirm.tool_name
-            }
-            onAnswer={onAnswerConfirm}
-          />
+          (() => {
+            const owns = confirmOwnsSegment(pendingConfirm, seg.entry)
+            const pc = owns ? pendingConfirm! : null
+            return (
+              <ToolCallBlock
+                key={i}
+                entry={seg.entry}
+                awaiting={pc ? pc.autonomy : null}
+                resolved={pc && pc.display_name ? { name: pc.display_name, input: pc.display_input ?? {} } : null}
+                verb={pc ? pc.confirm_verb : undefined}
+                editable={!!pc && (pc.display_name ?? pc.tool_name) === pc.tool_name}
+                onAnswer={onAnswerConfirm}
+              />
+            )
+          })()
         )
       )}
       {(currentText || !done) && (
@@ -1352,7 +1360,7 @@ const BlockCard = memo(function BlockCard({
   // inside ChatTranscript renders it (matched by tool_name) — don't also draw the
   // card-level gate, or the run would show two Approve/Deny panels.
   const segmentMatch = !!pendingConfirm && block.type === 'chat'
-    && block.segments.some(s => s.kind === 'tool' && s.entry.running && s.entry.name === pendingConfirm.tool_name)
+    && block.segments.some(s => s.kind === 'tool' && confirmOwnsSegment(pendingConfirm, s.entry))
   // A card-level gate is needed when a confirm is parked for this block but no
   // running tool segment claims it — the rule-mode trigger case (a runnable run,
   // not an agent tool call), and the cold-start seed case (a gate restored before
