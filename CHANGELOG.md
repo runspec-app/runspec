@@ -7,6 +7,27 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.60.0] — 2026-09-27
+
+### Added
+
+- **`runspec logs share --acl-user <user>` — grant write without a group change
+  or root.** `share` gained a repeatable `--acl-user` that additionally grants
+  each named OS user `rwX` on the logs dir via a POSIX ACL: an **access** entry
+  (recursive, so the existing files + `runspec_runs.db` become writable) plus a
+  **default** entry (so files created later inherit it). This is the answer to the
+  common no-root fleet case — an account that runs the runnables (e.g. the console
+  operator's SSH login user) isn't in the dir's group and can't be added to one
+  without root, but the dir's **owner** can grant it directly. Since `share` is
+  run *as the owner* (`sudo -u <owner> {venv}/bin/runspec logs share`, the scoped
+  grant), the ACL grant rides the same escalation — no broad sudo, no root, no
+  common group required. **Best-effort:** the per-dir result carries an `acl`
+  status (`applied` / `unsupported: …` when `setfacl` or filesystem ACLs are
+  absent / `error: …`) and the share still succeeds regardless — the group share
+  is the floor, the ACL is the upgrade. POSIX-only, `setfacl`-backed (a system
+  util, invoked via `subprocess`; no new Python dep). `runspec/logs.py`
+  `_grant_acl`; `runspec logs share [--acl-user U]…`.
+
 ## [0.59.0] — 2026-09-26
 
 ### Added

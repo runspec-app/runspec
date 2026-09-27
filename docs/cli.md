@@ -686,6 +686,22 @@ user may change — so if you don't own the dir, run it as the owner yourself:
 `sudo -u <owner> {venv}/bin/runspec logs share --group consoles`. Add the accounts
 to the group first, or a non-member still falls back to `~/logs`.
 
+**Grant a specific user without a group** — `--acl-user` (repeatable). On a host
+where you have no root, you often can't add an account to the dir's group (that
+needs root) — but the dir's **owner** can grant write directly with a POSIX ACL:
+
+```bash
+sudo -u <owner> {venv}/bin/runspec logs share --acl-user alice --acl-user svc
+```
+
+For each user this sets an **access** ACL (recursive — existing files + the runs
+index) and a **default** ACL (new files inherit), so the named account can write
+the dir with no group membership and no root. Best-effort: if `setfacl` or
+filesystem ACLs aren't available the share still succeeds (the `--json` result's
+per-dir `acl` field reads `unsupported: …`) and you fall back to the group route.
+This is exactly what the runspec-console "Make shared" button passes for your own
+login user when it escalates to the owner.
+
 ---
 
 ## Bash and shell runnables

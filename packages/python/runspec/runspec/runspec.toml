@@ -208,6 +208,7 @@ examples = [
   {cmd = "runspec logs prune deploy --max-files 50 --dry-run", description = "Preview keeping only the newest 50 files"},
   {cmd = "runspec logs prune --older-than 90d --scope home",   description = "Prune the shared ~/logs fallback instead of this venv's dir"},
   {cmd = "runspec logs share --group consoles",          description = "Make this venv's logs dir group-writable (POSIX; setgid + chgrp)"},
+  {cmd = "runspec logs share --acl-user alice",          description = "Also grant alice write via a POSIX ACL (no group change / root)"},
 ]
 
 [runspec.commands.logs.args]
@@ -225,6 +226,7 @@ gzip           = {type = "flag", description = "Gzip the archive (compact)", def
 dry-run        = {type = "flag", description = "Show what would change without deleting/archiving (prune/compact)", default = false}
 scope          = {options = ["venv", "home", "all"], description = "Which logs dir(s) to act on: 'venv' ({sys.prefix}/logs, this venv's own), 'home' (~/logs, the shared home fallback), or 'all' (both). Default: prune/compact/share act on 'venv' only — never the shared ~/logs; status/view show 'all'.", required = false}
 group          = {type = "str",  description = "Unix group to chgrp the logs dir + runs index to (share; POSIX only). Default: leave the group unchanged, just make it group-writable + setgid.", required = false}
+acl-user       = {type = "str",  description = "Also grant this OS user rwX on the dir via a POSIX ACL (repeatable; share). Lets an account that isn't in the dir's group still write there — no group change or root needed. Best-effort: needs setfacl + an ACL-capable filesystem.", multiple = true, required = false}
 
 [runspec.commands.history]
 description = "Query or maintain the per-venv runs index (runspec_runs.db)"

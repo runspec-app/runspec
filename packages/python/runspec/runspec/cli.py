@@ -937,9 +937,12 @@ def cmd_logs(args: list[str]) -> None:
             # Make the logs dir group-writable so a shared console group + the
             # service account a `run_as` runnable runs as can both write the runs
             # index. Defaults (unset --scope) to this venv's own dir only.
+            # `--acl-user` additionally grants a specific user write via a POSIX
+            # ACL (no group change / root needed).
             _logs.share(
                 dirs=_logs.scope_dirs(parsed.scope.value, destructive=True),
                 group=parsed.group.value or None,
+                acl_users=parsed.acl_user.value or None,
                 as_json=parsed.json.value,
             )
     except (ValueError, OSError) as exc:

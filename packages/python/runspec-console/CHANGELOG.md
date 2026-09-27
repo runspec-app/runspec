@@ -8,7 +8,25 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
-## [0.296.2] — 2026-09-27
+## [0.297.0] — 2026-09-27
+
+### Changed
+
+- **"Make shared" now grants your login user write automatically — no manual
+  `setfacl`, no root.** When the share escalates to the venv's owner (Run as), it
+  also passes `runspec logs share --acl-user <this console's login user>` (needs
+  runspec ≥ 0.60.0 on the target), so the owner grants that user write via a POSIX
+  ACL in the same escalated call. This closes the "shared it but my runs still log
+  to `~/logs`" gap on **rootless fleets**: the console's runnables run as the
+  *login* user (not the owner), which usually isn't in the dir's group and can't
+  be added to one without root — but the owner can grant it directly. Each
+  operator clicks "Make shared" once on their own console (which grants their own
+  login user); a shared SSH login is covered by one click. An old remote core that
+  doesn't know `--acl-user` is retried without it (then the existing
+  group-membership warning applies), and a host without `setfacl`/ACL support is
+  handled the same way — the writability probe still decides whether the warning
+  shows, and it now names why the ACL grant didn't apply. Requires
+  `runspec >= 0.60.0` (`bridge_reporting.share_venv_logs`).
 
 ### Fixed
 

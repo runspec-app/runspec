@@ -1262,6 +1262,15 @@ class ReportingMixin:
         ``run_as`` (the "Run as" field, pre-filled with the owner via
         :meth:`venv_owner`) for a venv owned by another user.
 
+        **When escalating**, it also passes ``--acl-user <this console's login
+        user>`` (runspec ``>= 0.60.0``) so the owner grants that user write via a
+        POSIX ACL — this console's runnables run as the *login* user, not the
+        owner, so without it their runs fall back to ``~/logs`` unless the login
+        user is in the dir's group (which needs root to arrange). The owner grants
+        it directly, no group/root. An old remote core that doesn't know
+        ``--acl-user`` is retried without it (then the group-membership warning
+        applies); ACLs unavailable on the host is handled the same way.
+
         ``group`` is the optional Unix group to ``chgrp`` to (empty ⇒ keep
         current). Returns ``{ok, venv, group, as_user, output, warning}`` on
         success, else ``{ok: False, venv, group, error}``."""
@@ -1286,34 +1295,52 @@ class ReportingMixin:
         # `runspec logs share --scope venv` acts on this venv's own {sys.prefix}/logs
         # only (never the shared ~/logs). `_run_logs` handles local/remote + the
         # `sudo -n -u <who>` escalation (the venv binary is scoped-sudoers-covered).
-        argv = ["logs", "share", "--scope", "venv"]
-        if g:
-            argv += ["--group", g]
-        argv.append("--json")
-        try:
-            code, stdout, stderr = self._run_logs(
-                host, rp, argv, timeout=30, run_as=who
-            )
-        except Exception as exc:  # noqa: BLE001 — surface any failure as a result, never raise into the UI
-            return {"ok": False, "venv": venv, "group": g, "error": str(exc)}
+        base = ["logs", "share", "--scope", "venv"] + (["--group", g] if g else [])
+        # When escalating to the owner, also have the owner grant *our* login user
+        # write via a POSIX ACL (runspec >= 0.60.0): this console's runnables run as
+        # the login user (not the owner), so without this its runs fall back to
+        # ~/logs unless the login user is in the dir's group — which needs root to
+        # arrange. The owner can grant it directly, no group/root. Not needed when
+        # we own the dir ourselves (non-escalated share).
+        acl_user = me if (escalate and me) else ""
+        attempts: list[list[str]] = []
+        if acl_user:
+            attempts.append([*base, "--acl-user", acl_user, "--json"])
+        attempts.append([*base, "--json"])
 
-        # `runspec logs share --json` emits one `{"shared": [...]}` object line;
-        # scan for it (last line first) so an INFO line routed to stdout can't mask
-        # it, and require the `shared` key so an old core silently *viewing* a
-        # runnable named "share" (its behaviour for the unknown verb) can't look
-        # like success.
+        def _find_payload(text: str) -> dict[str, Any] | None:
+            # `runspec logs share --json` emits one `{"shared": [...]}` object line;
+            # scan last-line-first so an INFO line can't mask it, and require the
+            # `shared` key so an old core silently *viewing* a runnable named
+            # "share" (its behaviour for the unknown verb) can't look like success.
+            for line in reversed(text.splitlines()):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(obj, dict) and isinstance(obj.get("shared"), list):
+                    return obj
+            return None
+
         payload: dict[str, Any] | None = None
-        for line in reversed(stdout.splitlines()):
-            line = line.strip()
-            if not line:
-                continue
+        code, stdout, stderr = -1, "", ""
+        for argv in attempts:
             try:
-                obj = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(obj, dict) and isinstance(obj.get("shared"), list):
-                payload = obj
+                code, stdout, stderr = self._run_logs(
+                    host, rp, argv, timeout=30, run_as=who
+                )
+            except Exception as exc:  # noqa: BLE001 — surface any failure as a result, never raise into the UI
+                return {"ok": False, "venv": venv, "group": g, "error": str(exc)}
+            payload = _find_payload(stdout)
+            if payload is not None:
                 break
+            # No payload from the `--acl-user` attempt ⇒ likely an old remote core
+            # (< 0.60.0) that rejects the flag; fall through to the plain attempt. A
+            # real permission/other failure fails the plain attempt the same way,
+            # and that error is what we report.
 
         if payload is not None:
             shared = payload["shared"]
@@ -1323,23 +1350,32 @@ class ReportingMixin:
                 bits.append(f"group {g}")
             if any(s.get("db_repaired") for s in shared):
                 bits.append("runs index repaired")
+            if first.get("acl") == "applied":
+                bits.append(f"acl for {acl_user}")
             output = f"shared {first.get('dir', logdir_s)} ({', '.join(bits)})"
             # When the share ran as the owner (escalated), the console's own (SSH/
-            # login) user — the one runnables actually run as — may still not be in
-            # the dir's group, so its runs' logs would silently fall back to ~/logs.
-            # Probe writability *as that user* and warn — the #1 "I shared it but
-            # logs still land in ~/logs" surprise. A non-escalated share was done
-            # *by* that user, so it can already write.
+            # login) user — the one runnables actually run as — may still not be able
+            # to write (not in the dir's group, and the ACL grant didn't take), so
+            # its runs' logs would silently fall back to ~/logs. Probe writability
+            # *as that user* and warn — the #1 "I shared it but logs still land in
+            # ~/logs" surprise. A non-escalated share was done *by* that user, so it
+            # can already write.
             warning = ""
             if escalate:
                 try:
                     if not self._probe_writable(host, entry, logdir_s):
                         eff = me or "the console's user"
                         grp = f"group '{g}'" if g else "the logs dir's group"
+                        acl_status = str(first.get("acl") or "")
+                        acl_note = (
+                            f" (the automatic ACL grant couldn't apply — {acl_status})"
+                            if acl_status and acl_status != "applied"
+                            else ""
+                        )
                         warning = (
-                            f"Shared, but {eff} isn't in {grp}, so runnable runs by "
-                            f"{eff} will still log to ~/logs (not {logdir_s}). Add {eff} "
-                            f"to {grp}, or share with a group {eff} belongs to."
+                            f"Shared, but {eff} isn't in {grp}{acl_note}, so runnable "
+                            f"runs by {eff} will still log to ~/logs (not {logdir_s}). Add "
+                            f"{eff} to {grp}, or share with a group {eff} belongs to."
                         )
                 except Exception:  # noqa: BLE001 — the probe is best-effort
                     pass

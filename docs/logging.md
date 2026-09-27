@@ -291,6 +291,22 @@ owner yourself — `sudo -u <owner> {venv}/bin/runspec logs share --group consol
 non-member of the group still logs to `~/logs`, so add the accounts to the group
 first.
 
+**No root to add a group member?** Use `--acl-user` instead of (or with)
+`--group`. On a host where you can't add an account to a group, the dir's owner
+can grant an account write directly with a POSIX ACL:
+
+```bash
+sudo -u <owner> {venv}/bin/runspec logs share --acl-user alice
+```
+
+This sets an access ACL (recursive) plus a default ACL (new files inherit) so
+`alice` can write the dir with no group change and no root. Best-effort — if
+`setfacl` or filesystem ACLs are unavailable the share still succeeds (the
+`--json` result's per-dir `acl` field says `unsupported`) and you fall back to the
+group route. The console's "Make shared" passes your own login user here
+automatically when it escalates to the owner, so its runs stop falling back to
+`~/logs` with no manual step.
+
 ---
 
 ## Run summary

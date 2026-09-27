@@ -599,11 +599,38 @@ class TestShareVenvLogs(unittest.TestCase):
         self.assertIn(
             "sudo -n -u svc /opt/venvs/deploy-core/bin/runspec logs share", share_cmd
         )
+        # Escalating grants the console's own login user write via an ACL, so its
+        # runs (which run as that user, not the owner) don't fall back to ~/logs.
+        self.assertIn("--acl-user u", share_cmd)
         self.assertEqual(res["warning"], "")  # probe returned writable
         # The second call is the `[ -w <logdir> ]` probe, run WITHOUT sudo.
         probe_cmd = m.call_args_list[1].args[1]
         self.assertIn("-w", probe_cmd)
         self.assertNotIn("sudo", probe_cmd)
+
+    def test_escalated_share_retries_without_acl_user_on_old_core(self) -> None:
+        # An old remote core (0.58.3–0.59.x) rejects the unknown `--acl-user`; the
+        # console falls back to the plain share (which that core understands), then
+        # probes. No silent failure just because the ACL flag is too new.
+        b = _make_bridge()
+        b._hosts = [_remote_entry()]  # ssh = u@h1 → effective user "u"
+        results = [
+            (
+                1,
+                "✗  unknown argument: --acl-user",
+                "",
+            ),  # attempt 1: --acl-user rejected
+            self._shared(),  # attempt 2: plain share succeeds
+            (0, "", ""),  # writability probe → writable
+        ]
+        with patch.object(b, "_ssh_run", side_effect=results) as m:
+            res = b.share_venv_logs("prod-1", "deploy-core", "consoles", run_as="svc")
+        self.assertTrue(res["ok"])
+        self.assertEqual(m.call_count, 3)
+        self.assertIn(
+            "--acl-user u", m.call_args_list[0].args[1]
+        )  # first tried the ACL
+        self.assertNotIn("--acl-user", m.call_args_list[1].args[1])  # retry dropped it
 
     def test_run_as_self_does_not_escalate(self) -> None:
         # Running as the SSH login user needs no sudo (and no writability probe).

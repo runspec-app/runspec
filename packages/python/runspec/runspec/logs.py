@@ -26,6 +26,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import time
 from collections.abc import Iterable
@@ -624,10 +625,57 @@ def compact(
     return compacted
 
 
+def _grant_acl(directory: Path, users: list[str]) -> str:
+    """Best-effort: grant each user ``rwX`` on ``directory`` via a POSIX ACL — an
+    **access** entry (recursive, so existing files + the runs index become
+    writable) plus a **default** entry (so files created later inherit it). This
+    lets an account that isn't in the dir's group still write there, with no group
+    change and no root — the owner (who runs this) grants it directly.
+
+    Returns ``"applied"``, ``"unsupported: …"`` (no ``setfacl`` / a filesystem
+    without ACL support), ``"error: …"``, or ``"skipped"`` (no users). Never raises
+    — the ACL grant is a bonus on top of the group share, so a failure here must
+    not fail the share.
+    """
+    users = [u for u in (users or []) if u]
+    if not users:
+        return "skipped"
+    setfacl = shutil.which("setfacl")
+    if not setfacl:
+        return "unsupported: setfacl not installed"
+    spec = ",".join(f"u:{u}:rwX" for u in users)
+
+    def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [setfacl, *args, str(directory)],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+
+    try:
+        access = _run(["-R", "-m", spec])
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"error: {exc}"
+    if access.returncode != 0:
+        msg = (access.stderr or access.stdout or "").strip().splitlines()
+        first = msg[0] if msg else f"exit {access.returncode}"
+        if "not supported" in first.lower():
+            return "unsupported: filesystem has no ACL support"
+        return f"error: {first}"
+    # Default ACL so new files inherit the grant (setfacl applies -d to
+    # directories only under -R, skipping regular files). Best-effort — the access
+    # ACL above is the load-bearing part.
+    with contextlib.suppress(OSError, subprocess.SubprocessError):
+        _run(["-R", "-d", "-m", spec])
+    return "applied"
+
+
 def share(
     dirs: Iterable[Path] | None = None,
     *,
     group: str | None = None,
+    acl_users: list[str] | None = None,
     as_json: bool = False,
     out: TextIO | None = None,
 ) -> list[dict[str, Any]]:
@@ -641,6 +689,12 @@ def share(
     664``). A dir ``chmod`` never touches a file already inside it, so without the
     repair a group member still couldn't write an index a non-member created.
 
+    ``acl_users`` additionally grants each named OS user ``rwX`` via a POSIX ACL
+    (see :func:`_grant_acl`) — the way to let an account that isn't in the dir's
+    group write there without a group change or root. Best-effort: the per-dir
+    result carries an ``acl`` status and the share still succeeds if ACLs aren't
+    available.
+
     **POSIX only** — setgid + group ownership are POSIX concepts, so this raises
     ``ValueError`` on a non-POSIX host. It is *sudo-free*: it changes only what the
     invoking user is allowed to change, so escalation — running it as the dir's
@@ -653,6 +707,7 @@ def share(
     from . import runsdb
 
     targets = list(dirs) if dirs is not None else log_dirs()
+    acl_users = [u for u in (acl_users or []) if u]
     out = out or sys.stdout
     results: list[dict[str, Any]] = []
     for d in targets:
@@ -672,11 +727,21 @@ def share(
                     shutil.chown(db, group=group)
                 os.chmod(db, 0o664)
                 db_repaired = True
-        results.append({"dir": str(d), "group": group or "", "mode": "2775", "db_repaired": db_repaired})
+        result: dict[str, Any] = {
+            "dir": str(d),
+            "group": group or "",
+            "mode": "2775",
+            "db_repaired": db_repaired,
+        }
+        if acl_users:
+            result["acl"] = _grant_acl(d, acl_users)
+            result["acl_users"] = list(acl_users)
+        results.append(result)
         if not as_json:
             g = f" (group {group})" if group else ""
             extra = " + runs index" if db_repaired else ""
-            out.write(f"shared {d}{g} — 2775 setgid{extra}\n")
+            acl = f" + acl {result['acl']} for {','.join(acl_users)}" if acl_users else ""
+            out.write(f"shared {d}{g} — 2775 setgid{extra}{acl}\n")
     if as_json:
         out.write(json.dumps({"shared": results}) + "\n")
     return results

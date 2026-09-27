@@ -6,6 +6,7 @@ import gzip
 import io
 import json
 import os
+import subprocess
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -471,7 +472,11 @@ class TestShare:
         from runspec import cli
 
         seen: dict[str, object] = {}
-        monkeypatch.setattr(logs, "share", lambda *, dirs, group, as_json: seen.update(group=group, as_json=as_json))
+        monkeypatch.setattr(
+            logs,
+            "share",
+            lambda *, dirs, group, acl_users, as_json: seen.update(group=group, as_json=as_json),
+        )
         cli.cmd_logs(["share", "--group", "consoles", "--json"])
         assert seen == {"group": "consoles", "as_json": True}
 
@@ -488,3 +493,84 @@ class TestShare:
             cli.cmd_logs(["share", "--group", "consoles"])
         assert exc.value.code == 1
         assert "✗" in capsys.readouterr().out
+
+    def test_acl_grants_via_setfacl(self, tmp_path, monkeypatch):
+        # --acl-user runs setfacl (access + default ACL) granting the user rwX, and
+        # records "applied". Monkeypatch setfacl so it needs no real ACL support.
+        d = tmp_path / "logs"
+        d.mkdir()
+        calls: list[list[str]] = []
+
+        def fake_run(argv, **_kw):
+            calls.append(argv)
+            return subprocess.CompletedProcess(argv, 0, "", "")
+
+        monkeypatch.setattr(logs.shutil, "which", lambda _name: "/usr/bin/setfacl")
+        monkeypatch.setattr(logs.subprocess, "run", fake_run)
+        results = logs.share([d], acl_users=["alice"], out=io.StringIO())
+        assert results[0]["acl"] == "applied"
+        assert results[0]["acl_users"] == ["alice"]
+        # An access pass (-R -m) and a default pass (-R -d -m), both granting rwX.
+        assert calls[0][:3] == ["/usr/bin/setfacl", "-R", "-m"]
+        assert "u:alice:rwX" in calls[0][3]
+        assert any(a[1:4] == ["-R", "-d", "-m"] for a in calls)
+
+    def test_acl_multiple_users_in_one_spec(self, tmp_path, monkeypatch):
+        d = tmp_path / "logs"
+        d.mkdir()
+        calls: list[list[str]] = []
+        monkeypatch.setattr(logs.shutil, "which", lambda _name: "/usr/bin/setfacl")
+        monkeypatch.setattr(logs.subprocess, "run", lambda argv, **_k: calls.append(argv) or subprocess.CompletedProcess(argv, 0, "", ""))
+        logs.share([d], acl_users=["alice", "svc"], out=io.StringIO())
+        assert calls[0][3] == "u:alice:rwX,u:svc:rwX"
+
+    def test_acl_unsupported_when_no_setfacl(self, tmp_path, monkeypatch):
+        d = tmp_path / "logs"
+        d.mkdir()
+        monkeypatch.setattr(logs.shutil, "which", lambda _name: None)
+        results = logs.share([d], acl_users=["alice"], out=io.StringIO())
+        assert results[0]["acl"].startswith("unsupported")
+
+    def test_acl_unsupported_when_filesystem_rejects(self, tmp_path, monkeypatch):
+        d = tmp_path / "logs"
+        d.mkdir()
+        monkeypatch.setattr(logs.shutil, "which", lambda _name: "/usr/bin/setfacl")
+        monkeypatch.setattr(
+            logs.subprocess,
+            "run",
+            lambda argv, **_k: subprocess.CompletedProcess(argv, 1, "", "setfacl: logs: Operation not supported"),
+        )
+        results = logs.share([d], acl_users=["alice"], out=io.StringIO())
+        assert results[0]["acl"] == "unsupported: filesystem has no ACL support"
+
+    def test_acl_failure_does_not_fail_the_share(self, tmp_path, monkeypatch):
+        # A setfacl error still leaves the group share applied (2775) — ACL is a bonus.
+        d = tmp_path / "logs"
+        d.mkdir()
+        monkeypatch.setattr(logs.shutil, "which", lambda _name: "/usr/bin/setfacl")
+        monkeypatch.setattr(
+            logs.subprocess,
+            "run",
+            lambda argv, **_k: subprocess.CompletedProcess(argv, 1, "", "setfacl: some other error"),
+        )
+        results = logs.share([d], acl_users=["alice"], out=io.StringIO())
+        assert results[0]["acl"].startswith("error:")
+        assert d.stat().st_mode & 0o7777 == 0o2775  # the share itself still applied
+
+    def test_no_acl_key_without_users(self, tmp_path):
+        d = tmp_path / "logs"
+        d.mkdir()
+        results = logs.share([d], out=io.StringIO())
+        assert "acl" not in results[0]
+
+    def test_cli_share_acl_user_dispatches(self, monkeypatch):
+        from runspec import cli
+
+        seen: dict[str, object] = {}
+        monkeypatch.setattr(
+            logs,
+            "share",
+            lambda *, dirs, group, acl_users, as_json: seen.update(acl_users=acl_users),
+        )
+        cli.cmd_logs(["share", "--acl-user", "alice", "--acl-user", "svc"])
+        assert seen["acl_users"] == ["alice", "svc"]
