@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Table, Tag, Typography, Button, Tooltip, message, Input, Drawer, Spin, Empty, Alert, Segmented } from 'antd'
 import { RedoOutlined, CopyOutlined, RobotOutlined, UserOutlined, SearchOutlined, EditOutlined, ClockCircleOutlined, ProfileOutlined } from '@ant-design/icons'
 import type { ColumnType } from 'antd/es/table'
+import type { FilterValue } from 'antd/es/table/interface'
 import { bridge, type HistoryRecord, type HistoryLogLine, type HistorySyncState, type LogViewResult, type RunningRun } from '../bridge'
 import { LogStream } from '../components/LogStream'
 import { MONO_FONT, RADIUS, useAccent, withAlpha } from '../ThemeContext'
@@ -402,7 +403,11 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
   // so automated runs (scheduled/trigger runnable runs on their own targets, and
   // agent/trigger/schedule turns logged on the console host) surface regardless
   // of the sidebar selection. The Host column filter narrows within the set.
-  const [hostColumnFilter, setHostColumnFilter] = useState<string[]>([])
+  // Every column filter's selection, keyed by column key — fully controlled so a
+  // re-render (a poll / run_end / history_updated refetch) never clears it. The
+  // columns used to pin `filteredValue: []`, which snapped any selection back to
+  // empty on the next render.
+  const [colFilters, setColFilters] = useState<Record<string, FilterValue | null>>({})
   const [expandedKeys, setExpandedKeys] = useState<string[]>([])
   const [fullLogRecord, setFullLogRecord] = useState<HistoryRecord | null>(null)
   // Read window in days (0 = all) — bounds the backend read so a first visit is
@@ -620,7 +625,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       ),
       filters: [{ text: 'Agent', value: 'llm' }, { text: 'User', value: 'user' }],
       onFilter: (value, record) => (record.initiatedBy ?? 'user') === value,
-      filteredValue: [],
+      filteredValue: colFilters['runBy'] ?? null,
     },
     {
       title: 'Group',
@@ -641,7 +646,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       },
       filters: groups.map(g => ({ text: g, value: g })),
       onFilter: (value, record) => record.group === value,
-      filteredValue: [],
+      filteredValue: colFilters['group'] ?? null,
     },
     ...(runbooks.length > 0 ? [{
       title: 'Runbook',
@@ -651,6 +656,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
         : <span style={{ color: 'var(--rs-text-faint)' }}>—</span>,
       filters: runbooks.map(s => ({ text: `$${s}`, value: s })),
       onFilter: (value, record) => record.runbook === value,
+      filteredValue: colFilters['runbook'] ?? null,
     } as ColumnType<HistoryRecord>] : []),
     {
       title: 'Host',
@@ -659,7 +665,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       render: (h: string) => <Tag>{h}</Tag>,
       filters: hosts.map(h => ({ text: h, value: h })),
       onFilter: (value, record) => record.host === value,
-      filteredValue: hostColumnFilter,
+      filteredValue: colFilters['host'] ?? null,
     },
     {
       title: 'Operator',
@@ -667,7 +673,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       key: 'operator',
       filters: operators.map(u => ({ text: u, value: u })),
       onFilter: (value, record) => record.operator === value,
-      filteredValue: [],
+      filteredValue: colFilters['operator'] ?? null,
     },
     {
       title: 'Run as',
@@ -676,7 +682,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       render: (u: string) => <code style={{ fontSize: 13 }}>{u}</code>,
       filters: runAsUsers.map(u => ({ text: u, value: u })),
       onFilter: (value, record) => record.runAs === value,
-      filteredValue: [],
+      filteredValue: colFilters['runAs'] ?? null,
     },
     {
       title: 'Status',
@@ -693,7 +699,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
         { text: 'skipped', value: -1 },
       ],
       onFilter: (value, record) => historyStatusMatches(record, value as number),
-      filteredValue: [],
+      filteredValue: colFilters['exitCode'] ?? null,
     },
     {
       title: 'Duration',
@@ -710,7 +716,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       sorter: (a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime(),
       defaultSortOrder: 'descend',
     },
-  ], [groups, runbooks, hosts, operators, runAsUsers, hostColumnFilter, activeScope, onScopeToggle, accent])
+  ], [groups, runbooks, hosts, operators, runAsUsers, colFilters, activeScope, onScopeToggle, accent])
 
   return (
     <div>
@@ -773,7 +779,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
         size="small"
         loading={loading && records.length === 0}
         pagination={{ pageSize: 50, showSizeChanger: true }}
-        onChange={(_, filters) => setHostColumnFilter((filters['host'] as string[]) || [])}
+        onChange={(_, filters) => setColFilters(filters)}
         expandable={{
           expandedRowRender: (record) => {
             const key = rowKeyOf(record)

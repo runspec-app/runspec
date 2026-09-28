@@ -100,11 +100,11 @@ def _pull_all(logs_dir: Path, db_id=None, seq=None, limit=2000, window_start=Non
 # ── schema + every writer path ─────────────────────────────────────────────────
 
 
-def test_fresh_db_is_v4(logs_dir):
+def test_fresh_db_is_current_schema(logs_dir):
     runsdb.begin_run(logs_dir, _row())
     with _raw(logs_dir) as con:
         assert runsdb._has_sync(con)
-        assert con.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert con.execute("PRAGMA user_version").fetchone()[0] == runsdb._SCHEMA_VERSION
         meta = runsdb.sync_state(con)
     assert meta and meta["db_id"] and meta["seq"] == 1 and meta["floor"] == 0
     assert _seq(logs_dir, "r1") == 1
@@ -213,7 +213,7 @@ def test_old_writer_on_a_v4_db_still_gets_seq(logs_dir):
     with _raw(logs_dir) as c:
         assert runsdb._has_sync(c)
     st = runsdb.stats(logs_dir)
-    assert st["schema_version"] == 4 and st["sync"]["seq"] == _meta_seq(logs_dir)
+    assert st["schema_version"] == runsdb._SCHEMA_VERSION and st["sync"]["seq"] == _meta_seq(logs_dir)
 
 
 # ── the pull contract ──────────────────────────────────────────────────────────

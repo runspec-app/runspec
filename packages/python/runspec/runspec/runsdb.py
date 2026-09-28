@@ -48,7 +48,14 @@ DB_NAME = "runspec_runs.db"
 # by *structure* (``_has_sync``), never by user_version: an older runspec writing
 # the DB resets user_version to its own number, but the triggers (which live in
 # the DB file) keep stamping ``seq`` on its writes regardless.
-_SCHEMA_VERSION = 4
+_SCHEMA_VERSION = 5
+# v5: + events (JSON {level: count} — the run's log-record counts by level) and
+# exception (JSON {type, message} — the uncaught exception, no traceback), taken
+# from the run_summary at finalize. They let a reader (the console's Analytics)
+# aggregate from the index instead of parsing log files. Written with COALESCE so
+# a later finalize that doesn't know them (`runspec exec` finalizing its child's
+# row) never clears them.
+_EXCEPTION_MESSAGE_MAX = 500
 _BUSY_TIMEOUT_MS = 2000
 
 _COLUMNS = (
@@ -101,7 +108,11 @@ CREATE TABLE IF NOT EXISTS runs (
   log_pruned_at TEXT,
   log_pruned_by TEXT,
   -- v3: the `runspec exec --label` tag (e.g. "sched:<id>"); NULL for direct runs.
-  label         TEXT
+  label         TEXT,
+  -- v5: from the run_summary — log-record counts by level, and the uncaught
+  -- exception's type + message. JSON text; NULL when unknown.
+  events        TEXT,
+  exception     TEXT
 );
 CREATE INDEX IF NOT EXISTS runs_start_ts ON runs (start_ts);
 CREATE INDEX IF NOT EXISTS runs_status   ON runs (status);
@@ -278,13 +289,13 @@ def _connect(path: Path, *, readonly: bool = False) -> sqlite3.Connection | None
 def _migrate(con: sqlite3.Connection) -> None:
     """Apply additive column adds an existing DB predates — the forward/backward-
     compatible half of a schema bump. v1 → v2 (§8.1): ``log_pruned_at`` /
-    ``log_pruned_by``; v2 → v3: ``label``. ``ALTER TABLE ADD COLUMN`` is metadata-only (no table
+    ``log_pruned_by``; v2 → v3: ``label``; v4 → v5: ``events`` / ``exception``. ``ALTER TABLE ADD COLUMN`` is metadata-only (no table
     rewrite); a fresh DB already has them via ``_DDL`` so this is a no-op there.
     Best-effort — a migration failure never blocks the write (the DB is a derived
     index; worst case it is rebuilt via :func:`reindex`)."""
     with contextlib.suppress(sqlite3.Error):
         have = {r[1] for r in con.execute("PRAGMA table_info(runs)").fetchall()}
-        for col in ("log_pruned_at", "log_pruned_by", "label"):
+        for col in ("log_pruned_at", "log_pruned_by", "label", "events", "exception"):
             if col not in have:
                 con.execute(f"ALTER TABLE runs ADD COLUMN {col} TEXT")
         # Here, not in _DDL: on a pre-v3 DB the column only exists after the ALTER.
@@ -468,6 +479,8 @@ def finish_run(
     cfg: dict[str, Any] | None = None,
     runnable: str = "",
     command: str = "",
+    events: dict[str, int] | None = None,
+    exception: Any = None,
 ) -> None:
     """Finalize a row (``completed``/``failed`` + exit code + duration) via UPSERT
     keyed on ``run_id`` — correct whether or not the start row landed. Then run the
@@ -479,16 +492,21 @@ def finish_run(
     row exists — begin_run lost its race, or the index was unwritable/contended at
     start). Without them that row lands nameless, and the console History read maps
     a DB row's ``runnable`` with no filename fallback, so it renders as
-    ``<venv>/`` with a blank name."""
+    ``<venv>/`` with a blank name.
+
+    ``events`` / ``exception`` are the run_summary's log-record counts and uncaught
+    exception (v5). Omitted (``runspec exec`` finalizing a child that already
+    wrote its own), they're left as they are."""
     with contextlib.suppress(Exception):
         con = _connect(db_path(log_dir))
         if con is None:
             return
         try:
             end_ts = _now_iso()
+            ev, exc = _events_json(events), _exception_json(exception)
             cur = con.execute(
-                "UPDATE runs SET status=?, exit_code=?, end_ts=?, duration_ms=? WHERE run_id=?",
-                (status, exit_code, end_ts, duration_ms, run_id),
+                "UPDATE runs SET status=?, exit_code=?, end_ts=?, duration_ms=?, events=COALESCE(?, events), exception=COALESCE(?, exception) WHERE run_id=?",
+                (status, exit_code, end_ts, duration_ms, ev, exc, run_id),
             )
             # This statement's own count — not con.total_changes, which also counts
             # the migration's writes (and trigger writes) on this connection.
@@ -498,8 +516,8 @@ def finish_run(
                 # history is still complete, carrying the runnable name + command
                 # so the row is never nameless.
                 con.execute(
-                    "INSERT OR IGNORE INTO runs (run_id, runnable, command, status, exit_code, start_ts, end_ts, duration_ms) VALUES (?,?,?,?,?,?,?,?)",
-                    (run_id, runnable or "", command or "", status, exit_code, end_ts, end_ts, duration_ms),
+                    "INSERT OR IGNORE INTO runs (run_id, runnable, command, status, exit_code, start_ts, end_ts, duration_ms, events, exception) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (run_id, runnable or "", command or "", status, exit_code, end_ts, end_ts, duration_ms, ev, exc),
                 )
             con.commit()
             _maintain(con, cfg or {})
@@ -508,9 +526,32 @@ def finish_run(
             con.close()
 
 
+def _events_json(events: Any) -> str | None:
+    """``{level: count}`` → JSON (non-zero counts). A run that logged nothing is
+    ``"{}"`` — NULL is reserved for *unknown* (a runspec that predates v5)."""
+    if not isinstance(events, dict):
+        return None
+    clean = {str(k): int(v) for k, v in events.items() if isinstance(v, int) and not isinstance(v, bool) and v}
+    return json.dumps(clean, sort_keys=True)
+
+
+def _exception_json(exc: Any) -> str | None:
+    """A run_summary ``exception`` (``{type, message, traceback}`` or a string) →
+    JSON ``{type, message}``, message capped. The traceback stays in the log."""
+    if not exc:
+        return None
+    if isinstance(exc, dict):
+        etype, msg = str(exc.get("type") or ""), str(exc.get("message") or "")
+    else:
+        etype, msg = "", str(exc)
+    return json.dumps({"type": etype, "message": msg[:_EXCEPTION_MESSAGE_MAX]})
+
+
 def _normalise_row(row: dict[str, Any]) -> dict[str, Any]:
     out = {c: row.get(c) for c in _COLUMNS}
     out["label"] = row.get("label") or None
+    out["events"] = _events_json(row.get("events"))
+    out["exception"] = _exception_json(row.get("exception"))
     out["run_id"] = row.get("run_id") or ""
     out["runnable"] = row.get("runnable") or ""
     out["status"] = row.get("status") or "running"
@@ -524,17 +565,19 @@ def _normalise_row(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _upsert(con: sqlite3.Connection, row: dict[str, Any]) -> None:
-    """INSERT or overwrite a row by ``run_id``. ``label`` is written on insert but
-    only ever *kept* on conflict: under ``runspec exec`` the wrapper writes the
-    labelled row first and the child's own begin/finish upserts (which don't know
-    the label) must not clear it."""
-    cols = ", ".join((*_COLUMNS, "label"))
-    placeholders = ", ".join("?" for _ in range(len(_COLUMNS) + 1))
+    """INSERT or overwrite a row by ``run_id``. ``label``, ``events`` and
+    ``exception`` are written on insert but only ever *kept* on conflict: under
+    ``runspec exec`` the wrapper writes the labelled row first and the child's own
+    begin/finish upserts (which don't know the label) must not clear it — and a
+    begin that races a finish must not clear the finish's events."""
+    kept = ("label", "events", "exception")
+    cols = ", ".join((*_COLUMNS, *kept))
+    placeholders = ", ".join("?" for _ in range(len(_COLUMNS) + len(kept)))
     updates = ", ".join(f"{c}=excluded.{c}" for c in _COLUMNS if c != "run_id")
-    updates += ", label=COALESCE(excluded.label, runs.label)"
+    updates += "".join(f", {c}=COALESCE(excluded.{c}, runs.{c})" for c in kept)
     con.execute(
         f"INSERT INTO runs ({cols}) VALUES ({placeholders}) ON CONFLICT(run_id) DO UPDATE SET {updates}",
-        (*(row[c] for c in _COLUMNS), row.get("label") or None),
+        (*(row[c] for c in _COLUMNS), *(row.get(c) or None for c in kept)),
     )
 
 
@@ -904,7 +947,8 @@ def stats(log_dir: Path) -> dict[str, Any]:
                 sync = sync_state(con)
                 if sync is not None:
                     # By structure: an older runspec may have reset user_version.
-                    out["schema_version"] = max(int(out["schema_version"] or 0), 4)
+                    has_v5 = any(r[1] == "events" for r in con.execute("PRAGMA table_info(runs)").fetchall())
+                    out["schema_version"] = max(int(out["schema_version"] or 0), 5 if has_v5 else 4)
                     sync["tombstones"] = con.execute("SELECT count(*) FROM runs_tombstones").fetchone()[0]
                     out["sync"] = sync
             by_status = {r[0]: r[1] for r in con.execute("SELECT status, count(*) FROM runs GROUP BY status")}
@@ -996,6 +1040,8 @@ def reindex(log_dir: Path, records: list[dict[str, Any]]) -> int:
                             "skill": rec.get("skill", ""),
                             "autonomy": rec.get("autonomy", ""),
                             "args": rec.get("invocation_args") or {},
+                            "events": rec.get("events"),
+                            "exception": exc,
                         }
                     ),
                 )

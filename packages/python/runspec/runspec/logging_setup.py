@@ -737,6 +737,11 @@ def _emit_run_summary() -> None:
                 # never nameless in History.
                 runnable=state["runnable"],
                 command=" ".join(state["command_path"]),
+                # v5: what Analytics aggregates — log-record counts by level and
+                # the uncaught exception (type + message; the traceback stays in
+                # the log).
+                events=dict(state["counter"].counts),
+                exception=state["exception"],
             )
 
     # Human-readable echo — opt-in (`summary_console`). Stays on stderr so it

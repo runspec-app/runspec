@@ -803,6 +803,43 @@ def db_row_to_record(row: dict[str, Any], group: str, host: str) -> dict[str, An
         # The index only holds real runnable runs (core's configure_logging/atexit
         # hooks; chat turns write run_summary via the console, not the core DB path).
         "kind": "runnable",
+        # The rich fields Analytics aggregates — the same shape _summary_extra
+        # gives a log-parsed record (History's slim rows drop it).
+        "extra": _db_row_extra(row, args, command),
+    }
+
+
+def _json_col(value: Any) -> Any:
+    """A JSON-text index column → its value; ``None`` for NULL / unparseable."""
+    if value is None or isinstance(value, (dict, list)):
+        return value
+    try:
+        return json.loads(value) if str(value).strip() else None
+    except (ValueError, TypeError):
+        return None
+
+
+def _db_row_extra(
+    row: dict[str, Any], args: dict[str, Any], command: str
+) -> dict[str, Any]:
+    """``_summary_extra``'s shape from a runs-index row. ``events`` / ``exception``
+    are the v5 columns (runspec >= 0.64): ``events`` is ``None`` when the row
+    predates them — *unknown*, which Analytics reports — and ``{}`` for a run that
+    logged nothing."""
+    events = _json_col(row.get("events"))
+    exc = _json_col(row.get("exception"))
+    return {
+        "autonomy": row.get("autonomy"),
+        "agent": bool(row.get("agent")),
+        "trigger": str(row.get("trigger") or ""),
+        "runbook": str(row.get("skill") or row.get("runbook") or ""),
+        "exception": exc
+        if isinstance(exc, dict) and (exc.get("type") or exc.get("message"))
+        else None,
+        "events": events if isinstance(events, dict) else None,
+        "command_path": command.split() if command else [],
+        "user_target": row.get("user_target"),
+        "invocation_args": args,
     }
 
 

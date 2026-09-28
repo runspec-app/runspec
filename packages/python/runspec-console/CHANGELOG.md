@@ -8,6 +8,41 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.301.0] — 2026-09-28
+
+### Changed
+
+- **Analytics reads the History cache; its window is capped at 30 days.** The
+  Analytics tab used to stream and parse every selected host's full audit logs
+  over SSH on each open and every 45 s poll. For a remote host with a v4 runs
+  index (runspec >= 0.63.0) it now aggregates the local History cache instead,
+  kept current by the same incremental pulls as History, with no SSH on its path.
+  - The window is **at most 30 days** to match the cache: the 90d option is gone,
+    and a wider request is clamped server-side.
+  - Log-event counts and top exceptions come from the index's new
+    `events` / `exception` fields (runspec >= 0.64.0).
+    - Runs an older runspec recorded still count toward totals, success and
+      durations. An info note names the hosts whose events or exceptions are
+      missing (`eventsUnknown` on the result).
+  - The local host (its logs also hold the console's agent turns and built-in
+    tool calls) and hosts without a v4 index are parsed from their logs as
+    before.
+  - Index rows now map to records carrying the same `extra` a log parse gives
+    (`bridge_utils._db_row_extra`), and the cache's log-parsed dirs keep `extra`
+    too.
+  - The cache file is versioned (`history_cache.CACHE_VERSION` 2); a cache
+    written by 0.300.0 is rebuilt once on first open.
+
+### Fixed
+
+- **History column filters no longer clear themselves.** Selecting values in
+  the Run by / Group / Operator / Run as / Status filters reset to "nothing
+  selected" a moment later: those columns pinned `filteredValue: []` (a
+  controlled, always-empty filter), so the next re-render snapped the selection
+  back. Since 0.300.0, a cache pull's `history_updated` refetch triggers such
+  re-renders often, so the bug showed within seconds. Every column filter is now
+  controlled from one state object updated by the table's `onChange`.
+
 ## [0.300.0] — 2026-09-28
 
 ### Added

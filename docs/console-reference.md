@@ -363,7 +363,15 @@ With the cache, opening History shows a remote host's runs immediately and a
 background pull (each refresh, and at once when a run finishes there) brings
 them up to date. If a pull fails, the host's chip in the per-host strip turns
 amber and reads **as of 3m ago**; hover for the error. The 90d / All views, and
-the local host, always read directly. Design:
+the local host, always read directly.
+
+The **Analytics** tab aggregates from the same cache for those hosts (no SSH on
+its path), so its window is **at most 30 days** (7d / 30d). Its log-event counts
+and top exceptions come from the runs index's `events` / `exception` fields,
+which need `runspec >= 0.64.0` on the host. Runs recorded by an older runspec
+still count, but the tab notes that their events and exceptions are missing.
+Hosts the cache can't serve (and the local host, whose logs also hold the
+console's agent turns) are read from their audit logs as before. Design:
 [history-incremental-pull.md](design/history-incremental-pull.md).
 
 ## `[improve]`

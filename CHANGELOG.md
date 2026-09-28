@@ -7,6 +7,30 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.64.0] — 2026-09-28
+
+### Added
+
+- **Runs index schema v5 — `events` and `exception` columns.** Each run's row now
+  also carries what the `run_summary` knows about it:
+  - `events`: the run's log-record counts by level, as JSON; `"{}"` for a run
+    that logged nothing.
+  - `exception`: the uncaught exception's type + message, as JSON; the message
+    is capped at 500 chars, and the traceback stays in the log.
+
+  A reader can then aggregate outcomes, log events and top exceptions from the
+  index instead of parsing log files. runspec-console's Analytics tab does this
+  over its History cache.
+  - Written by `finish_run` from the summary, and filled by `reindex` from the
+    audit logs.
+  - They're **kept** by a later finalize that doesn't know them (`runspec exec`
+    finalizing its child's row) and by a begin that races a finish.
+  - NULL means *unknown*: a row written by a runspec older than 0.64.
+  - Additive: the migration is two `ALTER TABLE ADD COLUMN`s on the first write.
+    Older readers ignore the columns, and the change sequence carries the new
+    fields to incremental readers.
+  - `runspec history stats` reports schema 5 by structure.
+
 ## [0.63.0] — 2026-09-28
 
 ### Added

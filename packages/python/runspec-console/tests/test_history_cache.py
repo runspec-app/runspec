@@ -230,8 +230,9 @@ class TestHistoryCacheStore(unittest.TestCase):
         c.close()
 
 
-class TestHistoryPull(unittest.TestCase):
-    """End to end: Bridge ↔ fake SSH running the real snippet ↔ core-written DBs."""
+class _PullFixture(unittest.TestCase):
+    """A Bridge with one remote host whose fake SSH runs the real pull snippet
+    against core-written indexes. No tests of its own."""
 
     def setUp(self) -> None:
         self.tmp = Path(tempfile.mkdtemp())
@@ -291,6 +292,10 @@ class TestHistoryPull(unittest.TestCase):
             patch("runspec_console.config.read_history", return_value={"cache": True}),
         ):
             return self.b._history_pull(self.b._host_entry("prod-1"))
+
+
+class TestHistoryPull(_PullFixture):
+    """End to end: Bridge ↔ fake SSH running the real snippet ↔ core-written DBs."""
 
     def test_first_read_pulls_then_serves_from_cache(self) -> None:
         _run(self.logs, "a")
@@ -429,3 +434,139 @@ class TestHistoryPull(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestDbRowExtra(unittest.TestCase):
+    def test_v5_columns_map_into_extra(self) -> None:
+        rec = bridge_utils.db_row_to_record(
+            {
+                "run_id": "r",
+                "runnable": "backup",
+                "status": "failed",
+                "exit_code": 1,
+                "start_ts": _now(),
+                "autonomy": "confirm",
+                "skill": "rb1",
+                "command": "sync all",
+                "events": '{"ERROR": 2, "INFO": 5}',
+                "exception": '{"type": "OSError", "message": "disk full"}',
+                "args": '{"target": "prod"}',
+            },
+            "v1",
+            "prod-1",
+        )
+        ex = rec["extra"]
+        self.assertEqual(ex["events"], {"ERROR": 2, "INFO": 5})
+        self.assertEqual(ex["exception"], {"type": "OSError", "message": "disk full"})
+        self.assertEqual((ex["autonomy"], ex["runbook"]), ("confirm", "rb1"))
+        self.assertEqual(ex["command_path"], ["sync", "all"])
+        self.assertEqual(ex["invocation_args"], {"target": "prod"})
+
+    def test_pre_v5_row_is_unknown_and_empty_is_empty(self) -> None:
+        old = bridge_utils.db_row_to_record({"run_id": "r", "runnable": "x"}, "v", "h")
+        self.assertIsNone(old["extra"]["events"])
+        self.assertIsNone(old["extra"]["exception"])
+        quiet = bridge_utils.db_row_to_record(
+            {"run_id": "r", "runnable": "x", "events": "{}"}, "v", "h"
+        )
+        self.assertEqual(quiet["extra"]["events"], {})
+
+
+class TestCacheVersion(unittest.TestCase):
+    def test_an_older_cache_is_rebuilt(self) -> None:
+        import sqlite3
+
+        path = Path(tempfile.mkdtemp()) / "history_cache.db"
+        con = sqlite3.connect(str(path))
+        con.execute(
+            "CREATE TABLE recs (host TEXT, dir TEXT, key TEXT, ts TEXT, rec TEXT, PRIMARY KEY (host, dir, key))"
+        )
+        con.execute(
+            "INSERT INTO recs VALUES ('h', '/d', 'a', '2026-09-28', '{\"runId\": \"a\"}')"
+        )
+        con.execute("PRAGMA user_version=1")
+        con.commit()
+        con.close()
+        c = HistoryCache(path)
+        self.assertEqual(
+            c.read("h", since_date=None, limit=10), []
+        )  # old-shape records gone
+        c.close()
+
+
+class TestAnalyticsFromCache(_PullFixture):
+    """get_analytics aggregates a cachable remote host from the History cache."""
+
+    def _finish(self, run_id: str, *, exit_code=0, events=None, exception=None) -> None:
+        runsdb.begin_run(
+            self.logs,
+            {
+                "run_id": run_id,
+                "runnable": "backup",
+                "status": "running",
+                "start_ts": _now(),
+                "host": "remote-box",
+            },
+        )
+        runsdb.finish_run(
+            self.logs,
+            run_id,
+            exit_code=exit_code,
+            duration_ms=10,
+            status="completed" if exit_code == 0 else "failed",
+            events=events,
+            exception=exception,
+        )
+
+    def _analytics(self, since_days=30, runnable=None):
+        self.b._connected_cache = {"prod-1": True}
+        with (
+            patch.object(self.b, "_ssh_run", side_effect=self.ssh),
+            patch.object(self.b, "_kick_history_pull"),
+            patch.object(self.b, "_collect_host_records", return_value=[]) as logs,
+            patch("runspec_console.config.read_history", return_value={"cache": True}),
+        ):
+            out = self.b.get_analytics(["prod-1"], since_days, runnable)
+        return out, logs
+
+    def test_aggregates_events_and_exceptions_from_the_cache(self) -> None:
+        self._finish("ok", events={"INFO": 3, "WARNING": 1})
+        self._finish(
+            "bad",
+            exit_code=1,
+            events={"ERROR": 2},
+            exception={"type": "OSError", "message": "disk full"},
+        )
+        out, logs = self._analytics()
+        logs.assert_not_called()  # no log streaming for a cached host
+        self.assertEqual((out["totalRuns"], out["failureCount"]), (2, 1))
+        [bucket_events] = [b["events"] for b in out["buckets"] if b["failure"]]
+        self.assertEqual(bucket_events["ERROR"], 2)
+        self.assertEqual(out["exceptions"][0]["exception"], "OSError: disk full")
+        self.assertEqual(out["eventsUnknown"], [])
+        # the second open is served without SSH (from the cache)
+        self.ssh_calls.clear()
+        self.b._analytics_cache.clear()
+        self._analytics()
+        self.assertEqual(self.ssh_calls, [])
+
+    def test_rows_from_an_older_runspec_are_flagged(self) -> None:
+        self._finish("old")  # finish_run without events → NULL (unknown)
+        out, _ = self._analytics()
+        self.assertEqual(out["eventsUnknown"], ["prod-1"])
+
+    def test_window_is_capped_at_the_cache_window(self) -> None:
+        from datetime import date, timedelta
+
+        self._finish("a")
+        out, _ = self._analytics(since_days=90)
+        self.assertEqual(out["since"], (date.today() - timedelta(days=29)).isoformat())
+
+    def test_runnable_filter_and_uncachable_host_fallback(self) -> None:
+        self._finish("a")
+        out, _ = self._analytics(runnable="deploy")
+        self.assertEqual(out["totalRuns"], 0)
+        # a host with no v4 index is parsed from its logs as before
+        with patch.object(self.b, "_cached_records", return_value=None):
+            _, logs = self._analytics()
+        logs.assert_called_once()

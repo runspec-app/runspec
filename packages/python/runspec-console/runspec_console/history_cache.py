@@ -32,6 +32,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+# Bumped when the stored record shape changes; a mismatched cache is rebuilt.
+# 2 (console 0.301.0): records carry ``extra`` (autonomy / events / exception …)
+# so Analytics can aggregate from the cache.
+CACHE_VERSION = 2
+
 _DDL = """
 CREATE TABLE IF NOT EXISTS recs (
   host TEXT NOT NULL, dir TEXT NOT NULL, key TEXT NOT NULL,
@@ -79,6 +84,13 @@ class HistoryCache:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         con = sqlite3.connect(str(self.path), timeout=5.0, check_same_thread=False)
         try:
+            if con.execute("PRAGMA user_version").fetchone()[0] != CACHE_VERSION:
+                # A cache written by an older console stores records of an older
+                # shape — derived data, so start over rather than migrate.
+                for table in ("recs", "cursors", "hosts"):
+                    con.execute(f"DROP TABLE IF EXISTS {table}")
+                con.execute(f"PRAGMA user_version={CACHE_VERSION}")
+                con.commit()
             con.executescript(_DDL)
             con.execute("PRAGMA journal_mode=WAL")
         except sqlite3.Error:

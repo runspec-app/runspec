@@ -373,3 +373,9 @@ contract.
 - **The local host bypasses the cache** (§5).
 - **The Logs tab's per-runnable run counts** stay on their current path — out of
   scope here.
+- **Analytics aggregates the cache** (console 0.301.0), and its window is capped
+  at the cache's 30 days. The index gained the two fields Analytics needed that it
+  lacked — `events` (log-record counts by level) and `exception` (type + message)
+  — in core 0.64.0 (schema v5), so the index fully replaces the log parse for
+  cached hosts. Records now carry `extra`, and the cache file is versioned
+  (`CACHE_VERSION`) so a change in record shape rebuilds it.

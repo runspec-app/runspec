@@ -179,7 +179,7 @@ class TestHandoff:
         d = Path({str(logs_dir)!r})
         runsdb.begin_run(d, {{"run_id": rid, "runnable": "demo", "command": "sub", "status": "running",
                               "pid": os.getpid(), "host": runsdb._hostname(), "args": {{"a": 1}}}})
-        runsdb.finish_run(d, rid, exit_code=0, duration_ms=1, status="completed")
+        runsdb.finish_run(d, rid, exit_code=0, duration_ms=1, status="completed", events={{"INFO": 2}})
         sys.exit(3)
         """
         _install(monkeypatch, tmp_path, body)
@@ -189,6 +189,7 @@ class TestHandoff:
         assert row["exit_code"] == 3 and row["status"] == "failed"  # observed, not inferred
         assert row["label"] == "sched:x"  # the child's upsert didn't clear it
         assert row["command"] == "sub"  # the child's own detail kept
+        assert row["events"] == '{"INFO": 2}'  # the wrapper's finalize kept the child's events
 
     def test_older_child_row_is_adopted(self, logs_dir, tmp_path, monkeypatch):
         # What a <= 0.61 child does: ignore RUNSPEC_RUN_ID and mint its own id.

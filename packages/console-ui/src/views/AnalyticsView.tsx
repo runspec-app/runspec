@@ -18,10 +18,11 @@ const SUCCESS = '#52c41a'
 const FAILURE = '#ff4d4f'
 const WARNING = '#faad14'
 
+// At most 30 days — the History cache's window, which remote hosts are
+// aggregated from (the backend clamps a wider request to 30 too).
 const RANGE_OPTIONS = [
   { label: '7d', value: 7 },
   { label: '30d', value: 30 },
-  { label: '90d', value: 90 },
 ]
 
 interface AnalyticsViewProps {
@@ -188,6 +189,14 @@ export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsVi
           type="warning" showIcon icon={<WarningOutlined />}
           message="Partial data — some hosts could not be scanned"
           description={data.errors.map(e => `${e.host}: ${e.message}`).join('  •  ')}
+        />
+      )}
+
+      {(data.eventsUnknown?.length ?? 0) > 0 && (
+        <Alert
+          type="info" showIcon
+          message="Log events and exceptions are incomplete for some hosts"
+          description={`Some runs on ${data.eventsUnknown!.join(', ')} were recorded by a runspec older than 0.64, which didn't store their log-event counts or exception in the runs index. Upgrade runspec on the host; runs recorded after that are complete.`}
         />
       )}
 

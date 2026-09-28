@@ -945,6 +945,9 @@ export interface AnalyticsData {
   dimensions: AnalyticsDimensions
   partial: boolean                 // true if any host scan failed/timed out
   errors: { host: string; message: string }[]
+  // Hosts with cached runs whose log-event counts / exception aren't in the runs
+  // index (recorded by runspec < 0.64) — the Events/Exceptions panels are partial.
+  eventsUnknown?: string[]
 }
 
 // ── logs management (Logs tab) ──────────────────────────────────────────────

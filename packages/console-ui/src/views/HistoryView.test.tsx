@@ -145,6 +145,31 @@ describe('HistoryView', () => {
     expect(screen.getByText('backup')).toBeTruthy()  // local untouched
   })
 
+  it('keeps a column filter selection across a refetch', async () => {
+    getHistorySlim.mockResolvedValue([
+      rec({ id: 'ok1', runId: 'ok1', runnable: 'backup', exitCode: 0 }),
+      rec({ id: 'bad1', runId: 'bad1', runnable: 'deploy', exitCode: 2 }),
+    ])
+    const { container } = render(<HistoryView {...PROPS} />)
+    await screen.findByText('deploy')
+    // Status column → pick "error" → OK
+    const triggers = container.querySelectorAll('.ant-table-filter-trigger')
+    const statusTrigger = [...triggers].find(t => t.closest('th')?.textContent?.includes('Status')) as HTMLElement
+    await act(async () => { statusTrigger.click() })
+    const errorItem = (await screen.findAllByText('error')).find(el => el.closest('.ant-dropdown-menu-item'))!
+    await act(async () => { (errorItem.closest('.ant-dropdown-menu-item') as HTMLElement).click() })
+    await act(async () => { screen.getByRole('button', { name: 'OK' }).click() })
+    await waitFor(() => expect(screen.queryByText('backup')).toBeNull())
+    // A cache pull refetches the host (a re-render with fresh records)…
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent('runspec:history_updated', { detail: { host: 'local' } }))
+      await flush()
+    })
+    // …and the filter still applies.
+    expect(screen.getByText('deploy')).toBeTruthy()
+    expect(screen.queryByText('backup')).toBeNull()
+  })
+
   it('marks a cached host whose last sync failed "as of …"', async () => {
     historyTargets.mockResolvedValue(['local', 'web-01'])
     getHistorySlim.mockImplementation((host: string) => Promise.resolve([rec({ id: host, host })]))

@@ -19,6 +19,7 @@ from runspec import logs as core_logs
 from . import bridge_utils as utils_mod
 from . import hosts as hosts_mod
 
+from .bridge_history_sync import HISTORY_CACHE_DAYS
 from .bridge_const import (
     logger,
 )
@@ -40,6 +41,9 @@ if TYPE_CHECKING:
 # so it can't collide with a venv name (which is a directory basename). The Logs
 # tab shows it as its own entry; prune/compact/view route it to `--scope home`.
 _HOME_SCOPE = "~/logs"
+# Records Analytics reads per host from the History cache — a local query over a
+# 30-day window, so generous; bounds a pathological host, not normal use.
+_ANALYTICS_CACHE_LIMIT = 100_000
 
 
 class ReportingMixin:
@@ -899,7 +903,7 @@ class ReportingMixin:
         return records[: self._HISTORY_CAP]
 
     def _parse_remote_stream(
-        self, stdout: str, host: str, group: str
+        self, stdout: str, host: str, group: str, *, include_extra: bool = False
     ) -> list[dict[str, Any]]:
         """Parse a ``_remote_log_script`` framed stream (a ``\\x00RUNSPEC_LOG:<name>``
         line per file) into HistoryRecords, tagging each with ``group`` — best-effort,
@@ -913,7 +917,10 @@ class ReportingMixin:
         def _flush() -> None:
             if current_name is not None:
                 for rec in _parse_log_text(
-                    current_name, "\n".join(current_lines), host
+                    current_name,
+                    "\n".join(current_lines),
+                    host,
+                    include_extra=include_extra,
                 ):
                     rec["group"] = group
                     records.append(rec)
@@ -939,6 +946,19 @@ class ReportingMixin:
     # (hosts, window, runnable) is served from the last result instead of
     # re-streaming every host. Busted on run completion (_invalidate_remote_history).
     _ANALYTICS_TTL = 30.0
+
+    def _analytics_cached_records(
+        self, entry: dict[str, Any], since_days: int, runnable: str | None
+    ) -> list[dict[str, Any]] | None:
+        """A remote host's records from the History cache (``extra`` included), or
+        ``None`` to parse its logs — the local host, cache off, or a host without
+        a v4 runs index."""
+        if not entry.get("ssh"):
+            return None
+        recs = self._cached_records(entry, since_days, limit=_ANALYTICS_CACHE_LIMIT)
+        if recs is None:
+            return None
+        return [r for r in recs if not runnable or r.get("runnable") == runnable]
 
     def _collect_host_records(
         self, entry: dict[str, Any], runnable: str | None
@@ -1042,11 +1062,21 @@ class ReportingMixin:
     ) -> dict[str, Any]:
         """Aggregate run history across the fleet into drill-ready analytics.
 
-        Scans full (uncapped) audit logs across the requested hosts' venvs,
-        buckets by day and by every drill dimension, and surfaces the rich
-        run_summary fields. Heavy work (parsing, SSH) happens here so the
-        frontend can re-filter the compact ``buckets`` instantly.
+        Buckets by day and by every drill dimension and surfaces the rich
+        run_summary fields; the heavy work happens here so the frontend can
+        re-filter the compact ``buckets`` instantly.
+
+        **Window: at most ``HISTORY_CACHE_DAYS`` (30) days** — the History cache's
+        window. A remote host with a v4 runs index (runspec >= 0.63) is aggregated
+        from the local cache (no SSH on this path; a background pull keeps it
+        current); others — and the local host, whose logs also hold the console's
+        agent turns and built-in tool calls — are parsed from the audit logs as
+        before. ``eventsUnknown`` lists hosts with cached runs whose log-event
+        counts / exception aren't in the index (written before runspec 0.64).
         """
+        since_days = max(
+            1, min(int(since_days or HISTORY_CACHE_DAYS), HISTORY_CACHE_DAYS)
+        )
         import time
         from datetime import timezone
 
@@ -1088,11 +1118,18 @@ class ReportingMixin:
 
         all_records: list[dict[str, Any]] = []
         errors: list[dict[str, str]] = []
+        events_unknown: set[str] = set()
         lock = threading.Lock()
 
         def collect(entry: dict[str, Any]) -> None:
             try:
-                recs = self._collect_host_records(entry, runnable)
+                recs = self._analytics_cached_records(entry, since_days, runnable)
+                if recs is not None:
+                    if any((r.get("extra") or {}).get("events") is None for r in recs):
+                        with lock:
+                            events_unknown.add(str(entry["name"]))
+                else:
+                    recs = self._collect_host_records(entry, runnable)
             except Exception as exc:  # noqa: BLE001 — degrade gracefully per host
                 with lock:
                     errors.append({"host": entry["name"], "message": str(exc)})
@@ -1114,6 +1151,7 @@ class ReportingMixin:
         result = _aggregate_analytics(
             in_window, since, until, partial=bool(errors), errors=errors
         )
+        result["eventsUnknown"] = sorted(events_unknown)
         # Cache only a clean (non-partial) result — a partial one should re-try
         # next open rather than pin a host's transient failure for the whole TTL.
         if not errors:

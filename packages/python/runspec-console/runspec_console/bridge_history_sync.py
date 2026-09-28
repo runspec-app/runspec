@@ -134,6 +134,18 @@ class HistorySyncMixin:
         """Slim History rows for a remote host from the cache, or ``None`` to read
         the host directly (cache off, a window wider than the cache, no v4 index on
         the host, or the first pull failed)."""
+        records = self._cached_records(entry, since_days, limit=_HISTORY_CACHE_CAP)
+        if records is None:
+            return None
+        return [self._slim_history_row(r) for r in records]
+
+    def _cached_records(
+        self: Bridge, entry: dict[str, Any], since_days: int | None, *, limit: int
+    ) -> list[dict[str, Any]] | None:
+        """A remote host's full cached records (``extra`` included — what Analytics
+        aggregates), newest first, within ``since_days``; ``None`` when the host
+        can't be served from the cache. A primed host kicks a background pull; an
+        unprimed one is pulled in line first."""
         if not since_days or since_days <= 0 or since_days > HISTORY_CACHE_DAYS:
             return None
         if not self._history_cache_enabled():
@@ -154,9 +166,8 @@ class HistorySyncMixin:
             if not capable:
                 return None
         since_date = self._since_date(since_days)
-        records = cache.read(host, since_date=since_date, limit=_HISTORY_CACHE_CAP)
-        records = [r for r in records if r.get("kind", "runnable") == "runnable"]
-        return [self._slim_history_row(r) for r in records]
+        records = cache.read(host, since_date=since_date, limit=limit)
+        return [r for r in records if r.get("kind", "runnable") == "runnable"]
 
     # ── the pull ──────────────────────────────────────────────────────────────
 
@@ -346,7 +357,9 @@ class HistorySyncMixin:
             script = _remote_log_script(unindexed, None, limit=self._HISTORY_CAP + 50)
             try:
                 _, stdout, _ = self._ssh_run(ssh, script, identity_file=idf, timeout=30)
-                parsed = self._parse_remote_stream(stdout, host, primary_group)
+                parsed = self._parse_remote_stream(
+                    stdout, host, primary_group, include_extra=True
+                )
                 if since_date:
                     parsed = [r for r in parsed if r.get("ts", "")[:10] >= since_date]
                 changed |= cache.replace(host, _LOGPARSE_DIR, parsed)

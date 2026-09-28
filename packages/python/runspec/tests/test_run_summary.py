@@ -512,6 +512,22 @@ class TestRunsIndexHook:
         _emit_run_summary()
         r = runsdb.list_runs(tmp_path / "logs", live=False)[0]
         assert r["status"] == "failed" and r["exit_code"] == 1
+        # v5: the uncaught exception (type + message, no traceback) is indexed
+        assert json.loads(r["exception"]) == {"type": "RuntimeError", "message": "nope"}
+        assert json.loads(r["events"]) is not None  # known (possibly empty), not NULL
+
+    def test_finish_indexes_event_counts(self, tmp_path):
+        import logging
+
+        from runspec import runsdb
+
+        configure_logging(_cfg(summary=True), runnable_name="demo", history_cfg={"db": True})
+        logging.getLogger("demo").warning("careful")
+        logging.getLogger("demo").warning("again")
+        _emit_run_summary()
+        r = runsdb.list_runs(tmp_path / "logs", live=False)[0]
+        assert json.loads(r["events"])["WARNING"] == 2
+        assert r["exception"] is None
 
     def test_history_off_writes_no_row(self, tmp_path):
         from runspec import runsdb

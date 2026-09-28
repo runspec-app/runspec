@@ -794,7 +794,10 @@ runspec-console's History cache does this over SSH instead of re-reading every
 venv's newest rows on each refresh. `stats` shows it as `change seq N (floor F,
 T tombstone(s))` (`"sync"` in `--json`). It's maintained by SQLite triggers
 stored in the DB file, so an older runspec writing the same venv's index still
-keeps it correct. Tombstones are kept 30 days. The Python API is
+keeps it correct. Tombstones are kept 30 days. Since 0.64.0 each row also
+carries the run's log-event counts by level and its uncaught exception (type +
+message), so readers can aggregate from the index rather than the log files.
+The Python API is
 `runspec.runsdb.changes_since(log_dir, db_id=…, seq=…)`; see
 [the design](design/history-incremental-pull.md).
 
