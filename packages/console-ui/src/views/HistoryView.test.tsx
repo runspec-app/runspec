@@ -212,3 +212,14 @@ describe('HistoryView', () => {
     expect(getRunDetail).not.toHaveBeenCalled()
   })
 })
+
+describe('historyStatusMatches', () => {
+  it('buckets skipped runs on their own', async () => {
+    const { historyStatusMatches } = await import('./HistoryView')
+    expect(historyStatusMatches({ exitCode: 0, status: 'skipped' }, 0)).toBe(false)
+    expect(historyStatusMatches({ exitCode: 0, status: 'skipped' }, -1)).toBe(true)
+    expect(historyStatusMatches({ exitCode: 0, status: 'completed' }, 0)).toBe(true)
+    expect(historyStatusMatches({ exitCode: 2, status: 'failed' }, 1)).toBe(true)
+    expect(historyStatusMatches({ exitCode: 0 }, -1)).toBe(false)
+  })
+})

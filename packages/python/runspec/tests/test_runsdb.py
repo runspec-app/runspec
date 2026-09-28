@@ -330,3 +330,88 @@ class TestPruneProvenance:
         assert n == 1  # migration added the columns, so the UPDATE matched
         r = runsdb.list_runs(logs_dir, live=False)[0]
         assert r["log_pruned_by"] == "bob"
+
+
+# ── maintenance introspection: stats / write_error / `runspec history` --json ────
+
+
+class TestStats:
+    def test_missing_db_reports_not_exists(self, logs_dir):
+        s = runsdb.stats(logs_dir)
+        assert s["exists"] is False
+        assert s["rows"] == 0
+        assert s["write_error"] == ""
+
+    def test_counts_by_status_and_span(self, logs_dir):
+        runsdb.begin_run(logs_dir, _row(run_id="a", start_ts="2026-01-01T00:00:00+00:00", status="completed"))
+        runsdb.begin_run(logs_dir, _row(run_id="b", status="failed"))
+        runsdb.begin_run(logs_dir, _row(run_id="c"))  # live running (our own pid)
+        s = runsdb.stats(logs_dir)
+        assert s["exists"] is True
+        assert s["rows"] == 3
+        assert s["by_status"] == {"completed": 1, "failed": 1, "running": 1}
+        assert s["oldest"].startswith("2026-01-01")
+        assert s["running"] == 1
+        assert s["stale_running"] == 0
+        assert s["size_bytes"] > 0
+        assert s["schema_version"] == runsdb._SCHEMA_VERSION
+
+    def test_stale_running_counts_dead_pids(self, logs_dir):
+        runsdb.begin_run(logs_dir, _row(run_id="dead", pid=2**22 + 12345, proc_start=""))
+        assert runsdb.stats(logs_dir)["stale_running"] == 1
+        runsdb.reap_now(logs_dir)
+        assert runsdb.stats(logs_dir)["stale_running"] == 0
+
+    def test_write_error_names_unwritable_index(self, logs_dir, monkeypatch):
+        runsdb.begin_run(logs_dir, _row())
+        assert runsdb.write_error(logs_dir) == ""
+        # os.access, not chmod: root (CI containers) bypasses permission bits.
+        monkeypatch.setattr(runsdb.os, "access", lambda p, mode: False)
+        assert "permission denied" in runsdb.write_error(logs_dir)
+        assert runsdb.stats(logs_dir)["write_error"]
+
+
+class TestHistoryCliJson:
+    @pytest.fixture
+    def cli(self, logs_dir, monkeypatch):
+        from runspec import cli
+        from runspec import logs as _logs
+
+        monkeypatch.setattr(_logs, "scope_dirs", lambda scope, destructive=False: [logs_dir])
+        return cli
+
+    def _json(self, capsys):
+        import json
+
+        return json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+
+    def test_stats_json(self, cli, logs_dir, capsys):
+        runsdb.begin_run(logs_dir, _row(status="completed"))
+        cli.cmd_history(["stats", "--json"])
+        out = self._json(capsys)
+        assert out["verb"] == "stats"
+        assert out["dirs"][0]["rows"] == 1
+
+    def test_prune_json_reports_count(self, cli, logs_dir, capsys):
+        for i in range(3):
+            runsdb.begin_run(logs_dir, _row(run_id=f"r{i}", status="completed", start_ts=f"2026-01-0{i + 1}T00:00:00+00:00"))
+        cli.cmd_history(["prune", "--max-rows", "1", "--json"])
+        out = self._json(capsys)
+        assert out == {"verb": "prune", "count": 2, "dirs": [{"dir": str(logs_dir), "count": 2}], "ok": True}
+
+    def test_reap_and_reindex_json(self, cli, logs_dir, capsys):
+        runsdb.begin_run(logs_dir, _row(run_id="dead", pid=2**22 + 12345, proc_start=""))
+        cli.cmd_history(["reap", "--json"])
+        assert self._json(capsys)["count"] == 1
+        cli.cmd_history(["reindex", "--json"])
+        out = self._json(capsys)
+        assert out["verb"] == "reindex" and out["ok"] is True
+
+    def test_unwritable_index_fails_named(self, cli, logs_dir, capsys, monkeypatch):
+        runsdb.begin_run(logs_dir, _row(status="completed"))
+        monkeypatch.setattr(runsdb.os, "access", lambda p, mode: False)
+        with pytest.raises(SystemExit):
+            cli.cmd_history(["reap", "--json"])
+        out = self._json(capsys)
+        assert out["ok"] is False
+        assert "permission denied" in out["dirs"][0]["error"]

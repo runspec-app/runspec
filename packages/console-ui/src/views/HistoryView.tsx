@@ -362,6 +362,14 @@ interface HistoryViewProps {
   active: boolean
 }
 
+/** Status-column filter: 0 = ok, 1 = error, -1 = skipped (a `runspec exec` run
+ *  that never started — exit 0 but not a success). */
+export function historyStatusMatches(record: Pick<HistoryRecord, 'exitCode' | 'status'>, value: number): boolean {
+  if (record.status === 'skipped') return value === -1
+  if (value === -1) return false
+  return value === 0 ? record.exitCode === 0 : record.exitCode !== 0
+}
+
 export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeScope, onScopeToggle, active }: HistoryViewProps) {
   // History reads one host at a time (local + every connected remote) and merges
   // the results, so each host renders as it arrives. recordsByHost holds each
@@ -630,12 +638,17 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       title: 'Status',
       dataIndex: 'exitCode',
       key: 'exitCode',
-      render: (c: number) => <Tag color={c === 0 ? 'green' : 'red'}>{c === 0 ? 'ok' : `exit ${c}`}</Tag>,
+      // A `runspec exec` skip (lock held / already running) has exit code 0 but
+      // never ran — its own tag, and excluded from both ok and error.
+      render: (c: number, record: HistoryRecord) => record.status === 'skipped'
+        ? <Tooltip title={`Didn't start — the previous run was still going${record.label ? ` (${record.label})` : ''}`}><Tag>skipped</Tag></Tooltip>
+        : <Tag color={c === 0 ? 'green' : 'red'}>{c === 0 ? 'ok' : `exit ${c}`}</Tag>,
       filters: [
         { text: 'ok', value: 0 },
         { text: 'error', value: 1 },
+        { text: 'skipped', value: -1 },
       ],
-      onFilter: (value, record) => (value === 0 ? record.exitCode === 0 : record.exitCode !== 0),
+      onFilter: (value, record) => historyStatusMatches(record, value as number),
       filteredValue: [],
     },
     {

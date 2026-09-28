@@ -1368,6 +1368,65 @@ export const mockApi: BridgeApi = {
     output: JSON.stringify({ venv: `/opt/venvs/${venv}`, logs_dir: `/opt/venvs/${venv}/logs`, group: group || '', mode: '2775', shared: true }),
   }),
 
+  shared_schedules: async (_host) => {
+    const ago = (m: number) => new Date(Date.now() - m * 60_000).toISOString()
+    return [
+      {
+        group: 'ops-tools', available: true, ok: true,
+        status: {
+          ok: true, venv: 'ops-tools', config: '/opt/venvs/ops-tools/runspec_scheduler.toml', backend: 'cron',
+          stale: [{ id: 'old-cleanup', user: 'svc-ops' }], errors: [],
+          schedules: [
+            {
+              id: 'nightly-backup', runnable: 'backup', enabled: true, when: { cron: '0 2 * * *' },
+              args: { target: 'prod' }, run_as: 'svc-ops', installable: true, not_installable_reason: null,
+              installed: true, line: 'exec', next_run: new Date(Date.now() + 5 * 3600_000).toISOString(),
+              runs: [
+                { run_id: 'r3', status: 'failed', exit_code: 2, start_ts: ago(60 * 20), duration_ms: 41_200, trigger: 'schedule', user: 'svc-ops', log_file: 'backup.x.r3.log' },
+                { run_id: 'r2', status: 'skipped', exit_code: 0, start_ts: ago(60 * 44), duration_ms: 0, trigger: 'schedule', user: 'svc-ops' },
+                { run_id: 'r1', status: 'completed', exit_code: 0, start_ts: ago(60 * 68), duration_ms: 38_900, trigger: 'schedule', user: 'svc-ops' },
+              ],
+              last_output: {
+                stdout: 'backing up /srv/data → s3://backups/prod\n12 of 40 files copied\n', stderr: 'error: disk quota exceeded on /tmp\n',
+                truncated: false, errors: ['upload failed: disk quota exceeded'],
+                result: { message: 'backup failed — exit 2 in 41.20s', status: 'failed', exit_code: 2, duration_ms: 41_200, reason: '' },
+              },
+            },
+            {
+              id: 'hourly-report', runnable: 'report', enabled: true, when: { cron: '15 * * * *', timezone: 'Europe/London' },
+              run_as: 'svc-ops', installable: true, not_installable_reason: null, installed: true, line: 'legacy',
+              next_run: new Date(Date.now() + 1800_000).toISOString(), runs: [], last_output: null,
+            },
+            {
+              id: 'tmp-usage', runnable: 'filesystem', command: ['directory-size'], enabled: true, when: { cron: '0 * * * *' },
+              args: { path: '/tmp' }, run_as: 'svc-ops', installable: true, not_installable_reason: null, installed: true, line: 'exec',
+              next_run: new Date(Date.now() + 2400_000).toISOString(), runs: [], last_output: null,
+            },
+            {
+              id: 'poll', runnable: 'check-queue', enabled: true, when: { every: '15m' }, installable: false,
+              not_installable_reason: "interval schedules ('every') are not supported on the cron backend; use a cron expression",
+              installed: false, line: null, next_run: null, runs: [], last_output: null,
+            },
+          ],
+        },
+      },
+      { group: 'web-tools', available: false, ok: true },
+    ]
+  },
+
+  history_db_stats: async (_host, group) => ({
+    ok: true, group, exists: true,
+    path: group === '~/logs' ? '~/logs/runspec_runs.db' : `/opt/venvs/${group}/logs/runspec_runs.db`,
+    size_bytes: 3_276_800, rows: 4213,
+    by_status: { completed: 4102, failed: 96, crashed: 12, running: 3 },
+    oldest: '2026-06-30T08:12:00+00:00', newest: new Date().toISOString(),
+    running: 3, stale_running: 1, log_pruned: 380, schema_version: 2, write_error: '',
+  }),
+
+  history_db_maintain: async (_host, group, action) => ({
+    ok: true, group, verb: action, count: action === 'reap' ? 1 : action === 'prune' ? 410 : 3802,
+  }),
+
   venv_owner: async (_host, group) => ({ ok: true, owner: group === '~/logs' ? '' : 'svc', self: 'operator' }),
 
   get_public_key: async () => ({

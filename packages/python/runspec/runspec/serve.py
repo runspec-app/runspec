@@ -21,10 +21,12 @@ from typing import Any
 # run_as resolution/validation/command-building live in runspec.become (shared
 # with external executing clients). Aliased to the old private names so existing
 # imports (cli.py, tests) keep working.
-from runspec.become import build_become_argv as _build_become_argv
+from runspec.become import build_become_argv as _build_become_argv  # noqa: F401 — re-export for existing imports
 from runspec.become import resolve_run_as as _resolve_run_as
 from runspec.become import validate_run_as_patterns as _validate_run_as_patterns
 from runspec.discovery import validate_discoverable as _validate_discoverable
+from runspec.execute import build_command as _build_command
+from runspec.execute import find_script as _find_script
 
 MCP_PROTOCOL_VERSION = "2024-11-05"
 MCP_SPEC = "https://github.com/modelcontextprotocol/specification"
@@ -303,34 +305,16 @@ def _handle_tools_call(
     argv = _args_to_argv(arguments, tool_arg_specs)
 
     runspec_env = _args_to_runspec_env(arguments, tool_arg_specs, name)
-    env = {**os.environ, "RUNSPEC_AGENT": "1", **runspec_env}
 
-    # Tell the subprocess where its runspec.toml lives. Otherwise the tool's
-    # parse() would walk up from cwd (typically $HOME for SSH-launched serves)
-    # and fail to find the spec — even though serve already knew its location.
+    # Build the command via the shared executor (runspec.execute — also used by
+    # `runspec exec`): RUNSPEC_CONFIG tells the subprocess where its runspec.toml
+    # lives (otherwise its parse() would walk up from cwd — typically $HOME for
+    # SSH-launched serves — and miss it), and a configured run_as (already
+    # resolved for this host at startup) escalates the command, re-supplying the
+    # RUNSPEC_* vars via env(1) because sudo and friends strip the environment.
     spec = exec_specs.get(name, {})
-    config_path = spec.get("config_path")
-    if config_path:
-        env["RUNSPEC_CONFIG"] = str(config_path)
-
-    # Apply privilege escalation (run_as / become_method) when configured. The
-    # run_as string was already resolved for this host at startup. sudo and
-    # friends strip the environment, so the RUNSPEC_* vars are re-supplied via
-    # env(1) inside the escalated command rather than the subprocess env.
-    run_as = spec.get("run_as") or ""
-    if run_as:
-        become_env = {"RUNSPEC_AGENT": "1", **runspec_env}
-        if config_path:
-            become_env["RUNSPEC_CONFIG"] = str(config_path)
-        final_cmd = _build_become_argv(
-            [*cmd, *argv],
-            run_as,
-            spec.get("become_method", "sudo"),
-            spec.get("become_flags"),
-            env=become_env,
-        )
-    else:
-        final_cmd = [*cmd, *argv]
+    final_cmd, extra_env = _build_command(spec, argv, {"RUNSPEC_AGENT": "1", **runspec_env})
+    env = {**os.environ, **extra_env}
 
     start = time.monotonic()
     result = subprocess.run(final_cmd, capture_output=True, text=True, env=env)
@@ -509,18 +493,6 @@ def _expand_tools(
             },
         )
     ]
-
-
-def _find_script(name: str, scripts_dir: Path) -> list[str] | None:
-    """Return a command list for the named script, or None if not found.
-
-    Looks only in the venv scripts dir — tools must be installed (pip install -e .).
-    """
-    for ext in ("", ".exe"):
-        candidate = scripts_dir / (name + ext)
-        if candidate.is_file():
-            return [str(candidate)]
-    return None
 
 
 def _server_name(config: dict[str, Any]) -> str:

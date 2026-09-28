@@ -8,6 +8,48 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.299.0] — 2026-09-28
+
+### Added
+
+- **Schedules tab → "Shared (host cron)" — a read-only view of a host's shared
+  schedules.** A toggle at the top of the Schedules tab (remembered per viewer)
+  switches between this console's own schedules and the host's
+  `runspec-scheduler` cron schedules. For the selected host, each venv with
+  `runspec-scheduler` ≥ 0.3.0 shows its schedules with crontab state
+  (installed / legacy line / not installed / unknown / not installable), last and
+  next run, and — on expand — the recent runs (incl. recorded *skipped* fires) and
+  the last run's captured stdout/stderr + errors. Crontab lines left over from
+  schedules no longer in the config are flagged. Reads each venv's
+  `runspec-scheduler status` over SSH as the login user, concurrently, bounded by
+  `[refresh] workers`. No writes, no credentials: management stays on the host,
+  per `docs/design/cron-scheduler.md`. A venv without the scheduler is listed as
+  such (not an error); a pre-0.3.0 scheduler gets an upgrade hint. A schedule
+  of a runnable's subcommand shows it next to the runnable (`filesystem
+  list-directory`). New bridge method `shared_schedules(host)`; UI
+  `views/SharedSchedulesView.tsx`.
+- **History shows `runspec exec` skips as *skipped*.** Rows from the runs index
+  now carry their `status` and exec `label`. A skipped run (exit 0, never started
+  because the previous one was still going) gets its own tag and **skipped**
+  status filter instead of reading as a success.
+
+- **Logs tab → "Runs index…" — maintain the per-venv `runspec_runs.db` from the
+  console.** Each venv (and the `~/logs` home entry) gains a **Runs index…**
+  button opening a dialog that shows the index's health — file, rows by status,
+  size incl. WAL, date span, stale orphaned `running` rows, rows outliving a
+  pruned log, and a warning when your login user can't write it — plus the three
+  maintenance actions: **Prune** (older-than and/or max-rows; confirm-gated),
+  **Reap orphans** and **Reindex** (rebuild from the audit logs). Like
+  Prune/Compact, each shells out to the venv's own `runspec history … --scope
+  venv|home --json` (scoped to that one dir), and **Run as** (pre-filled with the
+  venv owner) escalates via `sudo -n -u` for a service-account-owned index. A
+  successful action busts the History cache. New bridge methods
+  `history_db_stats(host, group)` / `history_db_maintain(host, group, action,
+  older_than?, max_rows?, run_as?)`; UI `views/RunsIndexModal.tsx`. Needs
+  runspec ≥ 0.62.0 on the target for `stats` (an older venv gets an upgrade
+  hint; 0.57–0.60's text-only prune/reap/reindex output is still read as
+  success). Dependency floor raised to `runspec>=0.62.0`.
+
 ## [0.297.0] — 2026-09-27
 
 ### Changed

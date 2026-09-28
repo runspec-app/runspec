@@ -18,6 +18,8 @@ from typing import Any
 
 from runspec.become import build_become_argv
 
+from .invocation import plan_invocation
+
 
 def scripts_dir() -> Path:
     """The venv's Scripts/bin directory (where entry-point binaries live)."""
@@ -31,23 +33,6 @@ def find_binary(runnable: str) -> Path | None:
         if candidate.exists():
             return candidate
     return None
-
-
-def args_to_argv(args: dict[str, Any]) -> list[str]:
-    """Turn a schedule's ``{name: value}`` args into CLI argv.
-
-    Flags: ``True`` → ``--name``, ``False`` → ``--no-name`` (runspec's negation).
-    Everything else → ``--name value``. Keeps the mapping simple and predictable;
-    scheduled runs use named args only.
-    """
-    argv: list[str] = []
-    for name, value in args.items():
-        flag = f"--{name}"
-        if isinstance(value, bool):
-            argv.append(flag if value else f"--no-{name}")
-        else:
-            argv.extend([flag, str(value)])
-    return argv
 
 
 def provenance_env(source_toml: str, env_file: str = "") -> dict[str, str]:
@@ -75,10 +60,15 @@ def run_runnable(
     become_flags: str | None = None,
     env_file: str = "",
     timeout: float | None = None,
+    spec: dict[str, Any] | None = None,
+    runnable: str = "",
 ) -> subprocess.CompletedProcess[str]:
-    """Execute one runnable invocation, escalating to ``run_as`` when set."""
-    cmd = [str(binary), *command_path, *args_to_argv(args)]
-    prov = provenance_env(source_toml, env_file)
+    """Execute one runnable invocation, escalating to ``run_as`` when set. The
+    argv/env come from :func:`~runspec_scheduler.invocation.plan_invocation`
+    against the runnable's ``spec``."""
+    plan = plan_invocation(runnable or binary.stem, spec or {}, command_path, args)
+    cmd = [str(binary), *plan.argv]
+    prov = {**provenance_env(source_toml, env_file), **plan.env}
     if run_as:
         # env(1) carries only the non-secret provenance + the RUNSPEC_ENV_FILE
         # path through sudo/su; the credentials themselves live in that file.

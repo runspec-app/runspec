@@ -587,6 +587,11 @@ export interface HistoryRecord {
   // into "log pruned by X on Y — record retained".
   logPrunedAt?: string
   logPrunedBy?: string
+  // From the runs index only: the row's outcome ('skipped' = a `runspec exec` run
+  // that never started — lock held / already running; exitCode is 0 but it isn't
+  // a success) and its exec label ("sched:<id>" for a shared cron schedule).
+  status?: string
+  label?: string
 }
 
 // One in-flight run from the per-venv runs index — the History tab's live
@@ -979,6 +984,95 @@ export interface ShareLogsResult {
   // write the dir — its runs' logs will fall back to ~/logs until that user joins
   // the dir's group. Names the fix.
   warning?: string
+}
+
+// Runs index (runspec_runs.db) health — `runspec history stats` for one venv's
+// logs dir. write_error is non-empty when the login user can't write the index
+// (the "Run as the venv owner" case). Needs runspec >= 0.62.0 on the target.
+export interface HistoryDbStats {
+  ok: boolean
+  group: string
+  error?: string
+  path?: string
+  exists?: boolean
+  size_bytes?: number
+  rows?: number
+  by_status?: Record<string, number>
+  oldest?: string | null
+  newest?: string | null
+  running?: number
+  stale_running?: number           // dead-process `running` rows a reap would crash
+  log_pruned?: number              // rows that outlive their pruned log file
+  schema_version?: number | null
+  write_error?: string
+}
+
+export type HistoryDbAction = 'prune' | 'reap' | 'reindex'
+
+export interface HistoryDbResult {
+  ok: boolean
+  group: string
+  verb?: HistoryDbAction
+  count?: number
+  error?: string
+}
+
+// Shared (host cron) schedules — read-only, from `runspec-scheduler status` on
+// each host venv (runspec-scheduler >= 0.3.0). Managed on the host, not here.
+export interface SharedScheduleRun {
+  run_id: string
+  status: string                   // completed / failed / crashed / skipped / running
+  exit_code: number | null
+  start_ts: string
+  end_ts?: string | null
+  duration_ms?: number | null
+  trigger?: string
+  user?: string
+  log_file?: string | null
+  log_pruned_at?: string | null
+}
+
+export interface SharedScheduleOutput {
+  stdout: string
+  stderr: string
+  truncated: boolean
+  result: { message?: string; status?: string; exit_code?: number; duration_ms?: number; reason?: string } | null
+  errors: string[]                 // the runnable's own ERROR records for that run
+}
+
+export interface SharedSchedule {
+  id: string
+  runnable: string
+  command?: string[]               // subcommand path for a runnable with verbs
+  enabled: boolean
+  when: { cron?: string; every?: string; timezone?: string }
+  args?: Record<string, unknown>
+  run_as?: string
+  installable: boolean
+  not_installable_reason: string | null
+  installed: boolean | null        // null = the account's crontab couldn't be read
+  line: 'exec' | 'legacy' | null   // legacy = pre-0.3 line (unrecorded output/skips)
+  next_run: string | null
+  runs: SharedScheduleRun[]
+  last_output: SharedScheduleOutput | null
+}
+
+export interface SharedSchedulesStatus {
+  ok: boolean
+  venv: string
+  config: string
+  backend: string
+  schedules: SharedSchedule[]
+  stale: { id: string; user: string }[]
+  errors: string[]
+}
+
+export interface SharedSchedulesVenv {
+  group: string
+  available: boolean               // false = no runspec-scheduler in this venv
+  ok: boolean
+  error?: string
+  status?: SharedSchedulesStatus
 }
 
 export interface LogPruneResult {
@@ -2005,6 +2099,12 @@ export interface BridgeApi {
   logs_prune: (host: string, group: string, runnable?: string, olderThan?: string, maxFiles?: number, maxTotalSize?: string, dryRun?: boolean, runAs?: string) => Promise<LogPruneResult>
   logs_compact: (host: string, group: string, runnable?: string, olderThan?: string, gzip?: boolean, dryRun?: boolean, runAs?: string) => Promise<LogCompactResult>
   share_venv_logs: (host: string, venv: string, group?: string, runAs?: string) => Promise<ShareLogsResult>
+  // Runs index (runspec_runs.db) maintenance for one venv — drives core's
+  // `runspec history stats|prune|reap|reindex --scope … --json`.
+  // Shared (host cron) schedules on a host — one entry per venv (read-only).
+  shared_schedules: (host: string) => Promise<SharedSchedulesVenv[]>
+  history_db_stats: (host: string, group: string) => Promise<HistoryDbStats>
+  history_db_maintain: (host: string, group: string, action: HistoryDbAction, olderThan?: string, maxRows?: number, runAs?: string) => Promise<HistoryDbResult>
   // Owner of a venv's dir — pre-fills the "Run as" field on the destructive Logs
   // actions (prune/compact/share). `self` is the effective (login/SSH) user, so the
   // UI can tell whether escalation is even needed. Empty owner for the ~/logs scope.

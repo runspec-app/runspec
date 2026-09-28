@@ -94,6 +94,7 @@ def configure_logging(
     command_path: list[str] | None = None,
     invocation_args: dict[str, Any] | None = None,
     history_cfg: dict[str, Any] | None = None,
+    run_id: str | None = None,
 ) -> None:
     """
     Configure root logger from normalised [config.logging].
@@ -140,8 +141,11 @@ def configure_logging(
     floor = logging.DEBUG if debug else logging.INFO
 
     # Unique ID for this invocation — injected into every JSON log record so
-    # multi-user or multi-run log files can be filtered by invocation.
-    run_id = str(uuid.uuid4())
+    # multi-user or multi-run log files can be filtered by invocation. Under
+    # `runspec exec` the wrapper has already minted it and written the row, so
+    # adopt its id (docs/design/runspec-exec.md §3.3).
+    # `run_id` is passed by parse() from adopt_exec_run_id().
+    run_id = run_id or str(uuid.uuid4())
 
     root = logging.getLogger()
     root.setLevel(logging.DEBUG)
@@ -261,6 +265,21 @@ def configure_logging(
     sys.stdout = _tee
 
     _configured = True
+
+
+# A run id is embedded in the per-run log filename, so it must fit that grammar
+# (runspec.logs._PER_RUN_RE): hex + dashes. Anything else is ignored.
+_RUN_ID_RE = re.compile(r"^[0-9a-fA-F-]{8,64}$")
+
+
+def adopt_exec_run_id() -> str | None:
+    """Take the run id a ``runspec exec`` wrapper handed down in ``RUNSPEC_RUN_ID``.
+
+    The variable is **removed from the environment** either way, so a runnable
+    that shells out to other runnables doesn't pass the same id to them (they'd
+    overwrite this run's row). Returns ``None`` when absent or malformed."""
+    rid = os.environ.pop("RUNSPEC_RUN_ID", "").strip()
+    return rid if _RUN_ID_RE.match(rid) else None
 
 
 def _resolve_log_dir() -> Path:

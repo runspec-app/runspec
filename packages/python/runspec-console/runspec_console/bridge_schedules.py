@@ -11,7 +11,7 @@ import sys
 import threading
 import time
 import uuid
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 if sys.version_info >= (3, 11):
@@ -796,6 +796,91 @@ class SchedulesMixin:
             return []
 
     # ── today digest ──────────────────────────────────────────────────────────
+
+    # ── shared (host cron) schedules — read-only ──────────────────────────────
+    #
+    # A host venv's *shared* schedules are managed outside the console by
+    # runspec-scheduler's cron backend (docs/design/cron-scheduler.md): crontab
+    # lines that run `runspec exec --label sched:<id>`. The console only observes
+    # them — `runspec-scheduler status` joins config ⋈ crontab ⋈ the runs index
+    # (+ the last run's captured output) and we render that. No credentials, no
+    # writes; distinct from the console's own local schedules above.
+
+    _SHARED_SCHED_MIN = "0.3.0"
+
+    def shared_schedules(self, host: str) -> list[dict[str, Any]]:
+        """Per venv on ``host``: ``{group, available, ok, error?, status?}`` where
+        ``status`` is ``runspec-scheduler status`` output. ``available`` is false
+        when the venv has no ``runspec-scheduler`` installed (not an error). Venvs
+        are read concurrently, bounded like the other fleet fan-outs."""
+        entry = self._host_entry(host)
+        if entry is None:
+            return []
+        venvs = [(hosts_mod.venv_name(rp), rp) for rp in utils_mod._paths(entry) if rp]
+        if not venvs:
+            return []
+        remote = bool(entry.get("ssh"))
+
+        def one(item: tuple[str, str]) -> dict[str, Any]:
+            group, rp = item
+            try:
+                return self._shared_schedules_venv(host, group, rp, remote)
+            except Exception as exc:  # noqa: BLE001 — one venv never sinks the rest
+                logger.exception("shared schedules: %s/%s failed", host, group)
+                return {
+                    "group": group,
+                    "available": True,
+                    "ok": False,
+                    "error": str(exc),
+                }
+
+        if len(venvs) == 1:
+            return [one(venvs[0])]
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(
+            max_workers=min(self._fanout_workers(), len(venvs))
+        ) as ex:
+            return list(ex.map(one, venvs))
+
+    def _shared_schedules_venv(
+        self, host: str, group: str, rp: str, remote: bool
+    ) -> dict[str, Any]:
+        """``runspec-scheduler status`` for one venv — the sibling of its runspec
+        binary — parsed from the last JSON-object line of stdout."""
+        if remote:
+            binary = str(PurePosixPath(rp).parent / "runspec-scheduler")
+        else:
+            local = Path(rp)
+            binary = str(local.with_name("runspec-scheduler" + local.suffix))
+        code, stdout, stderr = self._run_logs(host, binary, ["status"], timeout=45)
+        for line in reversed(stdout.splitlines()):
+            line = line.strip()
+            if not line.startswith("{"):
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict) and "schedules" in payload:
+                return {
+                    "group": group,
+                    "available": True,
+                    "ok": True,
+                    "status": payload,
+                }
+        err = stdout.strip() or stderr.strip() or f"exit {code}"
+        low = err.lower()
+        if code in (-1, 127) and ("not found" in low or "no such file" in low):
+            return {"group": group, "available": False, "ok": True}
+        if (
+            "unknown command" in low
+        ):  # "Unknown command for 'runspec-scheduler': 'status'"
+            err += (
+                f" — this venv's runspec-scheduler predates `status` (needs "
+                f">= {self._SHARED_SCHED_MIN}); upgrade it to see its schedules here."
+            )
+        return {"group": group, "available": True, "ok": False, "error": err}
 
     def get_today(self, host: str, group: str) -> dict[str, Any] | None:
         entry = self._host_entry(host)

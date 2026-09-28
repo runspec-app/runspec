@@ -7,6 +7,89 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.62.0] — 2026-09-28
+
+### Added
+
+- **`runspec exec` — run an installed runnable, recorded end-to-end.** A wrapper
+  verb for unattended callers (cron, CI, schedulers) that records what a runnable
+  can't record about itself: a runs-index row for every run (even with no
+  `[config.logging]`, or a failure before logging starts — bad args, a `run_as`
+  refusal, not installed → exit 127), the **observed** exit code (the self-record
+  infers 0 for `sys.exit(2)`), stdout/stderr **tee'd and tail-captured**
+  (`--capture-bytes`, default 64 KiB) into the run's log file as `exec_output` +
+  `exec_result` records (standard per-run log grammar, so `logs view/prune/
+  compact` handle them), **recorded skips** (`--lock PATH`, POSIX `flock`,
+  race-free; `--skip-if-running`, runs-index check) with the new `skipped` status,
+  `--label`, `--trigger`, `--timeout` (exit 124). Signals are forwarded to the
+  child. When the invoking user already *is* the runnable's `run_as` account (a
+  crontab line in that account's crontab), it runs directly instead of
+  `sudo -u <self>`. Python API `runspec.runexec.exec_runnable(…, env=…)` for
+  callers that add child environment (e.g. `RUNSPEC_ENV_FILE`). Design:
+  `docs/design/runspec-exec.md`. New `runspec/runexec.py`.
+- **Run-id handoff (`RUNSPEC_RUN_ID`).** `parse()` adopts a run id handed down by
+  `runspec exec` (and always removes it from the environment, so a runnable that
+  shells out to other runnables never passes it on), so the wrapper's row and the
+  runnable's own writes are one row. A pre-0.62 runnable that mints its own id is
+  adopted by the wrapper (one row, labelled).
+- **Runs index schema v3:** a `label` column (never cleared by a later upsert) +
+  index, and the `skipped` status value. Additive migration.
+  `runspec history list --label`, `--status skipped`; `runsdb.list_runs(label=)`,
+  `runsdb.get_run`, `runsdb.adopt_child_row`, `runsdb.set_log_file`.
+
+- **`runspec history stats` — runs-index health at a glance.** A new read-only
+  verb reporting, per logs dir, the index path, row count by status, on-disk size
+  (DB + `-wal`/`-shm`), oldest/newest run, live vs. **stale** `running` rows (dead
+  process on this host — what `reap` would crash), rows that outlive a pruned log
+  file, schema version, and whether the invoking user can write it. New
+  `runsdb.stats(log_dir)`.
+- **`--json` results for `runspec history prune` / `reap` / `reindex` (and
+  `stats`).** Each emits one result object — `{"verb", "count", "dirs": [{"dir",
+  "count", "error"?}], "ok"}` — so a caller (the runspec-console's Logs tab) can
+  drive maintenance and read the outcome. `list`/`running --json` are unchanged
+  (one row per line).
+
+### Fixed
+
+- **A flag set from the environment to `0`/`false`/`no`/`off` now reads as
+  false.** `_coerce_flag` was `bool(value)`, so any non-empty string was `True`
+  — and `runspec serve` serialises an explicit `false` flag argument as `"0"`
+  (per the spec's serialisation table), so **an agent switching a flag off
+  switched it on** (e.g. `which` with `all: false` returned every match). Flag
+  strings now parse like `bool` (`1/true/yes/on` vs `0/false/no/off`, empty =
+  false, anything else is an error), which also makes a default-`true` flag
+  switchable off via `RUNSPEC_<RUNNABLE>_ARG_<NAME>=0`.
+- **A `multiple` arg's env value is split on newlines**, as the spec's
+  serialisation table specifies (and as `runspec serve` writes it); it arrived
+  as one string (`['a\nb']`). Empty lines are dropped; applies to `env` aliases
+  too.
+- **Positional args can also be passed by name (`--target prod`).**
+  `runspec serve` builds argv as `--name value` for every argument, positionals
+  included, and the parser only accepted positionals by position — so **every
+  `serve` call to a runnable with a positional arg failed** ("Unknown argument:
+  --name"; e.g. `which`). A positional is now also accepted as `--name` /
+  `--name=value`; a slot filled by name is skipped by bare tokens, and giving
+  the same arg both ways is an error. Spec change: `spec/SPEC.md` →
+  "Positional Arguments" (the Node pack already accepted the flag form).
+
+- **History maintenance no longer reports "0 rows" when it couldn't write the
+  index.** The runsdb write helpers are best-effort (return 0 on failure), so a
+  `prune`/`reap`/`reindex` run by a user who can't write a service-account-owned
+  `runspec_runs.db` looked like "nothing to do". The verbs now check
+  writability first (new `runsdb.write_error`) and fail with a named
+  `permission denied … (owned by <user>)` error and a non-zero exit.
+
+### Changed
+
+- **`runspec serve` builds its command through the new shared executor**
+  (`runspec/execute.py`: `find_runnable`, `find_script`, `build_command`) —
+  extracted from its `tools/call` handler so `exec` runs a runnable exactly the
+  way `serve` does (`RUNSPEC_CONFIG`, `run_as` via `become`). No behaviour change.
+
+### Docs
+
+- `docs/cli.md` gained a `runspec history` section (it had none).
+
 ## [0.60.0] — 2026-09-27
 
 ### Added
@@ -253,6 +336,21 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   and drops a bound that isn't a number, keeping the runnable usable rather than
   dropped by the backstop above.
 
+
+## [node-0.40.0] — 2026-09-28
+
+### Fixed
+
+- **A flag set from the environment to `0`/`false`/`no`/`off` now reads as
+  false** (`coerceFlag` was `Boolean(value)`, so any non-empty string was true);
+  parity with Python 0.62.0.
+- **A `multiple` arg's env value is split on newlines**, per the spec's
+  serialisation table (it arrived as one string).
+- **Positional args passed by name are now well-defined** (`spec/SPEC.md` →
+  "Positional Arguments"): the Node parser already accepted `--name` for a
+  positional, but a following bare token could then overwrite it. A slot filled
+  by name is now skipped by bare tokens, and giving the same arg both ways is an
+  error — matching Python.
 
 ## [node-0.39.0] — 2026-09-22
 

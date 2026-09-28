@@ -750,7 +750,7 @@ description = "Controls output quality. Values below 60 rarely useful."
 | `ui` | string | Form control hint. Inferred from type if omitted. |
 | `hint` | string | Placeholder / hint text for a UI form field. Advisory for `str`/`path`/`password`; never affects parsing. |
 | `meta` | table | Developer-defined metadata. Pass-through — runspec never interprets the contents. |
-| `position` | int | 1-based positional index. Makes the arg positional rather than a `--flag`. |
+| `position` | int | 1-based positional index. Makes the arg positional (it may still be passed as `--name`). |
 
 ### Default Values for Argument Fields
 
@@ -779,7 +779,7 @@ fields that *are* present.
 | `ui` | derived from `type` at render time (text/number/checkbox/dropdown/etc.) | See "Form Control Inference". |
 | `hint` | `None` | Optional UI placeholder text; no effect on parsing or validation. |
 | `meta` | `None` | Pass-through — runspec never reads it. |
-| `position` | `None` (i.e. the arg is a `--flag`, not a positional) | 1-based when set. |
+| `position` | `None` (i.e. the arg is a `--flag`, not a positional) | 1-based when set; a positional is also accepted as `--name`. |
 
 The two non-obvious defaults to remember:
 
@@ -804,8 +804,14 @@ The following constraints are enforced at parse time and cause a clean error
 ### Positional Arguments
 
 Args with `position = N` are populated from non-flag tokens in declaration
-order rather than via `--name`. Positions are 1-based and must be unique
-within a runnable.
+order. Positions are 1-based and must be unique within a runnable.
+
+A positional arg can **also** be passed by name as `--name value` (or
+`--name=value`) — the form a programmatic caller building argv from a
+`{name: value}` map naturally produces (`runspec serve`, a scheduler, a
+console). A positional given by name is not also consumed from the bare
+tokens, so the remaining positionals keep their order. Passing the same arg
+both ways is an error.
 
 ```toml
 [deploy.args]
@@ -816,6 +822,8 @@ release = {type = "str", description = "Release tag", position = 2, required = f
 ```bash
 deploy prod v1.2.3       # target=prod, release=v1.2.3
 deploy prod              # target=prod, release=None
+deploy --target prod --release v1.2.3   # same as `deploy prod v1.2.3`
+deploy --release v1.2.3 prod            # target=prod (by position), release by name
 ```
 
 ### Pass-through Arguments (`type = "rest"`)

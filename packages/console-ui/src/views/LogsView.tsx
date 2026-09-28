@@ -5,7 +5,7 @@ import {
 } from 'antd'
 import {
   ReloadOutlined, DeleteOutlined, InboxOutlined, EyeOutlined, FolderOutlined,
-  BarChartOutlined, ShareAltOutlined,
+  BarChartOutlined, ShareAltOutlined, DatabaseOutlined,
 } from '@ant-design/icons'
 import type { ColumnType } from 'antd/es/table'
 import {
@@ -14,6 +14,7 @@ import {
 } from '../bridge'
 import { LogStream } from '../components/LogStream'
 import { MONO_FONT } from '../ThemeContext'
+import { RunsIndexModal, type RunsIndexTarget } from './RunsIndexModal'
 
 // Analytics is a per-host drill off the Logs tab (not a standalone tab): the
 // operator opens a host's disk usage here, then its run analytics in a drawer,
@@ -382,6 +383,7 @@ export function LogsView({ selectedHost, activeScope, active }: LogsViewProps) {
   const [loading, setLoading] = useState(false)
   const [maintTarget, setMaintTarget] = useState<MaintTarget | null>(null)
   const [shareTarget, setShareTarget] = useState<ShareTarget | null>(null)
+  const [indexTarget, setIndexTarget] = useState<RunsIndexTarget | null>(null)
   const [viewTarget, setViewTarget] = useState<ViewTarget | null>(null)
   const [analyticsOpen, setAnalyticsOpen] = useState(false)
 
@@ -513,6 +515,11 @@ export function LogsView({ selectedHost, activeScope, active }: LogsViewProps) {
                       </Button>
                     </Tooltip>
                   )}
+                  <Tooltip title="Inspect and maintain this dir's runs index (runspec_runs.db) — the fast History read: prune, reap orphans, reindex">
+                    <Button size="small" icon={<DatabaseOutlined />} onClick={() => setIndexTarget({ host, group: v.group })}>
+                      Runs index…
+                    </Button>
+                  </Tooltip>
                   <Button size="small" icon={<InboxOutlined />} onClick={() => setMaintTarget({ host, group: v.group, verb: 'compact' })}>
                     Compact…
                   </Button>
@@ -551,6 +558,7 @@ export function LogsView({ selectedHost, activeScope, active }: LogsViewProps) {
         onClose={() => setShareTarget(null)}
         onApplied={(actedHost) => { if (actedHost === host) refresh() }}
       />
+      <RunsIndexModal target={indexTarget} onClose={() => setIndexTarget(null)} />
       <StreamDrawer target={viewTarget} onClose={() => setViewTarget(null)} />
 
       <Drawer

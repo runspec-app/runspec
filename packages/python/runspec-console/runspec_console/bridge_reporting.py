@@ -1764,6 +1764,150 @@ class ReportingMixin:
             host, rp, group, argv, timeout=180, run_as=run_as or ""
         )
 
+    # ── runs index (runspec_runs.db) maintenance ─────────────────────────────
+    #
+    # The per-venv runs index the History tab reads is maintained by core's
+    # `runspec history stats|prune|reap|reindex` (a ring prune + orphan reap also
+    # run automatically on every run's finalize). These drive the same verbs over
+    # the venv's own binary — scoped like logs_prune (this entry's dir only) — so
+    # an operator can inspect and repair an index without a shell. Needs
+    # runspec >= 0.62.0 on the target (the `stats` verb + `--json` results).
+
+    _HISTORY_DB_ACTIONS = ("prune", "reap", "reindex")
+
+    def history_db_stats(self, host: str, group: str) -> dict[str, Any]:
+        """Health snapshot of one venv's runs index (``runspec history stats``):
+        ``{ok, group, path, exists, size_bytes, rows, by_status, oldest, newest,
+        running, stale_running, log_pruned, schema_version, write_error}``.
+        Read-only — no ``run_as`` (the index is ``0664`` and read ``mode=ro``)."""
+        rp, scope = self._scope_for(host, group)
+        if not rp:
+            return {
+                "ok": False,
+                "group": group,
+                "error": f"no venv '{group}' on {host}",
+            }
+        argv = ["history", "stats", "--scope", scope, "--json"]
+        r = self._history_db_action(host, rp, group, argv, timeout=60)
+        if not r.get("ok"):
+            return r
+        dirs = r.get("dirs") or []
+        snap = dict(dirs[0]) if dirs else {"exists": False}
+        snap.update(ok=True, group=group)
+        return snap
+
+    def history_db_maintain(
+        self,
+        host: str,
+        group: str,
+        action: str,
+        older_than: str | None = None,
+        max_rows: int | None = None,
+        run_as: str | None = None,
+    ) -> dict[str, Any]:
+        """Run one runs-index maintenance verb on a venv — ``prune`` (needs
+        ``older_than`` and/or ``max_rows``), ``reap`` (crash orphaned ``running``
+        rows) or ``reindex`` (rebuild from the audit logs). ``run_as`` escalates to
+        the venv owner via ``sudo -n -u`` like :meth:`logs_prune` — the index of a
+        service-account-owned venv isn't writable by the login user. Returns
+        ``{ok, group, verb, count, error?}``; a successful change busts the
+        History cache so the tab reflects it."""
+        if action not in self._HISTORY_DB_ACTIONS:
+            return {"ok": False, "group": group, "error": f"unknown action {action!r}"}
+        if action == "prune" and not older_than and not max_rows:
+            return {
+                "ok": False,
+                "group": group,
+                "error": "prune needs --older-than and/or --max-rows",
+            }
+        rp, scope = self._scope_for(host, group)
+        if not rp:
+            return {
+                "ok": False,
+                "group": group,
+                "error": f"no venv '{group}' on {host}",
+            }
+        argv = ["history", action]
+        if action == "prune":
+            if older_than:
+                argv += ["--older-than", older_than]
+            if max_rows:
+                argv += ["--max-rows", str(int(max_rows))]
+        argv += ["--scope", scope, "--json"]
+        r = self._history_db_action(
+            host,
+            rp,
+            group,
+            argv,
+            timeout=300 if action == "reindex" else 120,
+            run_as=run_as or "",
+        )
+        if r.get("ok") is False and not r.get("error"):
+            # The verb ran but a dir was unwritable — surface its named error.
+            errs = [d.get("error") for d in r.get("dirs") or [] if d.get("error")]
+            r["error"] = "; ".join(errs) or "maintenance failed"
+            if run_as:
+                r["error"] += f" (as {run_as})"
+            else:
+                r["error"] += " — set Run as to the venv's owner to escalate via sudo."
+        if r.get("ok"):
+            self._invalidate_remote_history(host)
+        return r
+
+    def _history_db_action(
+        self,
+        host: str,
+        rp: str,
+        group: str,
+        argv: list[str],
+        timeout: int,
+        run_as: str = "",
+    ) -> dict[str, Any]:
+        """Run a ``runspec history … --json`` verb and return its result object
+        (``ok`` preserved when the CLI set it), or ``{ok: False, error}`` with an
+        upgrade hint when the venv's runspec predates the verb/``--json``."""
+        code, stdout, stderr = self._run_logs(
+            host, rp, argv, timeout=timeout, run_as=run_as
+        )
+        for line in reversed(stdout.splitlines()):
+            line = line.strip()
+            if not line.startswith("{"):
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict) and "verb" in payload:
+                payload.setdefault("ok", True)
+                payload["group"] = group
+                return payload
+        # runspec 0.57–0.60 has prune/reap/reindex but prints a text "✓ … N …"
+        # line even with --json — the action succeeded, so report it as such.
+        if code == 0:
+            import re
+
+            m = re.search(r"✓\s+\D*?(\d+)", stdout)
+            if m:
+                return {
+                    "ok": True,
+                    "group": group,
+                    "verb": argv[1],
+                    "count": int(m.group(1)),
+                }
+        err = stdout.strip() or stderr.strip() or f"exit {code}"
+        low = err.lower()
+        if "unknown history verb" in low or "unknown command" in low or "--json" in low:
+            err += (
+                " — this venv's runspec is too old to maintain its runs index from "
+                "the console (needs runspec >= 0.62.0); upgrade runspec in this venv."
+            )
+        elif run_as and (utils_mod.looks_permission_denied(err) or "sudo" in low):
+            err += (
+                f" — passwordless sudo to run as {run_as} (sudo -n -u {run_as}) was "
+                "refused; grant it or run `runspec history` as that user manually."
+            )
+        return {"group": group, "ok": False, "error": err}
+
     def _logs_action(
         self,
         host: str,

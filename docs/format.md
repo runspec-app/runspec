@@ -230,7 +230,7 @@ description = "Output quality. Values below 60 are rarely useful."
 | `ui` | string | Form control hint. Inferred from type if omitted. On a `str` arg: `"date"`/`"datetime"`/`"time"`/`"month"` request a date / date-time / time / month picker (value an ISO-8601 string) and `"color"` a colour picker (`#rrggbb`). On an `int`/`float` arg with a `range`, `"slider"` renders a slider. On a `choice` arg, `"multiselect"` renders a multi-select (pair with `multiple = true`; a `multiple` choice is a multi-select by inference). |
 | `hint` | string | Placeholder text for a UI form field. Advisory for `str`/`path`/`password`; never affects parsing. |
 | `meta` | table | Developer-defined pass-through metadata. runspec never reads it. |
-| `position` | int | 1-based positional index. Makes the arg positional rather than a `--flag`. |
+| `position` | int | 1-based positional index. Makes the arg positional (it may still be passed as `--name`). |
 
 ### Positional arguments
 
@@ -246,7 +246,13 @@ release = {type = "str", description = "Release tag", position = 2, required = f
 ```bash
 deploy prod v1.2.3       # target=prod, release=v1.2.3
 deploy prod              # target=prod, release=None
+deploy --target prod --release v1.2.3   # by name works too
 ```
+
+A positional can also be passed by name (`--target prod`), which is what a
+program building the command line from a `{name: value}` map (e.g.
+`runspec serve`, a scheduler) produces. Passing the same arg both ways is an
+error.
 
 ### String validation (`pattern`, `min-length`, `max-length`)
 

@@ -137,9 +137,20 @@ def _coerce_bool(value: Any, arg: dict[str, Any]) -> bool:
 
 
 def _coerce_flag(value: Any, arg: dict[str, Any]) -> bool:
-    """Flags are True when present on CLI, False otherwise."""
+    """Flags are True when present on CLI, False otherwise.
+
+    A string value comes from the environment (``RUNSPEC_<RUNNABLE>_ARG_<NAME>``
+    or an ``env`` alias) and is read like a ``bool`` — ``1/true/yes/on`` vs
+    ``0/false/no/off`` — with an empty string meaning "not set" (False). It used
+    to be ``bool(value)``, so ``"0"``/``"false"`` read as **True**: a caller
+    (``runspec serve`` serialises an explicit ``false`` as ``"0"``, per the
+    spec's serialisation table) switching a flag *off* switched it on."""
     if isinstance(value, bool):
         return value
+    if isinstance(value, str):
+        if value.strip() == "":
+            return False
+        return _coerce_bool(value.strip(), arg)
     return bool(value)
 
 

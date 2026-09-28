@@ -183,3 +183,26 @@ class TestCustomTypes:
         types = list_types()
         for t in ("str", "int", "float", "bool", "flag", "path", "choice"):
             assert t in types
+
+
+class TestFlagFromEnvironment:
+    """A flag's value arrives as a string only from the environment
+    (RUNSPEC_<RUNNABLE>_ARG_<NAME> / env aliases); it reads like a bool. It used
+    to be bool(str), so "0"/"false" read as True — runspec serve serialises an
+    explicit false as "0", so switching a flag off switched it on."""
+
+    def test_false_variants(self):
+        for val in ("0", "false", "False", "no", "off", " 0 ", ""):
+            assert coerce(val, {"type": "flag", "name": "x"}) is False, val
+
+    def test_true_variants(self):
+        for val in ("1", "true", "yes", "ON"):
+            assert coerce(val, {"type": "flag", "name": "x"}) is True, val
+
+    def test_bools_pass_through(self):
+        assert coerce(True, {"type": "flag", "name": "x"}) is True
+        assert coerce(False, {"type": "flag", "name": "x"}) is False
+
+    def test_junk_is_an_error_not_true(self):
+        with pytest.raises(ValueError):
+            coerce("maybe", {"type": "flag", "name": "x"})

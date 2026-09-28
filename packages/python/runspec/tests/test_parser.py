@@ -1088,3 +1088,76 @@ class TestExclusiveGroupWithFlag:
             runspec.parse(script_name="task", argv=["--run-as", "deploy", "--sudo"])
         assert exc.value.code == 1
         assert "escalation" in capsys.readouterr().out
+
+
+class TestPositionalByName:
+    """SPEC.md → Positional Arguments: a positional may also be passed as --name
+    (what serve / a scheduler build from a {name: value} map)."""
+
+    SPECS = {
+        "target": {"type": "str", "position": 1},
+        "release": {"type": "str", "position": 2},
+        "verbose": {"type": "flag"},
+    }
+
+    def test_by_position(self):
+        assert _parse_argv(["prod", "v1"], self.SPECS) == {"target": "prod", "release": "v1", "verbose": None}
+
+    def test_by_name(self):
+        r = _parse_argv(["--target", "prod", "--release=v1"], self.SPECS)
+        assert r["target"] == "prod" and r["release"] == "v1"
+
+    def test_mixed_bare_token_skips_slot_taken_by_name(self):
+        r = _parse_argv(["--target", "prod", "v1"], self.SPECS)
+        assert r["target"] == "prod" and r["release"] == "v1"
+        r = _parse_argv(["--release", "v1", "prod"], self.SPECS)
+        assert r["target"] == "prod" and r["release"] == "v1"
+
+    def test_both_ways_is_an_error(self, capsys):
+        with pytest.raises(SystemExit):
+            _parse_argv(["prod", "--target", "staging"], self.SPECS)
+        assert "both as a positional value and as --target" in capsys.readouterr().out
+
+    def test_underscore_form(self):
+        specs = {"input_file": {"type": "str", "position": 1}}
+        assert _parse_argv(["--input-file", "a.txt"], {"input-file": {"type": "str", "position": 1}})["input_file"] == "a.txt"
+        assert _parse_argv(["--input_file", "a.txt"], specs)["input_file"] == "a.txt"
+
+
+class TestMultipleFromEnvironment:
+    """SPEC.md → Serialisation: a multiple arg's env value is newline-delimited
+    (what runspec serve writes); it's split into a list on the way in."""
+
+    def test_newline_split(self, monkeypatch):
+        monkeypatch.setenv("RUNSPEC_DEMO_ARG_TAGS", "a\nb\n")
+        result, _ = _apply_env({"tags": None}, {}, {"tags": {"type": "str", "multiple": True}}, "demo", frozenset())
+        assert result["tags"] == ["a", "b"]
+
+    def test_single_value_arg_is_not_split(self, monkeypatch):
+        monkeypatch.setenv("RUNSPEC_DEMO_ARG_NOTE", "line1\nline2")
+        result, _ = _apply_env({"note": None}, {}, {"note": {"type": "str"}}, "demo", frozenset())
+        assert result["note"] == "line1\nline2"
+
+    def test_alias_is_split_too(self, monkeypatch):
+        monkeypatch.setenv("CI_TAGS", "x\ny")
+        result, _ = _apply_env({"tags": None}, {}, {"tags": {"type": "str", "multiple": True, "env": ["CI_TAGS"]}}, "demo", frozenset())
+        assert result["tags"] == ["x", "y"]
+
+    def test_end_to_end_flag_off_and_list(self, tmp_path, monkeypatch):
+        cfg = tmp_path / "runspec.toml"
+        cfg.write_text(
+            textwrap.dedent(
+                """
+                [demo]
+                description = "d"
+                [demo.args]
+                dry-run = {type = "flag", default = true, description = "d"}
+                tags    = {type = "str", multiple = true, required = false, description = "t"}
+                """
+            )
+        )
+        monkeypatch.setenv("RUNSPEC_DEMO_ARG_DRY_RUN", "0")
+        monkeypatch.setenv("RUNSPEC_DEMO_ARG_TAGS", "a\nb")
+        r = runspec.parse("demo", argv=[], config_path=cfg)
+        assert r.dry_run.value is False
+        assert r.tags.value == ["a", "b"]

@@ -120,8 +120,10 @@ class Daemon:
         try:
             result = run_runnable(
                 target.binary,
-                [],
+                list(entry.command),
                 dict(entry.args),
+                spec=target.spec,
+                runnable=entry.runnable,
                 source_toml=target.source,
                 run_as=run_as,
                 become_method=entry.become_method or target.become_method,

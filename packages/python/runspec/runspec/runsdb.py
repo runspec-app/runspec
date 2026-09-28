@@ -39,7 +39,10 @@ DB_NAME = "runspec_runs.db"
 # v2 (§8.1): + log_pruned_at / log_pruned_by. Additive, forward/backward-
 # compatible — ALTER TABLE ADD COLUMN is metadata-only, existing rows read NULL,
 # older readers ignore the new columns.
-_SCHEMA_VERSION = 2
+# v3 (docs/design/runspec-exec.md): + label — set only by `runspec exec --label`,
+# never cleared by a later upsert (the child's own writes don't know it). Also
+# introduces the `skipped` status value (an exec skip — lock busy / already running).
+_SCHEMA_VERSION = 3
 _BUSY_TIMEOUT_MS = 2000
 
 _COLUMNS = (
@@ -90,7 +93,9 @@ CREATE TABLE IF NOT EXISTS runs (
   -- §8.1 log-prune provenance: the log FILE's availability (never the run
   -- outcome — that stays `status`). NULL log_pruned_at = the log file is present.
   log_pruned_at TEXT,
-  log_pruned_by TEXT
+  log_pruned_by TEXT,
+  -- v3: the `runspec exec --label` tag (e.g. "sched:<id>"); NULL for direct runs.
+  label         TEXT
 );
 CREATE INDEX IF NOT EXISTS runs_start_ts ON runs (start_ts);
 CREATE INDEX IF NOT EXISTS runs_status   ON runs (status);
@@ -266,15 +271,17 @@ def _connect(path: Path, *, readonly: bool = False) -> sqlite3.Connection | None
 def _migrate(con: sqlite3.Connection) -> None:
     """Apply additive column adds an existing DB predates — the forward/backward-
     compatible half of a schema bump. v1 → v2 (§8.1): ``log_pruned_at`` /
-    ``log_pruned_by``. ``ALTER TABLE ADD COLUMN`` is metadata-only (no table
+    ``log_pruned_by``; v2 → v3: ``label``. ``ALTER TABLE ADD COLUMN`` is metadata-only (no table
     rewrite); a fresh DB already has them via ``_DDL`` so this is a no-op there.
     Best-effort — a migration failure never blocks the write (the DB is a derived
     index; worst case it is rebuilt via :func:`reindex`)."""
     with contextlib.suppress(sqlite3.Error):
         have = {r[1] for r in con.execute("PRAGMA table_info(runs)").fetchall()}
-        for col in ("log_pruned_at", "log_pruned_by"):
+        for col in ("log_pruned_at", "log_pruned_by", "label"):
             if col not in have:
                 con.execute(f"ALTER TABLE runs ADD COLUMN {col} TEXT")
+        # Here, not in _DDL: on a pre-v3 DB the column only exists after the ALTER.
+        con.execute("CREATE INDEX IF NOT EXISTS runs_label ON runs (label)")
 
 
 def _ensure_group_writable(path: Path, fresh: bool) -> None:
@@ -362,6 +369,7 @@ def finish_run(
 
 def _normalise_row(row: dict[str, Any]) -> dict[str, Any]:
     out = {c: row.get(c) for c in _COLUMNS}
+    out["label"] = row.get("label") or None
     out["run_id"] = row.get("run_id") or ""
     out["runnable"] = row.get("runnable") or ""
     out["status"] = row.get("status") or "running"
@@ -375,12 +383,17 @@ def _normalise_row(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _upsert(con: sqlite3.Connection, row: dict[str, Any]) -> None:
-    cols = ", ".join(_COLUMNS)
-    placeholders = ", ".join("?" for _ in _COLUMNS)
+    """INSERT or overwrite a row by ``run_id``. ``label`` is written on insert but
+    only ever *kept* on conflict: under ``runspec exec`` the wrapper writes the
+    labelled row first and the child's own begin/finish upserts (which don't know
+    the label) must not clear it."""
+    cols = ", ".join((*_COLUMNS, "label"))
+    placeholders = ", ".join("?" for _ in range(len(_COLUMNS) + 1))
     updates = ", ".join(f"{c}=excluded.{c}" for c in _COLUMNS if c != "run_id")
+    updates += ", label=COALESCE(excluded.label, runs.label)"
     con.execute(
         f"INSERT INTO runs ({cols}) VALUES ({placeholders}) ON CONFLICT(run_id) DO UPDATE SET {updates}",
-        tuple(row[c] for c in _COLUMNS),
+        (*(row[c] for c in _COLUMNS), row.get("label") or None),
     )
 
 
@@ -483,6 +496,7 @@ def list_runs(
     limit: int = 100,
     running_only: bool = False,
     live: bool = True,
+    label: str | None = None,
 ) -> list[dict[str, Any]]:
     """Newest-first rows for the History/Logs read. ``since`` is an ISO date/time
     lower bound (the real ``WHERE`` the date window becomes). ``live`` liveness-
@@ -505,6 +519,9 @@ def list_runs(
             if runnable:
                 clauses.append("runnable=?")
                 params.append(runnable)
+            if label:
+                clauses.append("label=?")
+                params.append(label)
             where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
             rows = con.execute(
                 f"SELECT * FROM runs{where} ORDER BY start_ts DESC LIMIT ?",
@@ -533,6 +550,168 @@ def _liveness_filter(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if r.get("status") == "running" and r.get("host") == host and not _pid_alive(r.get("pid"), r.get("proc_start")):
             r["status"] = "crashed"
     return rows
+
+
+# ── `runspec exec` support (docs/design/runspec-exec.md §3.3) ───────────────────
+
+
+def get_run(log_dir: Path, run_id: str) -> dict[str, Any] | None:
+    """One row by ``run_id`` (read-only), or ``None`` when absent / unreadable."""
+    try:
+        con = _connect(db_path(log_dir), readonly=True)
+        if con is None:
+            return None
+        try:
+            r = con.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
+            return dict(r) if r else None
+        finally:
+            con.close()
+    except Exception:
+        return None
+
+
+def adopt_child_row(
+    log_dir: Path,
+    wrapper_run_id: str,
+    *,
+    runnable: str,
+    since_ts: str,
+    label: str | None,
+) -> str | None:
+    """Merge a pre-0.62 child's row into the wrapper's run.
+
+    An older runspec ignores ``RUNSPEC_RUN_ID`` and records the run under its own
+    fresh id, which would show as a second History row. When **exactly one** such
+    row exists — same runnable, this host, started at/after ``since_ts``, no label,
+    not the wrapper's — stamp the wrapper's label on it and delete the wrapper's
+    placeholder so the child's row (with its args, command and log file) is the
+    single record. Returns the adopted ``run_id``, or ``None`` when there is
+    nothing (or nothing unambiguous) to adopt. Best-effort."""
+    try:
+        con = _connect(db_path(log_dir))
+        if con is None:
+            return None
+        try:
+            rows = con.execute(
+                "SELECT run_id FROM runs WHERE runnable=? AND host=? AND start_ts >= ? AND run_id != ? AND label IS NULL",
+                (runnable, _hostname(), since_ts, wrapper_run_id),
+            ).fetchall()
+            if len(rows) != 1:
+                return None
+            child_id: str = rows[0]["run_id"]
+            con.execute("UPDATE runs SET label=? WHERE run_id=?", (label, child_id))
+            con.execute("DELETE FROM runs WHERE run_id=?", (wrapper_run_id,))
+            con.commit()
+            return child_id
+        finally:
+            con.close()
+    except Exception:
+        return None
+
+
+def set_log_file(log_dir: Path, run_id: str, log_file: str) -> None:
+    """Point a row at its log file — used by ``runspec exec`` when it created the
+    run's log file itself (the child wrote none). Best-effort."""
+    with contextlib.suppress(Exception):
+        con = _connect(db_path(log_dir))
+        if con is None:
+            return
+        try:
+            con.execute("UPDATE runs SET log_file=? WHERE run_id=? AND log_file IS NULL", (log_file, run_id))
+            con.commit()
+        finally:
+            con.close()
+
+
+# ── maintenance introspection (the ``runspec history stats`` verb) ───────────────
+
+
+def stats(log_dir: Path) -> dict[str, Any]:
+    """A read-only health snapshot of one dir's index — what an operator (or the
+    console's Logs tab) needs to decide whether to prune / reap / reindex.
+
+    ``size_bytes`` counts the DB plus its ``-wal``/``-shm`` sidecars (the WAL can
+    dwarf the main file between checkpoints). ``running`` is the raw count of
+    ``running`` rows; ``stale_running`` is how many of those on *this* host have a
+    dead process (what ``reap`` would crash). ``write_error`` is non-empty when the
+    invoking user couldn't write the index (the "run as the venv owner" case).
+    Never raises — a missing / unreadable DB reports ``exists``/``error``."""
+    path = db_path(log_dir)
+    out: dict[str, Any] = {
+        "dir": str(log_dir),
+        "path": str(path),
+        "exists": path.exists(),
+        "size_bytes": 0,
+        "rows": 0,
+        "by_status": {},
+        "oldest": None,
+        "newest": None,
+        "running": 0,
+        "stale_running": 0,
+        "log_pruned": 0,
+        "schema_version": None,
+        "write_error": write_error(log_dir),
+    }
+    for suffix in ("", "-wal", "-shm"):
+        with contextlib.suppress(OSError):
+            out["size_bytes"] += Path(f"{path}{suffix}").stat().st_size
+    if not out["exists"]:
+        return out
+    try:
+        con = _connect(path, readonly=True)
+        if con is None:
+            out["error"] = "could not open the index read-only"
+            return out
+        try:
+            out["schema_version"] = con.execute("PRAGMA user_version").fetchone()[0]
+            by_status = {r[0]: r[1] for r in con.execute("SELECT status, count(*) FROM runs GROUP BY status")}
+            out["by_status"] = by_status
+            out["rows"] = sum(by_status.values())
+            oldest, newest = con.execute("SELECT min(start_ts), max(start_ts) FROM runs").fetchone()
+            out["oldest"], out["newest"] = oldest, newest
+            with contextlib.suppress(sqlite3.Error):  # a v1 DB predates the column
+                out["log_pruned"] = con.execute("SELECT count(*) FROM runs WHERE log_pruned_at IS NOT NULL").fetchone()[0]
+            host = _hostname()
+            running = con.execute("SELECT pid, proc_start, host FROM runs WHERE status='running'").fetchall()
+            out["running"] = len(running)
+            out["stale_running"] = sum(1 for r in running if r["host"] == host and not _pid_alive(r["pid"], r["proc_start"]))
+        finally:
+            con.close()
+    except Exception as exc:  # noqa: BLE001 — a snapshot, never fatal
+        out["error"] = f"{type(exc).__name__}: {exc}"
+    return out
+
+
+def write_error(log_dir: Path) -> str:
+    """Why the invoking user can't write this dir's index, or ``""`` if it can.
+
+    The write helpers are best-effort (they return 0 on failure), so a prune run
+    by a user who can't write a service-account-owned index would otherwise
+    report "0 rows pruned" — indistinguishable from "nothing to prune". The
+    maintenance verbs check this first so the failure is named. SQLite needs the
+    file writable and — to create the ``-wal``/``-shm`` sidecars — the dir too."""
+    path = db_path(log_dir)
+    target = path if path.exists() else log_dir
+    if not target.exists():
+        # No dir yet: writable if the nearest existing ancestor is (mkdir works).
+        parent = log_dir.parent
+        while not parent.exists() and parent != parent.parent:
+            parent = parent.parent
+        target = parent
+    if not os.access(target, os.W_OK):
+        return f"permission denied: {target} is not writable by this user{_owner_hint(target)}"
+    if path.exists() and not os.access(log_dir, os.W_OK):
+        return f"permission denied: {log_dir} is not writable by this user{_owner_hint(log_dir)}"
+    return ""
+
+
+def _owner_hint(p: Path) -> str:
+    try:
+        import pwd
+
+        return f" (owned by {pwd.getpwuid(p.stat().st_uid).pw_name})"
+    except Exception:  # noqa: BLE001 — Windows (no pwd) / unknown uid
+        return ""
 
 
 # ── reindex (rebuild the DB from the on-disk run_summary log records) ────────────

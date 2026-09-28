@@ -73,7 +73,7 @@ Each schedule becomes one line (plus its marker comment), for example:
 
 ```cron
 # runspec:sched:nightly-backup
-0 2 * * *  RUNSPEC_ENV_FILE=$HOME/.config/runspec-scheduler/env/nightly-backup.env flock -n $HOME/.cache/runspec-scheduler/nightly-backup.lock /opt/venvs/ops/bin/runspec run backup --target prod >/dev/null 2>&1
+0 2 * * *  env RUNSPEC_AGENT=1 RUNSPEC_ENV_FILE=/home/svc/.config/runspec-scheduler/env/nightly-backup.env /opt/venvs/ops/bin/runspec exec --label sched:nightly-backup --trigger schedule --lock /home/svc/.cache/runspec-scheduler/nightly-backup.lock backup -- --target prod >/dev/null 2>&1
 ```
 
 - **Absolute venv binary** — cron runs with a minimal environment (no PATH, no
@@ -83,9 +83,15 @@ Each schedule becomes one line (plus its marker comment), for example:
 - **`RUNSPEC_ENV_FILE=…` inline** — per-job credentials without leaking to other
   jobs (a bare `NAME=val` crontab line would apply to every following job); the
   runnable reads its own `0600` dotenv.
-- **`>/dev/null 2>&1`** — cron's default is to mail stdout/stderr; we discard it
-  and let runspec's own logging write the record (which also populates the runs
-  index).
+- **`runspec exec`** (core ≥ 0.62, [runspec-exec.md](runspec-exec.md)) — the
+  line runs the runnable through core's wrapper, which records the fire in the
+  runs index under the label `sched:<id>` with the observed exit code and the
+  captured stdout/stderr, even when the runnable has no `[config.logging]` or
+  fails before logging starts. (Until scheduler 0.3.0 the line ran the binary
+  directly and discarded its output — see "Observability" below.)
+- **`--lock`** — the overlap guard; a held lock is recorded as a `skipped` run.
+- **`>/dev/null 2>&1`** — only stops cron mailing the output; `exec` has already
+  captured it in the run's log.
 
 ### Identity: a marker block, because user cron has no `.d`
 
@@ -117,6 +123,14 @@ hook. So without any live process:
 
 The scheduler contributes execution; the index contributes truth.
 
+**Why the wrapper (scheduler 0.3.0).** Relying on the runnable's *self*-record
+left gaps: a runnable without `[config.logging]` recorded nothing, failures before
+logging started (bad args, `run_as` refusal, missing binary) vanished, the exit
+code was inferred rather than observed, and the output went to `/dev/null`. Lines
+now run through `runspec exec`, which records all of these; `runspec-scheduler
+status` joins config ⋈ crontab ⋈ runs (label `sched:<id>`) + the last run's
+output.
+
 ### Overlap detection
 
 Cron will happily start a run while the previous one is still going. Two answers,
@@ -128,7 +142,9 @@ both without a daemon:
   running-rows before starting — more informative (it can record "skipped, prior
   still running"), reusing the liveness logic already built.
 
-v1 uses `flock`.
+v1 used a bare `flock -n`; since scheduler 0.3.0 the line uses
+`runspec exec --lock`, the same lock but with the skip **recorded** as a
+`skipped` run.
 
 ## Credentials in v1 — `RUNSPEC_ENV_FILE`, owned by `run_as`, provisioned out of band
 
@@ -205,6 +221,11 @@ factor — it made the console route an *operator's* selected credentials onto a
 shared host. Credentials stay keychain-only in the console, never shipped
 anywhere.
 
+**Shipped read-only (console 0.299.0):** Schedules tab → **Shared (host cron)**
+shows each host venv's shared schedules from `runspec-scheduler status` over SSH —
+installed state, recent runs and the last run's captured output. No management
+yet; the rest of this section is still the envisioned next step.
+
 **Envisioned future — a separate "Shared schedules" section, `run_as` = the venv
 owner.** The natural console home for this is a **distinct section** (not the
 personal Schedules tab) that reads and edits a host's cron shared-schedules over
@@ -265,6 +286,13 @@ args = { target = "prod" }
 cron = "0 2 * * *"
 run_as = "svc-ops"
 cred_vars = ["JIRA_USER", "JIRA_PASSWORD"]
+
+[[schedule]]                    # a runnable with verbs: name the verb
+id = "tmp-usage"
+runnable = "filesystem"
+command = ["directory-size"]    # scheduler ≥ 0.3.0; validated against the spec at `add`
+args = { path = "/tmp" }
+cron = "0 * * * *"
 ```
 
 `sync` reconciles: add lines for new ids, replace changed ones, remove ours that

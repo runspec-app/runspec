@@ -46,33 +46,48 @@ def _target(**over) -> Target:
 
 class TestRenderCommand:
     def test_shape(self):
-        cmd = cronsync.render_command("/venv/bin/backup", "/venv/lib/backup/runspec.toml", {"target": "prod"}, "", home="/home/svc", sched_id="nightly")
-        # mkdir -p the lock dir, then flock -n the run, output discarded.
-        assert cmd.startswith("mkdir -p /home/svc/.cache/runspec-scheduler && ")
-        assert "flock -n /home/svc/.cache/runspec-scheduler/nightly.lock" in cmd
+        cmd = cronsync.render_command("/venv/bin/runspec", "backup", {"target": "prod"}, "", home="/home/svc", sched_id="nightly")
+        # runspec exec, labelled + locked, recorded under trigger=schedule; output
+        # redirected only so cron doesn't mail it (exec captured it in the log).
+        assert cmd.startswith("env RUNSPEC_AGENT=1 /venv/bin/runspec exec --label sched:nightly --trigger schedule ")
+        assert "--lock /home/svc/.cache/runspec-scheduler/nightly.lock" in cmd
+        assert "backup -- --target prod" in cmd
         assert cmd.endswith(">/dev/null 2>&1")
-        # provenance via env(1), then the runnable binary + its args.
-        assert "env RUNSPEC_AGENT=1 RUNSPEC_TRIGGER=schedule RUNSPEC_CONFIG=/venv/lib/backup/runspec.toml" in cmd
-        assert "/venv/bin/backup --target prod" in cmd
+        # no bare flock / mkdir any more — exec takes the lock (and creates its dir)
+        assert "flock" not in cmd and "mkdir" not in cmd
 
-    def test_flag_negation_and_env_file(self):
-        cmd = cronsync.render_command("/venv/bin/backup", "", {"verbose": True, "dry-run": False}, "/home/svc/.config/runspec-scheduler/env/n.env", home="/home/svc", sched_id="n")
-        assert "--verbose" in cmd and "--no-dry-run" in cmd
+    def test_flags_and_env_file(self):
+        # verbose=true → --verbose; dry-run=false on a default-true flag → the env
+        # channel (argv has no --no-<flag>, which runspec rejects).
+        spec = {"args": {"verbose": {"default": False}, "dry-run": {"default": True}}, "commands": {}}
+        cmd = cronsync.render_command(
+            "/venv/bin/runspec",
+            "backup",
+            {"verbose": True, "dry-run": False},
+            "/home/svc/.config/runspec-scheduler/env/n.env",
+            home="/home/svc",
+            sched_id="n",
+            spec=spec,
+        )
+        assert "backup -- --verbose >/dev/null" in cmd
+        assert "--no-" not in cmd
+        assert "RUNSPEC_BACKUP_ARG_DRY_RUN=0" in cmd
         # the credential file rides RUNSPEC_ENV_FILE (never the secret itself).
         assert "RUNSPEC_ENV_FILE=/home/svc/.config/runspec-scheduler/env/n.env" in cmd
 
     def test_no_env_file_when_absent(self):
-        cmd = cronsync.render_command("/venv/bin/backup", "", {}, "", home="/home/svc", sched_id="n")
+        cmd = cronsync.render_command("/venv/bin/runspec", "backup", {}, "", home="/home/svc", sched_id="n")
         assert "RUNSPEC_ENV_FILE" not in cmd
+        assert cmd.endswith("backup -- >/dev/null 2>&1")
 
     def test_quotes_values_with_spaces(self):
-        cmd = cronsync.render_command("/venv/bin/backup", "", {"msg": "hello world"}, "", home="/home/svc", sched_id="n")
+        cmd = cronsync.render_command("/venv/bin/runspec", "backup", {"msg": "hello world"}, "", home="/home/svc", sched_id="n")
         assert "'hello world'" in cmd
 
 
 class TestRenderBlock:
     def test_marker_and_job(self):
-        block = cronsync.render_block("nightly", "0 2 * * *", "mkdir -p x && flock -n y env z >/dev/null 2>&1")
+        block = cronsync.render_block("nightly", "0 2 * * *", "env RUNSPEC_AGENT=1 /v/bin/runspec exec x >/dev/null 2>&1")
         assert block[0] == "# runspec:sched:nightly"
         assert block[1].startswith("0 2 * * *  ")
 
@@ -190,3 +205,19 @@ class TestSync:
         assert res.to_dict()["ok"] is False
         assert [e["user"] for e in res.errors] == ["svc"]
         assert [r["id"] for r in res.installed] == ["b"]  # the good account still installed
+
+
+def test_missing_crontab_binary_is_an_error_result_not_a_traceback(tmp_path, monkeypatch):
+    import subprocess
+
+    from runspec_scheduler.config import write_schedules
+
+    def boom(*a, **k):
+        raise FileNotFoundError(2, "No such file or directory", "crontab")
+
+    monkeypatch.setattr(subprocess, "run", boom)
+    monkeypatch.setattr(cronsync, "resolve_target", lambda name: _target())
+    write_schedules(tmp_path / "cfg.toml", [_entry()])
+    res = cronsync.sync(tmp_path / "cfg.toml", dry_run=True)
+    assert res.errors and "crontab is not installed" in res.errors[0]["error"]
+    assert not res.installed

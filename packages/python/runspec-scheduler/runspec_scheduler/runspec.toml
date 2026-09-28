@@ -8,6 +8,7 @@
 #   runspec-scheduler add     --id … …        add/replace a scheduled runnable in the config
 #   runspec-scheduler remove  --id …          remove a schedule from the config
 #   runspec-scheduler list                    print the configured schedules as JSON
+#   runspec-scheduler status                  config + crontab + recent runs/output per schedule (JSON)
 #   runspec-scheduler run-now --id …          fire one schedule immediately
 #   runspec-scheduler run                     run the long-running daemon (legacy; being replaced by `sync`)
 #   runspec-scheduler install-service         write + enable the per-venv systemd --user unit (legacy)
@@ -40,9 +41,11 @@ discoverable    = false
 
 examples = [
   {cmd = "runspec-scheduler add --id nightly-backup --runnable backup --cron '0 2 * * *'", description = "Add /backup at 02:00 to the config."},
+  {cmd = "runspec-scheduler add --id tmp-usage --runnable filesystem --command directory-size --args '{\"path\": \"/tmp\"}' --cron '0 * * * *'", description = "Schedule a runnable's subcommand (verb) hourly."},
   {cmd = "runspec-scheduler sync", description = "Render the config's cron schedules into the OS crontab (the recommended backend)."},
   {cmd = "runspec-scheduler sync --dry-run", description = "Preview the crontab changes without writing."},
   {cmd = "runspec-scheduler list", description = "Print configured schedules as JSON."},
+  {cmd = "runspec-scheduler status", description = "Per schedule: installed?, recent runs, last run's captured output (JSON)."},
   {cmd = "runspec-scheduler run", description = "Run the legacy daemon in the foreground (systemd ExecStart)."},
 ]
 
@@ -64,6 +67,7 @@ description = "Add or replace a schedule (keyed by --id), then hot-reload the da
 [runspec-scheduler.commands.add.args]
 id       = {type = "str",  required = true,  description = "Stable schedule id (the replace-in-place key)."}
 runnable = {type = "str",  required = true,  description = "Name of a runnable installed in THIS venv to run on fire."}
+command  = {type = "str",  required = false, description = "Subcommand path for a runnable with verbs, e.g. 'list-directory' or 'admin users' (space-separated). Required when the runnable requires a command; validated against its spec."}
 cron     = {type = "str",  required = false, description = "5-field cron expression, e.g. '0 2 * * *'. Exactly one of --cron / --every."}
 every    = {type = "str",  required = false, description = "Interval like 15m / 1h / 1d (number + s/m/h/d). Exactly one of --cron / --every."}
 timezone = {type = "str",  required = false, description = "IANA timezone (e.g. Europe/London). Blank = host local time."}
@@ -83,9 +87,17 @@ id = {type = "str", required = true, description = "Schedule id to remove."}
 description = "Print the configured schedules as JSON (read-only; what runspec-console reads to display + verify remote schedules)"
 output      = "json"
 
+# ---- status: config + crontab + runs index, joined per schedule -----------
+[runspec-scheduler.commands.status]
+description = "Per schedule: config, whether its crontab line is installed (exec vs legacy), its recent runs from the runs index (label sched:<id>), and the last run's captured output — JSON (read-only; what runspec-console's Shared schedules view reads)"
+output      = "json"
+
+[runspec-scheduler.commands.status.args]
+runs = {type = "int", default = 5, description = "Recent runs to include per schedule."}
+
 # ---- run-now: fire one schedule immediately ------------------------------
 [runspec-scheduler.commands.run-now]
-description = "Fire one schedule immediately by id (ignores enabled state)"
+description = "Fire one schedule immediately by id (ignores enabled state), through `runspec exec` so it's recorded under the schedule's label"
 output      = "json"
 
 [runspec-scheduler.commands.run-now.args]

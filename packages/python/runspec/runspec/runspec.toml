@@ -192,6 +192,27 @@ bin       = {type = "str",    description = "Path to runspec binary on the remot
 format    = {type = "choice", description = "Output format when listing", options = ["text", "json"], short = "-f", default = "text"}
 tool-args = {type = "rest",   description = "Args passed to the remote tool"}
 
+[runspec.commands.exec]
+description = "Run an installed runnable and record it end-to-end — observed exit code, captured output, skips — in the runs index + audit log"
+autonomy    = "confirm"
+
+examples = [
+  {cmd = "runspec exec backup -- --target prod",                              description = "Run 'backup', recording its exit code and output"},
+  {cmd = "runspec exec --label nightly --lock ~/.cache/nightly.lock backup",  description = "Skip (recorded) if the previous run still holds the lock"},
+  {cmd = "runspec exec --skip-if-running --timeout 600 report",               description = "Skip if already running per the runs index; kill after 10 min"},
+  {cmd = "runspec exec cron -- list",                                         description = "Everything after -- is passed through, incl. subcommands"},
+]
+
+[runspec.commands.exec.args]
+runnable        = {type = "str",  description = "Name of a runnable installed in this venv", position = 1, required = true}
+label           = {type = "str",  description = "Tag recorded on the run (e.g. sched:nightly) — filter with `runspec history list --label`", required = false}
+trigger         = {type = "str",  description = "Provenance recorded on the run and passed as RUNSPEC_TRIGGER (default: inherit)", required = false}
+lock            = {type = "str",  description = "Lock file (POSIX): if another run holds it, record a 'skipped' run and exit 0", required = false}
+skip-if-running = {type = "flag", description = "Record a 'skipped' run and exit 0 when the runs index shows one with the same label (else runnable) running", default = false}
+capture-bytes   = {type = "int",  description = "Bytes of each of stdout/stderr to keep (the tail) in the run's log; 0 = no capture", default = 65536}
+timeout         = {type = "int",  description = "Kill the run after this many seconds (exit 124, recorded failed)", required = false}
+runnable-args   = {type = "rest", description = "Args passed to the runnable (after --)"}
+
 [runspec.commands.logs]
 description = "View, status, prune, compact, or share per-invocation audit logs (store = 'per-run')"
 autonomy    = "autonomous"
@@ -240,16 +261,19 @@ examples = [
   {cmd = "runspec history prune --older-than 30d",             description = "Drop index rows older than 30 days (this venv)"},
   {cmd = "runspec history reindex",                            description = "Rebuild the index from the audit logs"},
   {cmd = "runspec history reap",                               description = "Mark crashed any 'running' row whose process is gone"},
+  {cmd = "runspec history list --label sched:nightly",         description = "Runs recorded by `runspec exec --label sched:nightly`"},
+  {cmd = "runspec history stats --json",                       description = "Index health: rows by status, size, age span, stale rows"},
 ]
 
 [runspec.commands.history.args]
-verb       = {type = "str", description = "list (default) / running / prune / reindex / reap", position = 1, required = false}
+verb       = {type = "str", description = "list (default) / running / stats / prune / reindex / reap", position = 1, required = false}
 runnable   = {type = "str", description = "Filter to one runnable (list)", required = false}
-status     = {options = ["running", "completed", "failed", "crashed"], description = "Filter by status (list)", required = false}
+status     = {options = ["running", "completed", "failed", "crashed", "skipped"], description = "Filter by status (list)", required = false}
+label      = {type = "str", description = "Filter to runs with this `runspec exec --label` (list)", required = false}
 since      = {type = "str", description = "Only runs newer than this, e.g. 1h, 7d (list)", required = false}
 limit      = {type = "int", description = "Max rows to show (list / running)", default = 50}
 failed     = {type = "flag", description = "Only failed/crashed runs (list)", default = false}
 older-than = {type = "str", description = "Age threshold for prune (day-granular), e.g. 30d, 90d", required = false}
 max-rows   = {type = "int", description = "Keep only the newest N rows (prune)", required = false}
-json       = {type = "flag", description = "Emit JSON lines instead of a table (list / running)", default = false}
-scope      = {options = ["venv", "home", "all"], description = "Which logs dir(s): 'venv' ({sys.prefix}/logs), 'home' (~/logs), or 'all'. Reads default to all; prune/reindex/reap default to 'venv'.", required = false}
+json       = {type = "flag", description = "Emit JSON instead of text (list / running: one row per line; stats / prune / reindex / reap: one result object)", default = false}
+scope      = {options = ["venv", "home", "all"], description = "Which logs dir(s): 'venv' ({sys.prefix}/logs), 'home' (~/logs), or 'all'. Reads (list/running/stats) default to all; prune/reindex/reap default to 'venv'.", required = false}

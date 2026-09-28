@@ -19,7 +19,7 @@ from runspec.env import apply_env_file
 from runspec.finder import find_config
 from runspec.inference import effective_autonomy, infer_script
 from runspec.loader import load_raw
-from runspec.logging_setup import configure_logging, install_excepthook
+from runspec.logging_setup import adopt_exec_run_id, configure_logging, install_excepthook
 from runspec.models import Arg, Group, RunSpec
 from runspec.types import coerce
 from runspec.validator import raise_if_errors, validate_args, validate_groups
@@ -223,6 +223,10 @@ def _parse_impl(
     # `$` skills menu. Recorded in run_summary as `extra.skill` — another provenance
     # axis alongside `trigger`/`agent`, so History/Analytics can attribute runs to it.
     skill = os.environ.get("RUNSPEC_SKILL", "").strip()
+    # A `runspec exec` wrapper's run id (RUNSPEC_RUN_ID). Taken — and removed from
+    # the environment — here, unconditionally, so it never leaks to runnables this
+    # one shells out to, even when this runnable has no [config.logging].
+    exec_run_id = adopt_exec_run_id()
     if prompt_secrets:
         parsed_values, sources = _prompt_passwords(parsed_values, sources, raw_script["args"], agent)
 
@@ -293,6 +297,7 @@ def _parse_impl(
             command_path=command_path,
             invocation_args=invocation_args,
             history_cfg=config.get("history"),
+            run_id=exec_run_id,
         )
     except ValueError as e:
         raise errors.RunSpecError(str(e)) from e
@@ -662,8 +667,9 @@ def _parse_argv(
     Handles --flag, --key value, --key=value, -short, and multiple values.
 
     Positional args (those with `position = N` in the spec) consume non-flag
-    tokens in declaration order. A `rest` type arg captures everything after
-    a literal `--` separator as a list.
+    tokens in declaration order, and may also be given as ``--name value`` (a
+    slot filled by name is skipped by bare tokens; both ways is an error). A
+    `rest` type arg captures everything after a literal `--` separator as a list.
     """
     # Build lookup maps and identify positional + rest args
     name_map: dict[str, str] = {}  # --flag-name → normalised_name
@@ -693,6 +699,11 @@ def _parse_argv(
                 sys.exit(1)
             positions_seen[pos] = name
             positionals.append((pos, normalised, spec))
+            # Also accepted by name (`--target prod`) — what a caller building argv
+            # from a {name: value} map produces (serve, schedulers). SPEC.md →
+            # "Positional Arguments".
+            name_map[f"--{name}"] = normalised
+            name_map[f"--{normalised}"] = normalised
             continue
         name_map[f"--{name}"] = normalised
         name_map[f"--{normalised}"] = normalised
@@ -727,6 +738,20 @@ def _parse_argv(
             unknown.extend(rest_tokens)
 
     positional_idx = 0
+    positional_names = {pos_name for _, pos_name, _ in positionals}
+    by_position: set[str] = set()  # positionals filled from a bare token
+    by_name: set[str] = set()  # positionals filled via --name
+
+    def _claim_by_name(norm: str) -> None:
+        # A positional given as --name: its slot is taken (bare tokens skip it),
+        # and giving it both ways is ambiguous → a clear error, not last-wins.
+        if norm not in positional_names:
+            return
+        if norm in by_position:
+            print(f"✗  '{norm.replace('_', '-')}' was given both as a positional value and as --{norm.replace('_', '-')}; pass it one way.")
+            sys.exit(1)
+        by_name.add(norm)
+
     i = 0
     while i < len(argv):
         token = argv[i]
@@ -736,6 +761,7 @@ def _parse_argv(
             key, value = token.split("=", 1)
             norm = name_map.get(key)
             if norm:
+                _claim_by_name(norm)
                 spec = arg_specs.get(norm.replace("_", "-"), arg_specs.get(norm, {}))
                 if spec.get("type") == "password":
                     _refuse_password_on_cli(norm)
@@ -748,6 +774,7 @@ def _parse_argv(
         # --flag or -short
         norm = name_map.get(token) or short_map.get(token)
         if norm:
+            _claim_by_name(norm)
             spec = arg_specs.get(norm.replace("_", "-"), arg_specs.get(norm, {}))
             arg_type = spec.get("type", "str")
 
@@ -776,10 +803,14 @@ def _parse_argv(
             i += 1
             continue
 
-        # Positional — non-flag token assigned to next available positional spec
+        # Positional — non-flag token assigned to the next positional slot that
+        # wasn't already filled by name.
+        while positional_idx < len(positionals) and positionals[positional_idx][1] in by_name:
+            positional_idx += 1
         if positional_idx < len(positionals):
             _, pos_name, _ = positionals[positional_idx]
             result[pos_name] = token
+            by_position.add(pos_name)
             positional_idx += 1
             i += 1
             continue
@@ -881,17 +912,27 @@ def _apply_env(
         auto_key = f"RUNSPEC_{runnable_prefix}_ARG_{name.upper().replace('-', '_')}"
         env_val = os.environ.get(auto_key)
         if env_val is not None:
-            result[norm] = env_val
+            result[norm] = _env_value(env_val, spec)
             new_sources[norm] = "runspec_env" if auto_key in runspec_env_applied else "env"
             continue
         # Tier 2b: developer-declared aliases
         for alias in spec.get("env") or []:
             env_val = os.environ.get(alias)
             if env_val is not None:
-                result[norm] = env_val
+                result[norm] = _env_value(env_val, spec)
                 new_sources[norm] = "runspec_env" if alias in runspec_env_applied else "env"
                 break
     return result, new_sources
+
+
+def _env_value(raw: str, spec: dict[str, Any]) -> Any:
+    """An env var's raw string as a parsed value. A ``multiple`` arg's value is
+    newline-delimited (the spec's env serialisation — what ``runspec serve``
+    writes), so it's split into a list here; empty lines are dropped. Every other
+    type is left as the string for its coercer."""
+    if spec.get("multiple") and spec.get("type") != "rest":
+        return [item for item in raw.split("\n") if item != ""]
+    return raw
 
 
 def _apply_defaults(

@@ -76,6 +76,7 @@ def main() -> None:
         "env": cmd_env,
         "logs": cmd_logs,
         "history": cmd_history,
+        "exec": cmd_exec,
         "deny": cmd_deny,
     }
 
@@ -952,7 +953,7 @@ def cmd_logs(args: list[str]) -> None:
         sys.exit(1)
 
 
-_HISTORY_MARK = {"completed": "✓", "failed": "✗", "crashed": "‼", "running": "▶"}
+_HISTORY_MARK = {"completed": "✓", "failed": "✗", "crashed": "‼", "running": "▶", "skipped": "↷"}
 
 
 def _print_history_table(rows: list[dict[str, Any]]) -> None:
@@ -982,8 +983,8 @@ def cmd_history(args: list[str]) -> None:
     from runspec import runsdb
 
     verb = (parsed.verb.value or "list").lower()
-    if verb not in ("list", "running", "prune", "reindex", "reap"):
-        print(f"✗  Unknown history verb: {verb} (list / running / prune / reindex / reap)")
+    if verb not in ("list", "running", "stats", "prune", "reindex", "reap"):
+        print(f"✗  Unknown history verb: {verb} (list / running / stats / prune / reindex / reap)")
         sys.exit(1)
 
     # Reads span every logs dir by default (scope_dirs → None ⇒ log_dirs());
@@ -992,6 +993,7 @@ def cmd_history(args: list[str]) -> None:
     dirs = _logs.scope_dirs(parsed.scope.value, destructive=destructive)
     if dirs is None:
         dirs = _logs.log_dirs()
+    as_json = parsed.json.value
 
     if verb in ("list", "running"):
         limit = parsed.limit.value or 50
@@ -1008,41 +1010,118 @@ def cmd_history(args: list[str]) -> None:
                     runnable=parsed.runnable.value,
                     limit=limit,
                     running_only=(verb == "running"),
+                    label=parsed.label.value,
                 )
             )
         if parsed.failed.value:
             rows = [r for r in rows if r.get("status") in ("failed", "crashed")]
         rows.sort(key=lambda r: r.get("start_ts") or "", reverse=True)
         rows = rows[:limit]
-        if parsed.json.value:
+        if as_json:
             for r in rows:
                 print(json.dumps(r, default=str))
         else:
             _print_history_table(rows)
         return
 
+    if verb == "stats":
+        snaps = [runsdb.stats(d) for d in dirs]
+        if as_json:
+            # One object line (like `runspec logs --json`) so a caller can scan for it.
+            print(json.dumps({"verb": "stats", "dirs": snaps}, default=str))
+        else:
+            _print_history_stats(snaps)
+        return
+
+    retention_days = 0
+    max_rows = 0
     if verb == "prune":
-        retention_days = 0
         if parsed.older_than.value:
             retention_days = max(0, int(_logs.parse_duration(parsed.older_than.value).total_seconds() // 86400))
         max_rows = parsed.max_rows.value or 0
         if not retention_days and not max_rows:
             print("✗  prune needs --older-than (day-granular) and/or --max-rows")
             sys.exit(1)
-        total = sum(runsdb.prune_now(d, retention_days=retention_days, max_rows=max_rows) for d in dirs)
-        print(f"✓  pruned {total} row(s) from the runs index")
-        return
 
-    if verb == "reap":
-        total = sum(runsdb.reap_now(d) for d in dirs)
-        print(f"✓  reaped {total} orphaned 'running' row(s) → crashed")
-        return
-
-    # reindex — rebuild each dir's index from its run_summary audit records.
-    total = 0
+    # The write helpers are best-effort (0 on failure), so name an unwritable
+    # index up front instead of reporting a misleading "0 rows".
+    results: list[dict[str, Any]] = []
     for d in dirs:
-        total += runsdb.reindex(d, _logs.read_run_summaries([d]))
-    print(f"✓  reindexed {total} run(s) into the runs index")
+        err = runsdb.write_error(d)
+        if err:
+            results.append({"dir": str(d), "count": 0, "error": err})
+            continue
+        if verb == "prune":
+            n = runsdb.prune_now(d, retention_days=retention_days, max_rows=max_rows)
+        elif verb == "reap":
+            n = runsdb.reap_now(d)
+        else:  # reindex — rebuild each dir's index from its run_summary audit records
+            n = runsdb.reindex(d, _logs.read_run_summaries([d]))
+        results.append({"dir": str(d), "count": n})
+    total = sum(r["count"] for r in results)
+    errors = [r for r in results if r.get("error")]
+
+    if as_json:
+        print(json.dumps({"verb": verb, "count": total, "dirs": results, "ok": not errors}, default=str))
+    else:
+        for r in errors:
+            print(f"✗  {r['error']}")
+        noun = {
+            "prune": "pruned {n} row(s) from the runs index",
+            "reap": "reaped {n} orphaned 'running' row(s) → crashed",
+            "reindex": "reindexed {n} run(s) into the runs index",
+        }[verb]
+        print(f"✓  {noun.format(n=total)}")
+    if errors:
+        sys.exit(1)
+
+
+def _print_history_stats(snaps: list[dict[str, Any]]) -> None:
+    if not snaps:
+        print("(no logs dir yet — nothing has been indexed)")
+    for s in snaps:
+        print(s["path"])
+        if not s.get("exists"):
+            print("   (no index yet)")
+            continue
+        if s.get("error"):
+            print(f"   ✗  {s['error']}")
+            continue
+        size_kib = (s.get("size_bytes") or 0) / 1024
+        by = ", ".join(f"{k}={v}" for k, v in sorted((s.get("by_status") or {}).items())) or "empty"
+        print(f"   {s.get('rows', 0)} row(s) ({by}), {size_kib:.1f} KiB incl. WAL, schema v{s.get('schema_version')}")
+        if s.get("oldest"):
+            print(f"   oldest {str(s['oldest'])[:19]}  newest {str(s.get('newest') or '')[:19]}")
+        if s.get("stale_running"):
+            print(f"   ‼  {s['stale_running']} stale 'running' row(s) — `runspec history reap` clears them")
+        if s.get("log_pruned"):
+            print(f"   {s['log_pruned']} row(s) outlive their pruned log file")
+        if s.get("write_error"):
+            print(f"   ✗  not writable by you: {s['write_error']}")
+
+
+def cmd_exec(args: list[str]) -> None:
+    """Run an installed runnable, recorded end-to-end (see runspec/runexec.py)."""
+    from runspec.parser import parse as _parse
+    from runspec.runexec import ExecError, exec_runnable
+
+    parsed = _parse(script_name="runspec", argv=["exec"] + args, config_path=_CLI_CONFIG)
+    capture = parsed.capture_bytes.value
+    try:
+        rc = exec_runnable(
+            parsed.runnable.value,
+            parsed.runnable_args.value or [],
+            label=parsed.label.value,
+            trigger=parsed.trigger.value,
+            lock=parsed.lock.value,
+            skip_if_running=parsed.skip_if_running.value,
+            capture_bytes=65536 if capture is None else max(0, capture),
+            timeout=parsed.timeout.value,
+        )
+    except ExecError as exc:
+        print(f"✗  {exc}", file=sys.stderr)
+        sys.exit(2)
+    sys.exit(rc)
 
 
 def cmd_init(args: list[str]) -> None:

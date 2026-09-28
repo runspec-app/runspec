@@ -223,6 +223,20 @@ function parseArgv(argv: string[], argSpecs: Record<string, ArgSpec>): Record<st
     result[name.replace(/-/g, '_')] = undefined;
   }
 
+  // A positional may also be given as --name (SPEC.md → Positional Arguments):
+  // its slot is then skipped by bare tokens, and giving it both ways is an error.
+  const positionalSet = new Set(positionalArgs);
+  const byPosition = new Set<string>();
+  const byName = new Set<string>();
+  const claimByName = (norm: string): void => {
+    if (!positionalSet.has(norm)) return;
+    if (byPosition.has(norm)) {
+      const flag = norm.replace(/_/g, '-');
+      throw new RunSpecError(`✗  '${flag}' was given both as a positional value and as --${flag}; pass it one way.`);
+    }
+    byName.add(norm);
+  };
+
   let positionalIndex = 0;
   let i = 0;
   while (i < argv.length) {
@@ -240,6 +254,7 @@ function parseArgv(argv: string[], argSpecs: Record<string, ArgSpec>): Record<st
       const value = token.slice(eqIdx + 1);
       const norm = nameMap[key];
       if (norm) {
+        claimByName(norm);
         const hyphenName = norm.replace(/_/g, '-');
         const spec = argSpecs[hyphenName] ?? argSpecs[norm] ?? {};
         if ((spec as ArgSpec).type === 'password') refusePasswordOnCli(norm);
@@ -251,6 +266,7 @@ function parseArgv(argv: string[], argSpecs: Record<string, ArgSpec>): Record<st
 
     const norm = nameMap[token] ?? shortMap[token];
     if (norm) {
+      claimByName(norm);
       const hyphenName = norm.replace(/_/g, '-');
       const spec = argSpecs[hyphenName] ?? argSpecs[norm] ?? {};
       const argType = spec.type ?? 'str';
@@ -273,9 +289,12 @@ function parseArgv(argv: string[], argSpecs: Record<string, ArgSpec>): Record<st
       continue;
     }
 
-    // Unrecognized non-flag token: assign to next positional arg
+    // Unrecognized non-flag token: assign to the next positional slot not
+    // already filled by name
+    while (positionalIndex < positionalArgs.length && byName.has(positionalArgs[positionalIndex])) positionalIndex++;
     if (!token.startsWith('-') && positionalIndex < positionalArgs.length) {
       result[positionalArgs[positionalIndex]] = token;
+      byPosition.add(positionalArgs[positionalIndex]);
       positionalIndex++;
     }
 
@@ -370,6 +389,14 @@ function readLineNoEcho(prompt: string): string {
   }
 }
 
+// A `multiple` arg's env value is newline-delimited (the spec's env
+// serialisation — what `runspec serve` writes): split it into a list, dropping
+// empty lines. Every other type stays a string for its coercer.
+function envValue(raw: string, spec: ArgSpec): unknown {
+  if (spec.multiple && spec.type !== 'rest') return raw.split('\n').filter((item) => item !== '');
+  return raw;
+}
+
 function applyEnv(parsed: Record<string, unknown>, argSpecs: Record<string, ArgSpec>, runnableName: string): Record<string, unknown> {
   const runnablePrefix = runnableName.toUpperCase().replace(/-/g, '_');
   const result = { ...parsed };
@@ -380,7 +407,7 @@ function applyEnv(parsed: Record<string, unknown>, argSpecs: Record<string, ArgS
     const autoKey = `RUNSPEC_${runnablePrefix}_ARG_` + name.toUpperCase().replace(/-/g, '_');
     const autoVal = process.env[autoKey];
     if (autoVal !== undefined) {
-      result[norm] = autoVal;
+      result[norm] = envValue(autoVal, spec);
       continue;
     }
     // Tier 2b: developer-declared aliases
@@ -388,7 +415,7 @@ function applyEnv(parsed: Record<string, unknown>, argSpecs: Record<string, ArgS
     for (const alias of aliases) {
       const envVal = process.env[alias];
       if (envVal !== undefined) {
-        result[norm] = envVal;
+        result[norm] = envValue(envVal, spec);
         break;
       }
     }

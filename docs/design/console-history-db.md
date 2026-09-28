@@ -392,6 +392,9 @@ The schema in [§5](#5-schema) already carries what it needs (`runnable`, `statu
    retained" note on the History expand panel.)**
 5. **Scheduler** reads the table for overlap-detection (when that work is picked
    up).
+6. **Incremental pull** — a cursor-synced console-local cache of the index so
+   History renders instantly and pulls only deltas. **(proposed — see
+   [history-incremental-pull.md](history-incremental-pull.md).)**
 
 Each phase is independently shippable: core writing the DB harms nothing on its
 own (best-effort, gated), and the console read is purely additive over the

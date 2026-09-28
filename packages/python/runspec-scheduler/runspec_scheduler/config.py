@@ -49,6 +49,10 @@ class ScheduleEntry:
     # 600, in the run_as account's HOME) written when console credentials were
     # attached. The daemon points RUNSPEC_ENV_FILE at it when firing. Empty = none.
     env_file: str = ""
+    # The subcommand path for a runnable with verbs (e.g. ("list-directory",) for
+    # `filesystem list-directory`, or ("admin", "users") for a nested one). Empty =
+    # the runnable itself, which is only valid when it doesn't require a command.
+    command: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         when: dict[str, Any] = {}
@@ -64,6 +68,8 @@ class ScheduleEntry:
             "enabled": self.enabled,
             "when": when,
         }
+        if self.command:
+            out["command"] = list(self.command)
         if self.args:
             out["args"] = dict(self.args)
         if self.run_as:
@@ -84,6 +90,7 @@ def parse_entry(data: dict[str, Any]) -> ScheduleEntry:
         raise ValueError(f"schedule '{sid}' is missing 'runnable'")
     when = parse_when(data.get("when") or {})
     return ScheduleEntry(
+        command=parse_command(data.get("command")),
         id=sid,
         when=when,
         runnable=runnable,
@@ -93,6 +100,19 @@ def parse_entry(data: dict[str, Any]) -> ScheduleEntry:
         become_method=str(data.get("become_method") or "sudo").strip() or "sudo",
         env_file=str(data.get("env_file") or "").strip(),
     )
+
+
+def parse_command(raw: Any) -> tuple[str, ...]:
+    """A schedule's subcommand path from config/CLI: a TOML array of strings
+    (``["admin", "users"]``) or a space-separated string (``"admin users"``).
+    ``None``/empty → ``()``. Raises ``ValueError`` on any other shape."""
+    if raw is None or raw == "":
+        return ()
+    if isinstance(raw, str):
+        return tuple(raw.split())
+    if isinstance(raw, (list, tuple)) and all(isinstance(p, str) for p in raw):
+        return tuple(p.strip() for p in raw if p.strip())
+    raise ValueError(f"'command' must be a string or a list of strings, got {raw!r}")
 
 
 def config_path(explicit: str | None = None) -> Path:
@@ -146,10 +166,13 @@ def _inline_table(table: dict[str, Any]) -> str:
 
 def _render_entry(entry: dict[str, Any]) -> str:
     lines = ["[[schedule]]"]
-    # Scalars first (stable, readable order), then inline tables last.
+    # Scalars first (stable, readable order), then the command array, then inline
+    # tables last.
     for key in ("id", "runnable", "enabled", "run_as", "become_method", "env_file"):
         if key in entry:
             lines.append(f"{key} = {_toml_scalar(entry[key])}")
+    if entry.get("command"):
+        lines.append("command = [" + ", ".join(_toml_str(str(p)) for p in entry["command"]) + "]")
     for key in ("when", "args"):
         if key in entry and entry[key]:
             lines.append(f"{key} = {_inline_table(entry[key])}")

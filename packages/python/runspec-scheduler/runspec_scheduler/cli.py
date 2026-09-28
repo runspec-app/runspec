@@ -13,11 +13,11 @@ from typing import Any
 
 import runspec as rs
 
-from .config import ScheduleEntry, config_path, load_schedules, remove_schedule, upsert_schedule
+from .config import ScheduleEntry, config_path, load_schedules, parse_command, remove_schedule, upsert_schedule
 from .daemon import configure_logging, run_daemon
-from .discovery import resolve_target
+from .discovery import check_invocation, resolve_target
 from .envfile import capture_env, remove_env_file, write_env_file
-from .runner import run_runnable, venv_name
+from .runner import venv_name
 from .timing import next_fire_time, parse_when
 
 
@@ -74,6 +74,15 @@ def _cmd_add(spec: rs.RunSpec) -> None:
     if target is None:
         _emit({"error": f"runnable '{runnable}' is not installed in this venv ({venv_name()})"})
         sys.exit(2)
+    try:
+        command = parse_command(_opt(spec.command))
+    except ValueError as exc:
+        _emit({"error": str(exc)})
+        sys.exit(2)
+    problem = check_invocation(target.spec, command, args)
+    if problem:
+        _emit({"error": f"'{runnable}': {problem}"})
+        sys.exit(2)
 
     cred_vars = _parse_json_arg(_opt(spec.cred_vars), "--cred-vars")
     env_file = ""
@@ -95,6 +104,7 @@ def _cmd_add(spec: rs.RunSpec) -> None:
         id=sid,
         when=when,
         runnable=runnable,
+        command=command,
         args=args,
         enabled=bool(spec.enabled.value),
         run_as=target.run_as,
@@ -102,7 +112,7 @@ def _cmd_add(spec: rs.RunSpec) -> None:
         env_file=env_file,
     )
     upsert_schedule(path, entry)
-    _emit({"ok": True, "id": sid, "runnable": runnable, "run_as": target.run_as, "env_file": bool(env_file)})
+    _emit({"ok": True, "id": sid, "runnable": runnable, "command": list(command), "run_as": target.run_as, "env_file": bool(env_file)})
 
 
 def _cmd_remove(spec: rs.RunSpec) -> None:
@@ -126,6 +136,12 @@ def _cmd_list(spec: rs.RunSpec) -> None:
     _emit({"schedules": out, "venv": venv_name(), "config": str(path)})
 
 
+def _cmd_status(spec: rs.RunSpec) -> None:
+    from .status import status
+
+    _emit(status(_cfg_path(spec), runs=max(1, int(spec.runs.value))))
+
+
 def _cmd_run_now(spec: rs.RunSpec) -> None:
     path = _cfg_path(spec)
     sid = str(spec.id.value)
@@ -137,26 +153,41 @@ def _cmd_run_now(spec: rs.RunSpec) -> None:
     if target is None:
         _emit({"error": f"runnable '{entry.runnable}' not found in this venv"})
         sys.exit(2)
-    result = run_runnable(
-        target.binary,
-        [],
-        dict(entry.args),
-        source_toml=target.source,
-        run_as=entry.run_as or target.run_as,
-        become_method=entry.become_method or target.become_method,
-        become_flags=target.become_flags,
-        env_file=entry.env_file,
+    # Fire through core's `runspec exec` so a manual fire is recorded exactly like
+    # a cron one — same `sched:<id>` label, observed exit code, captured output.
+    import io
+
+    from runspec.runexec import exec_runnable
+
+    from .cronsync import LABEL_PREFIX
+    from .invocation import plan_invocation
+
+    out, err = io.TextIOWrapper(io.BytesIO(), encoding="utf-8"), io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
+    plan = plan_invocation(entry.runnable, target.spec, entry.command, dict(entry.args))
+    env = {"RUNSPEC_AGENT": "1", **plan.env}
+    if entry.env_file:
+        env["RUNSPEC_ENV_FILE"] = entry.env_file
+    rc = exec_runnable(
+        entry.runnable,
+        plan.argv,
+        label=f"{LABEL_PREFIX}{sid}",
+        trigger="schedule",
+        env=env,
+        stdout=out,
+        stderr=err,
     )
+    out.flush()
+    err.flush()
     _emit(
         {
             "id": sid,
             "runnable": entry.runnable,
-            "exit_code": result.returncode,
-            "stdout": (result.stdout or "").strip(),
-            "stderr": (result.stderr or "").strip(),
+            "exit_code": rc,
+            "stdout": out.buffer.getvalue().decode("utf-8", errors="replace").strip(),  # type: ignore[attr-defined]
+            "stderr": err.buffer.getvalue().decode("utf-8", errors="replace").strip(),  # type: ignore[attr-defined]
         }
     )
-    sys.exit(0 if result.returncode == 0 else 1)
+    sys.exit(0 if rc == 0 else 1)
 
 
 def _cmd_sync(spec: rs.RunSpec) -> None:
@@ -193,10 +224,12 @@ def main() -> None:
         _cmd_list(spec)
     elif command == "run-now":
         _cmd_run_now(spec)
+    elif command == "status":
+        _cmd_status(spec)
     elif command == "sync":
         _cmd_sync(spec)
     elif command == "install-service":
         _cmd_install_service(spec)
     else:  # pragma: no cover - require-command makes this unreachable
-        _emit({"error": "no command — try: sync, add, remove, list, run-now, run, install-service"})
+        _emit({"error": "no command — try: sync, status, add, remove, list, run-now, run, install-service"})
         sys.exit(2)

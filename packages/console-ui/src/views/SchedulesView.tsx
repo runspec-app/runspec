@@ -10,6 +10,7 @@ import { SoundSelect } from '../components/SoundSelect'
 import { ModelSelect } from '../components/ModelSelect'
 import { initialFormValues } from './formsShared'
 import { RunbookField } from './RunbookRunModal'
+import { SharedSchedulesView } from './SharedSchedulesView'
 import {
   ArgFieldRow, commandPathOptions, CredentialsSection, effectiveArgsForPath,
   RunnableArgsBlock, runnableSelectOptions, TargetFormItems, runnablesForTarget,
@@ -17,6 +18,13 @@ import {
 } from './RunnableAction'
 
 const { Text } = Typography
+
+type ScheduleScope = 'console' | 'shared'
+const SCOPE_KEY = 'runspec.schedules.scope'
+
+export function readScheduleScope(): ScheduleScope {
+  try { return localStorage.getItem(SCOPE_KEY) === 'shared' ? 'shared' : 'console' } catch { return 'console' }
+}
 
 interface SchedulesViewProps {
   hosts: Host[]
@@ -795,6 +803,13 @@ export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewP
   const [streams, setStreams] = useState<Record<string, string>>({})
   const [selected, setSelected] = useState<string | null>(null)
   const [events, setEvents] = useState<TriggerEvent[]>([])
+  // Which schedules: this console's own (fired while it's open) or a host's
+  // shared cron schedules (read-only). Remembered per viewer.
+  const [scope, setScopeState] = useState<ScheduleScope>(readScheduleScope)
+  const setScope = (v: ScheduleScope) => {
+    setScopeState(v)
+    try { localStorage.setItem(SCOPE_KEY, v) } catch { /* storage unavailable — fine */ }
+  }
   const isDark = useIsDark()
   const accent = useAccent()
 
@@ -1021,8 +1036,31 @@ export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewP
     />
   )
 
+  const scopeToggle = (
+    <Segmented
+      size="small"
+      style={{ marginBottom: 16 }}
+      value={scope}
+      onChange={v => setScope(v as ScheduleScope)}
+      options={[
+        { label: 'This console', value: 'console' },
+        { label: 'Shared (host cron)', value: 'shared' },
+      ]}
+    />
+  )
+
+  if (scope === 'shared') {
+    return (
+      <div>
+        {scopeToggle}
+        <SharedSchedulesView host={selectedHost || 'local'} />
+      </div>
+    )
+  }
+
   return (
     <div>
+      {scopeToggle}
       {/* Schedules — collapsible table, mirroring the Triggers tab. Schedules are
           gated by the same working-hours rota (set on the Rota tab); fires outside
           it are skipped and recorded in the event log below. */}

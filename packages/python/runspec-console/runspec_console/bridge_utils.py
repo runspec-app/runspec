@@ -714,6 +714,12 @@ def db_row_to_record(row: dict[str, Any], group: str, host: str) -> dict[str, An
         # without the columns). Lets the History expand panel say "log pruned by X
         # on Y — record retained" instead of a bare "no log lines" for a row whose
         # log outlived its file. .get tolerates a v1 remote DB that lacks them.
+        # The index's own outcome (completed/failed/crashed/skipped) — `skipped`
+        # (a `runspec exec` run that didn't start: lock held / already running)
+        # carries exit_code 0 but must not read as a success. And the exec label
+        # (e.g. "sched:<id>" for a shared cron schedule), "" for direct runs.
+        "status": status,
+        "label": row.get("label") or "",
         "logPrunedAt": row.get("log_pruned_at") or "",
         "logPrunedBy": row.get("log_pruned_by") or "",
         # The index only holds real runnable runs (core's configure_logging/atexit

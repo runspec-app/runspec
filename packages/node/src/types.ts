@@ -95,8 +95,16 @@ function coerceBool(value: unknown): boolean {
   throw new Error(`Cannot interpret ${JSON.stringify(value)} as bool`);
 }
 
+// A flag's value is a string only when it comes from the environment
+// (RUNSPEC_<RUNNABLE>_ARG_<NAME> / env aliases): read it like a bool, '' = unset.
+// It used to be Boolean(value), so '0'/'false' read as true — `runspec serve`
+// serialises an explicit false as '0', so switching a flag off switched it on.
 function coerceFlag(value: unknown): boolean {
   if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    const v = value.trim();
+    return v === '' ? false : coerceBool(v);
+  }
   return Boolean(value);
 }
 

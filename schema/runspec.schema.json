@@ -384,7 +384,7 @@
         "position": {
           "type": "integer",
           "minimum": 1,
-          "description": "1-based positional index. Makes the arg positional rather than a --flag. Must be unique within a runnable."
+          "description": "1-based positional index. Makes the arg positional (it may still be passed as --name). Must be unique within a runnable."
         },
         "env": {
           "description": "Environment variable fallback(s). Checked after RUNSPEC_<RUNNABLE>_ARG_* and before the spec default.",

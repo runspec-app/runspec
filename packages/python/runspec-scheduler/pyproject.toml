@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-scheduler"
-version = "0.2.0"
+version = "0.3.0"
 requires-python = ">=3.10"
 description = "Cron-style scheduler service for runspec runnables installed in one venv"
 keywords = ["runspec", "runnable", "scheduler", "cron"]
@@ -12,7 +12,7 @@ readme = "README.md"
 license = "MIT"
 dependencies = [
     # 0.48.0 for the `discoverable` boolean + serve leaf globals used by the console.
-    "runspec>=0.48.0",
+    "runspec>=0.62.0",
     # APScheduler drives the cron/interval timing. This package's whole reason to
     # exist is scheduling, so it's a hard dependency (unlike runspec-console, which
     # keeps it optional under the [schedule] extra).

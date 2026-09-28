@@ -704,6 +704,91 @@ login user when it escalates to the owner.
 
 ---
 
+## `runspec exec`
+
+Run one installed runnable and record the whole invocation — including the parts
+a runnable can't record about itself. Built for unattended callers (cron, CI,
+schedulers), and it's what `runspec-scheduler` puts on its crontab lines.
+
+```bash
+runspec exec backup -- --target prod                 # args after -- go to the runnable
+runspec exec cron -- list                            # subcommands pass through too
+runspec exec --label nightly --trigger schedule backup
+runspec exec --lock ~/.cache/nightly.lock backup     # recorded 'skipped' if the lock is held
+runspec exec --skip-if-running --timeout 600 report  # skip if already running; kill after 10 min
+```
+
+What it adds over running the binary directly:
+
+- **A row for every run** in the runs index (`runspec history`), even when the
+  runnable has no `[config.logging]` or fails before logging starts (bad args, a
+  `run_as` refusal, not installed — exit 127).
+- **The observed exit code.** A runnable's own record infers `1` on an uncaught
+  exception and `0` otherwise, so `sys.exit(2)` would read as success.
+- **Captured output.** stdout and stderr are passed through live *and* their last
+  `--capture-bytes` (default 64 KiB) are appended to the run's log file as
+  `exec_output` records, next to an `exec_result` record — so `runspec logs view
+  --run <run_id>` and the console's History show them, and `runspec logs prune`
+  cleans them up like any other log.
+- **Recorded skips.** With `--lock PATH` (POSIX, race-free) or
+  `--skip-if-running` (runs-index check), a run that can't start because the
+  previous one is still going is recorded with status `skipped` and exits 0.
+- **Labels.** `--label` tags the run; find them with
+  `runspec history list --label <label>`.
+
+The wrapper and the runnable share one run id (handed down in `RUNSPEC_RUN_ID`),
+so each run is one row: the runnable's own details (command, args, log file) plus
+the wrapper's label, trigger and observed outcome. The exit code is the
+runnable's (124 on `--timeout`). See the design:
+[`docs/design/runspec-exec.md`](design/runspec-exec.md).
+
+---
+
+## `runspec history`
+
+Query and maintain the per-venv **runs index** (`runspec_runs.db`) — a small
+SQLite index core writes beside the audit logs (`{sys.prefix}/logs`, falling back
+to `~/logs`) at the start and end of every run. It's what makes the console's
+History tab load fast and gives a live "what's running" view. It is a **derived
+index**: the JSON-lines audit logs stay the source of truth, so the index can
+always be rebuilt from them.
+
+```bash
+runspec history                                   # recent runs, newest first
+runspec history running                           # what's running now (pid-checked)
+runspec history list --runnable deploy --failed   # filter; add --json for JSON lines
+runspec history list --label sched:nightly        # runs recorded by `runspec exec --label`
+runspec history stats                             # index health: rows, size, span, stale rows
+runspec history prune --older-than 30d            # drop finished rows older than 30 days
+runspec history prune --max-rows 10000            # keep only the newest 10k rows
+runspec history reap                              # crash 'running' rows whose process is gone
+runspec history reindex                           # rebuild the index from the audit logs
+```
+
+**You rarely need to run these.** Every run's finalize already does the
+maintenance automatically: it reaps orphaned `running` rows, ring-prunes to the
+`[config.history]` bounds (`retention_days` 90, `max_rows` 50000 by default), and
+reclaims space incrementally. The verbs are for on-demand repair — shrinking a
+retention after the fact, clearing orphans on a quiet venv, or rebuilding an
+index that was deleted or damaged.
+
+**Scope.** Reads (`list`/`running`/`stats`) cover every logs dir by default;
+`prune`/`reap`/`reindex` act on this venv's own `{sys.prefix}/logs` only unless
+you pass `--scope home|all` — so maintaining one venv never touches another's
+index in the shared `~/logs`.
+
+**Permissions.** On a shared venv the index belongs to whoever created it (often
+a service account). A maintenance verb run by a user who can't write it fails
+with a named `permission denied … (owned by <user>)` error rather than reporting
+"0 rows"; run it as the owner (`sudo -u <owner> {venv}/bin/runspec history reap`)
+or make the dir group-writable with [`runspec logs share`](#runspec-logs).
+
+**`--json`.** `list`/`running` print one row per line; `stats`/`prune`/`reap`/
+`reindex` print a single result object (`{"verb", "count", "dirs": [...], "ok"}`),
+which is what the runspec-console's **Logs → Runs index…** dialog drives.
+
+---
+
 ## Bash and shell runnables
 
 Any executable on `PATH` can be a runspec runnable — bash, Python, Node,

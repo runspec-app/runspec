@@ -258,6 +258,32 @@ The agent creates schedules directly:
 `create_schedule` shows a confirmation card; the schedule then lives on the
 Schedules tab where you can pause, edit, or delete it.
 
+These schedules fire only while this console is open. For **always-on, shared**
+schedules that run on the host itself, use `runspec-scheduler`'s cron backend on
+that host (see [the cron scheduler design](design/cron-scheduler.md)).
+
+### Shared (host cron) schedules — read-only
+
+The toggle at the top of the Schedules tab switches between **This console** and
+**Shared (host cron)**. The shared view shows, for the host selected in the
+sidebar, each venv that has `runspec-scheduler` (≥ 0.3.0) installed:
+
+- every configured schedule — runnable and args, cron/interval, `run_as`;
+- whether its **crontab line** is installed. *legacy line* means an older
+  scheduler wrote it, and its fires aren't recorded — run
+  `runspec-scheduler sync` on the host to upgrade. *not installed* means it's in
+  the config but not in the crontab. *unknown* means the owner's crontab couldn't
+  be read without a password;
+- the **last run** and **next run**; expand a row for the recent runs (including
+  recorded **skipped** fires, when the previous run was still going) and the last
+  run's captured **stdout/stderr** and errors;
+- crontab lines left over from schedules no longer in the config.
+
+It reads `runspec-scheduler status` over SSH as your login user and changes
+nothing. Schedules are managed on the host (`runspec-scheduler add` / `remove` /
+`sync`). Every fire runs through `runspec exec`, so it also appears in
+**History**, where a skipped fire shows as *skipped* rather than as a success.
+
 ---
 
 ## Choosing the model per trigger, schedule or runbook

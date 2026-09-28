@@ -3,23 +3,27 @@
 Instead of a long-running daemon, each enabled cron-timed schedule becomes one
 **marked line in its ``run_as`` account's own crontab**, and the OS ``cron``
 executes it — so there is no process of ours to supervise (design:
-``docs/design/cron-scheduler.md``). The line runs the runnable's own venv binary
-directly, exactly as the daemon's :mod:`runner` does, so the core logging hook
-still writes the run to the per-venv runs index (``runspec_runs.db``) — that is
-the observability channel; this module writes no feedback of its own.
+``docs/design/cron-scheduler.md``). The line runs the runnable through core's
+``runspec exec`` wrapper, which records each fire in the per-venv runs index
+(``runspec_runs.db``) and the run's audit log — that is the observability
+channel (read back by ``runspec-scheduler status``); this module writes no
+feedback of its own.
 
 Shape of one installed schedule (in ``run_as``'s crontab, so cron runs it *as*
 ``run_as`` — no per-fire ``sudo``; the escalation is at crontab-**write** time):
 
     # runspec:sched:<id>
-    <cron>  mkdir -p <lockdir> && flock -n <lock> env RUNSPEC_…=… <binary> <argv…> >/dev/null 2>&1
+    <cron>  env RUNSPEC_AGENT=1 [RUNSPEC_ENV_FILE=…] <venv>/bin/runspec exec \
+              --label sched:<id> --trigger schedule --lock <lock> <runnable> -- <argv…> >/dev/null 2>&1
 
-* **``flock -n``** is the overlap guard — a still-running prior fire makes the new
-  one exit immediately.
-* **``env RUNSPEC_…``** carries only the non-secret provenance + the
-  ``RUNSPEC_ENV_FILE`` path (the ``0600`` credential file the runnable reads); the
-  secrets themselves never touch the crontab.
-* **``mkdir -p``** is inline + idempotent so the lock dir always exists.
+* **``runspec exec``** (core ≥ 0.62) records every fire in the runs index under
+  the label ``sched:<id>`` — observed exit code, captured stdout/stderr, and
+  failures a runnable can't record itself (docs/design/runspec-exec.md).
+* **``--lock``** is the overlap guard — a still-running prior fire makes the new
+  one a *recorded* ``skipped`` run (the old bare ``flock -n`` skip was silent).
+* **``env``** carries only ``RUNSPEC_AGENT`` + the ``RUNSPEC_ENV_FILE`` path (the
+  ``0600`` credential file the runnable reads); the secrets themselves never
+  touch the crontab.
 
 Reconcile is **declarative** and marker-scoped: :func:`plan_crontab` strips every
 ``# runspec:sched:*`` block we previously wrote and appends the current set,
@@ -45,15 +49,21 @@ from typing import Any
 from runspec.become import build_become_argv
 
 from .config import ScheduleEntry, load_schedules
-from .discovery import Target, resolve_target
-from .runner import args_to_argv, provenance_env
+from .discovery import Target, check_invocation, resolve_target
+from .invocation import plan_invocation
+from .runner import scripts_dir
 
 #: Comment that tags every crontab line this tool owns (so reconcile touches only
 #: ours). One safe whitespace-free token per id, mirroring the SSH-key / denylist
 #: marker discipline.
 MARKER_PREFIX = "# runspec:sched:"
 
-#: Where per-schedule flock lock files live under the run_as account's home.
+#: Label ``runspec exec`` records on every fire of schedule ``<id>`` — the join key
+#: between the config, the crontab and the runs index (see :mod:`status`).
+LABEL_PREFIX = "sched:"
+
+#: Where per-schedule lock files (``runspec exec --lock``) live under the run_as
+#: account's home.
 _LOCK_SUBDIR = ".cache/runspec-scheduler"
 
 #: Sidecar next to the config listing the accounts we've written crontab lines to,
@@ -98,29 +108,53 @@ def _home_of(user: str) -> str:
 
 
 def render_command(
-    binary: str,
-    source_toml: str,
+    runspec_binary: str,
+    runnable: str,
     args: dict[str, Any],
     env_file: str,
     *,
     home: str,
     sched_id: str,
+    command: tuple[str, ...] | list[str] = (),
+    spec: dict[str, Any] | None = None,
 ) -> str:
     """The shell command a crontab line runs for one schedule.
 
-    Runs the runnable's own venv ``binary`` directly (so the core logging hook
-    records it in the runs index), under ``flock -n`` for overlap safety, with the
-    non-secret provenance + ``RUNSPEC_ENV_FILE`` set via ``env(1)``. No ``sudo``:
-    the line lives in ``run_as``'s crontab, so cron already runs it as that account.
-    Every interpolated value is ``shlex``-quoted."""
-    lock_dir = f"{home}/{_LOCK_SUBDIR}"
-    lock = f"{lock_dir}/{sched_id}.lock"
-    prov = provenance_env(source_toml, env_file)
-    env_tokens = ["env", *(f"{k}={v}" for k, v in prov.items())]
-    run_tokens = ["flock", "-n", lock, *env_tokens, str(binary), *args_to_argv(args)]
-    mkdir = shlex.join(["mkdir", "-p", lock_dir])
-    run = shlex.join(run_tokens)
-    return f"{mkdir} && {run} >/dev/null 2>&1"
+    Runs the runnable through core's ``runspec exec`` wrapper
+    (docs/design/runspec-exec.md), labelled ``sched:<id>``, so every fire is
+    recorded in the runs index with its observed exit code and captured output —
+    including runnables without ``[config.logging]``, failures before logging
+    starts, and overlap skips (``--lock``: a still-running previous fire makes
+    this one a recorded ``skipped`` run). ``exec`` resolves the runnable's binary
+    and ``runspec.toml`` itself. ``env(1)`` carries only ``RUNSPEC_AGENT`` and the
+    ``RUNSPEC_ENV_FILE`` path — never a secret. No ``sudo``: the line lives in
+    ``run_as``'s crontab, so cron already runs it as that account (and ``exec``
+    doesn't escalate to the account it's already running as). The trailing
+    redirect only stops cron mailing the tee'd output. Every interpolated value
+    is ``shlex``-quoted."""
+    lock = f"{home}/{_LOCK_SUBDIR}/{sched_id}.lock"
+    plan = plan_invocation(runnable, spec or {}, command, args)
+    env_tokens = ["env", "RUNSPEC_AGENT=1"]
+    if env_file:
+        env_tokens.append(f"RUNSPEC_ENV_FILE={env_file}")
+    # e.g. RUNSPEC_<R>_ARG_<FLAG>=0 — a default-true flag switched off (argv can't)
+    env_tokens += [f"{k}={v}" for k, v in sorted(plan.env.items())]
+    run_tokens = [
+        *env_tokens,
+        str(runspec_binary),
+        "exec",
+        "--label",
+        f"{LABEL_PREFIX}{sched_id}",
+        "--trigger",
+        "schedule",
+        "--lock",
+        lock,
+        runnable,
+        "--",
+        # globals, then the subcommand path, then the command's own args
+        *plan.argv,
+    ]
+    return f"{shlex.join(run_tokens)} >/dev/null 2>&1"
 
 
 def render_block(sched_id: str, cron_expr: str, command: str) -> list[str]:
@@ -165,7 +199,10 @@ def _crontab_argv(sub: str, run_as: str, become_method: str, become_flags: str |
 
 def _read_crontab(run_as: str, become_method: str, become_flags: str | None) -> list[str]:
     """The target account's current crontab lines ([] when it has none)."""
-    proc = subprocess.run(_crontab_argv("-l", run_as, become_method, become_flags), capture_output=True, text=True)
+    try:
+        proc = subprocess.run(_crontab_argv("-l", run_as, become_method, become_flags), capture_output=True, text=True)
+    except FileNotFoundError as exc:  # no crontab / sudo binary — an error result, not a traceback
+        raise RuntimeError(f"{exc.filename} is not installed on this host") from exc
     if proc.returncode != 0:
         if "no crontab for" in (proc.stderr or "").lower():
             return []
@@ -178,12 +215,15 @@ def _write_crontab(lines: list[str], run_as: str, become_method: str, become_fla
     content = "\n".join(lines)
     if content and not content.endswith("\n"):
         content += "\n"
-    proc = subprocess.run(
-        _crontab_argv("-", run_as, become_method, become_flags),
-        input=content,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        proc = subprocess.run(
+            _crontab_argv("-", run_as, become_method, become_flags),
+            input=content,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError(f"{exc.filename} is not installed on this host") from exc
     if proc.returncode != 0:
         raise RuntimeError((proc.stderr or "").strip() or f"crontab - failed (exit {proc.returncode})")
 
@@ -230,6 +270,20 @@ def _installable(entry: ScheduleEntry) -> tuple[bool, str]:
     return True, ""
 
 
+def resolve_entry(entry: ScheduleEntry) -> tuple[Target | None, str]:
+    """The installed target for ``entry`` if its invocation is valid, else
+    ``(None, reason)`` — the runnable isn't installed, or its command path/args
+    don't match the runnable's spec (e.g. a hand-edited config naming a verb that
+    no longer exists). Shared by ``sync`` (skips it) and ``status`` (reports it)."""
+    target = resolve_target(entry.runnable)
+    if target is None:
+        return None, f"runnable '{entry.runnable}' not installed in this venv"
+    problem = check_invocation(target.spec, entry.command, dict(entry.args))
+    if problem:
+        return None, problem
+    return target, ""
+
+
 def _group_key(entry: ScheduleEntry, target: Target) -> tuple[str, str, str]:
     """(run_as, become_method, become_flags) — the account+escalation a line's
     crontab is written under. Empty run_as = the invoking user's own crontab."""
@@ -258,9 +312,9 @@ def sync(config_path: Path, *, dry_run: bool = False) -> SyncResult:
         if not ok:
             result.skipped.append({"id": entry.id, "reason": reason})
             continue
-        target = resolve_target(entry.runnable)
+        target, reason = resolve_entry(entry)
         if target is None:
-            result.skipped.append({"id": entry.id, "reason": f"runnable '{entry.runnable}' not installed in this venv"})
+            result.skipped.append({"id": entry.id, "reason": reason})
             continue
         groups.setdefault(_group_key(entry, target), []).append((entry, target))
 
@@ -274,14 +328,16 @@ def sync(config_path: Path, *, dry_run: bool = False) -> SyncResult:
         members = [(e, t) for key, gs in groups.items() if key[0] == user for (e, t) in gs]
         blocks: list[list[str]] = []
         home = _home_of(user)
-        for entry, target in members:
+        for entry, _target in members:
             command = render_command(
-                str(target.binary),
-                target.source,
+                str(scripts_dir() / "runspec"),
+                entry.runnable,
                 dict(entry.args),
                 entry.env_file,
                 home=home,
                 sched_id=entry.id,
+                command=entry.command,
+                spec=_target.spec,
             )
             blocks.append(render_block(entry.id, entry.when.cron, command))
             result.installed.append({"id": entry.id, "runnable": entry.runnable, "user": user or "(self)"})

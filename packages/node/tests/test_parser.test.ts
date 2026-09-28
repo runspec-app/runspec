@@ -239,3 +239,68 @@ require-command = true
     expect(out).toContain('migrate');
   });
 });
+
+// ── positional by name + env flag/list values (SPEC.md → Positional Arguments,
+//    Serialisation) — parity with the Python pack ────────────────────────────────
+
+const POS_TOML = `
+[demo]
+description = "d"
+[demo.args]
+target  = {type = "str", position = 1, description = "t"}
+release = {type = "str", position = 2, required = false, description = "r"}
+dry-run = {type = "flag", default = true, description = "d"}
+verbose = {type = "flag", default = false, description = "v"}
+tags    = {type = "str", multiple = true, required = false, description = "t"}
+`;
+
+describe('positional args by name', () => {
+  test('by position', () => {
+    const args = parse({ scriptName: 'demo', argv: ['prod', 'v1'], configPath: makeTmpConfig(POS_TOML) });
+    expect(args['target']).toBe('prod');
+    expect(args['release']).toBe('v1');
+  });
+
+  test('by name, incl. =form', () => {
+    const args = parse({ scriptName: 'demo', argv: ['--target', 'prod', '--release=v1'], configPath: makeTmpConfig(POS_TOML) });
+    expect(args['target']).toBe('prod');
+    expect(args['release']).toBe('v1');
+  });
+
+  test('a bare token skips a slot already filled by name', () => {
+    const configPath = makeTmpConfig(POS_TOML);
+    let args = parse({ scriptName: 'demo', argv: ['--target', 'prod', 'v1'], configPath });
+    expect([args['target'], args['release']]).toEqual(['prod', 'v1']);
+    args = parse({ scriptName: 'demo', argv: ['--release', 'v1', 'prod'], configPath });
+    expect([args['target'], args['release']]).toEqual(['prod', 'v1']);
+  });
+
+  test('both ways is an error', () => {
+    expect(() => parse({ scriptName: 'demo', argv: ['prod', '--target', 'x'], configPath: makeTmpConfig(POS_TOML) })).toThrow(/both as a positional value and as --target/);
+  });
+});
+
+describe('flag + multiple values from the environment', () => {
+  afterEach(() => {
+    for (const k of ['RUNSPEC_DEMO_ARG_DRY_RUN', 'RUNSPEC_DEMO_ARG_VERBOSE', 'RUNSPEC_DEMO_ARG_TAGS']) delete process.env[k];
+  });
+
+  test("'0'/'false' switch a flag off (was: any non-empty string read as true)", () => {
+    const configPath = makeTmpConfig(POS_TOML);
+    for (const v of ['0', 'false', 'no', 'off']) {
+      process.env['RUNSPEC_DEMO_ARG_DRY_RUN'] = v;
+      process.env['RUNSPEC_DEMO_ARG_VERBOSE'] = v;
+      const args = parse({ scriptName: 'demo', argv: ['prod'], configPath });
+      expect(args['dry_run']).toBe(false);
+      expect(args['verbose']).toBe(false);
+    }
+    process.env['RUNSPEC_DEMO_ARG_VERBOSE'] = '1';
+    expect(parse({ scriptName: 'demo', argv: ['prod'], configPath })['verbose']).toBe(true);
+  });
+
+  test('a multiple arg splits its newline-delimited env value', () => {
+    process.env['RUNSPEC_DEMO_ARG_TAGS'] = 'a\nb\n';
+    const args = parse({ scriptName: 'demo', argv: ['prod'], configPath: makeTmpConfig(POS_TOML) });
+    expect(args['tags']).toEqual(['a', 'b']);
+  });
+});
