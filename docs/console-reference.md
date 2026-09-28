@@ -353,6 +353,19 @@ shared-mailbox `outlook` / `new_mail` trigger adds two keys — see
 | `compact_on_resume` | `false` | Use the model to summarise the middle of a long resumed chat (otherwise a mechanical note) |
 | `resume_keep_first` / `resume_keep_recent` | 1 / 20 | Turns kept verbatim when resuming a long chat |
 
+## `[history]`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `cache` | `true` | Serve remote hosts' **7d / 30d** History from a local cache (`history_cache.db` in the config dir — machine-local, never synced, safe to delete) kept current by pulling only what changed in each venv's runs index. Needs `runspec >= 0.63.0` on the host; a host without it is read directly as before. `false` reads every remote host over SSH on each refresh |
+
+With the cache, opening History shows a remote host's runs immediately and a
+background pull (each refresh, and at once when a run finishes there) brings
+them up to date. If a pull fails, the host's chip in the per-host strip turns
+amber and reads **as of 3m ago**; hover for the error. The 90d / All views, and
+the local host, always read directly. Design:
+[history-incremental-pull.md](design/history-incremental-pull.md).
+
 ## `[improve]`
 
 Settings for the [Improve](console-improve.md) evaluation & problem-report

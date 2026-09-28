@@ -42,7 +42,13 @@ DB_NAME = "runspec_runs.db"
 # v3 (docs/design/runspec-exec.md): + label — set only by `runspec exec --label`,
 # never cleared by a later upsert (the child's own writes don't know it). Also
 # introduces the `skipped` status value (an exec skip — lock busy / already running).
-_SCHEMA_VERSION = 3
+# v4 (docs/design/history-incremental-pull.md): + seq / sync_meta / runs_tombstones
+# and the triggers that maintain them — a per-DB change sequence so a reader (the
+# console's history cache) can pull only what changed since its cursor. Detected
+# by *structure* (``_has_sync``), never by user_version: an older runspec writing
+# the DB resets user_version to its own number, but the triggers (which live in
+# the DB file) keep stamping ``seq`` on its writes regardless.
+_SCHEMA_VERSION = 4
 _BUSY_TIMEOUT_MS = 2000
 
 _COLUMNS = (
@@ -259,7 +265,8 @@ def _connect(path: Path, *, readonly: bool = False) -> sqlite3.Connection | None
         con.execute("PRAGMA journal_mode=WAL")
         con.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
         con.executescript(_DDL)  # CREATE TABLE IF NOT EXISTS — fresh DBs get every column
-        _migrate(con)  # add columns an older DB predates (v1 → v2)
+        _migrate(con)  # add columns an older DB predates (v1 → v2 → v3)
+        _migrate_sync(con)  # v3 → v4: change sequence + tombstones + triggers
         con.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
         return con
     except sqlite3.Error:
@@ -282,6 +289,138 @@ def _migrate(con: sqlite3.Connection) -> None:
                 con.execute(f"ALTER TABLE runs ADD COLUMN {col} TEXT")
         # Here, not in _DDL: on a pre-v3 DB the column only exists after the ALTER.
         con.execute("CREATE INDEX IF NOT EXISTS runs_label ON runs (label)")
+
+
+# ── v4 change sequence (docs/design/history-incremental-pull.md §3) ─────────────
+
+# How long a delete's tombstone is kept for readers to learn about it, and a hard
+# cap on how many are kept. Dropping tombstones raises ``floor``: a reader whose
+# cursor is below it may have missed deletes, so it is told to ``reset``.
+_TOMBSTONE_DAYS = 30
+_TOMBSTONE_CAP = 50000
+_SYNC_TRIGGERS = ("runs_seq_ins", "runs_seq_upd", "runs_seq_del")
+
+# Every write to ``runs`` takes the next ``seq`` (inside the write transaction —
+# SQLite serializes writers, so a reader never sees N+1 committed while N is still
+# in flight). An insert also clears a tombstone for the same run_id (a pruned row
+# restored by reindex), so a pull never carries both "deleted" and the row.
+# ``WHEN NEW.seq IS OLD.seq`` skips the trigger's own seq write should
+# ``recursive_triggers`` ever be on.
+_SYNC_DDL = """
+CREATE TABLE IF NOT EXISTS sync_meta (key TEXT PRIMARY KEY, value);
+CREATE TABLE IF NOT EXISTS runs_tombstones (
+  run_id     TEXT PRIMARY KEY,
+  seq        INTEGER NOT NULL,
+  deleted_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS runs_seq ON runs (seq);
+CREATE INDEX IF NOT EXISTS runs_tombstones_seq ON runs_tombstones (seq);
+"""
+
+# One statement each (not an executescript — that would commit the migration's
+# BEGIN IMMEDIATE part-way through).
+_SYNC_TRIGGERS_DDL = (
+    """CREATE TRIGGER IF NOT EXISTS runs_seq_ins AFTER INSERT ON runs BEGIN
+  UPDATE sync_meta SET value = value + 1 WHERE key = 'seq';
+  UPDATE runs SET seq = (SELECT value FROM sync_meta WHERE key = 'seq') WHERE rowid = NEW.rowid;
+  DELETE FROM runs_tombstones WHERE run_id = NEW.run_id;
+END""",
+    """CREATE TRIGGER IF NOT EXISTS runs_seq_upd AFTER UPDATE ON runs WHEN NEW.seq IS OLD.seq BEGIN
+  UPDATE sync_meta SET value = value + 1 WHERE key = 'seq';
+  UPDATE runs SET seq = (SELECT value FROM sync_meta WHERE key = 'seq') WHERE rowid = NEW.rowid;
+END""",
+    """CREATE TRIGGER IF NOT EXISTS runs_seq_del AFTER DELETE ON runs BEGIN
+  UPDATE sync_meta SET value = value + 1 WHERE key = 'seq';
+  INSERT OR REPLACE INTO runs_tombstones (run_id, seq, deleted_at)
+    VALUES (OLD.run_id, (SELECT value FROM sync_meta WHERE key = 'seq'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
+END""",
+)
+
+
+def _has_sync(con: sqlite3.Connection) -> bool:
+    """True when the DB carries the v4 change sequence — by structure (``sync_meta``
+    exists and ``runs`` has ``seq``), since user_version can't be trusted."""
+    try:
+        if not con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sync_meta'").fetchone():
+            return False
+        return any(r[1] == "seq" for r in con.execute("PRAGMA table_info(runs)").fetchall())
+    except sqlite3.Error:
+        return False
+
+
+def _sync_ready(con: sqlite3.Connection) -> bool:
+    """The whole v4 setup is in place: tables, all three triggers, and no row
+    still waiting for a backfilled ``seq``."""
+    if not _has_sync(con):
+        return False
+    try:
+        n = con.execute(
+            "SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name IN (?,?,?)",
+            _SYNC_TRIGGERS,
+        ).fetchone()[0]
+        if n != len(_SYNC_TRIGGERS):
+            return False
+        if con.execute("SELECT count(*) FROM sync_meta WHERE key IN ('db_id','seq','floor')").fetchone()[0] != 3:
+            return False
+        return con.execute("SELECT 1 FROM runs WHERE seq IS NULL LIMIT 1").fetchone() is None
+    except sqlite3.Error:
+        return False
+
+
+def _migrate_sync(con: sqlite3.Connection) -> None:
+    """v3 → v4: add ``seq``, ``sync_meta`` (``db_id``/``seq``/``floor``),
+    ``runs_tombstones`` and the triggers; backfill ``seq`` for existing rows in
+    rowid order. One ``BEGIN IMMEDIATE`` transaction, so two writers migrating at
+    once can't hand out the same seq twice. A no-op (one cheap check) once done.
+    Best-effort — a failure leaves the DB a working v3 index."""
+    if _sync_ready(con):
+        return
+    import uuid
+
+    with contextlib.suppress(sqlite3.Error):
+        if con.in_transaction:
+            con.commit()
+        con.execute("BEGIN IMMEDIATE")
+        try:
+            have = {r[1] for r in con.execute("PRAGMA table_info(runs)").fetchall()}
+            if "seq" not in have:
+                con.execute("ALTER TABLE runs ADD COLUMN seq INTEGER")
+            for stmt in _SYNC_DDL.split(";"):
+                if stmt.strip():
+                    con.execute(stmt)
+            con.execute("INSERT OR IGNORE INTO sync_meta (key, value) VALUES ('db_id', ?)", (uuid.uuid4().hex,))
+            con.execute("INSERT OR IGNORE INTO sync_meta (key, value) VALUES ('seq', 0)")
+            con.execute("INSERT OR IGNORE INTO sync_meta (key, value) VALUES ('floor', 0)")
+            pending = [r[0] for r in con.execute("SELECT rowid FROM runs WHERE seq IS NULL ORDER BY rowid").fetchall()]
+            if pending:
+                base = int(con.execute("SELECT value FROM sync_meta WHERE key='seq'").fetchone()[0] or 0)
+                con.executemany("UPDATE runs SET seq=? WHERE rowid=?", [(base + i, rid) for i, rid in enumerate(pending, 1)])
+                con.execute("UPDATE sync_meta SET value=? WHERE key='seq'", (base + len(pending),))
+            for stmt in _SYNC_TRIGGERS_DDL:
+                con.execute(stmt)
+            con.commit()
+        except sqlite3.Error:
+            con.rollback()
+            raise
+
+
+def _trim_tombstones(con: sqlite3.Connection, days: int = _TOMBSTONE_DAYS, cap: int = _TOMBSTONE_CAP) -> None:
+    """Drop tombstones older than ``days`` (and beyond ``cap``, oldest first) and
+    raise ``floor`` to the highest seq dropped, so a reader whose cursor predates
+    them is sent a ``reset`` instead of silently missing those deletes."""
+    if not _has_sync(con):
+        return
+    with contextlib.suppress(sqlite3.Error):
+        top = con.execute(
+            "SELECT max(seq) FROM runs_tombstones WHERE deleted_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?)",
+            (f"-{int(days)} days",),
+        ).fetchone()[0]
+        over = con.execute("SELECT seq FROM runs_tombstones ORDER BY seq DESC LIMIT 1 OFFSET ?", (int(cap),)).fetchone()
+        if over is not None:
+            top = max(top or 0, over[0])
+        if top:
+            con.execute("DELETE FROM runs_tombstones WHERE seq <= ?", (top,))
+            con.execute("UPDATE sync_meta SET value = max(value, ?) WHERE key='floor'", (top,))
 
 
 def _ensure_group_writable(path: Path, fresh: bool) -> None:
@@ -347,11 +486,13 @@ def finish_run(
             return
         try:
             end_ts = _now_iso()
-            con.execute(
+            cur = con.execute(
                 "UPDATE runs SET status=?, exit_code=?, end_ts=?, duration_ms=? WHERE run_id=?",
                 (status, exit_code, end_ts, duration_ms, run_id),
             )
-            if con.total_changes == 0:
+            # This statement's own count — not con.total_changes, which also counts
+            # the migration's writes (and trigger writes) on this connection.
+            if (cur.rowcount or 0) <= 0:
                 # No start row (begin_run lost its race / was disabled / the index
                 # was unwritable at start) — record a finished row directly so
                 # history is still complete, carrying the runnable name + command
@@ -403,6 +544,7 @@ def _upsert(con: sqlite3.Connection, row: dict[str, Any]) -> None:
 def _maintain(con: sqlite3.Connection, cfg: dict[str, Any]) -> None:
     _reap(con, _int(cfg.get("max_run_hours"), 24))
     _prune(con, _int(cfg.get("retention_days"), 90), _int(cfg.get("max_rows"), 50000))
+    _trim_tombstones(con)
     with contextlib.suppress(sqlite3.Error):
         con.execute("PRAGMA incremental_vacuum")
 
@@ -541,6 +683,99 @@ def list_runs(
         return []
 
 
+def sync_state(con: sqlite3.Connection) -> dict[str, Any] | None:
+    """``{"db_id", "seq", "floor"}`` from ``sync_meta``, or ``None`` for a pre-v4 DB."""
+    if not _has_sync(con):
+        return None
+    meta = {r[0]: r[1] for r in con.execute("SELECT key, value FROM sync_meta").fetchall()}
+    if "db_id" not in meta:
+        return None
+    return {"db_id": str(meta["db_id"]), "seq": int(meta.get("seq") or 0), "floor": int(meta.get("floor") or 0)}
+
+
+def changes(
+    con: sqlite3.Connection,
+    *,
+    db_id: str | None,
+    seq: int | None,
+    limit: int = 2000,
+    window_start: str | None = None,
+) -> dict[str, Any]:
+    """The incremental-pull contract (docs/design/history-incremental-pull.md §4)
+    over an open connection — everything in one read transaction.
+
+    Returns ``{"mode", "db_id", "seq", "rows", "deleted", "more"}``:
+
+    * ``delta`` — the cursor ``(db_id, seq)`` is valid: ``rows`` changed after it
+      (finished *and* running, oldest change first), ``deleted`` the run_ids
+      removed after it.
+    * ``reset`` — no cursor, a different ``db_id`` (the DB was recreated), or a
+      cursor below ``floor`` (tombstones it needed are gone): drop what you hold for
+      this DB; ``rows`` is a snapshot (``start_ts >= window_start``).
+    * ``legacy`` — the DB predates v4 (no change sequence); read it directly.
+
+    ``seq`` in the result is the cursor to store. ``more`` means the page was capped
+    at ``limit``: apply it and pull again from the returned cursor. ``window_start``
+    also filters deltas — a reader that only keeps a window never needs changes to
+    rows older than it."""
+    limit = max(1, int(limit))
+    con.execute("BEGIN")  # one read snapshot for meta + rows + tombstones
+    try:
+        meta = sync_state(con)
+        if meta is None:
+            return {"mode": "legacy", "db_id": None, "seq": 0, "rows": [], "deleted": [], "more": False}
+        valid = seq is not None and db_id == meta["db_id"] and meta["floor"] <= int(seq) <= meta["seq"]
+        after = int(seq) if valid and seq is not None else 0
+        where = "seq > ?"
+        params: list[Any] = [after]
+        if window_start:
+            where += " AND start_ts >= ?"
+            params.append(window_start)
+        rows = [dict(r) for r in con.execute(f"SELECT * FROM runs WHERE {where} ORDER BY seq LIMIT ?", (*params, limit + 1)).fetchall()]
+        tombs: list[tuple[str, int]] = []
+        if valid:
+            tombs = [(r[0], r[1]) for r in con.execute("SELECT run_id, seq FROM runs_tombstones WHERE seq > ? ORDER BY seq LIMIT ?", (after, limit + 1)).fetchall()]
+        merged: list[tuple[int, Any]] = sorted([(r["seq"], r) for r in rows] + [(t[1], t[0]) for t in tombs], key=lambda x: x[0])
+        more = len(merged) > limit
+        page = merged[:limit]
+        cursor = page[-1][0] if more else meta["seq"]
+        return {
+            "mode": "delta" if valid else "reset",
+            "db_id": meta["db_id"],
+            "seq": cursor,
+            "rows": [item for _, item in page if isinstance(item, dict)],
+            "deleted": [item for _, item in page if isinstance(item, str)],
+            "more": more,
+        }
+    finally:
+        con.rollback()
+
+
+def changes_since(
+    log_dir: Path,
+    *,
+    db_id: str | None = None,
+    seq: int | None = None,
+    limit: int = 2000,
+    window_start: str | None = None,
+) -> dict[str, Any]:
+    """:func:`changes` for one dir's index (read-only), plus ``mode="none"`` when the
+    dir has no index. Never raises — an unreadable index reports ``error``."""
+    path = db_path(log_dir)
+    if not path.exists():
+        return {"mode": "none", "db_id": None, "seq": 0, "rows": [], "deleted": [], "more": False}
+    try:
+        con = _connect(path, readonly=True)
+        if con is None:
+            return {"mode": "none", "db_id": None, "seq": 0, "rows": [], "deleted": [], "more": False, "error": "could not open the index"}
+        try:
+            return changes(con, db_id=db_id, seq=seq, limit=limit, window_start=window_start)
+        finally:
+            con.close()
+    except Exception as exc:  # noqa: BLE001 — a read, never fatal
+        return {"mode": "none", "db_id": None, "seq": 0, "rows": [], "deleted": [], "more": False, "error": f"{type(exc).__name__}: {exc}"}
+
+
 def _liveness_filter(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Downgrade ``running`` rows on *this* host whose process is dead to
     ``crashed`` in the returned view (read-only — the DB itself is healed by the
@@ -650,6 +885,7 @@ def stats(log_dir: Path) -> dict[str, Any]:
         "stale_running": 0,
         "log_pruned": 0,
         "schema_version": None,
+        "sync": None,
         "write_error": write_error(log_dir),
     }
     for suffix in ("", "-wal", "-shm"):
@@ -664,6 +900,13 @@ def stats(log_dir: Path) -> dict[str, Any]:
             return out
         try:
             out["schema_version"] = con.execute("PRAGMA user_version").fetchone()[0]
+            with contextlib.suppress(sqlite3.Error):
+                sync = sync_state(con)
+                if sync is not None:
+                    # By structure: an older runspec may have reset user_version.
+                    out["schema_version"] = max(int(out["schema_version"] or 0), 4)
+                    sync["tombstones"] = con.execute("SELECT count(*) FROM runs_tombstones").fetchone()[0]
+                    out["sync"] = sync
             by_status = {r[0]: r[1] for r in con.execute("SELECT status, count(*) FROM runs GROUP BY status")}
             out["by_status"] = by_status
             out["rows"] = sum(by_status.values())

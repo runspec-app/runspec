@@ -105,6 +105,7 @@ EXPECTED = {
     "get_voice_config",
     "get_watches",
     "history_targets",
+    "history_sync_status",
     "import_filters",
     "import_jump_hosts",
     "import_sound",

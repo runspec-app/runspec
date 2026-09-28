@@ -28,6 +28,7 @@ from .bridge_helpers import _ParamikoDevHandler
 from .bridge_infra import InfraMixin
 from .bridge_hosts import HostsMixin
 from .bridge_transfer import TransferMixin
+from .bridge_history_sync import HistorySyncMixin
 from .bridge_reporting import ReportingMixin
 from .bridge_schedules import SchedulesMixin
 from .bridge_saved_runs import SavedRunsMixin
@@ -55,6 +56,7 @@ class Bridge(
     HostsMixin,
     TransferMixin,
     ReportingMixin,
+    HistorySyncMixin,
     SchedulesMixin,
     SavedRunsMixin,
     ConfigSshMixin,

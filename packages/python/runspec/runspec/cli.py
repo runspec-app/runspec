@@ -1092,6 +1092,9 @@ def _print_history_stats(snaps: list[dict[str, Any]]) -> None:
         print(f"   {s.get('rows', 0)} row(s) ({by}), {size_kib:.1f} KiB incl. WAL, schema v{s.get('schema_version')}")
         if s.get("oldest"):
             print(f"   oldest {str(s['oldest'])[:19]}  newest {str(s.get('newest') or '')[:19]}")
+        if s.get("sync"):
+            sy = s["sync"]
+            print(f"   change seq {sy['seq']} (floor {sy['floor']}, {sy.get('tombstones', 0)} tombstone(s)) — incremental pull ready")
         if s.get("stale_running"):
             print(f"   ‼  {s['stale_running']} stale 'running' row(s) — `runspec history reap` clears them")
         if s.get("log_pruned"):

@@ -1356,6 +1356,23 @@ def read_chat_history() -> dict[str, Any]:
     }
 
 
+def read_history() -> dict[str, Any]:
+    """The ``[history]`` settings for the History tab, with defaults applied.
+
+    ``cache`` (default **true**): read remote hosts' history from the console's
+    local cache (``history_cache.db`` — machine-local, never synced), kept current
+    by pulling only what changed in each venv's runs index (core runspec >= 0.63.0).
+    ``false`` restores reading every remote host over SSH on each refresh."""
+    raw = read_config().get("history")
+    cfg = dict(raw) if isinstance(raw, dict) else {}
+    return {"cache": bool(cfg.get("cache", True))}
+
+
+def history_cache_path() -> Path:
+    """The History cache file — machine-local, derived, safe to delete."""
+    return app_dir() / "history_cache.db"
+
+
 def read_rota() -> dict[str, Any]:
     """The ``[rota]`` working-hours table ({} when unset).
 

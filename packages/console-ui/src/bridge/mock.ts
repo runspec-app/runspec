@@ -787,6 +787,7 @@ export const mockApi: BridgeApi = {
   },
   get_history_slim: async (host, _since_days) =>
     MOCK_HISTORY.filter(h => h.host === host).map(({ logLines: _l, ...r }) => ({ ...r, logLines: [] })),
+  history_sync_status: async () => ({}),
   get_run_detail: async (_host, run_id) => {
     const r = MOCK_HISTORY.find(h => h.runId === run_id)
     return { logLines: r?.logLines ?? [] }

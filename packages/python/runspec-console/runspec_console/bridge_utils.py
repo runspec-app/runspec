@@ -321,6 +321,84 @@ def db_read_cmd(
     return f"{shlex.quote(python_path)} -c {shlex.quote(_DB_READ_SNIPPET)} {shlex.quote(arg)}"
 
 
+# ── incremental pull of the runs index (docs/design/history-incremental-pull.md) ──
+# The remote half of the console's History cache: for each logs dir, given the
+# console's cursor (db_id, seq), return only what changed since — the same contract
+# as core's ``runspec.runsdb.changes`` (mirrored here, stdlib only, so it runs under
+# any venv's python whatever runspec it has; tests/test_history_cache.py checks the
+# two agree). Per dir: ``none`` (no index), ``legacy`` (a pre-v4 index — no change
+# sequence; the console reads it directly), ``reset`` (no/stale cursor → a windowed
+# snapshot) or ``delta``; ``more`` when a page was capped at ``limit``.
+_DB_SYNC_SNIPPET = r"""
+import json, os, sqlite3, sys
+a = json.loads(sys.argv[1])
+limit = max(1, int(a.get("limit") or 2000))
+win = a.get("window_start")
+out = {}
+def pull(con, cur):
+    con.execute("BEGIN")
+    try:
+        if not con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sync_meta'").fetchone() or \
+           not any(r[1] == "seq" for r in con.execute("PRAGMA table_info(runs)").fetchall()):
+            return {"mode": "legacy"}
+        meta = dict(con.execute("SELECT key, value FROM sync_meta").fetchall())
+        if "db_id" not in meta:
+            return {"mode": "legacy"}
+        db_id, top, floor = str(meta["db_id"]), int(meta.get("seq") or 0), int(meta.get("floor") or 0)
+        seq = cur.get("seq")
+        valid = seq is not None and cur.get("db_id") == db_id and floor <= int(seq) <= top
+        after = int(seq) if valid else 0
+        q, pr = "SELECT * FROM runs WHERE seq > ?", [after]
+        if win:
+            q += " AND start_ts >= ?"; pr.append(win)
+        rows = [{k: r[k] for k in r.keys()} for r in con.execute(q + " ORDER BY seq LIMIT ?", pr + [limit + 1]).fetchall()]
+        tombs = []
+        if valid:
+            tombs = con.execute("SELECT run_id, seq FROM runs_tombstones WHERE seq > ? ORDER BY seq LIMIT ?", (after, limit + 1)).fetchall()
+        merged = sorted([(r["seq"], r) for r in rows] + [(t[1], t[0]) for t in tombs], key=lambda x: x[0])
+        more = len(merged) > limit
+        page = merged[:limit]
+        return {"mode": "delta" if valid else "reset", "db_id": db_id,
+                "seq": page[-1][0] if more else top,
+                "rows": [i for _, i in page if isinstance(i, dict)],
+                "deleted": [i for _, i in page if not isinstance(i, dict)],
+                "more": more}
+    finally:
+        con.rollback()
+for d, cur in (a.get("dirs") or {}).items():
+    db = os.path.join(os.path.expanduser(d), "runspec_runs.db")
+    if not os.path.exists(db):
+        out[d] = {"mode": "none"}
+        continue
+    try:
+        con = sqlite3.connect("file:%s?mode=ro" % db, uri=True, timeout=2.0)
+        con.row_factory = sqlite3.Row
+        try:
+            out[d] = pull(con, cur or {})
+        finally:
+            con.close()
+    except Exception as ex:
+        out[d] = {"mode": "error", "error": str(ex)}
+sys.stdout.write(json.dumps(out))
+"""
+
+
+def db_sync_cmd(
+    python_path: str,
+    cursors: dict[str, dict[str, Any]],
+    *,
+    limit: int,
+    window_start: str | None,
+) -> str:
+    """The command for one incremental-pull round-trip — ``{python} -c <snippet>
+    <json-arg>``. ``cursors`` maps each logs dir to ``{"db_id", "seq"}`` (empty for
+    a first pull); the result is keyed by the same dirs."""
+    arg = json.dumps(
+        {"dirs": cursors, "limit": int(limit), "window_start": window_start}
+    )
+    return f"{shlex.quote(python_path)} -c {shlex.quote(_DB_SYNC_SNIPPET)} {shlex.quote(arg)}"
+
+
 # ── live "what's running" read: running rows + pid-liveness, on the remote host ──
 # The finished-history snippet above filters `status != 'running'`; this one is its
 # mirror for the live view (Phase 3 part 2b). It selects the `running` rows and, on

@@ -989,6 +989,13 @@ export interface ShareLogsResult {
 // Runs index (runspec_runs.db) health — `runspec history stats` for one venv's
 // logs dir. write_error is non-empty when the login user can't write the index
 // (the "Run as the venv owner" case). Needs runspec >= 0.62.0 on the target.
+/** One remote host's History-cache freshness (see `history_sync_status`). */
+export interface HistorySyncState {
+  cached: boolean
+  synced_at: string | null
+  error: string
+}
+
 export interface HistoryDbStats {
   ok: boolean
   group: string
@@ -1617,6 +1624,12 @@ export interface BridgeApi {
   // get_history_all, scoped to a single host) — the per-host unit the History tab
   // fetches. Heavy logLines are dropped; fetch them on expand via get_run_detail.
   get_history_slim: (host: string, since_days?: number) => Promise<HistoryRecord[]>
+  // Per remote host whose History comes from the console's local cache (pulled
+  // incrementally from each venv's runs index — runspec >= 0.63.0): when it was
+  // last pulled and the last pull's error. A host absent from the map is read
+  // directly. The backend emits `runspec:history_updated {host}` when a pull
+  // changed a host's cached runs.
+  history_sync_status: () => Promise<Record<string, HistorySyncState>>
   // Heavy per-run detail (the recorded log lines) for one run, fetched on demand
   // when a History row is expanded — the bulk read ships slim rows without them.
   get_run_detail: (host: string, run_id: string) => Promise<{ logLines: HistoryLogLine[] }>

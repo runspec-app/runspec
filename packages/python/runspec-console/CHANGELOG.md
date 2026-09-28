@@ -8,6 +8,38 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.300.0] — 2026-09-28
+
+### Added
+
+- **History reads remote hosts from a local cache, pulled incrementally.** The
+  History tab used to re-read every connected remote over SSH on each refresh
+  (the newest 200 runs per host, every 25 s), and showed nothing for a host until
+  its round-trip returned. Now the **7d / 30d** views read a machine-local cache
+  (`history_cache.db` in the config dir — never synced, derived, rebuilt if
+  corrupt) and a background pull brings each host up to date by fetching **only
+  what changed** in each venv's runs index since the last pull. A quiet host's
+  pull is one small exec. It uses the change sequence core `runspec` 0.63.0 adds
+  to `runspec_runs.db`. Opening History renders cached hosts at once; a pull that
+  changed a host emits `runspec:history_updated {host}` and the tab refetches just
+  that host. A run finishing on a host (and Runs index maintenance) pulls it
+  immediately. Up to 1,000 runs per host (was 200), since the cap now bounds a
+  local query rather than an SSH transfer.
+  - **Nothing gets worse.** The cache engages only for a remote host with at
+    least one v4 index. A host without `runspec >= 0.63.0`, the local host
+    (already instant), the 90d / All views and `[history] cache = false` all read
+    directly as before. Within a cached host, a pre-v4 index is read directly and
+    a dir without an index is log-parsed, both as snapshots refreshed every 2
+    minutes or when a run finishes there.
+  - **Freshness.** If a pull fails, the cache keeps what it had and the host's
+    chip in the per-host strip turns amber and reads **as of 3m ago** (the tooltip
+    names the error). New bridge method `history_sync_status()`.
+  - `[history] cache` (default `true`) — see `docs/console-reference.md`. Design:
+    `docs/design/history-incremental-pull.md`. `HistoryCache`
+    (`history_cache.py`), `HistorySyncMixin` (`bridge_history_sync.py`), and the
+    stdlib pull snippet `bridge_utils._DB_SYNC_SNIPPET` / `db_sync_cmd`, which is
+    tested against core's `runsdb.changes_since` for parity.
+
 ## [0.299.1] — 2026-09-28
 
 ### Changed

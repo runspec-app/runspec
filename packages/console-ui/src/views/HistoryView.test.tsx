@@ -9,10 +9,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, act, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
-import { HistoryView } from './HistoryView'
+import { HistoryView, agoLabel, syncNote } from './HistoryView'
 import type { HistoryRecord, RunningRun } from '../bridge'
 
-const { historyTargets, getHistorySlim, getRunDetail, logsView, getRunningRuns } = vi.hoisted(() => ({
+const { historyTargets, getHistorySlim, getRunDetail, logsView, getRunningRuns, historySyncStatus } = vi.hoisted(() => ({
+  historySyncStatus: vi.fn(),
   historyTargets: vi.fn(),
   getHistorySlim: vi.fn(),
   getRunDetail: vi.fn(),
@@ -28,6 +29,7 @@ vi.mock('../bridge', () => ({
       if (p === 'get_run_detail') return getRunDetail
       if (p === 'logs_view') return logsView
       if (p === 'get_running_runs') return getRunningRuns
+      if (p === 'history_sync_status') return historySyncStatus
       return vi.fn()
     },
   }),
@@ -63,6 +65,7 @@ beforeEach(() => {
   getRunDetail.mockReset().mockResolvedValue({ logLines: [] })
   logsView.mockReset().mockResolvedValue({ ok: true, records: [] })
   getRunningRuns.mockReset().mockResolvedValue([])   // nothing running by default → no strip
+  historySyncStatus.mockReset().mockResolvedValue({})  // every host read directly
 })
 
 afterEach(() => { vi.useRealTimers() })
@@ -121,6 +124,35 @@ describe('HistoryView', () => {
       await flush()
     })
     expect(getHistorySlim).toHaveBeenCalledTimes(2)
+  })
+
+  it('refetches only the named host on runspec:history_updated', async () => {
+    historyTargets.mockResolvedValue(['local', 'web-01'])
+    getHistorySlim.mockImplementation((host: string) =>
+      Promise.resolve([rec({ id: host, host, runnable: host === 'local' ? 'backup' : 'deploy' })]))
+    render(<HistoryView {...PROPS} />)
+    await screen.findByText('deploy')
+    getHistorySlim.mockClear()
+    getHistorySlim.mockImplementation((host: string) =>
+      Promise.resolve([rec({ id: 'new', host, runnable: 'rotate-certs' })]))
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent('runspec:history_updated', { detail: { host: 'web-01' } }))
+      await flush()
+    })
+    expect(getHistorySlim).toHaveBeenCalledTimes(1)
+    expect(getHistorySlim).toHaveBeenCalledWith('web-01', 7)
+    expect(await screen.findByText('rotate-certs')).toBeTruthy()
+    expect(screen.getByText('backup')).toBeTruthy()  // local untouched
+  })
+
+  it('marks a cached host whose last sync failed "as of …"', async () => {
+    historyTargets.mockResolvedValue(['local', 'web-01'])
+    getHistorySlim.mockImplementation((host: string) => Promise.resolve([rec({ id: host, host })]))
+    historySyncStatus.mockResolvedValue({
+      'web-01': { cached: true, synced_at: new Date(Date.now() - 180_000).toISOString(), error: 'connection refused' },
+    })
+    render(<HistoryView {...PROPS} />)
+    expect(await screen.findByText(/as of 3m ago/)).toBeTruthy()
   })
 
   it('does not poll within the (slowed) fallback window absent an event', async () => {
@@ -221,5 +253,22 @@ describe('historyStatusMatches', () => {
     expect(historyStatusMatches({ exitCode: 0, status: 'completed' }, 0)).toBe(true)
     expect(historyStatusMatches({ exitCode: 2, status: 'failed' }, 1)).toBe(true)
     expect(historyStatusMatches({ exitCode: 0 }, -1)).toBe(false)
+  })
+})
+
+describe('syncNote', () => {
+  const now = Date.parse('2026-09-28T12:00:00Z')
+  it('is null for a host read directly', () => {
+    expect(syncNote(undefined, now)).toBeNull()
+    expect(syncNote({ cached: false, synced_at: null, error: 'x' }, now)).toBeNull()
+  })
+  it('says "as of" only when the latest pull failed', () => {
+    expect(syncNote({ cached: true, synced_at: '2026-09-28T11:58:00Z', error: '' }, now))
+      .toEqual({ stale: false, note: '', tip: 'From the local history cache · synced 2m ago' })
+    expect(syncNote({ cached: true, synced_at: '2026-09-28T09:00:00Z', error: 'timeout' }, now)?.note).toBe('as of 3h ago')
+  })
+  it('formats ages', () => {
+    expect(agoLabel('2026-09-28T11:59:30Z', now)).toBe('30s ago')
+    expect(agoLabel('2026-09-25T12:00:00Z', now)).toBe('3d ago')
   })
 })

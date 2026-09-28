@@ -7,6 +7,41 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.63.0] — 2026-09-28
+
+### Added
+
+- **Runs index change sequence (schema v4) — incremental pulls.** Every write to
+  `runspec_runs.db` now takes a per-DB, monotonically increasing `seq`, and every
+  deleted row leaves a tombstone, so a reader can ask "what changed since my
+  cursor" instead of re-reading the newest rows each time — the substrate for the
+  runspec-console's local History cache (`docs/design/history-incremental-pull.md`).
+  New `sync_meta` (`db_id` / `seq` / `floor`) and `runs_tombstones` tables, a `seq`
+  column, and three SQLite triggers that maintain them. Because the triggers live
+  **in the DB file**, an older runspec writing a v4 index (a mixed-version shared
+  venv) still stamps `seq` and records deletes. The migration from v3 is automatic
+  on the first write and backfills `seq` in insertion order, in one
+  `BEGIN IMMEDIATE` transaction. v4 is detected by **structure**, not
+  `user_version` (an older writer resets that). A row restored by `reindex` clears
+  its own tombstone. Tombstones are kept 30 days (cap 50,000); dropping one raises
+  `floor`, and a reader whose cursor is below it is told to reset.
+- **`runsdb.changes_since(log_dir, db_id=…, seq=…, limit=…, window_start=…)`** (and
+  `runsdb.changes(con, …)`) — the pull contract, in one read transaction: `delta`
+  (rows + deleted ids after the cursor), `reset` (a windowed snapshot — no cursor,
+  a new `db_id`, or a cursor below `floor`), `legacy` (pre-v4 DB) or `none` (no
+  index); pages capped at `limit` with `more` to continue.
+- `runspec history stats` shows the change sequence (`change seq N (floor F, T
+  tombstone(s))`); `--json` carries it as `"sync"`, and `schema_version` is 4 for a
+  v4 index even after an older writer reset `user_version`.
+
+### Fixed
+
+- **A finished run could go unrecorded on the first write after a schema
+  migration.** `finish_run` decided whether its start row existed from
+  `con.total_changes`, which also counts the migration's own writes on that
+  connection — so a run whose start row was missing could skip its fallback
+  insert. It now uses the UPDATE's own row count.
+
 ## [0.62.0] — 2026-09-28
 
 ### Added

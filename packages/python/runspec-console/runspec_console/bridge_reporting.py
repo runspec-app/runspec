@@ -454,6 +454,7 @@ class ReportingMixin:
             name = h.get("name")
             if name and name != "local" and connected.get(name):
                 names.append(name)
+        self._history_forget_hosts()  # removed / renamed hosts leave the cache
         return names
 
     def get_history_slim(
@@ -543,6 +544,11 @@ class ReportingMixin:
         if entry is None:
             return []
         if entry.get("ssh"):
+            # 7d/30d from the local cache (pulled incrementally) when the host has a
+            # v4 index; otherwise, and for wider windows, the direct read.
+            cached = self._history_from_cache(entry, since_days)
+            if cached is not None:
+                return cached
             return self._slim_history_db_remote(entry, since_days)
         since_date = self._since_date(since_days)
         records: list[dict[str, Any]] = []
@@ -586,25 +592,12 @@ class ReportingMixin:
         ssh = entry["ssh"]
         idf = entry.get("identityFile")
         host = entry["name"]
-        paths = [rp for rp in utils_mod._paths(entry) if rp]
-        if not paths:
+        layout = self._remote_history_layout(entry)
+        if layout is None:
             return None
+        dirs, dir_group, primary_group, sv_python = layout
         since_date = self._since_date(since_days)
         since_iso = f"{since_date}T00:00:00+00:00" if since_date else None
-        primary_group = PurePosixPath(paths[0]).parent.parent.name
-
-        dir_group: dict[str, str] = {}
-        dirs: list[str] = []
-        for rp in paths:
-            vd = str(PurePosixPath(rp).parent.parent / "logs")
-            if vd not in dir_group:
-                dir_group[vd] = PurePosixPath(rp).parent.parent.name
-                dirs.append(vd)
-        if "~/logs" not in dir_group:
-            dir_group["~/logs"] = primary_group
-            dirs.append("~/logs")
-
-        sv_python = str(PurePosixPath(paths[0]).parent / "python")
         cmd = utils_mod.db_read_cmd(sv_python, dirs, since_iso, self._HISTORY_CAP)
         try:
             _, out, _ = self._ssh_run(ssh, cmd, identity_file=idf, timeout=20)
@@ -826,6 +819,12 @@ class ReportingMixin:
     def _invalidate_remote_history(self, host: str | None = None) -> None:
         """Drop the cached remote-history read for ``host`` (or all hosts) so the
         next read re-streams — called when a run completes so History is fresh."""
+        # The History cache pulls the host now instead (a no-op unless it's cached).
+        if host is not None and hasattr(self, "_kick_history_pull"):
+            try:
+                self._kick_history_pull(host, force=True)
+            except Exception:
+                logger.exception("history: pull after run failed to start for %s", host)
         cache = getattr(self, "_remote_history_cache", None)
         if cache is None:
             return

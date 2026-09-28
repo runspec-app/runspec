@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Table, Tag, Typography, Button, Tooltip, message, Input, Drawer, Spin, Empty, Alert, Segmented } from 'antd'
 import { RedoOutlined, CopyOutlined, RobotOutlined, UserOutlined, SearchOutlined, EditOutlined, ClockCircleOutlined, ProfileOutlined } from '@ant-design/icons'
 import type { ColumnType } from 'antd/es/table'
-import { bridge, type HistoryRecord, type HistoryLogLine, type LogViewResult, type RunningRun } from '../bridge'
+import { bridge, type HistoryRecord, type HistoryLogLine, type HistorySyncState, type LogViewResult, type RunningRun } from '../bridge'
 import { LogStream } from '../components/LogStream'
 import { MONO_FONT, RADIUS, useAccent, withAlpha } from '../ThemeContext'
 
@@ -35,6 +35,26 @@ type HostFetch = { status: 'loading' | 'done' | 'error'; ms?: number; count?: nu
 const MERGED_CAP = 500
 const fmtMs = (ms?: number): string => (ms == null ? '—' : ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`)
 const slowMs = (ms?: number): boolean => (ms ?? 0) >= 1500
+
+/** "3m ago"-style age of an ISO timestamp. */
+export function agoLabel(iso: string, now = Date.now()): string {
+  const t = new Date(iso).getTime()
+  if (Number.isNaN(t)) return iso
+  const s = Math.max(0, Math.round((now - t) / 1000))
+  return s < 60 ? `${s}s ago` : s < 3600 ? `${Math.round(s / 60)}m ago` : s < 86400 ? `${Math.round(s / 3600)}h ago` : `${Math.round(s / 86400)}d ago`
+}
+
+/** How a host's per-host chip describes its History-cache freshness, or null when
+ *  the host is read directly. `stale` = showing cached runs because the latest
+ *  pull failed (the chip reads "as of …"). */
+export function syncNote(state: HistorySyncState | undefined, now = Date.now()): { stale: boolean; note: string; tip: string } | null {
+  if (!state?.synced_at) return null
+  const ago = agoLabel(state.synced_at, now)
+  if (state.error) {
+    return { stale: true, note: `as of ${ago}`, tip: `Showing cached history as of ${ago} — the last sync failed: ${state.error}` }
+  }
+  return { stale: false, note: '', tip: `From the local history cache · synced ${ago}` }
+}
 
 // Elapsed since an ISO start, ticked client-side by the Running-now strip so a
 // live run's timer counts up without a re-fetch. "—" for an unparseable ts.
@@ -397,6 +417,9 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
   // 25 s poll + debounced run_end), so it costs no extra timer; the strip itself
   // ticks the per-run elapsed time.
   const [running, setRunning] = useState<RunningRun[]>([])
+  // Per remote host: History-cache freshness (history_sync_status) — the chip
+  // says "as of …" when a cached host's latest pull failed.
+  const [sync, setSync] = useState<Record<string, HistorySyncState>>({})
   const accent = useAccent()
 
   // The view stays mounted across tab switches (App toggles display), so records
@@ -424,6 +447,27 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
         .catch(() => { if (!cancelled) setRunning([]) })
     }
 
+    const loadSync = () => {
+      Promise.resolve(bridge.history_sync_status())
+        .then(s => { if (!cancelled) setSync(s && typeof s === 'object' ? s : {}) })
+        .catch(() => {})
+    }
+
+    // One host's rows (a remote on the History cache returns instantly).
+    const fetchHost = (name: string) => {
+      const t0 = performance.now()
+      return bridge.get_history_slim(name, sinceDays)
+        .then(rows => {
+          if (cancelled) return
+          setRecordsByHost(prev => ({ ...prev, [name]: rows }))
+          setHostStatus(prev => ({ ...prev, [name]: { status: 'done', ms: Math.round(performance.now() - t0), count: rows.length } }))
+        })
+        .catch(e => {
+          if (cancelled) return
+          setHostStatus(prev => ({ ...prev, [name]: { status: 'error', ms: Math.round(performance.now() - t0), error: String(e) } }))
+        })
+    }
+
     const runLoad = async (showSpinner: boolean) => {
       loadRunning()
       if (showSpinner) { setLoading(true); setRecordsByHost({}) }
@@ -444,18 +488,8 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       if (hosts.length === 0) { setLoading(false); return }
       let pending = hosts.length
       for (const name of hosts) {
-        const t0 = performance.now()
-        bridge.get_history_slim(name, sinceDays)
-          .then(rows => {
-            if (cancelled) return
-            setRecordsByHost(prev => ({ ...prev, [name]: rows }))
-            setHostStatus(prev => ({ ...prev, [name]: { status: 'done', ms: Math.round(performance.now() - t0), count: rows.length } }))
-          })
-          .catch(e => {
-            if (cancelled) return
-            setHostStatus(prev => ({ ...prev, [name]: { status: 'error', ms: Math.round(performance.now() - t0), error: String(e) } }))
-          })
-          .finally(() => { if (!cancelled) { pending -= 1; if (pending === 0) setLoading(false) } })
+        fetchHost(name)
+          .finally(() => { if (!cancelled) { pending -= 1; if (pending === 0) { setLoading(false); loadSync() } } })
       }
     }
 
@@ -470,11 +504,21 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
     }
     window.addEventListener('runspec:run_end', onRunEnd)
 
+    // The History cache pulled a host and something changed → refetch just that
+    // host (from the cache — no SSH on the tab's path).
+    const onHistoryUpdated = (e: Event) => {
+      const host = (e as CustomEvent<{ host?: string }>).detail?.host
+      if (!host || cancelled) return
+      fetchHost(host).then(loadSync)
+    }
+    window.addEventListener('runspec:history_updated', onHistoryUpdated)
+
     return () => {
       cancelled = true
       clearInterval(id)
       if (debounce) clearTimeout(debounce)
       window.removeEventListener('runspec:run_end', onRunEnd)
+      window.removeEventListener('runspec:history_updated', onHistoryUpdated)
     }
   }, [active, sinceDays])
 
@@ -702,12 +746,15 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
           {targets.map(name => {
             const s = hostStatus[name]
             const st = s?.status ?? 'loading'
+            const cache = st === 'done' ? syncNote(sync[name]) : null
             const colour = st === 'error' ? '#ff4d4f'
               : st === 'loading' ? 'var(--rs-text-faint)'
-              : slowMs(s?.ms) ? '#faad14' : 'var(--rs-text-muted)'
-            const detail = st === 'loading' ? '…' : st === 'error' ? 'failed' : `${s?.count ?? 0}·${fmtMs(s?.ms)}`
+              : cache?.stale || slowMs(s?.ms) ? '#faad14' : 'var(--rs-text-muted)'
+            const detail = st === 'loading' ? '…' : st === 'error' ? 'failed'
+              : cache?.stale ? `${s?.count ?? 0}·${cache.note}` : `${s?.count ?? 0}·${fmtMs(s?.ms)}`
             const tip = st === 'error' ? (s?.error || 'fetch failed')
               : st === 'loading' ? 'fetching…'
+              : cache ? `${s?.count ?? 0} run(s) — ${cache.tip}`
               : `${s?.count ?? 0} run(s) in ${fmtMs(s?.ms)}${slowMs(s?.ms) ? ' — slow' : ''}`
             return (
               <Tooltip key={name} title={tip}>

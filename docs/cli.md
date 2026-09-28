@@ -787,6 +787,17 @@ or make the dir group-writable with [`runspec logs share`](#runspec-logs).
 `reindex` print a single result object (`{"verb", "count", "dirs": [...], "ok"}`),
 which is what the runspec-console's **Logs → Runs index…** dialog drives.
 
+**Change sequence (0.63.0+).** The index (schema v4) stamps every write with a
+per-DB change sequence and keeps a short-lived tombstone for every deleted row,
+so a reader can pull only what changed since its last read — the
+runspec-console's History cache does this over SSH instead of re-reading every
+venv's newest rows on each refresh. `stats` shows it as `change seq N (floor F,
+T tombstone(s))` (`"sync"` in `--json`). It's maintained by SQLite triggers
+stored in the DB file, so an older runspec writing the same venv's index still
+keeps it correct. Tombstones are kept 30 days. The Python API is
+`runspec.runsdb.changes_since(log_dir, db_id=…, seq=…)`; see
+[the design](design/history-incremental-pull.md).
+
 ---
 
 ## Bash and shell runnables
