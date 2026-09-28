@@ -6,7 +6,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 
-import { RunsIndexModal, humanBytes } from './RunsIndexModal'
+import { RunsIndexModal, humanBytes, checkPruneAge } from './RunsIndexModal'
 
 const { stats, maintain, venvOwner } = vi.hoisted(() => ({
   stats: vi.fn(),
@@ -67,12 +67,42 @@ describe('RunsIndexModal', () => {
     expect((screen.getByRole('button', { name: /Prune/ }) as HTMLButtonElement).disabled).toBe(false)
   })
 
+  it('rejects an age it cannot use, keeping prune disabled', async () => {
+    render(<RunsIndexModal target={TARGET} onClose={() => {}} />)
+    await screen.findByText('/opt/venvs/ops-tools/logs/runspec_runs.db')
+    fireEvent.change(screen.getByLabelText('older than'), { target: { value: 'older than 3 days' } })
+    expect(screen.getByText(/Use a number plus a unit/)).toBeTruthy()
+    fireEvent.change(screen.getByLabelText('max rows'), { target: { value: '500' } })
+    expect((screen.getByRole('button', { name: /Prune/ }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('prunes with both limits after confirming', async () => {
+    maintain.mockResolvedValue({ ok: true, group: 'ops-tools', verb: 'prune', count: 3 })
+    render(<RunsIndexModal target={TARGET} onClose={() => {}} />)
+    await waitFor(() => expect((screen.getByPlaceholderText('(yourself)') as HTMLInputElement).value).toBe('svc'))
+    fireEvent.change(screen.getByLabelText('older than'), { target: { value: '3d' } })
+    fireEvent.change(screen.getByLabelText('max rows'), { target: { value: '1000' } })
+    fireEvent.click(screen.getByRole('button', { name: /Prune/ }))
+    expect(await screen.findByText(/older than 3 days, then all but the newest 1,000/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /OK|Yes/ }))
+    await waitFor(() => expect(maintain).toHaveBeenCalledWith('web-01', 'ops-tools', 'prune', '3d', 1000, 'svc'))
+  })
+
   it('surfaces a failure inside the modal', async () => {
     maintain.mockResolvedValue({ ok: false, group: 'ops-tools', error: 'needs runspec >= 0.62.0' })
     render(<RunsIndexModal target={TARGET} onClose={() => {}} />)
     await screen.findByText('/opt/venvs/ops-tools/logs/runspec_runs.db')
     fireEvent.click(screen.getByRole('button', { name: /Reindex/ }))
     expect(await screen.findByText('needs runspec >= 0.62.0')).toBeTruthy()
+  })
+
+  it('checks prune ages like core (day-granular)', () => {
+    expect(checkPruneAge('')).toEqual({ days: null })
+    expect(checkPruneAge('30d').days).toBe(30)
+    expect(checkPruneAge('2w').days).toBe(14)
+    expect(checkPruneAge('72h').days).toBe(3)
+    expect(checkPruneAge('12h').error).toMatch(/0 days/)
+    expect(checkPruneAge('3 days').error).toBeTruthy()
   })
 
   it('formats sizes', () => {

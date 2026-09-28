@@ -8,6 +8,21 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.299.1] — 2026-09-28
+
+### Changed
+
+- **Runs index modal — clearer prune.** The prune controls were two unlabelled
+  inputs (the age placeholder truncated) with no hint that the action is a
+  one-off. Now: a **Prune now** section stating it's a one-off (nothing saved),
+  that both limits apply in turn (age, then row cap — the stricter wins) and that
+  automatic pruning already runs after every run per `[config.history]`
+  (`retention_days` 90 / `max_rows` 50,000 by default); separately labelled
+  **Delete rows older than** (e.g. `30d`, `2w`, `72h`) and **Keep only the
+  newest … rows** fields; the age is validated like core's `parse_duration` and
+  rejected when it rounds down to 0 days (prune stays disabled); and the confirm
+  names exactly what will be deleted (`RunsIndexModal.checkPruneAge`).
+
 ## [0.299.0] — 2026-09-28
 
 ### Added

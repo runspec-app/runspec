@@ -34,6 +34,21 @@ export function humanBytes(n: number | undefined): string {
   return `${v.toFixed(i === 0 ? 0 : 1)} ${u[i]}`
 }
 
+const AGE_UNIT_DAYS: Record<string, number> = { s: 1 / 86400, m: 1 / 1440, h: 1 / 24, d: 1, w: 7 }
+
+/** Validate a prune age token the way core's `parse_duration` reads it (`30m`,
+ *  `24h`, `7d`, `2w`) — then day-granular, as `runspec history prune` rounds it
+ *  down to whole days. Blank ⇒ no age limit. */
+export function checkPruneAge(raw: string): { days: number | null; error?: string } {
+  const s = raw.trim()
+  if (!s) return { days: null }
+  const m = /^(\d+)\s*([smhdw])$/i.exec(s)
+  if (!m) return { days: null, error: 'Use a number plus a unit — e.g. 30d, 2w or 72h' }
+  const days = Math.floor(Number(m[1]) * AGE_UNIT_DAYS[m[2].toLowerCase()])
+  if (days < 1) return { days: null, error: 'Rounds down to 0 days — use at least 1d (or 24h)' }
+  return { days }
+}
+
 const ACTION_DONE: Record<HistoryDbAction, (n: number) => string> = {
   prune: n => `Pruned ${n} row(s) from the runs index`,
   reap: n => `Marked ${n} orphaned running row(s) crashed`,
@@ -79,7 +94,13 @@ export function RunsIndexModal({ target, onClose }: {
   if (!target) return null
   const { host, group } = target
   const isHome = group === '~/logs'
-  const hasPolicy = olderThan.trim().length > 0 || (maxRows != null && maxRows > 0)
+  const age = checkPruneAge(olderThan)
+  const hasPolicy = !age.error && (age.days != null || (maxRows != null && maxRows > 0))
+
+  const pruneSummary = [
+    age.days != null ? `finished rows older than ${age.days} day${age.days === 1 ? '' : 's'}` : '',
+    maxRows != null && maxRows > 0 ? `all but the newest ${maxRows.toLocaleString()} finished rows` : '',
+  ].filter(Boolean).join(', then ')
 
   const act = async (action: HistoryDbAction) => {
     setBusy(action)
@@ -172,19 +193,35 @@ export function RunsIndexModal({ target, onClose }: {
               style={{ maxWidth: 200, fontFamily: MONO_FONT }} />
           </Form.Item>
         )}
-        <Form.Item label="Prune policy" style={{ marginBottom: 8 }}
-          help="Drop finished rows older than an age (day-granular) and/or beyond a row cap. Running rows are never pruned; the audit logs are untouched.">
-          <Space wrap>
-            <Input value={olderThan} onChange={e => setOlderThan(e.target.value)} placeholder="older than, e.g. 30d"
-              aria-label="older than" style={{ width: 170, fontFamily: MONO_FONT }} />
-            <InputNumber value={maxRows} onChange={v => setMaxRows(v)} min={1} placeholder="max rows"
-              aria-label="max rows" style={{ width: 140 }} />
-          </Space>
-        </Form.Item>
+        <Text strong style={{ fontSize: 13 }}>Prune now</Text>
+        <div style={{ marginBottom: 8 }}>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            A one-off prune — nothing here is saved. Fill either field or both; both apply
+            (age first, then the row cap), so the stricter wins. Running rows are never pruned
+            and the audit logs are untouched. Automatic pruning already runs after every run,
+            per the runnable's <Text code style={{ fontSize: 12 }}>{'[config.history]'}</Text>{' '}
+            (<Text code style={{ fontSize: 12 }}>retention_days</Text>, default 90;{' '}
+            <Text code style={{ fontSize: 12 }}>max_rows</Text>, default 50,000).
+          </Text>
+        </div>
+        <Space wrap align="start" size={16}>
+          <Form.Item label="Delete rows older than" style={{ marginBottom: 8 }}
+            validateStatus={age.error ? 'error' : undefined}
+            help={age.error ?? 'e.g. 30d, 2w, 72h — whole days; blank = no age limit'}>
+            <Input value={olderThan} onChange={e => setOlderThan(e.target.value)} placeholder="30d"
+              aria-label="older than" style={{ width: 220, fontFamily: MONO_FONT }} />
+          </Form.Item>
+          <Form.Item label="Keep only the newest" style={{ marginBottom: 8 }}
+            help="rows — blank = no row cap">
+            <InputNumber value={maxRows} onChange={v => setMaxRows(v)} min={1} placeholder="10000"
+              aria-label="max rows" addonAfter="rows" style={{ width: 200 }} />
+          </Form.Item>
+        </Space>
       </Form>
 
       <Space wrap style={{ marginTop: 8 }}>
-        <Popconfirm title="Prune the runs index?" description="Deleted rows can be restored by Reindex while their audit logs remain."
+        <Popconfirm title="Prune the runs index?"
+          description={<span>Deletes {pruneSummary || 'nothing'}.<br />Reindex restores rows while their audit logs remain.</span>}
           onConfirm={() => act('prune')} disabled={!hasPolicy}>
           <Button danger disabled={!hasPolicy || busy !== null} loading={busy === 'prune'}>Prune</Button>
         </Popconfirm>
