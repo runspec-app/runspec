@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import sys
 from collections.abc import Iterator
 from pathlib import Path
@@ -940,10 +941,18 @@ def cmd_logs(args: list[str]) -> None:
             # index. Defaults (unset --scope) to this venv's own dir only.
             # `--acl-user` additionally grants a specific user write via a POSIX
             # ACL (no group change / root needed).
+            # `--inbox` (recommended) instead creates the sticky logs inbox other
+            # accounts drop their runs into; as root it drops to the venv owner
+            # first so everything it creates belongs to that account.
+            if parsed.inbox.value or parsed.no_inbox.value or parsed.owner_only.value:
+                _drop_to_venv_owner()
             _logs.share(
                 dirs=_logs.scope_dirs(parsed.scope.value, destructive=True),
                 group=parsed.group.value or None,
                 acl_users=parsed.acl_user.value or None,
+                inbox=parsed.inbox.value,
+                no_inbox=parsed.no_inbox.value,
+                owner_only=parsed.owner_only.value,
                 as_json=parsed.json.value,
             )
     except (ValueError, OSError) as exc:
@@ -983,9 +992,13 @@ def cmd_history(args: list[str]) -> None:
     from runspec import runsdb
 
     verb = (parsed.verb.value or "list").lower()
-    if verb not in ("list", "running", "stats", "prune", "reindex", "reap"):
-        print(f"✗  Unknown history verb: {verb} (list / running / stats / prune / reindex / reap)")
+    if verb not in ("list", "running", "stats", "prune", "reindex", "reap", "sweep"):
+        print(f"✗  Unknown history verb: {verb} (list / running / stats / prune / reindex / reap / sweep)")
         sys.exit(1)
+
+    if verb == "sweep":
+        _history_sweep(parsed.json.value)
+        return
 
     # Reads span every logs dir by default (scope_dirs → None ⇒ log_dirs());
     # prune/reindex/reap default to this venv's own dir.
@@ -1002,8 +1015,10 @@ def cmd_history(args: list[str]) -> None:
             since_iso = (datetime.now(timezone.utc) - _logs.parse_duration(parsed.since.value)).isoformat()
         rows: list[dict[str, Any]] = []
         for d in dirs:
+            # index ∪ inbox: runs other accounts dropped into the inbox show up
+            # the moment they start, before the owner's sweep indexes them.
             rows.extend(
-                runsdb.list_runs(
+                runsdb.list_runs_with_inbox(
                     d,
                     since=since_iso,
                     status=parsed.status.value,
@@ -1055,8 +1070,8 @@ def cmd_history(args: list[str]) -> None:
             n = runsdb.prune_now(d, retention_days=retention_days, max_rows=max_rows)
         elif verb == "reap":
             n = runsdb.reap_now(d)
-        else:  # reindex — rebuild each dir's index from its run_summary audit records
-            n = runsdb.reindex(d, _logs.read_run_summaries([d]))
+        else:  # reindex — rebuild each dir's index from its audit records (never the inbox)
+            n = runsdb.reindex_rows(d, _logs.read_run_rows([d]))
         results.append({"dir": str(d), "count": n})
     total = sum(r["count"] for r in results)
     errors = [r for r in results if r.get("error")]
@@ -1101,6 +1116,95 @@ def _print_history_stats(snaps: list[dict[str, Any]]) -> None:
             print(f"   {s['log_pruned']} row(s) outlive their pruned log file")
         if s.get("write_error"):
             print(f"   ✗  not writable by you: {s['write_error']}")
+        _print_inbox_stats(s.get("inbox"))
+
+
+_INBOX_PROBLEMS = {
+    "missing": "no logs inbox — other accounts' runs fall back to their own ~/logs. Set it up (as the venv owner): runspec logs share --inbox",
+    "disabled": "logs inbox disabled (.no-inbox marker)",
+    "bad-mode": "logs inbox has the wrong mode — the owner's next run (or `runspec logs share --inbox`) repairs it",
+    "symlink": "‼  logs/inbox is a symlink — not used; remove it (as the owner) and run `runspec logs share --inbox`",
+    "not-dir": "‼  logs/inbox is not a directory — not used; remove it and run `runspec logs share --inbox`",
+    "foreign-owner": "‼  logs/inbox is owned by another account — not used; remove it and run `runspec logs share --inbox`",
+    "other-fs": "‼  logs/inbox is on another filesystem — not used",
+}
+
+
+def _print_inbox_stats(ib: dict[str, Any] | None) -> None:
+    if not ib or ib.get("state") in (None, "unsupported", "no-logs"):
+        return
+    st = ib["state"]
+    if st != "ok":
+        print(f"   {_INBOX_PROBLEMS.get(st, 'logs inbox: ' + st)}")
+        return
+    parts = [f"{ib.get('files', 0)} pending file(s)"]
+    if ib.get("running"):
+        parts.append(f"{ib['running']} running")
+    if ib.get("finished"):
+        parts.append(f"{ib['finished']} finished awaiting sweep")
+    print(f"   inbox: {', '.join(parts)} ({(ib.get('bytes') or 0) / 1024:.1f} KiB)")
+    if ib.get("subdirs"):
+        print(f"   ‼  {ib['subdirs']} subdirectory(ies) in the inbox — only root can remove a non-empty one")
+
+
+def _history_sweep(as_json: bool) -> None:
+    """`runspec history sweep` — index finished inbox runs and move them into
+    logs/ (this venv only). As root, drops to the venv owner first."""
+    from runspec import inbox
+
+    _drop_to_venv_owner()
+    d = Path(sys.prefix) / "logs"
+    res = inbox.sweep_inbox(d, {}, per_user_cap=inbox.PER_USER_CAP)
+    ok = not res.get("error")
+    if as_json:
+        print(json.dumps({"verb": "sweep", "ok": ok, **res}, default=str))
+    elif res.get("error"):
+        print(f"✗  {res['error']}")
+    elif res.get("busy"):
+        print("↷  another sweep is running — try again shortly")
+    elif res.get("state") in ("missing", "no-logs"):
+        print(f"(no logs inbox in {d} — nothing to sweep; set one up with `runspec logs share --inbox`)")
+    else:
+        print(
+            f"✓  swept {res['swept']} run(s) into the runs index"
+            + (f", {res['crashed']} crashed" if res["crashed"] else "")
+            + (f", {res['unindexed']} moved without indexing" if res["unindexed"] else "")
+            + (f"; {res['running']} still running" if res["running"] else "")
+            + (f"; {res['deferred']} deferred" if res["deferred"] else "")
+            + (f"; {res['removed']} junk entr(ies) removed" if res["removed"] else "")
+        )
+        if res["collisions"]:
+            print(f"‼  {res['collisions']} file(s) claim a run id another account owns — left in the inbox")
+        if res["skipped"]:
+            print(f"   {res['skipped']} entr(ies) skipped (unreadable / hard-linked / not a run file yet)")
+    if not ok:
+        sys.exit(1)
+
+
+def _drop_to_venv_owner() -> None:
+    """Run as root? Become the venv owner before touching logs/ — so what the
+    inbox verbs create belongs to that account, and the standard `(root)` sudo
+    grant is enough (no `sudo -u <owner>` rule needed). A no-op otherwise."""
+    if not hasattr(os, "geteuid") or os.geteuid() != 0:
+        return
+    from runspec import inbox
+
+    owner = inbox.venv_owner()
+    if owner is None or owner == 0:
+        return
+    import pwd
+
+    try:
+        pw = pwd.getpwuid(owner)
+        groups, gid, home = os.getgrouplist(pw.pw_name, pw.pw_gid), pw.pw_gid, pw.pw_dir
+    except KeyError:  # an owner uid with no passwd entry: its venv's group, nothing else
+        gid = os.stat(sys.prefix).st_gid
+        groups, home = [gid], ""
+    os.setgroups(groups)
+    os.setgid(gid)
+    os.setuid(owner)
+    if home:
+        os.environ["HOME"] = home
 
 
 def cmd_exec(args: list[str]) -> None:

@@ -49,13 +49,18 @@ DB_NAME = "runspec_runs.db"
 # by *structure* (``_has_sync``), never by user_version: an older runspec writing
 # the DB resets user_version to its own number, but the triggers (which live in
 # the DB file) keep stamping ``seq`` on its writes regardless.
-_SCHEMA_VERSION = 5
+_SCHEMA_VERSION = 6
 # v5: + events (JSON {level: count} — the run's log-record counts by level) and
 # exception (JSON {type, message} — the uncaught exception, no traceback), taken
 # from the run_summary at finalize. They let a reader (the console's Analytics)
 # aggregate from the index instead of parsing log files. Written with COALESCE so
 # a later finalize that doesn't know them (`runspec exec` finalizing its child's
 # row) never clears them.
+# v6 (docs/design/venv-logs-inbox.md): + os_user (the kernel-attested account —
+# the writer's effective uid for a direct row, the inbox file's owner for a swept
+# one), source ("direct" / "inbox") and exec_uid (the `runspec exec` wrapper's
+# uid, for binding a wrapper and its child across the inbox). Kept on conflict
+# like label, so a writer that doesn't know them never clears them.
 _EXCEPTION_MESSAGE_MAX = 500
 _BUSY_TIMEOUT_MS = 2000
 
@@ -113,7 +118,12 @@ CREATE TABLE IF NOT EXISTS runs (
   -- v5: from the run_summary — log-record counts by level, and the uncaught
   -- exception's type + message. JSON text; NULL when unknown.
   events        TEXT,
-  exception     TEXT
+  exception     TEXT,
+  -- v6: attribution — who actually wrote the row (kernel-attested), whether it
+  -- came straight from a run or was swept from the inbox, and the exec wrapper.
+  os_user       TEXT,
+  source        TEXT,
+  exec_uid      INTEGER
 );
 CREATE INDEX IF NOT EXISTS runs_start_ts ON runs (start_ts);
 CREATE INDEX IF NOT EXISTS runs_status   ON runs (status);
@@ -300,15 +310,17 @@ def _connect(path: Path, *, readonly: bool = False) -> sqlite3.Connection | None
 def _migrate(con: sqlite3.Connection) -> None:
     """Apply additive column adds an existing DB predates — the forward/backward-
     compatible half of a schema bump. v1 → v2 (§8.1): ``log_pruned_at`` /
-    ``log_pruned_by``; v2 → v3: ``label``; v4 → v5: ``events`` / ``exception``. ``ALTER TABLE ADD COLUMN`` is metadata-only (no table
+    ``log_pruned_by``; v2 → v3: ``label``; v4 → v5: ``events`` / ``exception``; v5 → v6: ``os_user`` / ``source`` / ``exec_uid``. ``ALTER TABLE ADD COLUMN`` is metadata-only (no table
     rewrite); a fresh DB already has them via ``_DDL`` so this is a no-op there.
     Best-effort — a migration failure never blocks the write (the DB is a derived
     index; worst case it is rebuilt via :func:`reindex`)."""
     with contextlib.suppress(sqlite3.Error):
         have = {r[1] for r in con.execute("PRAGMA table_info(runs)").fetchall()}
-        for col in ("log_pruned_at", "log_pruned_by", "label", "events", "exception"):
+        for col in ("log_pruned_at", "log_pruned_by", "label", "events", "exception", "os_user", "source"):
             if col not in have:
                 con.execute(f"ALTER TABLE runs ADD COLUMN {col} TEXT")
+        if "exec_uid" not in have:
+            con.execute("ALTER TABLE runs ADD COLUMN exec_uid INTEGER")
         # Here, not in _DDL: on a pre-v3 DB the column only exists after the ALTER.
         con.execute("CREATE INDEX IF NOT EXISTS runs_label ON runs (label)")
 
@@ -525,6 +537,7 @@ def finish_run(
     command: str = "",
     events: dict[str, int] | None = None,
     exception: Any = None,
+    sweep: bool = True,
 ) -> None:
     """Finalize a row (``completed``/``failed`` + exit code + duration) via UPSERT
     keyed on ``run_id`` — correct whether or not the start row landed. Then run the
@@ -568,6 +581,14 @@ def finish_run(
             con.commit()
         finally:
             con.close()
+    # The owner's finalize also drains the inbox (throttled + time-boxed; a no-op
+    # for anyone else and where there's no inbox). After the close, so the sweep's
+    # own connection doesn't contend with ours.
+    if sweep:
+        with contextlib.suppress(Exception):
+            from . import inbox
+
+            inbox.maybe_sweep(log_dir, cfg)
 
 
 def _events_json(events: Any) -> str | None:
@@ -594,6 +615,9 @@ def _exception_json(exc: Any) -> str | None:
 def _normalise_row(row: dict[str, Any]) -> dict[str, Any]:
     out = {c: row.get(c) for c in _COLUMNS}
     out["label"] = row.get("label") or None
+    out["os_user"] = row.get("os_user") or None
+    out["source"] = row.get("source") or None
+    out["exec_uid"] = _int_or_none(row.get("exec_uid"))
     out["events"] = _events_json(row.get("events"))
     out["exception"] = _exception_json(row.get("exception"))
     out["run_id"] = row.get("run_id") or ""
@@ -610,18 +634,19 @@ def _normalise_row(row: dict[str, Any]) -> dict[str, Any]:
 
 def _upsert(con: sqlite3.Connection, row: dict[str, Any]) -> None:
     """INSERT or overwrite a row by ``run_id``. ``label``, ``events`` and
-    ``exception`` are written on insert but only ever *kept* on conflict: under
+    ``exception`` (and v6 ``os_user`` / ``source`` / ``exec_uid``) are written on
+    insert but only ever *kept* on conflict: under
     ``runspec exec`` the wrapper writes the labelled row first and the child's own
     begin/finish upserts (which don't know the label) must not clear it — and a
     begin that races a finish must not clear the finish's events."""
-    kept = ("label", "events", "exception")
+    kept = ("label", "events", "exception", "os_user", "source", "exec_uid")
     cols = ", ".join((*_COLUMNS, *kept))
     placeholders = ", ".join("?" for _ in range(len(_COLUMNS) + len(kept)))
     updates = ", ".join(f"{c}=excluded.{c}" for c in _COLUMNS if c != "run_id")
     updates += "".join(f", {c}=COALESCE(excluded.{c}, runs.{c})" for c in kept)
     con.execute(
         f"INSERT INTO runs ({cols}) VALUES ({placeholders}) ON CONFLICT(run_id) DO UPDATE SET {updates}",
-        (*(row[c] for c in _COLUMNS), *(row.get(c) or None for c in kept)),
+        (*(row[c] for c in _COLUMNS), *(row.get(c) if row.get(c) not in ("", None) else None for c in kept)),
     )
 
 
@@ -945,6 +970,125 @@ def set_log_file(log_dir: Path, run_id: str, log_file: str) -> None:
             con.close()
 
 
+# ── the inbox (docs/design/venv-logs-inbox.md §6, §8) ───────────────────────────
+
+# A swept row may only *fill* these on a direct row it's bound to — never the
+# outcome (status / exit code / duration), which the direct writer owns.
+_FILL_ONLY = ("command", "user", "user_target", "agent", "trigger", "skill", "autonomy", "args", "label", "events", "exception", "log_file")
+
+
+def inbox_binding(con: sqlite3.Connection, run_id: str, *, os_user: str, uid: int, row: dict[str, Any] | None = None) -> str:
+    """Whether a run swept from an inbox file owned by ``uid`` (``os_user``) may
+    write the index row for ``run_id`` — the binding table. Read-only.
+
+    ``insert`` (no row) · ``update`` (an inbox row by the same account) ·
+    ``outcome`` (a direct row whose ``exec_uid`` is this account — a
+    ``runspec exec`` wrapper in the inbox whose child ran as the owner: take the
+    observed outcome) · ``fill`` (a direct row whose ``run_as`` resolves to this
+    account — a direct wrapper whose child ran in the inbox: fill empty columns
+    only) · ``collision`` (anything else: one account's file never rewrites
+    another's row)."""
+    from . import inbox
+
+    cur = con.execute("SELECT source, os_user, run_as, exec_uid FROM runs WHERE run_id=?", (run_id,)).fetchone()
+    if cur is None:
+        return "insert"
+    if cur["source"] == "inbox":
+        return "update" if cur["os_user"] == os_user else "collision"
+    if cur["exec_uid"] is not None and _int(cur["exec_uid"], -1) == uid and (row is None or row.get("exec")):
+        return "outcome"
+    if inbox.uid_of(cur["run_as"]) == uid:
+        return "fill"
+    return "collision"
+
+
+def apply_inbox_row(con: sqlite3.Connection, row: dict[str, Any], *, os_user: str, uid: int, decision: str | None = None) -> str:
+    """Write a swept row per the binding table (:func:`inbox_binding`). Returns
+    the decision applied. The caller commits."""
+    decision = decision or inbox_binding(con, row["run_id"], os_user=os_user, uid=uid, row=row)
+    if decision in ("insert", "update"):
+        _upsert(con, _normalise_row({**row, "source": "inbox", "os_user": os_user}))
+    elif decision == "outcome":
+        ex = row.get("exec") or {}
+        con.execute(
+            "UPDATE runs SET status=?, exit_code=?, duration_ms=COALESCE(?, duration_ms), end_ts=COALESCE(?, end_ts),"
+            " label=COALESCE(label, ?), trigger=COALESCE(NULLIF(trigger, ''), ?) WHERE run_id=?",
+            (ex.get("status") or "completed", ex.get("exit_code"), ex.get("duration_ms"), ex.get("end_ts"), row.get("label") or None, row.get("trigger") or None, row["run_id"]),
+        )
+    elif decision == "fill":
+        norm = _normalise_row(row)
+        sets = ", ".join(f"{c}=COALESCE(NULLIF({c}, ''), ?)" for c in _FILL_ONLY)
+        con.execute(f"UPDATE runs SET {sets} WHERE run_id=?", (*(norm.get(c) for c in _FILL_ONLY), row["run_id"]))
+    return decision
+
+
+def list_runs_with_inbox(
+    log_dir: Path,
+    *,
+    since: str | None = None,
+    status: str | None = None,
+    runnable: str | None = None,
+    limit: int = 100,
+    running_only: bool = False,
+    live: bool = True,
+    label: str | None = None,
+    max_run_hours: int = 24,
+) -> list[dict[str, Any]]:
+    """:func:`list_runs` plus the runs still waiting in the inbox — the reader
+    contract. The inbox is read **before** the index, then deduped by ``run_id``
+    with the index winning: a run swept between the two reads is seen once, not
+    zero times. Inbox rows carry ``pending=True``. Never raises."""
+    pending: list[dict[str, Any]] = []
+    with contextlib.suppress(Exception):
+        from . import inbox
+
+        pending = inbox.inbox_rows(Path(log_dir), max_run_hours=max_run_hours)
+    indexed = list_runs(log_dir, since=since, status=status, runnable=runnable, limit=limit, running_only=running_only, live=live, label=label)
+    have = {r.get("run_id") for r in indexed}
+    extra = []
+    for r in pending:
+        if r.get("run_id") in have:
+            continue
+        if running_only and r.get("status") != "running":
+            continue
+        if since and str(r.get("start_ts") or "") < since:
+            continue
+        if status and r.get("status") != status:
+            continue
+        if runnable and r.get("runnable") != runnable:
+            continue
+        if label and r.get("label") != label:
+            continue
+        extra.append(_normalise_row(r) | {"pending": True, "log_pruned_at": None, "log_pruned_by": None})
+    rows = indexed + extra
+    rows.sort(key=lambda r: r.get("start_ts") or "", reverse=True)
+    return rows[: max(1, int(limit))]
+
+
+def reindex_rows(log_dir: Path, rows: list[dict[str, Any]]) -> int:
+    """Rebuild finished rows from parsed log files (:func:`runspec.inbox.row_from_records`
+    — so ``runspec exec``'s observed exit codes, labels and skips survive a
+    reindex, which the run_summary-only :func:`reindex` loses). Rows already in
+    the index keep their attribution. Returns rows written, 0 on failure."""
+    try:
+        con = _connect(db_path(log_dir))
+        if con is None:
+            return 0
+        try:
+            n = 0
+            for row in rows:
+                if not row.get("run_id") or not row.get("finished") or not row.get("history_db", True):
+                    continue
+                _upsert(con, _normalise_row(row))
+                n += 1
+            con.commit()
+            return n
+        finally:
+            con.close()
+    except Exception:
+        return 0
+
+
 # ── maintenance introspection (the ``runspec history stats`` verb) ───────────────
 
 
@@ -974,7 +1118,13 @@ def stats(log_dir: Path) -> dict[str, Any]:
         "schema_version": None,
         "sync": None,
         "write_error": write_error(log_dir),
+        "inbox": None,
     }
+    with contextlib.suppress(Exception):
+        from . import inbox
+
+        if inbox.supported():
+            out["inbox"] = inbox.status(Path(log_dir))
     for suffix in ("", "-wal", "-shm"):
         with contextlib.suppress(OSError):
             out["size_bytes"] += Path(f"{path}{suffix}").stat().st_size
@@ -991,8 +1141,9 @@ def stats(log_dir: Path) -> dict[str, Any]:
                 sync = sync_state(con)
                 if sync is not None:
                     # By structure: an older runspec may have reset user_version.
-                    has_v5 = any(r[1] == "events" for r in con.execute("PRAGMA table_info(runs)").fetchall())
-                    out["schema_version"] = max(int(out["schema_version"] or 0), 5 if has_v5 else 4)
+                    cols = {r[1] for r in con.execute("PRAGMA table_info(runs)").fetchall()}
+                    structural = (6 if "os_user" in cols else 5) if "events" in cols else 4
+                    out["schema_version"] = max(int(out["schema_version"] or 0), structural)
                     sync["tombstones"] = con.execute("SELECT count(*) FROM runs_tombstones").fetchone()[0]
                     out["sync"] = sync
             by_status = {r[0]: r[1] for r in con.execute("SELECT status, count(*) FROM runs GROUP BY status")}
@@ -1191,6 +1342,15 @@ def _hostname() -> str:
     with contextlib.suppress(Exception):
         return socket.gethostname()
     return ""
+
+
+def _int_or_none(v: Any) -> int | None:
+    if v is None or v == "" or isinstance(v, bool):
+        return None
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
 
 
 def _int(v: Any, default: int) -> int:

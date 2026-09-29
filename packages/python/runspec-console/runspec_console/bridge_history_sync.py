@@ -273,11 +273,17 @@ class HistorySyncMixin:
         synced_any = False
         legacy: list[str] = []
         unindexed: list[str] = []
-        for _ in range(_PULL_MAX_PAGES):
+        for page in range(_PULL_MAX_PAGES):
             if not pending:
                 break
+            # The logs-inbox snapshot rides the first page only (later pages would
+            # repeat it).
             cmd = utils_mod.db_sync_cmd(
-                sv_python, pending, limit=_PULL_PAGE, window_start=window_start
+                sv_python,
+                pending,
+                limit=_PULL_PAGE,
+                window_start=window_start,
+                inbox=page == 0,
             )
             try:
                 _, out, _ = self._ssh_run(ssh, cmd, identity_file=idf, timeout=30)
@@ -294,6 +300,19 @@ class HistorySyncMixin:
             for d in list(pending):
                 res = results.get(d)
                 mode = res.get("mode") if isinstance(res, dict) else None
+                if isinstance(res, dict) and isinstance(res.get("pending"), list):
+                    # Finished runs still in this venv's logs inbox (runspec >=
+                    # 0.66) — a per-pull snapshot; the index wins on a read.
+                    g = dir_group.get(d, primary_group)
+                    changed |= cache.set_pending(
+                        host,
+                        d,
+                        [
+                            utils_mod.db_row_to_record(r, g, host)
+                            for r in res["pending"]
+                            if isinstance(r, dict)
+                        ],
+                    )
                 if mode in ("delta", "reset"):
                     assert isinstance(res, dict)
                     synced_any = True

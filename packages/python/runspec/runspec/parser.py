@@ -298,6 +298,7 @@ def _parse_impl(
             invocation_args=invocation_args,
             history_cfg=config.get("history"),
             run_id=exec_run_id,
+            run_as=_run_as_name(raw["runnables"][name].get("run_as")),
         )
     except ValueError as e:
         raise errors.RunSpecError(str(e)) from e
@@ -1041,3 +1042,12 @@ def _build_runspec(
         runspec._set_arg(arg_name, arg)
 
     return runspec
+
+
+def _run_as_name(value: Any) -> str:
+    """The resolved ``run_as`` account for the run's records ("" when unset or
+    unresolvable) — best-effort; it's provenance, never enforcement."""
+    try:
+        return resolve_run_as(value, socket.gethostname()) or ""
+    except Exception:  # noqa: BLE001
+        return ""

@@ -90,20 +90,38 @@ def _read_crontab_noninteractive(user: str, become_method: str) -> list[str] | N
 # ── runs index ──────────────────────────────────────────────────────────────────
 
 
-def _runs_for(label: str, limit: int) -> list[dict[str, Any]]:
+def _runs_for(label: str, limit: int, run_as: str = "") -> list[dict[str, Any]]:
     """Newest-first rows labelled ``label`` across this venv's log dirs, each
-    tagged with the ``_dir`` it came from (to find its log file)."""
+    tagged with the ``_dir`` it came from (to find its log file).
+
+    Reads index ∪ logs inbox (runspec >= 0.66): a schedule whose crontab belongs
+    to an account other than the venv owner records its runs in the inbox until
+    the owner's sweep indexes them. An inbox row only counts when its
+    kernel-attested ``os_user`` is the schedule's own account (``run_as``, or
+    whoever reads the status when that's empty) — anyone can drop a file labelled
+    ``sched:<id>`` into the inbox."""
     rows: list[dict[str, Any]] = []
+    account = run_as or _effective_user()
     for d in rs_logs.log_dirs():
-        for r in runsdb.list_runs(d, label=label, limit=limit):
+        for r in _list_runs(d, label, limit):
+            if r.get("source") == "inbox" and r.get("os_user") != account:
+                continue
             r["_dir"] = str(d)
             rows.append(r)
     rows.sort(key=lambda r: r.get("start_ts") or "", reverse=True)
     return rows[:limit]
 
 
+def _list_runs(d: Path, label: str, limit: int) -> list[dict[str, Any]]:
+    """Index ∪ inbox on runspec >= 0.66; the index alone on an older core."""
+    reader = getattr(runsdb, "list_runs_with_inbox", None)
+    if reader is not None:
+        return list(reader(d, label=label, limit=limit))
+    return list(runsdb.list_runs(d, label=label, limit=limit))
+
+
 def _run_summary(row: dict[str, Any]) -> dict[str, Any]:
-    keys = ("run_id", "status", "exit_code", "start_ts", "end_ts", "duration_ms", "trigger", "user", "log_file", "log_pruned_at")
+    keys = ("run_id", "status", "exit_code", "start_ts", "end_ts", "duration_ms", "trigger", "user", "log_file", "log_pruned_at", "os_user", "pending")
     return {k: row.get(k) for k in keys}
 
 
@@ -114,7 +132,9 @@ def last_output(row: dict[str, Any], limit: int = DEFAULT_OUTPUT_BYTES) -> dict[
     name = row.get("log_file")
     if not name or not row.get("_dir"):
         return None
-    path = Path(row["_dir"]) / Path(str(name)).name
+    path = _log_path(Path(row["_dir"]), Path(str(name)).name)
+    if path is None:
+        return None
     run_id = row.get("run_id")
     out: dict[str, Any] = {"stdout": "", "stderr": "", "truncated": False, "result": None, "errors": []}
     try:
@@ -146,6 +166,15 @@ def last_output(row: dict[str, Any], limit: int = DEFAULT_OUTPUT_BYTES) -> dict[
 
 
 # ── the join ────────────────────────────────────────────────────────────────────
+
+
+def _log_path(log_dir: Path, name: str) -> Path | None:
+    """The run's log file: in ``log_dir``, or — not swept yet — its inbox."""
+    resolve = getattr(rs_logs, "resolve_log_file", None)
+    if resolve is not None:
+        found: Path | None = resolve(log_dir, name)
+        return found
+    return log_dir / name
 
 
 def status(config_path: Path, *, runs: int = 5, output_bytes: int = DEFAULT_OUTPUT_BYTES) -> dict[str, Any]:
@@ -191,7 +220,7 @@ def status(config_path: Path, *, runs: int = 5, output_bytes: int = DEFAULT_OUTP
         nxt = next_fire_time(entry.when) if entry.enabled else None
         record["next_run"] = nxt.isoformat() if nxt else None
 
-        rows = _runs_for(f"{LABEL_PREFIX}{entry.id}", runs)
+        rows = _runs_for(f"{LABEL_PREFIX}{entry.id}", runs, entry.run_as)
         record["runs"] = [_run_summary(r) for r in rows]
         finished = next((r for r in rows if r.get("status") != "running"), None)
         record["last_output"] = last_output(finished, output_bytes) if finished else None

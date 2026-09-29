@@ -214,7 +214,7 @@ timeout         = {type = "int",  description = "Kill the run after this many se
 runnable-args   = {type = "rest", description = "Args passed to the runnable (after --)"}
 
 [runspec.commands.logs]
-description = "View, status, prune, compact, or share per-invocation audit logs (store = 'per-run')"
+description = "View, status, prune, compact, or share per-invocation audit logs (store = 'per-run'); share --inbox sets up the shared-venv logs inbox"
 autonomy    = "autonomous"
 
 examples = [
@@ -228,6 +228,7 @@ examples = [
   {cmd = "runspec logs prune --older-than 90d",          description = "Delete files older than 90 days (this venv's logs only)"},
   {cmd = "runspec logs prune deploy --max-files 50 --dry-run", description = "Preview keeping only the newest 50 files"},
   {cmd = "runspec logs prune --older-than 90d --scope home",   description = "Prune the shared ~/logs fallback instead of this venv's dir"},
+  {cmd = "runspec logs share --inbox",                   description = "Set up the logs inbox so every account's runs reach this venv's history (run as the venv owner)"},
   {cmd = "runspec logs share --group consoles",          description = "Make this venv's logs dir group-writable (POSIX; setgid + chgrp)"},
   {cmd = "runspec logs share --acl-user alice",          description = "Also grant alice write via a POSIX ACL (no group change / root)"},
 ]
@@ -248,6 +249,9 @@ dry-run        = {type = "flag", description = "Show what would change without d
 scope          = {options = ["venv", "home", "all"], description = "Which logs dir(s) to act on: 'venv' ({sys.prefix}/logs, this venv's own), 'home' (~/logs, the shared home fallback), or 'all' (both). Default: prune/compact/share act on 'venv' only — never the shared ~/logs; status/view show 'all'.", required = false}
 group          = {type = "str",  description = "Unix group to chgrp the logs dir + runs index to (share; POSIX only). Default: leave the group unchanged, just make it group-writable + setgid.", required = false}
 acl-user       = {type = "str",  description = "Also grant this OS user rwX on the dir via a POSIX ACL (repeatable; share). Lets an account that isn't in the dir's group still write there — no group change or root needed. Best-effort: needs setfacl + an ACL-capable filesystem.", multiple = true, required = false}
+inbox          = {type = "flag", description = "Set up the logs inbox (share; POSIX): a sticky 01777 logs/inbox other accounts drop their per-run files into, swept into the runs index by the venv owner — no group, ACL or sudo rule. Run as the venv owner (root drops to the owner). Leaves logs/'s own mode alone unless --group/--acl-user are also given.", default = false}
+no-inbox       = {type = "flag", description = "Opt this venv out of the logs inbox (share): writes a logs/.no-inbox marker; other accounts fall back to their own ~/logs.", default = false}
+owner-only     = {type = "flag", description = "Make logs/ owner-only, 0755 (share) — with --inbox, nobody but the owner needs to write it.", default = false}
 
 [runspec.commands.history]
 description = "Query or maintain the per-venv runs index (runspec_runs.db)"
@@ -262,11 +266,12 @@ examples = [
   {cmd = "runspec history reindex",                            description = "Rebuild the index from the audit logs"},
   {cmd = "runspec history reap",                               description = "Mark crashed any 'running' row whose process is gone"},
   {cmd = "runspec history list --label sched:nightly",         description = "Runs recorded by `runspec exec --label sched:nightly`"},
-  {cmd = "runspec history stats --json",                       description = "Index health: rows by status, size, age span, stale rows"},
+  {cmd = "runspec history stats --json",                       description = "Index health: rows by status, size, age span, stale rows, the logs inbox"},
+  {cmd = "runspec history sweep",                              description = "Index finished runs from the logs inbox and move them into logs/ (venv owner)"},
 ]
 
 [runspec.commands.history.args]
-verb       = {type = "str", description = "list (default) / running / stats / prune / reindex / reap", position = 1, required = false}
+verb       = {type = "str", description = "list (default) / running / stats / prune / reindex / reap / sweep", position = 1, required = false}
 runnable   = {type = "str", description = "Filter to one runnable (list)", required = false}
 status     = {options = ["running", "completed", "failed", "crashed", "skipped"], description = "Filter by status (list)", required = false}
 label      = {type = "str", description = "Filter to runs with this `runspec exec --label` (list)", required = false}
@@ -275,5 +280,5 @@ limit      = {type = "int", description = "Max rows to show (list / running)", d
 failed     = {type = "flag", description = "Only failed/crashed runs (list)", default = false}
 older-than = {type = "str", description = "Age threshold for prune (day-granular), e.g. 30d, 90d", required = false}
 max-rows   = {type = "int", description = "Keep only the newest N rows (prune)", required = false}
-json       = {type = "flag", description = "Emit JSON instead of text (list / running: one row per line; stats / prune / reindex / reap: one result object)", default = false}
+json       = {type = "flag", description = "Emit JSON instead of text (list / running: one row per line; stats / prune / reindex / reap / sweep: one result object)", default = false}
 scope      = {options = ["venv", "home", "all"], description = "Which logs dir(s): 'venv' ({sys.prefix}/logs), 'home' (~/logs), or 'all'. Reads (list/running/stats) default to all; prune/reindex/reap default to 'venv'.", required = false}

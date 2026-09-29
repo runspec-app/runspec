@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, act, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
-import { HistoryView, agoLabel, syncNote } from './HistoryView'
+import { HistoryView, accountNote, agoLabel, syncNote } from './HistoryView'
 import type { HistoryRecord, RunningRun } from '../bridge'
 
 const { historyTargets, getHistorySlim, getRunDetail, logsView, getRunningRuns, historySyncStatus } = vi.hoisted(() => ({
@@ -295,5 +295,14 @@ describe('syncNote', () => {
   it('formats ages', () => {
     expect(agoLabel('2026-09-28T11:59:30Z', now)).toBe('30s ago')
     expect(agoLabel('2026-09-25T12:00:00Z', now)).toBe('3d ago')
+  })
+})
+
+describe('accountNote', () => {
+  it('shows the OS account only when it adds something', () => {
+    expect(accountNote({ account: 'svc', operator: 'alice', runAs: '' })).toBe('svc')
+    expect(accountNote({ account: 'alice', operator: 'alice', runAs: '' })).toBe('')
+    expect(accountNote({ account: 'root', operator: 'alice', runAs: 'root' })).toBe('')
+    expect(accountNote({ operator: 'alice', runAs: '' })).toBe('')
   })
 })

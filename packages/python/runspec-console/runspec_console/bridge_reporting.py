@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import stat
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path, PurePath, PurePosixPath
@@ -241,14 +242,12 @@ class ReportingMixin:
         # fallback, so a "venv dir, else ~/logs" check reads an empty venv dir
         # and misses the real records in ~/logs. The Logs tab works because the
         # CLI's log_dirs() reads both. ~/logs records inherit the primary venv's
-        # group (correct in the common single-venv case) — same as analytics.
+        # group (correct in the common single-venv case) — same as analytics. Each
+        # venv's logs inbox is read too: other accounts' runs wait there for the
+        # owner's sweep (runspec >= 0.66).
         dir_groups: list[tuple[Path, str]] = [
-            (Path(rp).parent.parent / "logs", hosts_mod.venv_name(rp))
-            for rp in paths
-            if rp
+            (Path(d), g) for d, g, _ in utils_mod.log_layout(paths, remote=False)
         ]
-        fallback_group = hosts_mod.venv_name(paths[0]) if paths and paths[0] else ""
-        dir_groups.append((Path.home() / "logs", fallback_group))
 
         files = self._history_files(dir_groups, globs)
         live = {str(p) for p, *_ in files}  # prune against the full set, not the window
@@ -296,8 +295,14 @@ class ReportingMixin:
                     if f.name.startswith(self._TOOL_AUDIT_STEM):
                         continue
                     try:
-                        st = f.stat()
+                        st = f.lstat()
                     except OSError:
+                        continue
+                    # The logs inbox is world-writable: never follow a planted
+                    # symlink or read a hard link to someone else's file.
+                    if not stat.S_ISREG(st.st_mode) or (
+                        log_dir.name == "inbox" and st.st_nlink != 1
+                    ):
                         continue
                     seen_files.add(f)
                     out.append(
@@ -523,9 +528,10 @@ class ReportingMixin:
             if not runsdb.db_path(log_dir).exists():
                 return None
             since_iso = f"{since_date}T00:00:00+00:00" if since_date else None
-            rows = runsdb.list_runs(
-                log_dir, since=since_iso, limit=self._HISTORY_CAP, live=False
-            )
+            # index ∪ logs inbox (runspec >= 0.66): other accounts' finished runs
+            # show before the owner's sweep indexes them.
+            reader = getattr(runsdb, "list_runs_with_inbox", runsdb.list_runs)
+            rows = reader(log_dir, since=since_iso, limit=self._HISTORY_CAP, live=False)
             if not rows:
                 return None
             return [
@@ -615,12 +621,21 @@ class ReportingMixin:
         fallback_dirs: list[str] = []
         used_db = False
         for d in dirs:
-            res = results.get(d) if isinstance(results.get(d), dict) else {}
+            res: dict[str, Any] = (
+                results.get(d) if isinstance(results.get(d), dict) else {}
+            )
             rows = res.get("rows") or []
+            g = dir_group.get(d, primary_group)
             if res.get("has_db") and rows:
                 used_db = True
-                g = dir_group.get(d, primary_group)
                 records.extend(utils_mod.db_row_to_record(r, g, host) for r in rows)
+                # Finished runs still in the logs inbox — the index wins a dedupe.
+                have = {str(r.get("run_id") or "") for r in rows}
+                records.extend(
+                    utils_mod.db_row_to_record(r, g, host)
+                    for r in res.get("pending") or []
+                    if str(r.get("run_id") or "") not in have
+                )
             else:
                 fallback_dirs.append(d)  # no DB (or empty) → log-parse, never hide
         if not used_db:
@@ -718,12 +733,15 @@ class ReportingMixin:
         except Exception:
             return []
         try:
-            if not runsdb.db_path(log_dir).exists():
+            # index ∪ logs inbox (runspec >= 0.66): another account's live run
+            # holds its inbox file's lock and never writes the index.
+            reader = getattr(runsdb, "list_runs_with_inbox", None)
+            if reader is None and not runsdb.db_path(log_dir).exists():
                 return []
             own_pid = os.getpid()
             return [
                 r
-                for r in runsdb.list_runs(
+                for r in (reader or runsdb.list_runs)(
                     log_dir, running_only=True, live=True, limit=self._RUNNING_CAP
                 )
                 if r.get("pid") != own_pid
@@ -765,10 +783,18 @@ class ReportingMixin:
             return []
         rows: list[dict[str, Any]] = []
         for d in dirs:
-            res = results.get(d) if isinstance(results.get(d), dict) else {}
+            res: dict[str, Any] = (
+                results.get(d) if isinstance(results.get(d), dict) else {}
+            )
             g = dir_group.get(d, primary_group)
+            indexed = res.get("rows") or []
+            have = {str(r.get("run_id") or "") for r in indexed}
+            rows.extend(utils_mod.db_row_to_running(r, g, host) for r in indexed)
+            # Live runs in the logs inbox (other accounts', lock held).
             rows.extend(
-                utils_mod.db_row_to_running(r, g, host) for r in (res.get("rows") or [])
+                utils_mod.db_row_to_running(r, g, host)
+                for r in res.get("pending") or []
+                if str(r.get("run_id") or "") not in have
             )
         return rows
 
@@ -809,7 +835,9 @@ class ReportingMixin:
         cached = self._remote_logdir_cache.get(rp)
         if cached is not None:
             return cached
-        dirs = [str(PurePosixPath(rp).parent.parent / "logs"), "$HOME/logs"]
+        # {venv}/logs/inbox first (runs other accounts dropped for the owner's
+        # sweep — runspec >= 0.66), then {venv}/logs, then $HOME/logs.
+        dirs = [d for d, _, _ in utils_mod.log_layout([rp], remote=True)]
         self._remote_logdir_cache[rp] = dirs
         return dirs
 
@@ -911,28 +939,10 @@ class ReportingMixin:
         host's rows share the primary venv's group (as this read always has). Shared
         by the full remote read and the DB path's per-venv log-parse fallback."""
         records: list[dict[str, Any]] = []
-        current_name: str | None = None
-        current_lines: list[str] = []
-
-        def _flush() -> None:
-            if current_name is not None:
-                for rec in _parse_log_text(
-                    current_name,
-                    "\n".join(current_lines),
-                    host,
-                    include_extra=include_extra,
-                ):
-                    rec["group"] = group
-                    records.append(rec)
-
-        for line in stdout.splitlines():
-            if line.startswith("\x00RUNSPEC_LOG:"):
-                _flush()
-                current_name = line[len("\x00RUNSPEC_LOG:") :]
-                current_lines = []
-            else:
-                current_lines.append(line)
-        _flush()
+        for name, text in utils_mod.iter_log_frames(stdout):
+            for rec in _parse_log_text(name, text, host, include_extra=include_extra):
+                rec["group"] = group
+                records.append(rec)
         return records
 
     # ── analytics ─────────────────────────────────────────────────────────────
@@ -1005,28 +1015,11 @@ class ReportingMixin:
             )
             if code != 0 and not stdout:
                 raise RuntimeError(stderr.strip() or f"ssh exit {code}")
-            current_name: str | None = None
-            current_lines: list[str] = []
-
-            def _flush() -> None:
-                if current_name is not None:
-                    for rec in _parse_log_text(
-                        current_name,
-                        "\n".join(current_lines),
-                        entry["name"],
-                        include_extra=True,
-                    ):
-                        rec["group"] = group
-                        records.append(rec)
-
-            for line in stdout.splitlines():
-                if line.startswith("\x00RUNSPEC_LOG:"):
-                    _flush()
-                    current_name = line[len("\x00RUNSPEC_LOG:") :]
-                    current_lines = []
-                else:
-                    current_lines.append(line)
-            _flush()
+            records.extend(
+                self._parse_remote_stream(
+                    stdout, entry["name"], group, include_extra=True
+                )
+            )
             return records
 
         # Local host (distinct Path var — `log_dir` above is a str for the
@@ -1036,18 +1029,20 @@ class ReportingMixin:
         # aren't missed — same defect as get_history. ~/logs records are tagged
         # with the primary venv's group (correct in the common single-venv case).
         dir_groups: list[tuple[Path, str]] = [
-            (Path(rp).parent.parent / "logs", hosts_mod.venv_name(rp))
-            for rp in paths
-            if rp
+            (Path(d), g) for d, g, _ in utils_mod.log_layout(paths, remote=False)
         ]
-        fallback_group = hosts_mod.venv_name(paths[0]) if paths and paths[0] else ""
-        dir_groups.append((Path.home() / "logs", fallback_group))
         seen_dirs: set[Path] = set()
         for local_dir, group in dir_groups:
             if local_dir in seen_dirs or not local_dir.exists():
                 continue
             seen_dirs.add(local_dir)
-            matches = {f for pat in globs for f in local_dir.glob(pat)}
+            matches = {
+                f
+                for pat in globs
+                for f in local_dir.glob(pat)
+                if not f.is_symlink()
+                and (local_dir.name != "inbox" or f.stat().st_nlink == 1)
+            }
             for log_file in matches:
                 for rec in _parse_log(log_file, entry["name"], include_extra=True):
                     rec["group"] = group
@@ -1291,11 +1286,13 @@ class ReportingMixin:
         optionally ``chgrp``s it to ``group``, and repairs the existing
         ``runspec_runs.db`` (a dir chmod doesn't touch files already inside it).
         Going through the venv's ``runspec`` binary — rather than a raw
-        ``chmod``/``chgrp`` shell — means escalation to the venv's owner rides the
-        **scoped** ``sudo -n -u <owner> {venv}/bin/runspec logs …`` grant
-        (``enable-passwordless-sudo scoped``), never the broad ``all`` grant a bare
+        ``chmod``/``chgrp`` shell — keeps the escalation to one binary (``sudo -n -u
+        <owner> {venv}/bin/runspec logs …``) rather than a broad ``all`` grant a bare
         ``chmod`` would need; and it drops the ``runspec-linux`` dependency
-        entirely. For a venv the operator owns it needs no sudo at all. Pass
+        entirely. Note the standard ``enable-passwordless-sudo scoped`` grant is
+        ``(root)``-only, so ``sudo -u <owner>`` needs a grant of its own — the logs
+        **inbox** path (no group; :meth:`_share_venv_inbox`) avoids that by
+        escalating owner → root, and core drops a root call to the owner. For a venv the operator owns it needs no sudo at all. Pass
         ``run_as`` (the "Run as" field, pre-filled with the owner via
         :meth:`venv_owner`) for a venv owned by another user.
 
@@ -1322,6 +1319,9 @@ class ReportingMixin:
                 "group": g,
                 "error": f"no venv '{venv}' on {host}",
             }
+        if not g:
+            # The recommended share: the logs inbox (runspec >= 0.66) — no group.
+            return self._share_venv_inbox(host, venv, rp)
 
         is_remote = bool(entry and entry.get("ssh"))
         logdir = self._venv_logdir(rp, remote=is_remote)  # {venv}/logs
@@ -1331,7 +1331,8 @@ class ReportingMixin:
 
         # `runspec logs share --scope venv` acts on this venv's own {sys.prefix}/logs
         # only (never the shared ~/logs). `_run_logs` handles local/remote + the
-        # `sudo -n -u <who>` escalation (the venv binary is scoped-sudoers-covered).
+        # `sudo -n -u <who>` escalation (needs a sudo grant as <who>: the scoped grant
+        # is (root)-only — the inbox path above uses the owner → root ladder).
         base = ["logs", "share", "--scope", "venv"] + (["--group", g] if g else [])
         # When escalating to the owner, also have the owner grant *our* login user
         # write via a POSIX ACL (runspec >= 0.60.0): this console's runnables run as
@@ -1465,6 +1466,98 @@ class ReportingMixin:
                 "as its owner."
             ),
         }
+
+    def _share_venv_inbox(self, host: str, venv: str, rp: str) -> dict[str, Any]:
+        """Set up a venv's logs inbox — ``runspec logs share --scope venv --inbox``
+        run as the venv's owner (docs/design/venv-logs-inbox.md): ``logs/inbox``
+        (``01777``, owned by the owner) that every other account's runs drop into,
+        swept into the runs index by the owner. No group, no ACL.
+
+        Escalates by the owner → root ladder (:func:`bridge_utils.venv_escalation_cmd`):
+        the standard ``enable-passwordless-sudo scoped`` grant is ``(root)``-only,
+        and core drops a root call to the owner itself. Returns ``{ok, venv, group:
+        "", as_user, output, inbox}`` or ``{ok: False, venv, group: "", error}``."""
+        argv = ["logs", "share", "--scope", "venv", "--inbox", "--json"]
+        code, out, err, as_user = self._run_as_venv_owner(host, rp, argv)
+        payload = None
+        for line in reversed(out.splitlines()):
+            try:
+                obj = json.loads(line.strip())
+            except (json.JSONDecodeError, ValueError):
+                continue
+            if isinstance(obj, dict) and isinstance(obj.get("shared"), list):
+                payload = obj
+                break
+        if payload is not None:
+            first = payload["shared"][0] if payload["shared"] else {}
+            state = str(first.get("inbox") or "")
+            verb = {
+                "created": "created",
+                "repaired": "repaired",
+                "ok": "already set up",
+            }.get(state, state or "set up")
+            return {
+                "ok": True,
+                "venv": venv,
+                "group": "",
+                "as_user": as_user,
+                "inbox": first.get("inbox_path") or "",
+                "output": f"logs inbox {verb}: {first.get('inbox_path') or first.get('dir', '')} — every account's runs now reach this venv's history",
+                "warning": "",
+            }
+        msg = out.strip() or err.strip() or f"exit {code}"
+        if code == 77 or "cannot escalate" in msg:
+            error = msg
+        elif (
+            "--inbox" in msg
+            or "unrecognized" in msg.lower()
+            or "unknown" in msg.lower()
+        ):
+            error = (
+                f"{msg} — this venv's runspec has no logs inbox (needs runspec >= 0.66.0); "
+                "upgrade runspec in this venv."
+            )
+        else:
+            error = msg
+        return {"ok": False, "venv": venv, "group": "", "error": error}
+
+    def _run_as_venv_owner(
+        self, host: str, rp: str, argv: list[str], timeout: int = 120
+    ) -> tuple[int, str, str, str]:
+        """Run ``<rp> <argv>`` as the venv's owner by the owner → root ladder.
+        Returns ``(code, stdout, stderr, as_user)`` with the ``=====AS`` line
+        stripped (``as_user`` is ``""`` when it ran as the login user)."""
+        entry = self._host_entry(host)
+        if entry is None:
+            return -1, "", f"unknown host {host}", ""
+        cmd = utils_mod.venv_escalation_cmd(rp, argv, ["logs", "status", "--json"])
+        if entry.get("ssh"):
+            code, out, err = self._ssh_run(
+                entry["ssh"],
+                cmd,
+                identity_file=entry.get("identityFile"),
+                timeout=timeout,
+            )
+        elif os.name != "posix":
+            return -1, "", "the logs inbox is POSIX-only", ""
+        else:
+            import subprocess
+
+            try:
+                proc = subprocess.run(
+                    ["sh", "-c", cmd], capture_output=True, text=True, timeout=timeout
+                )
+                code, out, err = proc.returncode, proc.stdout, proc.stderr
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                return -1, "", str(exc), ""
+        as_user = ""
+        lines = out.splitlines()
+        if lines and lines[0].startswith(utils_mod.DENYLIST_AS_MARKER):
+            as_user = lines[0][len(utils_mod.DENYLIST_AS_MARKER) :].strip()
+            out = "\n".join(lines[1:])
+        if as_user and as_user == self._effective_user(entry):
+            as_user = ""
+        return code, out, err, as_user
 
     def _probe_writable(
         self, host: str, entry: dict[str, Any] | None, logdir_s: str
@@ -1810,7 +1903,7 @@ class ReportingMixin:
     # an operator can inspect and repair an index without a shell. Needs
     # runspec >= 0.62.0 on the target (the `stats` verb + `--json` results).
 
-    _HISTORY_DB_ACTIONS = ("prune", "reap", "reindex")
+    _HISTORY_DB_ACTIONS = ("prune", "reap", "reindex", "sweep")
 
     def history_db_stats(self, host: str, group: str) -> dict[str, Any]:
         """Health snapshot of one venv's runs index (``runspec history stats``):
@@ -1864,6 +1957,8 @@ class ReportingMixin:
                 "group": group,
                 "error": f"no venv '{group}' on {host}",
             }
+        if action == "sweep":
+            return self._history_sweep(host, group, rp)
         argv = ["history", action]
         if action == "prune":
             if older_than:
@@ -1890,6 +1985,35 @@ class ReportingMixin:
         if r.get("ok"):
             self._invalidate_remote_history(host)
         return r
+
+    def _history_sweep(self, host: str, group: str, rp: str) -> dict[str, Any]:
+        """``runspec history sweep`` on a venv (runspec >= 0.66): index the finished
+        runs waiting in its logs inbox and move them into ``logs/``. Owner-only, so
+        it runs by the owner → root ladder (core drops a root call to the owner).
+        ``count`` is the runs indexed (incl. crashed)."""
+        code, out, err, as_user = self._run_as_venv_owner(
+            host, rp, ["history", "sweep", "--json"], timeout=300
+        )
+        for line in reversed(out.splitlines()):
+            try:
+                payload = json.loads(line.strip())
+            except (json.JSONDecodeError, ValueError):
+                continue
+            if isinstance(payload, dict) and payload.get("verb") == "sweep":
+                payload["group"] = group
+                payload["as_user"] = as_user
+                payload["count"] = int(payload.get("swept") or 0) + int(
+                    payload.get("crashed") or 0
+                )
+                if payload.get("error"):
+                    payload["ok"] = False
+                if payload.get("ok"):
+                    self._invalidate_remote_history(host)
+                return payload
+        msg = out.strip() or err.strip() or f"exit {code}"
+        if "unknown history verb" in msg.lower():
+            msg += " — this venv's runspec has no logs inbox (needs runspec >= 0.66.0); upgrade runspec in this venv."
+        return {"ok": False, "group": group, "verb": "sweep", "error": msg}
 
     def _history_db_action(
         self,
@@ -1966,8 +2090,9 @@ class ReportingMixin:
         message was swallowed.
 
         ``run_as`` escalates the ``runspec logs`` call to that OS user via
-        ``sudo -n -u`` (the venv binary is covered by the scoped sudoers grant, so a
-        prune/compact can reach a service-account-owned venv's files)."""
+        ``sudo -n -u`` so a prune/compact can reach a service-account-owned venv's
+        files. That needs a sudo grant as that user — the standard
+        ``enable-passwordless-sudo scoped`` grant is ``(root)``-only."""
         code, stdout, stderr = self._run_logs(
             host, rp, argv, timeout=timeout, run_as=run_as
         )

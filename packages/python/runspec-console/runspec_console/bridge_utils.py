@@ -13,7 +13,7 @@ import re
 import shlex
 import shutil
 from datetime import datetime, timedelta
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 
@@ -261,17 +261,302 @@ def _remote_log_script(
     """
     dirs = [log_dir] if isinstance(log_dir, str) else list(log_dir)
     patterns = " ".join(f"{d}/{g}" for d in dirs for g in _log_globs(runnable))
+    # Frames carry a per-call nonce generated *on the host* and announced first
+    # (``\x00RUNSPEC_NONCE:<n>``): a log file's content — which, with the logs
+    # inbox, any local account can write — can't forge a frame boundary it can't
+    # predict. ``[ -f ]`` also rejects a symlink's missing target; ``-L`` skips a
+    # symlink outright (the inbox is world-writable). The NUL is written as the
+    # octal ``\\000`` — POSIX printf; dash's printf has no ``\\x`` escapes.
     body = (
-        '[ -f "$f" ] || continue; '
-        'printf "\\x00RUNSPEC_LOG:%s\\n" "$(basename "$f" .log)"; '
+        '[ -f "$f" ] && [ ! -L "$f" ] || continue; '
+        'printf "\\000RUNSPEC_LOG:%s:%s\\n" "$n" "$(basename "$f" .log)"; '
         'case "$f" in *.gz) gzip -dc "$f";; *) cat "$f";; esac; '
+    )
+    nonce = (
+        "n=$(od -An -N8 -tx1 /dev/urandom 2>/dev/null | tr -d ' \\n'); "
+        '[ -n "$n" ] || n=$$$(date +%s%N 2>/dev/null); '
+        'printf "\\000RUNSPEC_NONCE:%s\\n" "$n"; '
     )
     if limit is not None:
         return (
-            f"ls -1t {patterns} 2>/dev/null | head -n {int(limit)} | "
+            f"{nonce}ls -1t {patterns} 2>/dev/null | head -n {int(limit)} | "
             f"while IFS= read -r f; do {body}done 2>/dev/null"
         )
-    return f"for f in {patterns}; do {body}done 2>/dev/null"
+    return f"{nonce}for f in {patterns}; do {body}done 2>/dev/null"
+
+
+_NONCE_HEAD = "\x00RUNSPEC_NONCE:"
+_FRAME_HEAD = "\x00RUNSPEC_LOG:"
+
+
+def iter_log_frames(stdout: str) -> list[tuple[str, str]]:
+    """Split a :func:`_remote_log_script` stream into ``(name, text)`` per file.
+
+    A stream that opens with a ``\\x00RUNSPEC_NONCE:<n>`` line only honours frame
+    lines carrying that nonce (``\\x00RUNSPEC_LOG:<n>:<name>``) — anything else,
+    including a frame-looking line inside a file's content, is content. A stream
+    without the header (an older script) keeps the plain ``<name>`` frames."""
+    frames: list[tuple[str, str]] = []
+    name: str | None = None
+    lines: list[str] = []
+    nonce: str | None = None
+    for i, line in enumerate(stdout.splitlines()):
+        if i == 0 and line.startswith(_NONCE_HEAD):
+            nonce = line[len(_NONCE_HEAD) :]
+            continue
+        if line.startswith(_FRAME_HEAD):
+            rest = line[len(_FRAME_HEAD) :]
+            if nonce is None or rest.startswith(nonce + ":"):
+                if name is not None:
+                    frames.append((name, "\n".join(lines)))
+                name = rest if nonce is None else rest[len(nonce) + 1 :]
+                lines = []
+                continue
+        lines.append(line)
+    if name is not None:
+        frames.append((name, "\n".join(lines)))
+    return frames
+
+
+# ── the logs inbox, read on the remote host (docs/design/venv-logs-inbox.md) ─────
+# Runs by accounts other than a venv's owner wait in ``{venv}/logs/inbox`` until the
+# owner's sweep indexes them (core runspec >= 0.66). This stdlib fragment — appended
+# to the read / sync / running snippets below — returns them as runs-index-shaped
+# rows (``pending``, ``source="inbox"``, ``os_user`` from the file's owner). It
+# mirrors core's ``runspec.inbox.inbox_rows`` (the one parser), so it runs under any
+# venv's python whatever runspec it has; tests/test_history_cache.py checks the two
+# agree. Safe in a world-writable dir: the inbox must be a real sticky 01777 dir
+# owned by the venv owner; entries are lstat-checked (regular, one link, readable)
+# and opened ``O_NONBLOCK|O_NOFOLLOW`` against the dir handle, so a planted symlink
+# or FIFO can't redirect or hang the read; a per-run file yields only its own run.
+# Liveness is the writer's lock (a held ``flock`` = running), never the pid alone.
+_INBOX_FRAGMENT = r"""
+import json, os, re as _re, stat as _st, time as _time
+_RS_NAME = _re.compile(r"\.\d{8}T\d{6}Z\.([0-9a-fA-F-]{8,})\.log$")
+_RS_UUID = _re.compile(r"^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})(?:-[0-9a-fA-F]{8})?$")
+_RS_MAX = 64 * 1024 * 1024
+def _rs_host():
+    try:
+        import socket
+        return socket.gethostname()
+    except Exception:
+        return ""
+def _rs_tok(pid):
+    try:
+        with open("/proc/%d/stat" % int(pid), encoding="ascii", errors="replace") as fh:
+            data = fh.read()
+        tail = data[data.rfind(")") + 1:].split()
+        return tail[19] if len(tail) > 19 else ""
+    except Exception:
+        return ""
+def _rs_alive(pid, tok):
+    # hidepid-aware: /proc can hide another account's live process, so a missing
+    # start token falls back to kill(pid, 0) (EPERM = alive) instead of "dead".
+    if not pid:
+        return False
+    if tok:
+        t = _rs_tok(pid)
+        if t:
+            return t == tok
+    if os.name == "nt":
+        return True
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except Exception:
+        return False
+def _rs_unsafe(d):
+    # A world-writable or sticky dir must never hold a runs index (sidecar planting).
+    # POSIX only (like core's runsdb._unsafe_dir): Windows reports every dir 0o777.
+    if os.name == "nt":
+        return False
+    try:
+        return bool(os.stat(d).st_mode & 0o1002)
+    except Exception:
+        return False
+def _rs_rid(name):
+    m = _RS_NAME.search(name)
+    if not m:
+        return None
+    u = _RS_UUID.match(m.group(1))
+    return u.group(1) if u else m.group(1)
+def _rs_ts(v):
+    import datetime as _dt
+    if not isinstance(v, str) or not v:
+        return None
+    try:
+        t = _dt.datetime.fromisoformat(v.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return t if t.tzinfo else t.replace(tzinfo=_dt.timezone.utc)
+def _rs_empty(v):
+    return v is None or v == "" or v == [] or v == {}
+def _rs_row(rid, recs):
+    import datetime as _dt
+    start, summ, sts, end, ets, ex, xts, first, hdb, seen = {}, None, None, None, None, None, None, None, True, False
+    for rec in recs:
+        e = rec.get("extra") if isinstance(rec.get("extra"), dict) else {}
+        if e.get("run_id") != rid:
+            continue
+        seen = True
+        if first is None:
+            first = rec.get("ts")
+        ev = e.get("event")
+        if ev == "run_start":
+            if e.get("history_db") is False:
+                hdb = False
+                continue
+            for k, v in e.items():
+                if _rs_empty(start.get(k)) and not _rs_empty(v):
+                    start[k] = v
+        elif ev == "run_summary":
+            summ, sts = e, rec.get("ts")
+        elif ev == "run_end":
+            end, ets = e, rec.get("ts")
+        elif ev == "exec_result":
+            ex, xts = e, rec.get("ts")
+    if not seen:
+        return None
+    src = summ or {}
+    row = {"run_id": rid, "history_db": hdb}
+    row["runnable"] = start.get("runnable") or src.get("runnable") or ""
+    cmd = start.get("command_path") or src.get("command_path") or []
+    row["command"] = " ".join(cmd) if isinstance(cmd, list) else str(cmd or "")
+    for k in ("user", "user_target", "agent", "trigger", "skill", "autonomy"):
+        v = start.get(k)
+        row[k] = v if not _rs_empty(v) else src.get(k)
+    for k in ("pid", "host", "proc_start", "run_as", "label", "exec_uid", "venv"):
+        row[k] = start.get(k)
+    args = start.get("invocation_args") or src.get("invocation_args") or {}
+    row["args"] = args if isinstance(args, dict) else {}
+    if summ is not None:
+        exc = summ.get("exception")
+        code = summ.get("exit_code", 1 if exc else 0)
+        row.update(status="failed" if (exc or code) else "completed", exit_code=code, end_ts=sts,
+                   duration_ms=summ.get("duration_ms"), events=summ.get("events"), exception=exc)
+    elif end is not None:
+        code = end.get("exit_code", 0)
+        row.update(status="failed" if code else "completed", exit_code=code, end_ts=ets, duration_ms=end.get("duration_ms"))
+    else:
+        row["status"] = "running"
+    if ex is not None:
+        oc = {"status": ex.get("status") or ("completed" if not ex.get("exit_code") else "failed"),
+              "exit_code": ex.get("exit_code"), "duration_ms": ex.get("duration_ms"), "end_ts": xts}
+        row["exec"] = oc
+        row.update(oc)
+        for k in ("label", "trigger"):
+            if _rs_empty(row.get(k)) and not _rs_empty(ex.get(k)):
+                row[k] = ex.get(k)
+    st0 = start.get("start_ts")
+    if not st0 and summ is not None:
+        t = _rs_ts(sts)
+        st0 = (t - _dt.timedelta(milliseconds=summ.get("duration_ms"))).isoformat() if t is not None and isinstance(summ.get("duration_ms"), int) else sts
+    row["start_ts"] = st0 or first
+    row["finished"] = summ is not None or end is not None or ex is not None
+    return row
+def _rs_inbox(d, max_run_hours=24):
+    out = []
+    try:
+        import fcntl, pwd
+    except Exception:
+        return out
+    logs = os.path.expanduser(d)
+    box = os.path.join(logs, "inbox")
+    try:
+        owner = os.stat(os.path.dirname(os.path.abspath(logs))).st_uid
+        ldev = os.stat(logs).st_dev
+        if os.path.lexists(os.path.join(logs, ".no-inbox")):
+            return out
+        dfd = os.open(box, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except Exception:
+        return out
+    now = _time.time()
+    host = _rs_host()
+    try:
+        s0 = os.fstat(dfd)
+        if not _st.S_ISDIR(s0.st_mode) or s0.st_uid != owner or s0.st_dev != ldev or _st.S_IMODE(s0.st_mode) != 0o1777:
+            return out
+        for name in sorted(os.listdir(dfd)):
+            rid = _rs_rid(name)
+            if rid is None:
+                continue
+            try:
+                l = os.lstat(name, dir_fd=dfd)
+            except OSError:
+                continue
+            if not _st.S_ISREG(l.st_mode) or l.st_nlink != 1 or not l.st_mode & _st.S_IROTH or l.st_size > _RS_MAX:
+                continue
+            try:
+                fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_NOCTTY", 0), dir_fd=dfd)
+            except OSError:
+                continue
+            try:
+                f = os.fstat(fd)
+                if (f.st_dev, f.st_ino) != (l.st_dev, l.st_ino) or not _st.S_ISREG(f.st_mode) or f.st_nlink != 1:
+                    continue
+                held = False
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    held = True
+                except OSError:
+                    pass
+                data = b""
+                while len(data) <= _RS_MAX:
+                    c = os.read(fd, 1 << 20)
+                    if not c:
+                        break
+                    data += c
+            finally:
+                os.close(fd)
+            recs = []
+            for ln in data[:_RS_MAX + 1].decode("utf-8", "replace").splitlines():
+                if not ln.strip():
+                    continue
+                try:
+                    r = json.loads(ln)
+                except ValueError:
+                    continue
+                if isinstance(r, dict):
+                    recs.append(r)
+            row = _rs_row(rid, recs)
+            if row is None or row.get("history_db") is False:
+                continue
+            row["log_file"] = name
+            row["source"] = "inbox"
+            try:
+                row["os_user"] = pwd.getpwuid(f.st_uid).pw_name
+            except Exception:
+                row["os_user"] = str(f.st_uid)
+            lim = f.st_ctime + 5
+            for k in ("start_ts", "end_ts"):
+                t = _rs_ts(row.get(k))
+                if t is not None and t.timestamp() > lim:
+                    import datetime as _dt
+                    row[k] = _dt.datetime.fromtimestamp(f.st_ctime, tz=_dt.timezone.utc).isoformat()
+            if not row["finished"]:
+                if held:
+                    row["status"] = "running"
+                else:
+                    if row.get("host") == host and row.get("pid"):
+                        dead = not _rs_alive(row.get("pid"), row.get("proc_start"))
+                    else:
+                        t = _rs_ts(row.get("start_ts"))
+                        dead = now - (t.timestamp() if t is not None else f.st_ctime) > max(1, int(max_run_hours)) * 3600
+                    if dead:
+                        row["status"] = "crashed"
+            row["pending"] = True
+            out.append(row)
+    except Exception:
+        pass
+    finally:
+        os.close(dfd)
+    return out
+"""
 
 
 # ── DB-backed History read: a standalone stdlib program (no runspec import) ──────
@@ -290,7 +575,11 @@ limit = int(a.get("limit") or 500)
 out = {}
 for d in a.get("dirs", []):
     db = os.path.join(os.path.expanduser(d), "runspec_runs.db")
-    e = {"has_db": os.path.exists(db), "rows": []}
+    # The inbox first, then the index (a run swept in between is seen once, not
+    # zero times — the index wins the dedupe on the console side).
+    e = {"has_db": os.path.exists(db), "rows": [], "pending": [r for r in _rs_inbox(d) if r["status"] != "running"]}
+    if e["has_db"] and _rs_unsafe(os.path.expanduser(d)):
+        e["has_db"] = False; e["error"] = "refusing a runs index in a world-writable or sticky dir"
     if e["has_db"]:
         try:
             con = sqlite3.connect("file:%s?mode=ro" % db, uri=True, timeout=2.0)
@@ -318,7 +607,7 @@ def db_read_cmd(
     expands ``~`` and keys its JSON result by the input dir. ``since`` is an ISO
     lower bound on ``start_ts``."""
     arg = json.dumps({"dirs": list(dirs), "since": since, "limit": int(limit)})
-    return f"{shlex.quote(python_path)} -c {shlex.quote(_DB_READ_SNIPPET)} {shlex.quote(arg)}"
+    return f"{shlex.quote(python_path)} -c {shlex.quote(_INBOX_FRAGMENT + _DB_READ_SNIPPET)} {shlex.quote(arg)}"
 
 
 # ── incremental pull of the runs index (docs/design/history-incremental-pull.md) ──
@@ -367,18 +656,25 @@ def pull(con, cur):
         con.rollback()
 for d, cur in (a.get("dirs") or {}).items():
     db = os.path.join(os.path.expanduser(d), "runspec_runs.db")
+    # Finished runs still waiting in the logs inbox — read *before* the index, a
+    # per-pull snapshot the console dedupes against the index (index wins).
+    pending = [r for r in _rs_inbox(d) if r["status"] != "running"] if a.get("inbox") else None
     if not os.path.exists(db):
         out[d] = {"mode": "none"}
-        continue
-    try:
-        con = sqlite3.connect("file:%s?mode=ro" % db, uri=True, timeout=2.0)
-        con.row_factory = sqlite3.Row
+    elif _rs_unsafe(os.path.expanduser(d)):
+        out[d] = {"mode": "error", "error": "refusing a runs index in a world-writable or sticky dir"}
+    else:
         try:
-            out[d] = pull(con, cur or {})
-        finally:
-            con.close()
-    except Exception as ex:
-        out[d] = {"mode": "error", "error": str(ex)}
+            con = sqlite3.connect("file:%s?mode=ro" % db, uri=True, timeout=2.0)
+            con.row_factory = sqlite3.Row
+            try:
+                out[d] = pull(con, cur or {})
+            finally:
+                con.close()
+        except Exception as ex:
+            out[d] = {"mode": "error", "error": str(ex)}
+    if pending is not None:
+        out[d]["pending"] = pending
 sys.stdout.write(json.dumps(out))
 """
 
@@ -389,14 +685,22 @@ def db_sync_cmd(
     *,
     limit: int,
     window_start: str | None,
+    inbox: bool = True,
 ) -> str:
     """The command for one incremental-pull round-trip — ``{python} -c <snippet>
     <json-arg>``. ``cursors`` maps each logs dir to ``{"db_id", "seq"}`` (empty for
-    a first pull); the result is keyed by the same dirs."""
+    a first pull); the result is keyed by the same dirs. With ``inbox`` each dir's
+    result also carries ``pending`` — its finished runs still in the logs inbox
+    (only asked on a pull's first page; later pages would repeat it)."""
     arg = json.dumps(
-        {"dirs": cursors, "limit": int(limit), "window_start": window_start}
+        {
+            "dirs": cursors,
+            "limit": int(limit),
+            "window_start": window_start,
+            "inbox": bool(inbox),
+        }
     )
-    return f"{shlex.quote(python_path)} -c {shlex.quote(_DB_SYNC_SNIPPET)} {shlex.quote(arg)}"
+    return f"{shlex.quote(python_path)} -c {shlex.quote(_INBOX_FRAGMENT + _DB_SYNC_SNIPPET)} {shlex.quote(arg)}"
 
 
 # ── live "what's running" read: running rows + pid-liveness, on the remote host ──
@@ -445,7 +749,11 @@ def alive(pid, tok):
     if not pid:
         return False
     if tok:
-        return proc_start(pid) == tok
+        t = proc_start(pid)
+        if t:
+            return t == tok
+        # No token: gone — or hidden by /proc hidepid (another account's live
+        # run). kill(pid, 0) tells them apart (EPERM = alive).
     if os.name == "nt":
         return win_alive(pid)
     try:
@@ -460,7 +768,11 @@ def alive(pid, tok):
 out = {}
 for d in a.get("dirs", []):
     db = os.path.join(os.path.expanduser(d), "runspec_runs.db")
-    e = {"has_db": os.path.exists(db), "rows": []}
+    # Live runs in the logs inbox (the writer holds its file's lock) — other
+    # accounts' runs, which never write the index.
+    e = {"has_db": os.path.exists(db), "rows": [], "pending": [r for r in _rs_inbox(d) if r["status"] == "running"]}
+    if e["has_db"] and _rs_unsafe(os.path.expanduser(d)):
+        e["has_db"] = False; e["error"] = "refusing a runs index in a world-writable or sticky dir"
     if e["has_db"]:
         try:
             con = sqlite3.connect("file:%s?mode=ro" % db, uri=True, timeout=2.0)
@@ -491,7 +803,7 @@ def db_running_cmd(python_path: str, dirs: list[str], limit: int) -> str:
     dirs (+ ``~/logs``); the snippet expands ``~`` and keys its JSON by the input
     dir."""
     arg = json.dumps({"dirs": list(dirs), "limit": int(limit)})
-    return f"{shlex.quote(python_path)} -c {shlex.quote(_DB_RUNNING_SNIPPET)} {shlex.quote(arg)}"
+    return f"{shlex.quote(python_path)} -c {shlex.quote(_INBOX_FRAGMENT + _DB_RUNNING_SNIPPET)} {shlex.quote(arg)}"
 
 
 # The historic SSH key comment. ``key_marker()`` returns the live one (the
@@ -518,6 +830,41 @@ def looks_permission_denied(text: str) -> bool:
     (set "Run as" to escalate) from an old-core failure, not just an unwritable
     parent."""
     return bool(_PERMISSION_DENIED_RE.search(text or ""))
+
+
+def venv_escalation_cmd(runspec_path: str, tail: list[str], probe: list[str]) -> str:
+    """POSIX shell command running ``<runspec> <tail>`` **as the venv's owner** —
+    the logs-inbox verbs (``logs share --inbox``, ``history sweep``) only the owner
+    may run (runspec >= 0.66).
+
+    The same ladder as :func:`denylist_escalation_cmd`, plus a first rung for the
+    common case: the login user *is* the owner (no sudo). Else the owner via
+    ``sudo -n -u <owner>``; else **root** via ``sudo -n`` — which the standard
+    ``enable-passwordless-sudo scoped`` grant allows (it's ``(root)`` on the venv's
+    ``bin/`` only) and which core's inbox verbs turn into the owner themselves by
+    dropping privileges first. ``probe`` is a read-only argv on the same binary
+    (so the probe needs exactly the grant the real call does). The chosen tier is
+    announced as ``=====AS <user>`` (:data:`DENYLIST_AS_MARKER`); exit 77 when no
+    tier is available."""
+    rp = shlex.quote(runspec_path)
+    args = " ".join(shlex.quote(a) for a in tail)
+    pr = " ".join(shlex.quote(a) for a in probe)
+    m = DENYLIST_AS_MARKER
+    return (
+        f'rp={rp}; r=$(dirname "$(dirname "$rp")"); '
+        'o=$(stat -c %U "$r" 2>/dev/null || stat -f %Su "$r" 2>/dev/null); '
+        "me=$(id -un 2>/dev/null); "
+        'if [ -z "$o" ] || [ "$o" = "$me" ]; then '
+        f'echo "{m}$me"; exec "$rp" {args}; '
+        f'elif sudo -n -u "$o" "$rp" {pr} >/dev/null 2>&1; then '
+        f'echo "{m}$o"; exec sudo -n -u "$o" "$rp" {args}; '
+        f'elif sudo -n "$rp" {pr} >/dev/null 2>&1; then '
+        f'echo "{m}root"; exec sudo -n "$rp" {args}; '
+        'else echo "cannot escalate: the venv $r is owned by ${o:-?} and passwordless '
+        "sudo (as ${o:-the owner} or root) for $rp was refused — grant it "
+        "(enable-passwordless-sudo scoped), or run as ${o:-<owner>}: "
+        f'$rp {args}"; exit 77; fi'
+    )
 
 
 def denylist_escalation_cmd(runspec_path: str, tail: list[str]) -> str:
@@ -737,6 +1084,36 @@ def _record_kind(extra: dict[str, Any]) -> str:
     return "agent" if extra.get("tool") == "chat" else "tool"
 
 
+def log_layout(paths: list[str], *, remote: bool) -> list[tuple[str, str, str]]:
+    """The log dirs a host's runs can be in — one list the History, Analytics and
+    detail reads share: ``(dir, venv group, kind)`` with ``kind`` ``"venv"``
+    (``{venv}/logs``), ``"inbox"`` (``{venv}/logs/inbox`` — other accounts' runs
+    waiting for the owner's sweep, runspec >= 0.66; listed **before** its venv dir
+    so a file swept between the two globs is still streamed once) or ``"home"``
+    (``~/logs``, the fallback, tagged with the primary venv's group). ``remote``
+    spells the home dir ``$HOME/logs`` for the shell; locally it's expanded."""
+    out: list[tuple[str, str, str]] = []
+    seen: set[str] = set()
+    primary = ""
+    for rp in paths:
+        if not rp:
+            continue
+        venv = PurePosixPath(rp).parent.parent if remote else Path(rp).parent.parent
+        group = venv.name
+        primary = primary or group
+        for d, kind in (
+            (str(venv / "logs" / "inbox"), "inbox"),
+            (str(venv / "logs"), "venv"),
+        ):
+            if d not in seen:
+                seen.add(d)
+                out.append((d, group, kind))
+    home = "$HOME/logs" if remote else str(Path.home() / "logs")
+    if home not in seen:
+        out.append((home, primary, "home"))
+    return out
+
+
 def db_row_to_record(row: dict[str, Any], group: str, host: str) -> dict[str, Any]:
     """Map a raw ``runspec_runs.db`` row → the HistoryRecord shape :func:`_parse_log`
     emits, so History reads identically whether a row came from the runs index or a
@@ -800,6 +1177,13 @@ def db_row_to_record(row: dict[str, Any], group: str, host: str) -> dict[str, An
         "label": row.get("label") or "",
         "logPrunedAt": row.get("log_pruned_at") or "",
         "logPrunedBy": row.get("log_pruned_by") or "",
+        # v6 attribution (runspec >= 0.66, the logs inbox): the kernel-attested
+        # account that actually ran it (``operator`` is self-reported — the human
+        # behind sudo), and whether the run is still waiting in the venv's logs
+        # inbox for the owner's sweep (``pending``).
+        "account": row.get("os_user") or "",
+        "pending": bool(row.get("pending")),
+        "logFile": str(row.get("log_file") or ""),
         # The index only holds real runnable runs (core's configure_logging/atexit
         # hooks; chat turns write run_summary via the console, not the core DB path).
         "kind": "runnable",
@@ -884,6 +1268,8 @@ def db_row_to_running(row: dict[str, Any], group: str, host: str) -> dict[str, A
         # runbook id the run carried.
         "runbook": str(row.get("skill") or row.get("runbook") or ""),
         "autonomy": str(row.get("autonomy") or ""),
+        "account": row.get("os_user") or "",
+        "pending": bool(row.get("pending")),
     }
 
 
@@ -902,6 +1288,22 @@ def _parse_log(
     # extra.runnable in the records (see _parse_log_by_run_id). This keeps the
     # parser correct for per-invocation filenames whose stem isn't the runnable.
     return _parse_log_text(log_file.stem, text, host, include_extra=include_extra)
+
+
+_PER_RUN_NAME = re.compile(r"\.\d{8}T\d{6}Z\.([0-9a-fA-F-]{8,})(?:\.log)?$")
+_UUID_SUFFIXED = re.compile(
+    r"^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})(?:-[0-9a-fA-F]{8})?$"
+)
+
+
+def _file_run_id(name: str) -> str | None:
+    """The run id in a per-run log file's name (with or without ``.log`` — the
+    stream frames strip it); ``None`` for any other file."""
+    m = _PER_RUN_NAME.search(name)
+    if not m:
+        return None
+    u = _UUID_SUFFIXED.match(m.group(1))
+    return u.group(1) if u else m.group(1)
 
 
 def _parse_log_text(
@@ -931,6 +1333,16 @@ def _parse_log_text(
         # aren't records and calling ``.get`` on them would crash the parser.
         if isinstance(obj, dict):
             entries.append(obj)
+
+    # A per-run file ({runnable}.{ts}.{run_id}.log — including one from the
+    # world-writable logs inbox) contributes records only for its own run, so a
+    # dropped file can't inject records into another run (mirrors core's
+    # runspec.inbox.file_run_id rule).
+    own = _file_run_id(name)
+    if own is not None:
+        entries = [
+            e for e in entries if _entry_extra(e).get("run_id") in (own, None, "")
+        ]
 
     if not entries:
         return []

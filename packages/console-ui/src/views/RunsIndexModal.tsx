@@ -6,7 +6,7 @@ import {
 import { ReloadOutlined } from '@ant-design/icons'
 import {
   bridge,
-  type HistoryDbAction, type HistoryDbStats,
+  type HistoryDbAction, type HistoryDbInbox, type HistoryDbStats,
 } from '../bridge'
 import { MONO_FONT } from '../ThemeContext'
 
@@ -53,6 +53,28 @@ const ACTION_DONE: Record<HistoryDbAction, (n: number) => string> = {
   prune: n => `Pruned ${n} row(s) from the runs index`,
   reap: n => `Marked ${n} orphaned running row(s) crashed`,
   reindex: n => `Reindexed ${n} run(s) from the audit logs`,
+  sweep: n => `Swept ${n} run(s) from the logs inbox into the index`,
+}
+
+const INBOX_PROBLEM: Record<string, string> = {
+  missing: 'No logs inbox — other accounts\' runs fall back to their own ~/logs. Set it up with Make logs shared (or `runspec logs share --inbox` as the owner).',
+  disabled: 'The logs inbox is turned off for this venv (.no-inbox marker).',
+  'bad-mode': 'The logs inbox has the wrong mode — the owner\'s next run (or Make logs shared) repairs it.',
+  symlink: 'logs/inbox is a symlink — not used. Remove it as the owner, then Make logs shared.',
+  'not-dir': 'logs/inbox is not a directory — not used. Remove it, then Make logs shared.',
+  'foreign-owner': 'logs/inbox is owned by another account — not used. Remove it, then Make logs shared.',
+  'other-fs': 'logs/inbox is on another filesystem — not used.',
+}
+
+/** One line on the logs inbox for the stats panel (null when there's nothing to say). */
+export function inboxSummary(ib: HistoryDbInbox | null | undefined): { ok: boolean; text: string } | null {
+  if (!ib || ib.state === 'unsupported' || ib.state === 'no-logs') return null
+  if (ib.state !== 'ok') return { ok: false, text: INBOX_PROBLEM[ib.state] ?? `logs inbox: ${ib.state}` }
+  const parts = [`${ib.files ?? 0} pending file(s)`]
+  if (ib.running) parts.push(`${ib.running} running`)
+  if (ib.finished) parts.push(`${ib.finished} awaiting sweep`)
+  if (ib.subdirs) parts.push(`${ib.subdirs} subdirectory(ies) only root can remove`)
+  return { ok: true, text: parts.join(', ') }
 }
 
 export function RunsIndexModal({ target, onClose }: {
@@ -113,7 +135,9 @@ export function RunsIndexModal({ target, onClose }: {
         runAs.trim() || undefined,
       )
       if (!r.ok) { setError(r.error || `${action} failed.`); return }
-      message.success(ACTION_DONE[action](r.count ?? 0))
+      message.success(ACTION_DONE[action](r.count ?? 0)
+        + (action === 'sweep' && r.running ? ` — ${r.running} still running` : '')
+        + (r.as_user ? ` (as ${r.as_user})` : ''))
       load(target)
     } catch (e) {
       setError(String(e))
@@ -123,6 +147,7 @@ export function RunsIndexModal({ target, onClose }: {
   }
 
   const s = stats
+  const inbox = inboxSummary(s?.inbox)
   const statusTags = s?.by_status
     ? Object.entries(s.by_status).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => (
         <Tag key={k} color={STATUS_COLOR[k]}>{k} {v}</Tag>
@@ -169,6 +194,13 @@ export function RunsIndexModal({ target, onClose }: {
               <Descriptions.Item label="Stale">
                 <Tag color="orange">{s.stale_running} orphaned running row(s)</Tag>
                 <Text type="secondary" style={{ fontSize: 12 }}>Reap marks them crashed.</Text>
+              </Descriptions.Item>
+            )}
+            {inbox && (
+              <Descriptions.Item label="Inbox">
+                {inbox.ok
+                  ? <span>{inbox.text}</span>
+                  : <Text type="warning" style={{ fontSize: 12 }}>{inbox.text}</Text>}
               </Descriptions.Item>
             )}
             {(s.log_pruned ?? 0) > 0 && (
@@ -231,6 +263,11 @@ export function RunsIndexModal({ target, onClose }: {
         <Tooltip title="Rebuild rows from the run_summary records in this dir's audit logs — repairs a missing or damaged index">
           <Button disabled={busy !== null} loading={busy === 'reindex'} onClick={() => act('reindex')}>Reindex</Button>
         </Tooltip>
+        {!isHome && (
+          <Tooltip title="Index the finished runs other accounts dropped into this venv's logs inbox and move them into logs/ — runs as the venv's owner (via sudo as the owner, else root). Also happens on the owner's own runs.">
+            <Button disabled={busy !== null} loading={busy === 'sweep'} onClick={() => act('sweep')}>Sweep inbox</Button>
+          </Tooltip>
+        )}
       </Space>
 
       {error && <Alert type="error" showIcon style={{ marginTop: 12 }} message={error} />}

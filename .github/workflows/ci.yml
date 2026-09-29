@@ -272,6 +272,39 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 
+  # The shared-venv logs inbox with real accounts (docs/design/venv-logs-inbox.md):
+  # tests/test_inbox.py's root-only tier demotes subprocesses to an owner and two
+  # operators. Run as root, from a world-readable copy (the demoted accounts must
+  # be able to import runspec), with the fs.protected_* sysctls OFF — the design
+  # must not rely on them.
+  python-multiuser:
+    name: "Python multi-user inbox"
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install pytest
+        run: pip install pytest
+
+      - name: Turn the kernel's link protections off
+        run: sudo sysctl -w fs.protected_symlinks=0 fs.protected_hardlinks=0 fs.protected_regular=0 fs.protected_fifos=0
+
+      - name: Inbox tests as root
+        run: |
+          # Installed (not copied) so runspec's dist metadata is there —
+          # runspec/__init__ reads its own version from it.
+          sudo "$(which python)" -m pip install --no-deps --target /opt/rs packages/python/runspec
+          sudo cp -r packages/python/runspec/tests /opt/rs/
+          sudo chmod -R a+rX /opt/rs
+          cd /opt/rs
+          sudo env PATH="$PATH" PYTHONPATH=/opt/rs RUNSPEC_MULTIUSER_REQUIRED=1 "$(which python)" -m pytest tests/test_inbox.py -o addopts="" -p no:cacheprovider -v -W error
+
   # ── Node ────────────────────────────────────────────────────────────────────
 
   node:

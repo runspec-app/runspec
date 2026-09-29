@@ -41,10 +41,18 @@ def _line(run_id: str, message: str, *, ts: str, level: str = "INFO") -> str:
     return json.dumps({"ts": ts, "level": level, "logger": "app", "message": message, "extra": {"run_id": run_id}})
 
 
+def _id(short: str) -> str:
+    """A real run id for a short test id — a per-run file only yields records for
+    the run id in its own name, so names and records must agree."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, short))
+
+
 def _write_run(log_dir: Path, runnable: str, run_id: str, ts_name: str, *lines: str, age_days: float | None = None) -> Path:
-    # Filename uses a real uuid token (what _is_managed matches on); the record's
-    # extra.run_id stays the short test value the assertions read.
-    p = log_dir / f"{runnable}.{ts_name}.{uuid.uuid4()}.log"
+    # Filename uses a real uuid token (what _is_managed matches on); the records'
+    # extra.run_id is rewritten to match it (see _id).
+    real = _id(run_id)
+    lines = tuple(ln.replace(f'"run_id": "{run_id}"', f'"run_id": "{real}"') for ln in lines)
+    p = log_dir / f"{runnable}.{ts_name}.{real}.log"
     p.write_text("\n".join(lines) + "\n", encoding="utf-8")
     if age_days is not None:
         old = time.time() - age_days * 86400
@@ -80,7 +88,7 @@ class TestView:
         _write_run(tmp_path, "deploy", "r1", "20260601T100000Z", _summary("r1", "deploy", ts="2026-06-01T10:00:00+00:00"))
         recs = logs.collect_records([tmp_path], "deploy")
         ids = [r["extra"]["run_id"] for r, _ in recs]
-        assert ids == ["r1", "r2"]  # chronological across files
+        assert ids == [_id("r1"), _id("r2")]  # chronological across files
 
     def test_user_filter_covers_non_summary_lines(self, tmp_path):
         _write_run(
@@ -95,17 +103,17 @@ class TestView:
         recs = logs.collect_records([tmp_path], "deploy", user="bob")
         # both of bob's run records (the info line + the summary) come through;
         # alice's run is excluded.
-        assert {r["extra"]["run_id"] for r, _ in recs} == {"r1"}
+        assert {r["extra"]["run_id"] for r, _ in recs} == {_id("r1")}
         assert len(recs) == 2
 
     def test_run_filter(self, tmp_path):
         _write_run(tmp_path, "deploy", "r1", "20260601T100000Z", _summary("r1", "deploy", ts="2026-06-01T10:00:00+00:00"))
         _write_run(tmp_path, "deploy", "r2", "20260601T110000Z", _summary("r2", "deploy", ts="2026-06-01T11:00:00+00:00"))
-        recs = logs.collect_records([tmp_path], "deploy", run="r2")
-        assert [r["extra"]["run_id"] for r, _ in recs] == ["r2"]
+        recs = logs.collect_records([tmp_path], "deploy", run=_id("r2"))
+        assert [r["extra"]["run_id"] for r, _ in recs] == [_id("r2")]
 
     def test_json_passthrough(self, tmp_path):
-        raw = _summary("r1", "deploy", ts="2026-06-01T10:00:00+00:00")
+        raw = _summary(_id("r1"), "deploy", ts="2026-06-01T10:00:00+00:00")
         _write_run(tmp_path, "deploy", "r1", "20260601T100000Z", raw)
         buf = io.StringIO()
         logs.view("deploy", dirs=[tmp_path], as_json=True, out=buf)
@@ -123,7 +131,7 @@ class TestView:
         buf = io.StringIO()
         logs.view("deploy", dirs=[tmp_path], out=buf)
         first = buf.getvalue().splitlines()[0]
-        assert "run=r1" in first and "user=carol" in first  # resolved onto the info line
+        assert f"run={_id('r1')[:8]}" in first and "user=carol" in first  # resolved onto the info line
 
 
 # ── status ─────────────────────────────────────────────────────────────────────
@@ -237,7 +245,7 @@ class TestCompact:
         archives = list(tmp_path.glob("d.archive.*.log.gz"))
         assert len(archives) == 1
         with gzip.open(archives[0], "rt", encoding="utf-8") as fh:
-            assert "r1" in fh.read()
+            assert _id("r1") in fh.read()
 
     def test_archive_is_console_discoverable(self, tmp_path):
         _write_run(tmp_path, "d", "r1", "20260101T100000Z", _summary("r1", "d", ts="2026-01-01T10:00:00+00:00"), age_days=30)
@@ -249,7 +257,7 @@ class TestCompact:
         _write_run(tmp_path, "d", "r1", "20260101T100000Z", _summary("r1", "d", ts="2026-01-01T10:00:00+00:00"), age_days=30)
         logs.compact("d", dirs=[tmp_path], older_than=timedelta(days=7), gzip_=True, out=io.StringIO())
         recs = logs.collect_records([tmp_path], "d")
-        assert [r["extra"]["run_id"] for r, _ in recs] == ["r1"]
+        assert [r["extra"]["run_id"] for r, _ in recs] == [_id("r1")]
 
     def test_dry_run_keeps_originals(self, tmp_path):
         old = _write_run(tmp_path, "d", "r1", "20260101T100000Z", _summary("r1", "d", ts="2026-01-01T10:00:00+00:00"), age_days=30)
@@ -475,7 +483,7 @@ class TestShare:
         monkeypatch.setattr(
             logs,
             "share",
-            lambda *, dirs, group, acl_users, as_json: seen.update(group=group, as_json=as_json),
+            lambda *, dirs, group, acl_users, as_json, **_: seen.update(group=group, as_json=as_json),
         )
         cli.cmd_logs(["share", "--group", "consoles", "--json"])
         assert seen == {"group": "consoles", "as_json": True}
@@ -570,7 +578,7 @@ class TestShare:
         monkeypatch.setattr(
             logs,
             "share",
-            lambda *, dirs, group, acl_users, as_json: seen.update(acl_users=acl_users),
+            lambda *, dirs, group, acl_users, as_json, **_: seen.update(acl_users=acl_users),
         )
         cli.cmd_logs(["share", "--acl-user", "alice", "--acl-user", "svc"])
         assert seen["acl_users"] == ["alice", "svc"]

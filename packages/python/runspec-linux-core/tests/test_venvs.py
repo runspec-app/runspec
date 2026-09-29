@@ -25,6 +25,8 @@ def _record(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
 
     def fake_run(argv: list[str]) -> subprocess.CompletedProcess:
         calls.append(argv)
+        if "-L" in argv and "test" in argv:  # the inbox path is not a symlink
+            return _completed(returncode=1)
         return _completed("Successfully installed foo\n")
 
     monkeypatch.setattr(venvs, "_run", fake_run)
@@ -51,17 +53,54 @@ def test_create_venv_uses_symlinks_and_logs(monkeypatch: pytest.MonkeyPatch) -> 
     # chmod -R u=rwX,go=rX normalises the tree to 755-dirs/644-files regardless of
     # the caller's umask (a sudo -u <svc> shell often lands at 027 → 750).
     assert calls[1] == ["chmod", "-R", "u=rwX,go=rX", "/opt/v1"]
-    # mkdir -p logs, then chmod 2775 logs (no group → no chgrp step).
+    # mkdir -p logs, owner-only (no group: the inbox shares it), then the logs
+    # inbox — mkdir 0700 then chmod 1777, both as the owner.
     assert calls[2] == ["mkdir", "-p", "/opt/v1/logs"]
-    assert calls[3] == ["chmod", "2775", "/opt/v1/logs"]
+    assert calls[3] == ["chmod", "0755", "/opt/v1/logs"]
+    assert calls[4:] == [
+        ["test", "-L", "/opt/v1/logs/inbox"],
+        ["rm", "-f", "/opt/v1/logs/.no-inbox"],
+        ["mkdir", "-p", "-m", "0700", "/opt/v1/logs/inbox"],
+        ["chmod", "1777", "/opt/v1/logs/inbox"],
+    ]
     assert result == {
         "python": sys.executable,
         "dest": "/opt/v1",
         "run_as": "",
         "group": "",
         "logs_dir": "/opt/v1/logs",
+        "logs_mode": "0755",
+        "inbox": "/opt/v1/logs/inbox",
         "created": True,
     }
+
+
+def test_create_venv_no_inbox_keeps_the_group_layout(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _record(monkeypatch)
+    import sys
+
+    result = venvs.create_venv(sys.executable, "/opt/v1", inbox=False)
+    assert ["chmod", "2775", "/opt/v1/logs"] in calls
+    assert calls[-1] == ["touch", "/opt/v1/logs/.no-inbox"]
+    assert not any("1777" in c for c in calls)
+    assert result["inbox"] == "" and result["logs_mode"] == "2775"
+
+
+def test_create_venv_with_group_is_2775_plus_inbox(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _record(monkeypatch)
+    import sys
+
+    venvs.create_venv(sys.executable, "/opt/v1", group="consoles")
+    assert ["chmod", "2775", "/opt/v1/logs"] in calls
+    assert ["chmod", "1777", "/opt/v1/logs/inbox"] in calls
+
+
+def test_create_venv_refuses_a_symlinked_inbox(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    monkeypatch.setattr(venvs, "_run", lambda argv: _completed())  # `test -L` says: a symlink
+    with pytest.raises(CommandError, match="symlink"):
+        venvs.create_venv(sys.executable, "/opt/v1")
 
 
 def test_create_venv_only_sets_chosen_flags(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -109,21 +148,32 @@ def test_share_venv_logs_builds_commands(monkeypatch: pytest.MonkeyPatch) -> Non
 
     result = venvs.share_venv_logs("/opt/v1")
 
-    # Verify the venv is a dir, then mkdir -p logs, then chmod 2775 logs. No chgrp
-    # without a group; the chmod is the last step.
+    # Verify the venv is a dir, mkdir -p logs, then set up the inbox. Without a
+    # group, logs/'s own mode is left alone (no chgrp, no 2775).
     assert calls == [
         ["test", "-d", "/opt/v1"],
         ["mkdir", "-p", "/opt/v1/logs"],
-        ["chmod", "2775", "/opt/v1/logs"],
+        ["test", "-L", "/opt/v1/logs/inbox"],
+        ["rm", "-f", "/opt/v1/logs/.no-inbox"],
+        ["mkdir", "-p", "-m", "0700", "/opt/v1/logs/inbox"],
+        ["chmod", "1777", "/opt/v1/logs/inbox"],
     ]
     assert result == {
         "venv": "/opt/v1",
         "logs_dir": "/opt/v1/logs",
         "group": "",
         "run_as": "",
-        "mode": "2775",
+        "mode": "",
+        "inbox": "/opt/v1/logs/inbox",
         "shared": True,
     }
+
+
+def test_share_venv_logs_without_inbox_is_the_group_share(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _record(monkeypatch)
+    result = venvs.share_venv_logs("/opt/v1", inbox=False)
+    assert calls == [["test", "-d", "/opt/v1"], ["mkdir", "-p", "/opt/v1/logs"], ["chmod", "2775", "/opt/v1/logs"]]
+    assert result["mode"] == "2775" and result["inbox"] == ""
 
 
 def test_share_venv_logs_with_group_chgrps_dir_only(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -139,6 +189,10 @@ def test_share_venv_logs_with_group_chgrps_dir_only(monkeypatch: pytest.MonkeyPa
         ["mkdir", "-p", "/opt/v1/logs"],
         ["chgrp", "consoles", "/opt/v1/logs"],
         ["chmod", "2775", "/opt/v1/logs"],
+        ["test", "-L", "/opt/v1/logs/inbox"],
+        ["rm", "-f", "/opt/v1/logs/.no-inbox"],
+        ["mkdir", "-p", "-m", "0700", "/opt/v1/logs/inbox"],
+        ["chmod", "1777", "/opt/v1/logs/inbox"],
     ]
     assert not any(c[:2] == ["chgrp", "-R"] for c in calls)
 
@@ -263,10 +317,9 @@ def test_install_into_venv_normalises_perms(tmp_path, monkeypatch: pytest.Monkey
     ] in calls
     # No blanket `chmod -R` over the whole tree any more.
     assert not any(c[-4:] == ["chmod", "-R", "u=rwX,go=rX", venv] for c in calls)
-    # logs_dir exists (the default stub returns 0 for `test -d`), so its 2775 mode
-    # is restored as a guard.
-    assert ["sudo", "-n", "-u", "svc", "test", "-d", f"{venv}/logs"] in calls
-    assert ["sudo", "-n", "-u", "svc", "chmod", "2775", f"{venv}/logs"] in calls
+    # logs/ (and its inbox) keep whatever mode they had: nothing forces 2775 back
+    # (that undid an owner-only logs/ + inbox layout).
+    assert not any("2775" in c for c in calls)
     # And the normalise sweep runs *after* the pip install (order matters — pip
     # creates the dirs we're normalising).
     pip_i = next(i for i, c in enumerate(calls) if "pip" in c and "install" in c)
@@ -276,7 +329,7 @@ def test_install_into_venv_normalises_perms(tmp_path, monkeypatch: pytest.Monkey
 
 def test_install_into_venv_skips_logs_restore_when_absent(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A venv without a logs/ dir (not built by create_venv) gets the normalise
-    sweep but no 2775 restore — the test -d guard skips the logs step."""
+    sweep and nothing else — logs/ is never chmodded by an install."""
     venv = _fake_venv(tmp_path, monkeypatch)
     calls: list[list[str]] = []
 
@@ -308,7 +361,6 @@ def test_install_into_venv_skips_logs_restore_when_absent(tmp_path, monkeypatch:
         "{}",
         "+",
     ] in calls
-    assert ["test", "-d", f"{venv}/logs"] in calls
     assert not any(c[:2] == ["chmod", "2775"] for c in calls)
 
 

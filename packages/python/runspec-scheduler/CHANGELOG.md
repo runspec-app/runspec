@@ -2,6 +2,19 @@
 
 All notable changes to `runspec-scheduler` are documented here.
 
+## [0.4.0]
+
+- **`status` sees runs still in the logs inbox** (runspec >= 0.66,
+  `docs/design/venv-logs-inbox.md`).
+  - A schedule whose crontab belongs to an account other than the venv owner
+    records each run in the venv's logs inbox until the owner sweeps it. Its
+    runs now show straight away instead of waiting for the sweep.
+  - Each run carries `os_user` (kernel-attested) and `pending`.
+  - An inbox row counts only when `os_user` is the schedule's own account, so a
+    file anyone dropped in the inbox labelled `sched:<id>` is ignored.
+  - `last_output` reads a pending run's log from the inbox.
+  - On an older core it falls back to the index alone.
+
 ## [0.3.0]
 
 - **Crontab lines run through core's `runspec exec`** (needs `runspec >= 0.62.0`;

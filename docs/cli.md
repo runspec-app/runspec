@@ -664,7 +664,25 @@ A typical nightly cron line:
 Archives stay JSON-lines (gzipped), so `runspec logs <runnable>` and the
 console's History/Analytics keep reading them after compaction.
 
-**Sharing the dir across accounts** — `runspec logs share` (POSIX). When more
+**Set up the logs inbox** — `runspec logs share --inbox` (runspec >= 0.66,
+POSIX). A shared venv needs this once, run as its owner. It lets every other
+account's runs (operators, root, other crontabs) reach the venv's history
+instead of falling back to their own `~/logs`:
+
+```bash
+sudo -u <owner> {venv}/bin/runspec logs share --inbox   # create logs/inbox (01777, owned by the owner)
+runspec logs share --no-inbox                            # opt this venv out (logs/.no-inbox marker)
+runspec logs share --inbox --owner-only                  # …and make logs/ itself owner-only (0755)
+```
+
+Other accounts drop their per-run files into the inbox, and the owner sweeps
+them into the runs index (`runspec history sweep`, and automatically on the
+owner's own runs). Run as root, the command drops to the venv's owner first. It
+refuses a non-owner with a one-line message naming the owner. `--inbox` leaves
+`logs/`'s own mode alone unless `--group` / `--acl-user` are also given.
+Details: [logging → Sharing the logs dir](logging.md#sharing-the-logs-dir-across-accounts-runspec-logs-share).
+
+**The group alternative** — `runspec logs share` without `--inbox`. When more
 than one account writes into a venv (a console operator plus the service account
 a `run_as` runnable runs as), they must all be able to write the runs index
 (`runspec_runs.db`) and audit logs into the *same* dir. `share` makes that dir
@@ -762,6 +780,7 @@ runspec history stats                             # index health: rows, size, sp
 runspec history prune --older-than 30d            # drop finished rows older than 30 days
 runspec history prune --max-rows 10000            # keep only the newest 10k rows
 runspec history reap                              # crash 'running' rows whose process is gone
+runspec history sweep                             # index finished runs from the logs inbox (venv owner)
 runspec history reindex                           # rebuild the index from the audit logs
 ```
 
@@ -780,8 +799,18 @@ index in the shared `~/logs`.
 **Permissions.** On a shared venv the index belongs to whoever created it (often
 a service account). A maintenance verb run by a user who can't write it fails
 with a named `permission denied … (owned by <user>)` error rather than reporting
-"0 rows"; run it as the owner (`sudo -u <owner> {venv}/bin/runspec history reap`)
-or make the dir group-writable with [`runspec logs share`](#runspec-logs).
+"0 rows"; run it as the owner (`sudo -u <owner> {venv}/bin/runspec history reap`).
+Other accounts don't need to write the index at all once the venv has a logs
+inbox ([`runspec logs share --inbox`](#runspec-logs)).
+
+**The logs inbox (0.66.0+).** `list`/`running` also show runs still waiting in
+`{venv}/logs/inbox` (other accounts' runs, not yet swept). Such a row carries
+`"pending": true` and its kernel-attested `os_user`, and the index wins a
+dedupe. `sweep` is owner-only; as root it drops to the owner first. It indexes
+finished (or confirmed-dead) inbox runs and moves their files into `logs/`. A run
+whose lock is still held is left alone. `stats` reports the inbox's state
+(`"inbox"` in `--json`). Schema v6 adds `os_user`, `source` (`direct`/`inbox`)
+and `exec_uid`.
 
 **`--json`.** `list`/`running` print one row per line; `stats`/`prune`/`reap`/
 `reindex` print a single result object (`{"verb", "count", "dirs": [...], "ok"}`),

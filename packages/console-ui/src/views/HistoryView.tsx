@@ -336,6 +336,8 @@ function RunningNowStrip({ rows, accent }: { rows: RunningRun[]; accent: string 
           `started ${new Date(r.startTs).toLocaleString()}`,
           r.operator ? `by ${r.operator}` : '',
           r.runAs ? `as ${r.runAs}` : '',
+          r.account && r.account !== r.operator && r.account !== r.runAs ? `OS account ${r.account}` : '',
+          r.pending ? 'in the logs inbox (another account\'s run)' : '',
           r.pid ? `pid ${r.pid}` : '',
           argStr,
         ].filter(Boolean).join('\n')
@@ -674,6 +676,21 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       filters: operators.map(u => ({ text: u, value: u })),
       onFilter: (value, record) => record.operator === value,
       filteredValue: colFilters['operator'] ?? null,
+      // The self-reported operator, plus the kernel-attested account when they
+      // differ (runspec >= 0.66) — e.g. a sudo'd run, or a claim that doesn't match.
+      render: (op: string, record: HistoryRecord) => {
+        const acct = accountNote(record)
+        return (
+          <span>
+            {op}
+            {acct && (
+              <Tooltip title={`Ran as OS account ${acct} (from the file / process owner — trustworthy; the operator name is self-reported)`}>
+                <Tag style={{ marginLeft: 6, fontSize: 11, fontFamily: MONO_FONT }}>{acct}</Tag>
+              </Tooltip>
+            )}
+          </span>
+        )
+      },
     },
     {
       title: 'Run as',
@@ -690,9 +707,18 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       key: 'exitCode',
       // A `runspec exec` skip (lock held / already running) has exit code 0 but
       // never ran — its own tag, and excluded from both ok and error.
-      render: (c: number, record: HistoryRecord) => record.status === 'skipped'
-        ? <Tooltip title={`Didn't start — the previous run was still going${record.label ? ` (${record.label})` : ''}`}><Tag>skipped</Tag></Tooltip>
-        : <Tag color={c === 0 ? 'green' : 'red'}>{c === 0 ? 'ok' : `exit ${c}`}</Tag>,
+      render: (c: number, record: HistoryRecord) => (
+        <span>
+          {record.status === 'skipped'
+            ? <Tooltip title={`Didn't start — the previous run was still going${record.label ? ` (${record.label})` : ''}`}><Tag>skipped</Tag></Tooltip>
+            : <Tag color={c === 0 ? 'green' : 'red'}>{c === 0 ? 'ok' : `exit ${c}`}</Tag>}
+          {record.pending && (
+            <Tooltip title="Another account's run, still in the venv's logs inbox — the owner's next run (or Sweep inbox under Logs → Runs index) indexes it">
+              <Tag color="gold">inbox</Tag>
+            </Tooltip>
+          )}
+        </span>
+      ),
       filters: [
         { text: 'ok', value: 0 },
         { text: 'error', value: 1 },
@@ -803,4 +829,12 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       <RunLogDrawer record={fullLogRecord} onClose={() => setFullLogRecord(null)} />
     </div>
   )
+}
+
+/** The kernel-attested account worth showing next to the (self-reported)
+ *  operator — only when it adds something (differs from operator and run-as). */
+export function accountNote(r: Pick<HistoryRecord, 'account' | 'operator' | 'runAs'>): string {
+  const a = (r.account || '').trim()
+  if (!a || a === r.operator || a === r.runAs) return ''
+  return a
 }

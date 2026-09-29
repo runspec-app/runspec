@@ -1425,7 +1425,9 @@ export const mockApi: BridgeApi = {
   }),
 
   history_db_maintain: async (_host, group, action) => ({
-    ok: true, group, verb: action, count: action === 'reap' ? 1 : action === 'prune' ? 410 : 3802,
+    ok: true, group, verb: action,
+    count: action === 'reap' ? 1 : action === 'prune' ? 410 : action === 'sweep' ? 2 : 3802,
+    ...(action === 'sweep' ? { running: 1, as_user: 'svc' } : {}),
   }),
 
   venv_owner: async (_host, group) => ({ ok: true, owner: group === '~/logs' ? '' : 'svc', self: 'operator' }),

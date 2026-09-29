@@ -25,6 +25,7 @@ import subprocess
 import tempfile
 
 from runspec_linux_core.become import build_become, check_become_error
+from runspec_linux_core.errors import CommandError
 
 # A POSIX-ish user/group name. Used here to validate a *group* before it is
 # interpolated into a chgrp (a crafted value can't inject extra tokens — argv
@@ -66,6 +67,7 @@ def create_venv(
     upgrade_deps: bool = False,
     clear: bool = False,
     prompt: str | None = None,
+    inbox: bool = True,
 ) -> dict:
     """Create a virtualenv at ``dest`` from a specific ``python`` interpreter.
 
@@ -74,10 +76,15 @@ def create_venv(
     what a plain ``python -m venv`` produces under a default ``022`` umask, regardless
     of the caller's umask (``sudo -n -u <svc>`` often lands at ``027``, which would
     otherwise leave the venv at ``750`` and lock other consoles out). Then creates
-    ``<dest>/logs`` mode ``2775`` (setgid, so new audit-log files inherit the
-    directory's group) and, if ``group`` is set, ``chgrp -R`` the venv to it —
-    enabling a shared service-account venv that several consoles read/write. With
-    ``run_as`` set every step runs as that user (so the venv is owned by it). Raises
+    ``<dest>/logs`` and — with ``inbox`` (the default) — the **logs inbox**
+    ``<dest>/logs/inbox`` (``01777``, owned by the venv owner): every other account
+    that runs the venv's runnables (operators, root) drops its run there and the
+    owner indexes it (runspec >= 0.66, docs/design/venv-logs-inbox.md), so
+    ``logs/`` itself stays owner-only (``0755``). With ``group`` set the venv is
+    ``chgrp -R``'d to it and ``logs/`` is ``2775`` (setgid) — the group-sharing
+    alternative; ``inbox=False`` keeps the pre-inbox layout (``logs/`` ``2775``)
+    and writes a ``logs/.no-inbox`` opt-out marker. With ``run_as`` set every step
+    runs as that user (so the venv — and the inbox — are owned by it). Raises
     ValueError on a non-executable interpreter / bad name, or CommandError on a
     failed step.
     """
@@ -103,7 +110,9 @@ def create_venv(
     if group:
         _validate_name(group, "group")
         _check(_run(build_become(["chgrp", "-R", group, dest], run_as, become_method)), "chgrp", run_as)
-    _check(_run(build_become(["chmod", "2775", logs_dir], run_as, become_method)), "chmod logs", run_as)
+    logs_mode = "2775" if (group or not inbox) else "0755"
+    _check(_run(build_become(["chmod", logs_mode, logs_dir], run_as, become_method)), "chmod logs", run_as)
+    inbox_dir = _setup_inbox(logs_dir, inbox, run_as, become_method)
 
     return {
         "python": python,
@@ -111,8 +120,30 @@ def create_venv(
         "run_as": run_as or "",
         "group": group or "",
         "logs_dir": logs_dir,
+        "logs_mode": logs_mode,
+        "inbox": inbox_dir,
         "created": True,
     }
+
+
+def _setup_inbox(logs_dir: str, inbox: bool, run_as: str | None, become_method: str) -> str:
+    """Create ``<logs>/inbox`` (``01777``) as the venv owner — or, with
+    ``inbox=False``, write the ``.no-inbox`` opt-out marker. Returns the inbox path
+    ("" when opted out). ``mkdir`` then ``chmod``, both as the owner, so the dir is
+    never world-writable under any other account; an existing inbox that isn't a
+    plain directory owned by the owner makes ``chmod`` fail (``-h`` isn't used —
+    a symlink at the path is refused by the ``test`` first)."""
+    inbox_dir = os.path.join(logs_dir, "inbox")
+    marker = os.path.join(logs_dir, ".no-inbox")
+    if not inbox:
+        _check(_run(build_become(["touch", marker], run_as, become_method)), "no-inbox marker", run_as)
+        return ""
+    if _run(build_become(["test", "-L", inbox_dir], run_as, become_method)).returncode == 0:
+        raise CommandError(f"refusing to set up {inbox_dir}: it is a symlink")
+    _check(_run(build_become(["rm", "-f", marker], run_as, become_method)), "no-inbox marker", run_as)
+    _check(_run(build_become(["mkdir", "-p", "-m", "0700", inbox_dir], run_as, become_method)), "inbox dir", run_as)
+    _check(_run(build_become(["chmod", "1777", inbox_dir], run_as, become_method)), "chmod inbox", run_as)
+    return inbox_dir
 
 
 def share_venv_logs(
@@ -121,10 +152,19 @@ def share_venv_logs(
     group: str | None = None,
     run_as: str | None = None,
     become_method: str = "sudo",
+    inbox: bool = True,
 ) -> dict:
     """Make an existing venv's ``logs/`` dir shared — the repair path for a venv
-    **not** built by ``create-venv --group`` (hand-made or legacy).
+    **not** built by ``create-venv`` (hand-made or legacy).
 
+    **With ``inbox`` (the default)** it sets up the logs inbox
+    ``<venv>/logs/inbox`` (``01777``, owned by the venv owner — run it as the owner
+    with ``run_as``): every other account drops its runs there and the owner
+    indexes them (runspec >= 0.66), so no group is needed and ``logs/``'s own mode
+    is left alone. Given a ``group`` it *also* applies the group sharing below.
+    ``inbox=False`` is the pre-inbox behaviour (group sharing only).
+
+    **Group sharing:**
     Sets ``<venv>/logs`` to ``2775`` (setgid + group-writable) so new files —
     including the per-venv runs index ``runspec_runs.db`` and the audit-log
     files — inherit the directory's group and can be written by every console /
@@ -149,16 +189,21 @@ def share_venv_logs(
 
     logs_dir = os.path.join(venv, "logs")
     _check(_run(build_become(["mkdir", "-p", logs_dir], run_as, become_method)), "logs dir", run_as)
-    if group:
-        _check(_run(build_become(["chgrp", group, logs_dir], run_as, become_method)), "chgrp logs", run_as)
-    _check(_run(build_become(["chmod", "2775", logs_dir], run_as, become_method)), "chmod logs", run_as)
+    mode = ""
+    if group or not inbox:
+        if group:
+            _check(_run(build_become(["chgrp", group, logs_dir], run_as, become_method)), "chgrp logs", run_as)
+        _check(_run(build_become(["chmod", "2775", logs_dir], run_as, become_method)), "chmod logs", run_as)
+        mode = "2775"
+    inbox_dir = _setup_inbox(logs_dir, True, run_as, become_method) if inbox else ""
 
     return {
         "venv": venv,
         "logs_dir": logs_dir,
         "group": group or "",
         "run_as": run_as or "",
-        "mode": "2775",
+        "mode": mode,
+        "inbox": inbox_dir,
         "shared": True,
     }
 
@@ -190,8 +235,8 @@ def install_into_venv(
     packs from ``runspec local`` / ``importlib.metadata`` for anyone but the
     owner. The sweep **prunes** two things: ``<venv>/logs`` (the group-shared
     audit dir, which holds per-run log files owned by other users — a
-    ``run_as="root"`` runnable leaves root-owned logs there — so its ``2775``
-    setgid mode is left intact and restored afterwards as a guard), and
+    ``run_as="root"`` runnable leaves root-owned logs there — so its mode, and
+    its inbox's, are left exactly as they were), and
     **symlinks** (a ``--symlinks`` venv's ``bin/python*`` point at the root-owned
     system interpreter *outside* the venv; ``find -exec chmod`` would dereference
     them and fail — or, under sudo, silently repermission the system Python —
@@ -243,7 +288,9 @@ def install_into_venv(
     #     repermission of /usr/bin/python* under sudo. `chmod -R` skipped symlinks
     #     for free; the find sweep must skip them explicitly to match. A symlink's
     #     own mode is irrelevant on Linux, so nothing is lost.
-    # The logs dir keeps its 2775 mode (restored below as a belt-and-braces guard).
+    # The logs dir (and its inbox) keep whatever mode they have — the prune means
+    # the sweep never touches them. (Before 0.12 this forced logs/ back to 2775
+    # afterwards, which undid an owner-only 0755 logs/ + inbox layout.)
     logs_dir = os.path.join(venv, "logs")
     _check(
         _run(
@@ -272,9 +319,6 @@ def install_into_venv(
         "chmod venv",
         run_as,
     )
-    if _run(build_become(["test", "-d", logs_dir], run_as, become_method)).returncode == 0:
-        _check(_run(build_become(["chmod", "2775", logs_dir], run_as, become_method)), "chmod logs", run_as)
-
     return {
         "venv": venv,
         "packages": names,

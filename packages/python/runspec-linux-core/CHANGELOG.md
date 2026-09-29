@@ -1,5 +1,31 @@
 # runspec-linux-core Changelog
 
+## [0.12.0] — 2026-09-29
+
+### Added
+
+- **The logs inbox** (runspec >= 0.66, `docs/design/venv-logs-inbox.md`).
+  - `create_venv(..., inbox=True)` (the default) creates `<venv>/logs/inbox`
+    as the venv owner: `mkdir -m 0700`, then `chmod 1777`. Every other
+    account's runs (operators, root) land there and reach the venv's history
+    with no group admin.
+  - With no `group`, `logs/` itself is now owner-only (`0755`); with a `group`
+    it's still `2775`.
+  - `inbox=False` keeps the pre-inbox layout (`logs/` `2775`) and writes a
+    `logs/.no-inbox` opt-out marker.
+  - An inbox path that's a symlink is refused.
+- **`share_venv_logs(..., inbox=True)`** (the default) sets up the inbox on an
+  existing venv. It changes `logs/`'s own mode only when `group` is given (the
+  group share) or `inbox=False` (the old behaviour).
+
+### Changed
+
+- **`install_into_venv` no longer forces `logs/` back to `2775`.** The
+  permission sweep already skips `logs/`, and the forced restore undid an
+  owner-only `logs/` + inbox layout. Result dicts gain `inbox` (and
+  `logs_mode` for `create_venv`); `share_venv_logs`'s `mode` is `""` when
+  `logs/` was left alone.
+
 ## [0.11.0] — 2026-09-26
 
 ### Added

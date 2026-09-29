@@ -26,7 +26,7 @@ import uuid
 from pathlib import Path
 from typing import IO, Any
 
-from runspec import runsdb
+from runspec import inbox, runsdb
 from runspec.execute import build_command, find_runnable
 from runspec.logging_setup import _get_invoker, _resolve_log_dir
 
@@ -124,6 +124,26 @@ def _append(path: Path, lines: list[str]) -> None:
             f.write(line + "\n")
 
 
+class _Sink:
+    """Where this run's exec records go. Direct mode appends to a path in
+    ``logs/`` (only the owner writes there). Inbox mode writes through the held
+    handle of the run's inbox file — **never by path**: the inbox is
+    world-writable, so the name could have been replaced."""
+
+    def __init__(self, run: inbox.InboxRun | None = None) -> None:
+        self.run = run
+
+    def write(self, path: Path, lines: list[str]) -> None:
+        if self.run is not None:
+            for line in lines:
+                with contextlib.suppress(Exception):
+                    self.run.stream.write(line + "\n")
+            with contextlib.suppress(Exception):
+                self.run.stream.flush()
+        else:
+            _append(path, lines)
+
+
 # ── locking ─────────────────────────────────────────────────────────────────────
 
 
@@ -173,12 +193,27 @@ def exec_runnable(
     run_id = str(uuid.uuid4())
     start = _now()
     start_iso = start.isoformat()
-    log_dir = _resolve_log_dir()
     user, user_target = _get_invoker()
 
     spec = find_runnable(name)
     history_cfg: dict[str, Any] = ((spec or {}).get("config") or {}).get("history") or {}
-    write_row = bool(history_cfg.get("db", True))
+    indexed = bool(history_cfg.get("db", True))
+
+    # A non-owner of a shared venv records the run in the logs inbox (the owner's
+    # sweep indexes it) instead of writing the runs index itself —
+    # docs/design/venv-logs-inbox.md §9. The wrapper creates the run's file and
+    # holds its lock for the child's whole life.
+    venv_logs = Path(sys.prefix) / "logs"
+    box: inbox.InboxRun | None = None
+    with contextlib.suppress(Exception):
+        owner = inbox.venv_owner()
+        if owner is not None and hasattr(os, "geteuid") and os.geteuid() in (owner, 0) and venv_logs.is_dir():
+            inbox.ensure_inbox(venv_logs, owner)
+        if inbox.uses_inbox(venv_logs, owner):
+            box = inbox.open_run(venv_logs, name, run_id, owner=owner, when=start)
+    log_dir = venv_logs if box is not None else _resolve_log_dir()
+    write_row = indexed and box is None
+    sink = _Sink(box)
 
     base_row = {
         "run_id": run_id,
@@ -193,18 +228,31 @@ def exec_runnable(
         "host": socket.gethostname(),
         "proc_start": runsdb.proc_start_token(),
         "label": label,
+        "run_as": (spec or {}).get("run_as") or None,
+        "os_user": inbox.effective_user() or None,
+        "source": "direct",
     }
+    if box is not None:
+        start_extra: dict[str, Any] = {"event": "run_start", "history_db": False}
+        if indexed:
+            start_extra = {
+                "event": "run_start",
+                **{k: v for k, v in base_row.items() if k not in ("run_id", "os_user", "source", "command")},
+                "start_ts": start_iso,
+                "venv": sys.prefix,
+            }
+        sink.write(box.path, [_record(f"exec started '{name}'", run_id, start_extra)])
 
     def _finish_without_child(status: str, exit_code: int, message: str, reason: str) -> int:
         """Record a run that never started a child — not installed, not launchable,
         or skipped — as one finished row + an exec_result record."""
-        log_path = _log_file_for(log_dir, None, name, start, run_id)
+        log_path = box.path if box is not None else _log_file_for(log_dir, None, name, start, run_id)
         if write_row:
             runsdb.begin_run(
                 log_dir,
                 {**base_row, "status": status, "exit_code": exit_code, "end_ts": _now().isoformat(), "duration_ms": 0, "log_file": log_path.name},
             )
-        _append(
+        sink.write(
             log_path,
             [
                 _record(
@@ -237,7 +285,14 @@ def exec_runnable(
         if lock_fh is None:
             return _finish_without_child("skipped", 0, f"skipped '{name}' — lock {lock} is held (previous run still going)", "lock_held")
     if skip_if_running:
-        live = runsdb.list_runs(log_dir, running_only=True, label=label, runnable=None if label else name, limit=5)
+        # index ∪ inbox — but an inbox run only counts when it's this account's,
+        # the owner's or root's: a forged "running" file by another operator must
+        # not be able to hold a schedule off.
+        live = [
+            r
+            for r in runsdb.list_runs_with_inbox(venv_logs if box is not None else log_dir, running_only=True, label=label, runnable=None if label else name, limit=20)
+            if inbox.trusted_writer(r, venv_logs) and r.get("run_id") != run_id
+        ]
         if live:
             if lock_fh:
                 lock_fh.close()
@@ -249,6 +304,12 @@ def exec_runnable(
             runsdb.begin_run(log_dir, {**base_row, "status": "running"})
 
         child_env = {**(env or {}), "RUNSPEC_RUN_ID": run_id}
+        if hasattr(os, "geteuid"):
+            # Binds a child that runs as the owner (a direct row) to this wrapper's
+            # inbox file, and vice versa (the binding table, runsdb.inbox_binding).
+            child_env["RUNSPEC_EXEC_UID"] = str(os.geteuid())
+        if box is not None:
+            child_env["RUNSPEC_RUN_LOG"] = str(box.path)
         if trigger:
             child_env["RUNSPEC_TRIGGER"] = trigger
         cmd, extra_env = build_command(spec, list(argv), child_env)
@@ -264,9 +325,9 @@ def exec_runnable(
         except OSError as exc:
             if write_row:  # drop the running placeholder; record the launch failure
                 runsdb.finish_run(log_dir, run_id, exit_code=EXIT_NOT_EXECUTABLE, duration_ms=0, status="failed", cfg=history_cfg, runnable=name)
-            log_path = _log_file_for(log_dir, None, name, start, run_id)
+            log_path = box.path if box is not None else _log_file_for(log_dir, None, name, start, run_id)
             result = {"event": "exec_result", "status": "failed", "exit_code": EXIT_NOT_EXECUTABLE, "duration_ms": 0, "label": label, "trigger": trigger, "reason": "launch_error"}
-            _append(log_path, [_record(f"could not start '{name}': {exc}", run_id, result, level="ERROR")])
+            sink.write(log_path, [_record(f"could not start '{name}': {exc}", run_id, result, level="ERROR")])
             with contextlib.suppress(Exception):
                 err_stream.write(f"runspec exec: could not start '{name}': {exc}\n")
             return EXIT_NOT_EXECUTABLE
@@ -312,7 +373,7 @@ def exec_runnable(
             row = runsdb.get_run(log_dir, target_id)
 
         # ── output + result records in the run's log file ──
-        log_path = _log_file_for(log_dir, row, name, start, target_id)
+        log_path = box.path if box is not None else _log_file_for(log_dir, row, name, start, target_id)
         lines = []
         for stream_name, t in zip(("stdout", "stderr"), tails, strict=False):  # no tails when capture is off
             if t.total:
@@ -332,13 +393,16 @@ def exec_runnable(
                 level="INFO" if rc == 0 else "ERROR",
             )
         )
-        _append(log_path, lines)
+        sink.write(log_path, lines)
         if write_row and row is not None and not row.get("log_file"):
             runsdb.set_log_file(log_dir, target_id, log_path.name)
         return rc
     finally:
         if lock_fh is not None:
             lock_fh.close()
+        if box is not None:
+            with contextlib.suppress(Exception):
+                box.stream.close()  # releases the run's lock — the sweep may take it now
 
 
 def _effective_user() -> str:

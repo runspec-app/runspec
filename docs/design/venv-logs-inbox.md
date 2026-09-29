@@ -1,10 +1,17 @@
 # Shared-venv run history — a drop-box inbox with a single-writer index
 
-> **Status: proposed (for review).** The standalone fixes (§2) shipped in core
-> 0.65.0. The inbox itself (§3 onwards) is not implemented yet; this document
-> is the design to agree first. It keeps the self-contained venv (everything a
-> venv records lives under `{venv}/logs`; delete the venv and it's all gone),
-> and changes only **who writes what** in there.
+> **Status: implemented.** The standalone fixes (§2) shipped in core 0.65.0 and
+> the inbox itself (§3 onwards) in core 0.66.0 (`runspec/inbox.py`), with the
+> linux, scheduler and console follow-ups listed in §13. It keeps the
+> self-contained venv (everything a venv records lives under `{venv}/logs`;
+> delete the venv and it's all gone), and changes only **who writes what** in
+> there.
+>
+> **One deviation from §9:** when a `runspec exec` wrapper and its child are
+> two *different non-owner* accounts (wrapper `alice`, child `run_as = "bob"`),
+> the child can't append to the wrapper's file. It records its run under a
+> fresh run id rather than collide with the wrapper's, so the run shows as two
+> rows — as before the inbox. Every other combination is one row.
 
 ## 1. Problem
 

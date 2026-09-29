@@ -7,6 +7,47 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.304.0] — 2026-09-29
+
+**The shared-venv logs inbox** (runspec >= 0.66, `docs/design/venv-logs-inbox.md`).
+Runs by accounts other than a venv's owner (operators, root, other crontabs)
+wait in the venv's `logs/inbox` until the owner's sweep indexes them. The
+console now shows them straight away.
+
+### Added
+
+- **Pending runs in History, Running now and Analytics.**
+  - The remote read, sync and running snippets also read each venv's logs
+    inbox. Their stdlib reader mirrors core's `runspec.inbox.inbox_rows` and
+    is parity-tested.
+  - Liveness is the writer's lock, not the pid alone.
+  - Entries are opened `O_NONBLOCK|O_NOFOLLOW` after `lstat` checks, so a
+    planted symlink or FIFO can't redirect or hang the read.
+  - The History cache keeps finished inbox runs as a per-pull snapshot, and the
+    index wins a dedupe. Cache v3: a mismatched cache is rebuilt.
+  - Log-parse reads (and so row detail) include the inbox dir.
+- **History shows who really ran it.**
+  - An **inbox** tag marks a pending run.
+  - The Operator column adds the kernel-attested OS account when it differs
+    from the self-reported operator and run-as.
+- **Make logs shared sets up the logs inbox** (`runspec logs share --scope venv
+  --inbox`) when no group is given.
+  - It escalates owner first, then root. The standard `enable-passwordless-sudo
+    scoped` grant is `(root)`-only, and core drops a root call to the owner.
+  - A group still applies the old 2775 group share.
+- **Logs → Runs index…** shows the inbox's state and gains a **Sweep inbox**
+  button (`runspec history sweep`, same escalation).
+
+### Changed
+
+- **Log-stream frames carry a nonce generated on the host**, so a log file's
+  content (anyone can write the inbox) can't forge a frame.
+  - The NUL is written with an octal `printf` escape, portable to dash.
+  - Symlinked log files are skipped.
+- **A per-run log file yields only its own run's records.**
+- **The runs-index readers refuse a world-writable or sticky dir** (POSIX; Windows has no such mode bits).
+- **A run hidden by `hidepid` no longer reads as dead.**
+- Requires `runspec >= 0.66.0`.
 
 ## [0.303.0] — 2026-09-29
 

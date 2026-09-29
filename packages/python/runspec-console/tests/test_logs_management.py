@@ -495,15 +495,61 @@ class TestShareVenvLogs(unittest.TestCase):
         self.assertNotIn("chmod", cmd)  # no raw shell
         self.assertNotIn("share-venv-logs", cmd)  # no runspec-linux runnable
 
-    def test_remote_omits_group_when_no_group(self) -> None:
+    def test_no_group_sets_up_the_logs_inbox_by_the_owner_root_ladder(self) -> None:
+        # No group ⇒ the recommended share: the logs inbox (runspec >= 0.66),
+        # escalated owner → root (the scoped sudo grant is (root)-only; core drops
+        # a root call to the owner itself).
         b = _make_bridge()
         b._hosts = [_remote_entry()]
-        with patch.object(b, "_ssh_run", return_value=self._shared(group="")) as m:
+        reply = '=====AS root\n{"shared": [{"dir": "/opt/venvs/deploy-core/logs", "inbox": "created", "inbox_path": "/opt/venvs/deploy-core/logs/inbox"}]}\n'
+        with patch.object(b, "_ssh_run", return_value=(0, reply, "")) as m:
             res = b.share_venv_logs("prod-1", "deploy-core")
-        self.assertTrue(res["ok"])
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(res["as_user"], "root")
+        self.assertIn("logs inbox created", res["output"])
         cmd = m.call_args.args[1]
-        self.assertIn("logs share --scope venv", cmd)
+        self.assertIn("logs share --scope venv --inbox --json", cmd)
+        self.assertIn('sudo -n -u "$o"', cmd)  # the owner first…
+        self.assertIn('exec sudo -n "$rp"', cmd)  # …then root
         self.assertNotIn("--group", cmd)
+
+    def test_inbox_share_on_an_old_core_names_the_upgrade(self) -> None:
+        b = _make_bridge()
+        b._hosts = [_remote_entry()]
+        with patch.object(
+            b,
+            "_ssh_run",
+            return_value=(1, "=====AS u\n✗  unrecognized argument --inbox\n", ""),
+        ):
+            res = b.share_venv_logs("prod-1", "deploy-core")
+        self.assertFalse(res["ok"])
+        self.assertIn("runspec >= 0.66.0", res["error"])
+
+    def test_sweep_runs_history_sweep_as_the_owner(self) -> None:
+        b = _make_bridge()
+        b._hosts = [_remote_entry()]
+        reply = '=====AS svc\n{"verb": "sweep", "ok": true, "swept": 3, "crashed": 1, "running": 2}\n'
+        with patch.object(b, "_ssh_run", return_value=(0, reply, "")) as m:
+            res = b.history_db_maintain("prod-1", "deploy-core", "sweep")
+        self.assertTrue(res["ok"], res)
+        self.assertEqual((res["count"], res["as_user"], res["running"]), (4, "svc", 2))
+        self.assertIn("history sweep --json", m.call_args.args[1])
+
+    def test_sweep_on_an_old_core_names_the_upgrade(self) -> None:
+        b = _make_bridge()
+        b._hosts = [_remote_entry()]
+        with patch.object(
+            b,
+            "_ssh_run",
+            return_value=(
+                1,
+                "=====AS u\n✗  Unknown history verb: sweep (list / …)\n",
+                "",
+            ),
+        ):
+            res = b.history_db_maintain("prod-1", "deploy-core", "sweep")
+        self.assertFalse(res["ok"])
+        self.assertIn("runspec >= 0.66.0", res["error"])
 
     def test_reports_index_repair_in_output(self) -> None:
         # db_repaired in the payload → surfaced in the human output line.

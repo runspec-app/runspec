@@ -36,6 +36,28 @@ Allow the Jump Hosts list to be pulled from a git repo URL (central team config)
 
 ---
 
+## Logs inbox follow-ups (docs/design/venv-logs-inbox.md)
+
+### Node pack: the inbox
+The Node pack has the same racy fixed-name write probe in `logging_setup.ts` and
+no inbox. Its log dir is the npm project root and it keeps no runs index, so the
+first step is the 0.65.0 probe fix. The inbox follows only if Node gains an index.
+
+### `/proc/self/loginuid` as an invoker signal
+The run summary's `user` is self-reported (`SUDO_USER`/`USER`). On Linux,
+`loginuid` survives `sudo`/`su` and is kernel-set. Record it beside `os_user` to
+attest the human behind a root run.
+
+### Optional sweep cron line
+The owner sweeps on its own runs and on demand. A venv whose owner never runs
+anything (a pure service account) could use a `runspec history sweep` crontab
+line. Offer it from `create-venv` / the scheduler.
+
+### Tag `~/logs` runs with their venv
+Runs that fell back to `~/logs` (no inbox yet, Windows) can't be attributed to a
+venv. `run_start` now records `venv`; teach the `~/logs` readers to use it, so a
+later migration into the right venv's history is possible.
+
 ## Parity
 
 ### Node: subcommand global-arg inheritance

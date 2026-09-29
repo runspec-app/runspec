@@ -77,12 +77,37 @@ bootstrap runnables — `which` (find an interpreter), `create-venv`,
 Each step is confirm-gated. Then add the new venv's
 `/opt/venvs/ops/bin/runspec` to the host's `runspec_paths`.
 
-`create-venv --group consoles` makes the venv's `logs/` dir group-shared
-(`2775` + setgid), so every connected console can read/write it — and the
-per-venv run-index DB (`runspec_runs.db`) that lands there. For a venv that
-already exists but wasn't built that way, `share-venv-logs --venv <path>
---group consoles` brings just its `logs/` dir up to the same state without
-recreating the venv (add `--run-as <owner>` for a service-account venv).
+#### Set up the logs inbox (required for a shared venv)
+
+A shared venv is owned by one account but its runnables are run by others —
+operators logged in as themselves, root (`run_as = "root"`), other accounts'
+crontabs. **Set up its logs inbox** so every one of those runs lands in the
+venv's history (runspec >= 0.66):
+
+```bash
+sudo -u <owner> /opt/venvs/ops/bin/runspec logs share --inbox
+```
+
+This creates `logs/inbox` (sticky `01777`, owned by the venv's owner): every
+other account drops its per-run log file there, and the owner's runs index it.
+No group, ACL or extra sudo rule is needed. Until it's set up, other accounts'
+runs fall back to their own `~/logs`, where History can't see them.
+
+- `create-venv` (runspec-linux >= 0.18) creates the inbox for you;
+  `--no-inbox` opts out.
+- For a venv that already exists, run the command above, or
+  `share-venv-logs --venv <path> --run-as <owner>`, or the console's **Logs →
+  Make logs shared** (leave the group blank).
+- The owner's own runs also create it automatically, as a safety net.
+
+Finished runs waiting in the inbox show in History with an **inbox** tag. The
+owner's runs sweep them into the runs index, or use **Logs → Runs index… →
+Sweep inbox**. See [Audit logging → Sharing the logs dir](logging.md#sharing-the-logs-dir-across-accounts-runspec-logs-share)
+and the design, [venv logs inbox](design/venv-logs-inbox.md).
+
+The older alternative is still there: `create-venv --group consoles` (or
+`share-venv-logs --group consoles`) makes `logs/` group-shared (`2775` +
+setgid), so members of that group write it directly.
 
 ### Copy your SSH key to the fleet
 

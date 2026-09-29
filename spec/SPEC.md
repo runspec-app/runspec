@@ -171,6 +171,52 @@ run. Both layouts emit identical JSON records (including the run-summary
 and uncaught-exception records), so the only difference is how records are
 distributed across files.
 
+#### Shared logs directory — the inbox (Python pack)
+
+A logs directory shared by several accounts (a service-account-owned venv run
+by operators, by root, or from other accounts' crontabs) has **one writer for
+its contents**: the account that owns the installation root ("the owner").
+Everyone else drops their per-run file into a sticky, world-writable
+subdirectory:
+
+```
+{installation_root}/logs/         owner-only writes (incl. the runs index)
+{installation_root}/logs/inbox/   mode 01777, owned by the owner
+```
+
+- **Non-owners** (any account whose effective uid differs from the owner's —
+  root included) write to `logs/inbox/` whenever it exists and is sane (a real
+  directory, sticky + other-writable, owned by the owner, on the same
+  filesystem). Their file is always per-run, whatever `store` says, uses the
+  per-run name grammar, is created exclusively (never following a symlink,
+  never reopened by path) with mode `0644`, and is held under an exclusive
+  advisory lock for the life of the process. They never write the runs index.
+  With no usable inbox the previous fallback (`~/logs`, then a temp dir)
+  applies.
+- **The owner and root create the inbox automatically** (unless a
+  `logs/.no-inbox` marker file opts out): a missing inbox is created `0700`,
+  handed to the owner, then set to `01777`. A path that is a symlink, not a
+  directory, or owned by another account is never touched. The documented setup
+  step is `{installation_root}/bin/runspec logs share --inbox`, run as the owner.
+- **The owner sweeps** finished inbox files into the runs index and moves them
+  into `logs/` (`runspec history sweep`, and opportunistically at the end of
+  the owner's own runs). A file whose lock is still held is a live run and is
+  never indexed; readers show index ∪ inbox.
+
+Two records support this. Neither is counted in the run summary's `events`:
+
+- **`run_start`** — the first record of an inbox file (on the
+  `runspec.runsummary` logger): `run_id`, `runnable`, `command_path`, `pid`,
+  `host`, `proc_start`, `user`, `user_target`, `invocation_args`, `start_ts`,
+  `label`, `trigger`, `venv`. Omitted when `[config.history] db = false`; a
+  `{"event": "run_start", "history_db": false}` marker is written instead.
+- **`run_end`** — written instead of `run_summary` when `summary = false`
+  (`run_id`, `exit_code`, `duration_ms`), so a clean run is never mistaken for
+  a crash.
+
+The Node pack does not implement the inbox yet: its log directory is the
+project root and it keeps no runs index.
+
 #### Console routing
 
 A single `logger.X` call works in both CLI mode and agent mode — the language

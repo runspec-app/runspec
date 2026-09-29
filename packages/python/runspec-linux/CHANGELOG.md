@@ -1,5 +1,23 @@
 # runspec-linux Changelog
 
+## [0.18.0] — 2026-09-29
+
+### Added
+
+- **`create-venv` sets up the logs inbox** (`logs/inbox`, `01777`, owned by the
+  venv's owner). Operators' and root's runs of the venv's runnables then reach
+  its history with no group admin (runspec >= 0.66). `logs/` is owner-only
+  (`0755`) unless `--group` is given. `--no-inbox` keeps the pre-inbox `2775`
+  layout and writes a `.no-inbox` opt-out marker.
+- **`share-venv-logs` sets up the logs inbox** on an existing venv (run it with
+  `--run-as <owner>`). `--group` still adds the `2775` setgid group share, and
+  `--no-inbox` does only the group share, as before.
+
+### Changed
+
+- **`install-into-venv` keeps `logs/`'s mode** instead of forcing `2775`.
+- Requires `runspec-linux-core >= 0.12.0`.
+
 ## [0.17.0] — 2026-09-26
 
 ### Added

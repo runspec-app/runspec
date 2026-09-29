@@ -680,7 +680,7 @@ required    = false
 
 [create-venv]
 serve       = ["local"]
-description = "Create a Python virtualenv (always --symlinks) from a specific interpreter, optionally as a service account, with a shared 2775 logs/ dir"
+description = "Create a Python virtualenv (always --symlinks) from a specific interpreter, optionally as a service account, with a logs inbox so every account's runs reach its history"
 autonomy    = "confirm"
 output      = "json"
 
@@ -710,6 +710,11 @@ type        = "str"
 short       = "-g"
 description = "Optional shared group to chgrp the venv to (e.g. consoles), so every connected console can read/write"
 required    = false
+
+[create-venv.args.no-inbox]
+type        = "flag"
+description = "Don't set up the logs inbox (logs/inbox, 01777) — keep the pre-inbox layout (logs/ 2775) and write a logs/.no-inbox opt-out marker. Default: the inbox is created, so operators' and root's runs reach this venv's history with no group admin (runspec >= 0.66)"
+default     = false
 
 [create-venv.args.system-site-packages]
 type        = "flag"
@@ -862,12 +867,13 @@ description = "How to escalate to run-as: sudo (passwordless, -n) or su"
 
 [share-venv-logs]
 serve       = ["local"]
-description = "Make an existing venv's logs/ dir shared (2775 + setgid, optional chgrp) so the per-venv runs DB and audit logs are writable across a console group — the repair for a venv not built with create-venv --group"
+description = "Make an existing venv's logs shared: set up the logs inbox (logs/inbox, 01777) so every account's runs reach its history — plus, with --group, the 2775 setgid group share. Run as the venv owner (--run-as)"
 autonomy    = "confirm"
 output      = "json"
 
 examples = [
-  {cmd = "share-venv-logs --venv /opt/venvs/app",                            description = "Make /opt/venvs/app/logs group-writable + setgid (keeps its current group)"},
+  {cmd = "share-venv-logs --venv /opt/venvs/app --run-as svc",               description = "Set up the logs inbox as the venv's owner — the recommended setup"},
+  {cmd = "share-venv-logs --venv /opt/venvs/app --no-inbox",                 description = "The pre-inbox group share only: logs/ group-writable + setgid"},
   {cmd = "share-venv-logs --venv /opt/venvs/app --group consoles",           description = "...and chgrp the logs dir to the shared 'consoles' group"},
   {cmd = "share-venv-logs --venv /opt/venvs/app --group consoles --run-as svc", description = "Run as the service account that owns the venv (via sudo -n -u)"},
 ]
@@ -883,6 +889,11 @@ type        = "str"
 short       = "-g"
 description = "Optional shared group to chgrp the logs/ dir to (e.g. consoles), so every connected console can read/write. Omit to keep the current group"
 required    = false
+
+[share-venv-logs.args.no-inbox]
+type        = "flag"
+description = "Skip the logs inbox — only the group share (logs/ 2775 setgid, optional chgrp)"
+default     = false
 
 [share-venv-logs.args.run-as]
 type        = "str"

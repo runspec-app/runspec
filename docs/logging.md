@@ -266,30 +266,78 @@ automatic. See the shared-venv deployment guide for copy-paste schedules.
 
 ### Sharing the logs dir across accounts (`runspec logs share`)
 
-When several accounts write into one venv — a console operator plus the service
-account a `run_as` runnable runs as — they all need to write the per-venv runs
-index (`runspec_runs.db`) and audit logs into the *same* dir. `runspec logs
-share` makes that dir group-writable in one command (**POSIX only**):
+A shared venv is owned by one account, the owner of the venv root (e.g. the
+`svc` account `create-venv --run-as svc` built it as). Its runnables are also
+run by other accounts: operators logged in as themselves, root (a
+`run_as = "root"` runnable), other accounts' crontabs. None of them can write
+the owner's `logs/`, so without help their runs fall back to their own
+`~/logs`, where the venv's history (and every console) can't see them.
+
+**Set up the logs inbox (recommended, runspec >= 0.66, POSIX).** Run this once
+per venv, as the venv's owner:
+
+```bash
+sudo -u <owner> {venv}/bin/runspec logs share --inbox
+```
+
+It creates `{venv}/logs/inbox`: sticky, `01777`, owned by the owner. It works
+like `/tmp` or a mail spool:
+
+- Every other account (root included) writes its per-run file into the inbox
+  and never touches the runs index. The file is created exclusively, never
+  through a symlink, mode `0644`, and held under a lock while the run is live.
+- The owner **sweeps** finished inbox runs into the runs index and moves their
+  files into `logs/`. This happens automatically at the end of the owner's own
+  runs; `runspec history sweep` does it on demand (or from cron).
+- Until a run is swept, readers show it anyway: `runspec history list`,
+  `runspec logs <runnable>`, and the console's History tab (tagged **inbox**).
+
+No group, no ACL, no extra sudo rule. Run as root, `logs share --inbox` and
+`history sweep` drop to the venv's owner first, so the standard
+`enable-passwordless-sudo scoped` grant (which is `(root)` on the venv's `bin/`)
+is enough. `runspec-linux`'s `create-venv` creates the inbox for you, and the
+owner's (or root's) own runs create or repair it automatically as a safety net.
+Opt a venv out with `runspec logs share --no-inbox` (a `logs/.no-inbox` marker);
+add `--owner-only` to make `logs/` itself `0755`. `runspec history stats`
+reports the inbox's state.
+
+Trust model:
+
+- A swept run's `os_user` (runs index v6) is the file's kernel-attested owner.
+  The run summary's `user` stays self-reported.
+- One account's file can never rewrite another account's row.
+- Symlinks, hard links and FIFOs in the inbox are never followed, indexed or
+  read.
+
+Full design: [venv logs inbox](design/venv-logs-inbox.md).
+
+**The older alternative: a shared group.** `runspec logs share --group
+<group>` makes the dir group-writable, so a fixed set of accounts can write it
+directly:
 
 ```bash
 runspec logs share --group consoles   # chmod 2775 (setgid) + chgrp to `consoles`
 runspec logs share                     # just make it group-writable + setgid, group unchanged
 ```
 
-For each targeted dir it: ensures it exists, `chmod`s it `2775` (group-writable
-**and setgid**, so files created in it inherit the dir's group), optionally
-`chgrp`s it to `--group`, and repairs the existing `runspec_runs.db` (`chgrp` +
-`chmod 664`) — a dir `chmod` never touches a file already inside it, so without
-the repair a group member still couldn't write an index a non-member created.
+For each targeted dir, it:
+
+- ensures the dir exists;
+- `chmod`s it `2775` — group-writable **and setgid**, so files created in it
+  inherit the dir's group;
+- optionally `chgrp`s it to `--group`;
+- repairs the existing `runspec_runs.db` (`chgrp` + `chmod 664`). A dir `chmod`
+  never touches a file already inside it, so without the repair a group member
+  still couldn't write an index a non-member created.
+
 Like `prune`/`compact`, an unset `--scope` acts on this venv's own dir only
 (`{sys.prefix}/logs`); `--scope home`/`all` target the shared `~/logs`/both.
 
-It is **sudo-free**, like the rest of the core CLI: it changes only what the
-invoking user is allowed to change, so if you don't own the dir, escalate to its
-owner yourself — `sudo -u <owner> {venv}/bin/runspec logs share --group consoles`.
-(This is exactly what the runspec-console "Make shared" button runs for you.) A
-non-member of the group still logs to `~/logs`, so add the accounts to the group
-first.
+It changes only what the invoking user is allowed to change, so run it as the
+dir's owner: `sudo -u <owner> {venv}/bin/runspec logs share --group consoles`.
+A non-member of the group still logs to `~/logs`, so add the accounts to the
+group first. Once an inbox exists, group members use it too (only the owner
+writes `logs/` directly).
 
 **No root to add a group member?** Use `--acl-user` instead of (or with)
 `--group`. On a host where you can't add an account to a group, the dir's owner

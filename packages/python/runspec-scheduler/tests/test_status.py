@@ -137,3 +137,18 @@ def test_invalid_invocation_is_not_installable(env, monkeypatch):
     nightly = st.status(cfg)["schedules"][0]
     assert nightly["installable"] is False
     assert nightly["not_installable_reason"] == "unknown command 'x'"
+
+
+def test_inbox_rows_count_only_from_the_schedules_account(env, monkeypatch):
+    # A crontab under another account records its runs in the venv's logs inbox
+    # until the owner sweeps them; anyone could drop a file labelled sched:<id>
+    # there, so only the schedule's own account's rows count.
+    cfg, logs = env
+    _crontab(monkeypatch, [])
+    mine = {"run_id": "cccccccc-3", "status": "running", "label": "sched:nightly", "start_ts": "2026-09-28T03:00:00+00:00", "source": "inbox", "os_user": "svc", "pending": True}
+    forged = {**mine, "run_id": "dddddddd-4", "os_user": "mallory", "start_ts": "2026-09-28T04:00:00+00:00"}
+    monkeypatch.setattr(st, "_list_runs", lambda d, label, limit: [dict(forged), dict(mine)] if label == "sched:nightly" else [])
+    write_schedules(cfg, [ScheduleEntry(id="nightly", when=When(cron="0 2 * * *"), runnable="backup", run_as="svc")])
+    [rec] = st.status(cfg)["schedules"]
+    assert [r["run_id"] for r in rec["runs"]] == ["cccccccc-3"]
+    assert rec["runs"][0]["os_user"] == "svc" and rec["runs"][0]["pending"] is True

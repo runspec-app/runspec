@@ -592,6 +592,12 @@ export interface HistoryRecord {
   // a success) and its exec label ("sched:<id>" for a shared cron schedule).
   status?: string
   label?: string
+  // Logs inbox (runspec >= 0.66): `account` is the kernel-attested OS account that
+  // actually ran it (`operator` is self-reported — the human behind sudo); `pending`
+  // = still waiting in the venv's logs inbox for the owner's sweep.
+  account?: string
+  pending?: boolean
+  logFile?: string
 }
 
 // One in-flight run from the per-venv runs index — the History tab's live
@@ -617,6 +623,8 @@ export interface RunningRun {
   trigger?: string                   // event source that caused the run ("schedule"/…), "" = interactive
   runbook?: string                   // saved runbook that drove the run, "" otherwise
   autonomy?: string
+  account?: string                   // kernel-attested OS account (logs inbox, runspec >= 0.66)
+  pending?: boolean                  // a run in the venv's logs inbox (another account's)
 }
 
 // A schedule (Schedules tab). When it fires it either emits a matchable event
@@ -993,6 +1001,9 @@ export interface ShareLogsResult {
   // write the dir — its runs' logs will fall back to ~/logs until that user joins
   // the dir's group. Names the fix.
   warning?: string
+  // Set when the share set up the logs inbox (no group given; runspec >= 0.66):
+  // the inbox path.
+  inbox?: string
 }
 
 // Runs index (runspec_runs.db) health — `runspec history stats` for one venv's
@@ -1021,9 +1032,23 @@ export interface HistoryDbStats {
   log_pruned?: number              // rows that outlive their pruned log file
   schema_version?: number | null
   write_error?: string
+  // The venv's logs inbox (runspec >= 0.66): other accounts' runs waiting for the
+  // owner's sweep. `state` is 'ok' / 'missing' / 'disabled' / 'bad-mode' / …
+  inbox?: HistoryDbInbox | null
 }
 
-export type HistoryDbAction = 'prune' | 'reap' | 'reindex'
+export interface HistoryDbInbox {
+  state: string
+  path?: string
+  files?: number
+  running?: number
+  finished?: number
+  bytes?: number
+  other?: number
+  subdirs?: number
+}
+
+export type HistoryDbAction = 'prune' | 'reap' | 'reindex' | 'sweep'
 
 export interface HistoryDbResult {
   ok: boolean
@@ -1031,6 +1056,10 @@ export interface HistoryDbResult {
   verb?: HistoryDbAction
   count?: number
   error?: string
+  // sweep only: runs still live in the inbox, and the account it ran as
+  running?: number
+  collisions?: number
+  as_user?: string
 }
 
 // Shared (host cron) schedules — read-only, from `runspec-scheduler status` on

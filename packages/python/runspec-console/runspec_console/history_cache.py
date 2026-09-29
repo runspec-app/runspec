@@ -20,6 +20,12 @@ read is one indexed query. Per ``(host, dir)``:
 
 Only *finished* runs are cached (History shows outcomes; the Running-now strip asks
 the host live). Records older than the cache window are trimmed on every pull.
+
+**Pending runs** (runspec >= 0.66, ``docs/design/venv-logs-inbox.md``): runs by
+accounts other than a venv's owner wait in its logs inbox until the owner's sweep
+indexes them. Each pull brings the finished ones as a snapshot per ``(host, dir)``,
+kept in ``pending`` and replaced wholesale; a read shows them unless the index
+already has the run (the index wins).
 """
 
 from __future__ import annotations
@@ -35,7 +41,9 @@ from typing import Any
 # Bumped when the stored record shape changes; a mismatched cache is rebuilt.
 # 2 (console 0.301.0): records carry ``extra`` (autonomy / events / exception …)
 # so Analytics can aggregate from the cache.
-CACHE_VERSION = 2
+# 3 (console 0.304.0): + the ``pending`` table (finished runs still in a venv's
+# logs inbox) and records carry ``account`` / ``pending``.
+CACHE_VERSION = 3
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS recs (
@@ -50,6 +58,11 @@ CREATE TABLE IF NOT EXISTS cursors (
 );
 CREATE TABLE IF NOT EXISTS hosts (
   host TEXT PRIMARY KEY, synced_at TEXT, error TEXT
+);
+CREATE TABLE IF NOT EXISTS pending (
+  host TEXT NOT NULL, dir TEXT NOT NULL, key TEXT NOT NULL,
+  ts TEXT NOT NULL, rec TEXT NOT NULL,
+  PRIMARY KEY (host, dir, key)
 );
 """
 
@@ -87,7 +100,7 @@ class HistoryCache:
             if con.execute("PRAGMA user_version").fetchone()[0] != CACHE_VERSION:
                 # A cache written by an older console stores records of an older
                 # shape — derived data, so start over rather than migrate.
-                for table in ("recs", "cursors", "hosts"):
+                for table in ("recs", "cursors", "hosts", "pending"):
                     con.execute(f"DROP TABLE IF EXISTS {table}")
                 con.execute(f"PRAGMA user_version={CACHE_VERSION}")
                 con.commit()
@@ -236,6 +249,32 @@ class HistoryCache:
         out: bool = self._run(w, False)
         return out
 
+    def set_pending(self, host: str, dir_: str, records: list[dict[str, Any]]) -> bool:
+        """Replace ``(host, dir_)``'s pending (logs-inbox) snapshot. Returns whether
+        it changed."""
+
+        def w(con: sqlite3.Connection) -> bool:
+            before = {
+                (k, r)
+                for k, r in con.execute(
+                    "SELECT key, rec FROM pending WHERE host=? AND dir=?", (host, dir_)
+                )
+            }
+            con.execute("DELETE FROM pending WHERE host=? AND dir=?", (host, dir_))
+            after = set()
+            for rec in records:
+                key = str(rec.get("runId") or rec.get("id") or "")
+                blob = json.dumps(rec)
+                after.add((key, blob))
+                con.execute(
+                    "INSERT OR REPLACE INTO pending (host, dir, key, ts, rec) VALUES (?,?,?,?,?)",
+                    (host, dir_, key, str(rec.get("ts") or ""), blob),
+                )
+            return before != after
+
+        out: bool = self._run(w, False)
+        return out
+
     def drop_dirs(self, host: str, keep: set[str]) -> bool:
         """Forget ``host``'s dirs that aren't in ``keep`` (a venv removed from the host
         entry). Returns whether any records went."""
@@ -246,10 +285,20 @@ class HistoryCache:
                 for (d,) in con.execute("SELECT dir FROM cursors WHERE host=?", (host,))
                 if d not in keep
             ]
+            gone += [
+                d
+                for (d,) in con.execute(
+                    "SELECT DISTINCT dir FROM pending WHERE host=?", (host,)
+                )
+                if d not in keep and d not in gone
+            ]
             n = 0
             for d in gone:
                 n += con.execute(
                     "DELETE FROM recs WHERE host=? AND dir=?", (host, d)
+                ).rowcount
+                n += con.execute(
+                    "DELETE FROM pending WHERE host=? AND dir=?", (host, d)
                 ).rowcount
                 con.execute("DELETE FROM cursors WHERE host=? AND dir=?", (host, d))
             return n > 0
@@ -259,9 +308,12 @@ class HistoryCache:
 
     def trim(self, before_ts: str) -> None:
         """Drop records older than ``before_ts`` (the cache window)."""
-        self._run(
-            lambda con: con.execute("DELETE FROM recs WHERE ts < ?", (before_ts,)), None
-        )
+
+        def w(con: sqlite3.Connection) -> None:
+            con.execute("DELETE FROM recs WHERE ts < ?", (before_ts,))
+            con.execute("DELETE FROM pending WHERE ts < ?", (before_ts,))
+
+        self._run(w, None)
 
     def retain_hosts(self, hosts: set[str]) -> None:
         """Forget every host not in ``hosts`` (removed or renamed in the host list)."""
@@ -271,7 +323,7 @@ class HistoryCache:
                 h for (h,) in con.execute("SELECT DISTINCT host FROM cursors")
             }
             for h in known - hosts:
-                for table in ("recs", "cursors", "hosts"):
+                for table in ("recs", "cursors", "hosts", "pending"):
                     con.execute(f"DELETE FROM {table} WHERE host=?", (h,))
 
         self._run(w, None)
@@ -300,17 +352,22 @@ class HistoryCache:
         self, host: str, *, since_date: str | None, limit: int
     ) -> list[dict[str, Any]]:
         """``host``'s cached records, newest first, ``ts`` on/after ``since_date``
-        (``YYYY-MM-DD``), at most ``limit``."""
+        (``YYYY-MM-DD``), at most ``limit`` — the indexed records plus the pending
+        (logs-inbox) snapshot for runs the index doesn't have yet."""
 
         def q(con: sqlite3.Connection) -> list[dict[str, Any]]:
-            sql, params = "SELECT rec FROM recs WHERE host=?", [host]
-            if since_date:
-                sql += " AND ts >= ?"
-                params.append(since_date)
-            sql += " ORDER BY ts DESC LIMIT ?"
+            win = " AND ts >= ?" if since_date else ""
+            sql = (
+                f"SELECT rec, ts FROM recs WHERE host=?{win} "
+                f"UNION ALL SELECT p.rec, p.ts FROM pending p WHERE p.host=?{win.replace('ts', 'p.ts')} "
+                "AND NOT EXISTS (SELECT 1 FROM recs r WHERE r.host=p.host AND r.key=p.key) "
+                "ORDER BY 2 DESC LIMIT ?"
+            )
+            params: list[Any] = [host] + ([since_date] if since_date else [])
+            params += [host] + ([since_date] if since_date else [])
             params.append(max(1, int(limit)))
             out = []
-            for (blob,) in con.execute(sql, params):
+            for blob, _ts in con.execute(sql, params):
                 with contextlib.suppress(ValueError, TypeError):
                     out.append(json.loads(blob))
             return out

@@ -209,7 +209,7 @@ function MaintenanceModal({ target, onClose, onApplied }: MaintModalProps) {
         {!isHome && (
           <Form.Item
             label="Run as"
-            help="Escalate to this OS user via sudo (pre-filled with the venv's owner) — for a venv you don't own. Blank runs as you."
+            help="For the group share: escalate to this OS user via sudo (pre-filled with the venv's owner). The inbox always runs as the owner."
             style={{ marginBottom: 8 }}
           >
             <Input value={runAs} onChange={e => setRunAs(e.target.value)} placeholder="(yourself)" style={{ maxWidth: 200, fontFamily: MONO_FONT }} />
@@ -273,7 +273,7 @@ function ShareLogsModal({ target, onClose, onApplied }: {
       const r = await bridge.share_venv_logs(host, venv, group.trim() || undefined, runAs.trim() || undefined)
       if (!r.ok) { setError(r.error || 'Could not make logs shared.'); return }
       const via = r.as_user ? ` (as ${r.as_user})` : ''
-      message.success(`${venv}: logs dir made shared${via}`)
+      message.success(r.inbox ? `${venv}: logs inbox set up${via}` : `${venv}: logs dir made shared${via}`)
       onApplied(host)  // the share applied — refresh the inventory
       if (r.warning) {
         // Applied, but the console's user can't write it yet — keep the modal open
@@ -300,17 +300,22 @@ function ShareLogsModal({ target, onClose, onApplied }: {
       ]}
     >
       <Text type="secondary" style={{ fontSize: 13 }}>
-        Sets <Text code>{venv}</Text>'s <Text code>logs/</Text> dir on <Text code>{host}</Text>{' '}
-        to <Text code>2775</Text> (setgid + group-writable), so the per-venv runs index and
-        the audit logs are writable across a shared console group — the repair for a venv not
-        built with <Text code>create-venv --group</Text>. Runs <Text code>chmod</Text> directly
-        (no runspec-linux needed); for a venv owned by another user, set <Text code>Run as</Text>{' '}
-        to escalate via sudo. It also repairs the existing index file's group so writes succeed.
+        Sets up <Text code>{venv}</Text>'s <b>logs inbox</b> on <Text code>{host}</Text>{' '}
+        (<Text code>logs/inbox</Text>, sticky <Text code>01777</Text>, owned by the venv's owner):
+        every other account — operators, root, other crontabs — drops its runs there and they
+        reach this venv's History; the owner's runs (or <b>Sweep inbox</b>) index them. No group,
+        ACL or extra sudo rule: it runs as the venv's owner, via sudo as the owner or else root
+        (the standard scoped grant). Needs runspec &gt;= 0.66 in the venv.
+      </Text>
+      <Text type="secondary" style={{ fontSize: 13, display: 'block', marginTop: 8 }}>
+        Or give a <b>group</b> for the older group share instead: <Text code>logs/</Text>{' '}
+        <Text code>2775</Text> (setgid, group-writable) + the runs index repaired, run as{' '}
+        <Text code>Run as</Text>.
       </Text>
       <Form layout="vertical" style={{ marginTop: 16 }}>
         <Form.Item
-          label="Group (optional)"
-          help="Unix group to chgrp the logs/ dir to, e.g. consoles. Leave blank to keep the current group."
+          label="Group (optional — the alternative to the inbox)"
+          help="Blank = set up the logs inbox (recommended). A group, e.g. consoles, applies the 2775 group share instead."
           style={{ marginBottom: 16 }}
         >
           <Input value={group} onChange={e => setGroup(e.target.value)} placeholder="consoles" style={{ maxWidth: 200, fontFamily: MONO_FONT }} />

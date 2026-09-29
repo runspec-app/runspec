@@ -21,6 +21,10 @@ from typing import Any
 _configured: bool = False  # idempotency guard — reset in tests via monkeypatch
 _summary_state: dict[str, Any] | None = None  # populated when summary is enabled
 _debug: bool = False  # mirrors the --debug flag; read by the excepthook for console rendering
+# What a `runspec exec` wrapper handed down besides the run id (taken by
+# adopt_exec_run_id): the inbox file to join (RUNSPEC_RUN_LOG) and the wrapper's
+# uid (RUNSPEC_EXEC_UID). Reset in tests via monkeypatch.
+_exec_handoff: dict[str, Any] = {}
 
 _SIZE_RE = re.compile(r"^(\d+(?:\.\d+)?)\s*(KB|MB|GB)$", re.IGNORECASE)
 _SIZE_MULT: dict[str, int] = {"KB": 1024, "MB": 1024**2, "GB": 1024**3}
@@ -96,6 +100,7 @@ def configure_logging(
     invocation_args: dict[str, Any] | None = None,
     history_cfg: dict[str, Any] | None = None,
     run_id: str | None = None,
+    run_as: str = "",
 ) -> None:
     """
     Configure root logger from normalised [config.logging].
@@ -180,10 +185,21 @@ def configure_logging(
 
     # File handler: always active, always JSON; level follows --debug
     # (INFO by default — keeps third-party DEBUG noise out of the audit log).
-    log_dir = _resolve_log_dir()
+    # A non-owner of a shared venv writes its per-run file into the logs inbox
+    # (docs/design/venv-logs-inbox.md); the owner and root create/repair it.
+    write_history = bool((history_cfg or {}).get("db", True))
+    provisioned, inbox_run, run_id = _setup_inbox(runnable_name, run_id)
     fh: logging.Handler | None = None
-    log_path = log_dir / f"{runnable_name}.log"
-    if log_cfg.get("store") != "per-run" and _single_store_ok(log_dir):
+    if inbox_run is not None:
+        log_dir = inbox_run.path.parent.parent
+        log_path = inbox_run.path
+        fh = inbox_run.handler()
+    else:
+        log_dir = _resolve_log_dir()
+        log_path = log_dir / f"{runnable_name}.log"
+        if not provisioned:
+            provisioned = _provision_inbox(log_dir)
+    if fh is None and log_cfg.get("store") != "per-run" and _single_store_ok(log_dir):
         try:
             fh = _make_file_handler(log_path, log_cfg["rotate"], log_cfg["keep"])
         except PermissionError:
@@ -205,6 +221,13 @@ def configure_logging(
     fh.addFilter(_RunIdFilter(run_id))
     fh.setFormatter(_JsonFormatter())
     root.addHandler(fh)
+    if provisioned in ("created", "repaired"):
+        # Audit-log only (the console handlers drop this logger): never stdout/stderr.
+        with contextlib.suppress(Exception):
+            logging.getLogger(_RUN_SUMMARY_LOGGER).info(
+                f"logs inbox {provisioned}",
+                extra={"event": "inbox_created" if provisioned == "created" else "inbox_repaired", "path": str(log_dir / "inbox")},
+            )
 
     # Run-summary counter handler — silently increments per-level counts.
     counter = _RunSummaryCounter()
@@ -226,9 +249,9 @@ def configure_logging(
     # The runs index (runspec_runs.db) is a derived index over the audit log, so
     # it follows the same coverage: it writes when logging is configured, gated by
     # [config.history] db (default true, best-effort). See runsdb.py / the design
-    # doc docs/design/console-history-db.md.
-    write_history = bool((history_cfg or {}).get("db", True))
-    if write_record or write_console or write_history:
+    # doc docs/design/console-history-db.md. An inbox writer never touches SQLite:
+    # its run_start / run_summary records are what the owner's sweep indexes.
+    if inbox_run is not None or write_record or write_console or write_history:
         user, user_target = _get_invoker()
         _summary_state = {
             "counter": counter,
@@ -255,12 +278,16 @@ def configure_logging(
             "write_console": write_console,
             # runs-index (runspec_runs.db) — db_dir/history_cfg are what the atexit
             # finalize needs; the start row is written just below.
-            "write_history": write_history,
+            "write_history": write_history and inbox_run is None,
             "history_cfg": history_cfg or {},
             "db_dir": log_dir,
+            "inbox": inbox_run is not None,
+            "run_as": run_as,
         }
         atexit.register(_emit_run_summary)
-        if write_history:
+        if inbox_run is not None:
+            _write_run_start(_summary_state, indexed=write_history)
+        elif write_history:
             _begin_history_row(_summary_state, log_dir, log_path.name)
 
     # Tee sys.stdout so print() calls also land in the file audit log.
@@ -286,7 +313,117 @@ def adopt_exec_run_id() -> str | None:
     that shells out to other runnables doesn't pass the same id to them (they'd
     overwrite this run's row). Returns ``None`` when absent or malformed."""
     rid = os.environ.pop("RUNSPEC_RUN_ID", "").strip()
-    return rid if _RUN_ID_RE.match(rid) else None
+    # The inbox half of the handoff (docs/design/venv-logs-inbox.md §9) — popped
+    # for the same reason: a runnable this one shells out to must not join our file.
+    run_log = os.environ.pop("RUNSPEC_RUN_LOG", "").strip()
+    exec_uid = os.environ.pop("RUNSPEC_EXEC_UID", "").strip()
+    _exec_handoff.clear()
+    if _RUN_ID_RE.match(rid):
+        if run_log:
+            _exec_handoff["run_log"] = run_log
+        if exec_uid.isdigit():
+            _exec_handoff["exec_uid"] = int(exec_uid)
+        return rid
+    return None
+
+
+def _setup_inbox(runnable_name: str, run_id: str) -> tuple[str, Any, str]:
+    """The inbox half of choosing where this run logs. Returns ``(provisioned,
+    inbox_run, run_id)``:
+
+    * the owner or root first create/repair ``{venv}/logs/inbox`` (one ``lstat``
+      when it's already fine) — ``provisioned`` is what that did;
+    * anyone but the owner (root included) then writes into the inbox when it's
+      sane — ``inbox_run`` is the open, locked file (``None`` otherwise: the
+      caller falls back to the old resolution).
+
+    A ``runspec exec`` wrapper's inbox file (``RUNSPEC_RUN_LOG``) is joined when
+    it's ours; when it isn't (the child runs as another account) we can't share
+    it, so the run gets a fresh id rather than collide with the wrapper's.
+    Best-effort — any failure returns ``("", None, run_id)``."""
+    try:
+        from . import inbox
+
+        if not inbox.supported():
+            return "", None, run_id
+        venv_logs = Path(sys.prefix) / "logs"
+        owner = inbox.venv_owner()
+        if owner is None:
+            return "", None, run_id
+        euid = os.geteuid()
+        provisioned = ""
+        if euid in (owner, 0) and venv_logs.is_dir() and not venv_logs.is_symlink():
+            provisioned = inbox.ensure_inbox(venv_logs, owner)
+        if euid == owner:
+            return provisioned, None, run_id
+        join = _exec_handoff.get("run_log")
+        if join:
+            run = inbox.open_run(venv_logs, runnable_name, run_id, owner=owner, join=join)
+            if run is not None:
+                return provisioned, run, run_id
+            run_id = str(uuid.uuid4())  # can't join the wrapper's file: don't collide with it
+        return provisioned, inbox.open_run(venv_logs, runnable_name, run_id, owner=owner), run_id
+    except Exception:
+        return "", None, run_id
+
+
+def _provision_inbox(log_dir: Path) -> str:
+    """After the old resolution: the owner or root create/repair the inbox of the
+    venv's own logs dir (e.g. the run that just created ``logs/``)."""
+    with contextlib.suppress(Exception):
+        from . import inbox
+
+        if inbox.supported() and log_dir == Path(sys.prefix) / "logs":
+            owner = inbox.venv_owner()
+            if owner is not None and os.geteuid() in (owner, 0):
+                return inbox.ensure_inbox(log_dir, owner)
+    return ""
+
+
+def _write_run_start(state: dict[str, Any], *, indexed: bool) -> None:
+    """The first record of an inbox file — what the owner's sweep indexes the run
+    from (no SQLite for a non-owner). A run that opted out of the index
+    (``[config.history] db = false``) writes only a marker, so the sweep moves the
+    file without indexing it."""
+    with contextlib.suppress(Exception):
+        import socket
+
+        from . import runsdb
+
+        if not indexed:
+            extra: dict[str, Any] = {"event": "run_start", "run_id": state["run_id"], "history_db": False}
+        else:
+            extra = {
+                "event": "run_start",
+                "run_id": state["run_id"],
+                "runnable": state["runnable"],
+                "command_path": state["command_path"],
+                "pid": os.getpid(),
+                "host": socket.gethostname(),
+                "proc_start": runsdb.proc_start_token(),
+                "user": state["user"],
+                "user_target": state["user_target"],
+                "agent": state["agent"],
+                "trigger": state["trigger"],
+                "skill": state.get("skill", ""),
+                "autonomy": state["autonomy"],
+                "run_as": state.get("run_as") or "",
+                "invocation_args": {k: v["value"] for k, v in state.get("invocation_args", {}).items()},
+                "start_ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "venv": sys.prefix,
+            }
+            if "exec_uid" in _exec_handoff:
+                extra["exec_uid"] = _exec_handoff["exec_uid"]
+        logging.getLogger(_RUN_SUMMARY_LOGGER).info("run started", extra=extra)
+
+
+def _effective_user_name() -> str:
+    try:
+        import pwd
+
+        return pwd.getpwuid(os.geteuid()).pw_name
+    except Exception:  # noqa: BLE001 — Windows / unknown uid
+        return ""
 
 
 def _resolve_log_dir() -> Path:
@@ -734,6 +871,11 @@ def _begin_history_row(state: dict[str, Any], log_dir: Path, log_file: str) -> N
                 "proc_start": runsdb.proc_start_token(),
                 "log_file": log_file,
                 "args": {k: v["value"] for k, v in state.get("invocation_args", {}).items()},
+                "run_as": state.get("run_as") or None,
+                # v6 attribution: a direct row is written by the effective account.
+                "os_user": _effective_user_name(),
+                "source": "direct",
+                "exec_uid": _exec_handoff.get("exec_uid"),
             },
         )
 
@@ -778,6 +920,14 @@ def _emit_run_summary() -> None:
                     "invocation_args": {k: v["value"] for k, v in invocation_args.items()},
                     "arg_sources": {k: v["source"] for k, v in invocation_args.items()},
                 },
+            )
+    elif state.get("inbox"):
+        # `summary = false` in the inbox: a slim end record, so the sweep never
+        # mistakes a clean run for a crash (no record ⇒ crashed once the lock frees).
+        with contextlib.suppress(Exception):
+            logging.getLogger(_RUN_SUMMARY_LOGGER).info(
+                "run ended",
+                extra={"event": "run_end", "run_id": state.get("run_id"), "exit_code": exit_code, "duration_ms": duration_ms},
             )
 
     # Finalize the runs-index row (running → completed/failed + exit code +

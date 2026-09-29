@@ -19,6 +19,7 @@ def main_create_venv() -> None:
             upgrade_deps=spec.upgrade_deps.value,
             clear=spec.clear.value,
             prompt=spec.prompt.value or None,
+            inbox=not spec.no_inbox.value,
         )
         print(json.dumps(result))
     except CommandError as e:
@@ -62,6 +63,7 @@ def main_share_venv_logs() -> None:
             group=spec.group.value or None,
             run_as=spec.run_as.value or None,
             become_method=spec.become_method.value,
+            inbox=not spec.no_inbox.value,
         )
         print(json.dumps(result))
     except CommandError as e:

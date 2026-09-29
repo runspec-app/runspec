@@ -97,7 +97,11 @@ def _globs(runnable: str | None) -> list[str]:
     return ["*.log", "*.log.gz"]
 
 
-def _discover(dirs: Iterable[Path], runnable: str | None) -> list[Path]:
+def _discover(dirs: Iterable[Path], runnable: str | None, *, include_inbox: bool = False) -> list[Path]:
+    """The log files in ``dirs``. ``include_inbox`` overlays each dir's
+    ``inbox/`` (runs other accounts haven't had swept yet) — **read-only** callers
+    only (view / status): prune / compact / reindex never see the inbox, so they
+    can never delete or rewrite a pending file."""
     seen: set[Path] = set()
     files: list[Path] = []
     for d in dirs:
@@ -106,7 +110,57 @@ def _discover(dirs: Iterable[Path], runnable: str | None) -> list[Path]:
                 if f.is_file() and f not in seen:
                     seen.add(f)
                     files.append(f)
+        if include_inbox:
+            for f in _inbox_files(d, runnable):
+                if f not in seen:
+                    seen.add(f)
+                    files.append(f)
     return files
+
+
+def _inbox_files(d: Path, runnable: str | None) -> list[Path]:
+    """Per-run files waiting in ``d/inbox`` — regular, single-link files only,
+    never following a symlink (the inbox is world-writable: a planted link must
+    not make a reader print a file it can read but its writer can't)."""
+    import stat as _stat
+
+    box = d / "inbox"
+    if box.is_symlink() or not box.is_dir():
+        return []
+    out: list[Path] = []
+    try:
+        names = sorted(os.listdir(box))
+    except OSError:
+        return []
+    for name in names:
+        if not _PER_RUN_RE.search(name) or (runnable and _runnable_of(Path(name)) != runnable):
+            continue
+        try:
+            st = os.lstat(box / name)
+        except OSError:
+            continue
+        if _stat.S_ISREG(st.st_mode) and st.st_nlink == 1:
+            out.append(box / name)
+    return out
+
+
+def resolve_log_file(log_dir: Path, name: str) -> Path | None:
+    """Where a run's log file is now: ``log_dir/name``, else — not swept yet —
+    ``log_dir/inbox/name``. ``name`` is a bare basename (anything with a path
+    separator is refused); an inbox entry must be a regular, single-link file,
+    never a symlink. ``None`` when it's in neither."""
+    import stat as _stat
+
+    if not name or name != os.path.basename(name) or name in (".", ".."):
+        return None
+    for p in (Path(log_dir) / name, Path(log_dir) / "inbox" / name):
+        try:
+            st = os.lstat(p)
+        except OSError:
+            continue
+        if _stat.S_ISREG(st.st_mode) and (p.parent == Path(log_dir) or st.st_nlink == 1):
+            return p
+    return None
 
 
 def _is_managed(path: Path) -> bool:
@@ -216,9 +270,16 @@ def collect_records(
     ``user`` (every record of any run that user launched — resolved from the
     run_summary's ``extra.user``).
     """
+    # A per-run file contributes records only for its own run (the id in its
+    # name): a file dropped into the world-writable inbox can't inject records
+    # into another run's view.
     raw_lines: list[str] = []
-    for f in _discover(dirs, runnable):
-        raw_lines.extend(_read_lines(f))
+    for f in _discover(dirs, runnable, include_inbox=True):
+        own = _file_run_id(f.name)
+        for ln in _read_lines(f):
+            if own is not None and _line_run_id(ln) != own:
+                continue
+            raw_lines.append(ln)
 
     parsed: list[tuple[dict[str, Any], str]] = []
     user_of_run: dict[str, str] = {}
@@ -250,6 +311,39 @@ def collect_records(
     parsed = [(r, ln) for (r, ln) in parsed if keep(r)]
     parsed.sort(key=lambda pair: pair[0].get("ts", ""))
     return parsed
+
+
+def _file_run_id(name: str) -> str | None:
+    from .inbox import file_run_id
+
+    return file_run_id(name)
+
+
+def _line_run_id(line: str) -> str:
+    try:
+        rec = json.loads(line)
+    except (json.JSONDecodeError, ValueError):
+        return ""
+    extra = rec.get("extra") if isinstance(rec, dict) else None
+    return str(extra.get("run_id") or "") if isinstance(extra, dict) else ""
+
+
+def read_run_rows(dirs: Iterable[Path]) -> list[dict[str, Any]]:
+    """Every run's row across the log files in ``dirs`` (never the inbox), via the
+    one parser (:func:`runspec.inbox.rows_from_lines`) — the rebuild source for
+    ``runspec history reindex``. Unlike :func:`read_run_summaries` it keeps
+    ``runspec exec``'s observed exit codes, labels and skips, and ``log_file``."""
+    from .inbox import rows_from_lines
+
+    out: list[dict[str, Any]] = []
+    for d in dirs:
+        if not d.is_dir():
+            continue
+        for f in sorted(d.glob("*.log")) + sorted(d.glob("*.log.gz")):
+            for row in rows_from_lines(f.name, _read_lines(f)):
+                row["log_file"] = f.name
+                out.append(row)
+    return out
 
 
 def read_run_summaries(dirs: Iterable[Path]) -> list[dict[str, Any]]:
@@ -344,7 +438,7 @@ def inventory(dirs: Iterable[Path], runnable: str | None = None) -> dict[str, di
     files and archives are counted — never a single-mode ``{runnable}.log``.
     """
     per: dict[str, dict[str, Any]] = {}
-    for f in _discover(dirs, runnable):
+    for f in _discover(dirs, runnable, include_inbox=True):
         if not _is_managed(f):
             continue
         name = _runnable_of(f)
@@ -707,10 +801,25 @@ def share(
     *,
     group: str | None = None,
     acl_users: list[str] | None = None,
+    inbox: bool = False,
+    no_inbox: bool = False,
+    owner_only: bool = False,
     as_json: bool = False,
     out: TextIO | None = None,
 ) -> list[dict[str, Any]]:
-    """Make each logs dir writable by a shared Unix group, so several accounts
+    """Share each logs dir with other accounts.
+
+    **The inbox (recommended — docs/design/venv-logs-inbox.md):** ``inbox=True``
+    creates ``logs/inbox`` (``01777``, owned by the venv owner; a ``.no-inbox``
+    marker is removed) so every other account drops its per-run file there and
+    the owner's sweep indexes it — no group, ACL or sudo rule. With the inbox,
+    ``logs/`` itself keeps its mode unless ``group``/``acl_users`` also ask for
+    group sharing; ``owner_only`` makes it ``0755`` (drops group write — only
+    the owner writes it). ``no_inbox`` writes the ``.no-inbox`` opt-out marker
+    instead. Must run as the venv owner (or root, which the CLI drops to the
+    owner first).
+
+    **Group sharing (the alternative):** make each logs dir writable by a shared Unix group, so several accounts
     (e.g. a console operator plus the service account a ``run_as`` runnable runs
     as) can write the per-venv runs index and audit logs into the *same* dir.
 
@@ -741,8 +850,17 @@ def share(
     acl_users = [u for u in (acl_users or []) if u]
     out = out or sys.stdout
     results: list[dict[str, Any]] = []
+    if inbox and no_inbox:
+        raise ValueError("--inbox and --no-inbox are mutually exclusive")
+    group_share = not (inbox or no_inbox or owner_only) or bool(group or acl_users)
     for d in targets:
         d.mkdir(parents=True, exist_ok=True)
+        if not group_share:
+            res = _share_inbox(d, inbox=inbox, no_inbox=no_inbox, owner_only=owner_only)
+            results.append(res)
+            if not as_json:
+                out.write(_inbox_line(res) + "\n")
+            continue
         if group:
             shutil.chown(d, group=group)
         os.chmod(d, 0o2775)
@@ -767,15 +885,57 @@ def share(
         if acl_users:
             result["acl"] = _grant_acl(d, acl_users)
             result["acl_users"] = list(acl_users)
+        if inbox or no_inbox:
+            result.update(_share_inbox(d, inbox=inbox, no_inbox=no_inbox, owner_only=False))
+            result["mode"] = "2775"
         results.append(result)
         if not as_json:
             g = f" (group {group})" if group else ""
             extra = " + runs index" if db_repaired else ""
             acl = f" + acl {result['acl']} for {','.join(acl_users)}" if acl_users else ""
             out.write(f"shared {d}{g} — 2775 setgid{extra}{acl}\n")
+            if inbox or no_inbox:
+                out.write(_inbox_line(result) + "\n")
     if as_json:
         out.write(json.dumps({"shared": results}) + "\n")
     return results
+
+
+def _share_inbox(d: Path, *, inbox: bool, no_inbox: bool, owner_only: bool) -> dict[str, Any]:
+    """The inbox half of :func:`share` for one dir. Raises ``OSError`` (like the
+    group share) when the inbox can't be set up — e.g. not run as the owner."""
+    from . import inbox as _inbox
+
+    res: dict[str, Any] = {"dir": str(d)}
+    if owner_only:
+        os.chmod(d, 0o755)
+        res["mode"] = "0755"
+    if no_inbox:
+        _inbox.disable_inbox(d)
+        res["inbox"] = "disabled"
+        return res
+    if inbox:
+        owner = _inbox.owner_of_logs(d)
+        if owner is not None and hasattr(os, "geteuid") and os.geteuid() not in (owner, 0):
+            raise PermissionError(f"only the venv owner ({_inbox.user_name(owner)}) can set up {d / 'inbox'} — run it as that account (sudo -u {_inbox.user_name(owner)} …)")
+        got = _inbox.ensure_inbox(d, owner, force=True)
+        if got not in ("created", "repaired", "ok"):
+            raise OSError(f"couldn't set up {d / 'inbox'}: {got}")
+        res["inbox"] = got
+        res["inbox_path"] = str(_inbox.inbox_dir(d))
+    return res
+
+
+def _inbox_line(res: dict[str, Any]) -> str:
+    parts = []
+    if res.get("inbox") == "disabled":
+        parts.append(f"inbox disabled for {res['dir']} (.no-inbox marker written)")
+    elif res.get("inbox"):
+        verb = {"created": "created", "repaired": "repaired", "ok": "already set up"}.get(res["inbox"], res["inbox"])
+        parts.append(f"logs inbox {verb}: {res.get('inbox_path')} (01777) — other accounts' runs now reach this venv's history")
+    if res.get("mode") == "0755":
+        parts.append(f"{res['dir']} is owner-only (0755)")
+    return "; ".join(parts) or f"nothing to change in {res['dir']}"
 
 
 def _line_ts(line: str) -> str:

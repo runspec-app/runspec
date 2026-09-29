@@ -7,6 +7,85 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.66.0] — 2026-09-29
+
+**The shared-venv logs inbox** (`docs/design/venv-logs-inbox.md`). Every run of
+a shared venv now lands in that venv's history — whether the owner, root or any
+other operator ran it — with no groups, ACLs, sudo rules or daemons. The venv
+stays self-contained: everything is still under `{venv}/logs`.
+
+### Added
+
+- **`logs/inbox/`, a sticky drop-box.** It's mode `01777` and owned by the
+  venv owner (the owner of the venv root).
+  - Any other account (operators, root, other crontabs) writes its per-run file
+    there instead of falling back to its own `~/logs`, and never touches the
+    runs index.
+  - The file is created exclusively, never through a symlink, and never
+    reopened by path. It's mode `0644`, always per-run, and held under an
+    exclusive `flock` for the run; the lock is the liveness signal.
+  - It starts with a `run_start` record and ends with `run_summary` (or a new
+    slim `run_end` when `summary = false`). SPEC updated ("Shared logs
+    directory — the inbox").
+- **Automatic set-up.** On every run as the venv owner or root, core does a
+  quick check and set (one `lstat`):
+  - a missing inbox is created `0700`, handed to the owner, then set to
+    `01777`, so a root-owned world-writable dir never exists, even briefly;
+  - a wrong mode is repaired;
+  - a symlink, a non-directory or a foreign-owned path is never touched;
+  - a `logs/.no-inbox` marker opts out.
+
+  It's recorded in the audit log only (`event=inbox_created`).
+- **`runspec logs share --inbox`** is the documented set-up step, run as the
+  venv owner; as root it drops to the owner first, so the standard `(root)`
+  sudo grant is enough. `--no-inbox` writes the opt-out marker, and
+  `--owner-only` makes `logs/` `0755`. Without `--group`/`--acl-user`, `--inbox`
+  leaves `logs/`'s own mode alone.
+- **`runspec history sweep`**, for the owner only; as root it drops to the
+  owner.
+  - It indexes finished inbox runs and moves their files into `logs/`. The
+    owner's own runs also sweep at finalize (throttled to once a minute,
+    time-boxed to 2s).
+  - A run whose lock is still held is never indexed. An unfinished run whose
+    lock is free and whose process is confirmed gone is indexed `crashed`.
+  - Validation: `lstat` and `fstat` must agree; regular file; one link;
+    world-readable; not the owner's; under a size cap. Files are opened
+    `O_NONBLOCK|O_NOFOLLOW` against a directory handle, so FIFOs, symlinks and
+    hard links are skipped.
+  - Timestamps are clamped to the file's ctime, and one account's files are
+    capped per sweep.
+  - A file is never moved over an existing one, and is re-checked by inode
+    after the move.
+  - A binding table stops one account's file rewriting another's row.
+- **Readers see index ∪ inbox.** `history list` / `running` and
+  `runsdb.list_runs_with_inbox()` read the inbox first and dedupe by `run_id`,
+  with the index winning. Inbox rows carry `pending`. `history stats` reports
+  the inbox's state, pending files, and junk only root can clear.
+  - `runspec logs <runnable>` and `logs status` overlay the inbox read-only;
+    prune, compact and reindex never touch it.
+  - New `logs.resolve_log_file()` looks in `logs/` then `inbox/`.
+- **Runs index schema v6:** `os_user` (kernel-attested — the writer's effective
+  account for a direct row, the file owner for a swept one), `source`
+  (`direct`/`inbox`) and `exec_uid`. `user`/`user_target` stay self-reported.
+- **`runspec exec` in the inbox.** A non-owner wrapper creates the run's inbox
+  file and holds its lock. It hands the child `RUNSPEC_RUN_LOG` to join (and
+  `RUNSPEC_EXEC_UID`), and writes `exec_output`/`exec_result` through its held
+  handle.
+  - `--skip-if-running` reads index ∪ inbox, but only trusts runs by the same
+    account, the owner or root. A forged "running" file can't hold a schedule
+    off.
+  - A wrapper and child on different sides of the inbox bind through the
+    binding table.
+
+### Changed
+
+- **A per-run file only yields records for its own run** (the id in its name) —
+  in `runspec logs` views and the new parser — so a dropped file can't inject
+  records into another run.
+- **`runspec history reindex`** now rebuilds from every record through the one
+  parser (`inbox.row_from_records`). It keeps `runspec exec`'s observed exit
+  codes, labels and skips, which the run_summary-only rebuild lost.
+
 ## [0.65.0] — 2026-09-29
 
 Shared-venv logging fixes — the standalone half of the logs-inbox work

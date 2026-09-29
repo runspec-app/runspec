@@ -28,6 +28,13 @@ testpaths = ["tests"]
 [tool.mypy]
 python_version = "3.10"
 
+# `deprecated` (pulled in by atlassian-python-api) ships a py.typed marker and
+# Python 3.12-only syntax (`type X = …`), which mypy can't parse under
+# python_version = "3.10". We never call it — don't analyse it.
+[[tool.mypy.overrides]]
+module = ["deprecated", "deprecated.*"]
+follow_imports = "skip"
+
 # `markdown` / `markdownify` ship no type stubs; we only call the top-level API.
 # `truststore` is an optional runtime detection helper, imported lazily.
 [[tool.mypy.overrides]]

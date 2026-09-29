@@ -111,7 +111,7 @@ def test_v4_db_migrates_and_reports_v5(logs_dir):
     runsdb.finish_run(logs_dir, "new", exit_code=0, duration_ms=1, status="completed", events={"INFO": 1})
     assert _get(logs_dir, "old")["events"] is None  # unknown for rows written before
     assert json.loads(_get(logs_dir, "new")["events"]) == {"INFO": 1}
-    assert runsdb.stats(logs_dir)["schema_version"] == 5
+    assert runsdb.stats(logs_dir)["schema_version"] == 6  # a write migrates all the way up
 
 
 def test_changes_carry_them(logs_dir):
