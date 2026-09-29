@@ -331,7 +331,7 @@ def iter_log_frames(stdout: str) -> list[tuple[str, str]]:
 # or FIFO can't redirect or hang the read; a per-run file yields only its own run.
 # Liveness is the writer's lock (a held ``flock`` = running), never the pid alone.
 _INBOX_FRAGMENT = r"""
-import json, os, re as _re, stat as _st, time as _time
+import json, os, re as _re, sqlite3, stat as _st, time as _time
 _RS_NAME = _re.compile(r"\.\d{8}T\d{6}Z\.([0-9a-fA-F-]{8,})\.log$")
 _RS_UUID = _re.compile(r"^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})(?:-[0-9a-fA-F]{8})?$")
 _RS_MAX = 64 * 1024 * 1024
@@ -378,6 +378,21 @@ def _rs_unsafe(d):
         return bool(os.stat(d).st_mode & 0o1002)
     except Exception:
         return False
+def _rs_ro(db, timeout=2.0):
+    # Read-only open of a runs index. ``mode=ro`` on a WAL database still has to
+    # create the ``-shm`` sidecar, which a non-owner can't in an owner-only (0755)
+    # logs dir once the owner's last connection has removed it. With no ``-wal``
+    # the main file holds every committed row, so fall back to ``immutable=1``
+    # (mirrors core's runsdb._connect).
+    con = sqlite3.connect("file:%s?mode=ro" % db, uri=True, timeout=timeout)
+    try:
+        con.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchall()
+        return con
+    except sqlite3.OperationalError:
+        con.close()
+        if os.path.exists(db + "-wal"):
+            raise
+    return sqlite3.connect("file:%s?mode=ro&immutable=1" % db, uri=True, timeout=timeout)
 def _rs_rid(name):
     m = _RS_NAME.search(name)
     if not m:
@@ -582,7 +597,7 @@ for d in a.get("dirs", []):
         e["has_db"] = False; e["error"] = "refusing a runs index in a world-writable or sticky dir"
     if e["has_db"]:
         try:
-            con = sqlite3.connect("file:%s?mode=ro" % db, uri=True, timeout=2.0)
+            con = _rs_ro(db)
             con.row_factory = sqlite3.Row
             q = "SELECT * FROM runs WHERE status != 'running'"
             pr = []
@@ -665,7 +680,7 @@ for d, cur in (a.get("dirs") or {}).items():
         out[d] = {"mode": "error", "error": "refusing a runs index in a world-writable or sticky dir"}
     else:
         try:
-            con = sqlite3.connect("file:%s?mode=ro" % db, uri=True, timeout=2.0)
+            con = _rs_ro(db)
             con.row_factory = sqlite3.Row
             try:
                 out[d] = pull(con, cur or {})
@@ -775,7 +790,7 @@ for d in a.get("dirs", []):
         e["has_db"] = False; e["error"] = "refusing a runs index in a world-writable or sticky dir"
     if e["has_db"]:
         try:
-            con = sqlite3.connect("file:%s?mode=ro" % db, uri=True, timeout=2.0)
+            con = _rs_ro(db)
             con.row_factory = sqlite3.Row
             rows = con.execute("SELECT * FROM runs WHERE status='running' ORDER BY start_ts DESC LIMIT ?", (limit,)).fetchall()
             con.close()

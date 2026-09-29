@@ -264,6 +264,27 @@ def _win_pid_exists(pid: int) -> bool:
 # ── connection (chmod-before-WAL, WAL, busy_timeout, incremental auto-vacuum) ────
 
 
+def _connect_ro(path: Path) -> sqlite3.Connection:
+    """``mode=ro``, falling back to ``immutable=1`` when that can't open.
+
+    A ``mode=ro`` open of a WAL database still has to *create* the ``-shm``
+    sidecar. A non-owner reading an owner-only (0755) ``logs/`` can't, once the
+    owner's last connection has checkpointed and removed ``-wal``/``-shm`` — the
+    normal state of an inbox venv (docs/design/venv-logs-inbox.md). With no
+    ``-wal`` the main file holds every committed row, so an immutable read is
+    complete. Raises when both fail (the caller's best-effort ``except``)."""
+    timeout = _BUSY_TIMEOUT_MS / 1000
+    con = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=timeout)
+    try:
+        con.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchall()
+        return con
+    except sqlite3.OperationalError:
+        con.close()
+        if Path(f"{path}-wal").exists():
+            raise
+    return sqlite3.connect(f"file:{path}?mode=ro&immutable=1", uri=True, timeout=timeout)
+
+
 def _connect(path: Path, *, readonly: bool = False) -> sqlite3.Connection | None:
     """Open the DB best-effort, or ``None`` on any failure.
 
@@ -277,7 +298,7 @@ def _connect(path: Path, *, readonly: bool = False) -> sqlite3.Connection | None
         if readonly:
             if not path.exists():
                 return None
-            con = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=_BUSY_TIMEOUT_MS / 1000)
+            con = _connect_ro(path)
             con.row_factory = sqlite3.Row
             return con
 

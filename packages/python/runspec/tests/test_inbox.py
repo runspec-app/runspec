@@ -442,6 +442,28 @@ class TestMultiUser:
         assert all((venv / "logs" / r["log_file"]).exists() for r in rows)
         assert _sweep(exe, venv)["swept"] == 0  # idempotent
 
+    def test_an_operator_reads_the_swept_index_in_an_owner_only_logs_dir(self, shared):
+        # logs/ is 0755 and the owner's last connection removed -wal/-shm, so a
+        # plain mode=ro open can't create -shm — the reader must still see the rows
+        # (the immutable fallback), not an empty history.
+        venv, exe = shared
+        _run_as(OWNER, exe, venv, _A_RUN)
+        assert _run_as(ALICE, exe, venv, _A_RUN).returncode == 0
+        assert _sweep(exe, venv)["swept"] == 1
+        logs = venv / "logs"
+        assert not Path(f"{runsdb.db_path(logs)}-shm").exists()
+        read = """
+            import json
+            from pathlib import Path
+            from runspec import runsdb
+            d = Path(sys.prefix) / "logs"
+            st = runsdb.stats(d)
+            print(json.dumps([len(runsdb.list_runs(d, live=False)), st.get("rows"), st.get("error")]))
+        """
+        res = _run_as(BOB, exe, venv, read)
+        assert res.returncode == 0, res.stderr
+        assert json.loads(res.stdout.strip().splitlines()[-1]) == [2, 2, None]
+
     def test_only_the_owner_sweeps(self, shared):
         venv, exe = shared
         _run_as(OWNER, exe, venv, _A_RUN)
@@ -609,3 +631,43 @@ time.sleep(30)
             proc.wait()
             if proc.stdout is not None:
                 proc.stdout.close()
+
+
+class TestCliDisplay:
+    def test_history_line_shows_the_account_and_the_invoker(self, capsys):
+        from runspec import cli
+
+        base = {"start_ts": "2026-09-29T20:35:49", "status": "completed", "runnable": "demo", "duration_ms": 5, "exit_code": 0, "host": "web-01"}
+        cli._print_history_table(
+            [
+                {**base, "user": "root", "os_user": "alice"},  # sudo -u alice
+                {**base, "user": "bob", "os_user": "bob"},
+                {**base, "user": "carol"},  # pre-v6 row: no os_user
+                {**base, "user": "unknown", "os_user": "root"},
+            ]
+        )
+        out = capsys.readouterr().out.splitlines()
+        assert out[0].endswith("[alice@web-01 via root]")
+        assert out[1].endswith("[bob@web-01]")
+        assert out[2].endswith("[carol@web-01]")
+        assert out[3].endswith("[root@web-01]")
+
+    def test_stats_calls_read_only_expected_in_an_inbox_venv(self, capsys):
+        from runspec import cli
+
+        snap = {"path": "/v/logs/runspec_runs.db", "exists": True, "rows": 1, "by_status": {"completed": 1}, "write_error": "permission denied"}
+        cli._print_history_stats([{**snap, "inbox": {"state": "ok", "files": 0}}])
+        out = capsys.readouterr().out
+        assert "read-only for you" in out and "✗" not in out
+        cli._print_history_stats([{**snap, "inbox": {"state": "missing"}}])
+        out = capsys.readouterr().out
+        assert "✗  not writable by you" in out and "no logs inbox" in out
+
+    def test_stats_reports_the_inbox_before_any_index_exists(self, capsys):
+        from runspec import cli
+
+        cli._print_history_stats([{"path": "/v/logs/runspec_runs.db", "exists": False, "inbox": {"state": "ok", "files": 2, "finished": 2, "bytes": 2048}}])
+        out = capsys.readouterr().out
+        assert "(no index yet)" in out and "inbox: 2 pending file(s), 2 finished awaiting sweep" in out
+        cli._print_history_stats([{"path": "/v/logs/runspec_runs.db", "exists": False, "inbox": {"state": "no-logs"}}])
+        assert "runspec logs share --inbox" in capsys.readouterr().out

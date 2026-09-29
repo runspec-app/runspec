@@ -7,6 +7,39 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.66.1] — 2026-09-29
+
+### Fixed
+
+- **Operators can read a swept runs index again.** In an inbox venv, `logs/`
+  is owner-only (`0755`). A read-only (`mode=ro`) open of the WAL-mode index
+  still has to create the `-shm` sidecar, and a non-owner can't once the
+  owner's last connection has removed it. So, after the first sweep, other
+  accounts saw an empty `runspec history list`, and `history stats` failed with
+  "attempt to write a readonly database". A read-only open now falls back to
+  `immutable=1` when that happens and there is no `-wal` file, because then the
+  main file holds every committed row (`runsdb._connect_ro`). A new
+  multi-user test covers an operator reading after the sweep.
+- **`runspec history list` shows the account a run executed as.** Each line
+  showed the self-reported invoker (for `sudo -u opdemo …` that is `root`).
+  It now shows the kernel-attested `os_user`, plus `via <invoker>` when that
+  differs, e.g. `[opdemo@web-01 via root]`.
+- **`runspec history stats` is clearer for operators.**
+  - For a non-owner in a venv with a healthy inbox it prints "read-only for
+    you — your runs go through the logs inbox" instead of an alarming
+    `✗ not writable by you`. That state is expected there.
+  - The inbox line is now also printed before the first sweep has created the
+    index. It used to be skipped.
+  - When the venv has no `logs/` dir yet, it now names the set-up command
+    (`runspec logs share --inbox`) instead of printing nothing.
+
+### Docs
+
+- New guide **Shared venvs — the logs inbox** (`docs/logs-inbox.md`). It covers
+  how the inbox works end to end, the plain three-command set-up (no
+  runspec-linux needed), verification, the commands, and troubleshooting.
+  `docs/logging.md` and `docs/console-hosts.md` link to it.
+
 ## [0.66.0] — 2026-09-29
 
 **The shared-venv logs inbox** (`docs/design/venv-logs-inbox.md`). Every run of

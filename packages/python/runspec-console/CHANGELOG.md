@@ -7,6 +7,20 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.304.1] — 2026-09-29
+
+### Fixed
+
+- **History for a swept inbox venv is no longer empty for non-owner
+  operators.** The remote read, sync and running snippets opened the runs index
+  `mode=ro`, which still has to create the WAL `-shm` sidecar. The console
+  connects to a venv as the operator, not the owner, and the operator can't
+  create files in the owner-only (`0755`) `logs/`, so those reads failed and
+  History showed only the inbox's pending rows. A new `_rs_ro` helper in the
+  shared inbox fragment falls back to `immutable=1` when there is no `-wal`
+  file, mirroring core 0.66.1. It lives in the snippet, so it works against a
+  remote venv whatever runspec version it has.
+
 ## [0.304.0] — 2026-09-29
 
 **The shared-venv logs inbox** (runspec >= 0.66, `docs/design/venv-logs-inbox.md`).

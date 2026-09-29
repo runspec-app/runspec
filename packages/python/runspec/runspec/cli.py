@@ -975,7 +975,13 @@ def _print_history_table(rows: list[dict[str, Any]]) -> None:
         name = f"{r.get('runnable') or ''} {r.get('command') or ''}".strip()
         dur = r.get("duration_ms")
         dur_s = f"{dur / 1000:.2f}s" if isinstance(dur, int) else "—"
-        who = f"{r.get('user') or ''}@{r.get('host') or ''}"
+        # The account the run executed as (kernel-attested for inbox runs), plus
+        # the self-reported invoker when that differs (e.g. ``sudo -u``).
+        acct = r.get("os_user") or r.get("user") or ""
+        who = f"{acct}@{r.get('host') or ''}"
+        invoker = r.get("user") or ""
+        if invoker and invoker not in (acct, "unknown"):
+            who += f" via {invoker}"
         exit_part = "" if status == "running" else f" exit={r.get('exit_code')}"
         print(f"{_HISTORY_MARK.get(status, '·')} {ts}  {status:9} {dur_s:>8}  {name}{exit_part}  [{who}]")
 
@@ -1098,9 +1104,11 @@ def _print_history_stats(snaps: list[dict[str, Any]]) -> None:
         print(s["path"])
         if not s.get("exists"):
             print("   (no index yet)")
+            _print_inbox_stats(s.get("inbox"))
             continue
         if s.get("error"):
             print(f"   ✗  {s['error']}")
+            _print_inbox_stats(s.get("inbox"))
             continue
         size_kib = (s.get("size_bytes") or 0) / 1024
         by = ", ".join(f"{k}={v}" for k, v in sorted((s.get("by_status") or {}).items())) or "empty"
@@ -1115,11 +1123,17 @@ def _print_history_stats(snaps: list[dict[str, Any]]) -> None:
         if s.get("log_pruned"):
             print(f"   {s['log_pruned']} row(s) outlive their pruned log file")
         if s.get("write_error"):
-            print(f"   ✗  not writable by you: {s['write_error']}")
+            if (s.get("inbox") or {}).get("state") == "ok":
+                # Expected in an inbox venv: only the owner writes the index; your
+                # runs reach it through logs/inbox and the owner's sweep.
+                print("   read-only for you — your runs go through the logs inbox")
+            else:
+                print(f"   ✗  not writable by you: {s['write_error']}")
         _print_inbox_stats(s.get("inbox"))
 
 
 _INBOX_PROBLEMS = {
+    "no-logs": "no logs dir or inbox yet — other accounts' runs fall back to their own ~/logs. Set it up (as the venv owner): runspec logs share --inbox",
     "missing": "no logs inbox — other accounts' runs fall back to their own ~/logs. Set it up (as the venv owner): runspec logs share --inbox",
     "disabled": "logs inbox disabled (.no-inbox marker)",
     "bad-mode": "logs inbox has the wrong mode — the owner's next run (or `runspec logs share --inbox`) repairs it",
@@ -1131,7 +1145,7 @@ _INBOX_PROBLEMS = {
 
 
 def _print_inbox_stats(ib: dict[str, Any] | None) -> None:
-    if not ib or ib.get("state") in (None, "unsupported", "no-logs"):
+    if not ib or ib.get("state") in (None, "unsupported"):
         return
     st = ib["state"]
     if st != "ok":

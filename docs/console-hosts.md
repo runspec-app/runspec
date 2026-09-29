@@ -82,10 +82,10 @@ Each step is confirm-gated. Then add the new venv's
 A shared venv is owned by one account but its runnables are run by others —
 operators logged in as themselves, root (`run_as = "root"`), other accounts'
 crontabs. **Set up its logs inbox** so every one of those runs lands in the
-venv's history (runspec >= 0.66):
+venv's history (runspec >= 0.66.1):
 
 ```bash
-sudo -u <owner> /opt/venvs/ops/bin/runspec logs share --inbox
+sudo -u <owner> /opt/venvs/ops/bin/runspec logs share --inbox --owner-only
 ```
 
 This creates `logs/inbox` (sticky `01777`, owned by the venv's owner): every
@@ -93,6 +93,9 @@ other account drops its per-run log file there, and the owner's runs index it.
 No group, ACL or extra sudo rule is needed. Until it's set up, other accounts'
 runs fall back to their own `~/logs`, where History can't see them.
 
+- A plain venv works too — no `runspec-linux` needed. As the owner, with
+  `umask 022`: `python3 -m venv`, `pip install "runspec>=0.66.1" …`, then the
+  command above.
 - `create-venv` (runspec-linux >= 0.18) creates the inbox for you;
   `--no-inbox` opts out.
 - For a venv that already exists, run the command above, or
@@ -102,8 +105,8 @@ runs fall back to their own `~/logs`, where History can't see them.
 
 Finished runs waiting in the inbox show in History with an **inbox** tag. The
 owner's runs sweep them into the runs index, or use **Logs → Runs index… →
-Sweep inbox**. See [Audit logging → Sharing the logs dir](logging.md#sharing-the-logs-dir-across-accounts-runspec-logs-share)
-and the design, [venv logs inbox](design/venv-logs-inbox.md).
+Sweep inbox**. The full walkthrough — how it works, checking it, and
+troubleshooting — is [Shared venvs — the logs inbox](logs-inbox.md).
 
 The older alternative is still there: `create-venv --group consoles` (or
 `share-venv-logs --group consoles`) makes `logs/` group-shared (`2775` +

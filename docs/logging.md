@@ -273,12 +273,17 @@ run by other accounts: operators logged in as themselves, root (a
 the owner's `logs/`, so without help their runs fall back to their own
 `~/logs`, where the venv's history (and every console) can't see them.
 
-**Set up the logs inbox (recommended, runspec >= 0.66, POSIX).** Run this once
+**Set up the logs inbox (recommended, runspec >= 0.66.1, POSIX).** Run this once
 per venv, as the venv's owner:
 
 ```bash
-sudo -u <owner> {venv}/bin/runspec logs share --inbox
+sudo -u <owner> {venv}/bin/runspec logs share --inbox --owner-only
 ```
+
+A plain venv is enough — no `runspec-linux` needed. Create it, install
+`runspec>=0.66.1`, and run the command above, all as the owner with `umask 022`.
+**[Shared venvs — the logs inbox](logs-inbox.md)** walks through the whole
+thing: set-up, how to check it works, and troubleshooting.
 
 It creates `{venv}/logs/inbox`: sticky, `01777`, owned by the owner. It works
 like `/tmp` or a mail spool:

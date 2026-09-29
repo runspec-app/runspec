@@ -394,3 +394,77 @@ class TestUnsafeDirIsPosixOnly(unittest.TestCase):
             self.assertTrue(
                 ns["_rs_unsafe"](d)
             )  # a world-writable dir on POSIX is refused
+
+
+class TestReadOnlyOpenFallsBackToImmutable(unittest.TestCase):
+    """``mode=ro`` on a WAL index needs to create ``-shm``, which a non-owner can't
+    in an owner-only (0755) logs dir — the snippets must still read the rows."""
+
+    def _db(self) -> str:
+        import sqlite3
+
+        d = tempfile.mkdtemp()
+        db = os.path.join(d, "runspec_runs.db")
+        con = sqlite3.connect(db)
+        con.execute("PRAGMA journal_mode=WAL")
+        con.execute("CREATE TABLE runs (run_id TEXT)")
+        con.execute("INSERT INTO runs VALUES ('r1')")
+        con.commit()
+        con.close()  # last connection: -wal/-shm are removed
+        return db
+
+    def _ns(self, refuse_plain_ro: bool) -> dict:
+        import sqlite3
+
+        ns: dict = {}
+        exec(bridge_utils._INBOX_FRAGMENT, ns)
+        real = sqlite3.connect
+        seen: list[str] = []
+
+        class _Refusing:
+            def execute(self, *a, **k):  # what SQLite says when it can't make -shm
+                raise sqlite3.OperationalError("attempt to write a readonly database")
+
+            def close(self) -> None:
+                pass
+
+        def connect(target, *a, **k):
+            seen.append(target)
+            if refuse_plain_ro and "immutable" not in target:
+                return _Refusing()
+            return real(target, *a, **k)
+
+        fake = type(
+            "M",
+            (),
+            {
+                "connect": staticmethod(connect),
+                "OperationalError": sqlite3.OperationalError,
+            },
+        )
+        ns["sqlite3"] = fake
+        ns["_seen"] = seen
+        return ns
+
+    def test_plain_ro_is_used_when_it_works(self) -> None:
+        db = self._db()
+        ns = self._ns(refuse_plain_ro=False)
+        con = ns["_rs_ro"](db)
+        self.assertEqual(con.execute("SELECT run_id FROM runs").fetchall(), [("r1",)])
+        self.assertEqual(len(ns["_seen"]), 1)
+
+    def test_falls_back_to_immutable_when_shm_cant_be_created(self) -> None:
+        db = self._db()
+        ns = self._ns(refuse_plain_ro=True)
+        con = ns["_rs_ro"](db)
+        self.assertEqual(con.execute("SELECT run_id FROM runs").fetchall(), [("r1",)])
+        self.assertIn("immutable=1", ns["_seen"][-1])
+
+    def test_no_immutable_read_while_a_wal_holds_uncheckpointed_rows(self) -> None:
+        import sqlite3
+
+        db = self._db()
+        Path(db + "-wal").write_bytes(b"")
+        ns = self._ns(refuse_plain_ro=True)
+        with self.assertRaises(sqlite3.OperationalError):
+            ns["_rs_ro"](db)

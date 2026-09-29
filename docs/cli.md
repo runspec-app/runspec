@@ -664,7 +664,7 @@ A typical nightly cron line:
 Archives stay JSON-lines (gzipped), so `runspec logs <runnable>` and the
 console's History/Analytics keep reading them after compaction.
 
-**Set up the logs inbox** — `runspec logs share --inbox` (runspec >= 0.66,
+**Set up the logs inbox** — `runspec logs share --inbox` (runspec >= 0.66.1,
 POSIX). A shared venv needs this once, run as its owner. It lets every other
 account's runs (operators, root, other crontabs) reach the venv's history
 instead of falling back to their own `~/logs`:
@@ -680,7 +680,7 @@ them into the runs index (`runspec history sweep`, and automatically on the
 owner's own runs). Run as root, the command drops to the venv's owner first. It
 refuses a non-owner with a one-line message naming the owner. `--inbox` leaves
 `logs/`'s own mode alone unless `--group` / `--acl-user` are also given.
-Details: [logging → Sharing the logs dir](logging.md#sharing-the-logs-dir-across-accounts-runspec-logs-share).
+Walkthrough: [Shared venvs — the logs inbox](logs-inbox.md).
 
 **The group alternative** — `runspec logs share` without `--inbox`. When more
 than one account writes into a venv (a console operator plus the service account
