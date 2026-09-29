@@ -8,6 +8,28 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.302.0] — 2026-09-29
+
+### Changed
+
+- **Card header actions: Copy output · Ask the assistant · ⋯.** Copy output and
+  Ask the assistant were on a line of their own at the top of every card body,
+  which wasted a line on every card. They now sit at the end of the card header.
+  The per-card prompt and rerun icons move into a **⋯ More actions** menu: Copy
+  prompt, Edit & resend and Resend on a chat turn; Edit in a form & rerun and
+  Rerun with same args on a run. The header's info tags are unchanged. A
+  finished run with structured output keeps its Table / Raw toggle line (the
+  only case that still has one). New `OutputPanel.cardMoreItems`.
+- **Search-mode tool rows name the runnable that ran.** In `[llm] tool_mode =
+  "search"` every runnable call is the `run_runnable` wrapper, and deferred
+  built-ins go through `use_tool`, so tool rows (and the bottom activity bar)
+  all read `run_runnable` and you had to read the args to tell calls apart.
+  Rows now show the runnable, its subcommand and its own args (e.g.
+  `find-large-files host="web-01" path="/var"`, `cron add`), or the inner
+  built-in for `use_tool`. Hover the name to see the wrapper it ran through.
+  A group-qualified id (`runspec_linux__find-large-files`) is cut at its last
+  `__`. New `OutputPanel.toolDisplay`.
+
 ## [0.301.2] — 2026-09-29
 
 ### Changed

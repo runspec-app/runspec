@@ -1,5 +1,6 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Button, Checkbox, Input, Tag, Tooltip, Typography, message } from 'antd'
+import { Button, Checkbox, Dropdown, Input, Tag, Tooltip, Typography, message } from 'antd'
+import type { MenuProps } from 'antd'
 import { bridge } from '../bridge'
 import { Markdown } from './Markdown'
 import { useIsDark, textColor, useAccent, surfaces, textFaint, textMuted, textSecondary, MONO_FONT, RADIUS } from '../ThemeContext'
@@ -7,7 +8,7 @@ import {
   ThunderboltOutlined, CheckCircleOutlined, CloseCircleOutlined, LoadingOutlined,
   RedoOutlined, EditOutlined, CopyOutlined, RobotOutlined, CaretRightOutlined,
   ApiOutlined, DownOutlined, RightOutlined, VerticalAlignBottomOutlined,
-  TableOutlined, CodeOutlined, PauseCircleOutlined, StopOutlined,
+  TableOutlined, CodeOutlined, PauseCircleOutlined, StopOutlined, EllipsisOutlined,
 } from '@ant-design/icons'
 
 const { Text } = Typography
@@ -606,6 +607,69 @@ export function rerunFromToolEntry(entry: ToolCallEntry): RerunData | null {
   return { host: m[1], runnable: m[2], args: rest, commandPath }
 }
 
+/**
+ * What a tool row shows as its name + args. The search-mode wrappers carry
+ * the real call inside their input — `run_runnable {id, host, command, args}`
+ * and `use_tool {name, input}` — so showing the wrapper name made every row
+ * read `run_runnable` and the operator had to dig into the args to see which
+ * runnable ran. Unwrap them (like the backend's confirm-card view) and keep
+ * the wrapper name as `via` for a tooltip. Other tools: the name minus its
+ * `<group>__` / `<host>__` prefix, args as given.
+ */
+export function toolDisplay(entry: ToolCallEntry): { name: string; args: [string, unknown][]; via?: string } {
+  const input = (entry.input ?? {}) as Record<string, unknown>
+  const isObj = (v: unknown): v is Record<string, unknown> =>
+    !!v && typeof v === 'object' && !Array.isArray(v)
+  if (entry.name === 'run_runnable' && typeof input.id === 'string' && input.id) {
+    const cmd = Array.isArray(input.command)
+      ? (input.command as unknown[]).map(String).join(' ')
+      : typeof input.command === 'string' ? input.command : ''
+    // A group-qualified id (`runspec_linux__find-large-files`) — the group may
+    // itself contain underscores, so cut at the last `__`.
+    const id = input.id.includes('__') ? input.id.slice(input.id.lastIndexOf('__') + 2) : input.id
+    const name = [id, cmd].filter(Boolean).join(' ')
+    const args: [string, unknown][] = []
+    if (typeof input.host === 'string' && input.host) args.push(['host', input.host])
+    if (isObj(input.args)) args.push(...Object.entries(input.args))
+    return { name, args, via: 'run_runnable' }
+  }
+  if (entry.name === 'use_tool' && typeof input.name === 'string' && input.name) {
+    return {
+      name: input.name,
+      args: isObj(input.input) ? Object.entries(input.input) : [],
+      via: 'use_tool',
+    }
+  }
+  return { name: entry.name.replace(/^[^_]+__/, ''), args: Object.entries(input) }
+}
+
+/**
+ * The card header's ⋯ menu: the prompt actions for a finished chat turn and
+ * the rerun actions for a finished run. Empty while running (nothing to act on
+ * yet), so the ⋯ button is hidden then.
+ */
+export function cardMoreItems(
+  block: Pick<InvocationBlock, 'type' | 'done' | 'label' | 'rerunData'>,
+  opts: { canRerun: boolean; canEditInForm: boolean },
+): NonNullable<MenuProps['items']> {
+  if (!block.done) return []
+  if (block.type === 'chat') {
+    if (!block.label) return []
+    return [
+      { key: 'copy-prompt', icon: <CopyOutlined />, label: 'Copy prompt' },
+      { key: 'edit-resend', icon: <EditOutlined />, label: 'Edit & resend' },
+      { key: 'resend', icon: <RedoOutlined />, label: 'Resend' },
+    ]
+  }
+  if (!block.rerunData || !opts.canRerun) return []
+  return [
+    ...(opts.canEditInForm
+      ? [{ key: 'edit-form', icon: <EditOutlined />, label: 'Edit in a form & rerun' }]
+      : []),
+    { key: 'rerun', icon: <RedoOutlined />, label: 'Rerun with same args' },
+  ]
+}
+
 /** Serialise a chat transcript (interleaved assistant text + tool calls) to
  *  plain text for the clipboard, so Copy captures the tools the agent ran and
  *  their output — not just the prose. Each tool call renders as a `▶ name args`
@@ -683,7 +747,7 @@ function activeActivity(block: InvocationBlock): { label: string; tool?: string;
   for (let i = block.segments.length - 1; i >= 0; i--) {
     const seg = block.segments[i]
     if (seg.kind === 'tool' && seg.entry.running) {
-      return { label: 'Running', tool: seg.entry.name.replace(/^[^_]+__/, ''), progress: seg.entry.progress }
+      return { label: 'Running', tool: toolDisplay(seg.entry).name, progress: seg.entry.progress }
     }
   }
   if (block.currentText && block.currentText.length > 0) return { label: 'Responding…' }
@@ -1010,6 +1074,8 @@ function ToolCallBlock({
   const [expanded, setExpanded] = useState(false)
   const v = verb || 'run'
   const args = Object.entries(entry.input)
+  // The row's label: search-mode wrappers show the runnable / tool they ran.
+  const display = toolDisplay(entry)
   // Edit-and-rerun target when this call is a runnable invocation (search /
   // per_host / dedup); null for built-ins / MCP tools (no affordance).
   const rerun = !entry.running && !awaiting ? rerunFromToolEntry(entry) : null
@@ -1074,7 +1140,13 @@ function ToolCallBlock({
           : entry.running
             ? <LoadingOutlined style={{ color: 'var(--rs-accent)', fontSize: 13 }} />
             : <ApiOutlined style={{ color: '#52c41a', fontSize: 13 }} />}
-        <Text code style={{ fontSize: 13, flexShrink: 0 }}>{entry.name.replace(/^[^_]+__/, '')}</Text>
+        {display.via ? (
+          <Tooltip title={`Run via ${display.via}`}>
+            <Text code style={{ fontSize: 13, flexShrink: 0 }}>{display.name}</Text>
+          </Tooltip>
+        ) : (
+          <Text code style={{ fontSize: 13, flexShrink: 0 }}>{display.name}</Text>
+        )}
         {entry.operatorDecision && (
           <Tooltip title={
             entry.operatorDecision === 'denied' ? 'You denied this call — it did not run'
@@ -1089,9 +1161,9 @@ function ToolCallBlock({
             </Text>
           </Tooltip>
         )}
-        {args.length > 0 && (
+        {display.args.length > 0 && (
           <Text ellipsis style={{ flex: 1, minWidth: 0, color: c.dim, fontSize: 12 }}>
-            {args.map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(' ')}
+            {display.args.map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(' ')}
           </Text>
         )}
         {awaiting && (
@@ -1540,6 +1612,19 @@ const BlockCard = memo(function BlockCard({
     ? (block.segments.length > 0 || block.currentText.length > 0)
     : block.lines.length > 0
 
+  // Table/Raw toggle — only for a finished run with structured output.
+  const showViewToggle = block.type === 'run' && block.done && !deferredPending
+    && !!parsed && parsed.kind !== 'raw'
+
+  const moreItems = cardMoreItems(block, { canRerun: !!onRerun, canEditInForm })
+  const onMoreClick = (key: string) => {
+    if (key === 'copy-prompt') copyToClipboard(block.label)
+    else if (key === 'edit-resend') loadToComposer()
+    else if (key === 'resend') resend()
+    else if (key === 'edit-form') editInForm()
+    else if (key === 'rerun' && block.rerunData) onRerun?.(block.rerunData)
+  }
+
   return (
     <div style={{ background: c.cardBg, border: `1px solid ${c.cardBorder}`, borderRadius: RADIUS.md, overflow: 'hidden' }}>
       {/* Header */}
@@ -1682,56 +1767,41 @@ const BlockCard = memo(function BlockCard({
             </>
           )
         })()}
-        {block.done && block.rerunData && onRerun && (
-          <Fragment>
-            {canEditInForm && (
-              <Tooltip title="Edit in a form & rerun — opens the run dialog pre-filled with these values">
-                <EditOutlined
-                  onClick={editInForm}
-                  style={{ color: c.dim, cursor: 'pointer', fontSize: 14, marginLeft: 2 }}
-                  onMouseEnter={e => (e.currentTarget.style.color = c.text)}
-                  onMouseLeave={e => (e.currentTarget.style.color = c.dim)}
+        {/* Card actions: Copy output + Ask the assistant stay one click away;
+            the less-used prompt / rerun actions live in the ⋯ menu so the
+            header doesn't grow a row of look-alike icons. */}
+        {hasContent && (
+          <span style={{ display: 'flex', alignItems: 'center', gap: 2, marginLeft: 2, flexShrink: 0 }}>
+            <Tooltip title="Copy output to clipboard">
+              <Button
+                type="text" size="small" aria-label="Copy output to clipboard" icon={<CopyOutlined />}
+                onClick={(e) => { e.stopPropagation(); handleCopy() }}
+                style={{ color: c.dim, height: 24, width: 26 }}
+              />
+            </Tooltip>
+            {onAskLlm && (
+              <Tooltip title="Ask the assistant about this">
+                <Button
+                  type="text" size="small" aria-label="Ask the assistant about this" icon={<RobotOutlined />}
+                  onClick={(e) => { e.stopPropagation(); handleAskLlm() }}
+                  style={{ color: c.dim, height: 24, width: 26 }}
                 />
               </Tooltip>
             )}
-            <Tooltip title="Rerun with same args">
-              <RedoOutlined
-                onClick={() => onRerun(block.rerunData!)}
-                style={{ color: c.dim, cursor: 'pointer', fontSize: 14, marginLeft: 2 }}
-                onMouseEnter={e => (e.currentTarget.style.color = c.text)}
-                onMouseLeave={e => (e.currentTarget.style.color = c.dim)}
-              />
-            </Tooltip>
-          </Fragment>
-        )}
-        {/* Chat turns: copy / edit / resend the original prompt. */}
-        {block.type === 'chat' && block.done && block.label && (
-          <Fragment>
-            <Tooltip title="Copy this prompt">
-              <CopyOutlined
-                onClick={(e) => { e.stopPropagation(); copyToClipboard(block.label) }}
-                style={{ color: c.dim, cursor: 'pointer', fontSize: 14, marginLeft: 2 }}
-                onMouseEnter={e => (e.currentTarget.style.color = c.text)}
-                onMouseLeave={e => (e.currentTarget.style.color = c.dim)}
-              />
-            </Tooltip>
-            <Tooltip title="Edit & resend — load this prompt into the composer">
-              <EditOutlined
-                onClick={(e) => { e.stopPropagation(); loadToComposer() }}
-                style={{ color: c.dim, cursor: 'pointer', fontSize: 14, marginLeft: 2 }}
-                onMouseEnter={e => (e.currentTarget.style.color = c.text)}
-                onMouseLeave={e => (e.currentTarget.style.color = c.dim)}
-              />
-            </Tooltip>
-            <Tooltip title="Resend this prompt">
-              <RedoOutlined
-                onClick={(e) => { e.stopPropagation(); resend() }}
-                style={{ color: c.dim, cursor: 'pointer', fontSize: 14, marginLeft: 2 }}
-                onMouseEnter={e => (e.currentTarget.style.color = c.text)}
-                onMouseLeave={e => (e.currentTarget.style.color = c.dim)}
-              />
-            </Tooltip>
-          </Fragment>
+            {moreItems.length > 0 && (
+              <Dropdown
+                menu={{ items: moreItems, onClick: ({ key, domEvent }) => { domEvent.stopPropagation(); onMoreClick(key) } }}
+                trigger={['click']}
+                placement="bottomRight"
+              >
+                <Button
+                  type="text" size="small" aria-label="More actions" icon={<EllipsisOutlined />}
+                  onClick={(e) => e.stopPropagation()}
+                  style={{ color: c.dim, height: 24, width: 26 }}
+                />
+              </Dropdown>
+            )}
+          </span>
         )}
       </div>
 
@@ -1762,43 +1832,22 @@ const BlockCard = memo(function BlockCard({
                 old layout floated them absolutely and reserved a magic padding).
                 The Table/Raw toggle (structured run output only) sits here too,
                 separated from Copy/Ask so the two groups read as distinct. */}
-            {hasContent && (
+            {showViewToggle && (
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4, padding: '4px 8px' }}>
-                {block.type === 'run' && !deferredPending && parsed && parsed.kind !== 'raw' && block.done && (
-                  <Fragment>
-                    <Tooltip title="Table view">
-                      <Button
-                        type="text" size="small" icon={<TableOutlined />}
-                        onClick={() => setViewRaw(false)}
-                        style={{ color: !viewRaw ? c.link : c.dim, height: 22, padding: '0 5px' }}
-                      />
-                    </Tooltip>
-                    <Tooltip title="Raw output">
-                      <Button
-                        type="text" size="small" icon={<CodeOutlined />}
-                        onClick={() => setViewRaw(true)}
-                        style={{ color: viewRaw ? c.link : c.dim, height: 22, padding: '0 5px' }}
-                      />
-                    </Tooltip>
-                    <span style={{ width: 1, alignSelf: 'stretch', margin: '2px 4px', background: c.cardBorder }} />
-                  </Fragment>
-                )}
-                <Tooltip title="Copy to clipboard">
+                <Tooltip title="Table view">
                   <Button
-                    type="text" size="small" icon={<CopyOutlined />}
-                    onClick={handleCopy}
-                    style={{ color: c.dim, height: 22, padding: '0 5px' }}
+                    type="text" size="small" icon={<TableOutlined />}
+                    onClick={() => setViewRaw(false)}
+                    style={{ color: !viewRaw ? c.link : c.dim, height: 22, padding: '0 5px' }}
                   />
                 </Tooltip>
-                {onAskLlm && (
-                  <Tooltip title="Ask the assistant">
-                    <Button
-                      type="text" size="small" icon={<RobotOutlined />}
-                      onClick={handleAskLlm}
-                      style={{ color: c.dim, height: 22, padding: '0 5px' }}
-                    />
-                  </Tooltip>
-                )}
+                <Tooltip title="Raw output">
+                  <Button
+                    type="text" size="small" icon={<CodeOutlined />}
+                    onClick={() => setViewRaw(true)}
+                    style={{ color: viewRaw ? c.link : c.dim, height: 22, padding: '0 5px' }}
+                  />
+                </Tooltip>
               </div>
             )}
 

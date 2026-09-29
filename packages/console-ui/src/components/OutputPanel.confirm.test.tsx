@@ -100,7 +100,9 @@ describe('OutputPanel autonomy-gate confirm', () => {
     expect(screen.getByRole('button', { name: /approve & run/i })).toBeTruthy()
     expect(screen.getByRole('button', { name: /^deny$/i })).toBeTruthy()
     // The resolved runnable + its args show (the #267 intent that never rendered).
-    expect(screen.getByText('drain-node')).toBeTruthy()
+    // In the approval panel — and, unwrapped from run_runnable, in the tool
+    // row and the bottom activity bar too.
+    expect(screen.getAllByText('drain-node').length).toBeGreaterThanOrEqual(2)
     expect(screen.getByText(/node = "n1"/)).toBeTruthy()
   })
 
