@@ -8,6 +8,19 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.301.2] — 2026-09-29
+
+### Changed
+
+- **Thinking summaries show more text.** The live reasoning summary in the
+  Console's bottom activity bar (`[llm] thinking_display = "summarized"`) used
+  to be a single line capped at 360px, so most of a summary was cut off. It now
+  wraps to up to 3 lines at up to 640px wide. A very long line keeps its
+  **newest** words behind a leading `…` rather than cutting off the end, since
+  the summary streams in at the end (`OutputPanel.thinkingTail`, ~280
+  characters). The bar still grows only while a summary is showing and goes back
+  to one line for tool runs and replies.
+
 ## [0.301.1] — 2026-09-29
 
 ### Fixed

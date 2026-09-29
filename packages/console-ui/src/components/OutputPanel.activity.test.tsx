@@ -86,3 +86,35 @@ describe('lastLine', () => {
     expect(lastLine('')).toBe('')
   })
 })
+
+describe('thinkingTail', () => {
+  it('keeps a short line whole', async () => {
+    const { thinkingTail } = await import('./OutputPanel')
+    expect(thinkingTail('plan\nChecking /boot usage')).toBe('Checking /boot usage')
+  })
+
+  it('keeps the newest words of a long line behind a leading ellipsis', async () => {
+    const { thinkingTail } = await import('./OutputPanel')
+    const words = Array.from({ length: 80 }, (_, i) => `word${i}`).join(' ')
+    const out = thinkingTail(words, 100)
+    expect(out.startsWith('…')).toBe(true)
+    expect(out.endsWith('word79')).toBe(true)
+    expect(out.length).toBeLessThanOrEqual(101)
+    expect(out.slice(1).startsWith('word')).toBe(true) // cut at a word boundary
+  })
+})
+
+describe('OutputPanel activity indicator — longer summaries', () => {
+  it('renders a multi-row (wrapping, clamped) summary rather than a one-line ellipsis', async () => {
+    const { act } = await import('@testing-library/react')
+    render(<OutputPanel blocks={[chatBlock()]} />)
+    const long = 'The user wants the disk usage on web-01 so I will check /var first and then /home before deciding'
+    act(() => {
+      window.dispatchEvent(new CustomEvent('runspec:thinking', { detail: { id: 'c1', text: long } }))
+    })
+    const el = screen.getByTestId('thinking-summary')
+    expect(el.textContent).toBe(long)
+    expect(el.style.whiteSpace).toBe('normal')
+    expect(el.style.maxWidth).toBe('640px')
+  })
+})

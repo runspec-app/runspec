@@ -696,6 +696,22 @@ export function lastLine(text: string): string {
   return lines.length ? lines[lines.length - 1] : ''
 }
 
+// How much of the latest reasoning line the activity bar shows (~3 wrapped rows
+// at its max width). Longer lines keep their *tail* — the newest words — behind a
+// leading ellipsis, since a streaming summary grows at the end.
+export const THINKING_MAX_CHARS = 280
+
+// The latest reasoning line, capped to its newest THINKING_MAX_CHARS (cut at a
+// word boundary where one is near) for the activity bar.
+export function thinkingTail(text: string, max = THINKING_MAX_CHARS): string {
+  const line = lastLine(text)
+  if (line.length <= max) return line
+  let tail = line.slice(-max)
+  const space = tail.indexOf(' ')
+  if (space > 0 && space < 30) tail = tail.slice(space + 1)
+  return `…${tail}`
+}
+
 // A sticky bottom activity bar shown while a turn is in flight. Long turns with
 // many tool cards push the card's own spinner far above the fold; this keeps a
 // live "still working" signal — the current step + elapsed time — pinned at the
@@ -716,13 +732,13 @@ function ActivityIndicator({ block, onClick }: { block: InvocationBlock; onClick
   useEffect(() => {
     const onThinking = (e: Event) => {
       const d = (e as CustomEvent<{ id: string; text: string }>).detail
-      if (d?.id === block.id && d.text) setThinking(t => (t + d.text).slice(-400))
+      if (d?.id === block.id && d.text) setThinking(t => (t + d.text).slice(-2000))
     }
     window.addEventListener('runspec:thinking', onThinking)
     return () => window.removeEventListener('runspec:thinking', onThinking)
   }, [block.id])
   useEffect(() => { setThinking('') }, [act.label, act.tool])
-  const thinkingLine = act.label === 'Working…' ? lastLine(thinking) : ''
+  const thinkingLine = act.label === 'Working…' ? thinkingTail(thinking) : ''
   const secs = Math.max(0, Math.floor((Date.now() - new Date(block.startedAt).getTime()) / 1000))
   const elapsed = secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m ${secs % 60}s`
   return (
@@ -740,7 +756,19 @@ function ActivityIndicator({ block, onClick }: { block: InvocationBlock; onClick
           <LoadingOutlined style={{ color: 'var(--rs-accent)', fontSize: 13 }} spin />
           <Text style={{ fontSize: 13, color: c.dim, flexShrink: 0 }}>{thinkingLine ? 'Thinking…' : act.label}</Text>
           {thinkingLine && (
-            <Text ellipsis style={{ fontSize: 12, color: c.dim, maxWidth: 360 }}>{thinkingLine}</Text>
+            // Wraps up to 3 rows (and widens to 640px) so a longer summary
+            // reads in full instead of being cut to one short line; the
+            // line-clamp is a backstop — thinkingTail already bounds the text.
+            <Text
+              data-testid="thinking-summary"
+              style={{
+                fontSize: 12, color: c.dim, lineHeight: 1.4, maxWidth: 640, minWidth: 0,
+                whiteSpace: 'normal', overflowWrap: 'anywhere', overflow: 'hidden',
+                display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical',
+              }}
+            >
+              {thinkingLine}
+            </Text>
           )}
           {act.tool && (
             <Text code style={{ fontSize: 12, flexShrink: 0 }}>{act.tool}</Text>
