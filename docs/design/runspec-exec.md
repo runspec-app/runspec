@@ -1,5 +1,13 @@
 # `runspec exec` — run an installed runnable, recorded end-to-end
 
+> **Amendment (2026-09, proposed):** [venv-logs-inbox.md](venv-logs-inbox.md) §9
+> defines exec in inbox mode:
+> - the wrapper creates the run's inbox file and hands it to the child
+>   (`RUNSPEC_RUN_LOG`);
+> - output and result are appended through the held handle, never by path;
+> - `--skip-if-running` reads index ∪ inbox;
+> - a binding table resolves the `run_as` "two rows" case (§3.6).
+
 > **Status: v1 implemented** (`runspec` 0.62.0; `runspec-scheduler` 0.3.0;
 > `runspec-console` 0.299.0). A core verb that runs one installed runnable as a
 > child process and records the whole invocation — including the parts the

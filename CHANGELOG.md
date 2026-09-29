@@ -7,6 +7,52 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.65.0] — 2026-09-29
+
+Shared-venv logging fixes — the standalone half of the logs-inbox work
+(`docs/design/venv-logs-inbox.md`). None of these need the inbox. They stop
+another account's run from failing, silently losing its index row, or being
+reaped while still alive.
+
+### Fixed
+
+- **A second account's run could fail outright.** The default
+  `store = "single"` opens a shared rotating `{runnable}.log`. In a logs dir
+  written by several accounts, whoever didn't create that file hit
+  `PermissionError` in `configure_logging`, and the run failed. Now the single
+  file is used only by the account that owns the logs dir. Any other account
+  logs per-run, and so does a single file that can't be opened. SPEC updated.
+- **Root no longer locks everyone out of a venv's logs.** A root run (a
+  `run_as = "root"` runnable) that happened to run first used to create
+  `{venv}/logs` or `runspec_runs.db` owned by root. Every other account,
+  including the venv's own service account, then silently fell back to `~/logs`
+  or went unindexed. Root now hands a `logs/` dir it creates to the venv root's
+  owner. It hands a new runs index to the logs dir's owner, before WAL, so the
+  sidecar files match.
+- **Racy write probe.** The resolver probed with a fixed `.wtest` file. Two runs
+  starting together could delete each other's probe and spuriously fall back to
+  `~/logs`, and a `.wtest` left by another account blocked the probe entirely.
+  The probe is now a uniquely named temp file.
+- **Logging never fails a run.** When neither `{venv}/logs` nor `~/logs` is
+  writable (e.g. a service account with no home), the run logs to a private temp
+  dir and says so once on stderr. It no longer raises out of `configure_logging`.
+- **Live runs under `hidepid` were reaped as crashed.** With `/proc` mounted
+  `hidepid=2`, other users' processes are invisible. So `_pid_alive` read "no
+  start token" as dead, and the owner's maintenance marked other users' live
+  runs `crashed`. It now falls back to `kill(pid, 0)`, which reports EPERM for a
+  live process it can't see into.
+- **`runspec logs compact` deleted files it couldn't read.** An unreadable
+  source was folded in as "no lines" and then unlinked. It's now left in place
+  and reported. An existing archive that can't be read skips its group rather
+  than being overwritten.
+
+### Changed
+
+- **The runs index refuses a world-writable or sticky directory.** Any local
+  user could plant the DB's `-wal`/`-shm`/`-journal` sidecar files there, or a
+  whole fake DB. Runs still log in such a dir; they just aren't indexed there.
+  `runspec history stats` and the maintenance verbs name the reason.
+
 ## [0.64.0] — 2026-09-28
 
 ### Added

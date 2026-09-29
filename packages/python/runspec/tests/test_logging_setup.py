@@ -320,14 +320,16 @@ class TestLogDir:
         monkeypatch.setattr(Path, "home", staticmethod(lambda: home_dir))
 
         # Make the write-probe fail on the candidate dir to simulate no write permission
-        orig_touch = Path.touch
+        import runspec.logging_setup as ls
 
-        def failing_touch(self, mode=0o666, exist_ok=True):
-            if self.name == ".wtest":
+        orig_mkstemp = ls.tempfile.mkstemp
+
+        def failing_mkstemp(*args, dir=None, **kwargs):
+            if dir is not None and Path(dir) == tmp_path / "logs":
                 raise PermissionError("simulated no-write")
-            return orig_touch(self, mode=mode, exist_ok=exist_ok)
+            return orig_mkstemp(*args, dir=dir, **kwargs)
 
-        monkeypatch.setattr(Path, "touch", failing_touch)
+        monkeypatch.setattr(ls.tempfile, "mkstemp", failing_mkstemp)
 
         result = _resolve_log_dir()
         assert result == home_dir / "logs"

@@ -179,15 +179,23 @@ def scope_dirs(scope: str | None, *, destructive: bool) -> list[Path] | None:
 
 
 def _read_lines(path: Path) -> list[str]:
-    """JSON-line records from a log file, transparently decompressing .gz."""
+    """JSON-line records from a log file, transparently decompressing .gz.
+    An unreadable file reads as empty — see :func:`_read_lines_checked` for
+    callers that must tell the two apart."""
+    return _read_lines_checked(path) or []
+
+
+def _read_lines_checked(path: Path) -> list[str] | None:
+    """Like :func:`_read_lines`, but ``None`` when the file couldn't be read (vs
+    ``[]`` for a readable, empty file)."""
     try:
         if path.name.endswith(".gz"):
             with gzip.open(path, "rt", encoding="utf-8", errors="replace") as fh:
                 text = fh.read()
         else:
             text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return []
+    except (OSError, EOFError):
+        return None
     return [ln for ln in text.splitlines() if ln.strip()]
 
 
@@ -585,12 +593,35 @@ def compact(
                 out.write(f"would compact {len(sources)} file(s) → {target}\n")
             continue
 
+        # Only fold in what we could actually read: a source we can't read (a
+        # file another account made unreadable, a transient I/O error) is left in
+        # place rather than deleted without being archived. An unreadable existing
+        # archive would be overwritten, so that whole group is skipped.
         lines: list[str] = []
+        readable: list[Path] = []
+        archive_ok = True
         for existing in (archive, archive.with_suffix(archive.suffix + ".gz")):
             if existing.exists():
-                lines.extend(_read_lines(existing))
+                got = _read_lines_checked(existing)
+                if got is None:
+                    archive_ok = False
+                    break
+                lines.extend(got)
+        if not archive_ok:
+            if not as_json:
+                out.write(f"skipped {target}: the existing archive couldn't be read\n")
+            continue
         for s in sources:
-            lines.extend(_read_lines(s))
+            got = _read_lines_checked(s)
+            if got is None:
+                if not as_json:
+                    out.write(f"skipped {s}: couldn't be read — left in place\n")
+                continue
+            lines.extend(got)
+            readable.append(s)
+        if not readable:
+            continue
+        sources = readable
         lines.sort(key=lambda ln: _line_ts(ln))
 
         body = "\n".join(lines) + "\n"

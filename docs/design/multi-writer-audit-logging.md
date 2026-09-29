@@ -1,5 +1,14 @@
 # Design: multi-writer audit logging (per-invocation files + `runspec logs`)
 
+> **Amendment (2026-09, proposed):** the shared-venv deployment below
+> (`logs/` 2775 + a shared group) proved hard to administer. It is superseded by
+> [venv-logs-inbox.md](venv-logs-inbox.md): a sticky `logs/inbox/` drop-box
+> takes non-owner per-run files, and only the owner writes `logs/`. Since core
+> 0.65.0, a non-owner never uses the rotating single file (it logs per-run), and
+> logging never fails a run. `_get_invoker` is self-reported (environment
+> variables); the kernel-attested `os_user` column in the inbox design is the
+> trustworthy attribution.
+
 ## Problem
 
 runspec's file handler is always a *rotating* handler — `_make_file_handler`

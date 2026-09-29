@@ -135,7 +135,9 @@ not configurable. Use the auto-added `--debug` flag to *raise* verbosity
 everywhere at once.
 
 Log file path is always: `{installation_root}/logs/{runnable_name}.log`.
-Fallback when the root is not writable: `{home}/logs/{runnable_name}.log`.
+Fallback when the root is not writable: `{home}/logs/{runnable_name}.log`;
+if that isn't writable either, a private temporary directory (reported once
+on stderr) — logging never makes a run fail.
 One logs directory per environment — survives reinstalls and avoids
 scattering logs across package directories.
 
@@ -161,7 +163,11 @@ scattering logs across package directories.
   retention is an explicit operator action (`runspec logs compact` / `prune`).
 
 `"per-run"` is opt-in; the default stays `"single"` so existing deployments are
-unaffected. Both layouts emit identical JSON records (including the run-summary
+unaffected. **`"single"` is only honoured by the account that owns the logs
+directory** (always on Windows): any other account writing into a shared logs
+directory logs per-run instead, and a `"single"` file that can't be opened
+(another account's file) also falls back to per-run rather than failing the
+run. Both layouts emit identical JSON records (including the run-summary
 and uncaught-exception records), so the only difference is how records are
 distributed across files.
 

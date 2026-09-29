@@ -1,5 +1,10 @@
 # Incremental history pull — a cursor-synced local cache of the runs index
 
+> **Amendment (2026-09, proposed):** with [venv-logs-inbox.md](venv-logs-inbox.md)
+> the owner's sweep becomes an additional writer of index rows, and pending
+> inbox runs are read fresh on every pull as a snapshot (not every 2 minutes).
+> Running state comes from the inbox file lock, not the pid.
+
 > **Status: implemented** — core `runspec` 0.63.0 (schema v4, §3–§4) and
 > `runspec-console` 0.300.0 (the cache, §5). Decisions taken on the open
 > questions are recorded in §10.

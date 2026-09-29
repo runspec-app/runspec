@@ -11,6 +11,7 @@ import logging.handlers
 import os
 import re
 import sys
+import tempfile
 import time
 import traceback
 import uuid
@@ -180,7 +181,16 @@ def configure_logging(
     # File handler: always active, always JSON; level follows --debug
     # (INFO by default — keeps third-party DEBUG noise out of the audit log).
     log_dir = _resolve_log_dir()
-    if log_cfg.get("store") == "per-run":
+    fh: logging.Handler | None = None
+    log_path = log_dir / f"{runnable_name}.log"
+    if log_cfg.get("store") != "per-run" and _single_store_ok(log_dir):
+        try:
+            fh = _make_file_handler(log_path, log_cfg["rotate"], log_cfg["keep"])
+        except PermissionError:
+            # Another account's {runnable}.log in a shared dir: log per-run
+            # instead of failing the run over its audit log.
+            fh = None
+    if fh is None:
         # One file per invocation — multi-writer safe (no shared file, so no
         # rotation race when many users / parallel runs log at once). The
         # run_id in the name matches extra.run_id in the records, and the UTC
@@ -189,10 +199,7 @@ def configure_logging(
         # delay=True so a run that emits nothing leaves no empty file behind.
         ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         log_path = log_dir / f"{runnable_name}.{ts}.{run_id}.log"
-        fh: logging.Handler = logging.FileHandler(log_path, encoding="utf-8", delay=True)
-    else:
-        log_path = log_dir / f"{runnable_name}.log"
-        fh = _make_file_handler(log_path, log_cfg["rotate"], log_cfg["keep"])
+        fh = logging.FileHandler(log_path, encoding="utf-8", delay=True)
     fh.setLevel(floor)
     fh.addFilter(sensitive)
     fh.addFilter(_RunIdFilter(run_id))
@@ -288,18 +295,73 @@ def _resolve_log_dir() -> Path:
     The venv root is the right home for an installed package's logs — one
     logs dir per environment, survives `pip install -e .`, easy to locate,
     and avoids scattering log files across every package directory.
+
+    Never raises: when neither is writable (a service account whose home is
+    `/nonexistent`, a read-only home) the run logs to a private temp dir and says
+    so once on stderr — logging must never be the reason a run fails.
     """
     candidate = Path(sys.prefix) / "logs"
-    try:
-        candidate.mkdir(parents=True, exist_ok=True)
-        probe = candidate / ".wtest"
-        probe.touch()
-        probe.unlink()
+    if _writable_dir(candidate, created_owner_from=Path(sys.prefix)):
         return candidate
-    except (OSError, PermissionError):
-        fallback = Path.home() / "logs"
-        fallback.mkdir(parents=True, exist_ok=True)
+    fallback = Path.home() / "logs"
+    if _writable_dir(fallback):
         return fallback
+    last = Path(tempfile.mkdtemp(prefix="runspec-logs-"))
+    with contextlib.suppress(Exception):
+        sys.stderr.write(f"runspec: neither {candidate} nor {fallback} is writable — this run's audit log is in {last}\n")
+    return last
+
+
+def _writable_dir(d: Path, *, created_owner_from: Path | None = None) -> bool:
+    """Can this process create files in ``d`` (creating ``d`` if missing)?
+
+    The probe is a uniquely named temp file (``mkstemp``), not a fixed name: two
+    runs starting at once used to race on a shared ``.wtest`` (one's ``unlink``
+    removed the other's probe → a spurious fallback to ``~/logs``), and a
+    ``.wtest`` left behind by another user made the probe fail outright.
+
+    ``created_owner_from``: when *this* call creates ``d`` as root, hand it to the
+    owner of that path (the venv root). Otherwise a root-run runnable that
+    happens to run first leaves a root-owned ``logs/`` that locks the venv's own
+    service account — and everyone else — out."""
+    try:
+        created = not d.exists()
+        d.mkdir(parents=True, exist_ok=True)
+        if created and created_owner_from is not None:
+            _chown_like(d, created_owner_from)
+        fd, probe = tempfile.mkstemp(prefix=".wtest.", dir=d)
+        os.close(fd)
+        os.unlink(probe)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def _chown_like(path: Path, ref: Path) -> None:
+    """When running as root, give ``path`` the owner/group of ``ref``. Best-effort;
+    a no-op for non-root processes and on Windows."""
+    if not hasattr(os, "geteuid") or os.geteuid() != 0:
+        return
+    with contextlib.suppress(OSError):
+        st = ref.stat()
+        if st.st_uid != 0:
+            os.chown(path, st.st_uid, st.st_gid)
+
+
+def _single_store_ok(log_dir: Path) -> bool:
+    """May this process use the shared rotating ``{runnable}.log`` in ``log_dir``?
+
+    Only when it owns the dir (or on Windows, which has no ownership to check). A
+    shared dir written by several accounts must use per-run files: the rotating
+    file is created by whoever runs first, and every other account then either
+    can't append to it (the run used to fail with ``PermissionError``) or races
+    its rotation (docs/design/multi-writer-audit-logging.md)."""
+    if not hasattr(os, "geteuid"):
+        return True
+    try:
+        return log_dir.stat().st_uid == os.geteuid()
+    except OSError:
+        return False
 
 
 def _make_file_handler(path: Path, rotate: str, keep: int) -> logging.Handler:

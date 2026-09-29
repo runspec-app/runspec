@@ -1,5 +1,16 @@
 # Run-index DB — a shared per-venv SQLite runs table (`runspec_runs.db`)
 
+> **Amendment (2026-09, proposed):** [venv-logs-inbox.md](venv-logs-inbox.md)
+> changes the writer model. The index becomes **single-writer** (the venv owner).
+> Every other account drops per-run files into a sticky `logs/inbox/`, which the
+> owner sweeps in. That supersedes the multi-writer group setup in §4/§4.1/§7.
+> It also reverses §16's "core never provisions permissions", at the user's
+> request: core creates the inbox itself when running as the owner or root. In
+> §3/§6, in-flight inbox runs are read from the inbox and their liveness comes
+> from a file lock, not a pid. Core 0.65.0 already refuses an index in a
+> world-writable or sticky dir, and makes root hand a DB it creates to the
+> dir's owner.
+
 > **Status: in progress.** The agreed design for a per-venv SQLite index of
 > runnable runs, written by core `runspec`, read by the runspec-console History /
 > Logs tabs and (later) the standalone scheduler. **Phase 1 (core write path)** is

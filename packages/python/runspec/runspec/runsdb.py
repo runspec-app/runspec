@@ -31,6 +31,7 @@ import contextlib
 import json
 import os
 import sqlite3
+import stat
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -161,7 +162,13 @@ def _pid_alive(pid: int | None, proc_start: str | None) -> bool:
     if not pid:
         return False
     if proc_start:
-        return _read_proc_start(int(pid)) == proc_start
+        token = _read_proc_start(int(pid))
+        if token:
+            return token == proc_start
+        # No token: the process is gone — or /proc hides it (`hidepid=2` hides
+        # other users' processes entirely), which used to read as "dead" and got
+        # other users' live runs reaped as crashed. Ask the kernel instead:
+        # kill(pid, 0) says EPERM for a live process we can't see into.
     return _pid_exists(int(pid))
 
 
@@ -255,6 +262,8 @@ def _connect(path: Path, *, readonly: bool = False) -> sqlite3.Connection | None
     the file group-writable **before** entering WAL so the sidecars inherit it
     (umask can't add group-write); it also heals an owned, non-group-writable DB."""
     try:
+        if _unsafe_dir(path.parent):
+            return None
         if readonly:
             if not path.exists():
                 return None
@@ -271,6 +280,8 @@ def _connect(path: Path, *, readonly: bool = False) -> sqlite3.Connection | None
         # the first (creating) writer; a later different-user writer relies on the
         # first having set it + the setgid dir for group ownership.
         _ensure_group_writable(path, fresh)
+        if fresh:
+            _chown_to_dir_owner(path)
         if fresh:
             con.execute("PRAGMA auto_vacuum=INCREMENTAL")  # before first table write
         con.execute("PRAGMA journal_mode=WAL")
@@ -432,6 +443,39 @@ def _trim_tombstones(con: sqlite3.Connection, days: int = _TOMBSTONE_DAYS, cap: 
         if top:
             con.execute("DELETE FROM runs_tombstones WHERE seq <= ?", (top,))
             con.execute("UPDATE sync_meta SET value = max(value, ?) WHERE key='floor'", (top,))
+
+
+def _unsafe_dir(d: Path) -> str:
+    """Why an index must never live in ``d`` — ``""`` when it's fine.
+
+    A world-writable or sticky directory lets any local user plant the DB's
+    ``-wal``/``-shm``/``-journal`` sidecars (or a whole fake DB), which can corrupt
+    or forge the index; a read-only reader in such a dir can even create sidecars
+    the owner then can't write. So the index refuses those dirs outright — runs
+    still log, they're just not indexed there. POSIX only."""
+    if not hasattr(os, "geteuid"):
+        return ""
+    try:
+        mode = d.stat().st_mode
+    except OSError:
+        return ""
+    if mode & (stat.S_IWOTH | stat.S_ISVTX):
+        return f"refusing to keep a runs index in {d}: it is world-writable or sticky"
+    return ""
+
+
+def _chown_to_dir_owner(path: Path) -> None:
+    """A DB created by root in a directory owned by someone else is handed to that
+    owner (before WAL, so SQLite gives the -wal/-shm sidecars the same owner).
+    Otherwise a root-run runnable that runs first leaves a root-owned index every
+    other account — the venv's own service account included — silently can't
+    write. Best-effort; a no-op unless running as root."""
+    if not hasattr(os, "geteuid") or os.geteuid() != 0:
+        return
+    with contextlib.suppress(OSError):
+        st = path.parent.stat()
+        if st.st_uid != 0:
+            os.chown(path, st.st_uid, st.st_gid)
 
 
 def _ensure_group_writable(path: Path, fresh: bool) -> None:
@@ -978,6 +1022,9 @@ def write_error(log_dir: Path) -> str:
     maintenance verbs check this first so the failure is named. SQLite needs the
     file writable and — to create the ``-wal``/``-shm`` sidecars — the dir too."""
     path = db_path(log_dir)
+    unsafe = _unsafe_dir(log_dir)
+    if unsafe:
+        return unsafe
     target = path if path.exists() else log_dir
     if not target.exists():
         # No dir yet: writable if the nearest existing ancestor is (mkdir works).
