@@ -992,6 +992,7 @@ class InvokeMixin:
         tools: list[dict[str, Any]],
         usage: dict[str, int],
         model: str,
+        reply_thinking: dict[str, Any] | None = None,
     ) -> None:
         """Append a completed chat exchange to the session's saved conversation
         (its id — an interactive session *is* its conversation).
@@ -1012,6 +1013,10 @@ class InvokeMixin:
                 "model": model,
                 "ts": _iso_now(),
             }
+            # The reasoning summary behind the final reply (tool calls carry
+            # their own on each tools[] entry). Display-only: never replayed.
+            if reply_thinking:
+                turn["reply_thinking"] = reply_thinking
             directory = config_mod.conversations_dir()
             provider = str(self.get_config().get("llm", {}).get("provider", ""))
             with self._conv_store_lock:

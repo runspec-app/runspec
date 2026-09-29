@@ -1684,6 +1684,12 @@ export const mockApi: BridgeApi = {
 
     ;(async () => {
       await delay(10)  // yield so addBlock fires before first token
+      // Phase 0: a reasoning summary ([llm] thinking_display = "summarized")
+      const thought = 'The user wants a DNS flush. flush-dns is confirm-gated, so I will propose it and wait for approval rather than run anything else first.'
+      for (const w of thought.split(/(?<= )/)) {
+        dispatch('runspec:thinking', { id, text: w })
+        await delay(45)
+      }
       // Phase 1: stream intro text
       const intro = `Sure, let me run the DNS flush for you.`
       for (const ch of intro) {
@@ -1697,7 +1703,7 @@ export const mockApi: BridgeApi = {
       const tool_name = 'local__flush-dns'
       const tool_input = { scope: 'system' }
       const call_id = `toolu-${id}`
-      dispatch('runspec:tool_start', { id, call_id, tool_name, tool_input })
+      dispatch('runspec:tool_start', { id, call_id, tool_name, tool_input, thinking: thought, thinking_ms: 2100 })
 
       const request_id = `mock-${id}`
       const approved = await new Promise<boolean>(resolve => {
@@ -1724,6 +1730,14 @@ export const mockApi: BridgeApi = {
       dispatch('runspec:tool_end', { id, call_id, tool_name, output })
       await delay(150)
 
+      const replyThought = approved
+        ? 'The flush succeeded; a one-line confirmation is enough.'
+        : 'The operator declined. Acknowledge it and do not retry.'
+      for (const w of replyThought.split(/(?<= )/)) {
+        dispatch('runspec:thinking', { id, text: w })
+        await delay(45)
+      }
+
       // Phase 2: stream follow-up text reflecting the decision
       const outro = approved
         ? `\n\nDone — the system DNS cache has been flushed.`
@@ -1733,6 +1747,7 @@ export const mockApi: BridgeApi = {
         await delay(14)
       }
 
+      dispatch('runspec:reply_thinking', { id, text: replyThought, ms: 1400 })
       finish(approved ? 0 : 1, 1500)
       dispatch('runspec:chat_usage', {
         id, session, input_tokens: 1247, output_tokens: 342,

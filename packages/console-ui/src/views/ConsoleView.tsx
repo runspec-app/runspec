@@ -83,7 +83,10 @@ export function conversationToBlocks(conv: ChatConversation): InvocationBlock[] 
     }
     const segments: BlockSegment[] = []
     for (const tool of t.tools || []) {
-      segments.push({ kind: 'tool', entry: { name: tool.name, input: tool.input || {}, output: tool.output, running: false, operatorDecision: tool.operator_decision } })
+      segments.push({ kind: 'tool', entry: {
+        name: tool.name, input: tool.input || {}, output: tool.output, running: false, operatorDecision: tool.operator_decision,
+        ...(tool.thinking ? { thinking: tool.thinking, thinkingMs: tool.thinking_ms ?? 0 } : {}),
+      } })
     }
     if (t.assistant && t.assistant.trim()) segments.push({ kind: 'text', text: t.assistant })
     const u = (t.usage || undefined) as Record<string, number> | undefined
@@ -98,6 +101,7 @@ export function conversationToBlocks(conv: ChatConversation): InvocationBlock[] 
       currentText: '',
       done: true,
       model: t.model,
+      ...(t.reply_thinking?.text ? { replyThinking: { text: t.reply_thinking.text, ms: t.reply_thinking.ms ?? 0 } } : {}),
       tokenUsage: u ? { input: u.input || 0, output: u.output || 0, cacheRead: u.cache_read || 0, cacheCreation: u.cache_creation || 0 } : undefined,
     }
   })

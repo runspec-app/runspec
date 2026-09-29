@@ -27,8 +27,11 @@ A chat turn (``kind`` "chat")::
 
 A chat tool entry may carry operator-only annotations — ``operator_decision``
 ("approved" / "edited" / "denied") and ``proposed_input`` (the agent's original
-args when the operator edited them). These are ignored by the model-history
-rebuild (which reads only ``name``/``output``), so they never reach the agent.
+args when the operator edited them) — and ``thinking`` / ``thinking_ms``, the
+reasoning summary that led to the call ("why it ran this"). A chat turn may also
+carry ``reply_thinking`` (``{"text", "ms"}``), the reasoning behind the final
+reply. These are ignored by the model-history rebuild (which reads only
+``name``/``output``), so they never reach the agent.
 
 An operator-run record (``kind`` "operator_run") — a runnable the **operator**
 launched manually (Forms tab / command bar), captured for their own review::

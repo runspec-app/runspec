@@ -818,7 +818,13 @@ export interface ConversationTurn {
     // original args if the operator edited them. Operator-only annotations.
     operator_decision?: 'approved' | 'edited' | 'denied'
     proposed_input?: Record<string, unknown>
+    // The reasoning summary that led to this call ("why it ran this") and how
+    // long it streamed. Display-only; never replayed to the model.
+    thinking?: string
+    thinking_ms?: number
   }[]
+  // The reasoning summary behind the final reply.
+  reply_thinking?: { text: string; ms: number } | null
   usage?: Record<string, number> | null
   model?: string
   ts?: string

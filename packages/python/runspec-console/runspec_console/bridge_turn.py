@@ -57,6 +57,14 @@ else:
 
 InlineTool = Callable[[dict[str, Any]], Awaitable[str]]
 
+# A saved/live reasoning summary is capped — it's a UI note, not model input.
+_THOUGHT_CAP = 4000
+
+
+def _thought_ms(t0: float | None, t1: float) -> int:
+    """How long a reasoning summary streamed (first → last delta), in ms."""
+    return int(max(0.0, t1 - t0) * 1000) if t0 is not None else 0
+
 
 @dataclass
 class TurnSpec:
@@ -297,6 +305,12 @@ class TurnMixin(_Base):
         # store / the run card), separate from the adapter-native history.
         turn_assistant_parts: list[str] = []
         turn_tools: list[dict[str, Any]] = []
+        # Reasoning summaries ([llm] thinking_display = "summarized"), per model
+        # call: a call that ends in tool calls hands its thought to the first of
+        # them ("why it ran this"); one that ends in the reply keeps it as the
+        # reply's reasoning. Both ride the live events and the saved transcript.
+        reply_thinking: list[str] = []
+        reply_thinking_ms = 0
         actions: list[str] = []
         final_text = ""
         # Continuations (finishing a cut-off reply) and tool rounds are
@@ -346,6 +360,9 @@ class TurnMixin(_Base):
                     retry_iteration = False
                     errored = False
                     error_detail = ""
+                    iter_thinking = ""
+                    think_t0: float | None = None
+                    think_t1 = 0.0
                     # Tag anything appended since the last iteration with this
                     # chat_id, then build the model's view minus excluded turns.
                     session.sync_tags(chat_id)
@@ -381,7 +398,11 @@ class TurnMixin(_Base):
                                 elif event[0] == "thinking":
                                     # Reasoning summary (the anthropic built-in
                                     # with thinking_display = "summarized"): shown
-                                    # live in the activity bar, not the transcript.
+                                    # live, then attached to the step it led to.
+                                    iter_thinking += event[1]
+                                    think_t1 = time.monotonic()
+                                    if think_t0 is None:
+                                        think_t0 = think_t1
                                     self._dispatch(
                                         "runspec:thinking",
                                         {"id": chat_id, "text": event[1]},
@@ -530,9 +551,24 @@ class TurnMixin(_Base):
                             }
                         )
                         continuations += 1
+                        if iter_thinking.strip():
+                            reply_thinking.append(iter_thinking.strip())
+                            reply_thinking_ms += _thought_ms(think_t0, think_t1)
                         continue
 
                     if response is None or not has_tools:
+                        # The thought that led to the reply (not to a tool).
+                        if response is not None and iter_thinking.strip():
+                            reply_thinking.append(iter_thinking.strip())
+                            reply_thinking_ms += _thought_ms(think_t0, think_t1)
+                            self._dispatch(
+                                "runspec:reply_thinking",
+                                {
+                                    "id": chat_id,
+                                    "text": "\n\n".join(reply_thinking)[:_THOUGHT_CAP],
+                                    "ms": reply_thinking_ms,
+                                },
+                            )
                         # Final turn — persist the reply so the next message sees
                         # it (tool turns are persisted via make_tool_turn below).
                         if response is not None and assistant_text.strip():
@@ -562,6 +598,17 @@ class TurnMixin(_Base):
                             )
                         break
 
+                    # The thought this model call produced goes to the first tool
+                    # call it made (a parallel batch shares one thought — shown
+                    # once, on the first row). Keyed by object identity: not
+                    # every adapter gives calls an id.
+                    thought_by_call: dict[int, tuple[str, int]] = {}
+                    if iter_thinking.strip() and response.tool_calls:
+                        thought_by_call[id(response.tool_calls[0])] = (
+                            iter_thinking.strip()[:_THOUGHT_CAP],
+                            _thought_ms(think_t0, think_t1),
+                        )
+
                     async def _exec_call(tc: Any) -> tuple[str, dict[str, Any]]:
                         """Run one tool call end to end — tool_start, the autonomy
                         gate + execution, tool_end, trace — and return its output
@@ -569,15 +616,17 @@ class TurnMixin(_Base):
                         Safe to run several at once for parallel-safe calls: the
                         events carry ``call_id`` so each card pairs with its own
                         result."""
-                        self._dispatch(
-                            "runspec:tool_start",
-                            {
-                                "id": chat_id,
-                                "call_id": tc.id,
-                                "tool_name": tc.name,
-                                "tool_input": tc.input,
-                            },
-                        )
+                        start_event: dict[str, Any] = {
+                            "id": chat_id,
+                            "call_id": tc.id,
+                            "tool_name": tc.name,
+                            "tool_input": tc.input,
+                        }
+                        thought = thought_by_call.get(id(tc))
+                        if thought:
+                            start_event["thinking"] = thought[0]
+                            start_event["thinking_ms"] = thought[1]
+                        self._dispatch("runspec:tool_start", start_event)
                         display = tc.name.split("__", 1)[-1]
                         # The operator's confirm-gate decision (if the gate fires),
                         # recorded on the saved tool entry and echoed into the live
@@ -686,6 +735,10 @@ class TurnMixin(_Base):
                             "input": tc.input,
                             "output": output[:4000],
                         }
+                        thought = thought_by_call.get(id(tc))
+                        if thought:
+                            tool_rec["thinking"] = thought[0]
+                            tool_rec["thinking_ms"] = thought[1]
                         if gate_decision.get("decision"):
                             tool_rec["operator_decision"] = gate_decision["decision"]
                             if gate_decision.get("proposed_input") is not None:
@@ -718,6 +771,13 @@ class TurnMixin(_Base):
                 session.sync_tags(chat_id)
                 if spec.interactive:
                     session.trim()
+                    # Only when there is one, so older call shapes still fit.
+                    persist_extra: dict[str, Any] = {}
+                    if reply_thinking:
+                        persist_extra["reply_thinking"] = {
+                            "text": "\n\n".join(reply_thinking)[:_THOUGHT_CAP],
+                            "ms": reply_thinking_ms,
+                        }
                     self._persist_conversation_turn(
                         session,
                         spec.message,
@@ -725,6 +785,7 @@ class TurnMixin(_Base):
                         turn_tools,
                         usage_total,
                         model_name,
+                        **persist_extra,
                     )
         except Exception as exc:  # noqa: BLE001
             raised = exc

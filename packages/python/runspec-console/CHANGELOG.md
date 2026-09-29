@@ -8,6 +8,38 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.303.0] — 2026-09-29
+
+### Added
+
+- **Reasoning attached to the step it led to (turn card).** With `[llm]
+  thinking_display = "summarized"`, the reasoning summary used to appear only
+  live in the bottom activity bar and was gone once the turn finished. Now:
+  - While the model thinks, the summary streams into an **expanded "Thinking…"
+    box** in the turn card, newest words pinned at the bottom. It hides as soon
+    as the model starts writing text.
+  - When the step it led to starts, the thought **collapses into a 💡 on that
+    tool row**. Open the row to see **"Why it ran this · thought for Ns"**
+    above the command and output. A parallel batch of calls shares one
+    thought, shown once on the first row.
+  - The thought behind the final answer becomes a collapsed **"Reasoning
+    behind this reply"** line under it.
+  - It adds no height to a collapsed card, however many tools the turn calls.
+  - **Saved with the chat:** the tool's transcript entry gains `thinking` /
+    `thinking_ms` and the turn gains `reply_thinking`, so a reopened History
+    chat shows the same reasoning. Display-only: never replayed to the model
+    (the history rebuild reads only named fields).
+  - The bottom activity bar is unchanged.
+
+  Backend: the agent loop (`bridge_turn._run_agent_turn`) collects each model
+  call's thinking and adds `thinking` / `thinking_ms` to the first
+  `runspec:tool_start`, or emits a new `runspec:reply_thinking {id, text, ms}`
+  for the reply. The saved turn is extended via
+  `_persist_conversation_turn(…, reply_thinking=)`. Frontend: `liveThinking` /
+  `replyThinking` on the block, `thinking` / `thinkingMs` on tool entries, and
+  `LiveThought` / `ReplyReasoning` in `ChatTranscript`. The dev mock now streams
+  a sample thought.
+
 ## [0.302.0] — 2026-09-29
 
 ### Changed

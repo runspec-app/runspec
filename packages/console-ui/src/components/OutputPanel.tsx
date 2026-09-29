@@ -8,7 +8,7 @@ import {
   ThunderboltOutlined, CheckCircleOutlined, CloseCircleOutlined, LoadingOutlined,
   RedoOutlined, EditOutlined, CopyOutlined, RobotOutlined, CaretRightOutlined,
   ApiOutlined, DownOutlined, RightOutlined, VerticalAlignBottomOutlined,
-  TableOutlined, CodeOutlined, PauseCircleOutlined, StopOutlined, EllipsisOutlined,
+  TableOutlined, CodeOutlined, PauseCircleOutlined, StopOutlined, EllipsisOutlined, BulbOutlined,
 } from '@ant-design/icons'
 
 const { Text } = Typography
@@ -480,6 +480,10 @@ export interface ToolCallEntry {
   // rendered as a badge on a reopened conversation. Operator-only — not sent to
   // the model. 'denied' means the call never ran.
   operatorDecision?: 'approved' | 'edited' | 'denied'
+  // The reasoning summary that led to this call ("why it ran this") and how
+  // long it streamed — shown behind the row's bulb. Display-only.
+  thinking?: string
+  thinkingMs?: number
 }
 
 export interface ToolEndDetail {
@@ -539,6 +543,12 @@ export interface InvocationBlock {
   lines: OutputLine[]
   segments: BlockSegment[]   // for chat blocks — interleaved text + tool calls
   currentText: string        // currently-streaming text (chat blocks only)
+  // The reasoning summary streaming right now (runspec:thinking), shown
+  // expanded in the card until the step it led to starts — then it collapses
+  // into that tool row's bulb (runspec:tool_start `thinking`) or into the
+  // reply's reasoning line (runspec:reply_thinking).
+  liveThinking?: string
+  replyThinking?: { text: string; ms: number }
   done: boolean
   stopped?: boolean   // chat turn was halted by the user (distinct from error)
   exitCode?: number
@@ -605,6 +615,12 @@ export function rerunFromToolEntry(entry: ToolCallEntry): RerunData | null {
   const commandPath = asPath(rest.command)
   delete rest.command
   return { host: m[1], runnable: m[2], args: rest, commandPath }
+}
+
+/** "4s" / "<1s" for a thought's streaming time; "" when unknown (0). */
+export function fmtThought(ms: number | undefined): string {
+  if (!ms || ms <= 0) return ''
+  return ms < 1000 ? '<1s' : `${Math.round(ms / 1000)}s`
 }
 
 /**
@@ -1082,7 +1098,7 @@ function ToolCallBlock({
   // The card can expand to reveal the full command + output whenever there's
   // output OR any args — so the full (un-ellipsised) command is always reachable,
   // not only when the tool returned something.
-  const canExpand = entry.output !== undefined || args.length > 0
+  const canExpand = entry.output !== undefined || args.length > 0 || !!entry.thinking
   // Args shown in the approval panel: the resolved runnable's when we have it.
   const approveArgs = resolved ? Object.entries(resolved.input) : args
   // Edit buffer: arg name → its JSON-encoded string, seeded from approveArgs and
@@ -1165,6 +1181,14 @@ function ToolCallBlock({
           <Text ellipsis style={{ flex: 1, minWidth: 0, color: c.dim, fontSize: 12 }}>
             {display.args.map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(' ')}
           </Text>
+        )}
+        {entry.thinking && (
+          <Tooltip title="Has reasoning — open the row to see why it ran this">
+            <BulbOutlined
+              aria-label="Has reasoning"
+              style={{ color: c.dim, fontSize: 13, flexShrink: 0, marginLeft: display.args.length > 0 ? 0 : 'auto' }}
+            />
+          </Tooltip>
         )}
         {awaiting && (
           <Text style={{ color: '#e6a23c', fontSize: 12, marginLeft: 'auto', flexShrink: 0 }}>needs approval</Text>
@@ -1298,6 +1322,17 @@ function ToolCallBlock({
 
       {expanded && (
         <Fragment>
+          {/* Why it ran this — the reasoning summary that led to the call. */}
+          {entry.thinking && (
+            <div style={{ borderTop: `1px solid ${c.toolBorder}`, padding: '6px 12px 8px' }}>
+              <div style={{ fontSize: 11, color: c.dim, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 4 }}>
+                why it ran this{fmtThought(entry.thinkingMs) ? ` · thought for ${fmtThought(entry.thinkingMs)}` : ''}
+              </div>
+              <div data-testid="tool-thought" style={{ fontSize: 13, lineHeight: 1.55, color: textSecondary(c.isDark), whiteSpace: 'pre-wrap' }}>
+                {entry.thinking}
+              </div>
+            </div>
+          )}
           {/* Full command + args — the header line ellipsises, so this is the
               only place the complete (selectable) invocation is visible. Values
               render with their real newlines via displayArgValue. */}
@@ -1347,12 +1382,16 @@ export function ChatTranscript({
   segments,
   currentText,
   done,
+  liveThinking,
+  replyThinking,
   pendingConfirm,
   onAnswerConfirm,
 }: {
   segments: BlockSegment[]
   currentText: string
   done: boolean
+  liveThinking?: string
+  replyThinking?: { text: string; ms: number }
   pendingConfirm?: PendingConfirm | null
   onAnswerConfirm?: (approved: boolean, editedInput?: Record<string, unknown>) => void
 }) {
@@ -1390,6 +1429,60 @@ export function ChatTranscript({
           {currentText}
           {!done && <span style={{ color: c.faint }}>▌</span>}
         </pre>
+      )}
+      {/* The thought streaming now — expanded while the model thinks, hidden
+          once it starts writing, then collapsed into the step it led to. */}
+      {!done && !currentText && liveThinking && <LiveThought text={liveThinking} />}
+      {replyThinking?.text && <ReplyReasoning thought={replyThinking} />}
+    </div>
+  )
+}
+
+/** The reasoning summary streaming right now, shown expanded in the card. The
+ *  body scrolls with the newest words pinned at the bottom (column-reverse). */
+function LiveThought({ text }: { text: string }) {
+  const c = useCardTheme()
+  return (
+    <div data-testid="live-thought" style={{
+      margin: '6px 0', borderRadius: RADIUS.sm, border: `1px solid ${c.toolBorder}`, background: c.codeBg,
+      padding: '8px 12px',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: c.dim, marginBottom: 4 }}>
+        <LoadingOutlined style={{ color: 'var(--rs-accent)', fontSize: 12 }} />
+        <BulbOutlined style={{ fontSize: 12 }} />
+        Thinking…
+      </div>
+      <div style={{ maxHeight: 132, overflowY: 'auto', display: 'flex', flexDirection: 'column-reverse' }}>
+        <div style={{ fontSize: 13, lineHeight: 1.55, color: textSecondary(c.isDark), whiteSpace: 'pre-wrap' }}>
+          {text}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/** The thought behind the final reply — one quiet collapsed line under it. */
+function ReplyReasoning({ thought }: { thought: { text: string; ms: number } }) {
+  const c = useCardTheme()
+  const [open, setOpen] = useState(false)
+  const secs = fmtThought(thought.ms)
+  return (
+    <div style={{ marginTop: 6 }}>
+      <Button
+        type="text" size="small" aria-expanded={open}
+        icon={<BulbOutlined />}
+        onClick={() => setOpen(o => !o)}
+        style={{ color: c.dim, fontSize: 12, paddingInline: 6, marginLeft: -6 }}
+      >
+        Reasoning behind this reply{secs ? ` · ${secs}` : ''}
+      </Button>
+      {open && (
+        <div data-testid="reply-thought" style={{
+          marginTop: 4, borderRadius: RADIUS.sm, border: `1px solid ${c.toolBorder}`, background: c.codeBg,
+          padding: '8px 12px', fontSize: 13, lineHeight: 1.55, color: textSecondary(c.isDark), whiteSpace: 'pre-wrap',
+        }}>
+          {thought.text}
+        </div>
       )}
     </div>
   )
@@ -1928,6 +2021,8 @@ const BlockCard = memo(function BlockCard({
                 segments={block.segments}
                 currentText={block.currentText}
                 done={block.done}
+                liveThinking={block.liveThinking}
+                replyThinking={block.replyThinking}
                 pendingConfirm={pendingConfirm}
                 onAnswerConfirm={answerThis}
               />
@@ -1955,21 +2050,28 @@ export function useInvocationBlocks() {
     // transcript synchronously — starving the main thread so keystrokes in the
     // composer (a sibling subtree) couldn't paint until the render committed.
     const pendingTokens = new Map<string, string>()
+    const pendingThoughts = new Map<string, string>()
     let raf: number | null = null
 
     const flush = () => {
       raf = null
-      if (pending.size === 0 && pendingTokens.size === 0) return
+      if (pending.size === 0 && pendingTokens.size === 0 && pendingThoughts.size === 0) return
       const drained = new Map(pending)
       const drainedTokens = new Map(pendingTokens)
+      const drainedThoughts = new Map(pendingThoughts)
       pending.clear()
       pendingTokens.clear()
+      pendingThoughts.clear()
       // Lines and tokens for the same frame commit in ONE setBlocks so a card
       // that received both re-renders once, not twice.
       setBlocks(prev => prev.map(b => {
         let nb = b
         const add = drained.get(b.id)
         if (add && add.length) nb = { ...nb, lines: [...nb.lines, ...add] }
+        const thought = drainedThoughts.get(b.id)
+        if (thought && nb.type === 'chat') {
+          nb = { ...nb, liveThinking: (nb.liveThinking ?? '') + thought }
+        }
         const tok = drainedTokens.get(b.id)
         if (tok) {
           if (nb.type === 'chat') {
@@ -2004,6 +2106,23 @@ export function useInvocationBlocks() {
       scheduleFlush()
     }
 
+    // A reasoning summary streaming in — batched with tokens, shown expanded.
+    const onThinking = (e: Event) => {
+      const { id, text } = (e as CustomEvent).detail as { id: string; text: string }
+      if (!text) return
+      pendingThoughts.set(id, (pendingThoughts.get(id) ?? '') + text)
+      scheduleFlush()
+    }
+
+    // The thought behind the final reply: collapse the live box into the
+    // reply's reasoning line.
+    const onReplyThinking = (e: Event) => {
+      flush()
+      const { id, text, ms } = (e as CustomEvent).detail as { id: string; text: string; ms?: number }
+      setBlocks(prev => prev.map(b =>
+        b.id === id ? { ...b, liveThinking: undefined, ...(text ? { replyThinking: { text, ms: ms ?? 0 } } : {}) } : b))
+    }
+
     const onToolStart = (e: Event) => {
       // Drain any buffered tokens into currentText FIRST, so the text that
       // streamed right before this tool call is committed as the pre-tool text
@@ -2013,17 +2132,23 @@ export function useInvocationBlocks() {
       // already applies; both flush() and the setBlocks below are functional
       // updaters, so flush's drain runs before this reads b.currentText.
       flush()
-      const { id, call_id, tool_name, tool_input } = (e as CustomEvent).detail as {
+      const { id, call_id, tool_name, tool_input, thinking, thinking_ms } = (e as CustomEvent).detail as {
         id: string; call_id?: string; tool_name: string; tool_input: Record<string, unknown>
+        thinking?: string; thinking_ms?: number
       }
       setBlocks(prev => prev.map(b => {
         if (b.id !== id) return b
         const newSegs: BlockSegment[] = [
           ...b.segments,
           ...(b.currentText ? [{ kind: 'text' as const, text: b.currentText }] : []),
-          { kind: 'tool' as const, entry: { name: tool_name, ...(call_id ? { callId: call_id } : {}), input: tool_input, running: true, startedAt: Date.now() } },
+          { kind: 'tool' as const, entry: {
+            name: tool_name, ...(call_id ? { callId: call_id } : {}), input: tool_input, running: true, startedAt: Date.now(),
+            ...(thinking ? { thinking, thinkingMs: thinking_ms ?? 0 } : {}),
+          } },
         ]
-        return { ...b, segments: newSegs, currentText: '' }
+        // The step the thought led to has started: the live box collapses
+        // into this row's bulb.
+        return { ...b, segments: newSegs, currentText: '', liveThinking: undefined }
       }))
     }
 
@@ -2068,11 +2193,11 @@ export function useInvocationBlocks() {
           return {
             ...b,
             segments: [...b.segments, { kind: 'text', text: b.currentText }],
-            currentText: '',
+            currentText: '', liveThinking: undefined,
             done: true, exitCode: exit_code, durationMs: duration_ms, stopped: !!stopped,
           }
         }
-        return { ...b, done: true, exitCode: exit_code, durationMs: duration_ms, stopped: !!stopped }
+        return { ...b, liveThinking: undefined, done: true, exitCode: exit_code, durationMs: duration_ms, stopped: !!stopped }
       }))
     }
 
@@ -2104,6 +2229,8 @@ export function useInvocationBlocks() {
 
     window.addEventListener('runspec:output', onOutput)
     window.addEventListener('runspec:token', onToken)
+    window.addEventListener('runspec:thinking', onThinking)
+    window.addEventListener('runspec:reply_thinking', onReplyThinking)
     window.addEventListener('runspec:tool_start', onToolStart)
     window.addEventListener('runspec:tool_end', onToolEnd)
     window.addEventListener('runspec:tool_progress', onToolProgress)
@@ -2114,6 +2241,8 @@ export function useInvocationBlocks() {
       if (raf !== null) cancelAnimationFrame(raf)
       window.removeEventListener('runspec:output', onOutput)
       window.removeEventListener('runspec:token', onToken)
+      window.removeEventListener('runspec:thinking', onThinking)
+      window.removeEventListener('runspec:reply_thinking', onReplyThinking)
       window.removeEventListener('runspec:tool_start', onToolStart)
       window.removeEventListener('runspec:tool_end', onToolEnd)
       window.removeEventListener('runspec:tool_progress', onToolProgress)

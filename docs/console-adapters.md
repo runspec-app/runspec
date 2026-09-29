@@ -207,8 +207,13 @@ never see them, and each is off unless set:
   block, and the declined attempt's non-text blocks are not echoed back.
 - `thinking_display = "summarized"` — adds `display` to an adaptive `thinking`
   request; `thinking_delta`s are yielded as `("thinking", text)` stream events,
-  which the agent loop forwards as `runspec:thinking` for the activity bar. A
-  custom adapter may yield the same event to get the same UI.
+  which the agent loop forwards as `runspec:thinking` for the activity bar and
+  the turn card's live "Thinking…" box. When the model call ends, the loop
+  attaches that thought to the step it led to: the first tool call's
+  `runspec:tool_start` carries `thinking` / `thinking_ms` (saved on the tool's
+  transcript entry), or, for the final reply, `runspec:reply_thinking`
+  (saved as the turn's `reply_thinking`). A custom adapter may yield the same
+  event to get the same UI.
 
 ### `effort` — reasoning effort (adaptive extended thinking)
 
