@@ -246,6 +246,10 @@ def _build_icon() -> Path | None:
         return None
 
 
+# How long _apply_dwm_title_bar waits for the native window to appear.
+_TITLE_BAR_WAIT_S = 15.0
+
+
 def _apply_dwm_title_bar(title: str) -> None:
     """Style the native Windows title bar: dark mode + caption colour.
 
@@ -259,7 +263,9 @@ def _apply_dwm_title_bar(title: str) -> None:
     the coloured caption (re-drawn in a different shade on focus/resize, so it
     appears to come and go).
 
-    Called from the webview `started` callback so the window HWND is available.
+    Called from the webview `started` callback (polling until the native window
+    exists — pywebview starts that thread before building the form) and again
+    on the window `shown` event as a backstop.
     Requires Windows 11 build 22000+ for DWMWA_CAPTION_COLOR (attr 35).
     """
     import ctypes
@@ -275,10 +281,20 @@ def _apply_dwm_title_bar(title: str) -> None:
     # COLORREF is 0x00BBGGRR. Runspec blue #0958D9 → 0x00D95809, white text.
     caption, text = title_bar_colors() or (0x00D95809, 0x00FFFFFF)
 
-    # Brief wait for the window to be fully painted before we style it
-    time.sleep(0.15)
-    hwnd = win32gui.FindWindow(None, title)
+    # pywebview starts the ``started`` thread *before* it builds the native
+    # form, so the window may not exist yet. Poll for it rather than a single
+    # fixed sleep: a one-shot 150 ms guess lost the race on slower / busier
+    # launches (a white-label package, AV scanning, the refresh + trigger
+    # threads set_window() starts) and silently left the default caption.
+    hwnd = 0
+    deadline = time.monotonic() + _TITLE_BAR_WAIT_S
+    while True:
+        hwnd = win32gui.FindWindow(None, title)
+        if hwnd or time.monotonic() >= deadline:
+            break
+        time.sleep(0.1)
     if not hwnd:
+        logger.debug("title bar: no window titled %r — caption left default", title)
         return
 
     try:
@@ -660,6 +676,13 @@ def main() -> None:
     )
     bridge.set_window(window)
     prof("window created")
+    # Re-apply the caption styling once the window is actually shown — a
+    # backstop to the `started` hook (which can run before the native window
+    # exists). Idempotent, so styling twice is harmless.
+    try:
+        window.events.shown += lambda *_: _apply_dwm_title_bar(window_title)
+    except Exception:  # noqa: BLE001 — best-effort across pywebview versions
+        logger.debug("could not hook window 'shown' for title bar", exc_info=True)
 
     icon = _build_icon()
 

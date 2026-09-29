@@ -8,6 +8,18 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.301.1] — 2026-09-29
+
+### Fixed
+
+- **`[console.theme] title_bar_color` intermittently not applied.** The native
+  Windows caption was styled from pywebview's `started` thread, which pywebview
+  launches *before* it builds the native window; the code slept a fixed 150 ms,
+  called `FindWindow` once and silently gave up on a miss — leaving the default
+  caption while the rest of the white-label theme (rendered by the frontend)
+  applied fine. It now polls for the window (up to 15 s) and re-applies the
+  caption on the window `shown` event as a backstop (`app._apply_dwm_title_bar`).
+
 ## [0.301.0] — 2026-09-28
 
 ### Changed
