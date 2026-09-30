@@ -1504,33 +1504,40 @@ def pip_env(repo: Repo | None, auth: tuple[str, str] | None = None) -> dict[str,
     return env
 
 
+def exec_argv(
+    argv: list[str],
+    *,
+    run_as: str = "",
+    become_method: str = "sudo",
+    env: dict[str, str] | None = None,
+) -> tuple[list[str], bytes | None]:
+    """``argv`` escalated for a service-account venv (``sudo -n -u user`` / ``su``,
+    the same shape the ``install-into-venv`` runnable builds) with ``env`` carried
+    as the SPEC env frame: returns ``(argv, stdin)``. The env holds the index URL,
+    which can embed a credential, so it never goes on the command line (every user
+    can read that in ``ps``, and ``sudo`` logs it) — the caller writes ``stdin``
+    to the process first."""
+    from runspec.become import build_exec_argv  # core, stdlib
+
+    method = (become_method or "sudo").strip().lower()
+    flags = "-n" if run_as and method == "sudo" else None
+    return build_exec_argv(
+        list(argv), run_as, method, become_flags=flags, env=env or None
+    )
+
+
 def remote_command(
     argv: list[str],
     *,
     run_as: str = "",
     become_method: str = "sudo",
     env: dict[str, str] | None = None,
-) -> str:
-    """One shell line for an SSH exec channel: ``argv`` (quoted) with the env
-    carried by ``env(1)`` and — for a service-account venv — ``sudo -n -u user``
-    / ``su`` escalation, the same shape the ``install-into-venv`` runnable
-    builds. ``env(1)`` (rather than a bare ``KEY=val`` prefix) keeps every token
-    an ordinary argument, so quoting is uniform and a URL with a credential in
-    it survives intact."""
-    from runspec.become import build_become_argv  # core, stdlib
-
-    method = (become_method or "sudo").strip().lower()
-    env = dict(env or {})
-    if run_as:
-        flags = "-n" if method == "sudo" else None
-        full = build_become_argv(
-            list(argv), run_as, method, become_flags=flags, env=env
-        )
-    else:
-        full = (
-            ["env", *[f"{k}={v}" for k, v in env.items()], *argv] if env else list(argv)
-        )
-    return " ".join(shlex.quote(p) for p in full)
+) -> tuple[str, bytes | None]:
+    """One quoted shell line for an SSH exec channel plus the stdin to feed it —
+    :func:`exec_argv`, joined. Every token is quoted, so a URL with a credential
+    in it could never be split by the shell (and it isn't in the line anyway)."""
+    parts, frame = exec_argv(argv, run_as=run_as, become_method=become_method, env=env)
+    return " ".join(shlex.quote(p) for p in parts), frame
 
 
 def summarize_pip_output(output: str, *, limit: int = 12) -> str:

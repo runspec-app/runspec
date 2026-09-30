@@ -6,10 +6,19 @@ Covers the SPEC "Remote Execution" command table and run_as resolution.
 
 from __future__ import annotations
 
+import json
+import shutil
+import subprocess
+import sys
+
 import pytest
 
 from runspec.become import (
+    ENV_PRELUDE,
     build_become_argv,
+    build_exec_argv,
+    env_frame,
+    parse_env_frame,
     resolve_run_as,
     validate_run_as_patterns,
 )
@@ -77,7 +86,8 @@ def test_no_run_as_no_env_is_passthrough():
 
 
 def test_no_run_as_with_env_uses_shell_assignment():
-    out = build_become_argv(CMD, env={"RUNSPEC_AGENT": "1"})
+    with pytest.warns(DeprecationWarning, match="command line"):
+        out = build_become_argv(CMD, env={"RUNSPEC_AGENT": "1"})
     assert out == ["RUNSPEC_AGENT=1", *CMD]
 
 
@@ -87,7 +97,8 @@ def test_sudo_default():
 
 
 def test_sudo_with_env_uses_env_binary():
-    out = build_become_argv(CMD, run_as="deploy", env={"RUNSPEC_AGENT": "1"})
+    with pytest.warns(DeprecationWarning):
+        out = build_become_argv(CMD, run_as="deploy", env={"RUNSPEC_AGENT": "1"})
     assert out == ["sudo", "-u", "deploy", "env", "RUNSPEC_AGENT=1", *CMD]
 
 
@@ -129,13 +140,14 @@ def test_su_wraps_command_in_dash_c_string():
 
 
 def test_su_with_env_and_flags():
-    out = build_become_argv(
-        CMD,
-        run_as="deploy",
-        become_method="su",
-        become_flags="-l",
-        env={"RUNSPEC_AGENT": "1"},
-    )
+    with pytest.warns(DeprecationWarning):
+        out = build_become_argv(
+            CMD,
+            run_as="deploy",
+            become_method="su",
+            become_flags="-l",
+            env={"RUNSPEC_AGENT": "1"},
+        )
     assert out[0] == "su"
     assert "-l" in out
     assert out[-1] == "deploy"
@@ -152,3 +164,85 @@ def test_su_quotes_args_with_spaces():
 def test_empty_run_as_never_escalates(method):
     # An explicit empty run_as (e.g. a host mapped to "") must not escalate.
     assert build_become_argv(CMD, run_as="", become_method=method) == CMD
+
+
+# ── build_exec_argv / env frame: values never on the command line ────────────
+
+SECRET = "hunter2 'q\"$x `id` \\n \\0101 %s ünï\ntrailing\n\n"
+
+
+def test_env_frame_escapes_every_byte():
+    assert env_frame({"A": "a\n", "B": ""}) == b"A=\\0141\\0012\nB=\n.\n"
+    assert env_frame({}) == b".\n"
+
+
+@pytest.mark.parametrize("name", ["", "1A", "A-B", "A B", "A=B", "é"])
+def test_env_frame_refuses_bad_names(name):
+    with pytest.raises(ValueError, match="invalid environment variable name"):
+        env_frame({name: "x"})
+
+
+def test_env_frame_refuses_nul():
+    with pytest.raises(ValueError, match="NUL"):
+        env_frame({"A": "x\x00y"})
+
+
+def test_exec_without_env_is_the_plain_command():
+    assert build_exec_argv(CMD) == (CMD, None)
+    assert build_exec_argv(CMD, run_as="deploy") == (["sudo", "-u", "deploy", *CMD], None)
+
+
+def test_exec_sudo_with_env_wraps_in_the_prelude():
+    argv, frame = build_exec_argv(CMD, run_as="deploy", become_flags="-H", env={"K": SECRET})
+    assert argv == ["sudo", "-H", "-u", "deploy", "sh", "-c", ENV_PRELUDE, "sh", *CMD]
+    assert frame == env_frame({"K": SECRET})
+    assert not any("hunter2" in a for a in argv)
+
+
+def test_exec_no_run_as_with_env_still_uses_the_prelude():
+    argv, frame = build_exec_argv(CMD, env={"K": SECRET})
+    assert argv == ["sh", "-c", ENV_PRELUDE, "sh", *CMD]
+    assert frame is not None
+
+
+def test_exec_su_puts_the_prelude_inside_the_dash_c_string():
+    argv, _ = build_exec_argv(CMD, run_as="deploy", become_method="su", env={"K": SECRET})
+    assert argv[0] == "su" and argv[-1] == "deploy"
+    inner = argv[argv.index("-c") + 1]
+    assert inner.startswith("sh -c '" + ENV_PRELUDE + "' sh /venv/bin/restart-service")
+    assert "hunter2" not in inner
+
+
+def test_the_prelude_has_no_single_quotes():
+    # It is embedded verbatim in `sh -c '…'` (and inside su's -c string).
+    assert "'" not in ENV_PRELUDE
+
+
+@pytest.mark.skipif(not shutil.which("sh"), reason="needs a POSIX sh")
+@pytest.mark.parametrize("shell", ["sh", "dash", "bash", "busybox", "ksh", "mksh"])
+def test_the_prelude_delivers_values_exactly(shell):
+    exe = shutil.which(shell)
+    if exe is None:
+        pytest.skip(f"{shell} not installed")
+    env = {"A": "", "B": "trail\n\n", "C": SECRET, "D": "a\nb", "E": "-n", "F": "."}
+    probe = "import json, os, sys; print(json.dumps({k: os.environ.get(k) for k in 'ABCDEF'})); print(sys.stdin.read(), end='')"
+    argv, frame = build_exec_argv([sys.executable, "-c", probe], env=env)
+    assert argv[0] == "sh"
+    argv = [exe, *(["sh"] if shell == "busybox" else []), *argv[1:]]
+    res = subprocess.run(argv, input=frame + b"rest of stdin\n", capture_output=True, timeout=30)
+    assert res.returncode == 0, res.stderr
+    first, rest = res.stdout.decode().split("\n", 1)
+    assert json.loads(first) == env
+    assert rest == "rest of stdin\n"
+
+
+def test_parse_env_frame_round_trips():
+    env = {"A": "", "B": SECRET, "C": "a\nb"}
+    assert parse_env_frame(env_frame(env)) == env
+    assert parse_env_frame(env_frame(env) + b"trailing stdin") == env
+
+
+@pytest.mark.parametrize("bad", [b"A=x\n.\n", b"A=\\0141", b"1A=\\0141\n.\n", b"A=\\9999\n.\n"])
+def test_parse_env_frame_rejects_malformed(bad):
+    with pytest.raises(ValueError):
+        parse_env_frame(bad)

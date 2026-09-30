@@ -4,7 +4,8 @@ The daemon fires a schedule by exec'ing the target runnable's own venv script
 directly (a sibling of the ``runspec`` binary in the Scripts dir) — the same
 approach ``runspec serve`` / the console executor use — never by shelling through
 ``runspec run``. Credentials, when present, arrive via ``RUNSPEC_ENV_FILE`` (a
-600 file owned by ``run_as``), so only non-secret provenance rides ``env(1)``.
+600 file owned by ``run_as``), so only non-secret provenance crosses the
+escalation — on the child's stdin as the SPEC env frame, never on a command line.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ import sysconfig
 from pathlib import Path
 from typing import Any
 
-from runspec.become import build_become_argv
+from runspec.become import build_exec_argv
 
 from .invocation import plan_invocation
 
@@ -70,16 +71,18 @@ def run_runnable(
     cmd = [str(binary), *plan.argv]
     prov = {**provenance_env(source_toml, env_file), **plan.env}
     if run_as:
-        # env(1) carries only the non-secret provenance + the RUNSPEC_ENV_FILE
-        # path through sudo/su; the credentials themselves live in that file.
-        argv = build_become_argv(
+        # Only the non-secret provenance + the RUNSPEC_ENV_FILE path cross sudo/su
+        # (the credentials themselves live in that file), as the SPEC env frame on
+        # stdin — values never go on a command line.
+        argv, frame = build_exec_argv(
             cmd,
             run_as=run_as,
             become_method=become_method,
             become_flags=become_flags,
             env=prov,
         )
-        return subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+        feed: dict[str, Any] = {"input": frame.decode("ascii")} if frame else {"stdin": subprocess.DEVNULL}
+        return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, **feed)
     child_env = {**os.environ, **prov}
     return subprocess.run(cmd, capture_output=True, text=True, env=child_env, timeout=timeout)
 

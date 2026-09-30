@@ -270,6 +270,28 @@ def shell_join(parts: list[str]) -> str:
     return " ".join(shlex.quote(p) for p in parts)
 
 
+def remote_exec_command(
+    cmd_argv: list[str],
+    run_as: str = "",
+    become_method: str = "sudo",
+    become_flags: str | None = None,
+    env: dict[str, str] | None = None,
+) -> tuple[str, bytes | None]:
+    """The shell command line for an SSH exec channel, and the stdin to feed it.
+
+    Per the SPEC "Command building" table: with ``env`` the command is wrapped in
+    the env prelude (inside the ``run_as`` escalation) and the values travel as
+    the env frame on the channel's stdin — never in the command line, which every
+    user on the host can read (``ps``) and ``sudo`` logs. Without ``env`` the
+    frame is ``None``. Every token is quoted (:func:`shell_join`)."""
+    from runspec.become import build_exec_argv
+
+    parts, frame = build_exec_argv(
+        cmd_argv, run_as, become_method, become_flags, env=env or None
+    )
+    return shell_join(parts), frame
+
+
 def args_to_argv(
     args: dict[str, Any], positionals: dict[str, int] | None = None
 ) -> list[str]:
@@ -351,8 +373,8 @@ def run_local(
     ``cred_env`` are plain environment variables derived from named credentials
     (e.g. ``JIRA_USERNAME``/``JIRA_PASSWORD``) — final var names, unlike the
     ``RUNSPEC_*_ARG_*`` channel ``secrets`` ride. They are merged into the child
-    environment the same way secrets are (and carried through ``env(1)`` on the
-    ``run_as`` path)."""
+    environment the same way secrets are (and carried across the ``run_as``
+    escalation as the SPEC env frame on stdin)."""
     bin_dir = Path(runspec_path).parent
     # On Windows a Node folder (`runspec bin`) ships .cmd shims alongside the
     # POSIX ones; a Python venv has .exe entry points. Prefer .exe, then .cmd/.bat.
@@ -379,17 +401,20 @@ def run_local(
     if runbook:
         prov_env["RUNSPEC_RUNBOOK"] = runbook
     extra_env: dict[str, str] = {}
+    frame: bytes | None = None
     if run_as:
         # sudo/su strip the environment — carry RUNSPEC_AGENT and any secret/cred
-        # env vars through env(1) so they reach the target user's process. (These
-        # are argv tokens for the subprocess, not a shell, so no quoting is needed.)
-        from runspec.become import build_become_argv
+        # env vars across as the SPEC env frame on the child's stdin, never on the
+        # command line (visible to every user in ps, and logged by sudo).
+        from runspec.become import build_exec_argv
 
         env = {"RUNSPEC_AGENT": "1"} if agent else {}
         env.update(prov_env)
         env.update(secrets_env)
         env.update(cred_env)
-        cmd = build_become_argv(cmd, run_as, become_method, become_flags, env=env)
+        cmd, frame = build_exec_argv(
+            cmd, run_as, become_method, become_flags, env=env or None
+        )
     else:
         # No escalation — secrets/cred env vars go straight into the child process.
         extra_env = {**secrets_env, **cred_env, **prov_env}
@@ -401,6 +426,7 @@ def run_local(
         cancel_event=cancel_event,
         agent=agent,
         extra_env=extra_env,
+        stdin_data=frame,
     )
 
 
@@ -617,10 +643,8 @@ def run_remote(
     ``cred_env`` are plain environment variables derived from named credentials
     (final var names like ``JIRA_PASSWORD``, distinct from the ``RUNSPEC_*_ARG_*``
     channel ``secrets`` ride); they are merged into the command's environment the
-    same way secrets are, including through ``env(1)`` on the ``run_as`` path.
+    same way secrets are — on the channel's stdin as the SPEC env frame.
     """
-    from runspec.become import build_become_argv
-
     bin_dir = Path(runspec_path).parent.as_posix()
     remote_bin = f"{bin_dir}/{runnable}"
     argv = args_to_argv(args, positionals)
@@ -637,24 +661,13 @@ def run_remote(
     # Credential-derived plain env vars (final names, e.g. JIRA_PASSWORD).
     all_env = {**base_env, **secrets_env, **(cred_env or {})}
     cmd_argv = [remote_bin, *command_path, *argv]
-    if run_as:
-        # Escalated: env(1) after the become carries every var into the target
-        # user's context. shell_join quotes each `KEY=val` token as a unit, which
-        # `env` accepts verbatim — so secret values with shell metacharacters are
-        # safe (worse, an unquoted value would be a command-injection vector).
-        parts = build_become_argv(
-            cmd_argv, run_as, become_method, become_flags, env=all_env
-        )
-        remote_cmd = shell_join(parts)
-    else:
-        # No escalation: the runnable runs directly, so env vars become a shell
-        # assignment prefix (`KEY=val cmd`). Quote each *value* — not the whole
-        # `KEY=val` token — so an assignment stays an assignment even when the
-        # secret contains spaces or metacharacters.
-        parts = build_become_argv(cmd_argv, "", become_method, become_flags, env={})
-        cmd_str = shell_join(parts)
-        assigns = " ".join(f"{k}={shlex.quote(v)}" for k, v in all_env.items())
-        remote_cmd = f"{assigns} {cmd_str}" if assigns else cmd_str
+    # The env (secrets included) never goes in the command line: with any env the
+    # command is wrapped in the SPEC env prelude — inside the escalation when
+    # run_as is set — and the values ride the channel's stdin as the env frame.
+    # Every token is quoted, so an arg value can't inject shell syntax.
+    remote_cmd, frame = remote_exec_command(
+        cmd_argv, run_as, become_method, become_flags, env=all_env
+    )
 
     if jump:
         # System-ssh transport: the local OpenSSH client performs the CentOS 6
@@ -662,8 +675,8 @@ def run_remote(
         # remote command string is passed as a single argv element and executed
         # by the remote login shell — exactly as paramiko's exec_command does —
         # so ``remote_cmd`` is already correctly quoted for the *remote* shell.
-        # ``agent=False`` here: RUNSPEC_AGENT (if set) already rides remote_cmd's
-        # env prefix; it must not leak into the *local* ssh process instead.
+        # ``agent=False`` here: RUNSPEC_AGENT (if set) already rides the env
+        # frame; it must not leak into the *local* ssh process instead.
         ssh_argv = _system_ssh_argv(ssh_target, jump, identity_file, global_ssh_config)
         _stream(
             [*ssh_argv, remote_cmd],
@@ -672,6 +685,7 @@ def run_remote(
             timeout=timeout,
             cancel_event=cancel_event,
             agent=False,
+            stdin_data=frame,  # ssh forwards it to the remote command's stdin
         )
         return
 
@@ -696,6 +710,15 @@ def run_remote(
     try:
         channel.set_combine_stderr(False)
         channel.exec_command(remote_cmd)
+        if frame:
+            # EOF after the frame: the runnable reads no more. If the command has
+            # already exited (e.g. sudo refused) the write fails — its stderr and
+            # exit status below still tell the story, so don't abort the run here.
+            try:
+                channel.sendall(frame)
+                channel.shutdown_write()
+            except Exception:
+                pass
 
         cancelled = threading.Event()
         done = threading.Event()
@@ -781,10 +804,13 @@ def ssh_run(
     identity_file: str | None = None,
     global_ssh_config: dict[str, Any] | None = None,
     timeout: int = 15,
+    stdin: bytes | None = None,
 ) -> tuple[int, str, str]:
     """Run a single command over SSH, return (exit_code, stdout, stderr).
 
-    Used for discovery, connectivity checks, and log fetching.
+    Used for discovery, connectivity checks, and log fetching. ``stdin`` (e.g. an
+    env frame from :func:`remote_exec_command`) is written to the command's
+    standard input, which is then closed.
     """
     try:
         client = _make_ssh_client(ssh_target, identity_file, global_ssh_config)
@@ -792,7 +818,8 @@ def ssh_run(
         return -1, "", str(exc)
 
     try:
-        _, stdout, stderr = client.exec_command(command, timeout=timeout)
+        sin, stdout, stderr = client.exec_command(command, timeout=timeout)
+        feed_channel_stdin(sin, stdin)
         out = stdout.read().decode("utf-8", errors="replace")
         err = stderr.read().decode("utf-8", errors="replace")
         code = stdout.channel.recv_exit_status()
@@ -801,6 +828,24 @@ def ssh_run(
         return -1, "", str(exc)
     finally:
         client.close()
+
+
+def feed_channel_stdin(sin: Any, data: bytes | None) -> None:
+    """Write ``data`` to a paramiko ``exec_command`` stdin file and send EOF.
+    No-op when ``data`` is empty (the channel is left as it was).
+
+    Best-effort: if the command has already exited (e.g. ``sudo`` refused) the
+    write fails, but its output and exit status are still read by the caller —
+    and raising here would make the connection pool treat the transport as dead
+    and run the command a second time."""
+    if not data:
+        return
+    try:
+        sin.write(data)
+        sin.flush()
+        sin.channel.shutdown_write()
+    except Exception:
+        pass
 
 
 def _system_ssh_argv(
@@ -1006,6 +1051,7 @@ def _stream(
     cancel_event: threading.Event | None = None,
     agent: bool = False,
     extra_env: dict[str, str] | None = None,
+    stdin_data: bytes | None = None,
 ) -> None:
     env = dict(_UTF8_ENV)
     if agent:
@@ -1016,7 +1062,7 @@ def _stream(
     try:
         proc = subprocess.Popen(
             cmd,
-            stdin=subprocess.DEVNULL,
+            stdin=subprocess.PIPE if stdin_data else subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -1028,6 +1074,13 @@ def _stream(
         on_line(f"✗  Command not found: {cmd[0]}", "stderr")
         on_done(-1, 0)
         return
+    if stdin_data and proc.stdin is not None:
+        # The SPEC env frame (plain ASCII), then EOF.
+        try:
+            proc.stdin.write(stdin_data.decode("ascii"))
+            proc.stdin.close()
+        except OSError:
+            pass  # the process already exited; its exit code tells the story
 
     def _read(stream: Any, name: str) -> None:
         for line in stream:

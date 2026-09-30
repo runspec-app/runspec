@@ -168,12 +168,18 @@ class PooledConnection:
             return False
         return True
 
-    def run(self, command: str, timeout: int) -> tuple[int, str, str]:
-        """Run one command over a fresh channel on this transport."""
+    def run(
+        self, command: str, timeout: int, stdin: bytes | None = None
+    ) -> tuple[int, str, str]:
+        """Run one command over a fresh channel on this transport, writing
+        ``stdin`` (e.g. a SPEC env frame) to it first."""
+        from .executor import feed_channel_stdin
+
         self._sessions.acquire()
         try:
             self.last_used = self._clock()
-            _, stdout, stderr = self._client.exec_command(command, timeout=timeout)
+            sin, stdout, stderr = self._client.exec_command(command, timeout=timeout)
+            feed_channel_stdin(sin, stdin)
             out = stdout.read().decode("utf-8", errors="replace")
             err = stderr.read().decode("utf-8", errors="replace")
             code = stdout.channel.recv_exit_status()
@@ -537,8 +543,10 @@ class SSHConnectionPool:
         identity_file: str | None = None,
         global_ssh_config: dict[str, Any] | None = None,
         timeout: int = 15,
+        stdin: bytes | None = None,
     ) -> tuple[int, str, str]:
-        """Run one command on the host, reusing a pooled transport.
+        """Run one command on the host, reusing a pooled transport. ``stdin`` is
+        written to the command's standard input (then EOF).
 
         Mirrors ``executor.ssh_run`` return shape ``(code, out, err)``; on any
         failure returns ``(-1, "", message)`` so callers need no try/except.
@@ -554,6 +562,8 @@ class SSHConnectionPool:
             except Exception as exc:
                 return -1, "", str(exc)
             try:
+                if stdin:
+                    return conn.run(command, timeout, stdin)
                 return conn.run(command, timeout)
             except Exception as exc:
                 # A reused transport may have died between is_alive() and exec —

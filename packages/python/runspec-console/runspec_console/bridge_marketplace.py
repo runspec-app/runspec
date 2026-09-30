@@ -28,6 +28,7 @@ refused by ``marketplace.validate_spec``).
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import subprocess
@@ -599,17 +600,17 @@ class MarketplaceMixin:
 
             full_env = dict(os.environ)
             full_env.update(env or {})
+            frame: bytes | None = None
             if run_as:
-                cmd = mp.remote_command(
+                # Escalated: env crosses sudo/su as the SPEC env frame on stdin,
+                # never on the command line (the index URL can carry a credential).
+                popen_argv, frame = mp.exec_argv(
                     argv, run_as=run_as, become_method=become_method, env=env
                 )
-                popen_argv: list[str] | str = cmd
-                shell = True
             else:
-                popen_argv, shell = list(argv), False
+                popen_argv = list(argv)
             popen_kwargs: dict[str, Any] = dict(
-                shell=shell,
-                stdin=subprocess.DEVNULL,
+                stdin=subprocess.PIPE if frame else subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -619,6 +620,10 @@ class MarketplaceMixin:
             )
             popen_kwargs.update(no_window_kwargs())
             proc = subprocess.Popen(popen_argv, **popen_kwargs)
+            if frame and proc.stdin is not None:
+                with contextlib.suppress(OSError):
+                    proc.stdin.write(frame.decode("ascii"))
+                    proc.stdin.close()
             if proc_sink is not None:
                 proc_sink(proc)
             lines: list[str] = []
@@ -638,12 +643,17 @@ class MarketplaceMixin:
         h = self._target_host_entry(str(target.get("host")))
         if h is None or not h.get("ssh"):
             return -1, f"host {target.get('host')!r} is not configured"
-        cmd = mp.remote_command(
+        cmd, frame = mp.remote_command(
             argv, run_as=run_as, become_method=become_method, env=env
         )
         ssh_run = getattr(self, "_ssh_run")
+        feed: dict[str, Any] = {"stdin": frame} if frame else {}
         code, out, err = ssh_run(
-            str(h["ssh"]), cmd, identity_file=h.get("identityFile"), timeout=timeout
+            str(h["ssh"]),
+            cmd,
+            identity_file=h.get("identityFile"),
+            timeout=timeout,
+            **feed,
         )
         text = "\n".join(p for p in ((out or "").rstrip(), (err or "").rstrip()) if p)
         if on_line is not None:

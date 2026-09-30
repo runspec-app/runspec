@@ -100,6 +100,14 @@ def test_run_local_injects_secret_into_env_not_argv(monkeypatch):
 class _FakeChannel:
     def __init__(self) -> None:
         self.command = ""
+        self.stdin = b""
+        self.eof = False
+
+    def sendall(self, data):
+        self.stdin += data
+
+    def shutdown_write(self):
+        self.eof = True
 
     def set_combine_stderr(self, _v):  # noqa: D401
         pass
@@ -151,26 +159,179 @@ def _run_remote_capture(secrets, run_as=""):
         session_factory=session_factory,
         secrets=secrets,
     )
-    return chan.command
+    return chan
 
 
-def test_run_remote_no_escalation_secret_is_assignment_prefix():
-    cmd = _run_remote_capture({"db-password": "p@ss w0rd"})
-    # The runnable is invoked with the secret as a leading shell assignment whose
-    # value is quoted — so an assignment stays an assignment, no injection.
-    assert cmd.startswith("RUNSPEC_DEPLOY_ARG_DB_PASSWORD=")
-    # The value never appears as a --flag argument.
-    assert "--db-password" not in cmd
-    # The shell parses the assignment back to the exact value.
-    tokens = shlex.split(cmd)
-    assert "RUNSPEC_DEPLOY_ARG_DB_PASSWORD=p@ss w0rd" in tokens
+def test_run_remote_no_escalation_secret_rides_stdin_not_the_command():
+    from runspec.become import ENV_PRELUDE, parse_env_frame
+
+    chan = _run_remote_capture({"db-password": "p@ss w0rd"})
+    cmd = chan.command
+    # The secret is in neither the command line (readable by every user via ps)
+    # nor a --flag: it travels as the SPEC env frame on the channel's stdin.
+    assert "p@ss" not in cmd and "--db-password" not in cmd
+    assert shlex.split(cmd)[:4] == ["sh", "-c", ENV_PRELUDE, "sh"]
+    assert parse_env_frame(chan.stdin)["RUNSPEC_DEPLOY_ARG_DB_PASSWORD"] == "p@ss w0rd"
+    assert chan.eof
 
 
-def test_run_remote_with_escalation_secret_after_env():
-    cmd = _run_remote_capture({"db-password": "p@ss w0rd"}, run_as="deploy")
-    tokens = shlex.split(cmd)
-    # Escalated form: sudo -u deploy env ... RUNSPEC_..=value ... runnable
-    assert tokens[:3] == ["sudo", "-u", "deploy"]
-    assert "env" in tokens
-    assert "RUNSPEC_DEPLOY_ARG_DB_PASSWORD=p@ss w0rd" in tokens
-    assert "--db-password" not in cmd
+def test_run_remote_with_escalation_secret_rides_stdin_inside_the_escalation():
+    from runspec.become import ENV_PRELUDE, parse_env_frame
+
+    chan = _run_remote_capture({"db-password": "p@ss w0rd"}, run_as="deploy")
+    tokens = shlex.split(chan.command)
+    # Escalated form: sudo -u deploy sh -c <prelude> sh <runnable> … — sudo logs
+    # this line, so it must hold no value.
+    assert tokens[:7] == ["sudo", "-u", "deploy", "sh", "-c", ENV_PRELUDE, "sh"]
+    assert "p@ss" not in chan.command and "--db-password" not in chan.command
+    assert parse_env_frame(chan.stdin)["RUNSPEC_DEPLOY_ARG_DB_PASSWORD"] == "p@ss w0rd"
+
+
+def test_run_local_escalated_secret_rides_the_child_stdin(monkeypatch, tmp_path):
+    from runspec.become import ENV_PRELUDE, parse_env_frame
+
+    seen: dict = {}
+    monkeypatch.setattr(
+        executor, "_stream", lambda cmd, *a, **kw: seen.update(cmd=cmd, **kw)
+    )
+    executor.run_local(
+        str(tmp_path / "runspec"),
+        "deploy",
+        {},
+        [],
+        lambda *_: None,
+        lambda *_: None,
+        run_as="deploy",
+        secrets={"db-password": "p@ss w0rd"},
+        cred_env={"JIRA_PASSWORD": "j1ra"},
+    )
+    cmd = seen["cmd"]
+    assert cmd[:7] == ["sudo", "-u", "deploy", "sh", "-c", ENV_PRELUDE, "sh"]
+    assert not any("p@ss" in c or "j1ra" in c for c in cmd)
+    env = parse_env_frame(seen["stdin_data"])
+    assert env["RUNSPEC_DEPLOY_ARG_DB_PASSWORD"] == "p@ss w0rd"
+    assert env["JIRA_PASSWORD"] == "j1ra"
+    assert not seen["extra_env"]  # nothing on the (stripped) sudo environment
+
+
+def test_run_local_unescalated_secret_uses_the_child_environment(monkeypatch, tmp_path):
+    seen: dict = {}
+    monkeypatch.setattr(
+        executor, "_stream", lambda cmd, *a, **kw: seen.update(cmd=cmd, **kw)
+    )
+    executor.run_local(
+        str(tmp_path / "runspec"),
+        "deploy",
+        {},
+        [],
+        lambda *_: None,
+        lambda *_: None,
+        secrets={"db-password": "p@ss w0rd"},
+    )
+    assert seen["stdin_data"] is None
+    assert seen["extra_env"]["RUNSPEC_DEPLOY_ARG_DB_PASSWORD"] == "p@ss w0rd"
+    assert not any("p@ss" in c for c in seen["cmd"])
+
+
+def test_run_remote_jump_transport_feeds_the_frame_to_ssh(monkeypatch):
+    from runspec.become import parse_env_frame
+
+    seen: dict = {}
+    monkeypatch.setattr(
+        executor, "_stream", lambda cmd, *a, **kw: seen.update(cmd=cmd, **kw)
+    )
+    executor.run_remote(
+        "user@legacy",
+        "/venv/bin/runspec",
+        "deploy",
+        {},
+        [],
+        lambda *_: None,
+        lambda *_: None,
+        run_as="deploy",
+        secrets={"db-password": "p@ss w0rd"},
+        jump="bastion",
+    )
+    # The local ssh argv (visible in the operator's own process list) holds no value.
+    assert not any("p@ss" in c for c in seen["cmd"])
+    assert (
+        parse_env_frame(seen["stdin_data"])["RUNSPEC_DEPLOY_ARG_DB_PASSWORD"]
+        == "p@ss w0rd"
+    )
+
+
+def test_stream_writes_stdin_data_then_eof():
+    import sys
+
+    lines: list = []
+    done: list = []
+    code = "import sys; print(repr(sys.stdin.read()))"
+    executor._stream(
+        [sys.executable, "-c", code],
+        lambda line, _s: lines.append(line),
+        lambda c, _d: done.append(c),
+        stdin_data=b"A=\\0141\n.\n",
+    )
+    assert done == [0]
+    assert lines == [repr("A=\\0141\n.\n")]
+
+
+def test_ssh_run_feeds_stdin_and_sends_eof():
+    class _Chan:
+        def __init__(self):
+            self.eof = False
+
+        def shutdown_write(self):
+            self.eof = True
+
+    class _In:
+        def __init__(self):
+            self.data = b""
+            self.channel = _Chan()
+
+        def write(self, d):
+            self.data += d
+
+        def flush(self):
+            pass
+
+    sin = _In()
+    executor.feed_channel_stdin(sin, b"frame")
+    assert sin.data == b"frame" and sin.channel.eof
+    untouched = _In()
+    executor.feed_channel_stdin(untouched, None)
+    assert untouched.data == b"" and not untouched.channel.eof
+
+
+def test_feeding_stdin_to_a_command_that_already_exited_does_not_raise():
+    # sudo refused / the command exited early: the output + exit status still
+    # tell the story, and raising would make the pool re-run the command.
+    class _Dead:
+        channel = None
+
+        def write(self, _d):
+            raise OSError("Socket is closed")
+
+    executor.feed_channel_stdin(_Dead(), b"frame")
+
+
+def test_run_remote_survives_a_channel_that_rejects_the_frame():
+    class _Closed(_FakeChannel):
+        def sendall(self, data):
+            raise OSError("Socket is closed")
+
+    chan = _Closed()
+    done: list = []
+    executor.run_remote(
+        "user@host",
+        "/venv/bin/runspec",
+        "deploy",
+        {},
+        [],
+        lambda *_: None,
+        lambda c, _d: done.append(c),
+        run_as="deploy",
+        session_factory=lambda: (chan, lambda: None),
+        secrets={"db-password": "x"},
+    )
+    assert done == [0]  # the run still completes and reports its exit status

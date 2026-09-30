@@ -15,7 +15,7 @@ import sysconfig
 from pathlib import Path
 from typing import Any
 
-from runspec.become import build_become_argv, resolve_run_as
+from runspec.become import build_exec_argv, resolve_run_as
 
 
 def find_script(name: str, scripts_dir: Path | None = None) -> list[str] | None:
@@ -65,25 +65,29 @@ def build_command(
     spec: dict[str, Any],
     argv: list[str],
     env: dict[str, str] | None = None,
-) -> tuple[list[str], dict[str, str]]:
-    """The final argv and the extra environment to run ``spec`` with ``argv``.
+) -> tuple[list[str], dict[str, str], bytes | None]:
+    """The final argv, the extra environment, and the stdin to run ``spec`` with ``argv``.
 
     ``env`` are variables the runnable must see (``RUNSPEC_*`` provenance, the
     secret arg channel, …); ``RUNSPEC_CONFIG`` is added from the spec. Without
     ``run_as`` they're returned for the caller to put in the subprocess
-    environment. With ``run_as`` they're placed *inside* the escalated command via
-    ``env(1)`` (sudo strips the environment) and also returned, harmlessly."""
+    environment, and ``stdin`` is ``None``. With ``run_as`` (sudo strips the
+    environment) the command is wrapped in the SPEC env prelude and ``stdin`` is
+    the env frame the caller must write to the child's standard input first —
+    values never go on the command line, where every user can read them and sudo
+    logs them. ``extra`` is still returned, harmlessly."""
     extra = dict(env or {})
     if spec.get("config_path"):
         extra["RUNSPEC_CONFIG"] = str(spec["config_path"])
     cmd = [*(spec.get("command") or []), *argv]
     run_as = spec.get("run_as") or ""
+    stdin: bytes | None = None
     if run_as:
-        cmd = build_become_argv(
+        cmd, stdin = build_exec_argv(
             cmd,
             run_as,
             spec.get("become_method", "sudo"),
             spec.get("become_flags"),
             env=extra,
         )
-    return cmd, extra
+    return cmd, extra, stdin

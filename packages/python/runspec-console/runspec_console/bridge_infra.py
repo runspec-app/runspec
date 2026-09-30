@@ -175,8 +175,10 @@ class InfraMixin:
         *,
         identity_file: str | None = None,
         timeout: int = 15,
+        stdin: bytes | None = None,
     ) -> tuple[int, str, str]:
         """Run one SSH command, reusing a pooled transport when pooling is on.
+        ``stdin`` (e.g. a SPEC env frame) is written to the command's input.
 
         Single chokepoint for the bridge's one-shot SSH commands (discovery,
         history, logs, analytics) so they all share the per-host connection.
@@ -184,6 +186,7 @@ class InfraMixin:
         """
         cfg = self.get_config().get("ssh")
         pool = self._ssh_pool
+        extra: dict[str, Any] = {"stdin": stdin} if stdin else {}
         if pool is not None:
             return pool.run(
                 ssh_target,
@@ -191,6 +194,7 @@ class InfraMixin:
                 identity_file=identity_file,
                 global_ssh_config=cfg,
                 timeout=timeout,
+                **extra,
             )
         from .executor import ssh_run
 
@@ -200,6 +204,7 @@ class InfraMixin:
             identity_file=identity_file,
             global_ssh_config=cfg,
             timeout=timeout,
+            **extra,
         )
 
     def set_debug(self, debug: bool) -> None:

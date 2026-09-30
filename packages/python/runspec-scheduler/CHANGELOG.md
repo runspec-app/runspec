@@ -2,6 +2,17 @@
 
 All notable changes to `runspec-scheduler` are documented here.
 
+## [0.4.1] — 2026-09-30
+
+### Changed
+
+- The runner's escalated fire now passes its variables through `build_exec_argv`,
+  as the SPEC env frame on stdin, instead of `sudo … env KEY=val`. It needs
+  runspec >= 0.67.0. These variables were never secret: provenance, a flag's
+  `0`, and the path of the `RUNSPEC_ENV_FILE`; the credentials themselves live
+  in that file. This follows the new rule that no value goes on a command line,
+  and it avoids the new `DeprecationWarning`.
+
 ## [0.4.0]
 
 - **`status` sees runs still in the logs inbox** (runspec >= 0.66,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import shlex
 import zipfile
 from pathlib import Path
 
@@ -814,26 +815,41 @@ def test_pip_env_by_repo_role():
 
 
 def test_remote_command_shapes():
+    from runspec.become import ENV_PRELUDE, parse_env_frame
+
     argv = ["/opt/v/bin/python", "-m", "pip", "install", "runspec-linux"]
-    assert mp.remote_command(argv) == "/opt/v/bin/python -m pip install runspec-linux"
-    assert (
-        mp.remote_command(argv, env={"PIP_INDEX_URL": "https://u:p@x/simple/"})
-        == "env PIP_INDEX_URL=https://u:p@x/simple/ /opt/v/bin/python -m pip install runspec-linux"
+    assert mp.remote_command(argv) == (
+        "/opt/v/bin/python -m pip install runspec-linux",
+        None,
     )
-    assert (
-        mp.remote_command(argv, run_as="svc")
-        == "sudo -n -u svc /opt/v/bin/python -m pip install runspec-linux"
+    assert mp.remote_command(argv, run_as="svc") == (
+        "sudo -n -u svc /opt/v/bin/python -m pip install runspec-linux",
+        None,
     )
-    assert (
-        mp.remote_command(argv, run_as="svc", env={"A": "b c"})
-        == "sudo -n -u svc env 'A=b c' /opt/v/bin/python -m pip install runspec-linux"
+    # With env (the index URL can embed a credential): the SPEC env prelude, the
+    # values on stdin — never in the command line.
+    url = "https://u:p@x/simple/"
+    cmd, frame = mp.remote_command(argv, env={"PIP_INDEX_URL": url})
+    assert shlex.split(cmd) == ["sh", "-c", ENV_PRELUDE, "sh", *argv]
+    assert "u:p@" not in cmd and parse_env_frame(frame) == {"PIP_INDEX_URL": url}
+    cmd, frame = mp.remote_command(argv, run_as="svc", env={"A": "b c"})
+    assert shlex.split(cmd) == [
+        "sudo",
+        "-n",
+        "-u",
+        "svc",
+        "sh",
+        "-c",
+        ENV_PRELUDE,
+        "sh",
+        *argv,
+    ]
+    assert parse_env_frame(frame) == {"A": "b c"}
+    su, frame = mp.remote_command(
+        argv, run_as="svc", become_method="su", env={"A": "b"}
     )
-    su = mp.remote_command(argv, run_as="svc", become_method="su", env={"A": "b"})
-    assert (
-        su.startswith("su -c ")
-        and su.endswith(" svc")
-        and "env A=b /opt/v/bin/python" in su
-    )
+    assert su.startswith("su -c ") and su.endswith(" svc") and "A=b" not in su
+    assert parse_env_frame(frame) == {"A": "b"}
 
 
 def test_summarize_pip_output_keeps_the_verdict_lines():

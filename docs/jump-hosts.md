@@ -214,10 +214,14 @@ become_flags  = "-H"        # passed through to the become method
 
 `su` uses a distinct `-c "..."` wrapping because it doesn't accept `-u`.
 
-When the runnable declares both `env` args and `run_as`, the command is
-prefixed with `env KEY=val ...` after the become so variables apply in the
-target user's process context. This avoids requiring `sudo -E` / `env_keep`
-in sudoers and needs no `sshd_config` changes.
+When there are environment variables to pass (secret args, credentials,
+`RUNSPEC_AGENT`), their values never go on the command line — every user on the
+host can read a command line (`ps`), and `sudo` logs it. The command is wrapped
+in a fixed POSIX `sh` *prelude* (`… -u {user} sh -c '<prelude>' sh {command}
+{args}`) and the values are written to the process's standard input as an *env
+frame*, which the prelude reads with shell builtins and exports before `exec`ing
+the runnable. It needs only `/bin/sh` on the host: no `sudo -E` / `env_keep`,
+no `sshd_config` change. See SPEC → "Remote Execution → Command building".
 
 ---
 

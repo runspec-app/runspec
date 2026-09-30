@@ -7,6 +7,47 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.305.0] — 2026-09-30
+
+**Security: secrets no longer go on a command line** (runspec >= 0.67.0; SPEC →
+"Remote Execution → Command building"). A command line is readable by every
+user on the host (`ps`), and `sudo` logs it. Several paths put credentials
+there:
+- the SSH run path (secret args, credential variables);
+- escalated local runs;
+- the Marketplace pip install, whose index URL can carry a username and
+  password.
+
+With `run_as`, the credentials were visible for the whole run and written to
+the host's `sudo` log. Without it, they leaked while a dash login shell was
+alive. Rotate any credential used through these paths on an earlier version.
+
+### Fixed
+
+- **Remote runs** (`run_remote`, over the pooled SSH channel and the jump-host
+  system `ssh`) now send `sh -c '<env prelude>' sh <runnable> …`, wrapped inside
+  the `sudo`/`su` escalation when set. The values go on the channel's stdin as
+  the env frame, followed by EOF. The new pure helper `remote_exec_command()`
+  builds the line and the frame.
+- **Escalated local runs** (`run_local` with `run_as`) write the frame to the
+  child's stdin. `_stream` gained `stdin_data`.
+- **Marketplace install/uninstall.**
+  - `marketplace.remote_command()` now returns `(command, stdin)`.
+  - A new `exec_argv()` gives the local escalated path an argument list; it no
+    longer runs through `shell=True`.
+  - `ssh_run`, the connection pool's `run` and the bridge's `_ssh_run` accept
+    `stdin` and send EOF after it.
+- **Best-effort stdin writes.** Writing the frame never aborts a run. If the
+  command has already exited (for example, `sudo` refused to escalate), its
+  stderr and exit status are still reported. On the pooled path, a raised write
+  would have made the pool treat the transport as dead and **run the command a
+  second time**.
+- Checked end to end against a real `sshd`, with a login shell of `/bin/sh`
+  (dash), escalating to a service account. It covered the paramiko channel with
+  and without escalation, the jump-host transport with and without escalation,
+  and the Marketplace path via `ssh_run` and the pool. In every case the values
+  arrived intact and appeared in neither another user's `ps` nor the `sudo` log.
+
 ## [0.304.1] — 2026-09-29
 
 ### Fixed

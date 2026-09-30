@@ -7,6 +7,8 @@ script discovery. Subprocess execution is tested via mocking.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from runspec.serve import (
@@ -274,19 +276,23 @@ def test_tools_call_applies_run_as_sudo(monkeypatch, tmp_path):
         }
     }
 
-    captured: dict[str, list[str]] = {}
+    captured: dict[str, Any] = {}
 
     def fake_run(cmd, **kwargs):
         captured["cmd"] = cmd
+        captured["kwargs"] = kwargs
         return subprocess.CompletedProcess(cmd, 0, stdout="ok\n", stderr="")
 
     monkeypatch.setattr("runspec.serve.subprocess.run", fake_run)
 
     _handle_tools_call(5, {"name": "restart-service", "arguments": {}}, tools, {}, exec_specs)
     cmd = captured["cmd"]
-    assert cmd[:5] == ["sudo", "-H", "-u", "deploy", "env"]
-    assert "RUNSPEC_AGENT=1" in cmd
+    # The SPEC env prelude inside the escalation; values ride stdin, never argv.
+    assert cmd[:6] == ["sudo", "-H", "-u", "deploy", "sh", "-c"]
     assert cmd[-1] == str(script)
+    assert not any("RUNSPEC_AGENT" in c for c in cmd)
+    frame = captured["kwargs"]["input"]
+    assert frame.startswith("RUNSPEC_AGENT=") and frame.endswith(".\n")
 
 
 def test_tools_call_no_run_as_does_not_escalate(monkeypatch, tmp_path):
@@ -298,13 +304,19 @@ def test_tools_call_no_run_as_does_not_escalate(monkeypatch, tmp_path):
     tools = {"report": {"name": "report", "inputSchema": {"type": "object", "properties": {}}}}
     exec_specs = {"report": {"command": [str(script)]}}  # no run_as
 
-    captured: dict[str, list[str]] = {}
-    monkeypatch.setattr(
-        "runspec.serve.subprocess.run",
-        lambda cmd, **kw: captured.__setitem__("cmd", cmd) or subprocess.CompletedProcess(cmd, 0, stdout="ok\n", stderr=""),
-    )
+    captured: dict[str, Any] = {}
+
+    def fake_run(cmd, **kw):
+        captured["cmd"], captured["kw"] = cmd, kw
+        return subprocess.CompletedProcess(cmd, 0, stdout="ok\n", stderr="")
+
+    monkeypatch.setattr("runspec.serve.subprocess.run", fake_run)
     _handle_tools_call(6, {"name": "report", "arguments": {}}, tools, {}, exec_specs)
     assert captured["cmd"] == [str(script)]  # plain, no sudo
+    # The env rides the child's environment; the child never inherits serve's
+    # stdin (the MCP JSON-RPC stream).
+    assert captured["kw"]["env"]["RUNSPEC_AGENT"] == "1"
+    assert captured["kw"]["stdin"] is subprocess.DEVNULL
 
 
 def test_tools_call_sets_runspec_agent_env(tmp_path):

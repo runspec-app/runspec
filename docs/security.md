@@ -294,10 +294,11 @@ sequenceDiagram
     participant C as Console
     participant H as Remote host (sshd)
     C->>C: resolve run_as (string / $ENV / per-host / pattern)
-    C->>C: build_become_argv (sudo/su/pbrun/dzdo)
+    C->>C: build_exec_argv (sudo/su/pbrun/dzdo + env prelude)
     C->>C: shell_join — quote every token
-    C->>H: exec "env KEY=val ... sudo -u <user> <cmd>"
-    Note over H: secrets ride env(1) into target user's process
+    C->>H: exec "sudo -u <user> sh -c '<prelude>' sh <cmd>"
+    C->>H: stdin: env frame (NAME=\0ooo… per var, then ".")
+    Note over H: prelude reads the frame with sh builtins,<br/>exports, execs the runnable — values never in any argv
     Note over H: passwordless sudo assumed (no interactive prompt support)
 ```
 
@@ -350,7 +351,7 @@ flowchart LR
 | Secret *values* live in the OS keychain | `keyring.set_password("runspec-console", id, value)`; Windows Credential Manager / macOS Keychain / Secret Service | `credentials.py` (`set_secret`, `_keyring`) |
 | Only *metadata* is written to disk | Persisted fields are `id, label, kind, username, username_arg, secret_arg, private_key, public_key` — **no secret field** | `credentials.py` (`_STR_FIELDS`, `save_credentials`) |
 | Secrets reach runnables via **env, not argv** | Password-typed args are split out of argv into `RUNSPEC_<RUNNABLE>_ARG_<NAME>` env vars | `executor.py` (`secret_env`), `bridge_invoke.py` |
-| Secrets survive `sudo`/`su` correctly | Passed through `env(1)` into the target user's process | `executor.py`, `runspec.become` |
+| Secrets survive `sudo`/`su` without touching a command line | Written to the process's **stdin** as the SPEC *env frame* and exported by a fixed `sh` prelude after the escalation, so no value is in any argv (`ps`, `/proc/<pid>/cmdline`) or in the `sudo` log. Before core 0.67.0 / console 0.305.0 they went through `env KEY=val` on the command line — readable by every user for the whole run and logged by `sudo`; rotate any credential used with a `run_as` runnable on an older version | `runspec.become` (`build_exec_argv`, `env_frame`), `executor.py` (`remote_exec_command`), `tests/test_secret_argv.py` |
 | Config Sync carries metadata only | `runspec_credentials.toml` syncs; the keychain never does; merge is by identity, preserving local-only entries | `gitsync.py`, `configmerge.py` |
 | Secrets are kept out of logs | Secrets are split out *before* the in-flight/audit record is built; only credential **ids** are recorded; core logging additionally redacts sensitive keys/patterns | `bridge_invoke.py`, `bridge_transfer.py`, core `logging_setup.py` |
 | Secrets are withheld from the AI model | `password`-typed args are **omitted** from the agent's tool schema entirely (the model can't see or request them) | `catalog.py`, `tests/test_command_tools.py` |

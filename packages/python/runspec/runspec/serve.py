@@ -311,13 +311,16 @@ def _handle_tools_call(
     # lives (otherwise its parse() would walk up from cwd — typically $HOME for
     # SSH-launched serves — and miss it), and a configured run_as (already
     # resolved for this host at startup) escalates the command, re-supplying the
-    # RUNSPEC_* vars via env(1) because sudo and friends strip the environment.
+    # RUNSPEC_* vars on the child's stdin (the SPEC env frame) because sudo and
+    # friends strip the environment — never on the command line.
     spec = exec_specs.get(name, {})
-    final_cmd, extra_env = _build_command(spec, argv, {"RUNSPEC_AGENT": "1", **runspec_env})
+    final_cmd, extra_env, frame = _build_command(spec, argv, {"RUNSPEC_AGENT": "1", **runspec_env})
     env = {**os.environ, **extra_env}
+    # The child must never inherit serve's stdin: that's the MCP JSON-RPC stream.
+    feed: dict[str, Any] = {"input": frame.decode("ascii")} if frame else {"stdin": subprocess.DEVNULL}
 
     start = time.monotonic()
-    result = subprocess.run(final_cmd, capture_output=True, text=True, env=env)
+    result = subprocess.run(final_cmd, capture_output=True, text=True, env=env, **feed)
     duration_ms = int((time.monotonic() - start) * 1000)
 
     # _meta is the MCP-standard extension point; clients that don't understand

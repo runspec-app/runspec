@@ -736,19 +736,82 @@ schemas and listing runnables never depends on who is running them.
 Executing clients build the final remote command as follows. All interpolated values
 must be shell-escaped (Python: `shlex.quote()`).
 
-| `run_as` | `env` args | Command constructed |
-|---|---|---|
-| absent | absent | `{command} {args}` |
-| absent | present | `KEY=val … {command} {args}` |
-| present | absent | `{become_method} {become_flags} -u {user} {command} {args}` |
-| present | present | `{become_method} {become_flags} -u {user} env KEY=val … {command} {args}` |
+**Environment values never appear in a command line.** A process's argument vector
+is readable by every user on the host (`ps`, `/proc/<pid>/cmdline`), and privilege
+escalation tools log it: `sudo` writes each command it runs to syslog by default, and
+auditd / EDR agents record `execve` arguments. So the values of the variables an
+executor passes to a runnable (the secret-arg channel, credential variables, even
+non-secret ones like `RUNSPEC_AGENT`) are written to the process's **standard
+input** as an *env frame*, and a fixed POSIX `sh` *env prelude* reads them with shell
+builtins, exports them and `exec`s the runnable. Only variable *names* and the fixed
+prelude text ever reach an argument vector.
 
-When both `run_as` and `env` fields are present, `env(1)` is used after privilege
-escalation so that variables are set in the target user's process context. This avoids
-requiring `sudo -E` or `env_keep` in sudoers, and requires no changes to `sshd_config`
-on target hosts.
+| `run_as` | env vars | Command constructed | stdin |
+|---|---|---|---|
+| absent | absent | `{command} {args}` | — |
+| absent | present | `sh -c '{prelude}' sh {command} {args}` | env frame |
+| present | absent | `{become_method} {become_flags} -u {user} {command} {args}` | — |
+| present | present | `{become_method} {become_flags} -u {user} sh -c '{prelude}' sh {command} {args}` | env frame |
 
-`su` uses its own syntax and does not follow the `-u` pattern — see the table above.
+For `su`, the whole `sh -c '{prelude}' sh {command} {args}` string is the `-c`
+argument: `su {become_flags} -c "sh -c '{prelude}' sh {command} {args}" {user}`.
+
+An executor that starts the runnable directly — as a local child process with no
+`run_as` and no intermediate shell — may instead set the variables in the child's
+environment (e.g. `subprocess.run(..., env=...)`); the environment is readable only
+by the process's own user and root. Anything that goes through a shell command
+string (an SSH exec channel) or through a privilege-escalation tool must use the
+env frame.
+
+#### The env prelude
+
+The prelude is this exact text (it contains no values, so it is safe to log):
+
+```sh
+while IFS= read -r l; do [ "$l" = . ] && break; n=${l%%=*}; v=$(printf "%b" "${l#*=}X"); export "$n=${v%X}"; done; exec "$@"
+```
+
+`read`, `printf`, `export` and `exec` are builtins in every POSIX `sh` (dash, bash,
+ksh, BusyBox ash), so no value ever becomes another process's argument. The trailing
+`X` sentinel preserves trailing newlines that command substitution would strip. The
+prelude needs nothing on the host beyond `/bin/sh` — no particular runspec version,
+no sudoers `env_keep`/`SETENV`, and no `sshd_config` `AcceptEnv`.
+
+#### The env frame
+
+The executor writes one line per variable, then a line holding a single `.`:
+
+```
+NAME=\0ooo\0ooo…
+.
+```
+
+- `NAME` must match `[A-Za-z_][A-Za-z0-9_]*`; an executor refuses any other name.
+- The value is its UTF-8 bytes, **every byte** written as `\0` followed by exactly
+  three octal digits (so `a` → `\0141`, newline → `\0012`). The frame is therefore
+  plain printable ASCII with no spaces, and a value may contain newlines, quotes,
+  `$`, backticks or any other byte. A value containing a NUL byte is refused (an
+  environment variable can't hold one).
+- After the terminating `.` line the prelude has consumed exactly the frame (`read`
+  never reads past a newline on a pipe), so any further bytes the executor writes
+  reach the runnable's own standard input unchanged. An executor with nothing else
+  to send closes standard input after the frame.
+
+#### Sudoers rules
+
+Under an escalation rule restricted to specific commands (for example the
+`enable-passwordless-sudo` *scoped* grant, which allows only the venv's `bin/`
+scripts), a run that carries env vars runs `/bin/sh` under the escalation tool, so
+the rule must allow it. `/bin/sh` can run any command, exactly like the `/usr/bin/env`
+the previous form required, so allowing it grants nothing that form did not.
+
+#### Superseded form
+
+Earlier versions of this table placed variables on the command line —
+`KEY=val … {command}` without escalation and `… -u {user} env KEY=val … {command}`
+with it. That form exposes every value to all users on the host for the whole run
+(`sudo` stays running as the parent) and writes it permanently to the `sudo` log.
+Executors must not use it.
 
 ---
 
@@ -955,6 +1018,11 @@ handled differently everywhere a value could leak:
   supply a secret. The operator provides it through the environment.
 - **Kept out of logs.** A `password` value must not appear in the run-summary
   audit record (`invocation_args`) or other structured log output.
+- **Never on an executor's command line.** An executor (the console, an SSH
+  client, `runspec serve`/`exec` escalating with `run_as`) passes the secret
+  channel through the process environment or an *env frame* on standard input,
+  never as `KEY=val` or `env KEY=val` in a command — see *Remote Execution →
+  Command building*.
 
 ```toml
 [deploy.args]

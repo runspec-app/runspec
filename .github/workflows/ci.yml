@@ -295,7 +295,7 @@ jobs:
       - name: Turn the kernel's link protections off
         run: sudo sysctl -w fs.protected_symlinks=0 fs.protected_hardlinks=0 fs.protected_regular=0 fs.protected_fifos=0
 
-      - name: Inbox tests as root
+      - name: Inbox + secret-argv tests as root
         run: |
           # Installed (not copied) so runspec's dist metadata is there —
           # runspec/__init__ reads its own version from it.
@@ -303,7 +303,7 @@ jobs:
           sudo cp -r packages/python/runspec/tests /opt/rs/
           sudo chmod -R a+rX /opt/rs
           cd /opt/rs
-          sudo env PATH="$PATH" PYTHONPATH=/opt/rs RUNSPEC_MULTIUSER_REQUIRED=1 "$(which python)" -m pytest tests/test_inbox.py -o addopts="" -p no:cacheprovider -v -W error
+          sudo env PATH="$PATH" PYTHONPATH=/opt/rs RUNSPEC_MULTIUSER_REQUIRED=1 "$(which python)" -m pytest tests/test_inbox.py tests/test_secret_argv.py -o addopts="" -p no:cacheprovider -v -W error
 
   # ── Node ────────────────────────────────────────────────────────────────────
 

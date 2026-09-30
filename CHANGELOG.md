@@ -7,6 +7,65 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.67.0] — 2026-09-30
+
+**Security: variable values no longer go on the command line.** The command
+line of a process is readable by every user on the host (`ps`,
+`/proc/<pid>/cmdline`), and `sudo` logs it (to syslog by default). An
+escalated run (`run_as`) used to pass its variables as `sudo -u user env
+KEY=val … cmd`. Those variables include the `password` secret channel,
+console credentials and `RUNSPEC_AGENT`. So every secret was visible to all
+users on the host for the whole run and written permanently to the `sudo` log.
+Rotate any credential that was used with a `run_as` runnable on an earlier
+version.
+
+### Changed
+
+- **SPEC → "Remote Execution → Command building" is rewritten.** The values now
+  travel on the process's standard input as an *env frame*:
+  - one `NAME=\0ooo…` line per variable, every byte octal-escaped;
+  - then a `.` line.
+
+  A fixed POSIX `sh` *env prelude* reads the frame with shell builtins, exports
+  each variable and `exec`s the runnable:
+  - with escalation: `sudo -u user sh -c '<prelude>' sh cmd…`;
+  - without escalation, over a shell string: `sh -c '<prelude>' sh cmd…`.
+
+  Only variable names and the fixed prelude ever reach a command line. The
+  prelude needs nothing beyond `/bin/sh` on the host: no newer runspec, and no
+  sudoers or sshd changes. It is verified in dash, bash, BusyBox `sh`, ksh and
+  mksh. The old `env KEY=val` form is listed as superseded, and the Secret
+  Arguments section now says a secret is never on an executor's command line.
+- **`runspec serve` and `runspec exec` with `run_as`** use the new form:
+  - `runspec.execute.build_command` now returns `(cmd, extra_env, stdin)`.
+  - `serve` feeds the frame as the child's input. Without escalation it gives
+    the child `stdin=DEVNULL`; before, the child inherited the MCP JSON-RPC
+    stream.
+  - `exec` writes the frame, then passes its own stdin through.
+
+### Added
+
+- `runspec.become.build_exec_argv(cmd, run_as, method, flags, env)` returns
+  `(argv, stdin)`.
+- `env_frame()`, `parse_env_frame()` and `ENV_PRELUDE` are exported alongside
+  it.
+
+### Deprecated
+
+- `build_become_argv(env=...)` still builds the old form for compatibility.
+  It now emits a `DeprecationWarning` naming the leak.
+
+### Tests
+
+- New root-only `tests/test_secret_argv.py` escalates for real, to `nobody` via
+  `sudo` and via `su`.
+  - While each run is live, it reads the full-width process table as an
+    unrelated account.
+  - It asserts the value appears in no process's arguments, including the sudo
+    process whose arguments `sudo` logs.
+  - A control case runs the old form and asserts the leak *is* visible.
+- CI's `python-multiuser` job now also runs this file.
+
 ## [0.66.1] — 2026-09-29
 
 ### Fixed

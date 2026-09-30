@@ -55,6 +55,7 @@ class _StubBridge:
         self._credentials: list[dict] = []
         self.dispatched: list[tuple[str, dict]] = []
         self.ssh_calls: list[tuple[str, str]] = []
+        self.ssh_stdin: list[bytes | None] = []
         self.refreshed = 0
         self.ssh_reply: tuple[int, str, str] = (0, "", "")
 
@@ -70,8 +71,9 @@ class _StubBridge:
     def _fanout_workers(self) -> int:
         return 4
 
-    def _ssh_run(self, ssh, command, *, identity_file=None, timeout=15):
+    def _ssh_run(self, ssh, command, *, identity_file=None, timeout=15, stdin=None):
         self.ssh_calls.append((ssh, command))
+        self.ssh_stdin.append(stdin)
         return self.ssh_reply
 
     def mcp_credential_options(self):
@@ -619,10 +621,17 @@ def test_install_remote_runs_pip_as_owner_with_index_env_and_events(app, monkeyp
     ssh, cmd = b.ssh_calls[-1]
     assert ssh == "ops@web-01"
     toks = shlex.split(cmd)
-    assert toks[:5] == ["sudo", "-n", "-u", "svc", "env"]
-    assert toks[5] == "PIP_INDEX_URL=https://bob:pw@nexus.corp/simple/"
-    assert toks[6:10] == ["/opt/venvs/ops/bin/python", "-m", "pip", "install"]
+    # The credentialed index URL rides stdin (the SPEC env frame), never argv:
+    # a command line is readable by every user on the host and sudo logs it.
+    from runspec.become import ENV_PRELUDE, parse_env_frame
+
+    assert toks[:8] == ["sudo", "-n", "-u", "svc", "sh", "-c", ENV_PRELUDE, "sh"]
+    assert toks[8:12] == ["/opt/venvs/ops/bin/python", "-m", "pip", "install"]
     assert "-U" in toks and toks[-1] == "runspec-acme"
+    assert "bob:pw" not in cmd
+    assert parse_env_frame(b.ssh_stdin[-1]) == {
+        "PIP_INDEX_URL": "https://bob:pw@nexus.corp/simple/"
+    }
 
     events = [ev for ev, _ in b.dispatched]
     assert (

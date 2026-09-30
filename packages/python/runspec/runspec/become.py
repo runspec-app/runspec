@@ -15,6 +15,8 @@ from __future__ import annotations
 import os
 import re
 import shlex
+import warnings
+from collections.abc import Mapping
 from typing import Any
 
 # Methods that share the ``method {flags} -u {user} {command}`` syntax. ``su``
@@ -122,6 +124,76 @@ def verify_run_as_identity(run_as_user: str) -> str | None:
     return f"the current process runs as {current_name!r} (uid {current_uid}), not {run_as_user!r} (uid {target_uid})"
 
 
+# The SPEC "env prelude": reads the env frame from stdin with shell builtins,
+# exports each variable and execs the command. It holds no values, so it is safe
+# on a command line and in a sudo log. No single quotes, so it embeds verbatim in
+# ``sh -c '…'``. Verified in dash, bash, BusyBox sh, ksh and mksh.
+ENV_PRELUDE = 'while IFS= read -r l; do [ "$l" = . ] && break; n=${l%%=*}; v=$(printf "%b" "${l#*=}X"); export "$n=${v%X}"; done; exec "$@"'
+
+_ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def env_frame(env: Mapping[str, str]) -> bytes:
+    """The SPEC "env frame" for ``env``: one ``NAME=<escaped>`` line per variable
+    (every UTF-8 byte of the value as ``\\0ooo``), then a ``.`` line.
+
+    Raises ``ValueError`` for a name that isn't ``[A-Za-z_][A-Za-z0-9_]*`` or a
+    value containing NUL."""
+    lines = []
+    for name, value in env.items():
+        if not _ENV_NAME.fullmatch(name):
+            raise ValueError(f"invalid environment variable name: {name!r}")
+        raw = str(value).encode("utf-8")
+        if b"\0" in raw:
+            raise ValueError(f"environment variable {name} contains a NUL byte")
+        lines.append(name + "=" + "".join(f"\\0{b:03o}" for b in raw) + "\n")
+    lines.append(".\n")
+    return "".join(lines).encode("ascii")
+
+
+def parse_env_frame(frame: bytes) -> dict[str, str]:
+    """Decode an env frame back to ``{name: value}`` — the inverse of
+    :func:`env_frame` (what the prelude does in ``sh``). Stops at the ``.`` line.
+    Raises ``ValueError`` on a malformed frame."""
+    out: dict[str, str] = {}
+    for line in frame.decode("ascii").split("\n"):
+        if line == ".":
+            return out
+        name, sep, esc = line.partition("=")
+        if not sep or not _ENV_NAME.fullmatch(name) or len(esc) % 5:
+            raise ValueError(f"malformed env frame line: {line!r}")
+        chunks = [esc[i : i + 5] for i in range(0, len(esc), 5)]
+        if any(c[:2] != "\\0" or not c[2:].isdigit() for c in chunks):
+            raise ValueError(f"malformed env frame value for {name}")
+        out[name] = bytes(int(c[2:], 8) for c in chunks).decode("utf-8")
+    raise ValueError("env frame has no terminating '.' line")
+
+
+def build_exec_argv(
+    cmd_argv: list[str],
+    run_as: str = "",
+    become_method: str = "sudo",
+    become_flags: str | None = None,
+    env: Mapping[str, str] | None = None,
+) -> tuple[list[str], bytes | None]:
+    """The SPEC "Command building" table: ``(argv, stdin)``.
+
+    With ``env``, the command is wrapped in the env prelude (``sh -c ENV_PRELUDE
+    sh cmd…``) — inside the escalation when ``run_as`` is set — and ``stdin`` is
+    the env frame the caller must write to the process's standard input before
+    anything else. Variable values never appear in ``argv`` (a command line is
+    readable by every user and ``sudo`` logs it). Without ``env``, ``stdin`` is
+    ``None`` and ``argv`` is the plain (possibly escalated) command.
+
+    A caller that runs the command locally with no ``run_as`` may skip this and
+    put the variables in the child's environment instead."""
+    if not env:
+        return build_become_argv(cmd_argv, run_as, become_method, become_flags), None
+    frame = env_frame(env)
+    wrapped = ["sh", "-c", ENV_PRELUDE, "sh", *cmd_argv]
+    return build_become_argv(wrapped, run_as, become_method, become_flags), frame
+
+
 def build_become_argv(
     cmd_argv: list[str],
     run_as: str = "",
@@ -147,7 +219,18 @@ def build_become_argv(
     | present | present | ``method flags -u user env KEY=val … cmd args`` |
 
     ``su`` uses ``su flags -c "env KEY=val … cmd args" user`` instead.
+
+    .. deprecated:: 0.67.0
+       ``env`` puts variable values on the command line, where every user on
+       the host can read them (``ps``) and ``sudo`` logs them. Use
+       :func:`build_exec_argv`, which passes them on standard input instead.
     """
+    if env:
+        warnings.warn(
+            "build_become_argv(env=...) puts variable values on the command line (visible in ps, logged by sudo); use build_exec_argv(), which passes them on stdin",
+            DeprecationWarning,
+            stacklevel=2,
+        )
     env = env or {}
     assigns = [f"{k}={v}" for k, v in env.items()]
     flags = shlex.split(become_flags) if become_flags else []

@@ -312,13 +312,14 @@ def exec_runnable(
             child_env["RUNSPEC_RUN_LOG"] = str(box.path)
         if trigger:
             child_env["RUNSPEC_TRIGGER"] = trigger
-        cmd, extra_env = build_command(spec, list(argv), child_env)
+        cmd, extra_env, frame = build_command(spec, list(argv), child_env)
         capture = capture_bytes > 0
         t0 = time.monotonic()
         try:
             proc = subprocess.Popen(
                 cmd,
                 env={**os.environ, **extra_env},
+                stdin=subprocess.PIPE if frame else None,
                 stdout=subprocess.PIPE if capture else None,
                 stderr=subprocess.PIPE if capture else None,
             )
@@ -332,6 +333,8 @@ def exec_runnable(
                 err_stream.write(f"runspec exec: could not start '{name}': {exc}\n")
             return EXIT_NOT_EXECUTABLE
 
+        if frame:
+            _feed_stdin(proc, frame)
         tails: list[_Tail] = []
         if capture:
             assert proc.stdout is not None and proc.stderr is not None
@@ -403,6 +406,40 @@ def exec_runnable(
         if box is not None:
             with contextlib.suppress(Exception):
                 box.stream.close()  # releases the run's lock — the sweep may take it now
+
+
+def _feed_stdin(proc: subprocess.Popen[bytes], frame: bytes) -> None:
+    """Write the SPEC env frame to an escalated child's stdin, then pass this
+    process's own stdin through (the prelude consumes exactly the frame, so the
+    runnable still sees anything piped to ``runspec exec``). The copy runs on a
+    daemon thread; a closed or unreadable stdin just ends the child's input."""
+    pipe = proc.stdin
+    if pipe is None:
+        return
+    try:
+        pipe.write(frame)
+        pipe.flush()
+    except OSError:
+        with contextlib.suppress(OSError):
+            pipe.close()
+        return
+
+    def pump() -> None:
+        try:
+            src = sys.stdin.buffer if sys.stdin is not None else None
+            while src is not None:
+                chunk = src.read1(65536) if hasattr(src, "read1") else src.read(65536)
+                if not chunk:
+                    break
+                pipe.write(chunk)
+                pipe.flush()
+        except Exception:  # noqa: BLE001 — stdin closed/unreadable, or the child exited
+            pass
+        finally:
+            with contextlib.suppress(OSError):
+                pipe.close()
+
+    threading.Thread(target=pump, name="runspec-exec-stdin", daemon=True).start()
 
 
 def _effective_user() -> str:

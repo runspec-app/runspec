@@ -2,6 +2,19 @@
 
 All notable changes to `runspec-mcp` are documented here.
 
+## [0.1.4] — 2026-09-30
+
+### Fixed
+
+- **Security: secrets no longer go on a command line** (runspec >= 0.67.0).
+  - The vendored executor is updated the same way as runspec-console 0.305.0.
+    Remote and escalated runs now pass credential variables and the secret
+    channel as the SPEC env frame on stdin, instead of `KEY=val` or
+    `sudo … env KEY=val` in the command line. A command line is readable by
+    every user on the host, and `sudo` logs it.
+  - Adds `remote_exec_command()`, kept identical to the console's by
+    `tests/test_parity.py`.
+
 ## [0.1.3]
 
 Isolate an invalid tool schema instead of blanking the whole fleet list. The

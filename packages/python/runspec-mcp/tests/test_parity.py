@@ -47,6 +47,10 @@ def test_executor_pure_helpers_parity():
     assert f_exec.secret_env("my-tool", {"db-pass": "hunter2"}) == c_exec.secret_env("my-tool", {"db-pass": "hunter2"})
     for msg in ["Error reading SSH protocol banner", "auth failed", "connection reset", "codec can't decode"]:
         assert f_exec.is_transient_ssh_error(msg) == c_exec.is_transient_ssh_error(msg)
+    # The SPEC env-frame command building (values on stdin, never in the line).
+    argv = ["/v/bin/deploy", "--x", "a b"]
+    for kw in [{}, {"env": {"K": "v"}}, {"run_as": "svc", "env": {"K": "p@ss w0rd"}}, {"run_as": "svc", "become_method": "su", "env": {"K": "v"}}]:
+        assert f_exec.remote_exec_command(argv, **kw) == c_exec.remote_exec_command(argv, **kw)
 
 
 def test_hosts_parity():
