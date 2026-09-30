@@ -292,6 +292,7 @@ class _GateStub(_Stub):
     _gated_run_tool = Bridge._gated_run_tool
     _confirm_decision = Bridge._confirm_decision
     _confirm_card_view = Bridge._confirm_card_view
+    _confirm_runs_as = Bridge._confirm_runs_as
 
     def __init__(self, approve=True, edited=None):
         super().__init__()

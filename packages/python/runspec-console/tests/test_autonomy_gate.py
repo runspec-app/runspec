@@ -63,6 +63,7 @@ class _StubBridge:
     _coerce_run_args = staticmethod(Bridge._coerce_run_args)
     _confirm_decision = Bridge._confirm_decision
     _confirm_card_view = Bridge._confirm_card_view
+    _confirm_runs_as = Bridge._confirm_runs_as
     # Pre-gate command/arg validation for run_runnable (search mode).
     _group_fanout_calls = Bridge._group_fanout_calls
     _preflight_run_runnable = Bridge._preflight_run_runnable

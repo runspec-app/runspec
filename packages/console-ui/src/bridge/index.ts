@@ -1223,6 +1223,10 @@ export interface PendingConfirm {
   // the search-mode `run_runnable` wrapper; equal to tool_name/_input otherwise).
   display_name?: string
   display_input?: Record<string, unknown>
+  confirm_verb?: string
+  // The account the gated runnable executes as on its host (resolved run_as),
+  // when that isn't the login account. Absent for built-ins / login-account runs.
+  runs_as?: string
   autonomy: string
   // The gated tool call's id — pairs the gate with exactly its card (several
   // same-name cards can be running). Absent on older backends.

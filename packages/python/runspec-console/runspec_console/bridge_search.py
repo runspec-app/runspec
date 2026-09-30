@@ -65,7 +65,10 @@ class SearchMixin:
                     "Find runnables across the fleet by keyword. Returns matches under "
                     "'results' with their id, hosts, description, typed argument "
                     "list, any subcommands (with their own args), and any saved "
-                    "credentials in scope. "
+                    "credentials in scope. A 'runs_as' map ({host: account}) means "
+                    "the runnable executes as that OS account on that host (e.g. a "
+                    "shared venv's service account) — not as you; its files, "
+                    "crontab, home and permissions are that account's. "
                     "Call this first, then run_runnable with the id and host. "
                     "Use an empty query (optionally with group/host) to browse. "
                     "Matching saved runbooks — the operator's standing procedures — "
@@ -692,6 +695,23 @@ class SearchMixin:
                     out[n].append(h)
         return out
 
+    def _runs_as_by_host(self, records: list[dict[str, Any]]) -> dict[str, str]:
+        """``{host: account}`` for the hosts where this runnable runs as someone
+        other than the account the console logs in as (a shared venv's owner, or
+        ``run_as = "root"``). Hosts that run it as the login account are left out."""
+        out: dict[str, str] = {}
+        for rec in records:
+            host = str(rec.get("host") or "local")
+            if host in out:
+                continue
+            try:
+                account = self._become_params(rec, host)[0]
+            except Exception:  # noqa: BLE001 — a display hint, never fatal
+                continue
+            if account:
+                out[host] = str(account)
+        return out
+
     def _search_runnables(
         self, query: str, host: str = "", group: str = "", limit: int = 10
     ) -> dict[str, Any]:
@@ -852,6 +872,13 @@ class SearchMixin:
                 for c in self._union_scoped_credentials(list(info["hosts"]), name)
                 if c.get("id")
             ]
+            # The account each host's copy runs as, where it isn't the account the
+            # console logs in as (a shared venv's owner, or run_as = "root"). The
+            # agent otherwise assumes "the current user", e.g. says a cron job
+            # lands in the login user's crontab when it goes to the owner's.
+            runs_as = self._runs_as_by_host(info["records"])
+            if runs_as:
+                entry["runs_as"] = runs_as
             if creds:
                 entry["credentials"] = creds
                 entry["credentials_hint"] = (

@@ -736,6 +736,10 @@ export interface PendingConfirm {
   // stores or opens rather than executes. Optional for back-compat with an
   // older backend that didn't send it (falls back to "run").
   confirm_verb?: string
+  // The account the gated runnable will execute as on its host (its resolved
+  // `run_as` — e.g. a shared venv's owner). Absent / "" when it runs as the
+  // login account, and for built-in tools.
+  runs_as?: string
   autonomy: string
   // The gated tool call's id (runspec:tool_confirm `call_id`). Absent on older
   // backends and on gates with no agent tool call (rule runs).
@@ -897,12 +901,12 @@ export function OutputPanel({ blocks, onRerun, onAskLlm, onToggleContext }: Outp
 
   useEffect(() => {
     const onToolConfirm = (e: Event) => {
-      const { id, request_id, tool_name, tool_input, display_name, display_input, confirm_verb, autonomy, call_id } = (e as CustomEvent).detail as {
+      const { id, request_id, tool_name, tool_input, display_name, display_input, confirm_verb, runs_as, autonomy, call_id } = (e as CustomEvent).detail as {
         id: string; request_id: string; tool_name: string; tool_input: Record<string, unknown>
-        display_name?: string; display_input?: Record<string, unknown>; confirm_verb?: string; autonomy: string
+        display_name?: string; display_input?: Record<string, unknown>; confirm_verb?: string; runs_as?: string; autonomy: string
         call_id?: string
       }
-      setPendingConfirms(prev => ({ ...prev, [id]: { request_id, id, tool_name, tool_input: tool_input ?? {}, display_name, display_input, confirm_verb, autonomy, ...(call_id ? { call_id } : {}) } }))
+      setPendingConfirms(prev => ({ ...prev, [id]: { request_id, id, tool_name, tool_input: tool_input ?? {}, display_name, display_input, confirm_verb, autonomy, ...(runs_as ? { runs_as } : {}), ...(call_id ? { call_id } : {}) } }))
     }
     // Authoritative "this gate finished" from the backend (approved / denied /
     // timed out) — request-id-precise so a late signal can't clear a newer gate
@@ -1066,6 +1070,7 @@ function ToolCallBlock({
   awaiting,
   resolved,
   verb,
+  runsAs,
   editable,
   onAnswer,
 }: {
@@ -1080,6 +1085,10 @@ function ToolCallBlock({
   // executing tool, "save"/"create"/"open"/… for a tool that stores or opens
   // rather than executes. Defaults to "run".
   verb?: string
+  // The OS account the call will execute as on its host, when that isn't the
+  // login account (a shared venv's owner, a runnable's `run_as`). Shown in the
+  // approval panel so the operator knows whose identity they're approving.
+  runsAs?: string
   // The operator may edit the args before approving (editable confirmations).
   // Only when the displayed call equals the real call (a plain/direct tool, not
   // the search-mode `run_runnable` wrapper whose display args would re-wrap lossily).
@@ -1254,6 +1263,11 @@ function ToolCallBlock({
             {resolved ? ' ' : 'this '}— autonomy is{' '}
             <strong style={{ color: '#e6a23c' }}>{awaiting}</strong>, so it needs your go-ahead.
           </div>
+          {runsAs && (
+            <div data-testid="confirm-runs-as" style={{ fontSize: 13, color: textSecondary(c.isDark), marginBottom: 10 }}>
+              Runs as <Text code style={{ fontSize: 12 }}>{runsAs}</Text>
+            </div>
+          )}
           {approveArgs.length > 0 && editable && edits ? (
             // Editable confirmations: let the operator tweak each arg before
             // approving. One field per arg (JSON-encoded so a number/bool/string
@@ -1412,6 +1426,7 @@ export function ChatTranscript({
                 awaiting={pc ? pc.autonomy : null}
                 resolved={pc && pc.display_name ? { name: pc.display_name, input: pc.display_input ?? {} } : null}
                 verb={pc ? pc.confirm_verb : undefined}
+                runsAs={pc ? pc.runs_as : undefined}
                 editable={!!pc && (pc.display_name ?? pc.tool_name) === pc.tool_name}
                 onAnswer={onAnswerConfirm}
               />
@@ -1913,6 +1928,7 @@ const BlockCard = memo(function BlockCard({
                 awaiting={cardGate.autonomy}
                 resolved={cardGate.display_name ? { name: cardGate.display_name, input: cardGate.display_input ?? {} } : null}
                 verb={cardGate.confirm_verb}
+                runsAs={cardGate.runs_as}
                 editable={(cardGate.display_name ?? cardGate.tool_name) === cardGate.tool_name}
                 onAnswer={answerThis}
               />

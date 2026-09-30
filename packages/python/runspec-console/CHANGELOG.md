@@ -7,6 +7,26 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.309.0] — 2026-09-30
+
+### Added
+
+- **You and the agent can see which account a runnable runs as.** A shared
+  venv's tools run as the venv owner (`run_as` → `@owner`), not as the account
+  the console logs in as. Nothing said so, and the agent assumed "the current
+  user": it described a cron job as landing in the login user's crontab when it
+  went to the service account's.
+  - `search_runnables` rows now carry a `runs_as` map (`{host: account}`) for
+    the hosts where the resolved account differs from the login account, and
+    the tool description tells the agent what it means.
+  - The confirm card (agent and trigger gates) shows **Runs as `<account>`**,
+    so you can see whose identity you're approving. The line is left out when
+    the call runs as the login account, and for built-in tools.
+  - `runspec:tool_confirm` and `get_pending_confirms` carry the new optional
+    `runs_as` field.
+  - The value comes from the same resolution the executor uses
+    (`_become_params`), so the card matches what actually runs.
+
 ## [0.308.0] — 2026-09-30
 
 ### Changed

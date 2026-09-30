@@ -108,6 +108,8 @@ class _Bridge:
     _node_at = staticmethod(Bridge._node_at)
     _preflight_validate = Bridge._preflight_validate
     _search_runnables = Bridge._search_runnables
+    _runs_as_by_host = Bridge._runs_as_by_host
+    _confirm_runs_as = Bridge._confirm_runs_as
     _search_host_groups = Bridge._search_host_groups
     _is_literal_host = Bridge._is_literal_host
     _command_arg_rows = staticmethod(Bridge._command_arg_rows)

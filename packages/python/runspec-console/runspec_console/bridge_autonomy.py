@@ -337,6 +337,9 @@ class AutonomyMixin:
         # `run_runnable` != resolved-name, so the segment never matched and the
         # Approve/Deny buttons never rendered for search-mode calls.
         card_tool, card_input = self._confirm_card_view(tool_name, tool_input)
+        # The account the runnable would run as on its host, shown as its own line
+        # on the card (never mixed into the editable args).
+        runs_as = self._confirm_runs_as(tool_name, tool_input)
         # The confirm verb follows the *resolved* tool actually being approved
         # (card_tool), so a wrapped/deferred save reads "save", not "run".
         confirm_verb = _CONFIRM_VERBS.get(card_tool, _CONFIRM_VERB_DEFAULT)
@@ -359,6 +362,7 @@ class AutonomyMixin:
                 "tool_input": tool_input,
                 "display_name": card_tool,
                 "display_input": card_input,
+                "runs_as": runs_as,
                 "autonomy": level,
                 "confirm_verb": confirm_verb,
                 "call_id": call_id,
@@ -379,6 +383,7 @@ class AutonomyMixin:
                 "tool_input": tool_input,
                 "display_name": card_tool,
                 "display_input": card_input,
+                "runs_as": runs_as,
                 "autonomy": level,
                 "confirm_verb": confirm_verb,
                 "call_id": call_id,
@@ -386,6 +391,32 @@ class AutonomyMixin:
         )
         self._notify_confirm(card_tool, card_input, level)
         return request_id, event, holder
+
+    def _confirm_runs_as(self, tool_name: str, tool_input: dict[str, Any]) -> str:
+        """The account a runnable call would run as on its host (``""`` when it
+        runs as the login account, isn't a runnable, or can't be resolved) —
+        shown on the confirm card so the operator approves *who* runs it, not
+        just what. Best-effort: never blocks or fails the confirm."""
+        try:
+            if tool_name == "run_runnable":
+                ti = dict(tool_input or {})
+                resolved = self._resolve_id_host(
+                    str(ti.get("id") or ""), str(ti.get("host") or "")
+                )
+                if isinstance(resolved, str):
+                    return ""
+                host, _name, cached = resolved
+            else:
+                target = self._resolve_tool_target(tool_name, dict(tool_input or {}))
+                if isinstance(target, str):
+                    return ""
+                host, _name, cached, _key = target
+            if not cached:
+                return ""
+            return str(self._become_params(cached, host)[0] or "")
+        except Exception:  # noqa: BLE001 — a display hint must never break the gate
+            logger.debug("confirm runs_as lookup failed", exc_info=True)
+            return ""
 
     def _confirm_card_view(
         self, tool_name: str, tool_input: dict[str, Any]

@@ -202,6 +202,38 @@ describe('OutputPanel autonomy-gate confirm', () => {
     expect(resolveConfirm).toHaveBeenCalledWith('req-9', true, undefined)
   })
 
+  it('shows the account the call runs as when the backend names one', () => {
+    // A shared venv's tools run as its owner (run_as → @owner), not the login
+    // account — the card must say whose identity the operator is approving.
+    render(<OutputPanel blocks={[chatBlockWithRunningTool('cron_list')]} />)
+    fireConfirm({
+      id: 'chat1',
+      request_id: 'req-ra',
+      tool_name: 'cron_list',
+      tool_input: { host: 'deb2' },
+      display_name: 'cron_list',
+      display_input: { host: 'deb2' },
+      runs_as: 'svc-ops',
+      autonomy: 'confirm',
+    })
+    expect(screen.getByTestId('confirm-runs-as').textContent).toBe('Runs as svc-ops')
+  })
+
+  it('omits the runs-as line when the call runs as the login account', () => {
+    render(<OutputPanel blocks={[chatBlockWithRunningTool('cron_list')]} />)
+    fireConfirm({
+      id: 'chat1',
+      request_id: 'req-nora',
+      tool_name: 'cron_list',
+      tool_input: {},
+      display_name: 'cron_list',
+      display_input: {},
+      autonomy: 'confirm',
+    })
+    expect(screen.getByRole('button', { name: /approve & run/i })).toBeTruthy()
+    expect(screen.queryByTestId('confirm-runs-as')).toBeNull()
+  })
+
   it('approving an editable confirm without changing anything is not an edit', async () => {
     // The bug: an editable confirm always shipped its (unchanged) edit buffer as
     // editedInput, so a bare Approve got labelled "Edited" even though the operator
