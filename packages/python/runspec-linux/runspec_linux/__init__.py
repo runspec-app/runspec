@@ -4,7 +4,8 @@ The pure logic lives in the dependency-free ``runspec-linux-core`` package; the
 modules here wrap each helper in a runspec runnable. The helper functions are
 re-exported for convenience and back-compat (e.g. ``from runspec_linux import
 nc_send``). To import the helpers *without* surfacing any runnables in a venv,
-depend on ``runspec-linux-core`` directly instead.
+depend on ``runspec-linux-core`` directly instead. Tools that need root live in
+``runspec-linux-root``; their helpers are in ``runspec-linux-core``.
 """
 
 from runspec_linux_core import (
@@ -19,10 +20,8 @@ from runspec_linux_core import (
     create_venv,
     detect_manager,
     disk_usage,
-    enable_passwordless_sudo,
     find_large_files,
     install_into_venv,
-    install_package,
     journalctl,
     last_logins,
     list_containers,
@@ -30,19 +29,15 @@ from runspec_linux_core import (
     list_packages,
     list_processes,
     list_services,
-    list_upgrades,
     nc_send,
     ping_host,
-    reboot_host,
     remove_cron,
-    remove_package,
     restart_container,
     restart_service,
     search_log,
     show_connections,
     system_info,
     tail_log,
-    upgrade_packages,
     which,
     who,
 )
@@ -59,10 +54,8 @@ __all__ = [
     "create_venv",
     "detect_manager",
     "disk_usage",
-    "enable_passwordless_sudo",
     "find_large_files",
     "install_into_venv",
-    "install_package",
     "journalctl",
     "last_logins",
     "list_containers",
@@ -70,19 +63,15 @@ __all__ = [
     "list_packages",
     "list_processes",
     "list_services",
-    "list_upgrades",
     "nc_send",
     "ping_host",
-    "reboot_host",
     "remove_cron",
-    "remove_package",
     "restart_container",
     "restart_service",
     "search_log",
     "show_connections",
     "system_info",
     "tail_log",
-    "upgrade_packages",
     "which",
     "who",
 ]

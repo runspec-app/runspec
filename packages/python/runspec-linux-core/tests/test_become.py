@@ -84,3 +84,36 @@ def test_escalation_supported_and_current_user() -> None:
     # POSIX host in CI: both are meaningful and don't raise.
     assert escalation_supported() is True
     assert isinstance(current_user(), str) and current_user()
+
+
+@pytest.mark.real_current_user
+def test_escalating_to_yourself_is_a_no_op() -> None:
+    import os
+
+    if not hasattr(os, "geteuid"):
+        pytest.skip("POSIX only")
+    me = current_user()
+    assert build_become(["echo", "hi"], me) == ["echo", "hi"]
+    assert build_become(["echo", "hi"], me, "su") == ["echo", "hi"]
+
+
+@pytest.mark.real_current_user
+def test_is_current_user() -> None:
+    import os
+
+    from runspec_linux_core.become import is_current_user
+
+    if not hasattr(os, "geteuid"):
+        pytest.skip("POSIX only")
+    assert is_current_user(current_user())
+    assert not is_current_user("no-such-user-xyz")
+
+
+@pytest.mark.real_current_user
+def test_is_current_user_without_posix(monkeypatch) -> None:
+    import os
+
+    from runspec_linux_core.become import is_current_user
+
+    monkeypatch.delattr(os, "geteuid", raising=False)
+    assert not is_current_user("root")

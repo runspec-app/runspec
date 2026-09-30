@@ -56,6 +56,11 @@ def build_become(argv: list[str], run_as: str | None, method: str = "sudo") -> l
     if not run_as:
         return argv
     validate_user(run_as)
+    if is_current_user(run_as):
+        # Already that account: nothing to escalate. `sudo -u self` would still
+        # need a sudoers rule nobody has (a service account running its own
+        # venv's tools with `--run-as <itself>`).
+        return argv
     if method not in BECOME_METHODS:
         raise CommandError(f"invalid become-method: {method!r} (expected sudo or su)")
     if method == "su":
@@ -77,6 +82,21 @@ def check_become_error(what: str, stderr: str, run_as: str | None) -> None:
     if run_as and ("password is required" in low or "a terminal is required" in low):
         raise CommandError(f"{what}: passwordless sudo is not configured for run-as {run_as!r} ({err})")
     raise CommandError(err or f"{what} failed")
+
+
+def is_current_user(name: str) -> bool:
+    """True when ``name`` is the account this process already runs as
+    (compared by uid, so aliases sharing a uid count). ``False`` when that
+    can't be told — no POSIX uids, or no such user."""
+    geteuid = getattr(os, "geteuid", None)
+    if geteuid is None:
+        return False
+    try:
+        import pwd
+
+        return bool(pwd.getpwnam(name).pw_uid == geteuid())
+    except (ImportError, KeyError):
+        return False
 
 
 def escalation_supported() -> bool:

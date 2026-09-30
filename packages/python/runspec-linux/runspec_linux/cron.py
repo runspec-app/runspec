@@ -23,6 +23,8 @@ import runspec as rs
 from runspec_linux_core.cron import add_cron, clear_cron, list_cron, remove_cron
 from runspec_linux_core.errors import CommandError, ToolNotFoundError
 
+from runspec_linux._escalation import refuse_root
+
 
 def _emit(payload: dict[str, Any]) -> None:
     print(json.dumps(payload, default=str))
@@ -31,6 +33,7 @@ def _emit(payload: dict[str, Any]) -> None:
 def _run(spec: rs.RunSpec) -> dict[str, Any]:
     command = spec.runspec_command
     run_as = spec.run_as.value or None
+    refuse_root(run_as)
     become_method = spec.become_method.value
 
     if command == "list":

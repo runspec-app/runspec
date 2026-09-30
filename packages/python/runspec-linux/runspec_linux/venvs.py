@@ -5,9 +5,12 @@ import runspec as rs
 from runspec_linux_core import configure_pip, create_venv, install_into_venv, share_venv_logs
 from runspec_linux_core.errors import CommandError
 
+from runspec_linux._escalation import refuse_root
+
 
 def main_create_venv() -> None:
     spec = rs.parse("create-venv")
+    refuse_root(spec.run_as.value or None)
     try:
         result = create_venv(
             str(spec.python.value),
@@ -33,6 +36,7 @@ def main_create_venv() -> None:
 
 def main_install_into_venv() -> None:
     spec = rs.parse("install-into-venv")
+    refuse_root(spec.run_as.value or None)
     try:
         result = install_into_venv(
             str(spec.venv.value),
@@ -57,6 +61,7 @@ def main_install_into_venv() -> None:
 
 def main_share_venv_logs() -> None:
     spec = rs.parse("share-venv-logs")
+    refuse_root(spec.run_as.value or None)
     try:
         result = share_venv_logs(
             str(spec.venv.value),
@@ -77,6 +82,7 @@ def main_share_venv_logs() -> None:
 
 def main_configure_pip() -> None:
     spec = rs.parse("configure-pip")
+    refuse_root(spec.run_as.value or None)
     try:
         result = configure_pip(
             spec.index_url.value,

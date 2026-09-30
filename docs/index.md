@@ -55,7 +55,8 @@ Install-and-go packs give the agent real capabilities on day one:
 | Package | What you get |
 |---|---|
 | [`runspec-windows`](https://pypi.org/project/runspec-windows/) | Windows system administration and web/TLS diagnostics (Microsoft 365 is the separate `runspec-o365`). Installed with the console on Windows via `runspec-console[windows]`. |
-| [`runspec-linux`](https://pypi.org/project/runspec-linux/) | 59 runnables: Linux administration, package management, Python venv bootstrap, and the same web/TLS diagnostics. |
+| [`runspec-linux`](https://pypi.org/project/runspec-linux/) | 51 runnables: Linux administration, Python venv bootstrap, and the same web/TLS diagnostics. Nothing runs as root. |
+| [`runspec-linux-root`](https://pypi.org/project/runspec-linux-root/) | The Linux tools that need root: package upgrades and installs, `reboot-host`, `set-sysctl`. For a root-owned admin venv. |
 | [`runspec-jsm`](https://pypi.org/project/runspec-jsm/) | Jira Service Management: raise, comment, transition, discover request types. |
 | [`runspec-snow`](https://pypi.org/project/runspec-snow/) | ServiceNow ITSM: create, comment, state changes, catalog discovery. |
 | [`runspec-logops`](https://pypi.org/project/runspec-logops/) | Log triage: cluster errors into bounded digests, map traces to source. |

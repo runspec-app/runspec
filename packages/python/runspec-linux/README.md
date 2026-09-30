@@ -7,10 +7,15 @@ the runnables are discoverable by `runspec local`, `runspec serve` (MCP), and
 runspec-console.
 
 All runnables emit JSON on stdout. Read-only runnables are `autonomy =
-"autonomous"`; state-changing ones are `autonomy = "confirm"`. The privileged
-runnables declare `run_as = "root"`, so runspec-console escalates them via
-`sudo` — run `enable-passwordless-sudo` once to install a `visudo`-validated
-`/etc/sudoers.d` drop-in so they run without a password prompt.
+"autonomous"`; state-changing ones are `autonomy = "confirm"`.
+
+**Nothing here runs as root.** A tool runs as whoever owns its venv (runspec
+>= 0.68.0): you in a personal venv, or the service account in a shared one.
+`--run-as` picks another unprivileged account and refuses `root`. The tools that
+need root (package upgrades/installs, `reboot-host`, `set-sysctl`,
+`enable-passwordless-sudo`) are in
+[`runspec-linux-root`](https://pypi.org/project/runspec-linux-root/), for a
+root-owned admin venv.
 
 ## Install
 
@@ -27,13 +32,11 @@ pip install runspec-linux
 | Services | `list-services`, `check-service`, `restart-service`, `service-detail`, `failed-units` |
 | Logs | `tail-log`, `search-log`, `journalctl` |
 | Network | `network-interfaces`, `ping-host`, `check-port`, `show-connections`, `trace-route`, `route-table`, `socket-stats`, `dns-config`, `open-ports` |
-| Kernel params | `get-sysctl`, `set-sysctl` |
+| Kernel params | `get-sysctl` |
 | Files | `find-large-files`, `backup-files`, `owning-package` |
 | Sessions | `last-logins`, `who` |
 | Containers | `list-containers`, `container-logs`, `restart-container` |
-| Packages | `list-packages`, `list-upgrades`, `upgrade-packages`, `install-package`, `remove-package`, `autoremove-packages`, `list-autoremovable` |
-| Power | `reboot-host` |
-| Sudo bootstrap | `enable-passwordless-sudo` |
+| Packages (read-only) | `list-packages`, `list-autoremovable` |
 | Python venvs | `create-venv`, `install-into-venv`, `configure-pip` |
 | TCP | `nc-command` |
 | Commands | `which` |
@@ -41,13 +44,13 @@ pip install runspec-linux
 | Filesystem | `filesystem` (multi-verb, backed by `runspec-fs-core`) |
 | Web / TLS / API | `cert-check`, `cert-chain`, `tls-info`, `http-check`, `http-headers`, `redirect-trace`, `dns-lookup`, `api-spec` |
 
-The package-management runnables auto-detect apt / dnf / yum / zypper / pacman.
+The package runnables auto-detect apt / dnf / yum / zypper / pacman.
 The web/TLS/API probes are pure HTTP (shared with `runspec-windows` via
 `runspec-webops-core`) and run anywhere.
 
 ```
 system-info
-list-upgrades
+list-packages --filter nginx
 check-port --host db-01 --port 5432
 cert-check --url https://internal.example.com
 ```

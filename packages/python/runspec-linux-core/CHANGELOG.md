@@ -1,5 +1,23 @@
 # runspec-linux-core Changelog
 
+## [0.13.0] — 2026-09-30
+
+### Changed
+
+- **`build_become` does nothing when the target is the account the process
+  already runs as** (compared by uid; new `become.is_current_user`). A service
+  account running its own venv's tools with `--run-as <itself>` used to get
+  `sudo -n -u <itself> …`, which fails without a sudoers rule nobody has. This
+  applies to every `run_as` helper: logs, services, containers, investigate,
+  venvs and cron.
+- `sudoers.py`: the `scoped` note now says it covers direct
+  `sudo <venv>/bin/<tool>` runs only. The console and the MCP gateway run tools
+  through the env-frame `sh` prelude (runspec 0.67.0), which a scoped rule
+  doesn't match. The old note described `env(1)`, which runspec no longer uses.
+- The root-only helpers (packages, `reboot_host`, `set_sysctl`,
+  `enable_passwordless_sudo`) stay here. Their runnables moved to the new
+  `runspec-linux-root` package.
+
 ## [0.12.0] — 2026-09-29
 
 ### Added

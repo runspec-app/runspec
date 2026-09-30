@@ -13,12 +13,13 @@ fails, so a typo can't lock the operator out of sudo.
 Two grant scopes:
 
 - ``"scoped"`` — ``NOPASSWD`` only for the runspec venv's runnable scripts
-  (``{venv_bin}/``). Least privilege, and enough for **manual** console runs and
-  direct CLI/cron. Note: the console's *agent* path wraps the command in
-  ``env(1)`` to carry ``RUNSPEC_AGENT`` through sudo, so under the agent the
-  command sudo sees is ``/usr/bin/env …`` — which this scope does **not** match.
-  Agent-driven fleet management therefore needs ``"all"``.
-- ``"all"`` — ``NOPASSWD: ALL``. Works for every path (manual *and* agent).
+  (``{venv_bin}/``). Least privilege, and enough for **direct** runs:
+  ``sudo {venv_bin}/<tool>`` from a shell or cron. It does **not** cover the
+  console or the MCP gateway: since runspec 0.67.0 they pass variables on stdin
+  through a fixed ``sh`` prelude (secrets never on a command line), so the
+  command sudo sees is ``sh -c '<prelude>' sh <tool>`` — which this scope does
+  not match.
+- ``"all"`` — ``NOPASSWD: ALL``. Works for every path (direct, console, agent).
 """
 
 import getpass

@@ -34,6 +34,7 @@ publishes. Publishing is always an explicit step.
 | `runspec` (core) | `packages/python/runspec/pyproject.toml` | `v` | `release.yml` | PyPI + GitHub Release |
 | `runspec-linux` | `packages/python/runspec-linux/pyproject.toml` | `linux-v` | `linux-release.yml` | PyPI + GitHub Release |
 | `runspec-linux-core` | `packages/python/runspec-linux-core/pyproject.toml` | `linux-core-v` | `linux-core-release.yml` | PyPI + GitHub Release |
+| `runspec-linux-root` | `packages/python/runspec-linux-root/pyproject.toml` | `linux-root-v` | `linux-root-release.yml` | PyPI + GitHub Release |
 | `runspec-windows` | `packages/python/runspec-windows/pyproject.toml` | `windows-v` | `windows-release.yml` | PyPI + GitHub Release |
 | `runspec-o365` | `packages/python/runspec-o365/pyproject.toml` | `o365-v` | `o365-release.yml` | PyPI + GitHub Release |
 | `runspec-webops-core` | `packages/python/runspec-webops-core/pyproject.toml` | `webops-core-v` | `webops-core-release.yml` | PyPI + GitHub Release |
@@ -102,8 +103,9 @@ means the tag doesn't exist yet and the run fails.
   artifacts and proceeds to create the GitHub Release. This does **not** let you
   re-publish changed code under an existing version — only finish an interrupted
   release.
-- **`runspec-linux` depends on `runspec-linux-core`** — when both need releasing,
-  publish `runspec-linux-core` to PyPI **first**, then `runspec-linux`. A
+- **`runspec-linux` and `runspec-linux-root` depend on `runspec-linux-core`** — when
+  they need releasing together, publish `runspec-linux-core` to PyPI **first**,
+  then the others. A
   `runspec-linux` wheel can't resolve its `runspec-linux-core>=…` floor until that
   version is on PyPI. (CI smoke tests install the core from the sibling source, so
   pre-release CI passes regardless — the ordering only matters at publish time.)

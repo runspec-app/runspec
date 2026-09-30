@@ -1,5 +1,40 @@
 # runspec-linux Changelog
 
+## [0.19.0] — 2026-09-30
+
+**No root in runspec-linux.** Everything here now runs as an unprivileged
+account: you, or the service account that owns a shared venv (runspec >= 0.68.0
+runs a shared venv's tools as its owner). The tools that need root moved to the
+new **`runspec-linux-root`** package, for a root-owned admin venv.
+
+### Removed (moved to `runspec-linux-root`)
+
+- `list-upgrades`, `upgrade-packages`, `install-package`, `remove-package`,
+  `autoremove-packages`, `set-sysctl`, `reboot-host`, `enable-passwordless-sudo`.
+  Their helpers stay in `runspec-linux-core`. The `runspec_linux` re-exports of
+  `install_package`, `list_upgrades`, `reboot_host`, `remove_package`,
+  `upgrade_packages` and `enable_passwordless_sudo` are gone: import them from
+  `runspec_linux_core`.
+- **`--sudo`** ("run as root") on `restart-service`, `tail-log`, `search-log`,
+  `journalctl`, `list-containers`, `container-logs`, `restart-container`,
+  `service-detail` and `open-ports`.
+
+### Changed
+
+- **`--run-as root` is refused** on every tool that takes `--run-as` (the ones
+  above, the venv tools, `filesystem` and `cron`). It prints a JSON error naming
+  `runspec-linux-root` and exits 2. `--run-as` still selects any unprivileged
+  account.
+- **`--run-as` naming the account you already are does nothing** (from
+  runspec-linux-core 0.13.0). A service account running its own venv's tools with
+  `--run-as <itself>` used to need a sudoers rule letting it sudo to itself.
+
+### Upgrading
+
+Install `runspec-linux-root` into a separate root-owned venv (see its README).
+If an existing venv has both packages, upgrade `runspec-linux` first: pip
+removes the old copies of the moved scripts when it upgrades it.
+
 ## [0.18.0] — 2026-09-29
 
 ### Added

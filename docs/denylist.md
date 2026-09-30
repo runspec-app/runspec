@@ -139,7 +139,7 @@ itself, and `clear` can always re-enable them. Remote hosts need
 (the venv root belongs to the account it was created as — see above), the
 console re-runs it once, escalated: as the venv **owner** via passwordless
 `sudo -n -u <owner>` when that grant exists, else as **root** via `sudo -n`
-(what `enable-passwordless-sudo scoped` grants on the venv's `bin/`), else it
+(what runspec-linux-root's `enable-passwordless-sudo --scope scoped` grants on the venv's `bin/`), else it
 reports *cannot escalate* with the exact `sudo -u` command to run by hand. The
 result line says which ran — `✓ prod-1/app (as svc-app): …`. Listing never
 escalates, a write that succeeds plainly is untouched, and `-n` means a

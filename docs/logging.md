@@ -304,7 +304,7 @@ like `/tmp` or a mail spool:
 
 No group, no ACL, no extra sudo rule. Run as root, `logs share --inbox` and
 `history sweep` drop to the venv's owner first, so the standard
-`enable-passwordless-sudo scoped` grant (which is `(root)` on the venv's `bin/`)
+runspec-linux-root's `enable-passwordless-sudo --scope scoped` grant (which is `(root)` on the venv's `bin/`)
 is enough. `runspec-linux`'s `create-venv` creates the inbox for you, and the
 owner's (or root's) own runs create or repair it automatically as a safety net.
 Opt a venv out with `runspec logs share --no-inbox` (a `logs/.no-inbox` marker);

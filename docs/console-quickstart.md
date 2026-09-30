@@ -67,8 +67,8 @@ administration and web/TLS diagnostic runnables are available in the UI
 immediately — the agent has real tools to work with out of the box. (`[all]`
 doesn't include it; add `windows` alongside. You can also install it later from
 the **Marketplace** tab.)
-On Linux, `pip install runspec-linux` gives you the equivalent pack (57
-runnables).
+On Linux, `pip install runspec-linux` gives you the equivalent pack (51
+runnables). The tools that need root are the separate `runspec-linux-root`.
 
 ---
 

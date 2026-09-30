@@ -1,0 +1,145 @@
+# runspec-linux-root — Linux admin tools that need root.
+#
+# Install into a ROOT-OWNED venv (e.g. sudo python3 -m venv /opt/venvs/admin):
+# root runs this code, so only root may be able to change it. Every tool declares
+# run_as = "root"; sudoers decides who may run them.
+
+[config]
+autonomy-default = "confirm"
+
+[config.logging]
+store = "per-run"
+
+# ── Packages ──────────────────────────────────────────────────────────────────
+
+[list-upgrades]
+serve       = ["local"]
+description = "List packages with an available upgrade (refreshes the package index first)"
+autonomy    = "autonomous"
+output      = "json"
+run_as      = "root"
+
+[list-upgrades.args.no-refresh]
+type        = "flag"
+description = "Skip refreshing the package index — list from the cached index (faster)"
+default     = false
+
+[upgrade-packages]
+serve       = ["local"]
+description = "Refresh the package index and upgrade all installed packages (needs root)"
+autonomy    = "confirm"
+output      = "json"
+run_as      = "root"
+
+[install-package]
+serve       = ["local"]
+description = "Install one or more packages by name (needs root)"
+autonomy    = "confirm"
+output      = "json"
+run_as      = "root"
+
+[install-package.args.package]
+type        = "str"
+short       = "-p"
+description = "Package name to install (space-separated for several)"
+
+[remove-package]
+serve       = ["local"]
+description = "Remove one or more packages by name (needs root)"
+autonomy    = "confirm"
+output      = "json"
+run_as      = "root"
+
+[remove-package.args.package]
+type        = "str"
+short       = "-p"
+description = "Package name to remove (space-separated for several)"
+
+[remove-package.args.purge]
+type        = "flag"
+description = "Also delete the packages' configuration files (apt purge / pacman -Rn; a plain remove on dnf/yum/zypper)"
+default     = false
+
+[autoremove-packages]
+serve       = ["local"]
+description = "Remove packages nothing depends on any more, e.g. old kernels (apt autoremove and equivalents; needs root)"
+autonomy    = "confirm"
+output      = "json"
+run_as      = "root"
+
+[autoremove-packages.args.purge]
+type        = "flag"
+description = "Also delete the removed packages' configuration files (apt --purge / pacman -n)"
+default     = false
+
+[autoremove-packages.args.dry-run]
+type        = "flag"
+description = "Only list what would be removed; remove nothing (not supported on yum). list-autoremovable does the same without needing approval"
+default     = false
+
+# ── Kernel ────────────────────────────────────────────────────────────────────
+
+[set-sysctl]
+serve       = ["local"]
+description = "Set a kernel parameter (sysctl -w), optionally persisting it under /etc/sysctl.d (needs root)"
+autonomy    = "confirm"
+output      = "json"
+run_as      = "root"
+
+[set-sysctl.args.key]
+type        = "str"
+short       = "-k"
+description = "Dotted sysctl key (e.g. net.core.somaxconn)"
+
+[set-sysctl.args.value]
+type        = "str"
+description = "New value to set"
+
+[set-sysctl.args.persist]
+type        = "flag"
+description = "Also append the setting to /etc/sysctl.d/99-runspec.conf so it survives a reboot"
+default     = false
+
+# ── Power ─────────────────────────────────────────────────────────────────────
+
+[reboot-host]
+serve       = ["local"]
+description = "Reboot the host, optionally after a delay in minutes (needs root)"
+autonomy    = "confirm"
+output      = "json"
+run_as      = "root"
+
+[reboot-host.args.delay-minutes]
+type        = "int"
+short       = "-d"
+description = "Minutes to wait before rebooting (0 = immediately)"
+default     = 0
+
+# ── Privilege bootstrap ───────────────────────────────────────────────────────
+
+# One-time setup so the run_as="root" runnables above need no password. Itself
+# escalates with the supplied password via `sudo -S` (read from stdin, never
+# argv), so it runs as the invoker (run_as = ""). Validated with visudo before +
+# after install and rolled back on failure.
+[enable-passwordless-sudo]
+serve       = ["local"]
+description = "Install a validated /etc/sudoers.d drop-in so run_as='root' runnables need no password (one-time bootstrap)"
+autonomy    = "confirm"
+output      = "json"
+run_as      = ""
+
+[enable-passwordless-sudo.args.password]
+type        = "password"
+description = "Your sudo password — sent over the secret channel and piped to 'sudo -S'; never appears in argv, ps, or logs"
+
+[enable-passwordless-sudo.args.user]
+type        = "str"
+short       = "-u"
+description = "User to grant passwordless sudo (defaults to the current login user)"
+required    = false
+
+[enable-passwordless-sudo.args.scope]
+type        = "choice"
+options     = ["scoped", "all"]
+default     = "scoped"
+description = "scoped = NOPASSWD only for this venv's tools, run directly (sudo <venv>/bin/<tool> from a shell or cron); all = NOPASSWD: ALL (also needed for runs from runspec-console or the MCP gateway)"

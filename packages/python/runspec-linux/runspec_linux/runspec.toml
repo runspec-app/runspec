@@ -96,23 +96,14 @@ description = "Service name to restart"
 # Escalation: restarting a system service needs privilege.
 [restart-service.args.run-as]
 type        = "str"
-description = "Run as this specific OS user (via sudo -n -u / su). Mutually exclusive with --sudo."
+description = "Run as this specific OS user (via sudo -n -u / su). Never root — root tools live in runspec-linux-root."
 required    = false
-
-[restart-service.args.sudo]
-type        = "flag"
-description = "Run as root (via sudo). Mutually exclusive with --run-as."
-default     = false
 
 [restart-service.args.become-method]
 type        = "choice"
 options     = ["sudo", "su"]
-description = "How to escalate for --run-as/--sudo: sudo (passwordless, -n) or su."
+description = "How to escalate for --run-as: sudo (passwordless, -n) or su."
 default     = "sudo"
-
-[restart-service.groups.escalation]
-exclusive   = true
-args        = ["run-as", "sudo"]
 
 # ── Logs ──────────────────────────────────────────────────────────────────────
 
@@ -133,26 +124,17 @@ short       = "-n"
 description = "Number of lines to return"
 default     = 50
 
-# Escalation: read a root-owned / service-account-owned log (tail -n under sudo/su).
+# Escalation: read a service-account-owned log (tail -n under sudo/su).
 [tail-log.args.run-as]
 type        = "str"
-description = "Read as this specific OS user (via sudo -n -u / su). Mutually exclusive with --sudo."
+description = "Read as this specific OS user (via sudo -n -u / su). Never root — root tools live in runspec-linux-root."
 required    = false
-
-[tail-log.args.sudo]
-type        = "flag"
-description = "Read as root (via sudo). Mutually exclusive with --run-as."
-default     = false
 
 [tail-log.args.become-method]
 type        = "choice"
 options     = ["sudo", "su"]
-description = "How to escalate for --run-as/--sudo: sudo (passwordless, -n) or su."
+description = "How to escalate for --run-as: sudo (passwordless, -n) or su."
 default     = "sudo"
-
-[tail-log.groups.escalation]
-exclusive   = true
-args        = ["run-as", "sudo"]
 
 [search-log]
 serve       = ["local"]
@@ -176,26 +158,17 @@ short       = "-n"
 description = "Maximum number of matching lines to return"
 default     = 100
 
-# Escalation: search a root-owned / service-account-owned log (cat under sudo/su).
+# Escalation: search a service-account-owned log (cat under sudo/su).
 [search-log.args.run-as]
 type        = "str"
-description = "Read as this specific OS user (via sudo -n -u / su). Mutually exclusive with --sudo."
+description = "Read as this specific OS user (via sudo -n -u / su). Never root — root tools live in runspec-linux-root."
 required    = false
-
-[search-log.args.sudo]
-type        = "flag"
-description = "Read as root (via sudo). Mutually exclusive with --run-as."
-default     = false
 
 [search-log.args.become-method]
 type        = "choice"
 options     = ["sudo", "su"]
-description = "How to escalate for --run-as/--sudo: sudo (passwordless, -n) or su."
+description = "How to escalate for --run-as: sudo (passwordless, -n) or su."
 default     = "sudo"
-
-[search-log.groups.escalation]
-exclusive   = true
-args        = ["run-as", "sudo"]
 
 [journalctl]
 serve       = ["local"]
@@ -222,23 +195,14 @@ required    = false
 # Escalation: read a protected unit's journal (outside the systemd-journal group).
 [journalctl.args.run-as]
 type        = "str"
-description = "Read as this specific OS user (via sudo -n -u / su). Mutually exclusive with --sudo."
+description = "Read as this specific OS user (via sudo -n -u / su). Never root — root tools live in runspec-linux-root."
 required    = false
-
-[journalctl.args.sudo]
-type        = "flag"
-description = "Read as root (via sudo). Mutually exclusive with --run-as."
-default     = false
 
 [journalctl.args.become-method]
 type        = "choice"
 options     = ["sudo", "su"]
-description = "How to escalate for --run-as/--sudo: sudo (passwordless, -n) or su."
+description = "How to escalate for --run-as: sudo (passwordless, -n) or su."
 default     = "sudo"
-
-[journalctl.groups.escalation]
-exclusive   = true
-args        = ["run-as", "sudo"]
 
 # ── Network ───────────────────────────────────────────────────────────────────
 
@@ -375,23 +339,14 @@ default     = false
 # Escalation: the Docker daemon socket is usually root/docker-group owned.
 [list-containers.args.run-as]
 type        = "str"
-description = "Run docker as this specific OS user (via sudo -n -u / su). Mutually exclusive with --sudo."
+description = "Run docker as this specific OS user (via sudo -n -u / su). Never root — root tools live in runspec-linux-root."
 required    = false
-
-[list-containers.args.sudo]
-type        = "flag"
-description = "Run docker as root (via sudo). Mutually exclusive with --run-as."
-default     = false
 
 [list-containers.args.become-method]
 type        = "choice"
 options     = ["sudo", "su"]
-description = "How to escalate for --run-as/--sudo: sudo (passwordless, -n) or su."
+description = "How to escalate for --run-as: sudo (passwordless, -n) or su."
 default     = "sudo"
-
-[list-containers.groups.escalation]
-exclusive   = true
-args        = ["run-as", "sudo"]
 
 [container-logs]
 serve       = ["local"]
@@ -413,23 +368,14 @@ default     = 50
 # Escalation: the Docker daemon socket is usually root/docker-group owned.
 [container-logs.args.run-as]
 type        = "str"
-description = "Run docker as this specific OS user (via sudo -n -u / su). Mutually exclusive with --sudo."
+description = "Run docker as this specific OS user (via sudo -n -u / su). Never root — root tools live in runspec-linux-root."
 required    = false
-
-[container-logs.args.sudo]
-type        = "flag"
-description = "Run docker as root (via sudo). Mutually exclusive with --run-as."
-default     = false
 
 [container-logs.args.become-method]
 type        = "choice"
 options     = ["sudo", "su"]
-description = "How to escalate for --run-as/--sudo: sudo (passwordless, -n) or su."
+description = "How to escalate for --run-as: sudo (passwordless, -n) or su."
 default     = "sudo"
-
-[container-logs.groups.escalation]
-exclusive   = true
-args        = ["run-as", "sudo"]
 
 [restart-container]
 serve       = ["local"]
@@ -445,23 +391,14 @@ description = "Container name or ID"
 # Escalation: the Docker daemon socket is usually root/docker-group owned.
 [restart-container.args.run-as]
 type        = "str"
-description = "Run docker as this specific OS user (via sudo -n -u / su). Mutually exclusive with --sudo."
+description = "Run docker as this specific OS user (via sudo -n -u / su). Never root — root tools live in runspec-linux-root."
 required    = false
-
-[restart-container.args.sudo]
-type        = "flag"
-description = "Run docker as root (via sudo). Mutually exclusive with --run-as."
-default     = false
 
 [restart-container.args.become-method]
 type        = "choice"
 options     = ["sudo", "su"]
-description = "How to escalate for --run-as/--sudo: sudo (passwordless, -n) or su."
+description = "How to escalate for --run-as: sudo (passwordless, -n) or su."
 default     = "sudo"
-
-[restart-container.groups.escalation]
-exclusive   = true
-args        = ["run-as", "sudo"]
 
 # ── Packages ──────────────────────────────────────────────────────────────────
 
@@ -488,54 +425,6 @@ type        = "flag"
 description = "Also say whether each package was installed by name (manual) or as a dependency (auto) — autoremove only ever removes auto packages"
 default     = false
 
-[list-upgrades]
-serve       = ["local"]
-description = "List packages with an available upgrade (refreshes the package index first)"
-autonomy    = "autonomous"
-output      = "json"
-run_as      = "root"
-
-[list-upgrades.args.no-refresh]
-type        = "flag"
-description = "Skip refreshing the package index — list from the cached index (faster)"
-default     = false
-
-[upgrade-packages]
-serve       = ["local"]
-description = "Refresh the package index and upgrade all installed packages (needs root)"
-autonomy    = "confirm"
-output      = "json"
-run_as      = "root"
-
-[install-package]
-serve       = ["local"]
-description = "Install one or more packages by name (needs root)"
-autonomy    = "confirm"
-output      = "json"
-run_as      = "root"
-
-[install-package.args.package]
-type        = "str"
-short       = "-p"
-description = "Package name to install (space-separated for several)"
-
-[remove-package]
-serve       = ["local"]
-description = "Remove one or more packages by name (needs root)"
-autonomy    = "confirm"
-output      = "json"
-run_as      = "root"
-
-[remove-package.args.package]
-type        = "str"
-short       = "-p"
-description = "Package name to remove (space-separated for several)"
-
-[remove-package.args.purge]
-type        = "flag"
-description = "Also delete the packages' configuration files (apt purge / pacman -Rn; a plain remove on dnf/yum/zypper)"
-default     = false
-
 [list-autoremovable]
 serve       = ["local"]
 description = "List the packages autoremove-packages would remove (read-only preview; not supported on yum)"
@@ -546,66 +435,6 @@ output      = "json"
 type        = "flag"
 description = "Preview a purge (apt shows config files would go too)"
 default     = false
-
-[autoremove-packages]
-serve       = ["local"]
-description = "Remove packages nothing depends on any more, e.g. old kernels (apt autoremove and equivalents; needs root)"
-autonomy    = "confirm"
-output      = "json"
-run_as      = "root"
-
-[autoremove-packages.args.purge]
-type        = "flag"
-description = "Also delete the removed packages' configuration files (apt --purge / pacman -n)"
-default     = false
-
-[autoremove-packages.args.dry-run]
-type        = "flag"
-description = "Only list what would be removed; remove nothing (not supported on yum). list-autoremovable does the same without needing approval"
-default     = false
-
-# ── Power ─────────────────────────────────────────────────────────────────────
-
-[reboot-host]
-serve       = ["local"]
-description = "Reboot the host, optionally after a delay in minutes (needs root)"
-autonomy    = "confirm"
-output      = "json"
-run_as      = "root"
-
-[reboot-host.args.delay-minutes]
-type        = "int"
-short       = "-d"
-description = "Minutes to wait before rebooting (0 = immediately)"
-default     = 0
-
-# ── Privilege bootstrap ───────────────────────────────────────────────────────
-
-# One-time setup so the run_as="root" runnables above need no password. Itself
-# escalates with the supplied password via `sudo -S` (read from stdin, never
-# argv), so it must NOT declare run_as. Validated with visudo before + after
-# install and rolled back on failure.
-[enable-passwordless-sudo]
-serve       = ["local"]
-description = "Install a validated /etc/sudoers.d drop-in so run_as='root' runnables need no password (one-time bootstrap)"
-autonomy    = "confirm"
-output      = "json"
-
-[enable-passwordless-sudo.args.password]
-type        = "password"
-description = "Your sudo password — sent over the secret channel and piped to 'sudo -S'; never appears in argv, ps, or logs"
-
-[enable-passwordless-sudo.args.user]
-type        = "str"
-short       = "-u"
-description = "User to grant passwordless sudo (defaults to the current login user)"
-required    = false
-
-[enable-passwordless-sudo.args.scope]
-type        = "choice"
-options     = ["scoped", "all"]
-default     = "scoped"
-description = "scoped = NOPASSWD only for the runspec venv runnables (manual/CLI runs); all = NOPASSWD: ALL (also covers agent-driven runs)"
 
 # ── TCP interfaces (nc-command) ────────────────────────────────────────────────
 
@@ -1237,47 +1066,6 @@ short       = "-p"
 description = "Only return keys containing this substring (e.g. 'net.core')"
 required    = false
 
-[set-sysctl]
-serve       = ["local"]
-description = "Set a kernel parameter (sysctl -w), optionally persisting it under /etc/sysctl.d"
-autonomy    = "confirm"
-output      = "json"
-
-[set-sysctl.args.key]
-type        = "str"
-short       = "-k"
-description = "Dotted sysctl key (e.g. net.core.somaxconn)"
-
-[set-sysctl.args.value]
-type        = "str"
-description = "New value to set"
-
-[set-sysctl.args.persist]
-type        = "flag"
-description = "Also append the setting to /etc/sysctl.d/99-runspec.conf so it survives a reboot"
-default     = false
-
-# Escalation: writing a kernel parameter is privileged.
-[set-sysctl.args.run-as]
-type        = "str"
-description = "Apply as this specific OS user (via sudo -n -u / su). Mutually exclusive with --sudo."
-required    = false
-
-[set-sysctl.args.sudo]
-type        = "flag"
-description = "Apply as root (via sudo). Mutually exclusive with --run-as."
-default     = false
-
-[set-sysctl.args.become-method]
-type        = "choice"
-options     = ["sudo", "su"]
-description = "How to escalate for --run-as/--sudo: sudo (passwordless, -n) or su."
-default     = "sudo"
-
-[set-sysctl.groups.escalation]
-exclusive   = true
-args        = ["run-as", "sudo"]
-
 [cpu-info]
 serve       = ["local"]
 description = "Report CPU model, core count, and per-CPU scaling governor and frequency"
@@ -1306,23 +1094,14 @@ description = "Systemd unit name (e.g. nginx or nginx.service)"
 # Escalation: some properties on protected units need privilege.
 [service-detail.args.run-as]
 type        = "str"
-description = "Read as this specific OS user (via sudo -n -u / su). Mutually exclusive with --sudo."
+description = "Read as this specific OS user (via sudo -n -u / su). Never root — root tools live in runspec-linux-root."
 required    = false
-
-[service-detail.args.sudo]
-type        = "flag"
-description = "Read as root (via sudo). Mutually exclusive with --run-as."
-default     = false
 
 [service-detail.args.become-method]
 type        = "choice"
 options     = ["sudo", "su"]
-description = "How to escalate for --run-as/--sudo: sudo (passwordless, -n) or su."
+description = "How to escalate for --run-as: sudo (passwordless, -n) or su."
 default     = "sudo"
-
-[service-detail.groups.escalation]
-exclusive   = true
-args        = ["run-as", "sudo"]
 
 [open-ports]
 serve       = ["local"]
@@ -1339,23 +1118,14 @@ default     = "tcp"
 # Escalation: the full pid/process map needs privilege (ss shows other users' processes only as root).
 [open-ports.args.run-as]
 type        = "str"
-description = "Probe as this specific OS user (via sudo -n -u / su). Mutually exclusive with --sudo."
+description = "Probe as this specific OS user (via sudo -n -u / su). Never root — root tools live in runspec-linux-root."
 required    = false
-
-[open-ports.args.sudo]
-type        = "flag"
-description = "Probe as root (via sudo). Mutually exclusive with --run-as."
-default     = false
 
 [open-ports.args.become-method]
 type        = "choice"
 options     = ["sudo", "su"]
-description = "How to escalate for --run-as/--sudo: sudo (passwordless, -n) or su."
+description = "How to escalate for --run-as: sudo (passwordless, -n) or su."
 default     = "sudo"
-
-[open-ports.groups.escalation]
-exclusive   = true
-args        = ["run-as", "sudo"]
 
 [owning-package]
 serve       = ["local"]

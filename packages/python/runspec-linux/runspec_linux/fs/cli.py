@@ -26,6 +26,7 @@ from typing import Any
 import runspec as rs
 from runspec_fs_core import BecomeError, FsCoreError, build_become, current_user, escalation_supported
 
+from runspec_linux._escalation import refuse_root
 from runspec_linux.fs._dispatch import run_verb
 
 
@@ -115,6 +116,7 @@ def _run_as_worker(run_as: str, method: str, verb: str, kwargs: dict[str, Any]) 
 def main() -> None:
     spec = rs.parse("filesystem")
     run_as = spec.run_as.value
+    refuse_root(run_as or None)
     method = spec.become_method.value
     try:
         kwargs = _verb_kwargs(spec)

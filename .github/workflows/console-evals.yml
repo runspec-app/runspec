@@ -23,6 +23,7 @@ on:
       - 'packages/python/runspec-console/scripts/record_evals.py'
       - 'packages/python/runspec-console/tests/fixtures/agent_evals*.toml'
       - 'packages/python/runspec-linux/**'
+      - 'packages/python/runspec-linux-root/**'
       - 'packages/python/runspec-fs/**'
       - '.github/workflows/console-evals.yml'
   schedule:
@@ -62,7 +63,7 @@ jobs:
           pip install -e packages/python/runspec-linux-core \
                        packages/python/runspec-webops-core \
                        packages/python/runspec-fs-core
-          pip install -e packages/python/runspec-linux packages/python/runspec-fs
+          pip install -e packages/python/runspec-linux packages/python/runspec-linux-root packages/python/runspec-fs
       - name: Show the discovered toolset
         run: python "$RECORDER" build-toolset
       - name: Validate the fixture (expect_tool / expect_args exist)
@@ -96,7 +97,7 @@ jobs:
           pip install -e packages/python/runspec-linux-core \
                        packages/python/runspec-webops-core \
                        packages/python/runspec-fs-core
-          pip install -e packages/python/runspec-linux packages/python/runspec-fs
+          pip install -e packages/python/runspec-linux packages/python/runspec-linux-root packages/python/runspec-fs
           pip install anthropic
       - name: Record + score against the live model
         if: steps.guard.outputs.run == 'true'
