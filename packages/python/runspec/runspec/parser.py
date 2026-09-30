@@ -162,13 +162,17 @@ def _parse_impl(
     if check_run_as:
         root_spec = raw["runnables"][name]
         run_as = effective_run_as(root_spec.get("run_as"), config.get("run_as"))
-        detail = verify_run_as_identity(resolve_run_as(run_as, socket.gethostname()))
+        target = resolve_run_as(run_as, socket.gethostname())
+        detail = verify_run_as_identity(target)
         if detail:
             level = root_spec.get("enforce_run_as") or config.get("enforce_run_as") or "error"
             if level == "warn":
                 sys.stderr.write(f'⚠  {name}: {detail}. (enforce_run_as = "warn" — continuing)\n')
             elif level != "off":
-                raise errors.RunAsMismatch(errors.format_run_as_mismatch(name, detail))
+                # The hint re-runs the command as typed: sys.argv, unless parse()
+                # was handed an explicit argv (then name + those args).
+                hint_argv = list(sys.argv) if argv is None and sys.argv and sys.argv[0] else [name, *(argv or [])]
+                raise errors.RunAsMismatch(errors.format_run_as_mismatch(name, detail, resolve_account(target), hint_argv))
 
     # 6.45. Denylist kill switch — refuse runnables disabled in this venv's
     # {sys.prefix}/runspec_denylist.toml (by name / effective user / hostname).

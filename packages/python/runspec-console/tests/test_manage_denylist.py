@@ -565,3 +565,101 @@ def test_sh_refusal_exits_77_with_hint(tmp_path: Path):
     assert "cannot escalate" in proc.stderr
     assert "owned by svc-app" in proc.stderr
     assert "sudo -u svc-app" in proc.stderr and "deny all --reason 'x y'" in proc.stderr
+
+
+# ── remove / enable / per-venv / not-installed paths ───────────────────────
+
+
+def test_remove_builds_the_same_glob_flags_as_add():
+    b = _StubBridge(HOSTS)
+    b._run_manage_denylist(
+        {
+            "action": "remove",
+            "runnable": ["system-info"],
+            "host": ["prod-*"],
+            "reason": "x",
+        }
+    )
+    cmd = b.ssh_calls[0][1]
+    # reason is add-only — `deny remove` matches on the three lists
+    assert cmd.endswith("deny remove -r system-info -H 'prod-*'")
+
+
+def test_remove_without_lists_targets_the_all_star_rule():
+    b = _StubBridge(HOSTS)
+    b._run_manage_denylist({"action": "remove", "targets": ["prod-2"]})
+    assert b.ssh_calls[0][1].endswith("deny remove -r '*'")
+
+
+def test_enable_is_a_write_action():
+    b = _StubBridge(HOSTS)
+    b._run_manage_denylist({"action": "enable", "targets": ["prod-2"]})
+    assert b.ssh_calls[0][1].endswith("deny enable")
+    assert (
+        "enable" in bu.DENYLIST_WRITE_ACTIONS and "remove" in bu.DENYLIST_WRITE_ACTIONS
+    )
+    assert (
+        b._effective_tool_autonomy("manage_denylist", {"action": "remove"}) == "confirm"
+    )
+
+
+def test_venv_narrows_to_one_venv_per_host():
+    b = _StubBridge(HOSTS)
+    out = b._run_manage_denylist(
+        {"action": "enable", "targets": ["prod-1"], "venv": "ops"}
+    )
+    assert [c[1] for c in b.ssh_calls] == ["/opt/venvs/ops/bin/runspec deny enable"]
+    assert "1/1 venv(s) ok" in out
+
+
+def test_unknown_venv_errors_without_running_anything():
+    b = _StubBridge(HOSTS)
+    out = b._run_manage_denylist({"action": "enable", "venv": "nope"})
+    assert out.startswith("Error:") and not b.ssh_calls
+
+
+def _missing_on(ssh_target: str):
+    def run(ssh, command, *, identity_file=None, timeout=15):
+        if ssh == ssh_target:
+            path = command.split()[0]
+            return (127, "", f"bash: line 1: {path}: No such file or directory")
+        return (0, "ok", "")
+
+    return run
+
+
+def test_missing_runspec_is_skipped_not_failed():
+    b = _StubBridge(HOSTS)
+    b._ssh_run = _missing_on("deploy@prod-2")  # type: ignore[method-assign]
+    out = b._run_manage_denylist({"action": "mode", "setting": "enforce"})
+    assert (
+        "2/2 venv(s) ok across 2 host(s); 1 path(s) with no runspec installed skipped"
+        in out
+    )
+    assert "– prod-2/app: no runspec at /opt/venvs/app/bin/runspec" in out
+    assert "✗" not in out
+
+
+def test_status_marks_missing_runspec():
+    b = _StubBridge(HOSTS)
+    b._ssh_run = _missing_on("deploy@prod-2")  # type: ignore[method-assign]
+    [row] = b.denylist_status(["prod-2"])
+    assert row["ok"] is False and row["missing"] is True
+    assert "venv not created yet" in row["error"]
+
+
+def test_runspec_missing_classifier():
+    rp = "/opt/venvs/x/bin/runspec"
+    assert bu.runspec_missing(127, "", "", rp)
+    assert bu.runspec_missing(1, "", f"sh: {rp}: No such file or directory", rp)
+    # a real failure mentioning some other missing file is not "not installed"
+    assert not bu.runspec_missing(1, "", "open /etc/x: No such file or directory", rp)
+    assert not bu.runspec_missing(0, "", "", rp)
+
+
+def test_schema_offers_remove_and_enable_and_explains_host_globs():
+    tool = _StubBridge(HOSTS)._denylist_tool()
+    assert tool is not None
+    props = tool["input_schema"]["properties"]
+    assert {"remove", "enable"} <= set(props["action"]["enum"])
+    assert "not the console host name" in props["host"]["description"]

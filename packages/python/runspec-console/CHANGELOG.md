@@ -7,6 +7,45 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.308.0] — 2026-09-30
+
+### Changed
+
+- **Denylist: remove one rule, and no more rules that can never fire.** Found
+  in the Debian lab (B14):
+  - **Per-rule remove.** The status table's Detail column lists every rule on
+    its own line, wrapped and never cut off (it used to be an ellipsised line
+    whose only full view was a tooltip). Each rule has a remove button that
+    acts on exactly that host and venv. A venv disabled with *Disable all* has
+    an **Enable** button that undoes it and keeps the rules. Before this, the
+    only way back was *Re-enable all (clear)*.
+  - **Host globs match the machine's hostname, and the modal now says so.** A
+    rule's host globs are matched against the target machine's own hostname
+    (`little-girl`), never the console's name for it (`deb2-alice`). A rule
+    with `deb2-alice` in that field was written, reported ✓, and never fired.
+    - The field is relabelled **Only on machines whose hostname matches**, with
+      "empty = every targeted machine (usual)".
+    - The table shows each machine's hostname under its host name.
+    - A warning appears when a glob matches none of the targeted machines'
+      hostnames. It names the console host and points to **Target hosts** when
+      that's what was typed.
+    - Hostnames need `runspec >= 0.69.0` on the host. With an older core the
+      warning simply doesn't show.
+  - **Paths with no venv behind them are "not installed", not errors.** A host
+    entry that lists a venv not yet created showed a red `bash: …: No such file
+    or directory` row and counted as a failed venv in every action. It now shows
+    a grey *not installed* tag ("venv not created yet, or remove the path from
+    the host entry"). Actions report it as skipped:
+    `2/2 venv(s) ok …; 7 path(s) with no runspec installed skipped`.
+  - The Usernames hint now says a shared venv's tools run as its owner (e.g.
+    `svc-ops`), not as your login account.
+- `manage_denylist` (the agent tool and the modal's bridge call) gains
+  `remove` (the same `runnable`/`user`/`host` lists `add` takes) and `enable`,
+  plus an optional `venv` that narrows each host to one venv. The tool
+  description tells the agent that `host` globs are machine hostnames, and that
+  a console host is picked with `targets`. `remove`/`enable` need
+  `runspec >= 0.69.0` on the host; an older core replies "Unknown deny action".
+
 ## [0.307.0] — 2026-09-30
 
 ### Changed

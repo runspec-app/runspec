@@ -137,13 +137,35 @@ export function formatGroupExactlyOne(groupName: string, args: string[], provide
   ].join('\n');
 }
 
-export function formatRunAsMismatch(runnableName: string, detail: string): string {
-  return [
-    `✗  Refusing to run '${runnableName}': ${detail}.`,
-    `   It runs as its run_as account — by default the account that owns its environment.`,
-    '   Re-run under that account (e.g. `sudo -u <user> ...`, `runspec serve`, or the console),',
-    '   or relax the check with enforce_run_as = "warn" (or "off"), or opt out with run_as = "".',
-  ].join('\n');
+function shellQuote(value: string): string {
+  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(value) ? value : `'${value.replace(/'/g, `'"'"'`)}'`;
+}
+
+/** The command that re-runs this invocation as `runAsUser` — `sudo <argv>`
+ *  for root, `sudo -u <user> <argv>` otherwise (a bare uid uses `#uid`). */
+export function runAsCommandHint(runAsUser: string, argv: string[] | undefined): string {
+  const cmd = argv && argv.length ? argv.map(shellQuote).join(' ') : '<command>';
+  if (runAsUser === 'root' || runAsUser === '0') return `sudo ${cmd}`;
+  const user = /^\d+$/.test(runAsUser) ? `#${runAsUser}` : runAsUser;
+  return `sudo -u ${shellQuote(user)} ${cmd}`;
+}
+
+/** The refusal when a runnable is started as the wrong account — one idea per
+ *  line: what's wrong, the exact command to run instead, why that account, and
+ *  (last, for the developer) how the check is relaxed. */
+export function formatRunAsMismatch(runnableName: string, detail: string, runAsUser = '', argv?: string[]): string {
+  const lines = [`✗  Refusing to run '${runnableName}': ${detail}.`];
+  if (runAsUser && !detail.includes('does not exist')) {
+    const who = runAsUser === 'root' || runAsUser === '0' ? 'root' : `'${runAsUser}'`;
+    lines.push(`   Run it as ${who} instead:  ${runAsCommandHint(runAsUser, argv)}`);
+  } else if (runAsUser) {
+    lines.push('   Create that account, or set run_as to one that exists.');
+  }
+  lines.push(
+    "   Why that account: the runnable's run_as setting (default: whoever owns its environment).",
+    '   Developers can relax this check with enforce_run_as = "warn" or "off", or drop it with run_as = "".',
+  );
+  return lines.join('\n');
 }
 
 export function formatDeprecated(name: string, message: string): string {

@@ -281,3 +281,94 @@ def test_cli_permission_denied_without_owner(dl_path: Path, monkeypatch: pytest.
     err = capsys.readouterr().err
     assert "Re-run as the user that owns the virtual environment" in err
     assert "sudo -u" not in err
+
+
+# ── CLI: remove one rule / enable after `deny all` / hostname ──────────────
+
+
+def _rules(path: Path) -> list[dict[str, object]]:
+    return denylist.status(path)["rules"]
+
+
+def test_status_reports_this_machines_hostname(dl_path: Path) -> None:
+    import socket
+
+    assert denylist.status(dl_path)["hostname"] == socket.gethostname()
+
+
+def test_cli_remove_by_number(dl_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    from runspec import cli
+
+    cli.cmd_deny(["add", "-r", "a"])
+    cli.cmd_deny(["add", "-r", "b"])
+    cli.cmd_deny(["remove", "1"])
+    assert "Removed deny rule: runnables=['a']" in capsys.readouterr().out
+    assert [r["runnables"] for r in _rules(dl_path)] == [["b"]]
+
+
+def test_cli_remove_by_the_same_args_that_added_it(dl_path: Path) -> None:
+    from runspec import cli
+
+    cli.cmd_deny(["add", "-r", "deploy", "-H", "prod-*"])
+    cli.cmd_deny(["add", "-r", "deploy"])  # different host list — must survive
+    cli.cmd_deny(["remove", "-r", "deploy", "-H", "prod-*"])
+    assert _rules(dl_path) == [{"runnables": ["deploy"], "users": ["*"], "hosts": ["*"], "reason": ""}]
+
+
+def test_cli_remove_last_rule_keeps_mode(dl_path: Path) -> None:
+    from runspec import cli
+
+    cli.cmd_deny(["mode", "warn"])
+    cli.cmd_deny(["add", "-r", "deploy", "--reason", "x"])
+    cli.cmd_deny(["remove", "-r", "deploy"])
+    info = denylist.status(dl_path)
+    assert info["rules"] == [] and info["mode"] == "warn"
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["remove"],  # neither form
+        ["remove", "1", "-r", "a"],  # both forms
+        ["remove", "9"],  # out of range
+        ["remove", "x"],  # not a number
+        ["remove", "-r", "nope"],  # no such rule
+    ],
+)
+def test_cli_remove_refuses_bad_selectors(dl_path: Path, argv: list[str], capsys: pytest.CaptureFixture[str]) -> None:
+    from runspec import cli
+
+    cli.cmd_deny(["add", "-r", "a"])
+    with pytest.raises(SystemExit):
+        cli.cmd_deny(argv)
+    assert "✗" in capsys.readouterr().out
+    assert len(_rules(dl_path)) == 1
+
+
+def test_cli_enable_undoes_all_but_keeps_rules(dl_path: Path) -> None:
+    from runspec import cli
+
+    cli.cmd_deny(["add", "-r", "deploy"])
+    cli.cmd_deny(["all", "--reason", "freeze"])
+    cli.cmd_deny(["enable"])
+    info = denylist.status(dl_path)
+    assert info["disabled"] is False and info["reason"] == ""
+    assert [r["runnables"] for r in info["rules"]] == [["deploy"]]
+
+
+def test_cli_enable_when_not_disabled_is_a_noop(dl_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    from runspec import cli
+
+    cli.cmd_deny(["enable"])
+    assert "Nothing to enable" in capsys.readouterr().out
+    assert not dl_path.exists()
+
+
+def test_cli_list_names_the_hostname(dl_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    import socket
+
+    from runspec import cli
+
+    cli.cmd_deny(["add", "-r", "deploy"])
+    cli.cmd_deny(["list"])
+    assert f"Host:   {socket.gethostname()}" in capsys.readouterr().out

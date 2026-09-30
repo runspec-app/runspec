@@ -9,9 +9,9 @@
  */
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Modal, Alert, Button, Divider, Input, Popconfirm, Segmented, Select, Space, Table, Tag, Tooltip, Typography, message } from 'antd'
-import { ReloadOutlined, StopOutlined, WarningOutlined, LoadingOutlined, InfoCircleOutlined } from '@ant-design/icons'
-import { bridge, type DenylistHostStatus, type DenylistPayload, type Host } from '../bridge'
-import { RADIUS } from '../ThemeContext'
+import { ReloadOutlined, StopOutlined, WarningOutlined, LoadingOutlined, InfoCircleOutlined, DeleteOutlined, CheckCircleOutlined } from '@ant-design/icons'
+import { bridge, type DenylistHostStatus, type DenylistPayload, type DenylistRule, type Host } from '../bridge'
+import { MONO_FONT, RADIUS } from '../ThemeContext'
 
 const { Text } = Typography
 
@@ -26,6 +26,34 @@ function FieldLabel({ children, hint }: { children: ReactNode; hint: ReactNode }
       </Tooltip>
     </Text>
   )
+}
+
+/** Shell-style glob match (`*`, `?`, `[…]`) — the same semantics as the
+ *  core's `fnmatch` for the patterns a rule holds, case-sensitive like POSIX. */
+export function globMatch(pattern: string, value: string): boolean {
+  let re = ''
+  for (let i = 0; i < pattern.length; i++) {
+    const ch = pattern[i]
+    if (ch === '*') re += '.*'
+    else if (ch === '?') re += '.'
+    else if (ch === '[') {
+      const end = pattern.indexOf(']', i + 1)
+      if (end === -1) { re += '\\['; continue }
+      let body = pattern.slice(i + 1, end)
+      if (body.startsWith('!')) body = '^' + body.slice(1)
+      re += `[${body.replace(/\\/g, '\\\\')}]`
+      i = end
+    } else re += ch.replace(/[.+^${}()|\\]/g, '\\$&')
+  }
+  return new RegExp(`^${re}$`).test(value)
+}
+
+/** Host globs that match none of the target machines' real hostnames — a rule
+ *  carrying one can never fire on those targets. Empty when no hostname is
+ *  known (an older core) or every glob matches something. */
+export function unmatchedHostGlobs(globs: string[], hostnames: string[]): string[] {
+  if (!hostnames.length) return []
+  return globs.filter(g => !hostnames.some(h => globMatch(g, h)))
 }
 
 export interface DenylistModalProps {
@@ -97,10 +125,21 @@ export function DenylistModal({ open, onClose, hosts }: DenylistModalProps) {
   const targetSet = new Set(targets)
   const shownStatus = targets.length ? status.filter(r => targetSet.has(r.host)) : status
 
+  // The real hostnames of the targeted machines (from the status rows) — what a
+  // rule's host globs are matched against on each machine.
+  const targetHostnames = useMemo(() => {
+    const want = new Set(effectiveTargets)
+    return [...new Set(status.filter(r => r.ok && r.hostname && want.has(r.host)).map(r => r.hostname as string))]
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- effectiveTargets derives from targets + scopeKey
+  }, [status, targets, scopeKey])
+  const badHostGlobs = unmatchedHostGlobs(hostGlobs, targetHostnames)
+  const consoleNameGlobs = badHostGlobs.filter(g => scopeNames.includes(g))
+
   const run = async (payload: DenylistPayload, label: string) => {
     setBusy(label)
     try {
-      setResult(await bridge.manage_denylist({ ...payload, targets: effectiveTargets }))
+      // A row action names its own host (+ venv); the form acts on the picker.
+      setResult(await bridge.manage_denylist({ targets: effectiveTargets, ...payload }))
       await refresh()  // reflect the change in the table immediately
     } catch (err) {
       message.error((err as Error)?.message || 'denylist action failed')
@@ -114,21 +153,80 @@ export function DenylistModal({ open, onClose, hosts }: DenylistModalProps) {
     label: h.group ? `${h.name} (${h.group})` : h.name,
   }))
 
-  const ruleSummary = (r: DenylistHostStatus): string => {
-    if (!r.ok) return r.error || 'unreachable'
-    if (r.disabled) return 'ALL disabled' + (r.reason ? ` (${r.reason})` : '')
-    if (!r.rules?.length) return 'none'
-    return r.rules
-      .map(rule => `${rule.runnables.join(',')} [users ${rule.users.join(',')}; hosts ${rule.hosts.join(',')}]${rule.reason ? ` — ${rule.reason}` : ''}`)
-      .join(' · ')
+  const ruleText = (rule: DenylistRule): string =>
+    `${rule.runnables.join(', ')} — users ${rule.users.join(', ')}; hosts ${rule.hosts.join(', ')}` +
+    (rule.reason ? ` — ${rule.reason}` : '')
+
+  // One line per rule, wrapped (never ellipsised — a long rule set stays fully
+  // readable), each with its own remove button acting on exactly this venv.
+  const renderDetail = (r: DenylistHostStatus) => {
+    if (r.missing) return <Text type="secondary" style={{ fontSize: 12 }}>{r.error}</Text>
+    if (!r.ok) return <Text type="danger" style={{ fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{r.error || 'unreachable'}</Text>
+    const lines: ReactNode[] = []
+    const rowKey = `${r.host}/${r.venv}`
+    if (r.disabled) {
+      lines.push(
+        <div key="all" style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+          <Text style={{ fontSize: 13, flex: 1, wordBreak: 'break-word' }}>
+            ALL runnables disabled{r.reason ? ` — ${r.reason}` : ''}
+          </Text>
+          <Popconfirm
+            title={`Re-enable ${rowKey}?`}
+            description={<span style={{ fontSize: 13 }}>Undoes “Disable all” here; the rules below stay.</span>}
+            okText="Enable"
+            onConfirm={() => run({ action: 'enable', targets: [r.host], venv: r.venv }, `enable:${rowKey}`)}
+          >
+            <Button size="small" type="text" icon={<CheckCircleOutlined />} loading={busy === `enable:${rowKey}`} aria-label={`Enable ${rowKey}`}>
+              Enable
+            </Button>
+          </Popconfirm>
+        </div>,
+      )
+    }
+    ;(r.rules ?? []).forEach((rule, i) => {
+      const label = `remove:${rowKey}:${i}`
+      lines.push(
+        <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+          <Text style={{ fontSize: 13, flex: 1, wordBreak: 'break-word' }}>{ruleText(rule)}</Text>
+          <Popconfirm
+            title="Remove this rule?"
+            description={<span style={{ fontSize: 13 }}>{ruleText(rule)}<br />on {rowKey}</span>}
+            okText="Remove"
+            onConfirm={() => run(
+              { action: 'remove', targets: [r.host], venv: r.venv, runnable: rule.runnables, user: rule.users, host: rule.hosts },
+              label,
+            )}
+          >
+            <Button size="small" type="text" danger icon={<DeleteOutlined />} loading={busy === label} aria-label={`Remove rule ${i + 1} on ${rowKey}`} />
+          </Popconfirm>
+        </div>,
+      )
+    })
+    if (!lines.length) return <Text type="secondary" style={{ fontSize: 13 }}>none</Text>
+    return <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>{lines}</div>
   }
 
   const statusColumns = [
-    { title: 'Host', dataIndex: 'host', key: 'host' },
-    { title: 'Venv', dataIndex: 'venv', key: 'venv' },
+    {
+      title: 'Host',
+      key: 'host',
+      width: 170,
+      render: (_: unknown, r: DenylistHostStatus) => (
+        <div>
+          <div>{r.host}</div>
+          {r.hostname && r.hostname !== r.host && (
+            <Tooltip title="The machine's own hostname — what a rule's host globs match">
+              <Text type="secondary" style={{ fontSize: 12, fontFamily: MONO_FONT }}>{r.hostname}</Text>
+            </Tooltip>
+          )}
+        </div>
+      ),
+    },
+    { title: 'Venv', dataIndex: 'venv', key: 'venv', width: 90 },
     {
       title: 'Mode',
       key: 'mode',
+      width: 85,
       render: (_: unknown, r: DenylistHostStatus) =>
         !r.ok ? <Tag color="default">—</Tag>
           : <Tag color={r.mode === 'off' ? 'default' : r.mode === 'warn' ? 'gold' : 'blue'}>{r.mode}</Tag>,
@@ -136,22 +234,16 @@ export function DenylistModal({ open, onClose, hosts }: DenylistModalProps) {
     {
       title: 'Disabled',
       key: 'disabled',
+      width: 110,
       render: (_: unknown, r: DenylistHostStatus) => {
+        if (r.missing) return <Tag color="default">not installed</Tag>
         if (!r.ok) return <Tag color="red">error</Tag>
         if (r.disabled) return <Tag color="red">ALL</Tag>
         if (r.rules?.length) return <Tag color="orange">{r.rules.length} rule{r.rules.length === 1 ? '' : 's'}</Tag>
         return <Tag color="green">none</Tag>
       },
     },
-    {
-      title: 'Detail',
-      key: 'detail',
-      render: (_: unknown, r: DenylistHostStatus) => (
-        <Tooltip title={ruleSummary(r)}>
-          <Text style={{ fontSize: 13 }} ellipsis={{ tooltip: false }}>{ruleSummary(r)}</Text>
-        </Tooltip>
-      ),
-    },
+    { title: 'Detail', key: 'detail', render: (_: unknown, r: DenylistHostStatus) => renderDetail(r) },
   ]
 
   return (
@@ -254,12 +346,28 @@ export function DenylistModal({ open, onClose, hosts }: DenylistModalProps) {
           <Select mode="tags" size="small" style={{ width: '100%' }} value={runnableGlobs} onChange={setRunnableGlobs} placeholder="e.g. deploy, restart-* — empty = all" />
         </div>
         <div>
-          <FieldLabel hint="Glob(s) matched against the effective OS user the runnable runs as (its run_as user, or the login user). Empty = all users.">Usernames</FieldLabel>
+          <FieldLabel hint="Glob(s) matched against the OS account the runnable actually runs as — for a shared venv that is usually its owner (e.g. svc-ops), not the account you log in as. Empty = all users.">Usernames</FieldLabel>
           <Select mode="tags" size="small" style={{ width: '100%' }} value={userGlobs} onChange={setUserGlobs} placeholder="e.g. deploy, svc-* — empty = all users" />
         </div>
         <div>
-          <FieldLabel hint="Glob(s) matched against the hostname of the machine running the runnable — its own gethostname(). The rule only takes effect on hosts whose name matches, so one rule distributed to many hosts fires only where it should. Empty = all hosts. (This is the target host's real name, not the console's “local” alias.)">Hosts this rule applies to</FieldLabel>
-          <Select mode="tags" size="small" style={{ width: '100%' }} value={hostGlobs} onChange={setHostGlobs} placeholder="e.g. prod-* — empty = all hosts" />
+          <FieldLabel hint="Glob(s) matched against each machine's own hostname (shown under the host in the table) — NOT the name the console gives the host. Usually leave this empty and choose where the rule goes with Target hosts above; use it only for one rule shared across many machines that should fire on some of them.">Only on machines whose hostname matches</FieldLabel>
+          <Select mode="tags" size="small" style={{ width: '100%' }} value={hostGlobs} onChange={setHostGlobs} placeholder="empty = every targeted machine (usual)" />
+          {badHostGlobs.length > 0 && (
+            <div data-testid="denylist-host-glob-warning">
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginTop: 6 }}
+              message={
+                <span style={{ fontSize: 13 }}>
+                  {badHostGlobs.map(g => `“${g}”`).join(', ')} matches none of the targeted machines' hostnames
+                  ({targetHostnames.join(', ')}), so this rule would never fire there.
+                  {consoleNameGlobs.length > 0 && <> {consoleNameGlobs.map(g => `“${g}”`).join(', ')} is the console's name for a host — pick it under <strong>Target hosts</strong> and leave this field empty.</>}
+                </span>
+              }
+            />
+            </div>
+          )}
         </div>
         <div>
           <FieldLabel hint="Free text shown to the caller on the refusal when a matching run is blocked.">Reason</FieldLabel>

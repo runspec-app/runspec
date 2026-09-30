@@ -198,3 +198,58 @@ def test_load_spec_skips_the_check(tmp_path):
     cfg = _write(tmp_path, _BODY.format(enforce='enforce_run_as = "error"', config_enforce=""))
     spec = load_spec("tool", config_path=cfg)
     assert spec.runspec_runnable == "tool"
+
+
+# ── refusal wording: one idea per line, with the command to run instead ─────
+
+
+def test_refusal_gives_the_exact_command_for_root():
+    msg = errors.format_run_as_mismatch(
+        "list-upgrades",
+        "it must run as 'root' (uid 0), but you are 'jason' (uid 1000)",
+        "root",
+        ["/opt/venvs/admin/bin/list-upgrades"],
+    )
+    lines = msg.splitlines()
+    assert lines[0] == "✗  Refusing to run 'list-upgrades': it must run as 'root' (uid 0), but you are 'jason' (uid 1000)."
+    assert lines[1] == "   Run it as root instead:  sudo /opt/venvs/admin/bin/list-upgrades"
+    assert "run_as setting" in lines[2] and "enforce_run_as" in lines[3]
+
+
+def test_refusal_hint_quotes_args_and_names_the_account():
+    msg = errors.format_run_as_mismatch("t", "d", "svc-ops", ["/v/bin/t", "--msg", "a b"])
+    assert "Run it as 'svc-ops' instead:  sudo -u svc-ops /v/bin/t --msg 'a b'" in msg
+
+
+def test_refusal_hint_uses_sudo_uid_form_for_a_bare_uid():
+    assert errors.run_as_command_hint("1234", ["t"]) == "sudo -u '#1234' t"
+
+
+def test_refusal_for_a_missing_account_offers_no_sudo_command():
+    msg = errors.format_run_as_mismatch("t", "it must run as 'svc', which does not exist on this host", "svc", ["t"])
+    assert "sudo" not in msg and "Create that account" in msg
+
+
+@posix_only
+def test_parser_refusal_for_a_missing_account(tmp_path):
+    with pytest.raises(errors.RunAsMismatch) as exc:
+        _parse(tmp_path)
+    text = str(exc.value)
+    assert "it must run as 'nope-user-xyz', which does not exist on this host" in text
+    assert "Create that account" in text
+
+
+@posix_only
+def test_parser_refusal_gives_the_command_to_rerun(tmp_path, monkeypatch):
+    import pwd
+
+    me = pwd.getpwuid(os.geteuid()).pw_name
+    cfg = _write(tmp_path, f'[tool]\ndescription = "x"\nrun_as = "{me}"\n[tool.args]\nmsg = {{type = "str", default = "hi"}}\n')
+    monkeypatch.setattr(os, "geteuid", lambda: 999999)
+    with pytest.raises(errors.RunAsMismatch) as exc:
+        _parse_impl("tool", argv=["--msg", "a b"], config_path=cfg)
+    text = str(exc.value)
+    assert f"it must run as {me!r}" in text and "(uid 999999)" in text
+    who = "root" if me == "root" else repr(me)
+    assert f"Run it as {who} instead:" in text
+    assert "tool --msg 'a b'" in text

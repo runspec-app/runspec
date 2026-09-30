@@ -654,15 +654,44 @@ ls -l /opt/venvs/ops/bin/summarize-log
 
 ### B14. The kill switch
 
-1. In the **console**: the **Denylist** button at the bottom of the hosts panel →
-   host **deb2-alice** → add a rule for `system-info`.
+1. In the **console**: the **Denylist** button at the bottom of the hosts panel.
+   - **Target hosts:** pick **deb2-alice**. This is what sends the rule to that
+     host.
+   - Under **Disable specific runnables**: **Runnable names** = `system-info`.
+     Leave **Usernames** and **Only on machines whose hostname matches** empty.
+     That last field is matched against the machine's own hostname
+     (`little-girl`), not the console's name `deb2-alice`. Typing `deb2-alice`
+     there makes a rule that never fires, and the modal now warns about it.
+   - **Add deny rule.**
+
+   **You should see:** the result says `✓ deb2-alice/ops (as svc-ops): ✓ Added
+   deny rule`. In the table, the deb2-alice/ops row shows `little-girl` under
+   the host name and one rule line with a remove (🗑) button. Other venvs on the
+   same hosts that aren't created yet (Scenarios C–E) show a grey *not
+   installed* tag, which is fine at this stage.
 2. **Forms** on **deb2-alice** → run **system-info**.
 
-   **You should see:** refused by the denylist.
-3. Back in **Denylist** → **Re-enable all** (clear).
+   **You should see:** `✗ Refusing to run 'system-info': disabled by the
+   runspec denylist.`
+3. Back in **Denylist**, click the rule's 🗑 → **Remove**. That removes just
+   that rule on that venv. (**Re-enable all (clear)** also works, but drops
+   every rule.)
 4. Run **system-info** again.
 
    **You should see:** it works.
+5. Optional, all-disabled: **Target hosts** = deb2-alice → **Disable all** →
+   the row shows **ALL** with an **Enable** button. Click **Enable** → the row
+   goes back to its rules (or *none*).
+
+Needs `runspec >= 0.69.0` in `/opt/venvs/ops` for the hostname column, the
+warning and per-rule remove. Upgrade it on deb2, as **jason**:
+
+```bash
+sudo -u svc-ops /opt/venvs/ops/bin/pip install -U runspec
+```
+
+With an older runspec there, steps 1, 2 and 4 still work. Step 3's 🗑 then
+replies "Unknown deny action", so use **Re-enable all (clear)** instead.
 
 Type `exit` to close your deb2 SSH session.
 
@@ -712,7 +741,10 @@ As **jason**:
 /opt/venvs/admin/bin/list-upgrades
 ```
 
-**You should see:** `✗  Refusing to run 'list-upgrades': …` naming `root`.
+**You should see:** `✗  Refusing to run 'list-upgrades': it must run as 'root'
+(uid 0), but you are 'jason' (uid 1000).` With runspec ≥ 0.69.0 the next line
+gives the command to use instead: `Run it as root instead:  sudo
+/opt/venvs/admin/bin/list-upgrades`, which is what C1 did.
 
 ### C3. Alice can't use them
 
@@ -737,12 +769,36 @@ Go back to jason:
 exit
 ```
 
+### Before C4: does jason already have passwordless sudo?
+
+C4–C6 show what each sudo rule changes, so they need jason to start with
+**no** passwordless sudo. In your jason SSH session on deb3:
+
+```bash
+sudo -k; sudo -n true && echo "PASSWORDLESS ALREADY" || echo "needs a password"
+```
+
+- **needs a password:** do C4–C6 as written.
+- **PASSWORDLESS ALREADY:** an existing rule, often
+  `jason ALL=(ALL) NOPASSWD: ALL` in `/etc/sudoers` or `/etc/sudoers.d/`
+  (`sudo -l` shows which), already covers everything. With that rule, C4–C6
+  all just work, and that is the correct result for such a host. Either:
+  - **Skip C4–C6** and note "passwordless sudo already present" in the results
+    table, or
+  - **Park the rule for the test.** Find the file with
+    `sudo grep -rl NOPASSWD /etc/sudoers /etc/sudoers.d/`. If it's a file in
+    `/etc/sudoers.d/`, move it aside with
+    `sudo mv /etc/sudoers.d/<file> /root/<file>.parked`, then put it back after
+    C6 with `sudo mv /root/<file>.parked /etc/sudoers.d/<file>`. Keep a second
+    root shell open (`sudo -i`) until it's back. If the rule is inside
+    `/etc/sudoers` itself, skip rather than edit that file.
+
 ### C4. The console, with no passwordless rule
 
 In the **console**: host **deb3-jason** → **Forms** → **list-upgrades** → **Run**.
 
-**You should see:** a quick failure mentioning **a password is required**. It
-must not hang.
+**You should see:** a quick failure that says in plain English that jason has
+no passwordless sudo to root (console 0.307.0+), not a hang.
 
 ### C5. The "scoped" passwordless rule
 
@@ -768,9 +824,13 @@ sudo -n /opt/venvs/admin/bin/list-upgrades
 
 Now test it from the **console**: host **deb3-jason** → run **list-upgrades**.
 
-**You should see:** it **still fails** with "a password is required". That's the
-known limit: the console runs `sudo … sh -c …`, and a scoped rule doesn't
-cover `sh`.
+**You should see:** it **works**. A Forms run with no environment variables is
+`sudo -n -u root /opt/venvs/admin/bin/list-upgrades` directly, and the scoped
+rule covers that binary. (The `sh -c` env wrapper, which a scoped rule does
+*not* cover, is only used when the run carries variables, e.g. a selected
+credential. To see that limit, pick any credential in the run dialog's
+credential section and run again: it fails, and the console adds its "Ask an
+administrator for a passwordless sudo rule…" line.)
 
 ### C6. The "all" passwordless rule
 
@@ -780,11 +840,12 @@ In your jason SSH session on deb3:
 /opt/venvs/admin/bin/enable-passwordless-sudo --scope all
 ```
 
-In the **console**: host **deb3-jason** → run **list-upgrades**.
+In the **console**: host **deb3-jason** → run **list-upgrades**, this time with
+a credential selected as at the end of C5.
 
-**You should see:** it works.
+**You should see:** it works. The "all" rule covers the `sh` env wrapper too.
 
-Now remove the rule again:
+Now remove the rule again (and put back any rule you parked before C4):
 
 ```bash
 sudo rm /etc/sudoers.d/runspec
@@ -995,7 +1056,8 @@ Check it can reach your hosts using the console's settings:
   on deb3-jason**.
 
   **You should see:** "a password is required", the same as C4 (you removed the
-  passwordless rule in C6).
+  passwordless rule in C6). If you skipped C4–C6 because jason already had
+  passwordless sudo, it works instead, which is also correct.
 
 ---
 

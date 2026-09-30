@@ -230,15 +230,34 @@ def format_autonomy_violation(
     return "\n".join(lines)
 
 
-def format_run_as_mismatch(runnable_name: str, detail: str) -> str:
-    return "\n".join(
-        [
-            f"✗  Refusing to run '{runnable_name}': {detail}.",
-            "   It runs as its run_as account — by default the account that owns its environment.",
-            "   Re-run under that account (e.g. `sudo -u <user> ...`, `runspec serve`, or the console),",
-            '   or relax the check with enforce_run_as = "warn" (or "off"), or opt out with run_as = "".',
-        ]
-    )
+def run_as_command_hint(run_as_user: str, argv: list[str] | None) -> str:
+    """The command that re-runs this invocation as ``run_as_user`` —
+    ``sudo <argv>`` for root, ``sudo -u <user> <argv>`` otherwise."""
+    import shlex
+
+    cmd = shlex.join(argv) if argv else "<command>"
+    if run_as_user in ("root", "0"):
+        return f"sudo {cmd}"
+    # A bare uid (an owner with no passwd entry) is sudo's `#uid` form.
+    user = f"#{run_as_user}" if run_as_user.isdigit() else run_as_user
+    return f"sudo -u {shlex.quote(user)} {cmd}"
+
+
+def format_run_as_mismatch(runnable_name: str, detail: str, run_as_user: str = "", argv: list[str] | None = None) -> str:
+    """The refusal when a runnable is started as the wrong account — one idea
+    per line: what's wrong, the exact command to run instead, why that account,
+    and (last, for the developer) how the check is relaxed."""
+    lines = [f"✗  Refusing to run '{runnable_name}': {detail}."]
+    if run_as_user and "does not exist" not in detail:
+        who = "root" if run_as_user in ("root", "0") else repr(run_as_user)
+        lines.append(f"   Run it as {who} instead:  {run_as_command_hint(run_as_user, argv)}")
+    elif run_as_user:
+        lines.append("   Create that account, or set run_as to one that exists.")
+    lines += [
+        "   Why that account: the runnable's run_as setting (default: whoever owns its environment).",
+        '   Developers can relax this check with enforce_run_as = "warn" or "off", or drop it with run_as = "".',
+    ]
+    return "\n".join(lines)
 
 
 def format_runnable_denied(runnable_name: str, reason: str, path: Any) -> str:

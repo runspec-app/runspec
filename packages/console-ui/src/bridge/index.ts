@@ -1437,8 +1437,10 @@ export interface RoomDraft {
 // `runnable`/`user`/`host` are globs used by action 'add'; `setting` is for
 // action 'mode'. Returns the aggregated per-host/per-venv summary string.
 export interface DenylistPayload {
-  action: 'list' | 'add' | 'all' | 'clear' | 'mode'
+  action: 'list' | 'add' | 'remove' | 'enable' | 'all' | 'clear' | 'mode'
   targets?: string[]
+  // Only this venv (by name) on each target host — a table row's own venv.
+  venv?: string
   runnable?: string[]
   user?: string[]
   host?: string[]
@@ -1466,6 +1468,12 @@ export interface DenylistHostStatus {
   disabled?: boolean
   reason?: string
   rules?: DenylistRule[]
+  // A configured path with no runspec installed (venv not created yet) — shown
+  // as "not installed", not as an error.
+  missing?: boolean
+  // The machine's own hostname (runspec >= 0.69) — what a rule's host globs
+  // match. Absent from an older core.
+  hostname?: string
 }
 
 

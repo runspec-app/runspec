@@ -2037,7 +2037,13 @@ class AgentToolsMixin:
                 "because the core `runspec` binary is exempt from its own "
                 "denylist. Actions: 'list' (inspect), 'add' (disable specific "
                 "runnable/user/host globs), 'all' (disable every runnable), "
+                "'remove' (delete the rule(s) whose runnable/user/host lists equal "
+                "the ones given — pass the lists exactly as `list` shows them), "
+                "'enable' (undo 'all', keeping rules), "
                 "'clear' (re-enable everything), 'mode' (set enforce|warn|off). "
+                "The rule's `host` globs match each machine's own hostname (shown "
+                "as `hostname` by 'list'), NOT the console host name — to put a "
+                "rule on one console host, use `targets` and leave `host` empty. "
                 "A venv owned by a service account is written as that owner "
                 "(or root) via passwordless sudo — the result says '(as <user>)'."
             ),
@@ -2046,7 +2052,15 @@ class AgentToolsMixin:
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["list", "add", "all", "clear", "mode"],
+                        "enum": [
+                            "list",
+                            "add",
+                            "remove",
+                            "enable",
+                            "all",
+                            "clear",
+                            "mode",
+                        ],
                         "description": "What to do to the denylist on each target host.",
                     },
                     "targets": {
@@ -2061,19 +2075,19 @@ class AgentToolsMixin:
                         "type": "array",
                         "items": {"type": "string"},
                         "description": (
-                            "action='add': runnable-name globs to disable (e.g. "
-                            "['deploy', 'restart-*']). Omit ⇒ all runnables."
+                            "action='add'/'remove': runnable-name globs to disable "
+                            "(e.g. ['deploy', 'restart-*']). Omit ⇒ all runnables."
                         ),
                     },
                     "user": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "action='add': username globs the rule applies to. Omit ⇒ all users.",
+                        "description": "action='add'/'remove': username globs the rule applies to (the effective account the runnable runs as — for a shared venv usually its owner). Omit ⇒ all users.",
                     },
                     "host": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "action='add': hostname globs the rule applies to. Omit ⇒ all hosts.",
+                        "description": "action='add'/'remove': globs matched against each machine's own hostname (not the console host name). Omit ⇒ all hosts — the usual choice; pick hosts with `targets`.",
                     },
                     "reason": {
                         "type": "string",
@@ -4903,21 +4917,25 @@ class AgentToolsMixin:
         from .procutil import no_window_kwargs
 
         action = str(ti.get("action") or "").strip().lower()
-        valid = {"list", "add", "all", "clear", "mode"}
+        valid = {"list", "add", "remove", "enable", "all", "clear", "mode"}
         if action not in valid:
             return f"Error: action must be one of {', '.join(sorted(valid))}."
 
         # Build the tail of `runspec deny <action> ...` as an argv list.
         tail: list[str] = []
-        if action == "add":
+        if action in ("add", "remove"):
             for flag, key in (("-r", "runnable"), ("-u", "user"), ("-H", "host")):
                 vals = ti.get(key) or []
                 if isinstance(vals, str):
                     vals = [vals]
                 for v in vals:
                     tail += [flag, str(v)]
-            if ti.get("reason"):
+            if action == "add" and ti.get("reason"):
                 tail += ["--reason", str(ti["reason"])]
+            if action == "remove" and not tail:
+                # `deny remove` with no lists would be refused; say what an
+                # all-`*` rule removal needs rather than pass that through.
+                tail = ["-r", "*"]
         elif action == "all":
             if ti.get("reason"):
                 tail += ["--reason", str(ti["reason"])]
@@ -4945,11 +4963,21 @@ class AgentToolsMixin:
         # workers, handshakes by the pool's max_concurrent) — the serial loop this
         # replaces took minutes on a large fleet. Results are collected in
         # submission order so the summary reads host-by-host as before.
+        # An optional ``venv`` narrows each host to that one venv (the modal's
+        # per-row remove/enable acts on exactly the row it's on).
+        only_venv = str(ti.get("venv") or "")
         tasks: list[tuple[int, dict[str, Any], str]] = [
-            (i, h, rp) for i, h in enumerate(hosts, 1) for rp in utils_mod._paths(h)
+            (i, h, rp)
+            for i, h in enumerate(hosts, 1)
+            for rp in utils_mod._paths(h)
+            if not only_venv or hosts_mod.venv_name(rp) == only_venv
         ]
+        if not tasks:
+            return f"Error: no target host has a venv named {only_venv!r}."
 
-        def _one(task: tuple[int, dict[str, Any], str]) -> tuple[bool, str] | None:
+        def _one(
+            task: tuple[int, dict[str, Any], str],
+        ) -> tuple[bool | None, str] | None:
             _i, h, rp = task
             if cancel_event is not None and cancel_event.is_set():
                 return None  # cancelled before this venv's command was issued
@@ -4991,8 +5019,17 @@ class AgentToolsMixin:
                         **no_window_kwargs(),
                     )
                     code, out, err = proc.returncode, proc.stdout, proc.stderr
+            except FileNotFoundError:
+                code, out, err = 127, "", f"{rp}: No such file or directory"
             except Exception as exc:  # noqa: BLE001 — report any failure per venv
                 return False, f"✗ {host_name}/{venv}: {exc}"
+            if utils_mod.runspec_missing(code, out or "", err or "", rp):
+                # A configured path with no venv behind it (not created yet) —
+                # not a failure of this action; None = skipped.
+                return (
+                    None,
+                    f"– {host_name}/{venv}: {utils_mod.runspec_missing_note(rp)}",
+                )
             body = (out or "").strip() or (err or "").strip() or f"exit {code}"
             label = f"{host_name}/{venv}" + (f" (as {as_user})" if as_user else "")
             if code == 0:
@@ -5001,6 +5038,7 @@ class AgentToolsMixin:
 
         lines: list[str] = []
         ok_count = 0
+        skipped = 0
         with ThreadPoolExecutor(
             max_workers=min(self._fanout_workers(), max(1, len(tasks))),
             thread_name_prefix="denylist",
@@ -5021,10 +5059,16 @@ class AgentToolsMixin:
                     ex.shutdown(wait=False, cancel_futures=True)
                     raise ToolCancelled()
                 ok, line = res
+                if ok is None:
+                    skipped += 1
                 ok_count += 1 if ok else 0
                 lines.append(line)
 
-        header = f"runspec deny {action} — {ok_count}/{len(lines)} venv(s) ok across {len(hosts)} host(s):"
+        attempted = len(lines) - skipped
+        header = f"runspec deny {action} — {ok_count}/{attempted} venv(s) ok across {len(hosts)} host(s)"
+        if skipped:
+            header += f"; {skipped} path(s) with no runspec installed skipped"
+        header += ":"
         return header + "\n" + "\n".join(lines)
 
     def _resolve_tool_target(

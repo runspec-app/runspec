@@ -106,13 +106,17 @@ export function parse(opts: ParseOptions = {}): ParsedArgs {
     const rootSpec = raw.runnables[name];
     // run_as: runnable → [config] run_as → "@owner" (the project root's owner).
     const runAs = resolveRunAs(effectiveRunAs(rootSpec.runAs, config.runAs), os.hostname());
-    const detail = verifyRunAsIdentity(resolveAccount(runAs, environmentRoot(configPath)));
+    const account = resolveAccount(runAs, environmentRoot(configPath));
+    const detail = verifyRunAsIdentity(account);
     if (detail) {
       const level = rootSpec.enforceRunAs ?? config.enforceRunAs ?? 'error';
       if (level === 'warn') {
         process.stderr.write(`⚠  ${name}: ${detail}. (enforce_run_as = "warn" — continuing)\n`);
       } else if (level !== 'off') {
-        throw new RunAsMismatch(formatRunAsMismatch(name, detail));
+        // The hint re-runs the command as typed: the script + its args, unless
+        // parse() was handed an explicit argv (then name + those args).
+        const hintArgv = argvOverride ? [name, ...argvOverride] : process.argv.slice(1);
+        throw new RunAsMismatch(formatRunAsMismatch(name, detail, account, hintArgv));
       }
     }
   }

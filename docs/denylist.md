@@ -40,13 +40,25 @@ runspec deny add -r deploy -u svc-batch -H 'prod-*'   # disable deploy for svc-b
 runspec deny all --reason "change freeze"             # disable every runnable in this venv
 runspec deny list                                     # show the current mode + rules
 runspec deny mode warn                                # warn instead of refusing (enforce|warn|off)
+runspec deny remove 2                                 # remove rule 2 (numbered by `deny list`)
+runspec deny remove -r deploy -H 'prod-*'             # remove the rule added with these same lists
+runspec deny enable                                   # undo `deny all`; keep the rules
 runspec deny clear                                    # remove the denylist — re-enable everything
 ```
 
 `--runnable`, `--user`, and `--host` accept shell-style globs (`*`) and may be
-repeated. An omitted dimension means "all". `runspec deny list --json` emits the
-denylist as structured JSON (`{path, present, mode, disabled, reason, rules}`) —
-what the console's status table reads.
+repeated. An omitted dimension means "all". `remove -r/-u/-H` removes every rule
+whose three lists equal the ones given (as sets, omitted = `*`), so the
+arguments that added a rule also remove it. `runspec deny list --json` emits the
+denylist as structured JSON (`{path, present, mode, disabled, reason, rules,
+hostname}`) — what the console's status table reads.
+
+> **`--host` is the machine's hostname, not a console host name.** It is matched
+> against the target machine's own `hostname` (`socket.gethostname()`, shown by
+> `runspec deny list` as `Host:`), e.g. `little-girl`. A name you gave the host
+> in the console or in `runspec_hosts.toml` (`deb2-alice`) never matches. To
+> put a rule on one console host, *send* it there (the console's **Target
+> hosts**) and leave `--host` empty.
 
 ## File format
 
@@ -117,8 +129,13 @@ fleet over the SSH connections it already holds — one call per venv on each ho
   fleet sweep has settled): a host picker (empty ⇒ every connected host),
   **Disable all** / **Re-enable all (clear)** buttons (danger-confirmed), an
   *add specific rule* form (runnable / user / host globs + reason), and an
-  enforcement-mode toggle (`enforce`/`warn`/`off`). The aggregated result is
-  shown inline. A disconnected host is never queried or touched — reopen the
+  enforcement-mode toggle (`enforce`/`warn`/`off`). The status table lists each
+  venv's rules one per line with a remove button each (and an **Enable** button
+  on a venv disabled with *Disable all*), and shows each machine's hostname —
+  the form warns when a host glob matches none of the targets' hostnames, the
+  classic "I typed the console's host name" mistake. A configured path with no
+  `runspec` installed is shown as *not installed* rather than an error. The
+  aggregated result is shown inline. A disconnected host is never queried or touched — reopen the
   modal once it reconnects.
 - **The agent tool `manage_denylist`** — ask the agent something like *"disable
   all runnables on prod-\* until further notice"* or *"re-enable everything on
@@ -126,7 +143,8 @@ fleet over the SSH connections it already holds — one call per venv on each ho
 
 - `targets` selects which fleet hosts to act on; omit it to hit **all** hosts.
 - `add` takes the same `runnable` / `user` / `host` globs and `reason` as the
-  CLI; `mode` takes `enforce|warn|off`; `clear` re-enables everything.
+  CLI; `remove` takes the same globs to remove the rule they match; `enable`
+  undoes `all`; `mode` takes `enforce|warn|off`; `clear` re-enables everything.
 - The tool is **confirm-gated** (like file transfers), so a fleet-wide disable
   is one approval away — and one approval back.
 

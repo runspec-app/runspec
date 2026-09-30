@@ -168,13 +168,16 @@ examples = [
   {cmd = "runspec deny add --runnable deploy --user svc-batch --host 'prod-*'", description = "Disable deploy for svc-batch on prod hosts"},
   {cmd = "runspec deny all --reason 'change freeze'",           description = "Disable every runnable in this venv"},
   {cmd = "runspec deny mode warn",                              description = "Warn instead of refusing (enforce | warn | off)"},
+  {cmd = "runspec deny remove 2",                               description = "Remove rule 2 (as numbered by `deny list`)"},
+  {cmd = "runspec deny remove -r deploy",                       description = "Remove the rule(s) added with the same -r/-u/-H lists"},
+  {cmd = "runspec deny enable",                                 description = "Undo `deny all` — keep the rules"},
   {cmd = "runspec deny clear",                                  description = "Remove the denylist — re-enable everything"},
 ]
 
 [runspec.commands.deny.args]
-action   = {type = "str", description = "add | all | list | clear | mode", position = 1, required = false}
-setting  = {type = "str", description = "Value for 'mode': enforce | warn | off", position = 2, required = false}
-runnable = {type = "str", description = "Runnable name glob to deny (repeatable; default '*')", short = "-r", multiple = true, required = false}
+action   = {type = "str", description = "add | all | list | remove | enable | clear | mode", position = 1, required = false}
+setting  = {type = "str", description = "Value for 'mode' (enforce | warn | off), or the rule number for 'remove'", position = 2, required = false}
+runnable = {type = "str", description = "Runnable name glob to deny / remove (repeatable; default '*')", short = "-r", multiple = true, required = false}
 user     = {type = "str", description = "Username glob to deny (repeatable; default '*')", short = "-u", multiple = true, required = false}
 host     = {type = "str", description = "Hostname glob to deny (repeatable; default '*')", short = "-H", multiple = true, required = false}
 reason   = {type = "str", description = "Reason recorded and shown on refusal", required = false}

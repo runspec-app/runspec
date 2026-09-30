@@ -827,7 +827,25 @@ def db_running_cmd(python_path: str, dirs: list[str], limit: int) -> str:
 # change it — see bridge_config_ssh._KEY_MARKER.
 # ── denylist: escalate a write to the venv owner ─────────────────────────────
 
-DENYLIST_WRITE_ACTIONS = frozenset({"add", "all", "clear", "mode"})
+DENYLIST_WRITE_ACTIONS = frozenset({"add", "all", "clear", "mode", "remove", "enable"})
+
+
+def runspec_missing(code: int, out: str, err: str, runspec_path: str) -> bool:
+    """True when a ``<runspec_path> …`` call failed because no ``runspec`` is
+    installed at that path — the host entry names a venv that hasn't been
+    created (yet). The shell reports it as exit 127 / "No such file or
+    directory" naming the path; that is "not installed", not a denylist error."""
+    if code == 0:
+        return False
+    text = f"{out or ''}\n{err or ''}"
+    return code == 127 or (runspec_path in text and "No such file or directory" in text)
+
+
+def runspec_missing_note(runspec_path: str) -> str:
+    """The one-line row/summary text for :func:`runspec_missing`."""
+    return f"no runspec at {runspec_path} — venv not created yet, or remove the path from the host entry"
+
+
 DENYLIST_AS_MARKER = "=====AS "
 _PERMISSION_DENIED_RE = re.compile(
     r"permission denied|not permitted|PermissionError|EACCES|EPERM|Errno 13",

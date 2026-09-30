@@ -164,9 +164,11 @@ def status(path: Path | None = None) -> dict[str, Any]:
     """Return the denylist as a structured, normalised dict for display/JSON.
 
     Shape: ``{path, present, mode, disabled, reason, rules: [{runnables, users,
-    hosts, reason}]}`` with every rule dimension defaulted to ``["*"]`` so a
+    hosts, reason}], hostname}`` with every rule dimension defaulted to ``["*"]`` so a
     consumer (the ``--json`` CLI output, the console status table) never has to
-    re-apply the "omitted ⇒ all" rule."""
+    re-apply the "omitted ⇒ all" rule. ``hostname`` is this machine's
+    ``socket.gethostname()`` — what a rule's ``hosts`` globs match against — so a
+    caller can tell before writing whether a host glob will ever fire here."""
     if path is None:
         path = resolve_denylist_path()
     section = load_denylist(path)
@@ -192,7 +194,28 @@ def status(path: Path | None = None) -> dict[str, Any]:
         "disabled": bool(section.get("disabled")),
         "reason": str(section.get("reason", "")),
         "rules": norm_rules,
+        "hostname": socket.gethostname(),
     }
+
+
+def normalise_rule_lists(runnables: Any, users: Any, hosts: Any) -> tuple[list[str], list[str], list[str]]:
+    """The ``(runnables, users, hosts)`` of a rule with an omitted/empty
+    dimension as ``["*"]`` — how ``add`` writes a rule and ``remove`` matches it."""
+
+    def _one(v: Any) -> list[str]:
+        if isinstance(v, str):
+            v = [v]
+        return [str(x) for x in v] if v else ["*"]
+
+    return _one(runnables), _one(users), _one(hosts)
+
+
+def rule_equals(rule: dict[str, Any], runnables: Any, users: Any, hosts: Any) -> bool:
+    """True when ``rule``'s three lists equal the given ones as sets (after the
+    omitted ⇒ ``["*"]`` normalisation) — ``reason`` is ignored."""
+    have = normalise_rule_lists(rule.get("runnables"), rule.get("users"), rule.get("hosts"))
+    want = normalise_rule_lists(runnables, users, hosts)
+    return all(set(a) == set(b) for a, b in zip(have, want, strict=True))
 
 
 # ── Writing (used by `runspec deny`) ────────────────────────────────────────

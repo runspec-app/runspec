@@ -1342,9 +1342,18 @@ runspec deny add --runnable deploy [--user G] [--host G] [--reason T]
 runspec deny all [--reason T]      # disable everything
 runspec deny list                  # show mode + rules
 runspec deny mode enforce|warn|off
+runspec deny remove N              # remove rule N (1-based, as numbered by `deny list`)
+runspec deny remove -r G [-u G] [-H G]  # remove every rule whose lists equal these exactly
+runspec deny enable                # undo `deny all` (unset `disabled`); rules are kept
 runspec deny clear                 # remove the file — re-enable everything
-runspec deny list --json           # structured status: {path, present, mode, disabled, reason, rules}
+runspec deny list --json           # structured status: {path, present, mode, disabled, reason, rules, hostname}
 ```
+
+`remove` by match compares each dimension as a set, with an omitted dimension
+meaning `["*"]` (the same normalisation `add` applies), so the arguments that
+added a rule also remove it. `hostname` in the JSON is the machine's
+`socket.gethostname()` — the value a rule's `hosts` globs are matched against —
+so a tool can check a rule will match before writing it.
 
 `runspec deny` is a core subcommand (not a runnable), so it is never subject to
 the denylist it edits.

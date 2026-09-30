@@ -144,12 +144,12 @@ export function verifyRunAsIdentity(runAsUser: string): string | null {
       targetUid = parseInt(out.toString().trim(), 10);
     }
   } catch {
-    return `run_as user '${runAsUser}' does not exist on this host`;
+    return `it must run as '${runAsUser}', which does not exist on this host`;
   }
 
   if (currentUid === targetUid) return null;
 
   const currentName = uidName(currentUid);
 
-  return `the current process runs as '${currentName}' (uid ${currentUid}), not '${runAsUser}' (uid ${targetUid})`;
+  return `it must run as '${runAsUser}' (uid ${targetUid}), but you are '${currentName}' (uid ${currentUid})`;
 }

@@ -753,6 +753,7 @@ export const mockApi: BridgeApi = {
       host,
       venv: 'app',
       ok: true,
+      hostname: `${host}.example.internal`,
       present: host === 'prod-1',
       mode: 'enforce' as const,
       disabled: false,

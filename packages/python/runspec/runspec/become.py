@@ -180,14 +180,14 @@ def verify_run_as_identity(run_as_user: str) -> str | None:
         # database entry) is compared as a uid — it needn't have a name.
         target_uid = int(run_as_user) if run_as_user.isdigit() else pwd.getpwnam(run_as_user).pw_uid
     except KeyError:
-        return f"run_as user {run_as_user!r} does not exist on this host"
+        return f"it must run as {run_as_user!r}, which does not exist on this host"
 
     current_uid = geteuid()
     if current_uid == target_uid:
         return None
 
     current_name = _uid_username(current_uid)
-    return f"the current process runs as {current_name!r} (uid {current_uid}), not {run_as_user!r} (uid {target_uid})"
+    return f"it must run as {run_as_user!r} (uid {target_uid}), but you are {current_name!r} (uid {current_uid})"
 
 
 # The SPEC "env prelude": reads the env frame from stdin with shell builtins,

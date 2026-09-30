@@ -814,9 +814,66 @@ def _deny_write(action: str, parsed: Any, path: Path) -> None:
         print(f"   {path}")
         return
 
+    if action == "enable":
+        current = _dl.load_denylist(path)
+        if not current or not current.get("disabled"):
+            print(f"Not disabled-all ({path}). Nothing to enable.")
+            return
+        current.pop("disabled", None)
+        current.pop("reason", None)
+        _dl.write_denylist(current, path)
+        print("✓  Re-enabled runnables disabled by `deny all` (rules kept).")
+        print(f"   {path}")
+        return
+
+    if action == "remove":
+        _deny_remove(parsed, path)
+        return
+
     print(f"✗  Unknown deny action: {action}")
-    print("   Available actions: add | all | list | clear | mode")
+    print("   Available actions: add | all | list | remove | enable | clear | mode")
     sys.exit(1)
+
+
+def _deny_remove(parsed: Any, path: Path) -> None:
+    """``deny remove N`` (1-based index) or ``deny remove -r … [-u …] [-H …]``
+    (every rule whose three lists equal these as sets)."""
+    from runspec import denylist as _dl
+
+    section = _dl.load_denylist(path)
+    rules = (section or {}).get("rule", [])
+    if isinstance(rules, dict):
+        rules = [rules]
+    rules = [r for r in rules if isinstance(r, dict)]
+    index = (parsed.setting.value or "").strip()
+    by_match = bool(parsed.runnable.value or parsed.user.value or parsed.host.value)
+    if bool(index) == by_match:
+        print("✗  remove takes either a rule number (runspec deny remove 2) or")
+        print("   -r/-u/-H lists matching the rule exactly (runspec deny remove -r deploy)")
+        sys.exit(1)
+    if index:
+        if not index.isdigit() or not 1 <= int(index) <= len(rules):
+            print(f"✗  No rule {index} — `runspec deny list` numbers {len(rules)} rule(s).")
+            sys.exit(1)
+        removed = [rules.pop(int(index) - 1)]
+        kept = rules
+    else:
+        want = (parsed.runnable.value, parsed.user.value, parsed.host.value)
+        removed = [r for r in rules if _dl.rule_equals(r, *want)]
+        kept = [r for r in rules if not _dl.rule_equals(r, *want)]
+        if not removed:
+            runnables, users, hosts = _dl.normalise_rule_lists(*want)
+            print(f"✗  No rule matches runnables={runnables} users={users} hosts={hosts}.")
+            sys.exit(1)
+    assert section is not None  # a removed rule means the file was present
+    section["rule"] = kept
+    if not kept:
+        section.pop("rule")
+    _dl.write_denylist(section, path)
+    for r in removed:
+        runnables, users, hosts = _dl.normalise_rule_lists(r.get("runnables"), r.get("users"), r.get("hosts"))
+        print(f"✓  Removed deny rule: runnables={runnables} users={users} hosts={hosts}")
+    print(f"   {path}")
 
 
 def _venv_owner(path: Path) -> str:
@@ -864,6 +921,7 @@ def _deny_show(path: Path, as_json: bool = False) -> None:
         print("  Status: not present (all runnables enabled)")
         return
     print(f"  Mode:   {info['mode']}")
+    print(f"  Host:   {info['hostname']}  (what a rule's hosts= globs are matched against)")
     if info["disabled"]:
         line = "  Disabled: ALL runnables"
         if info["reason"]:

@@ -538,6 +538,9 @@ runspec deny add -r deploy -u svc-batch -H 'prod-*'   # disable deploy for svc-b
 runspec deny all --reason "change freeze"             # disable every runnable in this venv
 runspec deny list                                     # show the current mode + rules
 runspec deny mode warn                                # warn instead of refusing (enforce|warn|off)
+runspec deny remove 2                                 # remove rule 2 (numbered by `deny list`)
+runspec deny remove -r deploy -H 'prod-*'             # remove the rule added with these same lists
+runspec deny enable                                   # undo `deny all`; keep the rules
 runspec deny clear                                    # remove the denylist — re-enable everything
 ```
 

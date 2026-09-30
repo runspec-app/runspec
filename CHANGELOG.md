@@ -7,6 +7,42 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.69.0] — 2026-09-30
+
+**`runspec deny` removes one rule, and shows which hostname rules match.**
+
+- `runspec deny remove N` removes rule *N* (numbered as in `deny list`).
+  `runspec deny remove -r … [-u …] [-H …]` removes every rule whose three lists
+  equal the ones given (as sets, with an omitted list meaning `*`), so the
+  arguments that added a rule also remove it. Before this, the only way back
+  was `clear`, which dropped every rule.
+- `runspec deny enable` undoes `deny all` (unsets `disabled` and its reason)
+  and keeps the rules.
+- `deny list` prints `Host: <hostname>`, and `deny list --json` gains
+  `hostname`. That is the machine's `socket.gethostname()`, the only value a
+  rule's `--host` globs are matched against. A console host name like
+  `deb2-alice` never matches; the machine is `little-girl`. The console now
+  uses this to warn before writing a rule that can't fire.
+
+**The wrong-account refusal is shorter, and tells you what to run.** Starting
+a runnable as the wrong account used to print four dense lines. Each line now
+carries one idea: what's wrong, the exact command to run instead, why that
+account, and (for the developer) how to relax the check.
+
+```
+✗  Refusing to run 'list-upgrades': it must run as 'root' (uid 0), but you are 'jason' (uid 1000).
+   Run it as root instead:  sudo /opt/venvs/admin/bin/list-upgrades
+   Why that account: the runnable's run_as setting (default: whoever owns its environment).
+   Developers can relax this check with enforce_run_as = "warn" or "off", or drop it with run_as = "".
+```
+
+The command is your own command line with the arguments shell-quoted:
+`sudo …` for root and `sudo -u <account> …` otherwise. A `run_as` account
+that doesn't exist says so and offers no `sudo` line.
+`verify_run_as_identity`'s detail text changed to match
+(`it must run as 'X' (uid N), but you are 'Y' (uid M)`), and
+`format_run_as_mismatch` takes optional `run_as_user` and `argv`.
+
 ## [0.68.0] — 2026-09-30
 
 **`run_as` now defaults to the environment's owner.** A runnable that doesn't
@@ -655,6 +691,16 @@ reaped while still alive.
   and drops a bound that isn't a number, keeping the runnable usable rather than
   dropped by the backstop above.
 
+
+## [node-0.42.0] — 2026-09-30
+
+**The wrong-account refusal is shorter, and tells you what to run** (parity
+with Python 0.69.0). One idea per line: what's wrong, the exact
+`sudo [-u <account>] <your command>` to run instead, why that account, and how
+a developer relaxes the check. `verifyRunAsIdentity`'s detail reads
+`it must run as 'X' (uid N), but you are 'Y' (uid M)`, and
+`formatRunAsMismatch` takes optional `runAsUser` and `argv`. There's also a
+new `runAsCommandHint` helper.
 
 ## [node-0.41.0] — 2026-09-30
 

@@ -52,8 +52,9 @@ class HostsMixin:
         Runs ``runspec deny <action>`` across the selected fleet hosts (one call
         per venv) and returns the aggregated per-host/per-venv summary. Same
         handler the agent's ``manage_denylist`` tool uses. ``payload`` keys:
-        ``action`` (list|add|all|clear|mode), ``targets`` (host names; empty ⇒
-        all), ``runnable``/``user``/``host`` (globs, for add), ``reason``,
+        ``action`` (list|add|remove|enable|all|clear|mode), ``targets`` (host
+        names; empty ⇒ all), ``venv`` (optional: only that venv on each host),
+        ``runnable``/``user``/``host`` (globs, for add/remove), ``reason``,
         ``setting`` (for mode). It edits remote denylists via the core
         ``runspec`` binary (exempt from its own denylist), so ``clear`` always
         re-enables and the console can never be locked out.
@@ -65,8 +66,11 @@ class HostsMixin:
 
         Runs ``runspec deny list --json`` on each selected host (one call per
         venv) and parses it. ``targets`` selects host names (empty/None ⇒ all
-        hosts with a runspec path). Each row: ``{host, venv, ok, error?, path,
-        present, mode, disabled, reason, rules}``. Read-only — no prompt.
+        hosts with a runspec path). Each row: ``{host, venv, ok, error?, missing?,
+        path, present, mode, disabled, reason, rules, hostname?}`` — ``missing``
+        marks a configured path with no runspec installed (not an error);
+        ``hostname`` (runspec >= 0.69) is the machine's own name, what a rule's
+        host globs match. Read-only — no prompt.
         """
         import json as _json
         import shlex
@@ -109,11 +113,17 @@ class HostsMixin:
                         **no_window_kwargs(),
                     )
                     code, out, err = proc.returncode, proc.stdout, proc.stderr
-                if code != 0:
+                if utils_mod.runspec_missing(code, out or "", err or "", rp):
+                    row["missing"] = True
+                    row["error"] = utils_mod.runspec_missing_note(rp)
+                elif code != 0:
                     row["error"] = (err or out or f"exit {code}").strip()
                 else:
                     row.update(_json.loads(out))
                     row["ok"] = True
+            except FileNotFoundError:  # local path with no runspec behind it
+                row["missing"] = True
+                row["error"] = utils_mod.runspec_missing_note(rp)
             except Exception as exc:  # noqa: BLE001 — surface any failure as a row
                 row["error"] = str(exc)
             return row

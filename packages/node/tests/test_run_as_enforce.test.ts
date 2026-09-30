@@ -3,6 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { parse, loadSpec } from '../src/parser';
 import { effectiveRunAs, environmentOwner, environmentRoot, resolveAccount, resolveRunAs, verifyRunAsIdentity } from '../src/become';
+import { formatRunAsMismatch, runAsCommandHint } from '../src/errors';
 
 function makeTmpConfig(toml: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'runspec-run-as-test-'));
@@ -221,5 +222,39 @@ describe('@owner', () => {
   posixIt('[config] run_as is the package default', () => {
     const cfg = makeTmpConfig('[config]\nrun_as = "nope-user-xyz"\n\n[tool]\ndescription = "x"\n');
     expect(() => parse({ scriptName: 'tool', argv: [], configPath: cfg })).toThrow(/Refusing to run/);
+  });
+});
+
+// ── refusal wording: one idea per line, with the command to run instead ────────
+
+describe('formatRunAsMismatch', () => {
+  test('gives the exact command for root', () => {
+    const lines = formatRunAsMismatch(
+      'list-upgrades',
+      "it must run as 'root' (uid 0), but you are 'jason' (uid 1000)",
+      'root',
+      ['/opt/venvs/admin/bin/list-upgrades'],
+    ).split('\n');
+    expect(lines[0]).toBe("✗  Refusing to run 'list-upgrades': it must run as 'root' (uid 0), but you are 'jason' (uid 1000).");
+    expect(lines[1]).toBe('   Run it as root instead:  sudo /opt/venvs/admin/bin/list-upgrades');
+    expect(lines[2]).toContain('run_as setting');
+    expect(lines[3]).toContain('enforce_run_as');
+  });
+
+  test('quotes args and names the account', () => {
+    expect(formatRunAsMismatch('t', 'd', 'svc-ops', ['/v/bin/t', '--msg', 'a b'])).toContain(
+      "Run it as 'svc-ops' instead:  sudo -u svc-ops /v/bin/t --msg 'a b'",
+    );
+    expect(runAsCommandHint('1234', ['t'])).toBe("sudo -u '#1234' t");
+  });
+
+  test('a missing account offers no sudo command', () => {
+    const msg = formatRunAsMismatch('t', "it must run as 'svc', which does not exist on this host", 'svc', ['t']);
+    expect(msg).not.toContain('sudo');
+    expect(msg).toContain('Create that account');
+  });
+
+  posixIt('the parser refusal names the missing account', () => {
+    expect(() => doParse()).toThrow(/it must run as 'nope-user-xyz', which does not exist on this host/);
   });
 });
