@@ -42,6 +42,7 @@ hooks:
 
 nav:
   - Home: index.md
+  - Architecture: architecture.md
   - Console:
     - Get started: console-quickstart.md
     - Console without AI: console-ai-off.md

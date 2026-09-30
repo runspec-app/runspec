@@ -10,18 +10,23 @@ cli.py — the ``runspec-mcp`` command line.
     runspec-mcp seed-status           # show any bundled config-seed contributors
     runspec-mcp plugin-path           # print the bundled Claude Code plugin dir
     runspec-mcp check                 # validate config + connectivity + manifest
+    runspec-mcp setup claude|vscode|json  # connect an MCP client (absolute paths)
 """
 
 from __future__ import annotations
 
 import argparse
 import getpass
+import json
+import shutil
+import subprocess
 import sys
+import sysconfig
 from pathlib import Path
 
 from . import __version__
 from . import credentials as cred
-from .config import FleetConfig, load_config, manifest_path
+from .config import FleetConfig, app_dir, default_config_path, load_config, manifest_path
 
 
 def _load(args: argparse.Namespace) -> FleetConfig:
@@ -84,7 +89,7 @@ def cmd_cred(args: argparse.Namespace) -> int:
         return 0
     if args.action == "set":
         if not cred.available():
-            print("✗  no OS keychain backend available (install the 'credentials' extra).", file=sys.stderr)
+            print(f"✗  {_no_keychain_reason()}", file=sys.stderr)
             return 1
         secret = getpass.getpass(f"secret for '{args.id}': ")
         cred.set_secret(args.id, secret)
@@ -156,6 +161,73 @@ def cmd_seed_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def _no_keychain_reason() -> str:
+    """Why no secret can be stored, and what to do — the extra missing is only
+    one cause; on Linux the usual one is no Secret Service running/unlocked."""
+    if cred._keyring() is None:
+        return "no keychain support installed — pip install 'runspec-mcp[credentials]'"
+    if sys.platform.startswith("linux"):
+        return (
+            "no OS keychain is available. On Linux this needs a Secret Service provider "
+            "(GNOME Keyring or KWallet) running and unlocked in your session — typically "
+            "a desktop login; over SSH or on a headless server there is none. Store the "
+            "secret from a desktop session, or install a file-based keyring backend "
+            "(e.g. pip install keyrings.cryptfile) and select it with PYTHON_KEYRING_BACKEND."
+        )
+    return "no OS keychain is available to the keyring library in this session"
+
+
+def _gateway_bin() -> str:
+    """Absolute path of this install's runspec-mcp entry point. MCP clients spawn
+    servers with their own PATH, which usually doesn't include a venv's bin dir —
+    so a bare ``runspec-mcp`` command silently fails to start."""
+    name = "runspec-mcp.exe" if sys.platform == "win32" else "runspec-mcp"
+    candidate = Path(sysconfig.get_path("scripts")) / name
+    if candidate.exists():
+        return str(candidate)
+    found = shutil.which("runspec-mcp")
+    return str(Path(found).resolve()) if found else str(Path(sys.argv[0]).resolve())
+
+
+def _config_for_setup(args: argparse.Namespace) -> Path:
+    if getattr(args, "config", None):
+        return Path(args.config).expanduser().resolve()
+    found = default_config_path()
+    return found.resolve() if found else app_dir() / "runspec_mcp.toml"
+
+
+def cmd_setup(args: argparse.Namespace) -> int:
+    """Print (or apply) the exact client config — absolute binary + config paths,
+    so the client can start the gateway whatever its PATH and working dir."""
+    binary = _gateway_bin()
+    config = _config_for_setup(args)
+    if not config.is_file():
+        print(f"note: no config at {config} yet — create it (see docs/mcp.md), then re-run.", file=sys.stderr)
+    server = {"type": "stdio", "command": binary, "args": ["serve"], "env": {"RUNSPEC_MCP_CONFIG": str(config)}}
+    if args.client == "claude":
+        cmd = ["claude", "mcp", "add", "runspec", "--scope", "user", "--env", f"RUNSPEC_MCP_CONFIG={config}", "--", binary, "serve"]
+        plugin = Path(__file__).resolve().parent / "plugin"
+        if args.apply:
+            if shutil.which("claude") is None:
+                print("✗  the claude CLI isn't on PATH — run the command below yourself.", file=sys.stderr)
+                print(" ".join(cmd))
+                return 1
+            return subprocess.run(cmd).returncode
+        print("# Add the gateway to Claude Code (all projects):")
+        print(" ".join(cmd))
+        print()
+        print("# Or use the plugin (adds the autonomy hook: autonomous tools run without prompting):")
+        print(f"RUNSPEC_MCP_BIN={binary} RUNSPEC_MCP_CONFIG={config} claude --plugin-dir {plugin}")
+        return 0
+    if args.client == "vscode":
+        print("// VS Code / GitHub Copilot: .vscode/mcp.json in a workspace, or the")
+        print("// 'MCP: Open User Configuration' command for all workspaces.")
+        print(json.dumps({"servers": {"runspec": server}}, indent=2))
+        return 0
+    print(json.dumps({"mcpServers": {"runspec": {k: v for k, v in server.items() if k != "type"}}}, indent=2))
+    return 0
+
+
 def cmd_plugin_path(args: argparse.Namespace) -> int:
     plugin_dir = Path(__file__).resolve().parent / "plugin"
     print(plugin_dir)
@@ -178,6 +250,10 @@ def cmd_check(args: argparse.Namespace) -> int:
         print(f"  {'✓' if s.connected else '✗'} {s.name}: {s.tools} tool(s){' — ' + s.error if s.error else ''}")
     print(f"manifest path: {manifest_path()}")
     print(f"total tools: {len(catalog.tools())}")
+    if cfg.credentials and not cred.available():
+        print(f"  ! credentials: {_no_keychain_reason()}")
+    if shutil.which("runspec-mcp") is None:
+        print(f"  ! runspec-mcp isn't on PATH, so an MCP client can't start it by name. Use the absolute path {_gateway_bin()} — `runspec-mcp setup claude|vscode` prints the exact config.")
     return 0 if ok else 1
 
 
@@ -222,6 +298,12 @@ def main(argv: list[str] | None = None) -> int:
 
     p_pp = sub.add_parser("plugin-path", help="print the bundled Claude Code plugin directory")
     p_pp.set_defaults(func=cmd_plugin_path)
+
+    p_setup = sub.add_parser("setup", help="print the exact MCP client config (claude | vscode | json)")
+    p_setup.add_argument("client", choices=["claude", "vscode", "json"])
+    p_setup.add_argument("--config", help="the runspec_mcp.toml to point the client at (default: the one the gateway would find)")
+    p_setup.add_argument("--apply", action="store_true", help="claude only: run `claude mcp add` instead of printing it")
+    p_setup.set_defaults(func=cmd_setup)
 
     p_check = sub.add_parser("check", help="validate config + connectivity + manifest")
     _add_config_args(p_check)

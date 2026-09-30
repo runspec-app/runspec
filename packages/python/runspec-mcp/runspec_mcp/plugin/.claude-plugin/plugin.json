@@ -9,10 +9,7 @@
     "fleet": {
       "type": "stdio",
       "command": "${RUNSPEC_MCP_BIN:-runspec-mcp}",
-      "args": ["serve"],
-      "env": {
-        "RUNSPEC_PLUGIN_MANIFEST": "${CLAUDE_PLUGIN_ROOT}/autonomy.json"
-      }
+      "args": ["serve"]
     }
   }
 }

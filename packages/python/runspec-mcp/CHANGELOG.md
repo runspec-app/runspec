@@ -2,6 +2,42 @@
 
 All notable changes to `runspec-mcp` are documented here.
 
+## [0.1.5] — 2026-09-30
+
+Fixes for "the client never connects" and "the credential never arrives",
+found by installing the gateway and driving it as an MCP client.
+
+### Fixed
+
+- **A credential with only an `id` produced no environment variables.** The env
+  var prefix came from `label`, which defaulted to empty, and the documented
+  example gives only `id`. So the secret never reached the runnable. `label` now
+  defaults to the `id`.
+- **The autonomy manifest was written inside the installed package.** The plugin
+  pointed it at `$CLAUDE_PLUGIN_ROOT/autonomy.json`, which a system-wide install
+  can't write, and then every call prompted. The gateway and the hook now both
+  use `autonomy.json` in the user's config directory
+  (`$RUNSPEC_PLUGIN_MANIFEST` still overrides it). The hook's not-found message
+  no longer points at a script that doesn't exist.
+- **The keychain error blamed a missing extra.** It said to install the
+  `credentials` extra even when it was installed. It now names the real cause:
+  on Linux, no Secret Service running and unlocked, the usual case over SSH or
+  on a headless server. It also names the fixes.
+
+### Added
+
+- **`runspec-mcp setup claude|vscode|json`** prints the exact client config
+  with absolute paths for the gateway binary and config. An MCP client starts
+  the gateway with its own `PATH`, so a bare `runspec-mcp` in a venv silently
+  fails to start; this was the most likely reason Claude Code never connected.
+  - `setup claude --apply` runs `claude mcp add` for you.
+  - `setup vscode` prints the `.vscode/mcp.json` entry for VS Code and GitHub
+    Copilot.
+- **`runspec-mcp check`** warns when `runspec-mcp` isn't on `PATH`, and when
+  credentials are configured but no keychain is available.
+- `--version` and the version the gateway reports to MCP clients come from the
+  installed package. They were hard-coded to `0.1.0`.
+
 ## [0.1.4] — 2026-09-30
 
 ### Fixed

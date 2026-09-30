@@ -63,15 +63,14 @@ def default_config_path() -> Path | None:
 def manifest_path() -> Path:
     """Where the autonomy manifest is written for the PreToolUse hook to read.
 
-    The hook resolves it the same way: ``$RUNSPEC_PLUGIN_MANIFEST`` →
-    ``$CLAUDE_PLUGIN_ROOT/autonomy.json`` → the plugin root. We mirror that so the
-    gateway writes exactly where the hook looks."""
+    ``$RUNSPEC_PLUGIN_MANIFEST``, else ``autonomy.json`` in the app dir — the
+    user's own config dir, always writable. (It used to live in the plugin
+    directory, inside the installed package, which a system-wide install can't
+    write; the hook then asked about every call.) The hook resolves it the same
+    way (``plugin/hooks/autonomy_gate.py``)."""
     override = os.environ.get("RUNSPEC_PLUGIN_MANIFEST")
     if override:
         return Path(override).expanduser()
-    plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
-    if plugin_root:
-        return Path(plugin_root) / "autonomy.json"
     return app_dir() / "autonomy.json"
 
 
@@ -156,6 +155,10 @@ def load_config(
     # Fold config-seed layers underneath the resolved values (local wins).
     hosts = _collection("runspec_hosts.toml", "name", hosts)
     credentials = _collection("runspec_credentials.toml", "id", credentials)
+    # A credential's env var prefix comes from its label; a hand-written entry
+    # often gives only `id` (as the docs' own example does), which used to yield
+    # no env vars at all — so the secret silently never reached the runnable.
+    credentials = [{**c, "label": c.get("label") or c.get("id", "")} for c in credentials]
 
     refresh_interval = int(fleet_section.get("refresh_interval", 30) or 30)
     server_name = str(fleet_section.get("server_name", "") or "runspec-mcp")

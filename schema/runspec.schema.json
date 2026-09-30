@@ -29,6 +29,10 @@
           "description": "Default autonomy level for runnables that don't declare one.",
           "default": "confirm"
         },
+        "run_as": {
+          "$ref": "#/$defs/run_as",
+          "description": "Default run_as for runnables that don't declare one. Library default \"@owner\" (the environment's owner)."
+        },
         "enforce_run_as": {
           "$ref": "#/$defs/enforce_run_as",
           "description": "Default enforce_run_as for runnables that don't declare one."
@@ -270,11 +274,11 @@
       "additionalProperties": false
     },
     "run_as": {
-      "description": "The OS user to run the command as on the remote host.",
+      "description": "The OS user to run the command as. Default \"@owner\": the account that owns the runnable's environment (never root; no escalation when the caller already is that account). \"\" means no escalation.",
       "oneOf": [
         {
           "type": "string",
-          "description": "Username or environment variable reference (e.g. \"oracle\" or \"$ORACLE_RUN_AS\")."
+          "description": "Username, \"@owner\" (the environment's owner), \"\" (no escalation), or an environment variable reference (e.g. \"oracle\" or \"$ORACLE_RUN_AS\")."
         },
         {
           "type": "object",

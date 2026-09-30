@@ -13,4 +13,9 @@ is ``runspec-mcp serve``.
 
 from __future__ import annotations
 
-__version__ = "0.1.0"
+try:  # the installed version — what `--version` and the MCP serverInfo report
+    from importlib.metadata import version as _version
+
+    __version__ = _version("runspec-mcp")
+except Exception:  # noqa: BLE001 — running from a source tree without metadata
+    __version__ = "0+unknown"

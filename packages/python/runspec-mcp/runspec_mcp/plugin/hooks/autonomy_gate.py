@@ -50,15 +50,20 @@ DECISION = {
 
 
 def manifest_path() -> Path:
-    """autonomy.json in the plugin root: env override, CLAUDE_PLUGIN_ROOT, or
-    relative to this script (hooks/ is one level below the root)."""
+    """autonomy.json where the gateway writes it: ``$RUNSPEC_PLUGIN_MANIFEST``,
+    else the gateway's app dir. Mirrors ``runspec_mcp.config.manifest_path`` /
+    ``app_dir`` (this hook runs under the system python3, so it can't import them)."""
     override = os.environ.get("RUNSPEC_PLUGIN_MANIFEST")
     if override:
-        return Path(override)
-    plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
-    if plugin_root:
-        return Path(plugin_root) / "autonomy.json"
-    return Path(__file__).resolve().parent.parent / "autonomy.json"
+        return Path(override).expanduser()
+    home = os.environ.get("RUNSPEC_MCP_HOME")
+    if home:
+        return Path(home).expanduser() / "autonomy.json"
+    if sys.platform == "win32":
+        base = os.environ.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
+    else:
+        base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+    return Path(base) / "runspec-mcp" / "autonomy.json"
 
 
 def bare_tool_name(full_name: str) -> str:
@@ -105,8 +110,8 @@ def decide(payload: dict[str, Any]) -> tuple[str, str]:
         manifest = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return "ask", (
-            f"runspec autonomy manifest not found at {path} — "
-            "run scripts/generate_manifest.py to bake it; asking to be safe"
+            f"runspec autonomy manifest not found at {path} — the runspec-mcp "
+            "gateway writes it when it starts; is the server connected (/mcp)? Asking to be safe"
         )
     except (OSError, json.JSONDecodeError) as exc:
         return "ask", f"runspec autonomy manifest unreadable ({exc}); asking to be safe"

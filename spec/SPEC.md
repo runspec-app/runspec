@@ -52,6 +52,7 @@ Project-wide defaults. All fields are optional.
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `autonomy-default` | string | `"confirm"` | Autonomy when unspecified on a script |
+| `run_as` | string or table | `"@owner"` | Default `run_as` for runnables that don't declare one — same forms as the runnable field. See [`run_as`](#run_as). |
 | `enforce_run_as` | string | `"error"` | Default `enforce_run_as` for runnables that don't declare one. See [`enforce_run_as`](#enforce_run_as). |
 | `lang` | string | — | Preferred language for `runspec generate` |
 | `name` | string | — | MCP server name reported by `runspec serve`. Defaults to the venv directory name. The venv directory name must pass the naming check (see *Virtual Environment Identity*) regardless of whether this field is set. |
@@ -448,7 +449,7 @@ autonomy-reason = "Why this level was chosen"             # optional
 output          = "text"                                  # optional
 serve           = true                                    # optional, default true; also false or ["local","remote"]
 discoverable    = true                                    # optional, default true; false hides from discovery
-run_as          = "username"                              # optional, see Remote Execution
+run_as          = "username"                              # optional, default "@owner" (the venv's owner), see Remote Execution
 enforce_run_as  = "error"                                 # optional, default "error"; also "warn", "off"
 become_method   = "sudo"                                  # optional, default "sudo"
 become_flags    = "-H"                                    # optional
@@ -637,15 +638,47 @@ This refuses agent invocation of a destructive action unless the runnable's decl
 
 ## Remote Execution
 
-These fields control how `runspec jump` and compatible SSH clients run the tool on a remote host.
+These fields control how an executor — `runspec serve`, `runspec exec`, `runspec jump`,
+an SSH client such as the console — runs the tool: locally or on a remote host, and
+as which account.
 
 ### `run_as`
 
-The user to run the command as on the remote host. Four forms are supported.
+The user to run the command as. Four forms are supported, and anywhere a user name
+appears it may instead be the reserved value **`"@owner"`**.
+
+**The default is `"@owner"`: a runnable runs as the account that owns its
+environment.** The *environment owner* is the owner of the environment root on the
+host where the runnable runs — the venv directory (`sys.prefix`) for the Python
+pack; the project root (the directory holding its `node_modules`) for the Node pack.
+This makes the common deployments work with no configuration:
+
+- **A personal environment** (a venv in a user's home): the person running it *is*
+  the owner, so nothing escalates.
+- **A shared environment** owned by a service account: every run is escalated to
+  that account (`sudo -u svc …`), so the escalation tool's own rules (sudoers)
+  decide who may run its tools. No list of users lives in runspec, and every run of
+  the environment is made by one account.
+
+Two rules keep the default safe:
+
+- **An executor never escalates when the caller already is the target account**
+  (compared by uid). A personal environment never involves `sudo`.
+- **`"@owner"` never escalates to root.** If the environment is owned by uid 0 (for
+  example a venv created with `sudo python -m venv` or installed into system
+  Python), `"@owner"` resolves to no escalation. Running as root always takes an
+  explicit `run_as = "root"`.
+
+Resolution order for the value: the runnable's own `run_as` → the `[config]`
+`run_as` default → the library default `"@owner"`. An empty string (`""`) at any of
+those levels explicitly means **no escalation**: the runnable runs as whoever
+invokes it.
 
 **1. Simple string** — same user on all hosts:
 ```toml
 run_as = "oracle"
+run_as = "@owner"      # the environment's owner (the default)
+run_as = ""            # no escalation: run as the invoking user
 ```
 
 **2. Environment variable** — resolved by `runspec serve` at startup. Set per host
@@ -676,7 +709,8 @@ Forms 3 and 4 may be combined. Resolution order:
 3. `default`
 4. No privilege escalation
 
-An empty string (`""`) explicitly means no privilege escalation for that host or pattern.
+An empty string (`""`) explicitly means no privilege escalation for that host or
+pattern, and `"@owner"` may be used as any `default`, `hosts` or `patterns` value.
 
 Invalid regex patterns cause `runspec serve` to exit with a clear error at startup.
 `runspec local` also validates all patterns at startup.
@@ -721,13 +755,22 @@ account aliases sharing a uid are treated as equal.
 | `"off"` | No check is performed. |
 
 The check is a **no-op** when `run_as` resolves to the empty string (no escalation
-intended, so no identity to assert) or on a platform with no POSIX uid model (e.g.
-Windows, where there is nothing to compare). Under an executor that escalated correctly
+intended, so no identity to assert), when `"@owner"` resolves to root (see
+[`run_as`](#run_as)), or on a platform with no POSIX uid model (e.g. Windows, where
+there is nothing to compare).
+
+**The implicit default warns.** When neither the runnable nor `[config]` declares
+`run_as` — the value is the library default `"@owner"` — and neither declares
+`enforce_run_as`, a mismatch **warns** instead of refusing. A shared environment's
+tools, run directly by someone other than its owner, keep working and say they
+should be run as the owner. Declaring either field (`run_as = "@owner"` or
+`enforce_run_as = "error"`, on the runnable or in `[config]`) opts into refusal. Under an executor that escalated correctly
 the effective user already matches, so the check passes silently — `enforce_run_as`
 only ever fires on the direct/import path (or if escalation silently failed).
 
 Resolution order (most specific wins): the runnable's own `enforce_run_as` → the
-`[config]` `enforce_run_as` default → the library default `"error"`. The check is not
+`[config]` `enforce_run_as` default → the library default: `"error"`, or `"warn"`
+when `run_as` is the implicit default (above). The check is not
 performed during pure introspection (loading a spec without parsing argv), so emitting
 schemas and listing runnables never depends on who is running them.
 
@@ -746,12 +789,20 @@ input** as an *env frame*, and a fixed POSIX `sh` *env prelude* reads them with 
 builtins, exports them and `exec`s the runnable. Only variable *names* and the fixed
 prelude text ever reach an argument vector.
 
-| `run_as` | env vars | Command constructed | stdin |
+In the table, *escalate* means the resolved `run_as` names an account other than the
+caller: an empty value, `"@owner"` when the caller is the owner, and `"@owner"`
+resolving to root all mean **no escalation**.
+
+| Escalate | env vars | Command constructed | stdin |
 |---|---|---|---|
-| absent | absent | `{command} {args}` | — |
-| absent | present | `sh -c '{prelude}' sh {command} {args}` | env frame |
-| present | absent | `{become_method} {become_flags} -u {user} {command} {args}` | — |
-| present | present | `{become_method} {become_flags} -u {user} sh -c '{prelude}' sh {command} {args}` | env frame |
+| no | absent | `{command} {args}` | — |
+| no | present | `sh -c '{prelude}' sh {command} {args}` | env frame |
+| yes | absent | `{become_method} {become_flags} -u {user} {command} {args}` | — |
+| yes | present | `{become_method} {become_flags} -u {user} sh -c '{prelude}' sh {command} {args}` | env frame |
+
+To resolve `"@owner"` for a remote host, the executor learns the owner of the
+environment root on that host, for example from the same SSH round-trip it uses
+for discovery.
 
 For `su`, the whole `sh -c '{prelude}' sh {command} {args}` string is the `-c`
 argument: `su {become_flags} -c "sh -c '{prelude}' sh {command} {args}" {user}`.

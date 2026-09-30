@@ -37,8 +37,26 @@ credential environment injected per call.
 
 ```bash
 pip install "runspec-mcp[credentials]"
-# write runspec_mcp.toml, then:
-claude --plugin-dir "$(runspec-mcp plugin-path)"
+# write runspec_mcp.toml (see Configuration below), then check it:
+runspec-mcp check
+# and print the exact client config for your MCP client:
+runspec-mcp setup claude      # Claude Code: prints `claude mcp add …` (or --apply to run it)
+runspec-mcp setup vscode      # VS Code / GitHub Copilot: prints the .vscode/mcp.json entry
+runspec-mcp setup json        # any other client: a plain mcpServers block
+```
+
+**Always configure the client with the absolute path `setup` prints.** An MCP
+client starts the gateway itself, with its own `PATH` and working directory. If
+you installed runspec-mcp in a venv, a bare `runspec-mcp` command isn't found,
+and the client only reports that the server failed to connect.
+`runspec-mcp check` warns when it isn't on your `PATH`.
+
+`runspec-mcp setup claude` also prints the plugin form, which adds the autonomy
+hook:
+
+```bash
+RUNSPEC_MCP_BIN=/abs/path/runspec-mcp RUNSPEC_MCP_CONFIG=/abs/path/runspec_mcp.toml \
+  claude --plugin-dir "$(runspec-mcp plugin-path)"
 ```
 
 `/mcp` lists the `fleet` server; tools appear as
@@ -66,8 +84,9 @@ Desktop, Cursor, Cline, or Claude Code without the plugin. Add a plain
 }
 ```
 
-Set `RUNSPEC_MCP_CONFIG` explicitly here — an MCP client's working directory is
-unpredictable, and the gateway otherwise looks for `./runspec_mcp.toml` then its
+Use absolute paths for both `command` and `RUNSPEC_MCP_CONFIG`
+(`runspec-mcp setup json` prints them). An MCP client's `PATH` and working
+directory are unpredictable, and the gateway otherwise looks for `./runspec_mcp.toml` then its
 app-dir default. Drop the block into the client's MCP config (Claude Desktop's
 `claude_desktop_config.json`, Cursor/Cline's MCP settings, or a project
 `.mcp.json`). For Claude Code without the plugin:
@@ -111,7 +130,7 @@ runspec_paths = ["/opt/venvs/fleet/bin/runspec"] # remote venv runspec binaries
 jump = "bastion"                                 # optional ProxyJump (system ssh)
 
 [[credential]]
-id = "Windows"                                   # label → WINDOWS_* env vars
+id = "Windows"                                   # label defaults to the id → WINDOWS_* env vars
 kind = "userpass"                                # userpass | password | token | ssh-key
 username = "svc-bot"
 # scope_hosts / scope_runnables optional — else auto-matched by a runnable's arg env
@@ -157,6 +176,13 @@ runspec-mcp cred set Windows      # prompts, stores in the keychain
 runspec-mcp cred list             # shows which env vars each credential emits
 ```
 
+**On Linux, the keychain is the desktop's Secret Service** (GNOME Keyring or
+KWallet), running and unlocked in your session. Over SSH or on a headless server
+there usually isn't one, and `cred set` says so. Either store secrets from a
+desktop session, or install a file-based keyring backend (for example
+`keyrings.cryptfile`, which encrypts with a password) and select it with
+`PYTHON_KEYRING_BACKEND`.
+
 A credential is injected as name-derived environment variables — label `Windows`
 + kind `userpass` → `WINDOWS_USERNAME`/`WINDOWS_USER`/`WINDOWS_PASSWORD`; `Deploy`
 + `token` → `DEPLOY_TOKEN`/`DEPLOY_PAT`. Two matchers decide which credentials a
@@ -183,7 +209,10 @@ PreToolUse hook the plugin ships:
 | *(unknown / no manifest)* | ask | fail closed |
 
 The gateway rewrites the hook's manifest on **every discovery change**, so it is
-always fresh — there is no manual generation step. The remote side stays
+always fresh — there is no manual generation step. It lives in your config
+directory (`~/.config/runspec-mcp/autonomy.json`, or `%APPDATA%\runspec-mcp\` on
+Windows; `$RUNSPEC_PLUGIN_MANIFEST` overrides it), where both the gateway and the
+hook find it. The remote side stays
 authoritative regardless of the client: the venv denylist and `enforce_run_as` at
 `parse()` time, and `password` args omitted from agent-facing schemas.
 
