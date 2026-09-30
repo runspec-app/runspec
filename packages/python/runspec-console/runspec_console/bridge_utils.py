@@ -1848,3 +1848,84 @@ def model_kw(model: str | None) -> dict[str, str]:
     model is set, so the common call stays ``_get_adapter(system_override=...)``."""
     model = str(model or "").strip()
     return {"model_override": model} if model else {}
+
+
+# sudo's refusals when the console escalates with `sudo -n`: it never prompts,
+# so "no rule for this user" and "a rule that wants a password" both come back
+# as "a password is required". Neither tells an operator what to actually do.
+_SUDO_REFUSALS = (
+    "a password is required",
+    "a terminal is required",
+    "is not in the sudoers file",
+    "is not allowed to execute",
+    "may not run sudo",
+    "not allowed to run sudo",
+)
+
+
+def escalation_refusal_note(
+    lines: list[str], run_as: str, login_user: str, host: str, method: str = "sudo"
+) -> str:
+    """A plain-English explanation for a run that failed because the console
+    couldn't escalate to ``run_as``, or ``""`` when the output isn't that.
+
+    Keeps sudo's own words out of it (they suggest ``ssh -t`` or an askpass
+    helper, which is never the fix here): the fix is a passwordless rule
+    letting the login account run commands as ``run_as``."""
+    if not run_as:
+        return ""
+    text = "\n".join(lines).lower()
+    who = login_user or "the login account"
+    if method == "su" and "authentication failure" in text:
+        return (
+            f"✗  Couldn't run as {run_as} on {host}: su needs {run_as}'s password, "
+            'and the console can\'t type one. Use become_method = "sudo" with a '
+            f"passwordless sudo rule letting {who} run commands as {run_as}."
+        )
+    if not any(p in text for p in _SUDO_REFUSALS):
+        return ""
+    if run_as == "root":
+        fix = (
+            f"Ask an administrator for a passwordless sudo rule letting {who} run "
+            "commands as root, or run this tool from a terminal with sudo."
+        )
+    else:
+        fix = (
+            f"Ask an administrator for a passwordless sudo rule letting {who} run "
+            f"commands as {run_as}, usually by joining the group that has one."
+        )
+    return (
+        f"✗  Couldn't run as {run_as} on {host}: sudo didn't let {who} run this "
+        f"venv's tools as {run_as} without a password, and the console can't "
+        f"type one. {fix}"
+    )
+
+
+def watch_escalation(
+    on_line: Any,
+    on_done: Any,
+    run_as: str,
+    login_user: str,
+    host: str,
+    method: str = "sudo",
+) -> tuple[Any, Any]:
+    """Wrap a run's ``(on_line, on_done)`` so a failed escalated run ends with
+    :func:`escalation_refusal_note` as a last stderr line. A no-op wrap when
+    nothing escalates."""
+    if not run_as:
+        return on_line, on_done
+    seen: list[str] = []
+
+    def line(text: str, stream: str) -> None:
+        if len(seen) < 200:
+            seen.append(text)
+        on_line(text, stream)
+
+    def done(exit_code: int, duration_ms: int) -> None:
+        if exit_code != 0:
+            note = escalation_refusal_note(seen, run_as, login_user, host, method)
+            if note:
+                on_line(note, "stderr")
+        on_done(exit_code, duration_ms)
+
+    return line, done

@@ -333,6 +333,17 @@ class InvokeMixin:
                 on_done(-1, 0)
                 return
 
+            # A refused escalation ends with a plain-English note, not just
+            # sudo's "a terminal is required … askpass helper".
+            on_line, on_done = utils_mod.watch_escalation(
+                on_line,
+                on_done,
+                run_as,
+                str((cached or {}).get("loginUser") or ""),
+                host,
+                become_method,
+            )
+
             ssh = entry.get("ssh")
             jump = str(entry.get("jump") or "").strip()
             if ssh:

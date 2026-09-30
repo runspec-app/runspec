@@ -1750,6 +1750,16 @@ class AutonomyMixin:
         # The saved runbook that drove this turn (set by run_runbook) → tags each
         # runnable's run_summary as extra.runbook for History/Analytics attribution.
         run_runbook = str(origin.get("runbook", ""))
+        # A refused escalation ends with a plain-English note the agent can
+        # relay, not just sudo's "a terminal is required … askpass helper".
+        on_line, on_done = utils_mod.watch_escalation(
+            on_line,
+            on_done,
+            run_as,
+            str((cached_r or {}).get("loginUser") or ""),
+            host,
+            become_method,
+        )
         ssh = entry.get("ssh")
         if ssh:
             executor_mod.run_remote(

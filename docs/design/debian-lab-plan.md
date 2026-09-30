@@ -556,18 +556,35 @@ In the **console**, on **deb2-bob**:
 
 1. Run **system-info**.
 
-   **You should see:** a quick failure (seconds, not a hang) that mentions sudo
-   ("a password is required" or "not allowed").
-2. **Write down** how clear the message is. This is what an assessor would see.
+   **You should see:** a quick failure (seconds, not a hang). sudo's own lines
+   ("a terminal is required … a password is required") are followed by the
+   console's explanation (runspec-console 0.307.0 or later):
+
+   > ✗  Couldn't run as svc-ops on deb2-bob: sudo didn't let bob run this venv's
+   > tools as svc-ops without a password, and the console can't type one. Ask an
+   > administrator for a passwordless sudo rule letting bob run commands as
+   > svc-ops, usually by joining the group that has one.
+2. **Write down** whether that tells you what to do. This is what an assessor
+   would see.
 
 ### B9. The agent path
 
-In the **console** chat, type:
+**a) A read-only question.** In the **console** chat, type:
 
 > what's the uptime on deb2-alice?
 
-**You should see:** a confirm card for the run. Approve it. It runs as
-`svc-ops`, the same as B7.
+**You should see:** the answer, with **no** confirm card. `system-info` is
+read-only, so runspec-linux lets the agent run it without asking. It still runs
+as `svc-ops`, the same as B7.
+
+**b) Something that changes the machine.** In the chat, type:
+
+> add a cron job on deb2-alice that runs `echo hello` every hour
+
+**You should see:** a **confirm card** for `cron add`, showing the schedule and
+the command. Adding a cron job changes the machine, so the agent has to ask.
+Click **Deny**: nothing is added. (If you approve it by mistake, B11's
+`cron list` shows it; remove it with `cron remove`.)
 
 ### B10. One writer for the logs
 

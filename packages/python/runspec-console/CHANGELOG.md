@@ -7,6 +7,21 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.307.0] — 2026-09-30
+
+### Changed
+
+- **A refused escalation explains itself.** The console escalates with `sudo -n`,
+  which never prompts. So when the login account has no passwordless rule for
+  the target account, sudo's only words are "a terminal is required to read the
+  password; either use ssh's -t option or configure an askpass helper / a
+  password is required", which points at the wrong fix. A failed escalated run
+  (Forms, schedules, triggers, the MCP server and the agent) now ends with a
+  plain-English line naming the host, the login account, the account it needed
+  to run as, and the fix: a passwordless sudo rule, usually via a group; for
+  root, also running it from a terminal with sudo. sudo's own lines stay above
+  it. `bridge_utils.escalation_refusal_note` / `watch_escalation`.
+
 ## [0.306.0] — 2026-09-30
 
 **Runnables run as their venv's owner by default** (runspec >= 0.68.0; SPEC →
