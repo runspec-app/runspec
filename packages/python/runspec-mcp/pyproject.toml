@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-mcp"
-version = "0.1.6"
+version = "0.1.7"
 requires-python = ">=3.10"
 description = "Connect Claude Code to local and remote runspec runnables as MCP tools, from one config file"
 readme = "README.md"

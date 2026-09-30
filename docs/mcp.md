@@ -112,8 +112,10 @@ Point the gateway at a config three ways (first that applies wins):
 
 1. A single `runspec_mcp.toml` — `--config`, `$RUNSPEC_MCP_CONFIG`, or
    `./runspec_mcp.toml`.
-2. An existing runspec-console config directory — `--config-dir <dir>` reuses that
-   console's `runspec_hosts.toml` + `runspec_credentials.toml` + `config.toml`.
+2. An existing runspec-console config directory — `--config-dir <dir>` (or
+   `$RUNSPEC_MCP_CONFIG_DIR`) reuses that console's `runspec_hosts.toml` +
+   `runspec_credentials.toml` + `config.toml`, including its SSH key. On Windows
+   the console's directory is `%APPDATA%\runspec-console`.
 3. A bundled **config seed** package (see below).
 
 ```toml
@@ -138,7 +140,25 @@ username = "svc-bot"
 
 SSH connection details (user, port, ProxyJump) come from `~/.ssh/config` and the
 `[ssh]` section, exactly as in runspec-console; `jump` selects the system-ssh
-transport for legacy hosts.
+transport for legacy hosts. A host's own key can be written `identity_file` or
+`identityFile` (the console's spelling), so hosts read from a console directory
+keep their per-host key.
+
+### Reusing a console's configuration from an MCP client
+
+An MCP client starts the gateway itself, so the directory goes in the client's
+config. `setup` writes it for you:
+
+```bash
+runspec-mcp setup claude --config-dir "%APPDATA%\runspec-console"   # Windows
+runspec-mcp setup vscode --config-dir ~/AppData/Roaming/runspec-console   # Linux/macOS
+```
+
+That prints a client entry that runs `runspec-mcp serve` with
+`RUNSPEC_MCP_CONFIG_DIR` set. An environment variable rather than an argument,
+because the Claude Code plugin can't pass arguments. `runspec-mcp serve
+--config-dir <dir>` works too, for clients that let you give arguments. An
+explicit `--config` or `--config-dir` beats the environment variable.
 
 ---
 

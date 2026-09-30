@@ -2,6 +2,26 @@
 
 All notable changes to `runspec-mcp` are documented here.
 
+## [0.1.7] — 2026-09-30
+
+### Fixed
+
+- **A host's own SSH key from a console directory is honoured.** The console
+  writes a host's key as `identityFile`; the gateway only read `identity_file`,
+  so with `--config-dir` a per-host key was ignored and the global `[ssh]` key
+  (or the managed key) was used instead. `load_config` now accepts either
+  spelling, in `runspec_mcp.toml` too (`config.host_identity`).
+
+### Added
+
+- **`$RUNSPEC_MCP_CONFIG_DIR`**, the environment form of `--config-dir`. The
+  Claude Code plugin starts the gateway with environment variables but no
+  arguments, so it can now reuse a console's configuration. An explicit
+  `--config`/`--config-dir` still wins.
+- **`runspec-mcp setup <client> --config-dir <dir>`** prints the client entry
+  for a console directory (`RUNSPEC_MCP_CONFIG_DIR=<dir>`) instead of a
+  `runspec_mcp.toml`, for `claude`, `vscode` and `json`.
+
 ## [0.1.6] — 2026-09-30
 
 ### Changed

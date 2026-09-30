@@ -37,7 +37,7 @@ def _load(args: argparse.Namespace) -> FleetConfig:
 
 def _add_config_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--config", help="path to runspec_mcp.toml (default: $RUNSPEC_MCP_CONFIG / ./runspec_mcp.toml)")
-    p.add_argument("--config-dir", help="a runspec-console config directory to reuse (hosts + credentials + config.toml)")
+    p.add_argument("--config-dir", help="a runspec-console config directory to reuse (hosts + credentials + config.toml; default: $RUNSPEC_MCP_CONFIG_DIR)")
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
@@ -196,16 +196,28 @@ def _config_for_setup(args: argparse.Namespace) -> Path:
     return found.resolve() if found else app_dir() / "runspec_mcp.toml"
 
 
+def _setup_env(args: argparse.Namespace) -> tuple[str, str]:
+    """The (variable, value) the client starts the gateway with: a console config
+    directory (``--config-dir``) or a ``runspec_mcp.toml`` (``--config``)."""
+    if getattr(args, "config_dir", None):
+        config_dir = Path(args.config_dir).expanduser().resolve()
+        if not (config_dir / "runspec_hosts.toml").is_file():
+            print(f"note: no runspec_hosts.toml in {config_dir} — is it a runspec-console config directory?", file=sys.stderr)
+        return "RUNSPEC_MCP_CONFIG_DIR", str(config_dir)
+    config = _config_for_setup(args)
+    if not config.is_file():
+        print(f"note: no config at {config} yet — create it (see docs/mcp.md), then re-run.", file=sys.stderr)
+    return "RUNSPEC_MCP_CONFIG", str(config)
+
+
 def cmd_setup(args: argparse.Namespace) -> int:
     """Print (or apply) the exact client config — absolute binary + config paths,
     so the client can start the gateway whatever its PATH and working dir."""
     binary = _gateway_bin()
-    config = _config_for_setup(args)
-    if not config.is_file():
-        print(f"note: no config at {config} yet — create it (see docs/mcp.md), then re-run.", file=sys.stderr)
-    server = {"type": "stdio", "command": binary, "args": ["serve"], "env": {"RUNSPEC_MCP_CONFIG": str(config)}}
+    var, value = _setup_env(args)
+    server = {"type": "stdio", "command": binary, "args": ["serve"], "env": {var: value}}
     if args.client == "claude":
-        cmd = ["claude", "mcp", "add", "runspec", "--scope", "user", "--env", f"RUNSPEC_MCP_CONFIG={config}", "--", binary, "serve"]
+        cmd = ["claude", "mcp", "add", "runspec", "--scope", "user", "--env", f"{var}={value}", "--", binary, "serve"]
         plugin = Path(__file__).resolve().parent / "plugin"
         if args.apply:
             if shutil.which("claude") is None:
@@ -217,7 +229,7 @@ def cmd_setup(args: argparse.Namespace) -> int:
         print(" ".join(cmd))
         print()
         print("# Or use the plugin (adds the autonomy hook: autonomous tools run without prompting):")
-        print(f"RUNSPEC_MCP_BIN={binary} RUNSPEC_MCP_CONFIG={config} claude --plugin-dir {plugin}")
+        print(f"RUNSPEC_MCP_BIN={binary} {var}={value} claude --plugin-dir {plugin}")
         return 0
     if args.client == "vscode":
         print("// VS Code / GitHub Copilot: .vscode/mcp.json in a workspace, or the")
@@ -302,6 +314,7 @@ def main(argv: list[str] | None = None) -> int:
     p_setup = sub.add_parser("setup", help="print the exact MCP client config (claude | vscode | json)")
     p_setup.add_argument("client", choices=["claude", "vscode", "json"])
     p_setup.add_argument("--config", help="the runspec_mcp.toml to point the client at (default: the one the gateway would find)")
+    p_setup.add_argument("--config-dir", help="point the client at an existing runspec-console config directory instead")
     p_setup.add_argument("--apply", action="store_true", help="claude only: run `claude mcp add` instead of printing it")
     p_setup.set_defaults(func=cmd_setup)
 

@@ -6,7 +6,8 @@ Three sources, in order of the operator's choosing (``load_config``):
 1. A single ``runspec_mcp.toml`` (``--config`` / ``$RUNSPEC_MCP_CONFIG`` /
    ``./runspec_mcp.toml`` / ``<app_dir>/runspec_mcp.toml``) with ``[local]``,
    ``[[host]]``, ``[[credential]]`` and ``[ssh]`` sections.
-2. An existing runspec-console config **directory** (``--config-dir``): read the
+2. An existing runspec-console config **directory** (``--config-dir`` /
+   ``$RUNSPEC_MCP_CONFIG_DIR``): read the
    console's own ``runspec_hosts.toml`` + ``runspec_credentials.toml`` +
    ``config.toml`` (``[ssh]`` / ``[local]``) so a console user reuses their fleet
    with zero extra setup.
@@ -47,6 +48,21 @@ def app_dir() -> Path:
         return Path(base) / APP_NAME
     base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
     return Path(base) / APP_NAME
+
+
+def default_config_dir() -> Path | None:
+    """A console config directory named by ``$RUNSPEC_MCP_CONFIG_DIR``, if any.
+
+    The environment form of ``--config-dir``, for MCP clients that start the
+    gateway with environment variables but no arguments (the Claude Code plugin)."""
+    env = os.environ.get("RUNSPEC_MCP_CONFIG_DIR")
+    return Path(env).expanduser() if env else None
+
+
+def host_identity(host: dict[str, Any]) -> str | None:
+    """A host entry's own SSH key: ``identity_file`` (runspec_mcp.toml) or
+    ``identityFile`` (the console's runspec_hosts.toml spelling)."""
+    return host.get("identity_file") or host.get("identityFile") or None
 
 
 def default_config_path() -> Path | None:
@@ -129,9 +145,13 @@ def load_config(
     """Resolve the fleet configuration.
 
     ``config_dir`` (a runspec-console config directory) takes precedence when
-    given; otherwise ``config_path`` (or the discovered default) is read as a
-    single ``runspec_mcp.toml``. Config seeds are folded under whichever wins."""
+    given; otherwise ``config_path`` is read as a single ``runspec_mcp.toml``.
+    With neither, ``$RUNSPEC_MCP_CONFIG_DIR`` names a console directory, else the
+    default ``runspec_mcp.toml`` is found. Config seeds are folded under whichever
+    wins."""
     fleet_section: dict[str, Any] = {}
+    if config_dir is None and config_path is None:
+        config_dir = default_config_dir()
     if config_dir is not None:
         d = Path(config_dir).expanduser()
         hosts = load_hosts(d / "runspec_hosts.toml")
@@ -159,6 +179,10 @@ def load_config(
     # often gives only `id` (as the docs' own example does), which used to yield
     # no env vars at all — so the secret silently never reached the runnable.
     credentials = [{**c, "label": c.get("label") or c.get("id", "")} for c in credentials]
+    # A host's own key: the console writes `identityFile`, runspec_mcp.toml uses
+    # `identity_file`. Normalise to the one name every reader uses, so a per-host
+    # key from a console directory isn't silently ignored.
+    hosts = [{**h, "identity_file": host_identity(h)} if host_identity(h) else h for h in hosts]
 
     refresh_interval = int(fleet_section.get("refresh_interval", 30) or 30)
     server_name = str(fleet_section.get("server_name", "") or "runspec-mcp")
