@@ -152,6 +152,13 @@ def cmd_local(args: list[str]) -> None:
 
         callable_only = [d for d in discovered if _has_binary(d["runnable"])]
         if fmt == "json":
+            # What an executor needs to resolve the "@owner" default without a
+            # second round trip: the environment's owner ("" when root-owned or
+            # unknown — it never escalates to root) and the account listing it.
+            from runspec.become import current_user, environment_owner
+
+            owner, user = environment_owner(), current_user()
+            callable_only = [{**d, "env_owner": owner, "user": user} for d in callable_only]
             print(json.dumps(callable_only, indent=2, default=str))
         elif fmt in ("mcp", "openai", "anthropic"):
             schema = _emit_all(callable_only, fmt)
@@ -1918,7 +1925,8 @@ def _check_dist_files(dist: Any) -> list[dict[str, Any]]:
                 # (e.g. the console Forms tab, which then showed every
                 # no-autonomy subcommand as "confirm").
                 config_autonomy = raw.get("config", {}).get("autonomy_default")
-                return [{"source": str(config_path), "runnable": name, "spec": spec, "config_autonomy": config_autonomy} for name, spec in raw["runnables"].items()]
+                config_run_as = raw.get("config", {}).get("run_as")
+                return [{"source": str(config_path), "runnable": name, "spec": spec, "config_autonomy": config_autonomy, "config_run_as": config_run_as} for name, spec in raw["runnables"].items()]
             except Exception:
                 pass
 
@@ -1973,8 +1981,9 @@ def _check_editable_source(dist: Any) -> list[dict[str, Any]]:
                 # (e.g. the console Forms tab, which then showed every
                 # no-autonomy subcommand as "confirm").
                 config_autonomy = raw.get("config", {}).get("autonomy_default")
+                config_run_as = raw.get("config", {}).get("run_as")
                 for name, spec in raw["runnables"].items():
-                    discovered.append({"source": str(candidate), "runnable": name, "spec": spec, "config_autonomy": config_autonomy})
+                    discovered.append({"source": str(candidate), "runnable": name, "spec": spec, "config_autonomy": config_autonomy, "config_run_as": config_run_as})
             except Exception:
                 continue
     except PermissionError:

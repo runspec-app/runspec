@@ -7,6 +7,37 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.306.0] — 2026-09-30
+
+**Runnables run as their venv's owner by default** (runspec >= 0.68.0; SPEC →
+"Remote Execution → run_as"). A runnable with no `run_as` now runs as the
+account that owns its venv. A shared venv owned by a service account runs every
+tool as that account via `sudo -n -u`, so sudoers alone decides who may run it,
+and its logs and run history have a single writer. A venv you own (every
+personal venv) runs exactly as before, with no sudo.
+
+### Changed
+
+- **Discovery records each venv's owner and the login account.** The one-shot
+  remote scan now starts with the venv root's owner (`stat`) and the SSH login
+  account (`id -un`). A local venv reads the same in-process. The
+  `runspec local --format json` fallback uses the new `env_owner`/`user` fields
+  (an older core omits them, so its runnables don't escalate). Each runnable
+  record carries `configRunAs`, `venvOwner` and `loginUser`.
+- **`run_as` resolves runnable → `[config] run_as` → `"@owner"`** in the one
+  resolver every run path goes through (Forms, agent, schedules, triggers, group
+  fan-out, the MCP server). `"@owner"` becomes the venv owner, never root. No
+  escalation happens when the target is the account the console logs in as.
+- **Windows never escalates.** A local Windows venv and a Windows host
+  reached through a POSIX shell (Git Bash, MSYS, Cygwin) report no owner, so
+  nothing escalates. Windows has no sudo.
+- **A host that hasn't been discovered yet** borrows another host's runnable
+  definition but not its owner, so it runs without escalation. If the tool
+  needed one, core refuses and names the owner.
+- **Forms shows the resolved account** ("as svc") for the default too.
+- **A Forms run of a runnable present in two venvs** now uses the chosen venv's
+  record for `run_as`. It used to take the first match on the host.
+
 ## [0.305.0] — 2026-09-30
 
 **Security: secrets no longer go on a command line** (runspec >= 0.67.0; SPEC →

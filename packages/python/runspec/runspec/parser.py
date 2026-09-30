@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from runspec import denylist, errors
-from runspec.become import resolve_run_as, verify_run_as_identity
+from runspec.become import effective_run_as, resolve_account, resolve_run_as, verify_run_as_identity
 from runspec.env import apply_env_file
 from runspec.finder import find_config
 from runspec.inference import effective_autonomy, infer_script
@@ -161,7 +161,8 @@ def _parse_impl(
     # `<name> --help` is always readable; skipped for introspection (load_spec).
     if check_run_as:
         root_spec = raw["runnables"][name]
-        detail = verify_run_as_identity(resolve_run_as(root_spec.get("run_as"), socket.gethostname()))
+        run_as = effective_run_as(root_spec.get("run_as"), config.get("run_as"))
+        detail = verify_run_as_identity(resolve_run_as(run_as, socket.gethostname()))
         if detail:
             level = root_spec.get("enforce_run_as") or config.get("enforce_run_as") or "error"
             if level == "warn":
@@ -298,7 +299,7 @@ def _parse_impl(
             invocation_args=invocation_args,
             history_cfg=config.get("history"),
             run_id=exec_run_id,
-            run_as=_run_as_name(raw["runnables"][name].get("run_as")),
+            run_as=_run_as_name(effective_run_as(raw["runnables"][name].get("run_as"), config.get("run_as"))),
         )
     except ValueError as e:
         raise errors.RunSpecError(str(e)) from e
@@ -1048,6 +1049,6 @@ def _run_as_name(value: Any) -> str:
     """The resolved ``run_as`` account for the run's records ("" when unset or
     unresolvable) — best-effort; it's provenance, never enforcement."""
     try:
-        return resolve_run_as(value, socket.gethostname()) or ""
+        return resolve_account(resolve_run_as(value, socket.gethostname()) or "")
     except Exception:  # noqa: BLE001
         return ""

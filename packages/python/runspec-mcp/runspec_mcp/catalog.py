@@ -102,6 +102,25 @@ def _resolve_run_as(run_as: Any) -> str:
     return ""
 
 
+def _item_run_as(item: dict[str, Any], spec: dict[str, Any]) -> str:
+    """The account to escalate to for one ``runspec local --format json`` item.
+
+    ``run_as`` applies in order runnable → ``[config] run_as`` → ``"@owner"``
+    (SPEC → Remote Execution → run_as). ``"@owner"`` becomes the item's
+    ``env_owner`` (core 0.68.0+; ``""`` when root-owned, absent on an older core
+    ⇒ no escalation), and no escalation happens when the target is the account
+    that listed the venv (``user`` — the login account)."""
+    from runspec.become import OWNER, effective_run_as
+
+    run_as = _resolve_run_as(effective_run_as(spec.get("run_as"), item.get("config_run_as")))
+    if run_as == OWNER:
+        owner = item.get("env_owner")
+        run_as = owner if isinstance(owner, str) else ""
+    if run_as and run_as == item.get("user"):
+        return ""
+    return run_as
+
+
 def _discover_items(
     host: dict[str, Any],
     runspec_path: str,
@@ -153,7 +172,7 @@ def _build_host_tools(host: dict[str, Any], runspec_path: str, items: list[dict[
             continue
         if spec.get("discoverable") is False:
             continue
-        run_as = _resolve_run_as(spec.get("run_as"))
+        run_as = _item_run_as(item, spec)
         become_method = str(spec.get("become_method", "sudo") or "sudo")
         become_flags = spec.get("become_flags")
         try:

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shlex
 import subprocess
 import sys
@@ -63,6 +64,8 @@ _SCAN_EXCLUDE = _SELF_EXCLUDE | frozenset({"runspec"})
 # Markers in the remote scan reply. ``_SCAN_END`` doubles as the "this really
 # was our scan command's complete output" check — anything without it (a
 # Windows shell, a truncated stream, a plain ``[]``) falls back to the CLI.
+_SCAN_OWNER = "=====OWNER"
+_SCAN_USER = "=====USER"
 _SCAN_BIN = "=====BIN"
 _SCAN_EDITABLE = "=====EDITABLE"
 _SCAN_FILE = "=====FILE "
@@ -72,8 +75,9 @@ _SCAN_END = "=====END"
 def _scan_command(runspec_path: str) -> str:
     """The one-shot POSIX shell command that dumps everything the scan needs
     from a remote venv: the ``bin/`` listing (entry-point filter), any editable
-    install marker (⇒ fall back to the CLI), and every ``runspec.toml`` under
-    ``lib/python*/site-packages`` with its contents.
+    install marker (⇒ fall back to the CLI), every ``runspec.toml`` under
+    ``lib/python*/site-packages`` with its contents, and — first — the venv
+    root's owner and the login account (see :func:`_parse_scan_identity`).
 
     Portable ``sh``: no bashisms, ``find -exec … +`` (no ``-print0``/``xargs``),
     paths with spaces survive (``$f`` is always quoted). ``lib64`` is skipped on
@@ -83,6 +87,15 @@ def _scan_command(runspec_path: str) -> str:
     rp = shlex.quote(runspec_path)
     return (
         f'b=$(dirname {rp}); r=$(dirname "$b"); '
+        # Identity first (before BIN, so the section parser ignores it): the
+        # venv root's owner (uid + name; GNU then BSD stat) and the login
+        # account — what resolving the "@owner" run_as default needs. A POSIX
+        # shell on Windows (Git Bash / MSYS / Cygwin) reports none: Windows has
+        # no sudo to escalate with, so "@owner" is never resolved there.
+        f"echo {_SCAN_OWNER}; "
+        'case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*) ;; *) '
+        "stat -c '%u %U' \"$r\" 2>/dev/null || stat -f '%u %Su' \"$r\" 2>/dev/null; "
+        f"echo {_SCAN_USER}; id -un 2>/dev/null;; esac; "
         f'echo {_SCAN_BIN}; ls -1 "$b" 2>/dev/null; '
         f"echo {_SCAN_EDITABLE}; "
         'find "$r"/lib/python*/site-packages -maxdepth 2 -name direct_url.json '
@@ -137,6 +150,86 @@ def _parse_scan_output(out: str) -> tuple[set[str], bool, list[tuple[str, str]]]
     return bin_names, editable, files
 
 
+def owner_account(uid: str, name: str) -> str:
+    """The account the ``"@owner"`` run_as default resolves to for a venv root
+    owned by ``uid``/``name``: ``""`` for root (it never escalates to root) or
+    unknown, the uid itself when the name can't be resolved — the same rule as
+    core ``runspec.become.environment_owner``."""
+    uid, name = uid.strip(), name.strip()
+    if not uid or uid == "0":
+        return ""
+    return name if name and name != "UNKNOWN" else uid
+
+
+def _parse_scan_identity(out: str) -> tuple[str | None, str]:
+    """``(venv_owner, login_user)`` from a scan reply's identity preamble.
+
+    ``venv_owner`` is ``None`` when the reply has no usable owner line (an
+    older reply, ``stat`` unavailable) — the caller then doesn't escalate.
+    """
+    owner: str | None = None
+    user = ""
+    section = ""
+    for line in out.splitlines():
+        if line in (_SCAN_OWNER, _SCAN_USER):
+            section = line
+            continue
+        if line.startswith("====="):
+            break
+        text = line.strip()
+        if not text:
+            continue
+        if section == _SCAN_OWNER and owner is None:
+            uid, _, name = text.partition(" ")
+            if uid.isdigit():
+                owner = owner_account(uid, name)
+        elif section == _SCAN_USER and not user:
+            user = text
+    return owner, user
+
+
+def local_identity(runspec_path: str) -> tuple[str | None, str]:
+    """``(venv_owner, current_user)`` for a local venv — the in-process
+    counterpart of the scan's identity preamble."""
+    try:
+        from runspec.become import current_user, environment_owner
+    except ImportError:  # pragma: no cover — core older than 0.68.0
+        return None, ""
+    if not hasattr(os, "geteuid"):  # Windows — same as the scan there: no owner
+        return None, ""
+    root = Path(runspec_path).parent.parent
+    if not root.exists():
+        return None, current_user()
+    return environment_owner(root), current_user()
+
+
+def stamp_identity(
+    runnables: list[dict[str, Any]],
+    config_run_as: Any,
+    venv_owner: str | None,
+    login_user: str,
+) -> list[dict[str, Any]]:
+    """Attach what :meth:`InvokeMixin._become_params` needs to resolve run_as
+    on this host: the package's ``[config] run_as`` (``configRunAs``, ``None``
+    when unset), the venv root's owner (``venvOwner``, ``None`` = unknown ⇒
+    no escalation) and the account the console connects as (``loginUser``)."""
+    for r in runnables:
+        r["configRunAs"] = config_run_as
+        r["venvOwner"] = venv_owner
+        r["loginUser"] = login_user
+        # The "runs as" the UI shows: the account the default resolves to here.
+        shown = r.get("runAs")
+        if shown is None and (r.get("rawSpec") or {}).get("run_as") is None:
+            shown = config_run_as if isinstance(config_run_as, str) else "@owner"
+        if shown == "@owner":
+            shown = venv_owner or ""
+        if shown and shown != login_user:
+            r["runAs"] = shown
+        else:
+            r.pop("runAs", None)
+    return runnables
+
+
 def _normalise_toml_text(text: str) -> dict[str, Any] | None:
     """``runspec.loader.load_raw`` for TOML *text*: the same two normalisers the
     CLI runs per package, so the spec shape matches ``runspec local``'s JSON
@@ -170,6 +263,8 @@ def _runnables_from_tomls(
     bin_names: set[str],
     host: str,
     group: str,
+    venv_owner: str | None = None,
+    login_user: str = "",
 ) -> list[dict[str, Any]]:
     """Turn scanned ``(path, toml_text)`` pairs into Runnable dicts, applying the
     same filters ``runspec local --format json`` does: only runnables with an
@@ -193,7 +288,14 @@ def _runnables_from_tomls(
             if key in seen:
                 continue
             seen.add(key)
-            out.extend(_spec_to_runnables(name, spec, host, group, config_autonomy))
+            out.extend(
+                stamp_identity(
+                    _spec_to_runnables(name, spec, host, group, config_autonomy),
+                    raw["config"].get("run_as"),
+                    venv_owner,
+                    login_user,
+                )
+            )
     return out
 
 
@@ -232,7 +334,10 @@ def _scan_local(runspec_path: str, host: str) -> list[dict[str, Any]] | None:
         bin_names = {p.name for p in scripts_dir(runspec_path).iterdir()}
     except OSError:
         bin_names = set()
-    return _runnables_from_tomls(files, bin_names, host, venv_name(runspec_path))
+    owner, user = local_identity(runspec_path)
+    return _runnables_from_tomls(
+        files, bin_names, host, venv_name(runspec_path), owner, user
+    )
 
 
 def discover_local(runspec_path: str, host: str) -> list[dict[str, Any]]:
@@ -269,12 +374,26 @@ def _discover_local_cli(runspec_path: str, host: str) -> list[dict[str, Any]]:
     for item in items:
         if item["runnable"] in _SELF_EXCLUDE:
             continue
-        runnables.extend(
-            _spec_to_runnables(
-                item["runnable"], item["spec"], host, group, item.get("config_autonomy")
-            )
-        )
+        runnables.extend(_item_to_runnables(item, host, group))
     return runnables
+
+
+def _item_to_runnables(
+    item: dict[str, Any], host: str, group: str
+) -> list[dict[str, Any]]:
+    """One ``runspec local --format json`` item → Runnable dicts. Its
+    ``env_owner``/``user``/``config_run_as`` (core 0.68.0+) resolve the
+    ``"@owner"`` default; an older core omits them ⇒ owner unknown ⇒ no
+    escalation, as before."""
+    owner = item.get("env_owner")
+    return stamp_identity(
+        _spec_to_runnables(
+            item["runnable"], item["spec"], host, group, item.get("config_autonomy")
+        ),
+        item.get("config_run_as"),
+        owner if isinstance(owner, str) else None,
+        str(item.get("user") or ""),
+    )
 
 
 def discover_remote(
@@ -310,7 +429,8 @@ def discover_remote(
     if parsed is not None:
         bin_names, editable, files = parsed
         if files and not editable:
-            return _runnables_from_tomls(files, bin_names, host, group)
+            owner, user = _parse_scan_identity(out)
+            return _runnables_from_tomls(files, bin_names, host, group, owner, user)
         logger.debug(
             "discovery %s:%s — scan %s, falling back to runspec local",
             host,
@@ -326,6 +446,9 @@ def discover_remote(
         )
     code, out, _err = runner(
         ssh_target,
+        # Unquoted on purpose: this fallback is the path a Windows host takes
+        # (its shell can't run the POSIX scan), and cmd.exe doesn't treat
+        # POSIX single quotes as quoting.
         f"{runspec_path} local --format json",
         identity_file=identity_file,
         global_ssh_config=global_ssh_config,
@@ -338,11 +461,7 @@ def discover_remote(
         return []
     runnables: list[dict[str, Any]] = []
     for item in items:
-        runnables.extend(
-            _spec_to_runnables(
-                item["runnable"], item["spec"], host, group, item.get("config_autonomy")
-            )
-        )
+        runnables.extend(_item_to_runnables(item, host, group))
     return runnables
 
 

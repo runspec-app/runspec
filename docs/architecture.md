@@ -94,10 +94,12 @@ A tool environment (a Python venv) on a host is either **personal** or
 Either way, each venv has exactly one account running its tools, so its logs
 and run history have a single writer and need no special permissions.
 
-This is the recommended model. Today the console runs a tool as the service
-account only when the tool declares `run_as`, or when the operator chooses Run
-as. Making "run everything in this venv as its owner" a single per-venv setting
-is on the roadmap below.
+This is the default. A tool's `run_as` defaults to `"@owner"`, the account that
+owns its venv. The console, `runspec serve` and the MCP gateway escalate with
+`sudo -n -u <owner>`, and escalate nothing when you are the owner. A tool run
+directly by anyone but the owner refuses to start and names the account to
+`sudo -u` to. `run_as = ""` opts a package out, so its tools run as the
+invoker.
 
 ## Autonomy and AI
 
@@ -125,8 +127,5 @@ management, with no model involved.
 - **The MCP gateway** (today `runspec-mcp`). It needs a client-agnostic setup
   that works in Copilot as well as Claude Code, simpler credential
   configuration, and a clearer name (`runspec-mcp-gateway`).
-- **Per-venv "run as owner".** The console detects a shared venv's owner and
-  escalates every run to it with `sudo -n -u`, so sudo alone decides who may run
-  it. runspec can also refuse direct runs by anyone else (`enforce_run_as`).
 - **Run history.** Simplifying it follows from the single-writer rule above; see
   `design/venv-run-history-assessment.md`.

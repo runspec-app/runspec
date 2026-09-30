@@ -138,10 +138,58 @@ def test_runnable_overrides_config(tmp_path):
         _parse(tmp_path, enforce='enforce_run_as = "error"', config_enforce='enforce_run_as = "off"')
 
 
-def test_no_run_as_means_no_check(tmp_path):
+def test_no_run_as_passes_for_the_environment_owner(tmp_path):
+    # No run_as → "@owner"; the test process owns (or is root over) its venv.
     cfg = _write(tmp_path, '[tool]\ndescription = "x"\n')
     spec = _parse_impl("tool", argv=[], config_path=cfg)
     assert spec.runspec_runnable == "tool"
+
+
+def test_empty_run_as_means_no_check(tmp_path, monkeypatch):
+    monkeypatch.setattr("runspec.become.environment_owner", lambda env_root=None: "nope-user-xyz")
+    cfg = _write(tmp_path, '[tool]\ndescription = "x"\nrun_as = ""\n')
+    assert _parse_impl("tool", argv=[], config_path=cfg).runspec_runnable == "tool"
+
+
+# ── the "@owner" default ──────────────────────────────────────────────────────
+
+
+@posix_only
+def test_default_refuses_anyone_but_the_owner(tmp_path, monkeypatch):
+    monkeypatch.setattr("runspec.become.environment_owner", lambda env_root=None: "nope-user-xyz")
+    cfg = _write(tmp_path, '[tool]\ndescription = "x"\n')
+    with pytest.raises(errors.RunAsMismatch) as exc:
+        _parse_impl("tool", argv=[], config_path=cfg)
+    assert "nope-user-xyz" in str(exc.value)
+    assert "owns its environment" in str(exc.value)
+
+
+@posix_only
+def test_config_run_as_empty_opts_the_package_out(tmp_path, monkeypatch):
+    monkeypatch.setattr("runspec.become.environment_owner", lambda env_root=None: "nope-user-xyz")
+    cfg = _write(tmp_path, '[config]\nrun_as = ""\n\n[tool]\ndescription = "x"\n')
+    assert _parse_impl("tool", argv=[], config_path=cfg).runspec_runnable == "tool"
+
+
+@posix_only
+def test_config_run_as_is_the_package_default(tmp_path):
+    cfg = _write(tmp_path, '[config]\nrun_as = "nope-user-xyz"\n\n[tool]\ndescription = "x"\n')
+    with pytest.raises(errors.RunAsMismatch):
+        _parse_impl("tool", argv=[], config_path=cfg)
+
+
+@posix_only
+def test_runnable_run_as_beats_config(tmp_path):
+    cfg = _write(tmp_path, '[config]\nrun_as = "nope-user-xyz"\n\n[tool]\ndescription = "x"\nrun_as = ""\n')
+    assert _parse_impl("tool", argv=[], config_path=cfg).runspec_runnable == "tool"
+
+
+@posix_only
+def test_owner_default_warns_when_relaxed(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr("runspec.become.environment_owner", lambda env_root=None: "nope-user-xyz")
+    cfg = _write(tmp_path, '[config]\nenforce_run_as = "warn"\n\n[tool]\ndescription = "x"\n')
+    _parse_impl("tool", argv=[], config_path=cfg)
+    assert "nope-user-xyz" in capsys.readouterr().err
 
 
 @posix_only

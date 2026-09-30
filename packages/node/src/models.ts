@@ -17,6 +17,8 @@ export interface RawConfig {
   autonomyDefault: string;
   /** Default enforce_run_as for runnables that don't declare one. */
   enforceRunAs: string;
+  /** Package default `run_as` (`[config] run_as`); absent ⇒ `"@owner"`. */
+  runAs?: unknown;
   lang?: string;
   version: string;
   logging?: LoggingConfig;

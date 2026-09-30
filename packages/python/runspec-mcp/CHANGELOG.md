@@ -2,6 +2,18 @@
 
 All notable changes to `runspec-mcp` are documented here.
 
+## [0.1.6] — 2026-09-30
+
+### Changed
+
+- **Runnables run as their venv's owner by default** (runspec >= 0.68.0; SPEC →
+  "Remote Execution → run_as"). `run_as` resolves in order: the runnable's
+  own, then its package's `[config] run_as`, then `"@owner"`. `"@owner"` becomes
+  the venv root's owner reported by `runspec local --format json` (`env_owner`).
+  It never resolves to root, and nothing escalates when the owner is the account
+  the gateway logs in as. A host still on an older core reports no owner, so its
+  runnables don't escalate.
+
 ## [0.1.5] — 2026-09-30
 
 Fixes for "the client never connects" and "the credential never arrives",

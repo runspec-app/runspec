@@ -7,6 +7,7 @@ Covers the SPEC "Remote Execution" command table and run_as resolution.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -246,3 +247,84 @@ def test_parse_env_frame_round_trips():
 def test_parse_env_frame_rejects_malformed(bad):
     with pytest.raises(ValueError):
         parse_env_frame(bad)
+
+
+# ── "@owner" resolution ───────────────────────────────────────────────────────
+
+from runspec import become as _become  # noqa: E402,I001
+
+
+def test_effective_run_as_order():
+    assert _become.effective_run_as("svc", "other") == "svc"
+    assert _become.effective_run_as(None, "other") == "other"
+    assert _become.effective_run_as(None, None) == "@owner"
+    # "" is a real value at either level — no escalation — not "absent".
+    assert _become.effective_run_as("", "other") == ""
+    assert _become.effective_run_as(None, "") == ""
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid"), reason="POSIX only")
+def test_environment_owner_names_the_owner(tmp_path):
+    import pwd
+
+    expected = "" if os.geteuid() == 0 else pwd.getpwuid(os.geteuid()).pw_name
+    assert _become.environment_owner(tmp_path) == expected
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid"), reason="POSIX only")
+def test_environment_owner_never_resolves_to_root():
+    assert os.stat("/").st_uid == 0
+    assert _become.environment_owner("/") == ""
+
+
+def test_environment_owner_missing_root_is_empty(tmp_path):
+    assert _become.environment_owner(tmp_path / "nope") == ""
+
+
+def test_environment_owner_without_posix_is_empty(monkeypatch, tmp_path):
+    monkeypatch.delattr(os, "geteuid", raising=False)
+    assert _become.environment_owner(tmp_path) == ""
+
+
+def test_resolve_account_only_touches_owner(monkeypatch):
+    monkeypatch.setattr(_become, "environment_owner", lambda env_root=None: "svc")
+    assert _become.resolve_account("@owner") == "svc"
+    assert _become.resolve_account("alice") == "alice"
+    assert _become.resolve_account("") == ""
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid"), reason="POSIX only")
+def test_escalation_target_skips_the_current_account(monkeypatch):
+    import pwd
+
+    me = pwd.getpwuid(os.geteuid()).pw_name
+    assert _become.escalation_target(me) == ""
+    assert _become.escalation_target(str(os.geteuid())) == ""
+    monkeypatch.setattr(_become, "environment_owner", lambda env_root=None: me)
+    assert _become.escalation_target("@owner") == ""
+    monkeypatch.setattr(_become, "environment_owner", lambda env_root=None: "svc-xyz")
+    assert _become.escalation_target("@owner") == "svc-xyz"
+    assert _become.escalation_target("nope-user-xyz") == "nope-user-xyz"
+
+
+def test_local_json_reports_owner_and_config_run_as(tmp_path, monkeypatch, capsys):
+    from runspec import cli
+
+    item = {"source": "x", "runnable": "python3", "spec": {}, "config_autonomy": None, "config_run_as": ""}
+    monkeypatch.setattr(cli, "_discover_installed", lambda: [item])
+    monkeypatch.setattr(_become, "environment_owner", lambda env_root=None: "svc")
+    monkeypatch.setattr(sys, "executable", shutil.which("python3") or sys.executable)
+    cli.cmd_local(["--format", "json"])
+    out = json.loads(capsys.readouterr().out)
+    assert out and out[0]["env_owner"] == "svc"
+    assert out[0]["user"] == _become.current_user()
+    assert out[0]["config_run_as"] == ""
+
+
+def test_windows_owner_default_is_a_noop(monkeypatch):
+    # No POSIX uid model: "@owner" never escalates and the identity check never fires.
+    monkeypatch.delattr(os, "geteuid", raising=False)
+    assert _become.environment_owner() == ""
+    assert _become.escalation_target("@owner") == ""
+    assert _become.current_user() == ""
+    assert _become.verify_run_as_identity("@owner") is None

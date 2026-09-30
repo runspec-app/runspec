@@ -13,6 +13,14 @@ the venv owner, belong to a group, or have any other rights. The inbox is
 world-writable (like `/tmp`), so their own account writes their run's file
 there. Only the one-time set-up below is done as the owner.
 
+!!! note "Since runspec 0.68.0 most runs don't need the inbox"
+    Runnables now run as their venv's owner by default (`run_as = "@owner"`):
+    the console, `runspec serve` and the MCP gateway escalate to the owner, and
+    a direct run by anyone else is refused. So a shared venv's runs are
+    normally all made by its owner and write `logs/` directly. The inbox still
+    records runs by other accounts, i.e. root (`run_as = "root"`) and packages
+    that opt out with `run_as = ""`.
+
 This page explains how it works, how to set it up, how to check it's working,
 and what to do when it isn't. The full design rationale (alternatives
 considered, threat model) is in [the design doc](design/venv-logs-inbox.md).

@@ -140,9 +140,9 @@ export function formatGroupExactlyOne(groupName: string, args: string[], provide
 export function formatRunAsMismatch(runnableName: string, detail: string): string {
   return [
     `✗  Refusing to run '${runnableName}': ${detail}.`,
-    `   This runnable declares a run_as user it must execute as.`,
-    '   Re-run under the intended account (e.g. `sudo -u <user> ...`, `runspec serve`,',
-    '   or `runspec jump`), or relax the check with enforce_run_as = "warn" (or "off").',
+    `   It runs as its run_as account — by default the account that owns its environment.`,
+    '   Re-run under that account (e.g. `sudo -u <user> ...`, `runspec serve`, or the console),',
+    '   or relax the check with enforce_run_as = "warn" (or "off"), or opt out with run_as = "".',
   ].join('\n');
 }
 

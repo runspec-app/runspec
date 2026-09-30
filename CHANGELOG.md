@@ -7,6 +7,49 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.68.0] — 2026-09-30
+
+**`run_as` now defaults to the environment's owner.** A runnable that doesn't
+declare `run_as` runs as the account that owns its environment — the venv root
+(`sys.prefix`). That's the reserved value `"@owner"` (SPEC → "Remote Execution
+→ run_as"). A personal venv is unaffected: you own it, so nothing escalates and
+nothing is checked. A shared venv owned by a service account now runs every tool
+as that account, so its logs and run history have a single writer, and sudoers
+alone decides who may run it.
+
+### Changed
+
+- **The default `run_as` is `"@owner"`**, resolved in order: the runnable's
+  `run_as` → the new `[config] run_as` → `"@owner"`. `run_as = ""` at either level
+  opts out (no escalation, no check).
+- **`"@owner"` never resolves to root.** A root-owned environment (or one on
+  Windows, or with an unreadable root) gives no escalation.
+- **Executors skip escalation when they already run as the target.** `runspec
+  serve` and `runspec exec` compare uids and run a personal venv's tools
+  directly.
+- **The direct path refuses anyone but the owner.** With `enforce_run_as`'s
+  default `"error"`, running a shared venv's tool as another account stops with
+  a message naming the owner to `sudo -u` to. Set `enforce_run_as = "warn"` (on
+  the runnable or in `[config]`) to only warn, or `run_as = ""` to drop the check.
+  A numeric owner (a uid with no user-database entry) is compared as a uid.
+- **`runspec local --format json`** items carry `config_run_as` (the package's
+  `[config] run_as`), `env_owner` (the resolved owner, `""` for none) and `user`
+  (the account that listed them). Executors use these to resolve `"@owner"`
+  without a second round trip.
+- **The `runspec` CLI itself sets `[config] run_as = ""`.** The control plane runs
+  as whoever invokes it; `logs share` and `history sweep` do their own checks.
+
+### Added
+
+- `runspec.become`: `OWNER`, `effective_run_as`, `environment_owner`,
+  `resolve_account`, `escalation_target` and `current_user`.
+
+### Upgrading
+
+A shared venv's tools now refuse to run directly as anyone but the owner. Run
+them with `sudo -u <owner>`, through the console or `runspec serve`, or set
+`[config] run_as = ""` in a package that should keep running as its invoker.
+
 ## [0.67.0] — 2026-09-30
 
 **Security: variable values no longer go on the command line.** The command
@@ -612,6 +655,28 @@ reaped while still alive.
   and drops a bound that isn't a number, keeping the runnable usable rather than
   dropped by the backstop above.
 
+
+## [node-0.41.0] — 2026-09-30
+
+**`run_as` defaults to the environment's owner** (parity with Python 0.68.0; SPEC
+→ "Remote Execution → run_as"). The Node pack's environment root is the project
+root: the nearest `package.json` above the `runspec.toml`, skipping
+`node_modules`.
+
+### Changed
+
+- `run_as` resolves in order: the runnable's own, then the new `[config]
+  run_as`, then `"@owner"`. `"@owner"` is the project root's owner and never
+  root. `run_as = ""` opts out.
+- The `enforce_run_as` check (default `"error"`) now applies to the default. A
+  project owned by another account refuses to run directly and names that
+  account in the message. A project you own is unaffected.
+- A numeric `run_as` is compared as a uid without needing a user-database entry.
+
+### Added
+
+- `become.ts`: `OWNER`, `effectiveRunAs`, `environmentRoot`, `environmentOwner`
+  and `resolveAccount`.
 
 ## [node-0.40.0] — 2026-09-28
 

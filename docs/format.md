@@ -49,6 +49,8 @@ Project-wide defaults. All fields optional.
 | `lang` | string | — | Preferred language for `runspec init` code stubs |
 | `name` | string | venv dir name | MCP server name reported by `runspec serve` |
 | `version` | string | `"1"` | runspec spec version |
+| `run_as` | string or table | `"@owner"` | Default `run_as` for runnables that don't set one. `""` = run as the invoker. See [`run_as`](#run_as-become_method-become_flags). |
+| `enforce_run_as` | string | `"error"` | Default [`enforce_run_as`](#enforce_run_as) for runnables that don't set one. |
 | `jump-hosts` | table | — | Per-alias jump host config. See [Jump Hosts](jump-hosts.md). |
 | `logging` | table | — | Logging configuration. See [Logging](logging.md). |
 
@@ -78,7 +80,7 @@ output          = "text"                       # optional
 serve           = true                         # optional, default true; or ["local"] / ["remote"]
 discoverable    = true                         # optional, default true; false hides from discovery
 hosts           = ["web-01", "web-02"]         # optional, see Remote Execution
-run_as          = "deploy"                     # optional, see Remote Execution
+run_as          = "deploy"                     # optional, default "@owner" — see Remote Execution
 become_method   = "sudo"                       # optional, default "sudo"
 become_flags    = "-H"                         # optional
 examples        = [...]                        # optional, see below
@@ -728,8 +730,33 @@ hosts       = ["logserver-01", "logserver-02"]
 
 ### `run_as`, `become_method`, `become_flags`
 
-Privilege escalation for remote execution. Four `run_as` shapes are supported
-(plain string, env var, per-host map, regex patterns):
+The account a runnable runs as, and how an executor gets there.
+
+**By default a runnable runs as the account that owns its environment** — the
+reserved value `"@owner"`. The owner is the owner of the venv directory for
+Python, or of the project root for Node. In practice:
+
+- **A personal venv** (in your home): you are the owner, so nothing escalates and
+  nothing is checked.
+- **A shared venv** owned by a service account: every run goes through `sudo -u
+  svc`, so sudoers decides who may run its tools, and the venv's logs and run
+  history have a single writer.
+- **A root-owned venv**: `"@owner"` never escalates to root. Running as root takes
+  an explicit `run_as = "root"`.
+
+The value applies in order: the runnable's own `run_as` → `[config] run_as` →
+`"@owner"`. `run_as = ""` at either level means "run as whoever invokes it" —
+use it in `[config]` for a package whose tools must run as the operator, e.g.
+ones that read the operator's own files or credentials:
+
+```toml
+[config]
+run_as = ""       # every runnable in this package runs as its invoker
+```
+
+To run as a specific account instead, four `run_as` shapes are supported (plain
+string, env var, per-host map, regex patterns); `"@owner"` can appear anywhere a
+user name can:
 
 ```toml
 [deploy]
@@ -755,9 +782,9 @@ remote-command construction rules.
 
 ### `enforce_run_as`
 
-`run_as` is applied by an executor (`runspec serve`, an SSH client, the console)
-*before* the process starts, so under one the runnable is already the target
-user. When a runnable is invoked directly — its installed entry point run by
+`run_as` is applied by an executor (`runspec serve`, `runspec exec`, the
+console, the MCP gateway) *before* the process starts, so under one the runnable
+is already the target user. When a runnable is invoked directly — its installed entry point run by
 hand, from cron, or imported — nothing escalates and nothing checks who is
 running it. `enforce_run_as` closes that gap: on `parse()`, the resolved
 `run_as` user is compared (by uid) to the current process's effective user.
@@ -774,8 +801,14 @@ enforce_run_as = "error"    # default — also: "warn", "off"
 | `"warn"` | A warning is written to stderr; the runnable continues. |
 | `"off"` | No check. |
 
+Because the default `run_as` is `"@owner"`, this means **a shared venv's tools
+refuse to run directly as anyone but its owner**, and the message names the
+account to `sudo -u` to. Run them with `sudo -u <owner>`, through the console or
+`runspec serve`, or relax the check with `enforce_run_as = "warn"`.
+
 It is a no-op when `run_as` resolves to the empty string (no escalation
-intended) or on a platform with no POSIX uid model (e.g. Windows). The default
+intended — including `"@owner"` in a root-owned venv) or on a platform with no
+POSIX uid model (e.g. Windows). The default
 can be set project-wide via `[config] enforce_run_as`; a runnable's own value
 wins.
 

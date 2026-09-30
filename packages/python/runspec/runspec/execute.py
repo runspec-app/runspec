@@ -15,7 +15,7 @@ import sysconfig
 from pathlib import Path
 from typing import Any
 
-from runspec.become import build_exec_argv, resolve_run_as
+from runspec.become import build_exec_argv, effective_run_as, escalation_target, resolve_run_as
 
 
 def find_script(name: str, scripts_dir: Path | None = None) -> list[str] | None:
@@ -49,14 +49,16 @@ def find_runnable(name: str) -> dict[str, Any] | None:
         if item["runnable"] != name:
             continue
         runnable = item["spec"]
+        config = load_raw(Path(item["source"]))["config"]
+        run_as = effective_run_as(runnable.get("run_as"), config.get("run_as"))
         return {
             "runnable": name,
             "command": find_script(name),
             "config_path": item["source"],
-            "run_as": resolve_run_as(runnable.get("run_as"), socket.gethostname()),
+            "run_as": escalation_target(resolve_run_as(run_as, socket.gethostname())),
             "become_method": runnable.get("become_method", "sudo"),
             "become_flags": runnable.get("become_flags"),
-            "config": load_raw(Path(item["source"]))["config"],
+            "config": config,
         }
     return None
 

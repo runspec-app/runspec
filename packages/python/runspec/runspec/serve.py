@@ -22,6 +22,8 @@ from typing import Any
 # with external executing clients). Aliased to the old private names so existing
 # imports (cli.py, tests) keep working.
 from runspec.become import build_become_argv as _build_become_argv  # noqa: F401 — re-export for existing imports
+from runspec.become import effective_run_as as _effective_run_as
+from runspec.become import escalation_target as _escalation_target
 from runspec.become import resolve_run_as as _resolve_run_as
 from runspec.become import validate_run_as_patterns as _validate_run_as_patterns
 from runspec.discovery import validate_discoverable as _validate_discoverable
@@ -143,7 +145,7 @@ def serve() -> None:
 
         inferred = infer_script(runnable, config["autonomy_default"])
         base_cmd = _find_script(rname, scripts_dir)
-        run_as = _resolve_run_as(runnable.get("run_as"), hostname)
+        run_as = _escalation_target(_resolve_run_as(_effective_run_as(runnable.get("run_as"), config.get("run_as")), hostname))
         become_method = runnable.get("become_method", "sudo")
         become_flags = runnable.get("become_flags")
         config_path = item["source"]  # path to the runspec.toml that defined this runnable

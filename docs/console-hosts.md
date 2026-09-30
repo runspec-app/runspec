@@ -77,10 +77,21 @@ bootstrap runnables — `which` (find an interpreter), `create-venv`,
 Each step is confirm-gated. Then add the new venv's
 `/opt/venvs/ops/bin/runspec` to the host's `runspec_paths`.
 
-#### Set up the logs inbox (required for a shared venv)
+#### Who runs a shared venv's tools
 
-A shared venv is owned by one account but its runnables are run by others —
-operators logged in as themselves, root (`run_as = "root"`), other accounts'
+Tools run as the account that owns their venv (`run_as = "@owner"`, the default
+since runspec 0.68.0). Discovery records each venv's owner. When that isn't the
+account you log in as, the console runs the tool with `sudo -n -u <owner>`, so
+the host's sudoers decides who may run it — typically a Unix group granted
+`(svc-ops) NOPASSWD: ALL`. A venv you own runs with no sudo, and a root-owned
+venv never escalates to root. Forms shows the account next to the runnable
+("as svc-ops"). A package that must run as the operator sets
+`[config] run_as = ""`.
+
+#### Set up the logs inbox (for runs by other accounts)
+
+A shared venv is owned by one account, but some runs are made by others — root
+(`run_as = "root"`), packages that opt out with `run_as = ""`, other accounts'
 crontabs. **Set up its logs inbox** so every one of those runs lands in the
 venv's history (runspec >= 0.66.1):
 

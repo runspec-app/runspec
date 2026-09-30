@@ -234,9 +234,9 @@ def format_run_as_mismatch(runnable_name: str, detail: str) -> str:
     return "\n".join(
         [
             f"✗  Refusing to run '{runnable_name}': {detail}.",
-            "   This runnable declares a run_as user it must execute as.",
-            "   Re-run under the intended account (e.g. `sudo -u <user> ...`, `runspec serve`,",
-            '   or `runspec jump`), or relax the check with enforce_run_as = "warn" (or "off").',
+            "   It runs as its run_as account — by default the account that owns its environment.",
+            "   Re-run under that account (e.g. `sudo -u <user> ...`, `runspec serve`, or the console),",
+            '   or relax the check with enforce_run_as = "warn" (or "off"), or opt out with run_as = "".',
         ]
     )
 

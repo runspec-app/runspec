@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { parse, loadSpec } from '../src/parser';
-import { resolveRunAs, verifyRunAsIdentity } from '../src/become';
+import { effectiveRunAs, environmentOwner, environmentRoot, resolveAccount, resolveRunAs, verifyRunAsIdentity } from '../src/become';
 
 function makeTmpConfig(toml: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'runspec-run-as-test-'));
@@ -158,7 +158,8 @@ describe('enforce_run_as gate', () => {
     ).toThrow(/Refusing to run/);
   });
 
-  test('no run_as means no check', () => {
+  test('no run_as passes for the environment owner', () => {
+    // No run_as → "@owner"; the test process owns (or is root over) the tmp dir.
     const args = parse({ scriptName: 'tool', argv: [], configPath: makeTmpConfig('[tool]\ndescription = "x"\n') });
     expect(args.__runspec_script__).toBe('tool');
   });
@@ -166,5 +167,59 @@ describe('enforce_run_as gate', () => {
   posixIt('loadSpec skips the check', () => {
     const args = loadSpec({ scriptName: 'tool', configPath: makeTmpConfig(body({ enforce: 'enforce_run_as = "error"' })) });
     expect(args.__runspec_script__).toBe('tool');
+  });
+});
+
+// ── the "@owner" default ──────────────────────────────────────────────────────
+
+describe('@owner', () => {
+  test('effectiveRunAs order', () => {
+    expect(effectiveRunAs('svc', 'other')).toBe('svc');
+    expect(effectiveRunAs(undefined, 'other')).toBe('other');
+    expect(effectiveRunAs(undefined, undefined)).toBe('@owner');
+    expect(effectiveRunAs('', 'other')).toBe('');
+    expect(effectiveRunAs(undefined, '')).toBe('');
+  });
+
+  posixIt('environmentOwner never resolves to root', () => {
+    expect(environmentOwner('/')).toBe('');
+    expect(environmentOwner('/nope/not/here')).toBe('');
+  });
+
+  test('environmentRoot is the nearest package.json dir', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'runspec-envroot-'));
+    fs.writeFileSync(path.join(dir, 'package.json'), '{}');
+    fs.mkdirSync(path.join(dir, 'pkg'));
+    expect(environmentRoot(path.join(dir, 'pkg', 'runspec.toml'))).toBe(dir);
+  });
+
+  test('resolveAccount only touches @owner', () => {
+    expect(resolveAccount('alice', '/')).toBe('alice');
+    expect(resolveAccount('', '/')).toBe('');
+  });
+
+  // Needs root to hand the project dir to another uid.
+  const rootIt = process.geteuid && process.geteuid() === 0 ? test : test.skip;
+
+  function foreignOwnedConfig(toml: string): string {
+    const cfg = makeTmpConfig(toml);
+    fs.writeFileSync(path.join(path.dirname(cfg), 'package.json'), '{}');
+    fs.chownSync(path.dirname(cfg), 424242, 424242);
+    return cfg;
+  }
+
+  rootIt('default refuses anyone but the owner', () => {
+    const cfg = foreignOwnedConfig('[tool]\ndescription = "x"\n');
+    expect(() => parse({ scriptName: 'tool', argv: [], configPath: cfg })).toThrow(/owns its environment/);
+  });
+
+  rootIt('[config] run_as = "" opts the package out', () => {
+    const cfg = foreignOwnedConfig('[config]\nrun_as = ""\n\n[tool]\ndescription = "x"\n');
+    expect(parse({ scriptName: 'tool', argv: [], configPath: cfg }).__runspec_script__).toBe('tool');
+  });
+
+  posixIt('[config] run_as is the package default', () => {
+    const cfg = makeTmpConfig('[config]\nrun_as = "nope-user-xyz"\n\n[tool]\ndescription = "x"\n');
+    expect(() => parse({ scriptName: 'tool', argv: [], configPath: cfg })).toThrow(/Refusing to run/);
   });
 });

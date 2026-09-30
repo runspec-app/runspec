@@ -293,7 +293,7 @@ consistently. Injection risk via runnable arguments is **low**.
 sequenceDiagram
     participant C as Console
     participant H as Remote host (sshd)
-    C->>C: resolve run_as (string / $ENV / per-host / pattern)
+    C->>C: resolve run_as (runnable → [config] → "@owner" = venv owner)
     C->>C: build_exec_argv (sudo/su/pbrun/dzdo + env prelude)
     C->>C: shell_join — quote every token
     C->>H: exec "sudo -u <user> sh -c '<prelude>' sh <cmd>"
@@ -303,14 +303,20 @@ sequenceDiagram
 ```
 
 - Escalation supports sudo/su/pbrun/dzdo; the *target identity* is resolved from
-  the runnable's `run_as` declaration (`bridge_invoke.py`, core `runspec.become`).
+  the runnable's `run_as`, else its package's `[config] run_as`, else
+  **`"@owner"` — the account that owns the venv** (found at discovery;
+  `bridge_invoke.py`, core `runspec.become`). A shared venv owned by a service
+  account therefore runs every tool as that account, and **sudoers is the access
+  list**: whoever may `sudo -u svc` may run its tools. `"@owner"` never resolves
+  to root, and nothing escalates when the owner is the login account.
 - **No interactive sudo-password support** — escalation assumes **passwordless
   sudo** (`NOPASSWD` sudoers entries), which is the recommended, auditable
   pattern. A password-requiring sudo would simply hang.
 - The core library independently enforces an **identity gate** (`enforce_run_as`):
-  a runnable declared `run_as = root` refuses to run if the effective user does
-  not match (modes `error`/`warn`/`off`) — catching misconfiguration on the
-  direct path (§9.4).
+  a runnable refuses to run if the effective user doesn't match its resolved
+  `run_as` (modes `error`/`warn`/`off`). With the `"@owner"` default this means a
+  shared venv's tools refuse to run directly as anyone but the owner — so an
+  operator can't bypass sudoers by calling the venv's `bin/` directly (§9.4).
 
 **Honest note:** passwordless-sudo scoping is therefore an operator/host
 responsibility. The runspec model encourages narrow `sudoers.d` drop-ins (the
@@ -598,9 +604,13 @@ to your log pipeline (§13).
 ### 9.4 `enforce_run_as` identity gate
 
 The core library refuses to run a runnable on the direct path if the effective
-user doesn't match its declared `run_as` (modes `error`/`warn`/`off`,
+user doesn't match its resolved `run_as` (modes `error`/`warn`/`off`,
 `parser.py`/`become.py`) — a hard boundary that catches "ran a root-only tool as
-the wrong user."
+the wrong user." Because `run_as` defaults to the venv owner, it also stops
+anyone but the owner running a shared venv's tools directly. It checks identity,
+not file access: someone who can read the venv can still run its Python code by
+other means, so keep a shared venv's secrets out of files other accounts can
+read.
 
 ### Control classification summary
 
@@ -732,7 +742,8 @@ are organised by who owns them.
 - Pre-seed `known_hosts` via config management and set `[ssh] host_key_checking =
   "yes"` (strict) for high-assurance segments, eliminating first-contact TOFU.
 - Scope `sudoers.d` drop-ins narrowly (specific commands, `NOPASSWD`) for the
-  service accounts `run_as` targets; never grant blanket sudo.
+  service accounts `run_as` targets — by default, each shared venv's owner — and
+  grant them to a Unix group; never grant blanket sudo.
 - Use per-operator or per-role SSH keys so audit logs attribute actions to people.
 
 **AI & automation governance (§7, §8):**

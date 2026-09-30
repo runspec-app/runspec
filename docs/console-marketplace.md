@@ -59,7 +59,7 @@ A shared venv also needs its **logs inbox** set up once, so the runs of the
 packages you install reach its History whoever runs them. `create-venv` does
 this; for an older venv use **Logs → Make logs shared**, or run
 `sudo -u <owner> <venv>/bin/runspec logs share --inbox`. See
-[Set up the logs inbox](console-hosts.md#set-up-the-logs-inbox-required-for-a-shared-venv).
+[Set up the logs inbox](console-hosts.md#set-up-the-logs-inbox-for-runs-by-other-accounts).
 
 The command a target runs is the plain
 `<venv>/bin/python -m pip install [-U] [--force-reinstall] <package>` (or

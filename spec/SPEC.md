@@ -759,18 +759,15 @@ intended, so no identity to assert), when `"@owner"` resolves to root (see
 [`run_as`](#run_as)), or on a platform with no POSIX uid model (e.g. Windows, where
 there is nothing to compare).
 
-**The implicit default warns.** When neither the runnable nor `[config]` declares
-`run_as` — the value is the library default `"@owner"` — and neither declares
-`enforce_run_as`, a mismatch **warns** instead of refusing. A shared environment's
-tools, run directly by someone other than its owner, keep working and say they
-should be run as the owner. Declaring either field (`run_as = "@owner"` or
-`enforce_run_as = "error"`, on the runnable or in `[config]`) opts into refusal. Under an executor that escalated correctly
+With the default `run_as = "@owner"`, this means a shared environment's tools
+refuse to run directly as anyone but its owner, and the message names the owner
+to `sudo -u` to. `enforce_run_as = "warn"` (on the runnable or in `[config]`)
+relaxes that to a warning; `run_as = ""` removes the check entirely. Under an executor that escalated correctly
 the effective user already matches, so the check passes silently — `enforce_run_as`
 only ever fires on the direct/import path (or if escalation silently failed).
 
 Resolution order (most specific wins): the runnable's own `enforce_run_as` → the
-`[config]` `enforce_run_as` default → the library default: `"error"`, or `"warn"`
-when `run_as` is the implicit default (above). The check is not
+`[config]` `enforce_run_as` default → the library default `"error"`. The check is not
 performed during pure introspection (loading a spec without parsing argv), so emitting
 schemas and listing runnables never depends on who is running them.
 

@@ -610,7 +610,9 @@ class InternalsMixin:
                 f"were discovered and '{name}' is not among them — it may need "
                 f"installing or upgrading there). Available on: {options}."
             )
-        return {**template, "host": host}
+        # The venv owner / login account were found on the template's host, not
+        # this one: unknown here ⇒ no escalation (core refuses if it needed one).
+        return {**template, "host": host, "venvOwner": None, "loginUser": ""}
 
     def _active_profile_name(self) -> str:
         """The machine-local active host profile (``""`` = the built-in *All hosts*

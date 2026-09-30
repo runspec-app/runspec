@@ -25,9 +25,12 @@ from runspec_console import discovery
 from runspec_console.discovery import (
     _SCAN_END,
     _normalise_toml_text,
+    _parse_scan_identity,
     _parse_scan_output,
     _runnables_from_tomls,
     _scan_command,
+    local_identity,
+    owner_account,
     discover_local,
     discover_remote,
 )
@@ -333,7 +336,11 @@ def test_scan_command_runs_under_sh_and_matches_local_scan(tmp_path: Path):
     bin_names, editable, files = parsed
     assert bin_names == {"hello", "runspec"} and editable is False
     assert sorted(Path(p).parent.name for p, _ in files) == ["mypkg", "runspec"]
-    via_sh = _runnables_from_tomls(files, bin_names, "local", tmp_path.name)
+    owner, user = _parse_scan_identity(proc.stdout)
+    assert (owner, user) == local_identity(rp)
+    via_sh = _runnables_from_tomls(
+        files, bin_names, "local", tmp_path.name, owner, user
+    )
     assert via_sh == discover_local(rp, "local")
 
 
@@ -366,3 +373,33 @@ def test_scan_command_survives_spaces_in_paths(tmp_path: Path):
     assert [
         r["name"] for r in _runnables_from_tomls(parsed[2], parsed[0], "l", "g")
     ] == ["hello"]
+
+
+# ── "@owner" identity ─────────────────────────────────────────────────────────
+
+
+def test_owner_account_rules():
+    assert owner_account("1001", "svc") == "svc"
+    assert owner_account("0", "root") == ""  # never escalate to root
+    assert owner_account("4201", "UNKNOWN") == "4201"  # no passwd entry
+    assert owner_account("", "") == ""
+
+
+def test_parse_scan_identity():
+    out = "=====OWNER\n1001 svc\n=====USER\nalice\n=====BIN\nhello\n=====END\n"
+    assert _parse_scan_identity(out) == ("svc", "alice")
+    # The identity lines don't leak into the bin section.
+    assert _parse_scan_output(out)[0] == {"hello"}
+    # An older reply (no preamble) ⇒ owner unknown.
+    assert _parse_scan_identity("=====BIN\n=====END\n") == (None, "")
+
+
+def test_scanned_runnables_carry_identity():
+    files = [
+        (
+            "/v/lib/python3.12/site-packages/mypkg/runspec.toml",
+            '[config]\nrun_as = ""\n\n[hello]\ndescription = "x"\n',
+        )
+    ]
+    [r] = _runnables_from_tomls(files, {"hello"}, "prod-1", "ops", "svc", "alice")
+    assert (r["configRunAs"], r["venvOwner"], r["loginUser"]) == ("", "svc", "alice")

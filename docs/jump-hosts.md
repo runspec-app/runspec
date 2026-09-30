@@ -151,9 +151,17 @@ These cover accidents, not adversaries. To harden further:
 
 ## Privilege escalation
 
-When a tool needs to run as a different user on the remote, use `run_as`
-together with `become_method` / `become_flags` in the runnable's definition.
-These are resolved by `runspec serve` on the remote before the tool runs.
+A tool runs as the account that owns its venv unless it says otherwise — the
+default `run_as = "@owner"`. On a shared venv owned by a service account, the
+executor (`runspec serve`, the console, the MCP gateway) runs every tool with
+`sudo -u <owner>`. On a venv owned by the account you log in as, nothing
+escalates. A root-owned venv never escalates to root. `run_as = ""` (on the
+runnable or in `[config]`) runs a tool as whoever invokes it.
+
+To run as some other user, set `run_as` together with `become_method` /
+`become_flags` in the runnable's definition (or `run_as` in `[config]` for the
+whole package). The executor resolves these on the remote host before the tool
+runs; `"@owner"` can appear anywhere a user name can.
 
 ### Four `run_as` shapes
 
@@ -191,7 +199,8 @@ run_as.patterns."prod[0-9]*"     = "produser"
 ```
 
 Forms 3 and 4 can be combined. Resolution order: exact `hosts` match →
-first matching `patterns` entry → `default` → no escalation.
+first matching `patterns` entry → `default` → no escalation. The value itself
+comes from the runnable's `run_as`, else `[config] run_as`, else `"@owner"`.
 
 Invalid regex patterns cause `runspec serve` (and `runspec local`) to exit
 with a clear error at startup.

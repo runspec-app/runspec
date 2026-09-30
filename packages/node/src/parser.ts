@@ -7,7 +7,7 @@ import { loadRaw } from './loader';
 import { inferScript, effectiveAutonomy } from './inference';
 import { coerce } from './types';
 import { validateArgs, validateGroups, raiseIfErrors } from './validator';
-import { resolveRunAs, verifyRunAsIdentity } from './become';
+import { effectiveRunAs, environmentRoot, resolveAccount, resolveRunAs, verifyRunAsIdentity } from './become';
 import { RunSpecError, RunAsMismatch, formatMissingCommand, formatRunAsMismatch } from './errors';
 import { configureLogging, installExceptionHook } from './logging_setup';
 import type { ParsedArgs, ScriptSpec, ArgSpec, GroupSpec } from './models';
@@ -104,7 +104,9 @@ export function parse(opts: ParseOptions = {}): ParsedArgs {
   // `<name> --help` is always readable; skipped by loadSpec (introspection).
   if (_checkRunAs) {
     const rootSpec = raw.runnables[name];
-    const detail = verifyRunAsIdentity(resolveRunAs(rootSpec.runAs, os.hostname()));
+    // run_as: runnable → [config] run_as → "@owner" (the project root's owner).
+    const runAs = resolveRunAs(effectiveRunAs(rootSpec.runAs, config.runAs), os.hostname());
+    const detail = verifyRunAsIdentity(resolveAccount(runAs, environmentRoot(configPath)));
     if (detail) {
       const level = rootSpec.enforceRunAs ?? config.enforceRunAs ?? 'error';
       if (level === 'warn') {

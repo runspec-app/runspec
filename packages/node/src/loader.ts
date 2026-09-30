@@ -23,6 +23,7 @@ function normaliseConfig(raw: Record<string, unknown>): RawConfig {
   return {
     autonomyDefault: (raw['autonomy-default'] as string | undefined) ?? 'confirm',
     enforceRunAs: (raw['enforce_run_as'] as string | undefined) ?? 'error',
+    runAs: raw['run_as'],
     lang: raw['lang'] as string | undefined,
     version: String(raw['version'] ?? '1'),
     logging: normaliseLogging(raw['logging'] as Record<string, unknown> | undefined),

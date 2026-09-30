@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 import re
 import shlex
+import sys
 import warnings
 from collections.abc import Mapping
 from typing import Any
@@ -79,6 +80,72 @@ def _uid_username(uid: int) -> str:
         return str(uid)
 
 
+# The reserved run_as value for "the account that owns this environment" — the
+# library default (SPEC → Remote Execution → run_as).
+OWNER = "@owner"
+
+
+def effective_run_as(runnable_value: Any, config_value: Any = None) -> Any:
+    """The ``run_as`` spec that applies: the runnable's own, else the ``[config]``
+    default, else ``"@owner"``. ``""`` at either level is a real value (no
+    escalation), so only ``None`` (absent) falls through."""
+    if runnable_value is not None:
+        return runnable_value
+    if config_value is not None:
+        return config_value
+    return OWNER
+
+
+def environment_owner(env_root: str | os.PathLike[str] | None = None) -> str:
+    """The account that owns the environment root (``sys.prefix`` by default),
+    or ``""`` when there is none to run as: a root-owned environment (``"@owner"``
+    never escalates to root), an unreadable root, or a platform with no POSIX
+    ownership (Windows)."""
+    if not hasattr(os, "geteuid"):
+        return ""
+    try:
+        uid = os.stat(env_root if env_root is not None else sys.prefix).st_uid
+    except OSError:
+        return ""
+    return "" if uid == 0 else _uid_username(uid)
+
+
+def current_user() -> str:
+    """The account this process runs as (effective uid); ``""`` without POSIX uids."""
+    geteuid = getattr(os, "geteuid", None)
+    return _uid_username(geteuid()) if geteuid is not None else ""
+
+
+def _is_current_account(user: str) -> bool:
+    geteuid = getattr(os, "geteuid", None)
+    if geteuid is None:
+        return False
+    try:
+        import pwd
+
+        uid = int(user) if user.isdigit() else pwd.getpwnam(user).pw_uid
+    except (KeyError, ImportError, ValueError):
+        return False
+    return bool(uid == geteuid())
+
+
+def resolve_account(run_as: str, env_root: str | os.PathLike[str] | None = None) -> str:
+    """A resolved ``run_as`` string with ``"@owner"`` replaced by the environment's
+    owner (``""`` when that's root or unknown)."""
+    return environment_owner(env_root) if run_as == OWNER else run_as
+
+
+def escalation_target(run_as: str, env_root: str | os.PathLike[str] | None = None) -> str:
+    """The account an executor must escalate to, or ``""`` for none.
+
+    Resolves ``"@owner"`` (never to root) and returns ``""`` when the process
+    already runs as the target — a personal environment never involves sudo."""
+    target = resolve_account(run_as, env_root)
+    if target and _is_current_account(target):
+        return ""
+    return target
+
+
 def verify_run_as_identity(run_as_user: str) -> str | None:
     """Check that the current process is running as ``run_as_user``.
 
@@ -95,6 +162,7 @@ def verify_run_as_identity(run_as_user: str) -> str | None:
     already matches and this passes silently; it only fires on the
     direct/import path (or if escalation silently failed).
     """
+    run_as_user = resolve_account(run_as_user)
     if not run_as_user:
         return None
 
@@ -108,11 +176,9 @@ def verify_run_as_identity(run_as_user: str) -> str | None:
         return None
 
     try:
-        if run_as_user.isdigit():
-            target_uid = int(run_as_user)
-            pwd.getpwuid(target_uid)  # confirm it exists; raises KeyError otherwise
-        else:
-            target_uid = pwd.getpwnam(run_as_user).pw_uid
+        # A numeric account (explicit, or an environment owner with no user
+        # database entry) is compared as a uid — it needn't have a name.
+        target_uid = int(run_as_user) if run_as_user.isdigit() else pwd.getpwnam(run_as_user).pw_uid
     except KeyError:
         return f"run_as user {run_as_user!r} does not exist on this host"
 

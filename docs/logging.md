@@ -273,6 +273,11 @@ run by other accounts: operators logged in as themselves, root (a
 the owner's `logs/`, so without help their runs fall back to their own
 `~/logs`, where the venv's history (and every console) can't see them.
 
+Since runspec 0.68.0 this is rarer. Runnables run as the venv's owner by default
+(`run_as = "@owner"`), and a direct run by anyone else is refused, so most runs
+are the owner's own. The inbox covers the rest: root (`run_as = "root"`) and
+packages that set `run_as = ""`.
+
 **Set up the logs inbox (recommended, runspec >= 0.66.1, POSIX).** Run this once
 per venv, as the venv's owner:
 

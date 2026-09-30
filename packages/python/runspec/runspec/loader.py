@@ -50,6 +50,7 @@ def _normalise_config(raw: dict[str, Any]) -> dict[str, Any]:
     """Normalise the [config] section, applying defaults."""
     return {
         "autonomy_default": raw.get("autonomy-default", "confirm"),
+        "run_as": raw.get("run_as"),
         "enforce_run_as": raw.get("enforce_run_as", "error"),
         "lang": raw.get("lang"),
         "name": raw.get("name"),

@@ -50,13 +50,23 @@ class InvokeMixin:
     ) -> tuple[str, str, str | None]:
         """Resolve run_as + become method/flags for a runnable on a host.
 
-        Reads the runnable's raw spec (carried through discovery as ``rawSpec``)
-        and resolves ``run_as`` for this host. Returns ("", ...) when no
-        privilege escalation is configured."""
-        from runspec.become import resolve_run_as
+        ``run_as`` is the runnable's own (its raw spec, carried through
+        discovery as ``rawSpec``), else its package's ``[config] run_as``
+        (``configRunAs``), else ``"@owner"`` — resolved for this host. ``"@owner"``
+        becomes the venv root's owner found at discovery (``venvOwner``; ``""``
+        when root-owned, ``None`` when unknown ⇒ no escalation). Escalation is
+        dropped when the target is the account the console logs in as
+        (``loginUser``). Returns ("", ...) when no privilege escalation applies."""
+        from runspec.become import OWNER, effective_run_as, resolve_run_as
 
-        raw = (cached or {}).get("rawSpec") or {}
-        run_as = resolve_run_as(raw.get("run_as"), hostname)
+        rec = cached or {}
+        raw = rec.get("rawSpec") or {}
+        spec = effective_run_as(raw.get("run_as"), rec.get("configRunAs"))
+        run_as = resolve_run_as(spec, hostname)
+        if run_as == OWNER:
+            run_as = str(rec.get("venvOwner") or "")
+        if run_as and run_as == rec.get("loginUser"):
+            run_as = ""
         return run_as, str(raw.get("become_method") or "sudo"), raw.get("become_flags")
 
     def _ui_output_caps(self) -> tuple[int, int]:
@@ -148,7 +158,9 @@ class InvokeMixin:
                 (
                     r
                     for r in self._runnables_cache
-                    if r.get("host") == host and r.get("name") == runnable
+                    if r.get("host") == host
+                    and r.get("name") == runnable
+                    and (group is None or r.get("group") == group)
                 ),
                 None,
             )

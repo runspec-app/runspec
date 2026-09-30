@@ -5,6 +5,11 @@
 # top-level menu or on `serve` (which is a server, not an action).
 [config]
 autonomy-default = ""
+# The control-plane CLI runs as whoever invokes it — every account must be able
+# to read history, inspect logs and so on in a shared environment — rather than
+# the library default "@owner". (Owner-only verbs such as `logs share` and
+# `history sweep` check for themselves and drop to the owner when run as root.)
+run_as = ""
 
 [runspec]
 description = "Interface specification for anything runnable"
