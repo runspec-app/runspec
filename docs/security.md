@@ -296,9 +296,9 @@ sequenceDiagram
     C->>C: resolve run_as (runnable → [config] → "@owner" = venv owner)
     C->>C: build_exec_argv (sudo/su/pbrun/dzdo + env prelude)
     C->>C: shell_join — quote every token
-    C->>H: exec "sudo -u <user> sh -c '<prelude>' sh <cmd>"
+    C->>H: exec "sudo -u <user> <venv>/bin/python -c '<prelude>' <cmd>"<br/>(sh -c '<prelude>' sh <cmd> for a non-venv command)
     C->>H: stdin: env frame (NAME=\0ooo… per var, then ".")
-    Note over H: prelude reads the frame with sh builtins,<br/>exports, execs the runnable — values never in any argv
+    Note over H: prelude reads the frame (venv python, or sh builtins),<br/>exports, execs the runnable — values never in any argv
     Note over H: passwordless sudo assumed (no interactive prompt support)
 ```
 

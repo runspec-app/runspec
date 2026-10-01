@@ -13,6 +13,7 @@ Root only — skipped otherwise; CI's ``python-multiuser`` job runs them with
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import os
 import shutil
@@ -154,3 +155,77 @@ def test_runspec_exec_path_feeds_the_frame_and_passes_stdin_through(probe, monke
         assert proc.wait(timeout=30) == 0
     assert got == EXPECTED
     assert MARKER in table and TOKEN not in table
+
+
+# ── the Python prelude: a command in a venv runs the prelude on its own python ──
+
+
+@pytest.fixture
+def venv_probe(probe, tmp_path_factory):  # type: ignore[no-untyped-def]
+    """``probe``, but started as a venv's ``bin/python`` — a world-readable venv
+    shape (``pyvenv.cfg`` + ``bin/python`` → the nobody-runnable python3), so
+    build_exec_argv picks the Python prelude, as for a real venv runnable."""
+    root = tmp_path_factory.mktemp("rsvenv")
+    venv = root / "v"
+    (venv / "bin").mkdir(parents=True)
+    (venv / "pyvenv.cfg").write_text("home = /usr/bin\n")
+    py = venv / "bin" / "python"
+    py.symlink_to(probe[0])
+    for p in (root, venv, venv / "bin"):
+        p.chmod(0o755)
+    (venv / "pyvenv.cfg").chmod(0o644)
+    # tmp dirs sit under a 0700 base; let nobody traverse to the venv.
+    for parent in root.parents:
+        if str(parent) in ("/", "/tmp"):
+            break
+        parent.chmod(parent.stat().st_mode | 0o011)
+    return [str(py), *probe[1:]]
+
+
+def test_sudo_run_through_the_python_prelude_keeps_the_secret_off_every_command_line(venv_probe):
+    from runspec.become import PY_ENV_PRELUDE
+
+    argv, frame = build_exec_argv(venv_probe, run_as=TARGET, become_flags="-n", env={NAME: SECRET})
+    assert argv[4:7] == [venv_probe[0], "-c", PY_ENV_PRELUDE]  # sudo -n -u nobody <venv python> -c …
+    assert "sh" not in argv
+    table, got = _run(argv, frame)
+    assert got == EXPECTED
+    assert TOKEN not in table
+
+
+def test_a_shells_refused_sudoers_rule_allows_the_python_prelude(venv_probe):
+    """The corporate policy that broke the console Marketplace: a caller allowed
+    everything as the target *except* shells. The shell prelude is refused; the
+    Python prelude (on the venv's python) runs and receives the value."""
+    if shutil.which("useradd") is None or shutil.which("visudo") is None:
+        _skip_or_fail("needs useradd and visudo")
+    import pwd
+
+    user = f"rsnosh{TOKEN[:6]}"
+    rule = f"/etc/sudoers.d/rs-noshell-{TOKEN[:8]}"
+    shells = ["/bin/sh", "/usr/bin/sh", "/bin/bash", "/usr/bin/bash", "/bin/dash", "/usr/bin/dash"]
+    subprocess.run(["useradd", "--system", "--no-create-home", "--shell", "/usr/sbin/nologin", user], check=True)
+    try:
+        with open(rule, "w", encoding="utf-8") as fh:
+            fh.write(f"{user} ALL=({TARGET}) NOPASSWD: ALL, " + ", ".join(f"!{s}" for s in shells) + "\n")
+        os.chmod(rule, 0o440)
+        subprocess.run(["visudo", "-cf", rule], check=True, capture_output=True)
+        uid = pwd.getpwnam(user).pw_uid
+
+        def as_user(argv: list[str], frame: bytes) -> subprocess.CompletedProcess[bytes]:
+            return subprocess.run(argv, input=frame, capture_output=True, preexec_fn=_demote(uid), cwd="/", timeout=30)
+
+        # Shell prelude: the command sudo runs is sh, which the rule refuses.
+        sh_argv = ["sudo", "-n", "-u", TARGET, "sh", "-c", "exit 0"]
+        refused = as_user(sh_argv, b"")
+        assert refused.returncode != 0, "control: the rule should refuse a shell"
+
+        # Python prelude: allowed, and the value arrives intact.
+        argv, frame = build_exec_argv(venv_probe, run_as=TARGET, become_flags="-n", env={NAME: SECRET})
+        ok = as_user(argv, frame)
+        assert ok.returncode == 0, ok.stderr.decode()
+        assert ok.stdout.decode().splitlines()[0] == EXPECTED
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            os.remove(rule)
+        subprocess.run(["userdel", user], capture_output=True)

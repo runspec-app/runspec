@@ -1,5 +1,11 @@
 # runspec-linux-core Changelog
 
+## [0.13.1] — 2026-10-01
+
+- `sudoers` docstring: the *scoped* grant (`{venv_bin}/`) now also covers
+  console and MCP-gateway runs. From runspec 0.70.0 their env prelude runs on
+  the venv's `bin/python`, which the grant matches. No code change.
+
 ## [0.13.0] — 2026-09-30
 
 ### Changed

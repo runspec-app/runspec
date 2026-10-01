@@ -7,6 +7,24 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.310.0] — 2026-10-01
+
+### Fixed
+
+- **Runs with variables work under a sudoers rule that refuses shells.**
+  - **What broke:** escalated runs that carried variables failed under a rule
+    like `(svc) NOPASSWD: ALL, !/bin/sh, !/bin/bash, …`, or under the
+    `enable-passwordless-sudo` *scoped* grant. Those runs are a Forms run with
+    a credential selected, an agent run with in-scope credentials, and a
+    Marketplace install/update (index URL).
+  - **The fix:** the console now requires `runspec >= 0.70.0`, which runs the
+    variable-passing prelude on the venv's own `bin/python` instead of `sh`
+    (`sudo -n -u svc <venv>/bin/python -c '<prelude>' <tool> …`). That's what
+    both rule shapes allow. The values still travel on stdin, never on a
+    command line.
+  - **What you need:** an upgrade of the console only. Nothing changes on the
+    hosts, which only need their venv's `python`.
+
 ## [0.309.0] — 2026-09-30
 
 ### Added

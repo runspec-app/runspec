@@ -623,10 +623,13 @@ def test_install_remote_runs_pip_as_owner_with_index_env_and_events(app, monkeyp
     toks = shlex.split(cmd)
     # The credentialed index URL rides stdin (the SPEC env frame), never argv:
     # a command line is readable by every user on the host and sudo logs it.
-    from runspec.become import ENV_PRELUDE, parse_env_frame
+    # The prelude runs on the venv's own python, not sh, so a sudoers rule that
+    # refuses shells (ALL, !/bin/sh, …) still allows it.
+    from runspec.become import PY_ENV_PRELUDE, parse_env_frame
 
-    assert toks[:8] == ["sudo", "-n", "-u", "svc", "sh", "-c", ENV_PRELUDE, "sh"]
-    assert toks[8:12] == ["/opt/venvs/ops/bin/python", "-m", "pip", "install"]
+    py = "/opt/venvs/ops/bin/python"
+    assert toks[:7] == ["sudo", "-n", "-u", "svc", py, "-c", PY_ENV_PRELUDE]
+    assert toks[7:11] == [py, "-m", "pip", "install"]
     assert "-U" in toks and toks[-1] == "runspec-acme"
     assert "bob:pw" not in cmd
     assert parse_env_frame(b.ssh_stdin[-1]) == {

@@ -2,6 +2,13 @@
 
 All notable changes to `runspec-linux-root` are documented here.
 
+## [0.1.1] — 2026-10-01
+
+- `enable-passwordless-sudo --scope scoped`: the help text and README now say
+  the scoped grant also covers runspec-console and MCP-gateway runs, from
+  runspec 0.70.0 (their env prelude runs on the venv's `bin/python`).
+  `--scope all` is no longer needed for those. No code change.
+
 ## [0.1.0] — 2026-09-30
 
 First release. The Linux tools that need root, split out of `runspec-linux`

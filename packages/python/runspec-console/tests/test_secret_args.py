@@ -163,26 +163,34 @@ def _run_remote_capture(secrets, run_as=""):
 
 
 def test_run_remote_no_escalation_secret_rides_stdin_not_the_command():
-    from runspec.become import ENV_PRELUDE, parse_env_frame
+    from runspec.become import PY_ENV_PRELUDE, parse_env_frame
 
     chan = _run_remote_capture({"db-password": "p@ss w0rd"})
     cmd = chan.command
     # The secret is in neither the command line (readable by every user via ps)
     # nor a --flag: it travels as the SPEC env frame on the channel's stdin.
     assert "p@ss" not in cmd and "--db-password" not in cmd
-    assert shlex.split(cmd)[:4] == ["sh", "-c", ENV_PRELUDE, "sh"]
+    # The runnable is in a venv, so the prelude runs on that venv's python.
+    assert shlex.split(cmd)[:3] == ["/venv/bin/python", "-c", PY_ENV_PRELUDE]
     assert parse_env_frame(chan.stdin)["RUNSPEC_DEPLOY_ARG_DB_PASSWORD"] == "p@ss w0rd"
     assert chan.eof
 
 
 def test_run_remote_with_escalation_secret_rides_stdin_inside_the_escalation():
-    from runspec.become import ENV_PRELUDE, parse_env_frame
+    from runspec.become import PY_ENV_PRELUDE, parse_env_frame
 
     chan = _run_remote_capture({"db-password": "p@ss w0rd"}, run_as="deploy")
     tokens = shlex.split(chan.command)
-    # Escalated form: sudo -u deploy sh -c <prelude> sh <runnable> … — sudo logs
-    # this line, so it must hold no value.
-    assert tokens[:7] == ["sudo", "-u", "deploy", "sh", "-c", ENV_PRELUDE, "sh"]
+    # Escalated form: sudo -u deploy <venv>/bin/python -c <prelude> <runnable> …
+    # — sudo logs this line, so it must hold no value.
+    assert tokens[:6] == [
+        "sudo",
+        "-u",
+        "deploy",
+        "/venv/bin/python",
+        "-c",
+        PY_ENV_PRELUDE,
+    ]
     assert "p@ss" not in chan.command and "--db-password" not in chan.command
     assert parse_env_frame(chan.stdin)["RUNSPEC_DEPLOY_ARG_DB_PASSWORD"] == "p@ss w0rd"
 

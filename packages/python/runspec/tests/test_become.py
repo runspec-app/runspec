@@ -16,12 +16,14 @@ import pytest
 
 from runspec.become import (
     ENV_PRELUDE,
+    PY_ENV_PRELUDE,
     build_become_argv,
     build_exec_argv,
     env_frame,
     parse_env_frame,
     resolve_run_as,
     validate_run_as_patterns,
+    venv_python_for,
 )
 
 # ── resolve_run_as ────────────────────────────────────────────────────────────
@@ -193,30 +195,124 @@ def test_exec_without_env_is_the_plain_command():
     assert build_exec_argv(CMD, run_as="deploy") == (["sudo", "-u", "deploy", *CMD], None)
 
 
-def test_exec_sudo_with_env_wraps_in_the_prelude():
+# A command outside any venv (a system prefix) takes the shell prelude.
+SYS_CMD = ["/usr/local/bin/restart-service", "--name", "nginx"]
+VENV_PY = "/venv/bin/python"
+
+
+def test_exec_sudo_with_env_wraps_a_venv_command_in_the_python_prelude():
     argv, frame = build_exec_argv(CMD, run_as="deploy", become_flags="-H", env={"K": SECRET})
-    assert argv == ["sudo", "-H", "-u", "deploy", "sh", "-c", ENV_PRELUDE, "sh", *CMD]
+    assert argv == ["sudo", "-H", "-u", "deploy", VENV_PY, "-c", PY_ENV_PRELUDE, *CMD]
     assert frame == env_frame({"K": SECRET})
     assert not any("hunter2" in a for a in argv)
 
 
+def test_exec_sudo_with_env_wraps_other_commands_in_the_shell_prelude():
+    argv, frame = build_exec_argv(SYS_CMD, run_as="deploy", become_flags="-H", env={"K": SECRET})
+    assert argv == ["sudo", "-H", "-u", "deploy", "sh", "-c", ENV_PRELUDE, "sh", *SYS_CMD]
+    assert frame == env_frame({"K": SECRET})
+
+
 def test_exec_no_run_as_with_env_still_uses_the_prelude():
     argv, frame = build_exec_argv(CMD, env={"K": SECRET})
-    assert argv == ["sh", "-c", ENV_PRELUDE, "sh", *CMD]
+    assert argv == [VENV_PY, "-c", PY_ENV_PRELUDE, *CMD]
     assert frame is not None
+    argv, _ = build_exec_argv(SYS_CMD, env={"K": SECRET})
+    assert argv == ["sh", "-c", ENV_PRELUDE, "sh", *SYS_CMD]
 
 
 def test_exec_su_puts_the_prelude_inside_the_dash_c_string():
+    import shlex
+
     argv, _ = build_exec_argv(CMD, run_as="deploy", become_method="su", env={"K": SECRET})
     assert argv[0] == "su" and argv[-1] == "deploy"
     inner = argv[argv.index("-c") + 1]
-    assert inner.startswith("sh -c '" + ENV_PRELUDE + "' sh /venv/bin/restart-service")
+    assert shlex.split(inner) == [VENV_PY, "-c", PY_ENV_PRELUDE, *CMD]
     assert "hunter2" not in inner
+    argv, _ = build_exec_argv(SYS_CMD, run_as="deploy", become_method="su", env={"K": SECRET})
+    inner = argv[argv.index("-c") + 1]
+    assert inner.startswith("sh -c '" + ENV_PRELUDE + "' sh /usr/local/bin/restart-service")
 
 
-def test_the_prelude_has_no_single_quotes():
-    # It is embedded verbatim in `sh -c '…'` (and inside su's -c string).
+def test_the_preludes_have_no_quotes_or_expansions():
+    # Both embed verbatim in a single-quoted shell word (and inside su's -c string).
     assert "'" not in ENV_PRELUDE
+    for ch in "'\"$`":
+        assert ch not in PY_ENV_PRELUDE
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("/opt/venvs/ops/bin/system-info", "/opt/venvs/ops/bin/python"),
+        ("/opt/venvs/ops/bin/python", "/opt/venvs/ops/bin/python"),
+        ("/home/alice/venvs/tools/bin/runspec", "/home/alice/venvs/tools/bin/python"),
+        ("/usr/bin/system-info", None),
+        ("/usr/local/bin/x", None),
+        ("/bin/x", None),
+        ("/snap/bin/x", None),
+        ("/opt/homebrew/bin/x", None),
+        ("/home/alice/.local/bin/x", None),
+        ("/opt/venvs/ops/x", None),  # not in a bin/
+        ("system-info", None),  # not absolute
+        ("C:\\venvs\\ops\\Scripts\\x.exe", None),
+        ("/opt/venvs/ops/bin/", None),
+    ],
+)
+def test_venv_python_for_judges_a_remote_path_by_shape(command, expected):
+    assert venv_python_for(command) == expected
+
+
+def test_venv_python_for_requires_pyvenv_cfg_for_a_local_path(tmp_path):
+    bin_dir = tmp_path / "v" / "bin"
+    bin_dir.mkdir(parents=True)
+    tool = bin_dir / "tool"
+    tool.write_text("")
+    assert venv_python_for(str(tool)) is None  # exists here, but no pyvenv.cfg
+    (tmp_path / "v" / "pyvenv.cfg").write_text("home = /usr/bin\n")
+    assert venv_python_for(str(tool)) == str(bin_dir / "python")
+
+
+def test_the_python_prelude_matches_the_spec():
+    from pathlib import Path
+
+    spec = (Path(__file__).resolve().parents[4] / "spec" / "SPEC.md").read_text(encoding="utf-8")
+    assert "```python\n" + PY_ENV_PRELUDE + "\n```" in spec
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX venv layout")
+def test_the_python_prelude_delivers_values_exactly(tmp_path):
+    # A real venv shape: pyvenv.cfg + bin/python. The command is that python, so the
+    # prelude runs on the same interpreter (as for a Marketplace pip run).
+    venv = tmp_path / "v"
+    (venv / "bin").mkdir(parents=True)
+    (venv / "pyvenv.cfg").write_text("home = /usr/bin\n")
+    py = venv / "bin" / "python"
+    py.symlink_to(sys.executable)
+    env = {"A": "", "B": "trail\n\n", "C": SECRET, "D": "a\nb", "E": "-n", "F": "."}
+    probe = "import json, os, sys; print(json.dumps({k: os.environ.get(k) for k in 'ABCDEF'})); print(sys.stdin.read(), end='')"
+    argv, frame = build_exec_argv([str(py), "-c", probe], env=env)
+    assert argv[:3] == [str(py), "-c", PY_ENV_PRELUDE]
+    res = subprocess.run(argv, input=frame + b"rest of stdin\n", capture_output=True, timeout=30)
+    assert res.returncode == 0, res.stderr
+    first, rest = res.stdout.decode().split("\n", 1)
+    assert json.loads(first) == env
+    assert rest == "rest of stdin\n"  # nothing past the frame was consumed
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX venv layout")
+def test_the_python_prelude_searches_path_and_tolerates_eof(tmp_path):
+    venv = tmp_path / "v"
+    (venv / "bin").mkdir(parents=True)
+    (venv / "pyvenv.cfg").write_text("")
+    py = venv / "bin" / "python"
+    py.symlink_to(sys.executable)
+    # A frame cut short (no "." line) still runs the command with what was read,
+    # like the shell prelude; a bare command name is found on PATH (execvp).
+    frame = env_frame({"K": "v"})[: -len(b".\n")]
+    res = subprocess.run([str(py), "-c", PY_ENV_PRELUDE, "env"], input=frame, capture_output=True, timeout=30)
+    assert res.returncode == 0, res.stderr
+    assert b"K=v" in res.stdout
 
 
 @pytest.mark.skipif(not shutil.which("sh"), reason="needs a POSIX sh")
@@ -227,9 +323,9 @@ def test_the_prelude_delivers_values_exactly(shell):
         pytest.skip(f"{shell} not installed")
     env = {"A": "", "B": "trail\n\n", "C": SECRET, "D": "a\nb", "E": "-n", "F": "."}
     probe = "import json, os, sys; print(json.dumps({k: os.environ.get(k) for k in 'ABCDEF'})); print(sys.stdin.read(), end='')"
-    argv, frame = build_exec_argv([sys.executable, "-c", probe], env=env)
-    assert argv[0] == "sh"
-    argv = [exe, *(["sh"] if shell == "busybox" else []), *argv[1:]]
+    # Built by hand: sys.executable may live in a venv, which takes the Python prelude.
+    frame = env_frame(env)
+    argv = [exe, *(["sh"] if shell == "busybox" else []), "-c", ENV_PRELUDE, "sh", sys.executable, "-c", probe]
     res = subprocess.run(argv, input=frame + b"rest of stdin\n", capture_output=True, timeout=30)
     assert res.returncode == 0, res.stderr
     first, rest = res.stdout.decode().split("\n", 1)

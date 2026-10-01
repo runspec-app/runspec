@@ -782,9 +782,20 @@ escalation tools log it: `sudo` writes each command it runs to syslog by default
 auditd / EDR agents record `execve` arguments. So the values of the variables an
 executor passes to a runnable (the secret-arg channel, credential variables, even
 non-secret ones like `RUNSPEC_AGENT`) are written to the process's **standard
-input** as an *env frame*, and a fixed POSIX `sh` *env prelude* reads them with shell
-builtins, exports them and `exec`s the runnable. Only variable *names* and the fixed
-prelude text ever reach an argument vector.
+input** as an *env frame*, and a fixed *env prelude* reads them, exports them and
+`exec`s the runnable. Only variable *names* and the fixed prelude text ever reach an
+argument vector.
+
+The prelude runs on one of two interpreters (see *The env prelude*). In the table,
+`{prelude-cmd}` is:
+
+- `{venv}/bin/python -c '{py-prelude}'` when `{command}` is an absolute POSIX path
+  in a virtual environment's `bin/` directory, `{venv}/bin/{name}`. A venv's `bin/`
+  always holds `python`, and it is the interpreter the runnable itself runs on.
+  `{venv}` is not a venv when it is `/`, `/usr`, `/usr/local`, `/snap`,
+  `/opt/homebrew`, or a directory named `.local`. An executor that can see the path
+  (a local run) also requires `{venv}/pyvenv.cfg` to exist.
+- `sh -c '{prelude}' sh` otherwise.
 
 In the table, *escalate* means the resolved `run_as` names an account other than the
 caller: an empty value, `"@owner"` when the caller is the owner, and `"@owner"`
@@ -793,16 +804,16 @@ resolving to root all mean **no escalation**.
 | Escalate | env vars | Command constructed | stdin |
 |---|---|---|---|
 | no | absent | `{command} {args}` | — |
-| no | present | `sh -c '{prelude}' sh {command} {args}` | env frame |
+| no | present | `{prelude-cmd} {command} {args}` | env frame |
 | yes | absent | `{become_method} {become_flags} -u {user} {command} {args}` | — |
-| yes | present | `{become_method} {become_flags} -u {user} sh -c '{prelude}' sh {command} {args}` | env frame |
+| yes | present | `{become_method} {become_flags} -u {user} {prelude-cmd} {command} {args}` | env frame |
 
 To resolve `"@owner"` for a remote host, the executor learns the owner of the
 environment root on that host, for example from the same SSH round-trip it uses
 for discovery.
 
-For `su`, the whole `sh -c '{prelude}' sh {command} {args}` string is the `-c`
-argument: `su {become_flags} -c "sh -c '{prelude}' sh {command} {args}" {user}`.
+For `su`, the whole `{prelude-cmd} {command} {args}` string is the `-c` argument:
+`su {become_flags} -c "{prelude-cmd} {command} {args}" {user}`.
 
 An executor that starts the runnable directly — as a local child process with no
 `run_as` and no intermediate shell — may instead set the variables in the child's
@@ -813,7 +824,37 @@ env frame.
 
 #### The env prelude
 
-The prelude is this exact text (it contains no values, so it is safe to log):
+Both forms read the same env frame from standard input, set each variable in their
+own environment and replace themselves with `{command} {args}` (`exec`, searching
+`PATH` like the shell). Neither contains a value, so both are safe to log.
+
+**Python prelude** (`{py-prelude}`), used for a command in a venv. It is run as
+`{venv}/bin/python -c '{py-prelude}' {command} {args}`, so `sys.argv[1:]` is the
+command:
+
+```python
+import os,sys
+l=bytes()
+while 1:
+ c=os.read(0,1)
+ if c and c!=bytes([10]):
+  l+=c;continue
+ if l==bytes([46]) or not l and not c:break
+ if l:n,s,v=l.partition(bytes([61]));os.environ[n.decode()]=bytes(int(v[i+2:i+5],8) for i in range(0,len(v),5)).decode()
+ if not c:break
+ l=bytes()
+os.execvp(sys.argv[1],sys.argv[1:])
+```
+
+It uses only the standard library and reads one byte at a time, so like `read` it
+never consumes past the frame. It contains no quote characters, `$` or backticks, so
+it embeds verbatim in a single-quoted shell word. Running on the venv's own
+interpreter means a sudoers rule that allows the venv's `bin/` (the
+`enable-passwordless-sudo` *scoped* grant), or that allows everything except shells
+(`ALL, !/bin/sh, !/bin/bash, …`, a common corporate policy), also allows a run that
+carries variables.
+
+**Shell prelude** (`{prelude}`), used for any other command. It is this exact text:
 
 ```sh
 while IFS= read -r l; do [ "$l" = . ] && break; n=${l%%=*}; v=$(printf "%b" "${l#*=}X"); export "$n=${v%X}"; done; exec "$@"
@@ -824,6 +865,8 @@ ksh, BusyBox ash), so no value ever becomes another process's argument. The trai
 `X` sentinel preserves trailing newlines that command substitution would strip. The
 prelude needs nothing on the host beyond `/bin/sh` — no particular runspec version,
 no sudoers `env_keep`/`SETENV`, and no `sshd_config` `AcceptEnv`.
+
+The Python prelude likewise needs nothing beyond the venv's own interpreter.
 
 #### The env frame
 
@@ -841,17 +884,20 @@ NAME=\0ooo\0ooo…
   `$`, backticks or any other byte. A value containing a NUL byte is refused (an
   environment variable can't hold one).
 - After the terminating `.` line the prelude has consumed exactly the frame (`read`
-  never reads past a newline on a pipe), so any further bytes the executor writes
+  never reads past a newline on a pipe, and the Python prelude reads one byte at a
+  time), so any further bytes the executor writes
   reach the runnable's own standard input unchanged. An executor with nothing else
   to send closes standard input after the frame.
 
 #### Sudoers rules
 
-Under an escalation rule restricted to specific commands (for example the
-`enable-passwordless-sudo` *scoped* grant, which allows only the venv's `bin/`
-scripts), a run that carries env vars runs `/bin/sh` under the escalation tool, so
-the rule must allow it. `/bin/sh` can run any command, exactly like the `/usr/bin/env`
-the previous form required, so allowing it grants nothing that form did not.
+A run of a venv command that carries env vars runs the venv's own `bin/python`
+under the escalation tool, so any rule allowing that venv's `bin/` (the
+`enable-passwordless-sudo` *scoped* grant) or allowing everything except shells
+covers it. A run of any other command runs `/bin/sh`, so a rule restricted to
+specific commands must allow `/bin/sh` for it. `/bin/sh` can run any command, exactly
+like the `/usr/bin/env` the previous form required, so allowing it grants nothing
+that form did not.
 
 #### Superseded form
 

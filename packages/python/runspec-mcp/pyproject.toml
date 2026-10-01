@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-mcp"
-version = "0.1.7"
+version = "0.1.8"
 requires-python = ">=3.10"
 description = "Connect Claude Code to local and remote runspec runnables as MCP tools, from one config file"
 readme = "README.md"
@@ -12,7 +12,7 @@ license = "MIT"
 dependencies = [
     # 0.48.0 for the `discoverable` boolean + serve leaf globals; the gateway
     # reuses runspec.cli._build_schema and runspec.become.build_become_argv.
-    "runspec>=0.68.0",
+    "runspec>=0.70.0",
     # Warm SSH connection pool for remote venvs (mirrors runspec-console).
     "paramiko>=3.0",
     # Managed ed25519 keypair generation (also a transitive paramiko dep).

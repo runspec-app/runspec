@@ -196,7 +196,50 @@ def verify_run_as_identity(run_as_user: str) -> str | None:
 # ``sh -c '…'``. Verified in dash, bash, BusyBox sh, ksh and mksh.
 ENV_PRELUDE = 'while IFS= read -r l; do [ "$l" = . ] && break; n=${l%%=*}; v=$(printf "%b" "${l#*=}X"); export "$n=${v%X}"; done; exec "$@"'
 
+# The SPEC "Python prelude": the same job as ENV_PRELUDE, run on the command's
+# own venv interpreter (``{venv}/bin/python -c PY_ENV_PRELUDE cmd…``) so a sudoers
+# rule that refuses shells (``ALL, !/bin/sh, …``) or allows only the venv's
+# ``bin/`` still covers a run that carries variables. Reads one byte at a time so
+# it never consumes past the frame; no quotes, ``$`` or backticks, so it embeds
+# verbatim in a single-quoted shell word. Must match spec/SPEC.md byte for byte.
+PY_ENV_PRELUDE = """import os,sys
+l=bytes()
+while 1:
+ c=os.read(0,1)
+ if c and c!=bytes([10]):
+  l+=c;continue
+ if l==bytes([46]) or not l and not c:break
+ if l:n,s,v=l.partition(bytes([61]));os.environ[n.decode()]=bytes(int(v[i+2:i+5],8) for i in range(0,len(v),5)).decode()
+ if not c:break
+ l=bytes()
+os.execvp(sys.argv[1],sys.argv[1:])"""
+
+# ``{venv}`` values that hold a ``bin/`` but are not virtual environments (no
+# ``python`` beside the command), per the SPEC "Command building" rule.
+_NOT_VENV_ROOTS = frozenset({"/", "/usr", "/usr/local", "/snap", "/opt/homebrew"})
+
 _ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def venv_python_for(command: str) -> str | None:
+    """The venv interpreter to run the Python env prelude on for ``command``, or
+    ``None`` to use the shell prelude (SPEC "Command building").
+
+    ``command`` must be an absolute POSIX path ``{venv}/bin/{name}`` whose
+    ``{venv}`` isn't a system or user-tool prefix. When the path exists on this
+    machine (a local run) ``{venv}/pyvenv.cfg`` must exist too; a remote path is
+    judged by its shape alone."""
+    if not command.startswith("/") or "\\" in command:
+        return None
+    parts = command.rstrip("/").split("/")
+    if len(parts) < 3 or parts[-2] != "bin" or not parts[-1]:
+        return None
+    venv = "/".join(parts[:-2]) or "/"
+    if venv in _NOT_VENV_ROOTS or venv.rsplit("/", 1)[-1] == ".local":
+        return None
+    if os.path.exists(command) and not os.path.exists(f"{venv}/pyvenv.cfg"):
+        return None
+    return f"{venv}/bin/python"
 
 
 def env_frame(env: Mapping[str, str]) -> bytes:
@@ -244,8 +287,10 @@ def build_exec_argv(
 ) -> tuple[list[str], bytes | None]:
     """The SPEC "Command building" table: ``(argv, stdin)``.
 
-    With ``env``, the command is wrapped in the env prelude (``sh -c ENV_PRELUDE
-    sh cmd…``) — inside the escalation when ``run_as`` is set — and ``stdin`` is
+    With ``env``, the command is wrapped in the env prelude — inside the
+    escalation when ``run_as`` is set: ``{venv}/bin/python -c PY_ENV_PRELUDE
+    cmd…`` for a command in a venv (:func:`venv_python_for`), else ``sh -c
+    ENV_PRELUDE sh cmd…`` — and ``stdin`` is
     the env frame the caller must write to the process's standard input before
     anything else. Variable values never appear in ``argv`` (a command line is
     readable by every user and ``sudo`` logs it). Without ``env``, ``stdin`` is
@@ -256,7 +301,8 @@ def build_exec_argv(
     if not env:
         return build_become_argv(cmd_argv, run_as, become_method, become_flags), None
     frame = env_frame(env)
-    wrapped = ["sh", "-c", ENV_PRELUDE, "sh", *cmd_argv]
+    py = venv_python_for(cmd_argv[0]) if cmd_argv else None
+    wrapped = [py, "-c", PY_ENV_PRELUDE, *cmd_argv] if py else ["sh", "-c", ENV_PRELUDE, "sh", *cmd_argv]
     return build_become_argv(wrapped, run_as, become_method, become_flags), frame
 
 

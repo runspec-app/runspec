@@ -44,9 +44,11 @@ otherwise, naming the account to `sudo -u` to.
 which never prompts for a password, so the admin needs a passwordless sudo rule.
 `enable-passwordless-sudo` installs one:
 
-- `--scope scoped` allows only this venv's tools, run directly
-  (`sudo /opt/venvs/admin/bin/<tool>` from a shell or cron). It does **not**
-  cover the console or the gateway, which pass variables to the tool through a
-  `sh` prelude so that secrets never go on a command line; sudo then sees `sh`,
-  not the tool.
-- `--scope all` grants `NOPASSWD: ALL`, which the console and the gateway need.
+- `--scope scoped` allows only the programs in this venv's `bin/`. That covers
+  direct runs (`sudo /opt/venvs/admin/bin/<tool>` from a shell or cron) and,
+  with runspec-console / runspec-mcp built on runspec ≥ 0.70.0, console and
+  gateway runs too. Those pass variables to the tool on stdin through a small
+  prelude that runs on the venv's own `bin/python`, which the scoped rule covers.
+  (Before runspec 0.70.0 the prelude ran on `sh`, which the scoped rule doesn't
+  cover, so console runs that carried variables needed `--scope all`.)
+- `--scope all` grants `NOPASSWD: ALL`.

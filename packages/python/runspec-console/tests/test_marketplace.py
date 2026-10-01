@@ -815,7 +815,7 @@ def test_pip_env_by_repo_role():
 
 
 def test_remote_command_shapes():
-    from runspec.become import ENV_PRELUDE, parse_env_frame
+    from runspec.become import PY_ENV_PRELUDE, parse_env_frame
 
     argv = ["/opt/v/bin/python", "-m", "pip", "install", "runspec-linux"]
     assert mp.remote_command(argv) == (
@@ -827,10 +827,12 @@ def test_remote_command_shapes():
         None,
     )
     # With env (the index URL can embed a credential): the SPEC env prelude, the
-    # values on stdin — never in the command line.
+    # values on stdin — never in the command line. The command is the venv's
+    # python, so the prelude runs on it rather than sh (a shells-refused sudoers
+    # rule still allows it).
     url = "https://u:p@x/simple/"
     cmd, frame = mp.remote_command(argv, env={"PIP_INDEX_URL": url})
-    assert shlex.split(cmd) == ["sh", "-c", ENV_PRELUDE, "sh", *argv]
+    assert shlex.split(cmd) == ["/opt/v/bin/python", "-c", PY_ENV_PRELUDE, *argv]
     assert "u:p@" not in cmd and parse_env_frame(frame) == {"PIP_INDEX_URL": url}
     cmd, frame = mp.remote_command(argv, run_as="svc", env={"A": "b c"})
     assert shlex.split(cmd) == [
@@ -838,10 +840,9 @@ def test_remote_command_shapes():
         "-n",
         "-u",
         "svc",
-        "sh",
+        "/opt/v/bin/python",
         "-c",
-        ENV_PRELUDE,
-        "sh",
+        PY_ENV_PRELUDE,
         *argv,
     ]
     assert parse_env_frame(frame) == {"A": "b c"}

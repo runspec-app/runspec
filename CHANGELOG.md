@@ -7,6 +7,40 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.70.0] — 2026-10-01
+
+**A sudoers rule that refuses shells no longer breaks runs that carry
+variables.** An escalated run with variables (a secret arg, a credential,
+`RUNSPEC_AGENT`, a Marketplace index URL) passes them on stdin through the SPEC
+*env prelude*. Since 0.67.0 that prelude ran on `sh`:
+`sudo -u svc sh -c '<prelude>' sh <tool>`.
+
+Two common sudoers shapes refuse that `sh`:
+- a corporate `(svc) NOPASSWD: ALL, !/bin/sh, !/bin/bash, …`;
+- the `enable-passwordless-sudo` *scoped* grant, which allows only the venv's
+  `bin/`.
+
+Under either one, those runs failed. The plain `sudo -u svc <tool>` worked,
+which made it confusing.
+
+When the command lives in a virtual environment (`{venv}/bin/{name}`), the
+prelude now runs on **that venv's own `bin/python`** instead:
+`sudo -u svc {venv}/bin/python -c '<python prelude>' <tool> …`. Both rule
+shapes allow it, and it's the interpreter the runnable runs on anyway.
+
+- **Unchanged:** the env frame, the guarantee that values never appear on a
+  command line, and everything else. Any other command keeps the `sh` prelude.
+- **What counts as a venv:** `{venv}` is not `/`, `/usr`, `/usr/local`,
+  `/snap`, `/opt/homebrew` or a `.local` directory. A path that exists locally
+  must also have `pyvenv.cfg`.
+- **API:** `runspec.become.PY_ENV_PRELUDE`, `venv_python_for()`.
+- **SPEC:** "Remote Execution → Command building" defines both preludes, the
+  `{prelude-cmd}` choice and the updated sudoers guidance.
+- **Tests:** the root-only `test_secret_argv.py` (CI `python-multiuser`) gains
+  real-sudo tests of the Python prelude. One installs an
+  `ALL, !/bin/sh, …` rule for a throwaway account, and checks the shell form is
+  refused while the Python prelude runs and receives the value intact.
+
 ## [0.69.0] — 2026-09-30
 
 **`runspec deny` removes one rule, and shows which hostname rules match.**

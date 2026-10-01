@@ -629,9 +629,11 @@ Then look at the sudo line for this run:
 sudo journalctl _COMM=sudo --since "-5min" | grep alice | tail -2
 ```
 
-**You should see:** `COMMAND=/usr/bin/sh -c while IFS= read -r l; …` followed
-by the tool: the fixed prelude that reads the variables from stdin. The secret
-isn't in it.
+**You should see:** `COMMAND=/opt/venvs/ops/bin/python -c import os,sys …`
+followed by the tool: the fixed prelude, running on the venv's own python, that
+reads the variables from stdin. The secret isn't in it. (A console built on
+runspec older than 0.70.0 shows `COMMAND=/usr/bin/sh -c while IFS= read -r l; …`
+instead; same idea, on `sh`.)
 
 **This proves:** secrets travel on stdin, not on a command line anyone can read
 with `ps` or in the sudo log.
@@ -826,11 +828,17 @@ Now test it from the **console**: host **deb3-jason** → run **list-upgrades**.
 
 **You should see:** it **works**. A Forms run with no environment variables is
 `sudo -n -u root /opt/venvs/admin/bin/list-upgrades` directly, and the scoped
-rule covers that binary. (The `sh -c` env wrapper, which a scoped rule does
-*not* cover, is only used when the run carries variables, e.g. a selected
-credential. To see that limit, pick any credential in the run dialog's
-credential section and run again: it fails, and the console adds its "Ask an
-administrator for a passwordless sudo rule…" line.)
+rule covers that binary.
+
+Now pick any credential in the run dialog's credential section and run again.
+That run carries variables, so the console wraps it in the env prelude, which
+runs on the venv's own python:
+`sudo -n -u root /opt/venvs/admin/bin/python -c '<prelude>' …/list-upgrades`.
+
+**You should see:** it **still works** (console 0.310.0+). `bin/python` is in
+the venv's `bin/`, which the scoped rule covers. An older console runs the
+prelude on `sh`, so this run fails with the "Ask an administrator for a
+passwordless sudo rule…" line.
 
 ### C6. The "all" passwordless rule
 
@@ -840,10 +848,12 @@ In your jason SSH session on deb3:
 /opt/venvs/admin/bin/enable-passwordless-sudo --scope all
 ```
 
-In the **console**: host **deb3-jason** → run **list-upgrades**, this time with
-a credential selected as at the end of C5.
+In the **console**: host **deb3-jason** → run **list-upgrades**, with and
+without a credential selected.
 
-**You should see:** it works. The "all" rule covers the `sh` env wrapper too.
+**You should see:** both work. The "all" rule covers everything, so with
+console 0.310.0+ it adds nothing for these runs over the scoped rule. It's only
+needed for commands outside a venv.
 
 Now remove the rule again (and put back any rule you parked before C4):
 
@@ -870,8 +880,9 @@ After C4–C6, pick one way for admins to reach root from the console:
 1. **Command line only.** Admins type their sudo password in a terminal; the
    console handles everything else. Nothing to build.
 2. **`NOPASSWD: ALL` for admin accounts** (what C6 did). Simple, but broad.
-3. **A small launcher**, so the scoped rule from C5 works from the console too.
-   Only needed if (1) and (2) are both unacceptable.
+3. **The scoped rule from C5.** With console 0.310.0+ it covers console runs too,
+   with or without credentials, since the env prelude runs on the venv's own
+   python. Least privilege: only the admin venv's `bin/`.
 
 ---
 

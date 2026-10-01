@@ -225,12 +225,16 @@ become_flags  = "-H"        # passed through to the become method
 
 When there are environment variables to pass (secret args, credentials,
 `RUNSPEC_AGENT`), their values never go on the command line — every user on the
-host can read a command line (`ps`), and `sudo` logs it. The command is wrapped
-in a fixed POSIX `sh` *prelude* (`… -u {user} sh -c '<prelude>' sh {command}
-{args}`) and the values are written to the process's standard input as an *env
-frame*, which the prelude reads with shell builtins and exports before `exec`ing
-the runnable. It needs only `/bin/sh` on the host: no `sudo -E` / `env_keep`,
-no `sshd_config` change. See SPEC → "Remote Execution → Command building".
+host can read a command line (`ps`), and `sudo` logs it. The values are written
+to the process's standard input as an *env frame*, and a fixed *prelude* reads
+them and exports them before `exec`ing the runnable. For a runnable in a venv
+(the usual case) the prelude runs on that venv's own python
+(`… -u {user} {venv}/bin/python -c '<prelude>' {command} {args}`), so a sudoers
+rule that refuses shells, or one that allows only the venv's `bin/`, still
+covers it. Any other command uses a POSIX `sh` prelude
+(`… -u {user} sh -c '<prelude>' sh {command} {args}`). Neither needs `sudo -E` /
+`env_keep` or an `sshd_config` change. See SPEC → "Remote Execution → Command
+building".
 
 ---
 

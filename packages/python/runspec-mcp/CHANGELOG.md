@@ -2,6 +2,15 @@
 
 All notable changes to `runspec-mcp` are documented here.
 
+## [0.1.8] — 2026-10-01
+
+### Fixed
+
+- Gateway runs that carry variables (credentials) now work under a sudoers
+  rule that refuses shells (`ALL, !/bin/sh, …`) or that allows only the venv's
+  `bin/`. The gateway requires `runspec >= 0.70.0`, which runs the env prelude
+  on the venv's own `bin/python` instead of `sh`.
+
 ## [0.1.7] — 2026-09-30
 
 ### Fixed

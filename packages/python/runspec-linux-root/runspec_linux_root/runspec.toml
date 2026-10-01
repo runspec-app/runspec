@@ -142,4 +142,4 @@ required    = false
 type        = "choice"
 options     = ["scoped", "all"]
 default     = "scoped"
-description = "scoped = NOPASSWD only for this venv's tools, run directly (sudo <venv>/bin/<tool> from a shell or cron); all = NOPASSWD: ALL (also needed for runs from runspec-console or the MCP gateway)"
+description = "scoped = NOPASSWD only for the programs in this venv's bin/ (direct runs, and runspec-console / MCP gateway runs built on runspec >= 0.70.0); all = NOPASSWD: ALL"

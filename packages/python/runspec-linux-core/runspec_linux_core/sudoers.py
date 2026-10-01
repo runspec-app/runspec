@@ -12,13 +12,13 @@ fails, so a typo can't lock the operator out of sudo.
 
 Two grant scopes:
 
-- ``"scoped"`` — ``NOPASSWD`` only for the runspec venv's runnable scripts
-  (``{venv_bin}/``). Least privilege, and enough for **direct** runs:
-  ``sudo {venv_bin}/<tool>`` from a shell or cron. It does **not** cover the
-  console or the MCP gateway: since runspec 0.67.0 they pass variables on stdin
-  through a fixed ``sh`` prelude (secrets never on a command line), so the
-  command sudo sees is ``sh -c '<prelude>' sh <tool>`` — which this scope does
-  not match.
+- ``"scoped"`` — ``NOPASSWD`` only for the programs in the runspec venv's
+  ``bin/`` (``{venv_bin}/``). Least privilege. It covers **direct** runs
+  (``sudo {venv_bin}/<tool>`` from a shell or cron) and, from runspec 0.70.0,
+  console and MCP-gateway runs too: they pass variables on stdin through a fixed
+  prelude that runs on the venv's own ``bin/python`` (``sudo … {venv_bin}/python
+  -c '<prelude>' <tool>``), which this scope matches. Under runspec 0.67–0.69 the
+  prelude ran on ``sh``, which this scope does not match.
 - ``"all"`` — ``NOPASSWD: ALL``. Works for every path (direct, console, agent).
 """
 
