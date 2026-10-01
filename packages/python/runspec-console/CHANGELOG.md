@@ -7,6 +7,33 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.311.0] — 2026-10-01
+
+### Added
+
+- **Autonomous MCP-server calls show a card in the Console.** A call from an
+  external agent to an `autonomous` runnable used to run with no card, so it
+  appeared only in History. It now gets the same card as a gated call, created
+  straight in *running* with no Approve/Deny. Its output streams in, and the
+  card ends as done or failed. Built-in tools exposed over MCP
+  (`expose_builtins`) get one too. (`bridge_mcp_server._mcp_gate_with_card`.)
+
+### Fixed
+
+- **MCP-server calls show up in the Console again.** A confirm-gated call from
+  an external agent (Claude Code, Cursor) over the console's MCP server played
+  the confirm sound, but nothing appeared in the Console view.
+  - **Cause:** each call's card opened its own read-only session, like a
+    trigger fire. The Console only shows the selected session, and an open
+    chat is always the selected one. So the card, with its Approve/Deny, sat on
+    a chip you weren't looking at. The 0.280.1 test only covered a Console with
+    no chat open, so it missed this.
+  - **Fix:** an MCP-server card no longer opens a session. Its block goes into
+    your current chat, the same place a Forms run goes, and the Approve/Deny
+    shows where you're looking. Trigger and schedule fires still get their own
+    chips. (`bridge_mcp_server._mcp_server_card`;
+    `sessions.cardHasOwnSession`, `ConsoleView` `applyCard`/`placeCard`.)
+
 ## [0.310.0] — 2026-10-01
 
 ### Fixed

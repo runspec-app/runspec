@@ -7,7 +7,7 @@ import { OutputPanel, useInvocationBlocks, type RerunData, type InvocationBlock,
 import { useIsDark, MONO_FONT, RADIUS } from '../ThemeContext'
 import { useSessions } from '../useSessions'
 import { SessionStrip } from '../components/SessionStrip'
-import { cardLabel, sessionStatus, type Session } from '../sessions'
+import { cardHasOwnSession, cardLabel, sessionStatus, type Session } from '../sessions'
 import { READ_ONLY_SESSION_HINT } from '../components/CommandInput'
 
 const { Text } = Typography
@@ -225,13 +225,18 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
   // the chip row shows it as its own read-only session. First sighting creates
   // the block; later card events reconcile terminal state only —
   // segments/currentText belong to the streamed handlers.
-  const applyCard = useCallback((card: TriggerCard, kind: 'trigger' | 'schedule') => {
-    if (!card?.card_id) return
+  //
+  // placeCard creates / reconciles the block in a given session; applyCard
+  // picks the session. A console MCP-server call (`source: "mcp"`) has no
+  // session of its own: its block goes into the operator's current chat (like
+  // a Forms run). As a separate chip it was never the selected session, so the
+  // confirm sound played but nothing appeared in view.
+  const placeCard = useCallback((card: TriggerCard, kind: 'trigger' | 'schedule', sessionId: string) => {
     const id = card.card_id
     const isRun = cardIsRun(card, kind)
     upsertBlockRef.current(id, () => ({
       id,
-      sessionId: id,
+      sessionId,
       type: isRun ? 'run' : 'chat',
       label: cardBlockLabel(card, kind),
       startedAt: new Date((card.created_at || Date.now() / 1000) * 1000).toISOString(),
@@ -262,6 +267,32 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
       })
     }
   }, [])
+
+  const mcpPlacementRef = useRef<Map<string, Promise<string | null>>>(new Map())
+  const applyCard = useCallback((card: TriggerCard, kind: 'trigger' | 'schedule') => {
+    if (!card?.card_id) return
+    if (cardHasOwnSession(card)) {
+      placeCard(card, kind, card.card_id)
+      return
+    }
+    const id = card.card_id
+    const known = blocksRef.current.find(b => b.id === id)
+    if (known) {
+      placeCard(card, kind, known.sessionId)
+      return
+    }
+    // First sighting: resolve the host chat once per card (later events for the
+    // same card chain on it, so they apply in order and never open two chats).
+    let target = mcpPlacementRef.current.get(id)
+    if (!target) {
+      target = sessionsRef.current.ensureInteractive()
+      mcpPlacementRef.current.set(id, target)
+    }
+    void target.then(sid => {
+      if (sid) placeCard(card, kind, sid)
+      if (card.column === 'done' || card.column === 'failed') mcpPlacementRef.current.delete(id)
+    })
+  }, [placeCard])
 
   // The live session list + selection (chip row). Seeds from the backend and
   // both run boards (cold start replays every card through applyCard), folds

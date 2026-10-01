@@ -26,6 +26,13 @@ vi.mock('../bridge', () => ({
         return () => Promise.resolve([])
       }
       if (p === 'close_chat_session' || p === 'select_chat_session') return () => Promise.resolve({ ok: true })
+      // An MCP-server card lands in the current chat, opened on demand.
+      if (p === 'new_chat_session') {
+        return () => Promise.resolve({
+          id: 's1', kind: 'chat', label: '', interactive: true,
+          created_at: Date.now() / 1000, state: 'idle', turn: '', turns: 0,
+        })
+      }
       return vi.fn()
     },
   }),
@@ -128,6 +135,7 @@ describe('trigger runs in the Console', () => {
         card_id: 'm1', source: 'mcp', event_type: 'request',
         detail: { mode: 'rule', runnable: 'drain-node' }, column: 'awaiting_human',
       }))
+      for (let i = 0; i < 4; i++) await new Promise(r => setTimeout(r, 0))
     })
     await act(async () => {
       emitConfirm({

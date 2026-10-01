@@ -30,7 +30,9 @@ class _CardPrimitives:
         self.cards.append((event, dict(payload)))
 
     def _sync_card_session(self, kind, card):
-        pass
+        # An MCP card must never open its own session: the Console shows it
+        # inline in the operator's current chat, not as a hidden chip.
+        raise AssertionError("MCP server cards must not open a session")
 
     def _evict_trigger_cards(self, keep_id):
         pass
@@ -144,7 +146,9 @@ def test_autonomous_runs_and_returns_output():
     assert "ran greet" in text
     assert b.registered == []  # autonomous → no confirm raised
     assert b.runs and b.runs[0][1] == "greet" and b.runs[0][4] == "mcp"
-    assert b.card_columns() == []  # nothing to approve → no card
+    # Nothing to approve, but still a visible Console card, straight to running.
+    assert b.card_columns() == ["running", "done"]
+    assert b.inv_ids_seen[0] == b.cards[0][1]["card_id"]  # output streams into it
 
 
 def test_confirm_approved_runs():
@@ -356,6 +360,7 @@ def test_builtin_autonomous_runs_under_mcp_chat_id(monkeypatch):
     assert is_error is False and "ran console_status" in text
     assert b.registered == []  # autonomous → no confirm
     assert b.ran and b.ran[0][0] == "console_status" and b.ran[0][2] == "__mcp_server__"
+    assert b.card_columns() == ["running", "done"]  # visible, no Approve/Deny
 
 
 def test_builtin_confirm_parks_then_runs(monkeypatch):

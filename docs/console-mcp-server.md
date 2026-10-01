@@ -192,10 +192,14 @@ per-arg autonomy and the optional floor):
 
 | autonomy | over the console's MCP server |
 |---|---|
-| `autonomous` | runs immediately, no prompt |
+| `autonomous` | runs immediately, no prompt (its card still shows the run in the Console) |
 | `confirm` / `supervised` | **parks in the console's confirm card** — you Approve / edit args / Deny |
 | `manual` | refused (operator-only; run it yourself in the console) |
 | `password` args | omitted from the tool schema entirely |
+
+Every call shows as a card in the Console, in the chat you're viewing (or a new
+chat if none is open), like a Forms run. A gated call's card carries the
+Approve/Deny; an autonomous call's card just shows the run and its output.
 
 The denylist and `enforce_run_as` still apply on the executing host, regardless.
 

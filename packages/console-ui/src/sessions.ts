@@ -112,8 +112,16 @@ export function sessionFromCard(card: TriggerCard, kind: 'trigger' | 'schedule')
 /** Fold a run-card event into the list: first sighting appends the session;
  *  later ones reconcile the column / terminal state (the backend's own label,
  *  when it arrived via `runspec:session`, is kept). */
+/** Whether a run card is its own read-only session (chip). True for trigger /
+ *  schedule fires; false for a console MCP-server call (`source: "mcp"`), which
+ *  is an operator-facing run like a Forms run — its block lands in the
+ *  operator's current chat instead, where the Approve/Deny is actually seen. */
+export function cardHasOwnSession(card: TriggerCard): boolean {
+  return card?.source !== 'mcp'
+}
+
 export function applyCardEvent(list: Session[], card: TriggerCard, kind: 'trigger' | 'schedule'): Session[] {
-  if (!card?.card_id) return list
+  if (!card?.card_id || !cardHasOwnSession(card)) return list
   const idx = list.findIndex(s => s.id === card.card_id)
   if (idx < 0) return [...list, sessionFromCard(card, kind)]
   const cur = list[idx]

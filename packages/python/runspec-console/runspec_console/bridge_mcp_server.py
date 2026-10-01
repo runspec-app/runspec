@@ -175,9 +175,9 @@ class McpServerMixin:
         level: str,
         runnable: str,
         host: str,
-    ) -> tuple[str | None, bool, dict[str, Any], bool]:
-        """Gate a ``confirm``/``supervised`` MCP call behind a **visible** Console
-        card, returning ``(card_id, approved, args, timed_out)``.
+    ) -> tuple[str, bool, dict[str, Any], bool]:
+        """Gate an MCP call behind a **visible** Console card, returning
+        ``(card_id, approved, args, timed_out)``.
 
         Without a card the parked confirm had no home: its chat id was a fixed
         sentinel with no session/block, so the Approve/Deny prompt never rendered
@@ -187,12 +187,22 @@ class McpServerMixin:
         read-only run block in the always-present Console tab, so the operator can
         approve it whether or not AI is enabled.
 
-        For an ``autonomous`` call there is nothing to approve — no card is made
-        (``card_id`` is ``None``) and the caller runs it straight through, as
-        before. ``args`` comes back with any operator edit applied."""
-        if level not in ("confirm", "supervised"):
-            return None, True, args, False
+        An ``autonomous`` call has nothing to approve: it still gets a card, made
+        straight in ``running``, so the operator sees every external call land in
+        the Console (it used to run with no card at all). The
+        caller runs it at once and finalises the card. ``args`` comes back with
+        any operator edit applied."""
         card_id = uuid.uuid4().hex[:12]
+        if level not in ("confirm", "supervised"):
+            self._mcp_server_card(
+                card_id,
+                runnable=runnable,
+                args=args,
+                host=host,
+                column="running",
+                note="autonomous — running",
+            )
+            return card_id, True, args, False
         self._mcp_server_card(
             card_id,
             runnable=runnable,
@@ -257,7 +267,8 @@ class McpServerMixin:
         Reuses the trigger inbox card shape — ``source="mcp"`` and
         ``detail.mode="rule"`` mark it a plain run (a run block, not an agent
         turn). Stored on the trigger board so a UI reload mid-approval replays it
-        (the gate's own cold-start seed is :meth:`get_pending_confirms`)."""
+        (the gate's own cold-start seed is :meth:`get_pending_confirms`). It opens
+        no session/chip: the Console shows it inline in the current chat."""
         now = time.time()
         with self._lock:
             card = self._trigger_cards.get(card_id)
@@ -293,10 +304,10 @@ class McpServerMixin:
                 card["timeline"].append({"ts": now, "text": note})
             self._evict_trigger_cards(card_id)
             snapshot = dict(card)
-        # Keep the backend session registry 1:1 with the card (so list_chat_sessions
-        # replays it), then push the card — the frontend derives the read-only
-        # session + block from this event.
-        self._sync_card_session("trigger", snapshot)
+        # No automation session of its own (unlike a trigger fire): an MCP call is
+        # an operator-facing run like a Forms run, so the frontend places its block
+        # in the operator's current chat. A separate read-only session made it an
+        # unselected chip — the confirm sound played but nothing showed in view.
         self._dispatch("runspec:trigger_card", snapshot)
 
     def _mcp_server_confirm_wait(self) -> float:

@@ -216,4 +216,59 @@ describe('Console sessions', () => {
     expect(screen.queryAllByTestId('session-chip')).toHaveLength(0)
     expect(screen.queryByText(/restarted ok/)).toBeNull()
   })
+
+  // Regression: a console MCP-server call used to open its own (unselected)
+  // chip, so with a chat open the confirm sound played but nothing showed in
+  // the Console. It now lands inline in the current chat, Approve/Deny visible.
+  it('an MCP-server card shows inline in the current chat, not as a hidden chip', async () => {
+    mount()
+    await sendMessage('hello')
+    const mcp = card({
+      card_id: 'm1', source: 'mcp', trigger: 'drain-node', event_type: 'request',
+      summary: '/drain-node on web-01', column: 'awaiting_human',
+      detail: { mode: 'rule', runnable: 'drain-node', args: { node: 'n1' }, host: 'web-01' },
+    })
+    await act(async () => { emit('runspec:trigger_card', mcp); await settle() })
+    await act(async () => {
+      emit('runspec:tool_confirm', {
+        id: 'm1', request_id: 'req-m1', tool_name: 'drain-node', tool_input: { node: 'n1' },
+        display_name: 'drain-node', display_input: { node: 'n1' }, autonomy: 'confirm',
+      })
+      await settle()
+    })
+    expect(chips().map(c => c.dataset.sessionId)).toEqual(['s1'])
+    expect(chip('s1').dataset.selected).toBe('true')
+    expect(screen.getByText('hello')).toBeTruthy()
+    expect(screen.getByText('/drain-node on web-01')).toBeTruthy()
+    expect(screen.getByRole('button', { name: /approve & run/i })).toBeTruthy()
+    expect(newChatSession).toHaveBeenCalledTimes(1)
+
+    // The terminal card fills the same block — still no extra chip.
+    await act(async () => {
+      emit('runspec:trigger_card', { ...mcp, column: 'done', detail: { ...mcp.detail, result: 'drained n1' } })
+      await settle()
+    })
+    expect(screen.getByText(/drained n1/)).toBeTruthy()
+    expect(chips().map(c => c.dataset.sessionId)).toEqual(['s1'])
+  })
+
+  it('an autonomous MCP-server call shows as a run in the current chat, no Approve', async () => {
+    mount()
+    await sendMessage('hello')
+    const mcp = card({
+      card_id: 'm2', source: 'mcp', trigger: 'disk-usage', event_type: 'request',
+      summary: '/disk-usage on web-01', column: 'running',
+      detail: { mode: 'rule', runnable: 'disk-usage', args: {}, host: 'web-01' },
+    })
+    await act(async () => { emit('runspec:trigger_card', mcp); await settle() })
+    expect(chips().map(c => c.dataset.sessionId)).toEqual(['s1'])
+    expect(screen.getByText('/disk-usage on web-01')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /approve & run/i })).toBeNull()
+
+    await act(async () => {
+      emit('runspec:trigger_card', { ...mcp, column: 'done', detail: { ...mcp.detail, result: '/ 42% used' } })
+      await settle()
+    })
+    expect(screen.getByText(/42% used/)).toBeTruthy()
+  })
 })
