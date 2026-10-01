@@ -7,6 +7,47 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.311.1] — 2026-10-01
+
+### Fixed
+
+- **A local run with a very long argument no longer fails as "Command not
+  found" on Windows.** Windows refuses a command line over 32,767 characters
+  (8,191 for a `.cmd`/`.bat` shim run through `cmd /c`). It fails with WinError
+  206, which Python raises as `FileNotFoundError`. A page update carrying a whole
+  document body hit this, and the console reported "Command not found: <exe>"
+  for a runnable that was installed. Smaller subcommands of the same runnable
+  kept working.
+  - When the line would be too long, the longest values now leave the command
+    line one at a time and go on the `RUNSPEC_<RUNNABLE>_ARG_<NAME>` environment
+    variable, which core already reads for any arg. Flags and list args stay on
+    the command line. A positional moves only when it is the last one still on
+    the command line, so the others keep their positions. No runnable change is
+    needed.
+  - This applies to the Forms, chat agent and MCP-server paths
+    (`executor.run_local` → `fit_command_line`).
+  - A process that fails to start now shows the real OS error.
+    "Command not found" appears only when the program really is missing.
+    A Windows too-long line also names its length and the limit
+    (`executor.start_error`; it used to catch only `FileNotFoundError`).
+
+- **Re-discovering unchanged runnables no longer floods the UI.** A host is
+  re-discovered when its `[refresh] discovery_interval` elapses, when its
+  transport reconnects, or on a forced refresh. Each re-discovery counted as a
+  change, even when the host's runnables were exactly the same. So the console
+  sent `runspec:runnables_updated` as often as every 0.5 s during a sweep, and
+  again at its end.
+  - Each of those events made the frontend fetch the whole catalogue again and
+    pushed `notifications/tools/list_changed` to connected MCP clients. That push
+    is the "dropped … no standalone channel" debug line Claude Code sessions
+    showed repeatedly.
+  - Every event also went through the single UI-dispatch queue that MCP-server
+    confirm cards use, so a card could take a long time to appear.
+  - Now only a real change sends the event: a host's runnables differ from what
+    the cache held, or a host joins or leaves (`bridge_internals._refresh_cycle`,
+    `_runnables_fingerprint`). Progress (`discovery_state`) is still reported
+    during the sweep.
+
 ## [0.311.0] — 2026-10-01
 
 ### Added

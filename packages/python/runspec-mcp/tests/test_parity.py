@@ -45,6 +45,12 @@ def test_executor_pure_helpers_parity():
     assert f_exec.args_to_argv(args) == c_exec.args_to_argv(args)
     assert f_exec.shell_join(["a", "b c", "d;e"]) == c_exec.shell_join(["a", "b c", "d;e"])
     assert f_exec.secret_env("my-tool", {"db-pass": "hunter2"}) == c_exec.secret_env("my-tool", {"db-pass": "hunter2"})
+    # Long values leave a Windows command line for the env channel identically.
+    long_args = {"page": "1", "body": "x" * 5000, "tags": ["a"], "force": True}
+    for budget in [None, 100_000, 1000]:
+        assert f_exec.fit_command_line("t", ["t.exe"], long_args, {"page": 1}, budget) == c_exec.fit_command_line("t", ["t.exe"], long_args, {"page": 1}, budget)
+    exc = FileNotFoundError(2, "No such file or directory")
+    assert f_exec.start_error(["/no/such/tool"], exc) == c_exec.start_error(["/no/such/tool"], exc)
     for msg in ["Error reading SSH protocol banner", "auth failed", "connection reset", "codec can't decode"]:
         assert f_exec.is_transient_ssh_error(msg) == c_exec.is_transient_ssh_error(msg)
     # The SPEC env-frame command building (values on stdin, never in the line).

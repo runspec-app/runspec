@@ -6,6 +6,7 @@ instance, so ``self`` carries all shared state.
 
 from __future__ import annotations
 
+import json
 import random
 import sys
 import threading
@@ -44,6 +45,14 @@ if TYPE_CHECKING:
 # Minimum spacing (s) between mid-cycle discovery progress dispatches — see
 # _refresh_cycle_locked. The final end-of-cycle dispatch is never throttled.
 _DISCOVERY_DISPATCH_MIN_INTERVAL = 0.5
+
+
+def _runnables_fingerprint(entries: list[dict[str, Any]]) -> str:
+    """Order-sensitive content key for one host's discovered runnables — equal
+    when a re-discovery found exactly what the cache already held."""
+    return json.dumps(entries, sort_keys=True, default=str)
+
+
 # Same for the probe phase's per-host hosts_updated (sidebar dots).
 _PROBE_DISPATCH_MIN_INTERVAL = 0.5
 
@@ -1034,6 +1043,9 @@ class InternalsMixin:
                 and self._connected_cache.get(h["name"], h.get("ssh") is None)
             }
             previous_hosts = {r.get("host", "") for r in self._runnables_cache}
+            previous_by_host: dict[str, list[dict[str, Any]]] = {}
+            for r in self._runnables_cache:
+                previous_by_host.setdefault(r.get("host", ""), []).append(r)
             accumulated: list[dict[str, Any]] = [
                 r for r in self._runnables_cache if r.get("host", "") in keep_names
             ]
@@ -1046,6 +1058,13 @@ class InternalsMixin:
         # _DISCOVERY_DISPATCH_MIN_INTERVAL mid-cycle; the final emit below is
         # unconditional.
         last_emit = 0.0
+        # Re-discovering a host (its interval elapsed, or its transport
+        # reconnected) usually finds exactly what it had. Only a real change is
+        # worth a `runnables_updated` — each one makes the frontend re-fetch the
+        # catalogue and pushes `tools/list_changed` to MCP clients, and a
+        # no-change stream of them clogs the single UI-dispatch queue that
+        # confirm cards also ride.
+        content_changed = False
         if to_discover:
             with ThreadPoolExecutor(
                 max_workers=min(workers, len(to_discover)),
@@ -1074,6 +1093,10 @@ class InternalsMixin:
                         continue  # skipped: superseded — the next cycle re-runs it
                     cleaned = self._dedup_host_runnables(host_runnables, host_name)
                     accumulated.extend(cleaned)
+                    host_changed = _runnables_fingerprint(
+                        cleaned
+                    ) != _runnables_fingerprint(previous_by_host.get(host_name, []))
+                    content_changed = content_changed or host_changed
                     done += 1
                     # Splice this host's results into the live cache: drop its
                     # prior entries, keep every other host's, append the fresh
@@ -1094,7 +1117,8 @@ class InternalsMixin:
                     t = time.monotonic()
                     if t - last_emit >= _DISCOVERY_DISPATCH_MIN_INTERVAL:
                         last_emit = t
-                        self._dispatch("runspec:runnables_updated", {})
+                        if content_changed:
+                            self._dispatch("runspec:runnables_updated", {})
                         self._dispatch(
                             "runspec:discovery_state",
                             {
@@ -1124,7 +1148,7 @@ class InternalsMixin:
             for n in [n for n in self._discovery_stamp if n not in in_scope]:
                 self._discovery_stamp.pop(n, None)
             current_hosts = {r.get("host", "") for r in accumulated}
-        changed = bool(to_discover) or current_hosts != previous_hosts
+        changed = content_changed or current_hosts != previous_hosts
         logger.debug(
             "discovery: %d host(s) re-discovered, %d kept (fresh), force=%s",
             len(to_discover),
@@ -1135,9 +1159,9 @@ class InternalsMixin:
             "runspec:discovery_state", {"done": total, "total": total, "ready": True}
         )
         if changed:
-            # Something was re-discovered or a host left — tell the UI once (a
-            # steady-state cycle with nothing to re-run stays silent, so the
-            # frontend doesn't refetch the catalogue every 30 s).
+            # A host's runnables changed or a host left — tell the UI once (a
+            # cycle that re-discovered the same runnables stays silent, so the
+            # frontend doesn't refetch the catalogue for nothing).
             self._dispatch("runspec:runnables_updated", {})
             # The fleet's runnables changed — refresh every staffed queue's
             # self-service catalog so visitors are offered what can run *now*.

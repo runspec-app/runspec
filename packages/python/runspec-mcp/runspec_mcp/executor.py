@@ -199,20 +199,10 @@ def friendly_ssh_error(exc: BaseException | str) -> str:
     """
     msg = str(exc).strip()
     low = msg.lower()
-    if "banner" in low and (
-        "codec can't decode" in low or "invalid start byte" in low or "utf-8" in low
-    ):
-        return (
-            f"{msg}\n   ↳ the remote sent non-SSH data on connect — a proxy, TLS "
-            "middlebox, or load balancer may be intercepting the connection, or "
-            "the port is not an SSH server."
-        )
+    if "banner" in low and ("codec can't decode" in low or "invalid start byte" in low or "utf-8" in low):
+        return f"{msg}\n   ↳ the remote sent non-SSH data on connect — a proxy, TLS middlebox, or load balancer may be intercepting the connection, or the port is not an SSH server."
     if "banner" in low:
-        return (
-            f"{msg}\n   ↳ no SSH banner before the timeout — the server may be "
-            "slow, behind a proxy, or throttling new connections (sshd "
-            "MaxStartups). Raising [ssh] banner_timeout can help."
-        )
+        return f"{msg}\n   ↳ no SSH banner before the timeout — the server may be slow, behind a proxy, or throttling new connections (sshd MaxStartups). Raising [ssh] banner_timeout can help."
     return msg
 
 
@@ -286,15 +276,11 @@ def remote_exec_command(
     frame is ``None``. Every token is quoted (:func:`shell_join`)."""
     from runspec.become import build_exec_argv
 
-    parts, frame = build_exec_argv(
-        cmd_argv, run_as, become_method, become_flags, env=env or None
-    )
+    parts, frame = build_exec_argv(cmd_argv, run_as, become_method, become_flags, env=env or None)
     return shell_join(parts), frame
 
 
-def args_to_argv(
-    args: dict[str, Any], positionals: dict[str, int] | None = None
-) -> list[str]:
+def args_to_argv(args: dict[str, Any], positionals: dict[str, int] | None = None) -> list[str]:
     """Convert a {name: value} args dict to a CLI argv list.
 
     Args named in ``positionals`` ({name: position}) are emitted as bare values
@@ -349,6 +335,63 @@ def secret_env(runnable: str, secrets: dict[str, Any] | None) -> dict[str, str]:
     return out
 
 
+# Windows caps a process command line at 32,767 characters (CreateProcess), and
+# cmd.exe — the interpreter a .cmd/.bat shim runs under — at 8,191. A longer line
+# fails with WinError 206, which Python reports as FileNotFoundError, so it used
+# to surface as a misleading "Command not found" for a binary that exists.
+WIN_CMDLINE_MAX = 32_767
+WIN_CMD_SHIM_MAX = 8_191
+
+
+def fit_command_line(
+    runnable: str,
+    prefix: list[str],
+    args: dict[str, Any],
+    positionals: dict[str, int] | None = None,
+    budget: int | None = None,
+) -> tuple[list[str], dict[str, str]]:
+    """``(argv, env)`` for ``args`` such that ``prefix + argv`` fits ``budget``
+    characters (as Windows measures it, via ``subprocess.list2cmdline``).
+
+    When the line is too long, the longest scalar values move off argv onto the
+    ``RUNSPEC_<RUNNABLE>_ARG_<NAME>`` env channel core reads for every arg (cli →
+    env → default), one at a time until the line fits. Flags and lists stay on
+    argv (a list's env form is newline-split); a positional moves only when it is
+    the last one still on argv, so the rest keep their positions. ``budget=None``
+    → no limit, the plain ``args_to_argv`` result and no env."""
+    positionals = positionals or {}
+    remaining = dict(args)
+    env: dict[str, str] = {}
+
+    def too_long() -> bool:
+        line = subprocess.list2cmdline([*prefix, *args_to_argv(remaining, positionals)])
+        return budget is not None and len(line) > budget
+
+    while too_long():
+        present = [k for k in remaining if k in positionals and remaining[k] not in (None, "")]
+        last_pos = max((positionals[k] for k in present), default=None)
+        movable = [k for k, v in remaining.items() if isinstance(v, (str, int, float)) and not isinstance(v, bool) and str(v) != "" and (k not in positionals or positionals[k] == last_pos)]
+        if not movable:
+            break
+        name = max(movable, key=lambda k: len(str(remaining[k])))
+        env.update(secret_env(runnable, {name: remaining.pop(name)}))
+    return args_to_argv(remaining, positionals), env
+
+
+def start_error(cmd: list[str], exc: OSError) -> str:
+    """The line shown when ``cmd`` can't be started. "Command not found" only
+    when the program really is missing; otherwise the OS error itself, plus the
+    command-line length when Windows refused it as too long."""
+    program = cmd[0] if cmd else ""
+    if isinstance(exc, FileNotFoundError) and getattr(exc, "winerror", None) != 206 and not Path(program).exists() and shutil.which(program) is None:
+        return f"✗  Command not found: {program}"
+    msg = f"✗  Could not start {program}: {exc}"
+    length = len(subprocess.list2cmdline(cmd))
+    if getattr(exc, "winerror", None) == 206 or (sys.platform == "win32" and length > WIN_CMDLINE_MAX):
+        msg += f" — the command line is {length:,} characters; Windows allows at most {WIN_CMDLINE_MAX:,}"
+    return msg
+
+
 def run_local(
     runspec_path: str,
     runnable: str,
@@ -378,21 +421,18 @@ def run_local(
     bin_dir = Path(runspec_path).parent
     # On Windows a Node folder (`runspec bin`) ships .cmd shims alongside the
     # POSIX ones; a Python venv has .exe entry points. Prefer .exe, then .cmd/.bat.
-    candidates = (
-        [f"{runnable}.exe", f"{runnable}.cmd", f"{runnable}.bat", runnable]
-        if sys.platform == "win32"
-        else [runnable]
-    )
-    binary = next(
-        (bin_dir / c for c in candidates if (bin_dir / c).exists()), bin_dir / runnable
-    )
-    argv = args_to_argv(args, positionals)
-    cmd = [str(binary), *command_path, *argv]
+    candidates = [f"{runnable}.exe", f"{runnable}.cmd", f"{runnable}.bat", runnable] if sys.platform == "win32" else [runnable]
+    binary = next((bin_dir / c for c in candidates if (bin_dir / c).exists()), bin_dir / runnable)
     # A .cmd/.bat shim isn't directly executable by CreateProcess — run it
     # through the command interpreter so the Node-folder shims work on Windows.
-    if sys.platform == "win32" and binary.suffix.lower() in (".cmd", ".bat"):
-        cmd = ["cmd", "/c", *cmd]
-    secrets_env = secret_env(runnable, secrets)
+    shim = sys.platform == "win32" and binary.suffix.lower() in (".cmd", ".bat")
+    prefix = (["cmd", "/c"] if shim else []) + [str(binary), *command_path]
+    # On Windows a long value (e.g. a whole document body) can push the command
+    # line past the OS limit — move the longest values onto the env channel.
+    budget = (WIN_CMD_SHIM_MAX if shim else WIN_CMDLINE_MAX) - 64 if sys.platform == "win32" else None
+    argv, long_env = fit_command_line(runnable, prefix, args, positionals, budget)
+    cmd = [*prefix, *argv]
+    secrets_env = {**long_env, **secret_env(runnable, secrets)}
     cred_env = cred_env or {}
     # Provenance of what caused this run → recorded in the runnable's run_summary
     # (extra.trigger = event source, extra.runbook = the saved runbook that drove it).
@@ -412,9 +452,7 @@ def run_local(
         env.update(prov_env)
         env.update(secrets_env)
         env.update(cred_env)
-        cmd, frame = build_exec_argv(
-            cmd, run_as, become_method, become_flags, env=env or None
-        )
+        cmd, frame = build_exec_argv(cmd, run_as, become_method, become_flags, env=env or None)
     else:
         # No escalation — secrets/cred env vars go straight into the child process.
         extra_env = {**secrets_env, **cred_env, **prov_env}
@@ -448,9 +486,7 @@ def _parse_ssh_target(target: str) -> tuple[str, str, int]:
     return user, host, port
 
 
-def _http_connect_sock(
-    proxy: str, host: str, port: int, timeout: float = 10.0
-) -> socket.socket:
+def _http_connect_sock(proxy: str, host: str, port: int, timeout: float = 10.0) -> socket.socket:
     """Open a socket to ``host:port`` tunnelled through an HTTP CONNECT proxy.
 
     ``proxy`` is like ``"http://proxy.corp:8080"`` (scheme optional). No proxy
@@ -479,9 +515,7 @@ def _http_connect_sock(
         status_line = resp.split(b"\r\n", 1)[0].decode("latin-1", "replace")
         fields = status_line.split(None, 2)
         if len(fields) < 2 or fields[1] != "200":
-            raise OSError(
-                f"HTTP proxy CONNECT to {host}:{port} failed: {status_line!r}"
-            )
+            raise OSError(f"HTTP proxy CONNECT to {host}:{port} failed: {status_line!r}")
     except Exception:
         sock.close()
         raise
@@ -665,9 +699,7 @@ def run_remote(
     # command is wrapped in the SPEC env prelude — inside the escalation when
     # run_as is set — and the values ride the channel's stdin as the env frame.
     # Every token is quoted, so an arg value can't inject shell syntax.
-    remote_cmd, frame = remote_exec_command(
-        cmd_argv, run_as, become_method, become_flags, env=all_env
-    )
+    remote_cmd, frame = remote_exec_command(cmd_argv, run_as, become_method, become_flags, env=all_env)
 
     if jump:
         # System-ssh transport: the local OpenSSH client performs the CentOS 6
@@ -770,9 +802,7 @@ def run_remote(
                         break
                     buf_err += chunk_err
                 for remainder, stream in ((buf_out, "stdout"), (buf_err, "stderr")):
-                    for line in remainder.decode(
-                        "utf-8", errors="replace"
-                    ).splitlines():
+                    for line in remainder.decode("utf-8", errors="replace").splitlines():
                         on_line(line, stream)
                 break
 
@@ -871,9 +901,7 @@ def _system_ssh_argv(
     """
     cfg = global_ssh_config or {}
     try:
-        connect_timeout = int(
-            float(cfg.get("connect_timeout", DEFAULT_CONNECT_TIMEOUT))
-        )
+        connect_timeout = int(float(cfg.get("connect_timeout", DEFAULT_CONNECT_TIMEOUT)))
     except (TypeError, ValueError):
         connect_timeout = int(DEFAULT_CONNECT_TIMEOUT)
     argv = [
@@ -971,9 +999,7 @@ def ssh_jump_copy_id(
     """
     cfg = global_ssh_config or {}
     try:
-        connect_timeout = int(
-            float(cfg.get("connect_timeout", DEFAULT_CONNECT_TIMEOUT))
-        )
+        connect_timeout = int(float(cfg.get("connect_timeout", DEFAULT_CONNECT_TIMEOUT)))
     except (TypeError, ValueError):
         connect_timeout = int(DEFAULT_CONNECT_TIMEOUT)
     user, host, port = _parse_ssh_target(ssh_target)
@@ -1019,9 +1045,7 @@ def ssh_jump_copy_id(
     return proc.returncode, proc.stdout, proc.stderr
 
 
-def jump_copy_id_command(
-    ssh_target: str, jump: str, identity_file: str | None = None, port: int = 22
-) -> str:
+def jump_copy_id_command(ssh_target: str, jump: str, identity_file: str | None = None, port: int = 22) -> str:
     """A copy-paste terminal command that authorises this machine on a ``jump``
     host — shown when ``sshpass`` isn't available (e.g. stock Windows) so the
     copy-key button has an actionable fallback instead of a paramiko error.
@@ -1070,8 +1094,8 @@ def _stream(
             errors="replace",
             env=env,
         )
-    except FileNotFoundError:
-        on_line(f"✗  Command not found: {cmd[0]}", "stderr")
+    except OSError as exc:
+        on_line(start_error(cmd, exc), "stderr")
         on_done(-1, 0)
         return
     if stdin_data and proc.stdin is not None:

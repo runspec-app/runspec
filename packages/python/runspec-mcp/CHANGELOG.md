@@ -2,6 +2,18 @@
 
 All notable changes to `runspec-mcp` are documented here.
 
+## [0.2.1] — 2026-10-01
+
+### Fixed
+
+- **A local run with a very long argument no longer fails as "Command not
+  found" on Windows.** This is the same fix as runspec-console 0.311.1, applied
+  to the vendored executor.
+  - When a run's command line would go past the Windows limit, the longest
+    values move onto the `RUNSPEC_<RUNNABLE>_ARG_<NAME>` environment variable.
+  - A process that fails to start shows the real OS error.
+  - `tests/test_parity.py` covers the new `fit_command_line` and `start_error`.
+
 ## [0.2.0] — 2026-10-01
 
 ### Added

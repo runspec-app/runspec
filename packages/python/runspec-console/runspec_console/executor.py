@@ -358,6 +358,82 @@ def secret_env(runnable: str, secrets: dict[str, Any] | None) -> dict[str, str]:
     return out
 
 
+# Windows caps a process command line at 32,767 characters (CreateProcess), and
+# cmd.exe — the interpreter a .cmd/.bat shim runs under — at 8,191. A longer line
+# fails with WinError 206, which Python reports as FileNotFoundError, so it used
+# to surface as a misleading "Command not found" for a binary that exists.
+WIN_CMDLINE_MAX = 32_767
+WIN_CMD_SHIM_MAX = 8_191
+
+
+def fit_command_line(
+    runnable: str,
+    prefix: list[str],
+    args: dict[str, Any],
+    positionals: dict[str, int] | None = None,
+    budget: int | None = None,
+) -> tuple[list[str], dict[str, str]]:
+    """``(argv, env)`` for ``args`` such that ``prefix + argv`` fits ``budget``
+    characters (as Windows measures it, via ``subprocess.list2cmdline``).
+
+    When the line is too long, the longest scalar values move off argv onto the
+    ``RUNSPEC_<RUNNABLE>_ARG_<NAME>`` env channel core reads for every arg (cli →
+    env → default), one at a time until the line fits. Flags and lists stay on
+    argv (a list's env form is newline-split); a positional moves only when it is
+    the last one still on argv, so the rest keep their positions. ``budget=None``
+    → no limit, the plain ``args_to_argv`` result and no env."""
+    positionals = positionals or {}
+    remaining = dict(args)
+    env: dict[str, str] = {}
+
+    def too_long() -> bool:
+        line = subprocess.list2cmdline([*prefix, *args_to_argv(remaining, positionals)])
+        return budget is not None and len(line) > budget
+
+    while too_long():
+        present = [
+            k for k in remaining if k in positionals and remaining[k] not in (None, "")
+        ]
+        last_pos = max((positionals[k] for k in present), default=None)
+        movable = [
+            k
+            for k, v in remaining.items()
+            if isinstance(v, (str, int, float))
+            and not isinstance(v, bool)
+            and str(v) != ""
+            and (k not in positionals or positionals[k] == last_pos)
+        ]
+        if not movable:
+            break
+        name = max(movable, key=lambda k: len(str(remaining[k])))
+        env.update(secret_env(runnable, {name: remaining.pop(name)}))
+    return args_to_argv(remaining, positionals), env
+
+
+def start_error(cmd: list[str], exc: OSError) -> str:
+    """The line shown when ``cmd`` can't be started. "Command not found" only
+    when the program really is missing; otherwise the OS error itself, plus the
+    command-line length when Windows refused it as too long."""
+    program = cmd[0] if cmd else ""
+    if (
+        isinstance(exc, FileNotFoundError)
+        and getattr(exc, "winerror", None) != 206
+        and not Path(program).exists()
+        and shutil.which(program) is None
+    ):
+        return f"✗  Command not found: {program}"
+    msg = f"✗  Could not start {program}: {exc}"
+    length = len(subprocess.list2cmdline(cmd))
+    if getattr(exc, "winerror", None) == 206 or (
+        sys.platform == "win32" and length > WIN_CMDLINE_MAX
+    ):
+        msg += (
+            f" — the command line is {length:,} characters; Windows allows at "
+            f"most {WIN_CMDLINE_MAX:,}"
+        )
+    return msg
+
+
 def run_local(
     runspec_path: str,
     runnable: str,
@@ -395,13 +471,20 @@ def run_local(
     binary = next(
         (bin_dir / c for c in candidates if (bin_dir / c).exists()), bin_dir / runnable
     )
-    argv = args_to_argv(args, positionals)
-    cmd = [str(binary), *command_path, *argv]
     # A .cmd/.bat shim isn't directly executable by CreateProcess — run it
     # through the command interpreter so the Node-folder shims work on Windows.
-    if sys.platform == "win32" and binary.suffix.lower() in (".cmd", ".bat"):
-        cmd = ["cmd", "/c", *cmd]
-    secrets_env = secret_env(runnable, secrets)
+    shim = sys.platform == "win32" and binary.suffix.lower() in (".cmd", ".bat")
+    prefix = (["cmd", "/c"] if shim else []) + [str(binary), *command_path]
+    # On Windows a long value (e.g. a whole document body) can push the command
+    # line past the OS limit — move the longest values onto the env channel.
+    budget = (
+        (WIN_CMD_SHIM_MAX if shim else WIN_CMDLINE_MAX) - 64
+        if sys.platform == "win32"
+        else None
+    )
+    argv, long_env = fit_command_line(runnable, prefix, args, positionals, budget)
+    cmd = [*prefix, *argv]
+    secrets_env = {**long_env, **secret_env(runnable, secrets)}
     cred_env = cred_env or {}
     # Provenance of what caused this run → recorded in the runnable's run_summary
     # (extra.trigger = event source, extra.runbook = the saved runbook that drove it).
@@ -1082,8 +1165,8 @@ def _stream(
             env=env,
             **no_window_kwargs(),
         )
-    except FileNotFoundError:
-        on_line(f"✗  Command not found: {cmd[0]}", "stderr")
+    except OSError as exc:
+        on_line(start_error(cmd, exc), "stderr")
         on_done(-1, 0)
         return
     if stdin_data and proc.stdin is not None:

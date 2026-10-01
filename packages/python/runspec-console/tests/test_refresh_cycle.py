@@ -473,6 +473,33 @@ def test_steady_state_cycle_emits_no_runnables_updated():
     assert len(states) == 2  # kickoff + final discovery_state only
 
 
+def test_rediscovering_unchanged_runnables_emits_no_runnables_updated():
+    # A re-discovery that finds what the cache already holds (interval elapsed,
+    # reconnect, force) must not make the UI re-fetch the catalogue or push
+    # tools/list_changed to MCP clients — that stream clogged the UI-dispatch
+    # queue confirm cards ride.
+    b = _make_bridge()
+    b._hosts = list(_H)
+    _run_cycle(b)
+    sizes, states = _run_cycle(b, force=True)
+    assert sorted(b.last_discovered) == ["h1", "h2", "local"]  # it did re-run
+    assert sizes == []
+    assert states[-1] == {"done": 3, "total": 3, "ready": True}
+
+
+def test_changed_runnables_still_emit_runnables_updated():
+    b = _make_bridge()
+    b._hosts = list(_H)
+    _run_cycle(b)
+    with b._lock:  # simulate h1 having held something different before
+        b._runnables_cache = [
+            r if r["host"] != "h1" else {**r, "name": "old"} for r in b._runnables_cache
+        ]
+    sizes, _ = _run_cycle(b, force=True)
+    assert sizes  # at least the final emit
+    assert {r["name"] for r in b._runnables_cache if r["host"] == "h1"} == {"r-h1"}
+
+
 def test_force_rediscovers_everything():
     b = _make_bridge()
     b._hosts = list(_H)
