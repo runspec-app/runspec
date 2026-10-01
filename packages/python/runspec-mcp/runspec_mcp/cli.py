@@ -8,7 +8,8 @@ cli.py — the ``runspec-mcp`` command line.
     runspec-mcp key [--show|--regenerate]  # the gateway's managed SSH public key
     runspec-mcp copy-key [--all] [HOST...] # install the managed key on host(s)
     runspec-mcp seed-status           # show any bundled config-seed contributors
-    runspec-mcp plugin-path           # print the bundled Claude Code plugin dir
+    runspec-mcp plugin-path           # print the bundled Claude Code plugin source dir
+    runspec-mcp claude-plugin         # render the plugin for this install, print its path
     runspec-mcp check                 # validate config + connectivity + manifest
     runspec-mcp setup claude|vscode|json  # connect an MCP client (absolute paths)
 """
@@ -218,18 +219,29 @@ def cmd_setup(args: argparse.Namespace) -> int:
     server = {"type": "stdio", "command": binary, "args": ["serve"], "env": {var: value}}
     if args.client == "claude":
         cmd = ["claude", "mcp", "add", "runspec", "--scope", "user", "--env", f"{var}={value}", "--", binary, "serve"]
-        plugin = Path(__file__).resolve().parent / "plugin"
         if args.apply:
             if shutil.which("claude") is None:
                 print("✗  the claude CLI isn't on PATH — run the command below yourself.", file=sys.stderr)
                 print(" ".join(cmd))
                 return 1
             return subprocess.run(cmd).returncode
-        print("# Add the gateway to Claude Code (all projects):")
+        print("# Recommended: the Claude Code plugin (adds the autonomy hook, so autonomous")
+        print("# tools run without prompting). In Claude Code:")
+        print("#   /plugin marketplace add https://runspec.app/marketplace-pip.json")
+        print("#   /plugin install runspec-mcp@runspec-pip")
+        print("# and when it asks, set the config to:")
+        print(f"#   {'runspec-console config folder' if var == 'RUNSPEC_MCP_CONFIG_DIR' else 'runspec_mcp.toml'}: {value}")
+        key = "config_dir" if var == "RUNSPEC_MCP_CONFIG_DIR" else "config_file"
+        print("# or, from a shell:")
+        print("#   claude plugin marketplace add https://runspec.app/marketplace-pip.json")
+        print(f"#   claude plugin install runspec-mcp@runspec-pip --config {key}={value}")
+        print("# (No uv? This uses this install. With uv, runspec.app/marketplace.json needs no pip install.)")
+        print()
+        print("# Or add the gateway alone (no hook — every tool call asks):")
         print(" ".join(cmd))
         print()
-        print("# Or use the plugin (adds the autonomy hook: autonomous tools run without prompting):")
-        print(f"RUNSPEC_MCP_BIN={binary} {var}={value} claude --plugin-dir {plugin}")
+        print("# Or try the plugin for one session without installing it:")
+        print(f"{var}={value} claude --plugin-dir {cmd_claude_plugin_dir()}")
         return 0
     if args.client == "vscode":
         print("// VS Code / GitHub Copilot: .vscode/mcp.json in a workspace, or the")
@@ -237,6 +249,29 @@ def cmd_setup(args: argparse.Namespace) -> int:
         print(json.dumps({"servers": {"runspec": server}}, indent=2))
         return 0
     print(json.dumps({"mcpServers": {"runspec": {k: v for k, v in server.items() if k != "type"}}}, indent=2))
+    return 0
+
+
+def cmd_claude_plugin_dir() -> Path:
+    """Render the plugin for *this* install (absolute gateway binary + Python) into
+    the app dir, once per version, and return its path. Re-rendered only when the
+    install changed, so a once-per-session call from Claude Code is cheap."""
+    from . import claudeplugin
+
+    dest = app_dir() / "claude-plugin" / __version__
+    server = [_gateway_bin(), "serve"]
+    stamp = json.dumps({"server": server, "python": sys.executable})
+    stamp_file = dest / ".rendered-for"
+    if not (stamp_file.is_file() and stamp_file.read_text(encoding="utf-8") == stamp):
+        claudeplugin.render(dest, server=server, hook_python=sys.executable)
+        stamp_file.write_text(stamp, encoding="utf-8")
+    return dest
+
+
+def cmd_claude_plugin(args: argparse.Namespace) -> int:
+    """Print the path of a Claude Code plugin wired to this install — what the
+    ``runspec-pip`` marketplace's ``command`` source runs."""
+    print(cmd_claude_plugin_dir())
     return 0
 
 
@@ -308,8 +343,11 @@ def main(argv: list[str] | None = None) -> int:
     _add_config_args(p_seed)
     p_seed.set_defaults(func=cmd_seed_status)
 
-    p_pp = sub.add_parser("plugin-path", help="print the bundled Claude Code plugin directory")
+    p_pp = sub.add_parser("plugin-path", help="print the bundled Claude Code plugin source directory")
     p_pp.set_defaults(func=cmd_plugin_path)
+
+    p_cp = sub.add_parser("claude-plugin", help="render the Claude Code plugin for this install and print its path")
+    p_cp.set_defaults(func=cmd_claude_plugin)
 
     p_setup = sub.add_parser("setup", help="print the exact MCP client config (claude | vscode | json)")
     p_setup.add_argument("client", choices=["claude", "vscode", "json"])

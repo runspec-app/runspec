@@ -50,12 +50,23 @@ def app_dir() -> Path:
     return Path(base) / APP_NAME
 
 
+def _plugin_setting(name: str) -> str:
+    """A Claude Code plugin setting passed as ``name``: empty when unset, and when
+    the client left the ``${user_config.…}`` placeholder unexpanded (a plugin
+    loaded with ``--plugin-dir`` has no install-time settings)."""
+    value = os.environ.get(name, "").strip()
+    return "" if value.startswith("${") else value
+
+
 def default_config_dir() -> Path | None:
-    """A console config directory named by ``$RUNSPEC_MCP_CONFIG_DIR``, if any.
+    """A console config directory named by ``$RUNSPEC_MCP_CONFIG_DIR``, if any —
+    else by ``$RUNSPEC_MCP_PLUGIN_CONFIG_DIR``.
 
     The environment form of ``--config-dir``, for MCP clients that start the
-    gateway with environment variables but no arguments (the Claude Code plugin)."""
-    env = os.environ.get("RUNSPEC_MCP_CONFIG_DIR")
+    gateway with environment variables but no arguments. The ``PLUGIN_`` variant
+    is what the Claude Code plugin sets from its install-time setting: a separate
+    name, so the plugin's empty default never overrides a value set by hand."""
+    env = os.environ.get("RUNSPEC_MCP_CONFIG_DIR") or _plugin_setting("RUNSPEC_MCP_PLUGIN_CONFIG_DIR")
     return Path(env).expanduser() if env else None
 
 
@@ -66,8 +77,10 @@ def host_identity(host: dict[str, Any]) -> str | None:
 
 
 def default_config_path() -> Path | None:
-    """The config file to load when none is given on the command line."""
-    env = os.environ.get("RUNSPEC_MCP_CONFIG")
+    """The config file to load when none is given on the command line:
+    ``$RUNSPEC_MCP_CONFIG``, else the plugin's ``$RUNSPEC_MCP_PLUGIN_CONFIG``, else
+    ``./runspec_mcp.toml``, else the app dir's."""
+    env = os.environ.get("RUNSPEC_MCP_CONFIG") or _plugin_setting("RUNSPEC_MCP_PLUGIN_CONFIG")
     if env:
         return Path(env).expanduser()
     for candidate in (Path.cwd() / "runspec_mcp.toml", app_dir() / "runspec_mcp.toml"):

@@ -11,6 +11,9 @@ on:
       - "docs/**"
       - "mkdocs.yml"
       - ".github/workflows/docs.yml"
+      - "scripts/build_claude_marketplace.py"
+      - "packages/python/runspec-mcp/runspec_mcp/plugin/**"
+      - "packages/python/runspec-mcp/runspec_mcp/claudeplugin.py"
 
 permissions:
   contents: read
@@ -30,6 +33,10 @@ jobs:
       # (internal) or missing page — a guard against leaking design docs into
       # the public site via a stray link.
       - run: mkdocs build --strict
+      # The runspec-mcp Claude Code marketplaces (runspec.app/marketplace.json +
+      # marketplace-pip.json) and the plugin zip they point at — generated
+      # together so the published checksum always matches the published zip.
+      - run: python scripts/build_claude_marketplace.py --out site
       - uses: actions/upload-pages-artifact@v5
         if: github.event_name == 'push'
         with:

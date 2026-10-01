@@ -1,15 +1,37 @@
 {
   "name": "runspec-mcp",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "description": "Local and remote runspec runnables as MCP tools in Claude Code, from one config file, gated by their declared autonomy",
   "author": {
-    "name": "runspec"
+    "name": "runspec",
+    "url": "https://runspec.app"
+  },
+  "homepage": "https://runspec.app/mcp/",
+  "userConfig": {
+    "config_dir": {
+      "type": "directory",
+      "title": "runspec-console config folder",
+      "description": "Reuse a runspec-console's hosts and credentials: its config folder, e.g. %APPDATA%\\runspec-console or ~/.config/runspec-console. Leave empty to use a runspec_mcp.toml instead.",
+      "required": false,
+      "default": ""
+    },
+    "config_file": {
+      "type": "file",
+      "title": "runspec_mcp.toml",
+      "description": "Only when the config folder is empty: the gateway's own runspec_mcp.toml. Leave empty to use the default location.",
+      "required": false,
+      "default": ""
+    }
   },
   "mcpServers": {
     "fleet": {
       "type": "stdio",
-      "command": "${RUNSPEC_MCP_BIN:-runspec-mcp}",
-      "args": ["serve"]
+      "command": "runspec-mcp",
+      "args": ["serve"],
+      "env": {
+        "RUNSPEC_MCP_PLUGIN_CONFIG_DIR": "${user_config.config_dir}",
+        "RUNSPEC_MCP_PLUGIN_CONFIG": "${user_config.config_file}"
+      }
     }
   }
 }

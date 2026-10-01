@@ -51,13 +51,105 @@ you installed runspec-mcp in a venv, a bare `runspec-mcp` command isn't found,
 and the client only reports that the server failed to connect.
 `runspec-mcp check` warns when it isn't on your `PATH`.
 
-`runspec-mcp setup claude` also prints the plugin form, which adds the autonomy
-hook:
+---
+
+## Install the Claude Code plugin
+
+The plugin is the best way to use runspec-mcp in Claude Code. It runs the same
+gateway and adds the **autonomy hook**, so `autonomous` runnables run without a
+prompt, `confirm` ones ask and `manual` ones are refused. It also adds the
+`/runspec-hosts` and `/runspec-refresh` commands. Three ways to install it; pick
+the one that fits the machine.
+
+### Option 1: from runspec.app, with uv (no pip install)
+
+For a machine that has [uv](https://docs.astral.sh/uv/) and can reach PyPI. In
+Claude Code:
+
+```
+/plugin marketplace add https://runspec.app/marketplace.json
+/plugin install runspec-mcp@runspec
+```
+
+The plugin starts the gateway with `uvx --from runspec-mcp runspec-mcp serve`,
+so uv fetches runspec-mcp itself — there's nothing to `pip install`. The plugin
+files come from a zip published on runspec.app with the docs, checked against a
+SHA-256 in `marketplace.json`.
+
+### Option 2: from runspec.app, with an installed runspec-mcp
+
+For a machine without uv, or one that installs from a private index (Nexus):
+install the gateway first, then add the `runspec-pip` marketplace:
 
 ```bash
-RUNSPEC_MCP_BIN=/abs/path/runspec-mcp RUNSPEC_MCP_CONFIG=/abs/path/runspec_mcp.toml \
-  claude --plugin-dir "$(runspec-mcp plugin-path)"
+pip install "runspec-mcp[credentials]"     # from your usual index
 ```
+
+```
+/plugin marketplace add https://runspec.app/marketplace-pip.json
+/plugin install runspec-mcp@runspec-pip
+```
+
+This marketplace's plugin source is a **command**: Claude Code runs
+`runspec-mcp claude-plugin`, which writes a copy of the plugin wired to *this*
+install (the absolute `runspec-mcp` path, and this install's Python for the
+autonomy hook) and prints where. Claude Code shows you that command before it
+runs it, and re-runs it once per session, so a `pip install -U runspec-mcp` is
+picked up without reinstalling the plugin. `runspec-mcp` must be on the `PATH`
+Claude Code starts with; if it isn't, use option 3 or add the venv's `bin/`
+(`Scripts\` on Windows) to your `PATH`.
+
+### Option 3: one session, no install
+
+To try the plugin without installing it:
+
+```bash
+RUNSPEC_MCP_CONFIG_DIR=/path/to/runspec-console \
+  claude --plugin-dir "$(runspec-mcp claude-plugin)"
+```
+
+`runspec-mcp setup claude` prints these commands with your paths filled in.
+
+### Settings
+
+When you install the plugin (options 1 and 2), Claude Code asks for two
+settings — fill in one, or neither:
+
+| Setting | Use it for |
+|---|---|
+| **runspec-console config folder** | Reuse a runspec-console's hosts and credentials: the console's config folder (`%APPDATA%\runspec-console`, `~/.config/runspec-console`, or a white-label package's own folder). |
+| **runspec_mcp.toml** | The gateway's own config file, when you don't use the console. |
+
+Leave both empty to use `runspec_mcp.toml` from its default location. A
+`RUNSPEC_MCP_CONFIG_DIR` / `RUNSPEC_MCP_CONFIG` set in the environment Claude
+Code starts with wins over both. Change them later with
+`/plugin configure runspec-mcp@runspec` (or `@runspec-pip`).
+
+From a shell, set them as you install:
+
+```bash
+claude plugin marketplace add https://runspec.app/marketplace.json
+claude plugin install runspec-mcp@runspec --config config_dir=/path/to/runspec-console
+```
+
+The `runspec-pip` install shows you the `runspec-mcp claude-plugin` command and
+asks you to confirm it before running it.
+
+### Notes
+
+- **The autonomy hook needs Python.** It runs `python3` (option 1) or the
+  install's own Python (options 2 and 3). On Windows, option 1 needs a `python3`
+  on `PATH`; if there isn't one, use option 2. If the hook can't run, Claude
+  Code asks for every call — never less safe.
+- **Updates.** Each runspec-mcp release republishes the zip with the docs, and
+  `/plugin` offers the update. Option 1 then runs the newest runspec-mcp uv can
+  find; option 2 runs whatever you have installed.
+- **Claude Code only.** The plugin starts a local program, so it works in Claude
+  Code (terminal, IDE, and the desktop app's Code tab), not in claude.ai chat or
+  cloud sessions.
+- **A private GitHub repo isn't a problem.** Neither marketplace fetches
+  anything from GitHub: the zip is on runspec.app and option 2 uses your installed
+  package.
 
 `/mcp` lists the `fleet` server; tools appear as
 `mcp__plugin_runspec-mcp_fleet__<name>` (host-prefixed when more than one host
@@ -331,7 +423,8 @@ end-to-end on the console side (branding + `preserve` + re-assert-on-upgrade); t
 | `runspec-mcp copy-key [--all] [HOST…]` | install the managed public key on host(s) |
 | `runspec-mcp cred set\|list\|rm ID` | manage credential secrets in the keychain |
 | `runspec-mcp seed-status` | show bundled config-seed contributors |
-| `runspec-mcp plugin-path` | print the bundled Claude Code plugin directory |
+| `runspec-mcp plugin-path` | print the bundled Claude Code plugin source directory |
+| `runspec-mcp claude-plugin` | render the plugin for this install and print its path (what the `runspec-pip` marketplace runs) |
 | `runspec-mcp check` | validate config + connectivity + manifest |
 
 Inside a session the plugin also offers `/runspec-hosts` and `/runspec-refresh`

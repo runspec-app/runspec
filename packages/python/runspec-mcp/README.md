@@ -12,11 +12,25 @@ over SSH), and presents them all as MCP tools. Discovery is **live** — as host
 connect/disconnect or their runnables change, the tool list updates automatically
 (no restart, no manual refresh).
 
+Install the **Claude Code plugin** (the gateway plus the autonomy hook) from a
+Claude Code session. With [uv](https://docs.astral.sh/uv/), nothing else to install:
+
 ```
-pip install "runspec-mcp[credentials]"
-# write runspec_mcp.toml (or point at an existing runspec-console config dir)
-claude --plugin-dir "$(runspec-mcp plugin-path)"
+/plugin marketplace add https://runspec.app/marketplace.json
+/plugin install runspec-mcp@runspec
 ```
+
+Without uv (or from a private index), `pip install "runspec-mcp[credentials]"`
+first, then:
+
+```
+/plugin marketplace add https://runspec.app/marketplace-pip.json
+/plugin install runspec-mcp@runspec-pip
+```
+
+Either way, the plugin asks for your runspec-console config folder (or a
+`runspec_mcp.toml`) when you install it. See
+[runspec.app/mcp](https://runspec.app/mcp/#install-the-claude-code-plugin).
 
 **Any MCP client** (Claude Desktop, Cursor, Cline, or Claude Code without the
 plugin) works too — `runspec-mcp serve` is a standard MCP stdio server. Add a
@@ -89,7 +103,8 @@ remain a fallback.
 | `runspec-mcp copy-key [--all] [HOST…]` | install the managed key on host(s) |
 | `runspec-mcp cred set\|list\|rm ID` | manage credential secrets in the keychain |
 | `runspec-mcp seed-status` | show bundled config-seed contributors |
-| `runspec-mcp plugin-path` | print the bundled Claude Code plugin dir |
+| `runspec-mcp plugin-path` | print the bundled Claude Code plugin source dir |
+| `runspec-mcp claude-plugin` | render the plugin for this install, print its path |
 | `runspec-mcp check` | validate config + connectivity + manifest |
 
 ## Autonomy

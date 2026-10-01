@@ -52,8 +52,11 @@ def test_the_hook_reads_where_the_gateway_writes(monkeypatch, tmp_path):
 
 
 def test_plugin_launch_config_sets_no_manifest_path():
+    # The hook and the gateway must agree on the manifest's location, so the
+    # plugin sets only its own config settings — never a manifest/home path.
     plugin = json.loads((HOOK.parent.parent / ".claude-plugin" / "plugin.json").read_text())
-    assert "env" not in plugin["mcpServers"]["fleet"]
+    env = plugin["mcpServers"]["fleet"].get("env", {})
+    assert set(env) == {"RUNSPEC_MCP_PLUGIN_CONFIG_DIR", "RUNSPEC_MCP_PLUGIN_CONFIG"}
 
 
 def test_setup_prints_absolute_paths(capsys, tmp_path):

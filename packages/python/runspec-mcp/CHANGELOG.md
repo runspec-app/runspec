@@ -2,6 +2,56 @@
 
 All notable changes to `runspec-mcp` are documented here.
 
+## [0.2.0] — 2026-10-01
+
+### Added
+
+- **Install the Claude Code plugin from runspec.app.** Two marketplaces are
+  published with the docs, so the plugin installs with `/plugin` and stays
+  installed. Before this, it was a `--plugin-dir` flag on every launch.
+  - `https://runspec.app/marketplace.json` (marketplace `runspec`) serves the
+    plugin as a zip and starts the gateway with
+    `uvx --from runspec-mcp runspec-mcp serve`, so there's nothing to
+    `pip install`.
+  - `https://runspec.app/marketplace-pip.json` (marketplace `runspec-pip`)
+    uses an installed runspec-mcp. Its `command` source runs the new
+    `runspec-mcp claude-plugin`.
+  - Neither fetches anything from GitHub, so a private repo is fine.
+  - Install with `/plugin install runspec-mcp@runspec` or
+    `runspec-mcp@runspec-pip`. Both keep the plugin name `runspec-mcp`, so tool
+    names and the autonomy hook are the same either way.
+- **`runspec-mcp claude-plugin`** writes a copy of the plugin into the app dir
+  and prints its path. The copy points at this install's absolute
+  `runspec-mcp` and at this install's Python for the autonomy hook. It's
+  re-rendered only when the install moves, since Claude Code runs it once per
+  session.
+- **Install-time settings.** The plugin asks for the runspec-console config
+  folder, or a `runspec_mcp.toml`, when you install it. These reach the gateway
+  as `RUNSPEC_MCP_PLUGIN_CONFIG_DIR` / `RUNSPEC_MCP_PLUGIN_CONFIG`, which rank
+  below the usual `RUNSPEC_MCP_CONFIG_DIR` / `RUNSPEC_MCP_CONFIG`, so a value
+  set by hand still wins. An empty setting, or a placeholder the client left
+  unexpanded, counts as unset.
+- `scripts/build_claude_marketplace.py` builds the zip and both marketplace
+  files into the docs site. The docs workflow runs it after `mkdocs build`.
+  - It generates the zip and its SHA-256 together, so they always match.
+  - The zip is byte-identical across rebuilds, so a redeploy with no plugin
+    change publishes the same checksum.
+
+### Changed
+
+- **Plugin manifest.**
+  - It no longer uses `${RUNSPEC_MCP_BIN:-runspec-mcp}`; a `${VAR:-default}`
+    fallback isn't documented for plugin MCP servers. Each install route sets an
+    explicit command.
+  - The version now follows the package; it was stuck at 0.1.0.
+  - The stale package-internal `marketplace.json` is removed.
+- **`runspec-mcp setup claude`** now leads with the marketplace install, then
+  the bare `claude mcp add` (no hook), then a one-session `--plugin-dir`
+  command.
+- Docs: `docs/mcp.md` → "Install the Claude Code plugin" covers all three
+  options, the settings, and the notes (Python for the hook, updates, Claude
+  Code only).
+
 ## [0.1.8] — 2026-10-01
 
 ### Fixed
