@@ -9,9 +9,9 @@
  * streams pip's output per target over `runspec:marketplace_progress`.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Alert, Button, Checkbox, Input, Modal, Segmented, Select, Space, Switch, Table, Tag, Tooltip, Typography, message } from 'antd'
-import { AppstoreAddOutlined, BookOutlined, CodeOutlined, DownloadOutlined, DeleteOutlined, HistoryOutlined, HomeOutlined, InfoCircleOutlined, ReloadOutlined, SearchOutlined, SettingOutlined } from '@ant-design/icons'
-import { bridge, type Host, type MarketplaceCatalog, type MarketplaceEntry, type MarketplaceInstalled, type MarketplaceInstalledTarget, type MarketplaceOpPayload, type MarketplaceOpResult, type MarketplaceOpTarget } from '../bridge'
+import { Alert, Badge, Button, Checkbox, Input, Modal, Segmented, Select, Space, Switch, Table, Tag, Tooltip, Typography, message } from 'antd'
+import { AppstoreAddOutlined, UnorderedListOutlined, BookOutlined, CodeOutlined, DownloadOutlined, DeleteOutlined, HistoryOutlined, HomeOutlined, InfoCircleOutlined, ReloadOutlined, SearchOutlined, SettingOutlined } from '@ant-design/icons'
+import { bridge, type Host, type MarketplaceCatalog, type MarketplaceEntry, type MarketplaceInstalled, type MarketplaceInstalledTarget, type MarketplaceOpPayload, type MarketplaceOpRecord, type MarketplaceOpTarget } from '../bridge'
 import { useIsDark, useAccent, withAlpha, surfaces, RADIUS, textSecondary, textMuted, MONO_FONT } from '../ThemeContext'
 import { Markdown } from '../components/Markdown'
 
@@ -112,9 +112,11 @@ const INSTALL_CHIPS_MAX_H = 96  // ~4 rows of chips, then scroll
 
 // ── cards ──────────────────────────────────────────────────────────────────
 
-function PackageCard({ entry, states, onInstall, onUninstall, onDetails }: {
+function PackageCard({ entry, states, running, onInstall, onUninstall, onDetails, onOpenOp }: {
   entry: MarketplaceEntry
   states: TargetState[]
+  running?: MarketplaceOpRecord[]
+  onOpenOp?: (op: string) => void
   onInstall: () => void
   onUninstall: () => void
   onDetails: () => void
@@ -145,6 +147,13 @@ function PackageCard({ entry, states, onInstall, onUninstall, onDetails }: {
         <Text style={{ fontFamily: MONO_FONT, fontSize: 14, fontWeight: 600 }}>{entry.name}</Text>
         <Tag style={{ fontSize: 11, margin: 0, fontFamily: MONO_FONT }}>{entry.version || '?'}</Tag>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+          {(running ?? []).map(o => (
+            <Tooltip key={o.op} title="Running in the background. Click to see progress.">
+              <Tag color="processing" style={{ fontSize: 11, margin: 0, cursor: 'pointer' }} onClick={() => onOpenOp?.(o.op)}>
+                {o.action === 'uninstall' ? 'uninstalling…' : 'installing…'}
+              </Tag>
+            </Tooltip>
+          ))}
           {anyOutdated && <Tag color="orange" style={{ fontSize: 11, margin: 0 }}>update available</Tag>}
           {anyInstalled && !anyOutdated && <Tag color="green" style={{ fontSize: 11, margin: 0 }}>installed</Tag>}
           {entry.has_runspec_toml && (
@@ -258,14 +267,7 @@ function DetailsModal({ entry, onClose }: { entry: MarketplaceEntry | null; onCl
   )
 }
 
-// ── install / uninstall modal ──────────────────────────────────────────────
-
-interface OpState {
-  op: string
-  lines: Record<string, string[]>
-  results: Record<string, MarketplaceOpResult>
-  status: 'running' | 'finished' | 'cancelled'
-}
+// ── install / uninstall picker ─────────────────────────────────────────────
 
 interface RowChoice { checked: boolean; run_as: string; become_method: 'sudo' | 'su' }
 
@@ -273,12 +275,15 @@ export function defaultRunAs(t: MarketplaceInstalledTarget): string {
   return !t.local && t.ok && t.owner && t.user && t.owner !== t.user ? t.owner : ''
 }
 
-function OpModal({ entry, action, states, onClose, onFinished }: {
+/** Pick the venvs + options, start the op, hand its id back. The op then runs
+ *  in the background: the picker closes and the activity view follows it, so
+ *  the operator can start the next one without waiting. */
+function OpModal({ entry, action, states, onClose, onStarted }: {
   entry: MarketplaceEntry
   action: 'install' | 'uninstall'
   states: TargetState[]
   onClose: () => void
-  onFinished: () => void
+  onStarted: (op: string) => void
 }) {
   const isDark = useIsDark()
   const rowsAll = useMemo(() => states.filter(s => s.target.connected && s.target.ok), [states])
@@ -296,45 +301,13 @@ function OpModal({ entry, action, states, onClose, onFinished }: {
   })
   const [version, setVersion] = useState<string>('')  // '' = latest
   const [reinstall, setReinstall] = useState(false)
+  const [upgradeRunspec, setUpgradeRunspec] = useState(false)
   const [starting, setStarting] = useState(false)
-  const [op, setOp] = useState<OpState | null>(null)
-  const opRef = useRef<string | null>(null)
-
-  useEffect(() => {
-    const onProgress = (e: Event) => {
-      const d = (e as CustomEvent).detail || {}
-      if (!opRef.current || d.op !== opRef.current) return
-      setOp(prev => {
-        if (!prev) return prev
-        const next: OpState = { ...prev, lines: { ...prev.lines }, results: { ...prev.results } }
-        if (d.phase === 'line') next.lines[d.target] = [...(next.lines[d.target] || []), String(d.line)].slice(-200)
-        if (d.phase === 'start') next.lines[d.target] = next.lines[d.target] || []
-        if (d.phase === 'done') next.results[d.target] = { target: d.target, host: '', venv: '', ok: !!d.ok, exit_code: d.exit_code ?? null, summary: String(d.summary || ''), skipped: false }
-        return next
-      })
-    }
-    const onDone = (e: Event) => {
-      const d = (e as CustomEvent).detail || {}
-      if (!opRef.current || d.op !== opRef.current) return
-      setOp(prev => {
-        if (!prev) return prev
-        const results = { ...prev.results }
-        for (const r of (d.results || []) as MarketplaceOpResult[]) results[r.target] = r
-        return { ...prev, results, status: d.status === 'cancelled' ? 'cancelled' : 'finished' }
-      })
-      onFinished()
-    }
-    window.addEventListener('runspec:marketplace_progress', onProgress)
-    window.addEventListener('runspec:marketplace_done', onDone)
-    return () => {
-      window.removeEventListener('runspec:marketplace_progress', onProgress)
-      window.removeEventListener('runspec:marketplace_done', onDone)
-    }
-  }, [onFinished])
 
   const selected = eligible.filter(s => choice[s.target.id]?.checked)
   const spec = version ? `${entry.name}==${version}` : entry.name
   const upgrade = action === 'install' && !version && selected.some(s => s.installed)
+  const isRunspec = entry.name.toLowerCase() === 'runspec'
 
   const start = async () => {
     if (selected.length === 0) { message.warning('Pick at least one venv.'); return }
@@ -344,18 +317,18 @@ function OpModal({ entry, action, states, onClose, onFinished }: {
         id: s.target.id,
         ...(choice[s.target.id].run_as ? { run_as: choice[s.target.id].run_as, become_method: choice[s.target.id].become_method } : {}),
       }))
-      const payload: MarketplaceOpPayload = { package: spec, targets, upgrade, reinstall, repo: entry.repo }
+      const payload: MarketplaceOpPayload = {
+        package: spec, targets, upgrade, reinstall, repo: entry.repo,
+        upgrade_runspec: action === 'install' && !isRunspec && upgradeRunspec,
+      }
       const res = action === 'install' ? await bridge.marketplace_install(payload) : await bridge.marketplace_uninstall(payload)
-      opRef.current = res.op
-      setOp({ op: res.op, lines: {}, results: {}, status: 'running' })
+      onStarted(res.op)
     } catch (e) {
       message.error(e instanceof Error ? e.message : `Could not start ${action}`)
     } finally {
       setStarting(false)
     }
   }
-
-  const cancel = async () => { if (op) await bridge.marketplace_cancel(op.op).catch(() => {}) }
 
   const title = action === 'install'
     ? `${states.some(s => s.installed) ? 'Install / update' : 'Install'} ${entry.name}`
@@ -365,7 +338,7 @@ function OpModal({ entry, action, states, onClose, onFinished }: {
     {
       title: '', dataIndex: 'id', width: 36,
       render: (_: unknown, s: TargetState) => (
-        <Checkbox checked={!!choice[s.target.id]?.checked} disabled={!!op}
+        <Checkbox checked={!!choice[s.target.id]?.checked}
           onChange={e => setChoice(c => ({ ...c, [s.target.id]: { ...c[s.target.id], checked: e.target.checked } }))} />
       ),
     },
@@ -384,24 +357,15 @@ function OpModal({ entry, action, states, onClose, onFinished }: {
         ? <Text type="secondary" style={{ fontSize: 12 }}>this machine</Text>
         : (
           <Space.Compact size="small">
-            <Input value={choice[s.target.id]?.run_as ?? ''} placeholder={s.target.user || 'login user'} disabled={!!op}
+            <Input value={choice[s.target.id]?.run_as ?? ''} placeholder={s.target.user || 'login user'}
               style={{ fontFamily: MONO_FONT, width: 120 }}
               onChange={e => setChoice(c => ({ ...c, [s.target.id]: { ...c[s.target.id], run_as: e.target.value } }))} />
-            <Select size="small" value={choice[s.target.id]?.become_method ?? 'sudo'} disabled={!!op || !choice[s.target.id]?.run_as}
+            <Select size="small" value={choice[s.target.id]?.become_method ?? 'sudo'} disabled={!choice[s.target.id]?.run_as}
               options={[{ value: 'sudo', label: 'sudo' }, { value: 'su', label: 'su' }]} style={{ width: 72 }}
               onChange={v => setChoice(c => ({ ...c, [s.target.id]: { ...c[s.target.id], become_method: v } }))} />
           </Space.Compact>
         ),
     },
-    ...(op ? [{
-      title: 'Result',
-      render: (_: unknown, s: TargetState) => {
-        const r = op.results[s.target.id]
-        if (!choice[s.target.id]?.checked) return <Text type="secondary" style={{ fontSize: 12 }}>skipped</Text>
-        if (!r) return <Tag color="processing" style={{ fontSize: 11 }}>running…</Tag>
-        return <Tag color={r.ok ? 'green' : 'red'} style={{ fontSize: 11 }}>{r.ok ? 'ok' : `failed (exit ${r.exit_code ?? '?'})`}</Tag>
-      },
-    }] : []),
   ]
 
   return (
@@ -410,21 +374,13 @@ function OpModal({ entry, action, states, onClose, onFinished }: {
       title={title}
       width={860}
       onCancel={onClose}
-      maskClosable={!op || op.status !== 'running'}
       footer={
         <Space>
-          {op?.status === 'running' && <Button onClick={cancel}>Cancel</Button>}
-          {op ? (
-            <Button type="primary" onClick={onClose} disabled={op.status === 'running'}>Close</Button>
-          ) : (
-            <>
-              <Button onClick={onClose}>Cancel</Button>
-              <Button type="primary" danger={action === 'uninstall'} loading={starting} onClick={start}
-                icon={action === 'install' ? <DownloadOutlined /> : <DeleteOutlined />}>
-                {action === 'install' ? `Install ${spec}` : `Uninstall ${entry.name}`} on {selected.length} venv{selected.length === 1 ? '' : 's'}
-              </Button>
-            </>
-          )}
+          <Button onClick={onClose}>Cancel</Button>
+          <Button type="primary" danger={action === 'uninstall'} loading={starting} onClick={start} disabled={eligible.length === 0}
+            icon={action === 'install' ? <DownloadOutlined /> : <DeleteOutlined />}>
+            {action === 'install' ? `Install ${spec}` : `Uninstall ${entry.name}`} on {selected.length} venv{selected.length === 1 ? '' : 's'}
+          </Button>
         </Space>
       }
     >
@@ -436,43 +392,219 @@ function OpModal({ entry, action, states, onClose, onFinished }: {
             <div style={{ display: 'flex', gap: 16, alignItems: 'center', marginBottom: 10, flexWrap: 'wrap', fontSize: 13 }}>
               <span>
                 <span style={{ color: textSecondary(isDark), marginRight: 6 }}>Version</span>
-                <Select size="small" value={version} disabled={!!op} style={{ width: 160 }}
+                <Select size="small" value={version} style={{ width: 160 }}
                   options={[{ value: '', label: `latest (${entry.version})` }, ...(entry.versions || []).filter(v => v !== entry.version).map(v => ({ value: v, label: v }))]}
                   onChange={v => setVersion(v)} />
               </span>
               <span>
-                <Switch size="small" checked={reinstall} disabled={!!op} onChange={setReinstall} />
+                <Switch size="small" checked={reinstall} onChange={setReinstall} aria-label="Force reinstall" />
                 <span style={{ marginLeft: 6 }}>Force reinstall</span>
               </span>
+              {!isRunspec && (
+                <Tooltip title="Also upgrade the runspec library in each selected venv, in the same pip run (pip install -U <package> runspec).">
+                  <span>
+                    <Switch size="small" checked={upgradeRunspec} onChange={setUpgradeRunspec} aria-label="Also upgrade runspec" />
+                    <span style={{ marginLeft: 6 }}>Also upgrade runspec</span>
+                  </span>
+                </Tooltip>
+              )}
               {upgrade && <Text type="secondary" style={{ fontSize: 12 }}>Already-installed venvs will be upgraded (pip install -U).</Text>}
               {entry.repo && <Text type="secondary" style={{ fontSize: 12 }}>From {entry.repo_name}.</Text>}
             </div>
           )}
           <Table size="small" rowKey={(s: TargetState) => s.target.id} dataSource={eligible} columns={columns} pagination={false} />
-          {op && (
-            <div style={{ marginTop: 12 }}>
-              {selected.map(s => {
-                const lines = op.lines[s.target.id] || []
-                const r = op.results[s.target.id]
-                return (
-                  <div key={s.target.id} style={{ marginBottom: 8 }}>
-                    <Text style={{ fontFamily: MONO_FONT, fontSize: 12, fontWeight: 600 }}>{s.target.host}/{s.target.venv}</Text>
-                    <pre style={{
-                      margin: '4px 0 0', maxHeight: 160, overflow: 'auto', fontSize: 11, fontFamily: MONO_FONT,
-                      background: surfaces(isDark).sunken, border: '1px solid var(--rs-border)', borderRadius: RADIUS.sm, padding: '6px 8px',
-                      whiteSpace: 'pre-wrap',
-                    }}>
-                      {lines.length ? lines.join('\n') : (r ? r.summary : 'waiting…')}
-                    </pre>
-                  </div>
-                )
-              })}
-            </div>
-          )}
         </>
       )}
     </Modal>
   )
+}
+
+// ── activity: running + recent ops ─────────────────────────────────────────
+
+/** "Installing runspec-jira" while running, then "Install runspec-jira". */
+export function opLabel(op: Pick<MarketplaceOpRecord, 'action' | 'package' | 'status'>): string {
+  const verb = op.action === 'uninstall' ? 'Uninstall' : 'Install'
+  return `${op.status === 'running' ? `${verb}ing` : verb} ${op.package}`
+}
+
+/** Status tag colour + text for one op, from its per-target counts. */
+export function opOutcome(op: MarketplaceOpRecord): { color: string; text: string } {
+  const c = op.counts ?? { ok: 0, failed: 0, running: 0, queued: 0, skipped: 0 }
+  const total = (op.targets?.length ?? 0) || c.ok + c.failed + c.running + c.queued + c.skipped
+  if (op.status === 'running') {
+    const done = c.ok + c.failed + c.skipped
+    return { color: 'processing', text: `${done}/${total} done${c.queued ? ` · ${c.queued} queued` : ''}` }
+  }
+  if (op.status === 'cancelled') return { color: 'default', text: 'cancelled' }
+  if (c.failed) return { color: 'red', text: `${c.failed} of ${total} failed` }
+  return { color: 'green', text: total === 1 ? 'ok' : `ok on ${total}` }
+}
+
+/** Apply one runspec:marketplace_progress event to an op record (pure). */
+export function applyProgress(rec: MarketplaceOpRecord, d: Record<string, unknown>): MarketplaceOpRecord {
+  const targets = (rec.targets ?? []).map(t => {
+    if (t.target !== d.target) return t
+    if (d.phase === 'start') return { ...t, state: 'running' as const }
+    if (d.phase === 'line') return { ...t, lines: [...(t.lines ?? []), String(d.line)].slice(-400) }
+    if (d.phase === 'done') return { ...t, state: 'done' as const, ok: !!d.ok, exit_code: (d.exit_code as number | null) ?? null, summary: String(d.summary ?? '') }
+    return t
+  })
+  return { ...rec, targets }
+}
+
+const TARGET_STATE_TAG: Record<string, { color: string; text: string }> = {
+  queued: { color: 'default', text: 'queued' },
+  running: { color: 'processing', text: 'running…' },
+  skipped: { color: 'default', text: 'skipped' },
+}
+
+/** One op's per-venv status + pip output, live while it runs. Closing never
+ *  stops it — re-open it from the activity list. */
+function OpDetailModal({ opId, onClose }: { opId: string; onClose: () => void }) {
+  const isDark = useIsDark()
+  const [rec, setRec] = useState<MarketplaceOpRecord | null>(null)
+  const [missing, setMissing] = useState(false)
+
+  useEffect(() => {
+    let alive = true
+    const load = async () => {
+      try {
+        const r = await bridge.marketplace_op(opId)
+        if (!alive) return
+        if (r) setRec(r)
+        else setMissing(true)
+      } catch { /* keep what we have */ }
+    }
+    load()
+    const onProgress = (e: Event) => {
+      const d = (e as CustomEvent).detail || {}
+      if (d.op !== opId) return
+      setRec(prev => (prev ? applyProgress(prev, d) : prev))
+    }
+    const onDone = (e: Event) => {
+      const d = (e as CustomEvent).detail || {}
+      if (d.op === opId) load()
+    }
+    window.addEventListener('runspec:marketplace_progress', onProgress)
+    window.addEventListener('runspec:marketplace_done', onDone)
+    return () => {
+      alive = false
+      window.removeEventListener('runspec:marketplace_progress', onProgress)
+      window.removeEventListener('runspec:marketplace_done', onDone)
+    }
+  }, [opId])
+
+  const cancel = async () => { await bridge.marketplace_cancel(opId).catch(() => {}) }
+  const opts = rec?.options ?? {}
+  const flags = [opts.upgrade && 'upgrade', opts.reinstall && 'force reinstall', opts.upgrade_runspec && 'also upgrade runspec', opts.pre && 'pre-releases'].filter(Boolean) as string[]
+
+  return (
+    <Modal
+      open
+      title={rec ? opLabel(rec) : 'Marketplace operation'}
+      width={860}
+      onCancel={onClose}
+      footer={
+        <Space>
+          {rec?.status === 'running' && <Button onClick={cancel}>Cancel operation</Button>}
+          <Button type="primary" onClick={onClose}>Close</Button>
+        </Space>
+      }
+    >
+      {missing ? (
+        <Alert type="info" showIcon message="This operation is no longer in the activity history." />
+      ) : !rec ? (
+        <Text type="secondary">Loading…</Text>
+      ) : (
+        <>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10, fontSize: 12, color: textSecondary(isDark) }}>
+            <Tag color={opOutcome(rec).color} style={{ margin: 0 }}>{opOutcome(rec).text}</Tag>
+            <span>started {ago(rec.started_at)}</span>
+            {rec.status === 'running' && <span>Closing this keeps it running; reopen it from Activity.</span>}
+            {flags.length > 0 && <span>· {flags.join(', ')}</span>}
+          </div>
+          {(rec.targets ?? []).map(t => {
+            const tag = t.state === 'done'
+              ? { color: t.ok ? 'green' : 'red', text: t.ok ? 'ok' : `failed (exit ${t.exit_code ?? '?'})` }
+              : TARGET_STATE_TAG[t.state]
+            const lines = t.lines ?? []
+            return (
+              <div key={t.target} style={{ marginBottom: 10 }}>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <Text style={{ fontFamily: MONO_FONT, fontSize: 12, fontWeight: 600 }}>{t.host}/{t.venv}</Text>
+                  <Tag color={tag.color} style={{ fontSize: 11, margin: 0 }}>{tag.text}</Tag>
+                </div>
+                {(lines.length > 0 || t.summary) && (
+                  <pre style={{
+                    margin: '4px 0 0', maxHeight: 160, overflow: 'auto', fontSize: 11, fontFamily: MONO_FONT,
+                    background: surfaces(isDark).sunken, border: '1px solid var(--rs-border)', borderRadius: RADIUS.sm, padding: '6px 8px',
+                    whiteSpace: 'pre-wrap',
+                  }}>
+                    {lines.length ? lines.join('\n') : t.summary}
+                  </pre>
+                )}
+                {t.state === 'queued' && (
+                  <Text type="secondary" style={{ fontSize: 11 }}>Waiting for another operation on this venv to finish.</Text>
+                )}
+              </div>
+            )
+          })}
+        </>
+      )}
+    </Modal>
+  )
+}
+
+/** The activity list: every op this console session ran, newest first. */
+function ActivityModal({ ops, onOpen, onClose }: {
+  ops: MarketplaceOpRecord[]
+  onOpen: (op: string) => void
+  onClose: () => void
+}) {
+  const columns = [
+    { title: 'Started', width: 110, render: (_: unknown, o: MarketplaceOpRecord) => <Text style={{ fontSize: 12 }}>{ago(o.started_at)}</Text> },
+    { title: 'Operation', render: (_: unknown, o: MarketplaceOpRecord) => <span style={{ fontFamily: MONO_FONT, fontSize: 12 }}>{opLabel(o)}</span> },
+    { title: 'Venvs', width: 70, render: (_: unknown, o: MarketplaceOpRecord) => <Text style={{ fontSize: 12 }}>{o.targets?.length ?? o.results.length}</Text> },
+    { title: 'Status', width: 170, render: (_: unknown, o: MarketplaceOpRecord) => { const r = opOutcome(o); return <Tag color={r.color} style={{ fontSize: 11 }}>{r.text}</Tag> } },
+  ]
+  return (
+    <Modal open title="Marketplace activity" width={760} onCancel={onClose} footer={<Button onClick={onClose}>Close</Button>}>
+      {ops.length === 0 ? (
+        <Text type="secondary">No installs, updates or removals yet in this session.</Text>
+      ) : (
+        <>
+          <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>Click an operation to see what happened on each venv.</Text>
+          <Table size="small" rowKey="op" dataSource={ops} columns={columns} pagination={false}
+            onRow={o => ({ onClick: () => onOpen(o.op), style: { cursor: 'pointer' } })} />
+        </>
+      )}
+    </Modal>
+  )
+}
+
+/** The op list, kept fresh from the progress/done events. */
+function useMarketplaceOps() {
+  const [ops, setOps] = useState<MarketplaceOpRecord[]>([])
+  const reload = useCallback(async () => {
+    try {
+      const list = await bridge.marketplace_ops()
+      if (Array.isArray(list)) setOps(list)
+    } catch { /* an older backend without the list: no activity */ }
+  }, [])
+  useEffect(() => {
+    reload()
+    const onEvent = (e: Event) => {
+      const d = (e as CustomEvent).detail || {}
+      if (e.type === 'runspec:marketplace_done' || d.phase === 'start' || d.phase === 'done') reload()
+    }
+    window.addEventListener('runspec:marketplace_progress', onEvent)
+    window.addEventListener('runspec:marketplace_done', onEvent)
+    return () => {
+      window.removeEventListener('runspec:marketplace_progress', onEvent)
+      window.removeEventListener('runspec:marketplace_done', onEvent)
+    }
+  }, [reload])
+  return { ops, reload }
 }
 
 // ── the view ───────────────────────────────────────────────────────────────
@@ -493,6 +625,18 @@ export function MarketplaceView({ hosts, onOpenSettings, activeProfile }: { host
   const [scope, setScope] = useState<ScopeFilter>('all')
   const [details, setDetails] = useState<MarketplaceEntry | null>(null)
   const [opFor, setOpFor] = useState<{ entry: MarketplaceEntry; action: 'install' | 'uninstall' } | null>(null)
+  const [viewOp, setViewOp] = useState<string | null>(null)
+  const [activityOpen, setActivityOpen] = useState(false)
+  const { ops, reload: reloadOps } = useMarketplaceOps()
+  const runningOps = useMemo(() => ops.filter(o => o.status === 'running'), [ops])
+  const runningByPackage = useMemo(() => {
+    const m = new Map<string, MarketplaceOpRecord[]>()
+    for (const o of runningOps) {
+      const name = o.package.split(/[=<>!~[;\s]/)[0].toLowerCase()
+      m.set(name, [...(m.get(name) ?? []), o])
+    }
+    return m
+  }, [runningOps])
 
   const loadCatalog = useCallback(async (refresh: boolean) => {
     setLoading(true)
@@ -565,7 +709,11 @@ export function MarketplaceView({ hosts, onOpenSettings, activeProfile }: { host
   const updates = useMemo(() => entries.filter(e => statesFor(e).some(s => s.state === 'outdated')).length, [entries, statesFor])
 
   const refreshAll = () => { loadCatalog(true); probe(true) }
-  const onOpFinished = useCallback(() => { /* the runspec:marketplace_done listener re-probes */ }, [])
+  const onOpStarted = useCallback((op: string) => {
+    setOpFor(null)
+    setViewOp(op)
+    reloadOps()
+  }, [reloadOps])
 
   if (catalog && !catalog.enabled) {
     return (
@@ -587,7 +735,12 @@ export function MarketplaceView({ hosts, onOpenSettings, activeProfile }: { host
         <Tooltip title="Re-read the package indexes and re-probe every venv">
           <Button icon={<ReloadOutlined />} loading={loading || probing} onClick={refreshAll}>Refresh</Button>
         </Tooltip>
-        {onOpenSettings && <Button type="text" icon={<SettingOutlined />} onClick={onOpenSettings}>Settings</Button>}
+        <Tooltip title="Installs, updates and removals from this session. Several can run at once.">
+          <Badge count={runningOps.length} size="small">
+            <Button icon={<UnorderedListOutlined />} onClick={() => setActivityOpen(true)}>Activity</Button>
+          </Badge>
+        </Tooltip>
+                {onOpenSettings && <Button type="text" icon={<SettingOutlined />} onClick={onOpenSettings}>Settings</Button>}
       </div>
 
       <div style={{ marginBottom: 12, flexShrink: 0, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', fontSize: 12, color: textSecondary(isDark) }}>
@@ -611,6 +764,17 @@ export function MarketplaceView({ hosts, onOpenSettings, activeProfile }: { host
         ) : null}
       </div>
 
+      {runningOps.length > 0 && (
+        <div style={{ marginBottom: 12, flexShrink: 0, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', fontSize: 12 }}>
+          <Text type="secondary" style={{ fontSize: 12 }}>Running:</Text>
+          {runningOps.map(o => (
+            <Tag key={o.op} color="processing" style={{ fontSize: 11, margin: 0, cursor: 'pointer' }} onClick={() => setViewOp(o.op)}>
+              {opLabel(o)} · {opOutcome(o).text}
+            </Tag>
+          ))}
+        </div>
+      )}
+
       {loadError && <Alert type="error" showIcon message={loadError} style={{ marginBottom: 12 }} />}
 
       {loading && !catalog ? (
@@ -629,6 +793,7 @@ export function MarketplaceView({ hosts, onOpenSettings, activeProfile }: { host
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 10 }}>
             {filtered.map(e => (
               <PackageCard key={`${e.repo}/${e.name}`} entry={e} states={statesFor(e)}
+                running={runningByPackage.get(e.name.toLowerCase())} onOpenOp={setViewOp}
                 onInstall={() => setOpFor({ entry: e, action: 'install' })}
                 onUninstall={() => setOpFor({ entry: e, action: 'uninstall' })}
                 onDetails={() => setDetails(e)} />
@@ -640,8 +805,13 @@ export function MarketplaceView({ hosts, onOpenSettings, activeProfile }: { host
       <DetailsModal entry={details} onClose={() => setDetails(null)} />
       {opFor && (
         <OpModal entry={opFor.entry} action={opFor.action} states={statesFor(opFor.entry)}
-          onClose={() => setOpFor(null)} onFinished={onOpFinished} />
+          onClose={() => setOpFor(null)} onStarted={onOpStarted} />
       )}
+      {activityOpen && (
+        <ActivityModal ops={ops} onClose={() => setActivityOpen(false)}
+          onOpen={op => { setActivityOpen(false); setViewOp(op) }} />
+      )}
+      {viewOp && <OpDetailModal key={viewOp} opId={viewOp} onClose={() => setViewOp(null)} />}
     </div>
   )
 }

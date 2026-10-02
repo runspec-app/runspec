@@ -24,6 +24,36 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   configured to support act(...)"), and get a 20s timeout — they take ~5s
   under jsdom and timed out on slower runners.
 
+## [0.319.0] — 2026-10-02
+
+### Added
+
+- **Marketplace: run several installs, updates and removals at once.**
+  Starting one no longer blocks the tab: the picker hands off to the
+  operation's live view, which you can close while it keeps running, then
+  start the next. Running operations show in a **Running:** strip and as an
+  *installing…* tag on the package card. Two operations on the same venv
+  queue rather than run pip side by side (that can corrupt a venv); different
+  venvs run in parallel.
+- **Marketplace → Activity.** A toolbar button (with a running-count badge)
+  lists this session's operations, newest first, with each one's outcome.
+  Click one to reopen its per-venv results and pip output. Keeps the 25 most
+  recent finished operations, in memory. New JS API `marketplace_ops()`;
+  `marketplace_op()` now also returns each planned target's live `state`
+  (queued / running / done / skipped), its output so far, `options`, `counts`
+  and `started_at`/`finished_at`, and is JSON-safe (it used to copy the
+  internal cancel event).
+- **Marketplace: "Also upgrade runspec"** next to *Force reinstall*. It adds
+  the runspec library to the same pip run (`pip install -U <package> runspec`)
+  — payload field `upgrade_runspec`, install only, ignored when the package is
+  runspec itself.
+
+### Changed
+
+- Cancelling an operation now terminates every pip process it started, not
+  just the last local one, and also skips targets still queued behind another
+  operation.
+
 ## [0.318.0] — 2026-10-02
 
 ### Changed

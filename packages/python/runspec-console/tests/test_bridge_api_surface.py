@@ -158,6 +158,7 @@ EXPECTED = {
     "marketplace_install",
     "marketplace_installed",
     "marketplace_op",
+    "marketplace_ops",
     "marketplace_targets",
     "marketplace_uninstall",
     "mcp_credential_options",

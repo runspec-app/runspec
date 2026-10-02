@@ -28,6 +28,7 @@ refused by ``marketplace.validate_spec``).
 from __future__ import annotations
 
 import contextlib
+import itertools
 import json
 import re
 import subprocess
@@ -56,14 +57,58 @@ _PROBE_TIMEOUT_S = 40
 _PROBE_TTL_S = 60.0
 _PIP_TIMEOUT_S = 900
 _MAX_OP_LINES = 400  # pip output lines kept per target in the op record
+_MAX_FINISHED_OPS = 25  # finished ops kept for the Marketplace history list
+# The runspec library itself: "Also upgrade runspec" adds it to an install.
+_RUNSPEC_DIST = "runspec"
 _METADATA_WORKERS = 8
 _MARKETPLACE_TOOL_DEFAULT_LIMIT = 15  # search_marketplace results (agent tool)
 _MARKETPLACE_TOOL_MAX_LIMIT = 50
 
 
+_OP_SEQ = itertools.count()
+
+
+def _op_order(rec: dict[str, Any]) -> tuple[float, int]:
+    return (float(rec.get("started_at") or 0), int(rec.get("seq") or 0))
+
+
+def _op_view(rec: dict[str, Any], *, lines: bool) -> dict[str, Any]:
+    """A JSON-safe copy of an op record (no Event / process handles); with
+    ``lines`` the per-target pip output is included."""
+    targets = []
+    for row in (rec.get("targets") or {}).values():
+        r = {k: v for k, v in row.items() if k != "lines"}
+        if lines:
+            r["lines"] = list(row.get("lines") or [])
+        targets.append(r)
+    counts = {"ok": 0, "failed": 0, "running": 0, "queued": 0, "skipped": 0}
+    for r in targets:
+        state = r.get("state")
+        if state == "done":
+            counts["ok" if r.get("ok") else "failed"] += 1
+        elif state in counts:
+            counts[state] += 1
+    return {
+        "op": rec.get("op"),
+        "action": rec.get("action"),
+        "package": rec.get("package"),
+        "status": rec.get("status"),
+        "started_at": rec.get("started_at"),
+        "finished_at": rec.get("finished_at"),
+        "options": dict(rec.get("options") or {}),
+        "counts": counts,
+        "targets": targets,
+        "results": [
+            {k: v for k, v in r.items() if lines or k != "lines"}
+            for r in rec.get("results") or []
+        ],
+    }
+
+
 class MarketplaceMixin:
     _marketplace_lock: threading.Lock
     _marketplace_ops: dict[str, dict[str, Any]]
+    _marketplace_venv_locks: dict[str, threading.Lock]
     _marketplace_installed: dict[str, Any] | None
     _connected_cache: dict[str, bool]
     _lock: threading.Lock
@@ -175,9 +220,22 @@ class MarketplaceMixin:
 
     def marketplace_op(self, op: str) -> dict[str, Any] | None:
         """The record of a running / finished install-or-uninstall op (for a
-        tab that re-mounts mid-run): ``{op, action, package, status, results}``."""
+        tab that re-mounts mid-run, or a click back into the history list):
+        ``{op, action, package, status, started_at, finished_at, options,
+        targets, results}``. ``targets`` holds every planned target with its
+        live ``state`` (queued / running / done / skipped) and the pip output
+        so far, so a still-running op shows what it has done to date."""
         rec = self._marketplace_ops.get(str(op))
-        return dict(rec) if rec else None
+        return _op_view(rec, lines=True) if rec else None
+
+    def marketplace_ops(self) -> list[dict[str, Any]]:
+        """Every op this console session ran (running and the newest finished
+        ones), newest first, without pip output — the Marketplace history list.
+        Several ops can run at once; open one with :meth:`marketplace_op`."""
+        with self._marketplace_lock:
+            recs = list(self._marketplace_ops.values())
+        recs.sort(key=_op_order, reverse=True)
+        return [_op_view(r, lines=False) for r in recs]
 
     def marketplace_cancel(self, op: str) -> bool:
         """Best-effort cancel of a running op: targets not yet started are
@@ -187,8 +245,7 @@ class MarketplaceMixin:
         if not rec or rec.get("status") != "running":
             return False
         rec["cancel"].set()
-        proc = rec.get("proc")
-        if proc is not None:
+        for proc in list((rec.get("procs") or {}).values()):
             try:
                 proc.terminate()
             except Exception:
@@ -199,6 +256,17 @@ class MarketplaceMixin:
         """Drop the machine-local catalogue cache (the next read re-fetches)."""
         mp.CatalogCache(config_mod.marketplace_cache_path()).clear()
         self._invalidate_installed()
+
+    def _marketplace_venv_lock(self, target_id: str) -> threading.Lock:
+        """The lock serialising pip runs into one venv across concurrent ops."""
+        with self._marketplace_lock:
+            locks: dict[str, threading.Lock] | None = getattr(
+                self, "_marketplace_venv_locks", None
+            )
+            if locks is None:
+                locks = {}
+                self._marketplace_venv_locks = locks
+            return locks.setdefault(target_id, threading.Lock())
 
     def _invalidate_installed(self) -> None:
         """Drop the assembled installed result and every per-target probe row, so
@@ -795,6 +863,18 @@ class MarketplaceMixin:
                 raise ValueError(f"Unknown repo {repo_id!r}.")
             env = mp.pip_env(repo)
 
+        upgrade_runspec = (
+            action == "install"
+            and bool(payload.get("upgrade_runspec"))
+            and mp.normalize_name(re.split(r"[\[=<>!~;\s]", spec, maxsplit=1)[0])
+            != _RUNSPEC_DIST
+        )
+        opts = {
+            "upgrade": bool(payload.get("upgrade")) or upgrade_runspec,
+            "reinstall": bool(payload.get("reinstall")),
+            "pre": bool(payload.get("pre") or cfg["include_prerelease"]),
+        }
+
         op = uuid.uuid4().hex[:12]
         record: dict[str, Any] = {
             "op": op,
@@ -802,23 +882,42 @@ class MarketplaceMixin:
             "package": spec,
             "status": "running",
             "started_at": time.time(),
+            # Start order: time.time() can tie on a coarse clock (Windows).
+            "seq": next(_OP_SEQ),
+            "options": {
+                "upgrade": opts["upgrade"],
+                "reinstall": opts["reinstall"],
+                "pre": opts["pre"],
+                "upgrade_runspec": upgrade_runspec,
+            },
+            "specs": [spec, _RUNSPEC_DIST] if upgrade_runspec else [spec],
+            "targets": {
+                t["id"]: {
+                    "target": t["id"],
+                    "host": t["host"],
+                    "venv": t["venv"],
+                    "state": "queued",
+                    "lines": [],
+                }
+                for t in plan
+            },
             "results": [],
             "cancel": threading.Event(),
-            "proc": None,
+            "procs": {},
         }
-        self._marketplace_ops[op] = record
-        # Keep only the newest few finished ops around.
-        finished = [
-            k for k, v in self._marketplace_ops.items() if v.get("status") != "running"
-        ]
-        for k in finished[:-8]:
-            self._marketplace_ops.pop(k, None)
-
-        opts = {
-            "upgrade": bool(payload.get("upgrade")),
-            "reinstall": bool(payload.get("reinstall")),
-            "pre": bool(payload.get("pre") or cfg["include_prerelease"]),
-        }
+        with self._marketplace_lock:
+            self._marketplace_ops[op] = record
+            # Keep only the newest finished ops around (running ones always stay).
+            finished = [
+                k
+                for k, v in sorted(
+                    self._marketplace_ops.items(),
+                    key=lambda kv: _op_order(kv[1]),
+                )
+                if v.get("status") != "running"
+            ]
+            for k in finished[:-_MAX_FINISHED_OPS]:
+                self._marketplace_ops.pop(k, None)
         threading.Thread(
             target=self._run_pip_op,
             args=(record, plan, env, opts),
@@ -839,6 +938,8 @@ class MarketplaceMixin:
         spec = record["package"]
         cancel: threading.Event = record["cancel"]
         results: list[dict[str, Any]] = record["results"]
+        live: dict[str, dict[str, Any]] = record["targets"]
+        procs: dict[str, Any] = record["procs"]
         lock = threading.Lock()
 
         def _one(t: dict[str, Any]) -> dict[str, Any]:
@@ -852,19 +953,42 @@ class MarketplaceMixin:
                 "lines": [],
                 "skipped": False,
             }
+            row = live[t["id"]]
+            # Two pips writing one venv at once can corrupt it, so concurrent
+            # ops on the same venv queue here; different venvs run in parallel.
+            vlock = self._marketplace_venv_lock(t["id"])
+            while not vlock.acquire(timeout=0.25):
+                if cancel.is_set():
+                    break
+            else:
+                try:
+                    return _run(t, res, row)
+                finally:
+                    vlock.release()
+            res["skipped"] = True
+            res["summary"] = "cancelled"
+            row.update(state="skipped", summary="cancelled", ok=False)
+            return res
+
+        def _run(
+            t: dict[str, Any], res: dict[str, Any], row: dict[str, Any]
+        ) -> dict[str, Any]:
             if cancel.is_set():
                 res["skipped"] = True
                 res["summary"] = "cancelled"
+                row.update(state="skipped", summary="cancelled", ok=False)
                 return res
             python = str(t["python"])
             try:
                 if action == "install":
-                    argv = mp.pip_install_argv(python, [spec], **opts)
+                    argv = mp.pip_install_argv(python, record["specs"], **opts)
                 else:
                     argv = mp.pip_uninstall_argv(python, [spec])
             except mp.MarketplaceError as exc:
                 res["summary"] = str(exc)
+                row.update(state="done", summary=str(exc), ok=False)
                 return res
+            row["state"] = "running"
             self._marketplace_progress(
                 op=op,
                 phase="start",
@@ -874,6 +998,7 @@ class MarketplaceMixin:
                 action=action,
             )
             lines: list[str] = res["lines"]
+            row["lines"] = lines  # the live record shares the output buffer
 
             def _line(line: str) -> None:
                 if len(lines) < _MAX_OP_LINES:
@@ -883,8 +1008,7 @@ class MarketplaceMixin:
                 )
 
             def _sink(proc: Any) -> None:
-                if t.get("local"):
-                    record["proc"] = proc
+                procs[t["id"]] = proc
 
             try:
                 code, out = self._run_on_target(
@@ -899,6 +1023,7 @@ class MarketplaceMixin:
                 )
             except Exception as exc:
                 res["summary"] = str(exc)
+                row.update(state="done", summary=str(exc), ok=False)
                 self._marketplace_progress(
                     op=op,
                     phase="done",
@@ -909,11 +1034,13 @@ class MarketplaceMixin:
                 )
                 return res
             finally:
-                if t.get("local"):
-                    record["proc"] = None
+                procs.pop(t["id"], None)
             res["exit_code"] = code
             res["ok"] = code == 0
             res["summary"] = mp.summarize_pip_output(out) or f"exit {code}"
+            row.update(
+                state="done", ok=res["ok"], exit_code=code, summary=res["summary"]
+            )
             self._marketplace_progress(
                 op=op,
                 phase="done",

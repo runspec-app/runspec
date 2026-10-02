@@ -1625,6 +1625,8 @@ export interface MarketplaceOpPayload {
   reinstall?: boolean
   pre?: boolean
   repo?: string
+  // Also upgrade the runspec library in the same pip run (install only).
+  upgrade_runspec?: boolean
 }
 
 export interface MarketplaceOpResult {
@@ -1638,12 +1640,30 @@ export interface MarketplaceOpResult {
   skipped: boolean
 }
 
+// One planned target of an op, with its live state (queued = waiting for
+// another op on the same venv to finish).
+export interface MarketplaceOpTargetState {
+  target: string
+  host: string
+  venv: string
+  state: 'queued' | 'running' | 'done' | 'skipped'
+  ok?: boolean
+  exit_code?: number | null
+  summary?: string
+  lines?: string[]
+}
+
 export interface MarketplaceOpRecord {
   op: string
   action: 'install' | 'uninstall'
   package: string
   status: 'running' | 'finished' | 'cancelled'
   results: MarketplaceOpResult[]
+  started_at?: number
+  finished_at?: number | null
+  options?: { upgrade?: boolean; reinstall?: boolean; pre?: boolean; upgrade_runspec?: boolean }
+  counts?: { ok: number; failed: number; running: number; queued: number; skipped: number }
+  targets?: MarketplaceOpTargetState[]
 }
 
 // ── Venv provisioning (Settings → Jump Hosts → Provision / Deprovision) ──
@@ -1921,6 +1941,9 @@ export interface BridgeApi {
   marketplace_install: (payload: MarketplaceOpPayload) => Promise<{ op: string; targets: string[] }>
   marketplace_uninstall: (payload: MarketplaceOpPayload) => Promise<{ op: string; targets: string[] }>
   marketplace_op: (op: string) => Promise<MarketplaceOpRecord | null>
+  // Every op this session ran (running + the newest finished), newest first,
+  // without pip output — the Marketplace activity list.
+  marketplace_ops: () => Promise<MarketplaceOpRecord[]>
   marketplace_cancel: (op: string) => Promise<boolean>
   marketplace_clear_cache: () => Promise<void>
   // Create / remove runspec venvs on fleet hosts (one or many at once). Progress

@@ -103,6 +103,8 @@ class _StubBridge:
     marketplace_install = Bridge.marketplace_install
     marketplace_uninstall = Bridge.marketplace_uninstall
     marketplace_op = Bridge.marketplace_op
+    marketplace_ops = Bridge.marketplace_ops
+    _marketplace_venv_lock = Bridge._marketplace_venv_lock
     marketplace_cancel = Bridge.marketplace_cancel
     marketplace_clear_cache = Bridge.marketplace_clear_cache
     _invalidate_installed = Bridge._invalidate_installed
@@ -710,3 +712,125 @@ def test_install_local_streams_lines(app, monkeypatch):
         if ev == "runspec:marketplace_progress" and d.get("phase") == "line"
     ]
     assert lines == ["line one", "Successfully installed fake-1.0"]
+
+
+def test_upgrade_runspec_adds_runspec_and_upgrades(app):
+    _write_hosts(
+        [
+            {
+                "name": "web-01",
+                "ssh": "ops@web-01",
+                "runspec_paths": ["/opt/venvs/ops/bin/runspec"],
+            }
+        ]
+    )
+    b = _StubBridge()
+    b.ssh_reply = (0, "Successfully installed runspec-acme-1.2.0 runspec-0.71.0", "")
+    out = b.marketplace_install(
+        {
+            "package": "runspec-acme==1.2.0",
+            "upgrade_runspec": True,
+            "targets": [{"id": "web-01::/opt/venvs/ops"}],
+        }
+    )
+    rec = _wait_op(b, out["op"])
+    toks = shlex.split(b.ssh_calls[-1][1])
+    assert toks[-2:] == ["runspec-acme==1.2.0", "runspec"] and "-U" in toks
+    assert rec["options"]["upgrade_runspec"] is True
+    # Installing runspec itself doesn't list it twice; uninstall ignores the flag.
+    out = b.marketplace_install(
+        {
+            "package": "runspec",
+            "upgrade_runspec": True,
+            "targets": [{"id": "web-01::/opt/venvs/ops"}],
+        }
+    )
+    _wait_op(b, out["op"])
+    assert shlex.split(b.ssh_calls[-1][1]).count("runspec") == 1
+    out = b.marketplace_uninstall(
+        {
+            "package": "runspec-acme",
+            "upgrade_runspec": True,
+            "targets": [{"id": "web-01::/opt/venvs/ops"}],
+        }
+    )
+    _wait_op(b, out["op"])
+    toks = shlex.split(b.ssh_calls[-1][1])
+    assert toks[-1] == "runspec-acme" and "runspec" not in toks
+
+
+def test_concurrent_ops_history_and_same_venv_queues(app):
+    _write_hosts(
+        [
+            {
+                "name": "web-01",
+                "ssh": "ops@web-01",
+                "runspec_paths": ["/opt/venvs/ops/bin/runspec"],
+            }
+        ]
+    )
+    b = _StubBridge()
+    gate = threading.Event()
+    active: list[int] = []
+    peak: list[int] = []
+
+    def slow_ssh(ssh, command, *, identity_file=None, timeout=15, stdin=None):
+        active.append(1)
+        peak.append(len(active))
+        gate.wait(5)
+        active.pop()
+        b.ssh_calls.append((ssh, command))
+        return (0, "Successfully installed x", "")
+
+    b._ssh_run = slow_ssh  # type: ignore[method-assign]
+    tid = "web-01::/opt/venvs/ops"
+    first = b.marketplace_install({"package": "runspec-a", "targets": [{"id": tid}]})
+    second = b.marketplace_install({"package": "runspec-b", "targets": [{"id": tid}]})
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        views = {v["op"]: v for v in b.marketplace_ops()}
+        states = sorted(views[o["op"]]["targets"][0]["state"] for o in (first, second))
+        if states == ["queued", "running"]:
+            break
+        time.sleep(0.02)
+    assert states == ["queued", "running"]  # both started; one waits its turn
+    ops = b.marketplace_ops()
+    assert [o["status"] for o in ops] == ["running", "running"]
+    assert ops[0]["package"] == "runspec-b"  # newest first
+    assert "lines" not in ops[0]["targets"][0]
+    gate.set()
+    for o in (first, second):
+        rec = _wait_op(b, o["op"])
+        assert rec["status"] == "finished"
+        assert rec["targets"][0]["state"] == "done" and rec["targets"][0]["ok"]
+        assert rec["counts"]["ok"] == 1
+        json.dumps(rec)  # JSON-safe for the pywebview bridge
+    assert max(peak) == 1  # never two pips in one venv at once
+
+
+def test_cancel_while_queued_skips(app):
+    _write_hosts(
+        [
+            {
+                "name": "web-01",
+                "ssh": "ops@web-01",
+                "runspec_paths": ["/opt/venvs/ops/bin/runspec"],
+            }
+        ]
+    )
+    b = _StubBridge()
+    gate = threading.Event()
+
+    def slow_ssh(ssh, command, *, identity_file=None, timeout=15, stdin=None):
+        gate.wait(5)
+        return (0, "ok", "")
+
+    b._ssh_run = slow_ssh  # type: ignore[method-assign]
+    tid = "web-01::/opt/venvs/ops"
+    b.marketplace_install({"package": "runspec-a", "targets": [{"id": tid}]})
+    second = b.marketplace_install({"package": "runspec-b", "targets": [{"id": tid}]})
+    time.sleep(0.1)
+    assert b.marketplace_cancel(second["op"])
+    rec = _wait_op(b, second["op"])
+    gate.set()
+    assert rec["status"] == "cancelled" and rec["targets"][0]["state"] == "skipped"

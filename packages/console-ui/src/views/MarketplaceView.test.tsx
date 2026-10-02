@@ -8,10 +8,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, act, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
-import { MarketplaceView, cmpVersion, targetStates, filterEntries, defaultRunAs } from './MarketplaceView'
-import type { MarketplaceEntry, MarketplaceInstalled, MarketplaceInstalledTarget } from '../bridge'
+import { MarketplaceView, cmpVersion, targetStates, filterEntries, defaultRunAs, opLabel, opOutcome, applyProgress } from './MarketplaceView'
+import type { MarketplaceEntry, MarketplaceInstalled, MarketplaceInstalledTarget, MarketplaceOpRecord } from '../bridge'
 
-const { catalog, installed, install, uninstall, cancel } = vi.hoisted(() => ({
+const { catalog, installed, install, uninstall, cancel, opRec, opsList } = vi.hoisted(() => ({
+  opRec: vi.fn(),
+  opsList: vi.fn(),
   catalog: vi.fn(),
   installed: vi.fn(),
   install: vi.fn(),
@@ -27,6 +29,8 @@ vi.mock('../bridge', () => ({
       if (p === 'marketplace_install') return install
       if (p === 'marketplace_uninstall') return uninstall
       if (p === 'marketplace_cancel') return cancel
+      if (p === 'marketplace_op') return opRec
+      if (p === 'marketplace_ops') return opsList
       return vi.fn()
     },
   }),
@@ -47,6 +51,12 @@ const target = (over: Partial<MarketplaceInstalledTarget>): MarketplaceInstalled
   owner: 'svc', user: 'ops', python_version: '3.12.1', dists: {},
   ...over,
 })
+
+const RUNNING_OP: MarketplaceOpRecord = {
+  op: 'op1', action: 'install', package: 'runspec-linux', status: 'running', results: [], started_at: Date.now() / 1000,
+  options: { upgrade: true }, counts: { ok: 0, failed: 0, running: 0, queued: 1, skipped: 0 },
+  targets: [{ target: 'web-01::/opt/venvs/ops', host: 'web-01', venv: 'ops', state: 'queued', lines: [] }],
+}
 
 const ENTRIES = [
   entry({}),
@@ -118,6 +128,8 @@ describe('MarketplaceView', () => {
     install.mockReset().mockResolvedValue({ op: 'op1', targets: [] })
     uninstall.mockReset().mockResolvedValue({ op: 'op2', targets: [] })
     cancel.mockReset().mockResolvedValue(true)
+    opRec.mockReset().mockResolvedValue(RUNNING_OP)
+    opsList.mockReset().mockResolvedValue([])
   })
 
   it('renders cards with install state, links and the skipped-count tag', async () => {
@@ -162,20 +174,59 @@ describe('MarketplaceView', () => {
     await act(async () => { await user.click(within(dialog).getByRole('button', { name: /Install runspec-linux on 1 venv$/ })) })
     await waitFor(() => expect(install).toHaveBeenCalled())
     expect(install.mock.calls[0][0]).toEqual({
-      package: 'runspec-linux', upgrade: true, reinstall: false, repo: 'pypi',
+      package: 'runspec-linux', upgrade: true, reinstall: false, repo: 'pypi', upgrade_runspec: false,
       targets: [{ id: 'web-01::/opt/venvs/ops', run_as: 'svc', become_method: 'sudo' }],
     })
+    // The picker hands off to the op's live view (closable while it runs).
+    const live = await screen.findByRole('dialog', { name: /Installing runspec-linux/ })
+    expect(within(live).getByText(/Closing this keeps it running/)).toBeTruthy()
     // Streamed progress lands in the per-target log; done re-probes the venvs.
     await act(async () => {
+      window.dispatchEvent(new CustomEvent('runspec:marketplace_progress', { detail: { op: 'op1', phase: 'start', target: 'web-01::/opt/venvs/ops' } }))
       window.dispatchEvent(new CustomEvent('runspec:marketplace_progress', { detail: { op: 'op1', phase: 'line', target: 'web-01::/opt/venvs/ops', line: 'Successfully installed runspec-linux-0.13.2' } }))
     })
-    expect(await within(dialog).findByText(/Successfully installed runspec-linux-0\.13\.2/)).toBeTruthy()
+    expect(await within(live).findByText(/Successfully installed runspec-linux-0\.13\.2/)).toBeTruthy()
     const before = installed.mock.calls.length
+    opRec.mockResolvedValue({ ...RUNNING_OP, status: 'finished', counts: { ok: 1, failed: 0, running: 0, queued: 0, skipped: 0 },
+      targets: [{ ...RUNNING_OP.targets![0], state: 'done', ok: true, exit_code: 0, summary: 'ok', lines: ['Successfully installed runspec-linux-0.13.2'] }] })
     await act(async () => {
       window.dispatchEvent(new CustomEvent('runspec:marketplace_done', { detail: { op: 'op1', action: 'install', status: 'finished', results: [{ target: 'web-01::/opt/venvs/ops', host: 'web-01', venv: 'ops', ok: true, exit_code: 0, summary: 'ok', skipped: false }] } }))
     })
     await waitFor(() => expect(installed.mock.calls.length).toBeGreaterThan(before))
-    expect(await within(dialog).findByText('ok')).toBeTruthy()
+    expect((await within(live).findAllByText('ok')).length).toBeGreaterThan(0)
+  })
+
+  it('sends the "also upgrade runspec" flag', async () => {
+    render(<MarketplaceView hosts={HOSTS} />)
+    await screen.findByText('update available')
+    const user = userEvent.setup()
+    await act(async () => { await user.click(screen.getByRole('button', { name: /Update…/ })) })
+    const dialog = await screen.findByRole('dialog')
+    await act(async () => { await user.click(within(dialog).getByRole('switch', { name: 'Also upgrade runspec' })) })
+    await act(async () => { await user.click(within(dialog).getByRole('button', { name: /Install runspec-linux on 1 venv$/ })) })
+    await waitFor(() => expect(install).toHaveBeenCalled())
+    expect(install.mock.calls[0][0].upgrade_runspec).toBe(true)
+  })
+
+  it('lists running and past operations and reopens one from Activity', async () => {
+    const done: MarketplaceOpRecord = { ...RUNNING_OP, op: 'op0', package: 'runspec-jira', status: 'finished', started_at: Date.now() / 1000 - 600,
+      counts: { ok: 0, failed: 1, running: 0, queued: 0, skipped: 0 },
+      targets: [{ ...RUNNING_OP.targets![0], state: 'done', ok: false, exit_code: 1, summary: 'ERROR: boom', lines: ['ERROR: boom'] }] }
+    opsList.mockResolvedValue([RUNNING_OP, done])
+    opRec.mockImplementation(async (op: string) => (op === 'op0' ? done : RUNNING_OP))
+    render(<MarketplaceView hosts={HOSTS} />)
+    await screen.findByText('runspec-linux')
+    // The running op shows in the strip and on its package card.
+    expect(await screen.findByText(/Installing runspec-linux · 0\/1 done/)).toBeTruthy()
+    expect(screen.getByText('installing…')).toBeTruthy()
+    const user = userEvent.setup()
+    await act(async () => { await user.click(screen.getByRole('button', { name: /Activity/ })) })
+    const list = await screen.findByRole('dialog', { name: 'Marketplace activity' })
+    expect(within(list).getByText('1 of 1 failed')).toBeTruthy()
+    await act(async () => { await user.click(within(list).getByText('Install runspec-jira')) })
+    await waitFor(() => expect(opRec).toHaveBeenCalledWith('op0'))
+    expect(await screen.findByText('ERROR: boom')).toBeTruthy()
+    expect(screen.getByText('failed (exit 1)')).toBeTruthy()
   })
 
   it('uninstall lists only venvs that have the package', async () => {
@@ -241,5 +292,21 @@ describe('MarketplaceView', () => {
     catalog.mockResolvedValue({ enabled: false, entries: [], repos: [], errors: [] })
     render(<MarketplaceView hosts={HOSTS} />)
     await screen.findByText('The marketplace is turned off')
+  })
+})
+
+describe('op helpers', () => {
+  it('labels, summarises and applies progress', () => {
+    expect(opLabel(RUNNING_OP)).toBe('Installing runspec-linux')
+    expect(opLabel({ ...RUNNING_OP, action: 'uninstall', status: 'finished' })).toBe('Uninstall runspec-linux')
+    expect(opOutcome(RUNNING_OP)).toEqual({ color: 'processing', text: '0/1 done · 1 queued' })
+    expect(opOutcome({ ...RUNNING_OP, status: 'cancelled' }).text).toBe('cancelled')
+    expect(opOutcome({ ...RUNNING_OP, status: 'finished', counts: { ok: 1, failed: 0, running: 0, queued: 0, skipped: 0 } }).text).toBe('ok')
+    let r = applyProgress(RUNNING_OP, { phase: 'start', target: 'web-01::/opt/venvs/ops' })
+    expect(r.targets![0].state).toBe('running')
+    r = applyProgress(r, { phase: 'line', target: 'web-01::/opt/venvs/ops', line: 'hi' })
+    r = applyProgress(r, { phase: 'done', target: 'web-01::/opt/venvs/ops', ok: true, exit_code: 0, summary: 'ok' })
+    expect(r.targets![0]).toMatchObject({ state: 'done', ok: true, lines: ['hi'] })
+    expect(applyProgress(r, { phase: 'line', target: 'other', line: 'x' }).targets).toEqual(r.targets)
   })
 })

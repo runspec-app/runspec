@@ -194,6 +194,8 @@ class Bridge(
         # and memoises the last installed-state probe (see bridge_marketplace).
         self._marketplace_lock = threading.Lock()
         self._marketplace_ops: dict[str, dict[str, Any]] = {}
+        # One lock per target venv: concurrent ops into the same venv queue.
+        self._marketplace_venv_locks: dict[str, threading.Lock] = {}
         self._marketplace_installed: dict[str, Any] | None = None
         # Per-target installed-probe cache: target id → (wall_ts, ok-row). The
         # probe fan-out reuses a target's row within _PROBE_TTL_S, so the

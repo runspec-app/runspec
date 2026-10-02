@@ -708,28 +708,38 @@ const MOCK_MARKET_OPS = new Map<string, MarketplaceOpRecord>()
 
 function mockMarketplaceOp(action: 'install' | 'uninstall', payload: MarketplaceOpPayload) {
   const op = Math.random().toString(16).slice(2, 14)
-  const rec: MarketplaceOpRecord = { op, action, package: payload.package, status: 'running', results: [] }
+  const rec: MarketplaceOpRecord = {
+    op, action, package: payload.package, status: 'running', results: [], started_at: Date.now() / 1000,
+    options: { upgrade: !!payload.upgrade, reinstall: !!payload.reinstall, upgrade_runspec: !!payload.upgrade_runspec },
+    targets: payload.targets.map(t => {
+      const target = MOCK_MARKET_TARGETS.find(x => x.id === t.id)!
+      return { target: t.id, host: target.host, venv: target.venv, state: 'queued' as const, lines: [] }
+    }),
+  }
   MOCK_MARKET_OPS.set(op, rec)
   console.log('[mock] marketplace_' + action, payload)
   let delay = 200
   for (const t of payload.targets) {
     const target = MOCK_MARKET_TARGETS.find(x => x.id === t.id)!
-    setTimeout(() => window.dispatchEvent(new CustomEvent('runspec:marketplace_progress', { detail: { op, phase: 'start', target: t.id, host: target.host, venv: target.venv, action } })), delay)
+    const live = rec.targets!.find(x => x.target === t.id)!
+    setTimeout(() => { live.state = 'running'; window.dispatchEvent(new CustomEvent('runspec:marketplace_progress', { detail: { op, phase: 'start', target: t.id, host: target.host, venv: target.venv, action } })) }, delay)
     const lines = action === 'install'
       ? [`Collecting ${payload.package}`, `  Downloading ${payload.package.replace(/-/g, '_')}-1.0.0-py3-none-any.whl (42 kB)`, `Installing collected packages: ${payload.package}`, `Successfully installed ${payload.package}-1.0.0`]
       : [`Found existing installation: ${payload.package} 1.0.0`, `Uninstalling ${payload.package}-1.0.0:`, `  Successfully uninstalled ${payload.package}-1.0.0`]
-    lines.forEach((line, i) => setTimeout(() => window.dispatchEvent(new CustomEvent('runspec:marketplace_progress', { detail: { op, phase: 'line', target: t.id, line } })), delay + 250 * (i + 1)))
+    lines.forEach((line, i) => setTimeout(() => live.lines!.push(line) && window.dispatchEvent(new CustomEvent('runspec:marketplace_progress', { detail: { op, phase: 'line', target: t.id, line } })), delay + 250 * (i + 1)))
     delay += 250 * (lines.length + 1)
     const ok = target.venv !== 'ops-tools'
     setTimeout(() => {
       const res: MarketplaceOpResult = { target: t.id, host: target.host, venv: target.venv, ok, exit_code: ok ? 0 : 1, summary: ok ? lines[lines.length - 1] : 'ERROR: No matching distribution found', skipped: false }
       rec.results.push(res)
+      Object.assign(live, { state: 'done', ok, exit_code: res.exit_code, summary: res.summary })
       window.dispatchEvent(new CustomEvent('runspec:marketplace_progress', { detail: { op, phase: 'done', target: t.id, ok, exit_code: res.exit_code, summary: res.summary } }))
     }, delay)
     delay += 100
   }
   setTimeout(() => {
     rec.status = 'finished'
+    rec.finished_at = Date.now() / 1000
     window.dispatchEvent(new CustomEvent('runspec:marketplace_done', { detail: { op, action, package: payload.package, status: 'finished', results: rec.results } }))
   }, delay + 100)
   return Promise.resolve({ op, targets: payload.targets.map(t => t.id) })
@@ -1000,6 +1010,7 @@ export const mockApi: BridgeApi = {
   marketplace_install: async (payload) => mockMarketplaceOp('install', payload),
   marketplace_uninstall: async (payload) => mockMarketplaceOp('uninstall', payload),
   marketplace_op: async (op) => MOCK_MARKET_OPS.get(op) ?? null,
+  marketplace_ops: async () => [...MOCK_MARKET_OPS.values()].sort((a, b) => (b.started_at ?? 0) - (a.started_at ?? 0)),
   marketplace_cancel: async (op) => { console.log('[mock] marketplace_cancel', op); return true },
   marketplace_clear_cache: async () => { console.log('[mock] marketplace_clear_cache') },
   provision_options: async () => ({

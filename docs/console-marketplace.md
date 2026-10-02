@@ -43,8 +43,10 @@ A package can be installed into:
 Disconnected hosts are listed but cannot be picked. The install picker
 shows each venv's Python version and current install, pre-selects the
 sensible set (the outdated venvs for an update; nothing when the package is
-already current everywhere), and lets you choose a specific **version** or
-**force reinstall**.
+already current everywhere), and lets you choose a specific **version**,
+**force reinstall**, or **Also upgrade runspec**. That last one adds the
+runspec library to the same pip run (`pip install -U <package> runspec`), so a
+package that needs a newer runspec lands together with it.
 
 ### Run as — service-account venvs
 
@@ -71,6 +73,24 @@ configured indexes publish.
 pip's output streams live per target; a finished install kicks a discovery
 refresh so the new runnables appear in Forms and in the agent's toolset
 without a restart.
+
+### Several at once, and the Activity list
+
+An install, update or removal runs in the background. Starting one opens its
+live view, which you can close straight away and start the next; nothing
+waits for the previous one to finish. Running operations show in a
+**Running:** strip under the toolbar and as an *installing…* tag on their
+package's card; click either to reopen the live view.
+
+Two operations never run pip in the **same venv** at once (that can corrupt
+it): the second one shows that venv as *queued* and starts when the first
+finishes. Different venvs run in parallel.
+
+**Activity** (toolbar, with a badge counting running operations) lists every
+operation from this console session, newest first, with its outcome
+(*ok*, *2 of 5 failed*, *cancelled*). Click one to see each venv's result and
+pip output. The list keeps the 25 most recent finished operations and is
+cleared when the console restarts.
 
 ---
 
