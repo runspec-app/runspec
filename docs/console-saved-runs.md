@@ -22,7 +22,7 @@ id             = "restart-web"
 title          = "Restart web tier"
 description    = "Rolling restart of nginx across production"
 runnable       = "service-restart"
-group          = "Production"       # exactly one of host/group/hosts/selected_hosts
+group          = "Production"       # exactly one of host/group/hosts/selected_hosts/profile
 credential_ids = []                 # console credential ids — never secrets
 
 [saved_run.args]                    # fixed args, baked in
@@ -32,7 +32,7 @@ service = "nginx"
 reason = { required = true }
 ```
 
-Targeting mirrors a runnable-action schedule exactly — one of:
+Targeting mirrors a runnable-action schedule, plus a host profile — one of:
 
 | Key | Behaviour |
 |---|---|
@@ -40,6 +40,7 @@ Targeting mirrors a runnable-action schedule exactly — one of:
 | `group` | fan out across every member of the host group that carries the runnable |
 | `hosts` | candidate list — the run lands on the **first connected** one (failover) |
 | `selected_hosts` | explicit list — fan out to every host in it |
+| `profile` | fan out across every host tagged with the [host profile](console-hosts.md) that carries the runnable — membership is resolved at run time, so the preset follows the profile as hosts join or leave it |
 
 `params` is a runspec **args table** — the same grammar as a runnable's args
 and a runbook's `[runbook.args]` (types, choices, defaults, `required`), so a
@@ -75,8 +76,8 @@ the secret env channel.
 
 **Settings → Saved runs** is the editor, and it works exactly like the
 Schedules tab's run-a-runnable dialog (they share the same components): pick a
-target (hosts show a live connectivity dot; groups show connected/member
-counts), then pick the runnable from a searchable select of what the targeted
+target (hosts show a live connectivity dot; groups and profiles show
+connected/member counts), then pick the runnable from a searchable select of what the targeted
 host(s) actually expose. A runnable with subcommands gets a dropdown of its
 command paths (required when the runnable enforces `require-command`; hidden
 otherwise), and the args form always shows the **effective** set at the chosen

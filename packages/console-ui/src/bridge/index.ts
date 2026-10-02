@@ -71,11 +71,12 @@ export interface SavedRun {
   description: string
   runnable: string
   command: string[]        // optional subcommand path
-  // Exactly one of host / group / hosts / selected_hosts is set.
+  // Exactly one of host / group / hosts / selected_hosts / profile is set.
   host: string
   group: string
   hosts: string[]          // failover candidates — first connected wins
   selected_hosts: string[] // explicit fan-out list
+  profile?: string         // host profile — fans out across its members at run time
   args: Record<string, unknown>       // fixed args, baked in
   credential_ids: string[]
   target?: string          // human summary of the targeting, computed bridge-side

@@ -435,6 +435,14 @@ class SchedulesMixin:
                 exc,
             )
             return ""
+        selected = self._saved_run_selected_hosts(entry)
+        if entry.profile and not selected:
+            logger.warning(
+                "schedule '%s': host profile %r has no hosts — nothing run",
+                job.id,
+                entry.profile,
+            )
+            return ""
         runs = self._invoke_fanout(
             entry.host,
             entry.runnable,
@@ -445,7 +453,7 @@ class SchedulesMixin:
             command_path=entry.command or None,
             group=entry.group,
             hosts=entry.hosts or None,
-            selected_hosts=entry.selected_hosts or None,
+            selected_hosts=selected or None,
             credential_ids=entry.credential_ids or None,
         )
         return runs[0][1] if runs else ""

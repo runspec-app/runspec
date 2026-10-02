@@ -17,7 +17,9 @@ from runspec_console import savedruns
 from runspec_console.bridge import Bridge
 
 
-def _stub(tmp_path, monkeypatch, *, connected=None, groups=None, has=None):
+def _stub(
+    tmp_path, monkeypatch, *, connected=None, groups=None, has=None, profiles=None
+):
     monkeypatch.setattr(
         "runspec_console.config.saved_runs_path",
         lambda: tmp_path / "runspec_saved_runs.toml",
@@ -29,6 +31,8 @@ def _stub(tmp_path, monkeypatch, *, connected=None, groups=None, has=None):
         "run_saved_run",
         "_saved_run_entry",
         "_saved_run_calls",
+        "_saved_run_selected_hosts",
+        "_invoke_scheduled_saved",
         "_invoke_fanout",
         "_pick_connected_host",
     ):
@@ -37,6 +41,7 @@ def _stub(tmp_path, monkeypatch, *, connected=None, groups=None, has=None):
     ns._connected_cache = dict(connected or {})
     ns._host_entry = lambda h: {"name": h, "ssh": "user@" + h}
     ns._group_members = lambda g: list((groups or {}).get(g, []))
+    ns._profile_members = lambda p: list((profiles or {}).get(p, []))
     # has: set of (host, runnable) pairs that exist; None → everything exists.
     ns._host_has_runnable = lambda h, r: has is None or (h, r) in has
     ns._on_schedule_card = lambda card: None
@@ -183,6 +188,37 @@ def test_run_saved_run_selected_hosts_fans_out(tmp_path, monkeypatch):
     assert [r["host"] for r in res["runs"]] == ["h1", "h2"]
 
 
+def test_run_saved_run_profile_fans_out_over_members(tmp_path, monkeypatch):
+    ns = _stub(
+        tmp_path,
+        monkeypatch,
+        profiles={"devops": ["w1", "w2", "w3"]},
+        has={("w1", "svc"), ("w3", "svc")},  # w2 lacks the runnable
+    )
+    _seed([{"id": "a", "runnable": "svc", "profile": "devops"}])
+    res = ns.run_saved_run("a")
+    assert [r["host"] for r in res["runs"]] == ["w1", "w3"]
+
+
+def test_run_saved_run_empty_profile_errors(tmp_path, monkeypatch):
+    ns = _stub(tmp_path, monkeypatch, profiles={})
+    _seed([{"id": "a", "runnable": "svc", "profile": "ghost"}])
+    res = ns.run_saved_run("a")
+    assert "ghost" in res["error"]
+    assert ns.runs == []
+
+
+def test_save_and_get_round_trip_profile(tmp_path, monkeypatch):
+    ns = _stub(tmp_path, monkeypatch)
+    res = ns.save_saved_runs(
+        [{"id": "a", "runnable": "svc", "profile": "devops", "host": ""}]
+    )
+    assert res["ok"] is True
+    (row,) = ns.get_saved_runs()
+    assert row["profile"] == "devops"
+    assert row["target"] == "profile devops"
+
+
 def test_run_saved_run_unknown_id(tmp_path, monkeypatch):
     ns = _stub(tmp_path, monkeypatch)
     _seed([{"id": "a", "runnable": "svc", "host": "h"}])
@@ -274,3 +310,42 @@ def test_saved_run_calls_hosts_failover(tmp_path, monkeypatch):
     calls, err = ns._saved_run_calls(entry, None)
     assert err == ""
     assert [c[0] for c in calls] == ["h2__svc"]
+
+
+def test_saved_run_calls_profile_fans_out(tmp_path, monkeypatch):
+    ns = _stub(
+        tmp_path,
+        monkeypatch,
+        profiles={"devops": ["w1", "w2"]},
+        has={("w2", "svc")},
+    )
+    _seed([{"id": "a", "runnable": "svc", "profile": "devops"}])
+    entry = ns._saved_run_entry("a")
+    calls, err = ns._saved_run_calls(entry, None)
+    assert err == ""
+    assert [c[0] for c in calls] == ["w2__svc"]
+
+
+def test_saved_run_calls_profile_without_runnable_errors(tmp_path, monkeypatch):
+    ns = _stub(tmp_path, monkeypatch, profiles={"devops": ["w1"]}, has=set())
+    _seed([{"id": "a", "runnable": "svc", "profile": "devops"}])
+    entry = ns._saved_run_entry("a")
+    calls, err = ns._saved_run_calls(entry, None)
+    assert calls == []
+    assert "profile 'devops'" in err
+
+
+def test_scheduled_saved_run_profile_fans_out(tmp_path, monkeypatch):
+    ns = _stub(tmp_path, monkeypatch, profiles={"devops": ["w1", "w2"]})
+    _seed([{"id": "a", "runnable": "svc", "profile": "devops"}])
+    job = types.SimpleNamespace(id="nightly", saved_run="a", values={})
+    assert ns._invoke_scheduled_saved(job) == "inv-w1"
+    assert [r[0] for r in ns.runs] == ["w1", "w2"]
+
+
+def test_scheduled_saved_run_empty_profile_runs_nothing(tmp_path, monkeypatch):
+    ns = _stub(tmp_path, monkeypatch, profiles={})
+    _seed([{"id": "a", "runnable": "svc", "profile": "ghost"}])
+    job = types.SimpleNamespace(id="nightly", saved_run="a", values={})
+    assert ns._invoke_scheduled_saved(job) == ""
+    assert ns.runs == []

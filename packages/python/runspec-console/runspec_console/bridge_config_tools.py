@@ -276,7 +276,7 @@ class ConfigToolsMixin:
                 "the operator, you (run_saved_run), and schedules "
                 "(action='saved_run') can fire. 'save' upserts one saved run by "
                 "id — provide the full entry; it is validated before writing "
-                "(exactly one of host/group/hosts/selected_hosts; 'params' is a "
+                "(exactly one of host/group/hosts/selected_hosts/profile; 'params' is a "
                 "runspec args table for the open parameters)."
             ),
             "input_schema": {
@@ -296,7 +296,9 @@ class ConfigToolsMixin:
                         "description": (
                             "For save: the full saved-run entry. Keys: id, title, "
                             "description, runnable, command (subcommand path list), "
-                            "one of host / group / hosts / selected_hosts, args "
+                            "one of host / group / hosts / selected_hosts / "
+                            "profile (a host profile name — fans out across its "
+                            "members), args "
                             "(fixed values), params (runspec args table, e.g. "
                             "{reason: {required: true}}), credential_ids."
                         ),

@@ -7,6 +7,20 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.317.0] — 2026-10-02
+
+### Added
+
+- **A saved run can target a host profile.** The Settings → Saved runs editor
+  gains a **Host profile** target beside One host / Any of hosts / Selected
+  hosts / Host group. The run fans out to every host tagged with that profile
+  that carries the runnable, one run per host. Membership is resolved when the
+  run fires, so the preset follows the profile as hosts are added to or
+  removed from it. Stored as `profile = "<name>"` on the `[[saved_run]]` entry
+  (exactly one targeting mode, as before); honoured by the Forms run path, the
+  agent's `run_saved_run` tool and saved-run schedules. Runnable-action
+  schedules don't offer it.
+
 ## [0.312.1] — 2026-10-02
 
 ### Changed

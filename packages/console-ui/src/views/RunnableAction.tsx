@@ -11,8 +11,15 @@ import { ArgInput, bindingsForArgs, credEnvNames, partitionArgs, TruncatedText }
 
 const { Text } = Typography
 
-// The four targeting modes shared by runnable-action schedules and saved runs.
-export type Target = 'host' | 'group' | 'anyhost' | 'selected'
+// The targeting modes shared by runnable-action schedules and saved runs.
+// 'profile' (fan out across a host profile's members) is saved-run only — a
+// dialog offers it by passing `profileNames` to TargetFormItems.
+export type Target = 'host' | 'group' | 'anyhost' | 'selected' | 'profile'
+
+// Whether a host carries host profile `profile` (case-insensitive, matching the
+// backend's hosts.host_in_profile).
+export const hostInProfile = (h: Host, profile: string) =>
+  !!profile && (h.profiles ?? []).some(p => p.toLowerCase() === profile.toLowerCase())
 
 // The distinct runnables available on the targeted host(s): a single host's
 // runnables, or (group / any-of / selected mode) every runnable present on any
@@ -21,10 +28,12 @@ export function runnablesForTarget(
   runnables: Runnable[],
   hosts: Host[],
   target: Target,
-  sel: { host?: string; group?: string; hostsList?: string[]; selectedList?: string[] },
+  sel: { host?: string; group?: string; hostsList?: string[]; selectedList?: string[]; profile?: string },
 ): Runnable[] {
   const targeted = target === 'group'
     ? new Set(hosts.filter(h => h.group === (sel.group ?? '')).map(h => h.name))
+    : target === 'profile'
+    ? new Set(hosts.filter(h => hostInProfile(h, sel.profile ?? '')).map(h => h.name))
     : target === 'anyhost' ? new Set(sel.hostsList ?? [])
     : target === 'selected' ? new Set(sel.selectedList ?? [])
     : null
@@ -351,13 +360,15 @@ export function CredentialsSection({
 // a Target segmented control + the matching antd Form.Item selector. Both
 // dialogs use the same form field names (host / hosts / selected_hosts / group),
 // so the caller only supplies the fleet, the current target, and its change
-// handlers. Host options show a live connectivity dot; groups show
-// connected/member counts.
+// handlers. Host options show a live connectivity dot; groups and profiles show
+// connected/member counts. Passing `profileNames` adds the "Host profile" mode
+// (field name `profile`) — the saved-run editor does; schedules don't.
 export function TargetFormItems({
-  hosts, groupNames, target, onTargetChange, onHostChange, labelStyle,
+  hosts, groupNames, profileNames, target, onTargetChange, onHostChange, labelStyle,
 }: {
   hosts: Host[]
   groupNames: string[]
+  profileNames?: string[]
   target: Target
   onTargetChange: (t: Target) => void
   onHostChange: () => void
@@ -382,11 +393,16 @@ export function TargetFormItems({
             { label: 'Any of hosts', value: 'anyhost' },
             { label: 'Selected hosts', value: 'selected' },
             { label: 'Host group', value: 'group', disabled: groupNames.length === 0 },
+            ...(profileNames
+              ? [{ label: 'Host profile', value: 'profile', disabled: profileNames.length === 0 }]
+              : []),
           ]}
         />
         <div style={{ ...labelStyle, marginTop: 4 }}>
           {target === 'group'
             ? 'Runs the runnable on every host in the group (one run card per host).'
+            : target === 'profile'
+            ? 'Runs the runnable on every host in the profile at run time (one run card per host).'
             : target === 'anyhost'
             ? 'Runs on the first connected host from the list (failover) — one run.'
             : target === 'selected'
@@ -417,6 +433,23 @@ export function TargetFormItems({
           <Select mode="multiple" onChange={onHostChange} placeholder="Pick hosts to run on"
             optionFilterProp="value">
             {hosts.map(hostOption)}
+          </Select>
+        </Form.Item>
+      ) : target === 'profile' ? (
+        <Form.Item name="profile" label="Profile" rules={[{ required: true }]}>
+          <Select onChange={onHostChange} placeholder="Select a host profile">
+            {(profileNames ?? []).map(p => {
+              const members = hosts.filter(h => hostInProfile(h, p))
+              const up = members.filter(h => h.connected).length
+              return (
+                <Select.Option key={p} value={p}>
+                  <Space size={6}>
+                    {p}
+                    <span style={{ ...labelStyle }}>{up}/{members.length} connected</span>
+                  </Space>
+                </Select.Option>
+              )
+            })}
           </Select>
         </Form.Item>
       ) : (

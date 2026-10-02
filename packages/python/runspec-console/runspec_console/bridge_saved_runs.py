@@ -48,6 +48,7 @@ class SavedRunsMixin:
                 "group": row.get("group", ""),
                 "hosts": list(row.get("hosts", []) or []),
                 "selected_hosts": list(row.get("selected_hosts", []) or []),
+                "profile": row.get("profile", ""),
                 "args": dict(row.get("args", {}) or {}),
                 "credential_ids": list(row.get("credential_ids", []) or []),
                 "paramsRaw": raw,
@@ -86,6 +87,7 @@ class SavedRunsMixin:
                 "group": r.get("group"),
                 "hosts": r.get("hosts"),
                 "selected_hosts": r.get("selected_hosts"),
+                "profile": r.get("profile"),
                 "args": r.get("args"),
                 "params": raw_params,
                 "credential_ids": r.get("credential_ids"),
@@ -112,6 +114,8 @@ class SavedRunsMixin:
                 entry["hosts"] = parsed.hosts
             if parsed.selected_hosts:
                 entry["selected_hosts"] = parsed.selected_hosts
+            if parsed.profile:
+                entry["profile"] = parsed.profile
             if parsed.args:
                 entry["args"] = parsed.args
             if parsed.params:
@@ -141,6 +145,12 @@ class SavedRunsMixin:
             merged = savedruns_mod.merged_args(entry, values)
         except ValueError as exc:
             return {"error": str(exc)}
+        selected = self._saved_run_selected_hosts(entry)
+        if entry.profile and not selected:
+            return {
+                "error": f"nothing was run — host profile '{entry.profile}' "
+                "has no hosts"
+            }
         runs = self._invoke_fanout(
             entry.host,
             entry.runnable,
@@ -151,7 +161,7 @@ class SavedRunsMixin:
             command_path=entry.command or None,
             group=entry.group,
             hosts=entry.hosts or None,
-            selected_hosts=entry.selected_hosts or None,
+            selected_hosts=selected or None,
             credential_ids=entry.credential_ids or None,
             schedule_card=False,
         )
@@ -167,6 +177,14 @@ class SavedRunsMixin:
         }
 
     # ── internals (agent path) ────────────────────────────────────────────────
+
+    def _saved_run_selected_hosts(self, entry: savedruns_mod.SavedRun) -> list[str]:
+        """The explicit fan-out list for the deterministic engine: a ``profile``
+        resolves to its current members (so the preset follows the profile's
+        membership), otherwise the stored ``selected_hosts``."""
+        if entry.profile:
+            return self._profile_members(entry.profile)
+        return list(entry.selected_hosts)
 
     def _saved_run_entry(self, sid: str):
         """Load + parse a saved run by id → ``SavedRun``, or an error string."""
@@ -206,8 +224,9 @@ class SavedRunsMixin:
         args dict and are popped by ``_run_tool_sync`` before dispatch.
 
         Returns ``(calls, "")`` or ``([], error)``. Target resolution matches
-        the deterministic engine: ``selected_hosts``/``group`` fan out across
-        members carrying the runnable, ``hosts`` picks the first connected one."""
+        the deterministic engine: ``selected_hosts``/``group``/``profile`` fan
+        out across members carrying the runnable, ``hosts`` picks the first
+        connected one."""
         try:
             merged = savedruns_mod.merged_args(entry, values)
         except ValueError as exc:
@@ -225,6 +244,17 @@ class SavedRunsMixin:
             if not targets:
                 return [], (
                     f"Error: no host in {', '.join(entry.selected_hosts)} carries "
+                    f"'{name}' — nothing to run."
+                )
+        elif entry.profile:
+            targets = [
+                m
+                for m in self._profile_members(entry.profile)
+                if self._host_has_runnable(m, name)
+            ]
+            if not targets:
+                return [], (
+                    f"Error: no host in profile '{entry.profile}' carries "
                     f"'{name}' — nothing to run."
                 )
         elif entry.hosts:

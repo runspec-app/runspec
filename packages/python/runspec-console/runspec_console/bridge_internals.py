@@ -24,7 +24,7 @@ from .config import (
     filters_path,
 )
 from .discovery import discover_local, discover_remote
-from .hosts import group_members, groups_map, host_in_profile
+from .hosts import group_members, groups_map, host_in_profile, profile_members
 
 from .bridge_const import (
     DEFAULT_SYSTEM_PROMPT,
@@ -647,6 +647,14 @@ class InternalsMixin:
     def _group_members(self, group: str) -> list[str]:
         """Host names in ``group`` (see :func:`hosts.group_members`)."""
         return group_members(self._all_host_entries(), group)
+
+    def _profile_members(self, profile: str) -> list[str]:
+        """Host names tagged with host profile ``profile`` (see
+        :func:`hosts.profile_members`). A blank name yields no hosts — callers
+        targeting a profile always name one."""
+        if not str(profile or "").strip():
+            return []
+        return profile_members(self._all_host_entries(), profile)
 
     def _groups_map(self) -> dict[str, list[str]]:
         """``{group: [host names]}`` over the live host set."""

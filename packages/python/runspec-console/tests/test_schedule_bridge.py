@@ -622,7 +622,12 @@ def test_run_now_saved_run_fires_preset(tmp_path, monkeypatch):
         ]
     )
     ns = _stub(tmp_path, monkeypatch)
-    for name in ("_run_scheduled_saved", "_invoke_scheduled_saved", "_saved_run_entry"):
+    for name in (
+        "_run_scheduled_saved",
+        "_invoke_scheduled_saved",
+        "_saved_run_entry",
+        "_saved_run_selected_hosts",
+    ):
         setattr(ns, name, types.MethodType(getattr(Bridge, name), ns))
     ns._host_entry = lambda h: {"name": h, "ssh": "user@" + h}
     _seed(
@@ -668,7 +673,12 @@ def test_run_now_saved_run_invalid_values_skips(tmp_path, monkeypatch):
         ]
     )
     ns = _stub(tmp_path, monkeypatch)
-    for name in ("_run_scheduled_saved", "_invoke_scheduled_saved", "_saved_run_entry"):
+    for name in (
+        "_run_scheduled_saved",
+        "_invoke_scheduled_saved",
+        "_saved_run_entry",
+        "_saved_run_selected_hosts",
+    ):
         setattr(ns, name, types.MethodType(getattr(Bridge, name), ns))
     _seed(
         tmp_path,

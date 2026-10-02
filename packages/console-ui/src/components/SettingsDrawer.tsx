@@ -4513,6 +4513,7 @@ interface SavedRunFormValues {
   group?: string
   hosts?: string[]
   selected_hosts?: string[]
+  profile?: string
   args?: { key?: string; value?: string }[]
   params?: RunbookArgRow[]
 }
@@ -4524,6 +4525,7 @@ function SavedRunsTab() {
   const [hosts, setHosts] = useState<Host[]>([])
   const [runnables, setRunnables] = useState<Runnable[]>([])
   const [creds, setCreds] = useState<Credential[]>([])
+  const [profiles, setProfiles] = useState<HostProfile[]>([])
   const [editingKey, setEditingKey] = useState<string | null>(null)  // '' = new
   const [form] = Form.useForm<SavedRunFormValues>()
   // Targeting + rich arg state live outside the antd Form so the editor can
@@ -4544,6 +4546,7 @@ function SavedRunsTab() {
     load()
     bridge.get_hosts().then(setHosts).catch(() => {})
     bridge.list_credentials().then(setCreds).catch(() => {})
+    bridge.get_profiles().then(setProfiles).catch(() => {})
     const loadRunnables = () => bridge.get_runnables('all').then(setRunnables).catch(() => {})
     loadRunnables()
     const onChanged = () => { load() }
@@ -4556,14 +4559,16 @@ function SavedRunsTab() {
   }, [load])
 
   const groupNames = [...new Set(hosts.map(h => h.group).filter((g): g is string => !!g))].sort()
+  const profileNames = profiles.map(p => p.name)  // registry self-heals in-use tags
   const hostName: string = Form.useWatch('host', form) ?? ''
   const groupName: string = Form.useWatch('group', form) ?? ''
   const hostsList: string[] = Form.useWatch('hosts', form) ?? []
   const selectedList: string[] = Form.useWatch('selected_hosts', form) ?? []
+  const profileName: string = Form.useWatch('profile', form) ?? ''
   const runnableName: string = Form.useWatch('runnable', form) ?? ''
   // What the chosen target can run — same derivation as the Schedules modal.
   const targetRunnables = runnablesForTarget(runnables, hosts, target, {
-    host: hostName, group: groupName, hostsList, selectedList,
+    host: hostName, group: groupName, hostsList, selectedList, profile: profileName,
   })
   const editingEntry = editingKey ? savedRuns.find(s => s.id === editingKey) ?? null : null
   // The discovered runnable behind the picked name; null when the fleet doesn't
@@ -4597,12 +4602,13 @@ function SavedRunsTab() {
       runnable: s.runnable, command: (s.command ?? []).join(' '),
       host: s.host || undefined, group: s.group || undefined,
       hosts: s.hosts ?? [], selected_hosts: s.selected_hosts ?? [],
+      profile: s.profile || undefined,
       // Fallback editors — used only while the runnable isn't discovered; the
       // rich seeding effect below takes over as soon as it resolves.
       args: Object.entries(s.args ?? {}).map(([key, value]) => ({ key, value: String(value) })),
       params: argsRawToRows(s.paramsRaw),
     })
-    setTarget(s.group ? 'group' : s.selected_hosts?.length ? 'selected' : s.hosts?.length ? 'anyhost' : 'host')
+    setTarget(s.profile ? 'profile' : s.group ? 'group' : s.selected_hosts?.length ? 'selected' : s.hosts?.length ? 'anyhost' : 'host')
     setArgValues({}); setArgErrors({}); setOpenArgs(new Set())
     setCredentialIds(s.credential_ids ?? [])
     setEditingKey(s.id)
@@ -4666,6 +4672,7 @@ function SavedRunsTab() {
     id: s.id, title: s.title, description: s.description,
     runnable: s.runnable, command: s.command ?? [],
     host: s.host, group: s.group, hosts: s.hosts, selected_hosts: s.selected_hosts,
+    profile: s.profile ?? '',
     args: s.args ?? {}, paramsRaw: s.paramsRaw ?? {}, credential_ids: s.credential_ids ?? [],
   })
 
@@ -4710,6 +4717,7 @@ function SavedRunsTab() {
       group: target === 'group' ? values.group : '',
       hosts: target === 'anyhost' ? (values.hosts ?? []) : [],
       selected_hosts: target === 'selected' ? (values.selected_hosts ?? []) : [],
+      profile: target === 'profile' ? (values.profile ?? '') : '',
       args,
       paramsRaw,
       credential_ids: credentialIds,
@@ -4785,6 +4793,7 @@ function SavedRunsTab() {
           <TargetFormItems
             hosts={hosts}
             groupNames={groupNames}
+            profileNames={profileNames}
             target={target}
             onTargetChange={handleTargetChange}
             onHostChange={handleHostChange}

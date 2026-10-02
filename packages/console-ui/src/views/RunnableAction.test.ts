@@ -41,6 +41,19 @@ describe('runnablesForTarget', () => {
     ).toEqual(['backup', 'restart'])
   })
 
+  it('profile mode uses hosts tagged with the profile (case-insensitive)', () => {
+    const tagged = [
+      { ...host('w1', 'Prod'), profiles: ['DevOps'] },
+      host('w2', 'Prod'),
+      { ...host('db1', 'Data'), profiles: ['devops', 'dba'] },
+    ] as Host[]
+    expect(
+      runnablesForTarget(RUNNABLES, tagged, 'profile', { profile: 'devops' })
+        .map(r => r.name).sort(),
+    ).toEqual(['backup', 'restart'])
+    expect(runnablesForTarget(RUNNABLES, tagged, 'profile', { profile: '' })).toEqual([])
+  })
+
   it('empty selection yields nothing', () => {
     expect(runnablesForTarget(RUNNABLES, HOSTS, 'host', {})).toEqual([])
     expect(runnablesForTarget(RUNNABLES, HOSTS, 'group', { group: 'Nope' })).toEqual([])

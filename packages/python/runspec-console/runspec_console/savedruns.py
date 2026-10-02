@@ -16,7 +16,7 @@ A saved-run entry:
   description    = "Rolling restart"  # optional
   runnable       = "service-restart"
   command        = []                 # optional subcommand path
-  group          = "Production"       # exactly one of host/group/hosts/selected_hosts
+  group          = "Production"       # exactly one of host/group/hosts/selected_hosts/profile
   credential_ids = []                 # console credential ids — never secrets
 
   [saved_run.args]                    # fixed args, baked in
@@ -28,6 +28,9 @@ A saved-run entry:
 Targeting mirrors a runnable-action schedule exactly: ``host`` (one host),
 ``group`` (fan out across a host group), ``hosts`` (candidate list — the run
 lands on the first connected one), ``selected_hosts`` (explicit fan-out list).
+Saved runs add a fifth mode, ``profile`` (fan out across every host tagged with
+that host profile — resolved at run time, so the preset follows the profile's
+membership as hosts are added or removed).
 
 ``params`` is a runspec args table (the same grammar as a runnable's args and a
 runbook's ``[runbook.args]``) parsed/validated via :mod:`runbookargs`, so a
@@ -70,12 +73,13 @@ class SavedRun:
     description: str = ""
     runnable: str = ""
     command: list[str] = field(default_factory=list)
-    # Exactly one of host / group / hosts / selected_hosts is set (same targeting
-    # modes as a runnable-action ScheduleJob).
+    # Exactly one of host / group / hosts / selected_hosts / profile is set (the
+    # runnable-action ScheduleJob modes, plus a host profile).
     host: str = ""
     group: str = ""
     hosts: list[str] = field(default_factory=list)
     selected_hosts: list[str] = field(default_factory=list)
+    profile: str = ""
     args: dict[str, Any] = field(default_factory=dict)
     # Raw runspec args table for the open parameters (may be empty).
     params: dict[str, Any] = field(default_factory=dict)
@@ -89,6 +93,8 @@ class SavedRun:
             return f"group {self.group}"
         if self.hosts:
             return "first connected of " + ", ".join(self.hosts)
+        if self.profile:
+            return f"profile {self.profile}"
         return "all of " + ", ".join(self.selected_hosts)
 
 
@@ -116,13 +122,17 @@ def parse_saved_run(data: dict[str, Any]) -> SavedRun:
     selected_hosts = [
         str(h).strip() for h in (data.get("selected_hosts") or []) if str(h).strip()
     ]
-    modes = sum((bool(host), bool(group), bool(hosts), bool(selected_hosts)))
+    profile = str(data.get("profile") or "").strip()
+    modes = sum(
+        (bool(host), bool(group), bool(hosts), bool(selected_hosts), bool(profile))
+    )
     if modes != 1:
         raise ValueError(
             f"saved run '{sid}' needs exactly one of 'host' (a single host), "
             "'group' (a host group to fan out across), 'hosts' (a candidate list "
-            "to run on the first connected one), or 'selected_hosts' (an explicit "
-            "list to run on all of them)"
+            "to run on the first connected one), 'selected_hosts' (an explicit "
+            "list to run on all of them), or 'profile' (a host profile to fan out "
+            "across)"
         )
 
     command_raw = data.get("command") or []
@@ -159,6 +169,7 @@ def parse_saved_run(data: dict[str, Any]) -> SavedRun:
         group=group,
         hosts=hosts,
         selected_hosts=selected_hosts,
+        profile=profile,
         args=args,
         params=params,
         credential_ids=[

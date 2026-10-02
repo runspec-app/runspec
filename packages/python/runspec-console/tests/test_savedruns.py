@@ -66,6 +66,7 @@ def test_parse_requires_id_and_runnable():
         {},  # none
         {"host": "h", "group": "g"},  # two
         {"hosts": ["a"], "selected_hosts": ["b"]},  # two (lists)
+        {"group": "g", "profile": "p"},  # two (profile)
     ],
 )
 def test_parse_requires_exactly_one_targeting_mode(targeting):
@@ -89,6 +90,12 @@ def test_parse_each_targeting_mode_and_summary():
             {"id": "x", "runnable": "r", "selected_hosts": ["a", "b"]}
         ).target_summary()
         == "all of a, b"
+    )
+    assert (
+        parse_saved_run(
+            {"id": "x", "runnable": "r", "profile": "devops"}
+        ).target_summary()
+        == "profile devops"
     )
 
 
