@@ -232,7 +232,7 @@ function MaintenanceModal({ target, onClose, onApplied }: MaintModalProps) {
   )
 }
 
-// ── make-logs-shared modal (surfaces the Phase 2 share-venv-logs runnable) ────
+// ── make-logs-shared modal (runs `runspec logs share`) ────
 
 interface ShareTarget { host: string; venv: string }
 
@@ -514,7 +514,7 @@ export function LogsView({ selectedHost, activeScope, active }: LogsViewProps) {
               {v.ok && (
                 <>
                   {v.group !== HOME_GROUP && (
-                    <Tooltip title="Make this venv's logs/ dir group-shared (2775 + setgid) so the runs index and audit logs are writable across the console group — the repair for a venv not built with create-venv --group">
+                    <Tooltip title="Make this venv's logs/ dir group-shared (2775 + setgid) so the runs index and audit logs are writable across the console group — the repair for a venv whose logs/ isn't group-writable">
                       <Button size="small" icon={<ShareAltOutlined />} onClick={() => setShareTarget({ host, venv: v.group })}>
                         Make shared…
                       </Button>

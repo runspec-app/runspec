@@ -1,5 +1,16 @@
 # runspec-linux-core Changelog
 
+## [0.14.0] — 2026-10-02
+
+### Removed
+
+- The `venvs` module: `create_venv`, `install_into_venv`, `configure_pip` and
+  `share_venv_logs`. Venv provisioning now lives in runspec-console
+  (`runspec_console.provision`, 0.312.0); on the command line use
+  `python -m venv`, `pip install` and `runspec logs share --inbox`.
+  runspec-linux 0.19.0 still imports these helpers, so upgrade to
+  runspec-linux 0.20.0 at the same time.
+
 ## [0.13.1] — 2026-10-01
 
 - `sudoers` docstring: the *scoped* grant (`{venv_bin}/`) now also covers

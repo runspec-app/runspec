@@ -95,8 +95,8 @@ distributed across many hosts and still target only the right ones (e.g. disable
 ## Venvs owned by a service account
 
 `runspec deny` writes into the venv root, so a venv created as another user
-(`sudo -u svc python -m venv …` — for example runspec-linux's `create-venv
---run-as svc`) refuses the operator's write. runspec ≥ 0.51.2 turns that into a
+(`sudo -u svc python -m venv …` — for example the console's **Provision venv…**
+with a run-as account) refuses the operator's write. runspec ≥ 0.51.2 turns that into a
 one-line refusal naming the owner and the exact re-run instead of a traceback:
 
 ```

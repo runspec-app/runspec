@@ -18,8 +18,7 @@ Events:
   install/uninstall op; the tab re-probes the targets and the console kicks a
   discovery refresh so new runnables surface in Forms / the agent toolset.
 
-Install commands are the same ``<venv>/bin/python -m pip install …`` the
-``install-into-venv`` runnable runs, with the same ``sudo -n -u <owner>`` /
+Install commands are plain ``<venv>/bin/python -m pip install …``, with the ``sudo -n -u <owner>`` /
 ``su`` escalation for a service-account venv — but issued directly by the
 console (so a host needs no ``runspec-linux`` to be managed), and only ever for
 **named package specs** from the configured index (a URL / path / option is

@@ -986,8 +986,8 @@ export interface LogStatusVenv {
   total_files?: number
 }
 
-// "Make logs shared": ran the runspec-linux share-venv-logs runnable to set the
-// venv's logs/ dir 2775 + setgid (+ optional chgrp), so the runs DB + audit logs
+// "Make logs shared": ran `runspec logs share` to set the venv's logs/ dir
+// 2775 + setgid (+ optional chgrp), so the runs DB + audit logs
 // are group-writable. as_user is "" for a direct run, else the owner/root the
 // repair escalated to over SSH.
 export interface ShareLogsResult {

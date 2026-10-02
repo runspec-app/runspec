@@ -95,7 +95,7 @@ This package is a reference. To adopt it:
 2. Rename the package and publish it to your internal index from your existing
    GitLab CI — CI keeps building and publishing; the console just deploys.
 3. Install it (and `ansible-core`) into the same venv as runspec on each host
-   (e.g. via the console's `install-into-venv` runnable), so `run-playbook`
+   (e.g. from the console's Marketplace tab), so `run-playbook`
    surfaces in the console alongside your other runnables.
 
 See `docs/design/console-ansible-deploy.md` for the full design and rationale.

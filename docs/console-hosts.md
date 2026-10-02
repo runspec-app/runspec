@@ -91,7 +91,7 @@ You choose:
 interpreter runs and has `venv`, the account works without a password, the
 location doesn't already exist and is writable. **Provision** then runs on the
 ready hosts in parallel, each with its own log: create the venv (`--symlinks`,
-permissions as `create-venv` sets them), upgrade pip, install the packages,
+`u=rwX,go=rX` permissions), upgrade pip, install the packages,
 set up the [logs inbox](#set-up-the-logs-inbox-for-runs-by-other-accounts)
 (`runspec logs share --inbox`), and check `bin/runspec` runs. Each host that
 succeeds gets the new path added to its runspec paths; **Retry failed** re-runs
@@ -138,15 +138,13 @@ also recorded on the host itself, as [audit events](audit.md):
 
 ### Bootstrapping a fresh host
 
-If a host doesn't have runspec yet, [`runspec-linux`](https://pypi.org/project/runspec-linux/)
-(installed on any already-connected host, or locally) provides agent-drivable
-bootstrap runnables — `which` (find an interpreter), `create-venv`,
-`configure-pip` (private index), `install-into-venv`, and `share-venv-logs`:
-
-> Create a venv at /opt/venvs/ops on app-01 owned by the svc-ops account, configure it for our internal PyPI mirror, and install runspec and runspec-linux into it.
-
-Each step is confirm-gated. Then add the new venv's
-`/opt/venvs/ops/bin/runspec` to the host's `runspec_paths`.
+If a host doesn't have runspec yet, use
+[Provision a venv from the console](#provision-a-venv-from-the-console): it
+creates the venv, installs runspec and your packages, sets up the logs inbox and
+adds the new `bin/runspec` to the host's `runspec_paths`. Without the console,
+the same steps by hand as the venv's owner are `python3 -m venv --symlinks`,
+`pip install runspec …` and `runspec logs share --inbox`. (runspec-linux's
+`create-venv` / `install-into-venv` runnables were removed in 0.20.0.)
 
 #### Who runs a shared venv's tools
 
@@ -181,14 +179,11 @@ other account drops its per-run log file there, and the owner's runs index it.
 No group, ACL or extra sudo rule is needed. Until it's set up, other accounts'
 runs fall back to their own `~/logs`, where History can't see them.
 
-- A plain venv works too — no `runspec-linux` needed. As the owner, with
-  `umask 022`: `python3 -m venv`, `pip install "runspec>=0.66.1" …`, then the
-  command above.
-- `create-venv` (runspec-linux >= 0.18) creates the inbox for you;
-  `--no-inbox` opts out.
-- For a venv that already exists, run the command above, or
-  `share-venv-logs --venv <path> --run-as <owner>`, or the console's **Logs →
-  Make logs shared** (leave the group blank).
+- A venv built by hand works too. As the owner, with `umask 022`:
+  `python3 -m venv`, `pip install "runspec>=0.66.1" …`, then the command above.
+- The console's **Provision venv…** sets up the inbox for you.
+- For a venv that already exists, run the command above, or the console's
+  **Logs → Make logs shared** (leave the group blank).
 - The owner's own runs also create it automatically, as a safety net.
 
 Finished runs waiting in the inbox show in History with an **inbox** tag. The
@@ -196,8 +191,8 @@ owner's runs sweep them into the runs index, or use **Logs → Runs index… →
 Sweep inbox**. The full walkthrough — how it works, checking it, and
 troubleshooting — is [Shared venvs — the logs inbox](logs-inbox.md).
 
-The older alternative is still there: `create-venv --group consoles` (or
-`share-venv-logs --group consoles`) makes `logs/` group-shared (`2775` +
+The older alternative is still there: `runspec logs share --group consoles` (or
+**Logs → Make logs shared** with a group) makes `logs/` group-shared (`2775` +
 setgid), so members of that group write it directly.
 
 ### Copy your SSH key to the fleet
@@ -397,7 +392,7 @@ Listing is autonomous; changes are confirm-gated. The mechanism runs the core
 `runspec deny` command over SSH — across hosts in parallel, bounded by
 `[refresh] workers` — and the control path is exempt from its own denylist —
 the console can always re-enable. A venv created as a service account
-(`create-venv --run-as svc`) isn't writable by the login user, so a write that
+(**Provision venv…** with a run-as account) isn't writable by the login user, so a write that
 comes back *permission denied* is re-run once escalated — as the venv owner via
 passwordless `sudo -n -u`, else as root — and the result line says which
 (`(as svc)`); see [Denylist → service-account venvs](denylist.md#venvs-owned-by-a-service-account).

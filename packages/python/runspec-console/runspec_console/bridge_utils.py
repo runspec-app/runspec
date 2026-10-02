@@ -906,7 +906,8 @@ def denylist_escalation_cmd(runspec_path: str, tail: list[str]) -> str:
 
     ``runspec deny`` writes ``runspec_denylist.toml`` into the venv root
     (``{sys.prefix}``); a venv created as a service account (``sudo -u svc
-    python -m venv …``, e.g. runspec-linux's ``create-venv --run-as``) refuses
+    python -m venv …``, e.g. the console's own **Provision venv…** with a run-as
+    account) refuses
     the operator's write. Two tiers, probed with the read-only ``deny list`` on
     the *same* binary so the probe needs exactly the sudoers grant the write
     does (``enable-passwordless-sudo scoped`` grants ``(root)`` on the venv's

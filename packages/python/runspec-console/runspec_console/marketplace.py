@@ -35,8 +35,8 @@ Everything here is stdlib-only and side-effect-free apart from the injected
   carries the repo as ``PIP_INDEX_URL`` / ``PIP_EXTRA_INDEX_URL`` (with a
   credential's ``user:pass@`` folded into the URL — env, not argv, so a secret
   never shows in ``ps``), and :func:`remote_command` wraps it with ``sudo -n -u``
-  / ``su`` for a venv owned by a service account (the same escalation the
-  ``install-into-venv`` runnable uses). :data:`INSTALLED_PROBE` is the
+  / ``su`` for a venv owned by a service account (the same escalation
+  :mod:`provision` uses). :data:`INSTALLED_PROBE` is the
   ``python -c`` snippet a target runs to report what it has installed.
 
 Cache: :class:`CatalogCache` persists the last catalogue per repo as JSON with
@@ -1436,8 +1436,8 @@ _PKG_TOKEN_RE = re.compile(
 
 def validate_spec(spec: str) -> str:
     """A pip requirement token (``name``, ``name[extra]``, ``name==1.2``) — the
-    same shape the ``install-into-venv`` runnable accepts; anything else (a
-    URL, a path, an option) is refused so the marketplace can only install
+    shape a plain ``pip install`` takes; anything else (a URL, a path, an
+    option) is refused so the marketplace can only install
     named packages from the configured index."""
     s = (spec or "").strip()
     if not s or s.startswith("-") or not _PKG_TOKEN_RE.match(s):
@@ -1512,7 +1512,7 @@ def exec_argv(
     env: dict[str, str] | None = None,
 ) -> tuple[list[str], bytes | None]:
     """``argv`` escalated for a service-account venv (``sudo -n -u user`` / ``su``,
-    the same shape the ``install-into-venv`` runnable builds) with ``env`` carried
+    the same shape :mod:`provision` builds) with ``env`` carried
     as the SPEC env frame: returns ``(argv, stdin)``. The env holds the index URL,
     which can embed a credential, so it never goes on the command line (every user
     can read that in ``ps``, and ``sudo`` logs it) — the caller writes ``stdin``

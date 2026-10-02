@@ -335,9 +335,9 @@ operators get a clean, terminal-free launch.
 
 The footer's update badge now tracks `mycorp-console` against your index, so
 publishing `1.1.0` prompts every operator. For fleet-side venvs behind the
-same private index, the `configure-pip` runnable in `runspec-linux` writes
-the `pip.conf` — drivable by the agent during
-[host bootstrap](console-hosts.md#bootstrapping-a-fresh-host).
+same private index, add the index as a Marketplace repo: the console's
+[Provision venv…](console-hosts.md#provision-a-venv-from-the-console) and
+Marketplace installs point pip at it.
 
 ## 6. Verify
 

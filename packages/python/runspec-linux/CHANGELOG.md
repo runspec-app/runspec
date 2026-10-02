@@ -1,5 +1,25 @@
 # runspec-linux Changelog
 
+## [0.20.0] — 2026-10-02
+
+**Venv management moved to runspec-console.** Setting up a venv is a console
+job now: runspec-console 0.312.0 provisions a runspec venv on a host from
+**Settings → Jump Hosts → Provision new venv…** (interpreter, location,
+run-as account, packages, logs inbox), and its **Marketplace** tab installs
+into existing venvs. On the command line, plain `python -m venv`,
+`pip install` and `runspec logs share --inbox` do the same job.
+
+### Removed
+
+- `create-venv`, `install-into-venv`, `configure-pip` and `share-venv-logs`.
+- The `runspec_linux` re-exports of `create_venv`, `install_into_venv` and
+  `configure_pip`. Their helpers are also gone from `runspec-linux-core`
+  0.14.0.
+
+Upgrade `runspec-linux` and `runspec-linux-core` together: runspec-linux
+0.19.0 still imports the removed helpers, so it breaks against
+runspec-linux-core 0.14.0.
+
 ## [0.19.0] — 2026-09-30
 
 **No root in runspec-linux.** Everything here now runs as an unprivileged

@@ -1,6 +1,6 @@
 # runspec-linux
 
-Linux system-administration runnables (plus Python-venv management, crontab,
+Linux system-administration runnables (plus crontab,
 filesystem, and the cross-platform web/TLS/API probes) for
 [runspec](https://pypi.org/project/runspec/). `pip install` it into a venv and
 the runnables are discoverable by `runspec local`, `runspec serve` (MCP), and
@@ -37,7 +37,6 @@ pip install runspec-linux
 | Sessions | `last-logins`, `who` |
 | Containers | `list-containers`, `container-logs`, `restart-container` |
 | Packages (read-only) | `list-packages`, `list-autoremovable` |
-| Python venvs | `create-venv`, `install-into-venv`, `configure-pip` |
 | TCP | `nc-command` |
 | Commands | `which` |
 | Cron | `cron` (multi-verb: `list`/`add`/`remove`/`clear`) |
@@ -57,14 +56,11 @@ cert-check --url https://internal.example.com
 
 ### Python venvs
 
-`create-venv`, `install-into-venv` and `configure-pip` take a **per-invocation**
-`--run-as <user>` (+ `--become-method sudo|su`) rather than a declarative
-`run_as`, so the service account that owns a shared venv is chosen per call:
-
-```
-create-venv --python /usr/bin/python3.12 --dest /opt/venvs/ops --run-as svc-ops --group ops
-install-into-venv --venv /opt/venvs/ops --package "runspec-linux==0.13.2" --run-as svc-ops
-```
+The venv runnables (`create-venv`, `install-into-venv`, `configure-pip`,
+`share-venv-logs`) were removed in 0.20.0. Provision a venv on a host from
+runspec-console (**Settings → Jump Hosts → Provision new venv…**), install
+packages from its **Marketplace** tab, or on the command line use
+`python -m venv`, `pip install` and `runspec logs share --inbox`.
 
 ## Public Python API
 
@@ -74,7 +70,7 @@ runnables). A corporate wrapper package that only wants a helper should depend
 on the core alone:
 
 ```python
-from runspec_linux_core import nc_send, system_info, install_into_venv
+from runspec_linux_core import nc_send, system_info, which
 ```
 
 The helpers are also re-exported from `runspec_linux` for back-compat. Core

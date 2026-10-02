@@ -289,7 +289,7 @@ automatic. See the shared-venv deployment guide for copy-paste schedules.
 ### Sharing the logs dir across accounts (`runspec logs share`)
 
 A shared venv is owned by one account, the owner of the venv root (e.g. the
-`svc` account `create-venv --run-as svc` built it as). Its runnables are also
+`svc` account the console's **Provision venv…** built it as). Its runnables are also
 run by other accounts: operators logged in as themselves, root (a
 `run_as = "root"` runnable), other accounts' crontabs. None of them can write
 the owner's `logs/`, so without help their runs fall back to their own
@@ -327,7 +327,7 @@ like `/tmp` or a mail spool:
 No group, no ACL, no extra sudo rule. Run as root, `logs share --inbox` and
 `history sweep` drop to the venv's owner first, so the standard
 runspec-linux-root's `enable-passwordless-sudo --scope scoped` grant (which is `(root)` on the venv's `bin/`)
-is enough. `runspec-linux`'s `create-venv` creates the inbox for you, and the
+is enough. The console's **Provision venv…** creates the inbox for you, and the
 owner's (or root's) own runs create or repair it automatically as a safety net.
 Opt a venv out with `runspec logs share --no-inbox` (a `logs/.no-inbox` marker);
 add `--owner-only` to make `logs/` itself `0755`. `runspec history stats`

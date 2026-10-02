@@ -39,7 +39,7 @@ honest division of labour:
     ```
 
     …into the console's venv for a local runnable, or onto a host venv (the
-    agent *can* drive that part via `install-into-venv` — see
+    console's **Marketplace** tab installs published packages there — see
     [bootstrapping](console-hosts.md#bootstrapping-a-fresh-host)).
 
 4. **Relaunch the console** (local installs) or let the next refresh pick it

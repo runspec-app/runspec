@@ -172,12 +172,12 @@ drwxrwxrwt 2 svc svc 4096 … /opt/venvs/app/logs/inbox
 `drwxrwxrwt` (`01777`) owned by the venv owner is the only shape runspec
 accepts for the inbox.
 
-### With runspec-linux
+### When the console provisions the venv
 
-If you already manage venvs with [`runspec-linux`](https://pypi.org/project/runspec-linux/)
-(0.18+), `create-venv --run-as svc` does all of the above for you — it
-normalises the umask, and creates the inbox (`--no-inbox` opts out).
-`install-into-venv` keeps the permissions intact on later installs.
+The console's **Settings → Jump Hosts → Provision venv…** does all of the above
+for you: it builds the venv as the run-as account with normalised permissions
+and runs `runspec logs share --inbox` as the last step. (runspec-linux's
+`create-venv` did this too until it was removed in 0.20.0.)
 
 ### From the console
 

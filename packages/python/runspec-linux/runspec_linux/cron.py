@@ -7,7 +7,7 @@ merged ``[cron]`` tables in the pack's ``runspec.toml``); we unpack each
 helper, which does the crontab read-modify-write.
 
 **Per-invocation ``--run-as``** (a global arg inherited by every verb, like the
-venv runnables): the operator/agent picks whose crontab to manage per call. The
+container runnables): the operator/agent picks whose crontab to manage per call. The
 ``crontab`` command is escalated via ``sudo -n -u <user>`` / ``su`` inside the
 core helper, so "run as user *bob*" means "manage *bob*'s crontab". With no
 ``--run-as`` the caller's own crontab is used.

@@ -2,8 +2,8 @@
 ``sudo -n -u <user>`` / ``su <user> -c``.
 
 This is the single source of truth for runspec-linux's per-invocation ``run_as``
-escalation (mechanism B): the venv runnables and the ``--run-as`` / ``--sudo``
-args on the privileged runnables all build their become command here. It is a
+escalation (mechanism B): the ``--run-as`` args on the logs, services,
+containers, investigate and cron runnables all build their become command here. It is a
 sibling of ``runspec_fs_core.become`` (kept a separate copy because the ``*-core``
 packages stay dependency-free and must not cross-import); the canonical user
 regex here allows a dot (``[a-z0-9_.-]``), a superset of the fs-core form, so it
@@ -11,7 +11,7 @@ matches ``sudoers._USER_RE`` and every name runspec-linux already accepts.
 
 Pure and stdlib-only: this *builds and validates* the become command; executing
 it (and interpreting a passwordless-sudo failure) stays with the caller — see
-``_check`` in ``venvs.py`` and ``check_become_error`` below.
+``check_become_error`` below.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from runspec_linux_core.errors import CommandError
 # A POSIX-ish user/group name, validated before it is interpolated into a become
 # command (or a chgrp) so a crafted value can't inject extra tokens — everything
 # still goes to argv, never a shell, but this keeps the error early and clear.
-# Allows a dot, matching sudoers._USER_RE and the historical venvs._NAME_RE.
+# Allows a dot, matching sudoers._USER_RE.
 _USER_RE = re.compile(r"^[a-z_][a-z0-9_.-]*\$?$")
 
 BECOME_METHODS = ("sudo", "su")
@@ -74,8 +74,8 @@ def check_become_error(what: str, stderr: str, run_as: str | None) -> None:
 
     ``what`` labels the operation; ``stderr`` is the subprocess's captured
     stderr; ``run_as`` is the target user (``None`` when no escalation was in
-    play — then the hint is skipped). Shared by the venv helpers and the new
-    ``--run-as`` / ``--sudo`` runnables so the message is identical everywhere.
+    play — then the hint is skipped). Shared by every
+    ``--run-as`` helper so the message is identical everywhere.
     """
     err = stderr.strip()
     low = err.lower()

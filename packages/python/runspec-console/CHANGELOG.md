@@ -7,6 +7,16 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.312.1] — 2026-10-02
+
+### Changed
+
+- The **Make logs shared** refusal and tooltip no longer point at runspec-linux's
+  `create-venv --group`. That runnable is gone (runspec-linux 0.20.0), so the
+  refusal now suggests `runspec logs share --group <group>` as the
+  venv's owner. Comments that named `create-venv` / `install-into-venv` now say
+  the console's provisioning module is the one home of the venv recipe.
+
 ## [0.312.0] — 2026-10-02
 
 ### Added

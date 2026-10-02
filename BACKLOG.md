@@ -51,7 +51,7 @@ attest the human behind a root run.
 ### Optional sweep cron line
 The owner sweeps on its own runs and on demand. A venv whose owner never runs
 anything (a pure service account) could use a `runspec history sweep` crontab
-line. Offer it from `create-venv` / the scheduler.
+line. Offer it from the console's Provision venv… / the scheduler.
 
 ### Tag `~/logs` runs with their venv
 Runs that fell back to `~/logs` (no inbox yet, Windows) can't be attributed to a

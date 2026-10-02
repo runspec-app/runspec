@@ -20,7 +20,7 @@ A provision is, per host:
    the empty venv folder and chowns it to the run-as account, the usual case for
    a root-owned ``/opt/venvs`` shared by service accounts);
 3. **create** — ``python -m venv --symlinks`` + the permission normalisation the
-   ``create-venv`` runnable applies (``u=rwX,go=rX``; a kept ``logs/`` is left
+   removed ``create-venv`` runnable applied (``u=rwX,go=rX``; a kept ``logs/`` is left
    alone);
 4. **install** — ``pip install -U pip`` then ``pip install runspec <packages>``;
 5. **logs inbox** — ``<venv>/bin/runspec logs share --inbox`` as the owner;
@@ -31,10 +31,11 @@ A provision is, per host:
    before the delete (``logger`` to syslog when the venv's runspec is older
    than 0.71.0). The console keeps its own record too.
 
-The create recipe is a copy of ``runspec_linux_core.venvs.create_venv`` as
-remote shell steps. The plan is to remove ``create-venv`` / ``install-into-venv``
-from ``runspec-linux`` and ``runspec-linux-core`` so this module becomes the one
-home of the recipe (the command line just uses pip).
+This module is the one home of the venv recipe. It started as a copy of
+``runspec_linux_core.venvs.create_venv`` as remote shell steps; that helper and
+the ``create-venv`` / ``install-into-venv`` runnables were removed in
+runspec-linux-core 0.14.0 / runspec-linux 0.20.0 (the command line just uses
+pip).
 
 A deprovision deletes a venv the console already knows (one of a host's
 ``runspec_paths``), behind guards that are enforced here *and* re-checked on
@@ -514,8 +515,8 @@ def handoff_argv(dest: str, owner: str) -> list[str]:
 # Create / install / inbox / verify
 # --------------------------------------------------------------------------- #
 
-# ``sh -c CREATE_SCRIPT sh <python> <dest>`` as the run-as account. Mirrors
-# runspec_linux_core.venvs.create_venv: always --symlinks, then the tree is
+# ``sh -c CREATE_SCRIPT sh <python> <dest>`` as the run-as account. The recipe
+# the removed create-venv runnable used: always --symlinks, then the tree is
 # normalised to u=rwX,go=rX (sudo -n -u <svc> often lands at umask 027, which
 # would leave the venv 750 and lock other consoles out). A kept logs/ folder is
 # pruned from the chmod so its inbox keeps its mode, and symlinks are skipped:

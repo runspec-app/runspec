@@ -49,15 +49,15 @@ already current everywhere), and lets you choose a specific **version** or
 ### Run as — service-account venvs
 
 A venv on a fleet host often belongs to a service account (created with
-`runspec-linux`'s `create-venv --run-as`). The picker's **Run as** column is
+the console's **Provision venv…** and a run-as account). The picker's **Run as** column is
 pre-filled with the venv's owner whenever it differs from your SSH login
 user, and the install runs escalated — `sudo -n -u <owner>` (or `su`) —
-exactly as the `install-into-venv` runnable does. Leave it blank to run as
+the same way the console provisions venvs. Leave it blank to run as
 the login user.
 
 A shared venv also needs its **logs inbox** set up once, so the runs of the
-packages you install reach its History whoever runs them. `create-venv` does
-this; for an older venv use **Logs → Make logs shared**, or run
+packages you install reach its History whoever runs them. **Provision venv…**
+does this; for an older venv use **Logs → Make logs shared**, or run
 `sudo -u <owner> <venv>/bin/runspec logs share --inbox`. See
 [Set up the logs inbox](console-hosts.md#set-up-the-logs-inbox-for-runs-by-other-accounts).
 

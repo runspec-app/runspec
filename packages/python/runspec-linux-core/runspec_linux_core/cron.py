@@ -2,7 +2,7 @@
 
 Every helper drives the ``crontab`` binary and manages **one user's crontab**.
 Which user is chosen *per invocation* via the shared ``run_as`` escalation
-(mechanism B, like the venv/container helpers): with ``run_as`` set, the
+(mechanism B, like the container helpers): with ``run_as`` set, the
 ``crontab`` command is wrapped in ``sudo -n -u <user>`` / ``su <user> -c`` by
 :func:`runspec_linux_core.become.build_become`, so ``crontab -l`` reads and
 ``crontab -`` writes *that user's* own crontab. With no ``run_as`` the caller's

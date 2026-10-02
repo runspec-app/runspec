@@ -1278,8 +1278,7 @@ class ReportingMixin:
     ) -> dict[str, Any]:
         """Make a venv's ``logs/`` dir group-shared so the per-venv runs index
         (``runspec_runs.db``) and the audit logs become writable across a shared
-        console group — the repair for a venv not built with ``create-venv
-        --group``.
+        console group — the repair for a venv whose ``logs/`` isn't group-writable.
 
         Drives the core CLI's own **``runspec logs share --scope venv``**
         (runspec ``>= 0.58.3``): it ``chmod``s the dir ``2775`` (setgid),
@@ -1448,8 +1447,8 @@ class ReportingMixin:
                 "group": g,
                 "error": (
                     f'{logdir_s} is owned by another user. Set "Run as" to that owner '
-                    "to escalate (needs passwordless sudo for it), rebuild the venv with "
-                    f"`create-venv --group`, or `chmod 2775 {logdir_s}` manually as its owner."
+                    "to escalate (needs passwordless sudo for it), or as that owner run "
+                    f"`runspec logs share --group {g}` or `chmod 2775 {logdir_s}`."
                 ),
             }
         # Otherwise the verb/arg wasn't understood: a venv whose runspec predates
