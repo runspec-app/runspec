@@ -249,7 +249,7 @@ ad-hoc sources via `source_via` + `source_target`) and `relay_file`
 A **filter** is a named, reusable stream transform applied to the file **on
 the source host** during a transfer, so only the matching output crosses the
 network — the way to pull a few relevant lines out of a gigabyte log. Define
-filters under **Settings → Filters**; they're stored in
+filters with **Manage filters…** in the Transfer files dialog; they're stored in
 `runspec_filters.toml` (which rides [Config Sync](console-team.md), so a team
 shares one set):
 

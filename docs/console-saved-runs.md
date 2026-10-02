@@ -56,7 +56,8 @@ the secret env channel.
 
 ## Running one
 
-- **Forms tab** — saved runs appear as their own lane. Clicking one opens a
+- **Forms tab** — saved runs appear as their own section (collapsed by
+  default, with a count; click the header to open it). Clicking one opens a
   dialog showing what is baked in (target, fixed args, credentials) and a field
   per open param; a preset with no params runs immediately. Multi-host presets
   render one Console run block per host.
@@ -74,7 +75,7 @@ the secret env channel.
 
 ## Editing
 
-**Settings → Saved runs** is the editor, and it works exactly like the
+**New saved run** at the top of the Forms tab (or the edit icon on a saved-run card) opens the editor, and it works exactly like the
 Schedules tab's run-a-runnable dialog (they share the same components): pick a
 target (hosts show a live connectivity dot; groups and profiles show
 connected/member counts), then pick the runnable from a searchable select of what the targeted

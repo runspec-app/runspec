@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo, useRef, Suspense } from 'react'
-import { ConfigProvider, Badge, theme, Button, Tooltip, Tag, Dropdown, Spin, Popover, Select, message, Watermark } from 'antd'
+import { ConfigProvider, Badge, theme, Button, Tooltip, Tag, Dropdown, Spin, Popover, Select, message, Watermark, Modal } from 'antd'
 import {
   ThunderboltOutlined,
   AppstoreOutlined,
@@ -63,6 +63,11 @@ const DenylistModal = React.lazy(() => import('./views/DenylistModal').then(m =>
 const RunbookRunModal = React.lazy(() => import('./views/RunbookRunModal').then(m => ({ default: m.RunbookRunModal })))
 const SavedRunRunModal = React.lazy(() => import('./views/SavedRunRunModal').then(m => ({ default: m.SavedRunRunModal })))
 const SettingsDrawer = React.lazy(() => import('./components/SettingsDrawer').then(m => ({ default: m.SettingsDrawer })))
+// The editors that used to be Settings tabs, now hosted where they're used:
+// Forms (runbooks, saved runs) and the Marketplace tab (its settings modal).
+const RunbookEditor = React.lazy(() => import('./components/SettingsDrawer').then(m => ({ default: m.RunbooksTab })))
+const SavedRunEditor = React.lazy(() => import('./components/SettingsDrawer').then(m => ({ default: m.SavedRunsTab })))
+const MarketplaceSettings = React.lazy(() => import('./components/SettingsDrawer').then(m => ({ default: m.MarketplaceTab })))
 import { CommandInput } from './components/CommandInput'
 import { DisclaimerGate } from './components/DisclaimerGate'
 import { RUNNING_STATUSES } from './components/runShared'
@@ -704,6 +709,10 @@ export default function App() {
   }
 
   const handleOpenRunbook = (runbook: Runbook) => setPendingRunbook(runbook)
+  // Forms' New / edit buttons → the runbook / saved-run editor modals ('' = new).
+  const [runbookEditReq, setRunbookEditReq] = useState<{ id: string; nonce: number } | null>(null)
+  const [savedRunEditReq, setSavedRunEditReq] = useState<{ id: string; nonce: number } | null>(null)
+  const [marketplaceSettingsOpen, setMarketplaceSettingsOpen] = useState(false)
 
   // A saved run with open params opens the params-only dialog; one with none
   // runs immediately (the "runs immediately" card affordance).
@@ -1544,9 +1553,9 @@ export default function App() {
                 {view !== 'console' && view !== 'triggers' && view !== 'history' && view !== 'logs' && view !== 'specs' && (
                   <div className="rs-view" style={{ flex: 1, overflow: 'auto' }}>
                     <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin size="large" /></div>}>
-                      {view === 'forms'     && <FormsView runnables={runnables} hosts={hosts} selectedHost={selectedHost} activeScope={activeScope} onRunRunnable={handleRunRunnable} pendingForm={pendingForm} onPendingFormClear={() => setPendingForm(null)} runbooks={runbooks} onOpenRunbook={handleOpenRunbook} savedRuns={savedRuns} onOpenSavedRun={handleOpenSavedRun} />}
+                      {view === 'forms'     && <FormsView runnables={runnables} hosts={hosts} selectedHost={selectedHost} activeScope={activeScope} onRunRunnable={handleRunRunnable} pendingForm={pendingForm} onPendingFormClear={() => setPendingForm(null)} runbooks={runbooks} onOpenRunbook={handleOpenRunbook} savedRuns={savedRuns} onOpenSavedRun={handleOpenSavedRun} onEditRunbook={id => setRunbookEditReq({ id, nonce: Date.now() })} onEditSavedRun={id => setSavedRunEditReq({ id, nonce: Date.now() })} />}
                       {view === 'schedules' && <SchedulesView hosts={hosts} runnables={runnables} selectedHost={selectedHost} />}
-                      {view === 'marketplace' && <MarketplaceView hosts={hosts} activeProfile={activeProfile} onOpenSettings={() => setSettingsOpen(true)} />}
+                      {view === 'marketplace' && <MarketplaceView hosts={hosts} activeProfile={activeProfile} onOpenSettings={() => setMarketplaceSettingsOpen(true)} />}
                       {aiEnabled && view === 'improve' && <ImproveView active={view === 'improve'} />}
                       {aiEnabled && view === 'evals'   && <EvalsView active={view === 'evals'} />}
                       {view === 'rota'      && <RotaView />}
@@ -1677,6 +1686,22 @@ export default function App() {
               onClose={() => setDenylistOpen(false)}
               hosts={hosts.filter(h => h.name !== 'local' && h.connected)}
             />
+          )}
+        </Suspense>
+
+        <Suspense fallback={null}>
+          {runbookEditReq && <RunbookEditor editorOnly request={runbookEditReq} />}
+          {savedRunEditReq && <SavedRunEditor editorOnly request={savedRunEditReq} />}
+          {marketplaceSettingsOpen && (
+            <Modal
+              open
+              title="Marketplace settings"
+              width="min(96vw, 960px)"
+              footer={null}
+              onCancel={() => setMarketplaceSettingsOpen(false)}
+            >
+              <MarketplaceSettings />
+            </Modal>
           )}
         </Suspense>
 

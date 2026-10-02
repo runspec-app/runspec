@@ -591,7 +591,7 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
         {action === 'runbook' && (
           <>
             <Form.Item name="runbook" label="Runbook" rules={[{ required: true, message: 'Required' }]}
-              help={runbooks.length === 0 ? 'No saved runbooks yet — create one in Settings → Runbooks.' : undefined}>
+              help={runbooks.length === 0 ? 'No saved runbooks yet — create one from the Forms tab.' : undefined}>
               <Select placeholder="Select a runbook" showSearch
                 filterOption={(input, opt) => (opt?.value as string ?? '').toLowerCase().includes(input.toLowerCase())}>
                 {runbooks.map(s => (
@@ -627,7 +627,7 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
         {action === 'saved_run' && (
           <>
             <Form.Item name="saved_run" label="Saved run" rules={[{ required: true, message: 'Required' }]}
-              help={savedRuns.length === 0 ? 'No saved runs yet — create one in Settings → Saved runs.' : undefined}>
+              help={savedRuns.length === 0 ? 'No saved runs yet — create one from the Forms tab.' : undefined}>
               <Select placeholder="Select a saved run" showSearch
                 filterOption={(input, opt) => (opt?.value as string ?? '').toLowerCase().includes(input.toLowerCase())}>
                 {savedRuns.map(s => (

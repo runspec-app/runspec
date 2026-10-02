@@ -1,6 +1,6 @@
 // RunnableAction.tsx — the shared "pick a target, pick a runnable, fill its
 // args, attach credentials" building blocks used by BOTH the Schedules modal
-// (runnable-action schedules) and the Settings → Saved runs editor. One source
+// (runnable-action schedules) and the saved-run editor (Forms tab). One source
 // so the two dialogs render and behave identically; extracted from
 // SchedulesView (which previously owned local copies).
 
@@ -125,7 +125,7 @@ export function effectiveArgsForPath(runnable: Runnable, path: string[]): ArgDef
 // incl. password args which are ALWAYS open — the synced file never stores a
 // secret), and validation errors (a required arg must be either fixed or Open;
 // a fixed numeric value must sit inside the arg's range). Pure — exported for
-// unit tests and used by the Settings → Saved runs editor on save.
+// unit tests and used by the saved-run editor on save.
 export function splitFixedAndOpen(
   declared: ArgDef[],
   values: Record<string, unknown>,

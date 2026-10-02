@@ -22,7 +22,7 @@ procedure with the agent, then:
 The agent's `save_runbook` tool writes the entry (confirm-gated, and saving
 again under the same id is how you edit). Fields it doesn't mention keep their
 current values, so asking it to "fix step 3" won't quietly drop the runbook's
-parameters. You can also add runbooks under **Settings → Runbooks**, or edit the
+parameters. You can also add runbooks with **New runbook** on the Forms tab (each runbook card has an edit icon), or edit the
 file directly.
 
 The agent will also *offer* to capture a correction you just gave it, when that
@@ -82,7 +82,7 @@ are deliberately no `condition`/`goto`/step-reference fields (that would be a
 
 A parameter with a `default` is **optional**; one without a default is treated as
 **required** (the operator must supply it). To make a `choice` optional, give it a
-default in the editor (or a `default = …` in the file) — the **Settings → Runbooks**
+default in the editor (or a `default = …` in the file) — the runbook editor (Forms tab)
 arg editor shows a default picker for choice params alongside their options, plus a
 description field. Editing a runbook there saves that one entry only, so runbooks you
 changed in the file directly (or that arrived via Config Sync) are left intact.
@@ -90,7 +90,7 @@ changed in the file directly (or that arrived via Config Sync) are left intact.
 !!! note "Legacy `steps` string"
     Older runbooks used a single `steps = """…"""` string instead of the
     `[[runbook.step]]` array. That form is still read and runs identically; open
-    such a runbook in **Settings → Runbooks** and save it to convert it to the
+    such a runbook in the runbook editor (Forms tab) and save it to convert it to the
     ordered-step form.
 
 ## How the agent finds one

@@ -298,7 +298,7 @@ effort and other `[llm]` settings stay the same.
 |---|---|---|
 | Trigger | **Model (optional)** in the trigger editor (`model` in `runspec_triggers.toml`) | An agent-mode trigger's turn, or a rule trigger's pre-turn extract step |
 | Schedule | **Model (optional)** for a *prompt* or *runbook* schedule (`model` on the `[[schedule]]` entry) | That scheduled agent turn |
-| Runbook | **Model (optional)** in Settings → Runbooks (`model` on the `[[runbook]]` entry) | Any turn the runbook starts itself: the `$` menu, a runbook schedule, a room request |
+| Runbook | **Model (optional)** in the runbook editor on the Forms tab (`model` on the `[[runbook]]` entry) | Any turn the runbook starts itself: the `$` menu, a runbook schedule, a room request |
 | Settings | **Background model** (`[llm] utility_model`) | The console's own housekeeping: chat compaction summaries and Improve report synthesis |
 
 A runbook schedule uses the schedule's own model if set, else the runbook's,

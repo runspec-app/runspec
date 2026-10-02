@@ -518,6 +518,12 @@ export function MarketplaceView({ hosts, onOpenSettings, activeProfile }: { host
   }, [])
 
   useEffect(() => { loadCatalog(false); probe(false) }, [loadCatalog, probe])
+  // A save in the Marketplace settings modal (enable, repos, hide…) re-reads the catalogue.
+  useEffect(() => {
+    const onCfg = () => { loadCatalog(false) }
+    window.addEventListener('runspec:marketplace_config_changed', onCfg)
+    return () => window.removeEventListener('runspec:marketplace_config_changed', onCfg)
+  }, [loadCatalog])
 
   // A finished install/uninstall (from this or another mount) → re-probe; hosts
   // (re)connecting change the target set → re-probe too.
@@ -564,7 +570,8 @@ export function MarketplaceView({ hosts, onOpenSettings, activeProfile }: { host
   if (catalog && !catalog.enabled) {
     return (
       <div style={{ padding: 24 }}>
-        <Alert type="info" showIcon message="The marketplace is turned off" description="Set [marketplace] enabled = true in config.toml (Settings → Marketplace) to browse and install runnable packages." />
+        <Alert type="info" showIcon message="The marketplace is turned off" description="Turn it on in the marketplace settings ([marketplace] enabled = true in config.toml) to browse and install runnable packages."
+          action={onOpenSettings && <Button size="small" icon={<SettingOutlined />} onClick={onOpenSettings}>Settings</Button>} />
       </div>
     )
   }
@@ -580,7 +587,7 @@ export function MarketplaceView({ hosts, onOpenSettings, activeProfile }: { host
         <Tooltip title="Re-read the package indexes and re-probe every venv">
           <Button icon={<ReloadOutlined />} loading={loading || probing} onClick={refreshAll}>Refresh</Button>
         </Tooltip>
-        {onOpenSettings && <Button type="text" icon={<SettingOutlined />} onClick={onOpenSettings}>Repos…</Button>}
+        {onOpenSettings && <Button type="text" icon={<SettingOutlined />} onClick={onOpenSettings}>Settings</Button>}
       </div>
 
       <div style={{ marginBottom: 12, flexShrink: 0, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', fontSize: 12, color: textSecondary(isDark) }}>

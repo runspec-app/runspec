@@ -2537,7 +2537,7 @@ function filterToToml(filters: Filter[]): string {
   }).join('\n\n')
 }
 
-function FiltersTab() {
+export function FiltersTab() {
   const [filters, setFilters] = useState<Filter[]>([])
   const [editingKey, setEditingKey] = useState<string | null>(null)
   const [form] = Form.useForm<FilterFormValues>()
@@ -2553,10 +2553,17 @@ function FiltersTab() {
     const imported = await bridge.import_filters(await file.text())
     if (imported.length === 0) { message.warning('No new filters found in file'); return }
     setFilters(await bridge.get_filters())
+    window.dispatchEvent(new CustomEvent('runspec:filters_changed'))
     message.success(`Imported ${imported.length} filter${imported.length !== 1 ? 's' : ''}`)
   }
 
-  const persist = async (next: Filter[]) => { setFilters(next); await bridge.save_filters(next) }
+  // `runspec:filters_changed` refreshes any open FilterPicker (the Transfer modal
+  // hosts this tab in its "Manage filters" dialog).
+  const persist = async (next: Filter[]) => {
+    setFilters(next)
+    await bridge.save_filters(next)
+    window.dispatchEvent(new CustomEvent('runspec:filters_changed'))
+  }
   const startAdd = () => { form.resetFields(); setEditingKey('') }
   const startEdit = (f: Filter) => { form.setFieldsValue({ ...f }); setEditingKey(f.name) }
   const cancel = () => { setEditingKey(null); form.resetFields() }
@@ -4220,6 +4227,11 @@ const RUNBOOK_ARG_TYPES = ['str', 'int', 'float', 'flag', 'choice', 'path', 'hos
 // Normalise a runbook's steps into editor rows. get_runbooks already returns
 // structured rows, but tolerate a legacy string (best-effort split on "1." / "2)"
 // lines, falling back to a single row) so an old value never breaks the editor.
+// A request from outside the drawer to open a runbook / saved-run editor — the
+// Forms tab's "New …" buttons and card edit icons. `id` '' = new; `nonce`
+// changes on every click so re-opening the same id fires again.
+export interface EditorRequest { id: string; nonce: number }
+
 function stepsToRows(steps: RunbookStep[] | string | undefined): RunbookStep[] {
   if (Array.isArray(steps)) return steps.map(s => ({ text: s.text ?? '', title: s.title }))
   const body = (steps ?? '').trim()
@@ -4286,7 +4298,9 @@ function rowsToArgsRaw(rows: RunbookArgRow[] | undefined): Record<string, unknow
   return out
 }
 
-function RunbooksTab() {
+// `editorOnly` renders just the add/edit modal (driven by `request`) with no list —
+// how the Forms tab hosts it; the runbook list itself is the Forms cards.
+export function RunbooksTab({ editorOnly = false, request = null }: { editorOnly?: boolean; request?: EditorRequest | null } = {}) {
   const [runbooks, setRunbooks] = useState<Runbook[]>([])
   const [editingKey, setEditingKey] = useState<string | null>(null)  // '' = new
   const [form] = Form.useForm<RunbookFormValues>()
@@ -4313,6 +4327,15 @@ function RunbooksTab() {
     setEditingKey(s.id)
   }
   const cancel = () => { setEditingKey(null); form.resetFields() }
+
+  useEffect(() => {
+    if (!request) return
+    if (request.id === '') { startAdd(); return }
+    bridge.get_runbooks()
+      .then(list => { const s = list.find(r => r.id === request.id); if (s) startEdit(s) })
+      .catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [request?.nonce])
 
   // Refresh the `$` menu / run modal elsewhere in the app after a change.
   const afterChange = async () => {
@@ -4350,9 +4373,16 @@ function RunbooksTab() {
     if (!res.ok) { message.error(res.error || 'Could not delete runbook'); return }
     await afterChange()
   }
+  // The edit modal's Delete — the Forms tab's only way to remove a runbook.
+  const removeEditing = async () => {
+    if (!editingKey) return
+    await remove(editingKey)
+    cancel()
+  }
 
   return (
     <div>
+      {!editorOnly && (<>
       <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
         Runbooks are reusable, parameterized runbooks. Invoke one from the chat prompt
         with <Typography.Text code>$</Typography.Text>: it collects the parameters
@@ -4386,6 +4416,7 @@ function RunbooksTab() {
           </div>
         ))}
       </div>
+      </>)}
 
       <Modal
         open={editingKey !== null}
@@ -4395,6 +4426,17 @@ function RunbooksTab() {
         onOk={save}
         okText="Save"
         maskClosable={false}
+        footer={(_, { OkBtn, CancelBtn }) => (
+          <>
+            {editingKey && (
+              <Popconfirm title={`Remove ${editingKey}?`} onConfirm={removeEditing} okText="Remove" placement="topLeft">
+                <Button danger icon={<DeleteOutlined />} style={{ float: 'left' }}>Delete</Button>
+              </Popconfirm>
+            )}
+            <CancelBtn />
+            <OkBtn />
+          </>
+        )}
       >
         <Form form={form} layout="vertical" size="small">
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 12px' }}>
@@ -4538,7 +4580,8 @@ interface SavedRunFormValues {
 
 const _srNorm = (s: string) => s.replace(/-/g, '_')
 
-function SavedRunsTab() {
+// `editorOnly` / `request` — as RunbooksTab: the Forms tab hosts just the modal.
+export function SavedRunsTab({ editorOnly = false, request = null }: { editorOnly?: boolean; request?: EditorRequest | null } = {}) {
   const [savedRuns, setSavedRuns] = useState<SavedRun[]>([])
   const [hosts, setHosts] = useState<Host[]>([])
   const [runnables, setRunnables] = useState<Runnable[]>([])
@@ -4632,6 +4675,15 @@ function SavedRunsTab() {
     setEditingKey(s.id)
   }
   const cancel = () => { setEditingKey(null); form.resetFields() }
+
+  useEffect(() => {
+    if (!request) return
+    if (request.id === '') { startAdd(); return }
+    bridge.get_saved_runs()
+      .then(list => { const s = list.find(r => r.id === request.id); if (s) startEdit(s) })
+      .catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [request?.nonce])
 
   // Seed the rich arg state whenever the picked runnable (or its subcommand)
   // resolves — on edit (once discovery delivers it), and on every picker change.
@@ -4747,9 +4799,16 @@ function SavedRunsTab() {
   const remove = async (id: string) => {
     await persist(savedRuns.filter(s => s.id !== id).map(toRow))
   }
+  // The edit modal's Delete — the Forms tab's only way to remove a saved run.
+  const removeEditing = async () => {
+    if (!editingKey) return
+    await remove(editingKey)
+    cancel()
+  }
 
   return (
     <div>
+      {!editorOnly && (<>
       <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
         Saved runs are <strong>deterministic presets</strong>: a runnable + target host(s) +
         fixed args, with optional <strong>open parameters</strong> filled at run time. No
@@ -4785,6 +4844,7 @@ function SavedRunsTab() {
           </div>
         ))}
       </div>
+      </>)}
 
       <Modal
         open={editingKey !== null}
@@ -4794,6 +4854,17 @@ function SavedRunsTab() {
         onOk={save}
         okText="Save"
         maskClosable={false}
+        footer={(_, { OkBtn, CancelBtn }) => (
+          <>
+            {editingKey && (
+              <Popconfirm title={`Remove ${editingKey}?`} onConfirm={removeEditing} okText="Remove" placement="topLeft">
+                <Button danger icon={<DeleteOutlined />} style={{ float: 'left' }}>Delete</Button>
+              </Popconfirm>
+            )}
+            <CancelBtn />
+            <OkBtn />
+          </>
+        )}
       >
         <Form form={form} layout="vertical" size="small">
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 12px' }}>
@@ -6187,7 +6258,7 @@ export function VoiceTab() {
 }
 
 export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, connectedHosts, allRemoteHosts, activeProfile, initialTab }: SettingsDrawerProps) {
-  // `[console] ai` off-switch: the agent tabs (Model / API, Runbooks, MCP
+  // `[console] ai` off-switch: the agent tabs (Model / API, MCP
   // client, Chat History) are hidden; MCP Server, Telemetry and Tool visibility
   // stay (the last filters the MCP server's published tool list, so it is
   // meaningful with no embedded agent).
@@ -6212,14 +6283,10 @@ export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, co
           { key: 'jumpHosts', label: 'Jump Hosts',  children: <JumpHostsTab onHostsChanged={onHostsChanged} /> },
           { key: 'localVenvs', label: 'Local venvs', children: <LocalVenvsTab /> },
           { key: 'agentTools', label: 'Tool visibility', children: <AgentToolsTab /> },
-          { key: 'runbooks',    label: 'Runbooks',     children: <RunbooksTab /> },
-          { key: 'savedRuns',   label: 'Saved runs',   children: <SavedRunsTab /> },
           // Self-Service (helpdesk catalogue + rooms) hidden pending approval —
           // see SHOW_HELPDESK_ROOMS. The tab component is left intact.
           ...(SHOW_HELPDESK_ROOMS ? [{ key: 'selfService', label: 'Self-Service', children: <SelfServiceTab /> }] : []),
-          { key: 'filters',   label: 'Filters',    children: <FiltersTab /> },
           { key: 'repos',     label: 'Repos',      children: <ReposTab /> },
-          { key: 'marketplace', label: 'Marketplace', children: <MarketplaceTab /> },
           { key: 'credentials', label: 'Credentials', children: <CredentialsTab /> },
           { key: 'mcp',       label: 'MCP',        children: <McpTab /> },
           { key: 'mcpServer', label: 'MCP Server', children: <McpServerTab /> },

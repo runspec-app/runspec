@@ -1,10 +1,23 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Button, Collapse, Input, Modal, Select, Tag, Tooltip, Typography, message } from 'antd'
-import { SearchOutlined, RightOutlined, ArrowLeftOutlined, AppstoreOutlined } from '@ant-design/icons'
+import { SearchOutlined, RightOutlined, ArrowLeftOutlined, AppstoreOutlined, EditOutlined, PlusOutlined, DownOutlined } from '@ant-design/icons'
 import type { ArgDef, Host, Runnable, Runbook, SavedRun } from '../bridge'
 import { bridge } from '../bridge'
 import { useIsDark, useAccent, withAlpha, surfaces, RADIUS, textSecondary, MONO_FONT } from '../ThemeContext'
 import { runnableHidden } from '../toolVisibility'
+import { useFeatures } from '../features'
+import {
+  RUNBOOKS_SECTION,
+  SAVED_RUNS_SECTION,
+  anySectionExpanded,
+  groupSection,
+  isSectionCollapsed,
+  loadFormsSections,
+  saveFormsSections,
+  setAllSections,
+  toggleSection,
+  type FormsSectionsState,
+} from './formsSections'
 // Run-form helpers + light input components live in ./formsShared so the eager
 // consumers (CommandInput, SettingsDrawer, RunnableAction, …) can import them
 // without pinning this heavy view into the main chunk — App.tsx React.lazy-loads
@@ -646,9 +659,22 @@ function RunnableCard({ runnable, hosts, onClick }: {
   )
 }
 
+// Card edit icon — opens the item's editor without launching the card's run dialog.
+function CardEditButton({ title, onEdit }: { title: string; onEdit: () => void }) {
+  return (
+    <Tooltip title={title}>
+      <Button
+        type="text" size="small" icon={<EditOutlined />} aria-label={title}
+        onClick={e => { e.stopPropagation(); onEdit() }}
+        style={{ color: 'var(--rs-text-muted)' }}
+      />
+    </Tooltip>
+  )
+}
+
 // A saved runbook, rendered as a launchable card alongside runnables. Clicking opens
 // the same parameter form the `$` chat menu uses (App owns the RunbookRunModal).
-function RunbookCard({ runbook, onClick }: { runbook: Runbook; onClick: () => void }) {
+function RunbookCard({ runbook, onClick, onEdit }: { runbook: Runbook; onClick: () => void; onEdit?: () => void }) {
   const isDark = useIsDark()
   const [hovered, setHovered] = useState(false)
 
@@ -676,7 +702,8 @@ function RunbookCard({ runbook, onClick }: { runbook: Runbook; onClick: () => vo
         <Text style={{ fontFamily: MONO_FONT, fontSize: 14, fontWeight: 600, color: accent }}>
           ${runbook.id}
         </Text>
-        <div style={{ marginLeft: 'auto' }}>
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4 }}>
+          {onEdit && <CardEditButton title="Edit runbook" onEdit={onEdit} />}
           <Tag color="purple" style={{ fontSize: 11, margin: 0 }}>runbook</Tag>
         </div>
       </div>
@@ -704,7 +731,7 @@ function RunbookCard({ runbook, onClick }: { runbook: Runbook; onClick: () => vo
 // A saved run — a deterministic preset — rendered as a launchable card. Clicking
 // opens the params-only run dialog (App owns the SavedRunRunModal); a preset with
 // no open params runs immediately (the App-level handler decides).
-function SavedRunCard({ savedRun, onClick }: { savedRun: SavedRun; onClick: () => void }) {
+function SavedRunCard({ savedRun, onClick, onEdit }: { savedRun: SavedRun; onClick: () => void; onEdit?: () => void }) {
   const isDark = useIsDark()
   const [hovered, setHovered] = useState(false)
 
@@ -732,7 +759,8 @@ function SavedRunCard({ savedRun, onClick }: { savedRun: SavedRun; onClick: () =
         <Text style={{ fontFamily: MONO_FONT, fontSize: 14, fontWeight: 600, color: accent }}>
           {savedRun.title || savedRun.id}
         </Text>
-        <div style={{ marginLeft: 'auto' }}>
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4 }}>
+          {onEdit && <CardEditButton title="Edit saved run" onEdit={onEdit} />}
           <Tag color="blue" style={{ fontSize: 11, margin: 0 }}>saved run</Tag>
         </div>
       </div>
@@ -785,6 +813,59 @@ interface FormsViewProps {
   onOpenRunbook?: (runbook: Runbook) => void
   savedRuns?: SavedRun[]
   onOpenSavedRun?: (savedRun: SavedRun) => void
+  // Create / edit — the Forms tab is the one home for runbook + saved-run
+  // management (App hosts the editor modals). `id` '' = new.
+  onEditRunbook?: (id: string) => void
+  onEditSavedRun?: (id: string) => void
+}
+
+// One collapsible Forms section (Saved runs, Runbooks, or a runnable group):
+// a clickable header with a caret, and the item count shown while collapsed —
+// the count follows the search, so a collapsed lane still says how many match.
+function FormsSection({ title, count, collapsed, onToggle, children }: {
+  title: string
+  count: number
+  collapsed: boolean
+  onToggle: () => void
+  children: ReactNode
+}) {
+  const isDark = useIsDark()
+  return (
+    <div style={{ marginBottom: collapsed ? 12 : 28 }}>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={!collapsed}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+          background: 'none', border: 'none', cursor: 'pointer', padding: '0 0 6px',
+          marginBottom: collapsed ? 0 : 12,
+          borderBottom: '1px solid var(--rs-border)',
+          fontSize: 11, color: textSecondary(isDark),
+          textTransform: 'uppercase', letterSpacing: '0.08em', textAlign: 'left',
+        }}
+      >
+        {collapsed
+          ? <RightOutlined style={{ fontSize: 9 }} />
+          : <DownOutlined style={{ fontSize: 9 }} />}
+        <span>{title}</span>
+        {collapsed && (
+          <Tag style={{ marginInlineEnd: 0, fontSize: 11, lineHeight: '16px', textTransform: 'none', letterSpacing: 0 }}>
+            {count}
+          </Tag>
+        )}
+      </button>
+      {!collapsed && (
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))',
+          gap: 10,
+        }}>
+          {children}
+        </div>
+      )}
+    </div>
+  )
 }
 
 export function FormsView({
@@ -792,9 +873,15 @@ export function FormsView({
   onRunRunnable, pendingForm, onPendingFormClear,
   runbooks = [], onOpenRunbook,
   savedRuns = [], onOpenSavedRun,
+  onEditRunbook, onEditSavedRun,
 }: FormsViewProps) {
-  const isDark = useIsDark()
+  const { ai } = useFeatures()
   const [search, setSearch] = useState('')
+  const [sections, setSections] = useState<FormsSectionsState>(() => loadFormsSections())
+  const updateSections = (next: FormsSectionsState) => {
+    setSections(next)
+    saveFormsSections(next)
+  }
   const [modalState, setModalState] = useState<ModalState | null>(null)
   // [tool_visibility] hidden_from_all — runnables hidden everywhere in the
   // console, including this Forms list. The agent toolset + catalogs are filtered
@@ -905,19 +992,45 @@ export function FormsView({
     groupMap.get(r.group)!.push(r)
   }
 
-  const borderCol = 'var(--rs-border)'
+  // Sections currently on screen, for the bulk collapse/expand toggle.
+  const sectionKeys = [
+    ...(filteredSavedRuns.length > 0 ? [SAVED_RUNS_SECTION] : []),
+    ...(filteredRunbooks.length > 0 ? [RUNBOOKS_SECTION] : []),
+    ...[...groupMap.keys()].map(groupSection),
+  ]
+  const anyOpen = anySectionExpanded(sections, sectionKeys)
+  const sectionProps = (key: string) => ({
+    collapsed: isSectionCollapsed(sections, key),
+    onToggle: () => updateSections(toggleSection(sections, key)),
+  })
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <div style={{ marginBottom: 16, flexShrink: 0 }}>
+      <div style={{ marginBottom: 16, flexShrink: 0, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         <Input
           prefix={<SearchOutlined />}
           placeholder="Search name, group, host, description…"
           value={search}
           onChange={e => setSearch(e.target.value)}
           allowClear
-          style={{ maxWidth: 360 }}
+          style={{ maxWidth: 360, flex: '1 1 240px' }}
         />
+        {onEditSavedRun && (
+          <Button icon={<PlusOutlined />} onClick={() => onEditSavedRun('')}>New saved run</Button>
+        )}
+        {ai && onEditRunbook && (
+          <Button icon={<PlusOutlined />} onClick={() => onEditRunbook('')}>New runbook</Button>
+        )}
+        {sectionKeys.length > 0 && (
+          <Button
+            type="text"
+            style={{ marginLeft: 'auto' }}
+            icon={anyOpen ? <RightOutlined /> : <DownOutlined />}
+            onClick={() => updateSections(setAllSections(anyOpen ? 'collapsed' : 'expanded'))}
+          >
+            {anyOpen ? 'Collapse all' : 'Expand all'}
+          </Button>
+        )}
       </div>
 
       {filtered.length === 0 && filteredRunbooks.length === 0 && filteredSavedRuns.length === 0 ? (
@@ -930,72 +1043,30 @@ export function FormsView({
       ) : (
         <div style={{ flex: 1, overflowY: 'auto' }}>
           {filteredSavedRuns.length > 0 && (
-            <div style={{ marginBottom: 28 }}>
-              <div style={{
-                fontSize: 11, color: textSecondary(isDark),
-                textTransform: 'uppercase', letterSpacing: '0.08em',
-                marginBottom: 12, paddingBottom: 6,
-                borderBottom: `1px solid ${borderCol}`,
-              }}>
-                Saved runs
-              </div>
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))',
-                gap: 10,
-              }}>
-                {filteredSavedRuns.map(s => (
-                  <SavedRunCard key={s.id} savedRun={s} onClick={() => onOpenSavedRun?.(s)} />
-                ))}
-              </div>
-            </div>
+            <FormsSection title="Saved runs" count={filteredSavedRuns.length} {...sectionProps(SAVED_RUNS_SECTION)}>
+              {filteredSavedRuns.map(s => (
+                <SavedRunCard key={s.id} savedRun={s} onClick={() => onOpenSavedRun?.(s)} onEdit={onEditSavedRun && (() => onEditSavedRun(s.id))} />
+              ))}
+            </FormsSection>
           )}
           {filteredRunbooks.length > 0 && (
-            <div style={{ marginBottom: 28 }}>
-              <div style={{
-                fontSize: 11, color: textSecondary(isDark),
-                textTransform: 'uppercase', letterSpacing: '0.08em',
-                marginBottom: 12, paddingBottom: 6,
-                borderBottom: `1px solid ${borderCol}`,
-              }}>
-                Runbooks
-              </div>
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))',
-                gap: 10,
-              }}>
-                {filteredRunbooks.map(s => (
-                  <RunbookCard key={s.id} runbook={s} onClick={() => onOpenRunbook?.(s)} />
-                ))}
-              </div>
-            </div>
+            <FormsSection title="Runbooks" count={filteredRunbooks.length} {...sectionProps(RUNBOOKS_SECTION)}>
+              {filteredRunbooks.map(s => (
+                <RunbookCard key={s.id} runbook={s} onClick={() => onOpenRunbook?.(s)} onEdit={ai && onEditRunbook ? () => onEditRunbook(s.id) : undefined} />
+              ))}
+            </FormsSection>
           )}
           {[...groupMap.entries()].map(([group, groupRunnables]) => (
-            <div key={group} style={{ marginBottom: 28 }}>
-              <div style={{
-                fontSize: 11, color: textSecondary(isDark),
-                textTransform: 'uppercase', letterSpacing: '0.08em',
-                marginBottom: 12, paddingBottom: 6,
-                borderBottom: `1px solid ${borderCol}`,
-              }}>
-                {group}
-              </div>
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))',
-                gap: 10,
-              }}>
-                {groupRunnables.map(r => (
-                  <RunnableCard
-                    key={`${r.host}/${r.group}/${r.name}`}
-                    runnable={r}
-                    hosts={hosts}
-                    onClick={() => handleCardClick(r)}
-                  />
-                ))}
-              </div>
-            </div>
+            <FormsSection key={group} title={group} count={groupRunnables.length} {...sectionProps(groupSection(group))}>
+              {groupRunnables.map(r => (
+                <RunnableCard
+                  key={`${r.host}/${r.group}/${r.name}`}
+                  runnable={r}
+                  hosts={hosts}
+                  onClick={() => handleCardClick(r)}
+                />
+              ))}
+            </FormsSection>
           ))}
         </div>
       )}

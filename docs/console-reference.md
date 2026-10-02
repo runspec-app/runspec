@@ -30,9 +30,9 @@ to read, seed, or sync them directly. All files are plain TOML.
 | `runspec_profiles.toml` | Profile definitions | Yes (active pick is machine-local) | Sidebar / host editor |
 | `runspec_triggers.toml` | `[triggers.<name>]` tables | Yes | Triggers tab |
 | `runspec_rota.toml` | Working-hours rota | No — machine-local | Rota tab |
-| `runspec_filters.toml` | [Transfer filters](console-hosts.md#file-transfer-filters) — source-side pipelines | Yes | Settings → Filters |
+| `runspec_filters.toml` | [Transfer filters](console-hosts.md#file-transfer-filters) — source-side pipelines | Yes | Transfer files → Manage filters… |
 | `runspec_credentials.toml` | Credential **metadata** (secrets live in the OS keychain) | Yes | Settings → Credentials |
-| `runspec_runbooks.toml` | `[[runbook]]` collection | Yes (by `id`) | Agent / Settings → Runbooks |
+| `runspec_runbooks.toml` | `[[runbook]]` collection | Yes (by `id`) | Agent / Forms tab (runbook editor) |
 | `runspec_repos.toml` | Agent-accessible repo registry | Yes (checkout paths are machine-local) | Settings → Repos |
 | `runspec_self_service.toml` | Room self-service catalogue | Yes | Settings → Self-Service |
 | `runspec_memory.toml` | Agent memory | No — machine-local | Agent (`remember`) |

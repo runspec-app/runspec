@@ -78,7 +78,7 @@ without a restart.
 
 ### Automatically — your pip configuration
 
-With **Settings → Marketplace → "Also read the indexes this venv's pip is
+With **Marketplace → Settings → "Also read the indexes this venv's pip is
 configured with"** on (the default), the console reads pip's own
 configuration for the venv it runs in — `pip.ini` / `pip.conf` at the
 global, user and venv scopes, plus `PIP_INDEX_URL` / `PIP_EXTRA_INDEX_URL` —
@@ -94,7 +94,7 @@ same index URL takes over.
 
 ### Declared repos
 
-`[[marketplace.repos]]` in `config.toml` (Settings → Marketplace → *Add
+`[[marketplace.repos]]` in `config.toml` (Marketplace → Settings → *Add
 repo*) declares an index explicitly:
 
 ```toml
@@ -257,7 +257,7 @@ the wheel itself.
 
 ## Settings & knobs
 
-Settings → Marketplace edits the `[marketplace]` section (declared repos,
+The Marketplace tab's **Settings** button edits the `[marketplace]` section (declared repos,
 the pip-config switch, pre-releases, the cache period, clear cache). The full
 key list is in the [config reference](console-reference.md#marketplace).
 

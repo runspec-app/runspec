@@ -30,7 +30,17 @@ describe('Settings → Self-Service (hidden pending approval)', () => {
     expect(labels).not.toContain('Self-Service')
     expect(labels).not.toContain('Teams')
     // The neighbouring tabs are unaffected.
-    expect(labels).toContain('Saved runs')
-    expect(labels).toContain('Filters')
+    expect(labels).toContain('Repos')
+    expect(labels).toContain('Credentials')
+  })
+
+  it('no longer duplicates editors that live in their own views', async () => {
+    // Saved runs + Runbooks are managed from Forms, Filters from the Transfer
+    // dialog, Marketplace settings from the Marketplace tab.
+    render(<SettingsDrawer open onClose={() => {}} />)
+    const labels = (await screen.findAllByRole('tab')).map(t => t.textContent)
+    for (const gone of ['Saved runs', 'Runbooks', 'Filters', 'Marketplace']) {
+      expect(labels).not.toContain(gone)
+    }
   })
 })

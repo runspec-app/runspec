@@ -24,6 +24,32 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   configured to support act(...)"), and get a 20s timeout — they take ~5s
   under jsdom and timed out on slower runners.
 
+## [0.318.0] — 2026-10-02
+
+### Changed
+
+- **Marketplace, Saved runs, Runbooks and Filters are no longer duplicated in
+  the Settings panel.** Each is now managed where it is used, and its Settings
+  tab is gone:
+  - **Saved runs and Runbooks**: **New saved run** and **New runbook** buttons
+    sit at the top of the Forms tab, and every saved-run and runbook card has an
+    edit icon. The editor is the same one the Settings tab had, and it now has a
+    **Delete** button for an existing entry. Runbook authoring stays hidden when
+    AI is off.
+  - **Marketplace**: the **Settings** button on the Marketplace tab (it was
+    "Repos…") opens the marketplace settings in a modal. Saving them re-reads
+    the catalogue. When the marketplace is turned off, the notice carries the
+    same button so you can turn it back on.
+  - **Filters**: the Transfer files dialog has **Manage filters…** beside the
+    filter picker, which opens the filter list and editor. The picker refreshes
+    after a change (`runspec:filters_changed`).
+- **Forms sections collapse.** Saved runs, Runbooks and each runnable group are
+  now an expandable section. Saved runs and Runbooks start collapsed; runnable
+  groups start open. A collapsed section shows how many items it holds, and the
+  count follows the search. **Collapse all** / **Expand all** sits at the right
+  of the Forms toolbar. The open/closed state is remembered on this machine
+  (`localStorage`, `views/formsSections.ts`).
+
 ## [0.317.0] — 2026-10-02
 
 ### Added

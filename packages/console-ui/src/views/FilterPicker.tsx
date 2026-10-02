@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
-import { Select, Input, Typography } from 'antd'
+import { Button, Modal, Select, Input, Typography } from 'antd'
+import { FilterOutlined } from '@ant-design/icons'
 import { bridge, type Filter } from '../bridge'
-import { isParameterized } from '../components/SettingsDrawer'
+import { FiltersTab, isParameterized } from '../components/SettingsDrawer'
 import { MONO_FONT } from '../ThemeContext'
 
 const { Text } = Typography
@@ -16,9 +17,11 @@ export function humanBytes(n: number): string {
   return `${v.toFixed(v < 10 ? 1 : 0)} ${units[i]}`
 }
 
-// FilterPicker — select a saved source-side filter (Settings → Filters) and, when
+// FilterPicker — select a saved source-side filter and, when
 // the chosen filter is parameterized ({{arg}}), prompt for its runtime value. The
 // filtered pipeline runs on the source host so only matching output is transferred.
+// "Manage filters…" opens the filter list + editor (FiltersTab) in a modal — the
+// one home for filter management.
 export function FilterPicker({
   filterName,
   filterArg,
@@ -31,7 +34,13 @@ export function FilterPicker({
   onFilterArg: (arg: string) => void
 }) {
   const [filters, setFilters] = useState<Filter[]>([])
-  useEffect(() => { bridge.get_filters().then(setFilters).catch(() => {}) }, [])
+  const [manageOpen, setManageOpen] = useState(false)
+  useEffect(() => {
+    const load = () => { bridge.get_filters().then(setFilters).catch(() => {}) }
+    load()
+    window.addEventListener('runspec:filters_changed', load)
+    return () => window.removeEventListener('runspec:filters_changed', load)
+  }, [])
 
   const selected = filters.find(f => f.name === filterName)
   const needsArg = selected ? isParameterized(selected.pipeline) : false
@@ -60,10 +69,23 @@ export function FilterPicker({
             style={{ width: 220, fontFamily: MONO_FONT }}
           />
         )}
+        <Button size="small" type="link" icon={<FilterOutlined />} onClick={() => setManageOpen(true)}>
+          Manage filters…
+        </Button>
       </div>
       {selected?.description && (
         <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>{selected.description}</Text>
       )}
+      <Modal
+        open={manageOpen}
+        title="Filters"
+        width="min(92vw, 820px)"
+        footer={null}
+        onCancel={() => setManageOpen(false)}
+        destroyOnClose
+      >
+        <FiltersTab />
+      </Modal>
     </div>
   )
 }

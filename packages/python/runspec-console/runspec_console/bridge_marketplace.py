@@ -71,7 +71,7 @@ class MarketplaceMixin:
     # ── JS API ──
 
     def get_marketplace_config(self) -> dict[str, Any]:
-        """The ``[marketplace]`` settings for Settings → Marketplace plus the
+        """The ``[marketplace]`` settings for the Marketplace settings modal plus the
         **effective** repo list: the declared ``[[marketplace.repos]]`` and, when
         ``auto_pip`` is on, the indexes derived from this venv's pip config
         (``source: "pip"``; read-only in the UI — edit ``pip.ini`` / declare the
