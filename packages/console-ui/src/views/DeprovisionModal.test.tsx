@@ -93,4 +93,11 @@ describe('DeprovisionModal', () => {
     await user.click(screen.getByRole('button', { name: /Delete on 1 host/ }))
     expect(api.deprovision_start).toHaveBeenCalledWith(expect.objectContaining({ keep_logs: false }))
   })
+
+  it('stacks above the host editor it is opened from', async () => {
+    render(<DeprovisionModal open onClose={() => {}} zIndex={1100} />)
+    await screen.findByText('Deprovision a runspec venv')
+    const wrap = document.querySelector('.ant-modal-wrap') as HTMLElement
+    expect(wrap.style.zIndex).toBe('1100')
+  })
 })

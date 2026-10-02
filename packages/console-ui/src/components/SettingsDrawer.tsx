@@ -1924,6 +1924,13 @@ function AgentToolsTab() {
   )
 }
 
+// The Provision / Deprovision dialogs open from inside the host editor modal.
+// antd stacks the editor at the drawer's level + 100 (1100 + 100), and a sibling
+// modal given no zIndex can land at or below it, so pin the editor and put the
+// venv dialogs one container step above it.
+const HOST_EDITOR_Z = 1200
+const VENV_MODAL_Z = HOST_EDITOR_Z + 100
+
 function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
   const accent = useAccent()
   const [hosts, setHosts] = useState<JumpHost[]>([])
@@ -2170,6 +2177,7 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
         open={editingKey !== null}
         title={editingKey === '' ? 'New jump host' : `Edit — ${editingKey}`}
         width={680}
+        zIndex={HOST_EDITOR_Z}
         onCancel={cancel}
         onOk={save}
         okText="Save"
@@ -2501,12 +2509,14 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
         open={provisionHosts !== null}
         initialHosts={provisionHosts ?? undefined}
         onClose={() => setProvisionHosts(null)}
+        zIndex={VENV_MODAL_Z}
         onDone={reloadAfterVenvChange}
       />
       <DeprovisionModal
         open={deprovisionTargets !== null}
         initialTargets={deprovisionTargets ?? undefined}
         onClose={() => setDeprovisionTargets(null)}
+        zIndex={VENV_MODAL_Z}
         onDone={reloadAfterVenvChange}
       />
     </div>

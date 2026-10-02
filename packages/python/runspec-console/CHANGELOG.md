@@ -9,6 +9,8 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.320.1] — 2026-10-02
+
 ### Changed
 
 - **Unit suffixes and Browse buttons use antd's `Space.Compact`.** antd 5.29
@@ -23,6 +25,15 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   extra `act()` (which flooded stderr with "testing environment is not
   configured to support act(...)"), and get a 20s timeout — they take ~5s
   under jsdom and timed out on slower runners.
+
+### Fixed
+
+- **Provision / Deprovision venv dialogs open on top of the host editor.**
+  Clicking *Provision new venv…* (or a venv's *Deprovision*) inside the Jump
+  Host edit modal opened the dialog behind the editor, so it only showed once
+  the editor was closed: inside the Settings drawer antd stacks the editor at
+  1200, above a bare modal. The editor's level is now pinned and both dialogs
+  take a `zIndex` one step above it.
 
 ## [0.320.0] — 2026-10-02
 

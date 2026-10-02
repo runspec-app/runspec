@@ -159,4 +159,22 @@ describe('Jump Hosts tab', { timeout: 20_000 }, () => {
     await waitFor(() => expect(screen.queryByRole('button', { name: /save/i })).toBeNull())
     expect(saveJumpHosts).toHaveBeenCalledTimes(1)
   })
+
+  // Regression: Provision opened from inside the host editor rendered beneath
+  // it. The editor sits in the drawer, so antd stacks it at drawer + 100; the
+  // Provision dialog must land above that, not just above a bare modal.
+  it('opens Provision new venv on top of the host editor', async () => {
+    const user = await openTab()
+    await openEdit(user)
+    const zOf = (title: string) => {
+      const wrap = screen.getByText(title).closest('.ant-modal-wrap') as HTMLElement
+      return Number(wrap.style.zIndex)
+    }
+    const editorZ = zOf('Edit — web-01')
+
+    await user.click(screen.getByRole('button', { name: /Provision new venv/ }))
+    await screen.findByText('Provision a runspec venv')
+
+    expect(zOf('Provision a runspec venv')).toBeGreaterThan(editorZ)
+  })
 })

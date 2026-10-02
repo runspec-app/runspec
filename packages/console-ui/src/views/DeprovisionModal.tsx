@@ -49,11 +49,15 @@ export function DeprovisionModal({
   initialTargets,
   onClose,
   onDone,
+  zIndex,
 }: {
   open: boolean
   initialTargets?: DeprovisionTarget[]
   onClose: () => void
   onDone?: () => void
+  // Stack above a modal it is opened from (Ant siblings share zIndex 1000,
+  // so render order alone can leave this dialog hidden underneath).
+  zIndex?: number
 }) {
   const isDark = useIsDark()
   const [opts, setOpts] = useState<ProvisionOptions | null>(null)
@@ -145,6 +149,7 @@ export function DeprovisionModal({
       open={open}
       onCancel={onClose}
       width={640}
+      zIndex={zIndex}
       maskClosable={false}
       title={<span style={{ display: 'flex', alignItems: 'center', gap: 8 }}><DeleteOutlined /> Deprovision a runspec venv</span>}
       footer={

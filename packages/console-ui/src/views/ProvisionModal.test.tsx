@@ -113,4 +113,11 @@ describe('ProvisionModal', () => {
     await user.click(provisionBtn())
     expect(api.provision_start).toHaveBeenCalledWith(expect.objectContaining({ hosts: ['web-01'] }))
   })
+
+  it('stacks above the host editor it is opened from', async () => {
+    render(<ProvisionModal open initialHosts={['web-01']} onClose={() => {}} zIndex={1100} />)
+    await screen.findByText('Provision a runspec venv')
+    const wrap = document.querySelector('.ant-modal-wrap') as HTMLElement
+    expect(wrap.style.zIndex).toBe('1100')
+  })
 })

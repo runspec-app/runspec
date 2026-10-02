@@ -87,11 +87,15 @@ export function ProvisionModal({
   initialHosts,
   onClose,
   onDone,
+  zIndex,
 }: {
   open: boolean
   initialHosts?: string[]
   onClose: () => void
   onDone?: () => void
+  // Stack above a modal it is opened from (Ant siblings share zIndex 1000,
+  // so render order alone can leave this dialog hidden underneath).
+  zIndex?: number
 }) {
   const isDark = useIsDark()
   const [opts, setOpts] = useState<ProvisionOptions | null>(null)
@@ -277,6 +281,7 @@ export function ProvisionModal({
       open={open}
       onCancel={onClose}
       width={680}
+      zIndex={zIndex}
       maskClosable={false}
       title={<span style={{ display: 'flex', alignItems: 'center', gap: 8 }}><CloudServerOutlined /> Provision a runspec venv</span>}
       footer={footer}
