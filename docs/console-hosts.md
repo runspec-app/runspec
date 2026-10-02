@@ -65,6 +65,77 @@ connectivity and inventories its runnables. Ask the agent:
 
 > What runnables do you see on app-01?
 
+### Provision a venv from the console
+
+A host with no runspec venv yet (or one that needs another venv) can get one
+straight from **Settings → Jump Hosts**: **Provision venv…** in the toolbar
+(pick any hosts, or **+ Group** / **+ Profile** to tick a whole set), the
+cloud icon on a host row, or **Provision new venv…** under a saved host's
+runspec paths. Nothing needs to be on the host except Python and SSH.
+
+You choose:
+
+- **Location**: a parent folder (browse the host, like finding an existing
+  `bin/runspec`) plus a venv name, e.g. `/opt/venvs` + `ops`.
+- **Python**: an interpreter the console found on the host (with its version),
+  one you browse to in a non-standard location, or **Same version on each
+  host** (e.g. `3.12`) so each host uses its own 3.12 wherever it lives.
+  runspec needs Python 3.10 or newer, so an older interpreter is flagged and
+  blocked (on RHEL 9 pick 3.12, not the system 3.9).
+- **Run as**: the account that will own the venv, e.g. a service account
+  (reached with `sudo -n -u` or `su`). Blank means your SSH user.
+- **Packages** (runspec is always installed) and the **package index** (a
+  Marketplace repo, or the host's own pip config).
+
+**Check hosts** runs a preflight on every host that changes nothing: the
+interpreter runs and has `venv`, the account works without a password, the
+location doesn't already exist and is writable. **Provision** then runs on the
+ready hosts in parallel, each with its own log: create the venv (`--symlinks`,
+permissions as `create-venv` sets them), upgrade pip, install the packages,
+set up the [logs inbox](#set-up-the-logs-inbox-for-runs-by-other-accounts)
+(`runspec logs share --inbox`), and check `bin/runspec` runs. Each host that
+succeeds gets the new path added to its runspec paths; **Retry failed** re-runs
+only the failures. Linux/macOS hosts only for now.
+
+If the run-as account can't write the parent folder (say `/opt/venvs` belongs
+to root, with each service account owning only its own venv inside it), Check
+hosts asks whether your SSH login can `sudo` without a password. If it can, or
+you log in as root, the host stays ready with a warning: Provision creates the
+empty venv folder as root, gives it to the run-as account, and builds the rest
+as that account. Without passwordless sudo it stays blocked; create the folder
+and `chown` it to the account yourself, or pick a location the account can
+write.
+
+### Deprovision a venv
+
+**Deprovision…** (toolbar) or the delete icon beside a saved runspec path
+removes a venv from one or many hosts. Only a venv a host already lists can be
+picked. The dialog shows each host's path, owner, size, the runnables in it,
+and a warning if your triggers, schedules, saved runs or runbooks name them.
+Type the venv's folder name to enable **Delete**.
+
+- **Keep logs** (on by default) deletes everything except `logs/`, so the
+  folder stays with its run history. Provisioning a new venv at the same path
+  later builds around it and the history carries on.
+- The host re-checks that the folder is a real venv (`pyvenv.cfg` +
+  `bin/runspec`, not a symlink, not a system or home folder) in the same
+  command as the delete, which runs as the venv's owner.
+- The path is then removed from the host's runspec paths.
+
+Provision and deprovision each write audit events (`venv.provision.*`,
+`venv.deprovision.*`, `venv.logs.retained`) to the console's audit log. They're
+also recorded on the host itself, as [audit events](audit.md):
+
+- After a provision, the console runs `runspec audit record venv.provision`
+  in the new venv as its owner. The venv's ledger (`logs/audit.jsonl`) starts
+  with how the venv was made (who asked, the Python, the packages), and a copy
+  goes to the host's syslog.
+- Just before a deprovision deletes anything, it records
+  `venv.deprovision confirmed` the same way. With **Keep logs** the ledger stays
+  with `logs/`. Without it, the syslog copy is what remains. A venv whose
+  runspec is older than 0.71.0 can't record that, so the console writes one
+  `logger` line to syslog instead.
+
 ### Bootstrapping a fresh host
 
 If a host doesn't have runspec yet, [`runspec-linux`](https://pypi.org/project/runspec-linux/)

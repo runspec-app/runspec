@@ -1,0 +1,792 @@
+"""
+provision.py — build and remove runspec venvs on fleet hosts.
+
+Pure logic behind Settings → Jump Hosts → *Provision venv…* / *Deprovision…*:
+validation, the POSIX shell scripts each step runs on a host, and the parsers
+for their output. The bridge (:mod:`bridge_provision`) owns the I/O — it runs
+each script over the host's pooled SSH connection through
+:func:`marketplace.remote_command`, so a ``run_as`` service account is reached
+with ``sudo -n -u`` / ``su`` and the package-index URL (which can carry a
+credential) rides the SPEC env frame on stdin, never the command line.
+
+A provision is, per host:
+
+1. **probe** — list the Python interpreters on the host (operator picks one; a
+   non-standard location is reachable through the browse popup), as the SSH user;
+2. **preflight** — as the run-as account: the interpreter runs, has ``venv`` +
+   ``ensurepip``, is >= 3.10 (runspec's floor), the destination is absent / empty
+   / holds only a kept ``logs/``, and its nearest existing ancestor is writable
+   (or, when it isn't, the SSH login can ``sudo -n``: then **folder** — root makes
+   the empty venv folder and chowns it to the run-as account, the usual case for
+   a root-owned ``/opt/venvs`` shared by service accounts);
+3. **create** — ``python -m venv --symlinks`` + the permission normalisation the
+   ``create-venv`` runnable applies (``u=rwX,go=rX``; a kept ``logs/`` is left
+   alone);
+4. **install** — ``pip install -U pip`` then ``pip install runspec <packages>``;
+5. **logs inbox** — ``<venv>/bin/runspec logs share --inbox`` as the owner;
+6. **verify** — ``<venv>/bin/runspec --version``;
+7. **audit** — ``<venv>/bin/runspec audit record venv.provision`` as the owner,
+   so the new venv's own ledger (and the host's syslog) starts with how it was
+   made. A deprovision records ``venv.deprovision confirmed`` the same way just
+   before the delete (``logger`` to syslog when the venv's runspec is older
+   than 0.71.0). The console keeps its own record too.
+
+The create recipe is a copy of ``runspec_linux_core.venvs.create_venv`` as
+remote shell steps. The plan is to remove ``create-venv`` / ``install-into-venv``
+from ``runspec-linux`` and ``runspec-linux-core`` so this module becomes the one
+home of the recipe (the command line just uses pip).
+
+A deprovision deletes a venv the console already knows (one of a host's
+``runspec_paths``), behind guards that are enforced here *and* re-checked on
+the host in the same shell command as the ``rm``: an absolute, non-system path,
+not a symlink, containing ``pyvenv.cfg`` + ``bin/runspec``. ``keep_logs``
+removes everything except ``logs/`` so the folder stays with its history (and
+a later provision at the same path builds around it).
+
+POSIX hosts only for now; a Windows path (``\\`` / ``.exe``) is refused.
+"""
+
+from __future__ import annotations
+
+import json
+import posixpath
+import re
+from dataclasses import dataclass, field
+from typing import Any
+
+# runspec's own floor (packages/python/runspec/pyproject.toml requires-python).
+MIN_RUNSPEC_PYTHON = (3, 10)
+
+_USER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9._-]*$")
+_VENV_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_VERSION_RE = re.compile(r"^(\d+)\.(\d+)(?:\.(\d+))?$")
+
+# Directories that must never be a venv root (deprovision would delete them).
+# Anything shallower than two components is refused too, and so is a home dir
+# itself (``/home/<user>``, ``/Users/<user>``) — see :func:`check_removable`.
+_PROTECTED = frozenset(
+    {
+        "/",
+        "/bin",
+        "/boot",
+        "/dev",
+        "/etc",
+        "/home",
+        "/lib",
+        "/lib32",
+        "/lib64",
+        "/media",
+        "/mnt",
+        "/opt",
+        "/proc",
+        "/root",
+        "/run",
+        "/sbin",
+        "/snap",
+        "/srv",
+        "/sys",
+        "/tmp",
+        "/usr",
+        "/usr/bin",
+        "/usr/lib",
+        "/usr/lib64",
+        "/usr/local",
+        "/usr/local/bin",
+        "/usr/sbin",
+        "/usr/share",
+        "/var",
+        "/var/lib",
+        "/var/log",
+        "/var/tmp",
+        "/opt/venvs",
+        "/Users",
+        "/Applications",
+        "/Library",
+        "/System",
+    }
+)
+_HOME_PARENTS = ("/home", "/Users", "/export/home")
+
+
+class ProvisionError(ValueError):
+    """A refused request (bad input / unsafe target) — shown to the operator."""
+
+
+# --------------------------------------------------------------------------- #
+# Validation
+# --------------------------------------------------------------------------- #
+
+
+def validate_user(name: str) -> str:
+    """A run-as account name, or ``""`` for "the SSH user"."""
+    s = (name or "").strip()
+    if s and not _USER_RE.match(s):
+        raise ProvisionError(f"Not a user name: {name!r}.")
+    return s
+
+
+def validate_become(method: str) -> str:
+    m = (method or "sudo").strip().lower()
+    if m not in ("sudo", "su"):
+        raise ProvisionError("Become method must be sudo or su.")
+    return m
+
+
+def _is_windows_path(path: str) -> bool:
+    return (
+        "\\" in path
+        or path.lower().endswith(".exe")
+        or bool(re.match(r"^[A-Za-z]:", path))
+    )
+
+
+def normalize_dest(path: str) -> str:
+    """An absolute POSIX venv directory: normalised, no trailing slash, and with a
+    venv-ish final component. Raises :class:`ProvisionError` otherwise."""
+    p = (path or "").strip()
+    if not p:
+        raise ProvisionError("Pick a location for the venv.")
+    if _is_windows_path(p):
+        raise ProvisionError("Only Linux/macOS hosts can be provisioned for now.")
+    if not p.startswith("/"):
+        raise ProvisionError(f"The location must be an absolute path: {path!r}.")
+    if any(c in p for c in "\n\r\0"):
+        raise ProvisionError("The location contains a control character.")
+    norm = posixpath.normpath(p)
+    if norm.startswith("//"):
+        norm = "/" + norm.lstrip("/")
+    name = posixpath.basename(norm)
+    if not _VENV_NAME_RE.match(name):
+        raise ProvisionError(
+            f"Venv folder name {name!r} must start with a letter or digit and use "
+            "only letters, digits, '.', '_' or '-'."
+        )
+    check_not_protected(norm)
+    return norm
+
+
+def check_not_protected(root: str) -> None:
+    """Refuse a system directory, a top-level directory, or a home dir itself."""
+    if root in _PROTECTED:
+        raise ProvisionError(f"{root} is a system directory, not a venv location.")
+    parts = [x for x in root.split("/") if x]
+    if len(parts) < 2:
+        raise ProvisionError(f"{root} is too close to / to be a venv location.")
+    parent = posixpath.dirname(root)
+    if parent in _HOME_PARENTS:
+        raise ProvisionError(f"{root} looks like a home directory, not a venv.")
+
+
+def venv_paths(dest: str) -> dict[str, str]:
+    """The paths inside a (POSIX) venv the steps use."""
+    return {
+        "root": dest,
+        "python": f"{dest}/bin/python",
+        "runspec": f"{dest}/bin/runspec",
+        "logs": f"{dest}/logs",
+    }
+
+
+def root_from_runspec_path(runspec_path: str) -> str:
+    """``/opt/venvs/ops/bin/runspec`` → ``/opt/venvs/ops`` (POSIX only)."""
+    p = (runspec_path or "").strip()
+    if not p:
+        raise ProvisionError("No runspec path given.")
+    if _is_windows_path(p):
+        raise ProvisionError("Only Linux/macOS venvs can be deprovisioned for now.")
+    if not p.startswith("/"):
+        raise ProvisionError(
+            f"{runspec_path!r} is not an absolute path, so the venv can't be located."
+        )
+    norm = posixpath.normpath(p)
+    if posixpath.basename(norm) == "runspec":
+        norm = posixpath.dirname(norm)
+    if posixpath.basename(norm) == "bin":
+        norm = posixpath.dirname(norm)
+    return norm
+
+
+def parse_version(text: str) -> tuple[int, ...] | None:
+    m = _VERSION_RE.match((text or "").strip())
+    if not m:
+        return None
+    return tuple(int(g) for g in m.groups() if g is not None)
+
+
+def version_ok_for_runspec(version: str) -> bool:
+    v = parse_version(version)
+    return bool(v) and v[:2] >= MIN_RUNSPEC_PYTHON  # type: ignore[index]
+
+
+def matches_minor(version: str, wanted: str) -> bool:
+    """``3.12.4`` matches ``3.12`` (and ``3.12.4``)."""
+    v, w = parse_version(version), parse_version(wanted)
+    if not v or not w:
+        return False
+    return v[: len(w)] == w
+
+
+# --------------------------------------------------------------------------- #
+# Interpreter probe
+# --------------------------------------------------------------------------- #
+
+PROBE_MARK = "RSPY"
+
+# Run as ``sh -c PROBE_SCRIPT sh [extra paths…]``. Each candidate prints
+# ``RSPY<TAB>path<TAB>resolved<TAB>version``. Globs that match nothing stay
+# literal and fail the ``-f`` test, so no nullglob is needed.
+PROBE_SCRIPT = r"""
+found() {
+  p=$1
+  case "$p" in *-config|*-dbg|*.py) return 0;; esac
+  [ -f "$p" ] && [ -x "$p" ] || return 0
+  r=$(readlink -f "$p" 2>/dev/null || printf '%s' "$p")
+  v=$("$p" -c 'import sys;print("%d.%d.%d" % sys.version_info[:3])' 2>/dev/null) || return 0
+  printf 'RSPY\t%s\t%s\t%s\n' "$p" "$r" "$v"
+}
+for p in "$@"; do found "$p"; done
+for n in python3 python3.14 python3.13 python3.12 python3.11 python3.10 python3.9 python3.8 python3.6; do
+  p=$(command -v "$n" 2>/dev/null) && found "$p"
+done
+for p in /usr/bin/python3* /usr/local/bin/python3* /opt/*/bin/python3* \
+         /opt/*/*/bin/python3* /opt/rh/*/root/usr/bin/python3* /usr/local/*/bin/python3*; do
+  found "$p"
+done
+printf 'RSID\t%s\t%s\n' "$(id -un 2>/dev/null)" "$(uname -s 2>/dev/null)"
+"""
+
+
+@dataclass
+class Interpreter:
+    path: str
+    real: str
+    version: str
+
+    @property
+    def runspec_ok(self) -> bool:
+        return version_ok_for_runspec(self.version)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "path": self.path,
+            "real": self.real,
+            "version": self.version,
+            "runspec_ok": self.runspec_ok,
+        }
+
+
+@dataclass
+class ProbeResult:
+    user: str = ""
+    os: str = ""
+    pythons: list[Interpreter] = field(default_factory=list)
+
+
+def probe_argv(extra_paths: list[str] | None = None) -> list[str]:
+    extras = [
+        p for p in (extra_paths or []) if isinstance(p, str) and p.startswith("/")
+    ]
+    return ["sh", "-c", PROBE_SCRIPT, "sh", *extras]
+
+
+def parse_probe(text: str) -> ProbeResult:
+    """Interpreters in discovery order, de-duplicated on the resolved binary
+    (the first spelling seen wins, so an explicitly browsed path or the
+    ``python3.N`` on PATH is kept over a glob hit)."""
+    res = ProbeResult()
+    seen: set[str] = set()
+    for line in (text or "").splitlines():
+        parts = line.rstrip("\r").split("\t")
+        if parts[0] == "RSID" and len(parts) >= 3:
+            res.user, res.os = parts[1], parts[2]
+            continue
+        if parts[0] != PROBE_MARK or len(parts) < 4:
+            continue
+        path, real, version = parts[1], parts[2], parts[3]
+        if not parse_version(version):
+            continue
+        key = real or path
+        if key in seen:
+            continue
+        seen.add(key)
+        res.pythons.append(Interpreter(path=path, real=real, version=version))
+    return res
+
+
+def pick_interpreter(pythons: list[Interpreter], wanted: str) -> Interpreter | None:
+    """The first interpreter matching ``wanted`` — an absolute path (matched on
+    the path or its resolved target) or a version like ``3.12``."""
+    w = (wanted or "").strip()
+    if not w:
+        return None
+    if w.startswith("/"):
+        for i in pythons:
+            if w in (i.path, i.real):
+                return i
+        return None
+    for i in pythons:
+        if matches_minor(i.version, w):
+            return i
+    return None
+
+
+# --------------------------------------------------------------------------- #
+# Preflight
+# --------------------------------------------------------------------------- #
+
+PREFLIGHT_MARK = "RSPF"
+
+# ``sh -c PREFLIGHT_SCRIPT sh <python> <dest>`` as the run-as account. Prints
+# ``RSPF<TAB>key<TAB>value`` lines; never changes anything.
+PREFLIGHT_SCRIPT = r"""
+cd / 2>/dev/null
+py=$1; dest=$2
+out() { printf 'RSPF\t%s\t%s\n' "$1" "$2"; }
+out user "$(id -un 2>/dev/null)"
+if [ -f "$py" ] && [ -x "$py" ]; then
+  out python_version "$("$py" -c 'import sys;print("%d.%d.%d" % sys.version_info[:3])' 2>/dev/null)"
+  if "$py" -c 'import venv, ensurepip' >/dev/null 2>&1; then out venv ok; else out venv missing; fi
+else
+  out python_version ""
+  out venv missing
+fi
+if [ -L "$dest" ]; then
+  out dest symlink
+elif [ -e "$dest" ] && [ ! -d "$dest" ]; then
+  out dest file
+elif [ -d "$dest" ]; then
+  extra=$(ls -A "$dest" 2>/dev/null | grep -vx logs | head -n 1)
+  if [ -n "$extra" ]; then out dest notempty
+  elif [ -d "$dest/logs" ]; then out dest logs_only
+  else out dest empty
+  fi
+else
+  out dest absent
+fi
+a=$dest
+while [ ! -e "$a" ] && [ "$a" != "/" ]; do a=$(dirname "$a"); done
+if [ -d "$dest" ]; then a=$dest; fi
+out ancestor "$a"
+if [ -w "$a" ]; then out writable yes; else out writable no; fi
+"""
+
+
+def preflight_argv(python: str, dest: str) -> list[str]:
+    return ["sh", "-c", PREFLIGHT_SCRIPT, "sh", python, dest]
+
+
+def parse_preflight(text: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for line in (text or "").splitlines():
+        parts = line.rstrip("\r").split("\t", 2)
+        if len(parts) == 3 and parts[0] == PREFLIGHT_MARK:
+            out[parts[1]] = parts[2]
+    return out
+
+
+_DEST_BLOCKERS = {
+    "symlink": "The location is a symlink; pick the real directory.",
+    "file": "The location is a file, not a directory.",
+    "notempty": "The location already exists and isn't empty.",
+}
+
+
+def preflight_verdict(
+    facts: dict[str, str], *, require_runspec: bool = True, root_via: str = ""
+) -> tuple[list[str], list[str]]:
+    """``(blockers, warnings)`` from parsed preflight facts. ``root_via`` is the
+    SSH login's :func:`parse_root_check` answer (``""`` = not asked): with
+    ``root``/``sudo`` an unwritable parent becomes a warning, because the venv
+    folder is made by root and handed to the run-as account."""
+    blockers: list[str] = []
+    warnings: list[str] = []
+    if not facts.get("user"):
+        blockers.append(
+            "Couldn't run as the chosen account (is passwordless sudo/su set up for it?)."
+        )
+        return blockers, warnings
+    version = facts.get("python_version", "")
+    if not version:
+        blockers.append("The chosen Python doesn't run on this host.")
+    elif require_runspec and not version_ok_for_runspec(version):
+        blockers.append(
+            f"Python {version} is too old: runspec needs "
+            f"{MIN_RUNSPEC_PYTHON[0]}.{MIN_RUNSPEC_PYTHON[1]} or newer."
+        )
+    if version and facts.get("venv") != "ok":
+        blockers.append(
+            "This Python has no venv/ensurepip module (on Debian/Ubuntu install "
+            f"python{'.'.join(version.split('.')[:2])}-venv)."
+        )
+    dest = facts.get("dest", "")
+    if dest in _DEST_BLOCKERS:
+        blockers.append(_DEST_BLOCKERS[dest])
+    elif dest == "logs_only":
+        warnings.append(
+            "The location holds only a logs/ folder (from a kept-logs deprovision); "
+            "the new venv will be built around it."
+        )
+    if facts.get("writable") != "yes":
+        where = facts.get("ancestor") or "The location"
+        who = facts.get("user") or "the chosen account"
+        if needs_handoff(facts) and root_via in ("root", "sudo"):
+            warnings.append(
+                f"{who} can't write {where}, so the console will create the venv "
+                f"folder as root and hand it to {who}."
+            )
+        else:
+            hint = (
+                " Your SSH login can't sudo without a password either, so create "
+                f"the folder as root and chown it to {who}, or pick a location "
+                f"{who} can write."
+                if needs_handoff(facts) and root_via == "no"
+                else ""
+            )
+            blockers.append(f"{where} isn't writable by {who}.{hint}")
+    return blockers, warnings
+
+
+def needs_handoff(facts: dict[str, str]) -> bool:
+    """True when the run-as account can't write where the venv goes but root
+    could make the (absent or empty) venv folder and hand it over. A folder that
+    already holds something (a kept ``logs/``, other files) is never chowned."""
+    return (
+        bool(facts.get("user"))
+        and facts.get("writable") != "yes"
+        and facts.get("dest") in ("absent", "empty")
+    )
+
+
+# ``sh -c ROOT_CHECK_SCRIPT sh`` as the SSH login: can it act as root without a
+# password? ``root`` (logged in as root), ``sudo`` (``sudo -n`` works) or ``no``.
+ROOT_CHECK_SCRIPT = r"""
+if [ "$(id -u 2>/dev/null)" = 0 ]; then echo root
+elif command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then echo sudo
+else echo no
+fi
+"""
+
+
+def root_check_argv() -> list[str]:
+    return ["sh", "-c", ROOT_CHECK_SCRIPT, "sh"]
+
+
+def parse_root_check(text: str) -> str:
+    for line in reversed((text or "").splitlines()):
+        word = line.strip()
+        if word in ("root", "sudo", "no"):
+            return word
+    return "no"
+
+
+# ``sh -c HANDOFF_SCRIPT sh <dest> <owner>`` as root: make the venv folder (and
+# any missing parents, root-owned 755) and give just that folder to the owner,
+# so the rest of the build runs as the owner. Refuses a symlink, a non-directory
+# and a folder that already holds anything — it only ever chowns an empty dir.
+HANDOFF_SCRIPT = r"""
+cd / || exit 64
+dest=$1; owner=$2
+refuse() { echo "refused: $1"; exit 64; }
+case "$dest" in /*) ;; *) refuse "$dest is not an absolute path" ;; esac
+[ -L "$dest" ] && refuse "$dest is a symlink"
+if [ -e "$dest" ]; then
+  [ -d "$dest" ] || refuse "$dest is not a directory"
+  [ -z "$(ls -A "$dest" 2>/dev/null)" ] || refuse "$dest is not empty"
+fi
+group=$(id -gn "$owner" 2>/dev/null) || refuse "no such user: $owner"
+umask 022
+mkdir -p "$dest" || exit 1
+[ -L "$dest" ] && refuse "$dest is a symlink"
+chown "$owner:$group" "$dest" || exit 1
+chmod 0755 "$dest" || exit 1
+echo "created $dest for $owner"
+"""
+
+
+def handoff_argv(dest: str, owner: str) -> list[str]:
+    owner = validate_user(owner)
+    if not owner:
+        raise ProvisionError("No account to hand the venv folder to.")
+    return ["sh", "-c", HANDOFF_SCRIPT, "sh", dest, owner]
+
+
+# --------------------------------------------------------------------------- #
+# Create / install / inbox / verify
+# --------------------------------------------------------------------------- #
+
+# ``sh -c CREATE_SCRIPT sh <python> <dest>`` as the run-as account. Mirrors
+# runspec_linux_core.venvs.create_venv: always --symlinks, then the tree is
+# normalised to u=rwX,go=rX (sudo -n -u <svc> often lands at umask 027, which
+# would leave the venv 750 and lock other consoles out). A kept logs/ folder is
+# pruned from the chmod so its inbox keeps its mode, and symlinks are skipped:
+# chmod on bin/python would follow it to the system interpreter (EPERM for a
+# service account, and never ours to change; ``chmod -R`` skips them too).
+# ``logs share --inbox`` (a later step) sets up / repairs logs/ itself.
+CREATE_SCRIPT = r"""
+set -e
+cd /
+py=$1; dest=$2
+umask 022
+mkdir -p "$dest"
+"$py" -m venv --symlinks "$dest"
+find "$dest" -path "$dest/logs" -prune -o ! -type l -exec chmod u=rwX,go=rX {} +
+mkdir -p "$dest/logs"
+echo "created $dest"
+"""
+
+
+def create_argv(python: str, dest: str) -> list[str]:
+    return ["sh", "-c", CREATE_SCRIPT, "sh", python, dest]
+
+
+def pip_upgrade_argv(dest: str) -> list[str]:
+    return [
+        venv_paths(dest)["python"],
+        "-m",
+        "pip",
+        "install",
+        "--disable-pip-version-check",
+        "--no-input",
+        "-U",
+        "pip",
+    ]
+
+
+def install_specs(packages: list[str] | None) -> list[str]:
+    """``runspec`` first, then the operator's extra packages, de-duplicated.
+    Each spec is validated by the caller (``marketplace.validate_spec``)."""
+    out = ["runspec"]
+    for p in packages or []:
+        s = str(p or "").strip()
+        if not s:
+            continue
+        base = re.split(r"[\[<>=!~ ;]", s, maxsplit=1)[0].lower().replace("_", "-")
+        if base == "runspec" and s.lower() == "runspec":
+            continue
+        if base == "runspec":
+            out[0] = s  # a pinned runspec replaces the bare one
+            continue
+        if s not in out:
+            out.append(s)
+    return out
+
+
+def inbox_argv(dest: str) -> list[str]:
+    return [venv_paths(dest)["runspec"], "logs", "share", "--inbox"]
+
+
+def verify_argv(dest: str) -> list[str]:
+    return [venv_paths(dest)["runspec"], "--version"]
+
+
+# --------------------------------------------------------------------------- #
+# Host-side audit events (runspec 0.71.0+ ledger, OS-log fallback)
+# --------------------------------------------------------------------------- #
+
+
+def _audit_pairs(flag: str, fields: dict[str, Any]) -> list[str]:
+    out: list[str] = []
+    for k, v in fields.items():
+        if v is None or v == "" or v == []:
+            continue
+        if isinstance(v, bool):
+            v = "true" if v else "false"
+        elif isinstance(v, (list, tuple)):
+            v = " ".join(str(x) for x in v)
+        out += [flag, f"{k}={v}"]
+    return out
+
+
+def audit_record_argv(
+    dest: str,
+    event: str,
+    outcome: str,
+    *,
+    target: dict[str, Any] | None = None,
+    detail: dict[str, Any] | None = None,
+) -> list[str]:
+    """``<venv>/bin/runspec audit record …``, run on the host as the venv owner:
+    the event goes to the venv's hash-chained ledger (``logs/audit.jsonl``) and
+    the host's syslog, the way any runspec control-plane change is recorded.
+    Needs runspec 0.71.0+ in the venv; the caller falls back to
+    :func:`audit_logger_argv` when it fails."""
+    return [
+        venv_paths(dest)["runspec"],
+        "audit",
+        "record",
+        event,
+        "--outcome",
+        outcome,
+        *_audit_pairs("--target", target or {}),
+        *_audit_pairs("--detail", detail or {}),
+    ]
+
+
+def audit_logger_argv(
+    event: str,
+    outcome: str,
+    *,
+    target: dict[str, Any] | None = None,
+    detail: dict[str, Any] | None = None,
+) -> list[str]:
+    """The OS-log-only fallback: one ``logger`` line on the host's syslog (the
+    same ``auth`` facility runspec's ledger mirrors to), for a venv whose
+    runspec predates ``runspec audit``."""
+    body = {
+        "event": event,
+        "outcome": outcome,
+        "target": {k: v for k, v in (target or {}).items() if v not in (None, "")},
+        "detail": {k: v for k, v in (detail or {}).items() if v not in (None, "")},
+    }
+    return [
+        "logger",
+        "-t",
+        "runspec",
+        "-p",
+        "auth.notice",
+        "runspec-audit " + json.dumps(body, sort_keys=True, default=str),
+    ]
+
+
+# --------------------------------------------------------------------------- #
+# Deprovision
+# --------------------------------------------------------------------------- #
+
+INSPECT_MARK = "RSDP"
+
+# ``sh -c INSPECT_SCRIPT sh <root>`` — read-only facts for the confirm dialog.
+INSPECT_SCRIPT = r"""
+cd / 2>/dev/null
+r=$1
+out() { printf 'RSDP\t%s\t%s\n' "$1" "$2"; }
+if [ -L "$r" ]; then out kind symlink
+elif [ ! -d "$r" ]; then out kind missing
+elif [ -f "$r/pyvenv.cfg" ] && [ -e "$r/bin/runspec" ]; then out kind venv
+else out kind other
+fi
+out owner "$(stat -c %U "$r" 2>/dev/null || stat -f %Su "$r" 2>/dev/null)"
+out user "$(id -un 2>/dev/null)"
+out size_kb "$(du -sk "$r" 2>/dev/null | cut -f1)"
+if [ -d "$r/logs" ]; then out logs_kb "$(du -sk "$r/logs" 2>/dev/null | cut -f1)"; else out logs_kb 0; fi
+"""
+
+# ``sh -c REMOVE_SCRIPT sh <root> <keep_logs 1|0>`` as the venv owner. Re-checks
+# every guard on the host in the same command as the delete, so the check and
+# the rm can't diverge (a swapped-in symlink, a path that stopped being a venv).
+REMOVE_SCRIPT = r"""
+cd / || exit 64
+r=$1; keep=$2
+refuse() { echo "refused: $1"; exit 64; }
+case "$r" in /*) ;; *) refuse "not an absolute path";; esac
+case "$r" in */) refuse "trailing slash";; esac
+[ -L "$r" ] && refuse "$r is a symlink"
+[ -d "$r" ] || refuse "$r does not exist"
+real=$(cd "$r" && pwd -P) || refuse "cannot resolve $r"
+[ "$real" = "$r" ] || refuse "$r resolves to $real"
+[ -f "$r/pyvenv.cfg" ] || refuse "$r has no pyvenv.cfg (not a venv)"
+[ -e "$r/bin/runspec" ] || refuse "$r has no bin/runspec"
+[ "$r" = "$HOME" ] && refuse "$r is the home directory"
+if [ "$keep" = 1 ]; then
+  find "$r" -mindepth 1 -maxdepth 1 ! -name logs -exec rm -rf -- {} +
+  echo "removed $r (kept $r/logs)"
+else
+  rm -rf -- "$r"
+  echo "removed $r"
+fi
+"""
+
+
+def inspect_argv(root: str) -> list[str]:
+    return ["sh", "-c", INSPECT_SCRIPT, "sh", root]
+
+
+def parse_inspect(text: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for line in (text or "").splitlines():
+        parts = line.rstrip("\r").split("\t", 2)
+        if len(parts) == 3 and parts[0] == INSPECT_MARK:
+            out[parts[1]] = parts[2]
+    return out
+
+
+def check_removable(root: str) -> str:
+    """The normalised venv root if it may be deleted, else :class:`ProvisionError`."""
+    norm = normalize_dest(root)
+    if norm != root.rstrip("/"):
+        raise ProvisionError(f"{root} is not a normalised path.")
+    return norm
+
+
+def remove_argv(root: str, *, keep_logs: bool) -> list[str]:
+    check_removable(root)
+    return ["sh", "-c", REMOVE_SCRIPT, "sh", root, "1" if keep_logs else "0"]
+
+
+def venv_name(root: str) -> str:
+    return posixpath.basename(root.rstrip("/"))
+
+
+# --------------------------------------------------------------------------- #
+# Host-file edits + audit
+# --------------------------------------------------------------------------- #
+
+
+def add_runspec_path(entry: dict[str, Any], runspec_path: str) -> bool:
+    """Append ``runspec_path`` to a host entry's ``runspec_paths`` (migrating a
+    legacy ``runspec_path``). Returns whether the entry changed."""
+    paths = list(entry.get("runspec_paths") or [])
+    if not paths and entry.get("runspec_path"):
+        paths = [str(entry["runspec_path"])]
+    if runspec_path in paths:
+        return False
+    entry["runspec_paths"] = [*paths, runspec_path]
+    entry.pop("runspec_path", None)
+    return True
+
+
+def remove_runspec_path(entry: dict[str, Any], root: str) -> bool:
+    """Drop every ``runspec_paths`` entry inside ``root``. Returns whether the
+    entry changed."""
+    paths = list(entry.get("runspec_paths") or [])
+    if not paths and entry.get("runspec_path"):
+        paths = [str(entry["runspec_path"])]
+    keep = []
+    for p in paths:
+        try:
+            r = root_from_runspec_path(p)
+        except ProvisionError:
+            keep.append(p)
+            continue
+        if r != root:
+            keep.append(p)
+    if keep == paths:
+        return False
+    entry.pop("runspec_path", None)
+    if keep:
+        entry["runspec_paths"] = keep
+    else:
+        entry.pop("runspec_paths", None)
+    return True
+
+
+def audit_record(event: str, ts: str, **fields: Any) -> dict[str, Any]:
+    """One audit line for the console's audit log (the same shape as the
+    disclaimer acknowledgement). ``event`` is one of ``venv.provision.started``
+    / ``.succeeded`` / ``.failed``, ``venv.deprovision.confirmed`` /
+    ``.succeeded`` / ``.failed``, ``venv.logs.retained`` — kept stable so an
+    append-only audit sink can pick them up later."""
+    detail = {k: v for k, v in fields.items() if v not in (None, "")}
+    host = detail.get("host", "")
+    path = detail.get("path", "")
+    level = "WARNING" if event.endswith(".failed") else "INFO"
+    return {
+        "ts": ts,
+        "level": level,
+        "message": f"{event} {host}:{path}".strip(),
+        "extra": {"event": event, **detail},
+    }
+
+
+def tail(text: str, limit: int = 12) -> str:
+    lines = [ln.rstrip() for ln in (text or "").splitlines() if ln.strip()]
+    return "\n".join(lines[-limit:])

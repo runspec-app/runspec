@@ -46,6 +46,7 @@ from .bridge_evals import EvalsMixin
 from .bridge_mcp_server import McpServerMixin
 from .bridge_voice import VoiceMixin
 from .bridge_marketplace import MarketplaceMixin
+from .bridge_provision import ProvisionMixin
 from .bridge_turn import TurnMixin
 from .dictation import DictationSession
 from .session import ChatSession
@@ -73,6 +74,7 @@ class Bridge(
     McpServerMixin,
     VoiceMixin,
     MarketplaceMixin,
+    ProvisionMixin,
     TurnMixin,
 ):
     def __init__(self) -> None:

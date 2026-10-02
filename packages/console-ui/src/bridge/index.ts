@@ -1645,6 +1645,112 @@ export interface MarketplaceOpRecord {
   results: MarketplaceOpResult[]
 }
 
+// ── Venv provisioning (Settings → Jump Hosts → Provision / Deprovision) ──
+
+export interface ProvisionHostOption {
+  name: string
+  connected: boolean
+  group: string
+  profiles: string[]
+  runspec_paths: string[]
+}
+
+export interface ProvisionOptions {
+  hosts: ProvisionHostOption[]
+  groups: string[]
+  profiles: string[]
+  repos: { id: string; name: string; url: string }[]
+  min_python: string
+}
+
+export interface ProvisionInterpreter {
+  path: string
+  real: string
+  version: string
+  runspec_ok: boolean
+}
+
+export interface ProvisionInterpreters {
+  ok: boolean
+  host: string
+  user?: string
+  os?: string
+  error?: string
+  pythons: ProvisionInterpreter[]
+}
+
+export interface ProvisionPayload {
+  hosts: string[]
+  dest: string
+  // An absolute interpreter path, or a version like "3.12" resolved per host.
+  python: string
+  per_host_python?: Record<string, string>
+  run_as?: string
+  become_method?: 'sudo' | 'su'
+  packages?: string[]
+  repo?: string
+}
+
+export interface ProvisionPreflightRow {
+  host: string
+  ok: boolean
+  python: string
+  version: string
+  user: string
+  dest_state: string
+  blockers: string[]
+  warnings: string[]
+  /** The run-as account can't write the parent, so root makes the venv folder
+   *  and hands it over (via passwordless ``sudo`` or a ``root`` SSH login). */
+  handoff?: boolean
+  handoff_via?: string
+}
+
+export interface ProvisionResult {
+  host: string
+  ok: boolean
+  step?: string
+  summary: string
+  warnings?: string[]
+  python?: string
+  path?: string
+  skipped?: boolean
+  runspec_path?: string
+}
+
+export interface ProvisionOpRecord {
+  op: string
+  kind: 'provision' | 'deprovision'
+  status: 'running' | 'finished' | 'cancelled'
+  hosts: string[]
+  results: ProvisionResult[]
+}
+
+export interface DeprovisionTarget {
+  host: string
+  runspec_path: string
+}
+
+export interface DeprovisionPreviewRow extends DeprovisionTarget {
+  root: string
+  ok: boolean
+  kind: string
+  owner: string
+  user: string
+  size_kb: number
+  logs_kb: number
+  runnables: string[]
+  references: string[]
+  blockers: string[]
+}
+
+export interface DeprovisionPayload {
+  targets: DeprovisionTarget[]
+  confirm: string
+  keep_logs: boolean
+  become_method?: 'sudo' | 'su'
+}
+
 export interface BridgeApi {
   get_hosts: () => Promise<Host[]>
   // Disable / re-enable runnables across fleet hosts (a kill switch). Edits each
@@ -1816,6 +1922,16 @@ export interface BridgeApi {
   marketplace_op: (op: string) => Promise<MarketplaceOpRecord | null>
   marketplace_cancel: (op: string) => Promise<boolean>
   marketplace_clear_cache: () => Promise<void>
+  // Create / remove runspec venvs on fleet hosts (one or many at once). Progress
+  // streams over `runspec:provision_progress`; `runspec:provision_done` ends an op.
+  provision_options: () => Promise<ProvisionOptions>
+  provision_interpreters: (payload: { host: string; extra_paths?: string[] }) => Promise<ProvisionInterpreters>
+  provision_preflight: (payload: ProvisionPayload) => Promise<{ dest: string; rows: ProvisionPreflightRow[] }>
+  provision_start: (payload: ProvisionPayload) => Promise<{ op: string; hosts: string[] }>
+  provision_op: (op: string) => Promise<ProvisionOpRecord | null>
+  provision_cancel: (op: string) => Promise<boolean>
+  deprovision_preview: (payload: { targets: DeprovisionTarget[] }) => Promise<{ rows: DeprovisionPreviewRow[]; names: string[] }>
+  deprovision_start: (payload: DeprovisionPayload) => Promise<{ op: string; hosts: string[] }>
   get_tool_visibility: () => Promise<ToolVisibility>
   save_tool_visibility: (payload: ToolVisibility) => Promise<ToolVisibility>
   // Canonical host-group registry (runspec_groups.toml) — the controlled

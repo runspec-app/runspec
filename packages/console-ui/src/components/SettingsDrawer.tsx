@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { Drawer, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Empty, Table, Slider, Progress } from 'antd'
-import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, RightOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined, SearchOutlined, SoundOutlined } from '@ant-design/icons'
+import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, RightOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined, SearchOutlined, SoundOutlined, CloudServerOutlined } from '@ant-design/icons'
 import { VoiceConfig, VoiceDevice, bridge, type JumpHost, type LocalVenvConfig, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SeedStatus, type SeedOverride, type SeedApplyResult, type Runbook, type RunbookStep, type SavedRun, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost, type McpServer, type McpHeaderCredential, type McpStatus, type McpServerStatus, type McpCredentialOption, type ToolVisibility, type NamedSound, type MarketplaceConfig, type MarketplaceConfigInput, type MarketplaceRepo } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
 import { CopyKeyAllModal } from '../views/CopyKeyAllModal'
+import { ProvisionModal } from '../views/ProvisionModal'
+import { DeprovisionModal } from '../views/DeprovisionModal'
+import type { DeprovisionTarget } from '../bridge'
 import { PathInput } from '../views/PathInput'
 import { credEnvNames, initialFormValues } from '../views/formsShared'
 import { runnableHidden } from '../toolVisibility'
@@ -1930,6 +1933,9 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
   const [testingHost, setTestingHost] = useState<string | null>(null)
   const [testResults, setTestResults] = useState<Record<string, TestResult>>({})
   const [copyKeyHost, setCopyKeyHost] = useState<string | null>(null)
+  // Venv provisioning: `null` = closed; an array = open with those hosts / venv paths pre-picked.
+  const [provisionHosts, setProvisionHosts] = useState<string[] | null>(null)
+  const [deprovisionTargets, setDeprovisionTargets] = useState<DeprovisionTarget[] | null>(null)
   const [groups, setGroups] = useState<HostGroup[]>([])
   const [groupsOpen, setGroupsOpen] = useState(false)
   const [profiles, setProfiles] = useState<HostProfile[]>([])
@@ -1951,6 +1957,8 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
   const editPort = Form.useWatch('port', form)
   const editIdentity = Form.useWatch('identityFile', form)
   const hostReady = !!(editHostname ?? '').trim()
+  // Paths already saved for the host being edited — only those can be deprovisioned.
+  const savedPaths = hosts.find(h => h.name === editingKey)?.runspec_paths ?? []
 
   const pathLister = useCallback(
     (path: string, dirsOnly: boolean) =>
@@ -1983,6 +1991,19 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
     setHosts(next)
     onHostsChanged?.()
   }
+
+  // Provision / deprovision rewrite a host's runspec_paths on the backend: pick
+  // up the fresh list, including in an open editor for that host.
+  const reloadAfterVenvChange = useCallback(() => {
+    bridge.get_jump_hosts().then(next => {
+      setHosts(next)
+      if (editingKey) {
+        const fresh = next.find(h => h.name === editingKey)
+        if (fresh) form.setFieldValue('runspec_paths', fresh.runspec_paths ?? [])
+      }
+    })
+    onHostsChanged?.()
+  }, [editingKey, form, onHostsChanged])
 
   const startAdd = () => { form.resetFields(); setEditingKey('') }
 
@@ -2109,6 +2130,8 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
         <Space size={6}>
           <Button size="small" icon={<UploadOutlined />} onClick={() => fileInputRef.current?.click()} disabled={isEditing}>Import</Button>
           <Button size="small" icon={<DownloadOutlined />} onClick={() => { downloadToml(toToml(hosts)); message.success('Exported') }} disabled={isEditing || hosts.length === 0}>Export</Button>
+          <Button size="small" icon={<CloudServerOutlined />} onClick={() => setProvisionHosts([])} disabled={isEditing || hosts.length === 0}>Provision venv…</Button>
+          <Button size="small" icon={<DeleteOutlined />} onClick={() => setDeprovisionTargets([])} disabled={isEditing || hosts.length === 0}>Deprovision…</Button>
           <Button size="small" icon={<PlusOutlined />} onClick={startAdd} disabled={isEditing}>Add host</Button>
         </Space>
       </div>
@@ -2187,9 +2210,23 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
                           />
                         </Form.Item>
                         <MinusCircleOutlined onClick={() => remove(name)} style={{ color: 'var(--rs-text-muted)', cursor: 'pointer' }} />
+                        {savedPaths.includes(form.getFieldValue(['runspec_paths', name])) && String(form.getFieldValue(['runspec_paths', name])).startsWith('/') && (
+                          <Tooltip title="Deprovision: delete this venv from the host">
+                            <DeleteOutlined
+                              aria-label="Deprovision this venv"
+                              onClick={() => setDeprovisionTargets([{ host: editingKey ?? '', runspec_path: form.getFieldValue(['runspec_paths', name]) }])}
+                              style={{ color: 'var(--rs-text-muted)', cursor: 'pointer' }}
+                            />
+                          </Tooltip>
+                        )}
                       </Space>
                     ))}
-                    <Button type="dashed" size="small" onClick={() => add()} icon={<PlusOutlined />} style={{ marginTop: 2 }}>Add path</Button>
+                    <Space size={6} style={{ marginTop: 2 }}>
+                      <Button type="dashed" size="small" onClick={() => add()} icon={<PlusOutlined />}>Add path</Button>
+                      <Tooltip title={editingKey ? undefined : 'Save the host first, then provision a venv on it.'}>
+                        <Button size="small" icon={<CloudServerOutlined />} disabled={!editingKey} onClick={() => setProvisionHosts([editingKey ?? ''])}>Provision new venv…</Button>
+                      </Tooltip>
+                    </Space>
                   </>
                 )}
               </Form.List>
@@ -2366,6 +2403,9 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
             <Tooltip title="Copy SSH public key (authorize this machine)">
               <Button type="text" size="small" icon={<KeyOutlined />} onClick={() => setCopyKeyHost(h.name)} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
             </Tooltip>
+            <Tooltip title="Provision a runspec venv on this host">
+              <Button type="text" size="small" icon={<CloudServerOutlined />} onClick={() => setProvisionHosts([h.name])} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} aria-label={`Provision a venv on ${h.name}`} />
+            </Tooltip>
             <Button type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(h)} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} aria-label={`Edit ${h.name}`} />
             <Popconfirm title={`Remove ${h.name}?`} onConfirm={() => remove(h.name)} okText="Remove" cancelText="Cancel" placement="left">
               <Button type="text" size="small" icon={<DeleteOutlined />} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} danger aria-label={`Remove ${h.name}`} />
@@ -2456,6 +2496,18 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
         host={copyKeyHost ?? ''}
         onClose={() => setCopyKeyHost(null)}
         onDone={() => onHostsChanged?.()}
+      />
+      <ProvisionModal
+        open={provisionHosts !== null}
+        initialHosts={provisionHosts ?? undefined}
+        onClose={() => setProvisionHosts(null)}
+        onDone={reloadAfterVenvChange}
+      />
+      <DeprovisionModal
+        open={deprovisionTargets !== null}
+        initialTargets={deprovisionTargets ?? undefined}
+        onClose={() => setDeprovisionTargets(null)}
+        onDone={reloadAfterVenvChange}
       />
     </div>
   )

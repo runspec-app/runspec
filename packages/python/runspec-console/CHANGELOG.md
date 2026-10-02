@@ -7,6 +7,56 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.312.0] — 2026-10-02
+
+### Added
+
+- **Provision and deprovision runspec venvs on hosts from Settings → Jump
+  Hosts.** A host no longer needs a venv built by hand before the console can
+  use it. Linux/macOS hosts only for now. See `docs/console-hosts.md` →
+  "Provision a venv from the console".
+  - **Provision venv…** works on one host (host row, or **Provision new venv…**
+    in the host editor) or many at once, with **+ Group** / **+ Profile**
+    quick-picks like *Copy key to all hosts*. You pick the location (browse the
+    host), the Python interpreter (found on the host, browsed to in a
+    non-standard location, or "same version on each host" such as 3.12), the
+    run-as account that will own the venv (`sudo -n -u` / `su`), the packages
+    and the package index.
+  - **Check hosts** is a preflight that changes nothing. **Provision** then runs
+    on the ready hosts in parallel: create the venv (the `create-venv` recipe:
+    `--symlinks`, `u=rwX,go=rX`), upgrade pip, install `runspec` + packages
+    (index URL on stdin, never argv), run `runspec logs share --inbox`, verify
+    `bin/runspec`. Each host that succeeds gets the path added to its
+    `runspec_paths`; **Retry failed** re-runs the rest.
+  - **A root-owned parent folder isn't a dead end.** When the run-as account
+    can't write the parent (the usual root-owned `/opt/venvs` shared by
+    service accounts), and your SSH login can `sudo -n` (or is root), Check
+    hosts shows a warning instead of a blocker. Provision then creates just the
+    empty venv folder as root and hands it to the account (`chown`, `0755`)
+    before building the rest as that account. It never chowns a folder that
+    already holds anything.
+  - **Deprovision…** removes a venv a host already lists, after a read-only
+    preview (owner, size, runnables, triggers/schedules/saved runs/runbooks
+    that may use them) and a typed confirmation of the venv name. **Keep logs**
+    (default on) deletes everything except `logs/`; a later provision at the
+    same path builds around it. The host re-checks every guard in the same
+    command as the `rm`, run as the venv owner.
+  - Audit events `venv.provision.started|succeeded|failed`,
+    `venv.deprovision.confirmed|succeeded|failed` and `venv.logs.retained`
+    are written to the console audit log. They're also recorded on the host
+    with runspec 0.71.0's audit events: `runspec audit record venv.provision`
+    in the new venv as its owner (its ledger and the host's syslog), and
+    `venv.deprovision confirmed` just before a delete (a `logger` line to
+    syslog when the venv's runspec predates `runspec audit`).
+  - The venv recipe is copied from `runspec_linux_core.venvs.create_venv`; the
+    plan is to remove `create-venv` / `install-into-venv` from `runspec-linux`
+    and `runspec-linux-core` so the console is its one home.
+  - New `provision.py` (pure) + `bridge_provision.py` (`ProvisionMixin`); JS API
+    `provision_options` / `provision_interpreters` / `provision_preflight` /
+    `provision_start` / `provision_op` / `provision_cancel` /
+    `deprovision_preview` / `deprovision_start`; events
+    `runspec:provision_progress` / `runspec:provision_done`.
+
 ## [0.311.1] — 2026-10-01
 
 ### Fixed

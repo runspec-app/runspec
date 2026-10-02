@@ -14,6 +14,14 @@ from __future__ import annotations
 from runspec_console.bridge import Bridge
 
 EXPECTED = {
+    "provision_start",
+    "provision_preflight",
+    "provision_options",
+    "provision_op",
+    "provision_interpreters",
+    "provision_cancel",
+    "deprovision_start",
+    "deprovision_preview",
     "acknowledge_disclaimer",
     "add_team",
     "ai_enabled",

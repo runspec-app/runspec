@@ -1,4 +1,4 @@
-import type { BridgeApi, ChatSessionInfo, MarketplaceRepo, MarketplaceEntry, MarketplaceTarget, MarketplaceInstalledTarget, MarketplaceOpRecord, MarketplaceOpPayload, MarketplaceOpResult, Host, JumpHost, Runnable, HistoryRecord, RunningRun, Schedule, InFlightRecord, TestResult, AnalyticsData, AnalyticsBucket, TriggerCard } from './index'
+import type { BridgeApi, ProvisionOpRecord, ProvisionPayload, DeprovisionPayload, ProvisionResult, ChatSessionInfo, MarketplaceRepo, MarketplaceEntry, MarketplaceTarget, MarketplaceInstalledTarget, MarketplaceOpRecord, MarketplaceOpPayload, MarketplaceOpResult, Host, JumpHost, Runnable, HistoryRecord, RunningRun, Schedule, InFlightRecord, TestResult, AnalyticsData, AnalyticsBucket, TriggerCard } from './index'
 
 // 80 days ago — triggers the yellow warning state in dev mode
 let MOCK_KEY_CREATED_AT: string = new Date(Date.now() - 80 * 24 * 60 * 60 * 1000).toISOString()
@@ -735,6 +735,38 @@ function mockMarketplaceOp(action: 'install' | 'uninstall', payload: Marketplace
   return Promise.resolve({ op, targets: payload.targets.map(t => t.id) })
 }
 
+const MOCK_PROVISION_OPS = new Map<string, ProvisionOpRecord>()
+
+function mockProvisionOp(kind: 'provision' | 'deprovision', hosts: string[], path: string) {
+  const op = Math.random().toString(16).slice(2, 14)
+  const rec: ProvisionOpRecord = { op, kind, status: 'running', hosts, results: [] }
+  MOCK_PROVISION_OPS.set(op, rec)
+  const steps = kind === 'provision' ? ['preflight', 'create', 'pip', 'install', 'inbox', 'verify'] : ['inspect', 'remove']
+  let delay = 200
+  for (const host of hosts) {
+    for (const step of steps) {
+      const at = delay
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('runspec:provision_progress', { detail: { op, kind, host, phase: 'step', step } }))
+        window.dispatchEvent(new CustomEvent('runspec:provision_progress', { detail: { op, kind, host, phase: 'line', line: `[${step}] ok` } }))
+      }, at)
+      delay += 250
+    }
+    const ok = host !== 'logs-1'
+    setTimeout(() => {
+      const res: ProvisionResult = { host, ok, summary: ok ? (kind === 'provision' ? 'runspec 0.70.0' : `removed ${path}`) : 'install failed: No matching distribution found', step: ok ? undefined : 'install' }
+      rec.results.push(res)
+      window.dispatchEvent(new CustomEvent('runspec:provision_progress', { detail: { op, kind, host, phase: 'done', ok, summary: res.summary } }))
+    }, delay)
+    delay += 100
+  }
+  setTimeout(() => {
+    rec.status = 'finished'
+    window.dispatchEvent(new CustomEvent('runspec:provision_done', { detail: { op, kind, status: 'finished', results: rec.results } }))
+  }, delay + 100)
+  return Promise.resolve({ op, hosts })
+}
+
 export const mockApi: BridgeApi = {
   get_hosts: async () => MOCK_ACTIVE_PROFILE
     ? MOCK_HOSTS.filter(h => h.name === 'local' || (h.profiles ?? []).includes(MOCK_ACTIVE_PROFILE))
@@ -970,6 +1002,41 @@ export const mockApi: BridgeApi = {
   marketplace_op: async (op) => MOCK_MARKET_OPS.get(op) ?? null,
   marketplace_cancel: async (op) => { console.log('[mock] marketplace_cancel', op); return true },
   marketplace_clear_cache: async () => { console.log('[mock] marketplace_clear_cache') },
+  provision_options: async () => ({
+    hosts: MOCK_JUMP_HOSTS.map(h => ({ name: h.name, connected: h.name !== 'prod-2', group: h.group ?? '', profiles: h.profiles ?? [], runspec_paths: h.runspec_paths ?? ['/opt/venvs/ops/bin/runspec'] })),
+    groups: ['Production'],
+    profiles: [],
+    repos: [{ id: 'pypi', name: 'pypi.org', url: 'https://pypi.org/simple' }],
+    min_python: '3.10',
+  }),
+  provision_interpreters: async ({ host, extra_paths }) => ({
+    ok: true, host, user: 'jason', os: 'Linux',
+    pythons: [
+      ...(extra_paths ?? []).map(p => ({ path: p, real: p, version: '3.11.9', runspec_ok: true })),
+      { path: '/usr/bin/python3.12', real: '/usr/bin/python3.12', version: '3.12.4', runspec_ok: true },
+      { path: '/usr/bin/python3', real: '/usr/bin/python3.9', version: '3.9.18', runspec_ok: false },
+    ],
+  }),
+  provision_preflight: async (payload: ProvisionPayload) => ({
+    dest: payload.dest,
+    rows: payload.hosts.map(host => host === 'prod-2'
+      ? { host, ok: false, python: '', version: '', user: '', dest_state: '', blockers: ['Host is not connected.'], warnings: [] }
+      : { host, ok: true, python: payload.python.startsWith('/') ? payload.python : '/usr/bin/python3.12', version: '3.12.4', user: payload.run_as || 'jason', dest_state: 'absent', blockers: [],
+          ...(payload.run_as && payload.dest.startsWith('/opt/')
+            ? { handoff: true, handoff_via: 'sudo', warnings: [`${payload.run_as} can't write /opt/venvs, so the console will create the venv folder as root and hand it to ${payload.run_as}.`] }
+            : { warnings: [] }) }),
+  }),
+  provision_start: async (payload: ProvisionPayload) => mockProvisionOp('provision', payload.hosts, payload.dest),
+  provision_op: async (op) => MOCK_PROVISION_OPS.get(op) ?? null,
+  provision_cancel: async (op) => { console.log('[mock] provision_cancel', op); return true },
+  deprovision_preview: async ({ targets }) => ({
+    names: [...new Set(targets.map(t => t.runspec_path.replace(/\/bin\/runspec$/, '').split('/').pop() ?? ''))],
+    rows: targets.map(t => ({
+      ...t, root: t.runspec_path.replace(/\/bin\/runspec$/, ''), ok: true, kind: 'venv', owner: 'svc-ops', user: 'jason',
+      size_kb: 184320, logs_kb: 2048, runnables: ['disk-usage', 'list-services'], references: ['schedules'], blockers: [],
+    })),
+  }),
+  deprovision_start: async (payload: DeprovisionPayload) => mockProvisionOp('deprovision', payload.targets.map(t => t.host), payload.targets[0]?.runspec_path ?? ''),
 
   get_tool_visibility: async () => ({ hidden_from_agent: ['get-alerts'], hidden_from_all: ['flush-dns'] }),
   save_tool_visibility: async (payload) => {
