@@ -7,6 +7,23 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+- **Unit suffixes and Browse buttons use antd's `Space.Compact`.** antd 5.29
+  deprecates `addonAfter` on `Input`/`InputNumber`. The fields that used it now
+  sit in a `Space.Compact` with a `Space.Addon` unit or a real button: the
+  Marketplace cache TTL, MCP connect/call timeouts and per-server overrides,
+  the Repos checkout location, Credentials SSH-key paths, Config Sync's
+  "refresh tags", Improve's sweep window and the runs-index row cap. Browse
+  and "refresh tags" are now buttons rather than links inside the field.
+  No behaviour change.
+- **Tests:** the Jump Hosts tab tests no longer wrap `user-event` calls in an
+  extra `act()` (which flooded stderr with "testing environment is not
+  configured to support act(...)"), and get a 20s timeout — they take ~5s
+  under jsdom and timed out on slower runners.
+
 ## [0.317.0] — 2026-10-02
 
 ### Added

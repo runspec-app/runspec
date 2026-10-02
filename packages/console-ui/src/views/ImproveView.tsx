@@ -177,13 +177,15 @@ export function ImproveView({ active }: ImproveViewProps) {
           <Card size="small" title="Evaluation sweep">
             <Space>
               <Text>Window</Text>
-              <InputNumber
-                min={1}
-                max={365}
-                value={windowDays}
-                onChange={(v) => setWindowDays(Number(v) || 30)}
-                addonAfter="days"
-              />
+              <Space.Compact>
+                <InputNumber
+                  min={1}
+                  max={365}
+                  value={windowDays}
+                  onChange={(v) => setWindowDays(Number(v) || 30)}
+                />
+                <Space.Addon>days</Space.Addon>
+              </Space.Compact>
             </Space>
             <Button
               block

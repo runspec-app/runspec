@@ -4,7 +4,7 @@
  * search box / profile filter that flattens across groups.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, act, waitFor } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { message } from 'antd'
 
@@ -63,7 +63,10 @@ describe('pure helpers', () => {
   })
 })
 
-describe('Jump Hosts tab', () => {
+// These render the whole Settings drawer and click through an antd modal, which
+// takes ~5s under jsdom — right at vitest's default 5s timeout, so they flaked
+// on a loaded runner. Give them headroom rather than trimming what they cover.
+describe('Jump Hosts tab', { timeout: 20_000 }, () => {
   beforeEach(() => {
     getJumpHosts.mockReset().mockResolvedValue(HOSTS)
     getHosts.mockReset().mockResolvedValue([])
@@ -75,7 +78,7 @@ describe('Jump Hosts tab', () => {
   async function openTab() {
     render(<SettingsDrawer open onClose={() => {}} />)
     const user = userEvent.setup()
-    await act(async () => { await user.click(await screen.findByRole('tab', { name: 'Jump Hosts' })) })
+    await user.click(await screen.findByRole('tab', { name: 'Jump Hosts' }))
     await screen.findByText('5 hosts · 3 groups')
     return user
   }
@@ -88,34 +91,32 @@ describe('Jump Hosts tab', () => {
     expect(screen.getByText('Customer-facing')).toBeTruthy()
     expect(screen.queryByText('web-01')).toBeNull()
 
-    await act(async () => { await user.click(screen.getByRole('button', { name: 'Open group Production' })) })
+    await user.click(screen.getByRole('button', { name: 'Open group Production' }))
     await screen.findByText('web-01')
     expect(screen.getByText('web-02')).toBeTruthy()
     expect(screen.getByText('db-01')).toBeTruthy()
     expect(screen.queryByText('stg-01')).toBeNull()
     expect(screen.getByRole('button', { name: 'Edit web-01' })).toBeTruthy()
 
-    await act(async () => { await user.click(screen.getByRole('button', { name: '← All groups' })) })
+    await user.click(screen.getByRole('button', { name: '← All groups' }))
     await screen.findByRole('button', { name: 'Open group Staging' })
     expect(screen.queryByText('web-01')).toBeNull()
   })
 
   it('search flattens across groups; the profile filter narrows', async () => {
     const user = await openTab()
-    await act(async () => { await user.type(screen.getByRole('textbox', { name: 'Search hosts' }), 'web') })
+    await user.type(screen.getByRole('textbox', { name: 'Search hosts' }), 'web')
     await screen.findByText('2 of 5 hosts match')
     expect(screen.getByText('web-01')).toBeTruthy()
     expect(screen.getByText('web-02')).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Open group Production' })).toBeNull()
 
-    await act(async () => { await user.clear(screen.getByRole('textbox', { name: 'Search hosts' })) })
+    await user.clear(screen.getByRole('textbox', { name: 'Search hosts' }))
     await screen.findByRole('button', { name: 'Open group Production' })
 
     // Profile filter: devops → web-02 + stg-01 across two groups.
-    await act(async () => {
-      await user.click(screen.getAllByTitle('Filter by host profile')[0].querySelector('input')!)
-      await user.click(await screen.findByTitle('devops'))
-    })
+    await user.click(screen.getAllByTitle('Filter by host profile')[0].querySelector('input')!)
+    await user.click(await screen.findByTitle('devops'))
     await screen.findByText('2 of 5 hosts match')
     expect(screen.getByText('web-02')).toBeTruthy()
     expect(screen.getByText('stg-01')).toBeTruthy()
@@ -124,8 +125,8 @@ describe('Jump Hosts tab', () => {
   })
 
   async function openEdit(user: ReturnType<typeof userEvent.setup>) {
-    await act(async () => { await user.click(screen.getByRole('button', { name: 'Open group Production' })) })
-    await act(async () => { await user.click(await screen.findByRole('button', { name: 'Edit web-01' })) })
+    await user.click(screen.getByRole('button', { name: 'Open group Production' }))
+    await user.click(await screen.findByRole('button', { name: 'Edit web-01' }))
     await screen.findByText('Edit — web-01')
   }
 
@@ -139,7 +140,7 @@ describe('Jump Hosts tab', () => {
     const user = await openTab()
     await openEdit(user)
 
-    await act(async () => { await user.click(screen.getByRole('button', { name: /save/i })) })
+    await user.click(screen.getByRole('button', { name: /save/i }))
 
     expect(saveJumpHosts).toHaveBeenCalledTimes(1)
     expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("Couldn't save host"))
@@ -152,7 +153,7 @@ describe('Jump Hosts tab', () => {
     const user = await openTab()
     await openEdit(user)
 
-    await act(async () => { await user.click(screen.getByRole('button', { name: /save/i })) })
+    await user.click(screen.getByRole('button', { name: /save/i }))
 
     // Modal closed → the Save button leaves the accessibility tree.
     await waitFor(() => expect(screen.queryByRole('button', { name: /save/i })).toBeNull())

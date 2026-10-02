@@ -3030,10 +3030,14 @@ export function ReposTab() {
           <Form.Item name="description" label="Description">
             <Input placeholder="What this repo is (optional — shown to the agent)" />
           </Form.Item>
-          <Form.Item name="path" label="Checkout location"
+          <Form.Item label="Checkout location"
             tooltip="Where the repo is checked out on disk. Leave blank to use the default app-data location (recommended for read-only repos). Set it to your own dev folder for a repo you actively develop — that path is machine-local and never synced. Deleting the repo never removes a custom dev-folder checkout.">
-            <Input placeholder="(default app-data location)" autoComplete="off"
-              addonAfter={<a onClick={browsePath}>Browse…</a>} />
+            <Space.Compact block>
+              <Form.Item name="path" noStyle>
+                <Input placeholder="(default app-data location)" autoComplete="off" />
+              </Form.Item>
+              <Button onClick={browsePath}>Browse…</Button>
+            </Space.Compact>
           </Form.Item>
         </Form>
       </Modal>
@@ -3185,7 +3189,10 @@ export function MarketplaceTab() {
         </span>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
           <span>Re-read indexes after</span>
-          <InputNumber size="small" min={0} step={3600} value={Math.round(cfg.cache_ttl / 3600)} onChange={v => { if (v !== null) persist({ cache_ttl: v * 3600 }) }} addonAfter="h" style={{ width: 110 }} aria-label="cache ttl hours" />
+          <Space.Compact size="small">
+            <InputNumber size="small" min={0} step={3600} value={Math.round(cfg.cache_ttl / 3600)} onChange={v => { if (v !== null) persist({ cache_ttl: v * 3600 }) }} style={{ width: 80 }} aria-label="cache ttl hours" />
+            <Space.Addon>h</Space.Addon>
+          </Space.Compact>
           <Button size="small" onClick={clearCache}>Clear catalogue cache</Button>
         </span>
       </Space>
@@ -3424,13 +3431,21 @@ function CredentialsTab() {
                 <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
                   An SSH-key credential authenticates a Config Sync SSH repo with its own deploy key (use it in Settings → Config Sync). The key files stay on disk — only the paths are saved.
                 </Text>
-                <Form.Item name="private_key" label="Private key path" rules={[{ required: true, message: 'Required' }]} tooltip="Path to the private key file (e.g. an ed25519 deploy key). Passed to the SSH client as the identity file.">
-                  <Input placeholder="~/.ssh/runspec_ed25519" style={{ fontFamily: MONO_FONT }} autoComplete="off"
-                    addonAfter={<a onClick={() => pickKey('private_key')}>Browse</a>} />
+                <Form.Item label="Private key path" required tooltip="Path to the private key file (e.g. an ed25519 deploy key). Passed to the SSH client as the identity file.">
+                  <Space.Compact block>
+                    <Form.Item name="private_key" rules={[{ required: true, message: 'Required' }]} noStyle>
+                      <Input placeholder="~/.ssh/runspec_ed25519" style={{ fontFamily: MONO_FONT }} autoComplete="off" />
+                    </Form.Item>
+                    <Button onClick={() => pickKey('private_key')}>Browse</Button>
+                  </Space.Compact>
                 </Form.Item>
-                <Form.Item name="public_key" label="Public key path" tooltip="Optional — the matching .pub file. Informational; not required to connect.">
-                  <Input placeholder="~/.ssh/runspec_ed25519.pub" style={{ fontFamily: MONO_FONT }} autoComplete="off"
-                    addonAfter={<a onClick={() => pickKey('public_key')}>Browse</a>} />
+                <Form.Item label="Public key path" tooltip="Optional — the matching .pub file. Informational; not required to connect.">
+                  <Space.Compact block>
+                    <Form.Item name="public_key" noStyle>
+                      <Input placeholder="~/.ssh/runspec_ed25519.pub" style={{ fontFamily: MONO_FONT }} autoComplete="off" />
+                    </Form.Item>
+                    <Button onClick={() => pickKey('public_key')}>Browse</Button>
+                  </Space.Compact>
                 </Form.Item>
                 <Form.Item name="username" label="SSH user" tooltip="The SSH login user — defaults to git for most hosts (GitHub, GitLab).">
                   <Input placeholder="git" autoComplete="off" />
@@ -3959,15 +3974,18 @@ export function ConfigSyncTab() {
           tooltip="HTTPS (https://…) or SSH (git@host:org/repo.git). HTTPS uses the credential's token; SSH uses an SSH-key credential's deploy key (or your console SSH key when none is selected).">
           <Input placeholder="https://github.com/acme/runspec-config.git" autoComplete="off" />
         </Form.Item>
-        <Form.Item name="ref" label="Tag / ref" rules={[{ required: true, message: 'Required' }]}
+        <Form.Item label="Tag / ref" required
           tooltip="A tag (recommended, for versioned rollouts) or a branch name.">
-          <AutoComplete
-            options={tags.map(t => ({ value: t }))}
-            onFocus={() => { if (!tags.length) loadTags() }}
-            placeholder="v1.4.0"
-          >
-            <Input addonAfter={<a onClick={loadTags}>refresh tags</a>} />
-          </AutoComplete>
+          <Space.Compact block>
+            <Form.Item name="ref" rules={[{ required: true, message: 'Required' }]} noStyle>
+              <AutoComplete
+                options={tags.map(t => ({ value: t }))}
+                onFocus={() => { if (!tags.length) loadTags() }}
+                placeholder="v1.4.0"
+              />
+            </Form.Item>
+            <Button onClick={loadTags}>refresh tags</Button>
+          </Space.Compact>
         </Form.Item>
         <Form.Item name="credential_id" label="Credential"
           tooltip="A Credentials-tab entry. For HTTPS use a token/userpass credential (username + token). For SSH use an ssh-key credential (a per-repo deploy key); without one, SSH falls back to your console SSH key.">
@@ -5715,13 +5733,19 @@ export function McpTab() {
         </Space>
         <Space>
           <Text style={{ fontSize: 13 }} type="secondary">Default connect timeout</Text>
-          <InputNumber size="small" min={1} max={600} value={connectTimeout} style={{ width: 90 }} aria-label="Default connect timeout"
-            onChange={v => setConnectTimeout(v ?? 20)} onBlur={commitTimeouts} onPressEnter={commitTimeouts} addonAfter="s" />
+          <Space.Compact size="small">
+            <InputNumber size="small" min={1} max={600} value={connectTimeout} style={{ width: 90 }} aria-label="Default connect timeout"
+              onChange={v => setConnectTimeout(v ?? 20)} onBlur={commitTimeouts} onPressEnter={commitTimeouts} />
+            <Space.Addon>s</Space.Addon>
+          </Space.Compact>
         </Space>
         <Space>
           <Text style={{ fontSize: 13 }} type="secondary">Default call timeout</Text>
-          <InputNumber size="small" min={1} max={3600} value={callTimeout} style={{ width: 90 }} aria-label="Default call timeout"
-            onChange={v => setCallTimeout(v ?? 60)} onBlur={commitTimeouts} onPressEnter={commitTimeouts} addonAfter="s" />
+          <Space.Compact size="small">
+            <InputNumber size="small" min={1} max={3600} value={callTimeout} style={{ width: 90 }} aria-label="Default call timeout"
+              onChange={v => setCallTimeout(v ?? 60)} onBlur={commitTimeouts} onPressEnter={commitTimeouts} />
+            <Space.Addon>s</Space.Addon>
+          </Space.Compact>
         </Space>
       </Space>
       <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: -6, marginBottom: 12 }}>
@@ -5801,17 +5825,23 @@ export function McpTab() {
             <Space size="large">
               <Space size={6}>
                 <Text style={{ fontSize: 13 }} type="secondary">Connect</Text>
-                <InputNumber min={1} max={600} style={{ width: 130 }} aria-label="Connect timeout override"
-                  placeholder={`${connectTimeout} (default)`} addonAfter="s"
-                  value={draft.connect_timeout ?? undefined}
-                  onChange={v => setDraft({ ...draft, connect_timeout: typeof v === 'number' ? v : null })} />
+                <Space.Compact>
+                  <InputNumber min={1} max={600} style={{ width: 130 }} aria-label="Connect timeout override"
+                    placeholder={`${connectTimeout} (default)`}
+                    value={draft.connect_timeout ?? undefined}
+                    onChange={v => setDraft({ ...draft, connect_timeout: typeof v === 'number' ? v : null })} />
+                  <Space.Addon>s</Space.Addon>
+                </Space.Compact>
               </Space>
               <Space size={6}>
                 <Text style={{ fontSize: 13 }} type="secondary">Call</Text>
-                <InputNumber min={1} max={3600} style={{ width: 130 }} aria-label="Call timeout override"
-                  placeholder={`${callTimeout} (default)`} addonAfter="s"
-                  value={draft.call_timeout ?? undefined}
-                  onChange={v => setDraft({ ...draft, call_timeout: typeof v === 'number' ? v : null })} />
+                <Space.Compact>
+                  <InputNumber min={1} max={3600} style={{ width: 130 }} aria-label="Call timeout override"
+                    placeholder={`${callTimeout} (default)`}
+                    value={draft.call_timeout ?? undefined}
+                    onChange={v => setDraft({ ...draft, call_timeout: typeof v === 'number' ? v : null })} />
+                  <Space.Addon>s</Space.Addon>
+                </Space.Compact>
               </Space>
             </Space>
           </Form.Item>

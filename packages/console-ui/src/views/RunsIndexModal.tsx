@@ -245,8 +245,11 @@ export function RunsIndexModal({ target, onClose }: {
           </Form.Item>
           <Form.Item label="Keep only the newest" style={{ marginBottom: 8 }}
             help="rows — blank = no row cap">
-            <InputNumber value={maxRows} onChange={v => setMaxRows(v)} min={1} placeholder="10000"
-              aria-label="max rows" addonAfter="rows" style={{ width: 200 }} />
+            <Space.Compact>
+              <InputNumber value={maxRows} onChange={v => setMaxRows(v)} min={1} placeholder="10000"
+                aria-label="max rows" style={{ width: 200 }} />
+              <Space.Addon>rows</Space.Addon>
+            </Space.Compact>
           </Form.Item>
         </Space>
       </Form>

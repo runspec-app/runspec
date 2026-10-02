@@ -28,6 +28,11 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# pip caching: the test jobs set `cache: pip` keyed on their package's
+# pyproject.toml, so repeat runs reuse downloaded wheels. pip still resolves
+# against the index every time, so a new release is picked up as before. Lint
+# and format jobs install only ruff and aren't cached.
+
 jobs:
   changes:
     name: Detect changes
@@ -48,6 +53,7 @@ jobs:
       claude: ${{ steps.filter.outputs.claude }}
       scheduler: ${{ steps.filter.outputs.scheduler }}
       console: ${{ steps.filter.outputs.console }}
+      console-ui: ${{ steps.filter.outputs.console-ui }}
       console-room: ${{ steps.filter.outputs.console-room }}
       webops: ${{ steps.filter.outputs.webops }}
       webops-core: ${{ steps.filter.outputs.webops-core }}
@@ -122,8 +128,15 @@ jobs:
             mcp:
               - 'packages/python/runspec-mcp/**'
               - '.github/workflows/ci.yml'
+            # The Python console and its frontend are tested independently: no
+            # vitest test reads the Python package and no pytest reads the
+            # frontend, so a change to one doesn't need to re-run the other's
+            # suite. console-app-smoke builds the frontend into the wheel and
+            # runs on either.
             console:
               - 'packages/python/runspec-console/**'
+              - '.github/workflows/ci.yml'
+            console-ui:
               - 'packages/console-ui/**'
               - '.github/workflows/ci.yml'
             console-room:
@@ -242,6 +255,8 @@ jobs:
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v7
         with:
+          cache: pip
+          cache-dependency-path: packages/python/runspec/pyproject.toml
           python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
@@ -401,6 +416,8 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
+          cache: pip
+          cache-dependency-path: packages/python/runspec-linux/pyproject.toml
           python-version: "3.12"
 
       - name: Install dependencies
@@ -492,6 +509,8 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
+          cache: pip
+          cache-dependency-path: packages/python/runspec-linux-root/pyproject.toml
           python-version: "3.12"
 
       - name: Install dependencies
@@ -566,6 +585,8 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
+          cache: pip
+          cache-dependency-path: packages/python/runspec-linux-core/pyproject.toml
           python-version: "3.12"
 
       - name: Install dependencies
@@ -641,6 +662,8 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
+          cache: pip
+          cache-dependency-path: packages/python/runspec-jsm/pyproject.toml
           python-version: "3.12"
 
       - name: Install dependencies
@@ -714,6 +737,8 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
+          cache: pip
+          cache-dependency-path: packages/python/runspec-snow/pyproject.toml
           python-version: "3.12"
 
       - name: Install dependencies
@@ -791,6 +816,8 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
+          cache: pip
+          cache-dependency-path: packages/python/runspec-logops/pyproject.toml
           python-version: "3.12"
 
       - name: Install dependencies
@@ -869,6 +896,8 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
+          cache: pip
+          cache-dependency-path: packages/python/runspec-logops-core/pyproject.toml
           python-version: "3.12"
 
       - name: Install dependencies
@@ -944,6 +973,8 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
+          cache: pip
+          cache-dependency-path: packages/python/runspec-playbook/pyproject.toml
           python-version: "3.12"
 
       - name: Install dependencies
@@ -1030,6 +1061,8 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
+          cache: pip
+          cache-dependency-path: packages/python/runspec-claude/pyproject.toml
           python-version: "3.12"
 
       - name: Install dependencies
@@ -1114,6 +1147,8 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
+          cache: pip
+          cache-dependency-path: packages/python/runspec-scheduler/pyproject.toml
           python-version: "3.12"
 
       - name: Install dependencies
@@ -1196,6 +1231,8 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
+          cache: pip
+          cache-dependency-path: packages/python/runspec-mcp/pyproject.toml
           python-version: "3.12"
 
       - name: Install dependencies
@@ -1276,6 +1313,8 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
+          cache: pip
+          cache-dependency-path: packages/console-room/pyproject.toml
           python-version: "3.12"
 
       - name: Install dependencies
@@ -1354,6 +1393,8 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
+          cache: pip
+          cache-dependency-path: packages/python/runspec-windows/pyproject.toml
           python-version: "3.12"
 
       - name: Install dependencies
@@ -1385,6 +1426,8 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
+          cache: pip
+          cache-dependency-path: packages/python/runspec-windows/pyproject.toml
           python-version: "3.12"
 
       - name: Build wheel
@@ -1463,6 +1506,8 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
+          cache: pip
+          cache-dependency-path: packages/python/runspec-console/pyproject.toml
           python-version: "3.12"
 
       # runspec-console declares pywin32 as an unconditional dependency, so
@@ -1473,10 +1518,14 @@ jobs:
       # pywebview is included so test_window_kwargs can validate the create_window
       # / start kwargs against the *real* pywebview signatures (it imports headless,
       # no GUI backend needed) — the guard for private_mode-on-the-wrong-call.
+      #
+      # The otel / mcp / schedule extras are installed too: their tests skip
+      # when the package is missing, so without them ~25 tests never ran here.
+      # (The sandbox tests stay skipped: they need a ~20 MB WASM download.)
       - name: Install test deps
         run: |
           pip install -e ../runspec
-          pip install pytest anthropic paramiko cryptography tomli-w dulwich pywebview
+          pip install pytest anthropic paramiko cryptography tomli-w dulwich pywebview "opentelemetry-sdk>=1.27" "opentelemetry-exporter-otlp-proto-http>=1.27" "mcp>=2,<3" "apscheduler>=3.10"
 
       - name: Run tests
         env:
@@ -1507,6 +1556,8 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
+          cache: pip
+          cache-dependency-path: packages/python/runspec-console/pyproject.toml
           python-version: "3.12"
 
       # Install into a real venv, not the base setup-python: on Windows a base
@@ -1528,11 +1579,18 @@ jobs:
           PYTHONPATH: .
         run: .venv-ci/Scripts/python -m pytest
 
+  # vitest is the slowest step in CI (~190s on one runner), so the suite is
+  # split across three runners with `vitest run --shard`. Every test file still
+  # runs, once; the type check runs on the first shard only.
   console-ui:
-    name: console-ui (frontend)
+    name: "console-ui (frontend) / shard ${{ matrix.shard }}"
     needs: changes
-    if: needs.changes.outputs.console == 'true'
+    if: needs.changes.outputs.console-ui == 'true'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     defaults:
       run:
         working-directory: packages/console-ui
@@ -1550,10 +1608,11 @@ jobs:
         run: npm ci
 
       - name: Type check
+        if: matrix.shard == 1
         run: npm run typecheck
 
       - name: Test
-        run: npm test
+        run: npm test -- --shard=${{ matrix.shard }}/3
 
   # The Linux jobs above mock all Windows COM/WinRT, so the trigger event sources'
   # lazy win32com / winsdk import paths are never exercised there. This job runs
@@ -1575,6 +1634,8 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
+          cache: pip
+          cache-dependency-path: packages/python/runspec-console/pyproject.toml
           python-version: "3.12"
 
       - name: Install test + Windows deps
@@ -1614,7 +1675,7 @@ jobs:
   console-app-smoke:
     name: runspec-console app smoke (ubuntu)
     needs: changes
-    if: needs.changes.outputs.console == 'true'
+    if: needs.changes.outputs.console == 'true' || needs.changes.outputs.console-ui == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -1736,6 +1797,8 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
+          cache: pip
+          cache-dependency-path: packages/python/runspec-webops-core/pyproject.toml
           python-version: "3.12"
 
       - name: Install dependencies
@@ -1814,6 +1877,8 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
+          cache: pip
+          cache-dependency-path: packages/python/runspec-fs-core/pyproject.toml
           python-version: "3.12"
 
       - name: Install dependencies
@@ -1896,6 +1961,8 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
+          cache: pip
+          cache-dependency-path: packages/python/runspec-fs/pyproject.toml
           python-version: "3.12"
 
       - name: Install dependencies
@@ -1973,6 +2040,8 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
+          cache: pip
+          cache-dependency-path: packages/python/runspec-gitlab-core/pyproject.toml
           python-version: "3.12"
 
       - name: Install dependencies
@@ -2055,6 +2124,8 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
+          cache: pip
+          cache-dependency-path: packages/python/runspec-gitlab/pyproject.toml
           python-version: "3.12"
 
       - name: Install dependencies
@@ -2132,6 +2203,8 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
+          cache: pip
+          cache-dependency-path: packages/python/runspec-rundeck-core/pyproject.toml
           python-version: "3.12"
 
       - name: Install dependencies
@@ -2214,6 +2287,8 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
+          cache: pip
+          cache-dependency-path: packages/python/runspec-rundeck/pyproject.toml
           python-version: "3.12"
 
       - name: Install dependencies
@@ -2292,6 +2367,8 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
+          cache: pip
+          cache-dependency-path: packages/python/runspec-o365/pyproject.toml
           python-version: "3.12"
 
       - name: Install dependencies
@@ -2367,6 +2444,8 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
+          cache: pip
+          cache-dependency-path: packages/python/runspec-jira-core/pyproject.toml
           python-version: "3.12"
 
       - name: Install dependencies
@@ -2449,6 +2528,8 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
+          cache: pip
+          cache-dependency-path: packages/python/runspec-jira/pyproject.toml
           python-version: "3.12"
 
       - name: Install dependencies
@@ -2526,6 +2607,8 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
+          cache: pip
+          cache-dependency-path: packages/python/runspec-confluence-core/pyproject.toml
           python-version: "3.12"
 
       - name: Install dependencies
@@ -2608,6 +2691,8 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
+          cache: pip
+          cache-dependency-path: packages/python/runspec-confluence/pyproject.toml
           python-version: "3.12"
 
       - name: Install dependencies
@@ -2670,7 +2755,7 @@ jobs:
 
   ci:
     name: CI
-    needs: [python-quality, python-test, node, linux-quality, linux-test, linux-core-quality, linux-core-test, linux-root-quality, linux-root-test, jsm-quality, jsm-test, snow-quality, snow-test, logops-quality, logops-test, logops-core-quality, logops-core-test, playbook-quality, playbook-test, claude-quality, claude-test, windows-quality, windows-unit, windows-smoke, o365-quality, o365-test, console-quality, console-test, console-test-windows, console-ui, console-smoke, console-app-smoke, webops, webops-core-quality, webops-core-test, fs-core-quality, fs-core-test, fs-quality, fs-test, gitlab-core-quality, gitlab-core-test, gitlab-quality, gitlab-test, rundeck-core-quality, rundeck-core-test, rundeck-quality, rundeck-test, jira-core-quality, jira-core-test, jira-quality, jira-test, confluence-core-quality, confluence-core-test, confluence-quality, confluence-test, docs-check]
+    needs: [python-quality, python-test, node, linux-quality, linux-test, linux-core-quality, linux-core-test, linux-root-quality, linux-root-test, jsm-quality, jsm-test, snow-quality, snow-test, logops-quality, logops-test, logops-core-quality, logops-core-test, playbook-quality, playbook-test, claude-quality, claude-test, scheduler-quality, scheduler-test, mcp-quality, mcp-test, console-room-quality, console-room-test, windows-quality, windows-unit, windows-smoke, o365-quality, o365-test, console-quality, console-test, console-test-windows, console-ui, console-smoke, console-app-smoke, webops, webops-core-quality, webops-core-test, fs-core-quality, fs-core-test, fs-quality, fs-test, gitlab-core-quality, gitlab-core-test, gitlab-quality, gitlab-test, rundeck-core-quality, rundeck-core-test, rundeck-quality, rundeck-test, jira-core-quality, jira-core-test, jira-quality, jira-test, confluence-core-quality, confluence-core-test, confluence-quality, confluence-test, docs-check]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -2708,6 +2793,12 @@ jobs:
           check "playbook-test"     "${{ needs.playbook-test.result }}"
           check "claude-quality"  "${{ needs.claude-quality.result }}"
           check "claude-test"     "${{ needs.claude-test.result }}"
+          check "scheduler-quality" "${{ needs.scheduler-quality.result }}"
+          check "scheduler-test"    "${{ needs.scheduler-test.result }}"
+          check "mcp-quality"     "${{ needs.mcp-quality.result }}"
+          check "mcp-test"        "${{ needs.mcp-test.result }}"
+          check "console-room-quality" "${{ needs.console-room-quality.result }}"
+          check "console-room-test"    "${{ needs.console-room-test.result }}"
           check "windows-quality" "${{ needs.windows-quality.result }}"
           check "windows-unit"    "${{ needs.windows-unit.result }}"
           check "windows-smoke"   "${{ needs.windows-smoke.result }}"
