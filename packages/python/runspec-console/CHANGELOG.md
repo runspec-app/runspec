@@ -24,6 +24,30 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   configured to support act(...)"), and get a 20s timeout — they take ~5s
   under jsdom and timed out on slower runners.
 
+## [0.320.0] — 2026-10-02
+
+### Added
+
+- **Open SSH terminals on several hosts at once.** Right-click a sidebar group
+  header for *Open SSH terminals (N connected)*, which opens a PuTTY window on
+  every connected host in the group in one go, or *Choose hosts…*. A host's
+  right-click menu also gains *Open SSH terminals…*. The dialog lists every
+  configured host, including ones outside the active profile, since PuTTY makes
+  its own connection. You can add hosts by group, by profile, or all connected
+  hosts at once. A host that can't open (no key file, PuTTY missing) is listed
+  with its reason and the rest still open.
+- **The new windows are arranged** on the screen the console is on (Windows,
+  remembered per machine). The dialog's *Arrange windows* choice offers
+  *Grid* (the default, a near-square grid filling the screen), *Compact grid*
+  (terminal-sized windows packed from the top-left corner, the same size on
+  an ultrawide or a 16:9 screen and scaled with the display), *Side by side*
+  (full-height windows in one row, which suits an ultrawide), *Stacked*
+  (full-width windows top to bottom), *Cascade*, or *Don't arrange*. When the
+  windows would be too small to read, side by side and stacked fall back to a
+  grid, a compact grid shrinks to fit, and a grid falls back to a cascade. Works on scaled (125%/150%)
+  displays. New bridge method `launch_terminals(hosts, tile, layout)`; the PuTTY command line is now built by one
+  shared `_putty_command`, and the window layout lives in `wintile.py`.
+
 ## [0.319.0] — 2026-10-02
 
 ### Added

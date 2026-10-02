@@ -58,14 +58,13 @@ _PROBE_DISPATCH_MIN_INTERVAL = 0.5
 
 
 class InternalsMixin:
-    def launch_terminal(self, host: str) -> None:
-        """Launch PuTTY in a separate window connected to the host.
+    def _putty_command(self, host: str) -> list[str]:
+        """The ``putty.exe`` argv that opens an SSH window to ``host``.
 
-        Fire-and-forget: no stdout/stderr capture, no session tracking. PuTTY
-        runs as its own top-level process and the user closes it from there.
+        Raises ``ValueError`` (with an operator-readable message) when the host
+        is unknown/local, PuTTY isn't installed, or the configured key is
+        missing — shared by ``launch_terminal`` and ``launch_terminals``.
         """
-        import subprocess as _sp
-
         entry = self._host_entry(host)
         if entry is None:
             raise ValueError(f"Host '{host}' not found")
@@ -114,7 +113,64 @@ class InternalsMixin:
                     "Generate a new key in Settings → SSH."
                 )
             cmd.extend(["-i", str(key_file)])
-        _sp.Popen(cmd)
+        return cmd
+
+    def launch_terminal(self, host: str) -> None:
+        """Launch PuTTY in a separate window connected to the host.
+
+        Fire-and-forget: no stdout/stderr capture, no session tracking. PuTTY
+        runs as its own top-level process and the user closes it from there.
+        """
+        import subprocess as _sp
+
+        _sp.Popen(self._putty_command(host))
+
+    def launch_terminals(
+        self, hosts: list[str], tile: bool = True, layout: str = "grid"
+    ) -> dict[str, Any]:
+        """Open a PuTTY window on each of ``hosts`` at once, optionally tiled.
+
+        Each host is launched independently — one that fails (unknown, no key,
+        PuTTY missing) is reported in ``errors`` and the rest still open. With
+        ``tile`` the windows are then arranged on the console's monitor by a
+        background thread (Windows only, best-effort), so this returns as soon
+        as the processes are spawned. ``layout`` is one of ``grid`` /
+        ``columns`` / ``rows`` / ``cascade`` (``wintile.LAYOUTS``; anything
+        else ⇒ ``grid``).
+
+        Returns ``{"opened": [host…], "errors": [{"host", "error"}…],
+        "tiling": bool}``.
+        """
+        import subprocess as _sp
+
+        opened: list[str] = []
+        errors: list[dict[str, str]] = []
+        pids: list[int] = []
+        seen: set[str] = set()
+        for host in hosts or []:
+            name = str(host)
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            try:
+                proc = _sp.Popen(self._putty_command(name))
+            except (ValueError, OSError) as exc:
+                errors.append({"host": name, "error": str(exc)})
+                continue
+            opened.append(name)
+            pids.append(proc.pid)
+        tiling = bool(tile and len(pids) > 1 and sys.platform == "win32")
+        if tiling:
+            from . import wintile
+
+            threading.Thread(
+                target=wintile.tile_process_windows,
+                args=(pids,),
+                kwargs={"layout": layout if layout in wintile.LAYOUTS else "grid"},
+                name="tile-terminals",
+                daemon=True,
+            ).start()
+        return {"opened": opened, "errors": errors, "tiling": tiling}
 
     def launch_local_terminal(self) -> None:
         """Open a local terminal window — tries Windows Terminal, then PowerShell, then cmd."""

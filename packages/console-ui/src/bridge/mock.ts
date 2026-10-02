@@ -1846,6 +1846,10 @@ export const mockApi: BridgeApi = {
 
     return id
   },
+  launch_terminals: async (hosts: string[], tile = true, layout = 'grid') => {
+    console.log('mock: launch_terminals', hosts, tile, layout)
+    return { opened: hosts, errors: [], tiling: tile && hosts.length > 1 }
+  },
   launch_terminal: async (host: string): Promise<void> => {
     console.log('mock: launch_terminal', host)
   },

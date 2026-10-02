@@ -123,6 +123,7 @@ EXPECTED = {
     "launch_local_terminal",
     "launch_puttygen",
     "launch_terminal",
+    "launch_terminals",
     "list_action_tools",
     "list_chat_sessions",
     "list_conversations",

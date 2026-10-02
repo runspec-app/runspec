@@ -470,6 +470,12 @@ export interface Host {
 // An entry in the canonical host-group registry (runspec_groups.toml). The
 // registry pins the legal group NAMES (shared via Config Sync); membership lives
 // on each host's `group` field.
+export interface LaunchTerminalsResult {
+  opened: string[]
+  errors: { host: string; error: string }[]
+  tiling: boolean
+}
+
 export interface HostGroup {
   name: string
   description?: string
@@ -2326,6 +2332,12 @@ export interface BridgeApi {
   browse_sound_file: () => Promise<string>
   // ── terminal sessions ──────────────────────────────────────────────────────
   launch_terminal: (host: string) => Promise<void>
+  // Open a PuTTY window on each host at once; `tile` grids them on the
+  // console's monitor (Windows, best-effort). A host that can't open is
+  // reported in `errors` while the rest still launch.
+  launch_terminals: (
+    hosts: string[], tile?: boolean, layout?: 'grid' | 'compact' | 'columns' | 'rows' | 'cascade',
+  ) => Promise<LaunchTerminalsResult>
   launch_local_terminal: () => Promise<void>
   // ── dev tools ────────────────────────────────────────────────────────────
   is_debug_enabled: () => Promise<boolean>

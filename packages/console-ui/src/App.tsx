@@ -33,6 +33,7 @@ import {
 } from '@ant-design/icons'
 import { ConsoleView } from './views/ConsoleView'
 import { matchRunnableForEdit } from './views/formsMatch'
+import { openTerminals as openGroupTerminals } from './views/terminals'
 import type { PendingForm } from './views/FormsView'
 // Code-split: everything below is off the Console tab's first-paint path, so it
 // lazy-loads on first use instead of bloating the initial bundle the web view
@@ -59,6 +60,7 @@ const DevView = React.lazy(() => import('./views/DevView').then(m => ({ default:
 // Modals + the (large) Settings drawer — mounted only once their open state trips.
 const TransferModal = React.lazy(() => import('./views/TransferModal').then(m => ({ default: m.TransferModal })))
 const CopyKeyModal = React.lazy(() => import('./views/CopyKeyModal').then(m => ({ default: m.CopyKeyModal })))
+const TerminalsModal = React.lazy(() => import('./views/TerminalsModal').then(m => ({ default: m.TerminalsModal })))
 const DenylistModal = React.lazy(() => import('./views/DenylistModal').then(m => ({ default: m.DenylistModal })))
 const RunbookRunModal = React.lazy(() => import('./views/RunbookRunModal').then(m => ({ default: m.RunbookRunModal })))
 const SavedRunRunModal = React.lazy(() => import('./views/SavedRunRunModal').then(m => ({ default: m.SavedRunRunModal })))
@@ -255,6 +257,8 @@ export default function App() {
   viewsVisited.current.add(view)
   const [transferOpen, setTransferOpen] = useState(false)
   const [copyKeyHost, setCopyKeyHost] = useState<string | null>(null)
+  // Hosts pre-selected in the multi-terminal dialog; null = closed.
+  const [terminalsFor, setTerminalsFor] = useState<string[] | null>(null)
   const [sshKeyAgeDays, setSshKeyAgeDays] = useState<number | null>(null)
   // Tools the console's own MCP server couldn't publish (invalid draft-2020-12
   // schema — see mcp_server_status). Drives the gear badge; a newly-broken
@@ -1046,6 +1050,12 @@ export default function App() {
                               label: 'Open SSH terminal',
                               onClick: () => bridge.launch_terminal(h.name).catch(console.error),
                             }] : []),
+                            {
+                              key: 'open_terminals',
+                              icon: <CodeOutlined />,
+                              label: 'Open SSH terminals…',
+                              onClick: () => setTerminalsFor([h.name]),
+                            },
                           ],
                     }}
                   >
@@ -1106,8 +1116,31 @@ export default function App() {
                       const collapsed = isGroupCollapsed(groupsState, g)
                       const up = members.filter(m => m.connected).length
                       const down = members.length - up
+                      const remoteMembers = members.filter(m => m.name !== 'local')
+                      const connectedRemote = remoteMembers.filter(m => m.connected).map(m => m.name)
                       return (
                         <div key={g || '__hosts__'}>
+                          <Dropdown
+                            trigger={['contextMenu']}
+                            disabled={remoteMembers.length === 0}
+                            menu={{
+                              items: [
+                                {
+                                  key: 'open_group_terminals',
+                                  icon: <CodeOutlined />,
+                                  label: `Open SSH terminals (${connectedRemote.length} connected)`,
+                                  disabled: connectedRemote.length === 0,
+                                  onClick: () => { void openGroupTerminals(connectedRemote) },
+                                },
+                                {
+                                  key: 'choose_group_terminals',
+                                  icon: <CodeOutlined />,
+                                  label: 'Choose hosts…',
+                                  onClick: () => setTerminalsFor(remoteMembers.map(m => m.name)),
+                                },
+                              ],
+                            }}
+                          >
                           <div
                             className="rs-group-header"
                             onClick={() => toggleGroup(g)}
@@ -1132,6 +1165,7 @@ export default function App() {
                               </span>
                             )}
                           </div>
+                          </Dropdown>
                           {!collapsed && members.map(hostRow)}
                         </div>
                       )
@@ -1678,6 +1712,14 @@ export default function App() {
                 bridge.get_hosts().then(setHosts)
                 bridge.get_runnables('all').then(setRunnables)
               }}
+            />
+          )}
+          {terminalsFor !== null && (
+            <TerminalsModal
+              open={terminalsFor !== null}
+              initial={terminalsFor ?? []}
+              connected={hosts.filter(h => h.name !== 'local' && h.connected).map(h => h.name)}
+              onClose={() => setTerminalsFor(null)}
             />
           )}
           {denylistOpen && (
