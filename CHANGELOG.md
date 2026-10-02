@@ -7,6 +7,81 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.71.0] — 2026-10-02
+
+**Logging and the run audit are now on by default, and runnables can record
+append-only audit events.** Runnables are CLI *and* agent tools, so a run that
+leaves no record is the wrong default.
+
+### Changed: logging is on without `[config.logging]`
+
+A runnable with no `[config.logging]` section now gets all the logging defaults,
+as if it had an empty one: the JSON log file under `{venv}/logs/`, the run
+record (`run_start` / `run_summary`), the runs index, INFO → stdout and
+WARNING+ → stderr routing, capture of `print()` output, the `--debug` flag and
+the uncaught-exception handler. Runnables that already declare
+`[config.logging]` behave exactly as before.
+
+**Migration.** If your runnable sets up its own logging, add:
+
+```toml
+[config.logging]
+enabled = false
+```
+
+That's **audit-only** mode. runspec leaves the root logger, stdout, `print()`
+and `sys.excepthook` alone (your hook still runs) and adds no `--debug` flag.
+It still writes the run record and audit events, through its own file-only
+loggers. There is no package-level switch for the run audit itself.
+
+Not affected:
+- the core `runspec` CLI, which records its state-changing verbs as audit events
+  instead;
+- `runspec.testing.ParseHarness`;
+- `RUNSPEC_AUDIT=off`, which restores the old opt-in behaviour for test suites
+  and CI only.
+
+### Changed: `summary = false` no longer drops the run record
+
+The `run_summary` record is part of the run audit, so it is always written.
+`[config.logging] summary = false` still loads but is ignored. Runs that set it
+now appear in History and `runspec logs` like any other. `summary_console`
+is unchanged.
+
+The Node pack keeps the opt-in behaviour, and still honours `summary`, until
+its port.
+
+### Added: `runspec.audit()` and `runspec audit`
+
+```python
+runspec.audit("payment.refund", "succeeded", target={"order": "A-1043"})
+```
+
+Each event goes to up to three places:
+- the venv's ledger `{venv}/logs/audit.jsonl`, which is append-only and
+  **hash-chained**, and is never rotated, pruned or compacted;
+- the OS log: syslog/journald (facility `auth`) or the Windows Application log
+  (source `runspec`, id 200);
+- the run's own log, so the event shows in History.
+
+The event is tied to the current run automatically. Secret-looking keys and
+values are redacted. `strict=True` raises `AuditError` when nothing could
+record it. In a shared venv, a non-owner's events reach the owner's ledger
+through the logs-inbox sweep, attributed to the inbox file's real owner.
+
+`runspec audit record | list | verify` does the same from a shell, lists the
+ledger, and checks its chain. `verify` names the first edited, removed or
+reordered line and exits 1. `[config.audit]` (`syslog`, `facility`) tunes the
+OS-log copy.
+
+The core CLI now records `denylist.change` (`runspec deny`), `logs.share`,
+`logs.prune` and `logs.compact`.
+
+See `docs/audit.md`, `docs/logging.md` → "Bring your own logging", and
+`spec/SPEC.md` → Logging / Audit Events.
+
+---
+
 ## [0.70.0] — 2026-10-01
 
 **A sudoers rule that refuses shells no longer breaks runs that carry

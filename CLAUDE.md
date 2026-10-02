@@ -163,6 +163,19 @@ Documented at `docs/python.md` → "Value provenance". Use `name in args` /
 depends on the active subcommand — no up-front guard needed. (Pre-0.38.0 `Arg` proxied ~30 dunders; the leak made `.value`
 needed "sometimes but not always".)
 
+**Logging is on by default (0.71.0):** a runnable with no `[config.logging]` gets the
+defaults (Node still opt-in until ported). `enabled = false` = audit-only (no root
+handlers/stdout routing/print tee/`--debug`; run record + audit events still written via
+runspec's own file-only loggers). No package-level switch for the run audit;
+`RUNSPEC_AUDIT=off` is tests/CI only (core `tests/conftest.py` sets it; mark
+`@pytest.mark.audit_on` to test the default). The core `runspec` CLI is exempt
+(`parser._is_core_cli`). **Audit events:** `runspec.audit(event, outcome, target=,
+detail=, strict=)` / `runspec audit record|list|verify` → hash-chained
+`{venv}/logs/audit.jsonl` (owner-only writer; non-owners via the inbox sweep,
+`auditlog.fold_inbox_lines`) + syslog/Windows event log + the run log. Module is
+`runspec/auditlog.py` (not `audit.py` — the package exports the `audit` function).
+See `docs/audit.md`, SPEC → Audit Events.
+
 `[config.logging]` (0.10.0+): `logger = logging.getLogger(__name__)` just works.
 Extra fields (0.11.0): `logger.info('msg', extra={'user_id': '42'})` — standard stdlib
 `extra=` API; fields appear nested under `"extra"` in JSON, appended as `{key=value}` on console.
@@ -184,8 +197,8 @@ the data the console history/analytics tabs and `runspec logs` read.
 to stderr. The echo is off by default so stdout stays clean for pipes and a
 clean run never lands on a stream that stream-classifying log processors (e.g.
 Rundeck, which tags *all* stderr as ERROR) would flag — turning it on is the
-opt-in for interactive use. Both are **package-level** controls: set `summary =
-false` to drop the record. There is no per-invocation override flag — the
+opt-in for interactive use. **Since 0.71.0 the record is always written:
+`summary = false` is accepted but ignored** (Node still honours it). There is no per-invocation override flag — the
 auto-injected `--no-summary` / `RUNSPEC_*_ARG_NO_SUMMARY` kill switch was
 removed in 0.36.0 (once the echo became opt-in it mostly served to suppress the
 audit record the console depends on, so it didn't earn a global flag on every

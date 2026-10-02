@@ -57,7 +57,8 @@ Project-wide defaults. All fields are optional.
 | `lang` | string | — | Preferred language for `runspec generate` |
 | `name` | string | — | MCP server name reported by `runspec serve`. Defaults to the venv directory name. The venv directory name must pass the naming check (see *Virtual Environment Identity*) regardless of whether this field is set. |
 | `version` | string | `"1"` | runspec spec version |
-| `logging` | table | — | Logging configuration. See [Logging](#logging). |
+| `logging` | table | defaults | Logging configuration. On by default — an absent section means the defaults. See [Logging](#logging). |
+| `audit` | table | defaults | Where audit events go besides the venv ledger. See [Audit Events](#audit-events). |
 | `runspec_env` | string | — | Path to a `.runspec_env` file. Relative paths resolve from `sys.prefix`. Per-runnable `runspec_env` wins. |
 | `meta` | table | — | Project-wide developer-defined metadata. Pass-through — runspec never interprets it. Orchestration emitters read project defaults here (e.g. `[config.meta.rundeck]` for `runspec emit --rundeck`). |
 
@@ -116,16 +117,47 @@ name in the venv path so the identity is visible at the filesystem level:
 
 ### Logging
 
-When `[config.logging]` is present, the language pack configures the stdlib
-logging system automatically when `parse()` is called. No additional imports
-or setup calls are required in the runnable — `logger = logging.getLogger(__name__)`
-just works.
+Logging is **on by default**. Runnables are both CLI and agent tools, so every
+run is recorded: the language pack configures the stdlib logging system
+automatically when `parse()` is called, whether or not the runnable has a
+`[config.logging]` section — an absent section means all the defaults below. No
+additional imports or setup calls are required in the runnable —
+`logger = logging.getLogger(__name__)` just works.
+
+(Before Python core 0.71.0 logging was opt-in: nothing was configured without a
+`[config.logging]` section. The Node pack still behaves that way until its port
+lands.)
+
+Logging has two layers:
+
+- **The run audit** — the `run_start` / `run_summary` records, the runs index,
+  the logs inbox for other accounts, and [audit events](#audit-events). Always on;
+  there is no package-level switch.
+- **The logging takeover** — handlers on the root logger, INFO → stdout /
+  WARNING+ → stderr routing, capture of `print()` output into the log file, the
+  auto-added `--debug` flag, and the uncaught-exception handler. On by default;
+  `enabled = false` turns it off for runnables that bring their own logging setup.
+
+With `enabled = false` (**audit-only**) the language pack leaves the process's
+logging alone: no root handlers or level change, no stream routing, no print
+capture, no `--debug` flag, and the uncaught-exception hook only records the
+exception before calling whatever hook was installed before it. The run record
+and audit events are still written to the log file, through runspec's own
+file-only loggers (`runspec.runsummary`, `runspec.exception`, `runspec.audit`),
+which don't propagate to the root logger in that mode.
+
+Two exceptions to the default: the core `runspec` CLI (the control plane — it
+records its state-changing verbs as audit events instead), and the
+`RUNSPEC_AUDIT=off` environment variable, which restores the opt-in behaviour
+(and makes `audit()` a no-op) for **test suites and CI only**. A declared
+`[config.logging]` section is always honoured.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
+| `enabled` | bool | `true` | `false` = audit-only (see above). The run audit itself can't be turned off. |
 | `rotate` | string | `"midnight"` | Rotation policy: `"N MB"`, `"N KB"`, `"N GB"` (size-based), `"daily"`, `"midnight"`, `"weekly"` (time-based). Inert when `store = "per-run"`. |
 | `keep` | int | `7` | Number of rotated backup files to retain. Inert when `store = "per-run"`. |
-| `summary` | bool | `true` | Emit one run-summary record (file) + one stderr line at process exit. See *Run summary* below. |
+| `summary` | bool | `true` | **Ignored since 0.71.0** (still accepted). The run-summary record is part of the always-on run audit. See *Run summary* below. |
 | `store` | string | `"single"` | Log file layout — `"single"` or `"per-run"`. See *File layout* below. |
 
 There is no `level` knob. Console routing is fixed (see below); the file
@@ -211,9 +243,9 @@ Two records support this. Neither is counted in the run summary's `events`:
   `host`, `proc_start`, `user`, `user_target`, `invocation_args`, `start_ts`,
   `label`, `trigger`, `venv`. Omitted when `[config.history] db = false`; a
   `{"event": "run_start", "history_db": false}` marker is written instead.
-- **`run_end`** — written instead of `run_summary` when `summary = false`
-  (`run_id`, `exit_code`, `duration_ms`), so a clean run is never mistaken for
-  a crash.
+- **`run_end`** — a slim end record (`run_id`, `exit_code`, `duration_ms`)
+  that packs before 0.71.0 wrote instead of `run_summary` when `summary =
+  false`. Sweeps still accept it; current packs always write `run_summary`.
 
 The Node pack does not implement the inbox yet: its log directory is the
 project root and it keeps no runs index.
@@ -255,7 +287,7 @@ call do the right thing in two very different contexts:
 
 #### `--debug` flag
 
-When `[config.logging]` is present, a `--debug` flag is auto-added to every
+When logging is enabled (the default — not in audit-only mode), a `--debug` flag is auto-added to every
 runnable (also settable via `RUNSPEC_DEBUG=1`). Passing it includes DEBUG
 records — on stdout *and* in the audit file — and tracebacks on stdout.
 One knob; both surfaces move together:
@@ -265,9 +297,8 @@ my-script --debug
 RUNSPEC_DEBUG=1 my-script
 ```
 
-The flag only *adds* visibility; it never silences anything. The `debug` name
-is reserved when `[config.logging]` is present — your runnable cannot define
-its own argument by that name.
+The flag only *adds* visibility; it never silences anything. If your runnable
+defines its own `debug` argument, yours is kept and no flag is added.
 
 #### `run_id`
 
@@ -289,8 +320,7 @@ appear fully in the audit log without any code changes.
 
 #### Run summary
 
-When `summary = true` (default), the language pack records one summary at
-process exit — without any user code. It does two things:
+The language pack always records one summary at process exit — without any user code. It does two things:
 
 1. **Audit log:** one JSON record on the `runspec.runsummary` logger,
    written to the audit file (and only the audit file — the console
@@ -330,12 +360,11 @@ line doesn't trip log processors that flag any case-insensitive `error` match �
 e.g. Rundeck's output highlighter, which would otherwise colour a clean run red
 and tag it at ERROR level for downstream consumers.
 
-The summary has two package-level controls in `[config.logging]`: `summary`
-(default true) gates the structured audit record, and `summary_console`
-(default false) gates the human-readable stderr line. Set `summary = false`
-to drop the record entirely. There is no per-invocation override flag —
-the audit record is the data the console history/analytics read, so it is
-not exposed as a user-facing toggle on every runnable.
+The structured record is part of the run audit and is always written.
+`summary = false` is still accepted, so older files load, but it is ignored
+since 0.71.0 (the Node pack still honours it until its port).
+`summary_console` (default false) gates the human-readable stderr line. There
+is no per-invocation override flag.
 
 In agent mode, `runspec serve` returns the same information per call via
 the MCP `_meta` extension:
@@ -353,14 +382,13 @@ ignore the block. The tool response body is unaffected.
 
 #### Uncaught exceptions
 
-When `[config.logging]` is present, the language pack installs a process-level
+When logging is enabled (the default — not in audit-only mode), the language pack installs a process-level
 handler (Python `sys.excepthook`; Node `uncaughtException` / `unhandledRejection`)
 so **every** uncaught exception is handled the same way — automatically, with no
 per-runnable `try`/`except` and no code template. A runnable just lets the
 exception propagate.
 
-The handler is installed at the *start* of `parse()`, as soon as `[config.logging]`
-is seen — not only once parsing finishes. This means a failure inside runspec's
+The handler is installed at the *start* of `parse()` — not only once parsing finishes. This means a failure inside runspec's
 own parse pipeline (argument inference, validation, type coercion, or a later
 access to an undeclared argument) is routed through the same path as a runtime
 exception, rather than dumping a raw traceback. The structured audit record (1.
@@ -371,8 +399,7 @@ parse pipeline itself — before handlers exist — still gets the console treat
 On an uncaught exception:
 
 1. **Audit log (always):** one structured record on the `runspec.exception`
-   logger, written to the audit file regardless of `--debug` *and* regardless of
-   the `summary` toggle. Like `runspec.runsummary`, this logger is file-only —
+   logger, written to the audit file regardless of `--debug`. Like `runspec.runsummary`, this logger is file-only —
    the console handlers filter it out. The record carries the human `exc` string
    (full traceback) **and** a machine-readable `exc_structured` object that UI
    tools can render in a table:
@@ -1405,6 +1432,78 @@ so a tool can check a rule will match before writing it.
 the denylist it edits.
 
 ---
+
+## Audit Events
+
+Every run is recorded by the [run audit](#logging). **Audit events** record the
+important moments *inside* a run (a refund issued, a host rebooted) or outside
+one (a deny rule added). A language pack exposes one call — Python
+`runspec.audit(event, outcome, *, target, detail, strict)` — and the core CLI
+exposes the same as `runspec audit record`.
+
+### Record
+
+| Field | Type | Description |
+|---|---|---|
+| `v` | int | Record version (`1`) |
+| `ts` | string | UTC ISO-8601 timestamp |
+| `id` | string | UUID4 of this event |
+| `event` | string | Dotted lowercase name chosen by the caller (`^[a-z0-9][a-z0-9_.-]{0,99}$`), e.g. `payment.refund` |
+| `outcome` | string | Short lowercase word (`started`, `succeeded`, `failed`, `denied`…) or empty |
+| `actor` / `uid` | string / int | Effective OS user that wrote the event |
+| `host`, `pid`, `venv` | | Where it was written |
+| `runnable`, `command`, `run_id` | string | The run it belongs to (empty outside a run) |
+| `agent`, `trigger` | bool / string | Provenance, as in the run summary |
+| `target` | object | What was acted on |
+| `detail` | object | Extra context |
+| `prev`, `hash` | string | Ledger chain (see below) |
+
+Keys matching the secret-key pattern (`password`, `token`, `api_key`,
+`secret`…) and secret-looking values inside `target`/`detail` are redacted, as in
+log records. An invalid `event` name is a programming error (Python
+`ValueError`); otherwise recording never raises, unless `strict` is set and no
+sink took the event (Python `AuditError`).
+
+### Sinks
+
+1. **The venv ledger** — `{installation_root}/logs/audit.jsonl`. Opened in
+   append mode, never rotated, truncated, pruned or compacted. Each line is the
+   record plus `prev` (the previous line's `hash`, or `sha256:` + 64 zeros for
+   the first line) and `hash` = `sha256:` + hex SHA-256 of the record *including*
+   `prev` but excluding `hash`, serialised as JSON with sorted keys and
+   `(",", ":")` separators. Editing, deleting, inserting or reordering a line
+   breaks the chain; `runspec audit verify` reports the first bad line. Only the
+   venv owner (or root) appends. Another account in a shared venv writes its
+   events into its own per-run [inbox](#logging) file; the owner's sweep appends
+   them to the ledger with `actor` replaced by the file's kernel-attested owner
+   (the claimed actor kept as `claimed_actor`) and `via = "inbox"`. With no
+   writable venv `logs/`, the ledger is `{home}/logs/audit.jsonl`.
+2. **The OS log** — POSIX: syslog (ident `runspec`, facility from
+   `[config.audit] facility`, default `auth`, priority `notice`); Windows: the
+   Application event log (source `runspec`, event id 200). The message is
+   `runspec-audit ` followed by the record as JSON, including the ledger `hash`
+   when there is one, so truncating the ledger is detectable against the OS log.
+3. **The run's log** — inside a run, a file-only record on the `runspec.audit`
+   logger with `extra.event = "audit"` and the record under `extra.audit`.
+
+| `[config.audit]` field | Type | Default | Description |
+|---|---|---|---|
+| `syslog` | bool | `true` | Also write events to the OS log |
+| `facility` | string | `"auth"` | Syslog facility (POSIX) |
+
+There is no switch to turn the ledger off.
+
+### Control-plane events
+
+The core CLI records its own state-changing verbs: `denylist.change`
+(`runspec deny` add/all/remove/enable/clear/mode), `logs.share`, `logs.prune`
+and `logs.compact`.
+
+### Integrity
+
+Local records are tamper-*evident*, not tamper-proof: root or a local
+administrator can always erase them. An immutable record has to leave the
+machine — ship the OS log (syslog/journald) to a central system.
 
 ## Groups
 

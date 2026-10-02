@@ -1,19 +1,20 @@
 # Logging
 
-A runnable that wants stdlib logging shouldn't have to wire up handlers,
-formatters, or rotation policies. Add `[config.logging]` to your
-`runspec.toml` and `parse()` does it for you.
+A runnable shouldn't have to wire up handlers, formatters, or rotation
+policies. `parse()` does it for you — and because a runnable is both a CLI tool
+and an agent tool, every run is recorded.
 
 !!! info "Availability"
-    `[config.logging]` is available in **runspec 0.10.0+** (Python) and
-    **runspec-node 0.9.0+**. Structured `extra` fields landed in
-    **0.11.0 / node-0.10.0**.
+    Logging is **on by default** from **runspec 0.71.0** (Python): a runnable
+    with no `[config.logging]` section gets all the defaults. Before that, and
+    in **runspec-node** until its port lands, you opt in by adding
+    `[config.logging]` (available since 0.10.0 / node-0.9.0).
 
 ---
 
-## Turn it on
+## It's on by default
 
-Add the block to your spec:
+You don't need to add anything. To tune it, add the block to your spec:
 
 ```toml
 [config.logging]
@@ -21,8 +22,29 @@ rotate = "midnight"    # see "Rotation policies" below
 keep   = 7             # number of rotated backups to keep
 ```
 
-Both fields are optional. Defaults: `rotate = "midnight"`, `keep = 7`. That's
-enough — `parse()` configures the rest.
+Every field is optional. Defaults: `rotate = "midnight"`, `keep = 7`.
+
+---
+
+## Bring your own logging: `enabled = false`
+
+If your runnable configures logging itself (structlog, loguru, a corporate
+handler, OpenTelemetry), turn runspec's takeover off:
+
+```toml
+[config.logging]
+enabled = false
+```
+
+This is **audit-only** mode. runspec leaves your logging alone: no handlers on
+the root logger, no stdout/stderr routing, no capture of `print()` output, no
+`--debug` flag, and your own `sys.excepthook` still runs. It still writes the run
+record (who ran what, with which args, the exit code and how long it took) and
+any [audit events](audit.md) to the venv's `logs/`, through its own private
+loggers. The run audit can't be turned off.
+
+If audit-only doesn't fit how you log, tell us what you need — the plan is to
+make runspec sit alongside more logging setups over time.
 
 ---
 
@@ -119,8 +141,8 @@ response when an agent invokes it.
 
 ## Runtime override: `--debug`
 
-When `[config.logging]` is present, a `--debug` flag is automatically added
-to every runnable. It only raises visibility — there is no `level` knob to
+A `--debug` flag is automatically added to every runnable (not in audit-only
+mode, and not when your runnable defines its own `debug` argument). It only raises visibility — there is no `level` knob to
 silence INFO, because silencing INFO would break agent responses.
 
 ```bash
@@ -369,10 +391,9 @@ automatically when it escalates to the owner, so its runs stop falling back to
 
 ## Run summary
 
-When `[config.logging]` is present, runspec emits a **run summary** at process
-exit. This has two independently controlled parts:
+runspec emits a **run summary** at process exit. It has two parts:
 
-- **The audit record** (`summary`, default **on**) — one structured JSON record
+- **The audit record** (always on) — one structured JSON record
   written to the audit log. It captures the run's duration, exit code, log-event
   counts by level, the effective autonomy, whether it ran under an agent
   (`runspec serve` / `RUNSPEC_AGENT`), the **trigger provenance** (see below),
@@ -416,11 +437,10 @@ summary_console = true   # show the closing line in the terminal
 
 (The level words are abbreviated `warn`/`err` purely to keep the line terse.)
 
-Both parts are **package-level** controls in `[config.logging]` — there is no
-per-invocation override flag on the runnable. Set `summary = false` to drop the
-audit record (note: that also removes the run from the console
-history/analytics), and leave `summary_console` off (the default) to keep the
-terminal quiet.
+The record is part of the run audit, so it is always written. Since **runspec
+0.71.0** `summary = false` is still accepted but ignored (the Node pack still
+honours it until its port). Leave `summary_console` off (the default) to keep
+the terminal quiet. There is no per-invocation override flag on the runnable.
 
 !!! note "Availability"
     Run summaries landed in **runspec 0.12.x** and **node-0.12.0**. The
@@ -429,15 +449,14 @@ terminal quiet.
     per-invocation `--no-summary` flag (and `RUNSPEC_*_ARG_NO_SUMMARY` env
     var) was removed in **runspec 0.36.0** and **node-0.32.0** — once the
     echo became opt-in, the flag mostly served to suppress the audit record
-    the console depends on, so suppression now lives only at the package level
-    (`summary = false`).
+    the console depends on. Since **runspec 0.71.0** the record can't be
+    suppressed at all: `summary = false` is ignored.
 
 ---
 
 ## Uncaught exceptions
 
-You don't need `try`/`except` wrappers in your runnable. When `[config.logging]`
-is present, runspec installs a process-level handler so **every** uncaught
+You don't need `try`/`except` wrappers in your runnable. runspec installs a process-level handler so **every** uncaught
 exception is treated the same way — automatically. Just let exceptions
 propagate.
 
@@ -452,7 +471,7 @@ action = args.no_such_arg   # AttributeError — caught and shown as a one-liner
 ```
 
 On a crash, runspec always writes a structured record to the audit file (even
-without `--debug`, even with `summary = false`), and gates the console output on
+without `--debug`), and gates the console output on
 `--debug`:
 
 ```json
@@ -505,6 +524,7 @@ only with `--debug`, while the audit file always has the complete record.
 
 - [Python Library](python.md) — `parse()` integration details
 - [Node Library](node.md) — `getLogger` and ParsedArgs integration
+- [Audit events](audit.md) — record the important moments in a run, append-only
 - [Agent Integration](agents.md) — how `[config.logging]` behaves when
   invoked via `runspec serve`
 

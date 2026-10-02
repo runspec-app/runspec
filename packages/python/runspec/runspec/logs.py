@@ -617,6 +617,19 @@ def prune(
             ts = datetime.now(timezone.utc).isoformat()
             for d, names in pruned_by_dir.items():
                 runsdb.mark_log_pruned(d, names, pruned_by=who, pruned_at=ts)
+    if pruned_by_dir:
+        _audit_retention(
+            "logs.prune",
+            dirs=list(pruned_by_dir),
+            detail={
+                "files": sum(len(v) for v in pruned_by_dir.values()),
+                "freed_bytes": freed,
+                "runnable": runnable or "",
+                "older_than": str(older_than or ""),
+                "max_files": max_files,
+                "max_total_size": max_total_size,
+            },
+        )
     if as_json:
         out.write(json.dumps({"dry_run": dry_run, "count": len(targets), "freed_bytes": freed, "deleted": deleted}) + "\n")
     else:
@@ -743,6 +756,12 @@ def compact(
         if not as_json:
             out.write(f"compacted {len(sources)} file(s) → {target}\n")
 
+    if compacted and not dry_run:
+        _audit_retention(
+            "logs.compact",
+            dirs=sorted({Path(a["archive"]).parent for a in archives}),
+            detail={"files": compacted, "archives": len(archives), "runnable": runnable or "", "older_than": str(older_than), "gzip": gzip_ or None},
+        )
     if as_json:
         out.write(json.dumps({"dry_run": dry_run, "compacted": compacted, "archives": archives}) + "\n")
     elif not plan:
@@ -896,9 +915,24 @@ def share(
             out.write(f"shared {d}{g} — 2775 setgid{extra}{acl}\n")
             if inbox or no_inbox:
                 out.write(_inbox_line(result) + "\n")
+    _audit_retention(
+        "logs.share",
+        dirs=[Path(r["dir"]) for r in results if r.get("dir")],
+        detail={"inbox": "on" if inbox else ("off" if no_inbox else ""), "group": group or "", "acl_users": acl_users or None, "owner_only": owner_only or None},
+    )
     if as_json:
         out.write(json.dumps({"shared": results}) + "\n")
     return results
+
+
+def _audit_retention(event: str, *, dirs: list[Path], detail: dict[str, Any]) -> None:
+    """Record a retention / sharing change to the logs as an audit event —
+    deleting or rolling up run logs is exactly what the ledger is for. The
+    ledger itself (``audit.jsonl``) is never a prune/compact target. Best-effort."""
+    with contextlib.suppress(Exception):
+        from .auditlog import audit
+
+        audit(event, "succeeded", target={"dirs": [str(d) for d in dirs]}, detail={k: v for k, v in detail.items() if v not in (None, "")})
 
 
 def _share_inbox(d: Path, *, inbox: bool, no_inbox: bool, owner_only: bool) -> dict[str, Any]:

@@ -87,8 +87,7 @@ run file, and bob can't touch alice's.
    It holds an exclusive **lock** on that file for the whole run; the lock is
    how readers know the run is still live. The first record is `run_start`.
 2. **Run.** Log records go to that file as usual.
-3. **Finish.** The last record is `run_summary` (or a slim `run_end` when
-   `[config.logging] summary = false`), and the lock is released.
+3. **Finish.** The last record is `run_summary`, and the lock is released.
 4. **Visible immediately.** Readers (`runspec history list`, `runspec logs`, the
    console) read the inbox as well as the index, so the run shows up straight
    away — marked **pending** (the console tags it **inbox**).

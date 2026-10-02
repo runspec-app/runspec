@@ -525,6 +525,33 @@ the `.runspec_env` section of the format reference.
 
 ---
 
+## `runspec audit`
+
+Record, list or verify [audit events](audit.md) — the venv's append-only,
+hash-chained ledger (`{venv}/logs/audit.jsonl`), also copied to syslog / the
+Windows event log.
+
+```bash
+runspec audit record payment.refund --outcome succeeded -t order=A-1043 -d amount=12.50
+runspec audit record deploy.start --strict   # exit 1 if it couldn't be recorded
+runspec audit list                           # newest 50 events
+runspec audit list --json -n 500             # one JSON record per line
+runspec audit verify                         # check the hash chain (exit 1 if broken)
+```
+
+| Option | Description |
+|---|---|
+| `record EVENT` | Event name (lowercase, dotted) |
+| `-o`, `--outcome` | Outcome word (`started`, `succeeded`, `failed`, …) |
+| `-t`, `--target key=value` | What was acted on (repeatable) |
+| `-d`, `--detail key=value` | Extra context (repeatable) |
+| `--strict` | Exit 1 if no sink took the event |
+| `-f`, `--file` | Ledger file to list/verify, or directory to record into |
+| `-n`, `--limit` | Events to show for `list` (default 50) |
+| `--json` | JSON output |
+
+---
+
 ## `runspec deny`
 
 Manage the venv **denylist** — a kill switch that disables runnables installed

@@ -224,7 +224,6 @@ class TestExceptionCapture:
         # Disable the runs index too so this tests summary in isolation — with
         # history on (the default) the state is kept alive for the DB finalize.
         configure_logging(_cfg(summary=False), runnable_name="nosum", history_cfg={"db": False})
-        assert ls._summary_state is None  # summary genuinely disabled
         try:
             raise ValueError("invalid quality 200")
         except ValueError:
@@ -378,17 +377,17 @@ class TestExcStructuredHelpers:
 
 
 class TestDisable:
-    def test_summary_false_in_config_disables_record(self, tmp_path):
-        # summary=False drops the audit record; with console off (default) and the
-        # runs index off, the whole hook is inactive. (History on — the default —
-        # keeps the state alive for the DB finalize; that path is covered in the
-        # runsdb tests.)
+    def test_summary_false_is_ignored_record_still_written(self, tmp_path):
+        # 0.71.0: the run record is part of the always-on run audit, so a legacy
+        # `summary = false` no longer drops it.
         configure_logging(_cfg(summary=False), runnable_name="x", history_cfg={"db": False})
-        assert ls._summary_state is None
+        assert ls._summary_state is not None
+        _emit_run_summary()
+        lines = [json.loads(line) for line in (tmp_path / "logs" / "x.log").read_text().splitlines()]
+        assert any(obj.get("logger") == "runspec.runsummary" for obj in lines)
 
-    def test_summary_console_active_even_when_record_off(self, tmp_path, capsys):
-        # The two switches are independent: summary=False, summary_console=True
-        # → no audit record, but the human line still prints.
+    def test_summary_console_prints_alongside_the_record(self, tmp_path, capsys):
+        # summary_console=True adds the human line; the record is written too.
         configure_logging(_cfg(summary=False, summary_console=True), runnable_name="x")
         assert ls._summary_state is not None
         logging.getLogger("t").info("ran")
@@ -396,8 +395,8 @@ class TestDisable:
         err = capsys.readouterr().err
         assert "runspec: x completed" in err
         log_path = tmp_path / "logs" / "x.log"
-        lines = [json.loads(line) for line in log_path.read_text().strip().splitlines()] if log_path.exists() else []
-        assert not any(obj.get("logger") == "runspec.runsummary" for obj in lines)
+        lines = [json.loads(line) for line in log_path.read_text().strip().splitlines()]
+        assert any(obj.get("logger") == "runspec.runsummary" for obj in lines)
 
 
 # ── Stderr line shape ────────────────────────────────────────────────────────
@@ -543,8 +542,8 @@ class TestRunsIndexHook:
         configure_logging(_cfg(summary=False), runnable_name="demo")
         rows = runsdb.list_runs(tmp_path / "logs", live=False)
         assert rows and rows[0]["runnable"] == "demo"
-        # …but the run_summary audit record is still suppressed.
+        # …and the run_summary record is written too (summary=False is ignored).
         _emit_run_summary()
         log_path = tmp_path / "logs" / "demo.log"
-        lines = [json.loads(x) for x in log_path.read_text().splitlines()] if log_path.exists() else []
-        assert not any(x.get("logger") == "runspec.runsummary" for x in lines)
+        lines = [json.loads(x) for x in log_path.read_text().splitlines()]
+        assert any(x.get("logger") == "runspec.runsummary" for x in lines)

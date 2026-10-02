@@ -52,8 +52,13 @@
         },
         "logging": {
           "type": "object",
-          "description": "When present, the language pack configures structured logging automatically on parse().",
+          "description": "Logging and the run audit are on by default; this section tunes them. Absent = all defaults.",
           "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "false = audit-only: runspec leaves the process's logging to you (no root handlers, no stdout routing, no print capture, no --debug flag) but still writes the run record and audit events. The run audit itself can't be turned off.",
+              "default": true
+            },
             "rotate": {
               "type": "string",
               "description": "Log rotation policy: a time keyword (midnight, daily, weekly) or a size like '10 MB'.",
@@ -71,7 +76,7 @@
             },
             "summary": {
               "type": "boolean",
-              "description": "Write a structured run-summary record (duration, exit code, per-level event counts) to the audit log after each run. This is the data the console history/analytics tabs and 'runspec logs' read.",
+              "description": "Ignored since runspec 0.71.0 (still accepted): the structured run-summary record is part of the always-on run audit. The Node pack still honours it until its port.",
               "default": true
             },
             "summary_console": {
@@ -84,6 +89,24 @@
               "enum": ["single", "per-run"],
               "default": "single",
               "description": "Log file layout. 'single' = one rotating {runnable}.log per runnable (default). 'per-run' = one {runnable}.{utc-ts}.{run_id}.log per invocation — multi-writer safe (no in-process rotation; use 'runspec logs' to view/compact/prune)."
+            }
+          },
+          "additionalProperties": false
+        },
+        "audit": {
+          "type": "object",
+          "description": "Where runspec.audit() events go besides the venv's hash-chained ledger (logs/audit.jsonl) and the run's own log.",
+          "properties": {
+            "syslog": {
+              "type": "boolean",
+              "description": "Also write each audit event to the OS log — syslog/journald on POSIX, the Application event log on Windows.",
+              "default": true
+            },
+            "facility": {
+              "type": "string",
+              "enum": ["auth", "authpriv", "user", "daemon", "local0", "local1", "local2", "local3", "local4", "local5", "local6", "local7"],
+              "description": "Syslog facility for audit events (POSIX).",
+              "default": "auth"
             }
           },
           "additionalProperties": false

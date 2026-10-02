@@ -66,6 +66,7 @@ nav:
     - Format reference: format.md
     - Typed arguments: typed-args.md
     - Logging: logging.md
+    - Audit events: audit.md
     - Shared venvs — the logs inbox: logs-inbox.md
     - Testing: testing.md
     - Python library: python.md

@@ -498,7 +498,7 @@ class TestMultiUser:
         [row] = [r for r in runsdb.list_runs(venv / "logs", live=False) if r["source"] == "inbox"]
         assert row["status"] == "crashed"
 
-    def test_summary_off_writes_run_end_so_a_clean_run_isnt_a_crash(self, shared):
+    def test_legacy_summary_off_still_writes_the_record(self, shared):
         venv, exe = shared
         _run_as(OWNER, exe, venv, _A_RUN)
         body = _A_RUN.replace('{"rotate": "midnight", "keep": 7}', '{"rotate": "midnight", "keep": 7, "summary": False}')

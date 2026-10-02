@@ -368,7 +368,7 @@ class TestLoggingNormalisation:
         p = tmp_path / "runspec.toml"
         p.write_text("[config.logging]\n\n[greet]\n")
         cfg = load_raw(p)["config"]["logging"]
-        assert cfg == {"rotate": "midnight", "keep": 7, "summary": True, "summary_console": False, "store": "single"}
+        assert cfg == {"enabled": True, "rotate": "midnight", "keep": 7, "summary": True, "summary_console": False, "store": "single"}
 
     def test_logging_summary_explicit_false(self, tmp_path):
         p = tmp_path / "runspec.toml"

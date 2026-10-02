@@ -941,6 +941,12 @@ def sweep_inbox(
                 result["skipped"] += 1
                 continue
             taken[uid] = taken.get(uid, 0) + 1
+            # runspec.audit() events a non-owner wrote into its run file join the
+            # owner's hash-chained ledger, attributed to the file's real owner.
+            with contextlib.suppress(Exception):
+                from . import auditlog as _audit
+
+                result["audit_events"] = result.get("audit_events", 0) + _audit.fold_inbox_lines(log_dir, entry.lines, os_user=os_user or user_name(uid))
             if not index or con is None:
                 result["unindexed"] += 1
                 continue

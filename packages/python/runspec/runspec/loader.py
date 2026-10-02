@@ -57,7 +57,24 @@ def _normalise_config(raw: dict[str, Any]) -> dict[str, Any]:
         "version": str(raw.get("version", "1")),
         "logging": _normalise_logging(raw.get("logging")),
         "history": _normalise_history(raw.get("history")),
+        "audit": _normalise_audit(raw.get("audit")),
         "runspec_env": raw.get("runspec_env"),
+    }
+
+
+def _normalise_audit(raw: dict[str, Any] | None) -> dict[str, Any]:
+    """Normalise [config.audit] — where `runspec.audit()` events go besides the
+    venv ledger and the run's own log. Always returns a dict (the audit trail has
+    no off switch; these only tune the OS-log sink).
+
+    `syslog` (default true) also writes each event to the OS log — syslog/journald
+    on POSIX, the Application event log on Windows. `facility` (default "auth")
+    is the syslog facility; unknown names fall back to "auth" at write time.
+    """
+    raw = raw or {}
+    return {
+        "syslog": bool(raw.get("syslog", True)),
+        "facility": str(raw.get("facility", "auth")),
     }
 
 
@@ -104,13 +121,18 @@ def _normalise_logging(raw: dict[str, Any] | None) -> dict[str, Any] | None:
     stdout stays clean for pipes and the line never lands on a stream that log
     processors (e.g. Rundeck) tag as ERROR. Turn it on for interactive use.
 
-    Both are package-level controls: set `summary = false` to drop the audit
-    record, `summary_console = false` (the default) to keep the terminal quiet.
+    The record is part of the always-on run audit: `summary = false` is still
+    parsed (so existing files keep loading) but ignored since 0.71.0.
+    `summary_console = false` (the default) keeps the terminal quiet.
     """
     if raw is None:
         return None
     store = str(raw.get("store", "single"))
     return {
+        # false = "audit-only": runspec leaves the process's logging alone (no
+        # root handlers, no stdout routing, no print tee, no --debug) but still
+        # writes the run record and audit events. See spec/SPEC.md → Logging.
+        "enabled": bool(raw.get("enabled", True)),
         "rotate": str(raw.get("rotate", "midnight")),
         "keep": int(raw.get("keep", 7)),
         "summary": bool(raw.get("summary", True)),

@@ -19,7 +19,7 @@ from runspec.env import apply_env_file
 from runspec.finder import find_config
 from runspec.inference import effective_autonomy, infer_script
 from runspec.loader import load_raw
-from runspec.logging_setup import adopt_exec_run_id, configure_logging, install_excepthook
+from runspec.logging_setup import adopt_exec_run_id, configure_logging, install_excepthook, resolve_logging_config
 from runspec.models import Arg, Group, RunSpec
 from runspec.types import coerce
 from runspec.validator import raise_if_errors, validate_args, validate_groups
@@ -34,6 +34,7 @@ def parse(
     _prompt_secrets: bool = True,
     _check_run_as: bool = True,
     _check_denylist: bool = True,
+    _implicit_logging: bool = True,
 ) -> RunSpec:
     """
     Parse arguments for the calling runnable.
@@ -52,7 +53,14 @@ def parse(
     """
     try:
         return _parse_impl(
-            script_name, argv, config_path, enforce_required_command=_enforce_required_command, prompt_secrets=_prompt_secrets, check_run_as=_check_run_as, check_denylist=_check_denylist
+            script_name,
+            argv,
+            config_path,
+            enforce_required_command=_enforce_required_command,
+            prompt_secrets=_prompt_secrets,
+            check_run_as=_check_run_as,
+            check_denylist=_check_denylist,
+            implicit_logging=_implicit_logging,
         )
     except errors.RunSpecError as e:
         print(str(e))
@@ -60,6 +68,17 @@ def parse(
     except FileNotFoundError as e:
         print(str(e))
         sys.exit(1)
+
+
+_CORE_CLI_CONFIG = Path(__file__).parent / "runspec.toml"
+
+
+def _is_core_cli(config_path: Path) -> bool:
+    """Is this the core `runspec` CLI's own bundled spec?"""
+    try:
+        return Path(config_path).resolve() == _CORE_CLI_CONFIG.resolve()
+    except OSError:
+        return False
 
 
 def _parse_impl(
@@ -70,6 +89,7 @@ def _parse_impl(
     prompt_secrets: bool = True,
     check_run_as: bool = True,
     check_denylist: bool = True,
+    implicit_logging: bool = True,
 ) -> RunSpec:
     """Internal: full parse pipeline. Raises on error — call parse() for CLI use."""
     # 1. Find config — explicit arg > RUNSPEC_CONFIG > caller's package > cwd.
@@ -84,6 +104,14 @@ def _parse_impl(
     raw = load_raw(config_path)
     config = raw["config"]
 
+    # 2.1. Logging is on by default: a runnable with no [config.logging] gets the
+    # defaults. Exceptions: the core `runspec` CLI (the control plane — it audits
+    # its own state-changing verbs explicitly instead), callers that opt out
+    # (the test harness), and RUNSPEC_AUDIT=off (test suites / CI). `takeover`
+    # is false for `enabled = false` — audit-only, the developer owns logging.
+    log_cfg = resolve_logging_config(config.get("logging"), implicit=implicit_logging and not _is_core_cli(config_path))
+    takeover = bool(log_cfg and log_cfg.get("enabled", True))
+
     # 2.5. Install the uncaught-exception hook now — before the rest of the
     # pipeline runs — so a failure inside runspec's own parse code (inference,
     # argv parsing, validation, coercion, RunSpec build) is routed through the
@@ -93,7 +121,7 @@ def _parse_impl(
     # Gated on [config.logging] to match the feature's contract; full set-up
     # (file handler, summary, final --debug value) still happens in
     # configure_logging once parsing succeeds.
-    if config.get("logging"):
+    if takeover:
         early_argv = sys.argv[1:] if argv is None else argv
         install_excepthook(debug="--debug" in early_argv)
 
@@ -118,7 +146,7 @@ def _parse_impl(
     # 4.5. Auto-inject --debug flag when [config.logging] is present.
     # Without --debug: stdout = INFO+, stderr = WARNING+ (file always = DEBUG).
     # With --debug:    stdout also includes DEBUG records and tracebacks.
-    if config.get("logging") and "debug" not in raw_script["args"]:
+    if takeover and "debug" not in raw_script["args"]:
         raw_script["args"]["debug"] = {
             "name": "debug",
             "type": "flag",
@@ -277,9 +305,9 @@ def _parse_impl(
         runspec_env_data=runspec_env_data,
     )
 
-    # 16. Configure logging (no-op when [config.logging] absent)
+    # 16. Configure logging (no-op when log_cfg is None — see step 2.1)
     debug = False
-    if config.get("logging"):
+    if takeover:
         pair = coerced_values.get("debug")  # stores (value, source) tuples
         if pair and pair[0] is not None:
             debug = bool(pair[0])
@@ -292,7 +320,7 @@ def _parse_impl(
 
     try:
         configure_logging(
-            config.get("logging"),
+            log_cfg,
             runnable_name=name,
             debug=debug,
             autonomy=autonomy,
@@ -302,6 +330,7 @@ def _parse_impl(
             command_path=command_path,
             invocation_args=invocation_args,
             history_cfg=config.get("history"),
+            audit_cfg=config.get("audit"),
             run_id=exec_run_id,
             run_as=_run_as_name(effective_run_as(raw["runnables"][name].get("run_as"), config.get("run_as"))),
         )

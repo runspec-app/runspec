@@ -61,7 +61,7 @@ lang             = "python"
 version          = "1"
 ```
 
-`[config.jump-hosts]` and `[config.logging]` get their own pages — they're
+`[config.jump-hosts]`, `[config.logging]` and `[config.audit]` get their own pages — they're
 substantial enough that documenting them inline would bury the rest of the
 reference.
 
@@ -693,15 +693,19 @@ unaffected, so agent tooling still sees the runnable.
 
 ## Logging configuration
 
-When `[config.logging]` is present, `parse()` configures stdlib logging
-automatically and auto-injects a `--debug` flag. The full reference is on
-the dedicated [Logging](logging.md) page; the short form:
+Logging is on by default: `parse()` configures stdlib logging automatically
+and auto-injects a `--debug` flag, with or without a `[config.logging]` section.
+The full reference is on the dedicated [Logging](logging.md) page; the short
+form:
 
 ```toml
 [config.logging]
-rotate = "midnight"    # daily | midnight | weekly | "10 MB" | "1 GB" | …
-keep   = 7
+rotate  = "midnight"   # daily | midnight | weekly | "10 MB" | "1 GB" | …
+keep    = 7
+enabled = true         # false = audit-only: bring your own logging, keep the run record
 ```
+
+`[config.audit]` tunes where [audit events](audit.md) go (`syslog`, `facility`).
 
 File logs go to `{package_dir}/logs/{runnable}.log` as JSON at DEBUG, with
 midnight rotation and 7-day retention. Sensitive data is redacted on every

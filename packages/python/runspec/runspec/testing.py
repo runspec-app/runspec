@@ -135,6 +135,7 @@ class ParseHarness:
                 config_path=self.config_path,
                 _prompt_secrets=False,
                 _check_run_as=False,
+                _implicit_logging=False,
             )
 
     def expect_ok(self, argv: Iterable[str]) -> runspec.RunSpec:
@@ -149,6 +150,7 @@ class ParseHarness:
                     config_path=self.config_path,
                     _prompt_secrets=False,
                     _check_run_as=False,
+                    _implicit_logging=False,
                 )
             except SystemExit as e:
                 raise AssertionError(f"expected `{self.script_name} {' '.join(argv)}` to parse, but it exited {e.code}:\n{out.getvalue()}") from None
@@ -177,6 +179,7 @@ class ParseHarness:
                     config_path=self.config_path,
                     _prompt_secrets=False,
                     _check_run_as=False,
+                    _implicit_logging=False,
                 )
             except SystemExit as e:
                 text = out.getvalue()

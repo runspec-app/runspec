@@ -14,6 +14,7 @@ Commands:
     runspec serve
     runspec jump   [--list-jump-hosts] [<jump_host> [<tool>] [-- tool-args...]]
     runspec deny   <add|all|list|clear|mode> [...]   (venv kill switch)
+    runspec audit  <record|list|verify> [...]        (append-only audit events)
 
 Top-level options:
     --version, -V    Print the runspec package version and exit
@@ -79,6 +80,7 @@ def main() -> None:
         "history": cmd_history,
         "exec": cmd_exec,
         "deny": cmd_deny,
+        "audit": cmd_audit,
     }
 
     if command not in commands:
@@ -759,6 +761,104 @@ def cmd_deny(args: list[str]) -> None:
     except PermissionError as exc:
         _deny_permission_denied(path, exc, args)
         sys.exit(1)
+    except SystemExit as exc:
+        if exc.code not in (0, None):
+            raise
+    _audit_control(
+        "denylist.change",
+        target={"denylist": str(path)},
+        detail={"action": action, "setting": parsed.setting.value, "runnable": parsed.runnable.value, "user": parsed.user.value, "host": parsed.host.value, "reason": parsed.reason.value},
+    )
+
+
+def _audit_control(event: str, *, target: dict[str, Any], detail: dict[str, Any]) -> None:
+    """Record a control-plane change (the core CLI audits its state-changing verbs
+    explicitly — it has no run record of its own). Best-effort."""
+    try:
+        from runspec.auditlog import audit as _audit
+
+        _audit(event, "succeeded", target=target, detail={k: v for k, v in detail.items() if v not in (None, "", [])})
+    except Exception:  # noqa: BLE001 — auditing never breaks the command
+        pass
+
+
+def _kv_pairs(values: list[str] | None, flag: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for item in values or []:
+        key, sep, val = item.partition("=")
+        if not sep or not key.strip():
+            print(f"✗  {flag} takes key=value, got {item!r}")
+            sys.exit(1)
+        out[key.strip()] = val
+    return out
+
+
+def cmd_audit(args: list[str]) -> None:
+    """Record, list or verify append-only audit events (runspec/auditlog.py)."""
+    from runspec.parser import parse as _parse
+
+    parsed = _parse(script_name="runspec", argv=["audit"] + args, config_path=_CLI_CONFIG)
+
+    from runspec import auditlog
+
+    action = parsed.action.value or "list"
+    file_arg = parsed.file.value
+    if action == "record":
+        event = parsed.event.value
+        if not event:
+            print("✗  audit record needs an event name, e.g. runspec audit record deploy.start")
+            sys.exit(1)
+        try:
+            rec = auditlog.audit(
+                event,
+                parsed.outcome.value or "",
+                target=_kv_pairs(parsed.target.value, "--target"),
+                detail=_kv_pairs(parsed.detail.value, "--detail"),
+                strict=parsed.strict.value,
+                ledger_dir=file_arg,
+            )
+        except ValueError as exc:
+            print(f"✗  {exc}")
+            sys.exit(1)
+        except auditlog.AuditError as exc:
+            print(f"✗  {exc}", file=sys.stderr)
+            sys.exit(1)
+        if parsed.json.value:
+            print(json.dumps(rec))
+        elif rec is None:
+            print("runspec audit: RUNSPEC_AUDIT=off — nothing recorded")
+        else:
+            print(f"✓  Recorded {rec['event']}{' ' + rec['outcome'] if rec['outcome'] else ''} ({rec.get('hash', 'OS log / run log only')})")
+        return
+
+    path = Path(file_arg) if file_arg else auditlog.ledger_path()
+    if action == "verify":
+        result = auditlog.verify(path)
+        if parsed.json.value:
+            print(json.dumps(result))
+        elif result["ok"]:
+            print(f"✓  {path}: {result['records']} record(s), hash chain intact")
+        else:
+            print(f"✗  {path}: line {result['first_bad']} — {result['reason']}" if result["first_bad"] else f"✗  {path}: {result['reason']}")
+        if not result["ok"]:
+            sys.exit(1)
+        return
+
+    records = list(auditlog.read_ledger(path))
+    limit = max(1, int(parsed.limit.value or 50))
+    records = records[-limit:]
+    if parsed.json.value:
+        for rec in records:
+            print(json.dumps(rec))
+        return
+    if not records:
+        print(f"No audit events in {path}")
+        return
+    for rec in records:
+        who = rec.get("actor", "?")
+        where = rec.get("runnable") or "-"
+        tgt = " ".join(f"{k}={v}" for k, v in (rec.get("target") or {}).items())
+        print(f"{rec.get('ts', '')[:19]}  {rec.get('event', '')} {rec.get('outcome', '')}".rstrip() + f"  by {who} via {where}" + (f"  {tgt}" if tgt else ""))
 
 
 def _deny_write(action: str, parsed: Any, path: Path) -> None:

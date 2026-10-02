@@ -183,6 +183,29 @@ host     = {type = "str", description = "Hostname glob to deny (repeatable; defa
 reason   = {type = "str", description = "Reason recorded and shown on refusal", required = false}
 json     = {type = "flag", description = "Emit the denylist as JSON (list/show)", default = false}
 
+[runspec.commands.audit]
+description = "Record, list or verify append-only audit events (the venv's hash-chained ledger + OS log)"
+autonomy    = "confirm"
+
+examples = [
+  {cmd = "runspec audit record payment.refund --outcome succeeded --target order=A-1043", description = "Record an event from a shell script"},
+  {cmd = "runspec audit record deploy.start --strict",                description = "Fail (exit 1) if the event couldn't be recorded anywhere"},
+  {cmd = "runspec audit list",                                        description = "Show the newest events in this venv's ledger"},
+  {cmd = "runspec audit list --json --limit 500",                     description = "Raw JSON records (for jq)"},
+  {cmd = "runspec audit verify",                                      description = "Check the ledger's hash chain (exit 1 if broken)"},
+]
+
+[runspec.commands.audit.args]
+action  = {type = "choice", description = "record | list | verify", options = ["record", "list", "verify"], position = 1, default = "list"}
+event   = {type = "str",  description = "Event name for 'record' (lowercase, dotted — e.g. payment.refund)", position = 2, required = false}
+outcome = {type = "str",  description = "Outcome for 'record' (e.g. started, succeeded, failed)", short = "-o", required = false}
+target  = {type = "str",  description = "What was acted on, as key=value (repeatable)", short = "-t", multiple = true, required = false}
+detail  = {type = "str",  description = "Extra context, as key=value (repeatable)", short = "-d", multiple = true, required = false}
+strict  = {type = "flag", description = "Exit 1 if no sink (ledger, OS log) took the event", default = false}
+file    = {type = "path", description = "Ledger file to list/verify, or directory to record into (default: this venv's logs/audit.jsonl)", short = "-f", required = false}
+limit   = {type = "int",  description = "Newest events to show for 'list'", short = "-n", default = 50}
+json    = {type = "flag", description = "Emit JSON (list: one record per line; verify: the result object)", default = false}
+
 [runspec.commands.jump]
 description = "List tools on a remote host or run a tool via SSH+MCP"
 autonomy    = "confirm"

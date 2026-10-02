@@ -25,6 +25,16 @@ _debug: bool = False  # mirrors the --debug flag; read by the excepthook for con
 # adopt_exec_run_id): the inbox file to join (RUNSPEC_RUN_LOG) and the wrapper's
 # uid (RUNSPEC_EXEC_UID). Reset in tests via monkeypatch.
 _exec_handoff: dict[str, Any] = {}
+# What `runspec.audit()` needs to tie an event to the current run: run id,
+# runnable, command path, provenance, where the run logs and whether that's the
+# inbox. Set by configure_logging; empty outside a configured run. Reset in tests
+# via monkeypatch.
+_run_context: dict[str, Any] = {}
+
+# `RUNSPEC_AUDIT=off` — for test suites and CI only. Restores the pre-default
+# behaviour: a runnable with no [config.logging] configures nothing, and
+# runspec.audit() writes nothing. There is deliberately no package-level switch.
+AUDIT_ENV = "RUNSPEC_AUDIT"
 
 _SIZE_RE = re.compile(r"^(\d+(?:\.\d+)?)\s*(KB|MB|GB)$", re.IGNORECASE)
 _SIZE_MULT: dict[str, int] = {"KB": 1024, "MB": 1024**2, "GB": 1024**3}
@@ -81,10 +91,50 @@ _RUN_SUMMARY_LOGGER = "runspec.runsummary"
 # records them while the console handlers drop them by name — console display is
 # handled explicitly inside the excepthook (debug-gated).
 _EXCEPTION_LOGGER = "runspec.exception"
+# runspec.audit() events — file-only like the two above (never stdout/stderr).
+_AUDIT_LOGGER = "runspec.audit"
+# Loggers the console handlers drop by name: their records belong in the file.
+_FILE_ONLY_LOGGERS = frozenset({_RUN_SUMMARY_LOGGER, _EXCEPTION_LOGGER, _AUDIT_LOGGER})
 
 # Directory of the installed runspec package — used to filter internal library
 # frames out of the *displayed* compact traceback (the full trace still hits the file).
 _RUNSPEC_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def audit_disabled() -> bool:
+    """True when ``RUNSPEC_AUDIT=off`` (tests/CI only — see :data:`AUDIT_ENV`)."""
+    return os.environ.get(AUDIT_ENV, "").strip().lower() in ("off", "0", "false", "no")
+
+
+def default_logging_config() -> dict[str, Any]:
+    """The normalised [config.logging] a runnable gets when it declares none —
+    logging and the run audit are on by default (runnables are CLI *and* agent
+    tools, so an unrecorded run is the wrong default)."""
+    from .loader import _normalise_logging
+
+    cfg = _normalise_logging({})
+    assert cfg is not None
+    return cfg
+
+
+def resolve_logging_config(declared: dict[str, Any] | None, *, implicit: bool = True) -> dict[str, Any] | None:
+    """The logging config ``parse()`` acts on.
+
+    ``declared`` is the normalised [config.logging] (``None`` when absent). An
+    absent section means the defaults unless ``implicit`` is false (the core
+    ``runspec`` CLI and the test harness) or ``RUNSPEC_AUDIT=off`` is set — then
+    ``None``, the old opt-in behaviour. A declared section is always honoured."""
+    if declared is not None:
+        return declared
+    if not implicit or audit_disabled():
+        return None
+    return default_logging_config()
+
+
+def current_run() -> dict[str, Any]:
+    """A copy of the current run's context for ``runspec.audit()`` — empty when
+    this process has no configured run (a library caller, the console app)."""
+    return dict(_run_context)
 
 
 def configure_logging(
@@ -101,6 +151,7 @@ def configure_logging(
     history_cfg: dict[str, Any] | None = None,
     run_id: str | None = None,
     run_as: str = "",
+    audit_cfg: dict[str, Any] | None = None,
 ) -> None:
     """
     Configure root logger from normalised [config.logging].
@@ -136,8 +187,8 @@ def configure_logging(
     exception class, and per-level counts to the audit file. The human-readable
     one-line echo to stderr is opt-in via `log_cfg["summary_console"]` (default
     false) so stdout stays clean for pipes and the line never reaches a
-    stderr=ERROR log processor by default. To skip the audit record entirely,
-    set `summary = false` in `[config.logging]`.
+    stderr=ERROR log processor by default. The record itself is always
+    written: `summary = false` is accepted for back-compat but ignored (0.71.0).
     """
     global _configured, _summary_state, _debug
     if log_cfg is None or _configured:
@@ -152,9 +203,15 @@ def configure_logging(
     # adopt its id (docs/design/runspec-exec.md §3.3).
     # `run_id` is passed by parse() from adopt_exec_run_id().
     run_id = run_id or str(uuid.uuid4())
+    # enabled = false ⇒ "audit-only": leave the process's logging to the
+    # developer (no root handlers/level, no console routing, no print tee, no
+    # takeover excepthook) and attach the file handler only to runspec's own
+    # file-only loggers, so the run record and audit events are still written.
+    takeover = bool(log_cfg.get("enabled", True))
 
     root = logging.getLogger()
-    root.setLevel(logging.DEBUG)
+    if takeover:
+        root.setLevel(logging.DEBUG)
 
     # Sensitive filter goes on each handler so it runs during propagation from
     # child loggers (root logger-level filters are not called during callHandlers
@@ -170,18 +227,20 @@ def configure_logging(
     out_handler._runspec_stream = "stdout"  # type: ignore[attr-defined]
     out_handler.setLevel(floor)
     out_handler.addFilter(sensitive)
-    out_handler.addFilter(lambda r: r.levelno < logging.WARNING and r.name != _RUN_SUMMARY_LOGGER and r.name != _EXCEPTION_LOGGER and not getattr(r, "_from_print", False))
+    out_handler.addFilter(lambda r: r.levelno < logging.WARNING and r.name not in _FILE_ONLY_LOGGERS and not getattr(r, "_from_print", False))
     out_handler.setFormatter(_ConsoleFormatter(show_tracebacks=debug))
-    root.addHandler(out_handler)
+    if takeover:
+        root.addHandler(out_handler)
 
     # WARNING and above → stderr (Unix convention for diagnostics).
     err_handler = logging.StreamHandler(sys.stderr)
     err_handler._runspec_stream = "stderr"  # type: ignore[attr-defined]
     err_handler.setLevel(logging.WARNING)
     err_handler.addFilter(sensitive)
-    err_handler.addFilter(lambda r: r.name != _RUN_SUMMARY_LOGGER and r.name != _EXCEPTION_LOGGER)
+    err_handler.addFilter(lambda r: r.name not in _FILE_ONLY_LOGGERS)
     err_handler.setFormatter(_ConsoleFormatter(show_tracebacks=debug))
-    root.addHandler(err_handler)
+    if takeover:
+        root.addHandler(err_handler)
 
     # File handler: always active, always JSON; level follows --debug
     # (INFO by default — keeps third-party DEBUG noise out of the audit log).
@@ -220,7 +279,27 @@ def configure_logging(
     fh.addFilter(sensitive)
     fh.addFilter(_RunIdFilter(run_id))
     fh.setFormatter(_JsonFormatter())
-    root.addHandler(fh)
+    if takeover:
+        root.addHandler(fh)
+    else:
+        for name in _FILE_ONLY_LOGGERS:
+            own = logging.getLogger(name)
+            own.setLevel(logging.DEBUG)
+            own.propagate = False
+            own.addHandler(fh)
+    _run_context.clear()
+    _run_context.update(
+        {
+            "run_id": run_id,
+            "runnable": runnable_name,
+            "command_path": list(command_path or []),
+            "agent": agent,
+            "trigger": trigger,
+            "log_dir": str(log_dir),
+            "inbox": inbox_run is not None,
+            "audit_cfg": dict(audit_cfg or {}),
+        }
+    )
     if provisioned in ("created", "repaired"):
         # Audit-log only (the console handlers drop this logger): never stdout/stderr.
         with contextlib.suppress(Exception):
@@ -231,20 +310,26 @@ def configure_logging(
 
     # Run-summary counter handler — silently increments per-level counts.
     counter = _RunSummaryCounter()
-    root.addHandler(counter)
+    if takeover:
+        root.addHandler(counter)
 
     # Uncaught-exception handling is always installed (independent of the summary
     # toggle) so the structured exception record reaches the audit file even when
-    # summary is off. The hook also reads _summary_state when present.
-    _install_excepthook()
+    # summary is off. The hook also reads _summary_state when present. In
+    # audit-only mode it records and then hands over to the existing hook, so the
+    # developer's own exception handling is unchanged.
+    if takeover:
+        _install_excepthook()
+    else:
+        _install_recording_excepthook()
 
-    # `summary` gates the structured audit record (the data the console
-    # history/analytics tabs and `runspec logs` read). `summary_console` gates
-    # the human-readable terminal echo — off by default so stdout stays clean
-    # for pipes and the line never reaches a stream that log processors (e.g.
-    # Rundeck, which tags stderr as ERROR) would flag. Both are package-level
-    # controls in [config.logging]; set `summary = false` to drop the record.
-    write_record = bool(log_cfg.get("summary", True))
+    # The structured run record (the data the console history/analytics tabs and
+    # `runspec logs` read) is part of the always-on run audit, so it is always
+    # written: `[config.logging] summary = false` is still accepted but ignored
+    # (0.71.0). `summary_console` gates the human-readable terminal echo — off by
+    # default so stdout stays clean for pipes and the line never reaches a stream
+    # that log processors (e.g. Rundeck, which tags stderr as ERROR) would flag.
+    write_record = True
     write_console = bool(log_cfg.get("summary_console", False))
     # The runs index (runspec_runs.db) is a derived index over the audit log, so
     # it follows the same coverage: it writes when logging is configured, gated by
@@ -293,10 +378,11 @@ def configure_logging(
     # Tee sys.stdout so print() calls also land in the file audit log.
     # Handlers above captured the real sys.stdout reference before this swap.
     # Register flush AFTER _emit_run_summary (LIFO → flush runs FIRST at exit).
-    _print_logger = logging.getLogger("runspec.print")
-    _tee = _StdoutTee(sys.stdout, _print_logger)
-    atexit.register(_tee.flush_remaining)
-    sys.stdout = _tee
+    if takeover:
+        _print_logger = logging.getLogger("runspec.print")
+        _tee = _StdoutTee(sys.stdout, _print_logger)
+        atexit.register(_tee.flush_remaining)
+        sys.stdout = _tee
 
     _configured = True
 
@@ -814,6 +900,35 @@ def _install_excepthook() -> None:
     _excepthook_installed = True
 
 
+def _install_recording_excepthook() -> None:
+    """Audit-only mode's hook: write the structured exception record and feed the
+    run summary, then call whatever hook was installed before — console output
+    stays the developer's. Idempotent."""
+    global _excepthook_installed
+    if _excepthook_installed:
+        return
+    previous = sys.excepthook
+
+    def hook(exc_type: type[BaseException], exc_value: BaseException, tb: Any) -> None:
+        with contextlib.suppress(Exception):
+            structured = _build_exc_structured(exc_type, exc_value, tb)
+            logging.getLogger(_EXCEPTION_LOGGER).critical(
+                "uncaught exception",
+                exc_info=(exc_type, exc_value, tb),
+                extra={"exc_structured": structured},
+            )
+        if _summary_state is not None:
+            _summary_state["exception"] = {
+                "type": exc_type.__name__,
+                "message": str(exc_value),
+                "traceback": "".join(traceback.format_exception(exc_type, exc_value, tb)),
+            }
+        previous(exc_type, exc_value, tb)
+
+    sys.excepthook = hook
+    _excepthook_installed = True
+
+
 # ── Run summary ──────────────────────────────────────────────────────────────
 
 
@@ -895,8 +1010,8 @@ def _emit_run_summary() -> None:
     exit_code = 1 if state["exception"] else 0
 
     # File record via the standard logger — picked up by the file handler only
-    # (console handlers filter out runspec.runsummary by logger name). Gated by
-    # `summary`; this is the record the console + `runspec logs` consume.
+    # (console handlers filter out runspec.runsummary by logger name). Always on;
+    # this is the record the console + `runspec logs` consume.
     invocation_args = state.get("invocation_args", {})
     if state.get("write_record", True):
         with contextlib.suppress(Exception):
@@ -920,14 +1035,6 @@ def _emit_run_summary() -> None:
                     "invocation_args": {k: v["value"] for k, v in invocation_args.items()},
                     "arg_sources": {k: v["source"] for k, v in invocation_args.items()},
                 },
-            )
-    elif state.get("inbox"):
-        # `summary = false` in the inbox: a slim end record, so the sweep never
-        # mistakes a clean run for a crash (no record ⇒ crashed once the lock frees).
-        with contextlib.suppress(Exception):
-            logging.getLogger(_RUN_SUMMARY_LOGGER).info(
-                "run ended",
-                extra={"event": "run_end", "run_id": state.get("run_id"), "exit_code": exit_code, "duration_ms": duration_ms},
             )
 
     # Finalize the runs-index row (running → completed/failed + exit code +
