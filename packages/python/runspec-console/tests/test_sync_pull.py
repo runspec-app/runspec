@@ -83,13 +83,17 @@ class _SyncBridge:
     _apply_config_layers = Bridge._apply_config_layers
     _atomic_write_bytes = Bridge._atomic_write_bytes
     _merge_synced_file = Bridge._merge_synced_file
-    _merge_synced_triggers = Bridge._merge_synced_triggers
+    _local_merge_table = Bridge._local_merge_table
+    _write_merged_table = Bridge._write_merged_table
+    _local_native_table = Bridge._local_native_table
+    _sync_fetch = Bridge._sync_fetch
     _prune_backups = Bridge._prune_backups
 
     def __init__(self):
         self._credentials: list = []
         self.reloaded: list[str] = []
         self.triggers_restarted = False
+        self.dispatched: list = []
 
     def get_config(self):
         return cfg.read_config()
@@ -111,6 +115,9 @@ class _SyncBridge:
 
     def restart_triggers(self):
         self.triggers_restarted = True
+
+    def _dispatch(self, event, detail):
+        self.dispatched.append((event, detail))
 
 
 def _wire(monkeypatch, tmp_path, files: dict[str, bytes], *, commit="a1b2c3d4" * 5):
@@ -554,3 +561,228 @@ def test_sync_auth_ssh_falls_back_to_console_key(monkeypatch, tmp_path):
     assert auth.key_path == "/console/default_key"
     assert auth.username == "git"
     assert auth.passphrase == ""
+
+
+# ── previously-dropped collection files are written ─────────────────────────────
+
+
+def test_pull_writes_every_known_collection_file(monkeypatch, tmp_path):
+    # Profiles / saved runs / sounds / repos / self-service / evals used to be
+    # reported "written" but never merged onto disk.
+    files = {
+        "runspec_profiles.toml": b'[[profile]]\nname = "ops"\n',
+        "runspec_saved_runs.toml": b'[[saved_run]]\nid = "s1"\nrunnable = "x"\n',
+        "runspec_sounds.toml": b'[[sound]]\nid = "ding"\nlabel = "Ding"\nfile = "d.wav"\n',
+        "runspec_repos.toml": b'[[repo]]\nname = "r"\nurl = "https://g/r.git"\n',
+        "runspec_self_service.toml": b'[[self_service]]\nname = "help"\n',
+        "runspec_evals.toml": b'[[suite]]\nname = "smoke"\n',
+    }
+    _wire(monkeypatch, tmp_path, files)
+    for fn in (
+        "profiles_path",
+        "saved_runs_path",
+        "sounds_registry_path",
+        "repos_path",
+        "self_service_path",
+        "evals_path",
+    ):
+        monkeypatch.setattr(cfg, fn, lambda fn=fn: tmp_path / _PATHS[fn])
+    _set_sync(files=list(files))
+    res = _SyncBridge().sync_pull()
+    assert res["ok"], res
+    assert _read_toml(tmp_path / "runspec_profiles.toml")["profile"][0]["name"] == "ops"
+    assert (
+        _read_toml(tmp_path / "runspec_saved_runs.toml")["saved_run"][0]["id"] == "s1"
+    )
+    assert _read_toml(tmp_path / "runspec_sounds.toml")["sound"][0]["id"] == "ding"
+    assert _read_toml(tmp_path / "runspec_repos.toml")["repo"][0]["name"] == "r"
+    assert (
+        _read_toml(tmp_path / "runspec_self_service.toml")["self_service"][0]["name"]
+        == "help"
+    )
+    assert _read_toml(tmp_path / "runspec_evals.toml")["suite"][0]["name"] == "smoke"
+
+
+_PATHS = {
+    "profiles_path": "runspec_profiles.toml",
+    "saved_runs_path": "runspec_saved_runs.toml",
+    "sounds_registry_path": "runspec_sounds.toml",
+    "repos_path": "runspec_repos.toml",
+    "self_service_path": "runspec_self_service.toml",
+    "evals_path": "runspec_evals.toml",
+}
+
+
+# ── preview (diff before accepting) ──────────────────────────────────────────────
+
+
+class _PreviewBridge(_SyncBridge):
+    sync_preview = Bridge.sync_preview
+
+
+def _hosts_setup(monkeypatch, tmp_path):
+    monkeypatch.setattr(cfg, "hosts_path", lambda: tmp_path / "runspec_hosts.toml")
+    save_hosts(
+        tmp_path / "runspec_hosts.toml",
+        [
+            {"name": "web1", "hostname": "old.example"},
+            {"name": "mine", "hostname": "local.example"},
+        ],
+    )
+    cfg.write_config({"llm": {"provider": "openai"}, "ssh": {"identityFile": "~/k"}})
+
+
+def test_preview_shows_changes_and_writes_nothing(monkeypatch, tmp_path):
+    _wire(
+        monkeypatch,
+        tmp_path,
+        {
+            "config.toml": (
+                b'[llm]\nprovider = "anthropic"\n'
+                b'[config_sync]\nurl = "https://elsewhere/x.git"\n'
+            ),
+            "runspec_hosts.toml": (
+                b'[[host]]\nname = "web1"\nhostname = "new.example"\n'
+                b'[[host]]\nname = "web2"\nhostname = "w2.example"\n'
+            ),
+        },
+    )
+    _hosts_setup(monkeypatch, tmp_path)
+    _set_sync()
+    before_hosts = (tmp_path / "runspec_hosts.toml").read_bytes()
+    before_cfg = (tmp_path / "config.toml").read_bytes()
+
+    res = _PreviewBridge().sync_preview("v2.0.0")
+    assert res["ok"], res
+    assert res["ref"] == "v2.0.0" and res["changed"] is True
+    by = {f["name"]: f for f in res["files"]}
+
+    hosts = by["runspec_hosts.toml"]
+    assert hosts["status"] == "changed"
+    assert hosts["summary"]["added"] == ["web2"]
+    assert hosts["summary"]["updated"] == [{"id": "web1", "fields": ["hostname"]}]
+    assert hosts["summary"]["removed"] == []  # the operator's own host is kept
+    assert '-hostname = "old.example"' in hosts["diff"]
+    assert '+hostname = "new.example"' in hosts["diff"]
+    assert "v2.0.0/runspec_hosts.toml" in hosts["diff"]
+
+    conf = by["config.toml"]
+    assert conf["summary"]["updated"] == ["llm.provider"]
+    # The repo's [config_sync] never lands (a pull re-injects the local one).
+    assert "elsewhere" not in conf["diff"]
+
+    # Nothing touched on disk.
+    assert (tmp_path / "runspec_hosts.toml").read_bytes() == before_hosts
+    assert (tmp_path / "config.toml").read_bytes() == before_cfg
+
+
+def test_preview_matches_what_the_pull_writes(monkeypatch, tmp_path):
+    files = {
+        "config.toml": b'[llm]\nprovider = "anthropic"\n',
+        "runspec_hosts.toml": b'[[host]]\nname = "web1"\nhostname = "new.example"\n',
+    }
+    _wire(monkeypatch, tmp_path, files)
+    _hosts_setup(monkeypatch, tmp_path)
+    _set_sync()
+    b = _PreviewBridge()
+    assert b.sync_preview()["changed"] is True
+    assert b.sync_pull()["ok"]
+    again = b.sync_preview()
+    assert again["changed"] is False
+    assert {f["status"] for f in again["files"]} == {"unchanged"}
+    assert all(f["diff"] == "" for f in again["files"])
+
+
+def test_preview_flags_missing_new_and_invalid(monkeypatch, tmp_path):
+    _wire(
+        monkeypatch,
+        tmp_path,
+        {
+            "runspec_hosts.toml": b'[[host]]\nname = "a"\n',
+            "runspec_filters.toml": b"not = valid = toml",
+        },
+    )
+    monkeypatch.setattr(cfg, "hosts_path", lambda: tmp_path / "runspec_hosts.toml")
+    _set_sync(
+        files=["runspec_hosts.toml", "runspec_filters.toml", "runspec_groups.toml"]
+    )
+    res = _PreviewBridge().sync_preview()
+    by = {f["name"]: f["status"] for f in res["files"]}
+    assert by == {
+        "runspec_hosts.toml": "new",
+        "runspec_filters.toml": "invalid",
+        "runspec_groups.toml": "missing",
+    }
+
+
+def test_pull_refuses_when_ref_moved_since_preview(monkeypatch, tmp_path):
+    _wire(
+        monkeypatch,
+        tmp_path,
+        {"config.toml": b'[llm]\nprovider = "x"\n'},
+        commit="b" * 40,
+    )
+    _set_sync()
+    res = _SyncBridge().sync_pull(expect_commit="a" * 40)
+    assert res["ok"] is False and "Preview it again" in res["error"]
+    assert "llm" not in cfg.read_config()
+
+
+def test_pull_at_override_ref_becomes_the_configured_ref(monkeypatch, tmp_path):
+    _wire(
+        monkeypatch,
+        tmp_path,
+        {"config.toml": b'[llm]\nprovider = "x"\n'},
+        commit="c" * 40,
+    )
+    _set_sync()
+    b = _SyncBridge()
+    res = b.sync_pull(ref="v1.1.0", expect_commit="c" * 40)
+    assert res["ok"] and res["ref"] == "v1.1.0"
+    sync = cfg.read_sync()
+    assert sync["ref"] == "v1.1.0" and sync["last_ref"] == "v1.1.0"
+    assert (
+        "runspec:config_sync_changed",
+        {"ref": "v1.1.0", "commit": "c" * 40},
+    ) in b.dispatched
+
+
+# ── newer-config check ───────────────────────────────────────────────────────────
+
+
+class _CheckBridge(_SyncBridge):
+    sync_check_update = Bridge.sync_check_update
+
+
+def test_check_update_unconfigured(monkeypatch, tmp_path):
+    _cfg_path(monkeypatch, tmp_path)
+    assert _CheckBridge().sync_check_update() == {
+        "ok": True,
+        "configured": False,
+        "available": False,
+    }
+
+
+def test_check_update_reports_newer_tag(monkeypatch, tmp_path):
+    _cfg_path(monkeypatch, tmp_path)
+    monkeypatch.setattr(gitsync, "available", lambda: True)
+    monkeypatch.setattr(
+        gitsync,
+        "_ls_remote",
+        lambda url, auth: {
+            b"refs/tags/v1.0.0": b"1" * 40,
+            b"refs/tags/v1.2.0": b"2" * 40,
+            b"refs/tags/v1.10.0": b"3" * 40,
+            b"refs/tags/v2.0.0-rc1": b"4" * 40,
+        },
+    )
+    _set_sync()
+    res = _CheckBridge().sync_check_update()
+    assert res == {
+        "ok": True,
+        "configured": True,
+        "available": True,
+        "kind": "tag",
+        "current": "v1.0.0",
+        "latest": "v1.10.0",
+    }

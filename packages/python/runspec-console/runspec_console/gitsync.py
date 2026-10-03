@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlsplit
@@ -332,12 +333,11 @@ def _ParamikoSSHVendor(passphrase: str = "") -> Any:  # noqa: N802 — vendor fa
 # ── public API ──────────────────────────────────────────────────────────────────
 
 
-def list_tags(url: str, auth: GitAuth) -> list[str]:
-    """Tag names advertised by the remote (newest-ish first), for the UI dropdown.
+def _ls_remote(url: str, auth: GitAuth) -> dict[bytes, bytes]:
+    """The remote's advertised refs (``ls-remote``) — no objects downloaded.
 
-    Uses an ``ls-remote``-style ref listing — no objects are downloaded. Raises
-    ``GitSyncError`` on connection/auth failure.
-    """
+    Raises ``GitSyncError`` when the engine is missing or on connection/auth
+    failure."""
     if not available():
         raise GitSyncError(
             "git engine unavailable — install the 'git-sync' extra "
@@ -354,7 +354,11 @@ def list_tags(url: str, auth: GitAuth) -> list[str]:
         raise
     except Exception as exc:  # noqa: BLE001
         raise GitSyncError(_human_error(exc)) from exc
+    return dict(refs)
 
+
+def _tag_names(refs: dict[bytes, bytes]) -> list[str]:
+    """Tag names among ``refs`` (peeled ``^{}`` duplicates folded), newest first."""
     seen: set[str] = set()
     tags: list[str] = []
     prefix = b"refs/tags/"
@@ -367,8 +371,126 @@ def list_tags(url: str, auth: GitAuth) -> list[str]:
         if name not in seen:
             seen.add(name)
             tags.append(name)
-    tags.sort(reverse=True)
-    return tags
+    return sort_tags(tags)
+
+
+def list_tags(url: str, auth: GitAuth) -> list[str]:
+    """Tag names advertised by the remote (newest first), for the UI dropdown.
+
+    Uses an ``ls-remote``-style ref listing — no objects are downloaded. Raises
+    ``GitSyncError`` on connection/auth failure.
+    """
+    return _tag_names(_ls_remote(url, auth))
+
+
+# ── tag versions (newer-config detection) ─────────────────────────────────────
+
+# A version-like tag: an optional prefix (``v``, ``config-v``, ``emea-``), a
+# dotted number, and an optional pre-release suffix (``-rc1``, ``.beta2``).
+_TAG_VERSION_RE = re.compile(
+    r"^(?P<prefix>.*?)(?P<num>\d+(?:\.\d+)*)(?P<pre>[-.+_]?[A-Za-z][\w.]*)?$"
+)
+
+
+def parse_tag_version(tag: str) -> tuple[str, tuple[int, ...], str] | None:
+    """Split ``tag`` into ``(prefix, numbers, pre-release)`` or ``None`` when it
+    isn't version-like. ``v1.4.0`` → ``("v", (1, 4, 0), "")``;
+    ``emea-v2.0.0-rc1`` → ``("emea-v", (2, 0, 0), "-rc1")``."""
+    m = _TAG_VERSION_RE.match(tag.strip())
+    if not m:
+        return None
+    nums = tuple(int(n) for n in m.group("num").split("."))
+    return m.group("prefix"), nums, m.group("pre") or ""
+
+
+def _pad(nums: tuple[int, ...], width: int) -> tuple[int, ...]:
+    return nums + (0,) * (width - len(nums))
+
+
+def sort_tags(tags: list[str]) -> list[str]:
+    """Newest first: version-like tags by number (so ``v1.10.0`` sorts above
+    ``v1.9.0`` — a plain string sort gets that wrong), a release above its own
+    pre-releases; non-version tags after, reverse-alphabetical."""
+
+    def key(tag: str) -> tuple[int, tuple[int, ...], int, str]:
+        parsed = parse_tag_version(tag)
+        if parsed is None:
+            return (0, (), 0, tag)
+        _prefix, nums, pre = parsed
+        return (1, _pad(nums, 6), 0 if pre else 1, tag)
+
+    return sorted(tags, key=key, reverse=True)
+
+
+def newer_tag(current: str, tags: list[str]) -> str | None:
+    """The newest release tag strictly newer than ``current``, or ``None``.
+
+    Only tags in the **same series** count — the same prefix (so a team on
+    ``emea-v1.2.0`` isn't offered ``apac-v1.5.0``) — and pre-release tags
+    (``-rc1``) are never offered as an update. ``None`` when ``current`` isn't
+    version-like (a branch, or a free-form tag name)."""
+    cur = parse_tag_version(current)
+    if cur is None:
+        return None
+    prefix, cur_nums, _pre = cur
+    best: tuple[tuple[int, ...], str] | None = None
+    for tag in tags:
+        parsed = parse_tag_version(tag)
+        if parsed is None:
+            continue
+        t_prefix, nums, pre = parsed
+        if t_prefix != prefix or pre:
+            continue
+        width = max(len(nums), len(cur_nums))
+        if _pad(nums, width) <= _pad(cur_nums, width):
+            continue
+        if best is None or _pad(nums, 6) > _pad(best[0], 6):
+            best = (nums, tag)
+    return best[1] if best else None
+
+
+@dataclass
+class UpdateCheck:
+    """Whether the remote holds newer config than what was last pulled.
+
+    ``kind`` is ``"tag"`` (a newer release tag in the same series —
+    ``latest`` names it), ``"branch"`` (the configured branch moved past
+    ``last_commit`` — ``latest`` is its new head sha), or ``"none"`` (the ref
+    is a non-version tag, so there's nothing to compare)."""
+
+    available: bool
+    kind: str
+    current: str
+    latest: str = ""
+
+
+def check_update(url: str, ref: str, last_commit: str, auth: GitAuth) -> UpdateCheck:
+    """One ``ls-remote`` to answer "is there newer config than ``ref``?".
+
+    A version tag compares against the newest same-series release tag; a branch
+    compares its remote head with ``last_commit`` (the commit the last pull
+    applied — empty means never pulled, which reports nothing). No objects are
+    downloaded. Raises ``GitSyncError`` on connection/auth failure."""
+    refs = _ls_remote(url, auth)
+    tags = _tag_names(refs)
+    ref = ref.strip()
+    if ref in tags:
+        latest = newer_tag(ref, tags)
+        if latest is None and parse_tag_version(ref) is None:
+            return UpdateCheck(available=False, kind="none", current=ref)
+        return UpdateCheck(
+            available=latest is not None, kind="tag", current=ref, latest=latest or ""
+        )
+    head = refs.get(b"refs/heads/" + ref.encode("utf-8"))
+    if head is not None:
+        sha = head.decode("ascii", "replace")
+        moved = bool(last_commit) and sha != last_commit
+        return UpdateCheck(available=moved, kind="branch", current=ref, latest=sha)
+    # A version tag that's no longer on the remote (deleted) still has a series.
+    latest = newer_tag(ref, tags)
+    if latest is not None:
+        return UpdateCheck(available=True, kind="tag", current=ref, latest=latest)
+    return UpdateCheck(available=False, kind="none", current=ref)
 
 
 def fetch_files(

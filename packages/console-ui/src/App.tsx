@@ -74,7 +74,7 @@ import { CommandInput } from './components/CommandInput'
 import { DisclaimerGate } from './components/DisclaimerGate'
 import { RUNNING_STATUSES } from './components/runShared'
 import { useInFlight } from './bridge/useInFlight'
-import { bridge, type HistoryRecord, type Host, type HostProfile, type Runnable, type Runbook, type SavedRun, type RoomInfo, type BrandTheme, type Disclaimer } from './bridge'
+import { bridge, type HistoryRecord, type Host, type HostProfile, type Runnable, type Runbook, type SavedRun, type RoomInfo, type BrandTheme, type Disclaimer, type SyncUpdateCheck } from './bridge'
 import { ThemeContext, AccentContext, DEFAULT_ACCENT, UI_FONT, MONO_FONT, RADIUS, surfaces, withAlpha, textMuted, textSecondary, textFaint } from './ThemeContext'
 import {
   anyExpanded, isGroupCollapsed, loadSidebarGroups, saveSidebarGroups, setAllGroups, toggleGroupState,
@@ -308,6 +308,9 @@ export default function App() {
   const [activeChatId, setActiveChatId] = useState<string | null>(null)
   const [version, setVersion] = useState<string>('')
   const [updateInfo, setUpdateInfo] = useState<{ latest: string | null; updateAvailable: boolean } | null>(null)
+  // Config Sync: is newer config (a later tag in the same series, or new commits
+  // on a tracked branch) waiting in the repo? Null / not configured = no badge.
+  const [configUpdate, setConfigUpdate] = useState<SyncUpdateCheck | null>(null)
   const [docsUrl, setDocsUrl] = useState<string>('')
   // White-label theme ([console.theme]) — accent colour, watermark, sidebar brand
   // name. Read-only (set by a config seed or by hand); {} = the default look.
@@ -478,6 +481,16 @@ export default function App() {
     load()
     const t = setInterval(load, 6000)
     return () => clearInterval(t)
+  }, [])
+
+  // Config Sync update check: on mount, every 6 h, and right after a pull (or a
+  // settings save) so the badge clears without waiting. One ls-remote, no fetch.
+  useEffect(() => {
+    const check = () => { bridge.sync_check_update().then(setConfigUpdate).catch(() => setConfigUpdate(null)) }
+    check()
+    const t = setInterval(check, 6 * 60 * 60 * 1000)
+    window.addEventListener('runspec:config_sync_changed', check)
+    return () => { clearInterval(t); window.removeEventListener('runspec:config_sync_changed', check) }
   }, [])
 
   // An AI-only tab can't stay selected once the flag resolves to off.
@@ -1440,6 +1453,23 @@ export default function App() {
                   </Popover>
                 )
               })()}
+
+              {configUpdate?.ok && configUpdate.available && (
+                <div style={{ display: 'flex' }}>
+                  <Tooltip title={configUpdate.kind === 'branch'
+                    ? `New commits on ${configUpdate.current} — review the changes in Settings → Config Sync`
+                    : `Newer config ${configUpdate.latest} available (you're on ${configUpdate.current}) — review the changes in Settings → Config Sync`}>
+                    <Tag
+                      color="gold"
+                      data-testid="config-update-badge"
+                      onClick={() => openSettings('configSync')}
+                      style={{ cursor: 'pointer', margin: 0, fontSize: 11, lineHeight: '16px', padding: '0 5px' }}
+                    >
+                      config ↑ {configUpdate.kind === 'branch' ? 'new commits' : configUpdate.latest}
+                    </Tag>
+                  </Tooltip>
+                </div>
+              )}
 
               {/* Version + update state */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>

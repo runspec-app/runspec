@@ -246,6 +246,8 @@ EXPECTED = {
     "stop_triggers",
     "stop_voice_dictation",
     "submit_paste_input",
+    "sync_check_update",
+    "sync_preview",
     "sync_pull",
     "sync_repo",
     "synthesize_improve_report",

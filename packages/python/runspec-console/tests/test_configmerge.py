@@ -197,3 +197,67 @@ def test_seed_overrides_truncates_long_values():
     local = {"a": {"b": "y"}}
     rows = cm.seed_overrides("config.toml", seed, local, [])
     assert len(rows[0]["seed"]) == 200 and rows[0]["seed"].endswith("…")
+
+
+# ── merged_native / change_summary / render_diff (pull preview) ─────────────────
+
+
+def test_merged_native_collection_keeps_local_and_other_keys():
+    from runspec_console.configmerge import merged_native
+
+    local = {"host": [{"name": "a", "x": 1}, {"name": "mine"}], "version": 1}
+    incoming = {"host": [{"name": "a", "x": 2}, {"name": "b"}]}
+    out = merged_native("runspec_hosts.toml", local, incoming, [])
+    assert [h["name"] for h in out["host"]] == ["a", "mine", "b"]
+    assert out["host"][0]["x"] == 2
+    assert out["version"] == 1
+
+
+def test_merged_native_triggers_by_name_without_rota():
+    from runspec_console.configmerge import merged_native
+
+    local = {"triggers": {"mine": {"run": "x"}, "shared": {"run": "old"}}}
+    incoming = {"triggers": {"shared": {"run": "new"}}, "rota": {"days": ["mon"]}}
+    out = merged_native("runspec_triggers.toml", local, incoming, [])
+    assert out == {"triggers": {"mine": {"run": "x"}, "shared": {"run": "new"}}}
+
+
+def test_change_summary_collection_and_mapping():
+    from runspec_console.configmerge import change_summary
+
+    s = change_summary(
+        "runspec_hosts.toml",
+        {"host": [{"name": "a", "x": 1}, {"name": "k"}]},
+        {"host": [{"name": "a", "x": 2}, {"name": "k"}, {"name": "b"}]},
+    )
+    assert s["changed"] and s["added"] == ["b"] and s["unchanged"] == 1
+    assert s["updated"] == [{"id": "a", "fields": ["x"]}]
+
+    m = change_summary(
+        "config.toml",
+        {"llm": {"provider": "a"}, "gone": 1},
+        {"llm": {"provider": "b", "model": "m"}, "gone": 1},
+    )
+    assert m["updated"] == ["llm.provider"] and m["added"] == ["llm.model"]
+    assert m["removed"] == []
+    same = change_summary("config.toml", {"a": 1}, {"a": 1})
+    assert same["changed"] is False
+
+
+def test_render_diff_is_line_per_field_and_valid_toml():
+    import tomllib
+
+    from runspec_console.configmerge import _render_toml, render_diff
+
+    before = {"host": [{"name": "a", "hostname": "old"}]}
+    after = {"host": [{"name": "a", "hostname": "new"}]}
+    d = render_diff("runspec_hosts.toml", before, after, to_label="v2")
+    assert '-hostname = "old"' in d and '+hostname = "new"' in d
+    assert "+++ v2/runspec_hosts.toml" in d
+    assert render_diff("runspec_hosts.toml", after, after) == ""
+    nested = {
+        "llm": {"provider": "x", "extra": {"k": [1, 2]}},
+        "mcp": {"servers": [{"name": "s", "env": {"A": "1"}}]},
+        "triggers": {"my trig": {"run": "r"}},
+    }
+    assert tomllib.loads(_render_toml("config.toml", nested)) == nested

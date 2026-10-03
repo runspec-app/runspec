@@ -30,7 +30,8 @@ What syncs — the known config files: `config.toml`, `runspec_hosts.toml`,
 `runspec_groups.toml`, `runspec_profiles.toml`, `runspec_triggers.toml`,
 `runspec_filters.toml`, `runspec_credentials.toml` (metadata only — secrets
 stay in each operator's keychain), `runspec_runbooks.toml`,
-`runspec_repos.toml`, `runspec_self_service.toml`.
+`runspec_saved_runs.toml`, `runspec_sounds.toml`, `runspec_repos.toml`,
+`runspec_self_service.toml`, `runspec_evals.toml`.
 
 How it merges — **non-destructively**:
 
@@ -63,6 +64,30 @@ How it merges — **non-destructively**:
   the value (and make sure the value is present locally first).
 - Every fetched file is validated before writing, each local file is backed
   up first, and the result hot-reloads with no restart.
+
+### Reviewing a pull, and knowing when there's a new tag
+
+**Review & pull** never writes straight away. It fetches the tag, runs the same
+merge the pull will (your own entries and `preserve` keys included), and shows
+each file's changes before you accept: a headline (`2 entries added · 1
+updated`) and a line-per-field diff of your current file against the result.
+Files the repo doesn't carry at that tag are listed as skipped, and a file
+that isn't valid TOML blocks the pull. Accepting pulls **the commit you
+reviewed**; if the tag was moved in the meantime the pull is refused, so what
+lands is always what you looked at.
+
+The console also checks whether **newer config** is waiting (one `ls-remote`,
+nothing downloaded — at startup, every 6 hours, and after a pull):
+
+- On a **version tag** (`v1.4.0`, `emea-v2.1`, `2026.10.1`) it looks for a
+  later **release** tag in the same series: the same prefix, so a team on
+  `emea-v…` isn't offered `apac-v…`, and never a pre-release like `-rc1`.
+- On a **branch** it reports new commits since your last pull.
+- On a free-form tag (`golden`) there's nothing to compare, so it stays quiet.
+
+When there is, a gold **config ↑ v1.5.0** badge appears in the sidebar footer
+above the console version, and Settings → Config Sync shows a **Review v1.5.0**
+button. The review pulls that tag and makes it your configured tag.
 
 Mechanics worth knowing: git is pure-Python (dulwich — no system `git`, and
 it ignores `~/.gitconfig`); SSH auth uses the bundled client with a

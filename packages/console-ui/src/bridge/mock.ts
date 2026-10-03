@@ -1174,6 +1174,18 @@ export const mockApi: BridgeApi = {
   }),
   save_sync_config: async (data) => { console.log('[mock] save_sync_config', data) },
   list_sync_tags: async () => ({ tags: ['v1.2.0', 'v1.1.0', 'v1.0.0'] }),
+  sync_preview: async (ref?: string) => ({
+    ok: true, ref: ref || 'v1.2.0', commit: 'a1b2c3d4e5f6a7b8', current_ref: 'v1.1.0', current_commit: '9f8e7d6c', changed: true,
+    files: [
+      { name: 'config.toml', status: 'changed', summary: { kind: 'mapping', changed: true, added: ['llm.model'], updated: ['llm.provider'], removed: [] },
+        diff: '--- local/config.toml\n+++ v1.2.0/config.toml\n@@ -1,2 +1,3 @@\n [llm]\n-provider = "openai"\n+provider = "anthropic"\n+model = "claude-sonnet-5-5"\n' },
+      { name: 'runspec_hosts.toml', status: 'changed', summary: { kind: 'collection', changed: true, added: ['web2'], updated: [{ id: 'web1', fields: ['hostname'] }], removed: [], unchanged: 3 },
+        diff: '--- local/runspec_hosts.toml\n+++ v1.2.0/runspec_hosts.toml\n@@ -1,3 +1,7 @@\n [[host]]\n name = "web1"\n-hostname = "old.example"\n+hostname = "new.example"\n+\n+[[host]]\n+name = "web2"\n+hostname = "w2.example"\n' },
+      { name: 'runspec_filters.toml', status: 'unchanged', summary: { kind: 'collection', changed: false, added: [], updated: [], removed: [], unchanged: 2 }, diff: '' },
+      { name: 'runspec_triggers.toml', status: 'missing' },
+    ],
+  }),
+  sync_check_update: async () => ({ ok: true, configured: true, available: true, kind: 'tag', current: 'v1.1.0', latest: 'v1.2.0' }),
   sync_pull: async () => { console.log('[mock] sync_pull'); return { ok: true, ref: 'v1.2.0', commit: 'a1b2c3d4e5f6', written: ['config.toml', 'runspec_hosts.toml'], skipped: [], backups: ['config.toml.bak-20260616-043000'], pruned: [] } },
   seed_status: async () => ({ available: true, stamp: { 'mycorp-console': '1.4.0' }, applied: { 'mycorp-console': '1.4.0' }, last_applied: '2026-06-29T09:15:00Z', pending: false, overrides: [
     { file: 'config.toml', path: 'llm.api_key_command', seed: 'get-key', local: 'C:/venv/Scripts/get-key.exe', preserved: false },

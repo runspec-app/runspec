@@ -258,3 +258,43 @@ def test_pool_manager_verify_off(monkeypatch):
     pm = gitsync._https_pool_manager(gitsync.GitAuth(scheme="https", tls_verify=False))
     assert pm is not None
     assert pm.connection_pool_kw.get("cert_reqs") == "CERT_NONE"
+
+
+# ── tag versions / newer-config detection ───────────────────────────────────────
+
+
+def test_sort_tags_is_version_aware():
+    assert gitsync.sort_tags(["v1.9.0", "v1.10.0", "v1.10.0-rc1", "notes", "v2.0"]) == [
+        "v2.0",
+        "v1.10.0",
+        "v1.10.0-rc1",
+        "v1.9.0",
+        "notes",
+    ]
+
+
+def test_newer_tag_same_series_and_releases_only():
+    tags = ["v1.0.0", "v1.2.0", "v2.0.0-rc1", "emea-v9.0.0"]
+    assert gitsync.newer_tag("v1.0.0", tags) == "v1.2.0"
+    assert gitsync.newer_tag("v1.2.0", tags) is None
+    assert gitsync.newer_tag("emea-v1.0", ["emea-v1.0.1", "v5"]) == "emea-v1.0.1"
+    assert gitsync.newer_tag("main", tags) is None
+
+
+def test_check_update_tag_branch_and_unversioned(monkeypatch):
+    refs = {
+        b"refs/tags/v1.0.0": b"1" * 40,
+        b"refs/tags/v1.1.0": b"2" * 40,
+        b"refs/tags/golden": b"3" * 40,
+        b"refs/heads/main": b"9" * 40,
+    }
+    monkeypatch.setattr(gitsync, "_ls_remote", lambda url, auth: refs)
+    auth = gitsync.GitAuth()
+    tag = gitsync.check_update("u", "v1.0.0", "", auth)
+    assert (tag.available, tag.kind, tag.latest) == (True, "tag", "v1.1.0")
+    assert gitsync.check_update("u", "v1.1.0", "", auth).available is False
+    moved = gitsync.check_update("u", "main", "8" * 40, auth)
+    assert (moved.available, moved.kind, moved.latest) == (True, "branch", "9" * 40)
+    assert gitsync.check_update("u", "main", "9" * 40, auth).available is False
+    assert gitsync.check_update("u", "main", "", auth).available is False
+    assert gitsync.check_update("u", "golden", "", auth).kind == "none"

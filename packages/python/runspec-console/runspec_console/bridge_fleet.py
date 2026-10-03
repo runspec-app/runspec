@@ -978,8 +978,15 @@ class FleetMixin:
             tls_verify=sync.get("tls_verify", True) is not False,
         )
 
-    def sync_pull(self) -> dict[str, Any]:
+    def sync_pull(self, ref: str = "", expect_commit: str = "") -> dict[str, Any]:
         """Pull the configured files from the repo at the configured ref.
+
+        ``ref`` overrides the configured ref for this pull (and becomes the
+        configured ref when the pull succeeds) — so accepting a newer tag from
+        the update indicator / preview is one step. ``expect_commit`` is the
+        commit a :meth:`sync_preview` showed: when the ref now resolves to a
+        different commit (the tag was moved, the branch advanced) the pull
+        refuses and writes nothing, so what lands is exactly what was reviewed.
 
         When ``[config_sync] layers`` is set, each file is read at every layer
         subdir and **folded** low→high (a shared ``_base`` then a team dir, say)
@@ -992,10 +999,10 @@ class FleetMixin:
         ``backups_keep`` (default 5; 0 = keep all) per file and pruning the rest.
         The merge is
         **non-destructive**: collection files (hosts / triggers / filters /
-        credentials) merge by each entry's identity (name / id) — adding new
+        credentials / …) merge by each entry's identity (name / id) — adding new
         entries, updating matching ones, and keeping the operator's own; mapping
-        files (``config.toml``, the ``[rota]``) deep-overlay the repo on top of
-        local. A ``preserve`` list (built-in defaults + the user's, e.g.
+        files (``config.toml``) deep-overlay the repo on top of local. A
+        ``preserve`` list (built-in defaults + the user's, e.g.
         ``config.toml:mailbox.folder`` / ``runspec_hosts.toml:*.room_user``) keeps
         machine-local keys local. The local ``[config_sync]`` is re-injected into
         ``config.toml`` and stamped with ``last_*``. Finally the running app
@@ -1004,11 +1011,171 @@ class FleetMixin:
 
         Returns ``{ok, ref, commit, written, skipped, backups, pruned}`` or
         ``{ok: False, error}``."""
-        from . import configmerge, gitsync
+        fetched = self._sync_fetch(ref)
+        if not fetched.get("ok"):
+            return fetched
+        sync = fetched["sync"]
+        ref = fetched["ref"]
+        commit = fetched["commit"]
+        if expect_commit and expect_commit != commit:
+            return {
+                "ok": False,
+                "error": (
+                    f"{ref} now points at {commit[:8]}, not the {expect_commit[:8]} "
+                    "you previewed — nothing was written. Preview it again."
+                ),
+            }
+
+        def _stamp() -> None:
+            # Re-inject the local [config_sync] into the freshly-written config.toml
+            # (so the repo pointer survives the overwrite) and stamp last_*. Runs
+            # after the merge, before the hot-reload, so _after_config_change sees
+            # the final config.
+            sync["ref"] = ref
+            sync["last_ref"] = ref
+            sync["last_commit"] = commit
+            sync["last_synced"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            write_sync(sync)
+
+        applied = self._apply_config_layers(
+            fetched["files"],
+            fetched["layers"],
+            preserve=fetched["preserve"],
+            backups_keep=backups_keep_value(sync),
+            post_merge=_stamp,
+        )
+        if not applied.get("ok"):
+            return applied
+        self._dispatch("runspec:config_sync_changed", {"ref": ref, "commit": commit})
+        return {
+            "ok": True,
+            "ref": ref,
+            "commit": commit,
+            "written": applied["written"],
+            "skipped": applied["skipped"],
+            "backups": applied["backups"],
+            "pruned": applied["pruned"],
+        }
+
+    def sync_preview(self, ref: str = "") -> dict[str, Any]:
+        """What a pull at ``ref`` (default: the configured ref) would change.
+
+        Fetches exactly as :meth:`sync_pull` does and computes each file's
+        post-pull table with the same merge — but writes nothing. Per file:
+        ``status`` (``changed`` / ``unchanged`` / ``new`` — no local file yet —
+        / ``missing`` — not in the repo at that ref, so the pull skips it /
+        ``invalid`` — not valid TOML, which would abort the pull), a structured
+        ``summary`` (entries added/updated/removed, or changed keys) and a
+        unified ``diff`` of the local file → the pulled result, both rendered as
+        normalised TOML (so formatting-only differences don't show).
+
+        Returns ``{ok, ref, commit, current_ref, current_commit, files, changed}``
+        — pass ``commit`` back to :meth:`sync_pull` as ``expect_commit`` — or
+        ``{ok: False, error}``."""
+        from . import configmerge
+
+        fetched = self._sync_fetch(ref)
+        if not fetched.get("ok"):
+            return fetched
+        sync = fetched["sync"]
+        ref_name = fetched["ref"]
+        layers: dict[str, list[bytes]] = fetched["layers"]
+        preserve = fetched["preserve"]
+        files: list[dict[str, Any]] = []
+        for name in fetched["files"]:
+            datas = layers.get(name)
+            if not datas:
+                files.append({"name": name, "status": "missing"})
+                continue
+            try:
+                parsed = [tomllib.loads(d.decode("utf-8")) for d in datas]
+            except Exception as exc:  # noqa: BLE001
+                files.append({"name": name, "status": "invalid", "error": str(exc)})
+                continue
+            incoming = configmerge.fold_layers(name, parsed)
+            exists = (config_mod.app_dir() / name).exists()
+            before = self._local_merge_table(name) if exists else {}
+            after = configmerge.merged_native(
+                name, before, incoming, preserve.get(name, [])
+            )
+            if name == "config.toml":
+                # A pull re-injects the local [config_sync] after the merge, so
+                # the repo's copy (if any) never lands — don't show it.
+                after.pop("config_sync", None)
+                if "config_sync" in before:
+                    after["config_sync"] = before["config_sync"]
+            summary = configmerge.change_summary(name, before, after)
+            diff = configmerge.render_diff(
+                name, before, after, from_label="local", to_label=ref_name
+            )
+            if not exists:
+                status = "new"
+            elif summary["changed"] or diff:
+                status = "changed"
+            else:
+                status = "unchanged"
+            files.append(
+                {"name": name, "status": status, "summary": summary, "diff": diff}
+            )
+        return {
+            "ok": True,
+            "ref": ref_name,
+            "commit": fetched["commit"],
+            "current_ref": str(sync.get("last_ref", "") or ""),
+            "current_commit": str(sync.get("last_commit", "") or ""),
+            "changed": any(f["status"] in ("changed", "new", "invalid") for f in files),
+            "files": files,
+        }
+
+    def sync_check_update(self) -> dict[str, Any]:
+        """Is there newer config in the repo than the configured ref?
+
+        One ``ls-remote`` (no objects fetched). A version tag (``v1.4.0``,
+        ``emea-v2.1``) compares against the newest **release** tag in the same
+        series (same prefix; pre-releases never offered); a branch reports
+        whether its head moved past the last pulled commit. Feeds the footer
+        indicator and the Config Sync tab.
+
+        Returns ``{ok, configured, available, kind, current, latest}`` —
+        ``configured: False`` (nothing to check) when no repo/ref is set or the
+        git engine is missing — or ``{ok: False, error}``."""
+        from . import gitsync
 
         sync = read_sync()
         url = str(sync.get("url", "")).strip()
         ref = str(sync.get("ref", "")).strip()
+        if not url or not ref or not gitsync.available():
+            return {"ok": True, "configured": False, "available": False}
+        try:
+            auth = self._sync_auth(url, str(sync.get("credential_id", "")))
+            res = gitsync.check_update(
+                url, ref, str(sync.get("last_commit", "") or ""), auth
+            )
+        except gitsync.GitSyncError as exc:
+            return {"ok": False, "error": str(exc)}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": f"update check failed: {exc}"}
+        return {
+            "ok": True,
+            "configured": True,
+            "available": res.available,
+            "kind": res.kind,
+            "current": res.current,
+            "latest": res.latest,
+        }
+
+    def _sync_fetch(self, ref: str = "") -> dict[str, Any]:
+        """Fetch the configured files for a pull or its preview (no writes).
+
+        ``ref`` overrides the configured ref. Returns ``{ok: True, sync, ref,
+        commit, files, layers, preserve}`` — ``files`` the allowlisted names in
+        order, ``layers`` each found file's raw bytes per layer (low→high),
+        ``preserve`` parsed — or ``{ok: False, error}``."""
+        from . import configmerge, gitsync
+
+        sync = read_sync()
+        url = str(sync.get("url", "")).strip()
+        ref = str(ref or sync.get("ref", "")).strip()
         if not url or not ref:
             return {"ok": False, "error": "set a repository URL and a ref/tag first"}
 
@@ -1054,34 +1221,14 @@ class FleetMixin:
         preserve = configmerge.parse_preserve(
             [*configmerge.DEFAULT_PRESERVE, *(sync.get("preserve") or [])]
         )
-
-        def _stamp() -> None:
-            # Re-inject the local [config_sync] into the freshly-written config.toml
-            # (so the repo pointer survives the overwrite) and stamp last_*. Runs
-            # after the merge, before the hot-reload, so _after_config_change sees
-            # the final config.
-            sync["last_ref"] = ref
-            sync["last_commit"] = result.commit
-            sync["last_synced"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-            write_sync(sync)
-
-        applied = self._apply_config_layers(
-            safe,
-            fetched_layers,
-            preserve=preserve,
-            backups_keep=backups_keep_value(sync),
-            post_merge=_stamp,
-        )
-        if not applied.get("ok"):
-            return applied
         return {
             "ok": True,
+            "sync": sync,
             "ref": ref,
             "commit": result.commit,
-            "written": applied["written"],
-            "skipped": applied["skipped"],
-            "backups": applied["backups"],
-            "pruned": applied["pruned"],
+            "files": safe,
+            "layers": fetched_layers,
+            "preserve": preserve,
         }
 
     def _apply_config_layers(
@@ -1442,84 +1589,146 @@ class FleetMixin:
         """Merge one pulled file's effective table into local config, non-destructively.
 
         ``parsed`` is the file's already-folded layers (a single overlay collapses
-        to itself), in the file's native top-level shape. Collection files merge by
-        identity (``name``/``id``); mapping files deep-overlay; ``preserve`` paths
-        keep machine-local keys local."""
+        to itself), in the file's native top-level shape. The post-pull table is
+        :func:`configmerge.merged_native` of the local table — the same function
+        the preview (:meth:`sync_preview`) diffs, so what the operator reviewed is
+        what lands. Collection files merge by identity (``name``/``id``); mapping
+        files deep-overlay; ``preserve`` paths keep machine-local keys local."""
+        from . import configmerge
+
+        local = self._local_merge_table(name)
+        after = configmerge.merged_native(name, local, parsed, preserve)
+        self._write_merged_table(name, after)
+
+    def _local_merge_table(self, name: str) -> dict[str, Any]:
+        """The local side of a pull merge for ``name``, native-shaped.
+
+        Read through each store's own loader (which migrates legacy files and
+        quarantines a corrupt one) rather than raw TOML, so the merge — and its
+        preview — start from what the app actually uses."""
         from . import configmerge
 
         if name == "config.toml":
-            merged = configmerge.merge_mapping(self.get_config(), parsed, preserve)
-            config_mod.write_config(merged)
+            return dict(self.get_config())
+        if name == "runspec_hosts.toml":
+            return {"host": hosts_mod.load_hosts(config_mod.hosts_path())}
+        if name == "runspec_groups.toml":
+            from .groups import load_groups
+
+            return {"group": load_groups(config_mod.groups_path())}
+        if name == "runspec_profiles.toml":
+            from .profiles import load_profiles
+
+            return {"profile": load_profiles(config_mod.profiles_path())}
+        if name == "runspec_filters.toml":
+            from .filters_store import load_filters
+
+            return {"filter": load_filters(filters_path())}
+        if name == "runspec_credentials.toml":
+            from .credentials import load_credentials
+
+            return {"credential": load_credentials(config_mod.credentials_path())}
+        if name == "runspec_runbooks.toml":
+            from . import memory
+
+            return {"runbook": memory.load_runbooks()}
+        if name == "runspec_saved_runs.toml":
+            from .savedruns import load_saved_runs
+
+            return {"saved_run": load_saved_runs()}
+        if name == "runspec_sounds.toml":
+            from .sounds_registry import load_rows
+
+            return {"sound": load_rows()}
+        if name == "runspec_repos.toml":
+            from .repos import load_repos
+
+            return {"repo": load_repos(config_mod.repos_path())}
+        if name == "runspec_self_service.toml":
+            from .self_service import load_self_service
+
+            return {"self_service": load_self_service(config_mod.self_service_path())}
+        if name == configmerge.TRIGGERS_FILE:
+            from .config import read_triggers
+
+            triggers: dict[str, Any] = {}
+            for trig in read_triggers():
+                body = dict(trig)
+                key = body.pop("name", None)
+                if key:
+                    triggers[str(key)] = body
+            return {"triggers": triggers}
+        return self._local_native_table(name)
+
+    def _write_merged_table(self, name: str, table: dict[str, Any]) -> None:
+        """Persist a merged native table for ``name`` through its store's saver.
+
+        Every file in ``gitsync.KNOWN_FILES`` has a branch (each store normalises
+        on save); an unrecognised collection falls back to a plain TOML write.
+
+        The triggers file keeps the local rota as-is — working hours are
+        per-person and never synced (a legacy repo ``[rota]`` is ignored)."""
+        from . import configmerge
+
+        def rows(key: str) -> list[dict[str, Any]]:
+            raw = table.get(key)
+            return list(raw) if isinstance(raw, list) else []
+
+        if name == "config.toml":
+            config_mod.write_config(table)
         elif name == "runspec_hosts.toml":
-            merged = configmerge.merge_collection(
-                hosts_mod.load_hosts(config_mod.hosts_path()),
-                parsed.get("host", []),
-                "name",
-                preserve,
-            )
-            hosts_mod.save_hosts(config_mod.hosts_path(), merged)
+            hosts_mod.save_hosts(config_mod.hosts_path(), rows("host"))
         elif name == "runspec_groups.toml":
-            from .config import groups_path
-            from .groups import load_groups, save_groups
+            from .groups import save_groups
 
-            merged = configmerge.merge_collection(
-                load_groups(groups_path()), parsed.get("group", []), "name", preserve
-            )
-            save_groups(groups_path(), merged)
+            save_groups(config_mod.groups_path(), rows("group"))
+        elif name == "runspec_profiles.toml":
+            from .profiles import save_profiles
+
+            save_profiles(config_mod.profiles_path(), rows("profile"))
         elif name == "runspec_filters.toml":
-            from .filters_store import load_filters, save_filters
+            from .filters_store import save_filters
 
-            merged = configmerge.merge_collection(
-                load_filters(filters_path()), parsed.get("filter", []), "name", preserve
-            )
-            save_filters(filters_path(), merged)
+            save_filters(filters_path(), rows("filter"))
         elif name == "runspec_credentials.toml":
-            from .credentials import load_credentials, save_credentials
+            from .credentials import save_credentials
 
-            merged = configmerge.merge_collection(
-                load_credentials(config_mod.credentials_path()),
-                parsed.get("credential", []),
-                "id",
-                preserve,
-            )
-            save_credentials(config_mod.credentials_path(), merged)
+            save_credentials(config_mod.credentials_path(), rows("credential"))
         elif name == "runspec_runbooks.toml":
             from . import memory
 
-            merged = configmerge.merge_collection(
-                memory.load_runbooks(), parsed.get("runbook", []), "id", preserve
+            memory.save_runbooks(rows("runbook"))
+        elif name == "runspec_saved_runs.toml":
+            from .savedruns import save_saved_runs
+
+            save_saved_runs(rows("saved_run"))
+        elif name == "runspec_sounds.toml":
+            from .sounds_registry import save_rows
+
+            save_rows(rows("sound"))
+        elif name == "runspec_repos.toml":
+            from .repos import save_repos
+
+            save_repos(config_mod.repos_path(), rows("repo"))
+        elif name == "runspec_self_service.toml":
+            from .self_service import save_self_service
+
+            save_self_service(config_mod.self_service_path(), rows("self_service"))
+        elif name == configmerge.TRIGGERS_FILE:
+            from .config import read_rota, write_triggers_file
+
+            raw = table.get("triggers")
+            triggers = (
+                [{**v, "name": k} for k, v in raw.items() if isinstance(v, dict)]
+                if isinstance(raw, dict)
+                else []
             )
-            memory.save_runbooks(merged)
-        elif name == "runspec_triggers.toml":
-            self._merge_synced_triggers(parsed, preserve)
+            write_triggers_file(read_rota(), triggers)
+        else:
+            import tomli_w
 
-    def _merge_synced_triggers(
-        self, parsed: dict[str, Any], preserve: list[list[str]]
-    ) -> None:
-        """Merge pulled triggers by name (collection), preserving the operator's
-        own triggers (names not in the repo).
-
-        The working-hours rota is **never synced** — it's per-person and now lives
-        in its own ``runspec_rota.toml`` (managed on the Rota tab), so a pull keeps
-        the local rota untouched and ignores any legacy ``[rota]`` in the repo's
-        ``runspec_triggers.toml``."""
-        from . import configmerge
-        from .config import read_rota, read_triggers, write_triggers_file
-
-        raw = parsed.get("triggers")
-        incoming: list[dict[str, Any]] = []
-        if isinstance(raw, dict):
-            for key, val in raw.items():
-                if isinstance(val, dict):
-                    trig = dict(val)
-                    trig["name"] = key
-                    incoming.append(trig)
-        merged_triggers = configmerge.merge_collection(
-            read_triggers(), incoming, "name", preserve
-        )
-        # Keep the local rota as-is; the repo's [rota] (if any) is intentionally
-        # ignored — working hours are machine/person-specific.
-        write_triggers_file(read_rota(), merged_triggers)
+            dest = config_mod.app_dir() / name
+            self._atomic_write_bytes(dest, tomli_w.dumps(table).encode("utf-8"))
 
     def import_jump_hosts(self, toml_content: str) -> list[dict[str, Any]]:
         try:

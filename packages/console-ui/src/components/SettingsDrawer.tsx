@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { Drawer, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Empty, Table, Slider, Progress } from 'antd'
-import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, RightOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined, SearchOutlined, SoundOutlined, CloudServerOutlined } from '@ant-design/icons'
-import { VoiceConfig, VoiceDevice, bridge, type JumpHost, type LocalVenvConfig, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SeedStatus, type SeedOverride, type SeedApplyResult, type Runbook, type RunbookStep, type SavedRun, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost, type McpServer, type McpHeaderCredential, type McpStatus, type McpServerStatus, type McpCredentialOption, type ToolVisibility, type NamedSound, type MarketplaceConfig, type MarketplaceConfigInput, type MarketplaceRepo } from '../bridge'
+import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, RightOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined, SearchOutlined, SoundOutlined, CloudServerOutlined, DiffOutlined } from '@ant-design/icons'
+import { VoiceConfig, VoiceDevice, bridge, type JumpHost, type LocalVenvConfig, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SyncPreview, type SyncUpdateCheck, type SeedStatus, type SeedOverride, type SeedApplyResult, type Runbook, type RunbookStep, type SavedRun, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost, type McpServer, type McpHeaderCredential, type McpStatus, type McpServerStatus, type McpCredentialOption, type ToolVisibility, type NamedSound, type MarketplaceConfig, type MarketplaceConfigInput, type MarketplaceRepo } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
 import { CopyKeyAllModal } from '../views/CopyKeyAllModal'
 import { ProvisionModal } from '../views/ProvisionModal'
@@ -18,6 +18,7 @@ import {
 import { MONO_FONT, RADIUS, useAccent, withAlpha } from '../ThemeContext'
 import { ModelSelect } from './ModelSelect'
 import { useFeatures, visibleSettingsTabs } from '../features'
+import { ConfigSyncPreviewModal } from './ConfigSyncPreview'
 
 const { Text, Link } = Typography
 
@@ -3860,6 +3861,10 @@ export function ConfigSyncTab() {
   const [saved, setSaved] = useState(false)
   const [pulling, setPulling] = useState(false)
   const [result, setResult] = useState<SyncPullResult | null>(null)
+  const [preview, setPreview] = useState<SyncPreview | null>(null)
+  const [previewOpen, setPreviewOpen] = useState(false)
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const [update, setUpdate] = useState<SyncUpdateCheck | null>(null)
   const [docsDir, setDocsDir] = useState('')
   const [docsDefault, setDocsDefault] = useState('')
   const [docsBusy, setDocsBusy] = useState(false)
@@ -3927,17 +3932,41 @@ export function ConfigSyncTab() {
     else { setTags(r.tags ?? []); if (!r.tags?.length) message.info('No tags found in the repo.') }
   }
 
-  const pull = async () => {
-    setPulling(true); setResult(null)
+  // Review-then-pull: fetch the ref and show what would change (nothing is
+  // written), then pull exactly the previewed commit when the operator accepts.
+  const review = async (ref?: string) => {
     try {
       if (!(await persist())) return
-      const r = await bridge.sync_pull()
+    } catch { return }
+    setResult(null); setPreview(ref ? { ok: true, ref } : null)
+    setPreviewOpen(true); setPreviewLoading(true)
+    try {
+      setPreview(await bridge.sync_preview(ref))
+    } catch (e) {
+      setPreview({ ok: false, error: String(e) })
+    } finally { setPreviewLoading(false) }
+  }
+
+  const pull = async () => {
+    if (!preview?.ok) return
+    setPulling(true); setResult(null)
+    try {
+      const r = await bridge.sync_pull(preview.ref, preview.commit)
       setResult(r)
-      if (r.ok) message.success(`Pulled ${r.written?.length ?? 0} file(s) at ${r.ref}`)
-      else message.error(r.error || 'Pull failed')
+      if (r.ok) {
+        message.success(`Pulled ${r.written?.length ?? 0} file(s) at ${r.ref}`)
+        setPreviewOpen(false)
+        window.dispatchEvent(new CustomEvent('runspec:config_sync_changed'))
+      } else message.error(r.error || 'Pull failed')
       load()
+      checkUpdate()
     } finally { setPulling(false) }
   }
+
+  const checkUpdate = useCallback(() => {
+    bridge.sync_check_update().then(setUpdate).catch(() => setUpdate(null))
+  }, [])
+  useEffect(() => { checkUpdate() }, [checkUpdate])
 
   // Package config seed: read-only status of what the deployment package bundles.
   const loadSeed = useCallback(() => { bridge.seed_status().then(setSeed) }, [])
@@ -4055,14 +4084,32 @@ export function ConfigSyncTab() {
 
         <Space>
           <Button size="small" onClick={handleSave} loading={saving}>{saved ? 'Saved' : 'Save settings'}</Button>
-          <Popconfirm
-            title="Pull config from the repo?"
-            description={<span style={{ fontSize: 13 }}>Merges config from the chosen tag (adds/updates, keeps your own).<br />Each file is backed up first.</span>}
-            onConfirm={pull} okText="Pull" cancelText="Cancel" placement="topLeft">
-            <Button size="small" type="primary" icon={<DownloadOutlined />} loading={pulling} disabled={engineMissing}>Pull now</Button>
-          </Popconfirm>
+          <Tooltip title="Fetch the tag and show what would change before anything is written">
+            <Button size="small" type="primary" icon={<DiffOutlined />} loading={previewLoading} disabled={engineMissing} onClick={() => review()}>Review &amp; pull</Button>
+          </Tooltip>
         </Space>
       </Form>
+
+      <ConfigSyncPreviewModal
+        open={previewOpen}
+        loading={previewLoading}
+        pulling={pulling}
+        preview={preview}
+        onPull={pull}
+        onCancel={() => setPreviewOpen(false)}
+      />
+
+      {update?.ok && update.available && (
+        <Alert type="info" showIcon style={{ marginTop: 12 }}
+          message={update.kind === 'branch'
+            ? <>Branch <code>{update.current}</code> has new commits since your last pull.</>
+            : <>Newer config available: <code>{update.latest}</code> (you're on <code>{update.current}</code>).</>}
+          action={
+            <Button size="small" onClick={() => review(update.kind === 'branch' ? undefined : update.latest)} disabled={engineMissing}>
+              Review {update.kind === 'branch' ? 'changes' : update.latest}
+            </Button>
+          } />
+      )}
 
       {cfg?.last_synced && (
         <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 12 }}>

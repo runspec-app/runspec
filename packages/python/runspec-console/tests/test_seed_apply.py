@@ -35,7 +35,10 @@ class _SeedBridge:
     _apply_config_layers = Bridge._apply_config_layers
     _atomic_write_bytes = Bridge._atomic_write_bytes
     _merge_synced_file = Bridge._merge_synced_file
-    _merge_synced_triggers = Bridge._merge_synced_triggers
+    _local_merge_table = Bridge._local_merge_table
+    _write_merged_table = Bridge._write_merged_table
+    _local_native_table = Bridge._local_native_table
+    _sync_fetch = Bridge._sync_fetch
     _prune_backups = Bridge._prune_backups
 
     def __init__(self):

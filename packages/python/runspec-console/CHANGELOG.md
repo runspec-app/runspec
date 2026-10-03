@@ -9,6 +9,42 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.321.0] — 2026-10-03
+
+### Added
+
+- **Config Sync: review a pull before accepting it.** *Pull now* is replaced by
+  **Review & pull** (Settings → Config Sync): it fetches the tag and shows, per
+  file, what the pull would change — a headline (entries added / updated /
+  removed, or the `config.toml` keys that change) and a line-per-field diff of
+  the local file against the merged result — without writing anything. Files
+  absent at that tag show as skipped and an invalid TOML file blocks the pull.
+  Accepting pulls **exactly the previewed commit**: `sync_pull(ref,
+  expect_commit)` refuses if the tag moved since the preview. The preview and
+  the pull share one merge (`configmerge.merged_native`), so the diff is what
+  lands. New bridge method `sync_preview(ref)`; `configmerge.change_summary` /
+  `render_diff`; UI `components/ConfigSyncPreview.tsx`.
+- **Config Sync: newer-config indicator.** `sync_check_update()` does one
+  `ls-remote` (no download) and reports a later **release** tag in the same
+  series as the configured tag (same prefix, so `emea-v…` is never offered
+  `apac-v…`; pre-releases like `-rc1` are skipped), or new commits on a tracked
+  branch. When there is one, a gold **config ↑ v1.5.0** badge shows in the
+  sidebar footer above the version (click → Settings → Config Sync), and the tab
+  shows a **Review v1.5.0** button. Checked at startup, every 6 hours, and after
+  a pull. Pulling a newer tag from the review makes it the configured tag.
+  `gitsync.check_update` / `newer_tag` / `parse_tag_version`.
+
+### Fixed
+
+- **Config Sync silently skipped six files.** `runspec_profiles.toml`,
+  `runspec_saved_runs.toml`, `runspec_sounds.toml`, `runspec_repos.toml`,
+  `runspec_self_service.toml` and `runspec_evals.toml` were reported as
+  *written* by a pull but never merged onto disk (the per-file merge had no
+  branch for them). Every known file now merges through its own store's saver.
+- **Tag dropdown order.** Tags were sorted as plain strings, so `v1.10.0` listed
+  below `v1.9.0`. They're now sorted by version, newest first, with a release
+  above its own pre-releases.
+
 ## [0.320.1] — 2026-10-02
 
 ### Changed

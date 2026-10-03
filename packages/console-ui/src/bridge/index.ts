@@ -331,6 +331,53 @@ export interface SyncPullResult {
   error?: string
 }
 
+// Settings → Config Sync → Preview changes. One file's planned change: `status`
+// new (no local file yet) / changed / unchanged / missing (not in the repo at
+// that ref — skipped) / invalid (bad TOML — would abort the pull). `summary`
+// lists entry ids for collection files (hosts, triggers, …) or dotted keys for
+// config.toml; `diff` is a unified local → pulled diff of normalised TOML.
+export interface SyncFileSummary {
+  kind: 'collection' | 'mapping'
+  changed: boolean
+  added: string[]
+  updated: Array<string | { id: string; fields: string[] }>
+  removed: string[]
+  unchanged?: number
+}
+
+export interface SyncPreviewFile {
+  name: string
+  status: 'new' | 'changed' | 'unchanged' | 'missing' | 'invalid'
+  summary?: SyncFileSummary
+  diff?: string
+  error?: string
+}
+
+export interface SyncPreview {
+  ok: boolean
+  ref?: string
+  commit?: string
+  current_ref?: string
+  current_commit?: string
+  changed?: boolean
+  files?: SyncPreviewFile[]
+  error?: string
+}
+
+// Newer-config check. `kind` tag = a newer release tag in the same series
+// (`latest` names it); branch = the branch moved past the last pull (`latest`
+// is its head sha); none = the ref isn't versioned. `configured: false` = no
+// repo/ref set (show nothing).
+export interface SyncUpdateCheck {
+  ok: boolean
+  configured?: boolean
+  available?: boolean
+  kind?: 'tag' | 'branch' | 'none'
+  current?: string
+  latest?: string
+  error?: string
+}
+
 // Settings → Config Sync → Config seed. Read-only status of the baseline config
 // bundled inside the deployment package. `stamp`/`applied` map distribution name
 // → version; `pending` is true when what's bundled differs from what's applied
@@ -2037,7 +2084,15 @@ export interface BridgeApi {
   get_sync_config: () => Promise<SyncConfig>
   save_sync_config: (data: Partial<SyncConfig>) => Promise<void>
   list_sync_tags: () => Promise<{ tags?: string[]; error?: string }>
-  sync_pull: () => Promise<SyncPullResult>
+  // Pull at the configured ref, or at `ref` (which then becomes the configured
+  // ref). `expectCommit` is the commit a preview showed: the pull refuses if the
+  // ref moved since, so what lands is exactly what was reviewed.
+  sync_pull: (ref?: string, expectCommit?: string) => Promise<SyncPullResult>
+  // What a pull at `ref` (default: the configured ref) would change — per-file
+  // summary + unified diff, nothing written.
+  sync_preview: (ref?: string) => Promise<SyncPreview>
+  // Is there newer config in the repo? (one ls-remote; feeds the footer badge)
+  sync_check_update: () => Promise<SyncUpdateCheck>
   // Package config seed (Settings → Config Sync): baseline config bundled inside
   // the deployment package, applied on launch when its version changed. Read-only
   // status, and a force re-apply button.
