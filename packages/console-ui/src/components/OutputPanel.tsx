@@ -3,6 +3,7 @@ import { Button, Checkbox, Dropdown, Input, Tag, Tooltip, Typography, message } 
 import type { MenuProps } from 'antd'
 import { bridge } from '../bridge'
 import { Markdown } from './Markdown'
+import { shortcutHint } from '../shortcuts'
 import { useIsDark, textColor, useAccent, surfaces, textFaint, textMuted, textSecondary, MONO_FONT, RADIUS } from '../ThemeContext'
 import {
   ThunderboltOutlined, CheckCircleOutlined, CloseCircleOutlined, LoadingOutlined,
@@ -1145,7 +1146,7 @@ function ToolCallBlock({
   }
 
   return (
-    <div style={{
+    <div data-rs-confirm-gate={awaiting ? '' : undefined} style={{
       margin: '6px 0',
       border: `1px solid ${awaiting ? (c.isDark ? '#5a4a1a' : '#ffd591') : c.toolBorder}`,
       borderRadius: RADIUS.sm, overflow: 'hidden',
@@ -1326,10 +1327,14 @@ function ToolCallBlock({
             </pre>
           ) : null}
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <Button type="primary" size="small" icon={<CaretRightOutlined />} onClick={approve}>
-              Approve &amp; {v}
-            </Button>
-            <Button size="small" danger onClick={() => onAnswer?.(false)}>Deny</Button>
+            <Tooltip title={`Approve (${shortcutHint('approve')})`}>
+              <Button type="primary" size="small" icon={<CaretRightOutlined />} onClick={approve} data-rs-confirm="approve">
+                Approve &amp; {v}
+              </Button>
+            </Tooltip>
+            <Tooltip title={`Deny (${shortcutHint('deny')})`}>
+              <Button size="small" danger onClick={() => onAnswer?.(false)} data-rs-confirm="deny">Deny</Button>
+            </Tooltip>
           </div>
         </div>
       )}

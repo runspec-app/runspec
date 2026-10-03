@@ -9,6 +9,30 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.322.0] — 2026-10-03
+
+### Added
+
+- **Keyboard shortcuts and a Ctrl+K command palette.** App-wide shortcuts:
+  Ctrl+K palette, Ctrl+/ or `?` shortcut sheet, Ctrl+, Settings, Alt+R refresh
+  hosts, Ctrl+1…9 switch tab, Ctrl+L focus the command bar, `/` open the
+  runnable menu, Alt+A / Alt+D approve or deny the pending confirmation, Alt+N
+  new chat, Ctrl+Tab / Ctrl+Shift+Tab switch chat session, and Esc in the
+  command bar stops the running turn. The palette (on the already-bundled
+  `cmdk`) searches actions, tabs, runnables (opens the form), runbooks, saved
+  runs, hosts and host profiles. A new **?** button in the top bar opens the
+  sheet; Approve/Deny, New chat, Stop, Settings and the nav tabs show their
+  keys in tooltips.
+- Keyboard Approve/Deny never answers a confirmation the operator can't see:
+  from another tab, or with the card's buttons scrolled out of view, the first
+  press reveals and flashes the card and a second press answers it, by clicking
+  the card's own button (so edited args and the audit record are unchanged).
+- Bare keys (`?`, `/`) never fire while typing in a field, and no shortcut fires
+  while a dialog or drawer is open. AI-off hides the chat-only shortcuts.
+- Reload (Ctrl+R / F5), find (Ctrl+F), print (Ctrl+P) and the clipboard/undo
+  keys are reserved: the registry (`console-ui/src/shortcuts.ts`) is tested to
+  never bind them. See `docs/console-shortcuts.md`.
+
 ## [0.321.0] — 2026-10-03
 
 ### Added

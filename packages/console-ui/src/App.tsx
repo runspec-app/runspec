@@ -30,6 +30,10 @@ import {
   MenuUnfoldOutlined,
   ReloadOutlined,
   StopOutlined,
+  QuestionCircleOutlined,
+  PlayCircleOutlined,
+  CloudServerOutlined,
+  TeamOutlined,
 } from '@ant-design/icons'
 import { ConsoleView } from './views/ConsoleView'
 import { matchRunnableForEdit } from './views/formsMatch'
@@ -64,6 +68,8 @@ const TerminalsModal = React.lazy(() => import('./views/TerminalsModal').then(m 
 const DenylistModal = React.lazy(() => import('./views/DenylistModal').then(m => ({ default: m.DenylistModal })))
 const RunbookRunModal = React.lazy(() => import('./views/RunbookRunModal').then(m => ({ default: m.RunbookRunModal })))
 const SavedRunRunModal = React.lazy(() => import('./views/SavedRunRunModal').then(m => ({ default: m.SavedRunRunModal })))
+const ShortcutsHelp = React.lazy(() => import('./components/ShortcutsHelp').then(m => ({ default: m.ShortcutsHelp })))
+const CommandPalette = React.lazy(() => import('./components/CommandPalette').then(m => ({ default: m.CommandPalette })))
 const SettingsDrawer = React.lazy(() => import('./components/SettingsDrawer').then(m => ({ default: m.SettingsDrawer })))
 // The editors that used to be Settings tabs, now hosted where they're used:
 // Forms (runbooks, saved runs) and the Marketplace tab (its settings modal).
@@ -81,6 +87,8 @@ import {
   type GroupsMode, type SidebarGroupsState,
 } from './sidebarGroups'
 import { FeaturesContext, AI_ONLY_VIEWS, visibleNavTabs, type Features } from './features'
+import { useShortcuts, shortcutHint, answerPendingConfirm, revealPendingConfirm, hasPendingConfirm } from './shortcuts'
+import type { PaletteAction } from './components/CommandPalette'
 
 type ViewKey = 'console' | 'specs' | 'history' | 'logs' | 'forms' | 'marketplace' | 'schedules' | 'triggers' | 'rota' | 'improve' | 'evals' | 'dev'
 
@@ -915,6 +923,103 @@ export default function App() {
     { key: 'dev'       as ViewKey, label: 'Dev',       icon: <BugOutlined /> },
   ], features)
 
+  // ── Keyboard shortcuts (shortcuts.ts is the registry) ──────────────────────
+  const [paletteOpen, setPaletteOpen] = useState(false)
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const focusComposer = (slash = false) =>
+    window.dispatchEvent(new CustomEvent('runspec:focus_composer', { detail: { slash } }))
+  // Alt+A / Alt+D: answer the oldest pending confirmation — but only one the
+  // operator can see. From another tab the first press just brings the
+  // Console up with the card flashing; a card scrolled off screen is scrolled
+  // into view first. A second press answers it (via the card's own button).
+  const confirmByKey = (action: 'approve' | 'deny') => {
+    if (!hasPendingConfirm()) { message.info('Nothing is waiting for confirmation', 2); return }
+    const again = `Press ${shortcutHint(action)} again to ${action}`
+    if (view !== 'console') {
+      setView('console')
+      requestAnimationFrame(() => requestAnimationFrame(() => { revealPendingConfirm() }))
+      message.info(again, 2)
+      return
+    }
+    if (answerPendingConfirm(action) === 'revealed') message.info(again, 2)
+  }
+  const toConsoleThen = (event: string, detail?: unknown) => {
+    setView('console')
+    window.dispatchEvent(new CustomEvent(event, { detail }))
+  }
+  useShortcuts({
+    palette: () => setPaletteOpen(true),
+    help: () => setShortcutsOpen(true),
+    settings: () => openSettings(),
+    refreshHosts: () => { if (!refreshingHosts) refreshHosts() },
+    switchTab: (i: number) => { const t = navTabs[i]; if (t) setView(t.key) },
+    focusComposer: () => focusComposer(false),
+    findRunnable: () => focusComposer(true),
+    approve: () => confirmByKey('approve'),
+    deny: () => confirmByKey('deny'),
+    newChat: () => toConsoleThen('runspec:new_chat'),
+    nextSession: () => toConsoleThen('runspec:cycle_session', { dir: 1 }),
+    prevSession: () => toConsoleThen('runspec:cycle_session', { dir: -1 }),
+  }, aiEnabled)
+
+  // The palette's list — built only while it's open.
+  const paletteActions: PaletteAction[] = !paletteOpen ? [] : (() => {
+    const out: PaletteAction[] = []
+    const act = (id: string, label: string, run: () => void, hint?: string) =>
+      out.push({ id: `action:${id}`, label, group: 'Actions', hint, run })
+    if (activeChatId) act('stop', 'Stop the running turn', () => { bridge.cancel_chat(activeChatId).catch(console.error) }, 'Esc')
+    if (hasPendingConfirm()) {
+      act('approve', 'Approve the pending confirmation', () => confirmByKey('approve'), shortcutHint('approve'))
+      act('deny', 'Deny the pending confirmation', () => confirmByKey('deny'), shortcutHint('deny'))
+    }
+    if (aiEnabled) act('newChat', 'New chat', () => toConsoleThen('runspec:new_chat'), shortcutHint('newChat'))
+    act('focus', 'Focus the command bar', () => focusComposer(false), shortcutHint('focusComposer'))
+    act('refresh', 'Refresh hosts', () => { if (!refreshingHosts) refreshHosts() }, shortcutHint('refreshHosts'))
+    act('settings', 'Open Settings', () => openSettings(), shortcutHint('settings'))
+    act('transfer', 'Transfer files (SFTP)', () => setTransferOpen(true))
+    act('theme', isDark ? 'Switch to light theme' : 'Switch to dark theme', toggleTheme)
+    act('docs', 'Open documentation', () => { bridge.open_docs().catch(console.error) })
+    act('help', 'Keyboard shortcuts', () => setShortcutsOpen(true), shortcutHint('help'))
+    navTabs.forEach((t, i) => out.push({
+      id: `tab:${t.key}`, label: t.label, group: 'Go to', icon: t.icon,
+      hint: i < 9 ? `Ctrl+${i + 1}` : undefined, run: () => setView(t.key),
+    }))
+    // One row per runnable name (the fleet can have it on many hosts); open
+    // its form, preferring the selected host's copy.
+    const byName = new Map<string, Runnable[]>()
+    for (const r of runnables) byName.set(r.name, [...(byName.get(r.name) ?? []), r])
+    for (const [name, recs] of [...byName.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+      const pick = recs.find(r => r.host === selectedHost) ?? recs[0]
+      const hostsFor = [...new Set(recs.map(r => r.host))]
+      out.push({
+        id: `runnable:${name}`, label: name, group: 'Runnables', icon: <PlayCircleOutlined />,
+        detail: hostsFor.length > 1 ? `${hostsFor.length} hosts` : hostsFor[0],
+        keywords: [pick.description ?? '', ...hostsFor], run: () => handleOpenForm(pick),
+      })
+    }
+    if (aiEnabled) for (const rb of runbooks) out.push({
+      id: `runbook:${rb.id}`, label: rb.title || rb.id, group: 'Runbooks', icon: <ReadOutlined />,
+      detail: rb.title ? rb.id : undefined, keywords: rb.tags ?? [], run: () => handleOpenRunbook(rb),
+    })
+    for (const sr of savedRuns) out.push({
+      id: `saved:${sr.id}`, label: sr.title || sr.id, group: 'Saved runs', icon: <PlayCircleOutlined />,
+      detail: sr.title ? sr.id : undefined, run: () => handleOpenSavedRun(sr),
+    })
+    for (const h of hosts) out.push({
+      id: `host:${h.name}`, label: h.name, group: 'Hosts', icon: <CloudServerOutlined />,
+      detail: h.name === selectedHost ? 'selected' : undefined, run: () => handleHostSelect(h.name),
+    })
+    if (profiles.length > 0) {
+      out.push({ id: 'profile:', label: 'All hosts', group: 'Host profiles', icon: <TeamOutlined />,
+        detail: activeProfile === '' ? 'active' : undefined, run: () => handleSwitchProfile('') })
+      for (const p of profiles) out.push({
+        id: `profile:${p.name}`, label: p.name, group: 'Host profiles', icon: <TeamOutlined />,
+        detail: p.name === activeProfile ? 'active' : undefined, run: () => handleSwitchProfile(p.name),
+      })
+    }
+    return out
+  })()
+
   return (
     <ThemeContext.Provider value={isDark}>
     <FeaturesContext.Provider value={features}>
@@ -1521,6 +1626,7 @@ export default function App() {
                 <button
                   key={tab.key}
                   className="rs-nav-tab"
+                  title={navTabs.indexOf(tab) < 9 ? `${tab.label} (Ctrl+${navTabs.indexOf(tab) + 1})` : undefined}
                   onClick={() => setView(tab.key)}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 6,
@@ -1541,6 +1647,9 @@ export default function App() {
                 <Tooltip title={docsUrl ? `Documentation — ${docsUrl}` : 'Documentation'}>
                   <Button type="text" size="small" icon={<ReadOutlined />} onClick={() => bridge.open_docs().catch(console.error)} style={{ color: iconCol }} />
                 </Tooltip>
+                <Tooltip title={`Keyboard shortcuts (${shortcutHint('help')}) · command palette (${shortcutHint('palette')})`}>
+                  <Button type="text" size="small" icon={<QuestionCircleOutlined />} onClick={() => setShortcutsOpen(true)} style={{ color: iconCol }} aria-label="Keyboard shortcuts" />
+                </Tooltip>
                 <Tooltip title={isDark ? 'Light theme' : 'Dark theme'}>
                   <Button type="text" size="small" icon={isDark ? <SunOutlined /> : <MoonOutlined />} onClick={toggleTheme} style={{ color: iconCol }} />
                 </Tooltip>
@@ -1550,7 +1659,7 @@ export default function App() {
                 <Tooltip title={
                   mcpInvalidTools.length > 0
                     ? `${mcpInvalidTools.length} runnable(s) not published to the MCP server — invalid tool schema. Open Settings → MCP Server.`
-                    : sshKeyAgeDays !== null && sshKeyAgeDays >= 75 ? `SSH key ${sshKeyAgeDays}d old — rotation recommended` : 'Settings'
+                    : sshKeyAgeDays !== null && sshKeyAgeDays >= 75 ? `SSH key ${sshKeyAgeDays}d old — rotation recommended` : `Settings (${shortcutHint('settings')})`
                 }>
                   <Badge
                     dot={mcpInvalidTools.length > 0 || (sshKeyAgeDays !== null && sshKeyAgeDays >= 75)}
@@ -1706,6 +1815,9 @@ export default function App() {
             fallback={null} — nothing to show until the (usually cached) chunk
             resolves on first open. */}
         <Suspense fallback={null}>
+          {shortcutsOpen && <ShortcutsHelp open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />}
+          {paletteOpen && <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} actions={paletteActions} />}
+
           {transferOpen && (
             <TransferModal
               open={transferOpen}

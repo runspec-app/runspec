@@ -265,6 +265,14 @@ conventions and points at the source-of-truth files (`ThemeContext.tsx`,
 `index.css`, `bridge/index.ts`). Verify with `npm run typecheck` + `npm test`
 from `packages/console-ui/`.
 
+**Keyboard shortcuts (console 0.322.0):** one registry, `console-ui/src/shortcuts.ts`
+(`SHORTCUTS`), drives the global listener (`useShortcuts` in `App.tsx`), the `?`
+sheet (`ShortcutsHelp`) and the Ctrl+K palette (`CommandPalette`, on `cmdk`). Add
+a shortcut there, never with an ad-hoc `keydown` listener. `RESERVED` browser keys
+(Ctrl+R/F5 reload, Ctrl+F find, Ctrl+P print, clipboard/undo) must never be bound;
+a test enforces it. Keyboard Approve/Deny clicks the card's own
+`data-rs-confirm` button and only when it's on screen. See `docs/console-shortcuts.md`.
+
 ---
 
 ## Current Status

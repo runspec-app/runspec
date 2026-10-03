@@ -395,6 +395,28 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
     setViewing(null)
   }
 
+  // Keyboard shortcuts (shortcuts.ts, dispatched from App): Alt+N opens a new
+  // chat; Ctrl+Tab / Ctrl+Shift+Tab step through the session chips in order.
+  const handleNewChatRef = useRef(handleNewChat)
+  handleNewChatRef.current = handleNewChat
+  useEffect(() => {
+    const onNew = () => { void handleNewChatRef.current() }
+    const onCycle = (e: Event) => {
+      const { dir } = ((e as CustomEvent).detail ?? {}) as { dir?: number }
+      const { sessions: list, selectedId: cur, select: pick } = sessionsRef.current
+      if (list.length < 2) return
+      const i = list.findIndex(s => s.id === cur)
+      const next = list[(i + (dir && dir < 0 ? -1 : 1) + list.length) % list.length]
+      if (next) pick(next.id)
+    }
+    window.addEventListener('runspec:new_chat', onNew)
+    window.addEventListener('runspec:cycle_session', onCycle)
+    return () => {
+      window.removeEventListener('runspec:new_chat', onNew)
+      window.removeEventListener('runspec:cycle_session', onCycle)
+    }
+  }, [])
+
   // AI off: the Console is the run-output pane; "Clear" replaces the session
   // (backend) and drops its blocks. Without a session, just empty the pane.
   const handleClear = async () => {
@@ -669,7 +691,7 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
           </Tooltip>
         )}
         {ai ? (
-          <Tooltip title="Open another chat — this one keeps running">
+          <Tooltip title="Open another chat — this one keeps running (Alt+N)">
             <Button size="small" icon={<PlusOutlined />} onClick={handleNewChat} style={{ flexShrink: 0 }}>
               New chat
             </Button>

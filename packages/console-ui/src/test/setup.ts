@@ -34,6 +34,12 @@ if (typeof window !== 'undefined') {
     ;(window as unknown as { ResizeObserver: unknown }).ResizeObserver = ResizeObserverStub
   }
 
+  // jsdom has no layout, so no scrollIntoView — cmdk (the Ctrl+K palette) and
+  // the shortcut reveal call it.
+  if (!Element.prototype.scrollIntoView) {
+    Element.prototype.scrollIntoView = function scrollIntoView() {}
+  }
+
   // jsdom implements getComputedStyle(elt) but throws a noisy "Not implemented:
   // window.getComputedStyle(elt, pseudoElt)" when a pseudo-element arg is passed —
   // which antd's scrollbar measurement (rc-util measureScrollbarSize) does every
