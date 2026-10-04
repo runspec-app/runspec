@@ -36,6 +36,7 @@ import {
   TeamOutlined,
 } from '@ant-design/icons'
 import { ConsoleView } from './views/ConsoleView'
+import { useWaitingCue } from './useWaitingCue'
 import { matchRunnableForEdit } from './views/formsMatch'
 import { openTerminals as openGroupTerminals } from './views/terminals'
 import type { PendingForm } from './views/FormsView'
@@ -348,6 +349,9 @@ export default function App() {
   // Triggers badge). Lives here, not in SchedulesView, since that view unmounts.
   const [scheduleRunning, setScheduleRunning] = useState(0)
   const inFlight = useInFlight()
+  // Loop the gentle "waiting" ping while an attention badge needs the operator
+  // (Triggers approvals / queue callers, or any live Approve/Deny card).
+  useWaitingCue(triggerAwaiting)
 
   const selectedHostObj = hosts.find(h => h.name === selectedHost)
   const selectedHostGroups = selectedHostObj?.groups ?? []

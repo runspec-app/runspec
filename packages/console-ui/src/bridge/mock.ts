@@ -926,6 +926,7 @@ export const mockApi: BridgeApi = {
 
   test_notification: async () => ({ toast_available: false, toast_reason: 'mock', sound_available: false, window_found: false }),
   test_sound: async () => false,
+  set_waiting_cue: async (active: boolean) => active,
   sound_pack_info: async (path?: string) => ({ dir: path ?? '', exists: false, covered: {}, categories: [] }),
   get_sounds: async () => [
     { id: 'deploy-done', label: 'Deploy done', file: 'C:/sounds/deploy.mp3', exists: true },

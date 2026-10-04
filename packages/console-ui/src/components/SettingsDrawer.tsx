@@ -93,7 +93,12 @@ const SOUND_CATEGORIES: { key: string; label: string; def: string }[] = [
   { key: 'host_down', label: 'SSH host dropped', def: 'synth:host_down' },
   { key: 'room_up', label: 'Room reconnected', def: 'synth:room_up' },
   { key: 'room_down', label: 'Room connection dropped', def: 'synth:room_down' },
+  { key: 'waiting', label: 'Still waiting on you (repeats)', def: 'synth:waiting' },
 ]
+// [console.sounds] waiting_interval bounds — mirror config.WAITING_INTERVAL_*.
+const WAITING_INTERVAL_DEFAULT = 8
+const WAITING_INTERVAL_MIN = 2
+const WAITING_INTERVAL_MAX = 300
 // Valid winsound SND_ALIAS names offered as alternatives to the synth set.
 const SYSTEM_SOUND_ALIASES = ['SystemAsterisk', 'SystemExclamation', 'SystemHand', 'SystemQuestion', 'SystemDefault']
 // Sentinel option value that opens the native file picker instead of being a token.
@@ -113,6 +118,7 @@ export function SoundsTab() {
   const [enabled, setEnabled] = useState(true)
   const [choices, setChoices] = useState<Record<string, string>>({})
   const [volume, setVolume] = useState(100)
+  const [waitingInterval, setWaitingInterval] = useState(WAITING_INTERVAL_DEFAULT)
   const [pack, setPack] = useState('')
   const [packInfo, setPackInfo] = useState<{ exists: boolean; covered: Record<string, string> } | null>(null)
   const [confirmNotif, setConfirmNotif] = useState(true)
@@ -143,6 +149,9 @@ export function SoundsTab() {
       }
       setChoices(ch)
       setVolume(typeof sounds.volume === 'number' ? Math.max(0, Math.min(100, sounds.volume)) : 100)
+      setWaitingInterval(typeof sounds.waiting_interval === 'number'
+        ? Math.max(WAITING_INTERVAL_MIN, Math.min(WAITING_INTERVAL_MAX, sounds.waiting_interval))
+        : WAITING_INTERVAL_DEFAULT)
       const p = typeof sounds.pack === 'string' ? sounds.pack : ''
       setPack(p)
       loadPackInfo(p)
@@ -202,7 +211,11 @@ export function SoundsTab() {
     try {
       const cfg = await bridge.get_config()
       const con: Record<string, unknown> = { ...((cfg.console as Record<string, unknown>) ?? {}) }
-      con.sounds = { enabled, volume, ...(pack ? { pack } : {}), ...choices }
+      con.sounds = {
+        enabled, volume, ...(pack ? { pack } : {}), ...choices,
+        // Written only when changed, so an untouched console keeps following the default.
+        ...(waitingInterval !== WAITING_INTERVAL_DEFAULT ? { waiting_interval: waitingInterval } : {}),
+      }
       con.confirm_notifications = confirmNotif
       con.room_notifications = roomNotif
       await bridge.save_config({ ...cfg, console: con })
@@ -236,7 +249,9 @@ export function SoundsTab() {
         <Typography.Text code>.wav</Typography.Text>/<Typography.Text code>.mp3</Typography.Text> file, or point a
         <em>sound pack</em> folder of category-named files at the whole set. Volume applies to synthesized and
         file cues; Windows system aliases follow the system mixer. Connection cues (host/room up &amp; down) are
-        debounced — a flapping host won't chime more than once per half minute.
+        debounced — a flapping host won't chime more than once per half minute. The <em>waiting</em> cue is
+        a soft repeating ping that keeps going while something needs you (an approval, an unclaimed queue
+        caller) and stops as soon as it's cleared.
       </Typography.Paragraph>
 
       {row('Enable sounds', <Switch checked={enabled} onChange={setEnabled} />)}
@@ -338,6 +353,21 @@ export function SoundsTab() {
             />
           </Tooltip>
         </Space>,
+      ))}
+      {/* The "waiting" cue loops while a tab badge needs you (a pending approval,
+          an unclaimed queue caller) and stops when it clears — this is its gap. */}
+      {row('Repeat the waiting ping every', (
+        <Space size={4}>
+          <InputNumber
+            size="small" disabled={!enabled || choices.waiting === 'off'}
+            min={WAITING_INTERVAL_MIN} max={WAITING_INTERVAL_MAX} step={1}
+            value={waitingInterval}
+            onChange={v => setWaitingInterval(typeof v === 'number' ? v : WAITING_INTERVAL_DEFAULT)}
+            style={{ width: 80 }}
+            aria-label="Waiting ping interval (seconds)"
+          />
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>seconds</Typography.Text>
+        </Space>
       ))}
 
       <Divider style={{ margin: '12px 0 8px' }} />

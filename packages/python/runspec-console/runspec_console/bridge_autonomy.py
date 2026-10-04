@@ -495,6 +495,21 @@ class AutonomyMixin:
         except Exception:
             logger.debug("connection cue failed (%s %s)", kind, name, exc_info=True)
 
+    def set_waiting_cue(self, active: bool) -> bool:
+        """Hold (``True``) or release (``False``) the looping ``waiting`` ping.
+
+        The frontend calls this when a tab's attention badge appears / clears,
+        and re-asserts ``True`` periodically while it stays (the loop lapses on
+        its own if the re-asserts stop — see ``sounds.WaitingLoop``). Playback
+        still honours the master toggle and an ``off`` category. Returns the
+        loop's state. Never raises."""
+        try:
+            self._waiting_cue.set_active(bool(active))
+            return self._waiting_cue.active
+        except Exception:
+            logger.debug("set_waiting_cue failed", exc_info=True)
+            return False
+
     def test_sound(self, category: str, token: str | None = None) -> bool:
         """Preview a cue from Settings: play ``token`` if given (the row's
         unsaved selection), else the category's currently-effective cue. Forced

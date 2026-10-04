@@ -211,6 +211,13 @@ class Bridge(
         from . import sounds as _sounds
 
         self._conn_cue_gate = _sounds.ConnectionCueGate()
+        # The looping "waiting on you" ping, held active by the frontend while a
+        # tab carries an attention badge (set_waiting_cue). Re-reads the
+        # interval each ping so a Settings save applies live.
+        self._waiting_cue = _sounds.WaitingLoop(
+            lambda: _sounds.play("waiting"),
+            lambda: config_mod.sound_waiting_interval(),
+        )
         # Real remote log dirs per venv runspec path (asked of the remote, cached
         # for the session — they don't move). Avoids guessing the dir from the
         # binary path, which is wrong for pipx / ~/.local / system installs.

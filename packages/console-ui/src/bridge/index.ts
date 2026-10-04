@@ -1949,6 +1949,11 @@ export interface BridgeApi {
   // Preview one sound category (Settings row ▶). token plays the row's unsaved
   // selection ("synth:…" / "system:…" / "file:…"); omitted → the saved cue.
   test_sound: (category: string, token?: string | null) => Promise<boolean>
+  // Hold (true) / release (false) the looping "waiting" ping while a tab badge
+  // needs the operator. Re-assert true periodically: the backend lets the loop
+  // lapse on its own if the re-asserts stop (a reload mid-wait). Returns the
+  // loop's state.
+  set_waiting_cue: (active: boolean) => Promise<boolean>
   // Coverage report for a sound-pack folder: which categories it has files for.
   sound_pack_info: (path?: string) => Promise<{ dir: string; exists: boolean; covered: Record<string, string>; categories: string[] }>
   // The named-sound registry (runspec_sounds.toml): operator-added audio files

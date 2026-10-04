@@ -2078,6 +2078,7 @@ DEFAULT_SOUND_MAP = {
     "host_down": "synth:host_down",
     "room_up": "synth:room_up",
     "room_down": "synth:room_down",
+    "waiting": "synth:waiting",
 }
 
 
@@ -2265,6 +2266,22 @@ def sound_volume() -> int:
     if isinstance(val, bool) or not isinstance(val, (int, float)):
         return 100
     return max(0, min(100, int(val)))
+
+
+# `[console.sounds] waiting_interval` bounds (seconds between "waiting" pings).
+WAITING_INTERVAL_DEFAULT = 8.0
+WAITING_INTERVAL_MIN = 2.0
+WAITING_INTERVAL_MAX = 300.0
+
+
+def sound_waiting_interval() -> float:
+    """`[console.sounds] waiting_interval` — seconds between pings of the looping
+    ``waiting`` cue (played while a tab badge needs the operator). Clamped
+    2–300, default 8. Read on every ping so a Settings save applies live."""
+    val = sounds_config().get("waiting_interval")
+    if isinstance(val, bool) or not isinstance(val, (int, float)):
+        return WAITING_INTERVAL_DEFAULT
+    return max(WAITING_INTERVAL_MIN, min(WAITING_INTERVAL_MAX, float(val)))
 
 
 def sound_pack() -> str:

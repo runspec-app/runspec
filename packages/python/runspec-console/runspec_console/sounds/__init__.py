@@ -35,6 +35,8 @@ import itertools
 import logging
 import sys
 import threading
+import time
+from collections.abc import Callable
 from pathlib import Path
 
 from .. import config as config_mod
@@ -55,6 +57,7 @@ KNOWN_SOUNDS = (
     "host_down",
     "room_up",
     "room_down",
+    "waiting",
 )
 
 # The event categories config maps to a sound token (see config.DEFAULT_SOUND_MAP).
@@ -70,6 +73,7 @@ CATEGORIES = (
     "host_down",
     "room_up",
     "room_down",
+    "waiting",
 )
 
 # Extensions a file:<path> token / pack file may use, in pack-lookup preference
@@ -264,6 +268,95 @@ class ConnectionCueGate:
                 return False
             self._state[key] = (connected, now)
             return True
+
+
+class WaitingLoop:
+    """The looping "still waiting on you" cue.
+
+    While something in the UI needs the operator (a pending Approve/Deny, an
+    unclaimed queue caller — i.e. a *count* badge on a tab) the frontend holds
+    this loop active, and it plays the ``waiting`` category every ``interval()``
+    seconds until the badge clears — a gentle repeating ping in the spirit of a
+    video call's "connection lost" sonar, not an alarm. The first ping comes one
+    interval after activation, since the event that raised the badge already
+    played its own one-shot cue (``confirm`` / ``message``).
+
+    The frontend re-asserts ``set_active(True)`` periodically; if those stop
+    (the window reloaded or crashed mid-wait) the loop goes quiet on its own
+    after ``lease`` seconds, so a lost "clear" can't leave it pinging forever.
+
+    ``play``/``interval``/``clock`` are injected so the timing is unit-testable
+    without audio. One daemon thread, started lazily on first activation. Never
+    raises."""
+
+    def __init__(
+        self,
+        play: Callable[[], object],
+        interval: Callable[[], float],
+        *,
+        lease: float = 60.0,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._play = play
+        self._interval = interval
+        self._lease = lease
+        self._clock = clock
+        self._cond = threading.Condition()
+        self._active = False
+        self._asserted = 0.0  # clock() of the last set_active(True)
+        self._gen = 0  # bumped on every off→on, so a re-activation restarts the wait
+        self._thread: threading.Thread | None = None
+
+    @property
+    def active(self) -> bool:
+        with self._cond:
+            return self._active and not self._expired()
+
+    def _expired(self) -> bool:
+        return self._clock() - self._asserted > self._lease
+
+    def set_active(self, active: bool) -> None:
+        try:
+            with self._cond:
+                if active:
+                    if not self._active or self._expired():
+                        self._gen += 1
+                    self._active = True
+                    self._asserted = self._clock()
+                    if self._thread is None or not self._thread.is_alive():
+                        self._thread = threading.Thread(
+                            target=self._run, name="rs-waiting-cue", daemon=True
+                        )
+                        self._thread.start()
+                else:
+                    self._active = False
+                self._cond.notify_all()
+        except Exception:
+            logger.debug("waiting cue set_active failed", exc_info=True)
+
+    def _safe_interval(self) -> float:
+        try:
+            return max(0.01, float(self._interval()))
+        except Exception:
+            return 8.0
+
+    def _run(self) -> None:
+        while True:
+            with self._cond:
+                while not self._active:
+                    self._cond.wait()
+                gen = self._gen
+                # Wait one interval; a deactivate (or re-activation) wakes us early.
+                self._cond.wait(timeout=self._safe_interval())
+                if not self._active or gen != self._gen:
+                    continue
+                if self._expired():
+                    self._active = False  # lease lapsed — the UI stopped asserting
+                    continue
+            try:
+                self._play()
+            except Exception:
+                logger.debug("waiting cue play failed", exc_info=True)
 
 
 def _sound_path(name: str) -> Path | None:

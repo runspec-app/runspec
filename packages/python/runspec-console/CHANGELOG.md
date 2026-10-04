@@ -9,6 +9,21 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.323.0] — 2026-10-04
+
+### Added
+
+- **A gentle repeating "waiting" ping.** While something needs you (a pending
+  Approve/Deny card, or an unclaimed helpdesk queue caller on the Triggers tab)
+  the console now plays a soft sonar-style ping every few seconds until it's
+  cleared, so you know something is waiting without an alarm. It's a new
+  `waiting` sound category in **Settings → Sounds & Notifications** (pick another
+  sound or turn it off) with a *Repeat the waiting ping every … seconds* setting
+  (`[console.sounds] waiting_interval`, default 8). Playback runs in the backend
+  so it keeps going while the window is minimised, and it stops by itself if the
+  window reloads mid-wait. `sounds.WaitingLoop`, bridge `set_waiting_cue`,
+  frontend `useWaitingCue`.
+
 ## [0.322.1] — 2026-10-04
 
 ### Fixed

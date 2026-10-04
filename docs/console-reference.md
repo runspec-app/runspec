@@ -174,7 +174,16 @@ Notifications**.
 | `enabled` | Master toggle for all cues (default true) |
 | `volume` | 0–100 for synthesized + file cues (default 100) |
 | `pack` | A folder of category-named files (`confirm.wav`, `host_down.mp3`, …) applied to any category left on its default — machine-local, never synced |
-| *`<category>`* | Per-event override — one key per category (`confirm`, `trigger`, `completion_success`, …) set to a **sound token** |
+| *`<category>`* | Per-event override — one key per category (`confirm`, `trigger`, `completion_success`, …, `waiting`) set to a **sound token** |
+| `waiting_interval` | Seconds between pings of the looping `waiting` cue (default 8, clamped 2–300) |
+
+**The waiting ping.** While something needs you — a pending Approve/Deny card
+(chat, trigger or MCP server) or an unclaimed helpdesk queue caller, i.e. a count
+badge on a tab — the `waiting` cue repeats every `waiting_interval` seconds until
+it's cleared, a soft sonar-style ping rather than an alarm. The first repeat comes
+one interval after the event's own one-shot cue. Set `waiting = "off"` to keep
+the one-shot cues without the repeat. Progress badges (runs in flight, the
+Triggers "new activity" dot) never start it.
 
 A **sound token** is `synth:<name>` (a bundled cue), `system:<Alias>` (a Windows
 system sound), `file:<path>` (your own `.wav`/`.mp3`), `sound:<id>` (a **named

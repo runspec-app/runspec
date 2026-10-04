@@ -40,6 +40,7 @@ KNOWN_SOUNDS = (
     "host_down",
     "room_up",
     "room_down",
+    "waiting",
 )
 
 
@@ -125,12 +126,12 @@ def _seq(*segments: list[float]) -> list[float]:
     return out
 
 
-def _write(name: str, segments: list[list[float]]) -> Path:
+def _write(name: str, segments: list[list[float]], *, peak_level: float = PEAK) -> Path:
     data: list[float] = []
     for seg in segments:
         data.extend(seg)
     peak = max((abs(s) for s in data), default=1.0) or 1.0
-    scale = PEAK / peak
+    scale = peak_level / peak
     frames = bytearray()
     for s in data:
         v = int(max(-1.0, min(1.0, s * scale)) * 32767)
@@ -295,6 +296,37 @@ def build() -> list[Path]:
                     gain=0.35,
                 )
             ],
+        ),
+        # waiting: the looping "still waiting on you" ping (played every few
+        # seconds while a tab badge needs the operator). A soft sonar blip — a
+        # quick upward chirp into a pure C6 with a long tail and two fading
+        # echoes — so it reads "something is pending" without alarm. Quieter
+        # than the one-shot cues because it repeats.
+        _write(
+            "waiting",
+            [
+                _mix(
+                    _mix(
+                        _mix(
+                            _sweep(880.0, 1046.5, 0.05, decay=0.5),
+                            _tone(1046.5, 1.1, harmonics=(1.0, 0.0, 0.06), decay=5.5),
+                            at=0.04,
+                        ),
+                        _tone(1568.0, 0.6, decay=7.0),
+                        at=0.05,
+                        gain=0.08,
+                    ),
+                    _mix(
+                        _tone(1046.5, 0.8, decay=6.0),
+                        _tone(1046.5, 0.6, decay=6.0),
+                        at=0.32,
+                        gain=0.3,
+                    ),
+                    at=0.34,
+                    gain=0.35,
+                )
+            ],
+            peak_level=0.22,
         ),
     ]
     return written

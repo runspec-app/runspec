@@ -8,6 +8,7 @@ else ``available()`` is False and ``play()`` is a no-op. We exercise the pure
 from __future__ import annotations
 
 import sys
+import time
 
 import pytest
 
@@ -51,6 +52,7 @@ def test_categories_are_stable():
         "host_down",
         "room_up",
         "room_down",
+        "waiting",
     )
 
 
@@ -247,6 +249,25 @@ def test_sound_volume(monkeypatch):
         assert config.sound_volume() == want
 
 
+def test_sound_waiting_interval(monkeypatch):
+    monkeypatch.setattr(config, "read_config", lambda: {})
+    assert config.sound_waiting_interval() == 8.0  # default
+    for raw, want in [
+        (15, 15.0),
+        (2.5, 2.5),
+        (0, 2.0),
+        (9999, 300.0),
+        (True, 8.0),
+        ("x", 8.0),
+    ]:
+        monkeypatch.setattr(
+            config,
+            "read_config",
+            lambda raw=raw: {"console": {"sounds": {"waiting_interval": raw}}},
+        )
+        assert config.sound_waiting_interval() == want
+
+
 def test_sound_choice_set_distinguishes_unset(monkeypatch):
     monkeypatch.setattr(config, "read_config", lambda: {})
     assert config.sound_choice_set("confirm") is None  # unset — pack may apply
@@ -283,3 +304,81 @@ def test_play_is_noop_off_windows():
     assert sounds.play("confirm") is False
     assert sounds.play("confirm", force=True) is False
     assert sounds.play("not-a-category") is False  # never raises
+
+
+# ── WaitingLoop (the looping "waiting on you" ping) ──────────────────────────
+
+
+def _wait_for(pred, timeout=2.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if pred():
+            return True
+        time.sleep(0.005)
+    return pred()
+
+
+def test_waiting_loop_pings_while_active_and_stops_on_clear():
+    plays = []
+    loop = sounds.WaitingLoop(lambda: plays.append(1), lambda: 0.02)
+    assert not loop.active and plays == []
+    loop.set_active(True)
+    assert loop.active
+    assert _wait_for(lambda: len(plays) >= 3)
+    loop.set_active(False)
+    assert not loop.active
+    time.sleep(0.05)  # let an in-flight ping land
+    n = len(plays)
+    time.sleep(0.1)
+    assert len(plays) == n  # silent once cleared
+
+
+def test_waiting_loop_first_ping_waits_one_interval():
+    plays = []
+    loop = sounds.WaitingLoop(lambda: plays.append(1), lambda: 0.3)
+    loop.set_active(True)
+    time.sleep(0.1)
+    assert plays == []  # the badge's own one-shot cue already played
+    assert _wait_for(lambda: len(plays) == 1)
+    loop.set_active(False)
+
+
+def test_waiting_loop_lapses_without_reasserts():
+    plays = []
+    now = [0.0]
+    loop = sounds.WaitingLoop(
+        lambda: plays.append(1), lambda: 0.02, lease=10.0, clock=lambda: now[0]
+    )
+    loop.set_active(True)
+    assert _wait_for(lambda: len(plays) >= 1)
+    now[0] = 11.0  # the UI stopped re-asserting (reload / crash)
+    assert _wait_for(lambda: not loop.active)
+    time.sleep(0.05)
+    n = len(plays)
+    time.sleep(0.1)
+    assert len(plays) == n
+    loop.set_active(True)  # a fresh assert revives it
+    assert _wait_for(lambda: len(plays) > n)
+    loop.set_active(False)
+
+
+def test_waiting_loop_survives_play_errors():
+    calls = []
+
+    def boom():
+        calls.append(1)
+        raise RuntimeError("no audio device")
+
+    loop = sounds.WaitingLoop(boom, lambda: 0.02)
+    loop.set_active(True)
+    assert _wait_for(lambda: len(calls) >= 2)
+    loop.set_active(False)
+
+
+def test_bridge_set_waiting_cue_holds_and_releases():
+    from runspec_console.bridge import Bridge
+
+    b = Bridge.__new__(Bridge)
+    b._waiting_cue = sounds.WaitingLoop(lambda: None, lambda: 60.0)
+    assert b.set_waiting_cue(True) is True
+    assert b.set_waiting_cue(False) is False

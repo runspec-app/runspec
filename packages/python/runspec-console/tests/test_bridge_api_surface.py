@@ -230,6 +230,7 @@ EXPECTED = {
     "set_debug",
     "set_trigger_enabled",
     "set_turn_included",
+    "set_waiting_cue",
     "set_window",
     "set_window_title",
     "sound_pack_info",
