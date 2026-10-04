@@ -820,6 +820,9 @@ export interface KnowledgeOverview {
   // Run-history range the last capture used, in days (0 = all history).
   capture_days?: number
   dir: string
+  // Runnable names discovered right now; usage of anything not listed is
+  // drawn as "not installed". Empty before discovery has run.
+  installed_runnables?: string[]
   entity_types: string[]
   kinds: string[]
 }
@@ -2290,7 +2293,7 @@ export interface BridgeApi {
   knowledge_retire: (factId: string) => Promise<{ ok: boolean }>
   // Mine run history into observed facts (no AI). 0 = all history; omitted =
   // the last range used. The range is remembered for the hourly auto-capture.
-  knowledge_capture: (sinceDays?: number) => Promise<{ ok: boolean; observed?: number; runs?: number; days?: number; error?: string }>
+  knowledge_capture: (sinceDays?: number) => Promise<{ ok: boolean; observed?: number; runs?: number; days?: number; relinked?: number; error?: string }>
   // Ask the utility model to propose facts from saved chats (last `windowDays`,
   // 0 = all) into the inbox. Reads in chunks, one model call each, up to
   // `maxCalls` per click; chats already read are skipped, `remaining` counts the

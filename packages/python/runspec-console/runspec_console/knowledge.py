@@ -83,6 +83,9 @@ ENTITY_TYPES = (
     "app",
     "service",
     "team",
+    "trigger",
+    "schedule",
+    "runbook",
     "topic",
 )
 
@@ -436,6 +439,39 @@ class KnowledgeStore:
             own.append(dict(current, status="retired", last_confirmed=_today()))
             _save(self._path(FACTS_FILE), own)
             return True
+
+    def relink(self, fn: Any) -> int:
+        """Rewrite the ``about`` of inbox and own (non-retired) facts through
+        ``fn(about, text) -> about`` — e.g. :func:`link_about` after the fleet
+        gained a group. A fact whose subjects change gets its new content id;
+        everything else (status, source, author, confirmations) is kept. Returns
+        how many facts changed."""
+        changed = 0
+        with _LOCK:
+            for name in (INBOX_FILE, FACTS_FILE):
+                rows = _load(self._path(name))
+                out: list[dict[str, Any]] = []
+                dirty = False
+                for row in rows:
+                    if row.get("status") == "retired":
+                        out.append(row)
+                        continue
+                    about = list(row.get("about") or [])
+                    new = sorted(set(fn(about, str(row.get("text") or ""))))
+                    if new and new != sorted(about):
+                        row = dict(row, about=new)
+                        row["id"] = fact_id(
+                            str(row.get("kind")), new, str(row.get("text"))
+                        )
+                        dirty = True
+                        changed += 1
+                    out.append(row)
+                if dirty:
+                    seen: dict[str, dict[str, Any]] = {}
+                    for row in out:  # two facts can converge on one id — keep one
+                        seen.setdefault(str(row.get("id")), row)
+                    _save(self._path(name), list(seen.values()))
+        return changed
 
     def write_observed(self, facts: list[dict[str, Any]]) -> None:
         with _LOCK:
@@ -953,6 +989,287 @@ def observe(
     return out
 
 
+# ── linking facts to the fleet's real entities ──────────────────────────────
+
+#: Entity types whose names are matched against a fact's text and against the
+#: model's guesses, so a fact joins the existing node instead of floating alone.
+LINKABLE_TYPES = (
+    "host",
+    "group",
+    "profile",
+    "runnable",
+    "trigger",
+    "schedule",
+    "runbook",
+)
+#: Names too common to treat a bare mention in prose as a reference (they are
+#: still linked when the fact names them as a subject).
+_COMMON_NAMES = frozenset(
+    {"local", "default", "all", "test", "main", "prod", "dev", "uat", "staging", "data"}
+)
+MAX_ABOUT = 8
+
+
+def _name_key(name: str) -> str:
+    """Spelling-insensitive key: ``"Linux Servers"`` == ``linux-servers``."""
+    return "".join(_WORD.findall(str(name).lower()))
+
+
+def entity_catalog(entities: Iterable[str]) -> dict[str, list[str]]:
+    """``name key -> [refs]`` for the known entities (``type:name``), so a guess
+    like ``term:Linux Servers`` resolves to ``group:Linux Servers``."""
+    cat: dict[str, list[str]] = defaultdict(list)
+    for ref in entities:
+        ref = normalize_entity(ref)
+        if not ref or entity_type(ref) not in LINKABLE_TYPES:
+            continue
+        key = _name_key(entity_name(ref))
+        if key and ref not in cat[key]:
+            cat[key].append(ref)
+    return dict(cat)
+
+
+def _resolve(ref: str, catalog: dict[str, list[str]]) -> str:
+    kind = entity_type(ref)
+    if kind == "file":
+        return ref
+    hits = catalog.get(_name_key(entity_name(ref)), [])
+    if not hits:
+        return ref
+    same = [h for h in hits if entity_type(h) == kind]
+    if same:
+        return same[0]  # same type, canonical spelling
+    return hits[0] if len(hits) == 1 else ref  # ambiguous across types: keep
+
+
+def link_about(
+    about: Iterable[str], text: str, catalog: dict[str, list[str]]
+) -> list[str]:
+    """A fact's subjects joined up with the fleet: each guessed ref resolved to
+    the known entity of that name (any type, canonical spelling), plus every
+    known host / group / profile / runnable / trigger / schedule / runbook the
+    text names. Capped at :data:`MAX_ABOUT` subjects (named ones first)."""
+    refs = [_resolve(r, catalog) for r in (normalize_entity(a) for a in about) if r]
+    seen = set(refs)
+    if catalog and text:
+        low = f" {' '.join(_WORD.findall(text.lower()))} "
+        names: list[tuple[str, str]] = []
+        for hits in catalog.values():
+            for h in hits:
+                names.append((entity_name(h), h))
+        # Longest names first, so "web-01-backup" wins over "web-01".
+        for name, ref in sorted(names, key=lambda p: -len(p[0])):
+            if ref in seen or len(refs) >= MAX_ABOUT:
+                continue
+            words = " ".join(_WORD.findall(name.lower()))
+            if len(words) < 3 or words in _COMMON_NAMES:
+                continue
+            if f" {words} " in low:
+                refs.append(ref)
+                seen.add(ref)
+                # Consume the match so "web-01" doesn't also hit inside
+                # "web-01-backup".
+                low = low.replace(f" {words} ", "  ")
+    out: list[str] = []
+    for r in refs:
+        if r not in out:
+            out.append(r)
+    return out[:MAX_ABOUT]
+
+
+# ── facts read from the console's own config (no AI) ────────────────────────
+
+
+def _split_run(run: str) -> tuple[list[str], str]:
+    """A trigger ``run`` target → (target refs, runnable). ``group:G__r`` → a
+    group, ``host__r`` → a host, a bare ``r`` → no target."""
+    run = str(run or "").strip()
+    if "__" not in run:
+        return [], run
+    target, _, runnable = run.rpartition("__")
+    if target.startswith("group:"):
+        return [f"group:{target[6:]}"], runnable
+    return [f"host:{target}"], runnable
+
+
+def _join(names: list[str], limit: int = 12) -> str:
+    shown = names[:limit]
+    more = len(names) - len(shown)
+    return ", ".join(shown) + (f" and {more} more" if more > 0 else "")
+
+
+def observe_config(
+    *,
+    hosts: Iterable[dict[str, Any]] = (),
+    triggers: Iterable[dict[str, Any]] = (),
+    schedules: Iterable[dict[str, Any]] = (),
+    runbooks: Iterable[dict[str, Any]] = (),
+    filters: Iterable[dict[str, Any]] = (),
+    catalog: dict[str, list[str]] | None = None,
+) -> list[dict[str, Any]]:
+    """Facts read straight from the console's config (``status = observed``,
+    ``source = config``) so the wiki — and the graph — know how the fleet is
+    set up: which hosts are in each group and profile, what each trigger and
+    schedule runs where, what each runbook is for and which runnables it uses,
+    and the saved file-relay filters. Rebuilt on every capture, so it never
+    goes stale; the *why* behind the setup is what operators and chats add."""
+    facts: list[dict[str, Any]] = []
+    catalog = catalog or {}
+
+    def add(kind: str, about: list[str], text: str) -> None:
+        try:
+            facts.append(
+                make_fact(
+                    kind=kind,
+                    about=about,
+                    text=text,
+                    status="observed",
+                    source="config",
+                )
+            )
+        except ValueError:
+            pass
+
+    groups: dict[str, list[str]] = defaultdict(list)
+    profiles: dict[str, list[str]] = defaultdict(list)
+    for h in hosts:
+        name = str(h.get("name") or "").strip()
+        if not name:
+            continue
+        g = str(h.get("group") or "").strip()
+        if g:
+            groups[g].append(name)
+        for p in h.get("profiles") or []:
+            if str(p).strip():
+                profiles[str(p).strip()].append(name)
+    for g, members in sorted(groups.items()):
+        members = sorted(set(members))
+        add(
+            "host",
+            [f"group:{g}", *[f"host:{m}" for m in members[: MAX_ABOUT - 1]]],
+            f"Group {g} contains {len(members)} host(s): {_join(members)}.",
+        )
+    for p, members in sorted(profiles.items()):
+        members = sorted(set(members))
+        add(
+            "host",
+            [f"profile:{p}", *[f"host:{m}" for m in members[: MAX_ABOUT - 1]]],
+            f"Profile {p} loads {len(members)} host(s): {_join(members)}.",
+        )
+
+    for t in triggers:
+        name = str(t.get("name") or "").strip()
+        if not name:
+            continue
+        source = str(t.get("source") or "").strip() or "an event"
+        event = str(t.get("event") or "").strip()
+        mode = str(t.get("mode") or "agent").strip()
+        about = [f"trigger:{name}"]
+        runs: list[str] = []
+        targets = [str(t.get("run") or "")] + [
+            str(a.get("run") or "")
+            for a in (t.get("actions") or [])
+            if isinstance(a, dict)
+        ]
+        for run in targets:
+            tgt, runnable = _split_run(run)
+            if runnable:
+                about += [*tgt, f"runnable:{runnable}"]
+                where = f" on {entity_name(tgt[0])}" if tgt else ""
+                runs.append(f"{runnable}{where}")
+        for r in t.get("runnables") or []:  # an agent-mode trigger's allowlist
+            if str(r).strip():
+                about.append(f"runnable:{str(r).strip()}")
+        what = (
+            f"runs {_join(runs, 5)}"
+            if runs
+            else ("starts an agent turn" if mode == "agent" else "takes no action")
+        )
+        on = f"{source} {event}".strip()
+        state = "" if t.get("enabled", True) else " It is disabled."
+        add(
+            "procedure",
+            about[:MAX_ABOUT],
+            f"Trigger {name} fires on {on} and {what} ({mode} mode).{state}",
+        )
+
+    for s in schedules:
+        sid = str(s.get("id") or s.get("name") or "").strip()
+        if not sid:
+            continue
+        when = s.get("when") or {}
+        cadence = (
+            f"cron {when.get('cron')}"
+            if when.get("cron")
+            else f"every {when.get('every')}"
+            if when.get("every")
+            else "on a schedule"
+        )
+        action = str(s.get("action") or "runnable")
+        about = [f"schedule:{sid}"]
+        if action == "runnable" and s.get("runnable"):
+            about.append(f"runnable:{s['runnable']}")
+            if s.get("group"):
+                about.append(f"group:{s['group']}")
+                where = f" on group {s['group']}"
+            else:
+                hs = (
+                    [s["host"]]
+                    if s.get("host")
+                    else list(s.get("hosts") or s.get("selected_hosts") or [])
+                )
+                about += [f"host:{h}" for h in hs[:4]]
+                where = f" on {_join([str(h) for h in hs], 4)}" if hs else ""
+            what = f"runs {s['runnable']}{where}"
+        elif action == "runbook" and (s.get("runbook") or s.get("skill")):
+            rb_id = str(s.get("runbook") or s.get("skill"))
+            about.append(f"runbook:{rb_id}")
+            what = f"runs runbook {rb_id}"
+        elif action == "prompt":
+            what = "starts an agent turn on a fixed prompt"
+        else:
+            what = f"does a {action.replace('_', ' ')} action"
+        state = "" if s.get("enabled", True) else " It is disabled."
+        add(
+            "procedure", about[:MAX_ABOUT], f"Schedule {sid} {what} ({cadence}).{state}"
+        )
+
+    for rb in runbooks:
+        rid = str(rb.get("id") or "").strip()
+        if not rid:
+            continue
+        title = " ".join(str(rb.get("title") or "").split())
+        body = " ".join(
+            str(st.get("text") or "")
+            for st in (rb.get("steps") or [])
+            if isinstance(st, dict)
+        )
+        about = link_about([f"runbook:{rid}"], f"{title} {body}", catalog)
+        used = [entity_name(a) for a in about if entity_type(a) == "runnable"]
+        what = f": {title}" if title else ""
+        uses = f" It uses {_join(used, 6)}." if used else ""
+        add("procedure", about, f"Runbook {rid}{what}.{uses}")
+
+    for f in filters:
+        name = str(f.get("name") or "").strip()
+        pipeline = " ".join(str(f.get("pipeline") or "").split())
+        if not name or not pipeline:
+            continue
+        desc = " ".join(str(f.get("description") or "").split())
+        text = f"File filter {name} applies `{pipeline[:200]}` when relaying or fetching files."
+        if desc:
+            text += f" {desc}"
+        add("procedure", [f"topic:file filter {name}"], text)
+
+    seen: set[str] = set()
+    out = []
+    for f in facts:
+        if f["id"] not in seen:
+            seen.add(f["id"])
+            out.append(f)
+    return out
+
+
 # ── AI distillation helpers (prompt + parse; the bridge makes the call) ─────
 
 
@@ -1024,6 +1341,7 @@ def build_distill_prompt(
     known: list[str],
     max_chars: int = 24000,
     transcript: str | None = None,
+    entities: list[str] | None = None,
 ) -> str:
     """Prompt asking the model to extract durable team knowledge from chats.
     Pass a pre-chunked ``transcript`` (see :func:`chunk_transcripts`), or
@@ -1032,6 +1350,7 @@ def build_distill_prompt(
     if transcript is None:
         transcript = render_turns(turns or [])[-max_chars:]
     known_block = "\n".join(f"- {k}" for k in known[:80]) or "(none yet)"
+    entity_block = ", ".join((entities or [])[:300]) or "(none listed)"
     kinds = ", ".join(FACT_KINDS)
     types = ", ".join(ENTITY_TYPES)
     return (
@@ -1048,10 +1367,13 @@ def build_distill_prompt(
         "- Skip anything already in the known list.\n"
         f"- kind is one of: {kinds}.\n"
         f"- about lists the entities as type:name, type one of: {types}.\n"
+        "- When a fact is about one of the fleet's existing entities below, use "
+        "that exact type:name (a host group is group:, not term:).\n"
         "- At most 12 facts. Fewer is fine; none is fine.\n\n"
         "Reply with ONLY a JSON array, e.g.\n"
         '[{"kind": "location", "about": ["host:web-01", "app:orders"], '
         '"text": "orders logs are in /var/log/orders/app.log on web-01"}]\n\n'
+        f"Existing entities: {entity_block}\n\n"
         f"Known facts:\n{known_block}\n\nConversations:\n{transcript}"
     )
 

@@ -8,12 +8,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Badge, Button, Empty, Form, Input, Modal, Popconfirm, Select, Space, Spin, Tabs,
+  Badge, Button, Checkbox, Empty, Form, Input, Modal, Popconfirm, Select, Space, Spin, Tabs,
   Tag, Tooltip, Typography, message,
 } from 'antd'
 import {
-  BulbOutlined, CheckOutlined, CloseOutlined, DeleteOutlined, EditOutlined,
-  PlusOutlined, ReloadOutlined,
+  BulbOutlined, CheckOutlined, CloseOutlined, DeleteOutlined, EditOutlined, ExpandOutlined,
+  CloseCircleOutlined, PlusOutlined, ReloadOutlined, ZoomInOutlined, ZoomOutOutlined,
 } from '@ant-design/icons'
 
 import {
@@ -25,7 +25,8 @@ import {
   useIsDark, withAlpha,
 } from '../ThemeContext'
 import {
-  forceLayout, neighbourhood, nodeRadius, parseAbout, splitEntity, typeColor,
+  fitView, forceLayout, neighbourhood, nodeRadius, parseAbout, splitEntity, typeColor,
+  zoomAt, type Point, type View,
 } from './knowledgeGraph'
 
 const RANGE_OPTIONS = [
@@ -40,8 +41,29 @@ const rangeLabel = (days: number): string =>
 
 const { Text } = Typography
 
+// Canvas size before the first measurement (and in tests, where nothing lays out).
 const GRAPH_W = 960
 const GRAPH_H = 620
+const ZOOM_STEP = 1.25
+
+/** Usage facts from Capture: "<runnable> is used on <host> (N runs)." */
+export const isUsageFact = (f: KnowledgeFact): boolean =>
+  f.kind === 'host' && f.status === 'observed'
+  && f.about.some(a => a.startsWith('runnable:')) && f.about.some(a => a.startsWith('host:'))
+
+/**
+ * Runnable entities that aren't installed anywhere the console can see right
+ * now (their usage is history). Null when discovery hasn't reported yet, so
+ * nothing is dimmed on a cold start.
+ */
+export function staleCheck(installed: string[] | undefined): ((entity: string) => boolean) | null {
+  if (!installed || installed.length === 0) return null
+  const set = new Set(installed)
+  return (entity: string) => {
+    const [type, name] = splitEntity(entity)
+    return type === 'runnable' && !set.has(name)
+  }
+}
 
 interface KnowledgeViewProps {
   active: boolean
@@ -58,8 +80,9 @@ export function KnowledgeView({ active, aiEnabled }: KnowledgeViewProps) {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<KnowledgeFact[] | null>(null)
   const [hidden, setHidden] = useState<Set<string>>(new Set())
+  const [hideStale, setHideStale] = useState(false)
   const [busy, setBusy] = useState<'' | 'capture' | 'distill'>('')
-  // How far back Capture usage and Suggest from chats read (days, 0 = all).
+  // How far back Capture and Suggest from chats read (days, 0 = all).
   // Starts at the range the last capture used, so the picker matches the graph.
   const [range, setRange] = useState<number | null>(null)
   const rangeDays = range ?? overview?.capture_days ?? 30
@@ -101,7 +124,10 @@ export function KnowledgeView({ active, aiEnabled }: KnowledgeViewProps) {
     setBusy('capture')
     try {
       const r = await bridge.knowledge_capture(rangeDays)
-      if (r.ok) message.success(`Captured ${r.observed ?? 0} usage patterns from ${r.runs ?? 0} runs (${rangeLabel(rangeDays)}).`)
+      if (r.ok) {
+        const linked = r.relinked ? ` Linked ${r.relinked} earlier fact(s) to your hosts and groups.` : ''
+        message.success(`Captured ${r.observed ?? 0} facts from ${r.runs ?? 0} runs (${rangeLabel(rangeDays)}) and your config.${linked}`)
+      }
       else message.error(r.error || 'Capture failed.')
       await refresh()
     } finally { setBusy('') }
@@ -137,6 +163,15 @@ export function KnowledgeView({ active, aiEnabled }: KnowledgeViewProps) {
   }
 
   const types = overview?.entity_types ?? []
+  const isStale = useMemo(() => staleCheck(overview?.installed_runnables), [overview])
+  const staleCount = useMemo(
+    () => (isStale ? (overview?.graph.nodes ?? []).filter(n => isStale(n.id)).length : 0),
+    [overview, isStale],
+  )
+  const shownNodes = useMemo(
+    () => (overview?.graph.nodes ?? []).filter(n => !hidden.has(n.type) && !(hideStale && isStale?.(n.id))),
+    [overview, hidden, hideStale, isStale],
+  )
   const entitySuggestions = useMemo(
     () => (overview?.graph.nodes ?? []).map(n => n.id).sort(),
     [overview],
@@ -159,7 +194,7 @@ export function KnowledgeView({ active, aiEnabled }: KnowledgeViewProps) {
         </Text>
         <div style={{ flex: 1 }} />
         <Space wrap>
-          <Tooltip title="How far back Capture usage and Suggest from chats read.">
+          <Tooltip title="How far back Capture and Suggest from chats read.">
             <Select
               aria-label="History range"
               value={rangeDays}
@@ -169,7 +204,9 @@ export function KnowledgeView({ active, aiEnabled }: KnowledgeViewProps) {
             />
           </Tooltip>
           <Tooltip title="Mine run history for usage patterns: common args, where runnables run, what runs after what. No AI involved.">
-            <Button icon={<ReloadOutlined />} loading={busy === 'capture'} onClick={capture}>Capture usage</Button>
+            <Tooltip title="Reads run history (which runnables run where, usual args, what runs after what) and your config (groups, profiles, triggers, schedules, runbooks, file filters). No AI.">
+              <Button icon={<ReloadOutlined />} loading={busy === 'capture'} onClick={capture}>Capture</Button>
+            </Tooltip>
           </Tooltip>
           {aiEnabled && (
             <Tooltip title="Ask the model to suggest facts from your saved chats in the range. Chats already read are skipped, so re-running only reads what is new. Suggestions go to the inbox for you to review.">
@@ -203,32 +240,43 @@ export function KnowledgeView({ active, aiEnabled }: KnowledgeViewProps) {
       ) : (
         <div style={{ display: 'flex', gap: 12, flex: 1, minHeight: 0 }}>
           <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <TypeFilter types={types} hidden={hidden} onToggle={t => setHidden(prev => {
-              const next = new Set(prev)
-              if (next.has(t)) next.delete(t)
-              else next.add(t)
-              return next
-            })} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              <TypeFilter types={types} hidden={hidden} onToggle={t => setHidden(prev => {
+                const next = new Set(prev)
+                if (next.has(t)) next.delete(t)
+                else next.add(t)
+                return next
+              })} />
+              {staleCount > 0 && (
+                <Tooltip title="Runnables with past usage that aren't installed on any connected host now (for example, removed from a package). Their usage is drawn faded.">
+                  <Checkbox checked={hideStale} onChange={e => setHideStale(e.target.checked)} style={{ color: textSecondary(isDark) }}>
+                    Hide not installed ({staleCount})
+                  </Checkbox>
+                </Tooltip>
+              )}
+            </div>
             {overview && overview.graph.nodes.length > 0 ? (
               <GraphCanvas
-                nodes={overview.graph.nodes.filter(n => !hidden.has(n.type))}
+                nodes={shownNodes}
                 edges={overview.graph.edges}
+                isStale={isStale}
                 selected={selected}
                 onSelect={id => { setSelected(id); setResults(null); setQuery('') }}
+                onClear={() => { setSelected(''); setResults(null); setQuery('') }}
               />
             ) : (
               <Empty
                 style={{ marginTop: 60 }}
                 description={
                   <span style={{ color: textSecondary(isDark) }}>
-                    Nothing in the wiki yet. Capture usage from your run history, add a fact, or let the agent propose some as it works.
+                    Nothing in the wiki yet. Capture from your run history and config, add a fact, or let the agent propose some as it works.
                   </span>
                 }
               />
             )}
             {overview && (
               <Text style={{ color: textMuted(isDark), fontSize: 12 }}>
-                Usage last captured {overview.captured_at ? new Date(overview.captured_at).toLocaleString() : 'never'} · stored in <span style={{ fontFamily: MONO_FONT }}>{overview.dir}</span>
+                Last captured {overview.captured_at ? new Date(overview.captured_at).toLocaleString() : 'never'} · stored in <span style={{ fontFamily: MONO_FONT }}>{overview.dir}</span>
               </Text>
             )}
           </div>
@@ -236,6 +284,7 @@ export function KnowledgeView({ active, aiEnabled }: KnowledgeViewProps) {
             query={query}
             results={results}
             page={page}
+            isStale={isStale}
             onEntity={e => { setSelected(e); setResults(null) }}
             onEdit={f => setEditing({ fact: f })}
             onRetire={retire}
@@ -277,103 +326,154 @@ function TypeFilter({ types, hidden, onToggle }: { types: string[]; hidden: Set<
 
 // ── graph ────────────────────────────────────────────────────────────────────
 
-export function GraphCanvas({ nodes, edges, selected, onSelect }: {
+export function GraphCanvas({ nodes, edges, selected, onSelect, onClear, isStale = null }: {
   nodes: KnowledgeNode[]
   edges: KnowledgeEdge[]
   selected: string
   onSelect: (id: string) => void
+  /** Clear the selection: a click on empty canvas, or the clear button. */
+  onClear?: () => void
+  isStale?: ((entity: string) => boolean) | null
 }) {
   const isDark = useIsDark()
   const accent = useAccent()
   const sf = surfaces(isDark)
   const [hover, setHover] = useState('')
-  const [view, setView] = useState({ x: 0, y: 0, k: 1 })
+  const [size, setSize] = useState({ w: GRAPH_W, h: GRAPH_H })
+  const [view, setView] = useState<View>({ x: 0, y: 0, k: 1 })
   const drag = useRef<{ x: number; y: number; vx: number; vy: number } | null>(null)
-  const svgRef = useRef<SVGSVGElement | null>(null)
+  const boxRef = useRef<HTMLDivElement | null>(null)
+
+  // Draw at the panel's real size (1 SVG unit = 1px), so the layout takes the
+  // canvas's shape and labels stay a readable size. Rounded so a resize drag
+  // doesn't re-run the layout on every pixel.
+  useEffect(() => {
+    const el = boxRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(entries => {
+      const r = entries[0]?.contentRect
+      if (!r || r.width < 50 || r.height < 50) return
+      const w = Math.round(r.width / 20) * 20
+      const h = Math.round(r.height / 20) * 20
+      setSize(prev => (prev.w === w && prev.h === h ? prev : { w, h }))
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
 
   const ids = useMemo(() => new Set(nodes.map(n => n.id)), [nodes])
   const shownEdges = useMemo(() => edges.filter(e => ids.has(e.source) && ids.has(e.target)), [edges, ids])
-  const pos = useMemo(() => forceLayout(nodes, shownEdges, GRAPH_W, GRAPH_H), [nodes, shownEdges])
+  const pos = useMemo(() => forceLayout(nodes, shownEdges, size.w, size.h), [nodes, shownEdges, size])
+  // Re-fit when the set of nodes or the canvas changes — not on every refresh
+  // of the same graph, so the operator's zoom survives an inbox approval.
+  const fitKey = useMemo(() => `${size.w}x${size.h}|${[...ids].sort().join(',')}`, [ids, size])
+  const fit = useCallback(() => setView(fitView(pos, size.w, size.h)), [pos, size])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { fit() }, [fitKey])
+
   const focus = hover || selected
   const near = useMemo(() => (focus ? neighbourhood(focus, shownEdges) : null), [focus, shownEdges])
   const maxW = Math.max(1, ...nodes.map(n => n.weight))
   const maxEdge = Math.max(1, ...shownEdges.map(e => e.weight))
+  const labelSize = 12 / view.k // constant on screen whatever the zoom
 
   const onWheel = (e: React.WheelEvent) => {
-    const k = Math.min(4, Math.max(0.4, view.k * (e.deltaY < 0 ? 1.12 : 1 / 1.12)))
-    setView(v => ({ ...v, k }))
+    const rect = boxRef.current?.getBoundingClientRect()
+    const sx = rect ? e.clientX - rect.left : size.w / 2
+    const sy = rect ? e.clientY - rect.top : size.h / 2
+    setView(v => zoomAt(v, e.deltaY < 0 ? 1.12 : 1 / 1.12, sx, sy))
   }
+  const zoomBy = (f: number) => setView(v => zoomAt(v, f, size.w / 2, size.h / 2))
 
   return (
-    <svg
-      ref={svgRef}
-      role="img"
-      aria-label="Knowledge graph"
-      viewBox={`0 0 ${GRAPH_W} ${GRAPH_H}`}
-      style={{ width: '100%', flex: 1, minHeight: 360, background: sf.raised, border: `1px solid ${sf.border}`, borderRadius: RADIUS.md, cursor: drag.current ? 'grabbing' : 'grab', userSelect: 'none' }}
-      onWheel={onWheel}
-      onMouseDown={e => { drag.current = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y } }}
-      onMouseMove={e => {
-        const d = drag.current
-        if (!d) return
-        const rect = svgRef.current?.getBoundingClientRect()
-        const scale = rect && rect.width > 0 ? GRAPH_W / rect.width : 1
-        setView(v => ({ ...v, x: d.vx + (e.clientX - d.x) * scale, y: d.vy + (e.clientY - d.y) * scale }))
-      }}
-      onMouseUp={() => { drag.current = null }}
-      onMouseLeave={() => { drag.current = null; setHover('') }}
-    >
-      <g transform={`translate(${view.x + (GRAPH_W / 2) * (1 - view.k)} ${view.y + (GRAPH_H / 2) * (1 - view.k)}) scale(${view.k})`}>
-        {shownEdges.map(e => {
-          const a = pos.get(e.source)
-          const b = pos.get(e.target)
-          if (!a || !b) return null
-          const lit = near ? near.has(e.source) && near.has(e.target) && (e.source === focus || e.target === focus) : false
-          return (
-            <line key={`${e.source}|${e.target}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y}
-              stroke={lit ? accent : textMuted(isDark)}
-              strokeOpacity={near ? (lit ? 0.9 : 0.08) : 0.35}
-              strokeWidth={0.8 + (e.weight / maxEdge) * 2.5} />
-          )
-        })}
-        {nodes.map(n => {
-          const p = pos.get(n.id)
-          if (!p) return null
-          const r = nodeRadius(n.weight)
-          const dim = near ? !near.has(n.id) : false
-          const isSel = n.id === selected
-          const showLabel = isSel || n.id === hover || (near ? near.has(n.id) : n.weight >= maxW * 0.25 || nodes.length <= 40)
-          return (
-            <g key={n.id} data-testid={`node-${n.id}`} transform={`translate(${p.x} ${p.y})`} style={{ cursor: 'pointer' }}
-              opacity={dim ? 0.18 : 1}
-              onMouseDown={e => e.stopPropagation()}
-              onMouseEnter={() => setHover(n.id)}
-              onMouseLeave={() => setHover('')}
-              onClick={() => onSelect(n.id)}>
-              {isSel && <circle r={r + 5} fill="none" stroke={accent} strokeWidth={2} />}
-              <circle r={r} fill={typeColor(n.type)} fillOpacity={n.pending ? 0.35 : 0.9}
-                stroke={n.pending ? typeColor(n.type) : sf.raised} strokeDasharray={n.pending ? '3 2' : undefined} strokeWidth={1.5} />
-              {showLabel && (
-                <text y={r + 13} textAnchor="middle" fontSize={11} fontFamily={MONO_FONT} fill={textColor(isDark)}
-                  stroke={sf.raised} strokeWidth={3} paintOrder="stroke">
-                  {n.name.length > 28 ? n.name.slice(0, 27) + '…' : n.name}
-                </text>
-              )}
-              <title>{`${n.id} · ${n.facts} fact(s) · weight ${n.weight}`}</title>
-            </g>
-          )
-        })}
-      </g>
-    </svg>
+    <div ref={boxRef} style={{ position: 'relative', flex: 1, minHeight: 360, display: 'flex' }}>
+      <svg
+        role="img"
+        aria-label="Knowledge graph"
+        viewBox={`0 0 ${size.w} ${size.h}`}
+        preserveAspectRatio="xMidYMid meet"
+        style={{ width: '100%', height: '100%', position: 'absolute', inset: 0, background: sf.raised, border: `1px solid ${sf.border}`, borderRadius: RADIUS.md, cursor: drag.current ? 'grabbing' : 'grab', userSelect: 'none' }}
+        onWheel={onWheel}
+        onMouseDown={e => { drag.current = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y } }}
+        onMouseMove={e => {
+          const d = drag.current
+          if (!d) return
+          setView(v => ({ ...v, x: d.vx + (e.clientX - d.x), y: d.vy + (e.clientY - d.y) }))
+        }}
+        onMouseUp={e => {
+          const d = drag.current
+          drag.current = null
+          // A click (not a pan) on empty canvas clears the selection.
+          if (d && Math.hypot(e.clientX - d.x, e.clientY - d.y) < 4) onClear?.()
+        }}
+        onMouseLeave={() => { drag.current = null; setHover('') }}
+      >
+        <g transform={`translate(${view.x} ${view.y}) scale(${view.k})`}>
+          {shownEdges.map(e => {
+            const a = pos.get(e.source)
+            const b = pos.get(e.target)
+            if (!a || !b) return null
+            const lit = near ? near.has(e.source) && near.has(e.target) && (e.source === focus || e.target === focus) : false
+            const faded = !!isStale && (isStale(e.source) || isStale(e.target))
+            return (
+              <line key={`${e.source}|${e.target}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y}
+                stroke={lit ? accent : textMuted(isDark)}
+                strokeOpacity={near ? (lit ? 0.9 : 0.08) : faded ? 0.15 : 0.35}
+                strokeDasharray={faded ? '4 3' : undefined}
+                strokeWidth={(0.8 + (e.weight / maxEdge) * 2.5) / Math.max(1, view.k)} />
+            )
+          })}
+          {nodes.map(n => {
+            const p: Point | undefined = pos.get(n.id)
+            if (!p) return null
+            const r = nodeRadius(n.weight)
+            const stale = !!isStale?.(n.id)
+            const dim = near ? !near.has(n.id) : false
+            const isSel = n.id === selected
+            const showLabel = isSel || n.id === hover || (near ? near.has(n.id) : n.weight >= maxW * 0.25 || nodes.length <= 60)
+            return (
+              <g key={n.id} data-testid={`node-${n.id}`} transform={`translate(${p.x} ${p.y})`} style={{ cursor: 'pointer' }}
+                opacity={dim ? 0.18 : stale ? 0.4 : 1}
+                onMouseDown={e => e.stopPropagation()}
+                onMouseEnter={() => setHover(n.id)}
+                onMouseLeave={() => setHover('')}
+                onClick={() => onSelect(n.id)}>
+                {isSel && <circle r={r + 5} fill="none" stroke={accent} strokeWidth={2} />}
+                <circle r={r} fill={typeColor(n.type)} fillOpacity={n.pending || stale ? 0.35 : 0.9}
+                  stroke={n.pending || stale ? typeColor(n.type) : sf.raised} strokeDasharray={n.pending || stale ? '3 2' : undefined} strokeWidth={1.5} />
+                {showLabel && (
+                  <text y={r + 4 + labelSize} textAnchor="middle" fontSize={labelSize} fontFamily={MONO_FONT} fill={textColor(isDark)}
+                    stroke={sf.raised} strokeWidth={3 / view.k} paintOrder="stroke">
+                    {n.name.length > 28 ? n.name.slice(0, 27) + '…' : n.name}
+                  </text>
+                )}
+                <title>{`${n.id} · ${n.facts} fact(s) · weight ${n.weight}${stale ? ' · not installed on any connected host' : ''}`}</title>
+              </g>
+            )
+          })}
+        </g>
+      </svg>
+      <div style={{ position: 'absolute', top: 8, right: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <Tooltip title="Zoom in" placement="left"><Button size="small" icon={<ZoomInOutlined />} aria-label="Zoom in" onClick={() => zoomBy(ZOOM_STEP)} /></Tooltip>
+        <Tooltip title="Zoom out" placement="left"><Button size="small" icon={<ZoomOutOutlined />} aria-label="Zoom out" onClick={() => zoomBy(1 / ZOOM_STEP)} /></Tooltip>
+        <Tooltip title="Fit to view" placement="left"><Button size="small" icon={<ExpandOutlined />} aria-label="Fit to view" onClick={fit} /></Tooltip>
+        {selected && onClear && (
+          <Tooltip title="Clear selection (or click empty space)" placement="left">
+            <Button size="small" icon={<CloseCircleOutlined />} aria-label="Clear selection" onClick={onClear} />
+          </Tooltip>
+        )}
+      </div>
+    </div>
   )
 }
 
 // ── side panel: search results or the selected entity's page ─────────────────
 
-function SidePanel({ query, results, page, onEntity, onEdit, onRetire }: {
+function SidePanel({ query, results, page, onEntity, onEdit, onRetire, isStale = null }: {
   query: string
   results: KnowledgeFact[] | null
   page: KnowledgePage | null
+  isStale?: ((entity: string) => boolean) | null
   onEntity: (e: string) => void
   onEdit: (f: KnowledgeFact) => void
   onRetire: (f: KnowledgeFact) => void
@@ -391,17 +491,27 @@ function SidePanel({ query, results, page, onEntity, onEdit, onRetire }: {
       </>
     )
   } else if (page && page.facts.length > 0) {
+    // Capture's "X is used on Y (N runs)" facts read better as one table than as
+    // a card each; every other fact keeps its card.
+    const usage = page.facts.filter(isUsageFact)
     const byKind = new Map<string, KnowledgeFact[]>()
-    for (const f of page.facts) byKind.set(f.kind, [...(byKind.get(f.kind) ?? []), f])
+    for (const f of page.facts) {
+      if (isUsageFact(f)) continue
+      byKind.set(f.kind, [...(byKind.get(f.kind) ?? []), f])
+    }
     body = (
       <>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ width: 10, height: 10, borderRadius: 5, background: typeColor(page.type), display: 'inline-block' }} />
           <Text style={{ color: textMuted(isDark) }}>{page.type}</Text>
+          {isStale?.(page.entity) && <Tag style={{ marginInlineEnd: 0 }}>not installed</Tag>}
         </div>
         <div style={{ fontSize: 18, fontWeight: 600, fontFamily: MONO_FONT, color: textColor(isDark), wordBreak: 'break-all', margin: '2px 0 8px' }}>
           {page.name}
         </div>
+        {usage.length > 0 && (
+          <UsageTable facts={usage} current={page.entity} isStale={isStale} onEntity={onEntity} />
+        )}
         {[...byKind].map(([kind, facts]) => (
           <div key={kind} style={{ marginBottom: 12 }}>
             <div style={{ textTransform: 'uppercase', fontSize: 11, letterSpacing: 0.5, color: textMuted(isDark), marginBottom: 4 }}>{kind}</div>
@@ -432,8 +542,59 @@ function SidePanel({ query, results, page, onEntity, onEdit, onRetire }: {
     )
   }
   return (
-    <div style={{ width: 380, flexShrink: 0, overflow: 'auto', background: sf.raised, border: `1px solid ${sf.border}`, borderRadius: RADIUS.md, padding: 14 }}>
+    <div style={{ width: 'clamp(360px, 34%, 560px)', flexShrink: 0, overflow: 'auto', background: sf.raised, border: `1px solid ${sf.border}`, borderRadius: RADIUS.md, padding: 14 }}>
       {body}
+    </div>
+  )
+}
+
+/** Capture's usage facts on an entity page as one table: the other side of each
+ *  fact (the runnables on a host page, the hosts on a runnable page), its run
+ *  count and last run. Not-installed runnables sink to the bottom, faded. */
+export function UsageTable({ facts, current, isStale = null, onEntity }: {
+  facts: KnowledgeFact[]
+  current: string
+  isStale?: ((entity: string) => boolean) | null
+  onEntity: (e: string) => void
+}) {
+  const isDark = useIsDark()
+  const sf = surfaces(isDark)
+  const rows = facts
+    .map(f => {
+      const other = f.about.find(a => a !== current && (a.startsWith('runnable:') || a.startsWith('host:'))) ?? f.about[0]
+      return { f, other, stale: !!isStale?.(other) || !!isStale?.(current) }
+    })
+    .sort((a, b) => Number(a.stale) - Number(b.stale) || b.f.confirmations - a.f.confirmations)
+  const heading = current.startsWith('host:') ? 'Runs here' : 'Used on'
+  const cell: React.CSSProperties = { padding: '4px 6px', borderBottom: `1px solid ${sf.divider}`, textAlign: 'left' }
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <div style={{ textTransform: 'uppercase', fontSize: 11, letterSpacing: 0.5, color: textMuted(isDark), marginBottom: 4 }}>
+        {heading} <span style={{ textTransform: 'none' }}>· from run history</span>
+      </div>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, color: textColor(isDark) }}>
+        <thead>
+          <tr style={{ color: textMuted(isDark), fontSize: 12 }}>
+            <th style={{ ...cell, fontWeight: 500 }}>{current.startsWith('host:') ? 'Runnable' : 'Host'}</th>
+            <th style={{ ...cell, fontWeight: 500, textAlign: 'right' }}>Runs</th>
+            <th style={{ ...cell, fontWeight: 500 }}>Last run</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(({ f, other, stale }) => (
+            <tr key={f.id} data-testid="usage-row" style={{ opacity: stale ? 0.5 : 1 }}>
+              <td style={cell}>
+                <a onClick={() => onEntity(other)} style={{ fontFamily: MONO_FONT, color: textColor(isDark) }}>
+                  {splitEntity(other)[1]}
+                </a>
+                {stale && <Text style={{ fontSize: 11, color: textMuted(isDark), marginLeft: 6 }}>not installed</Text>}
+              </td>
+              <td style={{ ...cell, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{f.confirmations}</td>
+              <td style={{ ...cell, color: textMuted(isDark) }}>{f.last_confirmed}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   )
 }

@@ -9,6 +9,52 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.328.0] — 2026-10-04
+
+### Added
+
+- **The wiki learns your setup from config.** **Capture** (was *Capture
+  usage*) now also reads config, with no AI: which hosts are in each group and
+  profile, what each trigger and schedule runs and where, what each runbook is
+  for and which runnables it uses, and the saved file filters. These are
+  *observed* facts, rebuilt on every capture so they never go stale. The graph
+  now shows groups joined to their hosts, and triggers, schedules and runbooks
+  joined to what they run. New entity types `trigger`, `schedule` and `runbook`.
+
+### Changed
+
+- **Facts link to the fleet's real entities.** Suggestions from chats and
+  facts the agent proposes are attached to your existing hosts, groups,
+  profiles, runnables, triggers, schedules and runbooks. The model is given the
+  list, and a spelling-insensitive match fixes its guesses, so
+  `term:Linux Servers` becomes `group:Linux Servers`. Hosts and runnables named
+  in the text are linked too. Capture applies the same linking to earlier facts,
+  so one written before its group existed joins it.
+
+## [0.327.0] — 2026-10-04
+
+### Changed
+
+- **Knowledge graph fills its canvas.** The graph is laid out at the panel's
+  real size and fitted to view, so it uses the whole canvas instead of a small
+  corner. Unconnected nodes now sit beside the main cluster instead of being
+  pushed to the edges, and labels stay a readable size at any zoom. **Zoom in**,
+  **Zoom out** and **Fit to view** buttons sit in the graph's corner (the scroll
+  wheel still zooms, now about the pointer). The entity panel on the right is
+  wider.
+- **Clear the graph selection.** Clicking empty canvas (a click, not a pan)
+  clears the selected node and returns to the full graph. A **Clear selection**
+  button joins the zoom buttons while something is selected.
+- **Usage shows as one table.** On a host page, Capture's "X is used on host
+  (N runs)" facts show as one **Runs here** table (runnable, runs, last run),
+  busiest first. A runnable page shows **Used on** with hosts. Real facts keep
+  their cards, so usage no longer buries them.
+- **Usage of runnables no longer installed is faded.** A runnable that has past
+  runs but isn't discovered on any connected host now (for example, removed from
+  a package) is drawn faded and dashed, marked *not installed* on its page and
+  sorted to the bottom of usage tables. A **Hide not installed** box takes it off
+  the graph. `knowledge_overview` returns `installed_runnables` for this.
+
 ## [0.326.0] — 2026-10-04
 
 ### Changed

@@ -1665,6 +1665,10 @@ export const mockApi: BridgeApi = {
       fact('k_3', 'host', ['runnable:tail-log', 'host:web-01'], 'tail-log is used on web-01 (9 runs).', 'observed', 9),
       fact('k_4', 'glossary', ['term:BAU', 'team:ops'], 'BAU means business as usual: the planned daily checks.', 'approved', 2),
       fact('k_5', 'effect', ['service:lb', 'host:web-01', 'host:web-02'], 'draining web-01 at the LB moves all orders traffic to web-02', 'pending'),
+      fact('k_6', 'host', ['runnable:disk-usage', 'host:web-01'], 'disk-usage is used on web-01 (31 runs).', 'observed', 31),
+      fact('k_7', 'host', ['runnable:install-into-venv', 'host:web-01'], 'install-into-venv is used on web-01 (10 runs).', 'observed', 10),
+      fact('k_8', 'host', ['runnable:disk-usage', 'host:web-02'], 'disk-usage is used on web-02 (12 runs).', 'observed', 12),
+      fact('k_9', 'note', ['term:island'], 'An unconnected fact, to show how islands lay out.', 'approved'),
     ]
     const nodes = new Map<string, KnowledgeNode>()
     const edges = new Map<string, KnowledgeEdge>()
@@ -1689,6 +1693,7 @@ export const mockApi: BridgeApi = {
       inbox: facts.filter(f => f.status === 'pending'),
       captured_at: '2026-10-04T09:00:00+00:00',
       dir: '~/AppData/Roaming/runspec-console/knowledge',
+      installed_runnables: ['tail-log', 'restart-service', 'disk-usage'],
       entity_types: ['host', 'group', 'profile', 'runnable', 'file', 'term', 'app', 'service', 'team', 'topic'],
       kinds: ['location', 'glossary', 'pairing', 'host', 'effect', 'arg-habit', 'procedure', 'note'],
     }

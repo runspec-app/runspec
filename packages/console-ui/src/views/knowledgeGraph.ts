@@ -17,6 +17,9 @@ export const TYPE_COLORS: Record<string, string> = {
   app: '#14b8a6',
   service: '#06b6d4',
   team: '#f97316',
+  trigger: '#ef4444',
+  schedule: '#eab308',
+  runbook: '#84cc16',
   topic: '#94a3b8',
 }
 
@@ -39,9 +42,11 @@ function hash01(s: string): number {
 }
 
 /**
- * Fruchterman–Reingold layout into a `width`×`height` box. Connected nodes pull
- * together (heavier edges pull harder), every pair repels, a weak gravity keeps
- * disconnected islands on screen. Deterministic for the same input.
+ * Fruchterman–Reingold layout shaped to a `width`×`height` canvas. Connected
+ * nodes pull together (heavier edges pull harder), every pair repels, and
+ * gravity keeps disconnected islands next to the main cluster. Positions are
+ * not clamped to the box — draw them through {@link fitView}. Deterministic for
+ * the same input.
  */
 export function forceLayout(
   nodes: LayoutNode[],
@@ -49,6 +54,7 @@ export function forceLayout(
   width = 900,
   height = 600,
   iterations = 260,
+  gravity = 0.2,
 ): Map<string, Point> {
   const pos = new Map<string, Point>()
   const n = nodes.length
@@ -67,6 +73,11 @@ export function forceLayout(
   const k = Math.sqrt((width * height) / n) * 0.75
   const ids = nodes.map(nd => nd.id)
   const links = edges.filter(e => pos.has(e.source) && pos.has(e.target) && e.source !== e.target)
+  // Gravity pulls everything toward the centre so disconnected islands sit near
+  // the main cluster instead of being flung to the edges; it's weaker along the
+  // longer side so the drawing takes the canvas's shape.
+  const gx = (gravity * k / 10) * Math.min(1, height / width)
+  const gy = (gravity * k / 10) * Math.min(1, width / height)
   let temp = Math.min(width, height) / 8
   const cool = temp / (iterations + 1)
   for (let it = 0; it < iterations; it++) {
@@ -106,12 +117,12 @@ export function forceLayout(
     for (const id of ids) {
       const p = pos.get(id)!
       const d = disp.get(id)!
-      d.x += (cx - p.x) * 0.02 * k / 10
-      d.y += (cy - p.y) * 0.02 * k / 10
+      d.x += (cx - p.x) * gx
+      d.y += (cy - p.y) * gy
       const len = Math.max(0.01, Math.sqrt(d.x * d.x + d.y * d.y))
       const step = Math.min(len, temp)
-      p.x = Math.min(width - 20, Math.max(20, p.x + (d.x / len) * step))
-      p.y = Math.min(height - 20, Math.max(20, p.y + (d.y / len) * step))
+      p.x += (d.x / len) * step
+      p.y += (d.y / len) * step
     }
     temp = Math.max(0.5, temp - cool)
   }
@@ -137,4 +148,37 @@ export function splitEntity(ref: string): [string, string] {
 /** Parse a comma/newline-separated entity list from the fact editor. */
 export function parseAbout(text: string): string[] {
   return [...new Set(text.split(/[,\n]/).map(s => s.trim()).filter(Boolean))]
+}
+
+/** A pan/zoom transform: screen = graph * k + (x, y). */
+export interface View { x: number; y: number; k: number }
+
+export const MIN_ZOOM = 0.2
+export const MAX_ZOOM = 5
+
+const clampZoom = (k: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, k))
+
+/**
+ * The transform that fits every position (padded by `pad` for node + label)
+ * into a `width`×`height` viewport, centred. Never zooms in past 1.6× so a
+ * two-node wiki doesn't fill the screen with two giant circles.
+ */
+export function fitView(pos: Map<string, Point>, width: number, height: number, pad = 48): View {
+  if (pos.size === 0 || width <= 0 || height <= 0) return { x: 0, y: 0, k: 1 }
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
+  for (const p of pos.values()) {
+    x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y)
+    x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y)
+  }
+  const bw = Math.max(1, x1 - x0 + pad * 2)
+  const bh = Math.max(1, y1 - y0 + pad * 2)
+  const k = clampZoom(Math.min(width / bw, height / bh, 1.6))
+  return { k, x: width / 2 - ((x0 + x1) / 2) * k, y: height / 2 - ((y0 + y1) / 2) * k }
+}
+
+/** Zoom by `factor` keeping the screen point (`sx`, `sy`) fixed. */
+export function zoomAt(view: View, factor: number, sx: number, sy: number): View {
+  const k = clampZoom(view.k * factor)
+  const f = k / view.k
+  return { k, x: sx - (sx - view.x) * f, y: sy - (sy - view.y) * f }
 }

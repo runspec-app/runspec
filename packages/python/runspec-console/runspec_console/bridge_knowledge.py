@@ -298,10 +298,13 @@ class KnowledgeMixin:
                 }
             )
         if name == "propose_fact":
+            text = str(ti.get("text") or "")
             fact = kn.make_fact(
                 kind=str(ti.get("kind") or "note"),
-                about=list(ti.get("about") or []),
-                text=str(ti.get("text") or ""),
+                about=kn.link_about(
+                    list(ti.get("about") or []), text, self._knowledge_catalog()
+                ),
+                text=text,
                 status="pending",
                 source=self._knowledge_source(chat_id),
                 author=_author(),
@@ -371,11 +374,81 @@ class KnowledgeMixin:
                     store.state().get("capture_days"), _DEFAULT_CAPTURE_DAYS
                 ),
                 "dir": str(store.root),
+                "installed_runnables": self._knowledge_installed(),
                 "entity_types": list(kn.ENTITY_TYPES),
                 "kinds": list(kn.FACT_KINDS),
             }
         finally:
             idx.close()
+
+    def _knowledge_installed(self) -> list[str]:
+        """Names of the runnables discovered right now (local + connected hosts),
+        so the tab can dim usage of runnables that are no longer installed. Empty
+        until discovery has run — the tab then dims nothing."""
+        try:
+            with self._lock:  # type: ignore[attr-defined]
+                cache = list(getattr(self, "_runnables_cache", []) or [])
+        except Exception:  # noqa: BLE001
+            return []
+        return sorted({str(r.get("name")) for r in cache if r.get("name")})
+
+    def _knowledge_config(self) -> dict[str, list[dict[str, Any]]]:
+        """The config the wiki reads (hosts, triggers, schedules, runbooks,
+        file filters) — each part best-effort, so one unreadable file never
+        stops a capture."""
+        out: dict[str, list[dict[str, Any]]] = {}
+
+        def part(key: str, fn: Any) -> None:
+            try:
+                out[key] = list(fn() or [])
+            except Exception:  # noqa: BLE001
+                logger.debug("knowledge: reading %s failed", key, exc_info=True)
+                out[key] = []
+
+        def hosts() -> list[dict[str, Any]]:
+            from . import hosts as hosts_mod
+
+            return [
+                {
+                    "name": h.get("name"),
+                    "group": h.get("group"),
+                    "profiles": hosts_mod.host_profiles(h),
+                }
+                for h in self._all_host_entries()  # type: ignore[attr-defined]
+            ]
+
+        part("hosts", hosts)
+        part("triggers", config_mod.read_triggers)
+        part("schedules", lambda: self._read_schedules())  # type: ignore[attr-defined]
+        part("runbooks", lambda: self.get_runbooks())  # type: ignore[attr-defined]
+        part("filters", lambda: self.get_filters())  # type: ignore[attr-defined]
+        return out
+
+    def _knowledge_catalog(
+        self, cfg: dict[str, list[dict[str, Any]]] | None = None
+    ) -> dict[str, list[str]]:
+        """Every entity the fleet already has — hosts, groups, profiles,
+        runnables, triggers, schedules, runbooks — keyed by spelling-insensitive
+        name, so new facts link to the existing node instead of a lookalike."""
+        cfg = cfg if cfg is not None else self._knowledge_config()
+        refs: list[str] = []
+        for h in cfg.get("hosts", []):
+            refs.append(f"host:{h.get('name')}")
+            if h.get("group"):
+                refs.append(f"group:{h['group']}")
+            refs += [f"profile:{p}" for p in h.get("profiles") or []]
+        for name, fn in (("group", "get_groups"), ("profile", "get_profiles")):
+            try:
+                refs += [f"{name}:{g.get('name')}" for g in getattr(self, fn)() or []]
+            except Exception:  # noqa: BLE001
+                pass
+        refs += [f"runnable:{n}" for n in self._knowledge_installed()]
+        refs += [f"trigger:{t.get('name')}" for t in cfg.get("triggers", [])]
+        refs += [
+            f"schedule:{s.get('id') or s.get('name')}" for s in cfg.get("schedules", [])
+        ]
+        refs += [f"runbook:{b.get('id')}" for b in cfg.get("runbooks", [])]
+        return kn.entity_catalog(r for r in refs if not r.endswith(":None"))
 
     def knowledge_page(self, entity: str) -> dict[str, Any]:
         return self._knowledge_query(lambda idx: idx.page(str(entity or "")))
@@ -451,10 +524,22 @@ class KnowledgeMixin:
             logger.warning("knowledge capture: history read failed", exc_info=True)
             return {"ok": False, "error": f"could not read run history: {exc}"}
         facts = kn.observe(history)
+        cfg = self._knowledge_config()
+        catalog = self._knowledge_catalog(cfg)
+        facts += kn.observe_config(**cfg, catalog=catalog)
         store.write_observed(facts)
+        # Join earlier facts up with entities the fleet has since gained (a new
+        # group, a runnable installed after the fact was written).
+        relinked = store.relink(lambda about, text: kn.link_about(about, text, catalog))
         if notify:
             self._knowledge_changed()
-        return {"ok": True, "observed": len(facts), "runs": len(history), "days": days}
+        return {
+            "ok": True,
+            "observed": len(facts),
+            "runs": len(history),
+            "days": days,
+            "relinked": relinked,
+        }
 
     def knowledge_distill(
         self, window_days: int = 30, max_calls: int = _DISTILL_MAX_CALLS
@@ -501,11 +586,15 @@ class KnowledgeMixin:
             for f in store.all_facts()
             if f.get("status") != "retired"
         ]
+        catalog = self._knowledge_catalog()
+        entities = sorted({r for refs in catalog.values() for r in refs})
         proposed = skipped = calls = conversations = 0
         error = ""
         for text, finished in chunks[:budget]:
             if text.strip():
-                prompt = kn.build_distill_prompt(known=known, transcript=text)
+                prompt = kn.build_distill_prompt(
+                    known=known, transcript=text, entities=entities
+                )
                 try:
                     resp = asyncio.run(
                         adapter.chat([{"role": "user", "content": prompt}], [])
@@ -520,7 +609,7 @@ class KnowledgeMixin:
                     try:
                         fact = kn.make_fact(
                             kind=cand["kind"],
-                            about=cand["about"],
+                            about=kn.link_about(cand["about"], cand["text"], catalog),
                             text=cand["text"],
                             status="pending",
                             source="distill",

@@ -286,6 +286,9 @@ def bridge_stub(tmp_path, monkeypatch):
         knowledge_overview = Bridge.knowledge_overview
         knowledge_capture = Bridge.knowledge_capture
         knowledge_distill = Bridge.knowledge_distill
+        _knowledge_installed = Bridge._knowledge_installed
+        _knowledge_config = Bridge._knowledge_config
+        _knowledge_catalog = Bridge._knowledge_catalog
         knowledge_save_fact = Bridge.knowledge_save_fact
         knowledge_review = Bridge.knowledge_review
 
@@ -409,6 +412,19 @@ def test_chunk_transcripts_marks_a_block_on_its_last_piece(kn):
     assert "line 0 " in "".join(t for t, _ in chunks)  # nothing dropped
 
 
+def test_overview_lists_installed_runnables(bridge_stub):
+    assert bridge_stub.knowledge_overview()["installed_runnables"] == []
+    bridge_stub._runnables_cache = [
+        {"name": "disk-usage", "host": "local"},
+        {"name": "disk-usage", "host": "web-01"},
+        {"name": "cron", "host": "web-01"},
+    ]
+    assert bridge_stub.knowledge_overview()["installed_runnables"] == [
+        "cron",
+        "disk-usage",
+    ]
+
+
 def test_capture_range_is_remembered(bridge_stub):
     bridge_stub.knowledge_capture(0)
     assert bridge_stub.history_days[-1] is None  # 0 = all history
@@ -508,3 +524,166 @@ def test_distill_reads_all_history_in_batches_and_resumes(bridge_stub, tmp_path)
     assert "follow-up about /srv" in last and "recent question" not in last
     inbox = bridge_stub.knowledge_overview()["inbox"]
     assert len(inbox) == len(bridge_stub.adapter.prompts)  # one distinct fact per call
+
+
+def test_link_about_resolves_guesses_and_mentions(kn):
+    cat = kn.entity_catalog(
+        [
+            "group:Linux Servers",
+            "host:little-boy",
+            "host:little-girl",
+            "host:local",
+            "runnable:disk-usage",
+            "file:/var/log/x",  # not linkable
+        ]
+    )
+    # A term guess for a group name joins the group; prose mentions are added.
+    about = kn.link_about(
+        ["term:linux-servers"],
+        "Linux Servers is five Debian hosts: little-boy, little-girl and more.",
+        cat,
+    )
+    assert about[0] == "group:Linux Servers"
+    assert sorted(about) == [
+        "group:Linux Servers",
+        "host:little-boy",
+        "host:little-girl",
+    ]
+    # Same type, other spelling → canonical; files and unknowns are kept as-is.
+    assert kn.link_about(["host:Little-Boy", "file:/etc/x", "app:orders"], "", cat) == [
+        "host:little-boy",
+        "file:/etc/x",
+        "app:orders",
+    ]
+    # A common word in prose is not a reference ("local time"), but it is
+    # kept when the fact names it as a subject.
+    assert kn.link_about(["topic:clock"], "uses local time", cat) == ["topic:clock"]
+    assert kn.link_about(["host:local"], "local time", cat) == ["host:local"]
+    # The longer name wins over its prefix.
+    cat2 = kn.entity_catalog(["host:web-01", "host:web-01-backup"])
+    assert kn.link_about(["topic:x"], "copy to web-01-backup nightly", cat2) == [
+        "topic:x",
+        "host:web-01-backup",
+    ]
+
+
+def test_observe_config(kn):
+    facts = kn.observe_config(
+        hosts=[
+            {"name": "a", "group": "Linux Servers", "profiles": ["Homelab"]},
+            {"name": "b", "group": "Linux Servers", "profiles": ["Homelab", "Work"]},
+            {"name": "local", "group": None, "profiles": []},
+        ],
+        triggers=[
+            {
+                "name": "disk-alert",
+                "source": "outlook",
+                "event": "new_mail",
+                "mode": "rule",
+                "run": "group:Linux Servers__disk-usage",
+            },
+            {
+                "name": "triage",
+                "source": "chat",
+                "mode": "agent",
+                "runnables": ["summarize-log"],
+                "enabled": False,
+            },
+        ],
+        schedules=[
+            {
+                "id": "nightly",
+                "action": "runnable",
+                "runnable": "cron",
+                "host": "a",
+                "when": {"cron": "0 2 * * *"},
+            },
+            {
+                "id": "weekly-rb",
+                "action": "runbook",
+                "runbook": "patch",
+                "when": {"every": "7d"},
+            },
+        ],
+        runbooks=[
+            {
+                "id": "patch",
+                "title": "Patch the Linux boxes",
+                "steps": [{"text": "run disk-usage first, then upgrade"}],
+            },
+        ],
+        filters=[
+            {"name": "errors", "pipeline": "grep ERROR", "description": "Only errors."}
+        ],
+        catalog=kn.entity_catalog(["runnable:disk-usage", "group:Linux Servers"]),
+    )
+    texts = {f["text"]: f for f in facts}
+    assert all(f["status"] == "observed" and f["source"] == "config" for f in facts)
+    g = texts["Group Linux Servers contains 2 host(s): a, b."]
+    assert g["about"] == ["group:Linux Servers", "host:a", "host:b"]
+    assert "Profile Homelab loads 2 host(s): a, b." in texts
+    t = texts[
+        "Trigger disk-alert fires on outlook new_mail and runs disk-usage on Linux Servers (rule mode)."
+    ]
+    assert set(t["about"]) == {
+        "trigger:disk-alert",
+        "group:Linux Servers",
+        "runnable:disk-usage",
+    }
+    assert (
+        "Trigger triage fires on chat and starts an agent turn (agent mode). It is disabled."
+        in texts
+    )
+    assert "Schedule nightly runs cron on a (cron 0 2 * * *)." in texts
+    assert "Schedule weekly-rb runs runbook patch (every 7d)." in texts
+    rb = texts["Runbook patch: Patch the Linux boxes. It uses disk-usage."]
+    assert set(rb["about"]) == {
+        "runbook:patch",
+        "runnable:disk-usage",
+    }
+    assert any(
+        f["text"].startswith("File filter errors applies `grep ERROR`") for f in facts
+    )
+
+
+def test_capture_reads_config_and_relinks(bridge_stub):
+    from runspec_console import knowledge
+
+    store = bridge_stub._knowledge_store()
+    # A fact written before the group existed: a lonely term.
+    fact = knowledge.make_fact(
+        kind="glossary",
+        about=["term:Linux Servers"],
+        text="Linux Servers is a group of Debian hosts: web-01 and web-02.",
+        status="approved",
+        source="operator",
+    )
+    old = store.add_approved(fact)
+    bridge_stub._all_host_entries = lambda: [
+        {"name": "web-01", "group": "Linux Servers"},
+        {"name": "web-02", "group": "Linux Servers"},
+    ]
+    bridge_stub._read_schedules = lambda: []
+    r = bridge_stub.knowledge_capture()
+    assert r["ok"] and r["relinked"] == 1 and r["observed"] >= 1
+    facts = {f["text"]: f for f in store.all_facts() if f.get("status") != "retired"}
+    linked = facts[fact["text"]]
+    assert linked["about"] == ["group:Linux Servers", "host:web-01", "host:web-02"]
+    assert linked["id"] != old and linked["source"] == "operator"
+    assert "Group Linux Servers contains 2 host(s): web-01, web-02." in facts
+    # Idempotent: a second capture changes nothing more.
+    assert bridge_stub.knowledge_capture()["relinked"] == 0
+
+
+def test_agent_proposals_are_linked(bridge_stub):
+    bridge_stub._all_host_entries = lambda: [{"name": "web-01", "group": "Web"}]
+    bridge_stub._run_knowledge_tool(
+        "propose_fact",
+        {
+            "kind": "note",
+            "about": ["term:web"],
+            "text": "The web group serves orders from web-01.",
+        },
+    )
+    pending = bridge_stub._knowledge_store().inbox()
+    assert pending[0]["about"] == ["group:Web", "host:web-01"]

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { forceLayout, neighbourhood, nodeRadius, parseAbout, splitEntity, typeColor, TYPE_COLORS } from './knowledgeGraph'
+import { fitView, forceLayout, neighbourhood, nodeRadius, parseAbout, splitEntity, typeColor, zoomAt, TYPE_COLORS } from './knowledgeGraph'
 
 describe('knowledgeGraph', () => {
   const nodes = [
@@ -11,17 +11,42 @@ describe('knowledgeGraph', () => {
     { source: 'host:b', target: 'runnable:x', weight: 1 },
   ]
 
-  it('lays every node out inside the box, deterministically', () => {
+  it('lays out deterministically and fits the result into the viewport', () => {
     const a = forceLayout(nodes, edges, 400, 300)
     const b = forceLayout(nodes, edges, 400, 300)
     expect(a.size).toBe(4)
-    for (const [id, p] of a) {
-      expect(p.x).toBeGreaterThanOrEqual(20)
-      expect(p.x).toBeLessThanOrEqual(380)
-      expect(p.y).toBeGreaterThanOrEqual(20)
-      expect(p.y).toBeLessThanOrEqual(280)
-      expect(b.get(id)).toEqual(p)
+    for (const [id, p] of a) expect(b.get(id)).toEqual(p)
+    const v = fitView(a, 400, 300, 10)
+    for (const p of a.values()) {
+      const sx = p.x * v.k + v.x
+      const sy = p.y * v.k + v.y
+      expect(sx).toBeGreaterThanOrEqual(0); expect(sx).toBeLessThanOrEqual(400)
+      expect(sy).toBeGreaterThanOrEqual(0); expect(sy).toBeLessThanOrEqual(300)
     }
+  })
+
+  it('keeps disconnected islands near the cluster and follows the canvas shape', () => {
+    const star = [{ id: 'h', weight: 30 }, ...Array.from({ length: 14 }, (_, i) => ({ id: `r${i}`, weight: 5 }))]
+    const isl = Array.from({ length: 4 }, (_, i) => ({ id: `iso${i}`, weight: 1 }))
+    const links = star.slice(1).map(n => ({ source: 'h', target: n.id, weight: 3 }))
+    const p = forceLayout([...star, ...isl], links, 1400, 560)
+    const span = (ids: string[]) => {
+      const xs = ids.map(i => p.get(i)!.x), ys = ids.map(i => p.get(i)!.y)
+      return [Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)]
+    }
+    const [sw, sh] = span(star.map(n => n.id))
+    const [aw, ah] = span([...p.keys()])
+    expect((sw * sh) / (aw * ah)).toBeGreaterThan(0.5) // the cluster isn't a speck among outliers
+    expect(aw).toBeGreaterThan(ah) // wide canvas, wide drawing
+  })
+
+  it('zooms about a fixed screen point and clamps', () => {
+    const v = zoomAt({ x: 10, y: 20, k: 1 }, 2, 100, 100)
+    expect(v.k).toBe(2)
+    // the graph point under (100,100) stays under it
+    expect((100 - 10) / 1).toBeCloseTo((100 - v.x) / v.k)
+    expect(zoomAt({ x: 0, y: 0, k: 1 }, 1000, 0, 0).k).toBe(5)
+    expect(fitView(new Map(), 100, 100)).toEqual({ x: 0, y: 0, k: 1 })
   })
 
   it('pulls linked nodes closer than unlinked ones', () => {
