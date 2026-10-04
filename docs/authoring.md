@@ -314,10 +314,10 @@ prints the error and calls `sys.exit(1)`. runspec already does this, better:
   without `[config.logging]`. Bad args, missing required args, bad choices,
   unknown runnable, missing config: runspec prints a clean human message and
   exits 1. Wrapping `parse()` adds nothing.
-- **Uncaught runtime exceptions in your own logic are handled too — when
-  `[config.logging]` is declared.** runspec installs a process-level handler
+- **Uncaught runtime exceptions in your own logic are handled too.** Logging is
+  on by default (runspec 0.71.0+), so runspec installs a process-level handler
   (Python `sys.excepthook`, Node `uncaughtException` / `unhandledRejection`) that
-  writes a structured audit record plus a concise stderr line
+  writes a structured run record plus a concise stderr line
   (`ERROR: ValueError: ...`), or a full traceback under `--debug`. **Just let the
   exception propagate.**
 
@@ -326,7 +326,7 @@ from runspec import parse
 
 def main():
     args = parse()                 # arg/config errors already exit cleanly
-    result = do_the_work(args)     # let any exception propagate — runspec logs + renders it
+    result = do_the_work(directory=args.directory.value)  # let any exception propagate — runspec logs + renders it
     print(result)
 ```
 
@@ -339,9 +339,80 @@ The few **legitimate** reasons to raise or exit explicitly:
   (`except ConnectionError`), never bare `except Exception`.
 
 A blanket `try/except Exception: print(e); sys.exit(1)` throws away the structured
-audit record and the traceback, hides the exception type, and duplicates what
-runspec does. Adding a `[config.logging]` table is the right move — see
+run record and the traceback, hides the exception type, and duplicates what
+runspec does. See [Logging](logging.md).
+
+---
+
+## Logging and audit events
+
+Logging is **on by default** (runspec 0.71.0+, Python): every run gets a JSON
+log file under `{venv}/logs/`, a run record (who ran it, which args with secrets
+left out, exit code, duration), INFO → stdout and WARNING+ → stderr, and a
+`--debug` flag. In code, just use a logger — no `basicConfig()`, no handlers:
+
+```python
+import logging
+logger = logging.getLogger(__name__)
+logger.info("Rotated %d files", count)
+```
+
+A package that brings its own logging sets `[config.logging] enabled = false`
+(audit-only: runspec leaves logging alone but still writes the run record). See
 [Logging](logging.md).
+
+The run record says *that* the runnable ran. When an action **inside** the run
+must be on the record on its own (a refund issued, a host rebooted, an account
+unlocked), record an **audit event** with one call. It goes to the venv's
+append-only, hash-chained ledger, the OS log, and the run's log:
+
+```python
+import runspec
+
+runspec.audit("account.unlock", "succeeded", target={"user": user},
+              detail={"ticket": ticket})
+```
+
+Use a dotted lowercase `noun.verb` name, keep secrets out of `target`/`detail`,
+and pass `strict=True` before an action that must not happen unrecorded (it
+raises `runspec.AuditError` if nothing could record it). From a shell:
+`runspec audit record account.unlock --outcome succeeded --target user=alice`.
+Don't hand-roll an actions log. See [Audit events](audit.md).
+
+---
+
+## Who it runs as — `run_as`
+
+A runnable without `run_as` runs as **the account that owns its venv**
+(`"@owner"`, never root; runspec 0.68.0+). In a personal venv that's you, so
+nothing changes. In a shared venv owned by a service account, the console /
+`runspec serve` / `runspec exec` escalate to that account, and a direct run by
+anyone else is refused with the `sudo -u <owner> …` command to use. Set
+`run_as = "<account>"` only when the tool must run as someone specific, or
+`[config] run_as = ""` to run as the invoker with no check. Don't add your own
+`--user`/`--sudo` args. See [`run_as`](format.md#run_as-become_method-become_flags).
+
+---
+
+## Rundeck and Ansible
+
+`runspec emit --rundeck` / `--ansible` turn each runnable into a Rundeck job or
+an Ansible module from the same `runspec.toml`. What the scheduler needs that the
+interface doesn't say (venv, job group, node filter, schedule, notifications)
+goes in a `meta` table the emitters read, so write it next to the runnable:
+
+```toml
+[rotate-logs.meta.rundeck]
+venv        = "/opt/app/.venv"
+node_filter = "tags: web"
+schedule    = "0 0 2 * * ?"      # Quartz crontab, not Unix cron
+
+[rotate-logs.meta.ansible]
+venv = "/opt/app/.venv"
+```
+
+Project-wide defaults go under `[config.meta.rundeck]` / `[config.meta.ansible]`.
+See [Rundeck jobs](rundeck.md) and [Ansible modules](ansible.md).
 
 ---
 
@@ -383,6 +454,10 @@ def test_wiring():
   `require-command` is enforced, omitting required args exits 1, and a
   fully-populated invocation parses.
 
+A test that calls your runnable's `main()` directly runs the real `parse()`: set
+`RUNSPEC_AUDIT=off` for it (tests and CI only) so it doesn't write run records
+or audit events into your venv, and wrap the call in `no_run_as_check()`.
+
 Pass an inline spec with `toml="..."` instead of `config_path=` for small cases.
 **Node:** `import { ParseHarness } from "runspec-node/testing"` — same API
 (`expectOk`, `expectExit({ code, contains })`, `smoke({ values })`).
@@ -415,7 +490,9 @@ runspec test --format json
 2. **Add the runnable section** to `runspec.toml`. If creating the file fresh,
    add the schema comment first: `#:schema https://runspec.app/runspec.schema.json`.
 3. **Create the code stub** in the package directory. Keep `main()` thin —
-   delegate the real work to a plain function so it's directly testable.
+   delegate the real work to a plain function so it's directly testable. Log
+   with `logging.getLogger(__name__)`, and add a `runspec.audit(...)` call for
+   each action that must be on the record.
 4. **Wire the entry point** in `pyproject.toml` or `package.json` — name must
    match the runnable.
 5. **Add a test** under the package's `tests/` dir using `ParseHarness` (at least
