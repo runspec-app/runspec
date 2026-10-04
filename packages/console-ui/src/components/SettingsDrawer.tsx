@@ -19,6 +19,7 @@ import { MONO_FONT, RADIUS, useAccent, withAlpha } from '../ThemeContext'
 import { ModelSelect } from './ModelSelect'
 import { useFeatures, visibleSettingsTabs } from '../features'
 import { ConfigSyncPreviewModal } from './ConfigSyncPreview'
+import { MemorySyncTab } from './MemorySyncTab'
 
 const { Text, Link } = Typography
 
@@ -6378,6 +6379,7 @@ export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, co
           { key: 'mcp',       label: 'MCP',        children: <McpTab /> },
           { key: 'mcpServer', label: 'MCP Server', children: <McpServerTab /> },
           { key: 'configSync', label: 'Config Sync', children: <ConfigSyncTab /> },
+          { key: 'memorySync', label: 'Memory Sync', children: <MemorySyncTab /> },
           { key: 'mailbox',   label: 'Mailbox',    children: <MailboxesTab /> },
                   { key: 'sounds',    label: 'Sounds & Notifications', children: <SoundsTab /> },
           { key: 'voice',     label: 'Voice',      children: <VoiceTab /> },

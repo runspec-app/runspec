@@ -261,6 +261,58 @@ def _save(path: Path, rows: list[dict[str, Any]]) -> None:
     os.replace(tmp, path)
 
 
+# ── Memory Sync (sharing) ────────────────────────────────────────────────────
+
+#: A pulled team file: one contributor's lane, ``<name>.toml``.
+_TEAM_NAME = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}\.toml$")
+#: Fields a shared fact carries. ``evidence`` (local run / chat ids) means nothing
+#: on another console, so it stays home.
+SHARED_FIELDS = (
+    "id",
+    "kind",
+    "about",
+    "text",
+    "status",
+    "source",
+    "author",
+    "first_seen",
+    "last_confirmed",
+    "confirmations",
+)
+
+
+def is_team_file(name: str) -> bool:
+    """True for a file name Memory Sync will store under ``team/``."""
+    return bool(_TEAM_NAME.match(name))
+
+
+def lane_name(user: str) -> str:
+    """The contributor lane for ``user``: lower-case, ``[a-z0-9._-]`` only. It names
+    both the branch (``contrib/<lane>``) and the file (``facts/<lane>.toml``)."""
+    lane = re.sub(r"[^a-z0-9._-]+", "-", str(user or "").strip().lower()).strip(".-_")
+    return lane[:64] or "user"
+
+
+def contribution(rows: Iterable[dict[str, Any]]) -> tuple[bytes, int]:
+    """The file Memory Sync pushes: this console's **approved** facts only (never
+    the inbox, observed usage or retired facts), trimmed to ``SHARED_FIELDS``,
+    sorted by id. A fact whose text now looks like a secret is held back. Returns
+    ``(toml_bytes, fact_count)``."""
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        if r.get("status") != "approved" or secret_reason(str(r.get("text", ""))):
+            continue
+        out.append({k: r[k] for k in SHARED_FIELDS if r.get(k) not in (None, "", [])})
+    out.sort(key=lambda r: str(r.get("id", "")))
+    header = (
+        "# Shared by runspec-console Memory Sync. One contributor's approved facts;\n"
+        "# merge contrib/<name> into main to share them with the team.\n"
+    )
+    return (header + tomli_w.dumps({"fact": out}, multiline_strings=True)).encode(
+        "utf-8"
+    ), len(out)
+
+
 class KnowledgeStore:
     """The knowledge directory: source files + the derived SQLite index."""
 
@@ -476,6 +528,45 @@ class KnowledgeStore:
     def write_observed(self, facts: list[dict[str, Any]]) -> None:
         with _LOCK:
             _save(self._path(OBSERVED_FILE), facts)
+
+    def write_team(self, files: dict[str, bytes]) -> dict[str, int]:
+        """Replace ``team/`` with ``files`` (``{"alice.toml": b"..."}``), as pulled
+        by Memory Sync. Every file must parse as a fact collection first — a bad
+        pull writes nothing. Files no longer on the team branch are removed.
+        Returns ``{files, facts, added, removed}`` (fact ids new / gone)."""
+        parsed: dict[str, list[dict[str, Any]]] = {}
+        for name, data in files.items():
+            if not _TEAM_NAME.match(name):
+                raise ValueError(f"unexpected team file name {name!r}")
+            try:
+                doc = tomllib.loads(data.decode("utf-8"))
+            except (UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+                raise ValueError(f"{name}: not valid TOML ({exc})") from exc
+            rows = doc.get("fact", [])
+            if not isinstance(rows, list):
+                raise ValueError(f"{name}: [[fact]] must be a list")
+            parsed[name] = [dict(r) for r in rows if isinstance(r, dict)]
+        with _LOCK:
+            before = {str(r.get("id")) for r in self.team_facts()}
+            team = self.root / TEAM_DIR
+            team.mkdir(parents=True, exist_ok=True)
+            for old in team.glob("*.toml"):
+                if old.name not in files:
+                    old.unlink()
+            for name, data in files.items():
+                path = team / name
+                if path.exists() and path.read_bytes() == data:
+                    continue  # unchanged — keep the mtime so the index stays put
+                tmp = path.with_name(f"{name}.tmp.{os.getpid()}")
+                tmp.write_bytes(data)
+                os.replace(tmp, path)
+            after = {str(r.get("id")) for rows in parsed.values() for r in rows}
+        return {
+            "files": len(files),
+            "facts": len(after),
+            "added": len(after - before),
+            "removed": len(before - after),
+        }
 
     # -- machine-local state ------------------------------------------------
 

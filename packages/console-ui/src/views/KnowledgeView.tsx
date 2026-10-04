@@ -28,6 +28,7 @@ import {
   fitView, forceLayout, neighbourhood, nodeRadius, parseAbout, splitEntity, typeColor,
   zoomAt, type Point, type View,
 } from './knowledgeGraph'
+import { KnowledgeSync } from './KnowledgeSync'
 
 const RANGE_OPTIONS = [
   { value: 7, label: 'Last 7 days' },
@@ -68,9 +69,11 @@ export function staleCheck(installed: string[] | undefined): ((entity: string) =
 interface KnowledgeViewProps {
   active: boolean
   aiEnabled: boolean
+  // Opens Settings at a tab (Memory Sync's set-up button).
+  onOpenSettings?: (tab: string) => void
 }
 
-export function KnowledgeView({ active, aiEnabled }: KnowledgeViewProps) {
+export function KnowledgeView({ active, aiEnabled, onOpenSettings }: KnowledgeViewProps) {
   const isDark = useIsDark()
   const [overview, setOverview] = useState<KnowledgeOverview | null>(null)
   const [loading, setLoading] = useState(false)
@@ -203,16 +206,15 @@ export function KnowledgeView({ active, aiEnabled }: KnowledgeViewProps) {
               style={{ width: 130 }}
             />
           </Tooltip>
-          <Tooltip title="Mine run history for usage patterns: common args, where runnables run, what runs after what. No AI involved.">
-            <Tooltip title="Reads run history (which runnables run where, usual args, what runs after what) and your config (groups, profiles, triggers, schedules, runbooks, file filters). No AI.">
-              <Button icon={<ReloadOutlined />} loading={busy === 'capture'} onClick={capture}>Capture</Button>
-            </Tooltip>
+          <Tooltip title="Reads run history (which runnables run where, usual args, what runs after what) and your config (groups, profiles, triggers, schedules, runbooks, file filters). No AI.">
+            <Button icon={<ReloadOutlined />} loading={busy === 'capture'} onClick={capture}>Capture</Button>
           </Tooltip>
           {aiEnabled && (
             <Tooltip title="Ask the model to suggest facts from your saved chats in the range. Chats already read are skipped, so re-running only reads what is new. Suggestions go to the inbox for you to review.">
               <Button icon={<BulbOutlined />} loading={busy === 'distill'} onClick={distill}>Suggest from chats</Button>
             </Tooltip>
           )}
+          <KnowledgeSync onOpenSettings={() => onOpenSettings?.('memorySync')} />
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setEditing({})}>Add fact</Button>
         </Space>
       </div>

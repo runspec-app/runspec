@@ -938,7 +938,9 @@ class FleetMixin:
         except Exception as exc:  # noqa: BLE001
             return {"error": f"could not list tags: {exc}"}
 
-    def _sync_auth(self, url: str, credential_id: str) -> Any:
+    def _sync_auth(
+        self, url: str, credential_id: str, tls: dict[str, Any] | None = None
+    ) -> Any:
         """Build a ``GitAuth`` for ``url`` from a saved credential.
 
         HTTPS uses the credential's username + keyring secret (token), the
@@ -947,7 +949,9 @@ class FleetMixin:
         credential's own ``private_key`` path (with its keyring passphrase, if
         any) so a repo can use a dedicated deploy key; it falls back to the
         console's configured SSH key (``[ssh] identityFile``) when the credential
-        carries no key. The username defaults to ``git``."""
+        carries no key. The username defaults to ``git``. ``tls`` supplies
+        ``ca_bundle`` / ``tls_verify`` from another section (Memory Sync) instead
+        of ``[config_sync]``."""
         from . import credentials as cred
         from . import gitsync
 
@@ -968,7 +972,7 @@ class FleetMixin:
                 passphrase=passphrase,
             )
         secret = cred.get_secret(credential_id) if credential_id else None
-        sync = read_sync()
+        sync = tls if tls is not None else read_sync()
         return gitsync.GitAuth(
             scheme="https",
             username=username,

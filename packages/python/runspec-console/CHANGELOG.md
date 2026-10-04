@@ -9,6 +9,29 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.329.0] — 2026-10-04
+
+### Added
+
+- **Memory Sync: share the knowledge wiki with your team.** A new Settings →
+  Memory Sync tab points the wiki at a git repo of its own, with its own
+  credential, separate from Config Sync (which stays pull-only). The Knowledge
+  tab gains **Pull** and **Push**. Push writes only your approved facts, to one
+  file (`facts/<lane>.toml`) on your own branch (`contrib/<lane>`), never a
+  force push; they reach the team once someone merges that branch on the repo.
+  Pull brings the team branch's `facts/*.toml` (except yours) into `team/`.
+  `[memory_sync]` in `config.toml`; `user` is a Config Sync `preserve` default.
+  New `gitsync.push_file` / `fetch_dir`, bridge `bridge_memory_sync.py`. See
+  `docs/console-knowledge.md` → "Sharing with your team".
+
+### Fixed
+
+- **Tests no longer read or write your real console profile.** A new
+  `tests/conftest.py` points `APPDATA` at a fresh temp dir for every test. Before,
+  a developer's own saved runs or active host profile made 22 tests in
+  `test_console_context`, `test_outlook_tools` and `test_refresh_cycle` fail only
+  on their machine, and some tests wrote into the real profile.
+
 ## [0.328.0] — 2026-10-04
 
 ### Added

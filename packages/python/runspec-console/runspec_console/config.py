@@ -1883,6 +1883,51 @@ def write_sync(sync: dict[str, Any]) -> None:
     update_config(mutate)
 
 
+#: Memory Sync's default branch for the shared wiki (what a pull reads).
+DEFAULT_MEMORY_SYNC_BRANCH = "main"
+
+
+def read_memory_sync() -> dict[str, Any]:
+    """The ``[memory_sync]`` table from config.toml ({} when unset).
+
+    Memory Sync shares the **team knowledge wiki** through its own git repo —
+    separate from Config Sync's, with its own (write) credential. Shape::
+
+        [memory_sync]
+        url           = "https://gitlab.acme.com/ops/wiki.git"
+        credential_id = "wiki-token"    # a Credentials-tab entry (write access)
+        branch        = "main"          # what a pull reads; default "main"
+        user          = "jason"         # your lane: pushes go to contrib/<user>
+        ca_bundle     = ""              # HTTPS: PEM bundle (internal CA / TLS proxy)
+        tls_verify    = true
+
+    ``user`` defaults to the OS login name and is kept machine-local across a
+    Config Sync pull. The secret lives in the keyring under ``credential_id``.
+    Push/pull stamps live in the wiki's machine-local ``state.toml``, not here."""
+    raw = read_config().get("memory_sync")
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
+def write_memory_sync(ms: dict[str, Any]) -> None:
+    """Replace the ``[memory_sync]`` table, preserving every other section.
+    Blank scalars and the default branch / ``tls_verify = true`` are dropped."""
+
+    def mutate(cfg: dict[str, Any]) -> None:
+        entry: dict[str, Any] = {}
+        for key in ("url", "credential_id", "branch", "user", "ca_bundle"):
+            val = str(ms.get(key) or "").strip()
+            if val and not (key == "branch" and val == DEFAULT_MEMORY_SYNC_BRANCH):
+                entry[key] = val
+        if ms.get("tls_verify", True) is False:
+            entry["tls_verify"] = False
+        if entry:
+            cfg["memory_sync"] = entry
+        else:
+            cfg.pop("memory_sync", None)
+
+    update_config(mutate)
+
+
 def read_seed_state() -> dict[str, Any]:
     """The machine-local package-seed state (`runspec_seed_state.toml`), or `{}`.
 

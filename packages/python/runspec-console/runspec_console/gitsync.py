@@ -32,7 +32,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, overload
 from urllib.parse import urlsplit
 
 logger = logging.getLogger(__name__)
@@ -533,14 +533,225 @@ def fetch_layers(
     return LayeredFetchResult(ref=ref, commit=commit_sha.decode("ascii"), layers=layers)
 
 
+# ── Memory Sync: read a directory, push one file ───────────────────────────────
+#
+# Config Sync only ever pulls. Memory Sync (the team knowledge wiki) also pushes,
+# but narrowly: one file, onto the operator's own branch, of a separate repo with
+# its own credential. Nothing here can push anywhere else — the caller names the
+# branch and the single path, and the push is refused if the branch moved since
+# we read it (no force, no overwrite of someone else's work).
+
+
+@dataclass
+class DirFetchResult:
+    """The ``*.toml`` blobs directly under one directory of a ref's tree."""
+
+    ref: str
+    commit: str
+    files: dict[str, bytes] = field(default_factory=dict)
+
+
+@dataclass
+class PushResult:
+    """What :func:`push_file` did. ``changed`` is False when the branch already
+    held exactly these bytes (no commit was made). ``created`` is True when the
+    branch did not exist on the remote before this push."""
+
+    branch: str
+    commit: str
+    changed: bool
+    created: bool = False
+
+
+class PushConflictError(GitSyncError):
+    """The branch moved on the remote between our read and our push."""
+
+
+def fetch_dir(
+    url: str, ref: str, auth: GitAuth, subdir: str, suffix: str = ".toml"
+) -> DirFetchResult:
+    """Fetch ``ref`` and read every ``suffix`` file directly under ``subdir``.
+
+    A missing directory — or a missing ``ref``, as in a brand-new empty repo —
+    reads as no files (``commit`` empty for a missing ref). Nested directories are
+    ignored. Raises ``GitSyncError`` like :func:`fetch_files`."""
+    fetched = _fetch_tree(url, ref, auth, missing_ok=True)
+    if fetched is None:
+        return DirFetchResult(ref=ref, commit="")
+    repo, commit_sha, tree_sha = fetched
+    from dulwich.object_store import tree_lookup_path
+
+    out: dict[str, bytes] = {}
+    base = subdir.strip("/")
+    try:
+        dir_sha = tree_sha
+        if base:
+            _mode, dir_sha = tree_lookup_path(
+                repo.object_store.__getitem__, tree_sha, base.encode("utf-8")
+            )
+        tree = repo.object_store[dir_sha]
+    except KeyError:
+        return DirFetchResult(ref=ref, commit=commit_sha.decode("ascii"))
+    if getattr(tree, "type_name", b"") != b"tree":
+        return DirFetchResult(ref=ref, commit=commit_sha.decode("ascii"))
+    for entry in tree.iteritems():
+        name = entry.path.decode("utf-8", "replace")
+        if not name.endswith(suffix) or (entry.mode & 0o170000) != 0o100000:
+            continue
+        out[name] = repo.object_store[entry.sha].data
+    return DirFetchResult(ref=ref, commit=commit_sha.decode("ascii"), files=out)
+
+
+def push_file(
+    url: str,
+    branch: str,
+    path: str,
+    data: bytes,
+    auth: GitAuth,
+    *,
+    base_branch: str = "main",
+    message: str = "Update file",
+    author: str = "runspec-console <runspec-console@localhost>",
+    retries: int = 1,
+) -> PushResult:
+    """Commit ``data`` at ``path`` onto ``branch`` and push it — one file only.
+
+    The new commit's parent is the branch's current head; a branch that doesn't
+    exist yet starts from ``base_branch`` (or from nothing in an empty repo). When
+    the file already holds ``data`` nothing is committed. The push is a
+    compare-and-swap: if the remote branch moved since we fetched it, we re-read
+    and try again (``retries`` times), then raise :class:`PushConflictError` —
+    never a force push. Raises ``GitSyncError`` on connection/auth failure or a
+    rejected push."""
+    if not available():
+        raise GitSyncError(
+            "git engine unavailable — install the 'git-sync' extra "
+            "(pip install runspec-console[git-sync])"
+        )
+    rel = path.strip("/")
+    if not rel or ".." in rel.split("/"):
+        raise GitSyncError(f"refusing to push to path {path!r}")
+    target = b"refs/heads/" + branch.encode("utf-8")
+    for attempt in range(retries + 1):
+        try:
+            return _push_once(
+                url, target, rel, data, auth, base_branch, message, author
+            )
+        except PushConflictError:
+            if attempt >= retries:
+                raise
+    raise PushConflictError(f"{branch} kept moving — try again")  # pragma: no cover
+
+
+def _push_once(
+    url: str,
+    target: bytes,
+    rel: str,
+    data: bytes,
+    auth: GitAuth,
+    base_branch: str,
+    message: str,
+    author: str,
+) -> PushResult:
+    import time as _time
+
+    from dulwich.client import get_transport_and_path
+    from dulwich.object_store import commit_tree_changes, tree_lookup_path
+    from dulwich.objects import Blob, Commit, Tree
+    from dulwich.repo import MemoryRepo
+
+    branch = target[len(b"refs/heads/") :].decode("utf-8")
+    repo: Any = MemoryRepo()
+    try:
+        client, rpath = get_transport_and_path(url, **_transport_kwargs(url, auth))
+        refs: dict[Any, Any] = dict(client.fetch(rpath, repo).refs or {})
+    except GitSyncError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise GitSyncError(_human_error(exc)) from exc
+
+    store: Any = repo.object_store
+    head = refs.get(target)
+    parent = head or refs.get(b"refs/heads/" + base_branch.encode("utf-8"))
+    tree: Any = Tree()
+    if parent:
+        parent = _peel_to_commit(repo, parent)
+        tree = store[parent].tree
+        try:
+            _mode, old_blob = tree_lookup_path(
+                store.__getitem__, tree, rel.encode("utf-8")
+            )
+            if head and store[old_blob].data == data:
+                return PushResult(
+                    branch=branch, commit=head.decode("ascii"), changed=False
+                )
+        except KeyError:
+            pass
+    else:
+        store.add_object(tree)
+        tree = tree.id
+
+    blob = Blob.from_string(data)
+    store.add_object(blob)
+    new_tree = commit_tree_changes(
+        store, store[tree], [(rel.encode("utf-8"), 0o100644, blob.id)]
+    )
+    commit: Any = Commit()
+    commit.tree = new_tree
+    commit.parents = [parent] if parent else []
+    who = author.encode("utf-8")
+    commit.author = commit.committer = who
+    now = int(_time.time())
+    commit.author_time = commit.commit_time = now
+    commit.author_timezone = commit.commit_timezone = 0
+    commit.encoding = b"UTF-8"
+    commit.message = message.encode("utf-8") + b"\n"
+    store.add_object(commit)
+
+    expected = head
+
+    def update_refs(remote: dict[Any, Any]) -> dict[Any, Any]:
+        if remote.get(target) != expected:
+            raise PushConflictError(f"{branch} moved on the remote")
+        return {target: commit.id}
+
+    try:
+        result = client.send_pack(rpath, update_refs, store.generate_pack_data)  # type: ignore[arg-type]
+    except GitSyncError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise GitSyncError(_human_error(exc)) from exc
+    status = getattr(result, "ref_status", None) or {}
+    err = status.get(target)
+    if err:
+        raise GitSyncError(f"push to {branch} rejected: {err}")
+    return PushResult(
+        branch=branch,
+        commit=commit.id.decode("ascii"),
+        changed=True,
+        created=head is None,
+    )
+
+
 # ── helpers ─────────────────────────────────────────────────────────────────────
 
 
-def _fetch_tree(url: str, ref: str, auth: GitAuth) -> tuple[Any, bytes, bytes]:
+@overload
+def _fetch_tree(url: str, ref: str, auth: GitAuth) -> tuple[Any, bytes, bytes]: ...
+@overload
+def _fetch_tree(
+    url: str, ref: str, auth: GitAuth, missing_ok: bool
+) -> tuple[Any, bytes, bytes] | None: ...
+
+
+def _fetch_tree(
+    url: str, ref: str, auth: GitAuth, missing_ok: bool = False
+) -> tuple[Any, bytes, bytes] | None:
     """Fetch ``ref`` into a MemoryRepo; return (repo, commit_sha, tree_sha).
 
     Resolves the ref, peels annotated tags to their commit, and reads the commit
-    tree — the shared front half of ``fetch_files`` / ``fetch_layers``."""
+    tree — the shared front half of ``fetch_files`` / ``fetch_layers``. With
+    ``missing_ok`` an unknown ref returns None instead of raising."""
     if not available():
         raise GitSyncError(
             "git engine unavailable — install the 'git-sync' extra "
@@ -560,6 +771,8 @@ def _fetch_tree(url: str, ref: str, auth: GitAuth) -> tuple[Any, bytes, bytes]:
         raise GitSyncError(_human_error(exc)) from exc
 
     sha = _resolve_ref(refs, ref)
+    if sha is None and missing_ok:
+        return None
     if sha is None:
         raise GitSyncError(
             f"ref {ref!r} not found in {url} — check the tag/branch name"

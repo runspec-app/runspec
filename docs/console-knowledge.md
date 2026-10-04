@@ -91,11 +91,59 @@ Everything lives in `{app_dir}/knowledge/`:
 | `facts.toml` | facts approved on this console (your contributions) |
 | `inbox.toml` | proposed facts awaiting review |
 | `observed.toml` | usage patterns and config facts from the last capture (rewritten each capture) |
-| `team/*.toml` | facts pulled from the team (Memory Sync, coming next) |
+| `team/*.toml` | facts pulled from the team by Memory Sync, one file per contributor (replaced on each pull) |
 | `index.sqlite` | search/graph index, rebuilt from the files whenever they change; safe to delete |
-| `state.toml` | this console's bookkeeping: the capture range and which chats were already read. Never shared; delete it to re-read every chat |
+| `state.toml` | this console's bookkeeping: the capture range, which chats were already read, and the last Memory Sync push and pull. Never shared; delete it to re-read every chat |
 
 The TOML files are the source of truth, written in a stable order so they diff
-cleanly in git. **Memory Sync**, the follow-up to this feature, shares
-`facts.toml` through a separate git repo with its own credential, so Config Sync
-stays pull-only.
+cleanly in git.
+
+## Sharing with your team (Memory Sync)
+
+Memory Sync shares the wiki through a git repo of its own. It is a sibling of
+Config Sync with a separate repo and credential, so a wiki token never reaches
+your config, and Config Sync stays pull-only.
+
+**Set up** in Settings → Memory Sync:
+
+| Field | Meaning |
+|---|---|
+| Wiki repository | HTTPS or SSH URL of an empty repo kept for the wiki |
+| Credential | a Credentials entry that can push to it (a token, or an ssh-key credential over SSH) |
+| Team branch | what a pull reads; default `main` |
+| Your name in the wiki | your *lane*; blank uses your login name. Kept on this machine across a Config Sync pull |
+| CA bundle, Verify TLS | as for Config Sync, for an internal CA or a TLS-inspecting proxy |
+
+**Test connection** checks the repo is reachable and whether the team branch
+and your branch exist yet. The settings are stored as `[memory_sync]` in
+`config.toml`; the secret stays in the keychain.
+
+**Push** (Knowledge tab) shares your approved facts and nothing else:
+
+- It writes one file, `facts/<lane>.toml`, on your own branch `contrib/<lane>`.
+  Nothing else in the repo changes and it never force-pushes. Your branch starts
+  from the team branch the first time.
+- Only *approved* facts go: never the inbox, observed usage, retired facts, or
+  `evidence` ids (they name local runs). A fact whose text now looks like a
+  secret is held back.
+- A dot on **Push** means you have approved facts that aren't pushed yet.
+
+Facts reach the team when someone merges `contrib/<lane>` into the team branch
+on the repo, so every fact is reviewed twice: in your inbox, then in the merge.
+Each contributor only ever changes their own file, so merging any number of
+`contrib/*` branches never conflicts. Protect the team branch on the repo so
+merges go through review.
+
+**Pull** reads every `facts/*.toml` on the team branch except your own (those
+facts are already here) into `team/`, replacing what was there. A file that
+isn't valid TOML aborts the pull with nothing written; a file whose name isn't a
+valid lane is skipped. Team facts show in the graph, pages and search like your
+own, and confirmations from the team add to your count.
+
+Layout of the wiki repo:
+
+```text
+facts/
+  alice.toml     # merged from contrib/alice
+  jason.toml     # merged from contrib/jason
+```

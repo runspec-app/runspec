@@ -769,6 +769,50 @@ export interface ImproveRecommendation {
   confidence: string
 }
 
+// ── Memory Sync (bridge_memory_sync.py) ──────────────────────────────────────
+// Shares the knowledge wiki through its own git repo: push this console's approved
+// facts to contrib/<lane> (one file, facts/<lane>.toml); pull main's facts/*.toml
+// into team/.
+export interface MemorySyncSettings {
+  url: string
+  credential_id: string
+  branch: string
+  user: string          // blank = the OS login name
+  ca_bundle: string
+  tls_verify: boolean
+}
+export interface MemorySyncConfig {
+  config: MemorySyncSettings
+  user_default: string
+  lane: string
+  contrib_branch: string
+  path: string
+  engine: string | null  // null = the git-sync extra isn't installed
+}
+export interface MemorySyncStatus {
+  configured: boolean
+  engine: string | null
+  url: string
+  branch: string
+  contrib_branch: string
+  path: string
+  shareable: number      // approved facts a push would share
+  unpushed: boolean      // they changed since the last push
+  team_facts: number
+  last_push: string
+  last_push_commit: string
+  last_pull: string
+  last_pull_commit: string
+}
+export interface MemorySyncPushResult {
+  ok: boolean; error?: string
+  branch?: string; commit?: string; changed?: boolean; created?: boolean; facts?: number
+}
+export interface MemorySyncPullResult {
+  ok: boolean; error?: string
+  commit?: string; files?: number; facts?: number; added?: number; removed?: number; skipped?: string[]
+}
+
 // ── Team knowledge wiki (knowledge.py / bridge_knowledge.py) ─────────────────
 // A fact is about one or more entities written `type:name` (host:web-01,
 // runnable:tail-log, file:/var/log/a.log, term:BAU …). `observed` facts are
@@ -2302,6 +2346,14 @@ export interface BridgeApi {
     ok: boolean; proposed?: number; skipped?: number; calls?: number
     conversations?: number; remaining?: number; note?: string; error?: string
   }>
+  // ── Memory Sync ────────────────────────────────────────────────────────────────
+  get_memory_sync_config: () => Promise<MemorySyncConfig>
+  save_memory_sync_config: (payload: Partial<MemorySyncSettings>) => Promise<{ ok: boolean; error?: string } & Partial<MemorySyncConfig>>
+  memory_sync_status: () => Promise<MemorySyncStatus>
+  // One ls-remote: is the repo reachable, do the team / contrib branches exist yet.
+  memory_sync_test: () => Promise<{ ok: boolean; error?: string; branch_exists?: boolean; contrib_exists?: boolean; empty?: boolean }>
+  memory_sync_push: () => Promise<MemorySyncPushResult>
+  memory_sync_pull: () => Promise<MemorySyncPullResult>
   // ── Improve (effectiveness + problem report) ──────────────────────────────────
   // Mine this install's saved conversations + run history into an effectiveness
   // report. A non-empty comment makes it a problem report (carried into the
