@@ -71,9 +71,11 @@ clear button under the zoom buttons) to clear the selection.
 | `edit_wiki_fact` | correct an approved fact | confirm |
 | `retire_wiki_fact` | retire a wrong or stale fact | confirm |
 
-The agent is told to check `search_wiki` before asking you where something lives
-or what a term means. None of the wiki is put in the system prompt; the agent
-looks things up when it needs them.
+The default system prompt tells the agent to check `search_wiki` before asking
+you where something lives or what a term means, and to `propose_fact` what it
+learns. None of the wiki itself is put in the prompt; the agent looks things up
+when it needs them. A custom `[llm] system` replaces that line, so add it to
+yours (or use `system_append`) if you want the same behaviour.
 
 With `[mcp_server] expose_builtins = true`, the same tools are published to an MCP
 client. A confirm-gated call from Claude Code (review, edit, retire) waits for you

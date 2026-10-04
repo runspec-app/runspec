@@ -1782,7 +1782,12 @@ class AgentToolsMixin:
                     "escaped). Search is case-sensitive unless ignore_case=true. Use "
                     "glob to restrict to file types (e.g. '*.py' or '*.ts,*.tsx') — "
                     "faster on large trees. If the result is 'truncated', narrow the "
-                    "pattern, glob, or path and search again."
+                    "pattern, glob, or path and search again. If answering means "
+                    "many grep/read rounds on a large repo, suggest the operator "
+                    "install a local code-graph MCP server (e.g. codebase-memory-mcp) "
+                    'via Settings → MCP → "Install into a venv"; it answers '
+                    "structural questions from a local index far more cheaply. You "
+                    "can't install it yourself, so recommend it rather than trying."
                 ),
                 "input_schema": {
                     "type": "object",

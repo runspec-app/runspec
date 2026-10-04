@@ -61,13 +61,13 @@ def test_default_points_the_agent_at_runbooks():
     assert "save_runbook" in text
 
 
-def test_default_nudges_toward_a_code_graph_mcp_but_not_self_install():
-    """On a big repo the agent should recommend a local code-graph MCP via the
-    Settings UI, while making clear it can't install one itself."""
+def test_default_points_at_the_knowledge_wiki():
+    """The agent should look fleet details up in the wiki before asking or
+    guessing, and propose what it learns."""
     text = _stub({})._base_system()
-    assert "codebase-memory-mcp" in text
-    assert "Install into a venv" in text
-    assert "cannot install it yourself" in text
+    assert "search_wiki" in text
+    assert "propose_fact" in text
+    assert "codebase-memory-mcp" not in text  # moved to repo_grep
 
 
 def test_default_system_prompt_is_the_base_default():

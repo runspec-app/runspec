@@ -656,3 +656,16 @@ def test_delete_repo_keeps_custom_checkout(monkeypatch, tmp_path):
 def test_repo_paths_not_synced():
     """The machine-local override file must stay out of Config Sync."""
     assert "runspec_repo_paths.toml" not in gitsync.KNOWN_FILES
+
+
+def test_repo_grep_suggests_a_code_graph_mcp_but_not_self_install(monkeypatch):
+    """The code-graph MCP hint lives on repo_grep (it only matters while
+    exploring a repo), pointing at the Settings UI, not a self-install."""
+    monkeypatch.setattr(repos, "available", lambda: True)
+    monkeypatch.setattr(
+        repos, "read_repos", lambda: [{"name": "app", "url": "u", "ref": "main"}]
+    )
+    grep = next(t for t in _StubBridge()._repo_tools() if t["name"] == "repo_grep")
+    assert "codebase-memory-mcp" in grep["description"]
+    assert "Install into a venv" in grep["description"]
+    assert "can't install it yourself" in grep["description"]

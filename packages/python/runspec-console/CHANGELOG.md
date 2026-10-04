@@ -9,6 +9,20 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.330.0] — 2026-10-04
+
+### Changed
+
+- **The default system prompt points the agent at the knowledge wiki.** It now
+  says to check `search_wiki` before asking or guessing a fleet detail (where
+  something lives, who owns it, a host's quirks) and to record what it learns
+  with `propose_fact`. Before, the agent only found the wiki through the tool
+  descriptions.
+- **The code-graph MCP suggestion moved from the system prompt to `repo_grep`.**
+  The hint to install a local code-graph server (e.g. `codebase-memory-mcp`) only
+  matters while exploring a repo, so it now sits in that tool's description
+  instead of riding every turn.
+
 ## [0.329.0] — 2026-10-04
 
 ### Added
