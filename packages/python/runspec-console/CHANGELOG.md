@@ -9,6 +9,16 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.322.1] — 2026-10-04
+
+### Fixed
+
+- **Config Sync review no longer shows `[config_sync]` moving on every pull.**
+  When `[config_sync]` sat above other sections in `config.toml`, the preview
+  moved it to the end, so re-pulling the same tag always showed a diff that only
+  relocated it. The preview now keeps it where the pull leaves it, so a repeat
+  pull of the same tag shows no changes.
+
 ## [0.322.0] — 2026-10-03
 
 ### Added

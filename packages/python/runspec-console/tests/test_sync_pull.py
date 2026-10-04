@@ -693,6 +693,24 @@ def test_preview_matches_what_the_pull_writes(monkeypatch, tmp_path):
     assert all(f["diff"] == "" for f in again["files"])
 
 
+def test_preview_keeps_config_sync_in_place(monkeypatch, tmp_path):
+    # [config_sync] above other sections must not show as moved to the end on
+    # every preview — the pull stamps it in place, so the file order is stable.
+    _wire(monkeypatch, tmp_path, {"config.toml": b'[llm]\nprovider = "openai"\n'})
+    _hosts_setup(monkeypatch, tmp_path)
+    _set_sync(files=["config.toml"])
+    conf = cfg.read_config()
+    reordered = {"config_sync": conf["config_sync"]}
+    reordered.update({k: v for k, v in conf.items() if k != "config_sync"})
+    cfg.write_config(reordered)
+    b = _PreviewBridge()
+    first = b.sync_preview()
+    assert first["changed"] is False, first["files"][0]["diff"]
+    assert b.sync_pull()["ok"]
+    again = b.sync_preview()
+    assert again["changed"] is False, again["files"][0]["diff"]
+
+
 def test_preview_flags_missing_new_and_invalid(monkeypatch, tmp_path):
     _wire(
         monkeypatch,

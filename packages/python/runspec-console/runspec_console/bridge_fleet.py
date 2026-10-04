@@ -1100,10 +1100,13 @@ class FleetMixin:
             )
             if name == "config.toml":
                 # A pull re-injects the local [config_sync] after the merge, so
-                # the repo's copy (if any) never lands — don't show it.
-                after.pop("config_sync", None)
+                # the repo's copy (if any) never lands — don't show it. Assign in
+                # place (the pull stamps it where it sits), so its position in
+                # the file doesn't read as a move on every preview.
                 if "config_sync" in before:
                     after["config_sync"] = before["config_sync"]
+                else:
+                    after.pop("config_sync", None)
             summary = configmerge.change_summary(name, before, after)
             diff = configmerge.render_diff(
                 name, before, after, from_label="local", to_label=ref_name
