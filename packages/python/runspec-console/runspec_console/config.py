@@ -321,6 +321,15 @@ def improve_reports_dir() -> Path:
     return app_dir() / "improve"
 
 
+def knowledge_dir() -> Path:
+    """Directory holding the **team knowledge wiki** (``knowledge.py``): this
+    console's approved facts (``facts.toml``), the review inbox (``inbox.toml``),
+    mechanical observations (``observed.toml``), facts pulled from the team
+    (``team/``, Memory Sync) and the derived ``index.sqlite``. Not part of Config
+    Sync — the wiki has its own sync, with its own repo and credential."""
+    return app_dir() / "knowledge"
+
+
 def eval_reports_dir() -> Path:
     """Directory holding saved **Evals** reports (one `{ts}.json` per run) — the
     tool-selection eval sweeps produced by the Evals tab. **Machine-local** (like

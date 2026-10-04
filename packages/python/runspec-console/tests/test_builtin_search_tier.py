@@ -144,6 +144,11 @@ def test_hot_kernel_is_pinned_exactly():
         # keeps the old action_allow bypass from returning.
         "run_runbook",
         "load_runbook",
+        # The team wiki's everyday trio: check it before asking, propose what
+        # you learn. The curation tools (review/edit/retire) stay deferred.
+        "search_wiki",
+        "wiki_page",
+        "propose_fact",
         "workspace_read",
         "workspace_write",
         "workspace_ls",

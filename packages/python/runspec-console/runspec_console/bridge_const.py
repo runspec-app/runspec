@@ -189,6 +189,29 @@ _IMPROVE_TOOL_NAMES = frozenset({"run_improve_report"})
 # (default true); dropped entirely by [marketplace] enabled = false.
 _MARKETPLACE_TOOL_NAMES = frozenset({"search_marketplace"})
 
+# Team knowledge wiki (knowledge.py / bridge_knowledge.py). Reads + propose are
+# autonomous (a proposal only lands in the review inbox — the inbox is the gate);
+# review / edit / retire change what every console will eventually read, so they
+# are confirm-gated in _effective_tool_autonomy. Not AI-gated: with [console]
+# ai = false an MCP client (Claude Code) can still read and curate the wiki.
+_KNOWLEDGE_TOOL_NAMES = frozenset(
+    {
+        "search_wiki",
+        "wiki_page",
+        "wiki_graph",
+        "propose_fact",
+        "list_wiki_inbox",
+        "review_wiki_fact",
+        "edit_wiki_fact",
+        "retire_wiki_fact",
+    }
+)
+_KNOWLEDGE_WRITE_TOOL_NAMES = frozenset(
+    {"review_wiki_fact", "edit_wiki_fact", "retire_wiki_fact"}
+)
+# The wiki tools a turn reaches for constantly stay inline in search mode.
+_KNOWLEDGE_HOT_NAMES = frozenset({"search_wiki", "wiki_page", "propose_fact"})
+
 # Outlook Classic (desktop COM) agent tools. Reads are autonomous (no side
 # effects — local COM reads on the operator's box); draft/send are write actions
 # and prompt before running. Only offered when Outlook COM is available (Windows
@@ -356,6 +379,7 @@ _BUILTIN_TOOL_NAMES = (
     | _WORKSPACE_TOOL_NAMES
     | _EXEC_TOOL_NAMES
     | _CONFIG_TOOL_NAMES
+    | _KNOWLEDGE_TOOL_NAMES
 )
 
 # The hot kernel: built-ins that stay INLINE even when search mode defers the
@@ -385,14 +409,15 @@ _HOT_BUILTIN_NAMES = (
     # already been told about. load_runbook (the raw-definition reader) is hot for
     # the same reason — inspecting/editing a runbook shouldn't need a discovery hop.
     | {"run_runbook"}
+    | _KNOWLEDGE_HOT_NAMES
 )
 
 
 # Built-in agent tools the console's OWN MCP server may expose to an external
 # coding agent (Claude Code, …) when ``[mcp_server] expose_builtins`` is on. The
 # console-SPECIFIC ops/fleet built-ins a coding agent can't do itself — status,
-# run history, memory + runbooks, host→local file transfer, Outlook, and the
-# action tools. Deliberately EXCLUDES:
+# run history, memory + runbooks, the team knowledge wiki, host→local file
+# transfer, Outlook, and the action tools. Deliberately EXCLUDES:
 #   • config tools + search meta-tools — never (automation must not rewrite
 #     itself; the meta-tools are internal indirection a direct client doesn't use),
 #   • workspace / exec / web / files / repo / improve — a coding agent already has
@@ -408,6 +433,7 @@ _MCP_SERVER_BUILTIN_NAMES = (
     | _RUNBOOK_READ_TOOL_NAMES
     | _OUTLOOK_TOOL_NAMES
     | _ACTION_TOOL_NAMES
+    | _KNOWLEDGE_TOOL_NAMES
     | frozenset({"download_file", "relay_file"})
 )
 

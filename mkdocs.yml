@@ -55,6 +55,7 @@ nav:
     - Forms & credentials: console-forms.md
     - Marketplace — install runnable packages: console-marketplace.md
     - Team config — sync & rooms: console-team.md
+    - Knowledge wiki: console-knowledge.md
     - Improve — evaluation & problem reports: console-improve.md
     - Evals — tool-selection regression tests: console-evals.md
     - Keyboard shortcuts: console-shortcuts.md

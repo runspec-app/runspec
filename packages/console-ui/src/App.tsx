@@ -8,6 +8,7 @@ import {
   HistoryOutlined,
   CalendarOutlined,
   BulbOutlined,
+  DeploymentUnitOutlined,
   ExperimentOutlined,
   SunOutlined,
   MoonOutlined,
@@ -54,6 +55,7 @@ const LogsView = React.lazy(() => import('./views/LogsView').then(m => ({ defaul
 const TriggersView = React.lazy(() => import('./views/TriggersView').then(m => ({ default: m.TriggersView })))
 const FormsView = React.lazy(() => import('./views/FormsView').then(m => ({ default: m.FormsView })))
 const MarketplaceView = React.lazy(() => import('./views/MarketplaceView').then(m => ({ default: m.MarketplaceView })))
+const KnowledgeView = React.lazy(() => import('./views/KnowledgeView').then(m => ({ default: m.KnowledgeView })))
 const ImproveView = React.lazy(() => import('./views/ImproveView').then(m => ({ default: m.ImproveView })))
 const EvalsView = React.lazy(() => import('./views/EvalsView').then(m => ({ default: m.EvalsView })))
 const SchedulesView = React.lazy(() => import('./views/SchedulesView').then(m => ({ default: m.SchedulesView })))
@@ -91,7 +93,7 @@ import { FeaturesContext, AI_ONLY_VIEWS, visibleNavTabs, type Features } from '.
 import { useShortcuts, shortcutHint, answerPendingConfirm, revealPendingConfirm, hasPendingConfirm } from './shortcuts'
 import type { PaletteAction } from './components/CommandPalette'
 
-type ViewKey = 'console' | 'specs' | 'history' | 'logs' | 'forms' | 'marketplace' | 'schedules' | 'triggers' | 'rota' | 'improve' | 'evals' | 'dev'
+type ViewKey = 'console' | 'specs' | 'history' | 'logs' | 'forms' | 'marketplace' | 'schedules' | 'triggers' | 'rota' | 'improve' | 'evals' | 'knowledge' | 'dev'
 
 // Context-window fill of the active chat's latest turn (runspec:context_estimate).
 // total_tokens is exact (from the model's usage); bucket tokens are estimates that
@@ -904,6 +906,7 @@ export default function App() {
     },
     { key: 'history'   as ViewKey, label: 'History',   icon: <HistoryOutlined /> },
     { key: 'logs'      as ViewKey, label: 'Logs',      icon: <FileTextOutlined /> },
+    { key: 'knowledge' as ViewKey, label: 'Knowledge', icon: <DeploymentUnitOutlined /> },
     { key: 'improve'   as ViewKey, label: 'Improve',   icon: <BulbOutlined /> },
     { key: 'evals'     as ViewKey, label: 'Evals',     icon: <ExperimentOutlined /> },
     { key: 'specs'     as ViewKey, label: 'Specs',     icon: <AppstoreOutlined /> },
@@ -1733,6 +1736,7 @@ export default function App() {
                       {view === 'forms'     && <FormsView runnables={runnables} hosts={hosts} selectedHost={selectedHost} activeScope={activeScope} onRunRunnable={handleRunRunnable} pendingForm={pendingForm} onPendingFormClear={() => setPendingForm(null)} runbooks={runbooks} onOpenRunbook={handleOpenRunbook} savedRuns={savedRuns} onOpenSavedRun={handleOpenSavedRun} onEditRunbook={id => setRunbookEditReq({ id, nonce: Date.now() })} onEditSavedRun={id => setSavedRunEditReq({ id, nonce: Date.now() })} />}
                       {view === 'schedules' && <SchedulesView hosts={hosts} runnables={runnables} selectedHost={selectedHost} />}
                       {view === 'marketplace' && <MarketplaceView hosts={hosts} activeProfile={activeProfile} onOpenSettings={() => setMarketplaceSettingsOpen(true)} />}
+                      {view === 'knowledge' && <KnowledgeView active={view === 'knowledge'} aiEnabled={aiEnabled} />}
                       {aiEnabled && view === 'improve' && <ImproveView active={view === 'improve'} />}
                       {aiEnabled && view === 'evals'   && <EvalsView active={view === 'evals'} />}
                       {view === 'rota'      && <RotaView />}

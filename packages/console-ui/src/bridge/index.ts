@@ -769,6 +769,82 @@ export interface ImproveRecommendation {
   confidence: string
 }
 
+// ── Team knowledge wiki (knowledge.py / bridge_knowledge.py) ─────────────────
+// A fact is about one or more entities written `type:name` (host:web-01,
+// runnable:tail-log, file:/var/log/a.log, term:BAU …). `observed` facts are
+// mined from run history; `pending` ones wait in the review inbox.
+export interface KnowledgeFact {
+  id: string
+  kind: string
+  about: string[]
+  text: string
+  status: 'approved' | 'pending' | 'observed' | 'retired'
+  source: string
+  author: string
+  evidence: string[]
+  first_seen: string
+  last_confirmed: string
+  confirmations: number
+}
+
+export interface KnowledgeNode {
+  id: string
+  type: string
+  name: string
+  weight: number
+  facts: number
+  pending: boolean
+  last_confirmed: string
+}
+
+export interface KnowledgeEdge {
+  source: string
+  target: string
+  weight: number
+}
+
+export interface KnowledgeStats {
+  approved: number
+  observed: number
+  pending: number
+  retired: number
+  entities: number
+  fts: boolean
+}
+
+export interface KnowledgeOverview {
+  stats: KnowledgeStats
+  graph: { nodes: KnowledgeNode[]; edges: KnowledgeEdge[] }
+  inbox: KnowledgeFact[]
+  captured_at: string
+  dir: string
+  entity_types: string[]
+  kinds: string[]
+}
+
+export interface KnowledgePage {
+  entity: string
+  type: string
+  name: string
+  facts: KnowledgeFact[]
+  links: { entity: string; weight: number }[]
+  authors: string[]
+  last_confirmed: string
+}
+
+export interface KnowledgeFactInput {
+  id?: string
+  kind: string
+  about: string[]
+  text: string
+}
+
+export interface KnowledgeResult {
+  ok: boolean
+  fact?: KnowledgeFact | null
+  error?: string
+}
+
 // A saved Improve report. `synthesis` (+ `markdown`/`learnings_toml` regenerated
 // with it) is attached only after the optional LLM-judge pass runs.
 export interface ImproveReport {
@@ -2199,6 +2275,21 @@ export interface BridgeApi {
   resume_conversation: (id: string) => Promise<{ ok: boolean; turns?: number; kept?: number; compacted?: boolean; summarized?: boolean; exact?: boolean; error?: string; session?: string; already_open?: boolean }>
   delete_conversation: (id: string) => Promise<void>
   rename_conversation: (id: string, title: string) => Promise<void>
+  // ── Team knowledge wiki ──────────────────────────────────────────────────────
+  // Counts + the whole entity graph + the review inbox (re-captures usage first
+  // when the last capture is over an hour old).
+  knowledge_overview: () => Promise<KnowledgeOverview>
+  knowledge_page: (entity: string) => Promise<KnowledgePage>
+  knowledge_search: (query: string, kind?: string) => Promise<KnowledgeFact[]>
+  // Approve (optionally with edits) or reject an inbox fact.
+  knowledge_review: (factId: string, approve: boolean, edits?: Partial<KnowledgeFactInput>) => Promise<KnowledgeResult>
+  // Operator-authored fact (approved straight away), or an edit when `id` is set.
+  knowledge_save_fact: (payload: KnowledgeFactInput) => Promise<KnowledgeResult>
+  knowledge_retire: (factId: string) => Promise<{ ok: boolean }>
+  // Mine run history into observed facts (no AI).
+  knowledge_capture: (sinceDays?: number) => Promise<{ ok: boolean; observed?: number; runs?: number; error?: string }>
+  // Ask the utility model to propose facts from recent chats into the inbox.
+  knowledge_distill: (windowDays?: number) => Promise<{ ok: boolean; proposed?: number; skipped?: number; turns?: number; note?: string; error?: string }>
   // ── Improve (effectiveness + problem report) ──────────────────────────────────
   // Mine this install's saved conversations + run history into an effectiveness
   // report. A non-empty comment makes it a problem report (carried into the

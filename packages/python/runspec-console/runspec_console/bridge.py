@@ -42,6 +42,7 @@ from .bridge_search import SearchMixin
 from .bridge_internals import InternalsMixin
 from .bridge_triggers import TriggersMixin
 from .bridge_improve import ImproveMixin
+from .bridge_knowledge import KnowledgeMixin
 from .bridge_evals import EvalsMixin
 from .bridge_mcp_server import McpServerMixin
 from .bridge_voice import VoiceMixin
@@ -70,6 +71,7 @@ class Bridge(
     InternalsMixin,
     TriggersMixin,
     ImproveMixin,
+    KnowledgeMixin,
     EvalsMixin,
     McpServerMixin,
     VoiceMixin,

@@ -14,6 +14,14 @@ from __future__ import annotations
 from runspec_console.bridge import Bridge
 
 EXPECTED = {
+    "knowledge_capture",
+    "knowledge_distill",
+    "knowledge_overview",
+    "knowledge_page",
+    "knowledge_retire",
+    "knowledge_review",
+    "knowledge_save_fact",
+    "knowledge_search",
     "provision_start",
     "provision_preflight",
     "provision_options",

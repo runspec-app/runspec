@@ -9,6 +9,38 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.325.0] — 2026-10-04
+
+### Added
+
+- **Knowledge wiki.** A new **Knowledge** tab holds the team's knowledge about
+  the fleet as short facts about named things (`host:web-01`,
+  `runnable:tail-log`, `file:/var/log/app.log`, `term:BAU`, …), drawn as an
+  interactive graph (pan, zoom, hover to highlight neighbours, click for the
+  entity's page) with search and a review **Inbox**. Facts come from four places:
+  **Capture usage** mines run history for the args a runnable is usually run
+  with, the hosts it runs on and what runs after what (no AI; re-runs when the
+  tab opens if over an hour old); the agent's new `propose_fact` tool; **Suggest
+  from chats** (the utility model reads the last week of chats; hidden when AI is
+  off); and **Add fact**. Proposals wait in the inbox until approved. The same
+  fact proposed twice counts as a confirmation, not a duplicate, and anything
+  that looks like a password, key or token is refused.
+- **Wiki agent tools** — `search_wiki`, `wiki_page`, `propose_fact` (hot in
+  search mode), `wiki_graph`, `list_wiki_inbox` (autonomous) and
+  `review_wiki_fact`, `edit_wiki_fact`, `retire_wiki_fact` (confirm). They are
+  also published by the console's MCP server when `expose_builtins` is on, so
+  Claude Code can read, propose and curate the wiki, with its confirm-gated
+  calls waiting in the console's confirmation card. Facts record where they came
+  from (`agent`, `mcp`, `trigger:<name>`, `distill`, `operator`, `capture`). The
+  tools need no console model, so they work with `[console] ai = false`.
+- Storage is `{app_dir}/knowledge/`: TOML source files (`facts.toml`,
+  `inbox.toml`, `observed.toml`, `team/`) plus a derived `index.sqlite` (FTS5
+  search when the sqlite build has it). New `knowledge.py` (stdlib) and
+  `bridge_knowledge.py`; JS API `knowledge_overview`/`knowledge_page`/
+  `knowledge_search`/`knowledge_review`/`knowledge_save_fact`/
+  `knowledge_retire`/`knowledge_capture`/`knowledge_distill`; event
+  `runspec:knowledge_updated`. Docs: `docs/console-knowledge.md`.
+
 ## [0.324.0] — 2026-10-04
 
 ### Added

@@ -1,0 +1,550 @@
+"""
+bridge_knowledge.py — the Bridge glue for the **team knowledge wiki**.
+
+The pure store/index/capture lives in ``knowledge.py``; this mixin owns the I/O
+around it and the three ways in:
+
+* **Agent tools** (``search_wiki`` / ``wiki_page`` / ``wiki_graph`` /
+  ``propose_fact`` / ``list_wiki_inbox`` / ``review_wiki_fact`` / ``edit_wiki_fact``
+  / ``retire_wiki_fact``) — the console's own chat/trigger/schedule agent, and,
+  through ``_MCP_SERVER_BUILTIN_NAMES``, an MCP client such as Claude Code when
+  ``[mcp_server] expose_builtins`` is on. Same tools, same gate for both.
+* **Knowledge tab** (public JS API ``knowledge_*``) — graph, pages, search, the
+  review inbox, and operator-authored facts.
+* **Capture** — ``knowledge_capture`` mines run history into ``observed`` facts
+  (no AI); ``knowledge_distill`` asks the console's utility model to propose facts
+  from recent chats into the inbox (AI; refused when ``[console] ai = false``).
+
+Every mutation emits ``runspec:knowledge_updated`` so an open tab refreshes.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import getpass
+import json
+import logging
+import socket
+import time
+from datetime import datetime, timedelta, timezone
+from typing import Any
+
+from . import config as config_mod
+from . import conversations as conv_mod
+from . import knowledge as kn
+
+logger = logging.getLogger(__name__)
+
+_MCP_CHAT_ID = "__mcp_server__"  # mirrors bridge_mcp_server._MCP_SERVER_CHAT_ID
+# Mechanical capture re-runs at most this often on its own (the tab asks on open).
+_CAPTURE_MAX_AGE_S = 60 * 60
+
+_ENTITY_HELP = (
+    "Entities are written type:name, type one of "
+    + ", ".join(kn.ENTITY_TYPES)
+    + " (e.g. host:web-01, runnable:tail-log, file:/var/log/orders/app.log, "
+    "term:blue-green)."
+)
+
+
+def _author() -> str:
+    try:
+        user = getpass.getuser()
+    except Exception:  # noqa: BLE001
+        user = "user"
+    return f"{user}@{socket.gethostname()}"
+
+
+class KnowledgeMixin:
+    # ── store ────────────────────────────────────────────────────────────────
+    def _knowledge_store(self) -> kn.KnowledgeStore:
+        return kn.KnowledgeStore(config_mod.knowledge_dir())
+
+    def _knowledge_changed(self) -> None:
+        try:
+            self._dispatch("runspec:knowledge_updated", {})  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001 — a UI nudge must never fail a write
+            logger.debug("knowledge_updated dispatch failed", exc_info=True)
+
+    def _knowledge_query(self, fn: Any) -> Any:
+        idx = self._knowledge_store().index()
+        try:
+            return fn(idx)
+        finally:
+            idx.close()
+
+    # ── agent tools ──────────────────────────────────────────────────────────
+    def _knowledge_tools(self) -> list[dict[str, Any]]:
+        """Schemas for the wiki tools. Always offered (local store, no model
+        needed), so an MCP client can use them even with the console's AI off."""
+        about = {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "What the fact is about. " + _ENTITY_HELP,
+        }
+        return [
+            {
+                "name": "search_wiki",
+                "description": (
+                    "Search the team knowledge wiki — what the team already knows "
+                    "about hosts, groups, profiles, runnables, file locations, jargon, "
+                    "which tools go together and knock-on effects. Check it BEFORE "
+                    "asking the operator where something lives or what a term means, "
+                    "and before investigating something from scratch."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Keywords."},
+                        "kind": {"type": "string", "enum": list(kn.FACT_KINDS)},
+                        "entity": {
+                            "type": "string",
+                            "description": "Only facts about this entity (type:name).",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Default 10, max 50.",
+                        },
+                    },
+                    "required": ["query"],
+                },
+            },
+            {
+                "name": "wiki_page",
+                "description": (
+                    "Read one wiki page: every fact about an entity (a host, group, "
+                    "profile, runnable, file, term, app, service or team), plus the "
+                    "entities it links to. " + _ENTITY_HELP
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"entity": {"type": "string"}},
+                    "required": ["entity"],
+                },
+            },
+            {
+                "name": "wiki_graph",
+                "description": (
+                    "The wiki's entity graph around an entity: its neighbours out to "
+                    "depth hops, with weights — 'what usually goes with X', 'what else "
+                    "touches this host'. Omit entity for the most-connected overview."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "entity": {"type": "string"},
+                        "depth": {"type": "integer", "description": "1-3, default 1."},
+                    },
+                },
+            },
+            {
+                "name": "propose_fact",
+                "description": (
+                    "Propose a durable fact for the team wiki: where a file or log "
+                    "lives, what team jargon means, tools that go together, something "
+                    "learned about a host/group/profile, a knock-on effect, how the "
+                    "team does something. One or two specific sentences that will still "
+                    "be true next week; never secrets or one-off results. It goes to "
+                    "the operator's review inbox (not straight into the wiki), so "
+                    "propose freely when you learn something reusable."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "kind": {"type": "string", "enum": list(kn.FACT_KINDS)},
+                        "about": about,
+                        "text": {"type": "string", "description": "The fact."},
+                        "evidence": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Optional ids it came from (run ids, ticket keys).",
+                        },
+                    },
+                    "required": ["kind", "about", "text"],
+                },
+            },
+            {
+                "name": "list_wiki_inbox",
+                "description": (
+                    "List proposed wiki facts waiting for review (id, kind, about, "
+                    "text, who proposed it and from where)."
+                ),
+                "input_schema": {"type": "object", "properties": {}},
+            },
+            {
+                "name": "review_wiki_fact",
+                "description": (
+                    "Approve or reject a proposed wiki fact by id (from "
+                    "list_wiki_inbox). Optionally fix its kind/about/text while "
+                    "approving. The operator confirms each review."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "fact_id": {"type": "string"},
+                        "approve": {"type": "boolean"},
+                        "kind": {"type": "string", "enum": list(kn.FACT_KINDS)},
+                        "about": about,
+                        "text": {"type": "string"},
+                    },
+                    "required": ["fact_id", "approve"],
+                },
+            },
+            {
+                "name": "edit_wiki_fact",
+                "description": (
+                    "Correct an approved wiki fact by id (kind, about and/or text). "
+                    "The operator confirms each edit."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "fact_id": {"type": "string"},
+                        "kind": {"type": "string", "enum": list(kn.FACT_KINDS)},
+                        "about": about,
+                        "text": {"type": "string"},
+                    },
+                    "required": ["fact_id"],
+                },
+            },
+            {
+                "name": "retire_wiki_fact",
+                "description": (
+                    "Retire a wiki fact that is wrong or out of date (it stops showing "
+                    "and stops being returned). The operator confirms each retirement."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"fact_id": {"type": "string"}},
+                    "required": ["fact_id"],
+                },
+            },
+        ]
+
+    def _knowledge_source(self, chat_id: str) -> str:
+        if chat_id == _MCP_CHAT_ID:
+            return "mcp"
+        try:
+            with self._lock:  # type: ignore[attr-defined]
+                origin = dict(self._run_origin.get(chat_id, {})) if chat_id else {}  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001
+            origin = {}
+        trig = str(origin.get("trigger") or "")
+        return f"trigger:{trig}" if trig else "agent"
+
+    def _run_knowledge_tool(
+        self, name: str, ti: dict[str, Any], chat_id: str = ""
+    ) -> str:
+        """Run one wiki tool (the gate has already cleared it). Never raises."""
+        try:
+            return self._run_knowledge_tool_inner(name, ti, chat_id)
+        except ValueError as exc:
+            return f"Error: {exc}"
+        except Exception as exc:  # noqa: BLE001 — a tool must return
+            logger.warning("knowledge tool %s failed", name, exc_info=True)
+            return f"Error: {name} failed: {exc}"
+
+    def _run_knowledge_tool_inner(
+        self, name: str, ti: dict[str, Any], chat_id: str
+    ) -> str:
+        store = self._knowledge_store()
+        if name == "search_wiki":
+            limit = max(1, min(int(ti.get("limit") or 10), 50))
+            hits = self._knowledge_query(
+                lambda idx: idx.search(
+                    str(ti.get("query") or ""),
+                    kind=str(ti.get("kind") or ""),
+                    entity=str(ti.get("entity") or ""),
+                    limit=limit,
+                )
+            )
+            if not hits:
+                return "No wiki facts match. If you learn the answer, propose_fact it."
+            return json.dumps({"facts": [_brief(f) for f in hits]})
+        if name == "wiki_page":
+            entity = str(ti.get("entity") or "").strip()
+            if not entity:
+                return "Error: 'entity' is required (type:name)."
+            page = self._knowledge_query(
+                lambda idx: idx.page(entity, include_pending=False)
+            )
+            if not page["facts"]:
+                return f"No wiki page for {page['entity']} yet."
+            page["facts"] = [_brief(f) for f in page["facts"]]
+            return json.dumps(page)
+        if name == "wiki_graph":
+            g = self._knowledge_query(
+                lambda idx: idx.graph(
+                    entity=str(ti.get("entity") or ""),
+                    depth=int(ti.get("depth") or 1),
+                    max_nodes=60,
+                )
+            )
+            nodes = sorted(g["nodes"], key=lambda n: n["weight"], reverse=True)
+            return json.dumps(
+                {
+                    "nodes": [
+                        {"entity": n["id"], "weight": n["weight"], "facts": n["facts"]}
+                        for n in nodes
+                    ],
+                    "edges": sorted(
+                        g["edges"], key=lambda e: e["weight"], reverse=True
+                    )[:120],
+                }
+            )
+        if name == "propose_fact":
+            fact = kn.make_fact(
+                kind=str(ti.get("kind") or "note"),
+                about=list(ti.get("about") or []),
+                text=str(ti.get("text") or ""),
+                status="pending",
+                source=self._knowledge_source(chat_id),
+                author=_author(),
+                evidence=list(ti.get("evidence") or []),
+            )
+            fid, outcome = store.propose(fact)
+            self._knowledge_changed()
+            return {
+                "proposed": f"Proposed {fid}; it is in the operator's review inbox.",
+                "already-pending": f"{fid} is already waiting for review (noted again).",
+                "confirmed": f"{fid} is already in the wiki — confirmation recorded.",
+            }[outcome]
+        if name == "list_wiki_inbox":
+            rows = store.inbox()
+            if not rows:
+                return "The wiki inbox is empty."
+            return json.dumps({"inbox": [_brief(r, full=True) for r in rows]})
+        if name == "review_wiki_fact":
+            fid = str(ti.get("fact_id") or "").strip()
+            edits = {k: ti[k] for k in ("kind", "about", "text") if k in ti}
+            res = store.review(fid, bool(ti.get("approve")), edits or None)
+            if res is None:
+                return f"No pending fact {fid} (see list_wiki_inbox)."
+            self._knowledge_changed()
+            return f"Approved {res['id']}." if res else f"Rejected {fid}."
+        if name == "edit_wiki_fact":
+            fid = str(ti.get("fact_id") or "").strip()
+            edits = {k: ti[k] for k in ("kind", "about", "text") if k in ti}
+            if not edits:
+                return "Error: give at least one of kind, about, text."
+            res = store.edit(fid, dict(edits, author=_author()))
+            if res is None:
+                return f"No approved fact {fid}."
+            self._knowledge_changed()
+            return f"Updated; the fact is now {res['id']}."
+        if name == "retire_wiki_fact":
+            fid = str(ti.get("fact_id") or "").strip()
+            ok = store.retire(fid)
+            if ok:
+                self._knowledge_changed()
+            return f"Retired {fid}." if ok else f"No fact {fid}."
+        return f"Error: unknown wiki tool {name!r}."
+
+    # ── public JS API (Knowledge tab) ────────────────────────────────────────
+    def knowledge_overview(self) -> dict[str, Any]:
+        """Everything the tab's first paint needs: counts, the whole graph, the
+        inbox, and when usage was last captured. Re-captures usage first when the
+        last capture is over an hour old (best-effort)."""
+        store = self._knowledge_store()
+        try:
+            age = time.time() - (store.root / kn.OBSERVED_FILE).stat().st_mtime
+        except OSError:
+            age = None
+        if age is None or age > _CAPTURE_MAX_AGE_S:
+            try:
+                self.knowledge_capture(notify=False)
+            except Exception:  # noqa: BLE001
+                logger.debug("knowledge auto-capture failed", exc_info=True)
+        idx = store.index()
+        try:
+            return {
+                "stats": idx.stats(),
+                "graph": idx.graph(),
+                "inbox": store.inbox(),
+                "captured_at": _mtime_iso(store.root / kn.OBSERVED_FILE),
+                "dir": str(store.root),
+                "entity_types": list(kn.ENTITY_TYPES),
+                "kinds": list(kn.FACT_KINDS),
+            }
+        finally:
+            idx.close()
+
+    def knowledge_page(self, entity: str) -> dict[str, Any]:
+        return self._knowledge_query(lambda idx: idx.page(str(entity or "")))
+
+    def knowledge_search(self, query: str, kind: str = "") -> list[dict[str, Any]]:
+        return self._knowledge_query(
+            lambda idx: idx.search(
+                str(query or ""), kind=str(kind or ""), include_pending=True, limit=50
+            )
+        )
+
+    def knowledge_review(
+        self, fact_id: str, approve: bool, edits: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        try:
+            res = self._knowledge_store().review(
+                str(fact_id), bool(approve), edits or None
+            )
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        if res is None:
+            return {"ok": False, "error": "That fact is no longer in the inbox."}
+        self._knowledge_changed()
+        return {"ok": True, "fact": res or None}
+
+    def knowledge_save_fact(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Operator-authored fact (approved straight away), or an edit when
+        ``payload.id`` names an existing fact."""
+        data = dict(payload or {})
+        store = self._knowledge_store()
+        try:
+            if data.get("id"):
+                res = store.edit(str(data["id"]), {**data, "author": _author()})
+                if res is None:
+                    return {"ok": False, "error": "That fact no longer exists."}
+            else:
+                res = kn.make_fact(
+                    kind=str(data.get("kind") or "note"),
+                    about=list(data.get("about") or []),
+                    text=str(data.get("text") or ""),
+                    status="approved",
+                    source="operator",
+                    author=_author(),
+                )
+                store.add_approved(res)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        self._knowledge_changed()
+        return {"ok": True, "fact": res}
+
+    def knowledge_retire(self, fact_id: str) -> dict[str, Any]:
+        ok = self._knowledge_store().retire(str(fact_id))
+        if ok:
+            self._knowledge_changed()
+        return {"ok": ok}
+
+    def knowledge_capture(
+        self, since_days: int = 30, notify: bool = True
+    ) -> dict[str, Any]:
+        """Mine the last ``since_days`` of run history (local + connected hosts)
+        into observed facts. Replaces the previous observations wholesale."""
+        try:
+            history = self.get_history_all(since_days=max(1, int(since_days or 30)))  # type: ignore[attr-defined]
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("knowledge capture: history read failed", exc_info=True)
+            return {"ok": False, "error": f"could not read run history: {exc}"}
+        facts = kn.observe(history)
+        self._knowledge_store().write_observed(facts)
+        if notify:
+            self._knowledge_changed()
+        return {"ok": True, "observed": len(facts), "runs": len(history)}
+
+    def knowledge_distill(self, window_days: int = 7) -> dict[str, Any]:
+        """Ask the utility model to propose facts from the last ``window_days`` of
+        saved chats. Proposals land in the inbox (source ``distill``)."""
+        if not getattr(self, "_ai_enabled", True):
+            from .bridge_const import AI_OFF_MESSAGE
+
+            return {"ok": False, "error": AI_OFF_MESSAGE}
+        adapter = self._utility_adapter()  # type: ignore[attr-defined]
+        if adapter is None:
+            return {
+                "ok": False,
+                "error": "No model provider is configured (Settings → Model / API).",
+            }
+        since = (
+            datetime.now(timezone.utc) - timedelta(days=max(1, int(window_days or 7)))
+        ).isoformat()
+        turns = _recent_chat_turns(since, max_conversations=40)
+        if not turns:
+            return {"ok": True, "proposed": 0, "note": "No chats in that window."}
+        store = self._knowledge_store()
+        known = [
+            str(f.get("text", ""))
+            for f in store.all_facts()
+            if f.get("status") != "retired"
+        ]
+        prompt = kn.build_distill_prompt(turns, known=known)
+        try:
+            resp = asyncio.run(adapter.chat([{"role": "user", "content": prompt}], []))
+            text = (getattr(resp, "text", "") or "").strip()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("knowledge distill failed", exc_info=True)
+            return {"ok": False, "error": f"model call failed: {exc}"}
+        proposed = skipped = 0
+        for cand in kn.parse_distill(text):
+            try:
+                fact = kn.make_fact(
+                    kind=cand["kind"],
+                    about=cand["about"],
+                    text=cand["text"],
+                    status="pending",
+                    source="distill",
+                    author=_author(),
+                )
+            except ValueError:
+                skipped += 1
+                continue
+            _fid, outcome = store.propose(fact)
+            if outcome == "proposed":
+                proposed += 1
+        self._knowledge_changed()
+        return {
+            "ok": True,
+            "proposed": proposed,
+            "skipped": skipped,
+            "turns": len(turns),
+        }
+
+
+# ── helpers ──────────────────────────────────────────────────────────────────
+
+
+def _brief(f: dict[str, Any], full: bool = False) -> dict[str, Any]:
+    out = {
+        "id": f.get("id"),
+        "kind": f.get("kind"),
+        "about": f.get("about", []),
+        "text": f.get("text"),
+        "confirmations": f.get("confirmations", 1),
+        "last_confirmed": f.get("last_confirmed", ""),
+    }
+    if f.get("status") not in (None, "approved"):
+        out["status"] = f.get("status")
+    if full:
+        out.update(
+            source=f.get("source", ""),
+            author=f.get("author", ""),
+            evidence=f.get("evidence", []),
+        )
+    return out
+
+
+def _mtime_iso(path: Any) -> str:
+    try:
+        return datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat(
+            timespec="seconds"
+        )
+    except OSError:
+        return ""
+
+
+def _recent_chat_turns(since_iso: str, max_conversations: int) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    try:
+        directory = config_mod.conversations_dir()
+        metas = conv_mod.list_meta(directory)  # newest first
+    except Exception:  # noqa: BLE001
+        return out
+    for meta in metas[:max_conversations]:
+        if str(meta.get("updated") or "") and str(meta["updated"]) < since_iso:
+            break
+        conv = conv_mod.load(directory, str(meta.get("id") or ""))
+        for t in (conv or {}).get("turns") or []:
+            if t.get("kind") and t.get("kind") != "chat":
+                continue
+            if str(t.get("ts") or "") and str(t["ts"]) < since_iso:
+                continue
+            out.append(t)
+    return out

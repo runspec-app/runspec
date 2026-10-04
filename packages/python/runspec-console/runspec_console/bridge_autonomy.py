@@ -37,6 +37,8 @@ from .bridge_const import (
     _CONFIRM_VERB_DEFAULT,
     _CUSTOM_TOOL_NAMES,
     _READONLY_META,
+    _KNOWLEDGE_TOOL_NAMES,
+    _KNOWLEDGE_WRITE_TOOL_NAMES,
     _MEMORY_TOOL_NAMES,
     _RUNBOOK_READ_TOOL_NAMES,
     _STATUS_TOOL_NAMES,
@@ -156,6 +158,13 @@ class AutonomyMixin:
             # each forget is confirmed. Same special-case shape as save_runbook: kept
             # in _MEMORY_TOOL_NAMES (the dispatch + hot-kernel key), gated here.
             return "confirm"
+        if tool_name in _KNOWLEDGE_WRITE_TOOL_NAMES:
+            # Approving / editing / retiring a wiki fact changes what every console
+            # reads once Memory Sync shares it, so the operator sees each one — also
+            # how a call from an MCP client (Claude Code) parks for a human.
+            return "confirm"
+        if tool_name in _KNOWLEDGE_TOOL_NAMES:
+            return "autonomous"  # reads, and propose_fact (lands in the review inbox)
         if tool_name in _MEMORY_TOOL_NAMES:
             return "autonomous"  # local memory/runbook store — no model-spend gate
         if tool_name in _RUNBOOK_READ_TOOL_NAMES:
@@ -1601,6 +1610,8 @@ class AutonomyMixin:
                 cancel_event=cancel_event,
                 on_progress=on_progress,
             )
+        if tool_name in _KNOWLEDGE_TOOL_NAMES:
+            return self._run_knowledge_tool(tool_name, dict(tool_input or {}), chat_id)
         if tool_name in _MEMORY_TOOL_NAMES:
             return self._run_memory_tool(tool_name, dict(tool_input or {}))
         if tool_name in _RUNBOOK_READ_TOOL_NAMES:

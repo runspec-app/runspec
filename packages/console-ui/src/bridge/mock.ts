@@ -1,5 +1,7 @@
-import type { BridgeApi, ProvisionOpRecord, ProvisionPayload, DeprovisionPayload, ProvisionResult, ChatSessionInfo, MarketplaceRepo, MarketplaceEntry, MarketplaceTarget, MarketplaceInstalledTarget, MarketplaceOpRecord, MarketplaceOpPayload, MarketplaceOpResult, Host, JumpHost, Runnable, HistoryRecord, RunningRun, Schedule, InFlightRecord, TestResult, AnalyticsData, AnalyticsBucket, TriggerCard } from './index'
+import type { BridgeApi, ProvisionOpRecord, ProvisionPayload, DeprovisionPayload, ProvisionResult, ChatSessionInfo, MarketplaceRepo, MarketplaceEntry, MarketplaceTarget, MarketplaceInstalledTarget, MarketplaceOpRecord, MarketplaceOpPayload, MarketplaceOpResult, Host, JumpHost, Runnable, HistoryRecord, RunningRun, Schedule, InFlightRecord, TestResult, AnalyticsData, AnalyticsBucket, TriggerCard, KnowledgeFact, KnowledgeNode, KnowledgeEdge, KnowledgeFactInput } from './index'
 
+// Facts the knowledge_overview mock built, so knowledge_page / knowledge_search agree with it.
+let _mockKnowledgeFacts: KnowledgeFact[] = []
 // 80 days ago — triggers the yellow warning state in dev mode
 let MOCK_KEY_CREATED_AT: string = new Date(Date.now() - 80 * 24 * 60 * 60 * 1000).toISOString()
 
@@ -1652,6 +1654,58 @@ export const mockApi: BridgeApi = {
   },
   delete_conversation: async (_id: string) => {},
   rename_conversation: async (_id: string, _title: string) => {},
+  knowledge_overview: async () => {
+    const fact = (id: string, kind: string, about: string[], text: string, status: KnowledgeFact['status'] = 'approved', confirmations = 1): KnowledgeFact => ({
+      id, kind, about, text, status, source: status === 'observed' ? 'capture' : 'agent', author: 'jason@desk-01',
+      evidence: [], first_seen: '2026-09-20', last_confirmed: '2026-10-03', confirmations,
+    })
+    const facts = [
+      fact('k_1', 'location', ['host:web-01', 'app:orders', 'file:/var/log/orders/app.log'], 'orders logs are in /var/log/orders/app.log on web-01', 'approved', 4),
+      fact('k_2', 'pairing', ['runnable:tail-log', 'runnable:restart-service'], 'restart-service is often run after tail-log (6 times).', 'observed', 6),
+      fact('k_3', 'host', ['runnable:tail-log', 'host:web-01'], 'tail-log is used on web-01 (9 runs).', 'observed', 9),
+      fact('k_4', 'glossary', ['term:BAU', 'team:ops'], 'BAU means business as usual: the planned daily checks.', 'approved', 2),
+      fact('k_5', 'effect', ['service:lb', 'host:web-01', 'host:web-02'], 'draining web-01 at the LB moves all orders traffic to web-02', 'pending'),
+    ]
+    const nodes = new Map<string, KnowledgeNode>()
+    const edges = new Map<string, KnowledgeEdge>()
+    for (const f of facts) {
+      for (const a of f.about) {
+        const [type, ...rest] = a.split(':')
+        const n = nodes.get(a) ?? { id: a, type, name: rest.join(':'), weight: 0, facts: 0, pending: true, last_confirmed: f.last_confirmed }
+        n.weight += f.confirmations; n.facts += 1; n.pending = n.pending && f.status === 'pending'
+        nodes.set(a, n)
+      }
+      const ab = [...f.about].sort()
+      for (let i = 0; i < ab.length; i++) for (let j = i + 1; j < ab.length; j++) {
+        const k = ab[i] + '|' + ab[j]
+        const e = edges.get(k) ?? { source: ab[i], target: ab[j], weight: 0 }
+        e.weight += f.confirmations; edges.set(k, e)
+      }
+    }
+    _mockKnowledgeFacts = facts
+    return {
+      stats: { approved: 2, observed: 2, pending: 1, retired: 0, entities: nodes.size, fts: true },
+      graph: { nodes: [...nodes.values()], edges: [...edges.values()] },
+      inbox: facts.filter(f => f.status === 'pending'),
+      captured_at: '2026-10-04T09:00:00+00:00',
+      dir: '~/AppData/Roaming/runspec-console/knowledge',
+      entity_types: ['host', 'group', 'profile', 'runnable', 'file', 'term', 'app', 'service', 'team', 'topic'],
+      kinds: ['location', 'glossary', 'pairing', 'host', 'effect', 'arg-habit', 'procedure', 'note'],
+    }
+  },
+  knowledge_page: async (entity: string) => {
+    const facts = _mockKnowledgeFacts.filter(f => f.about.includes(entity))
+    const [type, ...rest] = entity.split(':')
+    const links = new Map<string, number>()
+    for (const f of facts) for (const a of f.about) if (a !== entity) links.set(a, (links.get(a) ?? 0) + f.confirmations)
+    return { entity, type, name: rest.join(':'), facts, links: [...links].map(([e, w]) => ({ entity: e, weight: w })), authors: ['jason@desk-01'], last_confirmed: '2026-10-03' }
+  },
+  knowledge_search: async (query: string) => _mockKnowledgeFacts.filter(f => f.text.toLowerCase().includes(query.toLowerCase())),
+  knowledge_review: async (_id: string, _approve: boolean) => ({ ok: true }),
+  knowledge_save_fact: async (_payload: KnowledgeFactInput) => ({ ok: true }),
+  knowledge_retire: async (_id: string) => ({ ok: true }),
+  knowledge_capture: async () => ({ ok: true, observed: 2, runs: 40 }),
+  knowledge_distill: async () => ({ ok: true, proposed: 1, skipped: 0, turns: 12 }),
   run_improve_report: async (_windowDays?: number, comment?: string) => ({
     id: 'mock-improve-1',
     ts: '2026-09-03T10:00:00Z',

@@ -408,6 +408,7 @@ class _ToolBridge:
     _outlook_tools = Bridge._outlook_tools
     _repo_tools = Bridge._repo_tools
     _memory_tools = Bridge._memory_tools
+    _knowledge_tools = Bridge._knowledge_tools
     _status_tools = Bridge._status_tools
     _history_tools = Bridge._history_tools
     _files_tools = Bridge._files_tools
