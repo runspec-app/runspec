@@ -403,7 +403,12 @@ def build_report(
                             idx,
                             cat,
                             tool=name,
-                            evidence=f"operator {decision} this call",
+                            evidence=f"operator {decision} this call"
+                            + (
+                                f": {tool['decline_reason']}"
+                                if decision == "denied" and tool.get("decline_reason")
+                                else ""
+                            ),
                         )
                     )
 

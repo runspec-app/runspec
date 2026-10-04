@@ -1056,10 +1056,12 @@ class AutonomyMixin:
                 # the card looks stuck; move to 'running' so the work is visible.
                 if stage is not None:
                     stage("running")
+                reason = str(holder.get("decline_reason") or "")
                 if on_decision is not None:
-                    on_decision({"decision": "denied"})
+                    on_decision({"decision": "denied", "reason": reason})
                 return (
                     f"✗ The user declined to run '{display}' (autonomy = {decision})."
+                    + utils_mod.decline_note(reason)
                 )
             gate_operator_decision = "edited" if edited is not None else "approved"
             # The operator may have edited the args before approving — run those.
@@ -1438,12 +1440,13 @@ class AutonomyMixin:
         if decision == "manual":
             return f"✗ '{display}' is manual-only (autonomy = manual) and cannot be run by the assistant. Ask the user to run it themselves from the Run button."
         if decision != "run":
-            approved, edited = self._await_confirmation(
+            approved, edited, reason = self._await_confirmation(
                 tool_name, tool_input, decision, chat_id
             )
             if not approved:
                 return (
                     f"✗ The user declined to run '{display}' (autonomy = {decision})."
+                    + utils_mod.decline_note(reason)
                 )
             # Edits are made against the card's display view — for a wrapped
             # call that's the inner input (defensive: wrapper confirms render
@@ -1506,10 +1509,11 @@ class AutonomyMixin:
         level: str,
         chat_id: str,
         headless: bool = True,
-    ) -> tuple[bool, dict[str, Any] | None]:
+    ) -> tuple[bool, dict[str, Any] | None, str]:
         """Ask the UI to approve an agent tool call; block until
         resolve_tool_confirmation() fires. Times out as a deny. Returns
-        ``(approved, edited_input)``.
+        ``(approved, edited_input, decline_reason)`` (reason ``""`` unless the
+        operator denied with one).
 
         Only the synchronous gate (``_gated_run_tool``, the declarative
         rule-trigger path) uses this, so ``headless`` defaults to True — the
@@ -1518,24 +1522,32 @@ class AutonomyMixin:
             chat_id, tool_name, tool_input, level
         )
         timed_out = not event.wait(timeout=self._confirm_timeout_s(headless))
-        return self._finish_confirm(request_id, holder, timed_out)
+        approved, edited = self._finish_confirm(request_id, holder, timed_out)
+        return approved, edited, str(holder.get("decline_reason") or "")
 
     def resolve_tool_confirmation(
         self,
         request_id: str,
         approved: bool,
         edited_input: dict[str, Any] | None = None,
+        decline_reason: str | None = None,
     ) -> None:
         """Frontend callback: resolve a pending agent tool-call confirmation.
 
         ``edited_input`` (optional) is an operator-edited tool_input — when
         approving, the call runs with these values instead of the agent's proposal
-        (Phase: editable confirmations). Ignored on a deny."""
+        (Phase: editable confirmations). Ignored on a deny.
+
+        ``decline_reason`` (optional) is the operator's free text on a Deny —
+        why, or what to do instead. It's appended to the declined tool result so
+        the agent can change course in the same turn. Ignored on an approve."""
+        reason = "" if approved else utils_mod.clean_decline_reason(decline_reason)
         logger.info(
-            "autonomy gate: UI resolved request_id=%s approved=%s edited=%s",
+            "autonomy gate: UI resolved request_id=%s approved=%s edited=%s reason=%s",
             request_id,
             approved,
             edited_input is not None,
+            bool(reason),
         )
         with self._lock:
             entry = self._pending_confirms.get(request_id)
@@ -1544,6 +1556,8 @@ class AutonomyMixin:
             holder["approved"] = bool(approved)
             if approved and isinstance(edited_input, dict):
                 holder["edited_input"] = edited_input
+            if reason:
+                holder["decline_reason"] = reason
             event.set()
         else:
             logger.warning(

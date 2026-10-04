@@ -1150,8 +1150,14 @@ class InvokeMixin:
             if assistant:
                 parts.append(assistant)
             for t in turn.get("tools", []) or []:
-                # A denied gated call never ran — don't replay it as if it had.
+                # A denied gated call never ran — don't replay it as if it had,
+                # but keep the operator's redirect (their decline reason).
                 if str(t.get("operator_decision", "")) == "denied":
+                    reason = str(t.get("decline_reason") or "").strip()
+                    if reason:
+                        parts.append(
+                            f"[user declined {t.get('name', 'tool')}: {reason[:500]}]"
+                        )
                     continue
                 out_text = str(t.get("output", ""))[:500]
                 parts.append(f"[ran {t.get('name', 'tool')} → {out_text}]")

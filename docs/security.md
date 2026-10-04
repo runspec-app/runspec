@@ -419,11 +419,11 @@ sequenceDiagram
     else confirm / supervised
         G->>U: render approval card (toast + taskbar flash)
         Note over G,U: blocks on event; 300s timeout = DENY (fail-closed)
-        U-->>G: Approve / Deny (+ optional edited args)
+        U-->>G: Approve (+ optional edited args) / Deny (+ optional reason)
         alt approved
             G->>X: run (edited args bypass the model entirely)
         else denied / timeout
-            G-->>M: not run
+            G-->>M: not run (+ the operator's reason, if given)
         end
     end
     X-->>G: result -> audit record
@@ -436,6 +436,10 @@ Key properties, all verified in `bridge_autonomy.py`:
 - **Edited confirmations:** the operator can change the arguments before
   approving; edited input goes straight to the executor and is **never round-
   tripped through the model**.
+- **Decline reasons:** a Deny can carry optional free text (why, or what to do
+  instead). It is appended to the declined tool result so the agent can change
+  course in the same turn. It is guidance to the model, not an approval: the
+  declined call never runs, and any new call the agent proposes is gated again.
 - **The model cannot approve its own calls.** Approval comes only from the UI
   calling `resolve_tool_confirmation(...)`. Even a prompt-injected or otherwise
   manipulated model response is still trapped by the gate — the model can *ask*,

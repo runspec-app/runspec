@@ -84,7 +84,7 @@ export function conversationToBlocks(conv: ChatConversation): InvocationBlock[] 
     const segments: BlockSegment[] = []
     for (const tool of t.tools || []) {
       segments.push({ kind: 'tool', entry: {
-        name: tool.name, input: tool.input || {}, output: tool.output, running: false, operatorDecision: tool.operator_decision,
+        name: tool.name, input: tool.input || {}, output: tool.output, running: false, operatorDecision: tool.operator_decision, declineReason: tool.decline_reason,
         ...(tool.thinking ? { thinking: tool.thinking, thinkingMs: tool.thinking_ms ?? 0 } : {}),
       } })
     }

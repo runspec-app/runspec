@@ -481,6 +481,9 @@ export interface ToolCallEntry {
   // rendered as a badge on a reopened conversation. Operator-only — not sent to
   // the model. 'denied' means the call never ran.
   operatorDecision?: 'approved' | 'edited' | 'denied'
+  // The operator's optional free text on a Deny (why / what to do instead) —
+  // sent to the agent with the declined result, shown in the badge tooltip.
+  declineReason?: string
   // The reasoning summary that led to this call ("why it ran this") and how
   // long it streamed — shown behind the row's bulb. Display-only.
   thinking?: string
@@ -494,6 +497,7 @@ export interface ToolEndDetail {
   output_chars?: number
   truncated?: { orig_len: number; cap: number } | null
   operator_decision?: 'approved' | 'edited' | 'denied' | ''
+  decline_reason?: string
 }
 
 /**
@@ -505,7 +509,7 @@ export interface ToolEndDetail {
  * would have finished all of them with its output.
  */
 export function finishToolSegment(segments: BlockSegment[], detail: ToolEndDetail, now: number = Date.now()): BlockSegment[] {
-  const { call_id, tool_name, output, output_chars, truncated, operator_decision } = detail
+  const { call_id, tool_name, output, output_chars, truncated, operator_decision, decline_reason } = detail
   const idx = segments.findIndex(seg =>
     seg.kind === 'tool' && seg.entry.running && (
       call_id && seg.entry.callId ? seg.entry.callId === call_id : seg.entry.name === tool_name
@@ -523,6 +527,7 @@ export function finishToolSegment(segments: BlockSegment[], detail: ToolEndDetai
     entry: {
       ...seg.entry, output, running: false, durationMs, outputChars: output_chars, truncated: truncated ?? null,
       ...(operator_decision ? { operatorDecision: operator_decision } : {}),
+      ...(decline_reason ? { declineReason: decline_reason } : {}),
     },
   }
   return [...segments.slice(0, idx), done, ...segments.slice(idx + 1)]
@@ -939,9 +944,13 @@ export function OutputPanel({ blocks, onRerun, onAskLlm, onToggleContext }: Outp
   // so it doesn't defeat the memoised BlockCard by handing each card a fresh prop
   // on every streamed frame. Keyed by the gate's request_id — each BlockCard binds
   // its own gate's request_id before calling.
-  const answerConfirm = useCallback((requestId: string, approved: boolean, editedInput?: Record<string, unknown>) => {
-    bridge.resolve_tool_confirmation(requestId, approved, editedInput)
-      .catch(err => console.error('[runspec] resolve_tool_confirmation failed', err))
+  const answerConfirm = useCallback((requestId: string, approved: boolean, editedInput?: Record<string, unknown>, declineReason?: string) => {
+    // Only a Deny with a reason carries the 4th argument — every other answer
+    // keeps the original (requestId, approved, editedInput) call shape.
+    const call = declineReason
+      ? bridge.resolve_tool_confirmation(requestId, approved, editedInput, declineReason)
+      : bridge.resolve_tool_confirmation(requestId, approved, editedInput)
+    call.catch(err => console.error('[runspec] resolve_tool_confirmation failed', err))
     setPendingConfirms(prev => {
       const hit = Object.entries(prev).find(([, v]) => v.request_id === requestId)
       if (!hit) return prev
@@ -1094,7 +1103,7 @@ function ToolCallBlock({
   // Only when the displayed call equals the real call (a plain/direct tool, not
   // the search-mode `run_runnable` wrapper whose display args would re-wrap lossily).
   editable?: boolean
-  onAnswer?: (approved: boolean, editedInput?: Record<string, unknown>) => void
+  onAnswer?: (approved: boolean, editedInput?: Record<string, unknown>, declineReason?: string) => void
 }) {
   const c = useCardTheme()
   const [expanded, setExpanded] = useState(false)
@@ -1124,6 +1133,17 @@ function ToolCallBlock({
     // Re-seed when a new confirm parks here (different tool/args); not on keystroke.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seedKey, awaiting, editable])
+
+  // Optional decline reason: free text sent to the agent with a Deny, so the
+  // operator can say why — or redirect it — in the same click. Cleared when a
+  // new gate parks here.
+  const [reason, setReason] = useState('')
+  useEffect(() => { setReason('') }, [seedKey])
+  const deny = () => {
+    const r = reason.trim()
+    if (r) onAnswer?.(false, undefined, r)
+    else onAnswer?.(false)
+  }
 
   const approve = () => {
     if (editable && edits) {
@@ -1175,7 +1195,8 @@ function ToolCallBlock({
         )}
         {entry.operatorDecision && (
           <Tooltip title={
-            entry.operatorDecision === 'denied' ? 'You denied this call — it did not run'
+            entry.operatorDecision === 'denied'
+              ? (entry.declineReason ? `You denied this call — it did not run. Your reason: ${entry.declineReason}` : 'You denied this call — it did not run')
             : entry.operatorDecision === 'edited' ? 'You edited the arguments before approving'
             : 'You approved this call'
           }>
@@ -1326,14 +1347,35 @@ function ToolCallBlock({
               }).join('\n')}
             </pre>
           ) : null}
+          <Input.TextArea
+            size="small"
+            data-rs-confirm-reason=""
+            aria-label="Reason for denying (optional)"
+            placeholder="Denying? Optionally say why or what to do instead. The assistant gets this with the denial."
+            value={reason}
+            maxLength={2000}
+            autoSize={{ minRows: 1, maxRows: 6 }}
+            onChange={e => setReason(e.target.value)}
+            onKeyDown={e => {
+              // Enter sends the Deny with the reason (it's only used on a deny);
+              // Shift+Enter is a newline, like the other multi-line fields.
+              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                e.preventDefault()
+                if (reason.trim()) deny()
+              }
+            }}
+            style={{ fontSize: 12, marginBottom: 8 }}
+          />
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <Tooltip title={`Approve (${shortcutHint('approve')})`}>
               <Button type="primary" size="small" icon={<CaretRightOutlined />} onClick={approve} data-rs-confirm="approve">
                 Approve &amp; {v}
               </Button>
             </Tooltip>
-            <Tooltip title={`Deny (${shortcutHint('deny')})`}>
-              <Button size="small" danger onClick={() => onAnswer?.(false)} data-rs-confirm="deny">Deny</Button>
+            <Tooltip title={reason.trim() ? `Deny and send your reason to the assistant (${shortcutHint('deny')})` : `Deny (${shortcutHint('deny')})`}>
+              <Button size="small" danger onClick={deny} data-rs-confirm="deny">
+                {reason.trim() ? 'Deny with reason' : 'Deny'}
+              </Button>
             </Tooltip>
           </div>
         </div>
@@ -1412,7 +1454,7 @@ export function ChatTranscript({
   liveThinking?: string
   replyThinking?: { text: string; ms: number }
   pendingConfirm?: PendingConfirm | null
-  onAnswerConfirm?: (approved: boolean, editedInput?: Record<string, unknown>) => void
+  onAnswerConfirm?: (approved: boolean, editedInput?: Record<string, unknown>, declineReason?: string) => void
 }) {
   const c = useCardTheme()
   return (
@@ -1556,7 +1598,7 @@ const BlockCard = memo(function BlockCard({
   onAskLlm?: (text: string) => void
   onToggleContext?: (id: string, inContext: boolean) => void
   pendingConfirm?: PendingConfirm | null
-  onAnswerConfirm?: (requestId: string, approved: boolean, editedInput?: Record<string, unknown>) => void
+  onAnswerConfirm?: (requestId: string, approved: boolean, editedInput?: Record<string, unknown>, declineReason?: string) => void
 }) {
   const c = useCardTheme()
   const [collapsed, setCollapsed] = useState(false)
@@ -1566,8 +1608,8 @@ const BlockCard = memo(function BlockCard({
   // Bind this card's gate to its own request_id, so the shared resolver knows
   // which parked run to answer. Passed to both the inline segment gate (agent
   // tool calls) and the card-level gate (rule runs / any gate with no segment).
-  const answerThis = useCallback((approved: boolean, editedInput?: Record<string, unknown>) => {
-    if (pendingConfirm) onAnswerConfirm?.(pendingConfirm.request_id, approved, editedInput)
+  const answerThis = useCallback((approved: boolean, editedInput?: Record<string, unknown>, declineReason?: string) => {
+    if (pendingConfirm) onAnswerConfirm?.(pendingConfirm.request_id, approved, editedInput, declineReason)
   }, [pendingConfirm, onAnswerConfirm])
   // Does a running tool segment already own this confirm? Then the inline gate
   // inside ChatTranscript renders it (matched by tool_name) — don't also draw the

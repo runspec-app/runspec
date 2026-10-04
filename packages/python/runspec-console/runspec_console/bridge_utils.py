@@ -1804,6 +1804,34 @@ def estimate_context_buckets(
 # Marker appended to a tool result when it exceeds the per-call output cap. Kept
 # parseable (carries the original length + cap) so a tool card can badge the cut
 # without the tool-runner having to change its plain-string return contract.
+# Cap on the operator's free-text decline reason — it rides into the agent's
+# tool result, so a pasted wall of text can't flood the context window.
+DECLINE_REASON_MAX = 2000
+
+
+def clean_decline_reason(reason: Any) -> str:
+    """Normalise an operator's decline reason: a stripped string, capped at
+    :data:`DECLINE_REASON_MAX` chars; ``""`` when absent/blank/not text."""
+    if not isinstance(reason, str):
+        return ""
+    reason = reason.strip()
+    if len(reason) > DECLINE_REASON_MAX:
+        reason = reason[:DECLINE_REASON_MAX].rstrip() + "…"
+    return reason
+
+
+def decline_note(reason: str) -> str:
+    """The text appended to a declined tool result when the operator gave a
+    reason with their Deny — so declining also redirects the agent. ``""``
+    when there is no reason (the declined result reads exactly as before)."""
+    if not reason:
+        return ""
+    return (
+        f"\nThe user's reason / what to do instead: {reason}\n"
+        "Follow that guidance — don't retry the declined call unchanged."
+    )
+
+
 _TRUNCATION_SENTINEL = "[output truncated:"
 
 

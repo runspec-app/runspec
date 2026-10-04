@@ -302,7 +302,7 @@ class _GateStub(_Stub):
 
     def _await_confirmation(self, tool_name, tool_input, level, chat_id):
         self.await_calls.append((tool_name, tool_input, level))
-        return self._approve, self._edited
+        return self._approve, self._edited, ""
 
     def _run_tool_sync(self, tool_name, tool_input, chat_id=""):
         self.sync_calls.append((tool_name, tool_input))

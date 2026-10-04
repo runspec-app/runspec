@@ -385,4 +385,68 @@ describe('OutputPanel autonomy-gate confirm', () => {
     })
     expect(screen.getByRole('button', { name: /approve & run/i })).toBeTruthy()
   })
+
+  it('sends an optional decline reason with Deny so the agent can be redirected', async () => {
+    render(<OutputPanel blocks={[chatBlockWithRunningTool('run_runnable')]} />)
+    fireConfirm({
+      id: 'chat1',
+      request_id: 'req-deny',
+      tool_name: 'run_runnable',
+      tool_input: { id: 'fleet__drain-node' },
+      display_name: 'drain-node',
+      autonomy: 'confirm',
+    })
+    const box = screen.getByRole('textbox', { name: /reason for denying/i })
+    await userEvent.type(box, '  drain web-02 instead  ')
+    // The button says the reason goes along.
+    await userEvent.click(screen.getByRole('button', { name: /deny with reason/i }))
+    expect(resolveConfirm).toHaveBeenCalledWith('req-deny', false, undefined, 'drain web-02 instead')
+  })
+
+  it('a plain Deny sends no reason', async () => {
+    render(<OutputPanel blocks={[chatBlockWithRunningTool('run_runnable')]} />)
+    fireConfirm({
+      id: 'chat1',
+      request_id: 'req-plain',
+      tool_name: 'run_runnable',
+      tool_input: { id: 'fleet__drain-node' },
+      display_name: 'drain-node',
+      autonomy: 'confirm',
+    })
+    await userEvent.type(screen.getByRole('textbox', { name: /reason for denying/i }), '   ')
+    await userEvent.click(screen.getByRole('button', { name: /^deny$/i }))
+    expect(resolveConfirm).toHaveBeenCalledWith('req-plain', false, undefined)
+  })
+
+  it('Enter in the reason box denies with the reason; Shift+Enter is a newline', async () => {
+    render(<OutputPanel blocks={[chatBlockWithRunningTool('run_runnable')]} />)
+    fireConfirm({
+      id: 'chat1',
+      request_id: 'req-enter',
+      tool_name: 'run_runnable',
+      tool_input: { id: 'fleet__drain-node' },
+      display_name: 'drain-node',
+      autonomy: 'confirm',
+    })
+    const box = screen.getByRole('textbox', { name: /reason for denying/i })
+    await userEvent.type(box, 'not now{Shift>}{Enter}{/Shift}check the queue first')
+    expect(resolveConfirm).not.toHaveBeenCalled()
+    await userEvent.type(box, '{Enter}')
+    expect(resolveConfirm).toHaveBeenCalledWith('req-enter', false, undefined, 'not now\ncheck the queue first')
+  })
+
+  it('Approve ignores a typed reason', async () => {
+    render(<OutputPanel blocks={[chatBlockWithRunningTool('run_runnable')]} />)
+    fireConfirm({
+      id: 'chat1',
+      request_id: 'req-appr',
+      tool_name: 'run_runnable',
+      tool_input: { id: 'fleet__drain-node' },
+      display_name: 'drain-node',
+      autonomy: 'confirm',
+    })
+    await userEvent.type(screen.getByRole('textbox', { name: /reason for denying/i }), 'meh')
+    await userEvent.click(screen.getByRole('button', { name: /approve & run/i }))
+    expect(resolveConfirm).toHaveBeenCalledWith('req-appr', true, undefined)
+  })
 })

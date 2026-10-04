@@ -26,8 +26,9 @@ A chat turn (``kind`` "chat")::
     }
 
 A chat tool entry may carry operator-only annotations — ``operator_decision``
-("approved" / "edited" / "denied") and ``proposed_input`` (the agent's original
-args when the operator edited them) — and ``thinking`` / ``thinking_ms``, the
+("approved" / "edited" / "denied"), ``decline_reason`` (the operator's optional
+free text on a Deny — why, or what to do instead) and ``proposed_input`` (the
+agent's original args when the operator edited them) — and ``thinking`` / ``thinking_ms``, the
 reasoning summary that led to the call ("why it ran this"). A chat turn may also
 carry ``reply_thinking`` (``{"text", "ms"}``), the reasoning behind the final
 reply. These are ignored by the model-history rebuild (which reads only

@@ -728,3 +728,55 @@ def test_saved_run_unknown_id_errors_before_any_gate(tmp_path, monkeypatch):
     out = b._gated_run_tool("run_saved_run", {"id": "nope"}, "chat1")
     assert "no saved run" in out
     assert b._dispatched == []
+
+
+# ── decline reason (Deny + redirect) ─────────────────────────────────────────
+
+
+def _drive_deny(b, reason):
+    result = {}
+    t = threading.Thread(
+        target=lambda: result.__setitem__(
+            "out", b._gated_run_tool("local__flush-dns", {}, "chat1")
+        )
+    )
+    t.start()
+    for _ in range(400):
+        if b._dispatched:
+            break
+        time.sleep(0.005)
+    _event, detail = b._dispatched[0]
+    b.resolve_tool_confirmation(detail["request_id"], False, None, reason)
+    t.join(timeout=5)
+    return result["out"]
+
+
+def test_decline_reason_reaches_the_agent():
+    b = _StubBridge(_runnable("confirm"), run_result="RAN")
+    out = _drive_deny(b, "  use web-02 instead, web-01 is in maintenance  ")
+    assert out.startswith("✗ The user declined to run 'flush-dns'")
+    assert "use web-02 instead, web-01 is in maintenance" in out
+    assert "RAN" not in out
+
+
+def test_decline_without_reason_reads_as_before():
+    b = _StubBridge(_runnable("confirm"), run_result="RAN")
+    out = _drive_deny(b, "   ")
+    assert out == "✗ The user declined to run 'flush-dns' (autonomy = confirm)."
+
+
+def test_decline_reason_ignored_on_approve():
+    b = _StubBridge(_runnable("confirm"))
+    rid, _, holder = b._register_confirm("c", "local__flush-dns", {}, "confirm")
+    b.resolve_tool_confirmation(rid, True, None, "should not stick")
+    assert "decline_reason" not in holder
+
+
+def test_decline_reason_is_capped():
+    from runspec_console.bridge_utils import DECLINE_REASON_MAX, clean_decline_reason
+
+    long = "x" * (DECLINE_REASON_MAX + 50)
+    cleaned = clean_decline_reason(long)
+    assert len(cleaned) == DECLINE_REASON_MAX + 1 and cleaned.endswith("…")
+    assert clean_decline_reason(None) == ""
+    assert clean_decline_reason(42) == ""

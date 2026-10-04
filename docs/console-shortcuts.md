@@ -32,7 +32,7 @@ Arrow keys move, **Enter** runs the highlighted item, **Esc** closes.
 | Ctrl+L | Focus the command bar |
 | / | Focus the command bar and open the runnable menu |
 | Alt+A | Approve the pending confirmation |
-| Alt+D | Deny the pending confirmation |
+| Alt+D | Deny the pending confirmation (sends any reason typed on the card) |
 | Alt+N | New chat |
 | Ctrl+Tab / Ctrl+Shift+Tab | Next / previous chat session |
 | Esc (in the command bar) | Stop the running turn |

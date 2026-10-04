@@ -879,6 +879,7 @@ export interface ConversationTurn {
     // Operator's confirm-gate decision (when the call was gated) + the agent's
     // original args if the operator edited them. Operator-only annotations.
     operator_decision?: 'approved' | 'edited' | 'denied'
+    decline_reason?: string
     proposed_input?: Record<string, unknown>
     // The reasoning summary that led to this call ("why it ran this") and how
     // long it streamed. Display-only; never replayed to the model.
@@ -2275,10 +2276,13 @@ export interface BridgeApi {
   // Resolve a parked autonomy-gate confirm. `editedInput` (optional) replaces the
   // agent's proposed tool_input when approving — the operator can tweak the args
   // before the call runs (editable confirmations). Ignored on a deny.
+  // `declineReason` (optional, deny only) is the operator's free text — why, or
+  // what to do instead — appended to the declined result the agent receives.
   resolve_tool_confirmation: (
     requestId: string,
     approved: boolean,
     editedInput?: Record<string, unknown>,
+    declineReason?: string,
   ) => Promise<void>
   // ── event triggers ─────────────────────────────────────────────────────────
   list_triggers: () => Promise<TriggerListResult>

@@ -9,6 +9,25 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.324.0] — 2026-10-04
+
+### Added
+
+- **Deny with a reason.** A confirmation card now has an optional reason box
+  under the arguments. Type why you're denying, or what the assistant should
+  do instead, and Deny: the reason is appended to the declined tool result, so
+  the agent changes course in the same turn instead of guessing. Enter in the
+  box denies with the reason (Shift+Enter for a newline), the button reads
+  **Deny with reason** while there's text, and Alt+D sends it too. A reason is
+  ignored on Approve, capped at 2000 characters, and a plain Deny reads exactly
+  as before. It works on every gated call: agent tool calls, grouped fan-out
+  and saved-run confirms, draft/propose-reply gates, and calls through the
+  console's MCP server (the external agent gets the reason with the refusal).
+  The reason is saved on the conversation's tool entry (shown in the DENIED
+  badge's tooltip, kept when a chat is resumed, and quoted in Improve's
+  autonomy-denied evidence). `resolve_tool_confirmation` gains an optional
+  `decline_reason`.
+
 ## [0.323.0] — 2026-10-04
 
 ### Added

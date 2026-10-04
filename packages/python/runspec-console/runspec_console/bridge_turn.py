@@ -675,6 +675,7 @@ class TurnMixin(_Base):
                                 "truncated": utils_mod.parse_truncation(output),
                                 "operator_decision": gate_decision.get("decision")
                                 or "",
+                                "decline_reason": gate_decision.get("reason") or "",
                             },
                         )
                         self._trace(
@@ -741,6 +742,8 @@ class TurnMixin(_Base):
                             tool_rec["thinking_ms"] = thought[1]
                         if gate_decision.get("decision"):
                             tool_rec["operator_decision"] = gate_decision["decision"]
+                            if gate_decision.get("reason"):
+                                tool_rec["decline_reason"] = gate_decision["reason"]
                             if gate_decision.get("proposed_input") is not None:
                                 tool_rec["proposed_input"] = gate_decision[
                                     "proposed_input"

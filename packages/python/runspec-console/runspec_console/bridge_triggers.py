@@ -2419,7 +2419,10 @@ class TriggersMixin:
             timed_out = not event.wait(timeout=self._confirm_timeout_s(headless=True))
             approved, edited = self._finish_confirm(request_id, holder, timed_out)
             if not approved:
-                return [f"✗ The user declined to run the {noun} (autonomy = {level})."]
+                return [
+                    f"✗ The user declined to run the {noun} (autonomy = {level})."
+                    + utils_mod.decline_note(str(holder.get("decline_reason") or ""))
+                ]
             calls = self._apply_group_edit(edited, calls)
         return self._run_calls_parallel(calls, chat_id)
 
@@ -2478,7 +2481,10 @@ class TriggersMixin:
             if holder.get("cancelled"):
                 return [f"⏹ The {noun} was not run — you stopped the assistant."]
             if not approved:
-                return [f"✗ The user declined to run the {noun} (autonomy = {level})."]
+                return [
+                    f"✗ The user declined to run the {noun} (autonomy = {level})."
+                    + utils_mod.decline_note(str(holder.get("decline_reason") or ""))
+                ]
             calls = self._apply_group_edit(edited, calls)
         if stage is not None:
             stage("running")
@@ -2651,7 +2657,9 @@ class TriggersMixin:
             # than leaving the card stuck in 'awaiting_human'.
             if stage is not None:
                 stage("running")
-            return "✗ You declined to save the draft reply."
+            return "✗ You declined to save the draft reply." + utils_mod.decline_note(
+                str(holder.get("decline_reason") or "")
+            )
         # The operator may have edited the reply body before approving.
         if edited is not None and str(edited.get("body") or "").strip():
             body = str(edited["body"]).strip()
@@ -2709,7 +2717,9 @@ class TriggersMixin:
             # than leaving the card stuck in 'awaiting_human'.
             if stage is not None:
                 stage("running")
-            return "✗ You declined to propose the reply."
+            return "✗ You declined to propose the reply." + utils_mod.decline_note(
+                str(holder.get("decline_reason") or "")
+            )
         # The operator may have edited the proposed text before approving.
         if edited is not None and str(edited.get("text") or "").strip():
             text = str(edited["text"]).strip()

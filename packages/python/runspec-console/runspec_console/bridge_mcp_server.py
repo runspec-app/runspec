@@ -28,6 +28,7 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 from . import config as config_mod
+from . import bridge_utils as utils_mod
 from .bridge_const import _MCP_SERVER_BUILTIN_NAMES, logger
 
 if TYPE_CHECKING:
@@ -77,7 +78,7 @@ class McpServerMixin:
                 True,
             )
 
-        card_id, approved, args, timed_out = self._mcp_gate_with_card(
+        card_id, approved, args, timed_out, reason = self._mcp_gate_with_card(
             display=display,
             args=args,
             level=level,
@@ -91,7 +92,10 @@ class McpServerMixin:
                     f"'{display}' there, then call this tool again to run it.",
                     False,
                 )
-            return (f"Operator declined '{display}'.", True)
+            return (
+                f"Operator declined '{display}'." + utils_mod.decline_note(reason),
+                True,
+            )
 
         return self._mcp_server_run_blocking(
             tool, args, command_path, host, card_id=card_id
@@ -141,7 +145,7 @@ class McpServerMixin:
                 "console.",
                 True,
             )
-        card_id, approved, args, timed_out = self._mcp_gate_with_card(
+        card_id, approved, args, timed_out, reason = self._mcp_gate_with_card(
             display=name, args=args, level=level, runnable=name, host=""
         )
         if not approved:
@@ -151,7 +155,10 @@ class McpServerMixin:
                     f"'{name}' there, then call this tool again to run it.",
                     False,
                 )
-            return (f"Operator declined '{name}'.", True)
+            return (
+                f"Operator declined '{name}'." + utils_mod.decline_note(reason),
+                True,
+            )
         try:
             text = self._run_tool_sync(name, args, _MCP_SERVER_CHAT_ID)
         except Exception as exc:  # noqa: BLE001
@@ -175,9 +182,10 @@ class McpServerMixin:
         level: str,
         runnable: str,
         host: str,
-    ) -> tuple[str, bool, dict[str, Any], bool]:
+    ) -> tuple[str, bool, dict[str, Any], bool, str]:
         """Gate an MCP call behind a **visible** Console card, returning
-        ``(card_id, approved, args, timed_out)``.
+        ``(card_id, approved, args, timed_out, decline_reason)`` — the reason is
+        the operator's optional free text on a Deny (``""`` otherwise).
 
         Without a card the parked confirm had no home: its chat id was a fixed
         sentinel with no session/block, so the Approve/Deny prompt never rendered
@@ -202,7 +210,7 @@ class McpServerMixin:
                 column="running",
                 note="autonomous — running",
             )
-            return card_id, True, args, False
+            return card_id, True, args, False, ""
         self._mcp_server_card(
             card_id,
             runnable=runnable,
@@ -226,16 +234,18 @@ class McpServerMixin:
                 error="No operator response — the agent may call again to retry.",
                 note="expired (no response)",
             )
-            return card_id, False, args, True
+            return card_id, False, args, True, ""
         if holder.get("cancelled") or not approved:
+            reason = str(holder.get("decline_reason") or "")
             self._mcp_server_card(
                 card_id,
                 runnable=runnable,
                 column="failed",
-                error="Operator declined this call.",
+                error="Operator declined this call."
+                + (f" Reason: {reason}" if reason else ""),
                 note="declined",
             )
-            return card_id, False, args, False
+            return card_id, False, args, False, reason
         if isinstance(edited, dict):
             args = edited
         self._mcp_server_card(
@@ -245,7 +255,7 @@ class McpServerMixin:
             column="running",
             note="approved — running",
         )
-        return card_id, True, args, False
+        return card_id, True, args, False, ""
 
     def _mcp_server_card(
         self,
