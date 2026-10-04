@@ -28,6 +28,16 @@ import {
   forceLayout, neighbourhood, nodeRadius, parseAbout, splitEntity, typeColor,
 } from './knowledgeGraph'
 
+const RANGE_OPTIONS = [
+  { value: 7, label: 'Last 7 days' },
+  { value: 30, label: 'Last 30 days' },
+  { value: 90, label: 'Last 90 days' },
+  { value: 0, label: 'All history' },
+]
+
+const rangeLabel = (days: number): string =>
+  days ? `last ${days} days` : 'all history'
+
 const { Text } = Typography
 
 const GRAPH_W = 960
@@ -49,6 +59,10 @@ export function KnowledgeView({ active, aiEnabled }: KnowledgeViewProps) {
   const [results, setResults] = useState<KnowledgeFact[] | null>(null)
   const [hidden, setHidden] = useState<Set<string>>(new Set())
   const [busy, setBusy] = useState<'' | 'capture' | 'distill'>('')
+  // How far back Capture usage and Suggest from chats read (days, 0 = all).
+  // Starts at the range the last capture used, so the picker matches the graph.
+  const [range, setRange] = useState<number | null>(null)
+  const rangeDays = range ?? overview?.capture_days ?? 30
   const [editing, setEditing] = useState<{ fact?: KnowledgeFact; review?: boolean } | null>(null)
 
   const refresh = useCallback(async () => {
@@ -86,8 +100,8 @@ export function KnowledgeView({ active, aiEnabled }: KnowledgeViewProps) {
   const capture = async () => {
     setBusy('capture')
     try {
-      const r = await bridge.knowledge_capture()
-      if (r.ok) message.success(`Captured ${r.observed ?? 0} usage patterns from ${r.runs ?? 0} runs.`)
+      const r = await bridge.knowledge_capture(rangeDays)
+      if (r.ok) message.success(`Captured ${r.observed ?? 0} usage patterns from ${r.runs ?? 0} runs (${rangeLabel(rangeDays)}).`)
       else message.error(r.error || 'Capture failed.')
       await refresh()
     } finally { setBusy('') }
@@ -96,10 +110,13 @@ export function KnowledgeView({ active, aiEnabled }: KnowledgeViewProps) {
   const distill = async () => {
     setBusy('distill')
     try {
-      const r = await bridge.knowledge_distill()
+      const r = await bridge.knowledge_distill(rangeDays)
       if (!r.ok) message.error(r.error || 'Could not suggest facts.')
       else if (r.note) message.info(r.note)
-      else message.success(`${r.proposed ?? 0} suggested fact(s) added to the inbox.`)
+      else {
+        const more = r.remaining ? ` ${r.remaining} more batch(es) to read: click again to continue.` : ''
+        message.success(`Read ${r.conversations ?? 0} chat(s): ${r.proposed ?? 0} suggested fact(s) added to the inbox.${more}`, more ? 6 : 3)
+      }
       if (r.ok && (r.proposed ?? 0) > 0) setTab('inbox')
       await refresh()
     } finally { setBusy('') }
@@ -142,11 +159,20 @@ export function KnowledgeView({ active, aiEnabled }: KnowledgeViewProps) {
         </Text>
         <div style={{ flex: 1 }} />
         <Space wrap>
-          <Tooltip title="Mine recent run history for usage patterns: common args, where runnables run, what runs after what. No AI involved.">
+          <Tooltip title="How far back Capture usage and Suggest from chats read.">
+            <Select
+              aria-label="History range"
+              value={rangeDays}
+              onChange={v => setRange(v)}
+              options={RANGE_OPTIONS}
+              style={{ width: 130 }}
+            />
+          </Tooltip>
+          <Tooltip title="Mine run history for usage patterns: common args, where runnables run, what runs after what. No AI involved.">
             <Button icon={<ReloadOutlined />} loading={busy === 'capture'} onClick={capture}>Capture usage</Button>
           </Tooltip>
           {aiEnabled && (
-            <Tooltip title="Ask the model to suggest facts from the last week of chats. Suggestions go to the inbox for you to review.">
+            <Tooltip title="Ask the model to suggest facts from your saved chats in the range. Chats already read are skipped, so re-running only reads what is new. Suggestions go to the inbox for you to review.">
               <Button icon={<BulbOutlined />} loading={busy === 'distill'} onClick={distill}>Suggest from chats</Button>
             </Tooltip>
           )}

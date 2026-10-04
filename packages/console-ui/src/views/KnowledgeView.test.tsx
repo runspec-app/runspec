@@ -73,4 +73,13 @@ describe('KnowledgeView', () => {
     fireEvent.click(screen.getByText('Approve'))
     await waitFor(() => expect(review).toHaveBeenCalledWith('k_p', true))
   })
+
+  it('suggests from chats over the remembered range', async () => {
+    overview.mockResolvedValue({ ...(await overview()), capture_days: 0 })
+    distill.mockResolvedValue({ ok: true, proposed: 3, conversations: 12, calls: 10, remaining: 4 })
+    render(<KnowledgeView active aiEnabled />)
+    await waitFor(() => expect(screen.getByText('All history')).toBeTruthy())
+    fireEvent.click(screen.getByText('Suggest from chats'))
+    await waitFor(() => expect(distill).toHaveBeenCalledWith(0))
+  })
 })

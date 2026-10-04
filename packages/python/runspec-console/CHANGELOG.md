@@ -9,6 +9,21 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.326.0] — 2026-10-04
+
+### Changed
+
+- **Knowledge wiki reads all your history, not just the latest chats.**
+  *Suggest from chats* used to read only the newest chats from the last week and
+  then send the model just the last ~24,000 characters, so on a busy console it
+  saw only a few recent chats. It now reads saved chats in batches of about
+  24,000 characters, one utility-model call each, up to 10 per click (the next
+  click carries on), and remembers which chats and turns it has read
+  (`knowledge/state.toml`, machine-local), so a re-run only reads what is new.
+  A **range picker** (7 / 30 / 90 days / all history) beside the buttons sets how
+  far back both *Suggest from chats* and *Capture usage* read; the capture range
+  is remembered so the hourly auto-capture keeps it.
+
 ## [0.325.0] — 2026-10-04
 
 ### Added

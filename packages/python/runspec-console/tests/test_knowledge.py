@@ -285,6 +285,7 @@ def bridge_stub(tmp_path, monkeypatch):
         _effective_tool_autonomy = Bridge._effective_tool_autonomy
         knowledge_overview = Bridge.knowledge_overview
         knowledge_capture = Bridge.knowledge_capture
+        knowledge_distill = Bridge.knowledge_distill
         knowledge_save_fact = Bridge.knowledge_save_fact
         knowledge_review = Bridge.knowledge_review
 
@@ -293,11 +294,17 @@ def bridge_stub(tmp_path, monkeypatch):
             self._run_origin = {"trig": {"trigger": "mail", "agent": True}}
             self.events = []
             self.history = []
+            self.history_days = []
+            self.adapter = None
+
+        def _utility_adapter(self):
+            return self.adapter
 
         def _dispatch(self, ev, payload):
             self.events.append(ev)
 
         def get_history_all(self, since_days=30):
+            self.history_days.append(since_days)
             return self.history
 
     return _Stub()
@@ -382,3 +389,122 @@ def test_overview_captures_and_operator_facts(bridge_stub):
     bad = bridge_stub.knowledge_save_fact({"kind": "note", "about": [], "text": "x"})
     assert bad["ok"] is False
     assert bridge_stub.knowledge_review("k_none", True)["ok"] is False
+
+
+def test_chunk_transcripts_marks_a_block_on_its_last_piece(kn):
+    big = "\n".join(f"line {i} " + "x" * 90 for i in range(40))  # ~4k chars
+    chunks = kn.chunk_transcripts(
+        [("a", "short a"), ("b", big), ("c", ""), ("d", "short d")], max_chars=1500
+    )
+    assert all(len(text) <= 1500 for text, _ in chunks)
+    finished = [k for _, keys in chunks for k in keys]
+    assert finished == ["a", "b", "c", "d"]
+    # b spans several chunks and is only finished on the last one
+    b_chunks = [
+        i
+        for i, (text, _) in enumerate(chunks)
+        if "line 0 " in text or "line 39 " in text
+    ]
+    assert "b" in chunks[b_chunks[-1]][1] and "b" not in chunks[b_chunks[0]][1]
+    assert "line 0 " in "".join(t for t, _ in chunks)  # nothing dropped
+
+
+def test_capture_range_is_remembered(bridge_stub):
+    bridge_stub.knowledge_capture(0)
+    assert bridge_stub.history_days[-1] is None  # 0 = all history
+    bridge_stub.knowledge_capture()  # auto-capture keeps the operator's range
+    assert bridge_stub.history_days[-1] is None
+    assert bridge_stub.knowledge_overview()["capture_days"] == 0
+    bridge_stub.knowledge_capture(90)
+    assert bridge_stub.history_days[-1] == 90
+
+
+class _FakeAdapter:
+    def __init__(self):
+        self.prompts = []
+
+    async def chat(self, messages, tools):
+        prompt = messages[0]["content"]
+        self.prompts.append(prompt)
+        n = len(self.prompts)
+
+        class _R:
+            text = json.dumps(
+                [{"kind": "note", "about": [f"topic:t{n}"], "text": f"fact number {n}"}]
+            )
+
+        return _R()
+
+
+def _write_conv(tmp_path, cid, updated, turns):
+    from runspec_console import config
+
+    d = config.conversations_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{cid}.json").write_text(
+        json.dumps(
+            {
+                "id": cid,
+                "title": cid,
+                "created": updated,
+                "updated": updated,
+                "turns": turns,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_distill_reads_all_history_in_batches_and_resumes(bridge_stub, tmp_path):
+    from datetime import datetime, timedelta, timezone
+
+    old = (datetime.now(timezone.utc) - timedelta(days=200)).isoformat()
+    new = datetime.now(timezone.utc).isoformat()
+    turn = {
+        "user": "where are the logs " + "y" * 700,
+        "assistant": "in /var/log " + "z" * 700,
+    }
+    for i in range(30):  # ~45k chars of chat → more than one chunk
+        _write_conv(tmp_path, f"old{i:02d}", old, [dict(turn)])
+    _write_conv(
+        tmp_path, "recent", new, [{"user": "recent question", "assistant": "ok"}]
+    )
+    bridge_stub.adapter = _FakeAdapter()
+
+    # A 7-day window only reads the recent chat.
+    r = bridge_stub.knowledge_distill(7)
+    assert (
+        r["ok"] and r["calls"] == 1 and r["conversations"] == 1 and r["remaining"] == 0
+    )
+    assert "recent question" in bridge_stub.adapter.prompts[0]
+
+    # All history, one call per click: the backlog continues across clicks and
+    # the already-read recent chat is not sent again.
+    r = bridge_stub.knowledge_distill(0, max_calls=1)
+    assert r["calls"] == 1 and r["remaining"] >= 1
+    total = r["conversations"]
+    while r["remaining"]:
+        r = bridge_stub.knowledge_distill(0, max_calls=1)
+        total += r["conversations"]
+    assert total == 30
+    assert not any("recent question" in p for p in bridge_stub.adapter.prompts[1:])
+    assert bridge_stub.knowledge_distill(0)["note"]  # nothing new left
+
+    # New turns appended to a chat are picked up on their own.
+    _write_conv(
+        tmp_path,
+        "recent",
+        new,
+        [
+            {"user": "recent question", "assistant": "ok"},
+            {"user": "follow-up about /srv", "assistant": "ok"},
+        ],
+    )
+    before = len(bridge_stub.adapter.prompts)
+    r = bridge_stub.knowledge_distill(7)
+    assert r["calls"] == 1
+    last = bridge_stub.adapter.prompts[-1]
+    assert len(bridge_stub.adapter.prompts) == before + 1
+    assert "follow-up about /srv" in last and "recent question" not in last
+    inbox = bridge_stub.knowledge_overview()["inbox"]
+    assert len(inbox) == len(bridge_stub.adapter.prompts)  # one distinct fact per call

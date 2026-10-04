@@ -38,6 +38,11 @@ logger = logging.getLogger(__name__)
 _MCP_CHAT_ID = "__mcp_server__"  # mirrors bridge_mcp_server._MCP_SERVER_CHAT_ID
 # Mechanical capture re-runs at most this often on its own (the tab asks on open).
 _CAPTURE_MAX_AGE_S = 60 * 60
+_DEFAULT_CAPTURE_DAYS = 30
+# Distill reads saved chats in chunks of this many characters, one model call per
+# chunk, at most _DISTILL_MAX_CALLS calls per click (the rest wait for the next).
+_DISTILL_CHUNK_CHARS = 24000
+_DISTILL_MAX_CALLS = 10
 
 _ENTITY_HELP = (
     "Entities are written type:name, type one of "
@@ -362,6 +367,9 @@ class KnowledgeMixin:
                 "graph": idx.graph(),
                 "inbox": store.inbox(),
                 "captured_at": _mtime_iso(store.root / kn.OBSERVED_FILE),
+                "capture_days": _as_days(
+                    store.state().get("capture_days"), _DEFAULT_CAPTURE_DAYS
+                ),
                 "dir": str(store.root),
                 "entity_types": list(kn.ENTITY_TYPES),
                 "kinds": list(kn.FACT_KINDS),
@@ -425,24 +433,38 @@ class KnowledgeMixin:
         return {"ok": ok}
 
     def knowledge_capture(
-        self, since_days: int = 30, notify: bool = True
+        self, since_days: int | None = None, notify: bool = True
     ) -> dict[str, Any]:
-        """Mine the last ``since_days`` of run history (local + connected hosts)
-        into observed facts. Replaces the previous observations wholesale."""
+        """Mine run history (local + connected hosts) into observed facts,
+        replacing the previous observations wholesale. ``since_days`` = 0 reads
+        all history; ``None`` reuses the last range picked (default 30 days), so
+        the tab's hourly auto-capture never narrows what the operator chose."""
+        store = self._knowledge_store()
+        if since_days is None:
+            days = _as_days(store.state().get("capture_days"), _DEFAULT_CAPTURE_DAYS)
+        else:
+            days = _as_days(since_days, _DEFAULT_CAPTURE_DAYS)
+            store.update_state(capture_days=days)
         try:
-            history = self.get_history_all(since_days=max(1, int(since_days or 30)))  # type: ignore[attr-defined]
+            history = self.get_history_all(since_days=days or None)  # type: ignore[attr-defined]
         except Exception as exc:  # noqa: BLE001
             logger.warning("knowledge capture: history read failed", exc_info=True)
             return {"ok": False, "error": f"could not read run history: {exc}"}
         facts = kn.observe(history)
-        self._knowledge_store().write_observed(facts)
+        store.write_observed(facts)
         if notify:
             self._knowledge_changed()
-        return {"ok": True, "observed": len(facts), "runs": len(history)}
+        return {"ok": True, "observed": len(facts), "runs": len(history), "days": days}
 
-    def knowledge_distill(self, window_days: int = 7) -> dict[str, Any]:
-        """Ask the utility model to propose facts from the last ``window_days`` of
-        saved chats. Proposals land in the inbox (source ``distill``)."""
+    def knowledge_distill(
+        self, window_days: int = 30, max_calls: int = _DISTILL_MAX_CALLS
+    ) -> dict[str, Any]:
+        """Ask the utility model to propose facts from saved chats in the last
+        ``window_days`` (0 = all). Chats are read in ~24k-character chunks, one
+        model call each, up to ``max_calls`` per click; each chat's progress is
+        remembered (``state.toml``) so a re-run only reads new turns, and a big
+        backlog continues where the last click stopped. Proposals land in the
+        inbox (source ``distill``)."""
         if not getattr(self, "_ai_enabled", True):
             from .bridge_const import AI_OFF_MESSAGE
 
@@ -453,49 +475,82 @@ class KnowledgeMixin:
                 "ok": False,
                 "error": "No model provider is configured (Settings → Model / API).",
             }
+        days = _as_days(window_days, 30)
         since = (
-            datetime.now(timezone.utc) - timedelta(days=max(1, int(window_days or 7)))
-        ).isoformat()
-        turns = _recent_chat_turns(since, max_conversations=40)
-        if not turns:
-            return {"ok": True, "proposed": 0, "note": "No chats in that window."}
+            (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+            if days
+            else ""
+        )
         store = self._knowledge_store()
+        done = {
+            str(k): int(v)
+            for k, v in (store.state().get("distilled") or {}).items()
+            if isinstance(v, int)
+        }
+        blocks, ends = _pending_chat_blocks(since, done)
+        if not blocks:
+            return {
+                "ok": True,
+                "proposed": 0,
+                "note": "No new chats to read in that range.",
+            }
+        chunks = kn.chunk_transcripts(blocks, _DISTILL_CHUNK_CHARS)
+        budget = max(1, int(max_calls or _DISTILL_MAX_CALLS))
         known = [
             str(f.get("text", ""))
             for f in store.all_facts()
             if f.get("status") != "retired"
         ]
-        prompt = kn.build_distill_prompt(turns, known=known)
-        try:
-            resp = asyncio.run(adapter.chat([{"role": "user", "content": prompt}], []))
-            text = (getattr(resp, "text", "") or "").strip()
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("knowledge distill failed", exc_info=True)
-            return {"ok": False, "error": f"model call failed: {exc}"}
-        proposed = skipped = 0
-        for cand in kn.parse_distill(text):
-            try:
-                fact = kn.make_fact(
-                    kind=cand["kind"],
-                    about=cand["about"],
-                    text=cand["text"],
-                    status="pending",
-                    source="distill",
-                    author=_author(),
-                )
-            except ValueError:
-                skipped += 1
-                continue
-            _fid, outcome = store.propose(fact)
-            if outcome == "proposed":
-                proposed += 1
-        self._knowledge_changed()
-        return {
-            "ok": True,
+        proposed = skipped = calls = conversations = 0
+        error = ""
+        for text, finished in chunks[:budget]:
+            if text.strip():
+                prompt = kn.build_distill_prompt(known=known, transcript=text)
+                try:
+                    resp = asyncio.run(
+                        adapter.chat([{"role": "user", "content": prompt}], [])
+                    )
+                    reply = (getattr(resp, "text", "") or "").strip()
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("knowledge distill failed", exc_info=True)
+                    error = f"model call failed: {exc}"
+                    break
+                calls += 1
+                for cand in kn.parse_distill(reply):
+                    try:
+                        fact = kn.make_fact(
+                            kind=cand["kind"],
+                            about=cand["about"],
+                            text=cand["text"],
+                            status="pending",
+                            source="distill",
+                            author=_author(),
+                        )
+                    except ValueError:
+                        skipped += 1
+                        continue
+                    _fid, outcome = store.propose(fact)
+                    if outcome == "proposed":
+                        proposed += 1
+                        known.append(fact["text"])
+            if finished:
+                store.update_state(distilled={k: ends[k] for k in finished})
+                conversations += len(finished)
+        remaining = max(0, len(chunks) - budget) if not error else None
+        if calls or conversations:
+            self._knowledge_changed()
+        out: dict[str, Any] = {
+            "ok": not error,
             "proposed": proposed,
             "skipped": skipped,
-            "turns": len(turns),
+            "calls": calls,
+            "conversations": conversations,
         }
+        if error:
+            out["error"] = error
+        else:
+            out["remaining"] = remaining
+        return out
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -530,21 +585,53 @@ def _mtime_iso(path: Any) -> str:
         return ""
 
 
-def _recent_chat_turns(since_iso: str, max_conversations: int) -> list[dict[str, Any]]:
-    out: list[dict[str, Any]] = []
+def _as_days(value: Any, default: int) -> int:
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return default
+
+
+def _pending_chat_blocks(
+    since_iso: str, done: dict[str, int]
+) -> tuple[list[tuple[str, str]], dict[str, int]]:
+    """Unread chat turns per saved conversation, newest conversation first.
+
+    ``done`` maps a conversation id to how many of its turns were already
+    distilled (turns are append-only, so the rest are new). ``since_iso`` picks
+    the conversations (last updated on/after it; empty = all) — a picked one is
+    read in full from where it left off, so a later wider range loses nothing.
+    Returns the ``(id, transcript)`` blocks plus each id's turn count to record."""
+    blocks: list[tuple[str, str]] = []
+    ends: dict[str, int] = {}
     try:
         directory = config_mod.conversations_dir()
         metas = conv_mod.list_meta(directory)  # newest first
     except Exception:  # noqa: BLE001
-        return out
-    for meta in metas[:max_conversations]:
-        if str(meta.get("updated") or "") and str(meta["updated"]) < since_iso:
+        return blocks, ends
+    for meta in metas:
+        cid = str(meta.get("id") or "")
+        if not cid:
+            continue
+        if (
+            since_iso
+            and str(meta.get("updated") or "")
+            and str(meta["updated"]) < since_iso
+        ):
             break
-        conv = conv_mod.load(directory, str(meta.get("id") or ""))
-        for t in (conv or {}).get("turns") or []:
-            if t.get("kind") and t.get("kind") != "chat":
-                continue
-            if str(t.get("ts") or "") and str(t["ts"]) < since_iso:
-                continue
-            out.append(t)
-    return out
+        conv = conv_mod.load(directory, cid)
+        turns = list((conv or {}).get("turns") or [])
+        start = done.get(cid, 0)
+        if start > len(turns):  # rewritten conversation: read it again
+            start = 0
+        if start >= len(turns):
+            continue
+        fresh = [
+            t for t in turns[start:] if not t.get("kind") or t.get("kind") == "chat"
+        ]
+        title = str(meta.get("title") or "").strip()
+        body = kn.render_turns(fresh)
+        header = f"--- conversation: {title} ---" if title else "--- conversation ---"
+        blocks.append((cid, f"{header}\n{body}" if body.strip() else ""))
+        ends[cid] = len(turns)
+    return blocks, ends

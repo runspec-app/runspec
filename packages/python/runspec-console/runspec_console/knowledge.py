@@ -66,6 +66,9 @@ INBOX_FILE = "inbox.toml"
 OBSERVED_FILE = "observed.toml"
 TEAM_DIR = "team"
 INDEX_FILE = "index.sqlite"
+#: Machine-local bookkeeping (capture range, which chats were already distilled).
+#: Never shared — it describes this console, not the team's knowledge.
+STATE_FILE = "state.toml"
 
 #: Entity types a fact can be about. Free-form ``type:name`` refs with another type
 #: are kept (as ``topic``-like nodes); these are the ones the UI colours and the
@@ -437,6 +440,38 @@ class KnowledgeStore:
     def write_observed(self, facts: list[dict[str, Any]]) -> None:
         with _LOCK:
             _save(self._path(OBSERVED_FILE), facts)
+
+    # -- machine-local state ------------------------------------------------
+
+    def state(self) -> dict[str, Any]:
+        path = self._path(STATE_FILE)
+        if not path.exists():
+            return {}
+        try:
+            with open(path, "rb") as fh:
+                data = tomllib.load(fh)
+        except (OSError, tomllib.TOMLDecodeError):
+            return {}
+        return dict(data)
+
+    def update_state(self, **changes: Any) -> dict[str, Any]:
+        """Merge ``changes`` into the state file (a ``distilled`` dict is merged
+        key by key, everything else replaced)."""
+        with _LOCK:
+            state = self.state()
+            for key, value in changes.items():
+                if key == "distilled" and isinstance(value, dict):
+                    merged = dict(state.get("distilled") or {})
+                    merged.update(value)
+                    state["distilled"] = merged
+                else:
+                    state[key] = value
+            path = self._path(STATE_FILE)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
+            tmp.write_text(tomli_w.dumps(state), encoding="utf-8")
+            os.replace(tmp, path)
+            return state
 
     # -- derived index -----------------------------------------------------
 
@@ -921,13 +956,10 @@ def observe(
 # ── AI distillation helpers (prompt + parse; the bridge makes the call) ─────
 
 
-def build_distill_prompt(
-    turns: list[dict[str, Any]], *, known: list[str], max_chars: int = 24000
-) -> str:
-    """Prompt asking the model to extract durable team knowledge from recent chat
-    turns. ``turns`` are conversation chat turns; ``known`` are existing fact texts
-    (so it doesn't re-propose them). Tool *outputs* are left out (size, and they
-    can carry sensitive data); tool names + inputs are kept."""
+def render_turns(turns: list[dict[str, Any]]) -> str:
+    """Chat turns as the plain transcript the distill prompt reads. Tool *outputs*
+    are left out (size, and they can carry sensitive data); tool names + inputs
+    are kept."""
     lines: list[str] = []
     for t in turns:
         user = str(t.get("user") or "").strip()
@@ -941,7 +973,64 @@ def build_distill_prompt(
         if reply:
             lines.append(f"AGENT: {reply[:800]}")
         lines.append("")
-    transcript = "\n".join(lines)[-max_chars:]
+    return "\n".join(lines)
+
+
+def chunk_transcripts(
+    blocks: list[tuple[str, str]], max_chars: int = 24000
+) -> list[tuple[str, list[str]]]:
+    """Pack ``(key, text)`` blocks (one per conversation) into chunks of at most
+    ``max_chars`` so a long history becomes several model calls instead of being
+    cut off. Returns ``(chunk_text, keys_finished_in_chunk)``: a key is listed on
+    the chunk holding its *last* piece, so a caller marks a conversation done only
+    once all of it has been read. An oversized block is split on line breaks."""
+    max_chars = max(1000, int(max_chars))
+    pieces: list[tuple[str, str | None]] = []
+    for key, text in blocks:
+        text = text.strip()
+        if not text:
+            pieces.append(("", key))
+            continue
+        parts: list[str] = []
+        cur = ""
+        for line in text.split("\n"):
+            line = line[:max_chars]
+            if cur and len(cur) + len(line) + 1 > max_chars:
+                parts.append(cur)
+                cur = ""
+            cur = f"{cur}\n{line}" if cur else line
+        parts.append(cur)
+        for i, part in enumerate(parts):
+            pieces.append((part, key if i == len(parts) - 1 else None))
+    chunks: list[tuple[str, list[str]]] = []
+    text_acc = ""
+    keys: list[str] = []
+    for part, done_key in pieces:
+        if text_acc and part and len(text_acc) + len(part) + 2 > max_chars:
+            chunks.append((text_acc, keys))
+            text_acc, keys = "", []
+        if part:
+            text_acc = f"{text_acc}\n\n{part}" if text_acc else part
+        if done_key is not None:
+            keys.append(done_key)
+    if text_acc or keys:
+        chunks.append((text_acc, keys))
+    return chunks
+
+
+def build_distill_prompt(
+    turns: list[dict[str, Any]] | None = None,
+    *,
+    known: list[str],
+    max_chars: int = 24000,
+    transcript: str | None = None,
+) -> str:
+    """Prompt asking the model to extract durable team knowledge from chats.
+    Pass a pre-chunked ``transcript`` (see :func:`chunk_transcripts`), or
+    ``turns`` (rendered, keeping the last ``max_chars``). ``known`` are existing
+    fact texts, so it doesn't re-propose them."""
+    if transcript is None:
+        transcript = render_turns(turns or [])[-max_chars:]
     known_block = "\n".join(f"- {k}" for k in known[:80]) or "(none yet)"
     kinds = ", ".join(FACT_KINDS)
     types = ", ".join(ENTITY_TYPES)

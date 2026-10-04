@@ -32,10 +32,10 @@ wiki is meant to be shared.
 
 | Source | How | Goes to |
 |---|---|---|
-| **Capture usage** | Mines the last 30 days of run history: the arguments a runnable is usually run with, which hosts it runs on, and what usually runs after what. No AI. Also re-runs on its own when the tab opens and the last capture is over an hour old. | The wiki, marked *observed* |
+| **Capture usage** | Mines run history over the range picked next to the button (7, 30 or 90 days, or all history; 30 by default): the arguments a runnable is usually run with, which hosts it runs on, and what usually runs after what. No AI. Also re-runs on its own, over the same range, when the tab opens and the last capture is over an hour old. | The wiki, marked *observed* |
 | **The agent** | `propose_fact`, whenever it learns something reusable | The inbox |
 | **Claude Code** (via the [console MCP server](console-mcp-server.md)) | the same `propose_fact` tool | The inbox |
-| **Suggest from chats** | The utility model reads the last week of chats and suggests facts. Hidden when AI is off. | The inbox |
+| **Suggest from chats** | The utility model reads your saved chats over the same range and suggests facts. Long history is read in batches of about 24,000 characters, one model call each, up to 10 per click; the next click carries on. Chats already read are remembered, so a re-run only reads new chats and new turns. Hidden when AI is off. | The inbox |
 | **Add fact** | You write one in the tab | The wiki |
 
 Nothing proposed joins the wiki until you approve it in the **Inbox** tab, where
@@ -76,6 +76,7 @@ Everything lives in `{app_dir}/knowledge/`:
 | `observed.toml` | usage patterns from the last capture (rewritten each capture) |
 | `team/*.toml` | facts pulled from the team (Memory Sync, coming next) |
 | `index.sqlite` | search/graph index, rebuilt from the files whenever they change; safe to delete |
+| `state.toml` | this console's bookkeeping: the capture range and which chats were already read. Never shared; delete it to re-read every chat |
 
 The TOML files are the source of truth, written in a stable order so they diff
 cleanly in git. **Memory Sync**, the follow-up to this feature, shares

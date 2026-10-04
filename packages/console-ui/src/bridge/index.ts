@@ -817,6 +817,8 @@ export interface KnowledgeOverview {
   graph: { nodes: KnowledgeNode[]; edges: KnowledgeEdge[] }
   inbox: KnowledgeFact[]
   captured_at: string
+  // Run-history range the last capture used, in days (0 = all history).
+  capture_days?: number
   dir: string
   entity_types: string[]
   kinds: string[]
@@ -2286,10 +2288,17 @@ export interface BridgeApi {
   // Operator-authored fact (approved straight away), or an edit when `id` is set.
   knowledge_save_fact: (payload: KnowledgeFactInput) => Promise<KnowledgeResult>
   knowledge_retire: (factId: string) => Promise<{ ok: boolean }>
-  // Mine run history into observed facts (no AI).
-  knowledge_capture: (sinceDays?: number) => Promise<{ ok: boolean; observed?: number; runs?: number; error?: string }>
-  // Ask the utility model to propose facts from recent chats into the inbox.
-  knowledge_distill: (windowDays?: number) => Promise<{ ok: boolean; proposed?: number; skipped?: number; turns?: number; note?: string; error?: string }>
+  // Mine run history into observed facts (no AI). 0 = all history; omitted =
+  // the last range used. The range is remembered for the hourly auto-capture.
+  knowledge_capture: (sinceDays?: number) => Promise<{ ok: boolean; observed?: number; runs?: number; days?: number; error?: string }>
+  // Ask the utility model to propose facts from saved chats (last `windowDays`,
+  // 0 = all) into the inbox. Reads in chunks, one model call each, up to
+  // `maxCalls` per click; chats already read are skipped, `remaining` counts the
+  // chunks left for the next click.
+  knowledge_distill: (windowDays?: number, maxCalls?: number) => Promise<{
+    ok: boolean; proposed?: number; skipped?: number; calls?: number
+    conversations?: number; remaining?: number; note?: string; error?: string
+  }>
   // ── Improve (effectiveness + problem report) ──────────────────────────────────
   // Mine this install's saved conversations + run history into an effectiveness
   // report. A non-empty comment makes it a problem report (carried into the

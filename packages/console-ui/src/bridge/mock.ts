@@ -1704,8 +1704,8 @@ export const mockApi: BridgeApi = {
   knowledge_review: async (_id: string, _approve: boolean) => ({ ok: true }),
   knowledge_save_fact: async (_payload: KnowledgeFactInput) => ({ ok: true }),
   knowledge_retire: async (_id: string) => ({ ok: true }),
-  knowledge_capture: async () => ({ ok: true, observed: 2, runs: 40 }),
-  knowledge_distill: async () => ({ ok: true, proposed: 1, skipped: 0, turns: 12 }),
+  knowledge_capture: async (sinceDays?: number) => ({ ok: true, observed: 2, runs: 40, days: sinceDays ?? 30 }),
+  knowledge_distill: async () => ({ ok: true, proposed: 1, skipped: 0, calls: 1, conversations: 4, remaining: 0 }),
   run_improve_report: async (_windowDays?: number, comment?: string) => ({
     id: 'mock-improve-1',
     ts: '2026-09-03T10:00:00Z',
