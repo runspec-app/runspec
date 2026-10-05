@@ -41,6 +41,25 @@ def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
+def _default_email(lane: str) -> str:
+    return f"{lane}@{socket.gethostname()}"
+
+
+# Words a server uses when it refuses a push over who authored the commit: a
+# GitLab push rule ("Author 'x' is not a member of team", "committer email does
+# not match"), or a generic pre-receive hook refusal.
+_AUTHOR_HINTS = ("author", "committer", "not a member", "pre-receive", "push rule")
+
+
+def _push_error(text: str) -> str:
+    if any(h in text.lower() for h in _AUTHOR_HINTS):
+        return (
+            f"{text} — the server checks who wrote the commit. Set Commit email in "
+            "Settings → Memory Sync to the email on your git account, then push again."
+        )
+    return text
+
+
 def _os_user() -> str:
     try:
         return getpass.getuser()
@@ -61,6 +80,7 @@ class MemorySyncMixin:
             "branch": str(ms.get("branch") or "").strip()
             or config_mod.DEFAULT_MEMORY_SYNC_BRANCH,
             "user": str(ms.get("user") or "").strip(),
+            "email": str(ms.get("email") or "").strip(),
             "ca_bundle": str(ms.get("ca_bundle") or "").strip(),
             "tls_verify": ms.get("tls_verify", True) is not False,
             "lane": lane,
@@ -99,11 +119,13 @@ class MemorySyncMixin:
                     "credential_id",
                     "branch",
                     "user",
+                    "email",
                     "ca_bundle",
                     "tls_verify",
                 )
             },
             "user_default": _os_user(),
+            "email_default": _default_email(ms["lane"]),
             "lane": ms["lane"],
             "contrib_branch": ms["contrib_branch"],
             "path": ms["path"],
@@ -122,6 +144,9 @@ class MemorySyncMixin:
             }
         if url and any(c.isspace() for c in url):
             return {"ok": False, "error": "the repository URL can't contain spaces"}
+        email = str(payload.get("email") or "").strip()
+        if email and ("@" not in email or any(c.isspace() or c in "<>" for c in email)):
+            return {"ok": False, "error": "the commit email doesn't look like an email"}
         try:
             config_mod.write_memory_sync(payload)
         except Exception as exc:  # noqa: BLE001
@@ -197,7 +222,8 @@ class MemorySyncMixin:
             return {"ok": False, "error": "Memory Sync isn't set up — add a repo first"}
         store = self._knowledge_store()  # type: ignore[attr-defined]
         data, count = kn.contribution(store.own_facts())
-        author = f"{ms['lane']} <{ms['lane']}@{socket.gethostname()}>"
+        name = ms["user"] or _os_user()
+        author = f"{name} <{ms['email'] or _default_email(ms['lane'])}>"
         try:
             res = gitsync.push_file(
                 ms["url"],
@@ -216,10 +242,10 @@ class MemorySyncMixin:
                 f"— try again. ({exc})",
             }
         except gitsync.GitSyncError as exc:
-            return {"ok": False, "error": str(exc)}
+            return {"ok": False, "error": _push_error(str(exc))}
         except Exception as exc:  # noqa: BLE001
             logger.exception("memory sync push failed")
-            return {"ok": False, "error": f"push failed: {exc}"}
+            return {"ok": False, "error": _push_error(f"push failed: {exc}")}
         self._memory_sync_stamp(
             last_push=_now(),
             last_push_commit=res.commit,

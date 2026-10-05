@@ -5,7 +5,7 @@
 // memory_sync_test (bridge_memory_sync.py).
 
 import { useCallback, useEffect, useState } from 'react'
-import { Alert, Button, Divider, Form, Input, Select, Space, Switch, Typography, message } from 'antd'
+import { Alert, Button, Divider, Form, Input, Select, Space, Switch, Typography } from 'antd'
 import { ApiOutlined } from '@ant-design/icons'
 
 import { bridge, type Credential, type MemorySyncConfig, type MemorySyncSettings } from '../bridge'
@@ -15,6 +15,15 @@ const { Text, Paragraph } = Typography
 
 type FormValues = Omit<MemorySyncSettings, 'credential_id'> & { credential_id?: string }
 
+/** What the last Save / Test did, shown under the buttons until the next one. */
+export interface SyncResult { ok: boolean; text: string }
+
+/** A thrown bridge call becomes a readable line; a form-validation reject is null. */
+export function errorText(e: unknown): string | null {
+  if (e && typeof e === 'object' && 'errorFields' in e) return null
+  return String((e as Error)?.message || e || 'Something went wrong.')
+}
+
 export function MemorySyncTab() {
   const [form] = Form.useForm<FormValues>()
   const [cfg, setCfg] = useState<MemorySyncConfig | null>(null)
@@ -22,6 +31,7 @@ export function MemorySyncTab() {
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
   const [user, setUser] = useState('')
+  const [result, setResult] = useState<SyncResult | null>(null)
 
   const load = useCallback(() => {
     bridge.get_memory_sync_config().then(c => {
@@ -43,34 +53,39 @@ export function MemorySyncTab() {
     const v = await form.validateFields()
     const r = await bridge.save_memory_sync_config({
       url: (v.url ?? '').trim(), branch: (v.branch ?? '').trim(), user: (v.user ?? '').trim(),
-      credential_id: v.credential_id || '', ca_bundle: (v.ca_bundle ?? '').trim(),
+      email: (v.email ?? '').trim(), credential_id: v.credential_id || '', ca_bundle: (v.ca_bundle ?? '').trim(),
       tls_verify: v.tls_verify !== false,
     })
-    if (!r.ok) { message.error(r.error || 'Could not save.'); return false }
+    if (!r.ok) { setResult({ ok: false, text: `Not saved: ${r.error || 'unknown error'}` }); return false }
     return true
   }
 
+  const fail = (e: unknown) => {
+    const text = errorText(e)
+    if (text) setResult({ ok: false, text })
+  }
+
   const save = async () => {
-    setSaving(true)
+    setSaving(true); setResult(null)
     try {
-      if (await persist()) { message.success('Memory Sync saved.'); load() }
-    } catch { /* validation shown inline */ } finally { setSaving(false) }
+      if (await persist()) { setResult({ ok: true, text: 'Saved.' }); load() }
+    } catch (e) { fail(e) } finally { setSaving(false) }
   }
 
   const test = async () => {
-    setTesting(true)
+    setTesting(true); setResult(null)
     try {
       if (!(await persist())) return
       load()
       const r = await bridge.memory_sync_test()
-      if (!r.ok) message.error(r.error || 'Could not reach the repo.')
-      else if (r.empty) message.success('Connected. The repo is empty; your first push creates your branch.')
+      if (!r.ok) setResult({ ok: false, text: `Could not reach the repo: ${r.error || 'unknown error'}` })
+      else if (r.empty) setResult({ ok: true, text: 'Connected. The repo is empty; your first push creates your branch.' })
       else {
         const team = r.branch_exists ? 'the team branch exists' : 'the team branch does not exist yet'
         const mine = r.contrib_exists ? 'your branch exists' : 'your branch is created on your first push'
-        message.success(`Connected: ${team}, ${mine}.`)
+        setResult({ ok: true, text: `Connected: ${team}, ${mine}.` })
       }
-    } catch { /* validation shown inline */ } finally { setTesting(false) }
+    } catch (e) { fail(e) } finally { setTesting(false) }
   }
 
   const lane = cfg ? (user.trim() ? laneOf(user) : cfg.lane) : ''
@@ -108,6 +123,13 @@ export function MemorySyncTab() {
             <Input placeholder={cfg?.user_default} onChange={e => setUser(e.target.value)} />
           </Form.Item>
         </Space>
+        <Form.Item
+          name="email" label="Commit email"
+          extra="The email on your git account. GitLab can refuse a push whose author it doesn't recognise."
+          rules={[{ pattern: /^[^\s<>@]+@[^\s<>]+$/, message: "That doesn't look like an email." }]}
+        >
+          <Input placeholder={cfg?.email_default} style={{ maxWidth: 360 }} />
+        </Form.Item>
         {lane && (
           <Paragraph type="secondary" style={{ marginTop: -8 }}>
             Pushes write <Text code>facts/{lane}.toml</Text> on the branch <Text code>contrib/{lane}</Text>.
@@ -125,6 +147,12 @@ export function MemorySyncTab() {
         <Button type="primary" loading={saving} onClick={save}>Save</Button>
         <Button icon={<ApiOutlined />} loading={testing} onClick={test}>Test connection</Button>
       </Space>
+      {result && (
+        <Alert
+          type={result.ok ? 'success' : 'error'} showIcon closable onClose={() => setResult(null)}
+          style={{ marginTop: 16 }} message={result.text}
+        />
+      )}
     </div>
   )
 }

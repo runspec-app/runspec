@@ -6,7 +6,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 
 import { KnowledgeSync } from './KnowledgeSync'
-import { laneOf } from '../components/MemorySyncTab'
+import { errorText, laneOf } from '../components/MemorySyncTab'
 
 const { status, push, pull } = vi.hoisted(() => ({
   status: vi.fn(),
@@ -54,6 +54,24 @@ describe('KnowledgeSync', () => {
     expect(push).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: 'Push' }))
     await waitFor(() => expect(push).toHaveBeenCalled())
+    expect(await screen.findByText(/Pushed 2 fact\(s\) to contrib\/jo/)).toBeTruthy()
+  })
+
+  it('keeps a failed push on screen', async () => {
+    status.mockResolvedValue(base)
+    push.mockResolvedValue({ ok: false, error: "GitLab: Author 'jo@pc' is not a member of team" })
+    render(<KnowledgeSync />)
+    fireEvent.click(await screen.findByText('Push'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Push' }))
+    expect(await screen.findByText(/Push failed: GitLab: Author/)).toBeTruthy()
+  })
+
+  it('reports a pull that throws', async () => {
+    status.mockResolvedValue(base)
+    pull.mockRejectedValue(new Error('bridge went away'))
+    render(<KnowledgeSync />)
+    fireEvent.click(await screen.findByText('Pull'))
+    expect(await screen.findByText('Pull failed: bridge went away')).toBeTruthy()
   })
 })
 
@@ -62,5 +80,12 @@ describe('laneOf', () => {
     expect(laneOf('Jason.Finestone')).toBe('jason.finestone')
     expect(laneOf('DOMAIN\\jason')).toBe('domain-jason')
     expect(laneOf('  ')).toBe('user')
+  })
+})
+
+describe('errorText', () => {
+  it('skips form validation and reads thrown errors', () => {
+    expect(errorText({ errorFields: [] })).toBeNull()
+    expect(errorText(new Error('boom'))).toBe('boom')
   })
 })

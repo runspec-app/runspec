@@ -9,6 +9,23 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.331.0] — 2026-10-05
+
+### Added
+
+- **Memory Sync: a Commit email setting.** Pushes are authored with your name and
+  this email (blank still uses `<lane>@<hostname>`). A GitLab repo with an
+  author push rule refused the old placeholder with `Author '…' is not a member
+  of team`; a refusal like that now says to set Commit email. Kept on this
+  machine across a Config Sync pull.
+
+### Fixed
+
+- **Memory Sync buttons show their result.** Save and Test connection in
+  Settings → Memory Sync, and Push and Pull on the Knowledge tab, now leave the
+  outcome on screen (an alert in Settings, a tag beside the buttons) until the
+  next action. A bridge call that threw used to show nothing at all.
+
 ## [0.330.0] — 2026-10-04
 
 ### Changed

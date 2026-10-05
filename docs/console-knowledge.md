@@ -114,10 +114,18 @@ your config, and Config Sync stays pull-only.
 | Credential | a Credentials entry that can push to it (a token, or an ssh-key credential over SSH) |
 | Team branch | what a pull reads; default `main` |
 | Your name in the wiki | your *lane*; blank uses your login name. Kept on this machine across a Config Sync pull |
+| Commit email | the author email on your pushes; use the one on your git account. Blank uses `<lane>@<hostname>`. Kept on this machine |
 | CA bundle, Verify TLS | as for Config Sync, for an internal CA or a TLS-inspecting proxy |
 
 **Test connection** checks the repo is reachable and whether the team branch
-and your branch exist yet. The settings are stored as `[memory_sync]` in
+and your branch exist yet. Save, Test, Push and Pull each leave their result on
+screen (under the buttons in Settings, beside them on the Knowledge tab) until
+the next action, so a credential or server error is visible.
+
+If GitLab refuses a push with `Author '…' is not a member of team` (or another
+author or committer check), the repo has a push rule that only accepts commits
+from known accounts. Set **Commit email** to the email on your GitLab account
+and push again. The settings are stored as `[memory_sync]` in
 `config.toml`; the secret stays in the keychain.
 
 **Push** (Knowledge tab) shares your approved facts and nothing else:

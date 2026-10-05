@@ -778,12 +778,14 @@ export interface MemorySyncSettings {
   credential_id: string
   branch: string
   user: string          // blank = the OS login name
+  email: string         // commit author email; blank = <lane>@<hostname>
   ca_bundle: string
   tls_verify: boolean
 }
 export interface MemorySyncConfig {
   config: MemorySyncSettings
   user_default: string
+  email_default: string
   lane: string
   contrib_branch: string
   path: string

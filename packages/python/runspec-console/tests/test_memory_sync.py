@@ -218,3 +218,30 @@ def test_save_rejects_a_contrib_team_branch(bridge):
     assert not bridge.save_memory_sync_config({"url": "x", "branch": "contrib/a"})["ok"]
     got = bridge.save_memory_sync_config({"url": "https://x/w.git", "user": "Al"})
     assert got["ok"] and got["lane"] == "al" and got["path"] == "facts/al.toml"
+
+
+def test_push_uses_the_commit_email(bridge, bare):
+    from dulwich.repo import Repo
+
+    assert bridge.save_memory_sync_config(
+        {"url": bare, "user": "Jason F", "email": "jason@acme.com"}
+    )["ok"]
+    bridge.memory_sync_push()
+    repo = Repo(bare)
+    head = repo[repo.refs[b"refs/heads/contrib/jason-f"]]
+    assert head.author == b"Jason F <jason@acme.com>"
+    assert head.committer == head.author
+    assert bridge.get_memory_sync_config()["config"]["email"] == "jason@acme.com"
+    assert not bridge.save_memory_sync_config({"url": bare, "email": "nope"})["ok"]
+
+
+def test_author_rejection_says_what_to_fix(bridge, monkeypatch):
+    def refuse(*a, **k):
+        raise gitsync.GitSyncError(
+            "push to contrib/jason rejected: GitLab: Author 'j@pc' is not a member of team"
+        )
+
+    monkeypatch.setattr(gitsync, "push_file", refuse)
+    res = bridge.memory_sync_push()
+    assert not res["ok"] and "Commit email" in res["error"]
+    assert "not a member of team" in res["error"]

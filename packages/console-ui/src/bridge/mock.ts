@@ -1712,8 +1712,8 @@ export const mockApi: BridgeApi = {
   knowledge_capture: async (sinceDays?: number) => ({ ok: true, observed: 2, runs: 40, days: sinceDays ?? 30 }),
   knowledge_distill: async () => ({ ok: true, proposed: 1, skipped: 0, calls: 1, conversations: 4, remaining: 0 }),
   get_memory_sync_config: async () => ({
-    config: { url: '', credential_id: '', branch: 'main', user: '', ca_bundle: '', tls_verify: true },
-    user_default: 'dev', lane: 'dev', contrib_branch: 'contrib/dev', path: 'facts/dev.toml', engine: 'dulwich',
+    config: { url: '', credential_id: '', branch: 'main', user: '', email: '', ca_bundle: '', tls_verify: true },
+    user_default: 'dev', email_default: 'dev@workstation', lane: 'dev', contrib_branch: 'contrib/dev', path: 'facts/dev.toml', engine: 'dulwich',
   }),
   save_memory_sync_config: async () => ({ ok: true }),
   memory_sync_status: async () => ({

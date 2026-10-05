@@ -1898,11 +1898,13 @@ def read_memory_sync() -> dict[str, Any]:
         credential_id = "wiki-token"    # a Credentials-tab entry (write access)
         branch        = "main"          # what a pull reads; default "main"
         user          = "jason"         # your lane: pushes go to contrib/<user>
+        email         = "jason@acme.com"  # commit author email (your git account)
         ca_bundle     = ""              # HTTPS: PEM bundle (internal CA / TLS proxy)
         tls_verify    = true
 
-    ``user`` defaults to the OS login name and is kept machine-local across a
-    Config Sync pull. The secret lives in the keyring under ``credential_id``.
+    ``user`` defaults to the OS login name and ``email`` to ``<lane>@<hostname>``;
+    both are kept machine-local across a Config Sync pull. A server that checks
+    commit authors (a GitLab push rule) needs ``email`` to be one on your account. The secret lives in the keyring under ``credential_id``.
     Push/pull stamps live in the wiki's machine-local ``state.toml``, not here."""
     raw = read_config().get("memory_sync")
     return dict(raw) if isinstance(raw, dict) else {}
@@ -1914,7 +1916,7 @@ def write_memory_sync(ms: dict[str, Any]) -> None:
 
     def mutate(cfg: dict[str, Any]) -> None:
         entry: dict[str, Any] = {}
-        for key in ("url", "credential_id", "branch", "user", "ca_bundle"):
+        for key in ("url", "credential_id", "branch", "user", "email", "ca_bundle"):
             val = str(ms.get(key) or "").strip()
             if val and not (key == "branch" and val == DEFAULT_MEMORY_SYNC_BRANCH):
                 entry[key] = val
