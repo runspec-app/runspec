@@ -234,6 +234,28 @@ def test_observe_mines_habits_hosts_and_pairings(kn):
     assert kn.observe(hist[:2]) == []  # below threshold
 
 
+def test_observe_skips_per_person_args(kn):
+    """A username, email or run-as value differs per person, so it never becomes
+    a habit fact — by arg name, or because the value is the operator's account."""
+    hist = [
+        _run(
+            "tool-one",
+            f"2026-10-0{day}T09:00:00+00:00",
+            args={
+                "username": "jason",
+                "user-email": "jason@corp.com",
+                "run_as": "svc-app",
+                "target": "CORP\\Jason",  # the operator, by value
+                "space": "OPS",
+            },
+        )
+        for day in range(1, 5)
+    ]
+    texts = [f["text"] for f in kn.observe(hist)]
+    habits = [t for t in texts if "usually run with" in t]
+    assert habits == ["tool-one is usually run with space = 'OPS' (4 of 4 runs)."]
+
+
 def test_parse_distill(kn):
     reply = 'Here you go:\n```json\n[{"kind":"glossary","about":"term:BAU","text":"BAU means business as usual"}, {"bad":1}]\n```'
     out = kn.parse_distill(reply)

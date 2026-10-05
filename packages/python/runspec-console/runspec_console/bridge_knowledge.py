@@ -224,7 +224,8 @@ class KnowledgeMixin:
                     "lives, what team jargon means, tools that go together, something "
                     "learned about a host/group/profile, a knock-on effect, how the "
                     "team does something. One or two specific sentences that will still "
-                    "be true next week; never secrets or one-off results. It goes to "
+                    "be true next week and for everyone on the team; never secrets, one-off "
+                    "results or per-person details (a username or account). It goes to "
                     "the operator's review inbox (not straight into the wiki), so "
                     "propose freely when you learn something reusable."
                 ),

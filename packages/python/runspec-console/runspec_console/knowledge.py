@@ -1032,6 +1032,54 @@ def _parse_ts(ts: Any) -> datetime | None:
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
+# Arg names whose value says who ran it rather than how a runnable is used — a
+# username, an email, a run-as account. Those differ per person, so a habit
+# built on one ("search is usually run with username = jason") is only true for
+# whoever ran it and would be wrong in the team wiki.
+_PERSONAL_ARG_WORDS = frozenset(
+    {
+        "user",
+        "username",
+        "userid",
+        "uid",
+        "login",
+        "email",
+        "mail",
+        "upn",
+        "owner",
+        "account",
+        "principal",
+        "author",
+        "assignee",
+        "reporter",
+        "runas",
+    }
+)
+
+
+def _bare_account(v: str) -> str:
+    """``DOMAIN\\jason`` / ``jason@corp.com`` / ``Jason`` → ``jason``."""
+    v = v.strip().lower().rsplit("\\", 1)[-1]
+    return v.split("@", 1)[0]
+
+
+def _personal_arg(name: str, value: str, run: dict[str, Any]) -> bool:
+    """True when ``name = value`` describes the person running, not the run: the
+    arg is named like a user/account field, or its value is the operator's or
+    run-as account."""
+    norm = name.lower().replace("-", "_")
+    words = {w for w in norm.split("_") if w}
+    if words & _PERSONAL_ARG_WORDS or norm.replace("_", "") in _PERSONAL_ARG_WORDS:
+        return True
+    bare = _bare_account(value)
+    if not bare:
+        return False
+    people = {
+        _bare_account(str(run.get(k) or "")) for k in ("operator", "runAs", "user")
+    }
+    return bare in people - {""}
+
+
 def _looks_like_path(v: str) -> bool:
     return (
         bool(re.match(r"^(/[^\s]+|[A-Za-z]:[\\/][^\n]*|~/[^\s]+)$", v)) and len(v) > 2
@@ -1055,7 +1103,9 @@ def observe(
 
     * **arg habits** — a runnable is usually run with ``arg=value`` (a value seen
       in ≥ ``habit_share`` of its runs, at least ``min_runs`` times); path values
-      also link a ``file:`` entity,
+      also link a ``file:`` entity. Args that name the person running (a
+      username, email or run-as account, or a value equal to the operator) are
+      skipped: they differ per person, so they are never a team fact,
     * **host usage** — a runnable is used on a host (≥ ``min_runs`` runs),
     * **pairings** — runnable B is often run after A by the same operator within
       ``pair_window_s`` (≥ ``min_runs`` times).
@@ -1132,6 +1182,8 @@ def observe(
                     sv = ", ".join(map(str, v)) if isinstance(v, list) else str(v)
                     if len(sv) > MAX_VALUE_LEN:
                         continue
+                    if _personal_arg(str(k), sv, r):
+                        continue  # per-person, never a team fact
                     values[(str(k), sv)].append(r)
             for (k, sv), vruns in sorted(values.items()):
                 c = len(vruns)
@@ -1625,6 +1677,9 @@ def build_distill_prompt(
         "Rules:\n"
         "- Only facts that will still be true next week. No one-off results, no "
         "opinions, no secrets, passwords, tokens or personal data.\n"
+        "- Nothing that differs per person: no usernames, emails or accounts "
+        "someone ran a tool as, and no 'X usually runs Y'. It must hold for "
+        "everyone on the team.\n"
         "- One or two sentences each, specific (name hosts, paths, runnables).\n"
         "- Skip anything already in the known list.\n"
         f"- kind is one of: {kinds}.\n"

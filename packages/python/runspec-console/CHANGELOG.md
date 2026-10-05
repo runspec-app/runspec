@@ -9,6 +9,20 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.332.1] — 2026-10-05
+
+### Fixed
+
+- **Capture no longer turns per-person args into wiki facts.** A runnable run
+  with your own username used to produce "tool-one search is usually run with
+  username = jason", which is only true for you and wrong in the team wiki.
+  Capture now skips args named like a user or account field (username, email,
+  login, owner, run-as and similar) and any value equal to the operator's or
+  run-as account (`DOMAIN\user` and `user@domain` forms included). Observed
+  facts are rebuilt on each capture, so the old ones go at the next one. The
+  chat distill prompt and `propose_fact` now also say not to record per-person
+  details.
+
 ## [0.332.0] — 2026-10-05
 
 ### Changed
