@@ -308,7 +308,7 @@ class BuiltinBridge(_CardPrimitives, McpServerMixin):
         # a mix: two exposed console-specific tools + two that must be filtered out
         return [
             {"name": "console_status", "description": "", "input_schema": {}},
-            {"name": "remember", "description": "", "input_schema": {}},
+            {"name": "propose_fact", "description": "", "input_schema": {}},
             {"name": "manage_hosts", "description": "", "input_schema": {}},
             {"name": "run_python_sandboxed", "description": "", "input_schema": {}},
         ]
@@ -350,7 +350,7 @@ def test_builtins_off_by_default(monkeypatch):
 def test_builtins_filtered_to_console_specific_set(monkeypatch):
     _expose(monkeypatch, on=True)
     names = {t["name"] for t in BuiltinBridge()._mcp_server_builtins()}
-    assert names == {"console_status", "remember"}  # config + exec tools dropped
+    assert names == {"console_status", "propose_fact"}  # config + exec tools dropped
 
 
 def test_builtin_autonomous_runs_under_mcp_chat_id(monkeypatch):
@@ -366,10 +366,10 @@ def test_builtin_autonomous_runs_under_mcp_chat_id(monkeypatch):
 def test_builtin_confirm_parks_then_runs(monkeypatch):
     _expose(monkeypatch, on=True)
     b = BuiltinBridge(autonomy="confirm", approve=True, answer=True)
-    text, is_error = b._mcp_server_execute_builtin("remember", {"text": "x"})
+    text, is_error = b._mcp_server_execute_builtin("propose_fact", {"text": "x"})
     assert is_error is False
     assert b.registered and b.registered[0][2] == "confirm"
-    assert b.ran and b.ran[0][0] == "remember"
+    assert b.ran and b.ran[0][0] == "propose_fact"
     # A visible card is raised for the built-in's gate and finalised to done.
     assert b.card_columns() == ["awaiting_human", "running", "done"]
 
@@ -386,7 +386,7 @@ def test_builtin_confirm_timeout_is_resumable(monkeypatch):
     _expose(monkeypatch, on=True)
     b = BuiltinBridge(autonomy="confirm", answer=False)
     b._mcp_server_confirm_wait = lambda: 0.05  # type: ignore
-    text, is_error = b._mcp_server_execute_builtin("remember", {})
+    text, is_error = b._mcp_server_execute_builtin("propose_fact", {})
     assert is_error is False and "awaiting operator approval" in text.lower()
     assert b.ran == []
 

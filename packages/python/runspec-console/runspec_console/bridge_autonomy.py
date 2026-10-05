@@ -152,21 +152,17 @@ class AutonomyMixin:
             # frozenset — the set is also the dispatch key (_run_tool_sync) and the
             # search-mode hot-kernel key, so removing it would strand the tool.
             return "confirm"
-        if tool_name == "forget_memory":
-            # Deleting a remembered fact is destructive (the content is gone), and the
-            # operator explicitly drives the prune ("remove the ones I agree to"), so
-            # each forget is confirmed. Same special-case shape as save_runbook: kept
-            # in _MEMORY_TOOL_NAMES (the dispatch + hot-kernel key), gated here.
-            return "confirm"
         if tool_name in _KNOWLEDGE_WRITE_TOOL_NAMES:
             # Approving / editing / retiring a wiki fact changes what every console
             # reads once Memory Sync shares it, so the operator sees each one — also
             # how a call from an MCP client (Claude Code) parks for a human.
             return "confirm"
         if tool_name in _KNOWLEDGE_TOOL_NAMES:
-            return "autonomous"  # reads, and propose_fact (lands in the review inbox)
+            # reads, propose_fact (lands in the review inbox) and pin_wiki_fact
+            # (machine-local, capped, undone by an unpin)
+            return "autonomous"
         if tool_name in _MEMORY_TOOL_NAMES:
-            return "autonomous"  # local memory/runbook store — no model-spend gate
+            return "autonomous"  # local runbook store — no model-spend gate
         if tool_name in _RUNBOOK_READ_TOOL_NAMES:
             return "autonomous"  # read-only runbook inspection — no side effects
         if tool_name in _STATUS_TOOL_NAMES:
@@ -298,7 +294,7 @@ class AutonomyMixin:
         * confirm/supervised calls — the operator answers one prompt at a time,
           and the frontend matches a confirm to its card by tool name;
         * built-in and MCP tools — several write shared console state
-          (``remember`` rewrites the memory file; runbook/config saves), so two at
+          (``propose_fact`` rewrites the wiki inbox; runbook/config saves), so two at
           once could lose an update;
         * group / saved-run fan-outs — already parallel inside, with their own
           grouped confirm;
@@ -1356,8 +1352,10 @@ class AutonomyMixin:
             key = first("action", "runnable", "id")
         elif tool_name == "emit_event":
             key = first("source", "type")
-        elif tool_name in ("remember", "search_memory"):
-            key = first("query", "text", "app")
+        elif tool_name in ("search_wiki", "propose_fact"):
+            key = first("query", "text", "entity")
+        elif tool_name in ("pin_wiki_fact", "retire_wiki_fact", "review_wiki_fact"):
+            key = first("fact_id")
         elif tool_name == "search_history":
             key = first("runnable", "host")
         elif tool_name == "list_files":

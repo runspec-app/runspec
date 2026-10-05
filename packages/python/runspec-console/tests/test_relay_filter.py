@@ -459,9 +459,9 @@ def test_custom_tools_schema_lists_hosts_and_filters():
     )
     tools = b._custom_agent_tools()
     names = {t["name"] for t in tools}
-    # Transfer tools (gated on a remote host) plus the always-on memory tools.
+    # Transfer tools (gated on a remote host) plus the always-on wiki + runbook tools.
     assert {"download_file", "relay_file"} <= names
-    assert {"remember", "search_memory", "save_runbook"} <= names
+    assert {"search_wiki", "propose_fact", "pin_wiki_fact", "save_runbook"} <= names
     dl = next(t for t in tools if t["name"] == "download_file")
     props = dl["input_schema"]["properties"]
     # Only the reachable remote host is offered (not "local").
@@ -473,12 +473,12 @@ def test_custom_tools_schema_lists_hosts_and_filters():
 
 
 def test_custom_tools_empty_without_remote_hosts():
-    # With no remote host there are no transfer tools, but the local memory tools
+    # With no remote host there are no transfer tools, but the local wiki + runbook tools
     # are still offered (they don't need SSH).
     b = _ToolBridge(hosts=[{"name": "local"}], filters=[])
     names = {t["name"] for t in b._custom_agent_tools()}
     assert "download_file" not in names and "relay_file" not in names
-    assert {"remember", "search_memory", "save_runbook"} <= names
+    assert {"search_wiki", "propose_fact", "pin_wiki_fact", "save_runbook"} <= names
 
 
 def test_custom_tools_are_gated():

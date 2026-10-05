@@ -452,8 +452,8 @@ Key properties, all verified in `bridge_autonomy.py`:
 | Read-only discovery / status | `search_runnables`, `describe_runnable`, `console_status` | **autonomous** |
 | Read-only Microsoft 365 | `outlook_inbox`, `outlook_search`, `outlook_calendar`, `outlook_reminders`, … | **autonomous** |
 | Read-only repo access | `repo_status`, `repo_list`, `repo_grep`, `repo_read`, `repo_diff` | **autonomous** |
-| Local memory recall / review | `remember`, `search_memory`, `list_memories` | **autonomous** (local TOML, reversible; `list_memories` is a read-only enumeration for pruning) |
-| **Forget** a memory | `forget_memory` | **confirm** — deletes a stored fact by id; the operator agrees to each prune |
+| Knowledge wiki read / propose / pin | `search_wiki`, `wiki_page`, `wiki_graph`, `list_wiki_inbox`, `propose_fact`, `pin_wiki_fact` | **autonomous** (reads; a proposal only lands in the review inbox; a pin is machine-local and capped at six) |
+| **Curate** the wiki | `review_wiki_fact`, `edit_wiki_fact`, `retire_wiki_fact` | **confirm** — changes what every console reads once Memory Sync shares it |
 | Read a runbook's steps | `run_runbook` | **autonomous** — it returns *text*; every runnable the steps then drive is gated individually at its own level |
 | **Write** a runbook | `save_runbook` | **confirm** — a runbook is a procedure the agent (and every console it syncs to) will later follow |
 | Session-workspace files | `workspace_ls`, `workspace_read`, `workspace_grep`, `workspace_write`, … | **autonomous** (read-only or path-jailed to the current session's workspace) |

@@ -1,15 +1,10 @@
 """
-memory.py — persistent agent memory + curated runbooks (the cross-run knowledge
-that makes repeat support queries cheaper).
+memory.py — curated runbooks (the cross-run procedures that make repeat support
+queries cheaper), plus a read-only view of the retired agent memory.
 
-Two stores, both small TOML collections in the app dir, both pure here (the bridge
-owns when to read/write):
-
-- **Memory** (`runspec_memory.toml`, machine-local, auto-accruing): facts the agent
-  writes via the `remember` tool, keyed by an `app` tag. Only the *pinned* subset is
-  folded into the system prompt (capped) so the prompt-cached prefix stays stable;
-  the rest is fetched on demand via `search_memory` (stdlib token-overlap scoring —
-  no embedding dependency). Never synced.
+- **Legacy memory** (`runspec_memory.toml`): facts the old `remember` tool wrote.
+  Since 0.332.0 facts live in the team knowledge wiki (``knowledge.py``); this file
+  is only read once, by the move into the wiki's review inbox.
 - **Runbooks** (`runspec_runbooks.toml`, shareable): operator/agent-authored runbooks
   (`symptom` → ordered steps naming which runnables to call). A `[[runbook]]`
   collection so it rides the existing Config Sync (merged by `id`). Steps are stored
@@ -18,7 +13,7 @@ owns when to read/write):
   form renders to numbered prose via `render_runbook` — execution is prose-only.
 
 Writes are atomic-ish (temp file + replace) under a re-entrant lock, mirroring
-``config.py``. Both files use ``tomli_w`` so arrays-of-tables / lists / bools / ints
+``config.py``. The files use ``tomli_w`` so arrays-of-tables / lists / bools / ints
 round-trip without a hand-rolled serialiser.
 """
 
@@ -28,7 +23,6 @@ import os
 import re
 import sys
 import threading
-import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -85,184 +79,15 @@ def _tokens(text: str) -> set[str]:
     return set(_WORD.findall(text.lower()))
 
 
-# ── memory ────────────────────────────────────────────────────────────────────
+# ── legacy memory (read-only, for the one-time move into the wiki) ─────────────
 
 
 def read_memory() -> list[dict[str, Any]]:
-    """All memory entries ({}-safe). Public so the bridge / Config-Sync-preserve can
-    read without importing internals."""
+    """All entries of the older ``runspec_memory.toml`` (the retired ``remember``
+    tool's store), ``[]`` when absent. Read once by
+    ``bridge_knowledge._migrate_memory``, which moves them into the wiki."""
     with _LOCK:
         return _load(memory_path(), "memory")
-
-
-def write_memory(rows: list[dict[str, Any]]) -> None:
-    with _LOCK:
-        _save(memory_path(), "memory", rows)
-
-
-def add_memory(
-    fact: str,
-    *,
-    app: str = _DEFAULT_APP,
-    tags: list[str] | tuple[str, ...] = (),
-    pin: bool = False,
-    cap: int = 50,
-) -> str:
-    """Append a fact and return its id. Evicts the app's oldest unpinned entries
-    once it exceeds ``cap``. A blank fact is rejected (returns "")."""
-    fact = (fact or "").strip()
-    if not fact:
-        return ""
-    app = (app or _DEFAULT_APP).strip() or _DEFAULT_APP
-    entry = {
-        "id": "m_" + uuid.uuid4().hex[:8],
-        "app": app,
-        "fact": fact,
-        "tags": [str(t).strip() for t in tags if str(t).strip()],
-        "pinned": bool(pin),
-        "created": _now(),
-        "hits": 0,
-    }
-    with _LOCK:
-        rows = _load(memory_path(), "memory")
-        rows.append(entry)
-        rows = _evict(rows, app, cap)
-        _save(memory_path(), "memory", rows)
-    return entry["id"]
-
-
-def _evict(rows: list[dict[str, Any]], app: str, cap: int) -> list[dict[str, Any]]:
-    """Keep at most ``cap`` entries for ``app``: pinned always survive; among the
-    rest keep the most-used then newest. Other apps are untouched."""
-    in_app = [r for r in rows if r.get("app") == app]
-    if len(in_app) <= cap:
-        return rows
-    pinned = [r for r in in_app if r.get("pinned")]
-    rest = [r for r in in_app if not r.get("pinned")]
-    rest.sort(
-        key=lambda r: (int(r.get("hits", 0)), str(r.get("created", ""))), reverse=True
-    )
-    keep = pinned + rest[: max(0, cap - len(pinned))]
-    # Preserve original order for stable output / diffs.
-    keep_ids = {r["id"] for r in keep if r.get("id")}
-    return [r for r in rows if r.get("app") != app or r.get("id") in keep_ids]
-
-
-def search_memory(
-    query: str, *, app: str | None = None, k: int = 5
-) -> list[dict[str, Any]]:
-    """Top-``k`` entries ranked by token overlap with ``query`` (optionally scoped to
-    one ``app``). Increments ``hits`` on the returned entries (persisted). Returns the
-    matched entries (id/app/fact/tags), most relevant first."""
-    q = _tokens(query)
-    with _LOCK:
-        rows = _load(memory_path(), "memory")
-        scored: list[tuple[int, str, dict[str, Any]]] = []
-        for r in rows:
-            if app and r.get("app") != app:
-                continue
-            hay = _tokens(str(r.get("fact", "")) + " " + " ".join(r.get("tags", [])))
-            score = len(q & hay)
-            if score:
-                scored.append((score, str(r.get("created", "")), r))
-        scored.sort(key=lambda t: (t[0], t[1]), reverse=True)
-        top = [r for _s, _c, r in scored[: max(0, k)]]
-        if top:
-            hit_ids = {r["id"] for r in top if r.get("id")}
-            for r in rows:
-                if r.get("id") in hit_ids:
-                    r["hits"] = int(r.get("hits", 0)) + 1
-            _save(memory_path(), "memory", rows)
-        return [
-            {
-                "id": r.get("id"),
-                "app": r.get("app"),
-                "fact": r.get("fact"),
-                "tags": r.get("tags", []),
-            }
-            for r in top
-        ]
-
-
-def list_memories(app: str | None = None) -> list[dict[str, Any]]:
-    """Every stored fact (optionally scoped to one ``app``), newest first, with the
-    fields an operator needs to prune — id, app, fact, tags, pinned, hits, created.
-
-    Unlike ``search_memory`` this takes no query, returns the *full* set, and is
-    strictly read-only (no ``hits`` increment), so the agent can enumerate what's
-    remembered — the list step of "help me prune my memories" — without a keyword to
-    guess or inflating recency stats just by looking."""
-    with _LOCK:
-        rows = _load(memory_path(), "memory")
-    # Newest first. The file is append-only (add_memory appends; _evict filters in
-    # place) and never synced, so its order is insertion order — reversing it is a
-    # reliable newest-first even for facts added in the same second (their `created`
-    # timestamps, at second granularity, would tie under a sort).
-    return [
-        {
-            "id": r.get("id"),
-            "app": r.get("app", _DEFAULT_APP),
-            "fact": r.get("fact"),
-            "tags": r.get("tags", []),
-            "pinned": bool(r.get("pinned")),
-            "hits": int(r.get("hits", 0)),
-            "created": r.get("created", ""),
-        }
-        for r in reversed(rows)
-        if not app or r.get("app") == app
-    ]
-
-
-def forget_memory(memory_id: str) -> bool:
-    """Remove one memory by id via read-modify-write (the whole file is re-read, the
-    matching entry dropped, and the rest written back untouched) — so forgetting one
-    fact never disturbs the others, including any added on disk since load. Mirrors
-    ``delete_runbook``. Returns True if an entry was removed, False for a blank/unknown
-    id."""
-    mid = str(memory_id or "").strip()
-    if not mid:
-        return False
-    with _LOCK:
-        rows = _load(memory_path(), "memory")
-        kept = [r for r in rows if r.get("id") != mid]
-        if len(kept) == len(rows):
-            return False
-        _save(memory_path(), "memory", kept)
-    return True
-
-
-#: Default count of pinned facts that fold into the system prompt (build_header).
-HEADER_MAX_FACTS = 6
-
-
-def pinned_count() -> int:
-    """How many memory facts are pinned (fold into the system prompt). Surfaced by
-    the context indicator so the operator can spot a bloated pin set — only the top
-    ``HEADER_MAX_FACTS`` actually reach the prompt."""
-    with _LOCK:
-        rows = _load(memory_path(), "memory")
-    return sum(1 for r in rows if r.get("pinned"))
-
-
-def build_header(max_facts: int = HEADER_MAX_FACTS, max_chars: int = 700) -> str:
-    """The small block folded into the system prompt: the **pinned** facts only
-    (most-used first), as ``- [app] fact`` bullets, hard-capped by count and chars.
-
-    Returns ``""`` when nothing is pinned, so a session with no pins leaves the
-    cached system prefix byte-identical (no prompt-cache churn)."""
-    with _LOCK:
-        rows = _load(memory_path(), "memory")
-    pinned = [r for r in rows if r.get("pinned")]
-    if not pinned:
-        return ""
-    pinned.sort(key=lambda r: int(r.get("hits", 0)), reverse=True)
-    lines = ["## Known facts (memory)"]
-    for r in pinned[: max(0, max_facts)]:
-        line = f"- [{r.get('app', _DEFAULT_APP)}] {str(r.get('fact', '')).strip()}"
-        if len("\n".join(lines)) + len(line) + 1 > max_chars:
-            break
-        lines.append(line)
-    return "\n".join(lines) if len(lines) > 1 else ""
 
 
 # ── runbooks (curated runbooks) ───────────────────────────────────────────────────

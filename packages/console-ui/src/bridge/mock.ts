@@ -1691,6 +1691,8 @@ export const mockApi: BridgeApi = {
       stats: { approved: 2, observed: 2, pending: 1, retired: 0, entities: nodes.size, fts: true },
       graph: { nodes: [...nodes.values()], edges: [...edges.values()] },
       inbox: facts.filter(f => f.status === 'pending'),
+      pinned: facts.filter(f => f.status === 'approved').slice(0, 1),
+      pin_max: 6,
       captured_at: '2026-10-04T09:00:00+00:00',
       dir: '~/AppData/Roaming/runspec-console/knowledge',
       installed_runnables: ['tail-log', 'restart-service', 'disk-usage'],
@@ -1709,6 +1711,7 @@ export const mockApi: BridgeApi = {
   knowledge_review: async (_id: string, _approve: boolean) => ({ ok: true }),
   knowledge_save_fact: async (_payload: KnowledgeFactInput) => ({ ok: true }),
   knowledge_retire: async (_id: string) => ({ ok: true }),
+  knowledge_pin: async (_id: string, _pinned: boolean) => ({ ok: true }),
   knowledge_capture: async (sinceDays?: number) => ({ ok: true, observed: 2, runs: 40, days: sinceDays ?? 30 }),
   knowledge_distill: async () => ({ ok: true, proposed: 1, skipped: 0, calls: 1, conversations: 4, remaining: 0 }),
   get_memory_sync_config: async () => ({

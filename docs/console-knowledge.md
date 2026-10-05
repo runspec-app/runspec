@@ -69,13 +69,48 @@ clear button under the zoom buttons) to clear the selection.
 | `list_wiki_inbox` | pending facts with source and author | autonomous |
 | `review_wiki_fact` | approve or reject (optionally editing) | confirm |
 | `edit_wiki_fact` | correct an approved fact | confirm |
-| `retire_wiki_fact` | retire a wrong or stale fact | confirm |
+| `retire_wiki_fact` | retire a wrong or stale fact (also drops its pin) | confirm |
+| `pin_wiki_fact` | pin a fact into every chat's context, or unpin it | autonomous |
 
 The default system prompt tells the agent to check `search_wiki` before asking
 you where something lives or what a term means, and to `propose_fact` what it
-learns. None of the wiki itself is put in the prompt; the agent looks things up
-when it needs them. A custom `[llm] system` replaces that line, so add it to
-yours (or use `system_append`) if you want the same behaviour.
+learns. The only part of the wiki in the prompt is your **pinned** facts; the
+agent looks everything else up when it needs it. A custom `[llm] system`
+replaces that line, so add it to yours (or use `system_append`) if you want the
+same behaviour.
+
+## Pinned facts
+
+Pin up to six facts that matter on almost every turn (the pushpin on a fact, or
+the agent's `pin_wiki_fact`); they are folded into every chat's system prompt
+under *Pinned facts (team wiki)*. With nothing pinned the prompt is unchanged.
+The side panel lists the pins when no entity is selected, and the context gauge
+counts them. Pins belong to this console: they live in `state.toml`, Memory Sync
+never shares them, and you can pin a fact pulled from the team. A pin follows a
+fact through an edit or a review, and goes away when the fact is retired or
+rejected.
+
+## Moving over from the old agent memory
+
+The wiki replaced the agent's older memory (`remember`, `search_memory`,
+`list_memories`, `forget_memory` over `runspec_memory.toml`) in console 0.332.0.
+The first time the wiki is opened after the upgrade, each remembered fact moves
+into the **inbox** as a pending `note` from source `memory`: about `app:<app>`
+(unless it was the default `general`), its first three tags as `topic:` entities,
+and any host, group or runnable the text names. Pinned memories stay pinned (the
+six most recalled), so the prompt carries the same facts as before. They move to
+the inbox rather than straight into the wiki because the old memory was never
+shared and approved facts are what Memory Sync pushes: you decide which become
+team knowledge. Until you approve one, `search_wiki` doesn't return it. A fact
+that looks like it contains a secret is not moved. The old file is renamed
+`runspec_memory.toml.migrated` and kept as a backup.
+
+| Old tool | Now |
+|---|---|
+| `remember` | `propose_fact` (then approve it in the inbox) |
+| `remember` with `pin` | `propose_fact`, then `pin_wiki_fact` |
+| `search_memory`, `list_memories` | `search_wiki`, `wiki_page` |
+| `forget_memory` | `retire_wiki_fact` |
 
 With `[mcp_server] expose_builtins = true`, the same tools are published to an MCP
 client. A confirm-gated call from Claude Code (review, edit, retire) waits for you
@@ -95,7 +130,7 @@ Everything lives in `{app_dir}/knowledge/`:
 | `observed.toml` | usage patterns and config facts from the last capture (rewritten each capture) |
 | `team/*.toml` | facts pulled from the team by Memory Sync, one file per contributor (replaced on each pull) |
 | `index.sqlite` | search/graph index, rebuilt from the files whenever they change; safe to delete |
-| `state.toml` | this console's bookkeeping: the capture range, which chats were already read, and the last Memory Sync push and pull. Never shared; delete it to re-read every chat |
+| `state.toml` | this console's bookkeeping: the capture range, which chats were already read, the pinned facts, and the last Memory Sync push and pull. Never shared; deleting it re-reads every chat and clears the pins |
 
 The TOML files are the source of truth, written in a stable order so they diff
 cleanly in git.

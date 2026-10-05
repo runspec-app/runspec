@@ -32,8 +32,8 @@ def _tool(name, desc="Do a thing. Second sentence with detail."):
 HOT = [
     "console_status",
     "search_history",
-    "remember",
-    "search_memory",
+    "search_wiki",
+    "save_runbook",
     "workspace_ls",
 ]
 DEFERRED = [
@@ -128,13 +128,6 @@ def test_hot_kernel_is_pinned_exactly():
         # fetch_url: read-only web read, the entry point of "make a runbook from
         # this doc" tasks — kept zero-hop so the agent reads the page directly.
         "fetch_url",
-        "remember",
-        "search_memory",
-        # list_memories/forget_memory: the review-and-prune pair. Hot for the same
-        # reason as the rest of the memory kernel — the pinned-fact header references
-        # memory, so managing it shouldn't need a discovery hop.
-        "list_memories",
-        "forget_memory",
         "save_runbook",
         # run_runbook renders a runbook's steps to follow; load_runbook reads its
         # raw definition to inspect/edit. Both are hot: the folded index advertises

@@ -3592,111 +3592,13 @@ class AgentToolsMixin:
         return payload
 
     def _memory_tools(self) -> list[dict[str, Any]]:
-        """Schemas for the persistent-memory / runbook tools. Always available (the
-        stores are local) — so the agent accrues knowledge even with no remote hosts.
+        """Schemas for the runbook-store tools. Always available (the store is local).
+        Facts the agent learns go to the team wiki instead (``_knowledge_tools``).
         Includes ``load_runbook`` (read a runbook's raw definition to inspect/edit it,
         chat-only); ``run_runbook`` in ``_action_tools`` renders the steps to follow."""
         from . import memory
 
         tools: list[dict[str, Any]] = [
-            {
-                "name": "remember",
-                "description": (
-                    "Save a durable fact about an application for future runs — where "
-                    "a log lives, what a recurring error means, which service to check. "
-                    "Cheap to call; it persists locally and is recalled later via "
-                    "search_memory. Set pin=true for a high-value fact you want folded "
-                    "into every future chat's context (use sparingly)."
-                ),
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "fact": {
-                            "type": "string",
-                            "description": "The fact to remember, one sentence.",
-                        },
-                        "app": {
-                            "type": "string",
-                            "description": "Application/system this fact is about (groups related facts). Defaults to 'general'.",
-                        },
-                        "tags": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "Optional keywords to aid later recall.",
-                        },
-                        "pin": {
-                            "type": "boolean",
-                            "description": "Pin into every future chat's context (only the most useful facts).",
-                        },
-                    },
-                    "required": ["fact"],
-                },
-            },
-            {
-                "name": "search_memory",
-                "description": (
-                    "Recall previously remembered facts about an application by keyword "
-                    "before investigating from scratch — saves re-deriving what a past "
-                    "run already learned. Returns the most relevant saved facts."
-                ),
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "Keywords to search remembered facts for.",
-                        },
-                        "app": {
-                            "type": "string",
-                            "description": "Optional: restrict to one application's facts.",
-                        },
-                    },
-                    "required": ["query"],
-                },
-            },
-            {
-                "name": "list_memories",
-                "description": (
-                    "List remembered facts (id, app, fact, tags, whether pinned, and "
-                    "how often recalled) so you can review or prune them — the step "
-                    "before forget_memory. Unlike search_memory this needs no query and "
-                    "returns everything (optionally scoped to one app). Use it when the "
-                    "operator asks what you remember or wants to clean up memory: only "
-                    "the top few pinned facts fold into the prompt, so a bloated pin set "
-                    "is worth trimming."
-                ),
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "app": {
-                            "type": "string",
-                            "description": "Optional: restrict to one application's facts.",
-                        },
-                    },
-                    "required": [],
-                },
-            },
-            {
-                "name": "forget_memory",
-                "description": (
-                    "Delete one remembered fact by its id (from list_memories or "
-                    "search_memory). Use this to prune outdated, wrong, or duplicate "
-                    "memories — deleting a pinned fact also frees a slot in the prompt "
-                    "header. The operator approves each forget, so name the fact you're "
-                    "removing in your message first. Deletion is permanent (the fact's "
-                    "text is gone); it does not affect any other memory."
-                ),
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "memory_id": {
-                            "type": "string",
-                            "description": "The id of the fact to forget (e.g. m_1a2b3c4d).",
-                        },
-                    },
-                    "required": ["memory_id"],
-                },
-            },
             {
                 "name": "save_runbook",
                 "description": (
@@ -4701,44 +4603,10 @@ class AgentToolsMixin:
         return json.dumps({"runbook": definition}, ensure_ascii=False)
 
     def _run_memory_tool(self, name: str, ti: dict[str, Any]) -> str:
-        """Execute a memory/runbook tool against the local stores (the gate has
+        """Execute a runbook-store tool against the local store (the gate has
         already cleared it as autonomous). Returns a short string the model reads."""
         from . import memory
 
-        if name == "remember":
-            fact = str(ti.get("fact") or "").strip()
-            if not fact:
-                return "Error: 'fact' is required."
-            mid = memory.add_memory(
-                fact,
-                app=str(ti.get("app") or "general"),
-                tags=list(ti.get("tags") or []),
-                pin=bool(ti.get("pin")),
-            )
-            pinned = " (pinned into future context)" if ti.get("pin") else ""
-            return f"Remembered{pinned}. id={mid}"
-        if name == "search_memory":
-            app = str(ti.get("app") or "").strip() or None
-            hits = memory.search_memory(str(ti.get("query") or ""), app=app)
-            if not hits:
-                return "No matching memories."
-            return json.dumps({"memories": hits})
-        if name == "list_memories":
-            app = str(ti.get("app") or "").strip() or None
-            rows = memory.list_memories(app=app)
-            if not rows:
-                return "No memories stored." + (f" (app={app})" if app else "")
-            return json.dumps({"memories": rows, "count": len(rows)})
-        if name == "forget_memory":
-            mid = str(ti.get("memory_id") or "").strip()
-            if not mid:
-                return "Error: 'memory_id' is required (get it from list_memories)."
-            removed = memory.forget_memory(mid)
-            return (
-                f"Forgot memory {mid}."
-                if removed
-                else f"No memory with id {mid} (already gone?)."
-            )
         if name == "save_runbook":
             # Create-or-update, and crucially a **partial** update: memory.save_runbook
             # replaces the whole entry, so every field the agent omits must be merged

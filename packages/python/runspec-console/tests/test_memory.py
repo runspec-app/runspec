@@ -15,113 +15,26 @@ def mem(tmp_path, monkeypatch):
     return memory
 
 
-def test_add_and_search(mem):
-    mem.add_memory("OrderSvc NPEs on null discount", app="ordersvc", tags=["npe"])
-    mem.add_memory("Payments timeout points at the gateway", app="payments")
-
-    hits = mem.search_memory("discount npe")
-    assert len(hits) == 1
-    assert hits[0]["app"] == "ordersvc"
-    assert "discount" in hits[0]["fact"]
-
-
-def test_search_scoped_by_app(mem):
-    mem.add_memory("log lives at /var/log/a.log", app="a", tags=["log"])
-    mem.add_memory("log lives at /var/log/b.log", app="b", tags=["log"])
-    hits = mem.search_memory("log", app="b")
-    assert len(hits) == 1 and hits[0]["app"] == "b"
-
-
-def test_search_increments_hits(mem):
-    mem.add_memory("cache flush fixes the stale read", app="x", tags=["cache"])
-    mem.search_memory("cache")
-    mem.search_memory("cache")
-    row = mem.read_memory()[0]
-    assert row["hits"] == 2
-
-
-def test_build_header_empty_when_no_pins(mem):
-    mem.add_memory("unpinned fact", app="x")
-    assert mem.build_header() == ""
-
-
-def test_pinned_count(mem):
-    assert mem.pinned_count() == 0
-    mem.add_memory("unpinned", app="x")
-    mem.add_memory("pin a", app="x", pin=True)
-    mem.add_memory("pin b", app="x", pin=True)
-    # Counts every pinned fact, including ones beyond the header display cap.
-    assert mem.pinned_count() == 2
-
-
-def test_build_header_lists_pinned_capped(mem):
-    for i in range(10):
-        mem.add_memory(f"pinned fact number {i}", app="x", pin=True)
-    header = mem.build_header(max_facts=3, max_chars=700)
-    assert header.startswith("## Known facts (memory)")
-    # Header lists at most max_facts bullets and stays under the char cap.
-    assert header.count("\n- ") <= 3
-    assert len(header) <= 700
-
-
-def test_evict_keeps_pinned_and_caps_app(mem):
-    mem.add_memory("keep me", app="x", pin=True)
-    for i in range(60):
-        mem.add_memory(f"fact {i}", app="x")
-    rows = [r for r in mem.read_memory() if r["app"] == "x"]
-    assert len(rows) <= 50
-    assert any(r["pinned"] and r["fact"] == "keep me" for r in rows)
-
-
-def test_blank_fact_rejected(mem):
-    assert mem.add_memory("   ") == ""
+def test_read_memory_reads_the_legacy_file_and_is_empty_without_it(mem):
+    """Only read_memory is left of the old fact store: the one-time move into the
+    knowledge wiki reads it (see test_knowledge.py)."""
     assert mem.read_memory() == []
+    from runspec_console.config import memory_path
 
-
-def test_list_memories_returns_all_with_fields(mem):
-    mem.add_memory("first fact", app="a", tags=["t1"])
-    mem.add_memory("second fact", app="b", pin=True)
-    rows = mem.list_memories()
-    assert len(rows) == 2
-    # Newest first, and every prune-relevant field is present.
-    assert rows[0]["fact"] == "second fact"
-    assert rows[0]["pinned"] is True
-    assert {"id", "app", "fact", "tags", "pinned", "hits", "created"} <= set(rows[0])
-
-
-def test_list_memories_scoped_by_app(mem):
-    mem.add_memory("a fact", app="a")
-    mem.add_memory("b fact", app="b")
-    rows = mem.list_memories(app="b")
-    assert [r["app"] for r in rows] == ["b"]
-
-
-def test_list_memories_does_not_increment_hits(mem):
-    mem.add_memory("a fact", app="a")
-    mem.list_memories()
-    mem.list_memories(app="a")
-    # Pure read — unlike search_memory, listing never inflates recall stats.
-    assert mem.read_memory()[0]["hits"] == 0
-
-
-def test_forget_memory_removes_only_that_entry(mem):
-    mid = mem.add_memory("goner", app="a")
-    mem.add_memory("keeper", app="a")
-    assert mem.forget_memory(mid) is True
-    facts = [r["fact"] for r in mem.read_memory()]
-    assert facts == ["keeper"]
-    # Deleting a missing / blank id is a no-op that reports False.
-    assert mem.forget_memory(mid) is False
-    assert mem.forget_memory("") is False
-
-
-def test_forget_a_pinned_memory_frees_a_header_slot(mem):
-    """The prune the operator asked for: dropping a pinned fact lowers the pin count
-    that gates the header (only HEADER_MAX_FACTS pins fold into the prompt)."""
-    ids = [mem.add_memory(f"pin {i}", app="x", pin=True) for i in range(3)]
-    assert mem.pinned_count() == 3
-    assert mem.forget_memory(ids[0]) is True
-    assert mem.pinned_count() == 2
+    memory_path().parent.mkdir(parents=True, exist_ok=True)
+    memory_path().write_text(
+        '[[memory]]\nid = "m_1"\napp = "a"\nfact = "x"\n', encoding="utf-8"
+    )
+    assert mem.read_memory()[0]["fact"] == "x"
+    for gone in (
+        "add_memory",
+        "search_memory",
+        "list_memories",
+        "forget_memory",
+        "build_header",
+        "pinned_count",
+    ):
+        assert not hasattr(mem, gone)
 
 
 def test_runbook_roundtrip(mem):
@@ -351,22 +264,9 @@ def test_runbook_args_survive_config_sync_merge(mem):
     assert merged["team"]["args"] == {"app": {"type": "str"}}
 
 
-def test_search_no_match_returns_empty(mem):
-    mem.add_memory("totally unrelated", app="x")
-    assert mem.search_memory("zzz qqq") == []
-
-
-def test_memory_persists_as_valid_json_shape(mem):
-    mem.add_memory("a fact", app="x", tags=["t"])
-    hits = mem.search_memory("fact")
-    # The bridge serialises search results as JSON — make sure they're JSON-safe.
-    json.dumps({"memories": hits})
-
-
-def test_bridge_registers_routes_and_gates_memory_tools(tmp_path, monkeypatch):
-    """The bridge surfaces the memory tools and runs the note/recall ones without a
-    confirm gate. save_runbook is the exception — see below. Reading a runbook is
-    not a memory tool at all: it is run_runbook (see test_action_tools.py)."""
+def test_bridge_registers_routes_and_gates_runbook_save(tmp_path, monkeypatch):
+    """Only save_runbook (+ load_runbook once a runbook exists) is left in the
+    memory tool set; the fact tools moved to the wiki."""
     monkeypatch.setenv("APPDATA", str(tmp_path))
     from runspec_console.bridge import Bridge
 
@@ -382,93 +282,17 @@ def test_bridge_registers_routes_and_gates_memory_tools(tmp_path, monkeypatch):
             self.dispatched.append((ev, payload))
 
     b = _Stub()
-
-    # Autonomy: local + reversible → run without prompting. list_memories is a pure
-    # read (no query, no hit bump), so it's autonomous too.
-    for name in ("remember", "search_memory", "list_memories"):
-        assert b._effective_tool_autonomy(name, {}) == "autonomous"
-    # save_runbook is the exception: a runbook is a procedure the agent (and every
-    # console it syncs to) will later follow, so the operator approves each save.
-    # forget_memory is the other: it deletes a stored fact, so the operator agrees to
-    # each prune. Both must stay *in* _MEMORY_TOOL_NAMES though — that frozenset is
-    # also the dispatch key and the search-mode hot-kernel key.
     assert b._effective_tool_autonomy("save_runbook", {}) == "confirm"
-    assert b._effective_tool_autonomy("forget_memory", {}) == "confirm"
     from runspec_console.bridge_const import _HOT_BUILTIN_NAMES, _MEMORY_TOOL_NAMES
 
-    for n in ("save_runbook", "forget_memory", "list_memories"):
-        assert n in _MEMORY_TOOL_NAMES
-        assert n in _HOT_BUILTIN_NAMES
-
-    # Registration: the five always-on memory tools — load_runbook only appears
-    # once a runbook exists to read (its runbook_id enum would otherwise be empty).
-    assert {t["name"] for t in b._memory_tools()} == {
-        "remember",
-        "search_memory",
-        "list_memories",
-        "forget_memory",
-        "save_runbook",
-    }
-
-    # Routing: remember → search round-trips; saving a runbook dispatches the
-    # UI-refresh event.
-    b._run_memory_tool(
-        "remember", {"fact": "the log is at /var/log/app.log", "app": "a"}
-    )
+    assert _MEMORY_TOOL_NAMES == {"save_runbook"}
+    assert "save_runbook" in _HOT_BUILTIN_NAMES
+    assert {t["name"] for t in b._memory_tools()} == {"save_runbook"}
     b._run_memory_tool(
         "save_runbook", {"title": "Restart flow", "steps": "1. restart-service"}
     )
-    # Now that a runbook exists, load_runbook is offered (the chat-only reader).
     assert "load_runbook" in {t["name"] for t in b._memory_tools()}
-    # Saving a runbook notifies the UI so the `$` menu / Forms / Runbooks editor
-    # refresh live (no restart needed) — mirrors the Settings editor's dispatch.
     assert any(ev == "runspec:runbooks_changed" for ev, _ in b.dispatched)
-    out = b._run_memory_tool("search_memory", {"query": "log"})
-    assert "/var/log/app.log" in out
-
-
-def test_bridge_list_and_forget_memory_roundtrip(tmp_path, monkeypatch):
-    """The agent's prune flow: list_memories enumerates everything (id included), then
-    forget_memory deletes one by that id — and a bad id reports rather than raises."""
-    monkeypatch.setenv("APPDATA", str(tmp_path))
-    from runspec_console.bridge import Bridge
-
-    class _Stub:
-        _run_memory_tool = Bridge._run_memory_tool
-
-        def _dispatch(self, ev, payload):
-            pass
-
-    b = _Stub()
-    b._run_memory_tool(
-        "remember", {"fact": "OrderSvc log at /var/log/o.log", "app": "o"}
-    )
-    b._run_memory_tool(
-        "remember", {"fact": "Payments token rotates monthly", "app": "p"}
-    )
-
-    listed = json.loads(b._run_memory_tool("list_memories", {}))
-    assert listed["count"] == 2
-    ids = {m["id"] for m in listed["memories"]}
-    # Scoped list narrows to one app.
-    scoped = json.loads(b._run_memory_tool("list_memories", {"app": "o"}))
-    assert scoped["count"] == 1 and scoped["memories"][0]["app"] == "o"
-
-    target = scoped["memories"][0]["id"]
-    assert b._run_memory_tool("forget_memory", {"memory_id": target}) == (
-        f"Forgot memory {target}."
-    )
-    after = json.loads(b._run_memory_tool("list_memories", {}))
-    assert after["count"] == 1 and target not in {m["id"] for m in after["memories"]}
-    assert ids  # (silence unused in case the set assertion above changes)
-
-    # A blank / unknown id reports an error string instead of raising.
-    assert b._run_memory_tool("forget_memory", {}).startswith("Error:")
-    assert "already gone" in b._run_memory_tool("forget_memory", {"memory_id": "m_zzz"})
-
-    # Empty store lists cleanly (no crash, human-readable).
-    b._run_memory_tool("forget_memory", {"memory_id": after["memories"][0]["id"]})
-    assert "No memories stored" in b._run_memory_tool("list_memories", {})
 
 
 def _runbook_tool_stub(tmp_path, monkeypatch):

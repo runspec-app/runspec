@@ -212,7 +212,7 @@ def test_classifier_allows_ungated_runnable_runs_and_discovery():
 def test_classifier_keeps_gated_builtin_mcp_and_fanout_calls_sequential():
     assert not _classifier("confirm")("run_runnable", {"id": "x"})
     assert not _classifier("manual")("run_runnable", {"id": "x"})
-    assert not _classifier("run")("remember")  # built-in: writes shared state
+    assert not _classifier("run")("propose_fact")  # built-in: writes shared state
     assert not _classifier("run")("use_tool")
     assert not _classifier("run", mcp=True)("mcp_jira_search")
     assert not _classifier("run", group=True)("run_runnable", {"host": "little"})

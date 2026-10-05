@@ -478,11 +478,9 @@ class InvokeMixin:
                     # hours) and only appears when interacting outside hours — the
                     # full rota + automation inventory now lives behind the
                     # on-demand console_status tool, not on every turn.
-                    from . import memory
-
                     now_block = self._now_context()
                     console_block = self._presence_caveat()
-                    memory_block = memory.build_header()
+                    memory_block = self._knowledge_header()
                     base_block = self._base_system()
                     # Standing workspace guidance (how to read a spilled result
                     # back, when to set `deliver`) — static text, cache-stable;

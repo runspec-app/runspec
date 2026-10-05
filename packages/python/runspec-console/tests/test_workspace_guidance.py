@@ -65,12 +65,10 @@ def test_guidance_empty_when_config_unreadable(monkeypatch):
 
 
 def _chat_stub(monkeypatch, guidance):
-    from runspec_console import memory as memory_mod
-
-    monkeypatch.setattr(memory_mod, "build_header", lambda: "")
     captured: dict = {}
     done = threading.Event()
     s = types.SimpleNamespace()
+    s._knowledge_header = lambda: ""
     s._lock = threading.Lock()
     s._chat_cancels = {}
     s._ai_enabled = True

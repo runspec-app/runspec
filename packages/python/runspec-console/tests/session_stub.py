@@ -71,6 +71,9 @@ def install_engine(stub: Any) -> None:
     that already has ``install_sessions`` applied."""
     for name in _ENGINE_METHODS:
         setattr(stub, name, types.MethodType(getattr(Bridge, name), stub))
+    # The context gauge counts pinned wiki facts; a stub has no wiki.
+    if not hasattr(stub, "_knowledge_pin_count"):
+        stub._knowledge_pin_count = lambda: 0
 
 
 def agentic_shim(stub: Any):

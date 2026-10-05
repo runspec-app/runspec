@@ -19,6 +19,7 @@ EXPECTED = {
     "knowledge_overview",
     "knowledge_page",
     "knowledge_retire",
+    "knowledge_pin",
     "knowledge_review",
     "knowledge_save_fact",
     "knowledge_search",

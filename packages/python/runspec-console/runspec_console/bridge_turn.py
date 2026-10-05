@@ -927,7 +927,7 @@ class TurnMixin(_Base):
         )
         if last_prompt_tokens <= 0:
             return
-        from . import memory as memory_mod
+        from . import knowledge as kn_mod
 
         adapter = spec.adapter
         model = getattr(adapter, "model", "") or ""
@@ -935,10 +935,7 @@ class TurnMixin(_Base):
         parts["tools"] = self._messages_chars(spec.tools)
         parts["catalog"] = len(spec.index_text)
         parts["history"] = last_history_chars
-        try:
-            pins = memory_mod.pinned_count()
-        except Exception:  # noqa: BLE001 — pin count is decorative
-            pins = 0
+        pins = self._knowledge_pin_count()
         self._dispatch(
             "runspec:context_estimate",
             {
@@ -956,7 +953,7 @@ class TurnMixin(_Base):
                 "tool_mode": self._tool_mode(),
                 "history_msgs": last_history_msgs,
                 "memory_pins": pins,
-                "memory_pins_shown": memory_mod.HEADER_MAX_FACTS,
+                "memory_pins_shown": kn_mod.PIN_MAX,
                 "catalog_overflow": (
                     getattr(self, "_catalog_overflow", 0) if spec.index_text else 0
                 ),

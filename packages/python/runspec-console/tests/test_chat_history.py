@@ -93,6 +93,9 @@ class _StubBridge:
     _max_self_recoveries = Bridge._max_self_recoveries
     _append_recovery_prompt = Bridge._append_recovery_prompt
 
+    def _knowledge_pin_count(self):  # the context gauge's pin count; no wiki here
+        return 0
+
 
 class _TextAdapter:
     """Replies with one text turn; records the history it was handed each call."""

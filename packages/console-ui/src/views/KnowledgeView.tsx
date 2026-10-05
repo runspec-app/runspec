@@ -1,6 +1,7 @@
 // Knowledge tab — the team knowledge wiki: an entity graph (hosts, runnables,
 // files, jargon … linked by the facts about them), one page per entity, search,
-// and the review inbox where proposed facts wait for the operator.
+// the review inbox where proposed facts wait for the operator, and pins (a few
+// facts folded into every chat's context; replaced the old agent memory).
 //
 // Data comes from bridge.knowledge_* (bridge_knowledge.py). The same store backs
 // the agent's wiki tools and the console MCP server, so facts proposed by the
@@ -13,7 +14,8 @@ import {
 } from 'antd'
 import {
   BulbOutlined, CheckOutlined, CloseOutlined, DeleteOutlined, EditOutlined, ExpandOutlined,
-  CloseCircleOutlined, PlusOutlined, ReloadOutlined, ZoomInOutlined, ZoomOutOutlined,
+  CloseCircleOutlined, PlusOutlined, PushpinFilled, PushpinOutlined, ReloadOutlined,
+  ZoomInOutlined, ZoomOutOutlined,
 } from '@ant-design/icons'
 
 import {
@@ -158,6 +160,14 @@ export function KnowledgeView({ active, aiEnabled, onOpenSettings }: KnowledgeVi
     await loadPage(selected)
   }
 
+  const pin = async (fact: KnowledgeFact, on: boolean) => {
+    const r = await bridge.knowledge_pin(fact.id, on)
+    if (!r.ok) message.error(r.error || 'Could not change the pin.')
+    await refresh()
+  }
+  const pinnedIds = useMemo(() => new Set((overview?.pinned ?? []).map(f => f.id)), [overview])
+  const pins = { ids: pinnedIds, max: overview?.pin_max ?? 6, onPin: pin }
+
   const review = async (fact: KnowledgeFact, approve: boolean) => {
     const r = await bridge.knowledge_review(fact.id, approve)
     if (!r.ok) message.error(r.error || 'Review failed.')
@@ -238,6 +248,7 @@ export function KnowledgeView({ active, aiEnabled, onOpenSettings }: KnowledgeVi
           onReject={f => review(f, false)}
           onEdit={f => setEditing({ fact: f, review: true })}
           onEntity={e => { setSelected(e); setTab('graph') }}
+          pins={pins}
         />
       ) : (
         <div style={{ display: 'flex', gap: 12, flex: 1, minHeight: 0 }}>
@@ -290,6 +301,8 @@ export function KnowledgeView({ active, aiEnabled, onOpenSettings }: KnowledgeVi
             onEntity={e => { setSelected(e); setResults(null) }}
             onEdit={f => setEditing({ fact: f })}
             onRetire={retire}
+            pinned={overview?.pinned ?? []}
+            pins={pins}
           />
         </div>
       )}
@@ -471,8 +484,17 @@ export function GraphCanvas({ nodes, edges, selected, onSelect, onClear, isStale
 
 // ── side panel: search results or the selected entity's page ─────────────────
 
-function SidePanel({ query, results, page, onEntity, onEdit, onRetire, isStale = null }: {
+/** Which facts are pinned into every chat's context, and how to change that. */
+export interface Pins {
+  ids: Set<string>
+  max: number
+  onPin: (f: KnowledgeFact, on: boolean) => void
+}
+
+function SidePanel({ query, results, page, onEntity, onEdit, onRetire, pinned = [], pins, isStale = null }: {
   query: string
+  pinned?: KnowledgeFact[]
+  pins?: Pins
   results: KnowledgeFact[] | null
   page: KnowledgePage | null
   isStale?: ((entity: string) => boolean) | null
@@ -489,7 +511,7 @@ function SidePanel({ query, results, page, onEntity, onEdit, onRetire, isStale =
         <div style={{ fontWeight: 600, color: textColor(isDark), marginBottom: 8 }}>
           {results.length} result(s) for “{query}”
         </div>
-        {results.map(f => <FactRow key={f.id} fact={f} onEntity={onEntity} onEdit={onEdit} onRetire={onRetire} />)}
+        {results.map(f => <FactRow key={f.id} fact={f} onEntity={onEntity} onEdit={onEdit} onRetire={onRetire} pins={pins} />)}
       </>
     )
   } else if (page && page.facts.length > 0) {
@@ -517,7 +539,7 @@ function SidePanel({ query, results, page, onEntity, onEdit, onRetire, isStale =
         {[...byKind].map(([kind, facts]) => (
           <div key={kind} style={{ marginBottom: 12 }}>
             <div style={{ textTransform: 'uppercase', fontSize: 11, letterSpacing: 0.5, color: textMuted(isDark), marginBottom: 4 }}>{kind}</div>
-            {facts.map(f => <FactRow key={f.id} fact={f} current={page.entity} onEntity={onEntity} onEdit={onEdit} onRetire={onRetire} />)}
+            {facts.map(f => <FactRow key={f.id} fact={f} current={page.entity} onEntity={onEntity} onEdit={onEdit} onRetire={onRetire} pins={pins} />)}
           </div>
         ))}
         {page.links.length > 0 && (
@@ -537,10 +559,21 @@ function SidePanel({ query, results, page, onEntity, onEdit, onRetire, isStale =
     )
   } else {
     body = (
-      <div style={{ color: textSecondary(isDark) }}>
-        Click a node to open its page. Larger nodes have more confirmed facts; dashed
-        ones only have facts waiting in the inbox. Drag to pan, scroll to zoom.
-      </div>
+      <>
+        {pinned.length > 0 && (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ textTransform: 'uppercase', fontSize: 11, letterSpacing: 0.5, color: textMuted(isDark), marginBottom: 4 }}>
+              Pinned · {pinned.length}/{pins?.max ?? 6} · in every chat's context
+            </div>
+            {pinned.map(f => <FactRow key={f.id} fact={f} onEntity={onEntity} pins={pins} />)}
+          </div>
+        )}
+        <div style={{ color: textSecondary(isDark) }}>
+          Click a node to open its page. Larger nodes have more confirmed facts; dashed
+          ones only have facts waiting in the inbox. Drag to pan, scroll to zoom.
+          Pin a fact to fold it into every chat's context.
+        </div>
+      </>
     )
   }
   return (
@@ -614,8 +647,9 @@ function EntityTag({ entity, onClick }: { entity: string; onClick?: (e: string) 
   )
 }
 
-function FactRow({ fact, current, onEntity, onEdit, onRetire, actions }: {
+function FactRow({ fact, current, onEntity, onEdit, onRetire, actions, pins }: {
   fact: KnowledgeFact
+  pins?: Pins
   current?: string
   onEntity: (e: string) => void
   onEdit?: (f: KnowledgeFact) => void
@@ -639,6 +673,22 @@ function FactRow({ fact, current, onEntity, onEdit, onRetire, actions }: {
         </Text>
         <div style={{ flex: 1 }} />
         {actions}
+        {pins && fact.status !== 'retired' && (() => {
+          const on = pins.ids.has(fact.id)
+          const full = !on && pins.ids.size >= pins.max
+          return (
+            <Tooltip title={on ? 'Unpin' : full ? `${pins.max} facts already pinned; unpin one first` : "Pin into every chat's context"}>
+              <Button
+                size="small"
+                type="text"
+                disabled={full}
+                icon={on ? <PushpinFilled /> : <PushpinOutlined />}
+                aria-label={on ? 'Unpin fact' : 'Pin fact'}
+                onClick={() => pins.onPin(fact, !on)}
+              />
+            </Tooltip>
+          )
+        })()}
         {onEdit && fact.status !== 'pending' && (
           <Tooltip title="Edit"><Button size="small" type="text" icon={<EditOutlined />} aria-label="Edit fact" onClick={() => onEdit(fact)} /></Tooltip>
         )}
@@ -654,8 +704,9 @@ function FactRow({ fact, current, onEntity, onEdit, onRetire, actions }: {
 
 // ── inbox ────────────────────────────────────────────────────────────────────
 
-function Inbox({ facts, onApprove, onReject, onEdit, onEntity }: {
+function Inbox({ facts, onApprove, onReject, onEdit, onEntity, pins }: {
   facts: KnowledgeFact[]
+  pins?: Pins
   onApprove: (f: KnowledgeFact) => void
   onReject: (f: KnowledgeFact) => void
   onEdit: (f: KnowledgeFact) => void
@@ -672,7 +723,7 @@ function Inbox({ facts, onApprove, onReject, onEdit, onEntity }: {
         Proposed by the agent, by an MCP client such as Claude Code, or suggested from your chats. Nothing joins the wiki until you approve it.
       </div>
       {facts.map(f => (
-        <FactRow key={f.id} fact={f} onEntity={onEntity} actions={
+        <FactRow key={f.id} fact={f} onEntity={onEntity} pins={pins} actions={
           <Space size={4}>
             <Button size="small" icon={<CheckOutlined />} onClick={() => onApprove(f)}>Approve</Button>
             <Button size="small" icon={<EditOutlined />} onClick={() => onEdit(f)}>Edit</Button>

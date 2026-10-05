@@ -9,6 +9,36 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.332.0] — 2026-10-05
+
+### Changed
+
+- **The agent's memory is now the knowledge wiki.** The older memory tools
+  (`remember`, `search_memory`, `list_memories`, `forget_memory` over
+  `runspec_memory.toml`) are gone; the agent proposes facts with `propose_fact`,
+  finds them with `search_wiki` and prunes with `retire_wiki_fact`. The pinned
+  block in every chat's system prompt now carries **pinned wiki facts** (at most
+  six, a hard cap) under *Pinned facts (team wiki)*.
+- **One-time move of the old memory.** The first time the wiki is opened, each
+  remembered fact moves into the Knowledge **inbox** as a pending `note` (source
+  `memory`, about `app:<app>`, its tags as `topic:` entities, linked to any host,
+  group or runnable it names). The six most recalled pinned memories stay pinned,
+  so the prompt carries the same facts as before. They wait in the inbox because
+  approved facts are what Memory Sync shares, and the old memory never was. A fact
+  that looks like a secret is not moved. The old file is kept as
+  `runspec_memory.toml.migrated`.
+
+### Added
+
+- **Pinned facts.** A new autonomous `pin_wiki_fact` tool and a pushpin on every
+  fact in the Knowledge tab pin a fact into every chat's context, or unpin it.
+  Pins are machine-local (`knowledge/state.toml`), never pushed by Memory Sync,
+  can sit on a team fact, and follow a fact through edits and reviews. The side
+  panel lists them when nothing is selected; `search_wiki` and `wiki_page` mark
+  pinned facts. New JS API `knowledge_pin`; `knowledge_overview` returns
+  `pinned` and `pin_max`. The confirm card now says "retire", "review" or "edit"
+  for the wiki curation tools instead of "run".
+
 ## [0.331.0] — 2026-10-05
 
 ### Added

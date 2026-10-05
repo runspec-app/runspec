@@ -6,7 +6,7 @@ around it and the three ways in:
 
 * **Agent tools** (``search_wiki`` / ``wiki_page`` / ``wiki_graph`` /
   ``propose_fact`` / ``list_wiki_inbox`` / ``review_wiki_fact`` / ``edit_wiki_fact``
-  / ``retire_wiki_fact``) — the console's own chat/trigger/schedule agent, and,
+  / ``retire_wiki_fact`` / ``pin_wiki_fact``) — the console's own chat/trigger/schedule agent, and,
   through ``_MCP_SERVER_BUILTIN_NAMES``, an MCP client such as Claude Code when
   ``[mcp_server] expose_builtins`` is on. Same tools, same gate for both.
 * **Knowledge tab** (public JS API ``knowledge_*``) — graph, pages, search, the
@@ -14,6 +14,11 @@ around it and the three ways in:
 * **Capture** — ``knowledge_capture`` mines run history into ``observed`` facts
   (no AI); ``knowledge_distill`` asks the console's utility model to propose facts
   from recent chats into the inbox (AI; refused when ``[console] ai = false``).
+
+**Pinned facts** (up to ``kn.PIN_MAX``, machine-local) fold into every chat's
+system prompt via ``_knowledge_header``. The wiki replaced the older ``remember``
+memory in 0.332.0: ``_knowledge_store`` moves a leftover ``runspec_memory.toml``
+into the review inbox once (``_migrate_memory``), keeping its pins.
 
 Every mutation emits ``runspec:knowledge_updated`` so an open tab refreshes.
 """
@@ -63,7 +68,77 @@ def _author() -> str:
 class KnowledgeMixin:
     # ── store ────────────────────────────────────────────────────────────────
     def _knowledge_store(self) -> kn.KnowledgeStore:
-        return kn.KnowledgeStore(config_mod.knowledge_dir())
+        store = kn.KnowledgeStore(config_mod.knowledge_dir())
+        if not getattr(self, "_memory_migration_checked", False):
+            self._memory_migration_checked = True
+            try:
+                self._migrate_memory(store)
+            except Exception:  # noqa: BLE001 — never block the wiki on the old store
+                logger.warning("memory → wiki migration failed", exc_info=True)
+        return store
+
+    def _migrate_memory(self, store: kn.KnowledgeStore) -> dict[str, int] | None:
+        """One-time move of the older agent memory (``runspec_memory.toml``, the
+        ``remember`` tool's store) into the wiki's review inbox, keeping its pins.
+        The old file is renamed ``runspec_memory.toml.migrated`` afterwards (kept
+        as a backup), so this runs once. ``None`` when there is nothing to move."""
+        path = config_mod.memory_path()
+        if not path.exists():
+            return None
+        from . import memory
+
+        rows = memory.read_memory()
+        try:
+            catalog = self._knowledge_catalog()
+        except Exception:  # noqa: BLE001 — link best-effort
+            catalog = {}
+        facts, pins, skipped = kn.memory_to_facts(
+            rows,
+            author=_author(),
+            link=lambda about, text: kn.link_about(about, text, catalog),
+        )
+        for fact in facts:
+            store.propose(fact)
+        kept = [p for p in store.pinned_ids() if p not in pins]
+        room = max(0, kn.PIN_MAX - len(kept))
+        store.update_state(
+            pinned=kept + pins[:room],
+            memory_migrated=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        )
+        path.replace(path.with_name(path.name + ".migrated"))
+        if skipped:
+            logger.warning(
+                "memory → wiki: skipped %d fact(s) that look like secrets "
+                "(still in %s.migrated): %s",
+                len(skipped),
+                path.name,
+                ", ".join(skipped),
+            )
+        logger.info(
+            "memory → wiki: moved %d fact(s) into the review inbox, %d pinned",
+            len(facts),
+            min(len(pins), room),
+        )
+        self._knowledge_changed()
+        return {
+            "facts": len(facts),
+            "pinned": min(len(pins), room),
+            "skipped": len(skipped),
+        }
+
+    def _knowledge_header(self) -> str:
+        """The pinned-facts block for the system prompt (``""`` when none)."""
+        try:
+            return self._knowledge_store().header()
+        except Exception:  # noqa: BLE001 — the prompt must still build
+            logger.debug("pinned wiki header unavailable", exc_info=True)
+            return ""
+
+    def _knowledge_pin_count(self) -> int:
+        try:
+            return len(self._knowledge_store().pinned_facts())
+        except Exception:  # noqa: BLE001
+            return 0
 
     def _knowledge_changed(self) -> None:
         try:
@@ -213,10 +288,32 @@ class KnowledgeMixin:
                 },
             },
             {
+                "name": "pin_wiki_fact",
+                "description": (
+                    f"Pin a wiki fact into every future chat's context (at most "
+                    f"{kn.PIN_MAX}), or unpin it with pinned=false. Pin only facts "
+                    "that matter on almost every turn; everything else is a "
+                    "search_wiki away. Pins are this console's own and are never "
+                    "shared. Search results mark pinned facts."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "fact_id": {"type": "string"},
+                        "pinned": {
+                            "type": "boolean",
+                            "description": "false to unpin. Default true.",
+                        },
+                    },
+                    "required": ["fact_id"],
+                },
+            },
+            {
                 "name": "retire_wiki_fact",
                 "description": (
                     "Retire a wiki fact that is wrong or out of date (it stops showing "
-                    "and stops being returned). The operator confirms each retirement."
+                    "and stops being returned, and loses its pin). The operator "
+                    "confirms each retirement."
                 ),
                 "input_schema": {
                     "type": "object",
@@ -253,6 +350,7 @@ class KnowledgeMixin:
         self, name: str, ti: dict[str, Any], chat_id: str
     ) -> str:
         store = self._knowledge_store()
+        pins = set(store.pinned_ids())
         if name == "search_wiki":
             limit = max(1, min(int(ti.get("limit") or 10), 50))
             hits = self._knowledge_query(
@@ -265,7 +363,7 @@ class KnowledgeMixin:
             )
             if not hits:
                 return "No wiki facts match. If you learn the answer, propose_fact it."
-            return json.dumps({"facts": [_brief(f) for f in hits]})
+            return json.dumps({"facts": [_brief(f, pins=pins) for f in hits]})
         if name == "wiki_page":
             entity = str(ti.get("entity") or "").strip()
             if not entity:
@@ -275,7 +373,7 @@ class KnowledgeMixin:
             )
             if not page["facts"]:
                 return f"No wiki page for {page['entity']} yet."
-            page["facts"] = [_brief(f) for f in page["facts"]]
+            page["facts"] = [_brief(f, pins=pins) for f in page["facts"]]
             return json.dumps(page)
         if name == "wiki_graph":
             g = self._knowledge_query(
@@ -340,6 +438,14 @@ class KnowledgeMixin:
                 return f"No approved fact {fid}."
             self._knowledge_changed()
             return f"Updated; the fact is now {res['id']}."
+        if name == "pin_wiki_fact":
+            fid = str(ti.get("fact_id") or "").strip()
+            if not fid:
+                return "Error: 'fact_id' is required (from search_wiki or wiki_page)."
+            ok, msg = store.set_pinned(fid, ti.get("pinned") is not False)
+            if ok:
+                self._knowledge_changed()
+            return msg if ok else f"Error: {msg}"
         if name == "retire_wiki_fact":
             fid = str(ti.get("fact_id") or "").strip()
             ok = store.retire(fid)
@@ -369,6 +475,8 @@ class KnowledgeMixin:
                 "stats": idx.stats(),
                 "graph": idx.graph(),
                 "inbox": store.inbox(),
+                "pinned": store.pinned_facts(),
+                "pin_max": kn.PIN_MAX,
                 "captured_at": _mtime_iso(store.root / kn.OBSERVED_FILE),
                 "capture_days": _as_days(
                     store.state().get("capture_days"), _DEFAULT_CAPTURE_DAYS
@@ -504,6 +612,13 @@ class KnowledgeMixin:
         if ok:
             self._knowledge_changed()
         return {"ok": ok}
+
+    def knowledge_pin(self, fact_id: str, pinned: bool = True) -> dict[str, Any]:
+        """Pin (or unpin) a fact into every chat's system prompt."""
+        ok, msg = self._knowledge_store().set_pinned(str(fact_id), bool(pinned))
+        if ok:
+            self._knowledge_changed()
+        return {"ok": ok, "message": msg} if ok else {"ok": False, "error": msg}
 
     def knowledge_capture(
         self, since_days: int | None = None, notify: bool = True
@@ -645,7 +760,9 @@ class KnowledgeMixin:
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 
-def _brief(f: dict[str, Any], full: bool = False) -> dict[str, Any]:
+def _brief(
+    f: dict[str, Any], full: bool = False, pins: set[str] | None = None
+) -> dict[str, Any]:
     out = {
         "id": f.get("id"),
         "kind": f.get("kind"),
@@ -656,6 +773,8 @@ def _brief(f: dict[str, Any], full: bool = False) -> dict[str, Any]:
     }
     if f.get("status") not in (None, "approved"):
         out["status"] = f.get("status")
+    if pins and f.get("id") in pins:
+        out["pinned"] = True
     if full:
         out.update(
             source=f.get("source", ""),

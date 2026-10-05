@@ -223,13 +223,11 @@ def _spawn_stub(index_text, monkeypatch):
     """A bare stub with the real ``_spawn_chat_turn`` bound, its dependencies
     stubbed, and ``_agentic_chat_turn`` replaced by a recorder that signals when
     the (threaded) turn has composed everything."""
-    from runspec_console import memory as memory_mod
-
-    monkeypatch.setattr(memory_mod, "build_header", lambda: "")
     captured: dict = {}
     done = threading.Event()
 
     s = types.SimpleNamespace()
+    s._knowledge_header = lambda: ""
     s._lock = threading.Lock()
     s._chat_cancels = {}
     s._ai_enabled = True

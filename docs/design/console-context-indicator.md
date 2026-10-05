@@ -244,8 +244,9 @@ backend now folds into `runspec:context_estimate` (`tool_mode`, `history_msgs`,
   messages; emits `runspec:chat_compacted`. New JS API method (frozen in
   `test_bridge_api_surface.py`).
 - **Pinned-memory hint** — the Memory bucket row shows `· N pinned`; when more
-  facts are pinned than fold into the prompt (`memory.HEADER_MAX_FACTS`), a hover
-  line says so. Count via `memory.pinned_count()`.
+  facts are pinned than fold into the prompt, a hover line says so. Since 0.330.0
+  the pins are knowledge-wiki pins, capped at `knowledge.PIN_MAX`, counted via
+  `KnowledgeStore.pinned_facts()`.
 
 Unit tests: `test_chat_history.py` (compaction drops the prefix, folds the note,
 preserves tool pairing, no-ops when short), `test_memory.py::test_pinned_count`.

@@ -35,7 +35,7 @@ to read, seed, or sync them directly. All files are plain TOML.
 | `runspec_runbooks.toml` | `[[runbook]]` collection | Yes (by `id`) | Agent / Forms tab (runbook editor) |
 | `runspec_repos.toml` | Agent-accessible repo registry | Yes (checkout paths are machine-local) | Settings → Repos |
 | `runspec_self_service.toml` | Room self-service catalogue | Yes | Settings → Self-Service |
-| `runspec_memory.toml` | Agent memory | No — machine-local | Agent (`remember`) |
+| `runspec_memory.toml` | Retired agent memory; moved into the knowledge wiki inbox once (0.330.0), then renamed `*.migrated` | No — machine-local | (read once) |
 | `marketplace_cache.json` | [Marketplace](console-marketplace.md) catalogue cache | No — machine-local | Marketplace tab |
 | `conversations/`, `workspaces/`, `repos/`, `improve/` | Chat history, session scratch, repo checkouts, [Improve](console-improve.md) reports | No | — |
 

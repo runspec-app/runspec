@@ -152,11 +152,10 @@ tools**) to also publish the console's own **console-specific** built-in agent
 tools — the ops/fleet powers a coding agent can't do itself:
 
 - `console_status`, `search_history`
-- memory + runbooks (`remember`, `search_memory`, `list_memories`, `forget_memory`,
-  `save_runbook`, `load_runbook`, `run_runbook`)
+- runbooks (`save_runbook`, `load_runbook`, `run_runbook`)
 - the team knowledge wiki (`search_wiki`, `wiki_page`, `wiki_graph`,
   `propose_fact`, `list_wiki_inbox`, `review_wiki_fact`, `edit_wiki_fact`,
-  `retire_wiki_fact`) — see [Knowledge wiki](console-knowledge.md)
+  `retire_wiki_fact`, `pin_wiki_fact`) — see [Knowledge wiki](console-knowledge.md)
 - host→local file transfer (`download_file`, `relay_file`)
 - Outlook (`outlook_*`, when Outlook COM is available)
 - the action tools (`create_document`, `create_schedule`, `emit_event`,

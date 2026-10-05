@@ -225,9 +225,9 @@ def self_service_path() -> Path:
 
 
 def memory_path() -> Path:
-    """Machine-local agent memory (`runspec_memory.toml`) — accrued facts the agent
-    writes via the `remember` tool. **Never** synced (not in Config Sync's
-    KNOWN_FILES): it's local knowledge, not shared config."""
+    """The retired agent memory (`runspec_memory.toml`, the old `remember` tool's
+    store). Since 0.332.0 it is only read once and moved into the knowledge wiki's
+    review inbox (then renamed `*.migrated`). Never synced."""
     return app_dir() / "runspec_memory.toml"
 
 

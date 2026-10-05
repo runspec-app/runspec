@@ -862,6 +862,9 @@ export interface KnowledgeOverview {
   stats: KnowledgeStats
   graph: { nodes: KnowledgeNode[]; edges: KnowledgeEdge[] }
   inbox: KnowledgeFact[]
+  // Facts pinned into every chat's system prompt (machine-local), pin order.
+  pinned?: KnowledgeFact[]
+  pin_max?: number
   captured_at: string
   // Run-history range the last capture used, in days (0 = all history).
   capture_days?: number
@@ -2337,6 +2340,7 @@ export interface BridgeApi {
   // Operator-authored fact (approved straight away), or an edit when `id` is set.
   knowledge_save_fact: (payload: KnowledgeFactInput) => Promise<KnowledgeResult>
   knowledge_retire: (factId: string) => Promise<{ ok: boolean }>
+  knowledge_pin: (factId: string, pinned: boolean) => Promise<{ ok: boolean; message?: string; error?: string }>
   // Mine run history into observed facts (no AI). 0 = all history; omitted =
   // the last range used. The range is remembered for the hourly auto-capture.
   knowledge_capture: (sinceDays?: number) => Promise<{ ok: boolean; observed?: number; runs?: number; days?: number; relinked?: number; error?: string }>

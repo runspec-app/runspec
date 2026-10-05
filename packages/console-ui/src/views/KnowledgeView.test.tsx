@@ -8,7 +8,8 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { GraphCanvas, KnowledgeView, UsageTable, isUsageFact, staleCheck } from './KnowledgeView'
 import type { KnowledgeFact } from '../bridge'
 
-const { overview, page, review, distill } = vi.hoisted(() => ({
+const { overview, page, review, distill, pin } = vi.hoisted(() => ({
+  pin: vi.fn(),
   overview: vi.fn(),
   page: vi.fn(),
   review: vi.fn(),
@@ -22,6 +23,7 @@ vi.mock('../bridge', () => ({
       if (p === 'knowledge_page') return page
       if (p === 'knowledge_review') return review
       if (p === 'knowledge_distill') return distill
+      if (p === 'knowledge_pin') return pin
       return vi.fn(async () => ({ ok: true }))
     },
   }),
@@ -33,7 +35,8 @@ const fact = (id: string, text: string, about: string[], status = 'approved') =>
 })
 
 beforeEach(() => {
-  overview.mockReset(); page.mockReset(); review.mockReset(); distill.mockReset()
+  overview.mockReset(); page.mockReset(); review.mockReset(); distill.mockReset(); pin.mockReset()
+  pin.mockResolvedValue({ ok: true })
   overview.mockResolvedValue({
     stats: { approved: 1, observed: 0, pending: 1, retired: 0, entities: 3, fts: true },
     graph: {
@@ -44,6 +47,8 @@ beforeEach(() => {
       edges: [{ source: 'app:orders', target: 'host:web-01', weight: 2 }],
     },
     inbox: [fact('k_p', 'web-01 has 64GB RAM', ['host:web-01'], 'pending')],
+    pinned: [fact('k_pin', 'deploys freeze on Fridays', ['term:freeze'])],
+    pin_max: 6,
     captured_at: '', dir: '/tmp/knowledge',
     entity_types: ['host', 'app'], kinds: ['location', 'note'],
   })
@@ -56,6 +61,18 @@ beforeEach(() => {
 })
 
 describe('KnowledgeView', () => {
+  it('lists pinned facts and pins / unpins from a fact row', async () => {
+    render(<KnowledgeView active aiEnabled />)
+    await waitFor(() => expect(screen.getByText('deploys freeze on Fridays')).toBeTruthy())
+    expect(screen.getByText(/Pinned · 1\/6/)).toBeTruthy()
+    fireEvent.click(screen.getByLabelText('Unpin fact'))
+    await waitFor(() => expect(pin).toHaveBeenCalledWith('k_pin', false))
+    fireEvent.click(screen.getByTestId('node-host:web-01'))
+    await waitFor(() => expect(screen.getByText('orders logs live in /var/log/orders')).toBeTruthy())
+    fireEvent.click(screen.getByLabelText('Pin fact'))
+    await waitFor(() => expect(pin).toHaveBeenCalledWith('k_1', true))
+  })
+
   it('draws the graph and opens a page on click', async () => {
     render(<KnowledgeView active aiEnabled />)
     await waitFor(() => expect(screen.getByTestId('node-host:web-01')).toBeTruthy())

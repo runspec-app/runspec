@@ -110,21 +110,14 @@ _READONLY_META = frozenset({"search_runnables", "describe_runnable"})
 # strips them defensively.
 _BUILTIN_META_NAMES = frozenset({"describe_tool", "use_tool"})
 
-# Persistent-memory / runbook tools. Backed by local TOML collections (see
-# memory.py) — local and reversible, so the autonomy gate lets them run without a
-# prompt (like the read-only meta-tools), keeping the model spend on actual work.
-# (save_runbook and forget_memory are the exceptions, gated in
-# _effective_tool_autonomy: a runbook is a procedure that gets followed later, and a
-# forget deletes a stored fact, so the operator approves each of those writes.)
-#
-# list_memories (read-only) + forget_memory (delete by id) give the operator a way to
-# review and prune what's accrued — the "help me prune my memories" flow, since the
-# header only surfaces the top HEADER_MAX_FACTS pinned facts. This frozenset is the
-# dispatch key (_run_memory_tool) and the search-mode hot-kernel key, so both new
-# tools must live here.
-_MEMORY_TOOL_NAMES = frozenset(
-    {"remember", "search_memory", "list_memories", "forget_memory", "save_runbook"}
-)
+# The runbook store's write tool (memory.py). The older fact memory (remember /
+# search_memory / list_memories / forget_memory) was folded into the team knowledge
+# wiki in 0.332.0 — facts are propose_fact / search_wiki, pins are pin_wiki_fact,
+# and prune is retire_wiki_fact (see _KNOWLEDGE_TOOL_NAMES). save_runbook is
+# confirm-gated in _effective_tool_autonomy: a runbook is a procedure that gets
+# followed later. This frozenset is the dispatch key (_run_memory_tool) and the
+# search-mode hot-kernel key.
+_MEMORY_TOOL_NAMES = frozenset({"save_runbook"})
 
 # load_runbook — read a runbook's *raw definition* (title/symptom/tags/steps
 # array/args table) as data, for inspecting or editing it. Distinct from
@@ -203,6 +196,7 @@ _KNOWLEDGE_TOOL_NAMES = frozenset(
         "review_wiki_fact",
         "edit_wiki_fact",
         "retire_wiki_fact",
+        "pin_wiki_fact",
     }
 )
 _KNOWLEDGE_WRITE_TOOL_NAMES = frozenset(
@@ -345,7 +339,9 @@ _CONFIG_TOOL_NAMES = frozenset(
 _CONFIRM_VERB_DEFAULT = "run"
 _CONFIRM_VERBS = {
     "save_runbook": "save",
-    "forget_memory": "forget",
+    "retire_wiki_fact": "retire",
+    "review_wiki_fact": "review",
+    "edit_wiki_fact": "edit",
     "create_document": "create",
     "create_schedule": "create",
     "open_url": "open",
@@ -384,8 +380,8 @@ _BUILTIN_TOOL_NAMES = (
 # The hot kernel: built-ins that stay INLINE even when search mode defers the
 # rest behind describe_tool/use_tool. These are the tools a turn reaches for
 # constantly or that other machinery references directly — status + history
-# (small, read-only), memory/runbooks (the system prompt references pinned
-# memory), and the workspace tools (spilled tool results tell the model to read
+# (small, read-only), runbooks + the wiki's search/page/propose (the system
+# prompt's pinned-facts block points at search_wiki), and the workspace tools (spilled tool results tell the model to read
 # them back via workspace_*; a discovery hop there would break that flow), and
 # list_files (read-only browsing — the entry point of most file tasks, kept
 # zero-hop so the agent finds exact paths before reaching for the deferred
@@ -415,7 +411,7 @@ _HOT_BUILTIN_NAMES = (
 # Built-in agent tools the console's OWN MCP server may expose to an external
 # coding agent (Claude Code, …) when ``[mcp_server] expose_builtins`` is on. The
 # console-SPECIFIC ops/fleet built-ins a coding agent can't do itself — status,
-# run history, memory + runbooks, the team knowledge wiki, host→local file
+# run history, runbooks, the team knowledge wiki, host→local file
 # transfer, Outlook, and the action tools. Deliberately EXCLUDES:
 #   • config tools + search meta-tools — never (automation must not rewrite
 #     itself; the meta-tools are internal indirection a direct client doesn't use),

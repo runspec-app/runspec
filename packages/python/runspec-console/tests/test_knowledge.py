@@ -291,6 +291,10 @@ def bridge_stub(tmp_path, monkeypatch):
         _knowledge_catalog = Bridge._knowledge_catalog
         knowledge_save_fact = Bridge.knowledge_save_fact
         knowledge_review = Bridge.knowledge_review
+        knowledge_pin = Bridge.knowledge_pin
+        _migrate_memory = Bridge._migrate_memory
+        _knowledge_header = Bridge._knowledge_header
+        _knowledge_pin_count = Bridge._knowledge_pin_count
 
         def __init__(self):
             self._lock = threading.Lock()
@@ -687,3 +691,125 @@ def test_agent_proposals_are_linked(bridge_stub):
     )
     pending = bridge_stub._knowledge_store().inbox()
     assert pending[0]["about"] == ["group:Web", "host:web-01"]
+
+
+# ── pins (the replacement for the old memory header) ─────────────────────────
+
+
+def test_pins_cap_follow_edits_and_drop_on_retire(store, kn):
+    a = _fact(kn, "orders logs live in /var/log/orders", status="approved")
+    store.add_approved(a)
+    assert store.header() == ""
+    ok, _ = store.set_pinned(a["id"], True)
+    assert ok and store.pinned_ids() == [a["id"]]
+    head = store.header()
+    assert head.startswith("## Pinned facts (team wiki)")
+    assert "orders logs live in /var/log/orders (host:web-01)" in head
+    # an edit gives the fact a new id; the pin follows it
+    edited = store.edit(a["id"], {"text": "orders logs live in /srv/orders"})
+    assert store.pinned_ids() == [edited["id"]]
+    assert "/srv/orders" in store.header()
+    # retiring drops the pin
+    store.retire(edited["id"])
+    assert store.pinned_ids() == [] and store.header() == ""
+    # unknown fact, and the cap
+    assert store.set_pinned("k_nope", True)[0] is False
+    for i in range(kn.PIN_MAX):
+        f = _fact(kn, f"fact number {i} about web", status="approved")
+        store.add_approved(f)
+        assert store.set_pinned(f["id"], True)[0]
+    extra = _fact(kn, "one fact too many", status="approved")
+    store.add_approved(extra)
+    ok, msg = store.set_pinned(extra["id"], True)
+    assert not ok and "unpin one first" in msg
+
+
+def test_pinned_pending_fact_follows_review(store, kn):
+    p = _fact(kn, "web-01 runs the orders api")
+    store.propose(p)
+    assert store.set_pinned(p["id"], True)[0]  # a pin may sit on a pending fact
+    assert "orders api" in store.header()
+    approved = store.review(p["id"], True, {"text": "web-01 runs the orders API v2"})
+    assert store.pinned_ids() == [approved["id"]]
+    q = _fact(kn, "web-01 is in rack 7")
+    store.propose(q)
+    store.set_pinned(q["id"], True)
+    store.review(q["id"], False)
+    assert q["id"] not in store.pinned_ids()
+
+
+def test_memory_to_facts(kn):
+    rows = [
+        {
+            "id": "m_1",
+            "app": "orders",
+            "fact": "orders logs live in /var/log/o",
+            "tags": ["logs"],
+            "pinned": True,
+            "hits": 2,
+            "created": "2026-01-02T00:00:00+00:00",
+        },
+        {
+            "id": "m_2",
+            "app": "general",
+            "fact": "the freeze starts Friday",
+            "pinned": True,
+            "hits": 9,
+        },
+        {"id": "m_3", "app": "x", "fact": "password: hunter2hunter2"},
+        {"id": "m_4", "app": "general", "fact": ""},
+    ]
+    facts, pins, skipped = kn.memory_to_facts(rows, author="me@box")
+    assert skipped == ["m_3"]
+    by_text = {f["text"]: f for f in facts}
+    o = by_text["orders logs live in /var/log/o"]
+    assert o["about"] == ["app:orders", "topic:logs"]
+    assert o["status"] == "pending" and o["source"] == "memory"
+    assert o["evidence"] == ["m_1"] and o["first_seen"] == "2026-01-02"
+    assert by_text["the freeze starts Friday"]["about"] == ["topic:general"]
+    # most-recalled pin first
+    assert pins == [by_text["the freeze starts Friday"]["id"], o["id"]]
+
+
+def test_bridge_migrates_old_memory_once_and_pins_carry_over(bridge_stub, tmp_path):
+    import json
+
+    from runspec_console import config as config_mod
+
+    path = config_mod.memory_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        '[[memory]]\nid = "m_1"\napp = "orders"\nfact = "orders logs live in /var/log/o"\n'
+        "pinned = true\nhits = 3\n\n"
+        '[[memory]]\nid = "m_2"\napp = "general"\nfact = "the change freeze is Friday"\n',
+        encoding="utf-8",
+    )
+    store = bridge_stub._knowledge_store()
+    assert not path.exists()
+    assert path.with_name(path.name + ".migrated").exists()
+    assert {f["text"] for f in store.inbox()} == {
+        "orders logs live in /var/log/o",
+        "the change freeze is Friday",
+    }
+    assert "orders logs live in /var/log/o" in bridge_stub._knowledge_header()
+    assert bridge_stub._knowledge_pin_count() == 1
+    # moved facts wait in the inbox (search shows approved facts only); once the
+    # operator approves one, the agent finds it, marked pinned, and can unpin it
+    assert "No wiki facts match" in bridge_stub._run_knowledge_tool(
+        "search_wiki", {"query": "orders logs"}
+    )
+    pid = store.pinned_ids()[0]
+    assert bridge_stub.knowledge_review(pid, True)["ok"]
+    hits = json.loads(
+        bridge_stub._run_knowledge_tool("search_wiki", {"query": "orders logs"})
+    )["facts"]
+    assert hits and hits[0].get("pinned") is True
+    out = bridge_stub._run_knowledge_tool(
+        "pin_wiki_fact", {"fact_id": hits[0]["id"], "pinned": False}
+    )
+    assert out.startswith("Unpinned")
+    assert bridge_stub._knowledge_header() == ""
+    # pinning is autonomous; the Knowledge tab can pin too
+    assert bridge_stub._effective_tool_autonomy("pin_wiki_fact", {}) == "autonomous"
+    assert bridge_stub.knowledge_pin(hits[0]["id"], True)["ok"] is True
+    assert bridge_stub.knowledge_overview()["pinned"][0]["id"] == hits[0]["id"]

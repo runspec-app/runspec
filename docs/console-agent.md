@@ -71,7 +71,7 @@ which is which.
 | Read and locally edit registered **git repos** (`repo_*` tools) | |
 | Work with session **workspace files** — list, read, grep, write | |
 | Execute **Python and SQL** in the session workspace (confirm-gated) | |
-| Remember facts across conversations (`remember` / `search_memory`) | |
+| Remember facts across conversations in the [knowledge wiki](console-knowledge.md) (`propose_fact` / `search_wiki`, pins) | |
 | Create markdown **documents** and upload them to hosts | |
 | Read and act on **Outlook** mail/calendar (**Windows**; send is confirm-gated) | |
 | Report its own state (`console_status` — time, rota, triggers, schedules) | |
@@ -182,8 +182,9 @@ possible from the console.
 
 > Remember that app-02 is the canary — deploy there first.
 
-`remember` stores machine-local notes the agent recalls in later
-conversations; pinned memories are always in context.
+The agent proposes the fact to the [knowledge wiki](console-knowledge.md); once
+you approve it in the Knowledge inbox it finds it again in later conversations.
+Pinned facts are always in context.
 
 ### Outlook (Windows)
 
