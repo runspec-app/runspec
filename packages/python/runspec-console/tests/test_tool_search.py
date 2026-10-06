@@ -118,6 +118,7 @@ class _Bridge:
     _runbook_id_hint = staticmethod(Bridge._runbook_id_hint)
     _run_search_tool = Bridge._run_search_tool
     _run_describe_tool = Bridge._run_describe_tool
+    _describe_arg_rows = staticmethod(Bridge._describe_arg_rows)
     _confirm_card_view = Bridge._confirm_card_view
     _register_confirm = Bridge._register_confirm
     # dispatch collaborators (no-ops with empty credentials)
@@ -610,9 +611,145 @@ def test_describe_returns_full_schema_with_host_enum():
         _rn("b", "ping", args=[{"name": "count", "type": "int"}]),
     ]
     out = json.loads(_Bridge(runnables)._run_describe_tool({"id": "fleet__ping"}))
-    props = out["input_schema"]["properties"]
-    assert props["host"]["enum"] == ["a", "b"]
-    assert "count" in props
+    assert out["hosts"] == ["a", "b"]
+    assert [a["name"] for a in out["args"]] == ["count"]
+    assert out["args"][0]["type"] == "integer"
+    assert "commands" not in out
+
+
+def _jira_like():
+    # Discovery merges inherited globals into every command node, so `env` rides
+    # each command's args too. Two commands share an arg NAME (`fields`) with a
+    # different meaning — the old flattened schema surfaced it once, with only
+    # the first command's description.
+    env = {"name": "env", "type": "str", "options": ["dev", "prod"]}
+    return [
+        _rn(
+            "a",
+            "jira",
+            description="jira",
+            args=[env],
+            requireCommand=True,
+            commands={
+                "get-issue": {
+                    "description": "Get one issue.",
+                    "args": [
+                        env,
+                        {"name": "issue-key", "type": "str", "required": True},
+                        {
+                            "name": "fields",
+                            "type": "str",
+                            "description": "Fields to return.",
+                        },
+                    ],
+                },
+                "create-request": {
+                    "description": "Raise a JSM request.",
+                    "autonomy": "confirm",
+                    "args": [
+                        env,
+                        {"name": "project", "type": "str", "required": True},
+                        {"name": "request-type", "type": "str", "required": True},
+                        {
+                            "name": "fields",
+                            "type": "str",
+                            "description": "Field values JSON.",
+                        },
+                        {"name": "pat", "type": "password"},
+                    ],
+                },
+            },
+        )
+    ]
+
+
+def test_describe_lists_every_command_with_its_own_args():
+    out = json.loads(_Bridge(_jira_like())._run_describe_tool({"id": "jira"}))
+    assert [a["name"] for a in out["args"]] == ["env"]  # globals once
+    assert out["command_required"] is True
+    cmds = out["commands"]
+    assert set(cmds) == {"get-issue", "create-request"}
+    cr = {a["name"]: a for a in cmds["create-request"]["args"]}
+    assert set(cr) == {"project", "request-type", "fields"}  # no global, no secret
+    assert cr["project"]["required"] is True
+    # A shared arg name keeps each command's own meaning.
+    gi = {a["name"]: a for a in cmds["get-issue"]["args"]}
+    assert gi["fields"]["description"] == "Fields to return."
+    assert cr["fields"]["description"] == "Field values JSON."
+    assert cmds["get-issue"]["description"] == "Get one issue."
+    assert "input_schema" not in out
+
+
+def test_describe_one_command_returns_its_complete_args():
+    out = json.loads(
+        _Bridge(_jira_like())._run_describe_tool(
+            {"id": "jira", "command": "create-request"}
+        )
+    )
+    assert out["command"] == "create-request"
+    assert out["command_description"] == "Raise a JSM request."
+    args = {a["name"]: a for a in out["args"]}
+    assert set(args) == {"env", "project", "request-type", "fields"}
+    assert args["env"]["enum"] == ["dev", "prod"]
+    assert [n for n, a in args.items() if a["required"]] == ["project", "request-type"]
+    assert "commands" not in out
+    assert "command='create-request'" in out["call"]
+
+
+def test_describe_unknown_command_lists_the_options():
+    out = _Bridge(_jira_like())._run_describe_tool({"id": "jira", "command": "nope"})
+    assert out.startswith("Error:")
+    assert "get-issue" in out and "create-request" in out
+
+
+def test_describe_nested_command_path():
+    runnables = [
+        _rn(
+            "a",
+            "db",
+            commands={
+                "restore": {
+                    "requireCommand": True,
+                    "args": [],
+                    "commands": {
+                        "full": {
+                            "args": [
+                                {"name": "snapshot", "type": "str", "required": True}
+                            ]
+                        },
+                    },
+                },
+            },
+        )
+    ]
+    b = _Bridge(runnables)
+    whole = json.loads(b._run_describe_tool({"id": "db"}))
+    assert list(whole["commands"]) == ["restore full"]
+    for cmd in ("restore full", ["restore", "full"]):
+        out = json.loads(b._run_describe_tool({"id": "db", "command": cmd}))
+        assert [a["name"] for a in out["args"]] == ["snapshot"]
+    mid = json.loads(b._run_describe_tool({"id": "db", "command": "restore"}))
+    assert mid["subcommands"] == ["restore full"]
+
+
+def test_describe_over_budget_lists_arg_names_only():
+    commands = {
+        f"verb{i}": {"args": [{"name": f"a{i}_{j}", "type": "str"} for j in range(10)]}
+        for i in range(40)
+    }
+    out = json.loads(
+        _Bridge([_rn("a", "big", commands=commands)])._run_describe_tool({"id": "big"})
+    )
+    assert out["commands"]["verb0"]["args"][0] == "a0_0"  # names only, all of them
+    assert len(out["commands"]["verb39"]["args"]) == 10
+    assert "command=" in out["commands_note"]
+    # …and a single command still comes back in full.
+    one = json.loads(
+        _Bridge([_rn("a", "big", commands=commands)])._run_describe_tool(
+            {"id": "big", "command": "verb3"}
+        )
+    )
+    assert one["args"][0]["type"] == "string"
 
 
 def test_describe_unknown_id_errors():

@@ -9,6 +9,22 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.335.0] — 2026-10-06
+
+### Changed
+
+- **`describe_runnable` describes each subcommand, and can describe one.**
+  For a runnable with subcommands it used to return the flattened dedup tool
+  schema: every command's args merged into one list, an arg name shared by two
+  commands shown once with only the first command's meaning, and "required"
+  only as a text note. On a many-verb runnable (Jira, Confluence) the agent
+  misread it, guessed args, and gave up in favour of a command whose args it
+  knew. The result is now shaped like the `run_runnable` call: `hosts`, the
+  global `args` as typed rows, and a `commands` map giving each command its
+  description and its own args. A new optional `command` input returns that one
+  command's complete argument list, globals included. The search row's
+  "too many to list" note now points at `describe_runnable` with `command`.
+
 ## [0.334.0] — 2026-10-06
 
 ### Added

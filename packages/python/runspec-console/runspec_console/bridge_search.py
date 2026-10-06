@@ -36,6 +36,12 @@ _RUNBOOK_SEARCH_LIMIT = 5
 # verbs (the common shape — cron, filesystem) fits comfortably under it.
 _SEARCH_COMMAND_ARG_BUDGET = 40
 
+# The same all-or-nothing budget for a describe_runnable call that names no
+# command. describe is the tool the agent calls *because* the search row was too
+# small, so it gets a far larger budget (a 37-verb Jira fits); past it each
+# command keeps its description + arg names and the agent asks for one command.
+_DESCRIBE_COMMAND_ARG_BUDGET = 300
+
 # The heading under which the search-mode catalogue index rides as a TRAILING
 # section of the system prompt. Before 0.262.0 the index was folded into the
 # first *user* message; it now composes into the system prompt instead, so a
@@ -163,8 +169,14 @@ class SearchMixin:
             {
                 "name": "describe_runnable",
                 "description": (
-                    "Get the full input schema for one runnable by id — use only when "
-                    "the search_runnables row isn't enough to construct the call."
+                    "Get one runnable's full interface by id when the "
+                    "search_runnables row isn't enough to build the call: its "
+                    "hosts, the global args every command accepts, and each "
+                    "command's OWN args (type, choices, default, required). Pass "
+                    "'command' to get that one command's complete argument list "
+                    "(globals included) — do this before running a command whose "
+                    "args you haven't seen, instead of guessing or switching to "
+                    "another command."
                 ),
                 "input_schema": {
                     "type": "object",
@@ -172,7 +184,15 @@ class SearchMixin:
                         "id": {
                             "type": "string",
                             "description": "The runnable id from a search_runnables result.",
-                        }
+                        },
+                        "command": {
+                            "type": "string",
+                            "description": (
+                                "Optional: one command (space-separated path for a "
+                                "nested one, e.g. 'restore full') to describe in "
+                                "full. Omit to list every command."
+                            ),
+                        },
                     },
                     "required": ["id"],
                 },
@@ -928,8 +948,9 @@ class SearchMixin:
                     # Name the tool that has the full answer instead of guessing.
                     cmd["note"] = (
                         "Arguments differ per command and are too many to list "
-                        "here — call describe_runnable for the full schema before "
-                        "running this."
+                        "here — call describe_runnable with this id and "
+                        "command='<command>' for that command's arguments before "
+                        "running it."
                     )
                 elif per_command:
                     cmd["args"] = per_command
@@ -1108,8 +1129,39 @@ class SearchMixin:
         )
         return json.dumps(rows, default=str)
 
+    @staticmethod
+    def _describe_arg_rows(
+        args: list[Any], skip: set[str] | None = None
+    ) -> list[dict[str, Any]]:
+        """Arg rows (name, required, type, enum, default, …) in the same shape as
+        a search row's, minus ``skip`` names and any ``password`` arg — secrets
+        never travel inline."""
+        from .catalog import arg_to_property
+
+        rows: list[dict[str, Any]] = []
+        seen: set[str] = set(skip or ())
+        for a in args or []:
+            if not isinstance(a, dict):
+                continue
+            nm = str(a.get("name") or "")
+            if not nm or nm in seen or str(a.get("type")) == "password":
+                continue
+            seen.add(nm)
+            row: dict[str, Any] = {"name": nm, "required": bool(a.get("required"))}
+            row.update(arg_to_property(a))
+            rows.append(row)
+        return rows
+
     def _run_describe_tool(self, ti: dict[str, Any]) -> str:
-        """Execute ``describe_runnable`` → the full input schema for one runnable."""
+        """Execute ``describe_runnable`` → one runnable's interface, shaped like
+        the ``run_runnable`` call it is for (``args`` by name, ``command`` beside
+        them), not like a dedup tool schema.
+
+        A subcommand runnable lists every command with its OWN args (globals
+        once, at the top). With ``command`` it returns that one command's
+        complete arg list — globals included, required flags exact — so the
+        agent can build the call for the command it chose rather than guessing
+        and drifting to another one whose args it happens to know."""
         rid = str(ti.get("id") or "")
         matches = self._runnables_for_id(rid)
         if not matches:
@@ -1129,18 +1181,92 @@ class SearchMixin:
             h = r.get("host", "local")
             if h not in hosts:
                 hosts.append(h)
-        schema = self._build_input_schema(
-            rep,
-            self._union_scoped_credentials(hosts, name),
-            hosts=hosts,
-            host_key=self._host_selector_key(rep),
-        )
         result: dict[str, Any] = {
             "id": rid,
             "name": name,
             "description": str(rep.get("description") or ""),
-            "input_schema": schema,
+            "hosts": hosts,
+            "autonomy": str(rep.get("autonomy") or "confirm"),
         }
+        commands = rep.get("commands") or {}
+        raw_cmd = ti.get("command")
+        if isinstance(raw_cmd, list):
+            path = [str(c) for c in raw_cmd if str(c).strip()]
+        else:
+            path = str(raw_cmd or "").split()
+        if path:
+            node: dict[str, Any] = rep
+            for seg in path:
+                nxt = (node.get("commands") or {}).get(seg)
+                if not isinstance(nxt, dict):
+                    options = [" ".join(p) for p, _ in utils_mod.subcommand_paths(rep)]
+                    return (
+                        f"Error: '{name}' has no command '{' '.join(path)}'. "
+                        f"Commands: {', '.join(options) or '(none)'}."
+                    )
+                node = nxt
+            # Discovery merges inherited globals into every node, so the node's
+            # own args are the complete set this command accepts.
+            result["command"] = " ".join(path)
+            if node.get("description"):
+                result["command_description"] = str(node["description"])
+            if node.get("autonomy"):
+                result["autonomy"] = str(node["autonomy"])
+            result["args"] = self._describe_arg_rows(
+                list(node.get("args") or []) + list(rep.get("args") or [])
+            )
+            sub = utils_mod.subcommand_paths(node)
+            if node.get("requireCommand") and sub:
+                result["subcommands"] = [" ".join(path + p) for p, _ in sub]
+            result["call"] = (
+                f"run_runnable(id='{rid}', host=<one of hosts>, "
+                f"command='{' '.join(path)}', args={{<name>: <value>}})"
+            )
+        else:
+            globals_ = list(rep.get("args") or [])
+            result["args"] = self._describe_arg_rows(globals_)
+            if commands:
+                inherited = {
+                    str(a.get("name")) for a in globals_ if isinstance(a, dict)
+                }
+                paths = utils_mod.subcommand_paths(rep)
+                per: dict[str, dict[str, Any]] = {}
+                total = 0
+                for p, node in paths:
+                    entry: dict[str, Any] = {}
+                    if node.get("description"):
+                        entry["description"] = str(node["description"])
+                    rows = self._describe_arg_rows(node.get("args") or [], inherited)
+                    total += len(rows)
+                    entry["args"] = rows
+                    per[" ".join(p)] = entry
+                if total > _DESCRIBE_COMMAND_ARG_BUDGET:
+                    # All-or-nothing, like the search row: past the budget every
+                    # command keeps only its arg names, never a half-listed set.
+                    for entry in per.values():
+                        entry["args"] = [r["name"] for r in entry["args"]]
+                    result["commands_note"] = (
+                        "Too many arguments to describe in full — each command "
+                        "lists only its arg names. Call describe_runnable again "
+                        "with command='<command>' for that command's full args."
+                    )
+                result["command_required"] = bool(rep.get("requireCommand"))
+                result["commands"] = per
+                result["args_note"] = (
+                    "'args' are globals every command accepts; each command adds "
+                    "its own. Pass the command as run_runnable's TOP-LEVEL "
+                    "'command' field, never inside args."
+                )
+        creds = [
+            {"id": str(c.get("id", "")), "label": str(c.get("label", ""))}
+            for c in self._union_scoped_credentials(hosts, name)
+            if c.get("id")
+        ]
+        if creds:
+            result["credentials"] = creds
+        runs_as = self._runs_as_by_host(matches)
+        if runs_as:
+            result["runs_as"] = runs_as
         notes = _wiki_notes_of(self, [name], per_entity=kn.NOTES_PER_DESCRIBE)
         if notes.get(name):
             result["wiki"] = notes[name]

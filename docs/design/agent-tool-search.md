@@ -222,16 +222,25 @@ avoids collisions with `id`/`host`/`command`. Single-host runnables may omit `ho
 
 ```jsonc
 { "type": "object",
-  "properties": { "id": { "type": "string" } },
+  "properties": { "id": { "type": "string" }, "command": { "type": "string" } },
   "required": ["id"] }
 ```
 
-Returns the exact tool schema for one runnable by reusing
-**`_build_input_schema(rep, union_creds, hosts, host_key)`** — i.e. the precise
-`input_schema` the dedup layout would have emitted, including the `host` enum,
-subcommand `command` enum, and `credential_id`. This is the escape hatch for when
-the compact `args` summary isn't enough; in practice the structured rows (§5.1)
-should make it rarely needed.
+Returns one runnable's interface in the shape of the `run_runnable` call it is
+for (console 0.335.0): `hosts`, the global `args` as typed rows (name, required,
+type, enum, default — the same rows a search result uses), and, for a subcommand
+runnable, a `commands` map of **command path → its description + its OWN args**
+(globals listed once, not per command). Passing `command` (a space-joined path)
+returns that one command's complete arg list, globals included, with exact
+`required` flags. Past a 300-row budget the no-command form lists only arg names
+per command (all-or-nothing) and says to ask for one command.
+
+Before 0.335.0 this returned the dedup tool schema (`_build_input_schema`), which
+flattened every command's args into one property list: a name shared by two
+commands kept only the first command's description and choices, per-command
+`required` was a text note, and the shape didn't match `run_runnable`. On a
+many-verb runnable (whose search row defers to describe) the agent misread it,
+guessed args, and drifted to a different command whose args it did know.
 
 ---
 
