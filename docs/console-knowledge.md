@@ -95,6 +95,21 @@ never shares them, and you can pin a fact pulled from the team. A pin follows a
 fact through an edit or a review, and goes away when the fact is retired or
 rejected.
 
+## Facts about a runnable
+
+Don't spend a pin on advice for one tool. A fact about `runnable:<name>` is
+shown to the agent whenever it searches for that runnable (up to three facts on
+its `search_runnables` row) or describes it (up to eight in `describe_runnable`),
+approved facts first, then observed ones. The agent gets the advice at the
+moment it picks the tool, and facts about other runnables stay out of its
+context.
+
+Advice that holds wherever the runnable is used, such as which args keep
+Confluence macro formatting or which verb is the right entry point, belongs in
+the arg and runnable `description` fields of its `runspec.toml` instead. That
+text is part of the tool's schema, so every agent sees it, including Claude Code
+through the MCP server. Use a wiki fact for what is specific to your team.
+
 ## Moving over from the old agent memory
 
 The wiki replaced the agent's older memory (`remember`, `search_memory`,

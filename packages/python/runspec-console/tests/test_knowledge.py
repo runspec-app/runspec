@@ -960,3 +960,74 @@ def test_render_turns_carries_redacted_output_excerpts(kn):
     assert "RESULT: orders/app.log other.log" in text
     assert "x" * 301 not in text and "…" in text  # capped
     assert "abcd1234efgh" not in text and "«redacted»" in text
+
+
+def test_notes_for_runnable(store, kn):
+    store.add_approved(
+        _fact(
+            kn,
+            "Use the space overview page as the entry point for team docs.",
+            about=["runnable:confluence"],
+            kind="note",
+            status="approved",
+        )
+    )
+    store.write_observed(
+        [
+            _fact(
+                kn,
+                "confluence is usually run with --space OPS.",
+                about=["runnable:confluence"],
+                kind="arg-habit",
+                status="observed",
+            )
+        ]
+    )
+    store.propose(_fact(kn, "unreviewed tip", about=["runnable:confluence"]))
+    store.add_approved(
+        _fact(kn, "x" * 500, about=["runnable:ping"], kind="note", status="approved")
+    )
+    idx = store.index()
+    try:
+        notes = idx.notes_for(["runnable:confluence", "runnable:ping", "runnable:none"])
+        assert notes["runnable:confluence"] == [
+            "Use the space overview page as the entry point for team docs.",
+            "confluence is usually run with --space OPS.",
+        ]  # approved before observed; pending left out
+        assert len(notes["runnable:ping"][0]) == kn.NOTE_MAX_CHARS
+        assert "runnable:none" not in notes
+        assert (
+            len(
+                idx.notes_for(["runnable:confluence"], per_entity=1)[
+                    "runnable:confluence"
+                ]
+            )
+            == 1
+        )
+    finally:
+        idx.close()
+
+
+def test_bridge_wiki_notes_by_runnable_name(kn, tmp_path, monkeypatch):
+    from runspec_console import bridge_knowledge as bk
+    from runspec_console import config as config_mod
+
+    monkeypatch.setattr(config_mod, "knowledge_dir", lambda: tmp_path / "kd")
+    st = kn.KnowledgeStore(tmp_path / "kd", seed=False)
+    st.add_approved(
+        _fact(
+            kn,
+            "keep macros",
+            about=["runnable:confluence"],
+            kind="note",
+            status="approved",
+        )
+    )
+
+    class B(bk.KnowledgeMixin):
+        pass
+
+    b = B()
+    b._memory_migration_checked = True
+    assert b._wiki_notes(["confluence", "ping"]) == {"confluence": ["keep macros"]}
+    assert b._wiki_notes([]) == {}

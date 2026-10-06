@@ -12,6 +12,7 @@ import re
 from typing import Any
 
 from . import bridge_utils as utils_mod
+from . import knowledge as kn
 from .bridge_const import _HOT_BUILTIN_NAMES
 
 from typing import TYPE_CHECKING
@@ -50,6 +51,15 @@ def _deliver_property() -> dict[str, Any]:
     from .workspaces import deliver_schema_property
 
     return deliver_schema_property()
+
+
+def _wiki_notes_of(
+    bridge: Any, names: list[str], *, per_entity: int = kn.NOTES_PER_ENTITY
+) -> dict[str, list[str]]:
+    """Wiki facts per runnable name (``KnowledgeMixin._wiki_notes``); ``{}`` on a
+    bridge without the wiki mixin (test stubs)."""
+    fn = getattr(bridge, "_wiki_notes", None)
+    return fn(names, per_entity=per_entity) if fn else {}
 
 
 class SearchMixin:
@@ -925,7 +935,19 @@ class SearchMixin:
                     cmd["args"] = per_command
                 entry["command"] = cmd
             rows.append(entry)
+        # Team wiki facts about each runnable ride its row, so knowledge specific
+        # to one tool reaches the agent when it is choosing that tool — no pin in
+        # every prompt, no extra search_wiki step.
+        notes = _wiki_notes_of(self, [str(e["name"]) for e in rows])
+        for e in rows:
+            if notes.get(e["name"]):
+                e["wiki"] = notes[e["name"]]
         result: dict[str, Any] = {"count": len(rows), "results": rows}
+        if notes:
+            result["wiki_hint"] = (
+                "A row's `wiki` lists what the team wiki knows about that "
+                "runnable — follow it when building the call."
+            )
         if truncated:
             result["truncated"] = True
             result["hint"] = (
@@ -1113,15 +1135,16 @@ class SearchMixin:
             hosts=hosts,
             host_key=self._host_selector_key(rep),
         )
-        return json.dumps(
-            {
-                "id": rid,
-                "name": name,
-                "description": str(rep.get("description") or ""),
-                "input_schema": schema,
-            },
-            default=str,
-        )
+        result: dict[str, Any] = {
+            "id": rid,
+            "name": name,
+            "description": str(rep.get("description") or ""),
+            "input_schema": schema,
+        }
+        notes = _wiki_notes_of(self, [name], per_entity=kn.NOTES_PER_DESCRIBE)
+        if notes.get(name):
+            result["wiki"] = notes[name]
+        return json.dumps(result, default=str)
 
     # ── always-on catalog index (search mode) ─────────────────────────────────
     #

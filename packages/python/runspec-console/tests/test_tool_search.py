@@ -1098,3 +1098,31 @@ def test_unreadable_host_groups_never_sink_search():
 
     b._groups_map = boom
     assert [r["id"] for r in b._search_runnables("disk")["results"]] == ["disk-usage"]
+
+
+def test_wiki_facts_ride_search_rows_and_describe():
+    b = _Bridge([_rn("a", "confluence"), _rn("a", "ping")])
+    calls = []
+
+    def notes(names, per_entity=3):
+        calls.append((list(names), per_entity))
+        return {"confluence": ["Pass --keep-macros to keep macro formatting."]}
+
+    b._wiki_notes = notes
+    out = b._search_runnables("")
+    rows = {r["name"]: r for r in out["results"]}
+    assert rows["confluence"]["wiki"] == [
+        "Pass --keep-macros to keep macro formatting."
+    ]
+    assert "wiki" not in rows["ping"]
+    assert "wiki_hint" in out
+    desc = json.loads(b._run_describe_tool({"id": "confluence"}))
+    assert desc["wiki"] == ["Pass --keep-macros to keep macro formatting."]
+    assert calls[-1] == (["confluence"], 8)  # describe gets a bigger budget
+
+
+def test_no_wiki_key_when_nothing_is_known():
+    b = _Bridge([_rn("a", "ping")])
+    b._wiki_notes = lambda names, per_entity=3: {}
+    out = b._search_runnables("ping")
+    assert "wiki_hint" not in out and "wiki" not in out["results"][0]

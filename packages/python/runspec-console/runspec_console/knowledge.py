@@ -127,6 +127,12 @@ _WORD = re.compile(r"[a-z0-9]+")
 PIN_MAX = 6
 #: Character budget for the pinned block in the system prompt.
 PIN_HEADER_CHARS = 900
+#: Facts about a runnable shown beside it in a search_runnables row, and in a
+#: describe_runnable result — so knowledge about one tool reaches the agent
+#: when it picks that tool, instead of riding every prompt as a pin.
+NOTES_PER_ENTITY = 3
+NOTES_PER_DESCRIBE = 8
+NOTE_MAX_CHARS = 300
 
 
 # ── small helpers ────────────────────────────────────────────────────────────
@@ -981,6 +987,41 @@ class KnowledgeIndex:
             "authors": sorted({f["author"] for f in facts if f["author"]}),
             "last_confirmed": max((f["last_confirmed"] for f in facts), default=""),
         }
+
+    def notes_for(
+        self,
+        entities: Iterable[str],
+        *,
+        per_entity: int = NOTES_PER_ENTITY,
+        max_chars: int = NOTE_MAX_CHARS,
+    ) -> dict[str, list[str]]:
+        """The texts of the live facts about each entity, for showing beside it in
+        a tool result: approved before observed, then most-confirmed first, at
+        most ``per_entity`` each, each capped at ``max_chars``. Pending and
+        retired facts are left out. Entities with no facts are absent."""
+        refs = [r for r in dict.fromkeys(normalize_entity(e) for e in entities) if r]
+        if not refs or per_entity <= 0:
+            return {}
+        marks = ",".join("?" * len(refs))
+        rows = self.conn.execute(
+            "SELECT a.entity AS e, f.text AS text FROM about a "
+            "JOIN facts f ON f.id = a.fact_id "
+            f"WHERE a.entity IN ({marks}) AND f.status IN ('approved','observed') "
+            "ORDER BY a.entity, f.status = 'observed', f.confirmations DESC, "
+            "f.last_confirmed DESC",
+            refs,
+        )
+        out: dict[str, list[str]] = {}
+        for r in rows:
+            notes = out.setdefault(r["e"], [])
+            if len(notes) >= per_entity:
+                continue
+            text = " ".join(str(r["text"] or "").split())
+            if len(text) > max_chars:
+                text = text[: max_chars - 1].rstrip() + "…"
+            if text and text not in notes:
+                notes.append(text)
+        return {k: v for k, v in out.items() if v}
 
     def graph(
         self, *, entity: str = "", depth: int = 1, max_nodes: int = 300

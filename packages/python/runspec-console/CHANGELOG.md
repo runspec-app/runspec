@@ -9,6 +9,25 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.334.0] — 2026-10-06
+
+### Added
+
+- **Facts about a runnable reach the agent when it looks at that runnable.**
+  Wiki facts about `runnable:<name>` now ride that runnable's
+  `search_runnables` row (up to 3) and its `describe_runnable` result (up to 8)
+  as a `wiki` list: approved facts first, then observed ones, most-confirmed
+  first, each capped at 300 characters. Pending and retired facts are left out.
+  So advice for one tool (which args keep Confluence macro formatting, which
+  verb to start with) no longer needs one of the six global pins, and the agent
+  gets it with no extra `search_wiki` step while other runnables' facts stay out
+  of context. The system prompt is unchanged, so prompt caching still holds.
+  `KnowledgeIndex.notes_for`, bridge `_wiki_notes`.
+- `pin_wiki_fact` and `propose_fact` tell the agent to tag a runnable-specific
+  fact `runnable:<name>` instead of pinning it, and a new seed fact explains where
+  runnable advice belongs: in the runnable's `runspec.toml` descriptions when it
+  holds everywhere, in a wiki fact about the runnable when it is your team's.
+
 ## [0.333.1] — 2026-10-06
 
 ### Fixed

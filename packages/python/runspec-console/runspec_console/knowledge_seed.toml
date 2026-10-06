@@ -142,7 +142,12 @@ text = "Config Sync pulls the console's config files (hosts, triggers, runbooks,
 [[fact]]
 kind = "note"
 about = ["app:runspec-console", "feature:knowledge"]
-text = "The Knowledge tab is the team wiki: facts about hosts, runnables, files and jargon. Capture reads run history and config (no AI), Suggest from chats proposes facts for the inbox, up to 6 pinned facts ride every chat, and Memory Sync shares approved facts through a git repo."
+text = "The Knowledge tab is the team wiki: facts about hosts, runnables, files and jargon. Capture reads run history and config (no AI), Suggest from chats proposes facts for the inbox, up to 6 pinned facts ride every chat, facts about a runnable are shown when the agent searches for or describes it, and Memory Sync shares approved facts through a git repo."
+
+[[fact]]
+kind = "procedure"
+about = ["app:runspec-console", "feature:knowledge", "app:runspec"]
+text = "Advice that holds wherever a runnable is used (which args keep formatting, which verb to start with) belongs in the arg and runnable descriptions in its runspec.toml, where every agent sees it. Advice specific to your team goes in a wiki fact about runnable:<name>, which the agent sees when it searches for or describes that runnable. Keep pins for tips that matter on almost every turn."
 
 [[fact]]
 kind = "note"

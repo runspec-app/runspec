@@ -82,6 +82,26 @@ class KnowledgeMixin:
                 logger.warning("memory → wiki migration failed", exc_info=True)
         return store
 
+    def _wiki_notes(
+        self, names: list[str], *, per_entity: int = kn.NOTES_PER_ENTITY
+    ) -> dict[str, list[str]]:
+        """``{runnable name: [fact text, …]}`` — the wiki's live facts about each
+        runnable, for search_runnables rows and describe_runnable results. A fact
+        reaches the agent when it looks at that runnable, so tool-specific
+        knowledge needs no pin. Best-effort: ``{}`` when the wiki is unreadable."""
+        if not names:
+            return {}
+        try:
+            notes = self._knowledge_query(
+                lambda idx: idx.notes_for(
+                    [f"runnable:{n}" for n in names], per_entity=per_entity
+                )
+            )
+        except Exception:  # noqa: BLE001 — never sink a search on the wiki
+            logger.debug("wiki notes unavailable", exc_info=True)
+            return {}
+        return {kn.entity_name(k): v for k, v in notes.items()}
+
     def _migrate_memory(self, store: kn.KnowledgeStore) -> dict[str, int] | None:
         """One-time move of the older agent memory (``runspec_memory.toml``, the
         ``remember`` tool's store) into the wiki's review inbox, keeping its pins.
@@ -235,7 +255,9 @@ class KnowledgeMixin:
                     "be true next week and for everyone on the team; never secrets, one-off "
                     "results or per-person details (a username or account). It goes to "
                     "the operator's review inbox (not straight into the wiki), so "
-                    "propose freely when you learn something reusable."
+                    "propose freely when you learn something reusable. A fact about "
+                    "how to use one runnable should be about runnable:<name>: it is "
+                    "then shown whenever that runnable is searched for or described."
                 ),
                 "input_schema": {
                     "type": "object",
@@ -302,7 +324,9 @@ class KnowledgeMixin:
                     f"Pin a wiki fact into every future chat's context (at most "
                     f"{kn.PIN_MAX}), or unpin it with pinned=false. Pin only facts "
                     "that matter on almost every turn; everything else is a "
-                    "search_wiki away. Pins are this console's own and are never "
+                    "search_wiki away. Don't pin a fact about one runnable: facts "
+                    "about runnable:<name> already show up when that runnable is "
+                    "searched for or described. Pins are this console's own and are never "
                     "shared. Search results mark pinned facts."
                 ),
                 "input_schema": {
