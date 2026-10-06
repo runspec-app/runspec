@@ -9,6 +9,20 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.333.1] — 2026-10-06
+
+### Fixed
+
+- **Dictation recovers when the speech library fails to load once.** If
+  Moonshine's native library (`moonshine.dll` / `libmoonshine.so`) failed to
+  load on the first mic press, `moonshine_voice` kept a half-built singleton,
+  so every later press failed with `'NoneType' object has no attribute
+  'moonshine_get_stt_catalog'` and the real reason was lost. The console now
+  drops that broken state and retries the load before each session
+  (`dictation.ensure_native_library`), serialises engine loads, and reports
+  the actual load error ("Moonshine's native speech library failed to load:
+  …") in the log and the mic state.
+
 ## [0.333.0] — 2026-10-06
 
 ### Fixed

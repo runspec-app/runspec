@@ -762,3 +762,58 @@ def test_voice_refused_when_ai_off(monkeypatch):
     assert b.start_dictation() == {"ok": False, "error": AI_OFF_MESSAGE}
     assert b.get_voice_config()["available"] is False
     assert b.stop_dictation() == {"ok": True, "session_id": None}
+
+
+# ── native-library singleton recovery ──
+
+
+def _fake_moonshine_lib(outcomes: list[Any]) -> type:
+    """Mimics ``moonshine_voice``'s ``_MoonshineLib``: the singleton is stored
+    *before* the load, so a failed load leaves an instance with ``_lib = None``.
+    Each construction pops the next outcome (an exception, or a lib object)."""
+
+    class FakeLib:
+        _instance = None
+        _lib = None
+        loads = 0
+
+        def __new__(cls):
+            if cls._instance is None:
+                cls._instance = super().__new__(cls)
+                cls._instance._load_library()
+            return cls._instance
+
+        def _load_library(self) -> None:
+            type(self).loads += 1
+            outcome = outcomes.pop(0)
+            if isinstance(outcome, BaseException):
+                raise outcome
+            self._lib = outcome
+
+    return FakeLib
+
+
+def test_ensure_native_library_recovers_a_poisoned_singleton():
+    lib = _fake_moonshine_lib([OSError("VCRUNTIME140_1.dll missing"), "lib"])
+    with pytest.raises(OSError):
+        lib()  # moonshine's own first call fails…
+    assert lib._instance is not None and lib._instance._lib is None  # …and sticks
+    dictation.ensure_native_library(lib)
+    assert lib._instance._lib == "lib"
+    assert lib.loads == 2
+
+
+def test_ensure_native_library_surfaces_the_real_error_and_retries_next_time():
+    lib = _fake_moonshine_lib([OSError("VCRUNTIME140_1.dll missing"), "lib"])
+    with pytest.raises(RuntimeError, match="VCRUNTIME140_1.dll missing"):
+        dictation.ensure_native_library(lib)
+    assert lib._instance is None  # not left half-built
+    dictation.ensure_native_library(lib)
+    assert lib._instance._lib == "lib"
+
+
+def test_ensure_native_library_is_a_no_op_once_loaded():
+    lib = _fake_moonshine_lib(["lib"])
+    dictation.ensure_native_library(lib)
+    dictation.ensure_native_library(lib)
+    assert lib.loads == 1

@@ -241,6 +241,41 @@ def model_loaded() -> bool:
 
 # ── engine factory (the only Moonshine-touching code) ─────────────────────────
 
+# One engine load at a time: Moonshine's native-library singleton is not
+# thread-safe (a second caller can see it half-built), and two loads would
+# only race to fill the same cache slot anyway.
+_LOAD_LOCK = threading.Lock()
+
+
+def ensure_native_library(lib_cls: Any = None) -> None:
+    """Load Moonshine's native library, surfacing the real reason if it fails.
+
+    ``moonshine_voice``'s ``_MoonshineLib`` stores its singleton *before*
+    loading the DLL / ``.so``, so when the load fails once (a missing VC++
+    runtime, a clashing ``onnxruntime.dll``…) every later call gets an
+    instance whose ``lib`` is ``None`` and dies with ``'NoneType' object has
+    no attribute 'moonshine_get_stt_catalog'`` — the original error is gone.
+    Drop a half-built instance, retry the load, and drop it again on failure
+    so the next mic press retries instead of inheriting the broken state."""
+    if lib_cls is None:
+        from moonshine_voice.moonshine_api import _MoonshineLib as lib_cls
+
+    inst = getattr(lib_cls, "_instance", None)
+    if inst is not None and getattr(inst, "_lib", None) is not None:
+        return
+    lib_cls._instance = None
+    lib_cls._lib = None  # class default; an instance attribute shadows it
+    try:
+        inst = lib_cls()
+    except Exception as exc:
+        lib_cls._instance = None
+        raise RuntimeError(
+            f"Moonshine's native speech library failed to load: {exc}"
+        ) from exc
+    if getattr(inst, "_lib", None) is None:
+        lib_cls._instance = None
+        raise RuntimeError("Moonshine's native speech library failed to load")
+
 
 def _load_transcriber(
     cfg: dict[str, Any], on_progress: Callable[[float, str], None]
@@ -274,6 +309,17 @@ def _build_mic(cfg: dict[str, Any], on_progress: Callable[[float, str], None]) -
     from moonshine_voice import ModelArch
     from moonshine_voice.mic_transcriber import MicTranscriber
 
+    with _LOAD_LOCK:
+        ensure_native_library()
+        return _configure_mic(cfg, on_progress, ModelArch, MicTranscriber)
+
+
+def _configure_mic(
+    cfg: dict[str, Any],
+    on_progress: Callable[[float, str], None],
+    ModelArch: Any,
+    MicTranscriber: Any,
+) -> Any:
     mic = (
         MicTranscriber()
         .update_interval(float(cfg.get("update_interval") or 0.5))
