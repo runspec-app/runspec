@@ -8,12 +8,16 @@ can be ported between the two packages without changes.
 from __future__ import annotations
 
 import logging
+import ntpath
 import os
+import posixpath
+import re
 import subprocess
 import sys
 import sysconfig
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from shlex import quote as shlex_quote
 from typing import Any, AsyncIterator, Callable
 
 from ..procutil import no_window_kwargs
@@ -379,12 +383,151 @@ def api_key_command_env() -> dict[str, str]:
         needs to locate other bundled files relative to the install.
     """
     env = dict(os.environ)
-    scripts = sysconfig.get_path("scripts") or os.path.dirname(sys.executable)
-    if scripts:
-        env["PATH"] = scripts + os.pathsep + env.get("PATH", "")
+    dirs = api_key_command_dirs()
+    if dirs:
+        env["PATH"] = os.pathsep.join([*dirs, env.get("PATH", "")])
     env["RUNSPEC_PYTHON"] = sys.executable
     env["RUNSPEC_VENV"] = sys.prefix
     return env
+
+
+def api_key_command_dirs() -> list[str]:
+    """The console's own install folders, in lookup order, for ``api_key_command``.
+
+    A key helper "next to the console" can live in any of these, and they are
+    not always the same folder: a ``pip install --user`` or white-label launcher
+    sits in the *user* script dir while ``sysconfig``'s default scheme names the
+    base interpreter's; a frozen build has only ``sys.executable``. So:
+
+      1. the venv's script dir (``sysconfig`` ``scripts`` — ``Scripts``/``bin``),
+      2. the folder holding ``sys.executable``,
+      3. the folder of the launcher that started the console (``sys.argv[0]``,
+         e.g. ``...\\Scripts\\runspec-console``),
+      4. the user-scheme script dir (outside a venv only).
+
+    Only existing directories, de-duplicated (case-insensitively on Windows).
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+
+    def add(path: str | None) -> None:
+        if not path:
+            return
+        path = os.path.abspath(path)
+        key = os.path.normcase(path)
+        if key in seen or not os.path.isdir(path):
+            return
+        seen.add(key)
+        out.append(path)
+
+    add(sysconfig.get_path("scripts"))
+    add(os.path.dirname(sys.executable))
+    argv0 = sys.argv[0] if sys.argv else ""
+    if argv0 and not argv0.startswith("-") and not argv0.endswith(".py"):
+        add(os.path.dirname(os.path.abspath(argv0)))
+    if sys.prefix == sys.base_prefix:  # a --user install; never inside a venv
+        try:
+            add(sysconfig.get_path("scripts", sysconfig.get_preferred_scheme("user")))
+        except (KeyError, ValueError):  # pragma: no cover - exotic interpreters
+            pass
+    return out
+
+
+# ``$RUNSPEC_PYTHON`` / ``${RUNSPEC_VENV}`` — the POSIX spelling the docs and seeds
+# use. ``cmd.exe`` only knows ``%VAR%``, so on Windows these are expanded here.
+_RUNSPEC_VAR_RE = re.compile(
+    r"\$(?:\{(RUNSPEC_PYTHON|RUNSPEC_VENV)\}|(RUNSPEC_PYTHON|RUNSPEC_VENV)\b)"
+)
+
+
+def _split_first_token(command: str) -> tuple[str, str, bool]:
+    """Split ``command`` into (executable, rest, was_quoted). The executable is a
+    leading ``"quoted string"`` or the text up to the first whitespace; ``rest``
+    keeps its leading whitespace so the arguments are rebuilt byte-for-byte."""
+    if command.startswith('"'):
+        end = command.find('"', 1)
+        if end > 0:
+            return command[1:end], command[end + 1 :], True
+    m = re.match(r"\S+", command)
+    if not m:
+        return "", command, False
+    return m.group(0), command[m.end() :], False
+
+
+def prepare_api_key_command(
+    command: str,
+    env: dict[str, str] | None = None,
+    *,
+    windows: bool | None = None,
+    cwd: str | None = None,
+    search_dirs: list[str] | None = None,
+    is_file: Callable[[str], bool] = os.path.isfile,
+) -> str:
+    """Rewrite ``api_key_command`` so the shell runs the helper the operator meant.
+
+    ``shell=True`` hands the string to ``cmd.exe`` on Windows, which mangles the
+    usual ways of naming a helper "in the console's folder":
+
+      * ``./get-key.exe`` / ``tools/get-key.exe`` — ``cmd`` treats ``/`` as a
+        switch, so it tries to run ``.`` (or ``tools``) and fails with "'.' is
+        not recognized as an internal or external command".
+      * ``.\\get-key.exe`` — resolved against the console's *working directory*,
+        which for a shortcut / Start-menu launch is not the install folder.
+      * ``"$RUNSPEC_PYTHON" -m pkg`` — ``cmd`` never expands ``$VAR``.
+
+    So: on Windows the ``$RUNSPEC_*`` vars are expanded; a relative executable
+    path is looked up in the working directory and then each of
+    :func:`api_key_command_dirs` and replaced by the absolute file that exists
+    (trying ``PATHEXT`` on Windows); a Windows path has its ``/`` turned into
+    ``\\``; a path with spaces is quoted. A bare name (``get-key``) is left to the
+    shell — the same folders lead ``PATH``. Arguments are never touched.
+    """
+    if windows is None:
+        windows = os.name == "nt"
+    env = env if env is not None else dict(os.environ)
+    if windows:
+        values = {
+            "RUNSPEC_PYTHON": env.get("RUNSPEC_PYTHON", sys.executable),
+            "RUNSPEC_VENV": env.get("RUNSPEC_VENV", sys.prefix),
+        }
+        command = _RUNSPEC_VAR_RE.sub(
+            lambda m: values[m.group(1) or m.group(2)], command
+        )
+    command = command.strip()
+    exe, rest, quoted = _split_first_token(command)
+    if not exe:
+        return command
+    pathmod = ntpath if windows else posixpath
+    has_sep = ("/" in exe or "\\" in exe) if windows else "/" in exe
+    if not has_sep:
+        return command  # bare name: PATH (with the console's folders first)
+    resolved = exe
+    if not pathmod.isabs(exe):
+        exts = [""]
+        if windows and not pathmod.splitext(exe)[1]:
+            exts += [
+                e for e in env.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").split(";") if e
+            ]
+        bases = [cwd if cwd is not None else os.getcwd()]
+        bases += search_dirs if search_dirs is not None else api_key_command_dirs()
+        found = None
+        for base in bases:
+            for ext in exts:
+                cand = pathmod.normpath(pathmod.join(base, exe + ext))
+                if is_file(cand):
+                    found = cand
+                    break
+            if found:
+                break
+        if found:
+            resolved = found
+    if windows:
+        resolved = ntpath.normpath(resolved)
+    if resolved == exe and not quoted:
+        return command
+    if quoted or any(c.isspace() for c in resolved):
+        resolved = f'"{resolved}"' if windows else shlex_quote(resolved)
+    return resolved + rest
 
 
 def run_api_key_command(command: str) -> str:
@@ -395,19 +538,22 @@ def run_api_key_command(command: str) -> str:
     stderr) when the command produces no output — the shared error every adapter
     surfaced individually before.
     """
+    env = api_key_command_env()
+    prepared = prepare_api_key_command(command, env)
     result = subprocess.run(
-        command,
+        prepared,
         capture_output=True,
         text=True,
         shell=True,
-        env=api_key_command_env(),
+        env=env,
         **no_window_kwargs(),
     )
     key = result.stdout.strip()
     if not key:
+        ran = f" [ran: {prepared}]" if prepared != command else ""
         raise RuntimeError(
             f"api_key_command returned no output (exit {result.returncode}): "
-            f"{result.stderr.strip()}"
+            f"{result.stderr.strip()}{ran}"
         )
     return key
 

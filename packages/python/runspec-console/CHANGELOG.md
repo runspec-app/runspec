@@ -9,6 +9,26 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.332.2] — 2026-10-06
+
+### Fixed
+
+- **`api_key_command` finds a helper placed next to the console on Windows.**
+  The command runs through `cmd.exe`, which broke the usual ways of naming a
+  helper in the console's folder: `./get-key.exe` or `tools/get-key.exe` failed
+  with "'.' is not recognized" (`cmd` reads `/` as a switch), `.\get-key.exe`
+  was looked up in the working directory (a shortcut or Start-menu launch is not
+  started in the install folder), and `"$RUNSPEC_PYTHON" -m …` was never
+  expanded. Now a relative helper path is looked up in the working directory and
+  then the console's own folders and run by its absolute path, Windows paths get
+  backslashes (quoted when they contain spaces), and `$RUNSPEC_PYTHON` /
+  `$RUNSPEC_VENV` are expanded on Windows. The folder of the launcher that
+  started the console (and, outside a venv, the user script dir of a
+  `pip install --user`) now also leads `PATH`, so a bare `get-key` resolves when
+  the launcher is not in `sysconfig`'s script dir. The error for a command with
+  no output now shows the command that actually ran when it was rewritten.
+  (`adapters/base.py` `prepare_api_key_command` / `api_key_command_dirs`.)
+
 ## [0.332.1] — 2026-10-05
 
 ### Fixed

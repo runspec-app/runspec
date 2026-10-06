@@ -190,7 +190,11 @@ lives (a hardcoded `Scripts/`/`bin/` path would not). Two env vars are also
 exported for a module-style helper: **`RUNSPEC_PYTHON`** (this venv's
 interpreter) and **`RUNSPEC_VENV`** (its root) —
 `api_key_command = '"$RUNSPEC_PYTHON" -m mycorp_console.auth token'`
-(`%RUNSPEC_PYTHON%` under `cmd`). The secret itself is never seeded — only the
+(the `$` spelling also works on Windows: the console expands these two itself
+before `cmd.exe` sees the command). A helper given as a relative path
+(`./get-key.exe`, `.\get-key.exe`) is looked up in the working directory and
+then the console's own folders and run by its absolute path, with `/` turned
+into `\` on Windows, so it works however the console was launched. The secret itself is never seeded — only the
 command that fetches it. Because a venv-relative command is correct on every
 machine, no operator ever needs to override it locally, so re-assert-on-upgrade
 (below) never fights you over this key.
