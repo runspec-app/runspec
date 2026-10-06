@@ -693,6 +693,9 @@ export interface ScheduleWhen {
 }
 export interface Schedule {
   id: string
+  // Optional display name for run cards and session chips (else derived from
+  // the action, never the generated id).
+  name?: string
   enabled?: boolean
   action: 'runnable' | 'event' | 'prompt' | 'runbook' | 'saved_run' | 'eval'
   when: ScheduleWhen
@@ -869,6 +872,8 @@ export interface KnowledgeOverview {
   // Run-history range the last capture used, in days (0 = all history).
   capture_days?: number
   dir: string
+  // A capture is running in the background; the tab refreshes when it lands.
+  capturing?: boolean
   // Runnable names discovered right now; usage of anything not listed is
   // drawn as "not installed". Empty before discovery has run.
   installed_runnables?: string[]

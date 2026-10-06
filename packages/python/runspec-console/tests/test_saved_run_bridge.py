@@ -34,6 +34,7 @@ def _stub(
         "_saved_run_selected_hosts",
         "_invoke_scheduled_saved",
         "_invoke_fanout",
+        "_schedule_title",
         "_pick_connected_host",
     ):
         setattr(ns, name, types.MethodType(getattr(Bridge, name), ns))

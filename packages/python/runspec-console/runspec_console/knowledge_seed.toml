@@ -1,0 +1,217 @@
+# Built-in knowledge the wiki starts with (source "seed"): what runspec is, how
+# to add a runnable, and what the console and its built-in tools can do. Shipped
+# with the package and read-only: it shows in search, pages and the graph like
+# any approved fact, an operator can pin, edit (adopts a copy) or retire one,
+# and Memory Sync never pushes it. Keep each fact to one or two sentences and
+# name every built-in tool somewhere here (a test checks that).
+#
+# Fields: kind (glossary / procedure / note / location), about (entities), text.
+# The id is computed from those, like every other fact.
+
+# ── runspec itself ──────────────────────────────────────────────────────────
+
+[[fact]]
+kind = "glossary"
+about = ["app:runspec", "topic:runnable"]
+text = "runspec is a TOML interface spec for anything runnable: a script, CLI app or tool declares its args, types, subcommands and autonomy in a runspec.toml, and the runspec library parses and validates arguments from it at run time. Docs: https://runspec.app/"
+
+[[fact]]
+kind = "glossary"
+about = ["app:runspec", "topic:runspec.toml"]
+text = "runspec.toml lives inside the package directory (mypkg/runspec.toml), not the project root. Each runnable is a top-level section such as [greeter]; [config] is the only reserved name. Format reference: https://runspec.app/format/"
+
+[[fact]]
+kind = "glossary"
+about = ["app:runspec", "topic:arg types"]
+text = "runspec arg types are str, int, float, flag, path, choice, password and rest. Types are inferred: a default of 42 makes an int, false makes a flag, options = [...] makes a choice, and an arg with no default is required."
+
+[[fact]]
+kind = "glossary"
+about = ["app:runspec", "topic:autonomy"]
+text = "Every runnable (and arg) has an autonomy level: autonomous (the agent may run it freely), confirm (the default; the operator approves each run on a card), supervised, or manual (humans only, the agent is refused). The most restrictive level that applies wins."
+
+[[fact]]
+kind = "note"
+about = ["app:runspec", "topic:logging", "topic:audit"]
+text = "Runnables log through the standard logger (logging.getLogger(__name__) in Python); logging and the run audit record are on by default and land in the venv's logs/ folder. Call runspec.audit(event, outcome, target=...) for actions that must be provable later. See https://runspec.app/logging/ and https://runspec.app/audit/"
+
+[[fact]]
+kind = "note"
+about = ["app:runspec", "topic:run_as"]
+text = "A runnable runs as the owner of its venv by default (run_as = \"@owner\"), never as root; set run_as on the runnable or in [config] to name a service account, or run_as = \"\" to opt out."
+
+[[fact]]
+kind = "note"
+about = ["app:runspec", "topic:runspec cli"]
+text = "The runspec CLI: runspec init scaffolds a runnable, runspec local lists the runnables installed in a venv, runspec test is the wiring gate for CI, runspec stubs writes typed stubs, runspec exec runs a runnable with a full run record, runspec serve exposes a venv as an MCP server, and runspec emit --rundeck / --ansible generates jobs and modules."
+
+# ── adding a runnable (the add-runnable skill) ──────────────────────────────
+
+[[fact]]
+kind = "procedure"
+about = ["app:runspec", "topic:add a runnable"]
+text = "To add a new runnable: pin down its purpose, name, args, subcommands, autonomy and side effects; add a [name] section to the package's runspec.toml; write a thin main() that calls runspec.parse() and hands plain values to a worker function; wire an entry point with exactly the same name; pip install -e .; then run runspec local and runspec test. Guide: https://runspec.app/authoring/"
+
+[[fact]]
+kind = "procedure"
+about = ["app:runspec", "topic:add a runnable"]
+text = "In runnable code, parse() returns a RunSpec and args.name is an Arg: read args.name.value for the value (if args.flag: raises on purpose). Test with runspec.testing.ParseHarness rather than faking args, and let errors propagate instead of wrapping parse() in try/except."
+
+[[fact]]
+kind = "procedure"
+about = ["app:runspec", "topic:add a runnable", "topic:claude code"]
+text = "Claude Code can scaffold a runnable for you with the add-runnable skill (download: https://runspec.app/skills/add-runnable.md); it interviews you for the interface, then writes the TOML section, code stub, entry point and a test. mcp-to-runnable ports an existing MCP server's tools into a runnable package."
+
+[[fact]]
+kind = "procedure"
+about = ["app:runspec", "topic:add a runnable", "feature:marketplace"]
+text = "To add an existing runnable package rather than write one, open the Marketplace tab (or ask the agent to search_marketplace), then install it into the console's venv or a host's venvs; on the command line it is just pip install <package> into the venv. New runnables appear after the next discovery."
+
+[[fact]]
+kind = "procedure"
+about = ["app:runspec", "topic:wrap a runnable"]
+text = "To build a company-specific runnable on a published one, depend on its -core package (for example runspec-linux-core or runspec-jira-core), import the helpers, and bake your defaults into your own package with its own runspec.toml; only your runnables then surface. runspec rebrand republishes a package under your own name. See https://runspec.app/white-label-runnables/"
+
+# ── the console: features ───────────────────────────────────────────────────
+
+[[fact]]
+kind = "glossary"
+about = ["app:runspec-console"]
+text = "runspec-console is a desktop app that discovers the runnables installed in local venvs and on SSH hosts, and runs them from forms, schedules, triggers, an AI chat agent, or an external agent over MCP, with every run recorded in History."
+
+[[fact]]
+kind = "procedure"
+about = ["app:runspec-console", "feature:forms"]
+text = "The Forms tab shows every discovered runnable as a typed form; pick a host, fill the args (selected Credentials can fill usernames and secrets) and run. A past run can be re-opened pre-filled from the Console card's pencil or History's Edit & rerun."
+
+[[fact]]
+kind = "note"
+about = ["app:runspec-console", "feature:hosts"]
+text = "Hosts are configured in Settings → Jump Hosts (runspec_hosts.toml). Groups target a runnable at every host in the group at once; profiles are a switchable working set of hosts the sidebar loads. The agent can see hosts with console_status and edit them with manage_hosts and manage_groups."
+
+[[fact]]
+kind = "procedure"
+about = ["app:runspec-console", "feature:hosts", "topic:venv"]
+text = "Settings → Jump Hosts → Provision venv… creates a runspec venv on one or many hosts (location, Python interpreter, run-as owner, packages) and shares its logs inbox; Deprovision… removes one after a typed confirmation, keeping logs by default."
+
+[[fact]]
+kind = "note"
+about = ["app:runspec-console", "feature:history"]
+text = "History and Analytics list every run (who, where, args, exit code, output). The agent reads the same records with search_history, e.g. to answer when something last ran and whether it worked."
+
+[[fact]]
+kind = "note"
+about = ["app:runspec-console", "feature:schedules"]
+text = "The Schedules tab runs a runnable, saved run, prompt, runbook or eval on a cron or interval, on a host, a group, or the first connected of several hosts. The agent can add one with create_schedule."
+
+[[fact]]
+kind = "note"
+about = ["app:runspec-console", "feature:triggers"]
+text = "Triggers react to events (new mail, a pasted block of text, a chat-room message, a schedule) either with a rule that runs runnables or with an agent turn. They respect the Rota (working hours, breaks, screen lock). The agent can edit them from chat with manage_triggers and manage_rota."
+
+[[fact]]
+kind = "note"
+about = ["app:runspec-console", "feature:runbooks"]
+text = "Runbooks are saved, parameterised procedures written for the agent (runspec_runbooks.toml). The agent saves them with save_runbook, reads them with load_runbook and runs one with run_runbook; operators type $name in the Console to run one."
+
+[[fact]]
+kind = "note"
+about = ["app:runspec-console", "feature:saved runs"]
+text = "A saved run is a runnable plus fixed args and target kept under a name, to repeat with one click or from a schedule. The agent runs one with run_saved_run and manages them with manage_saved_runs."
+
+[[fact]]
+kind = "note"
+about = ["app:runspec-console", "feature:credentials"]
+text = "Credentials (Settings → Credentials) keep secrets in the OS keychain; only names and metadata are in config. A credential is applied as name-derived environment variables (label Jira gives JIRA_USERNAME and JIRA_PASSWORD) or bound to a runnable's username and secret args."
+
+[[fact]]
+kind = "note"
+about = ["app:runspec-console", "feature:mcp server"]
+text = "The console can be an MCP server (Settings → MCP Server) so Claude Code or Cursor can run the fleet's runnables through the same approval cards; with expose_builtins on, the built-in tools (including this wiki) are offered too."
+
+[[fact]]
+kind = "note"
+about = ["app:runspec-console", "feature:mcp client"]
+text = "Settings → MCP connects the console's agent to outside MCP servers (stdio, http or sse); their tools appear as mcp_<server>_<tool> and go through the same approval gate."
+
+[[fact]]
+kind = "note"
+about = ["app:runspec-console", "feature:config sync"]
+text = "Config Sync pulls the console's config files (hosts, triggers, runbooks, groups and more) from a git repo at a tag, merging without overwriting local entries; a package can also ship a config seed. It only pulls; it never writes back."
+
+[[fact]]
+kind = "note"
+about = ["app:runspec-console", "feature:knowledge"]
+text = "The Knowledge tab is the team wiki: facts about hosts, runnables, files and jargon. Capture reads run history and config (no AI), Suggest from chats proposes facts for the inbox, up to 6 pinned facts ride every chat, and Memory Sync shares approved facts through a git repo."
+
+[[fact]]
+kind = "note"
+about = ["app:runspec-console", "feature:marketplace"]
+text = "The Marketplace tab lists runspec runnable packages from your package indexes and installs, updates or removes them in the console's venv and each connected host's venvs."
+
+[[fact]]
+kind = "note"
+about = ["app:runspec-console", "feature:improve", "feature:evals"]
+text = "Improve scores how well the agent and runnables are working from saved chats and run history, and can mail a report to the developers (run_improve_report). Evals check which runnable the agent would pick for a fixed set of prompts, without running anything."
+
+[[fact]]
+kind = "note"
+about = ["app:runspec-console", "feature:denylist"]
+text = "The Denylist (button under the hosts list) disables runnables on a venv by name, user or host, or all at once; the agent's manage_denylist does the same behind an approval."
+
+[[fact]]
+kind = "note"
+about = ["app:runspec-console", "feature:ai off"]
+text = "With [console] ai = false the console runs as a non-AI fleet tool: forms, schedules, rule triggers, history and the MCP server work; chat, runbooks, evals and agent-mode triggers are off."
+
+# ── the console agent's built-in tools ──────────────────────────────────────
+
+[[fact]]
+kind = "glossary"
+about = ["app:runspec-console", "feature:agent"]
+text = "The console agent runs runnables through search_runnables, describe_runnable and run_runnable (or one tool per runnable outside search mode). In search mode, built-in tools that are not always loaded are listed in a menu and used via describe_tool and use_tool."
+
+[[fact]]
+kind = "note"
+about = ["app:runspec-console", "feature:agent", "feature:files"]
+text = "Built-in file tools: list_files browses a directory on the local machine or any host, download_file copies a file from a host, and relay_file copies between hosts, optionally through a file filter."
+
+[[fact]]
+kind = "procedure"
+about = ["app:runspec-console", "feature:agent", "feature:files"]
+text = "To fetch a log whose exact path is unknown, use list_files on the host first (or a runnable that reports where the app logs), take the path from its output, then pass that path to download_file or relay_file; never guess a path."
+
+[[fact]]
+kind = "procedure"
+about = ["app:runspec-console", "feature:agent"]
+text = "Tool output can feed the next call: read a value from one runnable's or tool's result (a path, an id, a host name) and pass it as an argument to the next. Long output is saved to the chat workspace, where workspace_grep, workspace_json_get or workspace_tail pull out just the value needed."
+
+[[fact]]
+kind = "note"
+about = ["app:runspec-console", "feature:agent", "feature:workspace"]
+text = "Each chat has a workspace folder for files the agent makes or receives: workspace_ls, workspace_read, workspace_head, workspace_tail, workspace_grep, workspace_json_get, workspace_write, workspace_materialize and workspace_info. run_python_sandboxed and run_sql_sandboxed run code in a WASM sandbox that can only see the workspace."
+
+[[fact]]
+kind = "note"
+about = ["app:runspec-console", "feature:agent", "feature:outlook"]
+text = "On Windows with Outlook, the agent has Outlook tools: outlook_inbox, outlook_search, outlook_get_message, outlook_calendar, outlook_reminders, outlook_resolve_recipient and outlook_event_join_url read; outlook_draft, outlook_send, outlook_save_attachment, outlook_move, outlook_mark_read, outlook_categorize, outlook_create_event and outlook_respond_invite need approval."
+
+[[fact]]
+kind = "note"
+about = ["app:runspec-console", "feature:agent", "feature:repos"]
+text = "Repos (Settings → Repos) are git checkouts the agent may read and edit locally: repo_list, repo_sync, repo_status, repo_read, repo_grep, repo_diff and repo_write. It never commits or pushes."
+
+[[fact]]
+kind = "note"
+about = ["app:runspec-console", "feature:agent"]
+text = "Agent action tools: create_document (markdown to a file or host), create_schedule, emit_event, open_url, open_file, reveal_in_folder, play_sound, run_runbook and run_saved_run. fetch_url reads a web page; console_status reports the hosts, the current time and what is running."
+
+[[fact]]
+kind = "note"
+about = ["app:runspec-console", "feature:agent", "feature:knowledge"]
+text = "Wiki tools, also offered over the MCP server: search_wiki, wiki_page, wiki_graph, list_wiki_inbox and propose_fact run without approval; review_wiki_fact, edit_wiki_fact and retire_wiki_fact need approval; pin_wiki_fact pins a fact into every chat."
+
+[[fact]]
+kind = "note"
+about = ["app:runspec-console", "feature:agent", "feature:marketplace"]
+text = "search_marketplace finds runnable packages that could be installed but are not; the agent can only recommend them, installing stays an operator action in the Marketplace tab."

@@ -49,11 +49,6 @@ const GRAPH_W = 960
 const GRAPH_H = 620
 const ZOOM_STEP = 1.25
 
-/** Usage facts from Capture: "<runnable> is used on <host> (N runs)." */
-export const isUsageFact = (f: KnowledgeFact): boolean =>
-  f.kind === 'host' && f.status === 'observed'
-  && f.about.some(a => a.startsWith('runnable:')) && f.about.some(a => a.startsWith('host:'))
-
 /**
  * Runnable entities that aren't installed anywhere the console can see right
  * now (their usage is history). Null when discovery hasn't reported yet, so
@@ -216,7 +211,7 @@ export function KnowledgeView({ active, aiEnabled, onOpenSettings }: KnowledgeVi
               style={{ width: 130 }}
             />
           </Tooltip>
-          <Tooltip title="Reads run history (which runnables run where, usual args, what runs after what) and your config (groups, profiles, triggers, schedules, runbooks, file filters). No AI.">
+          <Tooltip title="Reads run history (usual args, what runs after what) and your config (triggers, schedules, runbooks, file filters). No AI.">
             <Button icon={<ReloadOutlined />} loading={busy === 'capture'} onClick={capture}>Capture</Button>
           </Tooltip>
           {aiEnabled && (
@@ -289,7 +284,7 @@ export function KnowledgeView({ active, aiEnabled, onOpenSettings }: KnowledgeVi
             )}
             {overview && (
               <Text style={{ color: textMuted(isDark), fontSize: 12 }}>
-                Last captured {overview.captured_at ? new Date(overview.captured_at).toLocaleString() : 'never'} · stored in <span style={{ fontFamily: MONO_FONT }}>{overview.dir}</span>
+                Last captured {overview.captured_at ? new Date(overview.captured_at).toLocaleString() : 'never'}{overview.capturing ? ' (capturing now…)' : ''} · stored in <span style={{ fontFamily: MONO_FONT }}>{overview.dir}</span>
               </Text>
             )}
           </div>
@@ -515,12 +510,8 @@ function SidePanel({ query, results, page, onEntity, onEdit, onRetire, pinned = 
       </>
     )
   } else if (page && page.facts.length > 0) {
-    // Capture's "X is used on Y (N runs)" facts read better as one table than as
-    // a card each; every other fact keeps its card.
-    const usage = page.facts.filter(isUsageFact)
     const byKind = new Map<string, KnowledgeFact[]>()
     for (const f of page.facts) {
-      if (isUsageFact(f)) continue
       byKind.set(f.kind, [...(byKind.get(f.kind) ?? []), f])
     }
     body = (
@@ -533,9 +524,6 @@ function SidePanel({ query, results, page, onEntity, onEdit, onRetire, pinned = 
         <div style={{ fontSize: 18, fontWeight: 600, fontFamily: MONO_FONT, color: textColor(isDark), wordBreak: 'break-all', margin: '2px 0 8px' }}>
           {page.name}
         </div>
-        {usage.length > 0 && (
-          <UsageTable facts={usage} current={page.entity} isStale={isStale} onEntity={onEntity} />
-        )}
         {[...byKind].map(([kind, facts]) => (
           <div key={kind} style={{ marginBottom: 12 }}>
             <div style={{ textTransform: 'uppercase', fontSize: 11, letterSpacing: 0.5, color: textMuted(isDark), marginBottom: 4 }}>{kind}</div>
@@ -579,57 +567,6 @@ function SidePanel({ query, results, page, onEntity, onEdit, onRetire, pinned = 
   return (
     <div style={{ width: 'clamp(360px, 34%, 560px)', flexShrink: 0, overflow: 'auto', background: sf.raised, border: `1px solid ${sf.border}`, borderRadius: RADIUS.md, padding: 14 }}>
       {body}
-    </div>
-  )
-}
-
-/** Capture's usage facts on an entity page as one table: the other side of each
- *  fact (the runnables on a host page, the hosts on a runnable page), its run
- *  count and last run. Not-installed runnables sink to the bottom, faded. */
-export function UsageTable({ facts, current, isStale = null, onEntity }: {
-  facts: KnowledgeFact[]
-  current: string
-  isStale?: ((entity: string) => boolean) | null
-  onEntity: (e: string) => void
-}) {
-  const isDark = useIsDark()
-  const sf = surfaces(isDark)
-  const rows = facts
-    .map(f => {
-      const other = f.about.find(a => a !== current && (a.startsWith('runnable:') || a.startsWith('host:'))) ?? f.about[0]
-      return { f, other, stale: !!isStale?.(other) || !!isStale?.(current) }
-    })
-    .sort((a, b) => Number(a.stale) - Number(b.stale) || b.f.confirmations - a.f.confirmations)
-  const heading = current.startsWith('host:') ? 'Runs here' : 'Used on'
-  const cell: React.CSSProperties = { padding: '4px 6px', borderBottom: `1px solid ${sf.divider}`, textAlign: 'left' }
-  return (
-    <div style={{ marginBottom: 12 }}>
-      <div style={{ textTransform: 'uppercase', fontSize: 11, letterSpacing: 0.5, color: textMuted(isDark), marginBottom: 4 }}>
-        {heading} <span style={{ textTransform: 'none' }}>· from run history</span>
-      </div>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, color: textColor(isDark) }}>
-        <thead>
-          <tr style={{ color: textMuted(isDark), fontSize: 12 }}>
-            <th style={{ ...cell, fontWeight: 500 }}>{current.startsWith('host:') ? 'Runnable' : 'Host'}</th>
-            <th style={{ ...cell, fontWeight: 500, textAlign: 'right' }}>Runs</th>
-            <th style={{ ...cell, fontWeight: 500 }}>Last run</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map(({ f, other, stale }) => (
-            <tr key={f.id} data-testid="usage-row" style={{ opacity: stale ? 0.5 : 1 }}>
-              <td style={cell}>
-                <a onClick={() => onEntity(other)} style={{ fontFamily: MONO_FONT, color: textColor(isDark) }}>
-                  {splitEntity(other)[1]}
-                </a>
-                {stale && <Text style={{ fontSize: 11, color: textMuted(isDark), marginLeft: 6 }}>not installed</Text>}
-              </td>
-              <td style={{ ...cell, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{f.confirmations}</td>
-              <td style={{ ...cell, color: textMuted(isDark) }}>{f.last_confirmed}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
     </div>
   )
 }

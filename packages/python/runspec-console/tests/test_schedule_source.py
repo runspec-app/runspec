@@ -903,3 +903,40 @@ def test_fire_runnable_threads_command():
     )
     src._fire("r1")
     assert ran == [["db", "restore"]]
+
+
+def test_schedule_label_prefers_name_then_action_never_bare_id():
+    from runspec_console.sources.schedule import parse_schedule_entry, schedule_label
+
+    when = {"every": "1h"}
+    named = parse_schedule_entry(
+        {
+            "id": "rs-prompt-1",
+            "name": " Morning  check ",
+            "action": "prompt",
+            "prompt": "x",
+            "when": when,
+        }
+    )
+    assert named.name == "Morning check" and schedule_label(named) == "Morning check"
+    prompt = {
+        "id": "rs-prompt-1790079272061",
+        "action": "prompt",
+        "when": when,
+        "prompt": "Check disk space on every web host and tell me which is low",
+    }
+    assert schedule_label(prompt) == "Check disk space on every web…"
+    assert (
+        schedule_label(parse_schedule_entry(prompt)) == "Check disk space on every web…"
+    )
+    assert (
+        schedule_label({"id": "a", "action": "runbook", "runbook": "patch"})
+        == "runbook patch"
+    )
+    assert (
+        schedule_label(
+            {"id": "a", "runnable": "cron", "command": ["list"], "host": "h"}
+        )
+        == "cron list"
+    )
+    assert schedule_label({"id": "rs-x", "action": "prompt", "prompt": ""}) == "rs-x"

@@ -258,6 +258,11 @@ The agent creates schedules directly:
 `create_schedule` shows a confirmation card; the schedule then lives on the
 Schedules tab where you can pause, edit, or delete it.
 
+Give a schedule a **Name** (`name` on the `[[schedule]]` entry) to label its
+run cards and session chips. Without one, the console labels a run from what it
+does: a prompt's first few words, `runbook <id>`, `saved run <id>`, or the
+runnable and subcommand. The generated id (`rs-prompt-…`) is never shown.
+
 These schedules fire only while this console is open. For **always-on, shared**
 schedules that run on the host itself, use `runspec-scheduler`'s cron backend on
 that host (see [the cron scheduler design](design/cron-scheduler.md)).

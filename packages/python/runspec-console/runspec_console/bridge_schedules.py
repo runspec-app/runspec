@@ -27,6 +27,7 @@ from .bridge_const import (
     logger,
     AI_OFF_MESSAGE,
 )
+from .sources.schedule import schedule_label
 from .bridge_utils import (
     _write_schedules,
 )
@@ -365,7 +366,7 @@ class SchedulesMixin:
         created = time.time()
         card: dict[str, Any] = {
             "card_id": card_id,
-            "trigger": job.id,
+            "trigger": schedule_label(job),
             "source": "schedule",
             "event_type": "eval",
             "summary": f"eval: {job.eval_fixture}",
@@ -527,7 +528,7 @@ class SchedulesMixin:
         detail["schedule_id"] = job.id
         card: dict[str, Any] = {
             "card_id": card_id,
-            "trigger": job.id,
+            "trigger": schedule_label(job),
             "source": "schedule",
             "event_type": job.action,
             "summary": summary,
@@ -621,6 +622,19 @@ class SchedulesMixin:
             credential_ids=credential_ids,
         )
         return runs[0][1] if runs else ""
+
+    def _schedule_title(self, label: str) -> str:
+        """The display name for a run card whose ``label`` is a schedule id (or
+        a saved-run id): the schedule's name or derived label, else ``label``."""
+        if not label:
+            return ""
+        try:
+            entry = next(
+                (e for e in self._read_schedules() if str(e.get("id")) == label), None
+            )
+        except Exception:  # noqa: BLE001 — a label is never worth failing a run
+            entry = None
+        return schedule_label(entry) if entry else label
 
     def _invoke_fanout(
         self,
@@ -740,7 +754,7 @@ class SchedulesMixin:
             # card.
             card: dict[str, Any] = {
                 "card_id": inv_id,
-                "trigger": label or runnable,
+                "trigger": self._schedule_title(label) or runnable,
                 "source": "schedule",
                 "event_type": "runnable",
                 "summary": f"/{runnable} on {host}",

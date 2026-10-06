@@ -270,11 +270,15 @@ def test_unwrap_preflights_inner_input():
     )
     assert got == ("outlook_inbox", {"path": "/a", "dest_dir": "/b"})
     err = stub._unwrap_use_tool({"name": "outlook_inbox", "input": {"path": "/a"}})
-    assert "missing required" in err and "describe_tool" in err
+    # The bounce carries the schema, so the retry needs no describe_tool hop.
+    assert "missing required" in err and "describe_tool" not in err
+    assert 'outlook_inbox input schema: {"' in err and '"dest_dir"' in err
+    err = stub._unwrap_use_tool({"name": "outlook_inbox"})  # no input at all
+    assert "missing required" in err and "input schema" in err
     err = stub._unwrap_use_tool(
         {"name": "outlook_inbox", "input": {"path": "/a", "dest_dir": "/b", "x": 1}}
     )
-    assert "unknown argument" in err
+    assert "unknown argument" in err and "input schema" in err
 
 
 # ── gate integration ──────────────────────────────────────────────────────────

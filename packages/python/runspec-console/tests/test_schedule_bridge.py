@@ -42,6 +42,7 @@ def _stub(tmp_path, monkeypatch, *, engine=None):
         "run_schedule_now",
         "_invoke_scheduled",
         "_invoke_fanout",
+        "_schedule_title",
         "_invoke_scheduled_agent",
         "_pick_connected_host",
         "_run_scheduled",

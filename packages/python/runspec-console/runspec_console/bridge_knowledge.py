@@ -12,7 +12,8 @@ around it and the three ways in:
 * **Knowledge tab** (public JS API ``knowledge_*``) — graph, pages, search, the
   review inbox, and operator-authored facts.
 * **Capture** — ``knowledge_capture`` mines run history into ``observed`` facts
-  (no AI); ``knowledge_distill`` asks the console's utility model to propose facts
+  (no AI); the tab's hourly auto-capture runs it on a background thread so the
+  tab paints at once (``_knowledge_autocapture``); ``knowledge_distill`` asks the console's utility model to propose facts
   from recent chats into the inbox (AI; refused when ``[console] ai = false``).
 
 **Pinned facts** (up to ``kn.PIN_MAX``, machine-local) fold into every chat's
@@ -30,6 +31,7 @@ import getpass
 import json
 import logging
 import socket
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -43,6 +45,9 @@ logger = logging.getLogger(__name__)
 _MCP_CHAT_ID = "__mcp_server__"  # mirrors bridge_mcp_server._MCP_SERVER_CHAT_ID
 # Mechanical capture re-runs at most this often on its own (the tab asks on open).
 _CAPTURE_MAX_AGE_S = 60 * 60
+# A failed background capture is not retried on every tab open; wait this long.
+_CAPTURE_RETRY_S = 5 * 60
+_CAPTURE_LOCK = threading.Lock()
 _DEFAULT_CAPTURE_DAYS = 30
 # Distill reads saved chats in chunks of this many characters, one model call per
 # chunk, at most _DISTILL_MAX_CALLS calls per click (the rest wait for the next).
@@ -168,9 +173,12 @@ class KnowledgeMixin:
                 "description": (
                     "Search the team knowledge wiki — what the team already knows "
                     "about hosts, groups, profiles, runnables, file locations, jargon, "
-                    "which tools go together and knock-on effects. Check it BEFORE "
+                    "which tools go together and knock-on effects — plus built-in "
+                    "notes on how runspec and this console work (features, built-in "
+                    "tools, how to write or install a runnable). Check it BEFORE "
                     "asking the operator where something lives or what a term means, "
-                    "and before investigating something from scratch."
+                    "before investigating something from scratch, and when asked how "
+                    "to do something in runspec or the console."
                 ),
                 "input_schema": {
                     "type": "object",
@@ -458,18 +466,13 @@ class KnowledgeMixin:
     # ── public JS API (Knowledge tab) ────────────────────────────────────────
     def knowledge_overview(self) -> dict[str, Any]:
         """Everything the tab's first paint needs: counts, the whole graph, the
-        inbox, and when usage was last captured. Re-captures usage first when the
-        last capture is over an hour old (best-effort)."""
+        inbox, and when usage was last captured. Returns straight away; when the
+        last capture is over an hour old a fresh one starts in the background
+        (``capturing``) and the tab refreshes on ``runspec:knowledge_updated``
+        when it lands. (Capture reads run history from every connected host,
+        which on a big fleet took long enough to stall the tab's first paint.)"""
         store = self._knowledge_store()
-        try:
-            age = time.time() - (store.root / kn.OBSERVED_FILE).stat().st_mtime
-        except OSError:
-            age = None
-        if age is None or age > _CAPTURE_MAX_AGE_S:
-            try:
-                self.knowledge_capture(notify=False)
-            except Exception:  # noqa: BLE001
-                logger.debug("knowledge auto-capture failed", exc_info=True)
+        capturing = self._knowledge_autocapture(store)
         idx = store.index()
         try:
             return {
@@ -483,12 +486,45 @@ class KnowledgeMixin:
                     store.state().get("capture_days"), _DEFAULT_CAPTURE_DAYS
                 ),
                 "dir": str(store.root),
+                "capturing": capturing,
                 "installed_runnables": self._knowledge_installed(),
                 "entity_types": list(kn.ENTITY_TYPES),
                 "kinds": list(kn.FACT_KINDS),
             }
         finally:
             idx.close()
+
+    def _knowledge_autocapture(self, store: kn.KnowledgeStore) -> bool:
+        """Start a background capture when the last one is over an hour old (and
+        none is running, and none failed in the last few minutes). Returns
+        whether a capture is running now."""
+        with _CAPTURE_LOCK:
+            running = getattr(self, "_knowledge_capture_thread", None)
+            if running is not None and running.is_alive():
+                return True
+            try:
+                age: float | None = (
+                    time.time() - (store.root / kn.OBSERVED_FILE).stat().st_mtime
+                )
+            except OSError:
+                age = None
+            if age is not None and age <= _CAPTURE_MAX_AGE_S:
+                return False
+            tried = float(getattr(self, "_knowledge_capture_tried", 0.0) or 0.0)
+            if time.time() - tried < _CAPTURE_RETRY_S:
+                return False
+            self._knowledge_capture_tried = time.time()
+
+            def run() -> None:
+                try:
+                    self.knowledge_capture(notify=True)
+                except Exception:  # noqa: BLE001 — best-effort, the tab still works
+                    logger.warning("knowledge auto-capture failed", exc_info=True)
+
+            thread = threading.Thread(target=run, name="knowledge-capture", daemon=True)
+            self._knowledge_capture_thread = thread
+            thread.start()
+            return True
 
     def _knowledge_installed(self) -> list[str]:
         """Names of the runnables discovered right now (local + connected hosts),
@@ -639,7 +675,12 @@ class KnowledgeMixin:
         except Exception as exc:  # noqa: BLE001
             logger.warning("knowledge capture: history read failed", exc_info=True)
             return {"ok": False, "error": f"could not read run history: {exc}"}
-        facts = kn.observe(history)
+        try:
+            with self._lock:  # type: ignore[attr-defined]
+                records = list(getattr(self, "_runnables_cache", []) or [])
+        except Exception:  # noqa: BLE001
+            records = []
+        facts = kn.observe(history, defaults=kn.arg_defaults(records))
         cfg = self._knowledge_config()
         catalog = self._knowledge_catalog(cfg)
         facts += kn.observe_config(**cfg, catalog=catalog)

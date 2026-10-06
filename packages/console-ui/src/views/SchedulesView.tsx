@@ -253,6 +253,7 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
       prompt: editing.prompt ?? '',
       runbook: editing.runbook ?? undefined,
       saved_run: editing.saved_run ?? undefined,
+      name: editing.name ?? '',
       sound: editing.sound ?? '',
       model: editing.model ?? '',
       fields: Object.entries(editing.fields ?? {}).map(([key, value]) => ({ key, value })),
@@ -436,6 +437,10 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
       if (!base.id) base.id = `rs-${values.runnable}-${Date.now()}`
     }
 
+    // Optional display name for run cards and session chips. Omit when unset
+    // (the console derives a label from the action instead of the id).
+    const name = String(values.name ?? '').trim()
+    if (name) base.name = name
     // Optional attention cue on fire (any action). Omit the key when unset.
     const sound = String(values.sound ?? '').trim()
     if (sound) base.sound = sound
@@ -471,6 +476,10 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
       destroyOnClose
     >
       <Form form={form} layout="vertical" initialValues={{ host: defaultHost, fields: [] }}>
+        <Form.Item name="name" label="Name (optional)"
+          extra="Shown on its runs and chat chips. Left blank, the console names it from what it does.">
+          <Input placeholder="e.g. Morning disk check" maxLength={80} />
+        </Form.Item>
         <Form.Item label="When it fires, it will…">
           {/* A dropdown, not a Segmented: six actions (and growing) overflow the
               modal width as a horizontal segmented control. */}
@@ -924,6 +933,19 @@ export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewP
     )
   }
 
+  const actionCell = (s: Schedule) =>
+    s.action === 'event'
+      ? <Space size={6}><Tag color="purple">event</Tag><code>{s.event}</code></Space>
+      : s.action === 'prompt'
+          ? <Space size={6}><Tag color="cyan">prompt</Tag><span style={{ color: dimCol, fontSize: 13 }}>{(s.prompt ?? '').slice(0, 48)}{(s.prompt ?? '').length > 48 ? '…' : ''}</span></Space>
+          : s.action === 'runbook'
+          ? <Space size={6}><Tag color="gold">runbook</Tag><code>{s.runbook}</code></Space>
+          : s.action === 'saved_run'
+          ? <Space size={6}><Tag color="blue">saved run</Tag><code>{s.saved_run}</code></Space>
+          : s.action === 'eval'
+          ? <Space size={6}><Tag color="magenta">evals</Tag><code>{s.eval_fixture}</code></Space>
+          : <Space size={6}><Tag>run</Tag><code>/{s.runnable}{s.command?.length ? ` ${s.command.join(' ')}` : ''}</code></Space>
+
   const columns = [
     {
       title: '',
@@ -938,18 +960,12 @@ export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewP
     {
       title: 'Action',
       key: 'action',
-      render: (_: unknown, s: Schedule) =>
-        s.action === 'event'
-          ? <Space size={6}><Tag color="purple">event</Tag><code>{s.event}</code></Space>
-          : s.action === 'prompt'
-          ? <Space size={6}><Tag color="cyan">prompt</Tag><span style={{ color: dimCol, fontSize: 13 }}>{(s.prompt ?? '').slice(0, 48)}{(s.prompt ?? '').length > 48 ? '…' : ''}</span></Space>
-          : s.action === 'runbook'
-          ? <Space size={6}><Tag color="gold">runbook</Tag><code>{s.runbook}</code></Space>
-          : s.action === 'saved_run'
-          ? <Space size={6}><Tag color="blue">saved run</Tag><code>{s.saved_run}</code></Space>
-          : s.action === 'eval'
-          ? <Space size={6}><Tag color="magenta">evals</Tag><code>{s.eval_fixture}</code></Space>
-          : <Space size={6}><Tag>run</Tag><code>/{s.runnable}{s.command?.length ? ` ${s.command.join(' ')}` : ''}</code></Space>,
+      render: (_: unknown, s: Schedule) => (
+        <>
+          {s.name && <div style={{ fontWeight: 600, marginBottom: 2 }}>{s.name}</div>}
+          {actionCell(s)}
+        </>
+      ),
     },
     {
       title: 'Where',
@@ -967,7 +983,7 @@ export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewP
           ? <Tag color="blue">preset target</Tag>
           : <span style={{ color: dimCol }}>—</span>,
     },
-    {
+        {
       title: 'Schedule',
       key: 'schedule',
       render: (_: unknown, s: Schedule) => <code style={{ fontSize: 13 }}>{whenText(s.when)}</code>,

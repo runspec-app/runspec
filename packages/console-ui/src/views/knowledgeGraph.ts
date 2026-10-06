@@ -20,6 +20,7 @@ export const TYPE_COLORS: Record<string, string> = {
   trigger: '#ef4444',
   schedule: '#eab308',
   runbook: '#84cc16',
+  feature: '#a855f7',
   topic: '#94a3b8',
 }
 

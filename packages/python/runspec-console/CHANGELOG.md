@@ -9,6 +9,62 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.333.0] — 2026-10-06
+
+### Fixed
+
+- **Scheduled runs no longer show ids like `rs-prompt-1790079272061`.** Run
+  cards and session chips used the schedule's generated id as the run's name.
+  A schedule now takes an optional **Name** (Schedules modal, the
+  `create_schedule` tool, or `name` on the `[[schedule]]` entry), shown on its
+  runs and above its action on the Schedules tab. Without one the label comes
+  from what it does: a prompt's first six words, `runbook <id>`,
+  `saved run <id>`, `eval <suite>`, or the runnable and subcommand
+  (`sources.schedule.schedule_label`).
+- **A deferred tool called with the wrong input now gets its schema back.**
+  When the agent called `use_tool` for a tool like `edit_wiki_fact` without
+  calling `describe_tool` first, the call bounced with "missing required
+  argument" and it then needed `describe_tool` before it could retry: three
+  calls in all. The bounce now includes the tool's input schema, so the agent
+  can fix the input and retry straight away.
+
+### Changed
+
+- **The Knowledge tab opens straight away.** The hourly auto-capture used to run
+  before the tab's first paint, and it reads run history from every connected
+  host, so on a big fleet the tab sat loading. It now runs in the background;
+  the tab shows "capturing now…" and refreshes when it lands
+  (`knowledge_overview` → `capturing`).
+- **Capture no longer writes host, group or profile facts.** "X is used on H (N
+  runs)" and "Group G contains …" / "Profile P loads …" swamped the wiki and only
+  repeated what History, the sidebar and `search_history` / `console_status`
+  already show. Capture keeps usual args, what runs after what, and the
+  trigger / schedule / runbook / file-filter facts. The host page's usage table
+  went with them.
+- **Capture skips arguments left at their default.** "report is usually run
+  with format = 'json'" said nothing when json is the default. Capture now
+  compares each arg with the default the runnable declares (subcommands inherit
+  their parents'; `kn.arg_defaults` over the discovered runnables) and only
+  records values someone chose. Suggest from chats is told the same.
+
+### Added
+
+- **Built-in knowledge.** The wiki now ships with facts (source `seed`,
+  `runspec_console/knowledge_seed.toml`) on what runspec is, the `runspec.toml`
+  format and arg types, autonomy, how to write a runnable (the `add-runnable`
+  skill's steps) or install one from the Marketplace, what each console feature
+  does, and every built-in agent tool — so the agent, or Claude Code over the
+  MCP server, can answer "how do I add a runnable?" from `search_wiki`. Seed
+  facts are read-only: retiring or editing one writes your own copy that
+  overrides it, they can be pinned, and Memory Sync never pushes them. A test
+  fails when a built-in tool is added without a seed mention. New `feature:`
+  entity type.
+- **Suggest from chats sees what tools returned.** The transcript it reads
+  now carries the first 300 characters of each tool result (secret-looking
+  text redacted) as well as the call's inputs, so it can spot chains such as
+  `list_files` finding the log that `relay_file` then fetched. Two seed facts
+  describe that pattern too.
+
 ## [0.332.2] — 2026-10-06
 
 ### Fixed

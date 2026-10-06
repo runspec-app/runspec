@@ -135,6 +135,9 @@ class ScheduleJob:
     when: When
     action: str = "runnable"
     enabled: bool = True
+    # Optional human name shown on run cards and session chips. Empty = a label
+    # derived from the action (see :func:`schedule_label`), never the bare id.
+    name: str = ""
     # Fire even outside the working-hours rota (escape hatch, mirrors a trigger's
     # ignore_rota). Default off — a schedule is gated like a trigger.
     ignore_rota: bool = False
@@ -366,6 +369,7 @@ def parse_schedule_entry(
         when=when,
         action=action,
         enabled=bool(data.get("enabled", True)),
+        name=" ".join(str(data.get("name") or "").split()),
         ignore_rota=bool(data.get("ignore_rota", False)),
         event=event,
         fields=fields,
@@ -388,6 +392,47 @@ def parse_schedule_entry(
         sound=str(data.get("sound") or "").strip(),
         model=str(data.get("model") or "").strip(),
     )
+
+
+_LABEL_WORDS = 6
+_LABEL_CHARS = 48
+
+
+def schedule_label(entry: Any) -> str:
+    """The name a schedule shows on its run cards and session chips: its
+    ``name`` when set, else a short label from what it does (the first words of
+    a prompt, the runbook / saved run / runnable / event / eval fixture), and
+    only as a last resort the generated id (``rs-prompt-1790079272061``).
+    Accepts a :class:`ScheduleJob` or a raw ``[[schedule]]`` dict."""
+
+    def get(key: str) -> Any:
+        if isinstance(entry, dict):
+            return entry.get(key)
+        return getattr(entry, key, None)
+
+    name = " ".join(str(get("name") or "").split())
+    if name:
+        return name
+    action = str(get("action") or "runnable")
+    if action == "prompt":
+        words = str(get("prompt") or "").split()
+        text = " ".join(words[:_LABEL_WORDS])
+        if len(words) > _LABEL_WORDS or len(text) > _LABEL_CHARS:
+            text = text[:_LABEL_CHARS].rstrip() + "…"
+        if text:
+            return text
+    elif action == "runbook" and (get("runbook") or get("skill")):
+        return f"runbook {get('runbook') or get('skill')}"
+    elif action == "saved_run" and get("saved_run"):
+        return f"saved run {get('saved_run')}"
+    elif action == "eval" and get("eval_fixture"):
+        return f"eval {get('eval_fixture')}"
+    elif action == "event" and get("event"):
+        return f"event {get('event')}"
+    elif action == "runnable" and get("runnable"):
+        command = [str(c) for c in (get("command") or [])]
+        return " ".join([str(get("runnable")), *command])
+    return str(get("id") or "schedule")
 
 
 def _when_to_trigger(when: When) -> Any:

@@ -16,7 +16,7 @@ def kn(tmp_path, monkeypatch):
 
 @pytest.fixture
 def store(kn, tmp_path):
-    return kn.KnowledgeStore(tmp_path / "knowledge")
+    return kn.KnowledgeStore(tmp_path / "knowledge", seed=False)
 
 
 def _fact(kn, text, about=("host:web-01",), kind="location", status="pending"):
@@ -196,7 +196,7 @@ def _run(runnable, ts, host="web-01", op="jason", args=None, rid=None):
     }
 
 
-def test_observe_mines_habits_hosts_and_pairings(kn):
+def test_observe_mines_habits_and_pairings(kn):
     hist = []
     for day in range(1, 5):
         hist.append(
@@ -220,7 +220,9 @@ def test_observe_mines_habits_hosts_and_pairings(kn):
         "tail-log is usually run with path = '/var/log/app.log'" in t for t in texts
     )
     assert not any("lines" in t for t in texts)  # varies every run
-    assert any("tail-log is used on web-01 (4 runs)" in t for t in texts)
+    # Where a runnable runs is History's job, not a fact (it swamped the wiki).
+    assert not any(" is used on " in t for t in texts)
+    assert not any(f["kind"] == "host" for f in facts)
     assert any(
         "restart-service is often run after tail-log (4 times)" in t for t in texts
     )
@@ -256,6 +258,53 @@ def test_observe_skips_per_person_args(kn):
     assert habits == ["tool-one is usually run with space = 'OPS' (4 of 4 runs)."]
 
 
+def test_observe_skips_unchanged_defaults(kn):
+    """An arg left at the runnable's declared default is not a habit — only a
+    value the operator actually chose is. Subcommands inherit parent defaults."""
+    records = [
+        {
+            "name": "report",
+            "args": [
+                {"name": "format", "default": "json"},
+                {"name": "verbose", "default": False},
+                {"name": "space"},
+            ],
+            "commands": {
+                "send": {"args": [{"name": "--max-rows", "default": 100}]},
+            },
+        }
+    ]
+    defaults = kn.arg_defaults(records)
+    assert defaults["report"] == {"format": {"json"}, "verbose": {"False"}}
+    assert defaults["report send"]["max_rows"] == {"100"}
+    assert defaults["report send"]["format"] == {"json"}
+
+    hist = []
+    for day in range(1, 5):
+        hist.append(
+            _run(
+                "report",
+                f"2026-10-0{day}T09:00:00+00:00",
+                args={"format": "json", "space": "OPS"},
+            )
+        )
+        r = _run(
+            "report",
+            f"2026-10-0{day}T10:00:00+00:00",
+            args={"format": "csv", "max-rows": 100},
+        )
+        r["commandPath"] = ["send"]
+        hist.append(r)
+    texts = [f["text"] for f in kn.observe(hist, defaults=defaults)]
+    habits = sorted(t for t in texts if "usually run with" in t)
+    assert habits == [
+        "report is usually run with space = 'OPS' (4 of 4 runs).",
+        "report send is usually run with format = 'csv' (4 of 4 runs).",
+    ]
+    # Without the defaults the unchanged ones would show up.
+    assert any("format = 'json'" in f["text"] for f in kn.observe(hist))
+
+
 def test_parse_distill(kn):
     reply = 'Here you go:\n```json\n[{"kind":"glossary","about":"term:BAU","text":"BAU means business as usual"}, {"bad":1}]\n```'
     out = kn.parse_distill(reply)
@@ -282,7 +331,7 @@ def test_parse_distill(kn):
     assert (
         "old fact" in prompt
         and "where are the logs" in prompt
-        and "SECRET" not in prompt
+        and "RESULT: SECRET" in prompt  # a short output excerpt rides along
     )
 
 
@@ -292,6 +341,10 @@ def test_parse_distill(kn):
 @pytest.fixture
 def bridge_stub(tmp_path, monkeypatch):
     monkeypatch.setenv("APPDATA", str(tmp_path))
+    from runspec_console import knowledge
+
+    # The shipped seed would match most searches; its own tests turn it back on.
+    monkeypatch.setattr(knowledge, "SEED_PATH", None)
     import threading
 
     from runspec_console.bridge import Bridge
@@ -306,6 +359,7 @@ def bridge_stub(tmp_path, monkeypatch):
         _knowledge_source = Bridge._knowledge_source
         _effective_tool_autonomy = Bridge._effective_tool_autonomy
         knowledge_overview = Bridge.knowledge_overview
+        _knowledge_autocapture = Bridge._knowledge_autocapture
         knowledge_capture = Bridge.knowledge_capture
         knowledge_distill = Bridge.knowledge_distill
         _knowledge_installed = Bridge._knowledge_installed
@@ -409,7 +463,12 @@ def test_overview_captures_and_operator_facts(bridge_stub):
         for d in range(1, 5)
     ]
     ov = bridge_stub.knowledge_overview()
-    assert ov["stats"]["observed"] >= 2
+    assert ov["capturing"] is True  # in the background, so the tab paints at once
+    bridge_stub._knowledge_capture_thread.join(10)
+    assert "runspec:knowledge_updated" in bridge_stub.events
+    ov = bridge_stub.knowledge_overview()
+    assert ov["capturing"] is False  # fresh now — no second capture
+    assert ov["stats"]["observed"] >= 1
     assert any(n["id"] == "runnable:tail-log" for n in ov["graph"]["nodes"])
     res = bridge_stub.knowledge_save_fact(
         {"kind": "glossary", "about": ["term:P1"], "text": "P1 means wake someone up"}
@@ -645,9 +704,8 @@ def test_observe_config(kn):
     )
     texts = {f["text"]: f for f in facts}
     assert all(f["status"] == "observed" and f["source"] == "config" for f in facts)
-    g = texts["Group Linux Servers contains 2 host(s): a, b."]
-    assert g["about"] == ["group:Linux Servers", "host:a", "host:b"]
-    assert "Profile Homelab loads 2 host(s): a, b." in texts
+    # Group / profile membership is visible elsewhere — never a fact.
+    assert not any(t.startswith(("Group ", "Profile ")) for t in texts)
     t = texts[
         "Trigger disk-alert fires on outlook new_mail and runs disk-usage on Linux Servers (rule mode)."
     ]
@@ -691,12 +749,11 @@ def test_capture_reads_config_and_relinks(bridge_stub):
     ]
     bridge_stub._read_schedules = lambda: []
     r = bridge_stub.knowledge_capture()
-    assert r["ok"] and r["relinked"] == 1 and r["observed"] >= 1
+    assert r["ok"] and r["relinked"] == 1
     facts = {f["text"]: f for f in store.all_facts() if f.get("status") != "retired"}
     linked = facts[fact["text"]]
     assert linked["about"] == ["group:Linux Servers", "host:web-01", "host:web-02"]
     assert linked["id"] != old and linked["source"] == "operator"
-    assert "Group Linux Servers contains 2 host(s): web-01, web-02." in facts
     # Idempotent: a second capture changes nothing more.
     assert bridge_stub.knowledge_capture()["relinked"] == 0
 
@@ -835,3 +892,71 @@ def test_bridge_migrates_old_memory_once_and_pins_carry_over(bridge_stub, tmp_pa
     assert bridge_stub._effective_tool_autonomy("pin_wiki_fact", {}) == "autonomous"
     assert bridge_stub.knowledge_pin(hits[0]["id"], True)["ok"] is True
     assert bridge_stub.knowledge_overview()["pinned"][0]["id"] == hits[0]["id"]
+
+
+# ── the shipped seed ─────────────────────────────────────────────────────────
+
+
+def test_seed_loads_and_names_every_builtin_tool(kn):
+    from runspec_console.bridge_const import _BUILTIN_META_NAMES, _BUILTIN_TOOL_NAMES
+
+    facts = kn.seed_facts()
+    assert len(facts) >= 30
+    assert all(f["status"] == "approved" and f["source"] == "seed" for f in facts)
+    assert len({f["id"] for f in facts}) == len(facts)
+    text = " ".join(f["text"] for f in facts)
+    # A built-in tool added without a seed mention fails here: name it in
+    # knowledge_seed.toml so the wiki (and an MCP client) can find it.
+    missing = sorted(
+        n
+        for n in _BUILTIN_TOOL_NAMES
+        | _BUILTIN_META_NAMES
+        | {"search_runnables", "describe_runnable", "run_runnable"}
+        if n not in text
+    )
+    assert missing == []
+    assert any("add-runnable" in f["text"] for f in facts)
+
+
+def test_seed_is_searchable_overridable_and_never_pushed(kn, tmp_path):
+    store = kn.KnowledgeStore(tmp_path / "knowledge")
+    idx = store.index()
+    try:
+        hits = idx.search("add a new runnable")
+        assert hits and hits[0]["source"] == "seed"
+        assert idx.page("feature:knowledge")["facts"]
+    finally:
+        idx.close()
+    seed = store.seed_facts()[0]
+    assert store.retire(seed["id"])  # an own-lane copy overrides the shipped one
+    by_id = {f["id"]: f for f in store.all_facts()}
+    assert by_id[seed["id"]]["status"] == "retired"
+    assert store.set_pinned(store.seed_facts()[1]["id"], True)[0]
+    data, count = kn.contribution(store.own_facts())
+    assert count == 0  # a seed fact is never pushed by Memory Sync
+
+
+def test_render_turns_carries_redacted_output_excerpts(kn):
+    text = kn.render_turns(
+        [
+            {
+                "user": "fetch the orders log",
+                "tools": [
+                    {
+                        "name": "list_files",
+                        "input": {"path": "/var/log"},
+                        "output": "orders/app.log\nother.log " + "x" * 600,
+                    },
+                    {
+                        "name": "relay_file",
+                        "input": {"path": "/var/log/orders/app.log"},
+                        "output": "copied; token=abcd1234efgh",
+                    },
+                ],
+                "assistant": "Fetched it.",
+            }
+        ]
+    )
+    assert "RESULT: orders/app.log other.log" in text
+    assert "x" * 301 not in text and "…" in text  # capped
+    assert "abcd1234efgh" not in text and "«redacted»" in text

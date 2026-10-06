@@ -5,7 +5,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 
-import { GraphCanvas, KnowledgeView, UsageTable, isUsageFact, staleCheck } from './KnowledgeView'
+import { GraphCanvas, KnowledgeView, staleCheck } from './KnowledgeView'
 import type { KnowledgeFact } from '../bridge'
 
 const { overview, page, review, distill, pin } = vi.hoisted(() => ({
@@ -148,25 +148,12 @@ describe('GraphCanvas selection', () => {
   })
 })
 
-describe('UsageTable', () => {
-  it('lists usage as rows, busiest first, not-installed last', () => {
-    const usage = [
-      fact('k_a', 'install-into-venv is used on web-01 (10 runs).', ['runnable:install-into-venv', 'host:web-01'], 'observed'),
-      fact('k_b', 'disk-usage is used on web-01 (31 runs).', ['runnable:disk-usage', 'host:web-01'], 'observed'),
-      fact('k_c', 'cron is used on web-01 (4 runs).', ['runnable:cron', 'host:web-01'], 'observed'),
-    ].map((f, i): KnowledgeFact => ({ ...f, kind: 'host', status: 'observed', confirmations: [10, 31, 4][i] }))
-    expect(usage.every(isUsageFact)).toBe(true)
-    expect(isUsageFact({ ...usage[0], status: 'approved' as const })).toBe(false)
-    const onEntity = vi.fn()
-    render(<UsageTable facts={usage} current="host:web-01" isStale={staleCheck(['disk-usage', 'cron'])} onEntity={onEntity} />)
-    expect(screen.getByText('Runs here')).toBeTruthy()
-    const rows = screen.getAllByTestId('usage-row').map(r => r.textContent)
-    expect(rows[0]).toContain('disk-usage')
-    expect(rows[1]).toContain('cron')
-    expect(rows[2]).toContain('install-into-venv')
-    expect(rows[2]).toContain('not installed')
-    fireEvent.click(screen.getByText('cron'))
-    expect(onEntity).toHaveBeenCalledWith('runnable:cron')
+describe('staleCheck', () => {
+  it('marks runnables missing from discovery, and nothing before discovery', () => {
+    const stale = staleCheck(['disk-usage', 'cron'])!
+    expect(stale('runnable:install-into-venv')).toBe(true)
+    expect(stale('runnable:cron')).toBe(false)
+    expect(stale('host:web-01')).toBe(false)
     expect(staleCheck([])).toBeNull()
   })
 })

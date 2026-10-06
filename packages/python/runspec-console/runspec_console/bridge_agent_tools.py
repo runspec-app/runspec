@@ -4160,6 +4160,13 @@ class AgentToolsMixin:
                                 "(action='eval'; default false)."
                             ),
                         },
+                        "name": {
+                            "type": "string",
+                            "description": (
+                                "A short human name for the schedule, shown on its "
+                                "runs (e.g. 'Morning disk check'). Recommended."
+                            ),
+                        },
                         "sound": {
                             "type": "string",
                             "description": (
@@ -4535,6 +4542,7 @@ class AgentToolsMixin:
             "eval_samples",
             "eval_validate",
             "eval_telemetry",
+            "name",
             "sound",
             "model",
         ):

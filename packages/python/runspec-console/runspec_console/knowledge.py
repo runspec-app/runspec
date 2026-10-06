@@ -73,6 +73,10 @@ INDEX_FILE = "index.sqlite"
 #: Machine-local bookkeeping (capture range, which chats were already distilled).
 #: Never shared — it describes this console, not the team's knowledge.
 STATE_FILE = "state.toml"
+#: Built-in facts shipped with the package (runspec overview, how to add a
+#: runnable, the console's features and built-in tools). Read-only, lowest layer.
+SEED_PATH = Path(__file__).with_name("knowledge_seed.toml")
+SEED_SOURCE = "seed"
 
 #: Entity types a fact can be about. Free-form ``type:name`` refs with another type
 #: are kept (as ``topic``-like nodes); these are the ones the UI colours and the
@@ -90,6 +94,7 @@ ENTITY_TYPES = (
     "trigger",
     "schedule",
     "runbook",
+    "feature",
     "topic",
 )
 
@@ -323,11 +328,53 @@ def contribution(rows: Iterable[dict[str, Any]]) -> tuple[bytes, int]:
     ), len(out)
 
 
+_SEED_CACHE: dict[str, tuple[int, list[dict[str, Any]]]] = {}
+
+
+def seed_facts(path: Path | None = SEED_PATH) -> list[dict[str, Any]]:
+    """Parse a seed file (``[[fact]]`` rows of ``kind``/``about``/``text``) into
+    approved facts with ``source = "seed"``. Ids are content hashes like every
+    other fact. Cached by mtime; a missing or broken file yields ``[]``."""
+    if path is None:
+        return []
+    try:
+        mtime = path.stat().st_mtime_ns
+    except OSError:
+        return []
+    key = str(path)
+    hit = _SEED_CACHE.get(key)
+    if hit is not None and hit[0] == mtime:
+        return [dict(r) for r in hit[1]]
+    out: list[dict[str, Any]] = []
+    for row in _load(path):
+        try:
+            out.append(
+                make_fact(
+                    kind=str(row.get("kind") or "note"),
+                    about=list(row.get("about") or []),
+                    text=str(row.get("text") or ""),
+                    status="approved",
+                    source=SEED_SOURCE,
+                    first_seen="2026-10-06",
+                    last_confirmed="2026-10-06",
+                )
+            )
+        except ValueError:
+            continue
+    _SEED_CACHE[key] = (mtime, out)
+    return [dict(r) for r in out]
+
+
 class KnowledgeStore:
     """The knowledge directory: source files + the derived SQLite index."""
 
-    def __init__(self, root: Path) -> None:
+    def __init__(
+        self, root: Path, seed_path: Path | None = None, *, seed: bool = True
+    ) -> None:
+        """``seed_path`` overrides the shipped seed file; ``seed=False`` leaves the
+        seed layer out (tests of the store itself)."""
         self.root = Path(root)
+        self.seed_path = (seed_path or SEED_PATH) if seed else None
 
     # -- source files ------------------------------------------------------
 
@@ -343,6 +390,12 @@ class KnowledgeStore:
     def observed(self) -> list[dict[str, Any]]:
         return _load(self._path(OBSERVED_FILE))
 
+    def seed_facts(self) -> list[dict[str, Any]]:
+        """The built-in facts shipped with the package (``source = "seed"``),
+        approved and read-only: retiring or editing one writes an own-lane copy
+        that overrides it, so the shipped file is never touched."""
+        return seed_facts(self.seed_path)
+
     def team_facts(self) -> list[dict[str, Any]]:
         team = self.root / TEAM_DIR
         if not team.is_dir():
@@ -356,6 +409,8 @@ class KnowledgeStore:
 
     def source_files(self) -> list[Path]:
         files = [self._path(n) for n in (FACTS_FILE, INBOX_FILE, OBSERVED_FILE)]
+        if self.seed_path is not None:
+            files.append(self.seed_path)
         team = self.root / TEAM_DIR
         if team.is_dir():
             files += sorted(team.glob("*.toml"))
@@ -366,8 +421,11 @@ class KnowledgeStore:
         team copy of the same id (local edits take precedence); confirmations from
         the team copy are added in so the count reflects everyone. Inbox facts are
         included with ``status = "pending"``; retired ones are kept (the UI and
-        search filter them)."""
+        search filter them). Seed facts are the lowest layer: any other copy of
+        the same id wins."""
         merged: dict[str, dict[str, Any]] = {}
+        for r in self.seed_facts():
+            merged[str(r.get("id"))] = dict(r)
         for r in self.team_facts():
             merged[str(r.get("id"))] = dict(r)
         for r in self.observed():
@@ -1092,9 +1150,47 @@ def _runnable_label(row: dict[str, Any]) -> str:
     return " ".join([name, *path]) if path else name
 
 
+def _arg_key(name: str) -> str:
+    return str(name).strip().lstrip("-").replace("-", "_").lower()
+
+
+def _value_str(v: Any) -> str:
+    return ", ".join(map(str, v)) if isinstance(v, list) else str(v)
+
+
+def arg_defaults(records: list[dict[str, Any]]) -> dict[str, dict[str, set[str]]]:
+    """Each runnable's declared arg defaults, from discovered runnable records
+    (``_runnables_cache`` shape), keyed like ``_runnable_label``: ``name`` for
+    the top level and ``name sub …`` for each subcommand (which inherits its
+    parents' args). Values are stringified as ``observe`` stringifies history
+    args; a runnable found in several venvs keeps every default it declares."""
+    out: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
+
+    def walk(node: dict[str, Any], label: str, inherited: dict[str, set[str]]) -> None:
+        mine = {k: set(v) for k, v in inherited.items()}
+        for a in node.get("args") or []:
+            if not isinstance(a, dict) or not a.get("name") or "default" not in a:
+                continue
+            d = a.get("default")
+            if d is None:
+                continue
+            mine.setdefault(_arg_key(a["name"]), set()).add(_value_str(d))
+        for k, vals in mine.items():
+            out[label][k] |= vals
+        for seg, sub in (node.get("commands") or {}).items():
+            if isinstance(sub, dict):
+                walk(sub, f"{label} {seg}", mine)
+
+    for r in records or []:
+        if isinstance(r, dict) and r.get("name"):
+            walk(r, str(r["name"]), {})
+    return {k: dict(v) for k, v in out.items()}
+
+
 def observe(
     history: list[dict[str, Any]],
     *,
+    defaults: dict[str, dict[str, set[str]]] | None = None,
     min_runs: int = MIN_RUNS,
     habit_share: float = HABIT_SHARE,
     pair_window_s: int = PAIR_WINDOW_S,
@@ -1105,10 +1201,16 @@ def observe(
       in ≥ ``habit_share`` of its runs, at least ``min_runs`` times); path values
       also link a ``file:`` entity. Args that name the person running (a
       username, email or run-as account, or a value equal to the operator) are
-      skipped: they differ per person, so they are never a team fact,
-    * **host usage** — a runnable is used on a host (≥ ``min_runs`` runs),
+      skipped: they differ per person, so they are never a team fact. So
+      are args left at the runnable's declared default (``defaults``, from
+      ``arg_defaults``) — "usually run with format = 'json'" when json is the
+      default says nothing,
     * **pairings** — runnable B is often run after A by the same operator within
       ``pair_window_s`` (≥ ``min_runs`` times).
+
+    Which runnable runs on which host is deliberately *not* a fact: History,
+    ``search_history`` and discovery already answer it, and as facts it buried
+    the wiki in "X is used on H" rows.
 
     Deterministic: same history → same facts (ids are content hashes)."""
     rows = [
@@ -1154,21 +1256,7 @@ def observe(
     for label, runs in sorted(by_runnable.items()):
         base = str(runs[0].get("runnable"))
         n = len(runs)
-        # host usage
-        by_host: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        for r in runs:
-            h = str(r.get("host") or "").strip()
-            if h:
-                by_host[h].append(r)
-        for host, hruns in sorted(by_host.items()):
-            if len(hruns) >= min_runs:
-                add(
-                    "host",
-                    [f"runnable:{base}", f"host:{host}"],
-                    f"{label} is used on {host} ({len(hruns)} runs).",
-                    len(hruns),
-                    hruns,
-                )
+        declared = (defaults or {}).get(label) or {}
         # arg habits
         if n >= min_runs:
             values: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
@@ -1179,9 +1267,11 @@ def observe(
                 for k, v in args.items():
                     if v is None or v is False or v == "" or v == []:
                         continue
-                    sv = ", ".join(map(str, v)) if isinstance(v, list) else str(v)
+                    sv = _value_str(v)
                     if len(sv) > MAX_VALUE_LEN:
                         continue
+                    if sv in declared.get(_arg_key(str(k)), ()):
+                        continue  # unchanged default — not a habit
                     if _personal_arg(str(k), sv, r):
                         continue  # per-person, never a team fact
                     values[(str(k), sv)].append(r)
@@ -1422,11 +1512,16 @@ def observe_config(
     catalog: dict[str, list[str]] | None = None,
 ) -> list[dict[str, Any]]:
     """Facts read straight from the console's config (``status = observed``,
-    ``source = config``) so the wiki — and the graph — know how the fleet is
-    set up: which hosts are in each group and profile, what each trigger and
-    schedule runs where, what each runbook is for and which runnables it uses,
-    and the saved file-relay filters. Rebuilt on every capture, so it never
-    goes stale; the *why* behind the setup is what operators and chats add."""
+    ``source = config``) so the wiki — and the graph — know how the automation
+    is set up: what each trigger and schedule runs where, what each runbook is
+    for and which runnables it uses, and the saved file-relay filters. Rebuilt
+    on every capture, so it never goes stale; the *why* behind the setup is what
+    operators and chats add.
+
+    Group and profile membership is deliberately *not* turned into facts (the
+    sidebar, ``console_status`` and ``manage_hosts`` already show it, and it
+    dominated the graph); ``hosts`` is accepted for compatibility and ignored."""
+    del hosts
     facts: list[dict[str, Any]] = []
     catalog = catalog or {}
 
@@ -1443,33 +1538,6 @@ def observe_config(
             )
         except ValueError:
             pass
-
-    groups: dict[str, list[str]] = defaultdict(list)
-    profiles: dict[str, list[str]] = defaultdict(list)
-    for h in hosts:
-        name = str(h.get("name") or "").strip()
-        if not name:
-            continue
-        g = str(h.get("group") or "").strip()
-        if g:
-            groups[g].append(name)
-        for p in h.get("profiles") or []:
-            if str(p).strip():
-                profiles[str(p).strip()].append(name)
-    for g, members in sorted(groups.items()):
-        members = sorted(set(members))
-        add(
-            "host",
-            [f"group:{g}", *[f"host:{m}" for m in members[: MAX_ABOUT - 1]]],
-            f"Group {g} contains {len(members)} host(s): {_join(members)}.",
-        )
-    for p, members in sorted(profiles.items()):
-        members = sorted(set(members))
-        add(
-            "host",
-            [f"profile:{p}", *[f"host:{m}" for m in members[: MAX_ABOUT - 1]]],
-            f"Profile {p} loads {len(members)} host(s): {_join(members)}.",
-        )
 
     for t in triggers:
         name = str(t.get("name") or "").strip()
@@ -1587,10 +1655,25 @@ def observe_config(
 # ── AI distillation helpers (prompt + parse; the bridge makes the call) ─────
 
 
+#: How much of each tool result the distill transcript carries — enough to see
+#: what one call found and the next one used, not the whole output.
+TOOL_OUTPUT_EXCERPT = 300
+
+
+def redact_secrets(text: str) -> str:
+    """``text`` with anything matching a secret pattern replaced by «redacted»."""
+    for pat, _what in _SECRET_PATTERNS:
+        text = pat.sub("«redacted»", text)
+    return text
+
+
 def render_turns(turns: list[dict[str, Any]]) -> str:
-    """Chat turns as the plain transcript the distill prompt reads. Tool *outputs*
-    are left out (size, and they can carry sensitive data); tool names + inputs
-    are kept."""
+    """Chat turns as the plain transcript the distill prompt reads: the operator,
+    each tool call (name + input) with the start of its result, and the agent's
+    reply. Results are cut to :data:`TOOL_OUTPUT_EXCERPT` characters and
+    secret-looking text is redacted — enough for the model to see that one
+    tool's output fed the next call (``list_files`` found the log that
+    ``relay_file`` then fetched)."""
     lines: list[str] = []
     for t in turns:
         user = str(t.get("user") or "").strip()
@@ -1599,7 +1682,13 @@ def render_turns(turns: list[dict[str, Any]]) -> str:
         for tool in t.get("tools") or []:
             name = str(tool.get("name") or "")
             ti = tool.get("input")
-            lines.append(f"TOOL {name}: {str(ti)[:300]}")
+            lines.append(f"TOOL {name}: {redact_secrets(str(ti)[:300])}")
+            out = " ".join(str(tool.get("output") or "").split())
+            if out:
+                cut = "…" if len(out) > TOOL_OUTPUT_EXCERPT else ""
+                lines.append(
+                    f"RESULT: {redact_secrets(out[:TOOL_OUTPUT_EXCERPT])}{cut}"
+                )
         reply = str(t.get("assistant") or "").strip()
         if reply:
             lines.append(f"AGENT: {reply[:800]}")
@@ -1672,14 +1761,17 @@ def build_distill_prompt(
         "recent conversations below and extract durable facts worth sharing with "
         "the rest of the team: where files and logs live on which hosts, what team "
         "jargon means, which tools go together, discovered facts about hosts / "
-        "groups / profiles, knock-on effects of changes, and how the team usually "
-        "does things.\n\n"
+        "groups / profiles, knock-on effects of changes, how the output of one "
+        "tool is used as the input of another (RESULT lines show the start of "
+        "each tool's output), and how the team usually does things.\n\n"
         "Rules:\n"
         "- Only facts that will still be true next week. No one-off results, no "
         "opinions, no secrets, passwords, tokens or personal data.\n"
         "- Nothing that differs per person: no usernames, emails or accounts "
         "someone ran a tool as, and no 'X usually runs Y'. It must hold for "
         "everyone on the team.\n"
+        "- No argument values a tool already uses by default — only values "
+        "someone chose.\n"
         "- One or two sentences each, specific (name hosts, paths, runnables).\n"
         "- Skip anything already in the known list.\n"
         f"- kind is one of: {kinds}.\n"

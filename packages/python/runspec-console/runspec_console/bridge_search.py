@@ -222,7 +222,8 @@ class SearchMixin:
                     "Run a deferred built-in console tool by name, with its "
                     "input as described by describe_tool — call describe_tool "
                     "first; the input is validated against the tool's schema "
-                    "and an invalid call is rejected with the valid shape. The "
+                    "and an invalid call is rejected with that schema, so fix "
+                    "the input and call again. The "
                     "inner tool's own rules apply exactly as if it were called "
                     "directly — confirm-gated tools still prompt the operator, "
                     "read-only tools run free."
@@ -317,7 +318,14 @@ class SearchMixin:
             name, tool.get("input_schema") or {}, inner_input
         )
         if err:
-            return err
+            # Carry the schema in the bounce so the retry needs no
+            # describe_tool round trip (an agent that skipped describe_tool
+            # used to take three calls: guess, describe, retry).
+            schema = json.dumps(
+                tool.get("input_schema") or {}, separators=(",", ":"), default=str
+            )
+            err = err.replace(" Call describe_tool for the full schema.", "")
+            return f"{err}\n{name} input schema: {schema}"
         return name, inner_input
 
     @staticmethod

@@ -32,10 +32,11 @@ wiki is meant to be shared.
 
 | Source | How | Goes to |
 |---|---|---|
-| **Capture** | Mines run history over the range picked next to the button (7, 30 or 90 days, or all history; 30 by default): the arguments a runnable is usually run with (never a username, email or run-as account, or a value that is your own account, since those differ per person), which hosts it runs on, and what usually runs after what. Also reads your config: which hosts are in each group and profile, what each trigger and schedule runs and where, what each runbook is for and which runnables it uses, and the saved file filters. No AI. Also re-runs on its own, over the same range, when the tab opens and the last capture is over an hour old. | The wiki, marked *observed* |
+| **Capture** | Mines run history over the range picked next to the button (7, 30 or 90 days, or all history; 30 by default): the arguments a runnable is usually run with (never a username, email or run-as account, or a value that is your own account, since those differ per person, and never an argument left at the runnable's own default) and what usually runs after what. Also reads your config: what each trigger and schedule runs and where, what each runbook is for and which runnables it uses, and the saved file filters. Which hosts a runnable runs on, and which hosts are in each group and profile, are left out: History, the sidebar and the agent's `search_history` / `console_status` already show them. No AI. Also re-runs on its own, in the background, over the same range, when the tab opens and the last capture is over an hour old; the tab opens straight away and refreshes when it lands. | The wiki, marked *observed* |
+| **Built in** | Ships with the console: what runspec is, the `runspec.toml` format, how to write a runnable (the `add-runnable` skill's steps) or install one from the Marketplace, what each console feature does, and every built-in agent tool. | The wiki, marked source *seed* |
 | **The agent** | `propose_fact`, whenever it learns something reusable | The inbox |
 | **Claude Code** (via the [console MCP server](console-mcp-server.md)) | the same `propose_fact` tool | The inbox |
-| **Suggest from chats** | The utility model reads your saved chats over the same range and suggests facts. Long history is read in batches of about 24,000 characters, one model call each, up to 10 per click; the next click carries on. Chats already read are remembered, so a re-run only reads new chats and new turns. Hidden when AI is off. | The inbox |
+| **Suggest from chats** | The utility model reads your saved chats over the same range and suggests facts. It sees your messages, the agent's replies, each tool call and the start of what it returned (300 characters, with anything that looks like a secret redacted), so it can spot one tool's output feeding the next. Long history is read in batches of about 24,000 characters, one model call each, up to 10 per click; the next click carries on. Chats already read are remembered, so a re-run only reads new chats and new turns. Hidden when AI is off. | The inbox |
 | **Add fact** | You write one in the tab | The wiki |
 
 Facts are linked to the fleet's real entities. When a suggestion, or a fact the
@@ -50,10 +51,9 @@ they appear in a sentence.
 Nothing proposed joins the wiki until you approve it in the **Inbox** tab, where
 you can approve, edit and approve, or reject each fact.
 
-On an entity's page, usage from Capture shows as one table (**Runs here** on a
-host, **Used on** on a runnable) instead of one card per fact. A runnable with
-past runs that isn't installed on any connected host now is drawn faded and
-marked *not installed*; tick **Hide not installed** to take those off the graph.
+A runnable with past runs that isn't installed on any connected host now is
+drawn faded and marked *not installed*; tick **Hide not installed** to take
+those off the graph.
 The graph has zoom in, zoom out and fit-to-view buttons in its corner, and the
 scroll wheel zooms about the pointer. Click empty space on the graph (or the
 clear button under the zoom buttons) to clear the selection.
@@ -78,6 +78,11 @@ learns. The only part of the wiki in the prompt is your **pinned** facts; the
 agent looks everything else up when it needs it. A custom `[llm] system`
 replaces that line, so add it to yours (or use `system_append`) if you want the
 same behaviour.
+
+Because the built-in facts cover runspec and the console, "how do I add a
+runnable?" or "what can the Schedules tab do?" is answered from the wiki, by the
+console's own agent or by Claude Code through the MCP server (with
+`expose_builtins` on).
 
 ## Pinned facts
 
@@ -129,6 +134,7 @@ Everything lives in `{app_dir}/knowledge/`:
 | `inbox.toml` | proposed facts awaiting review |
 | `observed.toml` | usage patterns and config facts from the last capture (rewritten each capture) |
 | `team/*.toml` | facts pulled from the team by Memory Sync, one file per contributor (replaced on each pull) |
+| `runspec_console/knowledge_seed.toml` (in the package) | the built-in facts; read-only. Retiring or editing one writes your own copy that overrides it, and Memory Sync never pushes them |
 | `index.sqlite` | search/graph index, rebuilt from the files whenever they change; safe to delete |
 | `state.toml` | this console's bookkeeping: the capture range, which chats were already read, the pinned facts, and the last Memory Sync push and pull. Never shared; deleting it re-reads every chat and clears the pins |
 
