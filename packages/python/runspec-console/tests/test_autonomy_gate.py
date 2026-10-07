@@ -68,6 +68,8 @@ class _StubBridge:
     _group_fanout_calls = Bridge._group_fanout_calls
     _preflight_run_runnable = Bridge._preflight_run_runnable
     _preflight_validate = Bridge._preflight_validate
+    _RUN_RUNNABLE_FIELDS = Bridge._RUN_RUNNABLE_FIELDS
+    _misplaced_run_fields = classmethod(Bridge._misplaced_run_fields.__func__)
     _node_at = staticmethod(Bridge._node_at)
     _register_confirm = Bridge._register_confirm
     _finish_confirm = Bridge._finish_confirm

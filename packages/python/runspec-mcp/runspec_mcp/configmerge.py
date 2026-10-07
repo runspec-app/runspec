@@ -36,6 +36,8 @@ from typing import Any
 DEFAULT_PRESERVE: tuple[str, ...] = (
     "config.toml:mailbox.folder",
     "config.toml:mailbox.folders",
+    "config.toml:memory_sync.user",
+    "config.toml:memory_sync.email",
     "runspec_hosts.toml:*.room_user",
 )
 

@@ -2,6 +2,16 @@
 
 All notable changes to `runspec-mcp` are documented here.
 
+## [0.2.2] — 2026-10-07
+
+### Fixed
+
+- **An object passed for a JSON-string argument is sent as JSON.** The vendored
+  executor sent a dict argument as Python's repr (single quotes, `True`), which
+  a runnable's JSON parse rejects. Same fix as runspec-console 0.335.1.
+- Memory Sync's `memory_sync.user` / `memory_sync.email` join the default
+  Config Sync preserve list, matching runspec-console.
+
 ## [0.2.1] — 2026-10-01
 
 ### Fixed

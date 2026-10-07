@@ -9,6 +9,22 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.335.1] — 2026-10-07
+
+### Fixed
+
+- **Runnable arguments given outside `args` are no longer silently lost.** A
+  search-mode `run_runnable` call that put runnable arguments beside `command`
+  (for example `link-type` next to `command`, with the rest inside `args`) ran
+  without them: only `id`, `host`, `command`, `args`, `credential_id` and
+  `deliver` were read and anything else was dropped. The call is now bounced
+  before it runs, naming the misplaced fields and saying they go inside `args`.
+- **An object passed for a JSON-string argument is sent as JSON.** When the
+  agent passed a JSON-object argument such as `values` as a real object instead
+  of a string, the command line got Python's repr (single quotes, `True`), which
+  the runnable's JSON parse rejects. Objects and nested lists are now sent as
+  JSON text.
+
 ## [0.335.0] — 2026-10-06
 
 ### Changed

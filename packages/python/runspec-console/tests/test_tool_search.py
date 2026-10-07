@@ -107,6 +107,8 @@ class _Bridge:
     _resolve_id_host = Bridge._resolve_id_host
     _node_at = staticmethod(Bridge._node_at)
     _preflight_validate = Bridge._preflight_validate
+    _RUN_RUNNABLE_FIELDS = Bridge._RUN_RUNNABLE_FIELDS
+    _misplaced_run_fields = classmethod(Bridge._misplaced_run_fields.__func__)
     _search_runnables = Bridge._search_runnables
     _runs_as_by_host = Bridge._runs_as_by_host
     _confirm_runs_as = Bridge._confirm_runs_as
@@ -1263,3 +1265,47 @@ def test_no_wiki_key_when_nothing_is_known():
     b._wiki_notes = lambda names, per_entity=3: {}
     out = b._search_runnables("ping")
     assert "wiki_hint" not in out and "wiki" not in out["results"][0]
+
+
+def test_run_runnable_bounces_args_given_beside_command(monkeypatch):
+    # A runnable arg placed as a sibling of `command` used to be dropped without
+    # a word, so the run went ahead without it. Bounce it, in the gate's
+    # preflight AND at dispatch, naming the field and where it belongs.
+    called = {"ran": False}
+    monkeypatch.setattr(
+        "runspec_console.executor.run_local", lambda *a, **k: called.update(ran=True)
+    )
+    monkeypatch.setattr(
+        "runspec_console.bridge_utils._paths", lambda e: ["/bin/runspec"]
+    )
+    monkeypatch.setattr("runspec_console.hosts.venv_name", lambda p: "fleet")
+    runnables = [
+        _rn(
+            "h1local",
+            "jira",
+            commands={
+                "create-request": {
+                    "args": [
+                        {"name": "project", "type": "str", "required": True},
+                        {"name": "link-type", "type": "str"},
+                    ]
+                }
+            },
+        )
+    ]
+    ti = {
+        "id": "fleet__jira",
+        "host": "h1local",
+        "command": "create-request",
+        "link-type": "Relates",
+        "args": {"project": "HR"},
+    }
+    b = _Bridge(runnables)
+    out = b._run_tool_sync("run_runnable", dict(ti))
+    assert out.startswith("Error:") and "link-type" in out and "INSIDE 'args'" in out
+    assert called["ran"] is False
+    assert "link-type" in (b._misplaced_run_fields(ti) or "")
+    # The documented top-level fields never trip it.
+    ok = {k: v for k, v in ti.items() if k != "link-type"}
+    ok.update(credential_id="c", deliver="inline")
+    assert b._misplaced_run_fields(ok) is None

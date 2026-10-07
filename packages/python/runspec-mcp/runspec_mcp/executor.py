@@ -11,6 +11,8 @@ The caller supplies two callbacks:
 
 from __future__ import annotations
 
+import json
+
 import os
 import shlex
 import shutil
@@ -280,6 +282,16 @@ def remote_exec_command(
     return shell_join(parts), frame
 
 
+def _argv_value(v: Any) -> str:
+    """One argv token for an arg value. A dict (or a nested list) is sent as
+    JSON: an agent often passes a JSON-object arg like ``values`` as a real
+    object rather than a JSON string, and ``str()`` would send Python's repr
+    (single quotes, ``True``), which the runnable's JSON parse rejects."""
+    if isinstance(v, (dict, list)):
+        return json.dumps(v)
+    return str(v)
+
+
 def args_to_argv(args: dict[str, Any], positionals: dict[str, int] | None = None) -> list[str]:
     """Convert a {name: value} args dict to a CLI argv list.
 
@@ -301,15 +313,15 @@ def args_to_argv(args: dict[str, Any], positionals: dict[str, int] | None = None
             continue
         if k in positionals:
             items = v if isinstance(v, list) else [v]
-            positional_vals.extend((positionals[k], str(item)) for item in items)
+            positional_vals.extend((positionals[k], _argv_value(item)) for item in items)
         elif isinstance(v, bool):
             if v:
                 flags.append(f"--{k}")
         elif isinstance(v, list):
             for item in v:
-                flags.extend([f"--{k}", str(item)])
+                flags.extend([f"--{k}", _argv_value(item)])
         else:
-            flags.extend([f"--{k}", str(v)])
+            flags.extend([f"--{k}", _argv_value(v)])
     positional_vals.sort(key=lambda p: p[0])
     return flags + [val for _, val in positional_vals]
 

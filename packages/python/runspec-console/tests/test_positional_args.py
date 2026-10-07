@@ -68,3 +68,15 @@ def test_positionals_for_resolves_subcommand_leaf():
 def test_positionals_for_uncached_is_empty():
     assert Bridge._positionals_for(None, []) == {}
     assert Bridge._positionals_for({"args": [{"name": "x"}]}, ["missing"]) == {}
+
+
+def test_object_values_are_sent_as_json():
+    # An agent often passes a JSON-object arg as a real object; str() would send
+    # Python's repr (single quotes, True), which the runnable's JSON parse rejects.
+    import json
+
+    argv = args_to_argv({"values": {"summary": "New laptop", "urgent": True}})
+    assert argv[0] == "--values"
+    assert json.loads(argv[1]) == {"summary": "New laptop", "urgent": True}
+    assert args_to_argv({"x": [{"a": 1}]}) == ["--x", '{"a": 1}']
+    assert args_to_argv({"x": ["a", "b"]}) == ["--x", "a", "--x", "b"]

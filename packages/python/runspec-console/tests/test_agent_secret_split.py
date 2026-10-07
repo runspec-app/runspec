@@ -51,6 +51,8 @@ class _AgentBridge:
     _runbook_id_hint = staticmethod(Bridge._runbook_id_hint)
     _coerce_run_args = staticmethod(Bridge._coerce_run_args)
     _preflight_validate = Bridge._preflight_validate
+    _RUN_RUNNABLE_FIELDS = Bridge._RUN_RUNNABLE_FIELDS
+    _misplaced_run_fields = classmethod(Bridge._misplaced_run_fields.__func__)
     _node_at = staticmethod(Bridge._node_at)
 
     def _visible_runnables(self, _surface):

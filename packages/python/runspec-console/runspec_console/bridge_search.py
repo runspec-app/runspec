@@ -593,6 +593,31 @@ class SearchMixin:
             if self._host_has_runnable(h, runnable)
         ]
 
+    # The fields run_runnable itself takes; everything else is a runnable
+    # argument and belongs inside `args`.
+    _RUN_RUNNABLE_FIELDS = frozenset(
+        {"id", "host", "args", "command", "credential_id", "deliver"}
+    )
+
+    @classmethod
+    def _misplaced_run_fields(cls, ti: dict[str, Any]) -> str | None:
+        """An error when a ``run_runnable`` call carries runnable arguments as
+        top-level fields (siblings of ``command``) instead of inside ``args``.
+
+        They used to be dropped without a word, so the runnable ran without
+        them — e.g. ``link-type`` given beside ``command`` was simply lost. Bounce
+        it in-turn so the agent re-sends them where they are read."""
+        extra = [k for k in ti if k not in cls._RUN_RUNNABLE_FIELDS]
+        if not extra:
+            return None
+        return (
+            f"Error: unexpected top-level field(s): {', '.join(extra)}. "
+            "Runnable arguments go INSIDE 'args', e.g. args={"
+            + ", ".join(f'"{k}": ...' for k in extra)
+            + "}. Only id, host, command, args, credential_id and deliver are "
+            "top-level fields."
+        )
+
     @staticmethod
     def _node_at(
         cached_r: dict[str, Any] | None, command_path: list[str]
@@ -1255,7 +1280,12 @@ class SearchMixin:
                 result["args_note"] = (
                     "'args' are globals every command accepts; each command adds "
                     "its own. Pass the command as run_runnable's TOP-LEVEL "
-                    "'command' field, never inside args."
+                    "'command' field, never inside args. Every argument — global "
+                    "or the command's own — goes inside run_runnable's 'args'."
+                )
+                result["call"] = (
+                    f"run_runnable(id='{rid}', host=<one of hosts>, "
+                    "command='<command>', args={<name>: <value>, ...})"
                 )
         creds = [
             {"id": str(c.get("id", "")), "label": str(c.get("label", ""))}

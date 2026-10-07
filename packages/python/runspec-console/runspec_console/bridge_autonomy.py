@@ -917,6 +917,9 @@ class AutonomyMixin:
         )
         if isinstance(resolved, str):
             return resolved  # unknown/ambiguous runnable or host — a routing error
+        misplaced = self._misplaced_run_fields(ti)
+        if misplaced:
+            return misplaced
         _host, _runnable, cached_r = resolved
         call_args = self._coerce_run_args(ti.get("args"))
         # `deliver` is an output-shaping directive, not a runnable arg — drop a
@@ -1674,6 +1677,9 @@ class AutonomyMixin:
             )
             if isinstance(resolved, str):
                 return resolved
+            misplaced = self._misplaced_run_fields(ti)
+            if misplaced:
+                return misplaced
             host, runnable, cached_r = resolved
             call_args = self._coerce_run_args(ti.get("args"))
             credential_id = str(ti.get("credential_id") or "")
