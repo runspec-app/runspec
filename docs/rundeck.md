@@ -10,7 +10,8 @@ whenever an arg changes.
   `cron_list` — exactly like `runspec serve`, each carrying its merged
   global + command args.
 - **JSON output**, generated with the standard library alone (no YAML
-  dependency). Requires **Rundeck 5.20 or later** (see
+  dependency). Safe on any Rundeck version, including those before 5.20 that
+  don't escape option values (see
   [How values reach the runnable](#how-values-reach-the-runnable)).
 - Files land in `{git_root}/jobs/{job}.json`, safe to commit as deployment
   artefacts.
@@ -206,13 +207,15 @@ command; a concrete pair targets one. Because the core stays single-target
 
 ## What's in a job
 
-Every job runs a single Bash **script step**. The script opens with one
-assignment per option, naming the runspec env var the runnable reads that arg
-from:
+Every job runs a single Bash **script step**. The script reads each option's
+value into the runspec env var the runnable reads that arg from, through a
+quoted heredoc:
 
 ```bash
-RUNSPEC_DEPLOY_ARG_DEPTH=@option.depth@
-RUNSPEC_DEPLOY_ARG_TOKEN=@option.token@
+IFS= read -r RUNSPEC_DEPLOY_ARG_TOKEN <<'RUNSPEC_VALUE'
+x@option.token@
+RUNSPEC_VALUE
+RUNSPEC_DEPLOY_ARG_TOKEN=${RUNSPEC_DEPLOY_ARG_TOKEN#x}
 ```
 
 Rundeck replaces each `@option.<name>@` token with the option's value before it
@@ -227,6 +230,8 @@ already resolves an arg that isn't on the command line.
 - **Flags** arrive as `"true"` / `"false"`.
 - A **`rest`** arg arrives as one value (it isn't word-split into separate
   items).
+- A value can't contain a **line break**: the job refuses to run (exit code 64)
+  rather than read one. See below for why.
 
 ### How values reach the runnable
 
@@ -239,11 +244,26 @@ in a locked-down corporate fleet:
   `ps` (PII and secrets alike), and Red Hat advises against hiding it with the
   `hidepid` mount option of `/proc`.
 
-That leaves the inline-script tokens. **Rundeck 5.20 is the minimum version**:
-it fixed the shell escaping of option values substituted into a job (the
+That leaves the inline-script tokens. Rundeck before 5.20 substitutes them
+without escaping (the
 [option-escaping advisory](https://docs.rundeck.com/docs/history/cves/2025-07-option-escaping.html),
-affecting 3.4.1 to 5.19). Don't import these jobs on an older Rundeck. Use an
-option's `regex` / `values` to restrict what it accepts where you can.
+affecting 3.4.1 to 5.19), so a value written straight into a shell command
+could run commands on the node. The script is built so that the shell never
+parses a value, which makes it safe on every version, secure options included
+(they can't carry a `regex`):
+
+- Each token sits alone on its own line inside a heredoc whose delimiter is
+  quoted (`<<'RUNSPEC_VALUE'`). Bash treats the body as plain data: quotes,
+  `$(...)`, backticks and `;` in a value are just characters.
+- A heredoc body ends only at a line that is exactly the delimiter. The `x` in
+  front of each token means a value can never make its own line equal it, so
+  the only way out is a value containing a line break.
+- The script's second line counts the script file's own non-blank lines and
+  exits with code 64 unless the count is the one the emitter wrote. A value
+  with a line break adds a line, so the job stops before any value is read.
+  Blank lines aren't counted, so a trailing newline changes nothing.
+
+Use an option's `regex` / `values` to restrict what it accepts where you can.
 
 !!! warning "Accepted tradeoff: values in the temp script"
     Rundeck writes the substituted script, secret values included, to a temp

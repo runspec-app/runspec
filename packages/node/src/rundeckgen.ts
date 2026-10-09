@@ -8,14 +8,15 @@
  *
  * Ports `runspec/rundeckgen.py`. One Rundeck job per **leaf command** (a
  * runnable with subcommands flattens to one job per fully-pathed leaf, like
- * `runspec serve`). Every job runs a single Bash **script step** that assigns
- * each option to its runspec env var — `RUNSPEC_<RUNNABLE>_ARG_<NAME>=@option.<name>@`
- * — and runs the binary with no arg values on its command line (they would show
- * in `ps`). It doesn't read `RD_OPTION_*` variables (those need `AcceptEnv RD_*`
- * on every node's sshd).
+ * `runspec serve`). Every job runs a single Bash **script step** that reads
+ * each option's `@option.<name>@` token, through a quoted heredoc, into its
+ * runspec env var `RUNSPEC_<RUNNABLE>_ARG_<NAME>` and runs the binary with no
+ * arg values on its command line (they would show in `ps`). It doesn't read
+ * `RD_OPTION_*` variables (those need `AcceptEnv RD_*` on every node's sshd).
  *
- * Requires Rundeck 5.20+, which shell-escapes option values substituted into a
- * job. Accepted tradeoff: Rundeck writes the substituted script, secrets
+ * Safe on Rundeck before 5.20, which substitutes option values unescaped: the
+ * shell never parses a value, and a line-count guard refuses a value with a
+ * line break (the only way out of its heredoc). Accepted tradeoff: Rundeck writes the substituted script, secrets
  * included, to a temp file on the node, readable by the Rundeck SSH user until
  * the step ends.
  */
@@ -154,6 +155,29 @@ export const FRAME_FUNC = [
   '}',
 ].join('\n');
 
+// Delimiter of the per-value heredocs. Each body line starts with `x`, so no
+// substituted value can turn its line into this delimiter.
+const VALUE_EOF = 'RUNSPEC_VALUE';
+
+// The script's second line: count the script file's own non-blank lines and
+// refuse to run unless the count is the one the emitter wrote. A Rundeck option
+// value is substituted into the script text before it reaches the node, and the
+// only way one can escape its heredoc is a line break, which adds a line. The
+// guard runs before Bash reads any value line. Blank lines are not counted, so
+// a trailing newline Rundeck adds (or an empty line in a value) changes nothing;
+// an unreadable script file fails closed.
+const GUARD_COUNT = '@RS_LINES@';
+const GUARD =
+  `[ "$(awk 'NF { n++ } END { print n + 0 }' "\${BASH_SOURCE[0]:-$0}")" = ${GUARD_COUNT} ] || ` +
+  "{ echo 'runspec: a Rundeck option value contains a line break; refusing to run' >&2; exit 64; }";
+
+/** Join the script and fill in the guard's expected non-blank line count. */
+function finish(lines: string[]): string {
+  const script = lines.join('\n');
+  const count = script.split('\n').filter((line) => line.trim()).length;
+  return script.replace(GUARD_COUNT, String(count));
+}
+
 const RUN_AS = /^[A-Za-z0-9_.][A-Za-z0-9_.-]*$/;
 
 /** Option name → the `@option.<name>@` token Rundeck substitutes into an inline script. */
@@ -172,9 +196,10 @@ export function shellQuote(s: string): string {
  * Build the Bash script that runs the runnable with the job's option values.
  *
  * Every value — secret or not — reaches the runnable on runspec's env channel
- * (`RUNSPEC_<RUNNABLE>_ARG_<NAME>`), never on a command line: one
- * `RUNSPEC_<RUNNABLE>_ARG_<NAME>=@option.<name>@` assignment per arg, which
- * Rundeck 5.20+ fills in (shell-escaped) before copying the script to the node.
+ * (`RUNSPEC_<RUNNABLE>_ARG_<NAME>`), never on a command line. Each
+ * `@option.<name>@` token sits alone (behind an `x`) inside a quoted heredoc
+ * that `read` takes into the variable, so the shell never parses a value; the
+ * guard on line 2 refuses a value with a line break.
  *
  * Without `runAs` the non-empty values are exported (an empty option stays
  * unset so the runnable's default applies) and the binary is exec'd. With
@@ -193,8 +218,13 @@ export function renderScript(
   const envVars = Object.keys(args).map((name) => [secretEnvVar(runnable, name), name] as const);
   const names = envVars.map(([v]) => v).join(' ');
 
-  const lines = ['#!/bin/bash', '# Requires Rundeck 5.20+ (shell-escaped @option.*@ substitution).', 'set -e'];
-  for (const [v, name] of envVars) lines.push(`${v}=${rdOptionToken(name)}`);
+  const lines = ['#!/bin/bash', GUARD, 'set -e'];
+  for (const [v, name] of envVars) {
+    lines.push(`IFS= read -r ${v} <<'${VALUE_EOF}'`);
+    lines.push(`x${rdOptionToken(name)}`);
+    lines.push(VALUE_EOF);
+    lines.push(`${v}=\${${v}#x}`);
+  }
 
   const cmd = [invocation, ...commandPath].map(shellQuote).join(' ');
   if (!runAs) {
@@ -204,14 +234,14 @@ export function renderScript(
       lines.push('done');
     }
     lines.push(`exec ${cmd}`);
-    return lines.join('\n');
+    return finish(lines);
   }
 
   if (!RUN_AS.test(runAs)) throw new Error(`run_as '${runAs}' is not a valid account name`);
   const become = `sudo -n -u ${runAs}`;
   if (!envVars.length) {
     lines.push(`exec ${become} ${cmd}`);
-    return lines.join('\n');
+    return finish(lines);
   }
 
   lines.push(`RS_PRELUDE='${venv ? PY_ENV_PRELUDE : ENV_PRELUDE}'`);
@@ -220,7 +250,7 @@ export function renderScript(
     ? [shellQuote(`${String(venv).replace(/\/+$/, '')}/bin/python`), '-c', '"$RS_PRELUDE"']
     : ['sh', '-c', '"$RS_PRELUDE"', 'sh'];
   lines.push(`rs_frame ${names} | ${become} ${[...prelude, cmd].join(' ')}`);
-  return lines.join('\n');
+  return finish(lines);
 }
 
 // ── notifications ─────────────────────────────────────────────────────────────

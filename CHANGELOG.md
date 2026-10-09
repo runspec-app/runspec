@@ -7,6 +7,18 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.72.1] — 2026-10-09
+
+**Emitted Rundeck jobs are safe on Rundeck before 5.20.** Those versions
+substitute `@option.<name>@` tokens into the script without escaping, so a value
+could run commands on the node (confirmed on 4.17.6). Each token now sits alone,
+behind an `x`, inside a quoted heredoc (`<<'RUNSPEC_VALUE'`) that `read` takes
+into the `RUNSPEC_<RUNNABLE>_ARG_<NAME>` variable, so the shell never parses a
+value. The only way out of a heredoc is a line break, so the script's second
+line counts its own non-blank lines and exits with code 64 if a value added
+any. This covers secure options too, which can't carry a `regex`. A value can
+no longer contain a line break.
+
 ## [0.72.0] — 2026-10-09
 
 **`runspec emit --rundeck` no longer passes values through `RD_OPTION_*` env
@@ -40,6 +52,18 @@ hiding it with `hidepid`).
   `run_as` (or `[config] run_as`) is used; `@owner`, `$ENV` and per-host forms
   are ignored because only the node can resolve them.
 - `rundeckgen.rd_env_var` is removed; `rd_option_token` replaces it.
+
+## [node-0.43.1] — 2026-10-09
+
+**Node: emitted Rundeck jobs are safe on Rundeck before 5.20.** Those versions
+substitute `@option.<name>@` tokens into the script without escaping, so a value
+could run commands on the node (confirmed on 4.17.6). Each token now sits alone,
+behind an `x`, inside a quoted heredoc (`<<'RUNSPEC_VALUE'`) that `read` takes
+into the `RUNSPEC_<RUNNABLE>_ARG_<NAME>` variable, so the shell never parses a
+value. The only way out of a heredoc is a line break, so the script's second
+line counts its own non-blank lines and exits with code 64 if a value added
+any. This covers secure options too, which can't carry a `regex`. A value can
+no longer contain a line break.
 
 ## [node-0.43.0] — 2026-10-09
 

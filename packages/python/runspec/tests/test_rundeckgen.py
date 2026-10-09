@@ -112,7 +112,8 @@ def test_script_assigns_every_arg_from_option_token():
     }
     s = _script("deploy", args)
     for name, var in [("target", "TARGET"), ("verbose", "VERBOSE"), ("first", "FIRST"), ("extra", "EXTRA"), ("token", "TOKEN")]:
-        assert f"RUNSPEC_DEPLOY_ARG_{var}=@option.{name}@" in s
+        assert f"IFS= read -r RUNSPEC_DEPLOY_ARG_{var} <<'RUNSPEC_VALUE'\nx@option.{name}@\nRUNSPEC_VALUE\n" in s
+        assert f"RUNSPEC_DEPLOY_ARG_{var}=${{RUNSPEC_DEPLOY_ARG_{var}#x}}" in s
 
 
 def test_script_never_reads_rd_option_env_vars():
@@ -160,31 +161,97 @@ def test_script_run_as_rejects_shell_metacharacters():
         rundeckgen.render_script("deploy", [], {}, "deploy", run_as="svc; id")
 
 
-def test_script_values_round_trip_through_bash(tmp_path):
-    """Substitute tokens the way Rundeck 5.20 does (shell-escaped) and run the
-    script: every value reaches the runnable's env intact; none is in argv."""
+def _run_substituted(tmp_path, script, values):
+    """Substitute tokens the way pre-5.20 Rundeck does (raw text, no escaping),
+    write the script to a file and run it with /bin/bash like the job's
+    scriptInterpreter does."""
     import re
-    import shlex
-    import shutil
     import subprocess
+
+    script = re.sub(r"@option\.([\w-]+)@", lambda m: values[m.group(1)], script)
+    path = tmp_path / "rd-script.sh"
+    path.write_text(script)
+    return subprocess.run(["bash", str(path)], capture_output=True, text=True, cwd=tmp_path)
+
+
+def _show_binary(tmp_path):
     import sys
 
-    if not shutil.which("bash") or not shutil.which("od"):
-        import pytest
-
-        pytest.skip("needs bash + od")
     show = tmp_path / "bin" / "show"
-    show.parent.mkdir()
+    show.parent.mkdir(exist_ok=True)
     show.write_text(f"#!{sys.executable}\nimport json, os, sys\nprint(json.dumps([{{k: v for k, v in os.environ.items() if k.startswith('RUNSPEC_SHOW_')}}, sys.argv[1:]]))\n")
     show.chmod(0o755)
-    values = {"plain": "3", "tricky": "a b'c\"$(id) `x`;\nline2 ü", "unset": ""}
+    return show
+
+
+def _needs_bash():
+    import shutil
+
+    import pytest
+
+    if not shutil.which("bash") or not shutil.which("od") or not shutil.which("awk"):
+        pytest.skip("needs bash + od + awk")
+
+
+def test_script_values_round_trip_through_bash(tmp_path):
+    """Raw (unescaped) substitution: every single-line value reaches the
+    runnable's env byte for byte, as data, and none is in argv."""
+    _needs_bash()
+    show = _show_binary(tmp_path)
+    values = {
+        "plain": "3",
+        "tricky": "a b'c\"$(touch pwned) `touch pwned`; touch pwned \\ ü  ",
+        "delim": "RUNSPEC_VALUE",
+        "unset": "",
+    }
     for venv in (None, str(tmp_path)):
         script = rundeckgen.render_script("show", ["sub"], {k: {"type": "str"} for k in values}, str(show), venv=venv)
-        script = re.sub(r"@option\.([\w-]+)@", lambda m: shlex.quote(values[m.group(1)]), script)
-        out = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True)
+        out = _run_substituted(tmp_path, script, values)
+        assert out.returncode == 0, out.stderr
         env, argv = json.loads(out.stdout)
-        assert env == {"RUNSPEC_SHOW_ARG_PLAIN": "3", "RUNSPEC_SHOW_ARG_TRICKY": values["tricky"]}
+        assert env == {"RUNSPEC_SHOW_ARG_PLAIN": "3", "RUNSPEC_SHOW_ARG_TRICKY": values["tricky"], "RUNSPEC_SHOW_ARG_DELIM": "RUNSPEC_VALUE"}
         assert argv == ["sub"]
+    assert not (tmp_path / "pwned").exists()
+
+
+def test_script_refuses_a_value_with_a_line_break(tmp_path):
+    """A value can only leave its heredoc through a line break; the guard on
+    line 2 counts the script's lines and stops before any value is read."""
+    _needs_bash()
+    show = _show_binary(tmp_path)
+    attacks = [
+        "a\nRUNSPEC_VALUE\ntouch pwned\n",
+        "a\nRUNSPEC_VALUE\ntouch pwned",
+        "\ntouch pwned",
+        "a\r\ntouch pwned",
+    ]
+    for attack in attacks:
+        for run_as in (None, "svc"):
+            script = rundeckgen.render_script("show", [], {"a": {"type": "str"}, "b": {"type": "password"}}, str(show), run_as=run_as)
+            out = _run_substituted(tmp_path, script, {"a": "ok", "b": attack})
+            assert out.returncode == 64, (attack, out.stdout, out.stderr)
+            assert "line break" in out.stderr
+            assert out.stdout == ""
+    assert not (tmp_path / "pwned").exists()
+
+
+def test_script_guard_tolerates_blank_lines(tmp_path):
+    """A trailing newline added on the way to the node, or a value that is only
+    a line break, adds blank lines only — the guard ignores them and the
+    heredoc still reads just its own line."""
+    _needs_bash()
+    show = _show_binary(tmp_path)
+    script = rundeckgen.render_script("show", [], {"a": {"type": "str"}}, str(show)) + "\n\n"
+    out = _run_substituted(tmp_path, script, {"a": "\n"})
+    assert out.returncode == 0, out.stderr
+    assert json.loads(out.stdout)[0] == {}
+
+
+def test_script_guard_count_matches_rendered_script():
+    script = rundeckgen.render_script("deploy", ["start"], {"t": {"type": "password"}}, "/opt/v/bin/d", run_as="svc", venv="/opt/v")
+    count = sum(1 for line in script.split("\n") if line.strip())
+    assert script.split("\n")[1].startswith('[ "$(awk ')
+    assert f"= {count} ]" in script.split("\n")[1]
 
 
 def test_script_env_frame_matches_spec():
@@ -416,7 +483,7 @@ def test_render_runnable_password_option_present_and_env_exported():
     job = jobs[0]
     token_opt = next(o for o in job["options"] if o["name"] == "token")
     assert token_opt["secure"] is True
-    assert "RUNSPEC_DEPLOY_ARG_TOKEN=@option.token@" in job["sequence"]["commands"][0]["script"]
+    assert "x@option.token@" in job["sequence"]["commands"][0]["script"]
 
 
 def test_render_job_run_as_wraps_in_sudo():

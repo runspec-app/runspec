@@ -1,4 +1,4 @@
-import { execFileSync } from 'child_process';
+import { execFileSync, spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -115,7 +115,8 @@ test('script assigns every arg from its option token, no RD_OPTION_*', () => {
     '/opt/app/.venv/bin/app',
   );
   for (const [name, v] of [['target', 'TARGET'], ['verbose', 'VERBOSE'], ['first', 'FIRST'], ['extra', 'EXTRA'], ['token', 'TOKEN']]) {
-    expect(s).toContain(`RUNSPEC_DEPLOY_ARG_${v}=@option.${name}@`);
+    expect(s).toContain(`IFS= read -r RUNSPEC_DEPLOY_ARG_${v} <<'RUNSPEC_VALUE'\nx@option.${name}@\nRUNSPEC_VALUE\n`);
+    expect(s).toContain(`RUNSPEC_DEPLOY_ARG_${v}=\${RUNSPEC_DEPLOY_ARG_${v}#x}`);
   }
   expect(s).not.toContain('RD_OPTION');
   expect(s).toContain('if [ -n "${!rs_var}" ]; then export "$rs_var"; else unset "$rs_var"; fi');
@@ -159,22 +160,66 @@ function hasTool(name: string): boolean {
 
 const bashIt = hasTool('bash') && hasTool('od') && hasTool('python3') ? test : test.skip;
 
-bashIt('values round-trip through bash into the runnable env', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rd-'));
-  fs.mkdirSync(path.join(dir, 'bin'));
+function showBinary(dir: string): string {
+  fs.mkdirSync(path.join(dir, 'bin'), { recursive: true });
   const show = path.join(dir, 'bin', 'show');
   fs.writeFileSync(
     show,
     "#!/usr/bin/env python3\nimport json, os, sys\nprint(json.dumps([{k: v for k, v in os.environ.items() if k.startswith('RUNSPEC_SHOW_')}, sys.argv[1:]]))\n",
   );
   fs.chmodSync(show, 0o755);
-  const values: Record<string, string> = { plain: '3', tricky: "a b'c\"$(id) `x`;\nline2 ü", unset: '' };
+  return show;
+}
+
+// Substitute tokens the way pre-5.20 Rundeck does (raw text, no escaping) and
+// run the script from a file with /bin/bash, like the job's scriptInterpreter.
+function runSubstituted(dir: string, script: string, values: Record<string, string>) {
+  const file = path.join(dir, 'rd-script.sh');
+  fs.writeFileSync(file, script.replace(/@option\.([\w-]+)@/g, (_m, n: string) => values[n]));
+  return spawnSync('bash', [file], { cwd: dir, encoding: 'utf8' });
+}
+
+bashIt('raw-substituted values reach the runnable env as data', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rd-'));
+  const show = showBinary(dir);
+  const values: Record<string, string> = {
+    plain: '3',
+    tricky: "a b'c\"$(touch pwned) `touch pwned`; touch pwned \\ ü  ",
+    delim: 'RUNSPEC_VALUE',
+    unset: '',
+  };
   const args = Object.fromEntries(Object.keys(values).map((k) => [k, arg({ type: 'str' })]));
-  let script = renderScript('show', ['sub'], args, show);
-  script = script.replace(/@option\.([\w-]+)@/g, (_m, n: string) => shellQuote(values[n]));
-  const [env, argv] = JSON.parse(execFileSync('bash', ['-c', script]).toString());
-  expect(env).toEqual({ RUNSPEC_SHOW_ARG_PLAIN: '3', RUNSPEC_SHOW_ARG_TRICKY: values.tricky });
-  expect(argv).toEqual(['sub']);
+  for (const venv of [null, dir]) {
+    const out = runSubstituted(dir, renderScript('show', ['sub'], args, show, null, venv), values);
+    expect(out.status).toBe(0);
+    const [env, argv] = JSON.parse(out.stdout);
+    expect(env).toEqual({ RUNSPEC_SHOW_ARG_PLAIN: '3', RUNSPEC_SHOW_ARG_TRICKY: values.tricky, RUNSPEC_SHOW_ARG_DELIM: 'RUNSPEC_VALUE' });
+    expect(argv).toEqual(['sub']);
+  }
+  expect(fs.existsSync(path.join(dir, 'pwned'))).toBe(false);
+});
+
+bashIt('a value with a line break is refused before anything runs', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rd-'));
+  const show = showBinary(dir);
+  const args = { a: arg({ type: 'str' }), b: arg({ type: 'password' }) };
+  for (const attack of ['a\nRUNSPEC_VALUE\ntouch pwned\n', 'a\nRUNSPEC_VALUE\ntouch pwned', '\ntouch pwned', 'a\r\ntouch pwned']) {
+    for (const runAs of [null, 'svc']) {
+      const out = runSubstituted(dir, renderScript('show', [], args, show, runAs), { a: 'ok', b: attack });
+      expect(out.status).toBe(64);
+      expect(out.stderr).toContain('line break');
+      expect(out.stdout).toBe('');
+    }
+  }
+  expect(fs.existsSync(path.join(dir, 'pwned'))).toBe(false);
+});
+
+bashIt('the guard ignores blank lines', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rd-'));
+  const show = showBinary(dir);
+  const out = runSubstituted(dir, renderScript('show', [], { a: arg({ type: 'str' }) }, show) + '\n\n', { a: '\n' });
+  expect(out.status).toBe(0);
+  expect(JSON.parse(out.stdout)[0]).toEqual({});
 });
 
 bashIt('rs_frame writes the SPEC env frame', () => {

@@ -157,6 +157,24 @@ _FRAME_FUNC = (
 )
 
 
+# Delimiter of the per-value heredocs. Each body line starts with `x`, so no
+# substituted value can turn its line into this delimiter.
+_VALUE_EOF = "RUNSPEC_VALUE"
+
+# The script's second line: count the script file's own non-blank lines and
+# refuse to run unless the count is the one the emitter wrote. A Rundeck option
+# value is substituted into the script text before it reaches the node, and the
+# only way one can escape its heredoc is a line break, which adds a line. The
+# guard runs before Bash reads any value line. Blank lines are not counted, so
+# a trailing newline Rundeck adds (or an empty line in a value) changes nothing;
+# an unreadable script file fails closed.
+_GUARD_COUNT = "@RS_LINES@"
+_GUARD = (
+    f'[ "$(awk \'NF {{ n++ }} END {{ print n + 0 }}\' "${{BASH_SOURCE[0]:-$0}}")" = {_GUARD_COUNT} ] || '
+    "{ echo 'runspec: a Rundeck option value contains a line break; refusing to run' >&2; exit 64; }"
+)
+
+
 _RUN_AS = re.compile(r"[A-Za-z0-9_.][A-Za-z0-9_.-]*")
 
 
@@ -186,11 +204,19 @@ def render_script(
     """Build the Bash script that runs the runnable with the job's option values.
 
     Every value — secret or not — reaches the runnable on runspec's env channel
-    (`RUNSPEC_<RUNNABLE>_ARG_<NAME>`), never on a command line: the script opens
-    with one `RUNSPEC_<RUNNABLE>_ARG_<NAME>=@option.<name>@` assignment per arg,
-    which Rundeck (5.20+, which shell-escapes the substituted value) fills in
-    before copying the script to the node. Nothing relies on `RD_OPTION_*`
-    variables, so the node's sshd needs no `AcceptEnv RD_*`.
+    (`RUNSPEC_<RUNNABLE>_ARG_<NAME>`), never on a command line, and nothing
+    relies on `RD_OPTION_*` variables (so the node's sshd needs no
+    `AcceptEnv RD_*`).
+
+    Rundeck substitutes each `@option.<name>@` token into the script text before
+    copying it to the node, and before 5.20 it does not escape the value. So the
+    script never lets the shell parse a value: each token sits alone on its own
+    line inside a quoted heredoc (`<<'RUNSPEC_VALUE'`), which Bash treats as
+    data, and `read` takes that one line into the variable. A heredoc body ends
+    only at a line that is exactly the delimiter, which a value can only reach by
+    containing a line break — so the script's second line counts its own
+    non-blank lines and refuses to run if a value added any. The `x` in front of
+    each token keeps an empty or delimiter-shaped value from ending the heredoc.
 
     Without `run_as` the non-empty values are exported (an empty option stays
     unset so the runnable's own default applies) and the binary is exec'd. With
@@ -202,9 +228,12 @@ def render_script(
     env_vars = [(secret_env_var(runnable, name), name) for name in args]
     names = " ".join(var for var, _ in env_vars)
 
-    lines = ["#!/bin/bash", "# Requires Rundeck 5.20+ (shell-escaped @option.*@ substitution).", "set -e"]
+    lines = ["#!/bin/bash", _GUARD, "set -e"]
     for var, name in env_vars:
-        lines.append(f"{var}={rd_option_token(name)}")
+        lines.append(f"IFS= read -r {var} <<'{_VALUE_EOF}'")
+        lines.append(f"x{rd_option_token(name)}")
+        lines.append(_VALUE_EOF)
+        lines.append(f"{var}=${{{var}#x}}")
 
     cmd = " ".join(shlex.quote(part) for part in [invocation, *command_path])
     if not run_as:
@@ -213,21 +242,28 @@ def render_script(
             lines.append('  if [ -n "${!rs_var}" ]; then export "$rs_var"; else unset "$rs_var"; fi')
             lines.append("done")
         lines.append(f"exec {cmd}")
-        return "\n".join(lines)
+        return _finish(lines)
 
     if not _RUN_AS.fullmatch(run_as):
         raise ValueError(f"run_as {run_as!r} is not a valid account name")
     become = f"sudo -n -u {run_as}"
     if not env_vars:
         lines.append(f"exec {become} {cmd}")
-        return "\n".join(lines)
+        return _finish(lines)
 
     prelude = PY_ENV_PRELUDE if venv else ENV_PRELUDE
     lines.append(f"RS_PRELUDE='{prelude}'")
     lines.append(_FRAME_FUNC)
     wrapped = " ".join([*_env_prelude_argv(invocation, venv), cmd])
     lines.append(f"rs_frame {names} | {become} {wrapped}")
-    return "\n".join(lines)
+    return _finish(lines)
+
+
+def _finish(lines: list[str]) -> str:
+    """Join the script and fill in the guard's expected non-blank line count."""
+    script = "\n".join(lines)
+    count = sum(1 for line in script.split("\n") if line.strip())
+    return script.replace(_GUARD_COUNT, str(count), 1)
 
 
 # ── notifications ─────────────────────────────────────────────────────────────

@@ -457,9 +457,11 @@ demonstrated in the docs.)
 **Queued:**
 - `runspec emit --rundeck` — **shipped** (0.52.0). Emits a Rundeck job
   **JSON** (stdlib only, no YAML dep) per **leaf command** to
-  `jobs/{job}.json` at the git root. **Rundeck 5.20+ only (0.72.0):** a Bash
-  **script step** opening with `RUNSPEC_<RUNNABLE>_ARG_<NAME>=@option.<name>@`
-  per arg (Rundeck shell-escapes the token) — no `RD_OPTION_*` (needs
+  `jobs/{job}.json` at the git root. A Bash **script step** reading each
+  `@option.<name>@` token into `RUNSPEC_<RUNNABLE>_ARG_<NAME>` through a quoted
+  heredoc, behind a line-2 guard that counts the script's non-blank lines and
+  exits 64 if a value added one (0.72.1 — safe on pre-5.20 Rundeck, which
+  substitutes unescaped; 0.72.0 relied on 5.20 escaping) — no `RD_OPTION_*` (needs
   `AcceptEnv RD_*`) and no value on argv (`ps`); accepted tradeoff: values sit
   in the node's temp script, readable by the Rundeck SSH user while it runs.
   `meta.rundeck.run_as` / `--run-as` → `sudo -n -u <svc>` with values on stdin
