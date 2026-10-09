@@ -2462,6 +2462,14 @@ export interface BridgeApi {
     editedInput?: Record<string, unknown>,
     declineReason?: string,
   ) => Promise<void>
+  // Answer a `runspec:render_diagram` request (the agent's render_diagram tool):
+  // the PNG as base64 plus its pixel size, or the error Mermaid reported.
+  diagram_render_result: (
+    requestId: string,
+    result:
+      | { ok: true; png_base64: string; width: number; height: number }
+      | { ok: false; error: string },
+  ) => Promise<{ ok: boolean }>
   // ── event triggers ─────────────────────────────────────────────────────────
   list_triggers: () => Promise<TriggerListResult>
   // The built-in action tools an agent-mode trigger may be allowed to use, for the

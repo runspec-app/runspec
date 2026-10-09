@@ -181,3 +181,18 @@ def test_detect_verify_falls_back_to_true(monkeypatch):
     monkeypatch.setitem(sys.modules, "truststore", None)
     monkeypatch.setattr(config_mod, "_SYSTEM_CA_BUNDLES", ("/nope/a.pem", "/nope/b.pem"))
     assert detect_verify() is True
+
+
+def test_diagram_settings_from_env(monkeypatch) -> None:
+    from runspec_confluence_core import config_from_env
+
+    monkeypatch.setenv("CONFLUENCE_URL", "https://wiki.example.com")
+    monkeypatch.setenv("CONFLUENCE_PERSONAL_TOKEN", "p")
+    cfg = config_from_env()
+    assert (cfg.kroki_url, cfg.diagram_mode, cfg.mermaid_macro, cfg.plantuml_macro) == (None, None, None, "plantuml")
+    monkeypatch.setenv("CONFLUENCE_KROKI_URL", "https://kroki.example.com/")
+    monkeypatch.setenv("CONFLUENCE_DIAGRAM_MODE", "Macro")
+    monkeypatch.setenv("CONFLUENCE_MERMAID_MACRO", "mermaid-cloud")
+    monkeypatch.setenv("CONFLUENCE_PLANTUML_MACRO", "plantumlcloud")
+    cfg = config_from_env()
+    assert (cfg.kroki_url, cfg.diagram_mode, cfg.mermaid_macro, cfg.plantuml_macro) == ("https://kroki.example.com", "macro", "mermaid-cloud", "plantumlcloud")

@@ -165,6 +165,7 @@ def test_fetch_url_wraps_http_error(monkeypatch):
 
 class _Stub:
     _web_tools = Bridge._web_tools
+    _diagram_tools = Bridge._diagram_tools
     _run_web_tool = Bridge._run_web_tool
     _effective_tool_autonomy = Bridge._effective_tool_autonomy
 

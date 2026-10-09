@@ -160,6 +160,10 @@ _FILES_TOOL_NAMES = frozenset({"list_files"})
 # needed). Dropped entirely by [web] enabled = false.
 _WEB_TOOL_NAMES = frozenset({"fetch_url"})
 
+# Draw a Mermaid diagram to a PNG in the session workspace, using the console's
+# own web view (bridge_diagram.py). Autonomous: it only writes in the workspace.
+_DIAGRAM_TOOL_NAMES = frozenset({"render_diagram"})
+
 # Improve: generate an effectiveness / problem report by mining this install's own
 # saved conversations + run history (tool-search funnels, argument bounces, stops,
 # errors, autonomy denials). Read-only analysis — no side effects, so the autonomy
@@ -368,6 +372,7 @@ _BUILTIN_TOOL_NAMES = (
     | _HISTORY_TOOL_NAMES
     | _FILES_TOOL_NAMES
     | _WEB_TOOL_NAMES
+    | _DIAGRAM_TOOL_NAMES
     | _IMPROVE_TOOL_NAMES
     | _MARKETPLACE_TOOL_NAMES
     | _ACTION_TOOL_NAMES
@@ -412,7 +417,9 @@ _HOT_BUILTIN_NAMES = (
 # coding agent (Claude Code, …) when ``[mcp_server] expose_builtins`` is on. The
 # console-SPECIFIC ops/fleet built-ins a coding agent can't do itself — status,
 # run history, runbooks, the team knowledge wiki, host→local file
-# transfer, Outlook, and the action tools. Deliberately EXCLUDES:
+# transfer, Outlook, the action tools, and render_diagram (the console's Mermaid
+# renderer — a coding agent usually has no browser engine to draw with).
+# Deliberately EXCLUDES:
 #   • config tools + search meta-tools — never (automation must not rewrite
 #     itself; the meta-tools are internal indirection a direct client doesn't use),
 #   • workspace / exec / web / files / repo / improve — a coding agent already has
@@ -429,6 +436,7 @@ _MCP_SERVER_BUILTIN_NAMES = (
     | _OUTLOOK_TOOL_NAMES
     | _ACTION_TOOL_NAMES
     | _KNOWLEDGE_TOOL_NAMES
+    | _DIAGRAM_TOOL_NAMES
     | frozenset({"download_file", "relay_file"})
 )
 

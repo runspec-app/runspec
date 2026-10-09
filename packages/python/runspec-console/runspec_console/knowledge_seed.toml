@@ -211,7 +211,7 @@ text = "Repos (Settings → Repos) are git checkouts the agent may read and edit
 [[fact]]
 kind = "note"
 about = ["app:runspec-console", "feature:agent"]
-text = "Agent action tools: create_document (markdown to a file or host), create_schedule, emit_event, open_url, open_file, reveal_in_folder, play_sound, run_runbook and run_saved_run. fetch_url reads a web page; console_status reports the hosts, the current time and what is running."
+text = "Agent action tools: create_document (markdown to a file or host), create_schedule, emit_event, open_url, open_file, reveal_in_folder, play_sound, run_runbook and run_saved_run. fetch_url reads a web page; render_diagram draws Mermaid text to a PNG in the workspace (e.g. for confluence add-diagram --image); console_status reports the hosts, the current time and what is running."
 
 [[fact]]
 kind = "note"

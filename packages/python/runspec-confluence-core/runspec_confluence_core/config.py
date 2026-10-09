@@ -53,6 +53,16 @@ class ConfluenceConfig:
     max_backoff_retries: int = DEFAULT_MAX_BACKOFF_RETRIES
     max_backoff_seconds: int = DEFAULT_MAX_BACKOFF_SECONDS
     env: str | None = None
+    # Diagram creation (see diagram_write.py). ``kroki_url`` points at a Kroki
+    # server that renders diagram text to PNG; ``diagram_mode`` picks "macro"
+    # (a Mermaid/PlantUML app's macro) or "image" (rendered PNG attachment) when
+    # a call doesn't say — unset means "image" when ``kroki_url`` is set. Both
+    # are opt-in: with neither set, a diagram needs a caller-rendered PNG. The
+    # macro names are the installed apps' (vendors differ).
+    kroki_url: str | None = None
+    diagram_mode: str | None = None
+    mermaid_macro: str | None = None
+    plantuml_macro: str = "plantuml"
 
     def resolve_verify(self) -> bool | str:
         """Resolve ``verify_ssl`` into the value ``requests`` expects.
@@ -197,6 +207,10 @@ def config_from_env(env: str | None = None, *, personal_token_override: str | No
         "max_backoff_retries": _env_int(lookup("MAX_BACKOFF_RETRIES"), DEFAULT_MAX_BACKOFF_RETRIES),
         "max_backoff_seconds": _env_int(lookup("MAX_BACKOFF_SECONDS"), DEFAULT_MAX_BACKOFF_SECONDS),
         "env": env,
+        "kroki_url": (lookup("KROKI_URL") or "").rstrip("/") or None,
+        "diagram_mode": (lookup("DIAGRAM_MODE") or "").strip().lower() or None,
+        "mermaid_macro": lookup("MERMAID_MACRO"),
+        "plantuml_macro": lookup("PLANTUML_MACRO") or "plantuml",
     }
 
     if personal_token_override:

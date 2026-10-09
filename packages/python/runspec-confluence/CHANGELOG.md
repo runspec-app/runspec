@@ -2,6 +2,22 @@
 
 All notable changes to `runspec-confluence` are documented here.
 
+## [0.8.0] — 2026-10-09
+
+### Added
+
+- **`add-diagram`** (confirm): add a diagram written as text (Mermaid,
+  PlantUML, C4-PlantUML, Graphviz, D2, ditaa, erd, nomnoml, BPMN, Structurizr)
+  to a page as an image, with the source in a collapsed "Diagram source" block
+  under it; re-adding the same `--name` replaces the image. Pass the diagram
+  already rendered as `--image <png>` (e.g. from runspec-console's
+  `render_diagram` tool). Without `--image` it uses a renderer the operator set
+  up on the host: a Kroki server (`CONFLUENCE_KROKI_URL`) or a Mermaid /
+  PlantUML app macro (`CONFLUENCE_DIAGRAM_MODE=macro`); with neither it refuses
+  and asks for `--image`. There's no per-call mode switch, so an agent is never
+  offered a renderer that isn't there. `--position append|prepend`,
+  `--caption`. Needs `runspec-confluence-core>=0.9.0`.
+
 ## [0.7.0] — 2026-10-09
 
 ### Added

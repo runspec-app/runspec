@@ -47,6 +47,7 @@ from .bridge_memory_sync import MemorySyncMixin
 from .bridge_evals import EvalsMixin
 from .bridge_mcp_server import McpServerMixin
 from .bridge_voice import VoiceMixin
+from .bridge_diagram import DiagramMixin
 from .bridge_marketplace import MarketplaceMixin
 from .bridge_provision import ProvisionMixin
 from .bridge_turn import TurnMixin
@@ -77,6 +78,7 @@ class Bridge(
     EvalsMixin,
     McpServerMixin,
     VoiceMixin,
+    DiagramMixin,
     MarketplaceMixin,
     ProvisionMixin,
     TurnMixin,

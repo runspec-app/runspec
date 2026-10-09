@@ -20,6 +20,7 @@ from runspec_confluence_core import (
     ConfluenceConfig,
     ConfluenceError,
     add_comment,
+    add_diagram,
     add_label,
     config_from_env,
     cql_from_text,
@@ -171,6 +172,17 @@ def _dispatch(spec: rs.RunSpec, config: ConfluenceConfig) -> Any:
         return page_macros(config, spec.page_id.value)
     if command == "get-diagram":
         return get_diagram(config, spec.page_id.value, name=spec.name.value, include_source=spec.include_source.value)
+    if command == "add-diagram":
+        return add_diagram(
+            config,
+            spec.page_id.value,
+            spec.kind.value,
+            spec.source.value,
+            spec.name.value,
+            image=spec.image.value,
+            position=spec.position.value,
+            caption=spec.caption.value,
+        )
     if command == "download-diagram":
         return download_diagram(config, spec.page_id.value, str(spec.dest.value), name=spec.name.value)
 

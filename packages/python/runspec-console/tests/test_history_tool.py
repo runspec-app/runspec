@@ -106,6 +106,7 @@ def test_history_tool_offered_by_custom_agent_tools():
         "_knowledge_tools",
         "_files_tools",
         "_web_tools",
+        "_diagram_tools",
         "_improve_tools",
         "_marketplace_agent_tools",
         "_action_tools",

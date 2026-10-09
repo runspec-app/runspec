@@ -79,6 +79,7 @@ EXPECTED = {
     "delete_sound",
     "delete_trigger",
     "denylist_status",
+    "diagram_render_result",
     "dictation_status",
     "disclaimer",
     "discovery_state",

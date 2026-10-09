@@ -20,7 +20,12 @@
 # `get-page --markdown` renders a fetched body back to Markdown (read side),
 # with macros rendered readably (code fences, panels, diagram placeholders).
 # `list-macros` / `get-diagram` / `download-diagram` read draw.io and Gliffy
-# diagrams, which live as page attachments.
+# diagrams, which live as page attachments. `add-diagram` writes a diagram from
+# text (Mermaid, PlantUML, Graphviz …): it attaches a PNG the caller already
+# rendered (--image, e.g. from runspec-console's render_diagram tool). Without
+# --image it uses a renderer the operator opted into on the host: a Kroki server
+# (CONFLUENCE_KROKI_URL) or a Mermaid/PlantUML app macro
+# (CONFLUENCE_DIAGRAM_MODE=macro). With neither set it refuses and asks for --image.
 #
 # Proxy + private-CA support is env-driven (no CLI flags): CONFLUENCE_PROXY_URL
 # routes requests through a proxy, and CONFLUENCE_VERIFY_SSL may be a CA-bundle
@@ -269,3 +274,15 @@ autonomy = "confirm"
 page-id = {type = "str", required = true, description = "Page the diagram is shown on"}
 dest = {type = "path", required = true, description = "Destination directory"}
 name = {type = "str", required = false, description = "Diagram name; required when the page has more than one (see list-macros)"}
+
+[confluence.commands.add-diagram]
+description = "Add a diagram to a page as an image with its text source in a collapsed block below it. Render the diagram to a PNG first (runspec-console: render_diagram) and pass it as --image; without --image this only works when the operator has set up a renderer on this host (Kroki or a Mermaid/PlantUML app macro). Re-adding with the same name replaces the image"
+autonomy = "confirm"
+[confluence.commands.add-diagram.args]
+page-id = {type = "str", required = true, description = "Page to add the diagram to"}
+kind = {type = "choice", options = ["mermaid", "plantuml", "c4plantuml", "graphviz", "d2", "ditaa", "erd", "nomnoml", "bpmn", "structurizr"], required = true, description = "Diagram language of --source"}
+source = {type = "str", required = true, description = "The diagram text, with real line breaks, e.g. Mermaid 'graph TD' then 'A-->B' on the next line. Kept under the image so the diagram can be edited and re-rendered"}
+name = {type = "str", required = true, description = "Diagram name; names the PNG attachment (Order flow -> order-flow.png)"}
+image = {type = "path", required = false, description = "PNG of the diagram, already rendered (e.g. by runspec-console's render_diagram); a path on the host this runs on"}
+position = {type = "choice", options = ["append", "prepend"], default = "append", description = "Add at the end or the start of the page"}
+caption = {type = "str", required = false, description = "Caption under the image"}

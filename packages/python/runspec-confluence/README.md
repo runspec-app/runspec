@@ -26,7 +26,7 @@ pip install runspec-confluence
 | Pages (write) | `create-page`, `update-page`, `delete-page`, `move-page` |
 | Labels & comments | `get-labels`, `add-label`, `get-comments`, `add-comment` |
 | Attachments | `get-attachments`, `download-attachments`, `upload-attachment`, `delete-attachment` |
-| Macros & diagrams | `list-macros`, `get-diagram`, `download-diagram` |
+| Macros & diagrams | `list-macros`, `get-diagram`, `download-diagram`, `add-diagram` |
 
 Page bodies pass in a Confluence `representation` via `--content-format`
 (`storage` / `wiki` / `editor` / `markdown`); `markdown` is converted to storage
@@ -51,8 +51,45 @@ draw.io and Gliffy keep the diagram itself as a page attachment, so:
 - `download-diagram --page-id 123 --dest ./out` saves the `.drawio` / `.gliffy`
   source and the `.png` preview.
 
-Reading only, for now: creating or editing a draw.io diagram would also need a
-fresh PNG preview, which needs draw.io itself to render.
+draw.io diagrams are read-only: creating or editing one would also need a fresh
+PNG preview, which only draw.io can render.
+
+### Creating diagrams
+
+`add-diagram` puts a diagram written as text on a page as an image, with the
+source in a collapsed "Diagram source" block under it so it can be edited and
+re-rendered later. Re-adding the same `--name` replaces the image.
+
+Render the PNG first and pass it with `--image`. In runspec-console the agent
+does this with the built-in `render_diagram` tool, which needs nothing installed:
+
+```
+confluence add-diagram --page-id 123 --kind mermaid --name "Order flow" \
+  --image order-flow.png \
+  --source $'graph TD\n  Cart-->Checkout\n  Checkout-->Payment'
+```
+
+The image path is on the host the runnable runs on, so a remote host needs the
+PNG uploaded there first.
+
+Without `--image`, it uses a renderer the operator turned on for the host. Both
+are off by default; with neither set, the call refuses before touching the page.
+
+- **Kroki**: a [Kroki](https://kroki.io) server renders the text to PNG. Works
+  on any Confluence, for mermaid, plantuml, c4plantuml, graphviz, d2, ditaa,
+  erd, nomnoml, bpmn and structurizr.
+- **macro**: inserts your Mermaid or PlantUML app's macro with the text as its
+  body, so Confluence draws it live and people can edit it. Needs the app.
+
+| Env var | Meaning |
+|---|---|
+| `CONFLUENCE_KROKI_URL` | Kroki server, e.g. a self-hosted `https://kroki.example.com`. The public kroki.io sees your diagram text, so prefer your own. |
+| `CONFLUENCE_DIAGRAM_MODE` | `macro` or `image`. Unset: Kroki when a Kroki URL is set, else nothing. |
+| `CONFLUENCE_MERMAID_MACRO` | Your Mermaid app's macro name (vendors differ; `list-macros` on a page with one shows it). Needed for Mermaid in macro mode. |
+| `CONFLUENCE_PLANTUML_MACRO` | PlantUML app's macro name, default `plantuml`. |
+
+All take the usual `CONFLUENCE_<ENV>_` prefix. With a Kroki URL set, macro mode
+checks the text renders before touching the page.
 
 ## Auth — env vars only
 

@@ -45,6 +45,7 @@ from .bridge_const import (
     _HISTORY_TOOL_NAMES,
     _FILES_TOOL_NAMES,
     _WEB_TOOL_NAMES,
+    _DIAGRAM_TOOL_NAMES,
     _IMPROVE_TOOL_NAMES,
     _MARKETPLACE_TOOL_NAMES,
     _OUTLOOK_READ_TOOLS,
@@ -173,6 +174,8 @@ class AutonomyMixin:
             return "autonomous"  # read-only directory listing — no side effects
         if tool_name in _WEB_TOOL_NAMES:
             return "autonomous"  # read-only web GET — no side effects
+        if tool_name in _DIAGRAM_TOOL_NAMES:
+            return "autonomous"  # draws a PNG into the session workspace only
         if tool_name in _IMPROVE_TOOL_NAMES:
             return "autonomous"  # read-only analysis of local transcripts/history
         if tool_name in _MARKETPLACE_TOOL_NAMES:
@@ -1625,6 +1628,10 @@ class AutonomyMixin:
             return self._run_files_tool(dict(tool_input or {}))
         if tool_name in _WEB_TOOL_NAMES:
             return self._run_web_tool(dict(tool_input or {}))
+        if tool_name in _DIAGRAM_TOOL_NAMES:
+            return self._run_diagram_tool(
+                dict(tool_input or {}), chat_id=chat_id, cancel_event=cancel_event
+            )
         if tool_name in _IMPROVE_TOOL_NAMES:
             return self._run_improve_tool(dict(tool_input or {}))
         if tool_name in _MARKETPLACE_TOOL_NAMES:

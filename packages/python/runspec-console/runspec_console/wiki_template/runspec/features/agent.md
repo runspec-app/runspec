@@ -5,7 +5,7 @@ description: "The console agent runs runnables through search_runnables, describ
 tags: [runspec, feature]
 status: stable
 generated:
-  by: runspec-console-seed/f019ddb84fa7
+  by: runspec-console-seed/05d02b8e446a
   at: "2026-10-09"
 ---
 # agent
@@ -30,7 +30,7 @@ On Windows with Outlook, the agent has Outlook tools: outlook_inbox, outlook_sea
 
 Repos (Settings → Repos) are git checkouts the agent may read and edit locally: repo_list, repo_sync, repo_status, repo_read, repo_grep, repo_diff and repo_write. It never commits or pushes.
 
-Agent action tools: create_document (markdown to a file or host), create_schedule, emit_event, open_url, open_file, reveal_in_folder, play_sound, run_runbook and run_saved_run. fetch_url reads a web page; console_status reports the hosts, the current time and what is running.
+Agent action tools: create_document (markdown to a file or host), create_schedule, emit_event, open_url, open_file, reveal_in_folder, play_sound, run_runbook and run_saved_run. fetch_url reads a web page; render_diagram draws Mermaid text to a PNG in the workspace (e.g. for confluence add-diagram --image); console_status reports the hosts, the current time and what is running.
 
 Wiki tools, also offered over the MCP server: search_wiki, wiki_page, wiki_graph, list_wiki_inbox and propose_fact run without approval; review_wiki_fact, edit_wiki_fact and retire_wiki_fact need approval; pin_wiki_fact pins a fact into every chat.
 

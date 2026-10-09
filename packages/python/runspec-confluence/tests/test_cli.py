@@ -214,3 +214,31 @@ def test_dispatch_get_diagram_reports_no_diagrams(fake) -> None:
     with pytest.raises(ConfluenceError, match="No draw.io or Gliffy"):
         cli._dispatch(spec, CFG)
     h.close()
+
+
+def test_dispatch_add_diagram_image(fake, tmp_path, monkeypatch) -> None:
+    from runspec_confluence_core import diagram_write as dw
+
+    png = tmp_path / "seq.png"
+    png.write_bytes(b"\x89PNG\r\n\x1a\nX")
+    uploaded: list[str] = []
+    monkeypatch.setattr(dw, "upload_attachment", lambda config, page_id, path, **kw: uploaded.append(kw["name"]))
+    fake._returns["get_page_by_id"] = {"id": "1", "title": "T", "body": {"storage": {"value": "<p>x</p>"}}}
+    h = _harness()
+    spec = h.expect_ok(["add-diagram", "--page-id", "1", "--kind", "mermaid", "--source", "graph TD\nA-->B", "--name", "seq", "--image", str(png)])
+    assert spec.position.value == "append"
+    assert "mode" not in spec  # the agent never picks a renderer
+    out = cli._dispatch(spec, CFG)
+    h.close()
+    assert out["rendered_by"] == "caller"
+    assert uploaded == ["seq.png"]
+    _, kwargs = fake.last("update_page")
+    assert 'ri:filename="seq.png"' in kwargs["body"]
+
+
+def test_dispatch_add_diagram_without_image_or_renderer(fake) -> None:
+    h = _harness()
+    spec = h.expect_ok(["add-diagram", "--page-id", "1", "--kind", "mermaid", "--source", "graph TD", "--name", "seq"])
+    with pytest.raises(cli.ConfluenceError, match="render_diagram"):
+        cli._dispatch(spec, CFG)
+    h.close()

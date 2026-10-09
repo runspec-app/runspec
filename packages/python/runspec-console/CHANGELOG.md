@@ -9,6 +9,26 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.338.0] — 2026-10-09
+
+### Added
+
+- **`render_diagram` agent tool.** Draws Mermaid text (flowchart, sequence,
+  class, state, ER, gantt, pie, mindmap, git graph …) to a PNG in the session
+  workspace (`diagrams/<name>.png`, with the source beside it as `<name>.mmd`)
+  and returns its absolute path and size. The drawing happens inside the
+  console's own window (WebView2 on Windows), so nothing is installed or
+  launched and a fleet host needs no browser. Mermaid ships with the UI as a
+  separate static script loaded on the first render, so the app bundle and
+  startup are unchanged. Made for `confluence add-diagram --image` (Confluence
+  without Kroki or a Mermaid app). A syntax error comes back as Mermaid's own
+  message; a diagram type that draws HTML labels (journey) is refused clearly.
+  Autonomous (it only writes in the workspace), deferred in search mode, and
+  exposed by the console's MCP server, so Claude Code gets it too. Backend
+  `bridge_diagram.py` (`DiagramMixin`, JS API `diagram_render_result`); UI
+  `diagramRender.ts` answers `runspec:render_diagram`. New UI dependency:
+  `mermaid` 11.
+
 ## [0.337.0] — 2026-10-09
 
 ### Added

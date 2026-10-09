@@ -36,6 +36,16 @@ from runspec_confluence_core.content import (
     get_page_history,
     get_page_restrictions,
 )
+from runspec_confluence_core.diagram_write import (
+    IMAGE_KINDS,
+    MACRO_KINDS,
+    add_diagram,
+    diagram_filename,
+    image_storage,
+    macro_storage,
+    render_kroki,
+    resolve_mode,
+)
 from runspec_confluence_core.diagrams import (
     decode_drawio,
     decode_gliffy,
@@ -117,6 +127,15 @@ __all__ = [
     "download_diagram",
     "decode_drawio",
     "decode_gliffy",
+    # diagram creation
+    "add_diagram",
+    "render_kroki",
+    "macro_storage",
+    "image_storage",
+    "diagram_filename",
+    "resolve_mode",
+    "IMAGE_KINDS",
+    "MACRO_KINDS",
     # markdown (write) / summarise (read)
     "markdown_to_storage",
     "html_to_markdown",

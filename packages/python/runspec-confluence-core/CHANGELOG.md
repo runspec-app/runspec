@@ -2,6 +2,40 @@
 
 All notable changes to `runspec-confluence-core` are documented here.
 
+## [0.9.0] — 2026-10-09
+
+**Create diagrams** from text.
+
+- **New `diagram_write` module:** `add_diagram(config, page_id, kind, source,
+  name, *, image=None, mode=None, position="append", caption=None)` adds a
+  diagram written as Mermaid / PlantUML / C4-PlantUML / Graphviz / D2 / ditaa /
+  erd / nomnoml / BPMN / Structurizr text to a page:
+  - **`image=`** (the default path): a PNG the caller already rendered (e.g.
+    by runspec-console's `render_diagram` tool) is uploaded as a page
+    attachment (`Order flow` → `order-flow.png`) and shown with `ac:image`,
+    followed by the source in a collapsed "Diagram source" expand. Needs
+    nothing set up on the host. Re-adding the same name uploads a new
+    attachment version and refreshes the source block in place.
+  - **Kroki** (operator opt-in, `kroki_url`): without `image`, the text is
+    rendered to PNG by a [Kroki](https://kroki.io) server and attached the
+    same way.
+  - **macro** (operator opt-in, `diagram_mode = "macro"`): a Mermaid /
+    PlantUML app macro with the text as its body. Macro names come from the
+    config (`mermaid_macro` has no default, `plantuml_macro` defaults to
+    `plantuml`). With a Kroki server also set, the text is rendered once first
+    so a syntax error comes back before the page is edited.
+  - With no `image` and neither renderer set up, it refuses before touching the
+    page and says to render the PNG first (`NO_RENDERER`). `resolve_mode`
+    picks: explicit mode, else `diagram_mode`, else image when `kroki_url` is
+    set, else that refusal.
+- Also exported: `render_kroki`, `macro_storage`, `image_storage`,
+  `diagram_filename`, `resolve_mode`, `IMAGE_KINDS`, `MACRO_KINDS`.
+- **Config:** `ConfluenceConfig` gains `kroki_url`, `diagram_mode`,
+  `mermaid_macro` and `plantuml_macro`, read from `CONFLUENCE_[ENV_]KROKI_URL`,
+  `DIAGRAM_MODE`, `MERMAID_MACRO` and `PLANTUML_MACRO`. Kroki requests use the
+  instance's proxy and CA settings.
+- draw.io is still read-only: its preview PNG can only be rendered by draw.io.
+
 ## [0.8.0] — 2026-10-09
 
 Read **macros and draw.io / Gliffy diagrams** on a page.

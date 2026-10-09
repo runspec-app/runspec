@@ -8,7 +8,23 @@ import pytest
 
 from runspec_confluence_core import client as client_mod
 
-_SUFFIXES = ("URL", "USERNAME", "API_TOKEN", "PERSONAL_TOKEN", "CLOUD", "SPACE", "VERIFY_SSL", "PROXY_URL", "RETRY", "MAX_BACKOFF_RETRIES", "MAX_BACKOFF_SECONDS")
+_SUFFIXES = (
+    "URL",
+    "USERNAME",
+    "API_TOKEN",
+    "PERSONAL_TOKEN",
+    "CLOUD",
+    "SPACE",
+    "VERIFY_SSL",
+    "PROXY_URL",
+    "RETRY",
+    "MAX_BACKOFF_RETRIES",
+    "MAX_BACKOFF_SECONDS",
+    "KROKI_URL",
+    "DIAGRAM_MODE",
+    "MERMAID_MACRO",
+    "PLANTUML_MACRO",
+)
 _ALL_VARS = ["CONFLUENCE_ENV"] + [f"CONFLUENCE_{s}" for s in _SUFFIXES]
 for _env in ("DEV", "UAT", "PROD"):
     _ALL_VARS += [f"CONFLUENCE_{_env}_{s}" for s in _SUFFIXES]

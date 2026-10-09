@@ -1599,6 +1599,10 @@ export const mockApi: BridgeApi = {
   // keyed by request_id; resolve_tool_confirmation (called by the UI's
   // Approve/Deny buttons) wakes it. Lets the browser mock exercise the real
   // autonomy modal instead of pretending every tool is autonomous.
+  diagram_render_result: async (requestId, result) => {
+    console.log('[mock] diagram_render_result', requestId, result.ok ? `${result.width}x${result.height}` : result.error)
+    return { ok: true }
+  },
   resolve_tool_confirmation: async (requestId, approved, editedInput, declineReason) => {
     console.log('[mock] resolve_tool_confirmation', requestId, approved, editedInput, declineReason)
     const resolve = _pendingConfirms.get(requestId)
