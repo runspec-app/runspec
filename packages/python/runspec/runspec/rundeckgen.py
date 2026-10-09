@@ -11,23 +11,29 @@ What it emits
 -------------
 One Rundeck job per **leaf command** (a runnable with subcommands flattens to
 one job per fully-pathed leaf, like `runspec serve`). Every job runs a single
-Bash **script step** — never an `exec`/command step, because a static command
-string can't conditionally include a `--flag` from a boolean option. The script
-reads each option from its `RD_OPTION_<NAME>` environment variable (not inline
-`${option.x}` substitution — that avoids script injection and is what lets a
-secret ride the env channel without ever landing on the command line).
+Bash **script step** that assigns each option to its runspec env var —
+`RUNSPEC_<RUNNABLE>_ARG_<NAME>=@option.<name>@` — and runs the binary with no
+arg values on its command line (they would show in `ps`). It doesn't read
+`RD_OPTION_*` variables (those need `AcceptEnv RD_*` on every node's sshd).
 
-Targets Rundeck 4.17.6. The JSON job-definition format mirrors the YAML job
-structure and imports via the API (`Content-Type: application/json`) or
-`rd jobs load -F json`.
+Requires Rundeck 5.20+, which shell-escapes option values substituted into a
+job. Accepted tradeoff: Rundeck writes the substituted script, secrets included,
+to a temp file on the node, readable by the Rundeck SSH user until the step
+ends.
+
+The JSON job-definition format mirrors the YAML job structure and imports via
+the API (`Content-Type: application/json`) or `rd jobs load -F json`.
 """
 
 from __future__ import annotations
 
 import json
 import re
+import shlex
 import uuid
 from typing import Any
+
+from runspec.become import ENV_PRELUDE, PY_ENV_PRELUDE
 
 # Re-exported so `rundeckgen.expand_leaves` / `rundeckgen.secret_env_var` keep
 # working; the generic implementations live in `emitutil` (shared with ansiblegen).
@@ -48,14 +54,6 @@ _NUMERIC_REGEX = {
 
 
 # ── name helpers ──────────────────────────────────────────────────────────────
-
-
-def rd_env_var(name: str) -> str:
-    """Option name → the `RD_OPTION_<NAME>` env var Rundeck exposes it as.
-
-    Rundeck uppercases the option name and replaces every non-alphanumeric
-    character with `_` (so `node-filter` → `RD_OPTION_NODE_FILTER`)."""
-    return "RD_OPTION_" + re.sub(r"[^A-Za-z0-9]", "_", name).upper()
 
 
 def job_filename(job_name: str) -> str:
@@ -92,9 +90,9 @@ def render_option(name: str, arg: dict[str, Any]) -> dict[str, Any]:
     """Render one runspec arg as a Rundeck job option.
 
     - `password` → a **secure** option (`secure: true, valueExposed: true`): the
-      operator enters it at run time, it is encrypted, kept off the command
-      line, and exposed to the script only as `RD_OPTION_<NAME>`. Never carries
-      a default `value`.
+      operator enters it at run time, it is encrypted, kept out of the job log,
+      and reaches the script only through its `@option.<name>@` token. Never
+      carries a default `value`.
     - `flag`     → text option constrained to `["true", "false"]` (`enforced`),
       defaulting to the flag's boolean default.
     - `choice`/`options` → text option constrained to the choices (`enforced`).
@@ -141,65 +139,94 @@ def render_option(name: str, arg: dict[str, Any]) -> dict[str, Any]:
 
 # ── script step ───────────────────────────────────────────────────────────────
 
+# Bash helper that writes the SPEC "env frame" for the named shell variables to
+# stdout: one `NAME=\0ooo…` line per non-empty variable (every byte of the value
+# as an octal escape), then a `.` line. Only shell builtins see a value
+# (`printf`), and `od`/`tr`/`sed` read it from a pipe, so no value reaches any
+# process's argv. The SPEC env prelude on the far side of `sudo` reads it back.
+_FRAME_FUNC = (
+    "rs_frame() {\n"
+    "  local rs_var rs_val\n"
+    '  for rs_var in "$@"; do\n'
+    "    rs_val=${!rs_var}\n"
+    '    [ -n "$rs_val" ] || continue\n'
+    "    printf '%s=%s\\n' \"$rs_var\" \"$(printf '%s' \"$rs_val\" | od -An -v -to1 | tr -d ' \\n' | sed 's/.../\\\\0&/g')\"\n"
+    "  done\n"
+    "  printf '.\\n'\n"
+    "}"
+)
 
-def _arg_category(arg: dict[str, Any]) -> str:
-    """One of: secret, rest, flag, positional, named."""
-    t = arg.get("type", "str")
-    if t == "password":
-        return "secret"
-    if t == "rest":
-        return "rest"
-    if t == "flag":
-        return "flag"
-    if arg.get("position") is not None:
-        return "positional"
-    return "named"
+
+_RUN_AS = re.compile(r"[A-Za-z0-9_.][A-Za-z0-9_.-]*")
 
 
-def render_script(runnable: str, command_path: list[str], args: dict[str, Any], invocation: str) -> str:
-    """Build the Bash script that reconstructs the CLI invocation from options.
+def rd_option_token(name: str) -> str:
+    """Option name → the `@option.<name>@` token Rundeck substitutes into an
+    inline script before copying it to the node."""
+    return f"@option.{name}@"
 
-    Values are read from `RD_OPTION_*` env vars (defaulted to empty so an unset
-    optional arg simply contributes nothing). Named args are emitted only when
-    non-empty; flags only when `"true"`; positionals in `position` order; a
-    `rest` arg is word-split after a literal `--`. `password` args never enter
-    the command line — they are exported on the runspec secret channel
-    (`RUNSPEC_<RUNNABLE>_ARG_<NAME>`) instead.
+
+def _env_prelude_argv(invocation: str, venv: str | None) -> list[str]:
+    """The env-prelude wrapper for a run behind `sudo` (SPEC "Command
+    building"): the venv's own `bin/python` when the venv is known, so a sudoers
+    rule allowing only the venv's `bin/` still covers it; else POSIX `sh`."""
+    if venv:
+        return [shlex.quote(f"{str(venv).rstrip('/')}/bin/python"), "-c", '"$RS_PRELUDE"']
+    return ["sh", "-c", '"$RS_PRELUDE"', "sh"]
+
+
+def render_script(
+    runnable: str,
+    command_path: list[str],
+    args: dict[str, Any],
+    invocation: str,
+    run_as: str | None = None,
+    venv: str | None = None,
+) -> str:
+    """Build the Bash script that runs the runnable with the job's option values.
+
+    Every value — secret or not — reaches the runnable on runspec's env channel
+    (`RUNSPEC_<RUNNABLE>_ARG_<NAME>`), never on a command line: the script opens
+    with one `RUNSPEC_<RUNNABLE>_ARG_<NAME>=@option.<name>@` assignment per arg,
+    which Rundeck (5.20+, which shell-escapes the substituted value) fills in
+    before copying the script to the node. Nothing relies on `RD_OPTION_*`
+    variables, so the node's sshd needs no `AcceptEnv RD_*`.
+
+    Without `run_as` the non-empty values are exported (an empty option stays
+    unset so the runnable's own default applies) and the binary is exec'd. With
+    `run_as` the script runs `sudo -n -u <run_as>` and, because sudo resets the
+    environment, writes the values as the SPEC env frame on the child's stdin,
+    read by the fixed env prelude — values never appear in argv or the sudo log.
+    The command line carries only the binary and the subcommand path.
     """
-    named: list[tuple[str, dict[str, Any]]] = []
-    flags: list[tuple[str, dict[str, Any]]] = []
-    positionals: list[tuple[str, dict[str, Any]]] = []
-    rests: list[tuple[str, dict[str, Any]]] = []
-    secrets: list[tuple[str, dict[str, Any]]] = []
-    for name, arg in args.items():
-        {"named": named, "flag": flags, "positional": positionals, "rest": rests, "secret": secrets}[_arg_category(arg)].append((name, arg))
-    positionals.sort(key=lambda pair: pair[1].get("position") or 0)
+    env_vars = [(secret_env_var(runnable, name), name) for name in args]
+    names = " ".join(var for var, _ in env_vars)
 
-    lines = ["#!/bin/bash", "set -e", "args=()"]
+    lines = ["#!/bin/bash", "# Requires Rundeck 5.20+ (shell-escaped @option.*@ substitution).", "set -e"]
+    for var, name in env_vars:
+        lines.append(f"{var}={rd_option_token(name)}")
 
-    for name, _arg in named:
-        env = rd_env_var(name)
-        lines.append(f'if [ -n "${{{env}:-}}" ]; then args+=(--{name} "${{{env}:-}}"); fi')
+    cmd = " ".join(shlex.quote(part) for part in [invocation, *command_path])
+    if not run_as:
+        if env_vars:
+            lines.append(f"for rs_var in {names}; do")
+            lines.append('  if [ -n "${!rs_var}" ]; then export "$rs_var"; else unset "$rs_var"; fi')
+            lines.append("done")
+        lines.append(f"exec {cmd}")
+        return "\n".join(lines)
 
-    for name, _arg in flags:
-        env = rd_env_var(name)
-        lines.append(f'if [ "${{{env}:-}}" = "true" ]; then args+=(--{name}); fi')
+    if not _RUN_AS.fullmatch(run_as):
+        raise ValueError(f"run_as {run_as!r} is not a valid account name")
+    become = f"sudo -n -u {run_as}"
+    if not env_vars:
+        lines.append(f"exec {become} {cmd}")
+        return "\n".join(lines)
 
-    for name, _arg in positionals:
-        env = rd_env_var(name)
-        lines.append(f'if [ -n "${{{env}:-}}" ]; then args+=("${{{env}:-}}"); fi')
-
-    for name, _arg in rests:
-        env = rd_env_var(name)
-        # Intentionally unquoted so the value word-splits into separate args.
-        lines.append(f'if [ -n "${{{env}:-}}" ]; then args+=(-- ${{{env}:-}}); fi')
-
-    for name, _arg in secrets:
-        env = rd_env_var(name)
-        lines.append(f'export {secret_env_var(runnable, name)}="${{{env}:-}}"')
-
-    invoke = " ".join([invocation, *command_path, '"${args[@]}"'])
-    lines.append(f"exec {invoke}")
+    prelude = PY_ENV_PRELUDE if venv else ENV_PRELUDE
+    lines.append(f"RS_PRELUDE='{prelude}'")
+    lines.append(_FRAME_FUNC)
+    wrapped = " ".join([*_env_prelude_argv(invocation, venv), cmd])
+    lines.append(f"rs_frame {names} | {become} {wrapped}")
     return "\n".join(lines)
 
 
@@ -254,12 +281,15 @@ def merge_settings(
     cli_opts: dict[str, Any],
     config_meta: dict[str, Any],
     runnable_meta: dict[str, Any],
+    default_run_as: Any = None,
 ) -> dict[str, Any]:
     """Resolve per-runnable Rundeck settings.
 
     Precedence: CLI flag > `[<runnable>.meta.rundeck]` > `[config.meta.rundeck]`
     > built-in default. `cli_opts` carries the emit flags (`venv`, `group`,
-    `node_filter`, `project`); the two meta dicts are read from the raw TOML.
+    `node_filter`, `project`, `run_as`); the two meta dicts are read from the
+    raw TOML. `run_as` falls back to `default_run_as` — the runnable's own
+    literal `run_as` account, when it names one.
     """
     venv = _first(cli_opts.get("venv"), runnable_meta.get("venv"), config_meta.get("venv"))
     invocation = f"{str(venv).rstrip('/')}/bin/{runnable}" if venv else runnable
@@ -274,9 +304,12 @@ def merge_settings(
 
     notifications = _first(runnable_meta.get("notifications"), config_meta.get("notifications"))
 
+    run_as = _first(cli_opts.get("run_as"), runnable_meta.get("run_as"), config_meta.get("run_as"), literal_run_as(default_run_as))
+
     return {
         "invocation": invocation,
         "venv": venv,
+        "run_as": run_as or None,
         "group": _first(cli_opts.get("group"), runnable_meta.get("group"), config_meta.get("group"), "runspec"),
         "project": _first(cli_opts.get("project"), config_meta.get("project"), "runspec"),
         "node_filter": node_filter,
@@ -292,6 +325,15 @@ def merge_settings(
     }
 
 
+def literal_run_as(value: Any) -> str | None:
+    """A runnable's `run_as` when it names a fixed account; `None` for the
+    forms only the node can resolve (`@owner`, `$ENV`, a per-host table) and for
+    the `""` opt-out."""
+    if isinstance(value, str) and value and value[0] not in "@$":
+        return value
+    return None
+
+
 # ── job + file assembly ───────────────────────────────────────────────────────
 
 
@@ -301,7 +343,14 @@ def render_job(runnable: str, leaf: dict[str, Any], settings: dict[str, Any]) ->
     args = leaf["args"]
     group = settings["group"]
 
-    script = render_script(runnable, leaf["command_path"], args, settings["invocation"])
+    script = render_script(
+        runnable,
+        leaf["command_path"],
+        args,
+        settings["invocation"],
+        run_as=settings.get("run_as"),
+        venv=settings.get("venv"),
+    )
 
     job: dict[str, Any] = {
         "name": job_name,

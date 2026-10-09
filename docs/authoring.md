@@ -404,6 +404,7 @@ goes in a `meta` table the emitters read, so write it next to the runnable:
 ```toml
 [rotate-logs.meta.rundeck]
 venv        = "/opt/app/.venv"
+run_as      = "svc"              # runs: sudo -n -u svc /opt/app/.venv/bin/rotate-logs
 node_filter = "tags: web"
 schedule    = "0 0 2 * * ?"      # Quartz crontab, not Unix cron
 

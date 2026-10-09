@@ -12,10 +12,9 @@ from runspec import rundeckgen
 # ── name helpers ──────────────────────────────────────────────────────────────
 
 
-def test_rd_env_var():
-    assert rundeckgen.rd_env_var("target") == "RD_OPTION_TARGET"
-    assert rundeckgen.rd_env_var("node-filter") == "RD_OPTION_NODE_FILTER"
-    assert rundeckgen.rd_env_var("older_than") == "RD_OPTION_OLDER_THAN"
+def test_rd_option_token():
+    assert rundeckgen.rd_option_token("target") == "@option.target@"
+    assert rundeckgen.rd_option_token("node-filter") == "@option.node-filter@"
 
 
 def test_secret_env_var_keys_on_runnable_not_leaf():
@@ -77,7 +76,7 @@ def test_option_flag_default_true():
 def test_option_password_is_secure_exposed_no_value():
     opt = rundeckgen.render_option("token", {"type": "password", "required": True, "description": "API token"})
     assert opt["secure"] is True
-    assert opt["valueExposed"] is True  # exposed to the script as RD_OPTION_TOKEN
+    assert opt["valueExposed"] is True  # substituted into the script via @option.token@
     assert opt["required"] is True
     assert "value" not in opt  # a secret never carries a default value
 
@@ -103,39 +102,106 @@ def _script(runnable, args, command_path=None, invocation="/opt/app/.venv/bin/ap
     return rundeckgen.render_script(runnable, command_path or [], args, invocation)
 
 
-def test_script_named_arg_guarded_nonempty():
-    s = _script("app", {"target": {"type": "str"}})
-    assert 'if [ -n "${RD_OPTION_TARGET:-}" ]; then args+=(--target "${RD_OPTION_TARGET:-}"); fi' in s
-
-
-def test_script_flag_conditional():
-    s = _script("app", {"verbose": {"type": "flag", "default": False}})
-    assert 'if [ "${RD_OPTION_VERBOSE:-}" = "true" ]; then args+=(--verbose); fi' in s
-
-
-def test_script_positionals_in_position_order():
+def test_script_assigns_every_arg_from_option_token():
     args = {
-        "second": {"type": "str", "position": 2},
+        "target": {"type": "str"},
+        "verbose": {"type": "flag", "default": False},
         "first": {"type": "str", "position": 1},
+        "extra": {"type": "rest"},
+        "token": {"type": "password"},
     }
-    s = _script("app", args)
-    assert s.index("RD_OPTION_FIRST") < s.index("RD_OPTION_SECOND")
+    s = _script("deploy", args)
+    for name, var in [("target", "TARGET"), ("verbose", "VERBOSE"), ("first", "FIRST"), ("extra", "EXTRA"), ("token", "TOKEN")]:
+        assert f"RUNSPEC_DEPLOY_ARG_{var}=@option.{name}@" in s
 
 
-def test_script_rest_is_word_split_after_double_dash():
-    s = _script("app", {"extra": {"type": "rest"}})
-    assert "args+=(-- ${RD_OPTION_EXTRA:-})" in s  # unquoted -> word-splits
+def test_script_never_reads_rd_option_env_vars():
+    s = _script("deploy", {"target": {"type": "str"}, "token": {"type": "password"}})
+    assert "RD_OPTION" not in s
 
 
-def test_script_secret_exported_not_on_command_line():
-    s = _script("deploy", {"token": {"type": "password"}})
-    assert 'export RUNSPEC_DEPLOY_ARG_TOKEN="${RD_OPTION_TOKEN:-}"' in s
-    assert "--token" not in s  # never a CLI flag
+def test_script_puts_no_value_on_the_command_line():
+    s = _script("deploy", {"target": {"type": "str"}, "token": {"type": "password"}}, command_path=["start"])
+    assert "--target" not in s and "--token" not in s
+    assert s.strip().endswith("exec /opt/app/.venv/bin/app start")
 
 
-def test_script_invocation_includes_command_path():
+def test_script_exports_only_non_empty_values():
+    s = _script("deploy", {"target": {"type": "str"}})
+    assert 'if [ -n "${!rs_var}" ]; then export "$rs_var"; else unset "$rs_var"; fi' in s
+
+
+def test_script_no_args_just_execs():
     s = _script("deploy", {}, command_path=["start"])
-    assert s.strip().endswith('exec /opt/app/.venv/bin/app start "${args[@]}"')
+    assert "for rs_var" not in s
+    assert s.strip().endswith("exec /opt/app/.venv/bin/app start")
+
+
+def test_script_run_as_sends_env_frame_on_stdin_to_venv_python():
+    s = rundeckgen.render_script("deploy", ["start"], {"token": {"type": "password"}}, "/opt/app/.venv/bin/deploy", run_as="svc", venv="/opt/app/.venv")
+    assert 'rs_frame RUNSPEC_DEPLOY_ARG_TOKEN | sudo -n -u svc /opt/app/.venv/bin/python -c "$RS_PRELUDE" /opt/app/.venv/bin/deploy start' in s
+    assert "export" not in s  # sudo resets the environment; values ride stdin
+
+
+def test_script_run_as_without_venv_uses_shell_prelude():
+    s = rundeckgen.render_script("deploy", [], {"x": {"type": "str"}}, "deploy", run_as="svc")
+    assert '| sudo -n -u svc sh -c "$RS_PRELUDE" sh deploy' in s
+
+
+def test_script_run_as_no_args_execs_sudo():
+    s = rundeckgen.render_script("deploy", [], {}, "/opt/v/bin/deploy", run_as="svc", venv="/opt/v")
+    assert s.strip().endswith("exec sudo -n -u svc /opt/v/bin/deploy")
+
+
+def test_script_run_as_rejects_shell_metacharacters():
+    import pytest
+
+    with pytest.raises(ValueError):
+        rundeckgen.render_script("deploy", [], {}, "deploy", run_as="svc; id")
+
+
+def test_script_values_round_trip_through_bash(tmp_path):
+    """Substitute tokens the way Rundeck 5.20 does (shell-escaped) and run the
+    script: every value reaches the runnable's env intact; none is in argv."""
+    import re
+    import shlex
+    import shutil
+    import subprocess
+    import sys
+
+    if not shutil.which("bash") or not shutil.which("od"):
+        import pytest
+
+        pytest.skip("needs bash + od")
+    show = tmp_path / "bin" / "show"
+    show.parent.mkdir()
+    show.write_text(f"#!{sys.executable}\nimport json, os, sys\nprint(json.dumps([{{k: v for k, v in os.environ.items() if k.startswith('RUNSPEC_SHOW_')}}, sys.argv[1:]]))\n")
+    show.chmod(0o755)
+    values = {"plain": "3", "tricky": "a b'c\"$(id) `x`;\nline2 ü", "unset": ""}
+    for venv in (None, str(tmp_path)):
+        script = rundeckgen.render_script("show", ["sub"], {k: {"type": "str"} for k in values}, str(show), venv=venv)
+        script = re.sub(r"@option\.([\w-]+)@", lambda m: shlex.quote(values[m.group(1)]), script)
+        out = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True)
+        env, argv = json.loads(out.stdout)
+        assert env == {"RUNSPEC_SHOW_ARG_PLAIN": "3", "RUNSPEC_SHOW_ARG_TRICKY": values["tricky"]}
+        assert argv == ["sub"]
+
+
+def test_script_env_frame_matches_spec():
+    """The bash `rs_frame` helper writes the same bytes as `become.env_frame`."""
+    import shutil
+    import subprocess
+
+    from runspec.become import env_frame
+
+    if not shutil.which("bash") or not shutil.which("od"):
+        import pytest
+
+        pytest.skip("needs bash + od")
+    value = "x y'z\n\u00fc$HOME"
+    script = rundeckgen._FRAME_FUNC + '\nA="$1"\nB=\nrs_frame A B'
+    out = subprocess.run(["bash", "-c", script, "bash", value], capture_output=True, check=True)
+    assert out.stdout == env_frame({"A": value})
 
 
 # ── leaf expansion ────────────────────────────────────────────────────────────
@@ -196,6 +262,18 @@ def test_merge_settings_runnable_over_config():
 def test_merge_settings_invocation_from_venv():
     settings = rundeckgen.merge_settings("app", {"venv": "/opt/v/"}, {}, {})
     assert settings["invocation"] == "/opt/v/bin/app"
+
+
+def test_merge_settings_run_as_precedence():
+    assert rundeckgen.merge_settings("app", {"run_as": "cli"}, {"run_as": "cfg"}, {"run_as": "run"}, "own")["run_as"] == "cli"
+    assert rundeckgen.merge_settings("app", {}, {"run_as": "cfg"}, {"run_as": "run"}, "own")["run_as"] == "run"
+    assert rundeckgen.merge_settings("app", {}, {"run_as": "cfg"}, {}, "own")["run_as"] == "cfg"
+    assert rundeckgen.merge_settings("app", {}, {}, {}, "own")["run_as"] == "own"
+
+
+def test_merge_settings_run_as_ignores_node_resolved_forms():
+    for value in ("@owner", "$SVC_USER", {"web-*": "svc"}, "", None):
+        assert rundeckgen.merge_settings("app", {}, {}, {}, value)["run_as"] is None
 
 
 def test_merge_settings_invocation_bare_without_venv():
@@ -338,4 +416,9 @@ def test_render_runnable_password_option_present_and_env_exported():
     job = jobs[0]
     token_opt = next(o for o in job["options"] if o["name"] == "token")
     assert token_opt["secure"] is True
-    assert 'export RUNSPEC_DEPLOY_ARG_TOKEN="${RD_OPTION_TOKEN:-}"' in job["sequence"]["commands"][0]["script"]
+    assert "RUNSPEC_DEPLOY_ARG_TOKEN=@option.token@" in job["sequence"]["commands"][0]["script"]
+
+
+def test_render_job_run_as_wraps_in_sudo():
+    job = rundeckgen.render_job("app", _leaf(args={"x": {"type": "str"}}), _settings(run_as="svc", venv="/opt/v"))
+    assert "| sudo -n -u svc /opt/v/bin/python" in job["sequence"]["commands"][0]["script"]

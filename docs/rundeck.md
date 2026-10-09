@@ -10,15 +10,17 @@ whenever an arg changes.
   `cron_list` — exactly like `runspec serve`, each carrying its merged
   global + command args.
 - **JSON output**, generated with the standard library alone (no YAML
-  dependency). Targets **Rundeck 4.17.6**.
+  dependency). Requires **Rundeck 5.20 or later** (see
+  [How values reach the runnable](#how-values-reach-the-runnable)).
 - Files land in `{git_root}/jobs/{job}.json`, safe to commit as deployment
   artefacts.
 
 ## Quick start
 
 ```bash
-# From your project (the venv where the runnables are installed):
-runspec emit --rundeck --venv /opt/app/.venv
+# From your project (the venv where the runnables are installed), running each
+# job's command as the venv's service account:
+runspec emit --rundeck --venv /opt/app/.venv --run-as svc
 # Wrote jobs/scan.json
 # Wrote jobs/deploy_start.json
 # ...
@@ -27,7 +29,7 @@ runspec emit --rundeck --venv /opt/app/.venv
 Then import into Rundeck (see below), or pipe straight to the `rd` CLI:
 
 ```bash
-runspec emit --rundeck --venv /opt/app/.venv --stdout | rd jobs load -F json -p myproject
+runspec emit --rundeck --venv /opt/app/.venv --run-as svc --stdout | rd jobs load -F json -p myproject
 ```
 
 ### Importing into Rundeck
@@ -204,16 +206,85 @@ command; a concrete pair targets one. Because the core stays single-target
 
 ## What's in a job
 
-Every job runs a single Bash **script step** — never a plain `exec`/command
-step, because a static command string can't conditionally include a `--flag`
-from a boolean option. The script rebuilds the CLI invocation from Rundeck's
-`RD_OPTION_*` option environment variables:
+Every job runs a single Bash **script step**. The script opens with one
+assignment per option, naming the runspec env var the runnable reads that arg
+from:
 
-- **Named args** are added only when non-empty: `--depth "$RD_OPTION_DEPTH"`.
-- **Flags** are added only when `"true"`.
-- **Positionals** are appended in `position` order.
-- **`rest`** args are word-split after a literal `--`.
-- **Secrets** never touch the command line — see below.
+```bash
+RUNSPEC_DEPLOY_ARG_DEPTH=@option.depth@
+RUNSPEC_DEPLOY_ARG_TOKEN=@option.token@
+```
+
+Rundeck replaces each `@option.<name>@` token with the option's value before it
+copies the script to the node. The script then runs the runnable with only the
+binary and the subcommand path on its command line, for example
+`/opt/app/.venv/bin/deploy start`. Every arg (named, flag, positional, `rest`,
+`password`) reaches the runnable through the env var, which is how runspec
+already resolves an arg that isn't on the command line.
+
+- An option left **empty** isn't exported, so the runnable's own default
+  applies.
+- **Flags** arrive as `"true"` / `"false"`.
+- A **`rest`** arg arrives as one value (it isn't word-split into separate
+  items).
+
+### How values reach the runnable
+
+The emitter avoids the two usual ways of passing values, because neither works
+in a locked-down corporate fleet:
+
+- **No `RD_OPTION_*` env vars.** Those only reach a remote node when its sshd
+  has `AcceptEnv RD_*`, and Red Hat advises against setting that.
+- **No arguments.** A value on a command line is visible to every user through
+  `ps` (PII and secrets alike), and Red Hat advises against hiding it with the
+  `hidepid` mount option of `/proc`.
+
+That leaves the inline-script tokens. **Rundeck 5.20 is the minimum version**:
+it fixed the shell escaping of option values substituted into a job (the
+[option-escaping advisory](https://docs.rundeck.com/docs/history/cves/2025-07-option-escaping.html),
+affecting 3.4.1 to 5.19). Don't import these jobs on an older Rundeck. Use an
+option's `regex` / `values` to restrict what it accepts where you can.
+
+!!! warning "Accepted tradeoff: values in the temp script"
+    Rundeck writes the substituted script, secret values included, to a temp
+    file on the node and deletes it when the step ends. While it exists, the
+    file is readable by the Rundeck SSH user (and root). Values never appear in
+    `ps`, the sudo log or the Rundeck job definition.
+
+### Running as the service account
+
+Runnables should run as the service account that owns their venv, not as the
+Rundeck SSH user. Set `run_as` in `meta.rundeck` (or pass `--run-as`) and the
+script runs the command through `sudo -n -u <account>`:
+
+```toml
+[config.meta.rundeck]
+venv   = "/opt/app/.venv"
+run_as = "svc"
+```
+
+Because `sudo` resets the environment, the values don't travel as env vars
+across it. The script writes them on the command's **standard input** as the
+runspec env frame, and the fixed env prelude on the venv's own `bin/python`
+reads them back before it starts the runnable (the same mechanism the console
+uses; see SPEC → "Remote Execution → Command building"):
+
+```bash
+rs_frame RUNSPEC_DEPLOY_ARG_DEPTH RUNSPEC_DEPLOY_ARG_TOKEN \
+  | sudo -n -u svc /opt/app/.venv/bin/python -c "$RS_PRELUDE" /opt/app/.venv/bin/deploy start
+```
+
+The sudoers rule therefore needs to allow the Rundeck SSH user to run the
+venv's `bin/` as `svc` without a password, for example:
+
+```
+rundeck ALL=(svc) NOPASSWD: /opt/app/.venv/bin/
+```
+
+Without a `venv` the prelude runs on `sh` instead. When `run_as` isn't set in
+`meta.rundeck` or on the command line, the emitter uses the runnable's own
+`run_as` (or `[config] run_as`) if it names a fixed account. `@owner`, `$ENV`
+and per-host forms can only be resolved on the node, so they're ignored here.
 
 ### Type mapping
 
@@ -237,16 +308,11 @@ option's description.
 
 A `password` arg becomes a Rundeck **secure option** (`secure: true`,
 `valueExposed: true`): the operator enters it at run time, it is encrypted, and
-it is exposed to the script only as `RD_OPTION_<NAME>`. The script exports it on
-the runspec secret channel —
-
-```bash
-export RUNSPEC_DEPLOY_ARG_TOKEN="${RD_OPTION_TOKEN:-}"
-```
-
-— so it reaches the runnable through the same `RUNSPEC_<RUNNABLE>_ARG_<NAME>`
-env var runspec already reads passwords from, and **never appears on the command
-line or in logs**.
+it is kept out of the job log. It reaches the script through its
+`@option.<name>@` token like every other option, and the runnable reads it from
+`RUNSPEC_<RUNNABLE>_ARG_<NAME>`, the env var runspec already reads passwords
+from. It never appears on a command line. The temp-script tradeoff above
+applies to it.
 
 ## Nodes and load-balancing
 
@@ -256,7 +322,7 @@ subset of 1** — each run lands on one random node of the set, so a scheduled o
 triggered job spreads its load:
 
 ```bash
-runspec emit --rundeck --venv /opt/app/.venv --node-filter 'tags: web'
+runspec emit --rundeck --venv /opt/app/.venv --run-as svc --node-filter 'tags: web'
 ```
 
 produces, on each job:
@@ -274,8 +340,9 @@ Rundeck-specific settings that aren't part of a runnable's interface live in a
 
 ```toml
 [config.meta.rundeck]
-venv  = "/opt/app/.venv"
-group = "myteam"
+venv   = "/opt/app/.venv"
+run_as = "svc"                     # sudo -n -u svc /opt/app/.venv/bin/…
+group  = "myteam"
 
 [deploy]
 description = "Deploy the app"
@@ -283,6 +350,7 @@ require-command = true
 
 [deploy.meta.rundeck]
 venv        = "/opt/deploy/.venv"
+run_as      = "svc-deploy"
 node_filter = "tags: deployers"
 schedule    = "0 0 2 * * ?"        # Quartz crontab (6/7 fields), NOT Unix 5-field cron
 
@@ -298,6 +366,7 @@ webhook = "https://hooks.example.com/deploy"
 | Key | Effect |
 |---|---|
 | `venv` | Venv whose `bin/` holds the runnable binary (the script invocation path) |
+| `run_as` | Account the command runs as, through `sudo -n -u` (values ride stdin) |
 | `group` | Rundeck job group (default `runspec`) |
 | `node_filter` | Node filter; presence enables orchestrator subset=1 |
 | `orchestrator` | `"subset"` (default when a filter is set) or `"none"` |
@@ -322,6 +391,7 @@ built-in default.
 | `--group <name>` | Rundeck job group (default `runspec`) |
 | `--node-filter <expr>` | Node filter → orchestrator subset=1 load-balancing |
 | `--project <name>` | Rundeck project (used for stable job UUIDs) |
+| `--run-as <account>` | Run each job's command as this account (`sudo -n -u`) |
 | `--check` | Verify emitted files are up to date; write nothing. Exit 1 if stale |
 | `--stdout` | Print the combined JSON array to stdout instead of writing files |
 
@@ -330,15 +400,15 @@ built-in default.
 Commit `jobs/` and guard drift the same way `runspec stubs --check` does:
 
 ```bash
-runspec emit --rundeck --venv /opt/app/.venv --check
+runspec emit --rundeck --venv /opt/app/.venv --run-as svc --check
 # ✗  jobs is out of date — run 'runspec emit --rundeck'   (exit 1)
 ```
 
 ## Not covered (yet)
 
-- **`run_as`** — the script invokes the venv binary directly; it does not wrap
-  the call in `sudo`/`su`. Escalate on the Rundeck node executor if needed.
+- **`su`** — `run_as` always escalates with `sudo -n -u`.
 - **Group constraints** (`exclusive`, `exactly-one`, …) have no Rundeck
   equivalent; they are noted in option descriptions and still enforced by the
   runnable at runtime.
-- **`multiple`** (repeatable) args emit as a single text option.
+- **`multiple`** (repeatable) args emit as a single text option (a value with
+  newlines would carry several items, but a Rundeck text option is one line).

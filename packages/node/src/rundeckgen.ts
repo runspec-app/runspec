@@ -8,10 +8,16 @@
  *
  * Ports `runspec/rundeckgen.py`. One Rundeck job per **leaf command** (a
  * runnable with subcommands flattens to one job per fully-pathed leaf, like
- * `runspec serve`). Every job runs a single Bash **script step** that reads each
- * option from its `RD_OPTION_<NAME>` environment variable — that avoids script
- * injection and lets a secret ride the env channel without ever landing on the
- * command line. Targets Rundeck 4.17.6.
+ * `runspec serve`). Every job runs a single Bash **script step** that assigns
+ * each option to its runspec env var — `RUNSPEC_<RUNNABLE>_ARG_<NAME>=@option.<name>@`
+ * — and runs the binary with no arg values on its command line (they would show
+ * in `ps`). It doesn't read `RD_OPTION_*` variables (those need `AcceptEnv RD_*`
+ * on every node's sshd).
+ *
+ * Requires Rundeck 5.20+, which shell-escapes option values substituted into a
+ * job. Accepted tradeoff: Rundeck writes the substituted script, secrets
+ * included, to a temp file on the node, readable by the Rundeck SSH user until
+ * the step ends.
  */
 
 import { createHash } from 'crypto';
@@ -44,11 +50,6 @@ const UUID_NAMESPACE = uuid5(NAMESPACE_URL, 'https://runspec.app/rundeck');
 
 // ── name helpers ──────────────────────────────────────────────────────────────
 
-/** Option name → the `RD_OPTION_<NAME>` env var Rundeck exposes it as. */
-export function rdEnvVar(name: string): string {
-  return 'RD_OPTION_' + name.replace(/[^A-Za-z0-9]/g, '_').toUpperCase();
-}
-
 /** Per-job output file name. */
 export function jobFilename(jobName: string): string {
   return `${jobName}.json`;
@@ -72,8 +73,8 @@ function optionDescription(arg: ArgSpec): string {
  * Render one runspec arg as a Rundeck job option.
  *
  * - `password` → a **secure** option (`secure, valueExposed`): entered at run
- *   time, kept off the command line, exposed to the script only as
- *   `RD_OPTION_<NAME>`; never carries a default `value`.
+ *   time, kept out of the job log, reaching the script only through its
+ *   `@option.<name>@` token; never carries a default `value`.
  * - `flag` → text option constrained to `["true","false"]` (`enforced`).
  * - `choice`/`options` → text option constrained to the choices (`enforced`).
  * - `int`/`float` → text option with a validating `regex`.
@@ -116,62 +117,109 @@ export function renderOption(name: string, arg: ArgSpec): Record<string, unknown
 
 // ── script step ───────────────────────────────────────────────────────────────
 
-type Category = 'secret' | 'rest' | 'flag' | 'positional' | 'named';
+// The SPEC "env prelude" (shell) and "Python prelude" — byte-identical to
+// `runspec.become.ENV_PRELUDE` / `PY_ENV_PRELUDE` and spec/SPEC.md. They read
+// the env frame from stdin, export each variable and exec the command.
+export const ENV_PRELUDE =
+  'while IFS= read -r l; do [ "$l" = . ] && break; n=${l%%=*}; v=$(printf "%b" "${l#*=}X"); export "$n=${v%X}"; done; exec "$@"';
 
-function argCategory(arg: ArgSpec): Category {
-  const t = arg.type ?? 'str';
-  if (t === 'password') return 'secret';
-  if (t === 'rest') return 'rest';
-  if (t === 'flag') return 'flag';
-  if (arg.position !== undefined && arg.position !== null) return 'positional';
-  return 'named';
+export const PY_ENV_PRELUDE = [
+  'import os,sys',
+  'l=bytes()',
+  'while 1:',
+  ' c=os.read(0,1)',
+  ' if c and c!=bytes([10]):',
+  '  l+=c;continue',
+  ' if l==bytes([46]) or not l and not c:break',
+  ' if l:n,s,v=l.partition(bytes([61]));os.environ[n.decode()]=bytes(int(v[i+2:i+5],8) for i in range(0,len(v),5)).decode()',
+  ' if not c:break',
+  ' l=bytes()',
+  'os.execvp(sys.argv[1],sys.argv[1:])',
+].join('\n');
+
+// Bash helper that writes the SPEC "env frame" for the named shell variables to
+// stdout: one `NAME=\0ooo…` line per non-empty variable (every byte of the value
+// as an octal escape), then a `.` line. Only shell builtins see a value
+// (`printf`), and `od`/`tr`/`sed` read it from a pipe, so no value reaches any
+// process's argv. The env prelude on the far side of `sudo` reads it back.
+export const FRAME_FUNC = [
+  'rs_frame() {',
+  '  local rs_var rs_val',
+  '  for rs_var in "$@"; do',
+  '    rs_val=${!rs_var}',
+  '    [ -n "$rs_val" ] || continue',
+  `    printf '%s=%s\\n' "$rs_var" "$(printf '%s' "$rs_val" | od -An -v -to1 | tr -d ' \\n' | sed 's/.../\\\\0&/g')"`,
+  '  done',
+  "  printf '.\\n'",
+  '}',
+].join('\n');
+
+const RUN_AS = /^[A-Za-z0-9_.][A-Za-z0-9_.-]*$/;
+
+/** Option name → the `@option.<name>@` token Rundeck substitutes into an inline script. */
+export function rdOptionToken(name: string): string {
+  return `@option.${name}@`;
+}
+
+/** POSIX shell quoting, identical to Python's `shlex.quote`. */
+export function shellQuote(s: string): string {
+  if (s === '') return "''";
+  if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(s)) return s;
+  return "'" + s.replace(/'/g, `'"'"'`) + "'";
 }
 
 /**
- * Build the Bash script that reconstructs the CLI invocation from options.
- * Values read from `RD_OPTION_*` env vars (defaulted to empty). Named args only
- * when non-empty; flags only when `"true"`; positionals in `position` order; a
- * `rest` arg word-split after a literal `--`. `password` args ride the runspec
- * secret channel (`RUNSPEC_<RUNNABLE>_ARG_<NAME>`), never the command line.
+ * Build the Bash script that runs the runnable with the job's option values.
+ *
+ * Every value — secret or not — reaches the runnable on runspec's env channel
+ * (`RUNSPEC_<RUNNABLE>_ARG_<NAME>`), never on a command line: one
+ * `RUNSPEC_<RUNNABLE>_ARG_<NAME>=@option.<name>@` assignment per arg, which
+ * Rundeck 5.20+ fills in (shell-escaped) before copying the script to the node.
+ *
+ * Without `runAs` the non-empty values are exported (an empty option stays
+ * unset so the runnable's default applies) and the binary is exec'd. With
+ * `runAs` the script runs `sudo -n -u <runAs>` and, because sudo resets the
+ * environment, writes the values as the SPEC env frame on the child's stdin,
+ * read by the env prelude — values never appear in argv or the sudo log.
  */
 export function renderScript(
   runnable: string,
   commandPath: string[],
   args: Record<string, ArgSpec>,
   invocation: string,
+  runAs?: string | null,
+  venv?: string | null,
 ): string {
-  const named: string[] = [];
-  const flags: string[] = [];
-  const positionals: Array<[string, ArgSpec]> = [];
-  const rests: string[] = [];
-  const secrets: string[] = [];
+  const envVars = Object.keys(args).map((name) => [secretEnvVar(runnable, name), name] as const);
+  const names = envVars.map(([v]) => v).join(' ');
 
-  for (const [name, arg] of Object.entries(args)) {
-    const cat = argCategory(arg);
-    const env = rdEnvVar(name);
-    if (cat === 'named') {
-      named.push(`if [ -n "\${${env}:-}" ]; then args+=(--${name} "\${${env}:-}"); fi`);
-    } else if (cat === 'flag') {
-      flags.push(`if [ "\${${env}:-}" = "true" ]; then args+=(--${name}); fi`);
-    } else if (cat === 'positional') {
-      positionals.push([name, arg]);
-    } else if (cat === 'rest') {
-      // Intentionally unquoted so the value word-splits into separate args.
-      rests.push(`if [ -n "\${${env}:-}" ]; then args+=(-- \${${env}:-}); fi`);
-    } else {
-      secrets.push(`export ${secretEnvVar(runnable, name)}="\${${env}:-}"`);
+  const lines = ['#!/bin/bash', '# Requires Rundeck 5.20+ (shell-escaped @option.*@ substitution).', 'set -e'];
+  for (const [v, name] of envVars) lines.push(`${v}=${rdOptionToken(name)}`);
+
+  const cmd = [invocation, ...commandPath].map(shellQuote).join(' ');
+  if (!runAs) {
+    if (envVars.length) {
+      lines.push(`for rs_var in ${names}; do`);
+      lines.push('  if [ -n "${!rs_var}" ]; then export "$rs_var"; else unset "$rs_var"; fi');
+      lines.push('done');
     }
+    lines.push(`exec ${cmd}`);
+    return lines.join('\n');
   }
 
-  positionals.sort((a, b) => (a[1].position ?? 0) - (b[1].position ?? 0));
-  const positionalLines = positionals.map(([name]) => {
-    const env = rdEnvVar(name);
-    return `if [ -n "\${${env}:-}" ]; then args+=("\${${env}:-}"); fi`;
-  });
+  if (!RUN_AS.test(runAs)) throw new Error(`run_as '${runAs}' is not a valid account name`);
+  const become = `sudo -n -u ${runAs}`;
+  if (!envVars.length) {
+    lines.push(`exec ${become} ${cmd}`);
+    return lines.join('\n');
+  }
 
-  const lines = ['#!/bin/bash', 'set -e', 'args=()', ...named, ...flags, ...positionalLines, ...rests, ...secrets];
-  const invoke = [invocation, ...commandPath, '"${args[@]}"'].join(' ');
-  lines.push(`exec ${invoke}`);
+  lines.push(`RS_PRELUDE='${venv ? PY_ENV_PRELUDE : ENV_PRELUDE}'`);
+  lines.push(FRAME_FUNC);
+  const prelude = venv
+    ? [shellQuote(`${String(venv).replace(/\/+$/, '')}/bin/python`), '-c', '"$RS_PRELUDE"']
+    : ['sh', '-c', '"$RS_PRELUDE"', 'sh'];
+  lines.push(`rs_frame ${names} | ${become} ${[...prelude, cmd].join(' ')}`);
   return lines.join('\n');
 }
 
@@ -228,11 +276,13 @@ export interface RundeckCliOpts {
   group?: string;
   nodeFilter?: string;
   project?: string;
+  runAs?: string;
 }
 
 export interface RundeckSettings {
   invocation: string;
   venv: unknown;
+  runAs?: string;
   group: string;
   project: string;
   nodeFilter?: string;
@@ -250,12 +300,15 @@ export interface RundeckSettings {
 /**
  * Resolve per-runnable Rundeck settings. Precedence: CLI flag >
  * `[<runnable>.meta.rundeck]` > `[config.meta.rundeck]` > built-in default.
+ * `run_as` falls back to `defaultRunAs` — the runnable's own literal `run_as`
+ * account, when it names one.
  */
 export function mergeSettings(
   runnable: string,
   cliOpts: RundeckCliOpts,
   configMeta: Record<string, unknown>,
   runnableMeta: Record<string, unknown>,
+  defaultRunAs?: unknown,
 ): RundeckSettings {
   const venv = firstDefined(cliOpts.venv, runnableMeta['venv'], configMeta['venv']);
   const invocation = venv ? `${String(venv).replace(/\/+$/, '')}/bin/${runnable}` : runnable;
@@ -271,9 +324,14 @@ export function mergeSettings(
     | Record<string, unknown>
     | undefined;
 
+  const runAs = firstDefined(cliOpts.runAs, runnableMeta['run_as'], configMeta['run_as'], literalRunAs(defaultRunAs)) as
+    | string
+    | undefined;
+
   return {
     invocation,
     venv,
+    runAs: runAs || undefined,
     group: (firstDefined(cliOpts.group, runnableMeta['group'], configMeta['group'], 'runspec') as string),
     project: (firstDefined(cliOpts.project, configMeta['project'], 'runspec') as string),
     nodeFilter,
@@ -289,6 +347,16 @@ export function mergeSettings(
   };
 }
 
+/**
+ * A runnable's `run_as` when it names a fixed account; `undefined` for the forms
+ * only the node can resolve (`@owner`, `$ENV`, a per-host table) and for the
+ * `""` opt-out.
+ */
+export function literalRunAs(value: unknown): string | undefined {
+  if (typeof value === 'string' && value && !'@$'.includes(value[0])) return value;
+  return undefined;
+}
+
 // ── job + file assembly ───────────────────────────────────────────────────────
 
 /** Assemble one Rundeck job object from a leaf command and resolved settings. */
@@ -297,7 +365,8 @@ export function renderJob(runnable: string, leaf: Leaf, settings: RundeckSetting
   const args = leaf.args;
   const group = settings.group;
 
-  const script = renderScript(runnable, leaf.commandPath, args, settings.invocation);
+  const venv = settings.venv ? String(settings.venv) : undefined;
+  const script = renderScript(runnable, leaf.commandPath, args, settings.invocation, settings.runAs, venv);
 
   const job: Record<string, unknown> = {
     name: jobName,

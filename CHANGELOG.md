@@ -7,6 +7,51 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.72.0] — 2026-10-09
+
+**`runspec emit --rundeck` no longer passes values through `RD_OPTION_*` env
+vars or the command line, and needs Rundeck 5.20+.** In a locked-down fleet
+neither channel works: `RD_OPTION_*` only reaches a node whose sshd has
+`AcceptEnv RD_*` (Red Hat advises against it), and an argument shows every
+value (PII, secrets) to any user through `ps` (Red Hat also advises against
+hiding it with `hidepid`).
+
+### Changed: values ride script-section env assignments
+- Each job's script now opens with one
+  `RUNSPEC_<RUNNABLE>_ARG_<NAME>=@option.<name>@` assignment per arg. Rundeck
+  substitutes the token, shell-escaped since 5.20, before copying the script to
+  the node, and the runnable reads every arg (not just `password`) from its
+  runspec env var. The command line carries only the binary and the subcommand
+  path. Empty options stay unset, so the runnable's default applies.
+- **Accepted tradeoff:** the substituted script, secrets included, sits in a
+  temp file on the node, readable by the Rundeck SSH user until the step ends.
+- **Rundeck 5.20 is the minimum** (it fixed option-value escaping; 3.4.1 to
+  5.19 are affected). The previous target was 4.17.6.
+- A `rest` arg now arrives as a single value (it was word-split on the command
+  line).
+
+### Added: `run_as` for Rundeck jobs
+- `meta.rundeck.run_as` (runnable or `[config]`), or `runspec emit --rundeck
+  --run-as <account>`, runs the job's command through `sudo -n -u <account>` so
+  runnables run as their service account. Because sudo resets the environment,
+  the values travel on the command's stdin as the SPEC env frame, read by the
+  env prelude on the venv's own `bin/python` (`sh` without a venv), so they
+  never appear in `ps` or the sudo log. When unset, the runnable's own literal
+  `run_as` (or `[config] run_as`) is used; `@owner`, `$ENV` and per-host forms
+  are ignored because only the node can resolve them.
+- `rundeckgen.rd_env_var` is removed; `rd_option_token` replaces it.
+
+## [node-0.43.0] — 2026-10-09
+
+**`runspec emit --rundeck` passes values through script-section env
+assignments and supports `run_as`** (parity with Python 0.72.0). Jobs need
+Rundeck 5.20+, never read `RD_OPTION_*` and put no value on a command line;
+`meta.rundeck.run_as` / `--run-as` runs the command through `sudo -n -u` with
+the values on stdin as the SPEC env frame. The env preludes and an
+`shellQuote` (Python `shlex.quote`) live in `rundeckgen.ts`; the generated
+scripts are byte-identical to Python's. `rdEnvVar` is replaced by
+`rdOptionToken`.
+
 ## [0.71.0] — 2026-10-02
 
 **Logging and the run audit are now on by default, and runnables can record

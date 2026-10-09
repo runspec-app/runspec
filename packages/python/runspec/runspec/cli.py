@@ -363,6 +363,7 @@ def _emit_rundeck(discovered: list[dict[str, Any]], parsed: Any) -> None:
         "group": parsed.group.value,
         "node_filter": parsed.get("node-filter").value,
         "project": parsed.project.value,
+        "run_as": parsed.get("run-as").value,
     }
 
     all_jobs: list[dict[str, Any]] = []
@@ -371,7 +372,10 @@ def _emit_rundeck(discovered: list[dict[str, Any]], parsed: Any) -> None:
     for item in discovered:
         runnable = item["runnable"]
         config_meta, runnable_meta = _emit_meta(item["source"], runnable, "rundeck")
-        settings = rundeckgen.merge_settings(runnable, cli_opts, config_meta, runnable_meta)
+        default_run_as = item["spec"].get("run_as")
+        if default_run_as is None:
+            default_run_as = item.get("config_run_as")
+        settings = rundeckgen.merge_settings(runnable, cli_opts, config_meta, runnable_meta, default_run_as)
         if settings["venv"] is None:
             missing_venv = True
         inferred = infer_script(item["spec"], item.get("config_autonomy") or "confirm")

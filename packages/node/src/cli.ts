@@ -668,12 +668,23 @@ function configAutonomyOf(source: string): string {
   }
 }
 
+/** The runnable's own `run_as`, else the package `[config] run_as`. */
+function runAsOf(source: string, spec: ScriptSpec): unknown {
+  if (spec.runAs !== undefined && spec.runAs !== null) return spec.runAs;
+  try {
+    return loadRaw(source).config.runAs;
+  } catch {
+    return undefined;
+  }
+}
+
 function emitRundeck(discovered: Array<{ source: string; runnable: string; spec: ScriptSpec }>, parsed: ParsedArgs): void {
   const cliOpts: rundeckgen.RundeckCliOpts = {
     venv: parsed['venv'] as string | undefined,
     group: parsed['group'] as string | undefined,
     nodeFilter: parsed['node_filter'] as string | undefined,
     project: parsed['project'] as string | undefined,
+    runAs: parsed['run_as'] as string | undefined,
   };
 
   const allJobs: Record<string, unknown>[] = [];
@@ -681,7 +692,7 @@ function emitRundeck(discovered: Array<{ source: string; runnable: string; spec:
   let missingVenv = false;
   for (const item of discovered) {
     const [configMeta, runnableMeta] = emitMeta(item.source, item.runnable, 'rundeck');
-    const settings = rundeckgen.mergeSettings(item.runnable, cliOpts, configMeta, runnableMeta);
+    const settings = rundeckgen.mergeSettings(item.runnable, cliOpts, configMeta, runnableMeta, runAsOf(item.source, item.spec));
     if (settings.venv === undefined || settings.venv === null) missingVenv = true;
     const inferred = inferScript(item.spec, configAutonomyOf(item.source));
     for (const job of rundeckgen.renderRunnable(item.runnable, inferred, settings)) {
@@ -1209,12 +1220,14 @@ Options:
   --group        Rundeck job group (default: runspec)
   --node-filter  Rundeck node filter; enables orchestrator random-subset=1 load-balancing
   --project      Rundeck project name (used for stable job UUIDs)
+  --run-as       Rundeck: run each job's command as this account (sudo -n -u)
   --check        Verify emitted files are up to date; write nothing. Exit 1 if stale
   --stdout       Rundeck: print the combined JSON array instead of writing files
 
 Examples:
   runspec emit --rundeck --venv /opt/app/.venv
   runspec emit --rundeck --node-filter 'tags: web'
+  runspec emit --rundeck --venv /opt/app/.venv --run-as svc
   runspec emit --ansible --venv /opt/app/.venv
   runspec emit --rundeck --check
   runspec emit --rundeck --stdout | rd jobs load -F json -p prod`,

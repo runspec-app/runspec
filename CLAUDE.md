@@ -457,10 +457,15 @@ demonstrated in the docs.)
 **Queued:**
 - `runspec emit --rundeck` — **shipped** (0.52.0). Emits a Rundeck job
   **JSON** (stdlib only, no YAML dep) per **leaf command** to
-  `jobs/{job}.json` at the git root, targeting Rundeck 4.17.6. Always a Bash
-  **script step** (not exec) rebuilding the CLI from `RD_OPTION_*` env vars so
-  flag args are conditional; `password` → a Rundeck **secure option** injected
-  on the runspec secret channel (never on argv); `--node-filter` adds
+  `jobs/{job}.json` at the git root. **Rundeck 5.20+ only (0.72.0):** a Bash
+  **script step** opening with `RUNSPEC_<RUNNABLE>_ARG_<NAME>=@option.<name>@`
+  per arg (Rundeck shell-escapes the token) — no `RD_OPTION_*` (needs
+  `AcceptEnv RD_*`) and no value on argv (`ps`); accepted tradeoff: values sit
+  in the node's temp script, readable by the Rundeck SSH user while it runs.
+  `meta.rundeck.run_as` / `--run-as` → `sudo -n -u <svc>` with values on stdin
+  as the SPEC env frame (venv `bin/python` prelude); examples should always set
+  it so runnables run as the service account; `password` → a Rundeck **secure
+  option**; `--node-filter` adds
   orchestrator **random subset=1** load-balancing; schedule + notifications
   from `[<runnable>.meta.rundeck]` (project defaults `[config.meta.rundeck]`);
   stable uuid5 so re-import updates in place; `--check` (CI drift) + `--stdout`
@@ -519,7 +524,7 @@ are now in the Node pack at parity with Python 0.52.0/0.53.0. Shared
 leaf-expansion + secret-env helpers in `packages/node/src/emitutil.ts`; pure
 generators `rundeckgen.ts` / `ansiblegen.ts`; thin `cmdEmit` in `cli.ts` owns
 discovery + writes (`--check` drift, `--stdout` for Rundeck). Same artefacts as
-Python — Rundeck script-step jobs (secure options + `RD_OPTION_*`,
+Python — Rundeck script-step jobs (secure options + `@option` env assignments, `run_as` via sudo + stdin env frame (node-0.43.0),
 orchestrator subset=1, schedule/notifications from `meta.rundeck`, stable
 **UUIDv5 via `crypto`** matching Python byte-for-byte) and Ansible modules
 (`DOCUMENTATION`/`argument_spec`, `no_log` secrets, `changed`/`check_mode`,

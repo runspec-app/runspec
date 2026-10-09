@@ -1,5 +1,13 @@
+import { execFileSync } from 'child_process';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import {
-  rdEnvVar,
+  rdOptionToken,
+  shellQuote,
+  ENV_PRELUDE,
+  PY_ENV_PRELUDE,
+  FRAME_FUNC,
   jobFilename,
   renderOption,
   renderScript,
@@ -22,10 +30,21 @@ function script(partial: Partial<ScriptSpec>): ScriptSpec {
 
 // ── name helpers ──────────────────────────────────────────────────────────────
 
-test('rdEnvVar uppercases and underscores', () => {
-  expect(rdEnvVar('target')).toBe('RD_OPTION_TARGET');
-  expect(rdEnvVar('node-filter')).toBe('RD_OPTION_NODE_FILTER');
-  expect(rdEnvVar('older_than')).toBe('RD_OPTION_OLDER_THAN');
+test('rdOptionToken is the inline-script substitution token', () => {
+  expect(rdOptionToken('target')).toBe('@option.target@');
+  expect(rdOptionToken('node-filter')).toBe('@option.node-filter@');
+});
+
+test('shellQuote matches Python shlex.quote', () => {
+  expect(shellQuote('/opt/app/.venv/bin/app')).toBe('/opt/app/.venv/bin/app');
+  expect(shellQuote('')).toBe("''");
+  expect(shellQuote("a b'c")).toBe(`'a b'"'"'c'`);
+});
+
+test('preludes are byte-identical to spec/SPEC.md', () => {
+  const spec = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'spec', 'SPEC.md'), 'utf-8');
+  expect(spec).toContain(ENV_PRELUDE);
+  expect(spec).toContain(PY_ENV_PRELUDE);
 });
 
 test('secretEnvVar keys on the runnable, not the leaf', () => {
@@ -82,32 +101,89 @@ test('option description notes constraints', () => {
 
 // ── script ────────────────────────────────────────────────────────────────────
 
-test('script guards named args, conditions flags, orders positionals', () => {
+test('script assigns every arg from its option token, no RD_OPTION_*', () => {
   const s = renderScript(
-    'app',
+    'deploy',
     [],
-    { target: arg({ type: 'str' }), verbose: arg({ type: 'flag', default: false }), b: arg({ type: 'str', position: 2 }), a: arg({ type: 'str', position: 1 }) },
+    {
+      target: arg({ type: 'str' }),
+      verbose: arg({ type: 'flag', default: false }),
+      first: arg({ type: 'str', position: 1 }),
+      extra: arg({ type: 'rest' }),
+      token: arg({ type: 'password' }),
+    },
     '/opt/app/.venv/bin/app',
   );
-  expect(s).toContain('if [ -n "${RD_OPTION_TARGET:-}" ]; then args+=(--target "${RD_OPTION_TARGET:-}"); fi');
-  expect(s).toContain('if [ "${RD_OPTION_VERBOSE:-}" = "true" ]; then args+=(--verbose); fi');
-  expect(s.indexOf('RD_OPTION_A')).toBeLessThan(s.indexOf('RD_OPTION_B'));
+  for (const [name, v] of [['target', 'TARGET'], ['verbose', 'VERBOSE'], ['first', 'FIRST'], ['extra', 'EXTRA'], ['token', 'TOKEN']]) {
+    expect(s).toContain(`RUNSPEC_DEPLOY_ARG_${v}=@option.${name}@`);
+  }
+  expect(s).not.toContain('RD_OPTION');
+  expect(s).toContain('if [ -n "${!rs_var}" ]; then export "$rs_var"; else unset "$rs_var"; fi');
 });
 
-test('rest arg word-splits after --', () => {
-  const s = renderScript('app', [], { extra: arg({ type: 'rest' }) }, 'app');
-  expect(s).toContain('args+=(-- ${RD_OPTION_EXTRA:-})');
-});
-
-test('secret is exported, never on the command line', () => {
-  const s = renderScript('deploy', [], { token: arg({ type: 'password' }) }, 'deploy');
-  expect(s).toContain('export RUNSPEC_DEPLOY_ARG_TOKEN="${RD_OPTION_TOKEN:-}"');
+test('no value goes on the command line', () => {
+  const s = renderScript('deploy', ['start'], { target: arg({ type: 'str' }), token: arg({ type: 'password' }) }, '/opt/app/.venv/bin/app');
+  expect(s).not.toContain('--target');
   expect(s).not.toContain('--token');
+  expect(s.trim().endsWith('exec /opt/app/.venv/bin/app start')).toBe(true);
 });
 
-test('invocation includes the command path', () => {
-  const s = renderScript('deploy', ['start'], {}, '/opt/app/.venv/bin/app');
-  expect(s.trim().endsWith('exec /opt/app/.venv/bin/app start "${args[@]}"')).toBe(true);
+test('run_as sends the env frame on stdin to the venv python', () => {
+  const s = renderScript('deploy', ['start'], { token: arg({ type: 'password' }) }, '/opt/app/.venv/bin/deploy', 'svc', '/opt/app/.venv');
+  expect(s).toContain('rs_frame RUNSPEC_DEPLOY_ARG_TOKEN | sudo -n -u svc /opt/app/.venv/bin/python -c "$RS_PRELUDE" /opt/app/.venv/bin/deploy start');
+  expect(s).not.toContain('export');
+});
+
+test('run_as without a venv uses the shell prelude', () => {
+  const s = renderScript('deploy', [], { x: arg({ type: 'str' }) }, 'deploy', 'svc');
+  expect(s).toContain('| sudo -n -u svc sh -c "$RS_PRELUDE" sh deploy');
+});
+
+test('run_as with no args just execs sudo', () => {
+  const s = renderScript('deploy', [], {}, '/opt/v/bin/deploy', 'svc', '/opt/v');
+  expect(s.trim().endsWith('exec sudo -n -u svc /opt/v/bin/deploy')).toBe(true);
+});
+
+test('run_as rejects shell metacharacters', () => {
+  expect(() => renderScript('deploy', [], {}, 'deploy', 'svc; id')).toThrow();
+});
+
+function hasTool(name: string): boolean {
+  try {
+    execFileSync('bash', ['-c', `command -v ${name}`]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const bashIt = hasTool('bash') && hasTool('od') && hasTool('python3') ? test : test.skip;
+
+bashIt('values round-trip through bash into the runnable env', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rd-'));
+  fs.mkdirSync(path.join(dir, 'bin'));
+  const show = path.join(dir, 'bin', 'show');
+  fs.writeFileSync(
+    show,
+    "#!/usr/bin/env python3\nimport json, os, sys\nprint(json.dumps([{k: v for k, v in os.environ.items() if k.startswith('RUNSPEC_SHOW_')}, sys.argv[1:]]))\n",
+  );
+  fs.chmodSync(show, 0o755);
+  const values: Record<string, string> = { plain: '3', tricky: "a b'c\"$(id) `x`;\nline2 ü", unset: '' };
+  const args = Object.fromEntries(Object.keys(values).map((k) => [k, arg({ type: 'str' })]));
+  let script = renderScript('show', ['sub'], args, show);
+  script = script.replace(/@option\.([\w-]+)@/g, (_m, n: string) => shellQuote(values[n]));
+  const [env, argv] = JSON.parse(execFileSync('bash', ['-c', script]).toString());
+  expect(env).toEqual({ RUNSPEC_SHOW_ARG_PLAIN: '3', RUNSPEC_SHOW_ARG_TRICKY: values.tricky });
+  expect(argv).toEqual(['sub']);
+});
+
+bashIt('rs_frame writes the SPEC env frame', () => {
+  const value = "x y'z\nü$HOME";
+  const out = execFileSync('bash', ['-c', `${FRAME_FUNC}\nA="$1"\nB=\nrs_frame A B`, 'bash', value]);
+  const esc = Array.from(Buffer.from(value, 'utf-8'))
+    .map((b) => '\\0' + b.toString(8).padStart(3, '0'))
+    .join('');
+  expect(out.toString()).toBe(`A=${esc}\n.\n`);
 });
 
 // ── leaf expansion ────────────────────────────────────────────────────────────
@@ -142,6 +218,16 @@ test('mergeSettings precedence CLI > runnable > config', () => {
   const s2 = mergeSettings('app', {}, { schedule: 'cfg' }, { schedule: 'run' });
   expect(s2.schedule).toBe('run');
   expect(mergeSettings('app', { venv: '/opt/v/' }, {}, {}).invocation).toBe('/opt/v/bin/app');
+});
+
+test('mergeSettings run_as precedence and node-resolved forms', () => {
+  expect(mergeSettings('app', { runAs: 'cli' }, { run_as: 'cfg' }, { run_as: 'run' }, 'own').runAs).toBe('cli');
+  expect(mergeSettings('app', {}, { run_as: 'cfg' }, { run_as: 'run' }, 'own').runAs).toBe('run');
+  expect(mergeSettings('app', {}, { run_as: 'cfg' }, {}, 'own').runAs).toBe('cfg');
+  expect(mergeSettings('app', {}, {}, {}, 'own').runAs).toBe('own');
+  for (const v of ['@owner', '$SVC', { 'web-*': 'svc' }, '', undefined]) {
+    expect(mergeSettings('app', {}, {}, {}, v).runAs).toBeUndefined();
+  }
 });
 
 test('orchestrator defaults subset with a node filter, none without', () => {

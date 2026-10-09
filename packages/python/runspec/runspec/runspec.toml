@@ -86,6 +86,7 @@ examples = [
   {cmd = "runspec emit --rundeck",                            description = "Write a Rundeck job JSON per runnable to jobs/"},
   {cmd = "runspec emit --rundeck --venv /opt/app/.venv",      description = "Invoke via that venv's bin/ in the job scripts"},
   {cmd = "runspec emit --rundeck --node-filter 'tags: web'",  description = "Dispatch to a node set (random subset=1 load-balance)"},
+  {cmd = "runspec emit --rundeck --venv /opt/app/.venv --run-as svc", description = "Run each job's command as the svc service account"},
   {cmd = "runspec emit --ansible --venv /opt/app/.venv",      description = "Write an Ansible module per runnable to library/"},
   {cmd = "runspec emit --ansible --runnable deploy",          description = "Emit only the 'deploy' runnable"},
   {cmd = "runspec emit --rundeck --check",                    description = "Verify emitted jobs are up to date (CI); no write"},
@@ -101,6 +102,7 @@ runnable    = {type = "str",  description = "Emit only this runnable", short = "
 group       = {type = "str",  description = "Rundeck job group (default: runspec)", required = false}
 node-filter = {type = "str",  description = "Rundeck node filter; enables orchestrator random-subset=1 load-balancing", required = false}
 project     = {type = "str",  description = "Rundeck project name (used for stable job UUIDs)", required = false}
+run-as      = {type = "str",  description = "Rundeck: run the job script's command as this account (sudo -n -u); values ride stdin", required = false}
 check       = {type = "flag", description = "Verify emitted files are up to date; write nothing. Exit 1 if stale (CI).", default = false}
 stdout      = {type = "flag", description = "Rundeck: print the combined JSON array to stdout instead of writing files", default = false}
 
