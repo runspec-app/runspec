@@ -23,11 +23,19 @@ from typing import Any
 
 from markdownify import markdownify as _md
 
+from runspec_confluence_core.macros import storage_to_html
+
 
 def html_to_markdown(html: str | None) -> str:
     """Convert Confluence HTML (storage or rendered ``view`` body) to Markdown
-    (best-effort, via ``markdownify``). Confluence-specific macros are not
-    interpreted.
+    (best-effort, via ``markdownify``).
+
+    Storage-format macros are rewritten first (:func:`macros.storage_to_html`):
+    code and PlantUML/Mermaid become fenced blocks tagged with their language,
+    info/note/tip/warning panels become block quotes led by their type, expand
+    becomes a bold title over its body, and draw.io/Gliffy diagrams become a
+    ``[draw.io diagram "name" rev N]`` placeholder (read the diagram itself with
+    :func:`diagrams.get_diagram`).
 
     Overrides two markdownify defaults that read poorly for documents: headings
     render as **ATX** (``# Heading``) rather than Setext (Setext can't express h3+,
@@ -36,7 +44,12 @@ def html_to_markdown(html: str | None) -> str:
     harder to read)."""
     if not html:
         return ""
-    return _md(html, heading_style="ATX", bullets="-").strip()
+    return _md(storage_to_html(html), heading_style="ATX", bullets="-", code_language_callback=_code_language).strip()
+
+
+def _code_language(el: Any) -> str | None:
+    """The fence language for a ``<pre>`` (set by :func:`macros.storage_to_html`)."""
+    return el.get("data-language") or None
 
 
 def _dig(raw: Any, *keys: str) -> Any:

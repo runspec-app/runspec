@@ -27,9 +27,11 @@ from runspec_confluence_core import (
     delete_attachment,
     delete_page,
     download_attachments,
+    download_diagram,
     get_attachments,
     get_comments,
     get_current_user,
+    get_diagram,
     get_labels,
     get_page,
     get_page_ancestors,
@@ -41,6 +43,7 @@ from runspec_confluence_core import (
     html_to_markdown,
     list_spaces,
     move_page,
+    page_macros,
     search,
     search_by_label,
     update_page,
@@ -162,6 +165,14 @@ def _dispatch(spec: rs.RunSpec, config: ConfluenceConfig) -> Any:
         )
     if command == "delete-attachment":
         return delete_attachment(config, spec.page_id.value, spec.filename.value)
+
+    # ── macros + diagrams ──
+    if command == "list-macros":
+        return page_macros(config, spec.page_id.value)
+    if command == "get-diagram":
+        return get_diagram(config, spec.page_id.value, name=spec.name.value, include_source=spec.include_source.value)
+    if command == "download-diagram":
+        return download_diagram(config, spec.page_id.value, str(spec.dest.value), name=spec.name.value)
 
     # require-command = true makes a bare invocation unreachable.
     raise SystemExit("no command — see `confluence --help`")  # pragma: no cover

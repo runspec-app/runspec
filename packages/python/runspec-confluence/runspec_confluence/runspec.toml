@@ -17,7 +17,10 @@
 # Reads are autonomous; writes require confirmation. Page bodies are passed in a
 # Confluence representation via --content-format (storage XHTML by default, or
 # wiki/editor/markdown; markdown is converted to storage client-side on write).
-# `get-page --markdown` renders a fetched body back to Markdown (read side).
+# `get-page --markdown` renders a fetched body back to Markdown (read side),
+# with macros rendered readably (code fences, panels, diagram placeholders).
+# `list-macros` / `get-diagram` / `download-diagram` read draw.io and Gliffy
+# diagrams, which live as page attachments.
 #
 # Proxy + private-CA support is env-driven (no CLI flags): CONFLUENCE_PROXY_URL
 # routes requests through a proxy, and CONFLUENCE_VERIFY_SSL may be a CA-bundle
@@ -242,3 +245,27 @@ autonomy = "confirm"
 [confluence.commands.delete-attachment.args]
 page-id = {type = "str", required = true, description = "Page id"}
 filename = {type = "str", required = true, description = "Attachment filename to delete"}
+
+# ── macros + diagrams ──────────────────────────────────────────────────────
+
+[confluence.commands.list-macros]
+description = "List the macros on a page (code, panels, expand, draw.io, Gliffy, PlantUML, Mermaid, …) with their parameters; draw.io/Gliffy entries name the attachments that hold the diagram"
+autonomy = "autonomous"
+[confluence.commands.list-macros.args]
+page-id = {type = "str", required = true, description = "Page id"}
+
+[confluence.commands.get-diagram]
+description = "Read a draw.io or Gliffy diagram on a page as text: its shapes (with labels and containing groups) and connectors (source -> target, with labels)"
+autonomy = "autonomous"
+[confluence.commands.get-diagram.args]
+page-id = {type = "str", required = true, description = "Page the diagram is shown on"}
+name = {type = "str", required = false, description = "Diagram name; required when the page has more than one (see list-macros)"}
+include-source = {type = "flag", default = false, description = "Also return the decoded diagram source (draw.io XML / Gliffy JSON)"}
+
+[confluence.commands.download-diagram]
+description = "Save a draw.io or Gliffy diagram's source file (.drawio / .gliffy) and its PNG preview into a directory on this host"
+autonomy = "confirm"
+[confluence.commands.download-diagram.args]
+page-id = {type = "str", required = true, description = "Page the diagram is shown on"}
+dest = {type = "path", required = true, description = "Destination directory"}
+name = {type = "str", required = false, description = "Diagram name; required when the page has more than one (see list-macros)"}

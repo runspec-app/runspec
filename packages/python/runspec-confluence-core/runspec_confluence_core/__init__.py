@@ -36,7 +36,15 @@ from runspec_confluence_core.content import (
     get_page_history,
     get_page_restrictions,
 )
+from runspec_confluence_core.diagrams import (
+    decode_drawio,
+    decode_gliffy,
+    download_diagram,
+    get_diagram,
+    page_macros,
+)
 from runspec_confluence_core.errors import ConfluenceError
+from runspec_confluence_core.macros import list_macros, macro_kind, storage_to_html
 from runspec_confluence_core.mdconvert import markdown_to_storage
 from runspec_confluence_core.pages import (
     create_page,
@@ -100,6 +108,15 @@ __all__ = [
     "download_attachments",
     "upload_attachment",
     "delete_attachment",
+    # macros + diagrams
+    "list_macros",
+    "macro_kind",
+    "storage_to_html",
+    "page_macros",
+    "get_diagram",
+    "download_diagram",
+    "decode_drawio",
+    "decode_gliffy",
     # markdown (write) / summarise (read)
     "markdown_to_storage",
     "html_to_markdown",

@@ -2,6 +2,25 @@
 
 All notable changes to `runspec-confluence` are documented here.
 
+## [0.7.0] — 2026-10-09
+
+### Added
+
+- **`list-macros`** (autonomous): list the macros on a page with their
+  parameters; draw.io / Gliffy entries name the attachments holding the diagram.
+- **`get-diagram`** (autonomous): read a draw.io or Gliffy diagram as text
+  (shapes with labels and groups, connectors `source -> target [label]`);
+  `--name` picks one when a page has several, `--include-source` adds the
+  decoded XML / JSON.
+- **`download-diagram`** (confirm): save a diagram's `.drawio` / `.gliffy`
+  source and `.png` preview into `--dest`.
+
+### Changed
+
+- `get-page --markdown` now renders macros readably (code fences with their
+  language, panels as quotes, expand titles, diagram placeholders) instead of
+  gluing their parameters into the text. Needs `runspec-confluence-core>=0.8.0`.
+
 ## [0.6.1] — 2026-09-20
 
 ### Changed

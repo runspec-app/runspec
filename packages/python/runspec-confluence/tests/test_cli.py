@@ -182,3 +182,35 @@ def test_main_missing_config_emits_error(monkeypatch, capsys) -> None:
     assert exc.value.code == 1
     payload = json.loads(capsys.readouterr().out)
     assert payload["kind"] == "ConfluenceError"
+
+
+def test_dispatch_list_macros(fake) -> None:
+    storage = '<ac:structured-macro ac:name="code"><ac:plain-text-body><![CDATA[x]]></ac:plain-text-body></ac:structured-macro>'
+    fake._returns["get_page_by_id"] = {"id": "1", "title": "T", "body": {"storage": {"value": storage}}}
+    h = _harness()
+    spec = h.expect_ok(["list-macros", "--page-id", "1"])
+    out = cli._dispatch(spec, CFG)
+    h.close()
+    assert out["counts"] == {"code": 1}
+    assert out["macros"][0]["body"] == "x"
+
+
+def test_get_diagram_args_parse() -> None:
+    h = _harness()
+    spec = h.expect_ok(["get-diagram", "--page-id", "1", "--name", "arch", "--include-source"])
+    assert spec.name.value == "arch"
+    assert spec.include_source.value is True
+    spec = h.expect_ok(["download-diagram", "--page-id", "1", "--dest", "/tmp/out"])
+    assert spec.name.value is None
+    h.close()
+
+
+def test_dispatch_get_diagram_reports_no_diagrams(fake) -> None:
+    from runspec_confluence_core import ConfluenceError
+
+    fake._returns["get_page_by_id"] = {"id": "1", "body": {"storage": {"value": "<p>none</p>"}}}
+    h = _harness()
+    spec = h.expect_ok(["get-diagram", "--page-id", "1"])
+    with pytest.raises(ConfluenceError, match="No draw.io or Gliffy"):
+        cli._dispatch(spec, CFG)
+    h.close()

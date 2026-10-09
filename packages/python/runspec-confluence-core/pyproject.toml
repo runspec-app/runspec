@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-confluence-core"
-version = "0.7.1"
+version = "0.8.0"
 requires-python = ">=3.10"
 description = "Pure-Python Confluence helpers (over atlassian-python-api) — the importable core behind runspec-confluence (no runspec dependency, no runnables)"
 dependencies = [
@@ -13,6 +13,9 @@ dependencies = [
     "markdown>=3.4",
     # Confluence HTML → Markdown conversion for read-side summarise.html_to_markdown.
     "markdownify>=1.2,<2",
+    # Storage-format macro parsing (draw.io / Gliffy / PlantUML / Mermaid / code / panels).
+    # Already pulled in by markdownify; declared because macros.py imports it.
+    "beautifulsoup4>=4.9",
 ]
 
 [project.optional-dependencies]

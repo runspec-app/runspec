@@ -26,10 +26,33 @@ pip install runspec-confluence
 | Pages (write) | `create-page`, `update-page`, `delete-page`, `move-page` |
 | Labels & comments | `get-labels`, `add-label`, `get-comments`, `add-comment` |
 | Attachments | `get-attachments`, `download-attachments`, `upload-attachment`, `delete-attachment` |
+| Macros & diagrams | `list-macros`, `get-diagram`, `download-diagram` |
 
 Page bodies pass in a Confluence `representation` via `--content-format`
 (`storage` / `wiki` / `editor` / `markdown`); `markdown` is converted to storage
 XHTML client-side (best-effort).
+
+## Macros and diagrams
+
+`get-page --markdown` renders macros readably: code and PlantUML/Mermaid
+macros become fenced blocks tagged with their language, info/note/tip/warning
+panels become block quotes, expand becomes a bold title over its body, and a
+draw.io or Gliffy diagram becomes a placeholder such as
+`[draw.io diagram "arch" rev 3]`.
+
+draw.io and Gliffy keep the diagram itself as a page attachment, so:
+
+- `list-macros --page-id 123` lists every macro on the page with its parameters.
+- `get-diagram --page-id 123 [--name arch]` reads the diagram as text: its
+  shapes (labels, containing group) and connectors (`source -> target [label]`).
+  Works with draw.io's compressed and uncompressed formats; Gliffy is
+  best-effort. A diagram embedded from another page (`inc-drawio`) is read from
+  that page.
+- `download-diagram --page-id 123 --dest ./out` saves the `.drawio` / `.gliffy`
+  source and the `.png` preview.
+
+Reading only, for now: creating or editing a draw.io diagram would also need a
+fresh PNG preview, which needs draw.io itself to render.
 
 ## Auth — env vars only
 

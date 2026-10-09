@@ -2,6 +2,41 @@
 
 All notable changes to `runspec-confluence-core` are documented here.
 
+## [0.8.0] — 2026-10-09
+
+Read **macros and draw.io / Gliffy diagrams** on a page.
+
+- **Macro-aware Markdown reads.** `html_to_markdown` (and so
+  `simplify_page(body_as_markdown=True)`) used to strip `ac:` macro tags and
+  glue their parameter values into the text, so a page with a draw.io diagram,
+  a code block and an expand read back as `arch3pythonprint(1)More`. Storage
+  macros are now rewritten first: code / noformat and PlantUML / Mermaid
+  macros become fenced blocks tagged with their language, info / note / tip /
+  warning / panel become block quotes led by their type, expand becomes a bold
+  title over its body, draw.io / Gliffy become a `[draw.io diagram "arch" rev 3]`
+  placeholder, `status` / `jira` keep their text, `ac:link` / `ac:image` become
+  their link text / `[image: name]`, and other macros keep their body or leave a
+  `[name macro]` placeholder. HTML without `ac:` markup is unchanged.
+- **New `macros` module:** `list_macros(storage)` inventories a storage body
+  (name, kind, parameters, plain-text body, nesting depth, and for draw.io /
+  Gliffy the attachment filenames that hold the diagram); `storage_to_html`;
+  `macro_kind`. PlantUML / Mermaid are matched by substring since vendors name
+  their macros differently.
+- **New `diagrams` module:** `page_macros(config, page_id)`,
+  `get_diagram(config, page_id, name=…, include_source=…)` (fetches the source
+  attachment and returns a text outline: shapes with labels, shape and
+  containing group, plus connectors `source -> target [label]`),
+  `download_diagram(config, page_id, dest, name=…)` (saves the `.drawio` /
+  `.gliffy` source and `.png` preview), and the pure decoders
+  `decode_drawio` (compressed and plain mxfile, `UserObject` wrappers, HTML
+  labels, edge-label cells) and `decode_gliffy` (best-effort). `inc-drawio`
+  diagrams are read from the page they're embedded from.
+- `beautifulsoup4` is now a declared dependency (already installed via
+  `markdownify`).
+
+Read-only: writing draw.io diagrams would also need a fresh PNG preview, which
+needs draw.io to render.
+
 ## [0.7.1] — 2026-09-05
 
 Fix **415 Unsupported Media Type when re-uploading an attachment that already
