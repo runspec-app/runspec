@@ -9,6 +9,18 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.335.2] — 2026-10-09
+
+### Changed
+
+- **The Mailbox settings tab is hidden when AI is off.** With `[console] ai =
+  false` nothing reacts to mail interactively (no agent, and the Triggers editor
+  is already hidden), so the tab only offered settings with no visible effect.
+  The MCP server doesn't change this: it answers an external agent's calls but
+  never pushes mail events out to one. This is UI curation only: a `[mailbox]`
+  shipped by the config seed or Config Sync still drives rule-mode triggers and
+  the helpdesk room identity.
+
 ## [0.335.1] — 2026-10-07
 
 ### Fixed

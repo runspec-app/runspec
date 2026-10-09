@@ -59,9 +59,19 @@ export function visibleNavTabs<T extends { key: string }>(tabs: T[], features: F
     : tabs.filter(t => !AI_ONLY_VIEWS.has(t.key) && !AI_OFF_HIDDEN_VIEWS.has(t.key))
 }
 
+// Settings tabs hidden when AI is off but not strictly agent-only — the Settings
+// twin of AI_OFF_HIDDEN_VIEWS. Mailbox feeds the `new_mail` trigger source, and
+// with no agent to react to mail (and the Triggers editor hidden) there is nothing
+// to configure here. The MCP server doesn't change that: it only answers calls an
+// external agent makes, it never pushes mail events out to one. UI curation, not
+// a gate: a seeded [mailbox] still drives rule triggers and the helpdesk identity.
+export const AI_OFF_HIDDEN_SETTINGS: ReadonlySet<string> = new Set(['mailbox'])
+
 /** The Settings tabs to render for the active feature set (order preserved). */
 export function visibleSettingsTabs<T extends { key: string }>(tabs: T[], features: Features): T[] {
-  return features.ai ? tabs : tabs.filter(t => !AI_ONLY_SETTINGS.has(t.key))
+  return features.ai
+    ? tabs
+    : tabs.filter(t => !AI_ONLY_SETTINGS.has(t.key) && !AI_OFF_HIDDEN_SETTINGS.has(t.key))
 }
 
 // Schedule actions that run an agent turn — mirrors the backend's

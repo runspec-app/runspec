@@ -8,7 +8,7 @@ import { describe, it, expect } from 'vitest'
 
 import {
   visibleNavTabs, visibleSettingsTabs, visibleScheduleActions,
-  AI_ONLY_VIEWS, AI_OFF_HIDDEN_VIEWS, AI_ONLY_SETTINGS, AI_SCHEDULE_ACTIONS,
+  AI_ONLY_VIEWS, AI_OFF_HIDDEN_VIEWS, AI_ONLY_SETTINGS, AI_OFF_HIDDEN_SETTINGS, AI_SCHEDULE_ACTIONS,
   AI_OFF_HIDDEN_SCHEDULE_ACTIONS, DEFAULT_FEATURES,
 } from './features'
 
@@ -45,7 +45,10 @@ describe('features — AI off', () => {
     // when AI is off. Tool visibility (agentTools) stays too — its globs filter
     // the MCP server's published tool list (+ Forms/catalogs via "hide
     // everywhere"), so it is meaningful with no embedded agent.
-    expect(keys).toEqual(['ssh', 'jumpHosts', 'localVenvs', 'agentTools', 'savedRuns', 'selfService', 'filters', 'repos', 'marketplace', 'credentials', 'denylist', 'mcpServer', 'configSync', 'mailbox', 'teams', 'sounds', 'telemetry'])
+    expect(keys).toEqual(['ssh', 'jumpHosts', 'localVenvs', 'agentTools', 'savedRuns', 'selfService', 'filters', 'repos', 'marketplace', 'credentials', 'denylist', 'mcpServer', 'configSync', 'teams', 'sounds', 'telemetry'])
+    // Mailbox hides too: it only feeds triggers, and nothing reacts to mail with AI off.
+    expect(keys).not.toContain('mailbox')
+    expect([...AI_OFF_HIDDEN_SETTINGS]).toEqual(['mailbox'])
     expect(AI_ONLY_SETTINGS.has('agentTools')).toBe(false)
     expect(AI_ONLY_SETTINGS.has('voice')).toBe(true)
   })
