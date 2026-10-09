@@ -209,6 +209,10 @@ class MemorySyncMixin:
             "empty": not heads,
         }
 
+    def _memory_sync_author(self, ms: dict[str, Any]) -> str:
+        name = ms["user"] or _os_user()
+        return f"{name} <{ms['email'] or _default_email(ms['lane'])}>"
+
     # ── push / pull ──────────────────────────────────────────────────────────
     def memory_sync_push(self) -> dict[str, Any]:
         """Push this console's approved facts to ``contrib/<lane>`` (one file).
@@ -222,8 +226,7 @@ class MemorySyncMixin:
             return {"ok": False, "error": "Memory Sync isn't set up — add a repo first"}
         store = self._knowledge_store()  # type: ignore[attr-defined]
         data, count = kn.contribution(store.own_facts())
-        name = ms["user"] or _os_user()
-        author = f"{name} <{ms['email'] or _default_email(ms['lane'])}>"
+        author = self._memory_sync_author(ms)
         try:
             res = gitsync.push_file(
                 ms["url"],
@@ -293,3 +296,137 @@ class MemorySyncMixin:
         self._memory_sync_stamp(last_pull=_now(), last_pull_commit=res.commit)
         self._knowledge_changed()  # type: ignore[attr-defined]
         return {"ok": True, "commit": res.commit, "skipped": skipped, **counts}
+
+    # ── the wiki repo (OKF pages, okf.py) ────────────────────────────────────
+    def memory_sync_create_repo(self) -> dict[str, Any]:
+        """Seed the Memory Sync repo from the wiki template: the OKF layout,
+        README, CI examples, lint and site scripts, and the generated
+        ``runspec/`` pages, as one commit on the team branch.
+
+        Only into a branch that doesn't exist yet (an empty repo, or a repo whose
+        team branch is still to be made) — it never overwrites a wiki in use.
+        Returns ``{ok, branch, commit, files}`` or ``{ok: False, error}``."""
+        from . import gitsync, okf
+
+        ms = self._memory_sync()
+        if not ms["url"]:
+            return {"ok": False, "error": "Memory Sync isn't set up — add a repo first"}
+        files = okf.template_files()
+        errors = okf.lint_errors(
+            {p: d.decode("utf-8") for p, d in files.items() if p.endswith(".md")}
+        )
+        if errors:  # a broken template is a packaging bug, not the operator's
+            return {
+                "ok": False,
+                "error": "the wiki template fails its own lint: "
+                + "; ".join(errors[:3]),
+            }
+        try:
+            res = gitsync.push_files(
+                ms["url"],
+                ms["branch"],
+                dict(files),
+                self._memory_sync_auth(ms),
+                base_branch=ms["branch"],
+                message="wiki: start from the runspec-console template",
+                author=self._memory_sync_author(ms),
+                require_new=True,
+            )
+        except gitsync.PushConflictError as exc:
+            return {
+                "ok": False,
+                "error": f"the repo changed while creating it — try again. ({exc})",
+            }
+        except gitsync.GitSyncError as exc:
+            text = str(exc)
+            if "already exists" in text:
+                return {
+                    "ok": False,
+                    "error": f"{ms['branch']} already exists on the repo, so it "
+                    "wasn't touched. Use Refresh runspec pages to update a wiki "
+                    "that's already set up.",
+                }
+            return {"ok": False, "error": _push_error(text)}
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("memory sync create repo failed")
+            return {"ok": False, "error": _push_error(f"push failed: {exc}")}
+        return {
+            "ok": True,
+            "branch": res.branch,
+            "commit": res.commit,
+            "files": len(files),
+        }
+
+    def memory_sync_refresh_docs(self) -> dict[str, Any]:
+        """Regenerate the wiki's ``runspec/`` pages from this console's
+        documentation summaries and push the difference to
+        ``refresh/runspec-docs`` for review. Pages whose content didn't change
+        are left alone (their date too); pages the summaries no longer produce
+        are removed. Returns ``{ok, branch, commit, changed, pages}`` (``pages``
+        = pages added, changed or removed) or ``{ok: False, error}``."""
+        from . import gitsync, okf
+
+        ms = self._memory_sync()
+        if not ms["url"]:
+            return {"ok": False, "error": "Memory Sync isn't set up — add a repo first"}
+        auth = self._memory_sync_auth(ms)
+        try:
+            res = gitsync.fetch_dir(
+                ms["url"], ms["branch"], auth, okf.GENERATED_DIR, ".md", recursive=True
+            )
+        except gitsync.GitSyncError as exc:
+            return {"ok": False, "error": str(exc)}
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("memory sync refresh read failed")
+            return {"ok": False, "error": f"could not read the wiki: {exc}"}
+        if not res.commit:
+            return {
+                "ok": False,
+                "error": f"{ms['branch']} doesn't exist yet — use Create wiki repo first",
+            }
+        current = {
+            f"{okf.GENERATED_DIR}/{name}": data.decode("utf-8", "replace")
+            for name, data in res.files.items()
+        }
+        changes = okf.refresh_changes(current)
+        if not changes:
+            return {"ok": True, "changed": False, "pages": 0, "branch": ms["branch"]}
+        after = dict(current)
+        for path, data in changes.items():
+            if data is None:
+                after.pop(path, None)
+            else:
+                after[path] = data.decode("utf-8")
+        errors = okf.lint_errors(after)
+        if errors:
+            return {
+                "ok": False,
+                "error": "the regenerated pages fail lint: " + "; ".join(errors[:3]),
+            }
+        try:
+            pushed = gitsync.push_files(
+                ms["url"],
+                okf.REFRESH_BRANCH,
+                changes,
+                auth,
+                base_branch=ms["branch"],
+                message=f"wiki: refresh runspec pages ({len(changes)} page(s))",
+                author=self._memory_sync_author(ms),
+            )
+        except gitsync.PushConflictError as exc:
+            return {
+                "ok": False,
+                "error": f"{okf.REFRESH_BRANCH} changed while pushing — try again. ({exc})",
+            }
+        except gitsync.GitSyncError as exc:
+            return {"ok": False, "error": _push_error(str(exc))}
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("memory sync refresh failed")
+            return {"ok": False, "error": _push_error(f"push failed: {exc}")}
+        return {
+            "ok": True,
+            "changed": pushed.changed,
+            "pages": len(changes),
+            "branch": pushed.branch,
+            "commit": pushed.commit,
+        }

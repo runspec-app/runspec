@@ -3,7 +3,9 @@
 # with the package and read-only: it shows in search, pages and the graph like
 # any approved fact, an operator can pin, edit (adopts a copy) or retire one,
 # and Memory Sync never pushes it. Keep each fact to one or two sentences and
-# name every built-in tool somewhere here (a test checks that).
+# name every built-in tool somewhere here (a test checks that). The wiki
+# template's runspec/ pages are generated from this file: after editing it, run
+# python -m runspec_console.okf --write (a test checks they're in step).
 #
 # Fields: kind (glossary / procedure / note / location), about (entities), text.
 # The id is computed from those, like every other fact.

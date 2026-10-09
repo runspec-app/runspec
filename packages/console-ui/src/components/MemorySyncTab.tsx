@@ -2,13 +2,18 @@
 // credential (never Config Sync's), so a wiki token can't reach config. A push
 // writes only facts/<lane>.toml on contrib/<lane>; a pull reads main's facts/.
 // Backed by bridge.get_memory_sync_config / save_memory_sync_config /
-// memory_sync_test (bridge_memory_sync.py).
+// memory_sync_test (bridge_memory_sync.py). The Wiki repo section seeds an
+// empty repo from the OKF template and refreshes its generated runspec/ pages
+// (memory_sync_create_repo / memory_sync_refresh_docs, okf.py).
 
 import { useCallback, useEffect, useState } from 'react'
 import { Alert, Button, Divider, Form, Input, Select, Space, Switch, Typography } from 'antd'
-import { ApiOutlined } from '@ant-design/icons'
+import { ApiOutlined, BookOutlined, SyncOutlined } from '@ant-design/icons'
 
-import { bridge, type Credential, type MemorySyncConfig, type MemorySyncSettings } from '../bridge'
+import {
+  bridge, type Credential, type MemorySyncConfig, type MemorySyncSettings,
+  type WikiRefreshResult, type WikiRepoCreateResult,
+} from '../bridge'
 import { MONO_FONT } from '../ThemeContext'
 
 const { Text, Paragraph } = Typography
@@ -146,6 +151,67 @@ export function MemorySyncTab() {
       <Space>
         <Button type="primary" loading={saving} onClick={save}>Save</Button>
         <Button icon={<ApiOutlined />} loading={testing} onClick={test}>Test connection</Button>
+      </Space>
+      {result && (
+        <Alert
+          type={result.ok ? 'success' : 'error'} showIcon closable onClose={() => setResult(null)}
+          style={{ marginTop: 16 }} message={result.text}
+        />
+      )}
+      <Divider style={{ margin: '24px 0 16px' }} />
+      <WikiRepoSection save={persist} />
+    </div>
+  )
+}
+
+export function createText(r: WikiRepoCreateResult): SyncResult {
+  if (!r.ok) return { ok: false, text: r.error || 'Could not create the wiki repo.' }
+  return { ok: true, text: `Created the wiki on ${r.branch} (${r.files} files). Open the repo to see the README.` }
+}
+
+export function refreshText(r: WikiRefreshResult): SyncResult {
+  if (!r.ok) return { ok: false, text: r.error || 'Could not refresh the runspec pages.' }
+  if (!r.pages) return { ok: true, text: 'The runspec pages are already up to date.' }
+  if (r.changed === false) return { ok: true, text: `${r.branch} already has these changes; merge it to publish them.` }
+  return { ok: true, text: `Pushed ${r.pages} changed page(s) to ${r.branch}. Merge it into the team branch to publish them.` }
+}
+
+/** Create a new wiki repo from the OKF template, or refresh its runspec/ pages.
+ *  ``save`` writes the form first so the buttons act on what's on screen. */
+export function WikiRepoSection({ save }: { save: () => Promise<boolean> }) {
+  const [busy, setBusy] = useState<'' | 'create' | 'refresh'>('')
+  const [result, setResult] = useState<SyncResult | null>(null)
+
+  const run = async (which: 'create' | 'refresh') => {
+    setBusy(which); setResult(null)
+    try {
+      if (!(await save())) return
+      setResult(which === 'create'
+        ? createText(await bridge.memory_sync_create_repo())
+        : refreshText(await bridge.memory_sync_refresh_docs()))
+    } catch (e) {
+      const text = errorText(e)
+      if (text) setResult({ ok: false, text })
+    } finally { setBusy('') }
+  }
+
+  return (
+    <div>
+      <Text strong>Wiki repo</Text>
+      <Paragraph type="secondary" style={{ marginTop: 4 }}>
+        Start an empty repo from the wiki template: one Markdown page per thing in the Open
+        Knowledge Format, a README, CI for GitLab and GitHub that lints changes and publishes
+        a site from release tags, and pages about runspec generated from this console's
+        documentation. It only writes to a team branch that doesn't exist yet. Refresh pushes
+        updated runspec pages to <Text code>refresh/runspec-docs</Text> for review.
+      </Paragraph>
+      <Space wrap>
+        <Button icon={<BookOutlined />} loading={busy === 'create'} disabled={!!busy && busy !== 'create'} onClick={() => run('create')}>
+          Create wiki repo
+        </Button>
+        <Button icon={<SyncOutlined />} loading={busy === 'refresh'} disabled={!!busy && busy !== 'refresh'} onClick={() => run('refresh')}>
+          Refresh runspec pages
+        </Button>
       </Space>
       {result && (
         <Alert

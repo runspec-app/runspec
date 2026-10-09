@@ -216,3 +216,73 @@ facts/
   alice.toml     # merged from contrib/alice
   jason.toml     # merged from contrib/jason
 ```
+
+## The wiki repo template
+
+The console ships a starter wiki repo in the
+[Open Knowledge Format](https://github.com/GoogleCloudPlatform/open-knowledge-format)
+(OKF v0.2): plain Markdown pages, one per thing, each with YAML frontmatter whose
+`type` says what it is. Any OKF reader or Markdown viewer can read it, and it
+doubles as the Memory Sync repo (the `facts/` folder sits beside the pages).
+
+There are two ways to start one:
+
+- **Settings → Memory Sync → Create wiki repo** pushes the template to the team
+  branch of the configured repo as one commit. It only writes to a branch that
+  doesn't exist yet, so it never touches a wiki that's already in use.
+- **Copy the folder.** The template is
+  `packages/python/runspec-console/runspec_console/wiki_template/` in the
+  runspec repo (also inside the installed package). Copy it into a new repo and
+  commit.
+
+What's in it:
+
+```text
+index.md           # okf_version: "0.2" and links to each folder
+log.md             # what changed, newest first
+README.md          # how to add a page, review, tag a release
+runnables/ services/ hosts/ runbooks/ terms/ topics/ teams/
+runspec/           # generated pages about runspec and the console (don't edit)
+tools/okf_lint.py  # OKF conformance, links, secrets, stale pages (stdlib only)
+tools/build_site.py
+.gitlab-ci.yml     # lint merge requests, publish GitLab Pages from v* tags
+.github/workflows/wiki.yml
+```
+
+A page looks like this:
+
+```markdown
+---
+type: Runnable
+title: cron
+description: Manage a user's crontab on a Linux host.
+tags: [linux, scheduling]
+---
+
+# cron
+
+What it's for, and how the team uses it.
+```
+
+`type` is the only required field. `sources`, `status`, `stale_after`,
+`generated` and `verified` are optional; the README in the template explains
+each. Link between pages from the bundle root (`/runnables/cron.md`).
+
+**Lint.** `python tools/okf_lint.py` checks that every page has frontmatter with
+a `type`, that `index.md` and `log.md` don't, that nothing looks like a secret
+(errors), and reports broken links and pages past their `stale_after` date
+(warnings; `--strict` fails on them too). It needs no install. The console runs
+the same file before it pushes pages.
+
+**Site.** `tools/build_site.py` turns the pages into a MkDocs site. The CI
+examples run it on release tags (`v*`), so readers see a reviewed snapshot.
+Delete whichever CI file you don't use; set `PIP_INDEX_URL` in CI if runners can
+only reach an internal package mirror.
+
+**The `runspec/` pages** are generated from the documentation summaries that
+ship with the console (the same ones seeded into the Knowledge tab). Each page
+records `generated.by: runspec-console-seed/<hash>`, a hash of its content, so a
+page that didn't change keeps its date. After upgrading the console, use
+**Settings → Memory Sync → Refresh runspec pages**: it regenerates the pages
+and pushes only the ones that changed (and removes ones that no longer exist)
+to the `refresh/runspec-docs` branch, for you to merge like any other change.

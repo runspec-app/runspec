@@ -568,13 +568,20 @@ class PushConflictError(GitSyncError):
 
 
 def fetch_dir(
-    url: str, ref: str, auth: GitAuth, subdir: str, suffix: str = ".toml"
+    url: str,
+    ref: str,
+    auth: GitAuth,
+    subdir: str,
+    suffix: str = ".toml",
+    *,
+    recursive: bool = False,
 ) -> DirFetchResult:
     """Fetch ``ref`` and read every ``suffix`` file directly under ``subdir``.
 
     A missing directory — or a missing ``ref``, as in a brand-new empty repo —
     reads as no files (``commit`` empty for a missing ref). Nested directories are
-    ignored. Raises ``GitSyncError`` like :func:`fetch_files`."""
+    ignored unless ``recursive``, which keys files by their path below ``subdir``
+    (``"topics/autonomy.md"``). Raises ``GitSyncError`` like :func:`fetch_files`."""
     fetched = _fetch_tree(url, ref, auth, missing_ok=True)
     if fetched is None:
         return DirFetchResult(ref=ref, commit="")
@@ -594,11 +601,17 @@ def fetch_dir(
         return DirFetchResult(ref=ref, commit=commit_sha.decode("ascii"))
     if getattr(tree, "type_name", b"") != b"tree":
         return DirFetchResult(ref=ref, commit=commit_sha.decode("ascii"))
-    for entry in tree.iteritems():
-        name = entry.path.decode("utf-8", "replace")
-        if not name.endswith(suffix) or (entry.mode & 0o170000) != 0o100000:
-            continue
-        out[name] = repo.object_store[entry.sha].data
+
+    def walk(node: Any, prefix: str) -> None:
+        for entry in node.iteritems():
+            name = prefix + entry.path.decode("utf-8", "replace")
+            kind = entry.mode & 0o170000
+            if kind == 0o040000 and recursive:
+                walk(repo.object_store[entry.sha], name + "/")
+            elif kind == 0o100000 and name.endswith(suffix):
+                out[name] = repo.object_store[entry.sha].data
+
+    walk(tree, "")
     return DirFetchResult(ref=ref, commit=commit_sha.decode("ascii"), files=out)
 
 
@@ -623,19 +636,62 @@ def push_file(
     and try again (``retries`` times), then raise :class:`PushConflictError` —
     never a force push. Raises ``GitSyncError`` on connection/auth failure or a
     rejected push."""
+    return push_files(
+        url,
+        branch,
+        {path: data},
+        auth,
+        base_branch=base_branch,
+        message=message,
+        author=author,
+        retries=retries,
+    )
+
+
+def push_files(
+    url: str,
+    branch: str,
+    files: dict[str, bytes | None],
+    auth: GitAuth,
+    *,
+    base_branch: str = "main",
+    message: str = "Update files",
+    author: str = "runspec-console <runspec-console@localhost>",
+    retries: int = 1,
+    require_new: bool = False,
+) -> PushResult:
+    """Commit several files onto ``branch`` in one commit and push it.
+
+    ``files`` maps repo paths to their new bytes; ``None`` deletes the path. Same
+    rules as :func:`push_file` (parent, compare-and-swap, never a force push, no
+    commit when nothing changes). ``require_new`` refuses with ``GitSyncError``
+    when ``branch`` already exists — used to seed a fresh repo without ever
+    overwriting one that's in use."""
     if not available():
         raise GitSyncError(
             "git engine unavailable — install the 'git-sync' extra "
             "(pip install runspec-console[git-sync])"
         )
-    rel = path.strip("/")
-    if not rel or ".." in rel.split("/"):
-        raise GitSyncError(f"refusing to push to path {path!r}")
+    if not files:
+        raise GitSyncError("nothing to push")
+    changes: dict[str, bytes | None] = {}
+    for path, data in files.items():
+        rel = path.strip("/")
+        if not rel or ".." in rel.split("/"):
+            raise GitSyncError(f"refusing to push to path {path!r}")
+        changes[rel] = data
     target = b"refs/heads/" + branch.encode("utf-8")
     for attempt in range(retries + 1):
         try:
             return _push_once(
-                url, target, rel, data, auth, base_branch, message, author
+                url,
+                target,
+                changes,
+                auth,
+                base_branch,
+                message,
+                author,
+                require_new,
             )
         except PushConflictError:
             if attempt >= retries:
@@ -646,12 +702,12 @@ def push_file(
 def _push_once(
     url: str,
     target: bytes,
-    rel: str,
-    data: bytes,
+    changes: dict[str, bytes | None],
     auth: GitAuth,
     base_branch: str,
     message: str,
     author: str,
+    require_new: bool = False,
 ) -> PushResult:
     import time as _time
 
@@ -672,30 +728,41 @@ def _push_once(
 
     store: Any = repo.object_store
     head = refs.get(target)
+    if require_new and head:
+        raise GitSyncError(f"{branch} already exists on the repo")
     parent = head or refs.get(b"refs/heads/" + base_branch.encode("utf-8"))
     tree: Any = Tree()
     if parent:
         parent = _peel_to_commit(repo, parent)
         tree = store[parent].tree
-        try:
-            _mode, old_blob = tree_lookup_path(
-                store.__getitem__, tree, rel.encode("utf-8")
-            )
-            if head and store[old_blob].data == data:
-                return PushResult(
-                    branch=branch, commit=head.decode("ascii"), changed=False
-                )
-        except KeyError:
-            pass
     else:
         store.add_object(tree)
         tree = tree.id
 
-    blob = Blob.from_string(data)
-    store.add_object(blob)
-    new_tree = commit_tree_changes(
-        store, store[tree], [(rel.encode("utf-8"), 0o100644, blob.id)]
-    )
+    def current(rel: str) -> bytes | None:
+        if not parent:
+            return None
+        try:
+            _mode, sha = tree_lookup_path(store.__getitem__, tree, rel.encode("utf-8"))
+        except KeyError:
+            return None
+        obj = store[sha]
+        return obj.data if getattr(obj, "type_name", b"") == b"blob" else None
+
+    edits: list[tuple[bytes, int | None, Any]] = []
+    for rel, data in sorted(changes.items()):
+        if current(rel) == data:
+            continue  # unchanged (or deleting a path that isn't there)
+        if data is None:
+            edits.append((rel.encode("utf-8"), None, None))
+            continue
+        blob = Blob.from_string(data)
+        store.add_object(blob)
+        edits.append((rel.encode("utf-8"), 0o100644, blob.id))
+    if not edits and head:
+        return PushResult(branch=branch, commit=head.decode("ascii"), changed=False)
+
+    new_tree = commit_tree_changes(store, store[tree], edits)
     commit: Any = Commit()
     commit.tree = new_tree
     commit.parents = [parent] if parent else []

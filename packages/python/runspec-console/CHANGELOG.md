@@ -9,6 +9,29 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.337.0] — 2026-10-09
+
+### Added
+
+- **Wiki repo template (OKF).** A starter team-wiki repo in the Open Knowledge
+  Format v0.2 ships in `runspec_console/wiki_template/`: one Markdown page per
+  thing with `type` frontmatter, a root `index.md` (`okf_version: "0.2"`),
+  `log.md`, a README (adding pages, review, release tags), one folder per entity
+  type, generated `runspec/` pages built from the console's documentation
+  summaries, a stdlib `tools/okf_lint.py` (conformance, links, secrets, stale
+  pages), `tools/build_site.py` (MkDocs site) and CI examples for GitLab and
+  GitHub that lint changes and publish Pages from `v*` tags.
+- **Settings → Memory Sync → Create wiki repo** pushes the template to the
+  configured repo's team branch in one commit, only when that branch doesn't
+  exist yet. **Refresh runspec pages** regenerates the `runspec/` pages and
+  pushes just the changed ones to `refresh/runspec-docs` for review. Bridge
+  `memory_sync_create_repo` / `memory_sync_refresh_docs`; pure `okf.py`
+  (`python -m runspec_console.okf --write|--check` keeps the committed pages in
+  step with `knowledge_seed.toml`).
+- `gitsync.push_files` commits several files (or deletions) in one push, with
+  `require_new` to refuse an existing branch; `fetch_dir(recursive=True)` reads
+  nested folders.
+
 ## [0.336.0] — 2026-10-09
 
 ### Fixed

@@ -1726,6 +1726,8 @@ export const mockApi: BridgeApi = {
   }),
   memory_sync_test: async () => ({ ok: true, branch_exists: true, contrib_exists: false, empty: false }),
   memory_sync_push: async () => ({ ok: true, branch: 'contrib/dev', commit: 'def456', changed: true, created: true, facts: 3 }),
+  memory_sync_create_repo: async () => ({ ok: true, branch: 'main', commit: 'aaa111', files: 59 }),
+  memory_sync_refresh_docs: async () => ({ ok: true, branch: 'refresh/runspec-docs', commit: 'bbb222', changed: true, pages: 4 }),
   memory_sync_pull: async () => ({ ok: true, commit: 'abc123', files: 2, facts: 5, added: 1, removed: 0, skipped: [] }),
   run_improve_report: async (_windowDays?: number, comment?: string) => ({
     id: 'mock-improve-1',

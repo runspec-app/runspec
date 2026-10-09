@@ -813,6 +813,16 @@ export interface MemorySyncPushResult {
   ok: boolean; error?: string
   branch?: string; commit?: string; changed?: boolean; created?: boolean; facts?: number
 }
+// The wiki repo itself (okf.py): seed an empty repo from the OKF template, or
+// push regenerated runspec/ pages to refresh/runspec-docs for review.
+export interface WikiRepoCreateResult {
+  ok: boolean; error?: string
+  branch?: string; commit?: string; files?: number
+}
+export interface WikiRefreshResult {
+  ok: boolean; error?: string
+  branch?: string; commit?: string; changed?: boolean; pages?: number
+}
 export interface MemorySyncPullResult {
   ok: boolean; error?: string
   commit?: string; files?: number; facts?: number; added?: number; removed?: number; skipped?: string[]
@@ -2365,6 +2375,8 @@ export interface BridgeApi {
   memory_sync_test: () => Promise<{ ok: boolean; error?: string; branch_exists?: boolean; contrib_exists?: boolean; empty?: boolean }>
   memory_sync_push: () => Promise<MemorySyncPushResult>
   memory_sync_pull: () => Promise<MemorySyncPullResult>
+  memory_sync_create_repo: () => Promise<WikiRepoCreateResult>
+  memory_sync_refresh_docs: () => Promise<WikiRefreshResult>
   // ── Improve (effectiveness + problem report) ──────────────────────────────────
   // Mine this install's saved conversations + run history into an effectiveness
   // report. A non-empty comment makes it a problem report (carried into the
