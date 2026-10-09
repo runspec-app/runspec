@@ -9,6 +9,17 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.336.0] — 2026-10-09
+
+### Fixed
+
+- **Memory Sync no longer shares facts about `local`.** `local` is whichever
+  machine the console runs on, so a fact about `host:local` meant nothing (or
+  something wrong) on a teammate's console, yet Push shared it like any other
+  approved fact. Push now leaves those facts out, and a pull ignores any that a
+  teammate pushed before this fix. `knowledge.MACHINE_LOCAL_ENTITIES` /
+  `is_machine_local`, used by `contribution` and `team_facts`.
+
 ## [0.335.2] — 2026-10-09
 
 ### Changed

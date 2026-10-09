@@ -192,6 +192,9 @@ and push again. The settings are stored as `[memory_sync]` in
 - Only *approved* facts go: never the inbox, observed usage, retired facts, or
   `evidence` ids (they name local runs). A fact whose text now looks like a
   secret is held back.
+- Facts about `host:local` stay on your machine, because each teammate's
+  `local` is their own machine. A pull also ignores any that a teammate pushed
+  before this rule existed.
 - A dot on **Push** means you have approved facts that aren't pushed yet.
 
 Facts reach the team when someone merges `contrib/<lane>` into the team branch

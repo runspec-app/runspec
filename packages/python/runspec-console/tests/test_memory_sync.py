@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import tomllib
 
+import tomli_w
+
 import pytest
 
 pytest.importorskip("dulwich")
@@ -57,6 +59,22 @@ def test_contribution_shares_approved_facts_only():
     rows = tomllib.loads(data.decode())["fact"]
     assert [r["id"] for r in rows] == [keep["id"]]
     assert "evidence" not in rows[0]  # local run ids stay home
+
+
+def test_machine_local_facts_are_never_shared(tmp_path):
+    shared = _approved("orders logs live in /var/log/orders")
+    mine = _approved("the console venv is C:\\venvs\\ops", about=("host:local",))
+    both = _approved("cron runs nightly here", about=("Host: local", "runnable:cron"))
+    data, count = kn.contribution([shared, mine, both])
+    assert count == 1
+    assert [r["id"] for r in tomllib.loads(data.decode())["fact"]] == [shared["id"]]
+
+    # A teammate's old push that still carries a fact about their `local` is
+    # not read as a fact about this machine.
+    old = tomli_w.dumps({"fact": [shared, mine]}).encode()
+    store = kn.KnowledgeStore(tmp_path)
+    store.write_team({"alice.toml": old})
+    assert [f["id"] for f in store.team_facts()] == [shared["id"]]
 
 
 def test_write_team_replaces_and_validates(tmp_path):

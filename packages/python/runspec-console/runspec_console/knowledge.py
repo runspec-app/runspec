@@ -284,6 +284,19 @@ def _save(path: Path, rows: list[dict[str, Any]]) -> None:
 
 # ── Memory Sync (sharing) ────────────────────────────────────────────────────
 
+#: Entities that mean a different thing on every console: ``local`` is whichever
+#: machine the console runs on. Facts about them are never pushed to or read from
+#: the team, since each teammate's ``local`` is their own machine.
+MACHINE_LOCAL_ENTITIES = frozenset({"host:local"})
+
+
+def is_machine_local(fact: dict[str, Any]) -> bool:
+    """Whether ``fact`` is about an entity that is different on every machine."""
+    return any(
+        normalize_entity(a) in MACHINE_LOCAL_ENTITIES for a in fact.get("about") or []
+    )
+
+
 #: A pulled team file: one contributor's lane, ``<name>.toml``.
 _TEAM_NAME = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}\.toml$")
 #: Fields a shared fact carries. ``evidence`` (local run / chat ids) means nothing
@@ -317,11 +330,14 @@ def lane_name(user: str) -> str:
 def contribution(rows: Iterable[dict[str, Any]]) -> tuple[bytes, int]:
     """The file Memory Sync pushes: this console's **approved** facts only (never
     the inbox, observed usage or retired facts), trimmed to ``SHARED_FIELDS``,
-    sorted by id. A fact whose text now looks like a secret is held back. Returns
+    sorted by id. A fact whose text now looks like a secret is held back, and so
+    is a fact about a machine-local entity such as ``host:local``. Returns
     ``(toml_bytes, fact_count)``."""
     out: list[dict[str, Any]] = []
     for r in rows:
         if r.get("status") != "approved" or secret_reason(str(r.get("text", ""))):
+            continue
+        if is_machine_local(r):
             continue
         out.append({k: r[k] for k in SHARED_FIELDS if r.get(k) not in (None, "", [])})
     out.sort(key=lambda r: str(r.get("id", "")))
@@ -409,6 +425,10 @@ class KnowledgeStore:
         out: list[dict[str, Any]] = []
         for p in sorted(team.glob("*.toml")):
             for r in _load(p):
+                # A teammate's ``local`` is their machine, not this one (and a
+                # push from before 0.336.0 could still carry such facts).
+                if is_machine_local(r):
+                    continue
                 r.setdefault("status", "approved")
                 out.append(r)
         return out
