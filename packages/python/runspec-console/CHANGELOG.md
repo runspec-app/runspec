@@ -9,6 +9,35 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.339.0] — 2026-10-10
+
+### Added
+
+- **More of the agent's tool calls run in parallel.** When the model asks for
+  several tools in one response, read-only built-ins now run together like
+  runnable runs already did: `fetch_url`, `list_files`, `search_history`,
+  `console_status`, the wiki reads (`search_wiki`, `wiki_page`, `wiki_graph`,
+  `list_wiki_inbox`), the workspace reads, the repo reads and `describe_tool`
+  (also through `use_tool`), when the autonomy gate lets them through without
+  asking (`bridge_const._PARALLEL_READONLY_BUILTINS`). Built-ins that write,
+  Outlook (COM), `search_marketplace` and MCP tools still run alone.
+- **Approved runs go ahead while the next approval is asked.** A runnable run
+  that needs approval (confirm/supervised) now joins the parallel batch
+  instead of stopping it. Its prompt waits until the previous prompt is
+  answered, so cards still come one at a time and in the model's order, but
+  each approved run starts straight away alongside the batch's other calls
+  (`Bridge._parallel_confirm_call`; the gate takes a shared `confirm_lock`).
+  Stop pressed during a prompt also skips the prompts still waiting. A
+  trigger card stays "awaiting approval" while any call in the batch waits on
+  the operator. Group and saved-run fan-outs keep their grouped confirm.
+
+### Fixed
+
+- A built-in tool's progress line (`runspec:tool_progress`) now carries
+  `call_id` and lands on its own card when two same-name tools run at once.
+- The one-time memory → wiki migration check is locked, so two wiki reads
+  running together on first use can't both start it.
+
 ## [0.338.0] — 2026-10-09
 
 ### Added

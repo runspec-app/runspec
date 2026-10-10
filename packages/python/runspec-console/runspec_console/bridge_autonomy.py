@@ -37,6 +37,7 @@ from .bridge_const import (
     _CONFIRM_VERB_DEFAULT,
     _CUSTOM_TOOL_NAMES,
     _READONLY_META,
+    _PARALLEL_READONLY_BUILTINS,
     _KNOWLEDGE_TOOL_NAMES,
     _KNOWLEDGE_WRITE_TOOL_NAMES,
     _MEMORY_TOOL_NAMES,
@@ -287,44 +288,79 @@ class AutonomyMixin:
         """True when this call may run concurrently with its siblings in the same
         model response (``bridge_turn`` batches these with ``asyncio.gather``).
 
-        Deliberately narrow: only **runnable executions the gate would run without
+        Deliberately narrow: **runnable executions the gate would run without
         asking** (``run_runnable`` or a dedup/per_host runnable tool, decision
-        "run") and the read-only discovery meta-tools. Runnable runs are separate
-        processes on the hosts — the same shape ``_run_calls_parallel`` already
-        runs concurrently for a group fan-out. Everything else is a barrier that
-        runs alone, in order:
+        "run"), the read-only discovery meta-tools, and the read-only built-ins
+        in ``_PARALLEL_READONLY_BUILTINS`` when the gate lets them through (also
+        when reached through ``use_tool``). Runnable runs are separate processes
+        on the hosts — the same shape ``_run_calls_parallel`` already runs
+        concurrently for a group fan-out. Everything else is a barrier that runs
+        alone, in order:
 
-        * confirm/supervised calls — the operator answers one prompt at a time,
-          and the frontend matches a confirm to its card by tool name;
-        * built-in and MCP tools — several write shared console state
-          (``propose_fact`` rewrites the wiki inbox; runbook/config saves), so two at
-          once could lose an update;
+        * confirm/supervised calls — unless ``_parallel_confirm_call`` admits
+          them (runnable runs), the operator answers them one at a time;
+        * every other built-in and MCP tool — several write shared console state
+          (``propose_fact`` rewrites the wiki inbox; runbook/config saves), so
+          two at once could lose an update;
         * group / saved-run fan-outs — already parallel inside, with their own
           grouped confirm;
         * anything whose decision can't be computed (fail safe: sequential).
         """
         if tool_name in _READONLY_META:
             return True
-        if (
-            tool_name in _BUILTIN_TOOL_NAMES
-            or tool_name in ("use_tool", "describe_tool", "run_saved_run")
-            or (
-                getattr(self, "_mcp", None) is not None and self._is_mcp_tool(tool_name)
-            )
-        ):
-            return False
         try:
-            if (
-                tool_name == "run_runnable"
-                and self._group_fanout_calls(tool_input) is not None
+            if tool_name in _PARALLEL_READONLY_BUILTINS or (
+                tool_name == "use_tool"
+                and str((tool_input or {}).get("name") or "")
+                in _PARALLEL_READONLY_BUILTINS
             ):
-                return False
-            return self._confirm_decision(tool_name, tool_input) == "run"
+                return self._confirm_decision(tool_name, tool_input) == "run"
+            return self._runnable_run_decision(tool_name, tool_input) == "run"
         except Exception:  # noqa: BLE001 — classification must never break a turn
             logger.debug(
                 "parallel classification failed for %s", tool_name, exc_info=True
             )
             return False
+
+    def _parallel_confirm_call(
+        self, tool_name: str, tool_input: dict[str, Any]
+    ) -> bool:
+        """True for a single runnable run that needs the operator's approval
+        (confirm/supervised). Such calls join a parallel batch: their prompts are
+        still asked one at a time, in the model's order (``bridge_turn`` hands the
+        gate a shared lock), but each approved run starts at once and runs
+        alongside the rest of the batch instead of waiting for it."""
+        try:
+            return self._runnable_run_decision(tool_name, tool_input) in (
+                "confirm",
+                "supervised",
+            )
+        except Exception:  # noqa: BLE001 — classification must never break a turn
+            logger.debug(
+                "parallel classification failed for %s", tool_name, exc_info=True
+            )
+            return False
+
+    def _runnable_run_decision(
+        self, tool_name: str, tool_input: dict[str, Any]
+    ) -> str | None:
+        """The gate decision for a call that is a single runnable run, or None
+        for anything else (built-ins, MCP tools, wrappers, group fan-outs)."""
+        if (
+            tool_name in _READONLY_META
+            or tool_name in _BUILTIN_TOOL_NAMES
+            or tool_name in ("use_tool", "describe_tool", "run_saved_run")
+            or (
+                getattr(self, "_mcp", None) is not None and self._is_mcp_tool(tool_name)
+            )
+        ):
+            return None
+        if (
+            tool_name == "run_runnable"
+            and self._group_fanout_calls(tool_input) is not None
+        ):
+            return None
+        return self._confirm_decision(tool_name, tool_input)
 
     def _register_confirm(
         self, chat_id: str, tool_name: str, tool_input: dict[str, Any], level: str
@@ -960,8 +996,17 @@ class AutonomyMixin:
         stage: Callable[[str], None] | None = None,
         on_decision: Callable[[dict[str, Any]], None] | None = None,
         headless: bool = False,
+        confirm_lock: asyncio.Lock | None = None,
+        is_cancelled: Callable[[], bool] | None = None,
     ) -> str:
         """Async autonomy gate used by the agentic loop.
+
+        ``confirm_lock`` (a parallel batch only) is held from raising the
+        confirm prompt until the operator answers it, so calls running together
+        still ask one at a time, in the model's order; the run itself happens
+        after the lock is released, alongside the rest of the batch.
+        ``is_cancelled`` is checked once the lock is acquired, so a Stop pressed
+        during an earlier prompt doesn't raise the next one.
 
         ``headless`` selects the longer unattended confirm timeout (a trigger /
         schedule turn — the operator may be away when it fires); explicit, so
@@ -1046,17 +1091,20 @@ class AutonomyMixin:
         if decision == "manual":
             return f"✗ '{display}' is manual-only (autonomy = manual) and cannot be run by the assistant. Ask the user to run it themselves from the Run button."
         if decision != "run":
-            if stage is not None:
-                stage("awaiting_human")
-            request_id, event, holder = self._register_confirm(
-                chat_id, tool_name, tool_input, decision
-            )
-            # Trigger/schedule turns wait on the longer headless timeout (the
-            # operator may be away when it fires).
-            timed_out = not await asyncio.to_thread(
-                event.wait, self._confirm_timeout_s(headless)
-            )
-            approved, edited = self._finish_confirm(request_id, holder, timed_out)
+            async with confirm_lock or contextlib.nullcontext():
+                if is_cancelled is not None and is_cancelled():
+                    return f"⏹ '{display}' was not run — you stopped the assistant."
+                if stage is not None:
+                    stage("awaiting_human")
+                request_id, event, holder = self._register_confirm(
+                    chat_id, tool_name, tool_input, decision
+                )
+                # Trigger/schedule turns wait on the longer headless timeout
+                # (the operator may be away when it fires).
+                timed_out = not await asyncio.to_thread(
+                    event.wait, self._confirm_timeout_s(headless)
+                )
+                approved, edited = self._finish_confirm(request_id, holder, timed_out)
             # Stop pressed while the dialog was up: don't run, and let the loop
             # halt at its next checkpoint (cancel flag is already set).
             if holder.get("cancelled"):
@@ -1200,6 +1248,9 @@ class AutonomyMixin:
         its next checkpoint. Any tool failure is surfaced, audited, and returned
         as a normal tool-result string so the turn never dies on a tool error."""
         tool_run_id = uuid.uuid4().hex[:12]
+        # The model's tool-call id, so a progress line lands on this call's card
+        # when two same-name tools run at once.
+        call_id = CURRENT_CALL_ID.get()
         cancel_event = threading.Event()
         label = self._builtin_tool_label(tool_name, tool_input)
         args_summary = self._builtin_tool_args(tool_input)
@@ -1239,6 +1290,7 @@ class AutonomyMixin:
                 {
                     "id": chat_id,
                     "tool_id": tool_run_id,
+                    "call_id": call_id,
                     "tool_name": tool_name,
                     "message": str(message),
                 },

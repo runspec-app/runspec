@@ -48,6 +48,9 @@ _CAPTURE_MAX_AGE_S = 60 * 60
 # A failed background capture is not retried on every tab open; wait this long.
 _CAPTURE_RETRY_S = 5 * 60
 _CAPTURE_LOCK = threading.Lock()
+# Read-only wiki tools can run concurrently (parallel tool calls), so the
+# one-time memory migration check must not race on first use.
+_MIGRATION_LOCK = threading.Lock()
 _DEFAULT_CAPTURE_DAYS = 30
 # Distill reads saved chats in chunks of this many characters, one model call per
 # chunk, at most _DISTILL_MAX_CALLS calls per click (the rest wait for the next).
@@ -74,12 +77,13 @@ class KnowledgeMixin:
     # ── store ────────────────────────────────────────────────────────────────
     def _knowledge_store(self) -> kn.KnowledgeStore:
         store = kn.KnowledgeStore(config_mod.knowledge_dir())
-        if not getattr(self, "_memory_migration_checked", False):
-            self._memory_migration_checked = True
-            try:
-                self._migrate_memory(store)
-            except Exception:  # noqa: BLE001 — never block the wiki on the old store
-                logger.warning("memory → wiki migration failed", exc_info=True)
+        with _MIGRATION_LOCK:
+            if not getattr(self, "_memory_migration_checked", False):
+                self._memory_migration_checked = True
+                try:
+                    self._migrate_memory(store)
+                except Exception:  # noqa: BLE001 — never block the wiki on the old store
+                    logger.warning("memory → wiki migration failed", exc_info=True)
         return store
 
     def _wiki_notes(

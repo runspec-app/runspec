@@ -4,8 +4,9 @@ concurrently.
 
 A model often asks for the same read-only runnable on five hosts in one response.
 The loop used to run them one after another; now parallel-safe calls (runnable
-runs the gate lets through unprompted, read-only discovery) are batched with
-``asyncio.gather`` while anything else — a confirm-gated call, a built-in, an MCP
+runs the gate lets through unprompted, read-only discovery and built-ins) are
+batched with ``asyncio.gather``; a gated runnable run joins the batch but asks
+its approval one prompt at a time; anything else — a writing built-in, an MCP
 tool — is a barrier that runs alone, in order. Results still pair with their
 tool_use blocks in the model's order, and every tool_start/tool_end carries the
 call's ``call_id`` so the frontend can pair concurrent same-name cards.
@@ -25,9 +26,14 @@ from tests.session_stub import current as _S
 from tests.test_agent_continuation import _chat_stub, _ScriptedAdapter
 
 
-def _stub_with_events(parallel_safe=lambda name, _inp: name.startswith("p_"), **kw):
+def _stub_with_events(
+    parallel_safe=lambda name, _inp: name.startswith("p_"),
+    parallel_confirm=lambda name, _inp: name.startswith("c_"),
+    **kw,
+):
     s = _chat_stub(**kw)
     s._parallel_safe_call = parallel_safe
+    s._parallel_confirm_call = parallel_confirm
     s.events: list[tuple[str, dict]] = []
     base_dispatch = s._dispatch
 
@@ -192,14 +198,25 @@ def test_max_parallel_tools_config_is_clamped():
 # ── the real classifier ─────────────────────────────────────────────────────
 
 
-def _classifier(decision="run", group=False, mcp=False):
+def _classifier_stub(decision="run", group=False, mcp=False):
     s = types.SimpleNamespace(
         _confirm_decision=lambda name, inp: decision,
         _group_fanout_calls=lambda inp: ("g", "x", []) if group else None,
         _mcp=object() if mcp else None,
         _is_mcp_tool=lambda name: mcp,
     )
+    s._runnable_run_decision = types.MethodType(Bridge._runnable_run_decision, s)
+    return s
+
+
+def _classifier(decision="run", group=False, mcp=False):
+    s = _classifier_stub(decision, group, mcp)
     return lambda name, inp=None: Bridge._parallel_safe_call(s, name, inp or {})
+
+
+def _confirm_classifier(decision="confirm", group=False, mcp=False):
+    s = _classifier_stub(decision, group, mcp)
+    return lambda name, inp=None: Bridge._parallel_confirm_call(s, name, inp or {})
 
 
 def test_classifier_allows_ungated_runnable_runs_and_discovery():
@@ -225,3 +242,122 @@ def test_classifier_fails_safe_when_the_decision_raises():
         _mcp=None,
     )
     assert Bridge._parallel_safe_call(s, "run_runnable", {"id": "x"}) is False
+
+
+def test_classifier_allows_read_only_builtins_the_gate_lets_through():
+    safe = _classifier("run")
+    for name in (
+        "fetch_url",
+        "list_files",
+        "search_history",
+        "search_wiki",
+        "workspace_read",
+        "repo_grep",
+        "console_status",
+        "describe_tool",
+    ):
+        assert safe(name), name
+    # Reached through the search-mode wrapper too.
+    assert safe("use_tool", {"name": "repo_read", "input": {}})
+    assert not safe("use_tool", {"name": "repo_write", "input": {}})
+    # Writes, Outlook (COM) and the marketplace (cache rewrite) stay sequential.
+    for name in (
+        "workspace_write",
+        "propose_fact",
+        "repo_sync",
+        "outlook_inbox",
+        "search_marketplace",
+        "save_runbook",
+    ):
+        assert not safe(name), name
+    # An operator who gated a read-only built-in gets it asked, alone.
+    assert not _classifier("confirm")("fetch_url")
+
+
+def test_read_only_parallel_set_names_real_tools():
+    from runspec_console.bridge_const import (
+        _BUILTIN_TOOL_NAMES,
+        _PARALLEL_READONLY_BUILTINS,
+    )
+
+    assert _PARALLEL_READONLY_BUILTINS - _BUILTIN_TOOL_NAMES == {"describe_tool"}
+
+
+def test_confirm_classifier_admits_only_gated_single_runnable_runs():
+    assert _confirm_classifier("confirm")("run_runnable", {"id": "restart"})
+    assert _confirm_classifier("supervised")("ops__restart", {"host": "a"})
+    assert not _confirm_classifier("run")("run_runnable", {"id": "x"})
+    assert not _confirm_classifier("manual")("run_runnable", {"id": "x"})
+    assert not _confirm_classifier("confirm")("outlook_send")
+    assert not _confirm_classifier("confirm")("use_tool", {"name": "repo_write"})
+    assert not _confirm_classifier("confirm", mcp=True)("mcp_jira_create")
+    assert not _confirm_classifier("confirm", group=True)("run_runnable", {"host": "g"})
+
+
+def test_approvals_are_asked_in_order_and_approved_runs_overlap():
+    """Two gated runs and an ungated one in one response: the prompts come one
+    at a time, in the model's order, while the ungated run and the first
+    approved run go ahead without waiting for the second answer."""
+    s = _stub_with_events()
+    log: list[str] = []
+
+    async def gated_run(
+        tool_name,
+        tool_input,
+        chat_id,
+        stage=None,
+        on_decision=None,
+        headless=False,
+        confirm_lock=None,
+        is_cancelled=None,
+    ):
+        n = tool_input["n"]
+        if tool_name.startswith("c_"):
+            assert confirm_lock is not None and is_cancelled is not None
+            async with confirm_lock:
+                log.append(f"ask {n}")
+                await asyncio.sleep(0.03)  # the operator reading the card
+                log.append(f"answer {n}")
+        else:
+            assert confirm_lock is None
+        log.append(f"start {n}")
+        await asyncio.sleep(0.02)
+        log.append(f"end {n}")
+        return f"out-{n}"
+
+    s._gated_run_tool_async = gated_run
+    calls = [
+        ToolCall(id="1", name="c_restart", input={"n": 1}),
+        ToolCall(id="2", name="c_restart", input={"n": 2}),
+        ToolCall(id="3", name="p_read", input={"n": 3}),
+    ]
+    _run(s, calls)
+
+    # Prompts never overlap and follow the model's order.
+    assert log.index("answer 1") < log.index("ask 2")
+    # The ungated read runs while the first prompt is still up.
+    assert log.index("start 3") < log.index("answer 1")
+    # The first approved run overlaps the second prompt.
+    assert log.index("start 1") < log.index("answer 2")
+    assert _tool_results(s) == [("1", "out-1"), ("2", "out-2"), ("3", "out-3")]
+
+
+def test_gate_skips_the_prompt_when_stopped_while_waiting_its_turn():
+    asked: list[str] = []
+    s = types.SimpleNamespace(
+        _confirm_decision=lambda name, inp: "confirm",
+        _confirm_card_view=lambda name, inp: (name, inp),
+        _register_confirm=lambda *a: asked.append("asked"),
+    )
+    out = asyncio.run(
+        Bridge._gated_run_tool_async(
+            s,
+            "ops__restart",
+            {"host": "a"},
+            "chat1",
+            confirm_lock=asyncio.Lock(),
+            is_cancelled=lambda: True,
+        )
+    )
+    assert asked == []
+    assert "was not run" in out and "stopped" in out

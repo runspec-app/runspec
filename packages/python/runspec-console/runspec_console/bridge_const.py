@@ -100,6 +100,38 @@ _MCP_PREFIX = "mcp_"
 # runnable it resolves to.
 _READONLY_META = frozenset({"search_runnables", "describe_runnable"})
 
+# Built-in tools that only read, so several from one model response may run at
+# once (``Bridge._parallel_safe_call``): status, run history, file listing, web
+# fetch, workspace reads, wiki reads, repo reads and the deferred-tool schema
+# lookup. Left out on purpose: anything that writes (memory, wiki proposals,
+# runbooks, workspace_write/materialize, repo_sync/write), Outlook (COM is
+# apartment-bound) and search_marketplace (a cold read rewrites its cache file).
+_PARALLEL_READONLY_BUILTINS = frozenset(
+    {
+        "console_status",
+        "search_history",
+        "list_files",
+        "fetch_url",
+        "workspace_info",
+        "workspace_ls",
+        "workspace_read",
+        "workspace_head",
+        "workspace_tail",
+        "workspace_grep",
+        "workspace_json_get",
+        "search_wiki",
+        "wiki_page",
+        "wiki_graph",
+        "list_wiki_inbox",
+        "repo_list",
+        "repo_read",
+        "repo_grep",
+        "repo_status",
+        "repo_diff",
+        "describe_tool",
+    }
+)
+
 # Built-in deferral meta-tools (search mode, chat turns only): the long tail of
 # built-in tools leaves the per-turn tool list and is reached via describe_tool
 # (read-only schema lookup — autonomous) + use_tool (a thin wrapper the autonomy

@@ -2227,14 +2227,19 @@ export function useInvocationBlocks() {
       // Live progress for a still-running built-in tool (repo clone/grep, denylist
       // fan-out): turns the silent gap between tool_start and tool_end into a
       // moving status line on the tool segment.
-      const { id, tool_name, message } = (e as CustomEvent).detail as {
-        id: string; tool_name: string; message: string
+      const { id, call_id, tool_name, message } = (e as CustomEvent).detail as {
+        id: string; call_id?: string; tool_name: string; message: string
       }
       if (!message) return
       setBlocks(prev => prev.map(b => {
         if (b.id !== id) return b
         const newSegs = b.segments.map(seg => {
-          if (seg.kind === 'tool' && seg.entry.name === tool_name && seg.entry.running) {
+          // By call id when both sides carry one: two same-name tools can run
+          // at once (parallel tool calls), and name-only matching put one's
+          // progress on both cards.
+          const mine = seg.kind === 'tool' && (
+            call_id && seg.entry.callId ? seg.entry.callId === call_id : seg.entry.name === tool_name)
+          if (seg.kind === 'tool' && mine && seg.entry.running) {
             return { ...seg, entry: { ...seg.entry, progress: message } }
           }
           return seg

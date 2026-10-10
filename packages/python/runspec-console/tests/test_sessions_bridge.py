@@ -81,6 +81,8 @@ class _Stub:
     _max_tool_rounds = Bridge._max_tool_rounds
     _max_parallel_tools = Bridge._max_parallel_tools
     _parallel_safe_call = Bridge._parallel_safe_call
+    _parallel_confirm_call = Bridge._parallel_confirm_call
+    _runnable_run_decision = Bridge._runnable_run_decision
     _max_continuations = Bridge._max_continuations
     _max_network_retries = Bridge._max_network_retries
     _max_self_recoveries = Bridge._max_self_recoveries

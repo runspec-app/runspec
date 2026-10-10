@@ -609,7 +609,30 @@ class TurnMixin(_Base):
                             _thought_ms(think_t0, think_t1),
                         )
 
-                    async def _exec_call(tc: Any) -> tuple[str, dict[str, Any]]:
+                    # Calls in one batch run side by side, but a trigger card has
+                    # one stage: while a call waits on the operator, another call
+                    # starting to run mustn't flip the card back to "running".
+                    stage_owner: dict[str, Any] = {"call": None}
+
+                    def _call_stage(key: int) -> Callable[[str], None] | None:
+                        if spec.stage is None:
+                            return None
+                        stage_fn = spec.stage
+
+                        def _stage(state: str) -> None:
+                            if state == "awaiting_human":
+                                stage_owner["call"] = key
+                            elif state == "running":
+                                if stage_owner["call"] not in (None, key):
+                                    return
+                                stage_owner["call"] = None
+                            stage_fn(state)
+
+                        return _stage
+
+                    async def _exec_call(
+                        tc: Any, gate_kw: dict[str, Any] | None = None
+                    ) -> tuple[str, dict[str, Any]]:
                         """Run one tool call end to end — tool_start, the autonomy
                         gate + execution, tool_end, trace — and return its output
                         and the operator's gate decision (if the gate fired).
@@ -637,6 +660,7 @@ class TurnMixin(_Base):
                         # context copy), so this names *this* call to any confirm
                         # it raises.
                         call_token = CURRENT_CALL_ID.set(str(tc.id or ""))
+                        call_stage = _call_stage(id(tc))
                         try:
                             if cancel.is_set():
                                 output = f"⏹ '{display}' was not run — you stopped the assistant."
@@ -647,9 +671,10 @@ class TurnMixin(_Base):
                                     tc.name,
                                     tc.input,
                                     chat_id,
-                                    stage=spec.stage,
+                                    stage=call_stage,
                                     on_decision=gate_decision.update,
                                     headless=spec.headless_confirm,
+                                    **(gate_kw or {}),
                                 )
                         except Exception as exc:  # noqa: BLE001
                             # A raising tool must not escape the loop (that strands
@@ -660,8 +685,8 @@ class TurnMixin(_Base):
                                 observability.current_span(), exc
                             )
                             output = f"✗ '{display}' failed: {exc}"
-                            if spec.stage is not None:
-                                spec.stage("running")  # un-stick an awaiting card
+                            if call_stage is not None:
+                                call_stage("running")  # un-stick an awaiting card
                         finally:
                             CURRENT_CALL_ID.reset(call_token)
                         self._dispatch(
@@ -689,38 +714,48 @@ class TurnMixin(_Base):
                         )
                         return output, gate_decision
 
-                    # Independent runnable runs (and read-only discovery) from one
-                    # response run concurrently — they're separate processes on the
-                    # hosts; a sequential loop made a 5-host inventory 5× slower.
-                    # Anything that may prompt the operator or touch shared console
-                    # state is a barrier that runs alone, so relative order between
-                    # gated and ungated calls is preserved (see _parallel_safe_call).
+                    # Independent calls from one response run concurrently —
+                    # runnable runs are separate processes on the hosts, and
+                    # read-only lookups touch no shared state; a sequential loop
+                    # made a 5-host inventory 5× slower. A runnable run that needs
+                    # approval joins the batch too: its prompt waits its turn on
+                    # ``confirm_lock`` (one prompt at a time, in the model's
+                    # order) and, once approved, it runs alongside the rest.
+                    # Anything else is a barrier that runs alone, so relative
+                    # order around it is preserved (see _parallel_safe_call).
                     calls = list(response.tool_calls)
                     outcomes: list[tuple[str, dict[str, Any]] | None] = [None] * len(
                         calls
                     )
                     max_parallel = self._max_parallel_tools()
                     limiter = asyncio.Semaphore(max_parallel)
+                    confirm_kw = {
+                        "confirm_lock": asyncio.Lock(),
+                        "is_cancelled": cancel.is_set,
+                    }
 
-                    async def _limited(i: int) -> None:
+                    async def _limited(i: int, gate_kw: dict[str, Any] | None) -> None:
                         async with limiter:
-                            outcomes[i] = await _exec_call(calls[i])
+                            outcomes[i] = await _exec_call(calls[i], gate_kw)
 
-                    batch: list[int] = []
-                    for i, tc in enumerate(calls):
-                        if (
-                            max_parallel > 1
-                            and tc.name not in spec.inline_tools
-                            and self._parallel_safe_call(tc.name, tc.input)
-                        ):
-                            batch.append(i)
-                            continue
+                    batch: list[tuple[int, dict[str, Any] | None]] = []
+
+                    async def _flush() -> None:
                         if batch:
-                            await asyncio.gather(*(_limited(j) for j in batch))
-                            batch = []
+                            await asyncio.gather(*(_limited(j, kw) for j, kw in batch))
+                            batch.clear()
+
+                    for i, tc in enumerate(calls):
+                        if max_parallel > 1 and tc.name not in spec.inline_tools:
+                            if self._parallel_safe_call(tc.name, tc.input):
+                                batch.append((i, None))
+                                continue
+                            if self._parallel_confirm_call(tc.name, tc.input):
+                                batch.append((i, confirm_kw))
+                                continue
+                        await _flush()
                         outcomes[i] = await _exec_call(tc)
-                    if batch:
-                        await asyncio.gather(*(_limited(j) for j in batch))
+                    await _flush()
 
                     # Record in the model's original order — tool results must pair
                     # with their tool_use blocks, and the transcript/actions read in
