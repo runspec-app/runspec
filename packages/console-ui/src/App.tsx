@@ -69,6 +69,7 @@ const TransferModal = React.lazy(() => import('./views/TransferModal').then(m =>
 const CopyKeyModal = React.lazy(() => import('./views/CopyKeyModal').then(m => ({ default: m.CopyKeyModal })))
 const TerminalsModal = React.lazy(() => import('./views/TerminalsModal').then(m => ({ default: m.TerminalsModal })))
 const DenylistModal = React.lazy(() => import('./views/DenylistModal').then(m => ({ default: m.DenylistModal })))
+const EnvFilesModal = React.lazy(() => import('./views/EnvFilesModal').then(m => ({ default: m.EnvFilesModal })))
 const RunbookRunModal = React.lazy(() => import('./views/RunbookRunModal').then(m => ({ default: m.RunbookRunModal })))
 const SavedRunRunModal = React.lazy(() => import('./views/SavedRunRunModal').then(m => ({ default: m.SavedRunRunModal })))
 const ShortcutsHelp = React.lazy(() => import('./components/ShortcutsHelp').then(m => ({ default: m.ShortcutsHelp })))
@@ -212,6 +213,8 @@ export default function App() {
   // scoped to the hosts connected right now. Disabled until the fleet sweep
   // has settled so its scope is the set of green dots you can see.
   const [denylistOpen, setDenylistOpen] = useState(false)
+  // Env files (.runspec_env manager) — opened beside the Denylist.
+  const [envFilesOpen, setEnvFilesOpen] = useState(false)
   const refreshHosts = () => {
     setRefreshingHosts(true)
     bridge.refresh_hosts?.().catch(() => setRefreshingHosts(false))
@@ -1335,6 +1338,26 @@ export default function App() {
                   </Tooltip>
                 )
               })()}
+              {/* Env files: each venv's .runspec_env (local venvs + the hosts
+                  connected right now), same sweep gate as the Denylist. */}
+              {(() => {
+                const sweeping = !discovery.ready || refreshingHosts
+                return (
+                  <Tooltip title={sweeping ? 'Waiting for the fleet to finish connecting…' : 'Edit the .runspec_env file of local and connected venvs'} placement="topLeft">
+                    <Button
+                      size="small"
+                      block
+                      icon={sweeping ? <LoadingOutlined /> : <CodeOutlined />}
+                      disabled={sweeping}
+                      onClick={() => setEnvFilesOpen(true)}
+                      aria-label="Env files"
+                      style={{ marginBottom: 4, fontSize: 12 }}
+                    >
+                      Env files
+                    </Button>
+                  </Tooltip>
+                )
+              })()}
               {/* Rooms: live connection state for every configured chat/helpdesk
                   room, so a room server going down is visible at a glance instead
                   of buried in the Dev tab. Hidden entirely when none are set. */}
@@ -1870,6 +1893,13 @@ export default function App() {
               initial={terminalsFor ?? []}
               connected={hosts.filter(h => h.name !== 'local' && h.connected).map(h => h.name)}
               onClose={() => setTerminalsFor(null)}
+            />
+          )}
+          {envFilesOpen && (
+            <EnvFilesModal
+              open={envFilesOpen}
+              onClose={() => setEnvFilesOpen(false)}
+              hosts={hosts.filter(h => h.name !== 'local' && h.connected)}
             />
           )}
           {denylistOpen && (

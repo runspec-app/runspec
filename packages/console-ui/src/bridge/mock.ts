@@ -635,6 +635,11 @@ const MOCK_IN_FLIGHT: InFlightRecord[] = [
 let invocationCounter = 0
 
 // request_id → resolver, for the simulated autonomy-confirm round-trip.
+// Mock .runspec_env files, keyed `host|runspec_path`.
+const _mockEnvFiles = new Map<string, Record<string, string>>([
+  ['local|/home/me/.venvs/console/bin/runspec', { JIRA_URL: 'https://jira.example.com', RUNSPEC_JIRA_ARG_JIRA_PAT: 'hunter2' }],
+])
+
 const _pendingConfirms = new Map<string, (approved: boolean) => void>()
 
 // Console sessions (see src/sessions.ts). Mirrors the backend registry: every
@@ -1051,6 +1056,66 @@ export const mockApi: BridgeApi = {
     })),
   }),
   deprovision_start: async (payload: DeprovisionPayload) => mockProvisionOp('deprovision', payload.targets.map(t => t.host), payload.targets[0]?.runspec_path ?? ''),
+  env_file_targets: async (hosts) => {
+    const names = ['local', ...(hosts ?? MOCK_HOSTS.filter(h => h.name !== 'local').map(h => h.name))]
+    return names.map(host => {
+      const root = host === 'local' ? '/home/me/.venvs/console' : '/opt/venvs/ops'
+      const h = MOCK_HOSTS.find(x => x.name === host)
+      return {
+        host, runspec_path: `${root}/bin/runspec`, venv: root.split('/').pop() ?? '', root,
+        path: `${root}/.runspec_env`, group: h?.group ?? '', profiles: h?.profiles ?? [],
+        local: host === 'local', connected: true, supported: true, reason: '',
+      }
+    })
+  },
+  env_file_read: async (ref) => {
+    const text = _mockEnvFiles.get(`${ref.host}|${ref.runspec_path}`) ?? {}
+    const reader = { runnable: 'jira', command: '', arg: 'jira-pat', via: 'auto' as const, password: true, description: 'Jira PAT' }
+    const secret = (k: string) => /PAT|TOKEN|PASSWORD|SECRET/.test(k)
+    return {
+      ...ref, venv: ref.runspec_path.split('/').slice(-3, -2)[0] ?? '', path: ref.runspec_path.replace(/bin\/runspec$/, '.runspec_env'),
+      ok: true, exists: Object.keys(text).length > 0, owner: 'svc-ops', user: 'deploy', as_user: ref.host === 'local' ? '' : 'svc-ops',
+      mode: '0600', sha: JSON.stringify(text), writable: true, warnings: [], overrides: [],
+      entries: Object.entries(text).map(([key, value], i) => ({
+        key, value: secret(key) ? '' : value, secret: secret(key), masked: secret(key), line: i + 1, duplicates: 0,
+        readers: key === 'RUNSPEC_JIRA_ARG_JIRA_PAT' ? [reader] : [],
+      })),
+      suggestions: 'RUNSPEC_JIRA_ARG_JIRA_PAT' in text ? [] : [{ key: 'RUNSPEC_JIRA_ARG_JIRA_PAT', secret: true, readers: [reader] }],
+    }
+  },
+  env_file_reveal: async ({ host, runspec_path, key }) => {
+    const text = _mockEnvFiles.get(`${host}|${runspec_path}`) ?? {}
+    return { key, value: text[key] ?? '', found: key in text }
+  },
+  env_file_save: async (payload) => {
+    const k = `${payload.host}|${payload.runspec_path}`
+    const text = { ...(_mockEnvFiles.get(k) ?? {}) }
+    for (const key of payload.unset) delete text[key]
+    Object.assign(text, payload.set)
+    _mockEnvFiles.set(k, text)
+    const view = await mockApi.env_file_read(payload)
+    return { ...view, saved: true, changes: { added: Object.keys(payload.set), changed: [], removed: payload.unset } }
+  },
+  env_file_bulk_preview: async (payload) => ({
+    key: payload.key, action: payload.action,
+    rows: payload.targets.map(t => {
+      const text = _mockEnvFiles.get(`${t.host}|${t.runspec_path}`) ?? {}
+      const has = payload.key in text
+      const state = payload.action === 'unset' ? (has ? 'present' : 'absent') : !has ? 'absent' : text[payload.key] === payload.value ? 'same' : 'differs'
+      return { ...t, venv: 'ops', path: '.runspec_env', ok: true, state, writable: true, as_user: 'svc-ops', exists: true }
+    }),
+  }),
+  env_file_bulk_apply: async (payload) => {
+    const rows = payload.targets.map(t => {
+      const k = `${t.host}|${t.runspec_path}`
+      const text = { ...(_mockEnvFiles.get(k) ?? {}) }
+      if (payload.action === 'unset') delete text[payload.key]
+      else text[payload.key] = payload.value ?? ''
+      _mockEnvFiles.set(k, text)
+      return { ...t, venv: 'ops', path: '.runspec_env', ok: true, changed: true, as_user: 'svc-ops' }
+    })
+    return { key: payload.key, action: payload.action, rows, ok: rows.length, changed: rows.length, failed: 0 }
+  },
 
   get_tool_visibility: async () => ({ hidden_from_agent: ['get-alerts'], hidden_from_all: ['flush-dns'] }),
   save_tool_visibility: async (payload) => {

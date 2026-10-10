@@ -136,6 +136,59 @@ also recorded on the host itself, as [audit events](audit.md):
   runspec is older than 0.71.0 can't record that, so the console writes one
   `logger` line to syslog instead.
 
+### Env files (`.runspec_env`)
+
+Every runspec venv can hold a `.runspec_env` file in its root: plain
+`KEY=value` lines that runspec loads into the environment before each run in
+that venv (a variable already set in the environment wins). It's the usual
+place for an instance URL, a region, or a token a runnable reads from
+`RUNSPEC_<RUNNABLE>_ARG_<ARG>` or one of its declared `env` names. The
+**Env files** button at the bottom of the hosts panel manages these files for
+the local venvs and every venv on the hosts that are connected right now (in
+the active profile).
+
+**One venv** shows one file as a table:
+
+- **Read by** lists the runnables in that venv that read each variable (the
+  automatic `RUNSPEC_<RUNNABLE>_ARG_<ARG>` name or a declared `env` alias), so a
+  stale variable stands out. **Add a variable** suggests the names this venv's
+  runnables read that the file doesn't set yet.
+- Values whose name looks like a secret (`…_PASSWORD`, `…_TOKEN`, `…_PAT`,
+  `…_SECRET`, `…_KEY`, …) or that feed a `password` arg arrive masked. The
+  console only fetches one when you press **Reveal**, and **Replace** sets a
+  new value without ever showing the old one.
+- **Save** sends only the keys you changed. The file is patched key by key, so
+  comments, blank lines and the lines you didn't touch stay as they were. If
+  someone changed the file after you opened it, the save is refused and the
+  table reloads.
+- Warnings point out a file that holds secrets but is readable by other
+  accounts, a variable set twice (the last one wins), lines runspec ignores,
+  and runnables that name their own env file in `runspec.toml` and so don't
+  read this one.
+
+**Across venvs** sets or removes one variable in many venvs at once. Pick the
+venvs directly, or add all of a group or profile. **Preview** shows each venv's
+current state (not set, already this value, a different value) without showing
+any value, and **Apply** changes only that variable in each file.
+
+How the files are written:
+
+- A remote file is read and written by the venv's own `bin/python` over the
+  host's SSH connection. When the SSH login can't read or write it, the
+  console retries as the venv's owner (`sudo -n -u <owner>`), then as root,
+  the same way the [denylist](denylist.md) does. A scoped NOPASSWD rule on the
+  venv's `bin/` covers it. If neither is allowed, the file opens read-only with
+  the reason.
+- The new text goes over the command's standard input, never its command line,
+  and is renamed over the old file in one step. The file keeps its mode; a new
+  file is created `0600`, owned by the venv's owner.
+- Each change is recorded as `venv.env.changed` in the console's audit log and,
+  with runspec 0.71.0 or newer, in the venv's own [audit ledger](audit.md) as
+  the account that wrote it. Records carry variable names, never values. A
+  **Reveal** is recorded as `venv.env.revealed`.
+- Only the default file in the venv root is managed. Windows remote hosts
+  aren't supported yet; local Windows venvs are.
+
 ### Bootstrapping a fresh host
 
 If a host doesn't have runspec yet, use

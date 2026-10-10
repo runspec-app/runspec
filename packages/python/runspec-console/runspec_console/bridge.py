@@ -50,6 +50,7 @@ from .bridge_voice import VoiceMixin
 from .bridge_diagram import DiagramMixin
 from .bridge_marketplace import MarketplaceMixin
 from .bridge_provision import ProvisionMixin
+from .bridge_envfile import EnvFileMixin
 from .bridge_turn import TurnMixin
 from .dictation import DictationSession
 from .session import ChatSession
@@ -81,6 +82,7 @@ class Bridge(
     DiagramMixin,
     MarketplaceMixin,
     ProvisionMixin,
+    EnvFileMixin,
     TurnMixin,
 ):
     def __init__(self) -> None:

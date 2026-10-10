@@ -9,6 +9,28 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.341.0] — 2026-10-10
+
+### Added
+
+- **Env files: manage each venv's `.runspec_env`.** A new **Env files** button
+  at the bottom of the hosts panel opens a manager for the dotenv file runspec
+  loads before every run, across the local venvs and the venvs of the connected
+  hosts. **One venv** is a key/value table showing which runnables read each
+  variable (automatic `RUNSPEC_<R>_ARG_<A>` names and declared `env` aliases),
+  with suggestions for unset ones; secret-looking values (and ones feeding a
+  `password` arg) stay masked until you press Reveal. **Across venvs** sets or
+  removes one variable in many venvs (pick by host, group or profile), with a
+  preview of each venv's current state. Saves patch the file by key (comments
+  and untouched lines survive) and are compare-and-swap, so a concurrent edit
+  is never overwritten. Remote files are handled by the venv's own
+  `bin/python`, escalating to the venv owner, then root, with `sudo -n` when the
+  login can't edit them; the text rides stdin, never the command line; a new
+  file is `0600`. Changes are audited as `venv.env.changed` (console log + the
+  venv's own ledger), names only. `envfile.py`, `_envfile_worker.py`,
+  `bridge_envfile.py`, `views/EnvFilesModal.tsx`; see `docs/console-hosts.md` →
+  "Env files".
+
 ## [0.340.0] — 2026-10-10
 
 ### Added

@@ -1681,6 +1681,98 @@ export interface DenylistHostStatus {
 }
 
 
+// ── .runspec_env manager (hosts panel → Env files) ──────────────────────────
+// One venv whose `.runspec_env` can be managed (env_file_targets).
+export interface EnvFileTarget {
+  host: string
+  runspec_path: string
+  venv: string
+  root: string
+  path: string
+  group: string
+  profiles: string[]
+  local: boolean
+  connected: boolean
+  supported: boolean
+  reason: string
+}
+
+// A runnable arg that reads an env variable (auto RUNSPEC_<R>_ARG_<A> or alias).
+export interface EnvFileReader {
+  runnable: string
+  command: string
+  arg: string
+  via: 'auto' | 'alias'
+  password: boolean
+  description: string
+}
+
+export interface EnvFileEntry {
+  key: string
+  // Empty when `masked` — a secret value only reaches the UI via env_file_reveal.
+  value: string
+  secret: boolean
+  masked: boolean
+  line: number
+  duplicates: number
+  readers: EnvFileReader[]
+}
+
+export interface EnvFileView {
+  host: string
+  runspec_path: string
+  venv: string
+  path: string
+  root?: string
+  local?: boolean
+  ok: boolean
+  error?: string
+  exists?: boolean
+  owner?: string
+  user?: string
+  // The account the file is read/written as when the SSH login can't (sudo -n -u).
+  as_user?: string
+  mode?: string
+  // Hash of the file as loaded; save refuses when it changed since (conflict).
+  sha?: string
+  writable?: boolean
+  write_error?: string
+  warnings?: string[]
+  entries?: EnvFileEntry[]
+  suggestions?: { key: string; secret: boolean; readers: EnvFileReader[] }[]
+  overrides?: { runnable: string; file: string }[]
+  // Set by env_file_save.
+  conflict?: boolean
+  saved?: boolean
+  changes?: { added: string[]; changed: string[]; removed: string[] }
+}
+
+export interface EnvFileRef { host: string; runspec_path: string }
+
+export interface EnvFileBulkPayload {
+  key: string
+  action: 'set' | 'unset'
+  value?: string
+  targets: EnvFileRef[]
+}
+
+export interface EnvFileBulkRow {
+  host: string
+  runspec_path: string
+  venv: string
+  path: string
+  ok: boolean
+  error?: string
+  // preview: absent | same | differs (set) or absent | present (unset)
+  state?: string
+  writable?: boolean
+  as_user?: string
+  exists?: boolean
+  // apply: whether the file was rewritten
+  changed?: boolean
+}
+
+
 // ── Marketplace (runspec runnable packages from package indexes) ─────────────
 // One package index the marketplace reads. `source: "pip"` rows are derived
 // from the console venv's pip configuration (index-url / extra-index-url) and
@@ -2160,6 +2252,13 @@ export interface BridgeApi {
   provision_cancel: (op: string) => Promise<boolean>
   deprovision_preview: (payload: { targets: DeprovisionTarget[] }) => Promise<{ rows: DeprovisionPreviewRow[]; names: string[] }>
   deprovision_start: (payload: DeprovisionPayload) => Promise<{ op: string; hosts: string[] }>
+  // .runspec_env manager — the hosts-panel Env files window.
+  env_file_targets: (hosts?: string[]) => Promise<EnvFileTarget[]>
+  env_file_read: (payload: EnvFileRef) => Promise<EnvFileView>
+  env_file_reveal: (payload: EnvFileRef & { key: string }) => Promise<{ key: string; value: string; found: boolean }>
+  env_file_save: (payload: EnvFileRef & { sha: string; set: Record<string, string>; unset: string[] }) => Promise<EnvFileView>
+  env_file_bulk_preview: (payload: EnvFileBulkPayload) => Promise<{ key: string; action: string; rows: EnvFileBulkRow[] }>
+  env_file_bulk_apply: (payload: EnvFileBulkPayload) => Promise<{ key: string; action: string; rows: EnvFileBulkRow[]; ok: number; changed: number; failed: number }>
   get_tool_visibility: () => Promise<ToolVisibility>
   save_tool_visibility: (payload: ToolVisibility) => Promise<ToolVisibility>
   // Canonical host-group registry (runspec_groups.toml) — the controlled
