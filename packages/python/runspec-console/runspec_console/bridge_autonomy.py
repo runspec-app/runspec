@@ -491,6 +491,8 @@ class AutonomyMixin:
             view["command"] = ti["command"]
         if ti.get("credential_id"):
             view["credential_id"] = ti["credential_id"]
+        if ti.get("debug"):
+            view["debug"] = True
         return name, view
 
     # ── desktop notification for confirmation events ──────────────────────────
@@ -965,6 +967,8 @@ class AutonomyMixin:
         # misplaced one so preflight doesn't flag it as unknown (matches dispatch).
         call_args.pop("deliver", None)
         command_path = _command_path(ti)
+        # A misplaced `debug` (inside args) is the debug switch, as at dispatch.
+        utils_mod.pop_debug(cached_r, command_path, call_args)
         return self._preflight_validate(cached_r, command_path, call_args)
 
     def _preflight_group_run(
@@ -1758,6 +1762,13 @@ class AutonomyMixin:
             # saved runs and nested paths use) to `[]`, which ran the top-level
             # runnable while the gate had resolved the subcommand leaf's autonomy.
             command_path = _command_path(ti)
+            # `debug` is a top-level field; a misplaced one inside args is taken
+            # out the same way. A runnable's own `debug` arg is never touched.
+            dbg_env = utils_mod.pop_debug(cached_r, command_path, call_args)
+            if ti.get("debug"):
+                dbg_env = utils_mod.pop_debug(
+                    cached_r, command_path, {"debug": ti["debug"]}
+                )
             preflight = self._preflight_validate(cached_r, command_path, call_args)
             if preflight:
                 return preflight
@@ -1799,6 +1810,7 @@ class AutonomyMixin:
                     if isinstance(chosen_command, str) and chosen_command
                     else []
                 )
+            dbg_env = utils_mod.pop_debug(cached_r, command_path, call_args)
         entry = self._host_entry(host)
         if entry is None:
             return f"Error: host '{host}' not found"
@@ -1874,6 +1886,7 @@ class AutonomyMixin:
         if credential_id_list:
             explicit_env, _ = self._credential_env(host, runnable, credential_id_list)
             cred_env.update(explicit_env)
+        cred_env.update(dbg_env)
         # Run provenance for this turn (set by the trigger handler; absent → a
         # direct chat agent run). `agent` distinguishes an LLM turn (chat / agent
         # trigger) from a fixed rule run; `trigger` is the causing event source.

@@ -121,6 +121,13 @@ Each run (or one grouped card for a group fan-out) asks for confirmation
 unless the runnable is `autonomous`. You can edit the arguments on the card
 before approving.
 
+> That failed with a one-line error. Run it again with debug logging on.
+
+Every runnable call takes an optional `debug` field that turns on the
+runnable's `--debug` logging (DEBUG lines and full tracebacks), the same switch
+as the Forms **Debug logging** checkbox. It shows as `debug: true` on the confirm
+card and changes nothing about how the call is gated.
+
 ### Save a procedure as a runbook
 
 > Save what we just did as a runbook called "cert-expiry-sweep": check the TLS certificates on every host in the `web` group and report any expiring within 30 days. Add a `days` argument defaulting to 30.

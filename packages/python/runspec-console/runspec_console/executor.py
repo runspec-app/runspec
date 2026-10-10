@@ -372,6 +372,24 @@ def secret_env(runnable: str, secrets: dict[str, Any] | None) -> dict[str, str]:
     return out
 
 
+# The console-level debug switch. Core auto-adds a `--debug` flag to every
+# runnable whose logging is on (it is injected at parse time, so it is not in
+# runspec.toml and discovery never lists it). The console turns it on through the
+# env channel core reads for every arg rather than `--debug` on argv: a runnable
+# with `[config.logging] enabled = false`, or a host on an older runspec, has no
+# such flag, and `--debug` would fail its run as an unknown argument, whereas an
+# env var for an arg it doesn't declare is simply ignored.
+DEBUG_ARG = "debug"
+
+
+def debug_env(runnable: str) -> dict[str, str]:
+    """The env var that switches core's auto-added ``--debug`` flag on for
+    ``runnable`` — ``RUNSPEC_<RUNNABLE>_ARG_DEBUG=1`` (top-level name, as for
+    every arg, even under a subcommand)."""
+    prefix = runnable.upper().replace("-", "_")
+    return {f"RUNSPEC_{prefix}_ARG_DEBUG": "1"}
+
+
 # Windows caps a process command line at 32,767 characters (CreateProcess), and
 # cmd.exe — the interpreter a .cmd/.bat shim runs under — at 8,191. A longer line
 # fails with WinError 206, which Python reports as FileNotFoundError, so it used

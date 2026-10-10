@@ -185,12 +185,16 @@ class InvokeMixin:
             k: v for k, v in args.items() if k in secret_names and v not in (None, "")
         }
         exec_args = {k: v for k, v in args.items() if k not in secret_names}
+        # The run dialog's "Debug logging" switch (or any caller's `debug`) rides
+        # the env channel, never argv — see executor.DEBUG_ARG.
+        dbg_env = utils_mod.pop_debug(cached, cp, exec_args)
 
         # Inject the operator-selected credentials as plain, name-derived env vars
         # (e.g. JIRA_USERNAME/JIRA_PASSWORD). Secrets are read from the keyring here
         # and never reach the surfaced args record. Returns the ids applied, for
         # the audit record.
         cred_env, applied_creds = self._credential_env(host, runnable, credential_ids)
+        cred_env.update(dbg_env)
         # Also honour the selected credentials' *arg-bindings* (username_arg →
         # argv, secret_arg → the env channel), so a runnable that reads its
         # credential from args — not bare env vars — works on the Forms run path

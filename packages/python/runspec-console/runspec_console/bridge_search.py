@@ -51,6 +51,19 @@ _DESCRIBE_COMMAND_ARG_BUDGET = 300
 _CATALOG_SYSTEM_HEADING = "What you can reach right now, by category:"
 
 
+def _debug_property() -> dict[str, Any]:
+    """The ``debug`` JSON-schema property (shared with the dedup/per-host tool
+    schema)."""
+    return {
+        "type": "boolean",
+        "description": (
+            "Optional: run with the runnable's debug logging on (DEBUG lines and "
+            "full tracebacks in the output). Set it to re-run a call that failed "
+            "unclearly; leave it off otherwise."
+        ),
+    }
+
+
 def _deliver_property() -> dict[str, Any]:
     """The ``deliver`` JSON-schema property (shared with the dedup/per-host tool
     schema via ``workspaces.deliver_schema_property``)."""
@@ -123,8 +136,8 @@ class SearchMixin:
                     "anything is missing or wrong. The host may instead be a host "
                     "GROUP name (see Console context) to run on every host in that "
                     "group at once, behind a single grouped confirm. "
-                    "'command', 'credential_id' and 'deliver' are TOP-LEVEL fields — "
-                    "never put any of them inside 'args'."
+                    "'command', 'credential_id', 'deliver' and 'debug' are TOP-LEVEL "
+                    "fields — never put any of them inside 'args'."
                 ),
                 "input_schema": {
                     "type": "object",
@@ -162,6 +175,7 @@ class SearchMixin:
                             ),
                         },
                         "deliver": _deliver_property(),
+                        "debug": _debug_property(),
                     },
                     "required": ["id", "host"],
                 },
@@ -556,6 +570,8 @@ class SearchMixin:
             base["command"] = ti["command"]
         if ti.get("credential_id"):
             base["credential_id"] = ti["credential_id"]
+        if ti.get("debug"):
+            base["debug"] = True
         calls = [(f"{h}__{name}", dict(base)) for h in members if h in present]
         return host, name, calls
 
@@ -596,7 +612,7 @@ class SearchMixin:
     # The fields run_runnable itself takes; everything else is a runnable
     # argument and belongs inside `args`.
     _RUN_RUNNABLE_FIELDS = frozenset(
-        {"id", "host", "args", "command", "credential_id", "deliver"}
+        {"id", "host", "args", "command", "credential_id", "deliver", "debug"}
     )
 
     @classmethod
@@ -614,7 +630,7 @@ class SearchMixin:
             f"Error: unexpected top-level field(s): {', '.join(extra)}. "
             "Runnable arguments go INSIDE 'args', e.g. args={"
             + ", ".join(f'"{k}": ...' for k in extra)
-            + "}. Only id, host, command, args, credential_id and deliver are "
+            + "}. Only id, host, command, args, credential_id, deliver and debug are "
             "top-level fields."
         )
 

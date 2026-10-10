@@ -9,6 +9,23 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.340.0] — 2026-10-10
+
+### Added
+
+- **Debug logging from Forms and the agent.** Core adds a `--debug` flag to
+  every runnable whose logging is on, but it is injected at parse time, so it
+  never appeared in the run dialog and the agent's preflight rejected it as an
+  unknown argument. The run dialog now has a **Debug logging** checkbox, and
+  every agent runnable call (`run_runnable` in search mode, each runnable tool in
+  dedup / per-host mode, group fan-outs) takes an optional `debug` field. Both
+  set `RUNSPEC_<RUNNABLE>_ARG_DEBUG=1` on the env channel rather than putting
+  `--debug` on the command line, so a runnable without the flag (logging turned
+  off, or a host on an older runspec) ignores it instead of failing its run. A
+  runnable that declares its own `debug` argument keeps it as a normal argument
+  and gets no extra switch. Calls without `debug` run exactly as before.
+  `bridge_utils.pop_debug`, `executor.debug_env`.
+
 ## [0.339.0] — 2026-10-10
 
 ### Added

@@ -652,6 +652,13 @@ class AgentToolsMixin:
         from . import workspaces as _ws
 
         properties["deliver"] = _ws.deliver_schema_property()
+        # `debug` — turn on core's auto-added --debug for this run (a reserved
+        # key, popped by bridge_utils.pop_debug). Skipped when the runnable declares its own
+        # `debug` arg: that one is already in the schema and stays a plain arg.
+        if "debug" not in properties:
+            from .bridge_search import _debug_property
+
+            properties["debug"] = _debug_property()
 
         schema: dict[str, Any] = {"type": "object", "properties": properties}
         if required:

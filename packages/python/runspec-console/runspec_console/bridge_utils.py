@@ -1976,3 +1976,37 @@ def watch_escalation(
         on_done(exit_code, duration_ms)
 
     return line, done
+
+
+def pop_debug(
+    cached: dict[str, Any] | None,
+    command_path: list[str],
+    args: dict[str, Any],
+) -> dict[str, str]:
+    """Take the console-level ``debug`` switch out of ``args`` and return the env
+    that turns core's auto-added ``--debug`` on (``{}`` when off).
+
+    Only when the runnable doesn't declare its own ``debug`` arg: one it declares
+    is a real argument and stays in ``args`` untouched. An unknown spec (no
+    discovery record) is also left alone, so that call behaves exactly as before.
+    Shared by the Forms run (``invoke_runnable``) and the agent
+    (``_run_tool_sync``); see ``executor.DEBUG_ARG`` for why it's env, not argv."""
+    from . import executor
+
+    if not cached or executor.DEBUG_ARG not in args:
+        return {}
+    node: dict[str, Any] = cached
+    declared = {a.get("name") for a in node.get("args") or [] if isinstance(a, dict)}
+    for seg in command_path:
+        node = (node.get("commands") or {}).get(seg) or {}
+        declared |= {
+            a.get("name") for a in node.get("args") or [] if isinstance(a, dict)
+        }
+    if executor.DEBUG_ARG in declared:
+        return {}
+    value = args.pop(executor.DEBUG_ARG)
+    if isinstance(value, str):
+        value = value.strip().lower() in ("1", "true", "yes", "on")
+    if not value:
+        return {}
+    return executor.debug_env(str(cached.get("name") or ""))

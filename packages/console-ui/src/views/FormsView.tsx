@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Button, Collapse, Input, Modal, Select, Tag, Tooltip, Typography, message } from 'antd'
+import { Button, Checkbox, Collapse, Input, Modal, Select, Tag, Tooltip, Typography, message } from 'antd'
 import { SearchOutlined, RightOutlined, ArrowLeftOutlined, AppstoreOutlined, EditOutlined, PlusOutlined, DownOutlined } from '@ant-design/icons'
 import type { ArgDef, Host, Runnable, Runbook, SavedRun } from '../bridge'
 import { bridge } from '../bridge'
@@ -35,6 +35,8 @@ import {
   filterSavedRuns,
   initialFormValues,
   isVarRef,
+  offerDebugSwitch,
+  withDebugFlag,
   partitionArgs,
   type ArgBinding,
   type ArgInputProps,
@@ -323,6 +325,7 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [credentialIds, setCredentialIds] = useState<string[]>([])
   const [creds, setCreds] = useState<SlimCred[]>([])
+  const [debug, setDebug] = useState(false)
 
   // Reset form when the modal or node changes
   useEffect(() => {
@@ -330,6 +333,7 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
     setValues(initialFormValues(state.currentNode.args ?? [], state.prefill))
     setErrors({})
     setCredentialIds([])
+    setDebug(false)
     // All saved credentials are selectable — the runnable may read any env var
     // names, so we don't pre-filter by scope. Restore the operator's previous
     // pick for this runnable, dropping any ids that no longer exist.
@@ -425,7 +429,7 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
     }
     if (Object.keys(errs).length > 0) { setErrors(errs); return }
     saveCredPrefs(rootRunnable.name, credentialIds)
-    onSubmit(rootRunnable, values, commandPath, credentialIds.length ? credentialIds : undefined)
+    onSubmit(rootRunnable, withDebugFlag(values, debug, declaredArgNames), commandPath, credentialIds.length ? credentialIds : undefined)
     onClose()
     message.success(`/${[rootRunnable.name, ...commandPath].join(' ')} submitted`)
   }
@@ -524,6 +528,15 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
             </div>
           )}
           <ArgForm node={currentNode} host={rootRunnable.host} runnable={rootRunnable.name} runAs={rootRunnable.runAs} group={rootRunnable.group} values={values} errors={errors} onChange={handleChange} boundArgs={boundArgs} />
+          {offerDebugSwitch(declaredArgNames) && (
+            <div style={{ marginTop: 12 }}>
+              <Tooltip title="Runs with --debug: DEBUG log lines and full tracebacks in the output. A runnable with logging turned off ignores it.">
+                <Checkbox checked={debug} onChange={e => setDebug(e.target.checked)}>
+                  <Text style={{ fontSize: 13 }}>Debug logging</Text>
+                </Checkbox>
+              </Tooltip>
+            </div>
+          )}
           {creds.length > 0 && (
             <div style={{ marginTop: 14, borderTop: '1px solid rgba(128,128,128,0.2)', paddingTop: 12 }}>
               <Text style={{ fontSize: 13, display: 'block', marginBottom: 2 }}>Credentials</Text>

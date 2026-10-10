@@ -185,6 +185,27 @@ export function bindingsForArgs(
 // The overlay is filtered to declared args so a stale/removed key can't ride into
 // the run; a password arg is never pre-filled (secrets aren't recorded). Exported
 // for unit tests.
+/**
+ * The run dialog's "Debug logging" switch. Core adds a `--debug` flag to every
+ * runnable whose logging is on, but it isn't in runspec.toml, so the form never
+ * lists it. When the switch is on this adds `debug: true` to the submitted args;
+ * the backend moves it onto the env channel (never argv), so a runnable without
+ * the flag just ignores it. A runnable that declares its own `debug` arg keeps
+ * it as a normal field, and the switch isn't offered (`offerDebugSwitch`).
+ */
+export function offerDebugSwitch(declaredArgNames: Set<string>): boolean {
+  return !declaredArgNames.has('debug')
+}
+
+export function withDebugFlag(
+  values: Record<string, unknown>,
+  debug: boolean,
+  declaredArgNames: Set<string>,
+): Record<string, unknown> {
+  if (!debug || !offerDebugSwitch(declaredArgNames)) return values
+  return { ...values, debug: true }
+}
+
 export function initialFormValues(
   args: ArgDef[],
   prefill?: Record<string, unknown>,

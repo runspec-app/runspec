@@ -17,7 +17,13 @@ tools. The dialog gives you:
   `ui = "datetime"`;
 - multi-line text fields that grow as you type (Shift+Enter for a newline);
 - for runnables with subcommands: the inherited global arguments and each
-  command's own arguments, sectioned.
+  command's own arguments, sectioned;
+- a **Debug logging** checkbox that runs the runnable with `--debug` (DEBUG
+  lines and full tracebacks in the output). The console sets
+  `RUNSPEC_<RUNNABLE>_ARG_DEBUG=1` instead of adding `--debug` to the command
+  line, so a runnable that has no debug flag (logging turned off, or a host on
+  an older runspec) ignores it rather than failing. A runnable that declares its
+  own `debug` argument shows that field instead.
 
 Results render as [tables](console-agent.md#how-runnable-output-is-rendered)
 with raw/copy toggles. From **History** (or a run card's pencil), **Edit &
