@@ -29,7 +29,15 @@ DEFAULT_URL = "https://gitlab.com"
 
 
 class GitlabError(Exception):
-    """Raised on configuration problems and non-2xx API responses."""
+    """Raised on configuration problems and non-2xx API responses.
+
+    ``status_code`` carries the HTTP status for an API error (``None`` for a
+    configuration problem), so a caller can tell e.g. a 404 from a 403.
+    """
+
+    def __init__(self, message: str, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 @dataclass
@@ -110,6 +118,7 @@ def gitlab_request(
     *,
     config: GitlabConfig,
     params: dict[str, Any] | None = None,
+    body: dict[str, Any] | None = None,
     raw: bool = False,
     api: bool = True,
     timeout: int = 30,
@@ -124,6 +133,8 @@ def gitlab_request(
 
     ``path`` should start with ``/`` (e.g. ``/projects/1/issues``). ``None`` values
     in ``params`` are dropped and booleans are rendered as ``"true"``/``"false"``.
+    ``body`` is sent as a JSON request body (write operations); its ``None``
+    values are dropped too, so callers can pass every optional field.
     Raises :class:`GitlabError` on any non-2xx response, surfacing the server's
     error message.
     """
@@ -145,10 +156,11 @@ def gitlab_request(
         f"{config.base_url}{prefix}{path}",
         headers=headers,
         params=clean,
+        json={k: v for k, v in body.items() if v is not None} if body is not None else None,
         timeout=timeout,
     )
     if resp.status_code >= 400:
-        raise GitlabError(_error_message(resp))
+        raise GitlabError(_error_message(resp), status_code=resp.status_code)
     if resp.status_code == 204 or not resp.content:
         return "" if raw else None
     if raw:

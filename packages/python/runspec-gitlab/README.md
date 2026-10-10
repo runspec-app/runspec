@@ -1,9 +1,10 @@
 # runspec-gitlab
 
-A read-only GitLab runnable for [runspec](https://pypi.org/project/runspec/),
-ported onto the GitLab REST API (v4) — **not** proxying GitLab's hosted MCP
-server. One runnable — **`gitlab`** — with 17 read verbs, all `autonomy =
-"autonomous"`. `pip install` it into a venv and it's discoverable by `runspec
+A GitLab runnable for [runspec](https://pypi.org/project/runspec/), ported onto
+the GitLab REST API (v4) — **not** proxying GitLab's hosted MCP server. One
+runnable — **`gitlab`** — with 17 read verbs (`autonomy = "autonomous"`), 15
+write verbs (`autonomy = "confirm"`, so an agent asks before each one) and 4
+delete verbs (`autonomy = "manual"`, so only a person can run them). `pip install` it into a venv and it's discoverable by `runspec
 local`, `runspec serve` (MCP), and runspec-console.
 
 `runspec serve` flattens each verb into a leaf MCP tool (`gitlab_get-issue`, …).
@@ -26,6 +27,24 @@ pip install runspec-gitlab
 | Merge requests | `list-merge-requests`, `get-merge-request`, `get-merge-request-diffs`, `get-merge-request-commits`, `get-merge-request-notes`, `get-merge-request-pipelines`, `get-merge-request-conflicts` |
 | Pipelines | `list-pipelines`, `get-pipeline-jobs`, `get-job-log` |
 
+Writes (all `confirm`):
+
+| Area | Verbs |
+|---|---|
+| Issues | `create-issue`, `update-issue` (edit, labels, assignees, close/reopen), `add-issue-note` |
+| Merge requests | `create-merge-request`, `update-merge-request` (edit, labels, assignees, reviewers, close/reopen), `add-merge-request-note`, `merge-merge-request` |
+| Repository | `create-branch`, `write-file` (create or replace a text file in one commit) |
+| Pipelines / jobs | `create-pipeline`, `retry-pipeline`, `cancel-pipeline`, `retry-job`, `cancel-job`, `play-job` |
+
+Assignees and reviewers are given as usernames. Labels, assignees, reviewers and
+pipeline variables (`KEY=VALUE`) are repeatable args. Writes need a token with
+the `api` scope; reads work with `read_api`.
+
+Deletes (all `manual` — refused to an agent, run from the command line or the
+console's Forms tab): `delete-issue`, `delete-branch`, `delete-file`,
+`delete-pipeline`. GitLab itself limits issue and pipeline deletes to project
+owners/admins and refuses protected or default branches.
+
 `get-merge-request-conflicts` is best-effort — GitLab has no public `/api/v4`
 conflicts endpoint, so it relays the web-UI endpoint and returns its JSON
 verbatim.
@@ -46,6 +65,9 @@ accepts a numeric id or a `group/project` path and falls back to
 gitlab whoami
 gitlab list-merge-requests --project group/app --state opened
 gitlab get-job-log --project group/app --job-id 998877
+gitlab create-issue --project group/app --title "Login fails" --label bug --assignee alice
+gitlab write-file --project group/app --branch fix --start-branch main \
+  --file-path docs/notes.md --content-file notes.md --commit-message "Add notes"
 ```
 
 ## Public Python API

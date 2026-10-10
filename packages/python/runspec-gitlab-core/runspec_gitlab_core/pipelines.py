@@ -1,4 +1,4 @@
-"""pipelines.py — CI/CD pipeline + job read operations (GitLab REST v4)."""
+"""pipelines.py — CI/CD pipeline + job operations (GitLab REST v4): reads + writes."""
 
 from __future__ import annotations
 
@@ -66,3 +66,90 @@ def get_job_log(
             text = "\n".join(lines[-tail:])
             truncated = True
     return {"job_id": job_id, "trace": text, "truncated": truncated}
+
+
+def _variables(variables: list[str] | None) -> list[dict[str, str]] | None:
+    """Parse ``KEY=VALUE`` strings into GitLab's pipeline-variable list."""
+    if not variables:
+        return None
+    parsed = []
+    for item in variables:
+        key, sep, value = item.partition("=")
+        if not sep or not key.strip():
+            raise ValueError(f"Bad variable {item!r} — expected KEY=VALUE")
+        parsed.append({"key": key.strip(), "value": value, "variable_type": "env_var"})
+    return parsed
+
+
+def create_pipeline(
+    config: GitlabConfig,
+    ref: str,
+    variables: list[str] | None = None,
+    project: str | None = None,
+) -> dict[str, Any]:
+    """Start a new pipeline on ``ref``; ``variables`` are ``KEY=VALUE`` strings."""
+    return gitlab_request(
+        "POST",
+        f"/projects/{_project(config, project)}/pipeline",
+        config=config,
+        body={"ref": ref, "variables": _variables(variables)},
+    )
+
+
+def retry_pipeline(config: GitlabConfig, pipeline_id: int, project: str | None = None) -> dict[str, Any]:
+    """Retry a pipeline's failed or canceled jobs."""
+    return gitlab_request(
+        "POST",
+        f"/projects/{_project(config, project)}/pipelines/{pipeline_id}/retry",
+        config=config,
+    )
+
+
+def cancel_pipeline(config: GitlabConfig, pipeline_id: int, project: str | None = None) -> dict[str, Any]:
+    """Cancel a pipeline's running jobs."""
+    return gitlab_request(
+        "POST",
+        f"/projects/{_project(config, project)}/pipelines/{pipeline_id}/cancel",
+        config=config,
+    )
+
+
+def retry_job(config: GitlabConfig, job_id: int, project: str | None = None) -> dict[str, Any]:
+    """Retry a single job (creates a new job; returns it)."""
+    return gitlab_request(
+        "POST",
+        f"/projects/{_project(config, project)}/jobs/{job_id}/retry",
+        config=config,
+    )
+
+
+def cancel_job(config: GitlabConfig, job_id: int, project: str | None = None) -> dict[str, Any]:
+    """Cancel a single running job."""
+    return gitlab_request(
+        "POST",
+        f"/projects/{_project(config, project)}/jobs/{job_id}/cancel",
+        config=config,
+    )
+
+
+def play_job(
+    config: GitlabConfig,
+    job_id: int,
+    variables: list[str] | None = None,
+    project: str | None = None,
+) -> dict[str, Any]:
+    """Run a manual job; ``variables`` are ``KEY=VALUE`` strings."""
+    parsed = _variables(variables)
+    return gitlab_request(
+        "POST",
+        f"/projects/{_project(config, project)}/jobs/{job_id}/play",
+        config=config,
+        body={"job_variables_attributes": [{"key": v["key"], "value": v["value"]} for v in parsed]} if parsed else None,
+    )
+
+
+def delete_pipeline(config: GitlabConfig, pipeline_id: int, project: str | None = None) -> dict[str, Any]:
+    """Delete a pipeline with its jobs, logs and artifacts. GitLab only allows
+    this for project owners."""
+    gitlab_request("DELETE", f"/projects/{_project(config, project)}/pipelines/{pipeline_id}", config=config)
+    return {"deleted": "pipeline", "pipeline_id": pipeline_id}

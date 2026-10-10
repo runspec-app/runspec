@@ -1,9 +1,11 @@
 #:schema https://runspec.app/runspec.schema.json
 
-# runspec-gitlab — GitLab reads as a runspec runnable, ported from the GitLab MCP
-# server: https://docs.gitlab.com/user/model_context_protocol/mcp_server/
+# runspec-gitlab — GitLab reads and writes as a runspec runnable, ported from the
+# GitLab MCP server: https://docs.gitlab.com/user/model_context_protocol/mcp_server/
 #
-# One runnable, `gitlab`, with a verb per read tool. `runspec serve` re-expands
+# One runnable, `gitlab`, with a verb per tool. Reads are `autonomous`; every
+# write (create/update/comment/merge/commit/pipeline control) is `confirm`; the
+# deletes are `manual` — an agent can never run them, only a person can. `runspec serve` re-expands
 # each verb into its own leaf MCP tool (gitlab_get-issue, gitlab_list-pipelines,
 # …), so a runspec-console agent calls them individually — over SSH on any fleet
 # host.
@@ -24,15 +26,18 @@ autonomy-default = "confirm"
 store = "per-run"
 
 [gitlab]
-description = "Read GitLab issues, merge requests, pipelines, and repository files (over the REST API)"
+description = "Read and update GitLab issues, merge requests, pipelines, and repository files (over the REST API)"
 output = "json"
 require-command = true
 examples = [
   {cmd = "gitlab whoami", description = "Verify the token and show the authenticated user"},
   {cmd = "gitlab list-issues --project group/app --state opened", description = "List a project's open issues"},
-  {cmd = "gitlab get-merge-request-changes --project 42 --mr-iid 17", description = "Show a merge request's diffs"},
+  {cmd = "gitlab get-merge-request-diffs --project 42 --mr-iid 17", description = "Show a merge request's diffs"},
   {cmd = "gitlab get-job-log --project group/app --job-id 9001 --tail 100", description = "Tail the last 100 lines of a CI job log"},
   {cmd = "gitlab get-file --project group/app --file-path src/main.py --ref main", description = "Read a repository file at a ref"},
+  {cmd = "gitlab create-issue --project group/app --title 'Login fails' --label bug", description = "Open an issue"},
+  {cmd = "gitlab create-merge-request --project group/app --source-branch fix --target-branch main --title 'Fix login'", description = "Open a merge request"},
+  {cmd = "gitlab retry-pipeline --project group/app --pipeline-id 9000", description = "Retry a pipeline's failed jobs"},
 ]
 
 # ── global args (inherited by every verb) ──────────────────────────────────
@@ -194,3 +199,201 @@ ref = {type = "str", required = false, description = "Branch, tag, or commit (de
 recursive = {type = "flag", default = false, description = "Walk subdirectories recursively"}
 per-page = {type = "int", default = 20, description = "Results per page (GitLab caps at 100)"}
 page = {type = "int", default = 1, description = "Page number"}
+
+# ── issue writes ───────────────────────────────────────────────────────────
+
+[gitlab.commands.create-issue]
+description = "Create an issue (canonical create_issue)"
+autonomy = "confirm"
+[gitlab.commands.create-issue.args]
+project = {type = "str", short = "-p", required = false, description = "Project id or path (falls back to GITLAB_PROJECT)"}
+title = {type = "str", required = true, description = "Issue title"}
+description = {type = "str", required = false, description = "Issue body (Markdown)"}
+label = {type = "str", multiple = true, required = false, description = "Label to apply (repeat --label)"}
+assignee = {type = "str", multiple = true, required = false, description = "Username to assign (repeat --assignee)"}
+milestone-id = {type = "int", required = false, description = "Milestone id"}
+due-date = {type = "str", ui = "date", required = false, description = "Due date (YYYY-MM-DD)"}
+confidential = {type = "flag", default = false, description = "Create the issue as confidential"}
+
+[gitlab.commands.update-issue]
+description = "Edit an issue's title, description, labels, assignees, milestone or due date, or close/reopen it"
+autonomy = "confirm"
+[gitlab.commands.update-issue.args]
+project = {type = "str", short = "-p", required = false, description = "Project id or path (falls back to GITLAB_PROJECT)"}
+issue-iid = {type = "int", required = true, description = "Issue internal id (the #N shown in the UI)"}
+title = {type = "str", required = false, description = "New title"}
+description = {type = "str", required = false, description = "New body (Markdown; replaces the old one)"}
+add-label = {type = "str", multiple = true, required = false, description = "Label to add (repeat)"}
+remove-label = {type = "str", multiple = true, required = false, description = "Label to remove (repeat)"}
+assignee = {type = "str", multiple = true, required = false, description = "Username to assign; replaces the current assignees (repeat)"}
+milestone-id = {type = "int", required = false, description = "Milestone id"}
+due-date = {type = "str", ui = "date", required = false, description = "Due date (YYYY-MM-DD)"}
+state = {type = "choice", options = ["close", "reopen"], required = false, description = "Close or reopen the issue"}
+
+[gitlab.commands.add-issue-note]
+description = "Comment on an issue"
+autonomy = "confirm"
+[gitlab.commands.add-issue-note.args]
+project = {type = "str", short = "-p", required = false, description = "Project id or path (falls back to GITLAB_PROJECT)"}
+issue-iid = {type = "int", required = true, description = "Issue internal id (the #N shown in the UI)"}
+body = {type = "str", required = true, description = "Comment text (Markdown)"}
+internal = {type = "flag", default = false, description = "Post as an internal note (project members only)"}
+
+# ── merge request writes ───────────────────────────────────────────────────
+
+[gitlab.commands.create-merge-request]
+description = "Open a merge request (canonical create_merge_request)"
+autonomy = "confirm"
+[gitlab.commands.create-merge-request.args]
+project = {type = "str", short = "-p", required = false, description = "Project id or path (falls back to GITLAB_PROJECT)"}
+source-branch = {type = "str", required = true, description = "Branch with the changes"}
+target-branch = {type = "str", required = true, description = "Branch to merge into (e.g. main)"}
+title = {type = "str", required = true, description = "Merge request title"}
+description = {type = "str", required = false, description = "Merge request body (Markdown)"}
+draft = {type = "flag", default = false, description = "Open as a draft (prefixes the title with 'Draft: ')"}
+label = {type = "str", multiple = true, required = false, description = "Label to apply (repeat)"}
+assignee = {type = "str", multiple = true, required = false, description = "Username to assign (repeat)"}
+reviewer = {type = "str", multiple = true, required = false, description = "Username to request review from (repeat)"}
+remove-source-branch = {type = "flag", default = false, description = "Delete the source branch when merged"}
+squash = {type = "flag", default = false, description = "Squash commits when merged"}
+
+[gitlab.commands.update-merge-request]
+description = "Edit a merge request's title, description, target branch, labels, assignees or reviewers, or close/reopen it"
+autonomy = "confirm"
+[gitlab.commands.update-merge-request.args]
+project = {type = "str", short = "-p", required = false, description = "Project id or path (falls back to GITLAB_PROJECT)"}
+mr-iid = {type = "int", required = true, description = "Merge request internal id (the !N shown in the UI)"}
+title = {type = "str", required = false, description = "New title"}
+description = {type = "str", required = false, description = "New body (Markdown; replaces the old one)"}
+target-branch = {type = "str", required = false, description = "New target branch"}
+add-label = {type = "str", multiple = true, required = false, description = "Label to add (repeat)"}
+remove-label = {type = "str", multiple = true, required = false, description = "Label to remove (repeat)"}
+assignee = {type = "str", multiple = true, required = false, description = "Username to assign; replaces the current assignees (repeat)"}
+reviewer = {type = "str", multiple = true, required = false, description = "Username to request review from; replaces the current reviewers (repeat)"}
+state = {type = "choice", options = ["close", "reopen"], required = false, description = "Close or reopen the merge request"}
+
+[gitlab.commands.add-merge-request-note]
+description = "Comment on a merge request"
+autonomy = "confirm"
+[gitlab.commands.add-merge-request-note.args]
+project = {type = "str", short = "-p", required = false, description = "Project id or path (falls back to GITLAB_PROJECT)"}
+mr-iid = {type = "int", required = true, description = "Merge request internal id (the !N shown in the UI)"}
+body = {type = "str", required = true, description = "Comment text (Markdown)"}
+internal = {type = "flag", default = false, description = "Post as an internal note (project members only)"}
+
+[gitlab.commands.merge-merge-request]
+description = "Merge a merge request, or set it to merge when its pipeline succeeds"
+autonomy = "confirm"
+[gitlab.commands.merge-merge-request.args]
+project = {type = "str", short = "-p", required = false, description = "Project id or path (falls back to GITLAB_PROJECT)"}
+mr-iid = {type = "int", required = true, description = "Merge request internal id (the !N shown in the UI)"}
+sha = {type = "str", required = false, description = "Only merge if the source branch head is still this commit"}
+when-pipeline-succeeds = {type = "flag", default = false, description = "Merge automatically once the pipeline passes instead of now"}
+squash = {type = "flag", default = false, description = "Squash commits (default: the merge request's own setting)"}
+remove-source-branch = {type = "flag", default = false, description = "Delete the source branch (default: the merge request's own setting)"}
+merge-commit-message = {type = "str", required = false, description = "Custom merge commit message"}
+
+# ── repository writes ──────────────────────────────────────────────────────
+
+[gitlab.commands.create-branch]
+description = "Create a branch from a branch, tag, or commit"
+autonomy = "confirm"
+[gitlab.commands.create-branch.args]
+project = {type = "str", short = "-p", required = false, description = "Project id or path (falls back to GITLAB_PROJECT)"}
+branch = {type = "str", required = true, description = "New branch name"}
+ref = {type = "str", required = true, description = "Branch, tag, or commit SHA to branch from"}
+
+[gitlab.commands.write-file]
+description = "Commit a text file to a branch, creating it or replacing its content"
+autonomy = "confirm"
+[gitlab.commands.write-file.args]
+project = {type = "str", short = "-p", required = false, description = "Project id or path (falls back to GITLAB_PROJECT)"}
+file-path = {type = "str", required = true, description = "Path within the repository (e.g. src/main.py)"}
+branch = {type = "str", required = true, description = "Branch to commit to"}
+commit-message = {type = "str", required = true, description = "Commit message"}
+content = {type = "str", required = false, description = "New file content"}
+content-file = {type = "path", required = false, description = "Local file whose text becomes the new content"}
+start-branch = {type = "str", required = false, description = "Create --branch from this branch first (for a new branch)"}
+last-commit-id = {type = "str", required = false, description = "Only update if the file's last commit is still this one"}
+[gitlab.commands.write-file.groups.content-source]
+exactly-one = true
+args = ["content", "content-file"]
+
+# ── pipeline / job writes ──────────────────────────────────────────────────
+
+[gitlab.commands.create-pipeline]
+description = "Start a new pipeline on a branch or tag"
+autonomy = "confirm"
+[gitlab.commands.create-pipeline.args]
+project = {type = "str", short = "-p", required = false, description = "Project id or path (falls back to GITLAB_PROJECT)"}
+ref = {type = "str", required = true, description = "Branch or tag to run the pipeline on"}
+variable = {type = "str", multiple = true, required = false, description = "Pipeline variable as KEY=VALUE (repeat)"}
+
+[gitlab.commands.retry-pipeline]
+description = "Retry a pipeline's failed or canceled jobs"
+autonomy = "confirm"
+[gitlab.commands.retry-pipeline.args]
+project = {type = "str", short = "-p", required = false, description = "Project id or path (falls back to GITLAB_PROJECT)"}
+pipeline-id = {type = "int", required = true, description = "Pipeline id (not the iid)"}
+
+[gitlab.commands.cancel-pipeline]
+description = "Cancel a pipeline's running jobs"
+autonomy = "confirm"
+[gitlab.commands.cancel-pipeline.args]
+project = {type = "str", short = "-p", required = false, description = "Project id or path (falls back to GITLAB_PROJECT)"}
+pipeline-id = {type = "int", required = true, description = "Pipeline id (not the iid)"}
+
+[gitlab.commands.retry-job]
+description = "Retry a single CI job"
+autonomy = "confirm"
+[gitlab.commands.retry-job.args]
+project = {type = "str", short = "-p", required = false, description = "Project id or path (falls back to GITLAB_PROJECT)"}
+job-id = {type = "int", required = true, description = "Job id"}
+
+[gitlab.commands.cancel-job]
+description = "Cancel a single running CI job"
+autonomy = "confirm"
+[gitlab.commands.cancel-job.args]
+project = {type = "str", short = "-p", required = false, description = "Project id or path (falls back to GITLAB_PROJECT)"}
+job-id = {type = "int", required = true, description = "Job id"}
+
+[gitlab.commands.play-job]
+description = "Run a manual CI job"
+autonomy = "confirm"
+[gitlab.commands.play-job.args]
+project = {type = "str", short = "-p", required = false, description = "Project id or path (falls back to GITLAB_PROJECT)"}
+job-id = {type = "int", required = true, description = "Job id of the manual job"}
+variable = {type = "str", multiple = true, required = false, description = "Job variable as KEY=VALUE (repeat)"}
+
+# ── deletes (manual: a person runs these, never an agent) ──────────────────
+
+[gitlab.commands.delete-issue]
+description = "Permanently delete an issue (project owners and admins only)"
+autonomy = "manual"
+[gitlab.commands.delete-issue.args]
+project = {type = "str", short = "-p", required = false, description = "Project id or path (falls back to GITLAB_PROJECT)"}
+issue-iid = {type = "int", required = true, description = "Issue internal id (the #N shown in the UI)"}
+
+[gitlab.commands.delete-branch]
+description = "Delete a branch (GitLab refuses protected and default branches)"
+autonomy = "manual"
+[gitlab.commands.delete-branch.args]
+project = {type = "str", short = "-p", required = false, description = "Project id or path (falls back to GITLAB_PROJECT)"}
+branch = {type = "str", required = true, description = "Branch to delete"}
+
+[gitlab.commands.delete-file]
+description = "Delete a repository file from a branch in one commit"
+autonomy = "manual"
+[gitlab.commands.delete-file.args]
+project = {type = "str", short = "-p", required = false, description = "Project id or path (falls back to GITLAB_PROJECT)"}
+file-path = {type = "str", required = true, description = "Path within the repository (e.g. src/old.py)"}
+branch = {type = "str", required = true, description = "Branch to commit the delete to"}
+commit-message = {type = "str", required = true, description = "Commit message"}
+last-commit-id = {type = "str", required = false, description = "Only delete if the file's last commit is still this one"}
+
+[gitlab.commands.delete-pipeline]
+description = "Delete a pipeline with its jobs, logs and artifacts (project owners only)"
+autonomy = "manual"
+[gitlab.commands.delete-pipeline.args]
+project = {type = "str", short = "-p", required = false, description = "Project id or path (falls back to GITLAB_PROJECT)"}
+pipeline-id = {type = "int", required = true, description = "Pipeline id (not the iid)"}

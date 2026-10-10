@@ -2,6 +2,29 @@
 
 All notable changes to `runspec-gitlab` are documented here.
 
+## [0.3.0] — 2026-10-10
+
+### Added
+
+- **15 write verbs**, all `autonomy = "confirm"` (the 17 read verbs stay
+  `autonomous`):
+  - issues: `create-issue`, `update-issue` (title/description, add/remove
+    labels, assignees, milestone, due date, close/reopen), `add-issue-note`;
+  - merge requests: `create-merge-request` (`--draft`, reviewers, squash,
+    remove source branch), `update-merge-request`, `add-merge-request-note`,
+    `merge-merge-request` (`--sha` guard, `--when-pipeline-succeeds`);
+  - repository: `create-branch`, `write-file` (creates or replaces a text file
+    in one commit, from `--content` or `--content-file`, optionally on a new
+    branch via `--start-branch`);
+  - pipelines/jobs: `create-pipeline` (`--variable KEY=VALUE`),
+    `retry-pipeline`, `cancel-pipeline`, `retry-job`, `cancel-job`, `play-job`.
+- **4 delete verbs**, all `autonomy = "manual"` so an agent can never run
+  them (a person can, from the CLI or the console's Forms tab):
+  `delete-issue`, `delete-branch`, `delete-file`, `delete-pipeline`.
+- Assignees and reviewers are taken as usernames. Writes and deletes need a
+  token with the `api` scope.
+- Requires `runspec-gitlab-core >= 0.3.0`.
+
 ## [0.2.1] — 2026-09-20
 
 ### Changed

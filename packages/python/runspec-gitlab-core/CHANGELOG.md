@@ -2,6 +2,27 @@
 
 All notable changes to `runspec-gitlab-core` are documented here.
 
+## [0.3.0]
+
+Write helpers, each taking a `GitlabConfig` first like the reads.
+
+- **Issues:** `create_issue`, `update_issue`, `add_issue_note`.
+- **Merge requests:** `create_merge_request`, `update_merge_request`,
+  `add_merge_request_note`, `merge_merge_request`.
+- **Repository:** `create_branch`, `write_file` (checks whether the file exists
+  on the starting branch, then creates or updates it; returns `action`
+  `created`/`updated`).
+- **Pipelines/jobs:** `create_pipeline`, `retry_pipeline`, `cancel_pipeline`,
+  `retry_job`, `cancel_job`, `play_job` (variables as `KEY=VALUE` strings).
+- **Deletes:** `delete_issue`, `delete_branch`, `delete_file`,
+  `delete_pipeline` (each returns a small `{"deleted": ...}` summary).
+- `resolve_user_ids` maps usernames to the numeric ids the write APIs take.
+- `gitlab_request` gains a `body=` JSON request body (its `None` values are
+  dropped), and `GitlabError` now carries the HTTP `status_code` of an API
+  error (`None` for a configuration error).
+- `update_issue`/`update_merge_request` raise `ValueError` when no field is
+  given, rather than sending an empty edit.
+
 ## [0.2.0]
 
 Reconciled against GitLab's canonical MCP tool set.

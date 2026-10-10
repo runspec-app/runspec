@@ -97,6 +97,95 @@ def test_dispatch_get_file_decodes(monkeypatch) -> None:
     assert result["content"] == "print('hi')"
 
 
+# ── writes ──────────────────────────────────────────────────────────────────
+
+
+def _record(monkeypatch, routes: dict | None = None) -> list:
+    calls: list = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.raw_path.decode().split("?")[0]
+        body = json.loads(request.content) if request.content else None
+        calls.append((request.method, path, body))
+        if routes and (request.method, path) in routes:
+            return routes[(request.method, path)]
+        return httpx.Response(201, json={"ok": True})
+
+    transport = httpx.MockTransport(handler)
+
+    def fake_request(method, url, **kwargs):
+        with httpx.Client(transport=transport) as c:
+            return c.request(method, url, **kwargs)
+
+    monkeypatch.setattr(client_mod.httpx, "request", fake_request)
+    return calls
+
+
+def test_dispatch_create_issue_labels(monkeypatch) -> None:
+    calls = _record(monkeypatch)
+    h = _harness()
+    spec = h.expect_ok(["create-issue", "--project", "grp/app", "--title", "Bug", "--label", "a", "--label", "b"])
+    cli._dispatch(spec, CFG)
+    h.close()
+    assert calls == [("POST", "/api/v4/projects/grp%2Fapp/issues", {"title": "Bug", "labels": "a,b"})]
+
+
+def test_dispatch_update_issue_close(monkeypatch) -> None:
+    calls = _record(monkeypatch)
+    h = _harness()
+    spec = h.expect_ok(["update-issue", "--project", "grp/app", "--issue-iid", "4", "--state", "close"])
+    cli._dispatch(spec, CFG)
+    h.close()
+    # unset repeatable args (assignee, labels) don't clear anything
+    assert calls == [("PUT", "/api/v4/projects/grp%2Fapp/issues/4", {"state_event": "close"})]
+
+
+def test_dispatch_merge_keeps_mr_settings(monkeypatch) -> None:
+    calls = _record(monkeypatch)
+    h = _harness()
+    spec = h.expect_ok(["merge-merge-request", "--project", "grp/app", "--mr-iid", "9", "--sha", "abc"])
+    cli._dispatch(spec, CFG)
+    h.close()
+    assert calls == [("PUT", "/api/v4/projects/grp%2Fapp/merge_requests/9/merge", {"sha": "abc"})]
+
+
+def test_dispatch_write_file_from_content_file(monkeypatch, tmp_path) -> None:
+    src = tmp_path / "new.txt"
+    src.write_text("hello\n", encoding="utf-8")
+    file_url = "/api/v4/projects/grp%2Fapp/repository/files/docs%2Fnew.txt"
+    calls = _record(monkeypatch, routes={("GET", file_url): httpx.Response(404, json={"message": "404"})})
+    h = _harness()
+    spec = h.expect_ok(
+        [
+            "write-file", "--project", "grp/app", "--file-path", "docs/new.txt",
+            "--branch", "main", "--commit-message", "add", "--content-file", str(src),
+        ]
+    )  # fmt: skip
+    result = cli._dispatch(spec, CFG)
+    h.close()
+    assert result["action"] == "created"
+    assert calls[-1] == ("POST", file_url, {"branch": "main", "content": "hello\n", "commit_message": "add"})
+
+
+def test_dispatch_create_pipeline_variables(monkeypatch) -> None:
+    calls = _record(monkeypatch)
+    h = _harness()
+    spec = h.expect_ok(["create-pipeline", "--project", "grp/app", "--ref", "main", "--variable", "A=1"])
+    cli._dispatch(spec, CFG)
+    h.close()
+    assert calls[-1][2]["variables"] == [{"key": "A", "value": "1", "variable_type": "env_var"}]
+
+
+def test_dispatch_delete_branch(monkeypatch) -> None:
+    calls = _record(monkeypatch)
+    h = _harness()
+    spec = h.expect_ok(["delete-branch", "--project", "grp/app", "--branch", "old/fix"])
+    result = cli._dispatch(spec, CFG)
+    h.close()
+    assert result == {"deleted": "branch", "branch": "old/fix"}
+    assert calls == [("DELETE", "/api/v4/projects/grp%2Fapp/repository/branches/old%2Ffix", None)]
+
+
 # ── main() error path ───────────────────────────────────────────────────────
 
 

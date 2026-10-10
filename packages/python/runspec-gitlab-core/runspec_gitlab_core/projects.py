@@ -68,3 +68,28 @@ def search_projects(
             "page": page,
         },
     )
+
+
+def resolve_user_ids(config: GitlabConfig, usernames: list[str] | None) -> list[int] | None:
+    """Map GitLab usernames to numeric user ids (the write APIs take ids).
+
+    A leading ``@`` is ignored and an all-digit entry is taken as an id already.
+    Returns ``None`` when ``usernames`` is ``None`` (field left unchanged) and
+    ``[]`` for an empty list (field cleared). Raises :class:`GitlabError` naming
+    any username GitLab doesn't know.
+    """
+    if usernames is None:
+        return None
+    ids: list[int] = []
+    for raw in usernames:
+        name = raw.strip().lstrip("@")
+        if not name:
+            continue
+        if name.isdigit():
+            ids.append(int(name))
+            continue
+        matches = gitlab_request("GET", "/users", config=config, params={"username": name})
+        if not matches:
+            raise GitlabError(f"Unknown GitLab user {name!r}")
+        ids.append(int(matches[0]["id"]))
+    return ids

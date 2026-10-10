@@ -24,6 +24,14 @@ def test_smoke_all_verbs() -> None:
             "pipeline-id": 1,
             "job-id": 1,
             "file-path": "README.md",
+            "title": "t",
+            "body": "b",
+            "source-branch": "fix",
+            "target-branch": "main",
+            "branch": "feat",
+            "ref": "main",
+            "commit-message": "m",
+            "content": "x",
         }
     )
     h.close()
@@ -80,4 +88,51 @@ def test_list_tree_recursive_flag() -> None:
     h = _harness()
     spec = h.expect_ok(["list-tree", "--project", "grp/app", "--recursive"])
     assert spec.recursive.value is True
+    h.close()
+
+
+READ_VERBS = {
+    "whoami", "get-project", "search-projects", "list-issues", "get-issue",
+    "list-merge-requests", "get-merge-request", "get-merge-request-diffs",
+    "get-merge-request-commits", "get-merge-request-notes",
+    "get-merge-request-pipelines", "get-merge-request-conflicts",
+    "list-pipelines", "get-pipeline-jobs", "get-job-log", "get-file", "list-tree",
+}  # fmt: skip
+
+
+def test_reads_autonomous_writes_confirm_deletes_manual() -> None:
+    try:
+        import tomllib
+    except ImportError:  # Python 3.10
+        import tomli as tomllib
+
+    commands = tomllib.loads(SPEC.read_text())["gitlab"]["commands"]
+    deletes = {name for name in commands if name.startswith("delete-")}
+    assert deletes == {"delete-issue", "delete-branch", "delete-file", "delete-pipeline"}
+    for name, cmd in commands.items():
+        if name in READ_VERBS:
+            expected = "autonomous"
+        elif name in deletes:
+            expected = "manual"  # human-only: an agent can never run a delete
+        else:
+            expected = "confirm"
+        assert cmd["autonomy"] == expected, name
+    assert len(commands) - len(READ_VERBS) - len(deletes) == 15
+
+
+def test_write_file_needs_exactly_one_content_source() -> None:
+    h = _harness()
+    base = ["write-file", "--project", "grp/app", "--file-path", "a", "--branch", "b", "--commit-message", "m"]
+    h.expect_exit(base, contains="content")
+    h.expect_exit([*base, "--content", "x", "--content-file", "f"], contains="content")
+    spec = h.expect_ok([*base, "--content", "x"])
+    assert spec.content.value == "x"
+    h.close()
+
+
+def test_repeatable_labels_and_unset_is_empty() -> None:
+    h = _harness()
+    spec = h.expect_ok(["create-issue", "--project", "grp/app", "--title", "t", "--label", "a", "--label", "b"])
+    assert list(spec.label.value) == ["a", "b"]
+    assert not spec.assignee.value
     h.close()
