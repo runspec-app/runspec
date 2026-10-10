@@ -459,14 +459,18 @@ demonstrated in the docs.)
   **JSON** (stdlib only, no YAML dep) per **leaf command** to
   `jobs/{job}.json` at the git root. A Bash **script step** reading each
   `@option.<name>@` token into `RUNSPEC_<RUNNABLE>_ARG_<NAME>` through a quoted
-  heredoc, behind a line-2 guard that counts the script's non-blank lines and
+  heredoc, behind a line-3 guard that counts the script's non-blank lines and
   exits 64 if a value added one (0.72.1 — safe on pre-5.20 Rundeck, which
   substitutes unescaped; 0.72.0 relied on 5.20 escaping) — no `RD_OPTION_*` (needs
   `AcceptEnv RD_*`) and no value on argv (`ps`); accepted tradeoff: values sit
-  in the node's temp script, readable by the Rundeck SSH user while it runs.
-  `meta.rundeck.run_as` / `--run-as` → `sudo -n -u <svc>` with values on stdin
-  as the SPEC env frame (venv `bin/python` prelude); examples should always set
-  it so runnables run as the service account; `password` → a Rundeck **secure
+  in the node's temp script, which `chmod 700`s itself on line 2 (0.73.0).
+  The job exits 127 with `runspec: <r> not found at <path> (checked as <user>
+  on <host>)` when the runnable isn't in the venv / on PATH (0.73.0). `run_as`
+  precedence `--run-as` → `meta.rundeck` → runnable `run_as` → `[config]
+  run_as` → `"@owner"` (0.73.0; `@owner` = `stat` the venv owner on the node,
+  never root, no sudo when already that account; `""` = no sudo) → `sudo -n -u`
+  with values on stdin as the SPEC env frame (venv `bin/python` prelude);
+  examples should always set it so runnables run as the service account; `password` → a Rundeck **secure
   option**; `--node-filter` adds
   orchestrator **random subset=1** load-balancing; schedule + notifications
   from `[<runnable>.meta.rundeck]` (project defaults `[config.meta.rundeck]`);

@@ -140,18 +140,23 @@ def test_script_no_args_just_execs():
 
 def test_script_run_as_sends_env_frame_on_stdin_to_venv_python():
     s = rundeckgen.render_script("deploy", ["start"], {"token": {"type": "password"}}, "/opt/app/.venv/bin/deploy", run_as="svc", venv="/opt/app/.venv")
-    assert 'rs_frame RUNSPEC_DEPLOY_ARG_TOKEN | sudo -n -u svc /opt/app/.venv/bin/python -c "$RS_PRELUDE" /opt/app/.venv/bin/deploy start' in s
-    assert "export" not in s  # sudo resets the environment; values ride stdin
+    assert "rs_user=svc\n" in s
+    assert 'rs_frame RUNSPEC_DEPLOY_ARG_TOKEN | sudo -n -u "$rs_user" /opt/app/.venv/bin/python -c "$RS_PRELUDE" /opt/app/.venv/bin/deploy start' in s
+    # sudo resets the environment, so values ride stdin; the only export is the
+    # no-sudo branch taken when the Rundeck user already is the account.
+    assert s.count("export") == 1
+    assert 'if [ "$rs_user" = "$(id -un)" ]; then' in s
 
 
 def test_script_run_as_without_venv_uses_shell_prelude():
     s = rundeckgen.render_script("deploy", [], {"x": {"type": "str"}}, "deploy", run_as="svc")
-    assert '| sudo -n -u svc sh -c "$RS_PRELUDE" sh deploy' in s
+    assert '| sudo -n -u "$rs_user" sh -c "$RS_PRELUDE" sh deploy' in s
+    assert "command -v" not in s  # sudo's PATH isn't the Rundeck user's
 
 
 def test_script_run_as_no_args_execs_sudo():
     s = rundeckgen.render_script("deploy", [], {}, "/opt/v/bin/deploy", run_as="svc", venv="/opt/v")
-    assert s.strip().endswith("exec sudo -n -u svc /opt/v/bin/deploy")
+    assert s.strip().endswith('exec sudo -n -u "$rs_user" /opt/v/bin/deploy')
 
 
 def test_script_run_as_rejects_shell_metacharacters():
@@ -161,7 +166,7 @@ def test_script_run_as_rejects_shell_metacharacters():
         rundeckgen.render_script("deploy", [], {}, "deploy", run_as="svc; id")
 
 
-def _run_substituted(tmp_path, script, values):
+def _run_substituted(tmp_path, script, values, env=None):
     """Substitute tokens the way pre-5.20 Rundeck does (raw text, no escaping),
     write the script to a file and run it with /bin/bash like the job's
     scriptInterpreter does."""
@@ -171,7 +176,7 @@ def _run_substituted(tmp_path, script, values):
     script = re.sub(r"@option\.([\w-]+)@", lambda m: values[m.group(1)], script)
     path = tmp_path / "rd-script.sh"
     path.write_text(script)
-    return subprocess.run(["bash", str(path)], capture_output=True, text=True, cwd=tmp_path)
+    return subprocess.run(["bash", str(path)], capture_output=True, text=True, cwd=tmp_path, env=env)
 
 
 def _show_binary(tmp_path):
@@ -250,8 +255,84 @@ def test_script_guard_tolerates_blank_lines(tmp_path):
 def test_script_guard_count_matches_rendered_script():
     script = rundeckgen.render_script("deploy", ["start"], {"t": {"type": "password"}}, "/opt/v/bin/d", run_as="svc", venv="/opt/v")
     count = sum(1 for line in script.split("\n") if line.strip())
-    assert script.split("\n")[1].startswith('[ "$(awk ')
-    assert f"= {count} ]" in script.split("\n")[1]
+    assert script.split("\n")[2].startswith('[ "$(awk ')
+    assert f"= {count} ]" in script.split("\n")[2]
+
+
+def test_script_makes_its_own_file_private(tmp_path):
+    """The job script's first command makes the temp file Rundeck copied to the
+    node readable by its owner only (it may be left behind if a job is killed)."""
+    _needs_bash()
+    show = _show_binary(tmp_path)
+    script = rundeckgen.render_script("show", [], {"a": {"type": "str"}}, str(show))
+    assert script.split("\n")[1].startswith('chmod 700 -- "${BASH_SOURCE[0]:-$0}"')
+    path = tmp_path / "rd-script.sh"
+    out = _run_substituted(tmp_path, script, {"a": "secret"})
+    assert out.returncode == 0, out.stderr
+    assert path.stat().st_mode & 0o777 == 0o700
+
+
+def test_script_stops_when_runnable_missing_from_venv(tmp_path):
+    _needs_bash()
+    (tmp_path / "bin").mkdir()
+    script = rundeckgen.render_script("app", [], {"a": {"type": "str"}}, str(tmp_path / "bin" / "app"), venv=str(tmp_path))
+    out = _run_substituted(tmp_path, script, {"a": "x"})
+    assert out.returncode == 127
+    assert f"runspec: app not found at {tmp_path}/bin/app (checked as " in out.stderr
+    assert out.stdout == ""
+
+
+def test_script_stops_when_runnable_missing_from_path(tmp_path):
+    _needs_bash()
+    import os
+
+    script = rundeckgen.render_script("rs-no-such-runnable", [], {}, "rs-no-such-runnable")
+    out = _run_substituted(tmp_path, script, {}, env={**os.environ, "PATH": "/usr/bin:/bin"})
+    assert out.returncode == 127
+    assert "runspec: rs-no-such-runnable not found on PATH (checked as " in out.stderr
+
+
+def test_script_owner_runs_directly_when_already_the_owner(tmp_path):
+    """`@owner` resolves the venv's owner on the node; the test venv is ours
+    (or root's, which @owner never escalates to), so no sudo is involved."""
+    _needs_bash()
+    import os
+
+    show = _show_binary(tmp_path)
+    for venv in (str(tmp_path), None):
+        invocation = str(show) if venv else "show"
+        script = rundeckgen.render_script("show", ["sub"], {"a": {"type": "str"}}, invocation, run_as="@owner", venv=venv)
+        env = {**os.environ, "PATH": f"{tmp_path}/bin:/usr/bin:/bin"}
+        out = _run_substituted(tmp_path, script, {"a": "v"}, env=env)
+        assert out.returncode == 0, out.stderr
+        assert json.loads(out.stdout) == [{"RUNSPEC_SHOW_ARG_A": "v"}, ["sub"]]
+
+
+def test_script_owner_escalates_to_the_venv_owner(tmp_path):
+    """A venv owned by another account: the job sudoes to that account and the
+    values cross on stdin. `stat` and `sudo` are stubbed to fake the owner."""
+    _needs_bash()
+    import os
+    import sys
+
+    show = _show_binary(tmp_path)
+    (tmp_path / "bin" / "python").symlink_to(sys.executable)
+    stubs = tmp_path / "stubs"
+    stubs.mkdir()
+    (stubs / "stat").write_text('#!/bin/sh\ncase "$2" in %U) echo svc-owner;; *) echo 4242;; esac\n')
+    (stubs / "sudo").write_text('#!/bin/sh\necho "$*" > "$SUDO_LOG"\nshift 3\nexec "$@"\n')
+    for stub in stubs.iterdir():
+        stub.chmod(0o755)
+    env = {**os.environ, "PATH": f"{stubs}:{tmp_path}/bin:/usr/bin:/bin", "SUDO_LOG": str(tmp_path / "sudo.log")}
+    for venv in (str(tmp_path), None):
+        invocation = str(show) if venv else "show"
+        script = rundeckgen.render_script("show", ["sub"], {"a": {"type": "str"}, "b": {"type": "password"}}, invocation, run_as="@owner", venv=venv)
+        out = _run_substituted(tmp_path, script, {"a": "v", "b": "s3cret"}, env=env)
+        assert out.returncode == 0, out.stderr
+        assert json.loads(out.stdout) == [{"RUNSPEC_SHOW_ARG_A": "v", "RUNSPEC_SHOW_ARG_B": "s3cret"}, ["sub"]]
+        sudo_argv = (tmp_path / "sudo.log").read_text()
+        assert sudo_argv.startswith("-n -u svc-owner ")
+        assert "s3cret" not in sudo_argv and str(show) in sudo_argv
 
 
 def test_script_env_frame_matches_spec():
@@ -338,9 +419,18 @@ def test_merge_settings_run_as_precedence():
     assert rundeckgen.merge_settings("app", {}, {}, {}, "own")["run_as"] == "own"
 
 
-def test_merge_settings_run_as_ignores_node_resolved_forms():
-    for value in ("@owner", "$SVC_USER", {"web-*": "svc"}, "", None):
+def test_merge_settings_run_as_ignores_forms_a_job_cannot_resolve():
+    for value in ("$SVC_USER", {"web-*": "svc"}, "", "@other"):
         assert rundeckgen.merge_settings("app", {}, {}, {}, value)["run_as"] is None
+
+
+def test_merge_settings_run_as_owner_and_unset_default_to_owner():
+    assert rundeckgen.merge_settings("app", {}, {}, {}, "@owner")["run_as"] == "@owner"
+    assert rundeckgen.merge_settings("app", {}, {}, {}, None)["run_as"] == "@owner"
+    assert rundeckgen.merge_settings("app", {}, {}, {})["run_as"] == "@owner"
+    # An explicit "" anywhere opts out, like the core.
+    assert rundeckgen.merge_settings("app", {"run_as": ""}, {}, {}, "own")["run_as"] is None
+    assert rundeckgen.merge_settings("app", {}, {}, {"run_as": ""}, None)["run_as"] is None
 
 
 def test_merge_settings_invocation_bare_without_venv():
@@ -488,4 +578,4 @@ def test_render_runnable_password_option_present_and_env_exported():
 
 def test_render_job_run_as_wraps_in_sudo():
     job = rundeckgen.render_job("app", _leaf(args={"x": {"type": "str"}}), _settings(run_as="svc", venv="/opt/v"))
-    assert "| sudo -n -u svc /opt/v/bin/python" in job["sequence"]["commands"][0]["script"]
+    assert '| sudo -n -u "$rs_user" /opt/v/bin/python' in job["sequence"]["commands"][0]["script"]

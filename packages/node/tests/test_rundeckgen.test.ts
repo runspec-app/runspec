@@ -131,18 +131,22 @@ test('no value goes on the command line', () => {
 
 test('run_as sends the env frame on stdin to the venv python', () => {
   const s = renderScript('deploy', ['start'], { token: arg({ type: 'password' }) }, '/opt/app/.venv/bin/deploy', 'svc', '/opt/app/.venv');
-  expect(s).toContain('rs_frame RUNSPEC_DEPLOY_ARG_TOKEN | sudo -n -u svc /opt/app/.venv/bin/python -c "$RS_PRELUDE" /opt/app/.venv/bin/deploy start');
-  expect(s).not.toContain('export');
+  expect(s).toContain('rs_user=svc\n');
+  expect(s).toContain('rs_frame RUNSPEC_DEPLOY_ARG_TOKEN | sudo -n -u "$rs_user" /opt/app/.venv/bin/python -c "$RS_PRELUDE" /opt/app/.venv/bin/deploy start');
+  // The only export is the no-sudo branch taken when the Rundeck user already is the account.
+  expect(s.split('export').length - 1).toBe(1);
+  expect(s).toContain('if [ "$rs_user" = "$(id -un)" ]; then');
 });
 
 test('run_as without a venv uses the shell prelude', () => {
   const s = renderScript('deploy', [], { x: arg({ type: 'str' }) }, 'deploy', 'svc');
-  expect(s).toContain('| sudo -n -u svc sh -c "$RS_PRELUDE" sh deploy');
+  expect(s).toContain('| sudo -n -u "$rs_user" sh -c "$RS_PRELUDE" sh deploy');
+  expect(s).not.toContain('command -v');
 });
 
 test('run_as with no args just execs sudo', () => {
   const s = renderScript('deploy', [], {}, '/opt/v/bin/deploy', 'svc', '/opt/v');
-  expect(s.trim().endsWith('exec sudo -n -u svc /opt/v/bin/deploy')).toBe(true);
+  expect(s.trim().endsWith('exec sudo -n -u "$rs_user" /opt/v/bin/deploy')).toBe(true);
 });
 
 test('run_as rejects shell metacharacters', () => {
@@ -173,10 +177,10 @@ function showBinary(dir: string): string {
 
 // Substitute tokens the way pre-5.20 Rundeck does (raw text, no escaping) and
 // run the script from a file with /bin/bash, like the job's scriptInterpreter.
-function runSubstituted(dir: string, script: string, values: Record<string, string>) {
+function runSubstituted(dir: string, script: string, values: Record<string, string>, env?: NodeJS.ProcessEnv) {
   const file = path.join(dir, 'rd-script.sh');
   fs.writeFileSync(file, script.replace(/@option\.([\w-]+)@/g, (_m, n: string) => values[n]));
-  return spawnSync('bash', [file], { cwd: dir, encoding: 'utf8' });
+  return spawnSync('bash', [file], { cwd: dir, encoding: 'utf8', env: env ?? process.env });
 }
 
 bashIt('raw-substituted values reach the runnable env as data', () => {
@@ -222,6 +226,66 @@ bashIt('the guard ignores blank lines', () => {
   expect(JSON.parse(out.stdout)[0]).toEqual({});
 });
 
+bashIt('the script makes its own file private first', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rd-'));
+  const show = showBinary(dir);
+  const script = renderScript('show', [], { a: arg({ type: 'str' }) }, show);
+  expect(script.split('\n')[1].startsWith('chmod 700 -- "${BASH_SOURCE[0]:-$0}"')).toBe(true);
+  const out = runSubstituted(dir, script, { a: 'secret' });
+  expect(out.status).toBe(0);
+  expect(fs.statSync(path.join(dir, 'rd-script.sh')).mode & 0o777).toBe(0o700);
+});
+
+bashIt('a runnable missing from the venv stops with a clear message', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rd-'));
+  fs.mkdirSync(path.join(dir, 'bin'));
+  const out = runSubstituted(dir, renderScript('app', [], { a: arg({ type: 'str' }) }, path.join(dir, 'bin', 'app'), null, dir), { a: 'x' });
+  expect(out.status).toBe(127);
+  expect(out.stderr).toContain(`runspec: app not found at ${dir}/bin/app (checked as `);
+  expect(out.stdout).toBe('');
+});
+
+bashIt('a runnable missing from PATH stops with a clear message', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rd-'));
+  const out = runSubstituted(dir, renderScript('rs-no-such-runnable', [], {}, 'rs-no-such-runnable'), {}, { ...process.env, PATH: '/usr/bin:/bin' });
+  expect(out.status).toBe(127);
+  expect(out.stderr).toContain('runspec: rs-no-such-runnable not found on PATH (checked as ');
+});
+
+bashIt('@owner runs directly when already the venv owner', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rd-'));
+  const show = showBinary(dir);
+  const env = { ...process.env, PATH: `${dir}/bin:/usr/bin:/bin` };
+  for (const venv of [dir, null]) {
+    const script = renderScript('show', ['sub'], { a: arg({ type: 'str' }) }, venv ? show : 'show', '@owner', venv);
+    const out = runSubstituted(dir, script, { a: 'v' }, env);
+    expect(out.status).toBe(0);
+    expect(JSON.parse(out.stdout)).toEqual([{ RUNSPEC_SHOW_ARG_A: 'v' }, ['sub']]);
+  }
+});
+
+bashIt('@owner sudoes to the venv owner with values on stdin', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rd-'));
+  const show = showBinary(dir);
+  fs.symlinkSync(execFileSync('bash', ['-c', 'command -v python3']).toString().trim(), path.join(dir, 'bin', 'python'));
+  const stubs = path.join(dir, 'stubs');
+  fs.mkdirSync(stubs);
+  fs.writeFileSync(path.join(stubs, 'stat'), '#!/bin/sh\ncase "$2" in %U) echo svc-owner;; *) echo 4242;; esac\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(stubs, 'sudo'), '#!/bin/sh\necho "$*" > "$SUDO_LOG"\nshift 3\nexec "$@"\n', { mode: 0o755 });
+  const log = path.join(dir, 'sudo.log');
+  const env = { ...process.env, PATH: `${stubs}:${dir}/bin:/usr/bin:/bin`, SUDO_LOG: log };
+  const args = { a: arg({ type: 'str' }), b: arg({ type: 'password' }) };
+  for (const venv of [dir, null]) {
+    const out = runSubstituted(dir, renderScript('show', ['sub'], args, venv ? show : 'show', '@owner', venv), { a: 'v', b: 's3cret' }, env);
+    expect(out.status).toBe(0);
+    expect(JSON.parse(out.stdout)).toEqual([{ RUNSPEC_SHOW_ARG_A: 'v', RUNSPEC_SHOW_ARG_B: 's3cret' }, ['sub']]);
+    const sudoArgv = fs.readFileSync(log, 'utf8');
+    expect(sudoArgv.startsWith('-n -u svc-owner ')).toBe(true);
+    expect(sudoArgv).not.toContain('s3cret');
+    expect(sudoArgv).toContain(show);
+  }
+});
+
 bashIt('rs_frame writes the SPEC env frame', () => {
   const value = "x y'z\nü$HOME";
   const out = execFileSync('bash', ['-c', `${FRAME_FUNC}\nA="$1"\nB=\nrs_frame A B`, 'bash', value]);
@@ -265,14 +329,22 @@ test('mergeSettings precedence CLI > runnable > config', () => {
   expect(mergeSettings('app', { venv: '/opt/v/' }, {}, {}).invocation).toBe('/opt/v/bin/app');
 });
 
-test('mergeSettings run_as precedence and node-resolved forms', () => {
+test('mergeSettings run_as precedence and forms a job cannot resolve', () => {
   expect(mergeSettings('app', { runAs: 'cli' }, { run_as: 'cfg' }, { run_as: 'run' }, 'own').runAs).toBe('cli');
   expect(mergeSettings('app', {}, { run_as: 'cfg' }, { run_as: 'run' }, 'own').runAs).toBe('run');
   expect(mergeSettings('app', {}, { run_as: 'cfg' }, {}, 'own').runAs).toBe('cfg');
   expect(mergeSettings('app', {}, {}, {}, 'own').runAs).toBe('own');
-  for (const v of ['@owner', '$SVC', { 'web-*': 'svc' }, '', undefined]) {
+  for (const v of ['$SVC', { 'web-*': 'svc' }, '', '@other']) {
     expect(mergeSettings('app', {}, {}, {}, v).runAs).toBeUndefined();
   }
+});
+
+test('mergeSettings run_as: @owner, and unset defaults to @owner', () => {
+  expect(mergeSettings('app', {}, {}, {}, '@owner').runAs).toBe('@owner');
+  expect(mergeSettings('app', {}, {}, {}, undefined).runAs).toBe('@owner');
+  expect(mergeSettings('app', {}, {}, {}).runAs).toBe('@owner');
+  expect(mergeSettings('app', { runAs: '' }, {}, {}, 'own').runAs).toBeUndefined();
+  expect(mergeSettings('app', {}, {}, { run_as: '' }, undefined).runAs).toBeUndefined();
 });
 
 test('orchestrator defaults subset with a node filter, none without', () => {

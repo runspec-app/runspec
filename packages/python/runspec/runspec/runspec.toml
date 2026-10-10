@@ -102,7 +102,7 @@ runnable    = {type = "str",  description = "Emit only this runnable", short = "
 group       = {type = "str",  description = "Rundeck job group (default: runspec)", required = false}
 node-filter = {type = "str",  description = "Rundeck node filter; enables orchestrator random-subset=1 load-balancing", required = false}
 project     = {type = "str",  description = "Rundeck project name (used for stable job UUIDs)", required = false}
-run-as      = {type = "str",  description = "Rundeck: run the job script's command as this account (sudo -n -u); values ride stdin", required = false}
+run-as      = {type = "str",  description = "Rundeck: run the job script's command as this account, @owner (the venv's owner, the default) or \"\" (no sudo); values ride stdin", required = false}
 check       = {type = "flag", description = "Verify emitted files are up to date; write nothing. Exit 1 if stale (CI).", default = false}
 stdout      = {type = "flag", description = "Rundeck: print the combined JSON array to stdout instead of writing files", default = false}
 

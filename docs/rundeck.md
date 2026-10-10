@@ -232,6 +232,12 @@ already resolves an arg that isn't on the command line.
   items).
 - A value can't contain a **line break**: the job refuses to run (exit code 64)
   rather than read one. See below for why.
+- If the runnable isn't where the job expects it (`<venv>/bin/<runnable>`, or
+  on the Rundeck user's `PATH` without a venv), the job stops with exit code
+  127 and a message naming the runnable, the place it looked, the account that
+  looked and the node:
+  `runspec: deploy not found at /opt/app/.venv/bin/deploy (checked as rundeck on web-01)`.
+  A venv whose `bin/` the Rundeck user can't open is left to the run itself.
 
 ### How values reach the runnable
 
@@ -258,7 +264,7 @@ parses a value, which makes it safe on every version, secure options included
 - A heredoc body ends only at a line that is exactly the delimiter. The `x` in
   front of each token means a value can never make its own line equal it, so
   the only way out is a value containing a line break.
-- The script's second line counts the script file's own non-blank lines and
+- The script's third line counts the script file's own non-blank lines and
   exits with code 64 unless the count is the one the emitter wrote. A value
   with a line break adds a line, so the job stops before any value is read.
   Blank lines aren't counted, so a trailing newline changes nothing.
@@ -267,15 +273,29 @@ Use an option's `regex` / `values` to restrict what it accepts where you can.
 
 !!! warning "Accepted tradeoff: values in the temp script"
     Rundeck writes the substituted script, secret values included, to a temp
-    file on the node and deletes it when the step ends. While it exists, the
-    file is readable by the Rundeck SSH user (and root). Values never appear in
-    `ps`, the sudo log or the Rundeck job definition.
+    file on the node (for example under `/var/tmp`) and deletes it when the step
+    ends. It copies the file with the node's default umask, so the script's
+    first command is `chmod 700` on its own file: from then on only the Rundeck
+    SSH user (and root) can read it. That also covers a file Rundeck fails to
+    delete, such as after a killed job. Values never appear in `ps`, the sudo
+    log or the Rundeck job definition.
 
 ### Running as the service account
 
 Runnables should run as the service account that owns their venv, not as the
-Rundeck SSH user. Set `run_as` in `meta.rundeck` (or pass `--run-as`) and the
-script runs the command through `sudo -n -u <account>`:
+Rundeck SSH user. The job follows the same `run_as` rules as the runnable
+itself, resolved in this order: `--run-as`, `[<runnable>.meta.rundeck] run_as`,
+`[config.meta.rundeck] run_as`, the runnable's own `run_as`, `[config] run_as`,
+and finally `"@owner"` when none of them is set (the core default).
+
+| `run_as` | What the job does |
+|---|---|
+| `"@owner"` (or unset) | Looks up the owner of the venv on the node (`stat`). Runs directly when the Rundeck user already is that account or the venv is owned by root; otherwise runs through `sudo -n -u <owner>`. Without a `venv`, the venv is the one the runnable was found in on `PATH`. |
+| `"svc"` (an account) | Runs through `sudo -n -u svc`, or directly when the Rundeck user already is `svc`. |
+| `""` | Runs as the Rundeck SSH user, no `sudo`. |
+| `"$ENV"`, a per-host table | Can't be resolved by a job, so it runs as the Rundeck SSH user. Set `run_as` in `meta.rundeck` instead. |
+
+For example:
 
 ```toml
 [config.meta.rundeck]
@@ -291,7 +311,7 @@ uses; see SPEC → "Remote Execution → Command building"):
 
 ```bash
 rs_frame RUNSPEC_DEPLOY_ARG_DEPTH RUNSPEC_DEPLOY_ARG_TOKEN \
-  | sudo -n -u svc /opt/app/.venv/bin/python -c "$RS_PRELUDE" /opt/app/.venv/bin/deploy start
+  | sudo -n -u "$rs_user" /opt/app/.venv/bin/python -c "$RS_PRELUDE" /opt/app/.venv/bin/deploy start
 ```
 
 The sudoers rule therefore needs to allow the Rundeck SSH user to run the
@@ -301,10 +321,7 @@ venv's `bin/` as `svc` without a password, for example:
 rundeck ALL=(svc) NOPASSWD: /opt/app/.venv/bin/
 ```
 
-Without a `venv` the prelude runs on `sh` instead. When `run_as` isn't set in
-`meta.rundeck` or on the command line, the emitter uses the runnable's own
-`run_as` (or `[config] run_as`) if it names a fixed account. `@owner`, `$ENV`
-and per-host forms can only be resolved on the node, so they're ignored here.
+Without a `venv` the prelude runs on `sh` instead.
 
 ### Type mapping
 
@@ -386,7 +403,7 @@ webhook = "https://hooks.example.com/deploy"
 | Key | Effect |
 |---|---|
 | `venv` | Venv whose `bin/` holds the runnable binary (the script invocation path) |
-| `run_as` | Account the command runs as, through `sudo -n -u` (values ride stdin) |
+| `run_as` | Account the command runs as: an account, `"@owner"` (default) or `""` — see "Running as the service account" |
 | `group` | Rundeck job group (default `runspec`) |
 | `node_filter` | Node filter; presence enables orchestrator subset=1 |
 | `orchestrator` | `"subset"` (default when a filter is set) or `"none"` |
@@ -411,7 +428,7 @@ built-in default.
 | `--group <name>` | Rundeck job group (default `runspec`) |
 | `--node-filter <expr>` | Node filter → orchestrator subset=1 load-balancing |
 | `--project <name>` | Rundeck project (used for stable job UUIDs) |
-| `--run-as <account>` | Run each job's command as this account (`sudo -n -u`) |
+| `--run-as <account>` | Run each job's command as this account, `@owner` or `""` (`sudo -n -u` when needed) |
 | `--check` | Verify emitted files are up to date; write nothing. Exit 1 if stale |
 | `--stdout` | Print the combined JSON array to stdout instead of writing files |
 

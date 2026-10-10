@@ -16,10 +16,10 @@ Bash **script step** that assigns each option to its runspec env var —
 arg values on its command line (they would show in `ps`). It doesn't read
 `RD_OPTION_*` variables (those need `AcceptEnv RD_*` on every node's sshd).
 
-Requires Rundeck 5.20+, which shell-escapes option values substituted into a
-job. Accepted tradeoff: Rundeck writes the substituted script, secrets included,
-to a temp file on the node, readable by the Rundeck SSH user until the step
-ends.
+Safe on any Rundeck version: each value is read as data from a quoted heredoc,
+and a value with a line break stops the job (see `render_script`). Rundeck
+writes the substituted script, secrets included, to a temp file on the node;
+the script's first command makes that file readable by its owner only.
 
 The JSON job-definition format mirrors the YAML job structure and imports via
 the API (`Content-Type: application/json`) or `rd jobs load -F json`.
@@ -161,7 +161,7 @@ _FRAME_FUNC = (
 # substituted value can turn its line into this delimiter.
 _VALUE_EOF = "RUNSPEC_VALUE"
 
-# The script's second line: count the script file's own non-blank lines and
+# The script's third line: count the script file's own non-blank lines and
 # refuse to run unless the count is the one the emitter wrote. A Rundeck option
 # value is substituted into the script text before it reaches the node, and the
 # only way one can escape its heredoc is a line break, which adds a line. The
@@ -176,6 +176,18 @@ _GUARD = (
 
 
 _RUN_AS = re.compile(r"[A-Za-z0-9_.][A-Za-z0-9_.-]*")
+
+# `run_as` value resolved on the node to the owner of the venv (the core's
+# default, SPEC "run_as"): never root, and no sudo when already that account.
+_OWNER = "@owner"
+
+# The script's second line: make the script file readable by its owner only.
+# Rundeck copies it to the node's temp dir with the default umask, and leaves
+# it there when a killed job's cleanup fails, values included.
+_PRIVATE = "chmod 700 -- \"${BASH_SOURCE[0]:-$0}\" || { echo 'runspec: could not make the job script private to its owner; refusing to run' >&2; exit 64; }"
+
+# Who ran a failed check, and where, for the not-found message.
+_WHERE = '"$(id -un)" "${HOSTNAME:-this node}"'
 
 
 def rd_option_token(name: str) -> str:
@@ -193,6 +205,40 @@ def _env_prelude_argv(invocation: str, venv: str | None) -> list[str]:
     return ["sh", "-c", '"$RS_PRELUDE"', "sh"]
 
 
+def _not_found(runnable: str, where: str) -> str:
+    """`{ printf …; exit 127; }` naming the runnable, where it was looked for,
+    and the account + node that looked."""
+    return f"{{ printf 'runspec: %s not found %s (checked as %s on %s)\\n' {shlex.quote(runnable)} {shlex.quote(where)} {_WHERE} >&2; exit 127; }}"
+
+
+def _exists_check(runnable: str, invocation: str, venv: str | None, run_as: str | None) -> list[str]:
+    """Lines that stop the job with a clear message when the runnable isn't
+    where the job expects it: `<venv>/bin/<runnable>`, or on the Rundeck user's
+    PATH without a venv. A venv whose `bin/` this account can't search (owned by
+    the `run_as` account) is left to the run itself. With a fixed `run_as` and
+    no venv the binary is found on sudo's PATH, which this account can't see, so
+    there is no check."""
+    if venv:
+        bin_dir = shlex.quote(f"{str(venv).rstrip('/')}/bin")
+        return [f"[ -e {shlex.quote(invocation)} ] || {{ [ -d {bin_dir} ] && [ ! -x {bin_dir} ]; }} || " + _not_found(runnable, f"at {invocation}")]
+    if run_as and run_as != _OWNER:
+        return []
+    return [f"rs_bin=$(command -v {shlex.quote(invocation)}) || " + _not_found(runnable, "on PATH")]
+
+
+def _direct(env_vars: list[tuple[str, str]], cmd: str, indent: str = "") -> list[str]:
+    """Export the non-empty values (an empty option stays unset so the
+    runnable's own default applies) and exec the binary as this account."""
+    lines: list[str] = []
+    if env_vars:
+        names = " ".join(var for var, _ in env_vars)
+        lines.append(f"{indent}for rs_var in {names}; do")
+        lines.append(f'{indent}  if [ -n "${{!rs_var}}" ]; then export "$rs_var"; else unset "$rs_var"; fi')
+        lines.append(f"{indent}done")
+    lines.append(f"{indent}exec {cmd}")
+    return lines
+
+
 def render_script(
     runnable: str,
     command_path: list[str],
@@ -208,45 +254,67 @@ def render_script(
     relies on `RD_OPTION_*` variables (so the node's sshd needs no
     `AcceptEnv RD_*`).
 
+    The script first makes its own file private to its owner (Rundeck writes
+    it with the default umask and can leave it behind when a job is killed).
+
     Rundeck substitutes each `@option.<name>@` token into the script text before
     copying it to the node, and before 5.20 it does not escape the value. So the
     script never lets the shell parse a value: each token sits alone on its own
     line inside a quoted heredoc (`<<'RUNSPEC_VALUE'`), which Bash treats as
     data, and `read` takes that one line into the variable. A heredoc body ends
     only at a line that is exactly the delimiter, which a value can only reach by
-    containing a line break — so the script's second line counts its own
+    containing a line break — so the script's third line counts its own
     non-blank lines and refuses to run if a value added any. The `x` in front of
     each token keeps an empty or delimiter-shaped value from ending the heredoc.
 
-    Without `run_as` the non-empty values are exported (an empty option stays
-    unset so the runnable's own default applies) and the binary is exec'd. With
-    `run_as` the script runs `sudo -n -u <run_as>` and, because sudo resets the
-    environment, writes the values as the SPEC env frame on the child's stdin,
-    read by the fixed env prelude — values never appear in argv or the sudo log.
-    The command line carries only the binary and the subcommand path.
+    It then stops with exit 127 and a clear message if the runnable isn't where
+    the job expects it.
+
+    `run_as` picks the account: `None`/`""` runs as the Rundeck user; an account
+    name, or `"@owner"` (the venv's owner, resolved on the node, never root),
+    runs through `sudo -n -u` unless the Rundeck user already is that account.
+    Because sudo resets the environment, the values then go as the SPEC env
+    frame on the child's stdin, read by the fixed env prelude — never in argv or
+    the sudo log. The command line carries only the binary and the subcommand
+    path.
     """
     env_vars = [(secret_env_var(runnable, name), name) for name in args]
     names = " ".join(var for var, _ in env_vars)
 
-    lines = ["#!/bin/bash", _GUARD, "set -e"]
+    lines = ["#!/bin/bash", _PRIVATE, _GUARD, "set -e"]
     for var, name in env_vars:
         lines.append(f"IFS= read -r {var} <<'{_VALUE_EOF}'")
         lines.append(f"x{rd_option_token(name)}")
         lines.append(_VALUE_EOF)
         lines.append(f"{var}=${{{var}#x}}")
 
+    run_as = run_as or None
+    lines.extend(_exists_check(runnable, invocation, venv, run_as))
+
     cmd = " ".join(shlex.quote(part) for part in [invocation, *command_path])
     if not run_as:
-        if env_vars:
-            lines.append(f"for rs_var in {names}; do")
-            lines.append('  if [ -n "${!rs_var}" ]; then export "$rs_var"; else unset "$rs_var"; fi')
-            lines.append("done")
-        lines.append(f"exec {cmd}")
+        lines.extend(_direct(env_vars, cmd))
         return _finish(lines)
 
-    if not _RUN_AS.fullmatch(run_as):
+    if run_as == _OWNER:
+        root = shlex.quote(str(venv).rstrip("/")) if venv else '"$rs_venv"'
+        if not venv:
+            # The venv is the one PATH found the binary in; run that same file
+            # (sudo's own PATH may not reach it).
+            lines.append("rs_venv=${rs_bin%/*}; rs_venv=${rs_venv%/*}")
+            cmd = " ".join(['"$rs_bin"', *(shlex.quote(part) for part in command_path)])
+        lines.append(f"rs_user=$(stat -c %U -- {root})")
+        lines.append(f'[ "$(stat -c %u -- {root})" != 0 ] || rs_user=')
+        lines.append('if [ -z "$rs_user" ] || [ "$rs_user" = "$(id -un)" ]; then')
+    elif _RUN_AS.fullmatch(run_as):
+        lines.append(f"rs_user={run_as}")
+        lines.append('if [ "$rs_user" = "$(id -un)" ]; then')
+    else:
         raise ValueError(f"run_as {run_as!r} is not a valid account name")
-    become = f"sudo -n -u {run_as}"
+    lines.extend(_direct(env_vars, cmd, indent="  "))
+    lines.append("fi")
+
+    become = 'sudo -n -u "$rs_user"'
     if not env_vars:
         lines.append(f"exec {become} {cmd}")
         return _finish(lines)
@@ -325,7 +393,8 @@ def merge_settings(
     > built-in default. `cli_opts` carries the emit flags (`venv`, `group`,
     `node_filter`, `project`, `run_as`); the two meta dicts are read from the
     raw TOML. `run_as` falls back to `default_run_as` — the runnable's own
-    literal `run_as` account, when it names one.
+    `run_as`, else its `[config] run_as` — and, when neither is set, to
+    `"@owner"` like the core.
     """
     venv = _first(cli_opts.get("venv"), runnable_meta.get("venv"), config_meta.get("venv"))
     invocation = f"{str(venv).rstrip('/')}/bin/{runnable}" if venv else runnable
@@ -340,7 +409,7 @@ def merge_settings(
 
     notifications = _first(runnable_meta.get("notifications"), config_meta.get("notifications"))
 
-    run_as = _first(cli_opts.get("run_as"), runnable_meta.get("run_as"), config_meta.get("run_as"), literal_run_as(default_run_as))
+    run_as = _first(cli_opts.get("run_as"), runnable_meta.get("run_as"), config_meta.get("run_as"), emit_run_as(default_run_as))
 
     return {
         "invocation": invocation,
@@ -361,11 +430,13 @@ def merge_settings(
     }
 
 
-def literal_run_as(value: Any) -> str | None:
-    """A runnable's `run_as` when it names a fixed account; `None` for the
-    forms only the node can resolve (`@owner`, `$ENV`, a per-host table) and for
-    the `""` opt-out."""
-    if isinstance(value, str) and value and value[0] not in "@$":
+def emit_run_as(value: Any) -> str | None:
+    """A runnable's `run_as` as the job uses it: an account name, `"@owner"`
+    (also when unset — the core default), or `None` for the `""` opt-out and
+    the forms a job can't resolve (`$ENV`, a per-host table)."""
+    if value is None:
+        return _OWNER
+    if isinstance(value, str) and value and (value == _OWNER or value[0] not in "@$"):
         return value
     return None
 

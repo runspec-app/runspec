@@ -16,9 +16,9 @@
  *
  * Safe on Rundeck before 5.20, which substitutes option values unescaped: the
  * shell never parses a value, and a line-count guard refuses a value with a
- * line break (the only way out of its heredoc). Accepted tradeoff: Rundeck writes the substituted script, secrets
- * included, to a temp file on the node, readable by the Rundeck SSH user until
- * the step ends.
+ * line break (the only way out of its heredoc). Rundeck writes the substituted
+ * script, secrets included, to a temp file on the node; the script's first
+ * command makes that file readable by its owner only.
  */
 
 import { createHash } from 'crypto';
@@ -159,7 +159,7 @@ export const FRAME_FUNC = [
 // substituted value can turn its line into this delimiter.
 const VALUE_EOF = 'RUNSPEC_VALUE';
 
-// The script's second line: count the script file's own non-blank lines and
+// The script's third line: count the script file's own non-blank lines and
 // refuse to run unless the count is the one the emitter wrote. A Rundeck option
 // value is substituted into the script text before it reaches the node, and the
 // only way one can escape its heredoc is a line break, which adds a line. The
@@ -180,6 +180,20 @@ function finish(lines: string[]): string {
 
 const RUN_AS = /^[A-Za-z0-9_.][A-Za-z0-9_.-]*$/;
 
+// `run_as` value resolved on the node to the owner of the venv (the core's
+// default, SPEC "run_as"): never root, and no sudo when already that account.
+const OWNER = '@owner';
+
+// The script's second line: make the script file readable by its owner only.
+// Rundeck copies it to the node's temp dir with the default umask, and leaves
+// it there when a killed job's cleanup fails, values included.
+const PRIVATE =
+  'chmod 700 -- "${BASH_SOURCE[0]:-$0}" || ' +
+  "{ echo 'runspec: could not make the job script private to its owner; refusing to run' >&2; exit 64; }";
+
+// Who ran a failed check, and where, for the not-found message.
+const WHERE = '"$(id -un)" "${HOSTNAME:-this node}"';
+
 /** Option name → the `@option.<name>@` token Rundeck substitutes into an inline script. */
 export function rdOptionToken(name: string): string {
   return `@option.${name}@`;
@@ -192,20 +206,60 @@ export function shellQuote(s: string): string {
   return "'" + s.replace(/'/g, `'"'"'`) + "'";
 }
 
+/** `{ printf …; exit 127; }` naming the runnable, where it was looked for, and who looked. */
+function notFound(runnable: string, where: string): string {
+  return (
+    `{ printf 'runspec: %s not found %s (checked as %s on %s)\\n' ` +
+    `${shellQuote(runnable)} ${shellQuote(where)} ${WHERE} >&2; exit 127; }`
+  );
+}
+
+/**
+ * Lines that stop the job with a clear message when the runnable isn't where
+ * the job expects it: `<venv>/bin/<runnable>`, or on the Rundeck user's PATH
+ * without a venv. A venv `bin/` this account can't search is left to the run
+ * itself; with a fixed `run_as` and no venv there is no check (sudo's PATH).
+ */
+function existsCheck(runnable: string, invocation: string, venv: string | null | undefined, runAs: string | undefined): string[] {
+  if (venv) {
+    const binDir = shellQuote(`${String(venv).replace(/\/+$/, '')}/bin`);
+    return [
+      `[ -e ${shellQuote(invocation)} ] || { [ -d ${binDir} ] && [ ! -x ${binDir} ]; } || ` +
+        notFound(runnable, `at ${invocation}`),
+    ];
+  }
+  if (runAs && runAs !== OWNER) return [];
+  return [`rs_bin=$(command -v ${shellQuote(invocation)}) || ` + notFound(runnable, 'on PATH')];
+}
+
+/** Export the non-empty values and exec the binary as this account. */
+function direct(envVars: ReadonlyArray<readonly [string, string]>, cmd: string, indent = ''): string[] {
+  const lines: string[] = [];
+  if (envVars.length) {
+    lines.push(`${indent}for rs_var in ${envVars.map(([v]) => v).join(' ')}; do`);
+    lines.push(`${indent}  if [ -n "\${!rs_var}" ]; then export "$rs_var"; else unset "$rs_var"; fi`);
+    lines.push(`${indent}done`);
+  }
+  lines.push(`${indent}exec ${cmd}`);
+  return lines;
+}
+
 /**
  * Build the Bash script that runs the runnable with the job's option values.
  *
- * Every value — secret or not — reaches the runnable on runspec's env channel
+ * The script first makes its own file private to its owner. Every value —
+ * secret or not — reaches the runnable on runspec's env channel
  * (`RUNSPEC_<RUNNABLE>_ARG_<NAME>`), never on a command line. Each
  * `@option.<name>@` token sits alone (behind an `x`) inside a quoted heredoc
  * that `read` takes into the variable, so the shell never parses a value; the
- * guard on line 2 refuses a value with a line break.
+ * guard on line 3 refuses a value with a line break. A runnable that isn't
+ * where the job expects it stops the job with exit 127 and a clear message.
  *
- * Without `runAs` the non-empty values are exported (an empty option stays
- * unset so the runnable's default applies) and the binary is exec'd. With
- * `runAs` the script runs `sudo -n -u <runAs>` and, because sudo resets the
- * environment, writes the values as the SPEC env frame on the child's stdin,
- * read by the env prelude — values never appear in argv or the sudo log.
+ * `runAs`: unset/`""` runs as the Rundeck user; an account name, or `"@owner"`
+ * (the venv's owner, resolved on the node, never root), runs through
+ * `sudo -n -u` unless the Rundeck user already is that account — with the
+ * values as the SPEC env frame on the child's stdin, never in argv or the sudo
+ * log.
  */
 export function renderScript(
   runnable: string,
@@ -218,7 +272,7 @@ export function renderScript(
   const envVars = Object.keys(args).map((name) => [secretEnvVar(runnable, name), name] as const);
   const names = envVars.map(([v]) => v).join(' ');
 
-  const lines = ['#!/bin/bash', GUARD, 'set -e'];
+  const lines = ['#!/bin/bash', PRIVATE, GUARD, 'set -e'];
   for (const [v, name] of envVars) {
     lines.push(`IFS= read -r ${v} <<'${VALUE_EOF}'`);
     lines.push(`x${rdOptionToken(name)}`);
@@ -226,19 +280,36 @@ export function renderScript(
     lines.push(`${v}=\${${v}#x}`);
   }
 
-  const cmd = [invocation, ...commandPath].map(shellQuote).join(' ');
-  if (!runAs) {
-    if (envVars.length) {
-      lines.push(`for rs_var in ${names}; do`);
-      lines.push('  if [ -n "${!rs_var}" ]; then export "$rs_var"; else unset "$rs_var"; fi');
-      lines.push('done');
-    }
-    lines.push(`exec ${cmd}`);
+  const target = runAs || undefined;
+  lines.push(...existsCheck(runnable, invocation, venv, target));
+
+  let cmd = [invocation, ...commandPath].map(shellQuote).join(' ');
+  if (!target) {
+    lines.push(...direct(envVars, cmd));
     return finish(lines);
   }
 
-  if (!RUN_AS.test(runAs)) throw new Error(`run_as '${runAs}' is not a valid account name`);
-  const become = `sudo -n -u ${runAs}`;
+  if (target === OWNER) {
+    const root = venv ? shellQuote(String(venv).replace(/\/+$/, '')) : '"$rs_venv"';
+    if (!venv) {
+      // The venv is the one PATH found the binary in; run that same file
+      // (sudo's own PATH may not reach it).
+      lines.push('rs_venv=${rs_bin%/*}; rs_venv=${rs_venv%/*}');
+      cmd = ['"$rs_bin"', ...commandPath.map(shellQuote)].join(' ');
+    }
+    lines.push(`rs_user=$(stat -c %U -- ${root})`);
+    lines.push(`[ "$(stat -c %u -- ${root})" != 0 ] || rs_user=`);
+    lines.push('if [ -z "$rs_user" ] || [ "$rs_user" = "$(id -un)" ]; then');
+  } else if (RUN_AS.test(target)) {
+    lines.push(`rs_user=${target}`);
+    lines.push('if [ "$rs_user" = "$(id -un)" ]; then');
+  } else {
+    throw new Error(`run_as '${target}' is not a valid account name`);
+  }
+  lines.push(...direct(envVars, cmd, '  '));
+  lines.push('fi');
+
+  const become = 'sudo -n -u "$rs_user"';
   if (!envVars.length) {
     lines.push(`exec ${become} ${cmd}`);
     return finish(lines);
@@ -330,8 +401,8 @@ export interface RundeckSettings {
 /**
  * Resolve per-runnable Rundeck settings. Precedence: CLI flag >
  * `[<runnable>.meta.rundeck]` > `[config.meta.rundeck]` > built-in default.
- * `run_as` falls back to `defaultRunAs` — the runnable's own literal `run_as`
- * account, when it names one.
+ * `run_as` falls back to `defaultRunAs` — the runnable's own `run_as`, else its
+ * `[config] run_as` — and, when neither is set, to `"@owner"` like the core.
  */
 export function mergeSettings(
   runnable: string,
@@ -354,7 +425,7 @@ export function mergeSettings(
     | Record<string, unknown>
     | undefined;
 
-  const runAs = firstDefined(cliOpts.runAs, runnableMeta['run_as'], configMeta['run_as'], literalRunAs(defaultRunAs)) as
+  const runAs = firstDefined(cliOpts.runAs, runnableMeta['run_as'], configMeta['run_as'], emitRunAs(defaultRunAs)) as
     | string
     | undefined;
 
@@ -378,12 +449,13 @@ export function mergeSettings(
 }
 
 /**
- * A runnable's `run_as` when it names a fixed account; `undefined` for the forms
- * only the node can resolve (`@owner`, `$ENV`, a per-host table) and for the
- * `""` opt-out.
+ * A runnable's `run_as` as the job uses it: an account name, `"@owner"` (also
+ * when unset — the core default), or `undefined` for the `""` opt-out and the
+ * forms a job can't resolve (`$ENV`, a per-host table).
  */
-export function literalRunAs(value: unknown): string | undefined {
-  if (typeof value === 'string' && value && !'@$'.includes(value[0])) return value;
+export function emitRunAs(value: unknown): string | undefined {
+  if (value === undefined || value === null) return OWNER;
+  if (typeof value === 'string' && value && (value === OWNER || !'@$'.includes(value[0]))) return value;
   return undefined;
 }
 

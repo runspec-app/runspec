@@ -7,6 +7,32 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.73.0] — 2026-10-10
+
+**emitted Rundeck jobs protect their temp script, check the runnable is
+there, and follow `run_as` like the runnable does.**
+
+- **Private script file.** Rundeck copies the job script, values included, to
+  the node's temp dir (e.g. `/var/tmp`) with the default umask, and leaves it
+  behind when a killed job's cleanup fails. The script's first command is now
+  `chmod 700` on its own file, so only the Rundeck SSH user (and root) can read
+  it. The line-break guard moved to line 3.
+- **Runnable-exists check.** Before running, the job checks the runnable is at
+  `<venv>/bin/<runnable>` (or on the Rundeck user's `PATH` without a venv) and
+  otherwise stops with exit code 127 and
+  `runspec: <runnable> not found at <path> (checked as <user> on <host>)`.
+- **`run_as` resolved like the core.** Precedence is `--run-as`, `meta.rundeck`
+  (runnable, then config), the runnable's `run_as`, `[config] run_as`, then
+  `"@owner"`. `"@owner"` (and unset) now looks up the venv's owner on the node
+  and runs through `sudo -n -u <owner>` unless the Rundeck user already is the
+  owner or the venv is root-owned; it was ignored before. A fixed account also
+  skips `sudo` when the Rundeck user already is that account. `""` still means
+  no `sudo`. **Upgrade note:** a job with no `run_as` set anywhere now sudoes to
+  the venv's owner when the Rundeck user isn't the owner (the runnable itself
+  refuses to run as anyone else by default), so the Rundeck user needs a
+  sudoers rule for that account, or set `run_as = ""` to keep the old
+  behaviour.
+
 ## [0.72.1] — 2026-10-09
 
 **Emitted Rundeck jobs are safe on Rundeck before 5.20.** Those versions
@@ -52,6 +78,32 @@ hiding it with `hidepid`).
   `run_as` (or `[config] run_as`) is used; `@owner`, `$ENV` and per-host forms
   are ignored because only the node can resolve them.
 - `rundeckgen.rd_env_var` is removed; `rd_option_token` replaces it.
+
+## [node-0.44.0] — 2026-10-10
+
+**Node: emitted Rundeck jobs protect their temp script, check the runnable is
+there, and follow `run_as` like the runnable does.**
+
+- **Private script file.** Rundeck copies the job script, values included, to
+  the node's temp dir (e.g. `/var/tmp`) with the default umask, and leaves it
+  behind when a killed job's cleanup fails. The script's first command is now
+  `chmod 700` on its own file, so only the Rundeck SSH user (and root) can read
+  it. The line-break guard moved to line 3.
+- **Runnable-exists check.** Before running, the job checks the runnable is at
+  `<venv>/bin/<runnable>` (or on the Rundeck user's `PATH` without a venv) and
+  otherwise stops with exit code 127 and
+  `runspec: <runnable> not found at <path> (checked as <user> on <host>)`.
+- **`run_as` resolved like the core.** Precedence is `--run-as`, `meta.rundeck`
+  (runnable, then config), the runnable's `run_as`, `[config] run_as`, then
+  `"@owner"`. `"@owner"` (and unset) now looks up the venv's owner on the node
+  and runs through `sudo -n -u <owner>` unless the Rundeck user already is the
+  owner or the venv is root-owned; it was ignored before. A fixed account also
+  skips `sudo` when the Rundeck user already is that account. `""` still means
+  no `sudo`. **Upgrade note:** a job with no `run_as` set anywhere now sudoes to
+  the venv's owner when the Rundeck user isn't the owner (the runnable itself
+  refuses to run as anyone else by default), so the Rundeck user needs a
+  sudoers rule for that account, or set `run_as = ""` to keep the old
+  behaviour.
 
 ## [node-0.43.1] — 2026-10-09
 
