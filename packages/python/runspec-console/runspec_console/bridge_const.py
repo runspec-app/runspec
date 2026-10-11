@@ -559,6 +559,9 @@ _OPERATOR_RUN_OUTPUT_CAP = 20_000
 _TOOL_HEARTBEAT_SECS = 12
 
 PUTTY_PROXY_SESSION = "runspec-console-proxy"
+# Prefix of the PuTTY saved sessions that open a terminal through a jump host
+# (one per jump target — see bridge_utils._ensure_putty_jump_session).
+PUTTY_JUMP_SESSION_PREFIX = "runspec-console-jump-"
 
 _EVENT_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 

@@ -125,6 +125,38 @@ persist it; `validate_editor_hosts` requires it to be a non-empty string backed 
 an ssh/hostname target. The Hosts editor gets a **Jump host (ProxyJump)** field,
 and the agent's `manage_hosts` config tool exposes `jump`.
 
+## Update (console 0.342.0): the jump hop, failures, and PuTTY
+
+The first cut used `ssh -J <jump>`. OpenSSH starts the jump hop as a separate
+ssh process that gets **none** of the command-line options, so the hop had no
+`-i` key, no `[ssh] user`, no `BatchMode`, and the default
+`StrictHostKeyChecking=ask` against `~/.ssh/known_hosts` only (the console keeps
+its accepted keys in its own known_hosts). Unless `~/.ssh/config` had a matching
+`Host` block, every probe failed — and because this transport bypasses paramiko
+and the pool, nothing reached the Dev tab: the host just went grey.
+
+- **Jump hop.** `_system_ssh_argv` now passes an explicit
+  `ProxyCommand=<ssh> <same options> -W %h:%p <jump>`, so the hop gets the same
+  key, user fallback, timeout, `BatchMode` and host-key handling as the target.
+  A chain (`a,b`) still uses `-J`.
+- **Host keys.** Both hops use `UserKnownHostsFile="<console known_hosts>"
+  "~/.ssh/known_hosts"` and `StrictHostKeyChecking=accept-new` (or `yes` when
+  `[ssh] host_key_checking` is strict) — the same trust store and policy as the
+  paramiko transport. `LogLevel=ERROR` keeps the "Permanently added" chatter out
+  of run output.
+- **Fleet host names.** `jump` may name another fleet host; it resolves to that
+  host's ssh target (`bridge_utils.host_jump`).
+- **Failures are visible.** A failing (or recovering) probe writes one
+  `ssh.jump` row to the Dev tab and the console log, with ssh's own error text,
+  once per change (`InternalsMixin._report_jump_probe`).
+- **PuTTY terminals.** A `jump` host opens PuTTY with `-load
+  runspec-console-jump-<target>`, a saved session whose proxy type is a *local
+  command*: `plink -batch -ssh [-load <http proxy session>] -l <user> -P <port>
+  -i <key> -nc %host:%port <jump>`. This works on PuTTY versions without the SSH
+  proxy type (added in 0.77). `-batch` makes plink fail with a readable error
+  instead of waiting on a prompt it can't show, so the jump host's key must
+  already be known to PuTTY (open a terminal to the jump host once).
+
 ## Scope / limits (first cut)
 
 - **In scope:** connectivity probe, discovery (`runspec local`), and runnable

@@ -972,6 +972,97 @@ def feed_channel_stdin(sin: Any, data: bytes | None) -> None:
         pass
 
 
+def _system_ssh_common_opts(cfg: dict[str, Any]) -> list[str]:
+    """``-o`` options shared by the target hop and the jump hop of the
+    system-ssh transport: batch mode, connect timeout, quiet logging, and the
+    console's host-key policy.
+
+    Host keys use the **same trust store as the paramiko transport**: the
+    app-managed known_hosts first (accept-new writes there, never into the
+    user's file) and ``~/.ssh/known_hosts`` second (read for verification).
+    Without this, ssh's default ``StrictHostKeyChecking=ask`` plus
+    ``BatchMode=yes`` refused every host not already in ``~/.ssh/known_hosts``
+    — and the console had only ever recorded keys in its own file.
+    Paths use forward slashes: newer OpenSSH treats a backslash in an ``-o``
+    value as an escape character, and Windows ssh accepts ``/``.
+    """
+    try:
+        connect_timeout = int(
+            float(cfg.get("connect_timeout", DEFAULT_CONNECT_TIMEOUT))
+        )
+    except (TypeError, ValueError):
+        connect_timeout = int(DEFAULT_CONNECT_TIMEOUT)
+    mode = str(cfg.get("host_key_checking", DEFAULT_HOST_KEY_CHECKING)).strip().lower()
+    strict = "yes" if mode in _HOST_KEY_STRICT else "accept-new"
+    opts = [
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        f"ConnectTimeout={max(1, connect_timeout)}",
+        # Errors still print (auth refused, host key mismatch, no route); the
+        # "Permanently added … to the list of known hosts" chatter does not.
+        "-o",
+        "LogLevel=ERROR",
+        "-o",
+        f"StrictHostKeyChecking={strict}",
+    ]
+    try:
+        app_known = str(_known_hosts_path(cfg)).replace("\\", "/")
+    except Exception:
+        app_known = ""
+    if app_known:
+        opts += [
+            "-o",
+            f'UserKnownHostsFile="{app_known}" "~/.ssh/known_hosts"',
+        ]
+    return opts
+
+
+def _proxy_command_line(tokens: list[str]) -> str:
+    """Join ``tokens`` into a ProxyCommand string for the local platform's
+    command parser (``sh -c`` on POSIX, ``CreateProcess`` on Windows), with
+    ``%`` doubled so ssh's own ``%h``/``%p`` expansion leaves it alone. The
+    literal ``%h:%p`` destination token is passed through unescaped."""
+
+    dest = "%h:%p"
+    escaped = [t if t == dest else t.replace("%", "%%") for t in tokens]
+    if os.name == "nt":
+        return subprocess.list2cmdline(escaped)
+    return shlex.join(escaped)
+
+
+def _jump_hop_opts(jump: str, key: str, cfg: dict[str, Any]) -> list[str]:
+    """The ssh options that reach the target **through** ``jump``.
+
+    ``ssh -J`` starts the jump hop as a separate ssh process that gets *none* of
+    the command-line options — no ``-i`` key, no ``BatchMode``, no host-key
+    policy, no ``[ssh] user`` — so unless ``~/.ssh/config`` happened to have a
+    matching ``Host`` block with the right user and key, the hop failed to
+    authenticate and the host just showed as disconnected. An explicit
+    ``ProxyCommand`` running ``ssh -W %h:%p`` gives the hop the same key, user
+    fallback, timeouts and host-key handling as the target. ``~/.ssh/config``
+    still applies to it (HostName, Port, algorithms) unless overridden.
+
+    A ``jump`` chain (``a,b``) keeps ``-J`` — the chain's per-hop settings must
+    come from ``~/.ssh/config``.
+    """
+    if "," in jump:
+        return ["-J", jump]
+    juser, jhost, jport = _parse_ssh_target(jump)
+    if not juser and cfg.get("user"):
+        juser = str(cfg["user"])
+    ssh_exe = shutil.which("ssh") or "ssh"
+    tokens = [ssh_exe, *_system_ssh_common_opts(cfg)]
+    if key:
+        tokens += ["-i", str(Path(key).expanduser())]
+    if jport and jport != 22:
+        tokens += ["-p", str(jport)]
+    if juser:
+        tokens += ["-l", juser]
+    tokens += ["-W", "%h:%p", jhost]
+    return ["-o", f"ProxyCommand={_proxy_command_line(tokens)}"]
+
+
 def _system_ssh_argv(
     ssh_target: str,
     jump: str,
@@ -987,26 +1078,16 @@ def _system_ssh_argv(
     paramiko 4+/5 can no longer negotiate: put the legacy algorithms on the
     target's ``Host`` block in ``~/.ssh/config``.
 
-    ``-J <jump>`` sets the ProxyJump intermediary. Explicit host-entry
-    ``identityFile``/port (and the global ``[ssh] user``/``identityFile``) are
-    passed as flags and override ssh_config. ``BatchMode=yes`` forbids
-    interactive prompts — a password prompt would hang a headless run — so auth
-    is key/agent only, matching ``runspec jump``.
+    The jump hop runs through an explicit ``ProxyCommand`` carrying the same
+    key, user fallback and host-key policy as the target (see
+    :func:`_jump_hop_opts`). Explicit host-entry ``identityFile``/port (and the
+    global ``[ssh] user``/``identityFile``) are passed as flags and override
+    ssh_config. ``BatchMode=yes`` forbids interactive prompts — a password
+    prompt would hang a headless run — so auth is key/agent only, matching
+    ``runspec jump``.
     """
     cfg = global_ssh_config or {}
-    try:
-        connect_timeout = int(
-            float(cfg.get("connect_timeout", DEFAULT_CONNECT_TIMEOUT))
-        )
-    except (TypeError, ValueError):
-        connect_timeout = int(DEFAULT_CONNECT_TIMEOUT)
-    argv = [
-        "ssh",
-        "-o",
-        "BatchMode=yes",
-        "-o",
-        f"ConnectTimeout={max(1, connect_timeout)}",
-    ]
+    argv = ["ssh", *_system_ssh_common_opts(cfg)]
     user, host, port = _parse_ssh_target(ssh_target)
     if not user and cfg.get("user"):
         user = str(cfg["user"])
@@ -1016,7 +1097,7 @@ def _system_ssh_argv(
     if port and port != 22:
         argv += ["-p", str(port)]
     if jump:
-        argv += ["-J", str(jump)]
+        argv += _jump_hop_opts(str(jump), str(key), cfg)
     argv.append(f"{user}@{host}" if user else host)
     return argv
 

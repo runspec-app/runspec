@@ -190,3 +190,102 @@ class TestLaunchTerminals(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTerminalThroughJumpHost(unittest.TestCase):
+    def _bridge(self):
+        b = _make_bridge()
+        b._hosts.append(
+            {"name": "behind", "ssh": "svc@10.0.0.5", "jump": "ops@bastion:2200"}
+        )
+        return b
+
+    def test_loads_jump_session_with_plink_proxy_command(self):
+        from runspec_console import bridge_utils
+
+        b = self._bridge()
+        exe = {
+            "putty.exe": Path("C:/Program Files/PuTTY/putty.exe"),
+            "plink.exe": Path("C:/Program Files/PuTTY/plink.exe"),
+        }
+        with (
+            patch(
+                "runspec_console.bridge_utils._find_putty_exe",
+                side_effect=lambda n="putty.exe": exe[n],
+            ),
+            patch.object(
+                b, "get_config", return_value={"ssh": {"identityFile": "C:/k/id"}}
+            ),
+            patch("pathlib.Path.exists", return_value=True),
+            patch(
+                "runspec_console.bridge_utils._ensure_putty_jump_session",
+                return_value="runspec-console-jump-x",
+            ) as ensure,
+            patch("subprocess.Popen") as popen,
+        ):
+            b.launch_terminal("behind")
+        cmd = popen.call_args.args[0]
+        self.assertEqual(cmd[1:3], ["-load", "runspec-console-jump-x"])
+        self.assertIn("10.0.0.5", cmd)
+        jump, proxy_cmd = ensure.call_args.args
+        self.assertEqual(jump, "ops@bastion:2200")
+        self.assertIn("-nc %host:%port bastion", proxy_cmd)
+        self.assertIn("-l ops", proxy_cmd)
+        self.assertIn("-P 2200", proxy_cmd)
+        self.assertIn("-batch", proxy_cmd)
+        self.assertEqual(
+            bridge_utils._putty_jump_session_name("ops@bastion:2200"),
+            "runspec-console-jump-ops-bastion-2200",
+        )
+
+    def test_missing_plink_is_a_clear_error(self):
+        b = self._bridge()
+        with (
+            patch(
+                "runspec_console.bridge_utils._find_putty_exe",
+                side_effect=lambda n="putty.exe": (
+                    Path("C:/PuTTY/putty.exe") if n == "putty.exe" else None
+                ),
+            ),
+            patch.object(b, "get_config", return_value={"ssh": {}}),
+            self.assertRaises(ValueError) as ctx,
+        ):
+            b.launch_terminal("behind")
+        self.assertIn("plink.exe", str(ctx.exception))
+
+    def test_proxy_command_escaping(self):
+        from runspec_console.bridge_utils import _putty_jump_proxy_command
+
+        cmd = _putty_jump_proxy_command(
+            r"C:\Program Files\PuTTY\plink.exe",
+            "bastion",
+            user="deploy",
+            key_file=r"C:\keys\100%.ppk",
+            proxy_session="runspec-console-proxy",
+        )
+        # PuTTY un-doubles backslashes and %% when it runs the command.
+        self.assertTrue(cmd.startswith(r'"C:\\Program Files\\PuTTY\\plink.exe" -batch'))
+        self.assertIn(r"C:\\keys\\100%%.ppk", cmd)
+        self.assertIn("-load runspec-console-proxy", cmd)
+        self.assertIn("-l deploy", cmd)
+        self.assertTrue(cmd.endswith("-nc %host:%port bastion"))
+
+    def test_without_jump_keeps_http_proxy_session(self):
+        b = _make_bridge()
+        with (
+            patch(
+                "runspec_console.bridge_utils._find_putty_exe",
+                return_value=Path("C:/PuTTY/putty.exe"),
+            ),
+            patch.object(
+                b, "get_config", return_value={"ssh": {"proxy": "http://p:8080"}}
+            ),
+            patch(
+                "runspec_console.bridge_internals._ensure_putty_proxy_session",
+                return_value="runspec-console-proxy",
+            ),
+            patch("subprocess.Popen") as popen,
+        ):
+            b.launch_terminal("no-key")
+        cmd = popen.call_args.args[0]
+        self.assertEqual(cmd[1:3], ["-load", "runspec-console-proxy"])

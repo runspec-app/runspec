@@ -2274,7 +2274,7 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
             <Form.Item
               name="jump"
               label="Jump host (ProxyJump)"
-              help="Reach this host through a jump host using the system ssh client, so ~/.ssh/config legacy algorithms apply (e.g. HostKeyAlgorithms +ssh-rsa for CentOS 6). An SSH host/alias as `ssh -J` expects. Needs an OpenSSH client on this machine. Leave blank for the normal (paramiko) transport."
+              help="Reach this host through a jump host using the system ssh client, so ~/.ssh/config legacy algorithms apply (e.g. HostKeyAlgorithms +ssh-rsa for CentOS 6). Another host in this list (by name), or an SSH host/alias such as user@bastion:2222. Uses the same key, user and known hosts as this host; failures show in the Dev tab. Needs an OpenSSH client on this machine (and plink.exe for PuTTY terminals). Leave blank for the normal (paramiko) transport."
             >
               <Input placeholder="bastion  (or user@bastion)" style={{ fontFamily: MONO_FONT }} />
             </Form.Item>

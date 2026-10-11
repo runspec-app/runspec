@@ -12,6 +12,7 @@ connectivity.
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 from unittest.mock import patch
 
 from runspec_console import executor
@@ -33,8 +34,68 @@ def test_system_ssh_argv_basic_jump():
     argv = _system_ssh_argv("svc@c6", "bastion")
     assert argv[0] == "ssh"
     assert "BatchMode=yes" in argv
-    assert argv[argv.index("-J") + 1] == "bastion"
+    proxy = next(a for a in argv if a.startswith("ProxyCommand="))
+    assert "-W %h:%p bastion" in proxy
+    assert "-J" not in argv
     assert argv[-1] == "svc@c6"  # target last, user@host reassembled
+
+
+def _proxy_command(argv):
+    return next(a for a in argv if a.startswith("ProxyCommand="))[
+        len("ProxyCommand=") :
+    ]
+
+
+def test_jump_hop_gets_key_user_and_batch_mode():
+    # `ssh -J` passed none of these to the jump hop, so it could not log in.
+    argv = _system_ssh_argv(
+        "svc@c6",
+        "bastion:2200",
+        identity_file="/keys/id_ed25519",
+        global_ssh_config={"user": "deploy", "connect_timeout": 7},
+    )
+    proxy = _proxy_command(argv)
+    assert "BatchMode=yes" in proxy
+    assert "ConnectTimeout=7" in proxy
+    assert f"-i {Path('/keys/id_ed25519')}" in proxy
+    assert "-p 2200" in proxy
+    assert "-l deploy" in proxy
+    assert proxy.endswith("-W %h:%p bastion")
+
+
+def test_jump_hop_keeps_explicit_user():
+    argv = _system_ssh_argv("c6", "ops@bastion", global_ssh_config={"user": "deploy"})
+    proxy = _proxy_command(argv)
+    assert "-l ops" in proxy and "deploy" not in proxy
+
+
+def test_jump_chain_keeps_dash_j():
+    argv = _system_ssh_argv("c6", "a,b")
+    assert argv[argv.index("-J") + 1] == "a,b"
+    assert not any(a.startswith("ProxyCommand=") for a in argv)
+
+
+def test_system_ssh_uses_console_known_hosts_and_accept_new(tmp_path):
+    kh = tmp_path / "known hosts"
+    argv = _system_ssh_argv("c6", "bastion", global_ssh_config={"known_hosts": kh})
+    assert "StrictHostKeyChecking=accept-new" in argv
+    assert f'UserKnownHostsFile="{kh.as_posix()}" "~/.ssh/known_hosts"' in argv
+    # Same trust store on the jump hop, quoted for the local command parser.
+    assert "StrictHostKeyChecking=accept-new" in _proxy_command(argv)
+    assert "known hosts" in _proxy_command(argv)
+
+
+def test_system_ssh_strict_host_key_checking():
+    argv = _system_ssh_argv(
+        "c6", "bastion", global_ssh_config={"host_key_checking": "strict"}
+    )
+    assert "StrictHostKeyChecking=yes" in argv
+
+
+def test_proxy_command_escapes_percent_in_paths():
+    argv = _system_ssh_argv("c6", "bastion", identity_file="/k/100%key")
+    proxy = _proxy_command(argv)
+    assert "100%%key" in proxy and "%h:%p" in proxy
 
 
 def test_system_ssh_argv_identity_port_and_timeout():
@@ -83,7 +144,7 @@ def test_ssh_jump_run_invokes_system_ssh_and_returns_triple():
     argv = m.call_args.args[0]
     assert argv[0] == "ssh"
     assert argv[-1] == "runspec local"  # command is the final argv element
-    assert "bastion" in argv
+    assert any(a.endswith(" bastion") for a in argv)
 
 
 def test_ssh_jump_run_missing_ssh_binary():
@@ -128,7 +189,7 @@ def test_run_remote_jump_streams_over_system_ssh_not_paramiko(monkeypatch):
     )
     assert done["code"] == 0
     cmd = captured["cmd"]
-    assert cmd[0] == "ssh" and "bastion" in cmd
+    assert cmd[0] == "ssh" and any(a.endswith(" bastion") for a in cmd)
     # The last element is the remote command string that invokes the runnable.
     assert "disk-usage" in cmd[-1]
 
@@ -348,3 +409,46 @@ def test_discover_one_routes_jump_host_through_system_ssh():
     assert out == []
     assert calls["jump"] == "bastion"
     assert "local --format json" in calls["command"]
+
+
+def test_check_connected_resolves_fleet_host_name_as_jump():
+    # The system ssh client doesn't know the console's host names.
+    b = _bridge()
+    b._hosts = [
+        {"name": "bastion", "ssh": "ops@bastion.corp:2200"},
+        {"name": "c6", "ssh": "svc@c6", "jump": "Bastion"},
+    ]
+    with (
+        patch.object(b, "get_config", return_value={"ssh": {}}),
+        patch("runspec_console.executor.ssh_jump_run", return_value=(0, "", "")) as m,
+    ):
+        assert b._check_connected(b._hosts[1]) is True
+    assert m.call_args.kwargs["jump"] == "ops@bastion.corp:2200"
+
+
+def test_check_connected_jump_failure_reaches_dev_tab_once():
+    b = _bridge()
+    host = {"name": "c6", "ssh": "svc@c6", "jump": "bastion"}
+    events = []
+    with (
+        patch.object(b, "get_config", return_value={"ssh": {}}),
+        patch.object(b, "_emit_ssh_log", side_effect=events.append),
+        patch(
+            "runspec_console.executor.ssh_jump_run",
+            return_value=(255, "", "ops@bastion: Permission denied (publickey).\n"),
+        ),
+    ):
+        assert b._check_connected(host) is False
+        assert b._check_connected(host) is False  # same failure: not repeated
+    assert len(events) == 1
+    assert events[0]["logger"] == "ssh.jump"
+    assert events[0]["level"] == "ERROR"
+    assert "Permission denied" in events[0]["message"]
+    assert events[0]["host"] == "c6"
+    with (
+        patch.object(b, "get_config", return_value={"ssh": {}}),
+        patch.object(b, "_emit_ssh_log", side_effect=events.append),
+        patch("runspec_console.executor.ssh_jump_run", return_value=(0, "", "")),
+    ):
+        assert b._check_connected(host) is True
+    assert events[-1]["level"] == "INFO"  # recovery is reported too

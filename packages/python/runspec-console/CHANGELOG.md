@@ -9,6 +9,30 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.342.0] — 2026-10-11
+
+### Fixed
+- **A host with a jump host (ProxyJump) no longer just goes grey.** `ssh -J`
+  gave the jump hop none of the console's settings — no key, no `[ssh] user`, no
+  batch mode, and only `~/.ssh/known_hosts` for host keys — so unless
+  `~/.ssh/config` covered the jump host, every connection failed. The jump hop
+  now runs through an explicit `ProxyCommand` with the same key, user, timeout
+  and host-key handling as the target, and both hops use the console's own
+  known_hosts with accept-new (or strict, per `[ssh] host_key_checking`). A
+  chain (`a,b`) still uses `-J`.
+- **Jump failures are visible.** When a jump host can't be reached (or comes
+  back), one `ssh.jump` row with ssh's own error goes to the Dev tab and the
+  console log, once per change.
+
+### Added
+- **`jump` can name a fleet host.** Typing another host's sidebar name uses that
+  host's ssh target.
+- **PuTTY terminals through a jump host.** A host with a jump host opens PuTTY
+  through a saved session whose proxy is a local `plink -nc` command, so it works
+  on PuTTY versions without the SSH proxy type. The HTTP proxy, if set, moves to
+  the plink hop. Needs `plink.exe` (ships with PuTTY) and the jump host's key
+  already known to PuTTY.
+
 ## [0.341.0] — 2026-10-10
 
 ### Added

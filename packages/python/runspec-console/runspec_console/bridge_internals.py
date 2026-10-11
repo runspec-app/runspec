@@ -85,23 +85,8 @@ class InternalsMixin:
         if not user:
             user = cfg_ssh.get("user", "")
 
-        cmd = [str(putty)]
-        # Route through the HTTP proxy by loading a saved session that carries
-        # the proxy config (PuTTY has no proxy CLI flag). Host/user/key below
-        # still override the session.
-        proxy = cfg_ssh.get("proxy") or ""
-        if proxy:
-            session = _ensure_putty_proxy_session(proxy)
-            if session:
-                cmd.extend(["-load", session])
-        cmd.append("-ssh")
-        if user:
-            cmd.extend(["-l", user])
-        cmd.append(hostname)
-        if port:
-            cmd.extend(["-P", str(port)])
-
         # Prefer PPK v2 (works with all PuTTY versions) over raw OpenSSH key.
+        key_file: Path | None = None
         idf = cfg_ssh.get("identityFile", "")
         if idf:
             expanded = Path(idf).expanduser()
@@ -112,6 +97,48 @@ class InternalsMixin:
                     f"SSH key file not found: {idf}\n"
                     "Generate a new key in Settings → SSH."
                 )
+
+        cmd = [str(putty)]
+        # Route through the HTTP proxy by loading a saved session that carries
+        # the proxy config (PuTTY has no proxy CLI flag). Host/user/key below
+        # still override the session.
+        proxy = cfg_ssh.get("proxy") or ""
+        proxy_session = _ensure_putty_proxy_session(proxy) if proxy else None
+        jump = utils_mod.host_jump(getattr(self, "_hosts", None), entry)
+        if jump:
+            # Through a jump host: a saved session whose proxy is a local
+            # `plink -nc` command — works on PuTTY versions without the SSH
+            # proxy type. The HTTP proxy (if any) moves onto the plink hop.
+            plink = utils_mod._find_putty_exe("plink.exe")
+            if plink is None:
+                raise ValueError(
+                    f"plink.exe not found — it is needed to open a terminal to "
+                    f"{host} through jump host {jump}. It ships with PuTTY "
+                    r"(expected at C:\Program Files\PuTTY\plink.exe)."
+                )
+            proxy_cmd = utils_mod._putty_jump_proxy_command(
+                str(plink),
+                jump,
+                user=str(cfg_ssh.get("user") or ""),
+                key_file=str(key_file) if key_file else "",
+                proxy_session=proxy_session or "",
+            )
+            session = utils_mod._ensure_putty_jump_session(jump, proxy_cmd)
+            if not session:
+                raise ValueError(
+                    "Opening a PuTTY terminal through a jump host needs Windows "
+                    "(the jump is stored as a PuTTY saved session)."
+                )
+            cmd.extend(["-load", session])
+        elif proxy_session:
+            cmd.extend(["-load", proxy_session])
+        cmd.append("-ssh")
+        if user:
+            cmd.extend(["-l", user])
+        cmd.append(hostname)
+        if port:
+            cmd.extend(["-P", str(port)])
+        if key_file is not None:
             cmd.extend(["-i", str(key_file)])
         return cmd
 
@@ -815,7 +842,7 @@ class InternalsMixin:
             connected = self._connected_cache.get(name, ssh is None)
         if not connected:
             return []
-        jump = str(h.get("jump") or "").strip()
+        jump = utils_mod.host_jump(getattr(self, "_hosts", None), h)
         if jump:
             # System-ssh transport: discover over the jump host's OpenSSH so a
             # legacy target's ssh-rsa/ssh-dss handshake works (paramiko can't).
@@ -1241,6 +1268,44 @@ class InternalsMixin:
         if self._adhoc_pool is not None:
             self._adhoc_pool.reap()
 
+    def _report_jump_probe(
+        self, host: dict[str, Any], jump: str, code: int, detail: str
+    ) -> None:
+        """Make a jump-host connectivity result visible — a ``runspec:ssh`` row in
+        the Dev tab plus the console log — once per change, not every cycle.
+
+        The jump (system-ssh) transport bypasses paramiko and the pool, which is
+        where every other SSH event comes from, so a failing jump host used to
+        show only as a grey sidebar dot with nothing anywhere saying why.
+        """
+        name = str(host.get("name") or "")
+        state = "" if code == 0 else (detail or f"ssh exited {code}")
+        with self._lock:
+            seen = getattr(self, "_jump_probe_state", None)
+            if seen is None:
+                seen = self._jump_probe_state = {}
+            previous = seen.get(name)
+            seen[name] = state
+        if previous == state or (previous is None and not state):
+            return
+        if state:
+            message = (
+                f"{name}: can't connect to {host.get('ssh')} via jump host "
+                f"{jump}: {state}"
+            )
+            logger.warning("ssh.jump %s", message)
+            level = "ERROR"
+        else:
+            message = f"{name}: connected to {host.get('ssh')} via jump host {jump}"
+            logger.info("ssh.jump %s", message)
+            level = "INFO"
+        try:
+            self._emit_ssh_log(
+                {"level": level, "logger": "ssh.jump", "message": message, "host": name}
+            )
+        except Exception:
+            logger.debug("could not forward jump probe event", exc_info=True)
+
     def _check_connected(
         self, host: dict[str, Any], *, ssh_cfg: dict[str, Any] | None = None
     ) -> bool:
@@ -1249,12 +1314,12 @@ class InternalsMixin:
             return True
         if ssh_cfg is None:
             ssh_cfg = self.get_config().get("ssh")
-        jump = str(host.get("jump") or "").strip()
+        jump = utils_mod.host_jump(getattr(self, "_hosts", None), host)
         if jump:
             # System-ssh transport (not pooled): a successful `ssh … true` over
             # the jump host IS the connectivity check. Uses OpenSSH so legacy
             # algorithms in ~/.ssh/config apply — see executor._system_ssh_argv.
-            code, _, _ = executor_mod.ssh_jump_run(
+            code, out, err = executor_mod.ssh_jump_run(
                 ssh,
                 "true",
                 jump=jump,
@@ -1262,6 +1327,7 @@ class InternalsMixin:
                 global_ssh_config=ssh_cfg,
                 timeout=8,
             )
+            self._report_jump_probe(host, jump, code, (err or out or "").strip())
             return code == 0
         pool = self._ssh_pool
         if pool is not None:

@@ -1932,7 +1932,7 @@ class AutonomyMixin:
                 cred_env=cred_env,
                 trigger=run_trigger,
                 runbook=run_runbook,
-                jump=str(entry.get("jump") or "").strip(),
+                jump=utils_mod.host_jump(getattr(self, "_hosts", None), entry),
             )
         else:
             executor_mod.run_local(

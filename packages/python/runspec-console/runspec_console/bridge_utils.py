@@ -18,6 +18,7 @@ from typing import Any
 
 
 from .bridge_const import (
+    PUTTY_JUMP_SESSION_PREFIX,
     PUTTY_PROXY_SESSION,
     _EVENT_LEVELS,
 )
@@ -141,6 +142,103 @@ def _ensure_putty_proxy_session(
         winreg.SetValueEx(key, "ProxyHost", 0, winreg.REG_SZ, phost)
         winreg.SetValueEx(key, "ProxyPort", 0, winreg.REG_DWORD, pport)
         winreg.SetValueEx(key, "ProxyDNS", 0, winreg.REG_DWORD, 1)  # 1 = Auto
+        winreg.SetValueEx(key, "ProxyLocalhost", 0, winreg.REG_DWORD, 0)
+        winreg.SetValueEx(key, "ProxyUsername", 0, winreg.REG_SZ, "")
+        winreg.SetValueEx(key, "ProxyPassword", 0, winreg.REG_SZ, "")
+    return session
+
+
+def host_jump(hosts: list[dict[str, Any]] | None, entry: dict[str, Any] | None) -> str:
+    """The ProxyJump target for a host entry's ``jump`` field, or ``""``.
+
+    ``jump`` may name another **fleet host** (as shown in the sidebar) — then
+    that host's ssh target (``user@hostname:port``) is used, since the system
+    ssh client only knows names from ``~/.ssh/config``/DNS, not the console's
+    host list. Anything else passes through verbatim (an ssh alias,
+    ``user@host``, or an ``a,b`` chain).
+    """
+    jump = str((entry or {}).get("jump") or "").strip()
+    if not jump or "," in jump:
+        return jump
+    own = str((entry or {}).get("name") or "")
+    for h in hosts or []:
+        name = str(h.get("name") or "")
+        if name and name != own and name.lower() == jump.lower():
+            target = str(h.get("ssh") or "").strip()
+            if target and not str(h.get("jump") or "").strip():
+                return target
+            break
+    return jump
+
+
+def _putty_jump_proxy_command(
+    plink: str,
+    jump: str,
+    *,
+    user: str = "",
+    key_file: str = "",
+    proxy_session: str = "",
+) -> str:
+    """The PuTTY *local proxy command* that reaches ``%host:%port`` through
+    ``jump`` with ``plink -nc`` — PuTTY's ProxyJump for versions with no SSH
+    proxy type (that arrived in 0.77; ``-nc`` and the local-command proxy work
+    on far older releases).
+
+    ``-batch`` makes plink fail with a readable error instead of waiting on a
+    prompt nobody can answer (plink has no console when PuTTY starts it). An
+    ``proxy_session`` (the HTTP-proxy saved session) is loaded first, so a jump
+    host that is itself behind the HTTP proxy still works.
+
+    The result is escaped for PuTTY's proxy-command format, which treats ``\\``
+    and ``%`` specially: backslashes are doubled and ``%`` becomes ``%%``,
+    except in the ``%host:%port`` placeholder PuTTY fills in.
+    """
+    import subprocess
+
+    juser, jhost, jport = _parse_ssh(jump)
+    juser = juser or user
+    dest = "%host:%port"
+    tokens = [plink, "-batch", "-ssh"]
+    if proxy_session:
+        tokens += ["-load", proxy_session]
+    if juser:
+        tokens += ["-l", juser]
+    if jport and jport != 22:
+        tokens += ["-P", str(jport)]
+    if key_file:
+        tokens += ["-i", key_file]
+    tokens += ["-nc", dest, jhost]
+    escaped = [t if t == dest else t.replace("%", "%%") for t in tokens]
+    return subprocess.list2cmdline(escaped).replace("\\", "\\\\")
+
+
+def _putty_jump_session_name(jump: str) -> str:
+    """A registry-safe PuTTY saved-session name for one jump target."""
+    slug = re.sub(r"[^A-Za-z0-9.-]+", "-", jump).strip("-") or "host"
+    return f"{PUTTY_JUMP_SESSION_PREFIX}{slug}"
+
+
+def _ensure_putty_jump_session(jump: str, proxy_command: str) -> str | None:
+    """Write a PuTTY saved session whose proxy is the local command
+    ``proxy_command`` (see :func:`_putty_jump_proxy_command`); return its name.
+
+    Same model as :func:`_ensure_putty_proxy_session`: the session carries only
+    the proxy settings and ``putty -load <session> -ssh -l user host`` supplies
+    the rest. ``ProxyDNS = Yes`` hands the target's name to the jump host to
+    resolve, so hosts only the jump host's network can resolve still work.
+    Returns None where winreg is unavailable (non-Windows).
+    """
+    try:
+        import winreg  # Windows-only
+    except ImportError:
+        return None
+    session = _putty_jump_session_name(jump)
+    key_path = rf"Software\SimonTatham\PuTTY\Sessions\{session}"
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path) as key:
+        winreg.SetValueEx(key, "ProxyMethod", 0, winreg.REG_DWORD, 5)  # 5 = local
+        winreg.SetValueEx(key, "ProxyTelnetCommand", 0, winreg.REG_SZ, proxy_command)
+        winreg.SetValueEx(key, "ProxyHost", 0, winreg.REG_SZ, "")
+        winreg.SetValueEx(key, "ProxyDNS", 0, winreg.REG_DWORD, 2)  # 2 = Yes
         winreg.SetValueEx(key, "ProxyLocalhost", 0, winreg.REG_DWORD, 0)
         winreg.SetValueEx(key, "ProxyUsername", 0, winreg.REG_SZ, "")
         winreg.SetValueEx(key, "ProxyPassword", 0, winreg.REG_SZ, "")

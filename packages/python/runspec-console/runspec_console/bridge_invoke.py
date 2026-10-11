@@ -349,7 +349,7 @@ class InvokeMixin:
             )
 
             ssh = entry.get("ssh")
-            jump = str(entry.get("jump") or "").strip()
+            jump = utils_mod.host_jump(getattr(self, "_hosts", None), entry)
             if ssh:
                 # Stream over a pooled transport when pooling is on — the
                 # invocation reuses the host's warm connection (one more channel,
