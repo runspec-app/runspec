@@ -1011,10 +1011,10 @@ def _system_ssh_common_opts(cfg: dict[str, Any]) -> list[str]:
     except Exception:
         app_known = ""
     if app_known:
-        opts += [
-            "-o",
-            f'UserKnownHostsFile="{app_known}" "~/.ssh/known_hosts"',
-        ]
+        # Quote only a path with a space: the jump hop re-joins these options
+        # into a ProxyCommand line, and every quote there needs an escape.
+        known = f'"{app_known}"' if " " in app_known else app_known
+        opts += ["-o", f"UserKnownHostsFile={known} ~/.ssh/known_hosts"]
     return opts
 
 
@@ -1060,6 +1060,11 @@ def _jump_hop_opts(jump: str, key: str, cfg: dict[str, Any]) -> list[str]:
     if juser:
         tokens += ["-l", juser]
     tokens += ["-W", "%h:%p", jhost]
+    if os.name == "nt":
+        # OpenSSH reads a backslash in the ProxyCommand line as an escape and
+        # drops it, so C:\Users\me\.ssh\id became C:Usersme.sshid ("identity
+        # file not found"). Windows ssh accepts forward slashes everywhere.
+        tokens = [t.replace("\\", "/") for t in tokens]
     return ["-o", f"ProxyCommand={_proxy_command_line(tokens)}"]
 
 

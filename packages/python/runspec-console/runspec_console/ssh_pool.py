@@ -714,6 +714,12 @@ class SSHConnectionPool:
             self._event("DEBUG", f"reaped idle SSH connection to {key[0]}")
         return len(dropped)
 
+    def clear_backoff(self) -> None:
+        """Forget every host's backoff so the next probe connects at once —
+        called when the operator saves host settings."""
+        with self._map_lock:
+            self._backoff.clear()
+
     def close_all(self) -> None:
         """Close every pooled transport — called on app shutdown."""
         with self._map_lock:

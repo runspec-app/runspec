@@ -1316,13 +1316,20 @@ class InternalsMixin:
         """
         name = str(host.get("name") or "")
         state = "" if code == 0 else (detail or f"ssh exited {code}")
+        # The settings are part of the key, so editing the jump, target or key
+        # reports the next attempt even when it fails the same way as before.
+        settings = (
+            jump,
+            str(host.get("ssh") or ""),
+            str(host.get("identityFile") or ""),
+        )
         with self._lock:
             seen = getattr(self, "_jump_probe_state", None)
             if seen is None:
                 seen = self._jump_probe_state = {}
             previous = seen.get(name)
-            seen[name] = state
-        if previous == state or (previous is None and not state):
+            seen[name] = (settings, state)
+        if previous == (settings, state) or (previous is None and not state):
             return
         if state:
             message = (

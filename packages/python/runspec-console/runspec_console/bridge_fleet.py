@@ -297,6 +297,11 @@ class FleetMixin:
         # refetch — otherwise e.g. a host whose room config was just removed still
         # shows in the room dropdown until the app restarts.
         self._dispatch("runspec:hosts_updated", {})
+        # An edit is a fresh attempt: a host backing off after failed connects
+        # would otherwise wait out its window before the new settings are tried.
+        pool = getattr(self, "_ssh_pool", None)
+        if pool is not None:
+            pool.clear_backoff()
         self._kick_refresh(force=True)
 
     # ── local venv auto-discovery ([local] venv_globs) ────────────────────────

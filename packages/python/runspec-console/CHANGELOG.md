@@ -9,6 +9,22 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.343.1] — 2026-10-11
+
+### Fixed
+- **Jump hosts on Windows connect.** OpenSSH read the backslashes in the jump
+  hop's `ProxyCommand` line as escapes and dropped them, so the key path became
+  one long string ("identity file not found") and no jump host went green. The
+  hop's command line now uses forward slashes on Windows, and the console
+  known_hosts path is only quoted when it has a space.
+- **Jump host edits show their next attempt.** The Dev tab's `ssh.jump` row
+  was skipped when a probe failed with the same error as before, even after the
+  jump, target or key was edited, so an edit looked like it hadn't applied. A
+  settings change now reports the next attempt.
+- **Saving hosts retries backed-off hosts at once.** Settings → Jump Hosts
+  Save clears the SSH pool's per-host backoff, so a host that kept failing tries
+  the new settings straight away instead of after its backoff window.
+
 ## [0.343.0] — 2026-10-11
 
 ### Added

@@ -142,3 +142,12 @@ def test_save_jump_hosts_heals_corrupt_existing_file(app):
 
     (entry,) = _reload_from_disk()  # save wrote a clean file over the quarantine
     assert entry["name"] == "h2"
+
+
+def test_save_jump_hosts_clears_ssh_backoff(app):
+    # A host backing off after failed connects tries the new settings at once.
+    b = _StubBridge()
+    cleared = []
+    b._ssh_pool = type("P", (), {"clear_backoff": lambda self: cleared.append(1)})()
+    b.save_jump_hosts([{"name": "h1", "hostname": "h1.corp"}])
+    assert cleared == [1]

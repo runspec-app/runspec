@@ -57,7 +57,7 @@ def test_jump_hop_gets_key_user_and_batch_mode():
     proxy = _proxy_command(argv)
     assert "BatchMode=yes" in proxy
     assert "ConnectTimeout=7" in proxy
-    assert f"-i {Path('/keys/id_ed25519')}" in proxy
+    assert f"-i {Path('/keys/id_ed25519').as_posix()}" in proxy
     assert "-p 2200" in proxy
     assert "-l deploy" in proxy
     assert proxy.endswith("-W %h:%p bastion")
@@ -79,10 +79,39 @@ def test_system_ssh_uses_console_known_hosts_and_accept_new(tmp_path):
     kh = tmp_path / "known hosts"
     argv = _system_ssh_argv("c6", "bastion", global_ssh_config={"known_hosts": kh})
     assert "StrictHostKeyChecking=accept-new" in argv
-    assert f'UserKnownHostsFile="{kh.as_posix()}" "~/.ssh/known_hosts"' in argv
+    assert f'UserKnownHostsFile="{kh.as_posix()}" ~/.ssh/known_hosts' in argv
     # Same trust store on the jump hop, quoted for the local command parser.
     assert "StrictHostKeyChecking=accept-new" in _proxy_command(argv)
     assert "known hosts" in _proxy_command(argv)
+
+
+def test_known_hosts_without_space_is_not_quoted(tmp_path):
+    kh = tmp_path / "known_hosts"
+    argv = _system_ssh_argv("c6", "bastion", global_ssh_config={"known_hosts": kh})
+    assert f"UserKnownHostsFile={kh.as_posix()} ~/.ssh/known_hosts" in argv
+    # No inner quotes, so nothing in the hop's line needs a backslash escape.
+    assert "\\" not in _proxy_command(argv)
+    assert kh.as_posix() in _proxy_command(argv)
+
+
+def test_jump_hop_on_windows_uses_forward_slashes():
+    # OpenSSH dropped the backslashes in the ProxyCommand line, so the hop's
+    # key became C:Usersme.sshid_ed25519 ("identity file not found").
+    with (
+        patch.object(executor.os, "name", "nt"),
+        patch.object(
+            executor.shutil,
+            "which",
+            return_value="C:\\Windows\\System32\\OpenSSH\\ssh.exe",
+        ),
+    ):
+        argv = _system_ssh_argv(
+            "svc@c6", "bastion", identity_file="C:\\Users\\me\\.ssh\\id_ed25519"
+        )
+    proxy = _proxy_command(argv)
+    assert "\\" not in proxy
+    assert "-i C:/Users/me/.ssh/id_ed25519" in proxy
+    assert proxy.startswith("C:/Windows/System32/OpenSSH/ssh.exe ")
 
 
 def test_system_ssh_strict_host_key_checking():
@@ -452,3 +481,24 @@ def test_check_connected_jump_failure_reaches_dev_tab_once():
     ):
         assert b._check_connected(host) is True
     assert events[-1]["level"] == "INFO"  # recovery is reported too
+
+
+def test_jump_edit_reports_the_next_attempt_even_if_it_fails_the_same():
+    # Editing a jump host and getting no new Dev-tab row looked like the edit
+    # had not been applied.
+    b = _bridge()
+    host = {"name": "c6", "ssh": "svc@c6", "jump": "bastion"}
+    events = []
+    with (
+        patch.object(b, "get_config", return_value={"ssh": {}}),
+        patch.object(b, "_emit_ssh_log", side_effect=events.append),
+        patch(
+            "runspec_console.executor.ssh_jump_run",
+            return_value=(255, "", "Connection timed out"),
+        ),
+    ):
+        b._check_connected(host)
+        b._check_connected({**host, "jump": "bastion2"})
+        b._check_connected({**host, "jump": "bastion2"})
+    assert len(events) == 2
+    assert "bastion2" in events[1]["message"]

@@ -338,6 +338,22 @@ def test_failing_host_enters_backoff_and_fails_fast():
     assert attempts["n"] == 2
 
 
+def test_clear_backoff_lets_the_next_attempt_through():
+    attempts = {"n": 0}
+
+    def make_client(target, idf, cfg):
+        attempts["n"] += 1
+        raise OSError("connection refused")
+
+    pool = make_pool({"backoff_base": 60}, make_client=make_client, clock=lambda: 0.0)
+    pool.run("u@h", "true")
+    pool.run("u@h", "true")
+    assert attempts["n"] == 1  # backing off
+    pool.clear_backoff()
+    pool.run("u@h", "true")
+    assert attempts["n"] == 2
+
+
 def test_backoff_is_exponential_and_capped():
     now = {"t": 0.0}
 
