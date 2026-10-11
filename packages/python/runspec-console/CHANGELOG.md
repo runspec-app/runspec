@@ -9,6 +9,26 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.343.0] — 2026-10-11
+
+### Added
+- **Terminal look for PuTTY terminals.** Settings → SSH → **Terminal look**
+  sets the font, size, colour theme, cursor, scrollback and padding of the PuTTY
+  windows the console opens, with a live preview. Eight themes ship
+  (Campbell, One Half Dark, Dracula, Nord, Gruvbox Dark, Solarized Dark/Light,
+  and Red alert), and a host group can get its own theme, e.g. red for
+  production. Stored as `[terminal]` in config.toml, so it rides Config Sync and
+  the config seed. Nothing changes until a look is set. New module
+  `terminal_look.py`, bridge method `terminal_themes()`.
+
+### Changed
+- **The console's PuTTY saved sessions start from your Default Settings.** PuTTY
+  fills a value missing from a saved session with its built-in default, not
+  your Default Settings, so the HTTP proxy and jump host sessions used to drop
+  your own font, colours and keyboard settings. Each session the console writes
+  is now a copy of Default Settings with the console's values on top
+  (`bridge_utils._write_putty_session`).
+
 ## [0.342.0] — 2026-10-11
 
 ### Fixed

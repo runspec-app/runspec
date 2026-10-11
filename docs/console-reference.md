@@ -226,6 +226,43 @@ flags such an entry as `missing`.
 Connection pooling, timeouts, proxies, and the background refresh cadence —
 documented with the fleet setup in [Hosts & fleet](console-hosts.md#ssh-tuning).
 
+## `[terminal]` — PuTTY terminal look {#terminal}
+
+Font, colours and cursor for the PuTTY windows **Launch terminal** opens. Set in
+Settings → SSH → **Terminal look** (with a live preview), or in config.toml — so
+it rides Config Sync and the config seed. Applies to terminals opened after the
+change.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `theme` | `""` | Colour theme: `campbell`, `one-half-dark`, `dracula`, `nord`, `gruvbox-dark`, `solarized-dark`, `solarized-light`, `red-alert`. Blank = PuTTY's own colours |
+| `font` | `""` | Font name, e.g. `Cascadia Mono` or `Consolas`. Blank = PuTTY's default |
+| `font_size` | 0 | Font size in points (6–72). 0 = default |
+| `cursor` | `""` | `block`, `underline` or `bar` |
+| `cursor_blink` | unset | Blink the cursor |
+| `scrollback` | 0 | Scrollback lines. 0 = default |
+| `padding` | 0 | Pixels between the text and the window edge (0–40) |
+| `group_themes` | `{}` | A table of host group → theme, e.g. `prod = "red-alert"`, so production windows stand out |
+
+```toml
+[terminal]
+theme = "one-half-dark"
+font = "Cascadia Mono"
+font_size = 11
+cursor = "bar"
+
+[terminal.group_themes]
+prod = "red-alert"
+```
+
+How it works: PuTTY only reads these settings from a saved session, so the
+console writes them into the saved sessions it already uses (the HTTP proxy and
+jump host sessions) and, for other hosts, into one called
+`runspec-console-terminal`. Each session starts as a copy of your own PuTTY
+**Default Settings**, so anything left blank here keeps your own choice. A
+group with its own theme gets its own session (`…--red-alert`). An unknown
+theme or cursor value is ignored, never an error.
+
 ## `[automation]`
 
 The trigger/schedule engine's execution pool.

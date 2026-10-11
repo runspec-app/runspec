@@ -28,6 +28,8 @@ from .hosts import group_members, groups_map, host_in_profile, profile_members
 
 from .bridge_const import (
     DEFAULT_SYSTEM_PROMPT,
+    PUTTY_LOOK_SESSION,
+    PUTTY_PROXY_SESSION,
     WORKSPACE_GUIDANCE,
     logger,
 )
@@ -80,7 +82,8 @@ class InternalsMixin:
                 r"expected at C:\Program Files\PuTTY\putty.exe."
             )
         # Parse ssh target for hostname/port; get username from host or global config.
-        cfg_ssh = self.get_config().get("ssh", {})
+        cfg = self.get_config()
+        cfg_ssh = cfg.get("ssh", {})
         user, hostname, port = _parse_ssh(ssh)
         if not user:
             user = cfg_ssh.get("user", "")
@@ -102,8 +105,22 @@ class InternalsMixin:
         # Route through the HTTP proxy by loading a saved session that carries
         # the proxy config (PuTTY has no proxy CLI flag). Host/user/key below
         # still override the session.
+        # The [terminal] look (font, colours, cursor) rides the same saved
+        # sessions; a host whose group has its own theme gets its own session.
+        from . import terminal_look
+
+        look_cfg = terminal_look.read_terminal(cfg)
+        group = str(entry.get("group") or "")
+        look = terminal_look.session_values(look_cfg, group)
+        suffix = terminal_look.session_suffix(look_cfg, group) if look else ""
         proxy = cfg_ssh.get("proxy") or ""
-        proxy_session = _ensure_putty_proxy_session(proxy) if proxy else None
+        proxy_session = (
+            _ensure_putty_proxy_session(
+                proxy, PUTTY_PROXY_SESSION + suffix, look=look or None
+            )
+            if proxy
+            else None
+        )
         jump = utils_mod.host_jump(getattr(self, "_hosts", None), entry)
         if jump:
             # Through a jump host: a saved session whose proxy is a local
@@ -123,7 +140,13 @@ class InternalsMixin:
                 key_file=str(key_file) if key_file else "",
                 proxy_session=proxy_session or "",
             )
-            session = utils_mod._ensure_putty_jump_session(jump, proxy_cmd)
+            session = (
+                utils_mod._ensure_putty_jump_session(
+                    jump, proxy_cmd, look=look, suffix=suffix
+                )
+                if look
+                else utils_mod._ensure_putty_jump_session(jump, proxy_cmd)
+            )
             if not session:
                 raise ValueError(
                     "Opening a PuTTY terminal through a jump host needs Windows "
@@ -132,6 +155,12 @@ class InternalsMixin:
             cmd.extend(["-load", session])
         elif proxy_session:
             cmd.extend(["-load", proxy_session])
+        elif look:
+            look_session = utils_mod._ensure_putty_look_session(
+                look, PUTTY_LOOK_SESSION + suffix
+            )
+            if look_session:
+                cmd.extend(["-load", look_session])
         cmd.append("-ssh")
         if user:
             cmd.extend(["-l", user])
@@ -198,6 +227,13 @@ class InternalsMixin:
                 daemon=True,
             ).start()
         return {"opened": opened, "errors": errors, "tiling": tiling}
+
+    def terminal_themes(self) -> list[dict[str, Any]]:
+        """The PuTTY colour themes for Settings → SSH → Terminal look (id,
+        label and colours as hex, for the preview)."""
+        from . import terminal_look
+
+        return terminal_look.themes_for_ui()
 
     def launch_local_terminal(self) -> None:
         """Open a local terminal window — tries Windows Terminal, then PowerShell, then cmd."""

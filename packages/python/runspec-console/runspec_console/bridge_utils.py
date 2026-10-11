@@ -19,6 +19,7 @@ from typing import Any
 
 from .bridge_const import (
     PUTTY_JUMP_SESSION_PREFIX,
+    PUTTY_LOOK_SESSION,
     PUTTY_PROXY_SESSION,
     _EVENT_LEVELS,
 )
@@ -110,15 +111,91 @@ def _normalize_ssh_section(ssh: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+# Look values the console may have written into one of its sessions before;
+# removed again when the look is turned off (unless Default Settings has them).
+_PUTTY_LOOK_KEYS = (
+    "UseSystemColours",
+    *(f"Colour{i}" for i in range(22)),
+    "Font",
+    "FontIsBold",
+    "FontCharSet",
+    "FontQuality",
+    "FontHeight",
+    "CurType",
+    "BlinkCur",
+    "ScrollbackLines",
+    "WindowBorder",
+)
+
+
+def _write_putty_session(session: str, values: dict[str, int | str]) -> str | None:
+    """Write a PuTTY saved session the console owns; return its name.
+
+    The session starts as a copy of the operator's own ``Default Settings``
+    (PuTTY fills a value missing from a saved session with its built-in
+    default, not ``Default Settings``, so without the copy loading our session
+    would drop the operator's own font/colours/keyboard settings). ``values``
+    (``int`` ⇒ REG_DWORD, ``str`` ⇒ REG_SZ) is written on top. A look value
+    left over from an earlier ``[terminal]`` setting is deleted, so turning the
+    look off restores the defaults. Values are overwritten, never the whole
+    key deleted: a PuTTY started a moment ago may still be reading it.
+
+    Returns None where winreg is unavailable (non-Windows).
+    """
+    try:
+        import winreg  # Windows-only
+    except ImportError:
+        return None
+
+    base = r"Software\SimonTatham\PuTTY\Sessions"
+    defaults: dict[str, tuple[Any, int]] = {}
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER, rf"{base}\Default%20Settings"
+        ) as dk:
+            i = 0
+            while True:
+                try:
+                    name, data, typ = winreg.EnumValue(dk, i)
+                except OSError:
+                    break
+                defaults[name] = (data, typ)
+                i += 1
+    except OSError:
+        pass  # no Default Settings saved — PuTTY's built-ins apply
+    for k in ("HostName", "PortNumber", "UserName", "PublicKeyFile"):
+        defaults.pop(k, None)  # the command line supplies these per host
+
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, rf"{base}\{session}") as key:
+        for name, (data, typ) in defaults.items():
+            if name not in values:
+                winreg.SetValueEx(key, name, 0, typ, data)
+        for name, val in values.items():
+            if isinstance(val, int):
+                winreg.SetValueEx(key, name, 0, winreg.REG_DWORD, val)
+            else:
+                winreg.SetValueEx(key, name, 0, winreg.REG_SZ, str(val))
+        for name in _PUTTY_LOOK_KEYS:
+            if name not in values and name not in defaults:
+                try:
+                    winreg.DeleteValue(key, name)
+                except OSError:
+                    pass
+    return session
+
+
 def _ensure_putty_proxy_session(
-    proxy: str, session: str = PUTTY_PROXY_SESSION
+    proxy: str,
+    session: str = PUTTY_PROXY_SESSION,
+    look: dict[str, int | str] | None = None,
 ) -> str | None:
     """Write a PuTTY saved session carrying an HTTP proxy; return its name.
 
     PuTTY has no command-line proxy flag — proxy config lives in a saved session
-    (Windows registry). We maintain a dedicated session holding only the proxy
-    settings; `putty -load <session> -ssh -l user host` then applies the proxy
-    while host/user/key still come from the command line.
+    (Windows registry). We maintain a dedicated session holding the proxy
+    settings (plus the ``[terminal]`` ``look`` values); `putty -load <session>
+    -ssh -l user host` then applies the proxy while host/user/key still come
+    from the command line.
 
     Returns the session name, or None if the proxy URL is unusable or winreg is
     unavailable (non-Windows). No proxy auth — front an auth proxy with a local
@@ -131,21 +208,27 @@ def _ensure_putty_proxy_session(
     pport = parsed.port or 8080
     if not phost:
         return None
-    try:
-        import winreg  # Windows-only
-    except ImportError:
-        return None
+    return _write_putty_session(
+        session,
+        {
+            **(look or {}),
+            "ProxyMethod": 3,  # 3 = HTTP
+            "ProxyHost": phost,
+            "ProxyPort": pport,
+            "ProxyDNS": 1,  # 1 = Auto
+            "ProxyLocalhost": 0,
+            "ProxyUsername": "",
+            "ProxyPassword": "",
+        },
+    )
 
-    key_path = rf"Software\SimonTatham\PuTTY\Sessions\{session}"
-    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path) as key:
-        winreg.SetValueEx(key, "ProxyMethod", 0, winreg.REG_DWORD, 3)  # 3 = HTTP
-        winreg.SetValueEx(key, "ProxyHost", 0, winreg.REG_SZ, phost)
-        winreg.SetValueEx(key, "ProxyPort", 0, winreg.REG_DWORD, pport)
-        winreg.SetValueEx(key, "ProxyDNS", 0, winreg.REG_DWORD, 1)  # 1 = Auto
-        winreg.SetValueEx(key, "ProxyLocalhost", 0, winreg.REG_DWORD, 0)
-        winreg.SetValueEx(key, "ProxyUsername", 0, winreg.REG_SZ, "")
-        winreg.SetValueEx(key, "ProxyPassword", 0, winreg.REG_SZ, "")
-    return session
+
+def _ensure_putty_look_session(
+    look: dict[str, int | str], session: str = PUTTY_LOOK_SESSION
+) -> str | None:
+    """Write the saved session a host with no proxy/jump loads to get the
+    ``[terminal]`` look; return its name (None off Windows)."""
+    return _write_putty_session(session, dict(look))
 
 
 def host_jump(hosts: list[dict[str, Any]] | None, entry: dict[str, Any] | None) -> str:
@@ -218,31 +301,35 @@ def _putty_jump_session_name(jump: str) -> str:
     return f"{PUTTY_JUMP_SESSION_PREFIX}{slug}"
 
 
-def _ensure_putty_jump_session(jump: str, proxy_command: str) -> str | None:
+def _ensure_putty_jump_session(
+    jump: str,
+    proxy_command: str,
+    look: dict[str, int | str] | None = None,
+    suffix: str = "",
+) -> str | None:
     """Write a PuTTY saved session whose proxy is the local command
     ``proxy_command`` (see :func:`_putty_jump_proxy_command`); return its name.
 
-    Same model as :func:`_ensure_putty_proxy_session`: the session carries only
-    the proxy settings and ``putty -load <session> -ssh -l user host`` supplies
-    the rest. ``ProxyDNS = Yes`` hands the target's name to the jump host to
-    resolve, so hosts only the jump host's network can resolve still work.
-    Returns None where winreg is unavailable (non-Windows).
+    Same model as :func:`_ensure_putty_proxy_session`: the session carries the
+    proxy settings (plus the ``[terminal]`` ``look``) and ``putty -load
+    <session> -ssh -l user host`` supplies the rest. ``ProxyDNS = Yes`` hands
+    the target's name to the jump host to resolve, so hosts only the jump
+    host's network can resolve still work. Returns None where winreg is
+    unavailable (non-Windows).
     """
-    try:
-        import winreg  # Windows-only
-    except ImportError:
-        return None
-    session = _putty_jump_session_name(jump)
-    key_path = rf"Software\SimonTatham\PuTTY\Sessions\{session}"
-    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path) as key:
-        winreg.SetValueEx(key, "ProxyMethod", 0, winreg.REG_DWORD, 5)  # 5 = local
-        winreg.SetValueEx(key, "ProxyTelnetCommand", 0, winreg.REG_SZ, proxy_command)
-        winreg.SetValueEx(key, "ProxyHost", 0, winreg.REG_SZ, "")
-        winreg.SetValueEx(key, "ProxyDNS", 0, winreg.REG_DWORD, 2)  # 2 = Yes
-        winreg.SetValueEx(key, "ProxyLocalhost", 0, winreg.REG_DWORD, 0)
-        winreg.SetValueEx(key, "ProxyUsername", 0, winreg.REG_SZ, "")
-        winreg.SetValueEx(key, "ProxyPassword", 0, winreg.REG_SZ, "")
-    return session
+    return _write_putty_session(
+        _putty_jump_session_name(jump) + suffix,
+        {
+            **(look or {}),
+            "ProxyMethod": 5,  # 5 = local command
+            "ProxyTelnetCommand": proxy_command,
+            "ProxyHost": "",
+            "ProxyDNS": 2,  # 2 = Yes
+            "ProxyLocalhost": 0,
+            "ProxyUsername": "",
+            "ProxyPassword": "",
+        },
+    )
 
 
 def _public_key_from_private(path: Path) -> str:

@@ -276,6 +276,7 @@ EXPECTED = {
     "sync_pull",
     "sync_repo",
     "synthesize_improve_report",
+    "terminal_themes",
     "test_host",
     "test_notification",
     "test_room_connection",

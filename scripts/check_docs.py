@@ -104,6 +104,7 @@ TOML_FENCE = re.compile(r"```toml\n(.*?)```", re.S)
 #   eval                       → console eval fixture ([[eval]] tool-selection cases)
 #   suite                      → console `runspec_evals.toml` ([[suite]] fixture store)
 #   chat_history/workspace/plugins → console `config.toml` sections
+#   terminal                   → console `config.toml` ([terminal] PuTTY look)
 # Trade-off: a runspec runnable literally named `ssh`/`refresh`/`hosts`/`triggers`
 # would be skipped — none exist in the docs (guarded by check below), and runnable
 # names are author-chosen, so this is acceptable.
@@ -147,6 +148,7 @@ NON_RUNSPEC_SECTIONS = {
     "mcp_server",
     "local",
     "tool_visibility",
+    "terminal",
     "improve",
     "gateway",
     "eval",  # console eval fixture ([[eval]] tool-selection cases)

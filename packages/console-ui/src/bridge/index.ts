@@ -517,6 +517,18 @@ export interface Host {
 // An entry in the canonical host-group registry (runspec_groups.toml). The
 // registry pins the legal group NAMES (shared via Config Sync); membership lives
 // on each host's `group` field.
+// A PuTTY colour theme ([terminal] theme); colours are #rrggbb. `ansi` is the
+// 8 normal colours then the 8 bright ones (black, red, green, yellow, blue,
+// magenta, cyan, white).
+export interface TerminalTheme {
+  id: string
+  label: string
+  fg: string
+  bg: string
+  cursor: string
+  ansi: string[]
+}
+
 export interface LaunchTerminalsResult {
   opened: string[]
   errors: { host: string; error: string }[]
@@ -2688,6 +2700,8 @@ export interface BridgeApi {
     hosts: string[], tile?: boolean, layout?: 'grid' | 'compact' | 'columns' | 'rows' | 'cascade',
   ) => Promise<LaunchTerminalsResult>
   launch_local_terminal: () => Promise<void>
+  // PuTTY colour themes for Settings → SSH → Terminal look (the preview).
+  terminal_themes: () => Promise<TerminalTheme[]>
   // ── dev tools ────────────────────────────────────────────────────────────
   is_debug_enabled: () => Promise<boolean>
   open_devtools: () => Promise<void>

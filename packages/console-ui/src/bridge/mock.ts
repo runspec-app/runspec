@@ -2012,6 +2012,18 @@ export const mockApi: BridgeApi = {
   launch_terminal: async (host: string): Promise<void> => {
     console.log('mock: launch_terminal', host)
   },
+  terminal_themes: async () => [
+    {
+      id: 'one-half-dark', label: 'One Half Dark', fg: '#dcdfe4', bg: '#282c34', cursor: '#ffffff',
+      ansi: ['#282c34', '#e06c75', '#98c379', '#e5c07b', '#61afef', '#c678dd', '#56b6c2', '#dcdfe4',
+        '#5a6374', '#e06c75', '#98c379', '#e5c07b', '#61afef', '#c678dd', '#56b6c2', '#ffffff'],
+    },
+    {
+      id: 'red-alert', label: 'Red alert (production)', fg: '#ebdcdc', bg: '#3a080c', cursor: '#ffffff',
+      ansi: ['#0c0c0c', '#e74856', '#16c60c', '#f9d250', '#5a8cff', '#c85ad2', '#61d6d6', '#cccccc',
+        '#767676', '#ff6e78', '#50e646', '#f9f1a5', '#82aaff', '#e678e6', '#8cebeb', '#f2f2f2'],
+    },
+  ],
   launch_local_terminal: async (): Promise<void> => {
     console.log('mock: launch_local_terminal')
   },

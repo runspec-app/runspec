@@ -20,6 +20,7 @@ import { ModelSelect } from './ModelSelect'
 import { useFeatures, visibleSettingsTabs } from '../features'
 import { ConfigSyncPreviewModal } from './ConfigSyncPreview'
 import { MemorySyncTab } from './MemorySyncTab'
+import { TerminalLook } from './TerminalLook'
 
 const { Text, Link } = Typography
 
@@ -1036,6 +1037,10 @@ export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [],
           ),
         }]}
       />
+
+      <Divider />
+
+      <TerminalLook />
 
       <Divider />
 
