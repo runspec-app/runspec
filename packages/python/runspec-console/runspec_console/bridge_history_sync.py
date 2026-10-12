@@ -273,6 +273,9 @@ class HistorySyncMixin:
         synced_any = False
         legacy: list[str] = []
         unindexed: list[str] = []
+        # A dir that was a snapshot (no index / pre-v4 / unreadable) and now syncs
+        # by cursor: rebuild the snapshots this pull so its log-parsed copies go.
+        left_snapshot = False
         for page in range(_PULL_MAX_PAGES):
             if not pending:
                 break
@@ -316,6 +319,8 @@ class HistorySyncMixin:
                 if mode in ("delta", "reset"):
                     assert isinstance(res, dict)
                     synced_any = True
+                    if d in known and not known[d].get("db_id"):
+                        left_snapshot = True
                     group = dir_group.get(d, primary_group)
                     recs, drop = [], [str(x) for x in res.get("deleted") or []]
                     for row in res.get("rows") or []:
@@ -332,7 +337,20 @@ class HistorySyncMixin:
                     legacy.append(d)
                 elif mode == "none":
                     unindexed.append(d)
-                else:  # error / missing — leave that dir's cache as it was
+                elif mode == "error":
+                    # The index is there but can't be opened (e.g. "unable to open
+                    # database file": a non-owner reading an owner-only logs dir while
+                    # a -wal is present). The direct read falls back to parsing the
+                    # dir's logs; do the same, or the cache sits on stale records and
+                    # 7d / 30d miss runs that 90d / All show.
+                    unindexed.append(d)
+                    logger.info(
+                        "history: pull of %s:%s failed, reading its logs: %s",
+                        host,
+                        d,
+                        (res or {}).get("error") if isinstance(res, dict) else "",
+                    )
+                else:  # no reply for this dir — leave its cache as it was
                     logger.info(
                         "history: pull of %s:%s failed: %s",
                         host,
@@ -355,6 +373,7 @@ class HistorySyncMixin:
             state["uncachable"].pop(host, None)
             refresh = (
                 force
+                or left_snapshot
                 or now - state["snapshot"].get(host, -_SNAPSHOT_INTERVAL)
                 >= _SNAPSHOT_INTERVAL
             )
@@ -369,8 +388,8 @@ class HistorySyncMixin:
                 entry, legacy, dir_group, primary_group, sv_python, since_iso
             )
         for d in unindexed:
-            # An index that disappeared (deleted by hand) leaves no stale records
-            # beside the log-parsed ones.
+            # An index that disappeared (deleted by hand) or can't be opened leaves
+            # no stale records beside the log-parsed ones.
             changed |= cache.replace(host, d, [])
         if unindexed:
             script = _remote_log_script(unindexed, None, limit=self._HISTORY_CAP + 50)

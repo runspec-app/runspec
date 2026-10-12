@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Table, Tag, Typography, Button, Tooltip, message, Input, Drawer, Spin, Empty, Alert, Segmented } from 'antd'
 import { RedoOutlined, CopyOutlined, RobotOutlined, UserOutlined, SearchOutlined, EditOutlined, ClockCircleOutlined, ProfileOutlined } from '@ant-design/icons'
 import type { ColumnType } from 'antd/es/table'
@@ -565,14 +565,28 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
     )
   }, [records, search])
 
-  const facets = useMemo(() => ({
-    hosts: [...new Set(records.map(r => r.host))],
-    groups: [...new Set(records.map(r => r.group))],
-    operators: [...new Set(records.map(r => r.operator))],
-    runAsUsers: [...new Set(records.map(r => r.runAs))],
-    runbooks: [...new Set(records.map(r => r.runbook).filter((s): s is string => !!s))],
-  }), [records])
+  // The filter options, keyed by their *content*: a refetch that returns the same
+  // hosts/groups/operators keeps the same arrays, so the columns below keep their
+  // identity. Ant re-syncs an open filter dropdown's ticks to the committed value
+  // whenever the columns are rebuilt, so rebuilding them on every refetch (a cache
+  // pull's history_updated arrives every few seconds on 7d/30d) undid a tick or
+  // untick before the operator could press OK.
+  const facetKey = useMemo(() => JSON.stringify([
+    [...new Set(records.map(r => r.host))],
+    [...new Set(records.map(r => r.group))],
+    [...new Set(records.map(r => r.operator))],
+    [...new Set(records.map(r => r.runAs))],
+    [...new Set(records.map(r => r.runbook).filter((s): s is string => !!s))],
+  ]), [records])
+  const facets = useMemo(() => {
+    const [hosts, groups, operators, runAsUsers, runbooks] = JSON.parse(facetKey) as string[][]
+    return { hosts, groups, operators, runAsUsers, runbooks }
+  }, [facetKey])
   const { hosts, groups, operators, runAsUsers, runbooks } = facets
+  // App passes a fresh onScopeToggle on every render; read it through a ref so an
+  // unrelated App re-render doesn't rebuild the columns (same reason as above).
+  const scopeToggleRef = useRef(onScopeToggle)
+  useLayoutEffect(() => { scopeToggleRef.current = onScopeToggle })
 
   const columns: ColumnType<HistoryRecord>[] = useMemo(() => [
     {
@@ -638,7 +652,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
         return (
           <Tag
             color={active ? 'geekblue' : 'blue'}
-            onClick={() => onScopeToggle(g)}
+            onClick={() => scopeToggleRef.current(g)}
             style={{ cursor: 'pointer', fontWeight: active ? 600 : 400 }}
             title={active ? 'Remove from scope' : 'Add to scope'}
           >
@@ -742,7 +756,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       sorter: (a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime(),
       defaultSortOrder: 'descend',
     },
-  ], [groups, runbooks, hosts, operators, runAsUsers, colFilters, activeScope, onScopeToggle, accent])
+  ], [groups, runbooks, hosts, operators, runAsUsers, colFilters, activeScope, accent])
 
   return (
     <div>

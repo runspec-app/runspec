@@ -413,7 +413,7 @@ class TestReadOnlyOpenFallsBackToImmutable(unittest.TestCase):
         con.close()  # last connection: -wal/-shm are removed
         return db
 
-    def _ns(self, refuse_plain_ro: bool) -> dict:
+    def _ns(self, refuse_plain_ro: bool, refuse_immutable: bool = False) -> dict:
         import sqlite3
 
         ns: dict = {}
@@ -430,8 +430,10 @@ class TestReadOnlyOpenFallsBackToImmutable(unittest.TestCase):
 
         def connect(target, *a, **k):
             seen.append(target)
-            if refuse_plain_ro and "immutable" not in target:
+            if refuse_plain_ro and "immutable" not in target and "mode=ro" in target:
                 return _Refusing()
+            if refuse_immutable and "immutable" in target:
+                return _Refusing()  # SQLite < 3.8 ignores immutable=1
             return real(target, *a, **k)
 
         fake = type(
@@ -459,6 +461,16 @@ class TestReadOnlyOpenFallsBackToImmutable(unittest.TestCase):
         con = ns["_rs_ro"](db)
         self.assertEqual(con.execute("SELECT run_id FROM runs").fetchall(), [("r1",)])
         self.assertIn("immutable=1", ns["_seen"][-1])
+
+    def test_old_sqlite_without_immutable_reads_a_private_copy(self) -> None:
+        db = self._db()
+        ns = self._ns(refuse_plain_ro=True, refuse_immutable=True)
+        con = ns["_rs_ro"](db)
+        self.assertEqual(con.execute("SELECT run_id FROM runs").fetchall(), [("r1",)])
+        con.execute("BEGIN")  # the sync snippet's read transaction
+        con.rollback()
+        self.assertNotIn(db, ns["_seen"][-1])  # opened the copy, not the index
+        self.assertEqual(sorted(os.listdir(os.path.dirname(db))), ["runspec_runs.db"])
 
     def test_no_immutable_read_while_a_wal_holds_uncheckpointed_rows(self) -> None:
         import sqlite3

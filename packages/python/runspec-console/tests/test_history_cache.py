@@ -373,6 +373,36 @@ class TestHistoryPull(_PullFixture):
         self.assertEqual({r["runId"] for r in rows}, {"v4row", "v3row"})
         self.assertEqual(next(r for r in rows if r["runId"] == "v3row")["group"], "v2")
 
+    def test_unreadable_index_is_log_parsed_not_left_stale(self) -> None:
+        # v1 syncs; v2's index can't be opened ("unable to open database file" —
+        # here a directory where the DB file should be). Like the direct read, the
+        # pull parses v2's logs instead of leaving the cache without its runs.
+        _run(self.logs, "v4row")
+        v2 = self.tmp / "v2"
+        runsdb.db_path(v2 / "logs").mkdir(parents=True)
+        self.b._hosts[0]["runspec_paths"].append((v2 / "bin" / "runspec").as_posix())
+        parsed = {
+            "id": "p1",
+            "runId": "fromlog",
+            "runnable": "deploy",
+            "group": "v2",
+            "host": "prod-1",
+            "ts": _now(),
+            "kind": "runnable",
+        }
+        with patch.object(self.b, "_parse_remote_stream", return_value=[parsed]):
+            rows, _ = self._slim()
+        self.assertEqual({r["runId"] for r in rows}, {"v4row", "fromlog"})
+        log_cmds = [c for c in self.ssh_calls if "RUNSPEC_LOG" in c]
+        self.assertTrue(log_cmds and (v2 / "logs").as_posix() in log_cmds[0])
+
+        # Once the index opens again, the log-parsed copies are dropped at once.
+        runsdb.db_path(v2 / "logs").rmdir()
+        _run(v2 / "logs", "indexed")
+        self.assertTrue(self._pull())
+        rows, _ = self._slim()
+        self.assertEqual({r["runId"] for r in rows}, {"v4row", "indexed"})
+
     def test_wider_windows_and_cache_off_bypass(self) -> None:
         _run(self.logs, "a")
         with patch.object(self.b, "_slim_history_db_remote", return_value=[]) as direct:

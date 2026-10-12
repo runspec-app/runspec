@@ -577,7 +577,29 @@ def _rs_ro(db, timeout=2.0):
         con.close()
         if os.path.exists(db + "-wal"):
             raise
-    return sqlite3.connect("file:%s?mode=ro&immutable=1" % db, uri=True, timeout=timeout)
+    con = sqlite3.connect("file:%s?mode=ro&immutable=1" % db, uri=True, timeout=timeout)
+    try:
+        con.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchall()
+        return con
+    except sqlite3.OperationalError:
+        con.close()  # SQLite < 3.8 (CentOS 7's 3.7.17) has no immutable=1
+    return _rs_copy(db, timeout)
+def _rs_copy(db, timeout=2.0):
+    # Read a private copy: with no -wal the main file holds every committed row,
+    # and a copy in a dir we own opens on any SQLite. The copy is unlinked once
+    # open (POSIX keeps the open file readable); rollback journal, so no -shm.
+    import shutil, tempfile
+    d = tempfile.mkdtemp(prefix="rs-runs-")
+    try:
+        p = os.path.join(d, "runs.db")
+        shutil.copyfile(db, p)
+        if os.path.exists(db + "-wal"):
+            raise sqlite3.OperationalError("runs index changed while copying it")
+        con = sqlite3.connect(p, timeout=timeout)
+        con.execute("PRAGMA journal_mode=DELETE").fetchall()
+        return con
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
 def _rs_rid(name):
     m = _RS_NAME.search(name)
     if not m:

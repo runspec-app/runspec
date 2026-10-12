@@ -9,6 +9,32 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.344.1] — 2026-10-12
+
+### Fixed
+
+- **History column filters keep your ticks while the table refreshes.** With a
+  filter dropdown open, a background refresh (a cache pull's `history_updated`,
+  frequent on the 7d / 30d views, or any console re-render) rebuilt the table's
+  columns, and Ant Design re-synced the dropdown to the last confirmed filter:
+  a new tick vanished and an untick came back before you could press OK. The
+  filter options are now keyed by their content and the scope-toggle callback is
+  read through a ref, so the columns only change when the options do.
+- **History 7d / 30d show recent runs on hosts whose run index can't be
+  opened.** When a venv's `runspec_runs.db` couldn't be opened by the console's
+  login (e.g. "unable to open database file": a leftover `-wal` in an owner-only
+  `logs/` dir), the cache pull logged the error and kept that venv's old
+  records, so 7d / 30d missed runs that 90d / All (a direct read, which falls
+  back to the venv's log files) showed. The pull now parses that venv's logs
+  too, and drops those copies as soon as the index opens again.
+- **Run indexes open on hosts with SQLite older than 3.8.** A login that isn't
+  the venv's owner reads the index through SQLite's `immutable=1` open, which
+  SQLite 3.7 (CentOS 7's 3.7.17, which a self-built Python 3.10 links) doesn't
+  have — every read failed with "unable to open database file", on a freshly
+  created index too. The remote read/sync/running snippets now fall back to a
+  private copy of the index (taken only when no `-wal` exists, so it holds every
+  committed row), opened and then deleted from a temp dir.
+
 ## [0.344.0] — 2026-10-12
 
 ### Added

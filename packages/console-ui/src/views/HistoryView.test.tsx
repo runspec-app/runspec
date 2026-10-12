@@ -170,6 +170,35 @@ describe('HistoryView', () => {
     expect(screen.queryByText('backup')).toBeNull()
   })
 
+  it('a refetch while a filter dropdown is open keeps the unconfirmed ticks', async () => {
+    getHistorySlim.mockResolvedValue([
+      rec({ id: 'a', runId: 'a', operator: 'alice' }),
+      rec({ id: 'b', runId: 'b', operator: 'bob', runnable: 'deploy' }),
+    ])
+    const { container, rerender } = render(<HistoryView {...PROPS} />)
+    await screen.findByText('deploy')
+    const trigger = [...container.querySelectorAll('.ant-table-filter-trigger')]
+      .find(t => t.closest('th')?.textContent?.includes('Operator')) as HTMLElement
+    const bob = () => screen.getAllByText('bob')
+      .find(el => el.closest('.ant-dropdown-menu-item'))!.closest('.ant-dropdown-menu-item') as HTMLElement
+    const ticked = () => bob().querySelector('.ant-checkbox-checked') !== null
+    const refetch = async () => {
+      window.dispatchEvent(new CustomEvent('runspec:history_updated', { detail: { host: 'local' } }))
+      await flush()
+    }
+    // Commit "bob", reopen, untick it — then a cache pull refetches and the parent
+    // re-renders (a fresh onScopeToggle) before OK is pressed.
+    await act(async () => { trigger.click() })
+    await act(async () => { bob().click() })
+    await act(async () => { screen.getByRole('button', { name: 'OK' }).click() })
+    await act(async () => { trigger.click() })
+    await act(async () => { bob().click() })
+    expect(ticked()).toBe(false)
+    await act(refetch)
+    rerender(<HistoryView {...PROPS} onScopeToggle={() => {}} />)
+    expect(ticked()).toBe(false)
+  })
+
   it('marks a cached host whose last sync failed "as of …"', async () => {
     historyTargets.mockResolvedValue(['local', 'web-01'])
     getHistorySlim.mockImplementation((host: string) => Promise.resolve([rec({ id: host, host })]))
