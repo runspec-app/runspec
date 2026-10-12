@@ -1,4 +1,6 @@
-# Team wiki CI: lint every change, publish GitLab Pages from release tags.
+# Team wiki CI: lint every merge request, publish GitLab Pages from release tags.
+# Merging doesn't lint again (the merge request already did); a release tag
+# lints once more before Pages, which catches two merges that clash.
 # Set PIP_INDEX_URL as a CI variable if runners can only reach an internal mirror.
 
 stages: [check, publish]
@@ -12,7 +14,6 @@ lint:
     - python tools/okf_lint.py .
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - if: $CI_COMMIT_TAG
 
 pages:

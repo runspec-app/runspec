@@ -3,10 +3,22 @@
  * settings form previews.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { useState } from 'react'
 import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 
-import { KnowledgeSync } from './KnowledgeSync'
-import { errorText, laneOf } from '../components/MemorySyncTab'
+import { KnowledgeSync, SyncResultBanner, pullTip } from './KnowledgeSync'
+import { errorText, laneOf, type SyncResult } from '../components/MemorySyncTab'
+
+// The tab shows the outcome on its own line, under the toolbar.
+function Harness() {
+  const [result, setResult] = useState<SyncResult | null>(null)
+  return (
+    <>
+      <KnowledgeSync onResult={setResult} />
+      <SyncResultBanner result={result} onClose={() => setResult(null)} />
+    </>
+  )
+}
 
 const { status, push, pull } = vi.hoisted(() => ({
   status: vi.fn(),
@@ -26,9 +38,9 @@ vi.mock('../bridge', () => ({
 }))
 
 const base = {
-  configured: true, engine: 'dulwich', url: 'u', branch: 'main', contrib_branch: 'contrib/jo',
+  configured: true, engine: 'dulwich', url: 'u', branch: 'main', pull_from: 'branch' as const, pull_source: 'main', contrib_branch: 'contrib/jo',
   path: 'facts/jo.toml', shareable: 2, unpushed: true, team_facts: 0,
-  last_push: '', last_push_commit: '', last_pull: '', last_pull_commit: '',
+  last_push: '', last_push_commit: '', last_pull: '', last_pull_commit: '', last_pull_ref: '',
 }
 
 beforeEach(() => { status.mockReset(); push.mockReset(); pull.mockReset() })
@@ -46,7 +58,7 @@ describe('KnowledgeSync', () => {
     status.mockResolvedValue(base)
     pull.mockResolvedValue({ ok: true, files: 1, facts: 3, added: 3, removed: 0, skipped: [] })
     push.mockResolvedValue({ ok: true, branch: 'contrib/jo', changed: true, facts: 2 })
-    render(<KnowledgeSync />)
+    render(<Harness />)
     fireEvent.click(await screen.findByText('Pull'))
     await waitFor(() => expect(pull).toHaveBeenCalled())
     fireEvent.click(screen.getByText('Push'))
@@ -60,7 +72,7 @@ describe('KnowledgeSync', () => {
   it('keeps a failed push on screen', async () => {
     status.mockResolvedValue(base)
     push.mockResolvedValue({ ok: false, error: "GitLab: Author 'jo@pc' is not a member of team" })
-    render(<KnowledgeSync />)
+    render(<Harness />)
     fireEvent.click(await screen.findByText('Push'))
     fireEvent.click(await screen.findByRole('button', { name: 'Push' }))
     expect(await screen.findByText(/Push failed: GitLab: Author/)).toBeTruthy()
@@ -69,9 +81,27 @@ describe('KnowledgeSync', () => {
   it('reports a pull that throws', async () => {
     status.mockResolvedValue(base)
     pull.mockRejectedValue(new Error('bridge went away'))
-    render(<KnowledgeSync />)
+    render(<Harness />)
     fireEvent.click(await screen.findByText('Pull'))
     expect(await screen.findByText('Pull failed: bridge went away')).toBeTruthy()
+  })
+})
+
+describe('pullTip', () => {
+  const tagged = { ...base, pull_from: 'latest-tag' as const, pull_source: 'the newest v* tag', last_pull: '2026-10-12T09:00:00Z', last_pull_ref: 'v1.0.0' }
+  it('names the source and a newer release', () => {
+    const tip = pullTip(tagged, { ok: true, available: true, latest: 'v1.1.0', pinned: false })
+    expect(tip).toMatch(/from the newest v\* tag/)
+    expect(tip).toMatch(/Last pull: v1.0.0,/)
+    expect(tip).toMatch(/v1.1.0 is ready to pull/)
+  })
+  it('points a pinned tag at Settings', () => {
+    const tip = pullTip({ ...tagged, pull_from: 'tag', pull_source: 'v1.0.0' }, { ok: true, available: true, latest: 'v1.1.0', pinned: true })
+    expect(tip).toMatch(/change the pinned tag in Settings/)
+  })
+  it('says when the branch has new merges', () => {
+    expect(pullTip(base, { ok: true, available: true, latest: 'abc', pinned: false })).toMatch(/main has new merges/)
+    expect(pullTip(base, null)).toMatch(/Never pulled/)
   })
 })
 

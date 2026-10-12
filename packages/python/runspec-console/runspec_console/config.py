@@ -1886,6 +1886,12 @@ def write_sync(sync: dict[str, Any]) -> None:
 #: Memory Sync's default branch for the shared wiki (what a pull reads).
 DEFAULT_MEMORY_SYNC_BRANCH = "main"
 
+#: What a Memory Sync pull reads: the team branch (default), the newest release
+#: tag, or one pinned tag.
+MEMORY_SYNC_PULL_FROM = ("branch", "latest-tag", "tag")
+#: The release-tag series ``latest-tag`` follows (``v1.4.0``, ``v2026.10.12``).
+DEFAULT_MEMORY_SYNC_TAG_PREFIX = "v"
+
 
 def read_memory_sync() -> dict[str, Any]:
     """The ``[memory_sync]`` table from config.toml ({} when unset).
@@ -1896,7 +1902,10 @@ def read_memory_sync() -> dict[str, Any]:
         [memory_sync]
         url           = "https://gitlab.acme.com/ops/wiki.git"
         credential_id = "wiki-token"    # a Credentials-tab entry (write access)
-        branch        = "main"          # what a pull reads; default "main"
+        branch        = "main"          # the team branch; default "main"
+        pull_from     = "branch"        # or "latest-tag" / "tag" (see below)
+        pull_tag      = "v1.4.0"        # pull_from = "tag": the pinned tag
+        tag_prefix    = "v"             # pull_from = "latest-tag": the tag series
         user          = "jason"         # your lane: pushes go to contrib/<user>
         email         = "jason@acme.com"  # commit author email (your git account)
         ca_bundle     = ""              # HTTPS: PEM bundle (internal CA / TLS proxy)
@@ -1905,6 +1914,9 @@ def read_memory_sync() -> dict[str, Any]:
     ``user`` defaults to the OS login name and ``email`` to ``<lane>@<hostname>``;
     both are kept machine-local across a Config Sync pull. A server that checks
     commit authors (a GitLab push rule) needs ``email`` to be one on your account. The secret lives in the keyring under ``credential_id``.
+    ``pull_from`` picks what a pull reads: the team branch (every merge, at
+    once), the newest release tag in the ``tag_prefix`` series (only what was
+    released), or one pinned ``pull_tag``. Pushes always start from ``branch``.
     Push/pull stamps live in the wiki's machine-local ``state.toml``, not here."""
     raw = read_config().get("memory_sync")
     return dict(raw) if isinstance(raw, dict) else {}
@@ -1912,13 +1924,28 @@ def read_memory_sync() -> dict[str, Any]:
 
 def write_memory_sync(ms: dict[str, Any]) -> None:
     """Replace the ``[memory_sync]`` table, preserving every other section.
-    Blank scalars and the default branch / ``tls_verify = true`` are dropped."""
+    Blank scalars, default values and ``tls_verify = true`` are dropped."""
 
     def mutate(cfg: dict[str, Any]) -> None:
         entry: dict[str, Any] = {}
-        for key in ("url", "credential_id", "branch", "user", "email", "ca_bundle"):
+        defaults = {
+            "branch": DEFAULT_MEMORY_SYNC_BRANCH,
+            "pull_from": "branch",
+            "tag_prefix": DEFAULT_MEMORY_SYNC_TAG_PREFIX,
+        }
+        for key in (
+            "url",
+            "credential_id",
+            "branch",
+            "pull_from",
+            "pull_tag",
+            "tag_prefix",
+            "user",
+            "email",
+            "ca_bundle",
+        ):
             val = str(ms.get(key) or "").strip()
-            if val and not (key == "branch" and val == DEFAULT_MEMORY_SYNC_BRANCH):
+            if val and val != defaults.get(key):
                 entry[key] = val
         if ms.get("tls_verify", True) is False:
             entry["tls_verify"] = False

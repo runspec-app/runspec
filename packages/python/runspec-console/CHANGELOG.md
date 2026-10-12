@@ -9,6 +9,33 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.344.0] — 2026-10-12
+
+### Added
+- **Memory Sync can pull release tags.** Settings → Memory Sync → *Pull from*
+  chooses what a pull reads: the team branch (default, unchanged), the newest
+  release tag in a series (*Tag prefix*, default `v`), or one pinned tag. With a
+  tag, merged facts reach other consoles only once the team tags a release — the
+  same releases that publish the Pages site. Push still starts from the team
+  branch. New `[memory_sync] pull_from` / `pull_tag` / `tag_prefix`;
+  `gitsync.latest_release`.
+- **Newer-version hint on the Knowledge tab.** When the tab opens and after each
+  pull, `memory_sync_check_update` asks the repo (one `ls-remote`) for new merges
+  or a newer release tag; a dot on **Pull** says so and its tooltip names the
+  version last pulled. A pull's result names the tag it read, and the status
+  carries `last_pull_ref`.
+
+## [0.343.4] — 2026-10-12
+
+### Changed
+
+- Knowledge tab: the Pull / Push outcome is now its own closable line under the
+  toolbar instead of a tag between the buttons, so a long message no longer
+  widens the toolbar.
+- Wiki repo template CI lints merge (pull) requests and release tags, no longer
+  again after each merge to the default branch. The README says tags drive the
+  site only; Memory Sync reads the team branch.
+
 ## [0.343.3] — 2026-10-12
 
 ### Fixed

@@ -29,6 +29,7 @@ EXPECTED = {
     "memory_sync_test",
     "memory_sync_push",
     "memory_sync_pull",
+    "memory_sync_check_update",
     "memory_sync_create_repo",
     "memory_sync_refresh_docs",
     "provision_start",

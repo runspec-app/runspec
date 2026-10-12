@@ -11,7 +11,7 @@ import { Alert, Button, Divider, Form, Input, Select, Space, Switch, Typography 
 import { ApiOutlined, BookOutlined, SyncOutlined } from '@ant-design/icons'
 
 import {
-  bridge, type Credential, type MemorySyncConfig, type MemorySyncSettings,
+  bridge, type Credential, type MemorySyncConfig, type MemorySyncPullFrom, type MemorySyncSettings,
   type WikiRefreshResult, type WikiRepoCreateResult,
 } from '../bridge'
 import { MONO_FONT } from '../ThemeContext'
@@ -58,6 +58,7 @@ export function MemorySyncTab() {
     const v = await form.validateFields()
     const r = await bridge.save_memory_sync_config({
       url: (v.url ?? '').trim(), branch: (v.branch ?? '').trim(), user: (v.user ?? '').trim(),
+      pull_from: v.pull_from || 'branch', pull_tag: (v.pull_tag ?? '').trim(), tag_prefix: (v.tag_prefix ?? '').trim(),
       email: (v.email ?? '').trim(), credential_id: v.credential_id || '', ca_bundle: (v.ca_bundle ?? '').trim(),
       tls_verify: v.tls_verify !== false,
     })
@@ -94,6 +95,7 @@ export function MemorySyncTab() {
   }
 
   const lane = cfg ? (user.trim() ? laneOf(user) : cfg.lane) : ''
+  const pullFrom = (Form.useWatch('pull_from', form) as MemorySyncPullFrom | undefined) ?? 'branch'
 
   return (
     <div style={{ maxWidth: 640 }}>
@@ -121,12 +123,41 @@ export function MemorySyncTab() {
           />
         </Form.Item>
         <Space size={16} wrap style={{ width: '100%' }} align="start">
-          <Form.Item name="branch" label="Team branch" extra="What a pull reads." style={{ width: 220 }}>
+          <Form.Item name="branch" label="Team branch" extra="Where merges land; pushes start here." style={{ width: 220 }}>
             <Input placeholder="main" style={{ fontFamily: MONO_FONT }} />
           </Form.Item>
           <Form.Item name="user" label="Your name in the wiki" extra={cfg ? `Blank uses ${cfg.user_default}.` : undefined} style={{ width: 260 }}>
             <Input placeholder={cfg?.user_default} onChange={e => setUser(e.target.value)} />
           </Form.Item>
+        </Space>
+        <Space size={16} wrap style={{ width: '100%' }} align="start">
+          <Form.Item
+            name="pull_from" label="Pull from" style={{ width: 260 }}
+            extra={pullFrom === 'branch'
+              ? 'Every merge reaches the team at once.'
+              : pullFrom === 'latest-tag'
+                ? 'Only released facts: tag the team branch to release.'
+                : 'Stays on one release until you change the tag.'}
+          >
+            <Select options={[
+              { value: 'branch', label: 'The team branch' },
+              { value: 'latest-tag', label: 'The newest release tag' },
+              { value: 'tag', label: 'A pinned tag' },
+            ]} />
+          </Form.Item>
+          {pullFrom === 'latest-tag' && (
+            <Form.Item name="tag_prefix" label="Tag prefix" extra="Release tags look like v1.4.0." style={{ width: 160 }}>
+              <Input placeholder="v" style={{ fontFamily: MONO_FONT }} />
+            </Form.Item>
+          )}
+          {pullFrom === 'tag' && (
+            <Form.Item
+              name="pull_tag" label="Tag" style={{ width: 200 }}
+              rules={[{ required: true, whitespace: true, message: 'Name the tag to pull.' }]}
+            >
+              <Input placeholder="v1.0.0" style={{ fontFamily: MONO_FONT }} />
+            </Form.Item>
+          )}
         </Space>
         <Form.Item
           name="email" label="Commit email"

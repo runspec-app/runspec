@@ -12,6 +12,9 @@ operator-driven from the Knowledge tab:
   ``main`` until someone merges the branch on the repo — the second review.
 * **Pull** — every ``facts/*.toml`` on ``main`` (except this operator's own lane)
   replaces the local ``team/`` directory, which the wiki reads as team facts.
+  ``pull_from`` can point it at the newest release tag (``v*``) or one pinned
+  tag instead, so consoles only see what the team released;
+  ``memory_sync_check_update`` reports a newer tag / new commits.
 
 Because each contributor only ever changes their own file, merging any number of
 ``contrib/*`` branches into ``main`` never conflicts.
@@ -60,6 +63,15 @@ def _push_error(text: str) -> str:
     return text
 
 
+def _pull_source(ms: dict[str, Any]) -> str:
+    """What a pull reads, in words: ``main``, ``the newest v* tag``, ``v1.4.0``."""
+    if ms["pull_from"] == "tag":
+        return ms["pull_tag"]
+    if ms["pull_from"] == "latest-tag":
+        return f"the newest {ms['tag_prefix']}* tag"
+    return ms["branch"]
+
+
 def _os_user() -> str:
     try:
         return getpass.getuser()
@@ -74,11 +86,18 @@ class MemorySyncMixin:
         ms = config_mod.read_memory_sync()
         user = str(ms.get("user") or "").strip() or _os_user()
         lane = kn.lane_name(user)
+        pull_from = str(ms.get("pull_from") or "").strip()
+        if pull_from not in config_mod.MEMORY_SYNC_PULL_FROM:
+            pull_from = "branch"
         return {
             "url": str(ms.get("url") or "").strip(),
             "credential_id": str(ms.get("credential_id") or "").strip(),
             "branch": str(ms.get("branch") or "").strip()
             or config_mod.DEFAULT_MEMORY_SYNC_BRANCH,
+            "pull_from": pull_from,
+            "pull_tag": str(ms.get("pull_tag") or "").strip(),
+            "tag_prefix": str(ms.get("tag_prefix") or "").strip()
+            or config_mod.DEFAULT_MEMORY_SYNC_TAG_PREFIX,
             "user": str(ms.get("user") or "").strip(),
             "email": str(ms.get("email") or "").strip(),
             "ca_bundle": str(ms.get("ca_bundle") or "").strip(),
@@ -118,6 +137,9 @@ class MemorySyncMixin:
                     "url",
                     "credential_id",
                     "branch",
+                    "pull_from",
+                    "pull_tag",
+                    "tag_prefix",
                     "user",
                     "email",
                     "ca_bundle",
@@ -142,6 +164,17 @@ class MemorySyncMixin:
                 "ok": False,
                 "error": "the team branch can't be a contrib/ branch — use main",
             }
+        pull_from = str(payload.get("pull_from") or "branch").strip()
+        if pull_from not in config_mod.MEMORY_SYNC_PULL_FROM:
+            return {"ok": False, "error": f"unknown pull source {pull_from!r}"}
+        if pull_from == "tag" and not str(payload.get("pull_tag") or "").strip():
+            return {"ok": False, "error": "name the tag to pull, e.g. v1.0.0"}
+        for key in ("pull_tag", "tag_prefix"):
+            if any(c.isspace() for c in str(payload.get(key) or "").strip()):
+                return {
+                    "ok": False,
+                    "error": f"the {key.replace('_', ' ')} can't contain spaces",
+                }
         if url and any(c.isspace() for c in url):
             return {"ok": False, "error": "the repository URL can't contain spaces"}
         email = str(payload.get("email") or "").strip()
@@ -171,6 +204,8 @@ class MemorySyncMixin:
             "engine": gitsync.engine_name(),
             "url": ms["url"],
             "branch": ms["branch"],
+            "pull_from": ms["pull_from"],
+            "pull_source": _pull_source(ms),
             "contrib_branch": ms["contrib_branch"],
             "path": ms["path"],
             "shareable": count,
@@ -180,6 +215,59 @@ class MemorySyncMixin:
             "last_push_commit": state.get("last_push_commit", ""),
             "last_pull": state.get("last_pull", ""),
             "last_pull_commit": state.get("last_pull_commit", ""),
+            "last_pull_ref": state.get("last_pull_ref", ""),
+        }
+
+    def memory_sync_check_update(self) -> dict[str, Any]:
+        """Is there something newer to pull? One ``ls-remote``, no objects.
+
+        ``branch``: the team branch moved past the last pulled commit.
+        ``latest-tag``: a newer release tag than the one last pulled (or none
+        pulled yet). ``tag``: a newer release in the pinned tag's series —
+        pulling won't take it until the pin changes, so ``pinned`` is True.
+        Returns ``{ok, available, latest, current, pinned}`` or
+        ``{ok: False, error}``."""
+        from . import gitsync
+
+        ms = self._memory_sync()
+        if not ms["url"]:
+            return {"ok": False, "error": "Memory Sync isn't set up"}
+        state = self._memory_sync_state()
+        auth = self._memory_sync_auth(ms)
+        try:
+            if ms["pull_from"] == "branch":
+                chk = gitsync.check_update(
+                    ms["url"], ms["branch"], state.get("last_pull_commit", ""), auth
+                )
+                return {
+                    "ok": True,
+                    "available": chk.available,
+                    "latest": chk.latest,
+                    "current": ms["branch"],
+                    "pinned": False,
+                }
+            tags = gitsync.list_tags(ms["url"], auth)
+        except gitsync.GitSyncError as exc:
+            return {"ok": False, "error": str(exc)}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": f"could not reach the repo: {exc}"}
+        if ms["pull_from"] == "tag":
+            newer = gitsync.newer_tag(ms["pull_tag"], tags) or ""
+            return {
+                "ok": True,
+                "available": bool(newer),
+                "latest": newer,
+                "current": ms["pull_tag"],
+                "pinned": True,
+            }
+        latest = gitsync.latest_release(tags, ms["tag_prefix"]) or ""
+        current = state.get("last_pull_ref", "")
+        return {
+            "ok": True,
+            "available": bool(latest) and latest != current,
+            "latest": latest,
+            "current": current,
+            "pinned": False,
         }
 
     def memory_sync_test(self) -> dict[str, Any]:
@@ -265,22 +353,25 @@ class MemorySyncMixin:
         }
 
     def memory_sync_pull(self) -> dict[str, Any]:
-        """Pull the team's facts from ``main`` into ``team/``.
+        """Pull the team's facts into ``team/`` from the team branch, the newest
+        release tag, or a pinned tag (``pull_from``).
 
         Reads every ``facts/*.toml`` except this operator's own lane (those facts
         are already local). A brand-new empty repo pulls nothing and isn't an
         error. Files whose names aren't a valid lane are skipped (and listed). Returns
-        ``{ok, commit, files, facts, added, removed, skipped}`` or
+        ``{ok, ref, commit, files, facts, added, removed, skipped}`` or
         ``{ok: False, error}``."""
         from . import gitsync
 
         ms = self._memory_sync()
         if not ms["url"]:
             return {"ok": False, "error": "Memory Sync isn't set up — add a repo first"}
+        auth = self._memory_sync_auth(ms)
         try:
-            res = gitsync.fetch_dir(
-                ms["url"], ms["branch"], self._memory_sync_auth(ms), FACTS_DIR
-            )
+            ref = self._memory_sync_pull_ref(ms, auth)
+            res = gitsync.fetch_dir(ms["url"], ref, auth, FACTS_DIR)
+            if ms["pull_from"] != "branch" and not res.commit:
+                return {"ok": False, "error": f"tag {ref} isn't on the repo"}
         except gitsync.GitSyncError as exc:
             return {"ok": False, "error": str(exc)}
         except Exception as exc:  # noqa: BLE001
@@ -293,9 +384,38 @@ class MemorySyncMixin:
             counts = self._knowledge_store().write_team(files)  # type: ignore[attr-defined]
         except ValueError as exc:
             return {"ok": False, "error": f"nothing was pulled: {exc}"}
-        self._memory_sync_stamp(last_pull=_now(), last_pull_commit=res.commit)
+        self._memory_sync_stamp(
+            last_pull=_now(), last_pull_commit=res.commit, last_pull_ref=ref
+        )
         self._knowledge_changed()  # type: ignore[attr-defined]
-        return {"ok": True, "commit": res.commit, "skipped": skipped, **counts}
+        return {
+            "ok": True,
+            "ref": ref,
+            "commit": res.commit,
+            "skipped": skipped,
+            **counts,
+        }
+
+    def _memory_sync_pull_ref(self, ms: dict[str, Any], auth: Any) -> str:
+        """The branch or tag a pull reads. ``latest-tag`` asks the repo for its
+        tags (one ``ls-remote``) and raises ``GitSyncError`` when there's no
+        release tag yet."""
+        from . import gitsync
+
+        if ms["pull_from"] == "tag":
+            return ms["pull_tag"]
+        if ms["pull_from"] == "latest-tag":
+            latest = gitsync.latest_release(
+                gitsync.list_tags(ms["url"], auth), ms["tag_prefix"]
+            )
+            if latest is None:
+                raise gitsync.GitSyncError(
+                    f"the repo has no release tag starting with "
+                    f"{ms['tag_prefix']!r} yet — tag the team branch "
+                    f"(e.g. {ms['tag_prefix']}1.0.0), or pull from the branch"
+                )
+            return latest
+        return ms["branch"]
 
     # ── the wiki repo (OKF pages, okf.py) ────────────────────────────────────
     def memory_sync_create_repo(self) -> dict[str, Any]:

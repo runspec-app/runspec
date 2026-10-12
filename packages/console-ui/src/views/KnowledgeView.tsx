@@ -30,7 +30,8 @@ import {
   fitView, forceLayout, neighbourhood, nodeRadius, parseAbout, splitEntity, typeColor,
   zoomAt, type Point, type View,
 } from './knowledgeGraph'
-import { KnowledgeSync } from './KnowledgeSync'
+import { KnowledgeSync, SyncResultBanner } from './KnowledgeSync'
+import type { SyncResult } from '../components/MemorySyncTab'
 
 const RANGE_OPTIONS = [
   { value: 7, label: 'Last 7 days' },
@@ -75,6 +76,7 @@ export function KnowledgeView({ active, aiEnabled, onOpenSettings }: KnowledgeVi
   const [overview, setOverview] = useState<KnowledgeOverview | null>(null)
   const [loading, setLoading] = useState(false)
   const [tab, setTab] = useState<'graph' | 'inbox'>('graph')
+  const [syncResult, setSyncResult] = useState<SyncResult | null>(null)
   const [selected, setSelected] = useState<string>('')
   const [page, setPage] = useState<KnowledgePage | null>(null)
   const [query, setQuery] = useState('')
@@ -219,10 +221,11 @@ export function KnowledgeView({ active, aiEnabled, onOpenSettings }: KnowledgeVi
               <Button icon={<BulbOutlined />} loading={busy === 'distill'} onClick={distill}>Suggest from chats</Button>
             </Tooltip>
           )}
-          <KnowledgeSync onOpenSettings={() => onOpenSettings?.('memorySync')} />
+          <KnowledgeSync onOpenSettings={() => onOpenSettings?.('memorySync')} onResult={setSyncResult} />
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setEditing({})}>Add fact</Button>
         </Space>
       </div>
+      <SyncResultBanner result={syncResult} onClose={() => setSyncResult(null)} />
 
       <Tabs
         activeKey={tab}

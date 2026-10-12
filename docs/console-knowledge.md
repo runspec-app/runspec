@@ -168,7 +168,8 @@ your config, and Config Sync stays pull-only.
 |---|---|
 | Wiki repository | HTTPS or SSH URL of an empty repo kept for the wiki |
 | Credential | a Credentials entry that can push to it (a token, or an ssh-key credential over SSH) |
-| Team branch | what a pull reads; default `main` |
+| Team branch | where merges land and pushes start; default `main` |
+| Pull from | **The team branch** (default: every merge reaches the team at once), **The newest release tag** (only what was released; Tag prefix, default `v`, picks the series), or **A pinned tag** (stays on one release until you change it) |
 | Your name in the wiki | your *lane*; blank uses your login name. Kept on this machine across a Config Sync pull |
 | Commit email | the author email on your pushes; use the one on your git account. Blank uses `<lane>@<hostname>`. Kept on this machine |
 | CA bundle, Verify TLS | as for Config Sync, for an internal CA or a TLS-inspecting proxy |
@@ -208,6 +209,21 @@ facts are already here) into `team/`, replacing what was there. A file that
 isn't valid TOML aborts the pull with nothing written; a file whose name isn't a
 valid lane is skipped. Team facts show in the graph, pages and search like your
 own, and confirmations from the team add to your count.
+
+With **Pull from** set to a release tag, a merged fact reaches other consoles
+only once someone tags the team branch (`v1.4.0`, `v2026.10.12`), the same
+releases that publish the Pages site. "Newest" compares the numbers, so
+`v1.10.0` beats `v1.9.0`; pre-release tags (`v2.0.0-rc1`) and other series
+(`emea-v3`) never count. A repo with no release tag yet refuses the pull and
+says so. Your own facts are unaffected: they are on your console from the moment
+you approve them, and Push still starts your branch from the team branch.
+
+When the Knowledge tab opens, and after each pull, the console asks the repo
+(one `ls-remote`, nothing downloaded) whether there's something newer: new
+merges on the team branch, or a newer release tag. A dot on **Pull** says there
+is, and its tooltip names the version you last pulled. A pinned tag shows a
+newer release in the tooltip only, since pulling stays on the pin until you
+change it in Settings.
 
 Layout of the wiki repo:
 
@@ -280,6 +296,9 @@ the same file before it pushes pages.
 
 **Site.** `tools/build_site.py` turns the pages into a MkDocs site. The CI
 examples run it on release tags (`v*`), so readers see a reviewed snapshot.
+They lint each merge request and lint again on the tag, not after every merge.
+Memory Sync pulls the team branch unless a console is set to pull release tags
+(see Pull from, above).
 Delete whichever CI file you don't use; set `PIP_INDEX_URL` in CI if runners can
 only reach an internal package mirror.
 

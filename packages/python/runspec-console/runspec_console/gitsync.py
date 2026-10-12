@@ -449,6 +449,23 @@ def newer_tag(current: str, tags: list[str]) -> str | None:
     return best[1] if best else None
 
 
+def latest_release(tags: list[str], prefix: str = "v") -> str | None:
+    """The newest release tag in the ``prefix`` series (``v1.4.0`` for ``"v"``),
+    or ``None`` when there isn't one. Pre-release tags (``-rc1``) and tags of
+    another series (``emea-v2.0``) never count."""
+    best: tuple[tuple[int, ...], str] | None = None
+    for tag in tags:
+        parsed = parse_tag_version(tag)
+        if parsed is None:
+            continue
+        t_prefix, nums, pre = parsed
+        if t_prefix != prefix or pre:
+            continue
+        if best is None or _pad(nums, 6) > _pad(best[0], 6):
+            best = (nums, tag)
+    return best[1] if best else None
+
+
 @dataclass
 class UpdateCheck:
     """Whether the remote holds newer config than what was last pulled.

@@ -77,7 +77,12 @@ Check a change locally with `python tools/okf_lint.py` (no install needed).
 
 `main` is the working copy. Tag a release when a batch of changes is ready,
 for example `v2026.10.09`. The site is published from release tags, so readers
-see a reviewed snapshot rather than whatever merged last.
+see a reviewed snapshot rather than whatever merged last. The tag lints the wiki
+once more before publishing, which catches two merge requests that clash.
+
+By default the console's Memory Sync reads `main`, so a merged fact reaches
+other consoles on their next Pull, tag or not. A console set to pull the newest
+release tag (Settings → Memory Sync → Pull from) only sees what was tagged.
 
 ## The `runspec/` folder
 

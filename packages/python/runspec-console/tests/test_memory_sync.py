@@ -263,3 +263,89 @@ def test_author_rejection_says_what_to_fix(bridge, monkeypatch):
     res = bridge.memory_sync_push()
     assert not res["ok"] and "Commit email" in res["error"]
     assert "not a member of team" in res["error"]
+
+
+# ── pulling a release tag (pull_from) ────────────────────────────────────────
+
+
+def _tag(bare, name, branch="main"):
+    from dulwich.repo import Repo
+
+    repo = Repo(bare)
+    repo.refs[b"refs/tags/" + name.encode()] = repo.refs[
+        b"refs/heads/" + branch.encode()
+    ]
+
+
+def _team_file(bare, lane, text):
+    data, _ = kn.contribution([_approved(text, [f"host:{lane}"])])
+    gitsync.push_file(bare, "main", f"facts/{lane}.toml", data, LOCAL)
+
+
+def test_latest_release_picks_the_newest_in_the_series():
+    tags = ["v1.9.0", "v1.10.0", "v2.0.0-rc1", "emea-v9.0", "notes"]
+    assert gitsync.latest_release(tags) == "v1.10.0"
+    assert gitsync.latest_release(tags, "emea-v") == "emea-v9.0"
+    assert gitsync.latest_release(["notes"]) is None
+
+
+def test_save_validates_the_pull_source(bridge):
+    assert not bridge.save_memory_sync_config({"pull_from": "sideways"})["ok"]
+    assert not bridge.save_memory_sync_config({"pull_from": "tag"})["ok"]
+    got = bridge.save_memory_sync_config(
+        {"url": "x", "pull_from": "tag", "pull_tag": "v1.0.0"}
+    )
+    assert got["ok"] and got["config"]["pull_from"] == "tag"
+    assert cfg.read_memory_sync()["pull_tag"] == "v1.0.0"
+    bridge.save_memory_sync_config({"url": "x", "pull_from": "branch"})
+    assert "pull_from" not in cfg.read_memory_sync()  # the default isn't written
+
+
+def test_pull_latest_tag_reads_the_release_not_the_branch(bridge, bare):
+    cfg.write_memory_sync({"url": bare, "user": "Jason", "pull_from": "latest-tag"})
+    _team_file(bare, "alice", "released fact")
+    res = bridge.memory_sync_pull()
+    assert not res["ok"] and "no release tag" in res["error"]
+
+    _tag(bare, "v1.0.0")
+    _team_file(bare, "bob", "merged but not released")
+    assert bridge.memory_sync_check_update()["available"]  # never pulled
+    res = bridge.memory_sync_pull()
+    assert res["ok"] and res["ref"] == "v1.0.0" and res["files"] == 1
+    status = bridge.memory_sync_status()
+    assert status["last_pull_ref"] == "v1.0.0"
+    assert status["pull_source"] == "the newest v* tag"
+    assert not bridge.memory_sync_check_update()["available"]
+
+    _tag(bare, "v1.1.0")
+    chk = bridge.memory_sync_check_update()
+    assert chk["available"] and chk["latest"] == "v1.1.0" and not chk["pinned"]
+    assert bridge.memory_sync_pull()["files"] == 2
+
+
+def test_pull_pinned_tag_stays_put(bridge, bare):
+    _team_file(bare, "alice", "one")
+    _tag(bare, "v1.0.0")
+    _team_file(bare, "bob", "two")
+    _tag(bare, "v1.1.0")
+    cfg.write_memory_sync(
+        {"url": bare, "user": "Jason", "pull_from": "tag", "pull_tag": "v1.0.0"}
+    )
+    res = bridge.memory_sync_pull()
+    assert res["ok"] and res["ref"] == "v1.0.0" and res["files"] == 1
+    chk = bridge.memory_sync_check_update()
+    assert chk["available"] and chk["pinned"] and chk["latest"] == "v1.1.0"
+
+    cfg.write_memory_sync(
+        {"url": bare, "user": "Jason", "pull_from": "tag", "pull_tag": "v9.9.9"}
+    )
+    res = bridge.memory_sync_pull()
+    assert not res["ok"] and "v9.9.9" in res["error"]
+
+
+def test_branch_check_update_sees_new_commits(bridge, bare):
+    _team_file(bare, "alice", "one")
+    bridge.memory_sync_pull()
+    assert not bridge.memory_sync_check_update()["available"]
+    _team_file(bare, "bob", "two")
+    assert bridge.memory_sync_check_update()["available"]

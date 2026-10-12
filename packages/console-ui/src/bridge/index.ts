@@ -788,10 +788,15 @@ export interface ImproveRecommendation {
 // Shares the knowledge wiki through its own git repo: push this console's approved
 // facts to contrib/<lane> (one file, facts/<lane>.toml); pull main's facts/*.toml
 // into team/.
+// What a pull reads: the team branch, the newest release tag, or one pinned tag.
+export type MemorySyncPullFrom = 'branch' | 'latest-tag' | 'tag'
 export interface MemorySyncSettings {
   url: string
   credential_id: string
   branch: string
+  pull_from: MemorySyncPullFrom
+  pull_tag: string      // pull_from = 'tag': the pinned tag
+  tag_prefix: string    // pull_from = 'latest-tag': the tag series (default 'v')
   user: string          // blank = the OS login name
   email: string         // commit author email; blank = <lane>@<hostname>
   ca_bundle: string
@@ -811,6 +816,8 @@ export interface MemorySyncStatus {
   engine: string | null
   url: string
   branch: string
+  pull_from: MemorySyncPullFrom
+  pull_source: string    // what a pull reads, in words: "main", "the newest v* tag", "v1.4.0"
   contrib_branch: string
   path: string
   shareable: number      // approved facts a push would share
@@ -820,6 +827,13 @@ export interface MemorySyncStatus {
   last_push_commit: string
   last_pull: string
   last_pull_commit: string
+  last_pull_ref: string  // the branch or tag the last pull read
+}
+// Something newer to pull? For a pinned tag, `pinned` means pulling won't take it
+// until the pin changes in Settings.
+export interface MemorySyncUpdate {
+  ok: boolean; error?: string
+  available?: boolean; latest?: string; current?: string; pinned?: boolean
 }
 export interface MemorySyncPushResult {
   ok: boolean; error?: string
@@ -839,7 +853,7 @@ export interface WikiRefreshResult {
 }
 export interface MemorySyncPullResult {
   ok: boolean; error?: string
-  commit?: string; files?: number; facts?: number; added?: number; removed?: number; skipped?: string[]
+  ref?: string; commit?: string; files?: number; facts?: number; added?: number; removed?: number; skipped?: string[]
 }
 
 // ── Team knowledge wiki (knowledge.py / bridge_knowledge.py) ─────────────────
@@ -2488,6 +2502,7 @@ export interface BridgeApi {
   memory_sync_test: () => Promise<{ ok: boolean; error?: string; branch_exists?: boolean; contrib_exists?: boolean; empty?: boolean }>
   memory_sync_push: () => Promise<MemorySyncPushResult>
   memory_sync_pull: () => Promise<MemorySyncPullResult>
+  memory_sync_check_update: () => Promise<MemorySyncUpdate>
   memory_sync_create_repo: () => Promise<WikiRepoCreateResult>
   memory_sync_refresh_docs: () => Promise<WikiRefreshResult>
   // ── Improve (effectiveness + problem report) ──────────────────────────────────

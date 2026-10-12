@@ -1,11 +1,12 @@
-# Team wiki CI: lint every change, publish GitHub Pages from release tags.
+# Team wiki CI: lint every pull request, publish GitHub Pages from release tags.
+# Merging doesn't lint again (the pull request already did); a release tag
+# lints once more before Pages, which catches two merges that clash.
 # Turn on Pages in the repo settings with source "GitHub Actions".
 name: wiki
 
 on:
   pull_request:
   push:
-    branches: [main]
     tags: ["v*"]
 
 permissions:
