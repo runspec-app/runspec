@@ -61,6 +61,8 @@ jobs:
       fs-core: ${{ steps.filter.outputs.fs-core }}
       gitlab: ${{ steps.filter.outputs.gitlab }}
       gitlab-core: ${{ steps.filter.outputs.gitlab-core }}
+      prometheus: ${{ steps.filter.outputs.prometheus }}
+      prometheus-core: ${{ steps.filter.outputs.prometheus-core }}
       rundeck: ${{ steps.filter.outputs.rundeck }}
       rundeck-core: ${{ steps.filter.outputs.rundeck-core }}
       jira: ${{ steps.filter.outputs.jira }}
@@ -161,6 +163,11 @@ jobs:
               - '.github/workflows/ci.yml'
             gitlab-core:
               - 'packages/python/runspec-gitlab-core/**'
+            prometheus:
+              - 'packages/python/runspec-prometheus/**'
+              - 'packages/python/runspec-prometheus-core/**'
+            prometheus-core:
+              - 'packages/python/runspec-prometheus-core/**'
               - '.github/workflows/ci.yml'
             rundeck:
               - 'packages/python/runspec-rundeck/**'
@@ -2158,6 +2165,169 @@ jobs:
           print('Wheel contents OK')
           "
 
+  # ── runspec-prometheus-core ──────────────────────────────────────────────────
+
+  prometheus-core-quality:
+    name: "prometheus-core quality / ${{ matrix.check }}"
+    needs: changes
+    if: needs.changes.outputs.prometheus-core == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [lint, format]
+    defaults:
+      run:
+        working-directory: packages/python/runspec-prometheus-core
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Lint
+        if: matrix.check == 'lint'
+        run: ruff check .
+
+      - name: Format check
+        if: matrix.check == 'format'
+        run: ruff format --check .
+
+  prometheus-core-test:
+    name: runspec-prometheus-core test
+    needs: changes
+    if: needs.changes.outputs.prometheus-core == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/python/runspec-prometheus-core
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          cache: pip
+          cache-dependency-path: packages/python/runspec-prometheus-core/pyproject.toml
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Type check
+        run: mypy runspec_prometheus_core/
+
+      - name: Run tests
+        run: pytest
+
+      - name: Build wheel
+        run: |
+          pip install build
+          python -m build --wheel
+
+      - name: Wheel smoke test
+        run: |
+          python -m venv /tmp/smoke-core
+          /tmp/smoke-core/bin/pip install dist/*.whl
+          # The split's contract: importable helpers, but no runspec dependency,
+          # no runspec.toml, and no console scripts — so it surfaces no runnables.
+          /tmp/smoke-core/bin/python -c "
+          import importlib.metadata as m
+          from runspec_prometheus_core import query, list_alerts
+          reqs = m.requires('runspec-prometheus-core') or []
+          assert not any(r.split()[0].lower().startswith('runspec') for r in reqs), f'core must not depend on runspec: {reqs}'
+          eps = m.entry_points()
+          scripts = [e.name for e in eps.select(group='console_scripts') if e.value.startswith('runspec_prometheus_core')]
+          assert not scripts, f'core must not ship console scripts: {scripts}'
+          print('core surface OK — importable, zero runnables')
+          "
+
+  # ── runspec-prometheus ───────────────────────────────────────────────────────────
+
+  prometheus-quality:
+    name: "prometheus quality / ${{ matrix.check }}"
+    needs: changes
+    if: needs.changes.outputs.prometheus == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [lint, format]
+    defaults:
+      run:
+        working-directory: packages/python/runspec-prometheus
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        # runspec-prometheus-core isn't published yet — install it from the sibling
+        # source so the runspec-prometheus deps resolve locally.
+        run: |
+          pip install -e ../runspec-prometheus-core
+          pip install -e ".[dev]"
+
+      - name: Lint
+        if: matrix.check == 'lint'
+        run: ruff check .
+
+      - name: Format check
+        if: matrix.check == 'format'
+        run: ruff format --check .
+
+  prometheus-test:
+    name: runspec-prometheus test
+    needs: changes
+    if: needs.changes.outputs.prometheus == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/python/runspec-prometheus
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          cache: pip
+          cache-dependency-path: packages/python/runspec-prometheus/pyproject.toml
+          python-version: "3.12"
+
+      - name: Install dependencies
+        # runspec-prometheus-core isn't published yet — install it from the sibling
+        # source so the runspec-prometheus deps resolve locally.
+        run: |
+          pip install -e ../runspec-prometheus-core
+          pip install -e ".[dev]"
+
+      - name: Run tests
+        run: pytest
+
+      - name: Build wheel
+        run: |
+          pip install build
+          python -m build --wheel
+
+      - name: Wheel smoke test
+        run: |
+          python -m venv /tmp/smoke
+          # Install the unpublished core dependency first, then the wheel under test.
+          /tmp/smoke/bin/pip install ../runspec-prometheus-core
+          /tmp/smoke/bin/pip install dist/*.whl
+          /tmp/smoke/bin/prometheus --help
+          /tmp/smoke/bin/python -c "
+          from importlib.resources import files
+          pkg = files('runspec_prometheus')
+          assert (pkg / 'runspec.toml').is_file(), 'runspec.toml missing from wheel'
+          from runspec_prometheus import query
+          print('Wheel contents OK')
+          "
+
   # ── runspec-rundeck-core ─────────────────────────────────────────────────────
 
   rundeck-core-quality:
@@ -2755,7 +2925,7 @@ jobs:
 
   ci:
     name: CI
-    needs: [python-quality, python-test, node, linux-quality, linux-test, linux-core-quality, linux-core-test, linux-root-quality, linux-root-test, jsm-quality, jsm-test, snow-quality, snow-test, logops-quality, logops-test, logops-core-quality, logops-core-test, playbook-quality, playbook-test, claude-quality, claude-test, scheduler-quality, scheduler-test, mcp-quality, mcp-test, console-room-quality, console-room-test, windows-quality, windows-unit, windows-smoke, o365-quality, o365-test, console-quality, console-test, console-test-windows, console-ui, console-smoke, console-app-smoke, webops, webops-core-quality, webops-core-test, fs-core-quality, fs-core-test, fs-quality, fs-test, gitlab-core-quality, gitlab-core-test, gitlab-quality, gitlab-test, rundeck-core-quality, rundeck-core-test, rundeck-quality, rundeck-test, jira-core-quality, jira-core-test, jira-quality, jira-test, confluence-core-quality, confluence-core-test, confluence-quality, confluence-test, docs-check]
+    needs: [python-quality, python-test, node, linux-quality, linux-test, linux-core-quality, linux-core-test, linux-root-quality, linux-root-test, jsm-quality, jsm-test, snow-quality, snow-test, logops-quality, logops-test, logops-core-quality, logops-core-test, playbook-quality, playbook-test, claude-quality, claude-test, scheduler-quality, scheduler-test, mcp-quality, mcp-test, console-room-quality, console-room-test, windows-quality, windows-unit, windows-smoke, o365-quality, o365-test, console-quality, console-test, console-test-windows, console-ui, console-smoke, console-app-smoke, webops, webops-core-quality, webops-core-test, fs-core-quality, fs-core-test, fs-quality, fs-test, gitlab-core-quality, gitlab-core-test, gitlab-quality, gitlab-test, prometheus-core-quality, prometheus-core-test, prometheus-quality, prometheus-test, rundeck-core-quality, rundeck-core-test, rundeck-quality, rundeck-test, jira-core-quality, jira-core-test, jira-quality, jira-test, confluence-core-quality, confluence-core-test, confluence-quality, confluence-test, docs-check]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -2821,6 +2991,10 @@ jobs:
           check "gitlab-core-test"    "${{ needs.gitlab-core-test.result }}"
           check "gitlab-quality"  "${{ needs.gitlab-quality.result }}"
           check "gitlab-test"     "${{ needs.gitlab-test.result }}"
+          check "prometheus-core-quality" "${{ needs.prometheus-core-quality.result }}"
+          check "prometheus-core-test"    "${{ needs.prometheus-core-test.result }}"
+          check "prometheus-quality"  "${{ needs.prometheus-quality.result }}"
+          check "prometheus-test"     "${{ needs.prometheus-test.result }}"
           check "rundeck-core-quality" "${{ needs.rundeck-core-quality.result }}"
           check "rundeck-core-test"    "${{ needs.rundeck-core-test.result }}"
           check "rundeck-quality" "${{ needs.rundeck-quality.result }}"

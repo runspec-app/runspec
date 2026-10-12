@@ -101,6 +101,15 @@ _FILE_ONLY_LOGGERS = frozenset({_RUN_SUMMARY_LOGGER, _EXCEPTION_LOGGER, _AUDIT_L
 _RUNSPEC_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
+# Loggers of HTTP client libraries whose per-request INFO lines are noise on
+# stdout (httpx logs every request at INFO). Matched with their children.
+_HTTP_CLIENT_LOGGERS = ("httpx", "httpcore", "urllib3")
+
+
+def _is_http_client_chatter(name: str) -> bool:
+    return any(name == n or name.startswith(n + ".") for n in _HTTP_CLIENT_LOGGERS)
+
+
 def audit_disabled() -> bool:
     """True when ``RUNSPEC_AUDIT=off`` (tests/CI only — see :data:`AUDIT_ENV`)."""
     return os.environ.get(AUDIT_ENV, "").strip().lower() in ("off", "0", "false", "no")
@@ -228,6 +237,11 @@ def configure_logging(
     out_handler.setLevel(floor)
     out_handler.addFilter(sensitive)
     out_handler.addFilter(lambda r: r.levelno < logging.WARNING and r.name not in _FILE_ONLY_LOGGERS and not getattr(r, "_from_print", False))
+    if not debug:
+        # HTTP client libraries log every request at INFO ("HTTP Request: GET
+        # … 200 OK"). On stdout that lands ahead of a runnable's JSON output,
+        # so keep it in the audit file and show it on stdout only with --debug.
+        out_handler.addFilter(lambda r: not _is_http_client_chatter(r.name))
     out_handler.setFormatter(_ConsoleFormatter(show_tracebacks=debug))
     if takeover:
         root.addHandler(out_handler)

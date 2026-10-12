@@ -119,6 +119,26 @@ class TestConsoleRouting:
         assert "hello from info" in cap.out
         assert "hello from info" not in cap.err
 
+    def test_http_client_request_lines_stay_off_stdout(self, capsys):
+        configure_logging(_cfg(), runnable_name="x")
+        logging.getLogger("httpx").info("HTTP Request: GET http://h/ 200 OK")
+        logging.getLogger("urllib3.connectionpool").info("pooled")
+        logging.getLogger("httpxtra").info("not an http client")
+        cap = capsys.readouterr()
+        assert "HTTP Request" not in cap.out
+        assert "pooled" not in cap.out
+        assert "not an http client" in cap.out
+
+    def test_http_client_warnings_still_reach_stderr(self, capsys):
+        configure_logging(_cfg(), runnable_name="x")
+        logging.getLogger("httpx").warning("retrying")
+        assert "retrying" in capsys.readouterr().err
+
+    def test_debug_shows_http_client_request_lines(self, capsys):
+        configure_logging(_cfg(), runnable_name="x", debug=True)
+        logging.getLogger("httpx").info("HTTP Request: GET http://h/ 200 OK")
+        assert "HTTP Request" in capsys.readouterr().out
+
     def test_warning_routes_to_stderr(self, capsys):
         configure_logging(_cfg(), runnable_name="x")
         logging.getLogger("test.route").warning("be careful")

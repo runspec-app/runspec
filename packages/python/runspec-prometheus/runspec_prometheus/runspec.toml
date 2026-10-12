@@ -1,0 +1,218 @@
+#:schema https://runspec.app/runspec.schema.json
+
+# runspec-prometheus — Prometheus as a runspec runnable, ported from the official
+# Prometheus MCP server: https://github.com/prometheus/prometheus-mcp
+#
+# One runnable, `prometheus`, with a verb per tool. Reads are `autonomous`;
+# reload, snapshot and clean-tombstones are `confirm`; delete-series and quit are
+# `manual` — an agent can never run them, only a person can. `runspec serve`
+# re-expands each verb into its own leaf MCP tool (prometheus_query,
+# prometheus_list-alerts, …), so a runspec-console agent calls them individually
+# — over SSH on any fleet host.
+#
+# The tools are PORTED onto the Prometheus HTTP API, not proxied from the MCP
+# server, so no extra process is involved. Auth is env-var driven:
+#   PROMETHEUS_URL (default http://127.0.0.1:9090 — right when this runs on the
+#   Prometheus host), PROMETHEUS_TOKEN (bearer) or PROMETHEUS_USERNAME +
+#   PROMETHEUS_PASSWORD (basic), PROMETHEUS_ORG_ID (X-Scope-OrgID for
+#   Mimir/Cortex), PROMETHEUS_CA_BUNDLE, PROMETHEUS_TLS_VERIFY, PROMETHEUS_PROXY.
+#   Per-instance overrides use a PROMETHEUS_<ENV>_ prefix, selected with --env.
+#
+# Times accept Unix seconds, RFC 3339, or a duration back from now (5m, 1h30m).
+
+[config]
+autonomy-default = "confirm"
+
+[config.logging]
+store = "per-run"
+
+[prometheus]
+description = "Query Prometheus (PromQL) and inspect its alerts, rules, scrape targets, metadata, and server status"
+output = "json"
+require-command = true
+examples = [
+  {cmd = "prometheus query --query 'up == 0'", description = "Which targets are down right now"},
+  {cmd = "prometheus range-query --query 'rate(http_requests_total[5m])' --start 6h", description = "Request rate over the last six hours"},
+  {cmd = "prometheus label-values --label job", description = "List every job label value"},
+  {cmd = "prometheus list-alerts --state firing", description = "Alerts that are firing"},
+  {cmd = "prometheus list-targets --health down", description = "Scrape targets that are failing"},
+  {cmd = "prometheus --env prod-eu tsdb-stats", description = "Cardinality hot spots on one instance"},
+]
+
+# ── global args (inherited by every verb) ──────────────────────────────────
+[prometheus.args]
+env = {type = "str", short = "-e", required = false, description = "Instance label: reads PROMETHEUS_<ENV>_* vars first (e.g. prod, prod-eu), falling back to PROMETHEUS_*"}
+url = {type = "str", required = false, description = "Prometheus base URL; overrides PROMETHEUS_URL (default http://127.0.0.1:9090)"}
+prometheus-token = {type = "password", required = false, description = "Bearer token; overrides PROMETHEUS_TOKEN. Supplied via the runspec-console credential/secret channel (RUNSPEC_PROMETHEUS_ARG_PROMETHEUS_TOKEN), never on the command line."}
+
+# ── queries → autonomous ───────────────────────────────────────────────────
+
+[prometheus.commands.query]
+description = "Run an instant PromQL query: one value per series at a single point in time"
+autonomy = "autonomous"
+[prometheus.commands.query.args]
+query = {type = "str", short = "-q", required = true, description = "The PromQL expression"}
+time = {type = "str", required = false, description = "Evaluation time: Unix seconds, RFC 3339, or a duration back from now (e.g. 1h). Default now"}
+limit = {type = "int", default = 100, description = "Most series to return (0 = all); use a small limit to explore"}
+
+[prometheus.commands.range-query]
+description = "Run a PromQL query over a time window, returning values for graphing and trends"
+autonomy = "autonomous"
+[prometheus.commands.range-query.args]
+query = {type = "str", short = "-q", required = true, description = "The PromQL expression"}
+start = {type = "str", required = false, description = "Window start: Unix seconds, RFC 3339, or a duration back from now (e.g. 6h). Default 1h before end"}
+end = {type = "str", required = false, description = "Window end, same forms. Default now"}
+step = {type = "str", required = false, description = "Resolution step (e.g. 30s, 5m). Default gives about 250 points"}
+limit = {type = "int", default = 100, description = "Most series to return (0 = all)"}
+
+[prometheus.commands.exemplar-query]
+description = "Find trace exemplars attached to the samples of a PromQL selector"
+autonomy = "autonomous"
+[prometheus.commands.exemplar-query.args]
+query = {type = "str", short = "-q", required = true, description = "The PromQL expression"}
+start = {type = "str", required = false, description = "Window start (Unix seconds, RFC 3339, or e.g. 1h). Default 1h before end"}
+end = {type = "str", required = false, description = "Window end. Default now"}
+limit = {type = "int", default = 100, description = "Most series to return (0 = all)"}
+
+[prometheus.commands.series]
+description = "Find series (label sets) matching one or more selectors"
+autonomy = "autonomous"
+[prometheus.commands.series.args]
+match = {type = "str", multiple = true, required = true, description = "Series selector, e.g. up or {job=\"node\"} (repeat --match)"}
+start = {type = "str", required = false, description = "Window start (Unix seconds, RFC 3339, or e.g. 1h)"}
+end = {type = "str", required = false, description = "Window end"}
+limit = {type = "int", default = 100, description = "Most series to return (0 = all)"}
+
+[prometheus.commands.label-names]
+description = "List label names, optionally only those on series matching a selector"
+autonomy = "autonomous"
+[prometheus.commands.label-names.args]
+match = {type = "str", multiple = true, required = false, description = "Series selector to filter by (repeat --match)"}
+start = {type = "str", required = false, description = "Window start"}
+end = {type = "str", required = false, description = "Window end"}
+limit = {type = "int", default = 100, description = "Most names to return (0 = all)"}
+
+[prometheus.commands.label-values]
+description = "List the values of one label (e.g. job, instance), optionally filtered by selector"
+autonomy = "autonomous"
+[prometheus.commands.label-values.args]
+label = {type = "str", short = "-l", required = true, description = "Label name, e.g. job"}
+match = {type = "str", multiple = true, required = false, description = "Series selector to filter by (repeat --match)"}
+start = {type = "str", required = false, description = "Window start"}
+end = {type = "str", required = false, description = "Window end"}
+limit = {type = "int", default = 100, description = "Most values to return (0 = all)"}
+
+# ── metadata → autonomous ──────────────────────────────────────────────────
+
+[prometheus.commands.metric-metadata]
+description = "Show type, help text, and unit for scraped metrics"
+autonomy = "autonomous"
+[prometheus.commands.metric-metadata.args]
+metric = {type = "str", required = false, description = "Metric name; all metrics when omitted"}
+limit = {type = "int", default = 100, description = "Most metrics to return (0 = all)"}
+
+[prometheus.commands.targets-metadata]
+description = "Show metric metadata as reported by each scrape target"
+autonomy = "autonomous"
+[prometheus.commands.targets-metadata.args]
+match-target = {type = "str", required = false, description = "Label selector over targets, e.g. {job=\"node\"}; all targets when omitted"}
+metric = {type = "str", required = false, description = "Metric name; all metrics when omitted"}
+limit = {type = "int", default = 100, description = "Most targets to match (0 = all)"}
+
+# ── server state → autonomous ──────────────────────────────────────────────
+
+[prometheus.commands.list-alerts]
+description = "List active alerts (firing and pending)"
+autonomy = "autonomous"
+[prometheus.commands.list-alerts.args]
+state = {type = "choice", options = ["firing", "pending"], required = false, description = "Only alerts in this state"}
+
+[prometheus.commands.list-rules]
+description = "List loaded alerting and recording rules, by group"
+autonomy = "autonomous"
+[prometheus.commands.list-rules.args]
+rule-type = {type = "choice", options = ["alert", "record"], required = false, description = "Only alerting or only recording rules"}
+rule-name = {type = "str", multiple = true, required = false, description = "Only rules with this name (repeat)"}
+rule-group = {type = "str", multiple = true, required = false, description = "Only rules in this group (repeat)"}
+exclude-alerts = {type = "flag", default = false, description = "Leave out each alerting rule's active alerts"}
+
+[prometheus.commands.list-targets]
+description = "List scrape targets and their health"
+autonomy = "autonomous"
+[prometheus.commands.list-targets.args]
+state = {type = "choice", options = ["active", "dropped", "any"], default = "active", description = "Active targets, dropped targets, or both"}
+health = {type = "choice", options = ["up", "down", "unknown"], required = false, description = "Only active targets with this health"}
+scrape-pool = {type = "str", required = false, description = "Only targets in this scrape pool (job)"}
+limit = {type = "int", default = 200, description = "Most targets of each kind to return (0 = all)"}
+
+[prometheus.commands.alertmanagers]
+description = "Show the Alertmanagers Prometheus has discovered"
+autonomy = "autonomous"
+
+[prometheus.commands.build-info]
+description = "Show the server's version, revision, and Go version"
+autonomy = "autonomous"
+
+[prometheus.commands.runtime-info]
+description = "Show runtime information: start time, retention, reload status, goroutines"
+autonomy = "autonomous"
+
+[prometheus.commands.config]
+description = "Show the loaded Prometheus configuration (YAML)"
+autonomy = "autonomous"
+
+[prometheus.commands.flags]
+description = "Show the command-line flags Prometheus was started with"
+autonomy = "autonomous"
+
+[prometheus.commands.tsdb-stats]
+description = "Show TSDB cardinality: the metrics, labels, and label pairs with the most series"
+autonomy = "autonomous"
+[prometheus.commands.tsdb-stats.args]
+limit = {type = "int", default = 10, description = "Entries per top-N list"}
+
+[prometheus.commands.wal-replay-status]
+description = "Show write-ahead-log replay progress after a restart"
+autonomy = "autonomous"
+
+[prometheus.commands.list-stores]
+description = "Thanos Query only: list the store API servers it queries"
+autonomy = "autonomous"
+
+[prometheus.commands.healthy]
+description = "Check that Prometheus is healthy"
+autonomy = "autonomous"
+
+[prometheus.commands.ready]
+description = "Check that Prometheus is ready to serve queries"
+autonomy = "autonomous"
+
+# ── changes → confirm ──────────────────────────────────────────────────────
+
+[prometheus.commands.reload]
+description = "Reload the configuration and rule files (needs --web.enable-lifecycle)"
+autonomy = "confirm"
+
+[prometheus.commands.snapshot]
+description = "Snapshot all current TSDB data under the data directory (needs --web.enable-admin-api)"
+autonomy = "confirm"
+[prometheus.commands.snapshot.args]
+skip-head = {type = "flag", default = false, description = "Leave out data still in the in-memory head block"}
+
+[prometheus.commands.clean-tombstones]
+description = "Remove deleted data from disk and clear tombstones; I/O heavy (needs --web.enable-admin-api)"
+autonomy = "confirm"
+
+# ── destructive → manual (never run by an agent) ───────────────────────────
+
+[prometheus.commands.delete-series]
+description = "Delete the samples of matching series within a time range (needs --web.enable-admin-api)"
+autonomy = "manual"
+[prometheus.commands.delete-series.args]
+match = {type = "str", multiple = true, required = true, description = "Series selector to delete (repeat --match)"}
+start = {type = "str", required = true, description = "Range start (Unix seconds, RFC 3339, or e.g. 2d)"}
+end = {type = "str", required = true, description = "Range end (Unix seconds, RFC 3339, or e.g. 1d)"}
+
+[prometheus.commands.quit]
+description = "Shut Prometheus down gracefully (needs --web.enable-lifecycle)"
+autonomy = "manual"

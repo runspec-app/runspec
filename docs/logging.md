@@ -115,6 +115,11 @@ defaults to INFO so third-party libraries logging at DEBUG (urllib3, boto3,
 sqlalchemy, …) don't flood it, and flips to DEBUG together with stdout when
 you need full detail.
 
+HTTP client libraries (`httpx`, `httpcore`, `urllib3`) are kept off stdout
+below WARNING: `httpx` logs every request at INFO (`HTTP Request: GET … 200
+OK`), which would otherwise print ahead of a runnable's JSON output. Those lines
+still go to the file, and `--debug` shows them on stdout too.
+
 ```json
 // excerpt from {package_dir}/logs/deploy.log
 {"time":"2026-05-20T14:02:18.412Z","level":"INFO","logger":"deploy","msg":"Starting run for prod"}
@@ -152,6 +157,7 @@ RUNSPEC_DEBUG=1 deploy --target prod
 
 With `--debug`:
 - **stdout** also includes DEBUG records (plus full tracebacks on errors)
+- **stdout** also shows HTTP client request lines (`httpx` and friends)
 - **file** flips from INFO to DEBUG too
 
 Stderr stays pinned at WARNING regardless. The CLI flag wins if both

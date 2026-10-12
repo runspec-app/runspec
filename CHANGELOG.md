@@ -7,6 +7,17 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.73.1] — 2026-10-12
+
+**HTTP client request lines no longer print on stdout.**
+
+- `httpx` logs every request at INFO (`HTTP Request: GET … 200 OK`). runspec
+  sends INFO to stdout, so in the runnables that call APIs through `httpx`
+  (gitlab, jsm, snow, rundeck, o365, prometheus) that line printed ahead of
+  the JSON output and broke piping it into `jq`. Records below WARNING from
+  `httpx`, `httpcore` and `urllib3` now stay off stdout; they are still written
+  to the run's log file, and `--debug` shows them on stdout as before.
+
 ## [0.73.0] — 2026-10-10
 
 **emitted Rundeck jobs protect their temp script, check the runnable is
