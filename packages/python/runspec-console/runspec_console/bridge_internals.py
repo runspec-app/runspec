@@ -1038,6 +1038,13 @@ class InternalsMixin:
         host's probe instead of after the whole fleet's."""
         with self._lock:
             self._refresh_epoch += 1
+        if force:
+            # A forced refresh is an operator action (host save, profile switch,
+            # Refresh): try every host now instead of after its connect-backoff
+            # window, which silently skipped hosts that had failed earlier.
+            pool = getattr(self, "_ssh_pool", None)
+            if pool is not None:
+                pool.clear_backoff()
         threading.Thread(
             target=lambda: self._refresh_cycle(force=force), daemon=True
         ).start()
@@ -1336,6 +1343,20 @@ class InternalsMixin:
                 f"{name}: can't connect to {host.get('ssh')} via jump host "
                 f"{jump}: {state}"
             )
+            # The console puts no proxy on the jump hop, so one ssh -G finds came
+            # from the operator's own ssh config — the usual cause of an
+            # "HTTP relay" or banner failure on that hop.
+            try:
+                hop_proxy = executor_mod.jump_hop_proxy(
+                    jump, self.get_config().get("ssh")
+                )
+            except Exception:  # noqa: BLE001 — a diagnostic never blocks the probe
+                hop_proxy = ""
+            if hop_proxy:
+                message += (
+                    f" (your ssh config gives {jump} '{hop_proxy}' — check "
+                    "~/.ssh/config or the ssh_config of the ssh on PATH)"
+                )
             logger.warning("ssh.jump %s", message)
             level = "ERROR"
         else:

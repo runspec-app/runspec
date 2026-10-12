@@ -186,3 +186,23 @@ and the pool, nothing reached the Dev tab: the host just went grey.
 - **Auto-inject `-o HostKeyAlgorithms=+ssh-rsa`.** Would make a `jump` host work
   with zero ssh-config editing, but bakes an algorithm policy into the app.
   Deferred; `~/.ssh/config` is the honest home for it and matches `runspec jump`.
+
+## Update (console 0.343.2): many hosts behind one jump
+
+Each probe and discovery call over the jump transport opens its own hop
+connection, and the refresh cycle probes hosts in parallel. A fleet behind one
+jump therefore hit the jump's sshd with a burst of new connections; sshd's
+`MaxStartups` (default `10:30:100`) drops the excess before key exchange, so
+one or two hosts went green and the rest failed with
+`kex_exchange_identification: Connection closed by remote host`.
+
+`ssh_jump_run` now holds a per-jump semaphore around each ssh process
+(`[ssh] jump_max_concurrent`, default 4) and retries a throttle-shaped failure
+(exit 255 with a transient marker, now including `kex_exchange_identification`)
+up to `[ssh] jump_retries` times (default 2) with a short jittered pause.
+
+Host keys are not the cause: both hops run with
+`StrictHostKeyChecking=accept-new` against the console's known_hosts, so new
+keys are accepted. PuTTY (and `plink -batch` in the PuTTY jump session) keeps
+its own host-key cache in the registry, which is why a PuTTY terminal asks
+about an uncached key even when the console's probes connect.

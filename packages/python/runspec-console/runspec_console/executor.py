@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 
 import os
+import random
 import shlex
 import shutil
 import socket
@@ -25,7 +26,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlparse
 
-from .procutil import no_window_kwargs
+from .procutil import no_window_kwargs, run_with_deadline
 
 # Ensure child Python processes use UTF-8 for print()/sys.stdout
 _UTF8_ENV = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
@@ -247,6 +248,9 @@ _TRANSIENT_SSH_MARKERS = (
     "eof during negotiation",
     "administratively prohibited",
     "channel closed",
+    # OpenSSH's wording when the far sshd drops the connection before its
+    # banner — the jump host's MaxStartups throttle under a probe burst.
+    "kex_exchange_identification",
 )
 
 
@@ -1126,26 +1130,92 @@ def ssh_jump_run(
     """
     argv = _system_ssh_argv(ssh_target, jump, identity_file, global_ssh_config)
     argv.append(command)
+    cfg = global_ssh_config or {}
+    retries = max(0, _cfg_int(cfg, "jump_retries", DEFAULT_JUMP_RETRIES))
+    gate = _jump_gate(
+        jump, max(1, _cfg_int(cfg, "jump_max_concurrent", DEFAULT_JUMP_MAX_CONCURRENT))
+    )
+    attempt = 0
+    while True:
+        try:
+            with gate:
+                code, out, err = run_with_deadline(argv, timeout)
+        except FileNotFoundError:
+            return (
+                -1,
+                "",
+                "ssh not found — install an OpenSSH client on the console machine",
+            )
+        if code is None:
+            return -1, out, f"ssh to {ssh_target} timed out after {timeout}s"
+        # 255 = ssh itself failed (not the remote command). Retry only a
+        # throttle-shaped refusal: every hop goes through one jump sshd, and a
+        # burst of them trips its MaxStartups (``kex_exchange_identification:
+        # Connection closed by remote host``).
+        if code == 255 and attempt < retries and is_transient_ssh_error(err):
+            attempt += 1
+            time.sleep(_JUMP_RETRY_BASE * attempt + random.uniform(0, _JUMP_RETRY_BASE))
+            continue
+        return code, out, err
+
+
+DEFAULT_JUMP_MAX_CONCURRENT = 4
+DEFAULT_JUMP_RETRIES = 2
+_JUMP_RETRY_BASE = 0.5
+_jump_gates: dict[tuple[str, int], threading.BoundedSemaphore] = {}
+_jump_gates_lock = threading.Lock()
+
+
+def _cfg_int(cfg: dict[str, Any], key: str, default: int) -> int:
     try:
-        proc = subprocess.run(
-            argv,
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout,
-            **no_window_kwargs(),
-        )
-    except subprocess.TimeoutExpired:
-        return -1, "", f"ssh to {ssh_target} timed out after {timeout}s"
-    except FileNotFoundError:
-        return (
-            -1,
+        return int(cfg.get(key, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _jump_gate(jump: str, limit: int) -> threading.BoundedSemaphore:
+    """One semaphore per jump host (and limit), so at most ``limit`` ssh
+    connections go through the same jump at once. Every jump-host probe and
+    discovery call opens its own hop connection; a fleet behind one jump
+    probed in parallel otherwise floods the jump's sshd, which drops all but a
+    few before key exchange (MaxStartups, default 10 unauthenticated)."""
+    key = (jump, limit)
+    with _jump_gates_lock:
+        gate = _jump_gates.get(key)
+        if gate is None:
+            gate = _jump_gates[key] = threading.BoundedSemaphore(limit)
+        return gate
+
+
+def jump_hop_proxy(jump: str, global_ssh_config: dict[str, Any] | None = None) -> str:
+    """The ``ProxyCommand``/``ProxyJump`` that ssh's own config files give the
+    jump hop (``ssh -G``, which reads ``~/.ssh/config`` and the system
+    ssh_config without connecting), or ``""``. The console puts no proxy on the
+    hop, so one found here comes from the operator's ssh config."""
+    if "," in jump:
+        return ""
+    cfg = global_ssh_config or {}
+    juser, jhost, jport = _parse_ssh_target(jump)
+    argv = [shutil.which("ssh") or "ssh", "-G"]
+    if jport and jport != 22:
+        argv += ["-p", str(jport)]
+    if juser or cfg.get("user"):
+        argv += ["-l", str(juser or cfg["user"])]
+    argv.append(jhost)
+    try:
+        code, out, _err = run_with_deadline(argv, 5)
+    except OSError:
+        return ""
+    if code != 0:
+        return ""
+    for line in out.splitlines():
+        key, _, value = line.strip().partition(" ")
+        if key.lower() in ("proxycommand", "proxyjump") and value.strip() not in (
             "",
-            "ssh not found — install an OpenSSH client on the console machine",
-        )
-    return proc.returncode, proc.stdout, proc.stderr
+            "none",
+        ):
+            return f"{key.lower()} {value.strip()}"
+    return ""
 
 
 def has_sshpass() -> bool:
@@ -1213,22 +1283,12 @@ def ssh_jump_copy_id(
     argv += [target, remote_cmd]
     env = {**os.environ, "SSHPASS": password}
     try:
-        proc = subprocess.run(
-            argv,
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout,
-            env=env,
-            **no_window_kwargs(),
-        )
-    except subprocess.TimeoutExpired:
-        return -1, "", f"ssh to {ssh_target} timed out after {timeout}s"
+        code, out, err = run_with_deadline(argv, timeout, env=env)
     except FileNotFoundError:
         return -1, "", "sshpass or ssh not found on the console machine"
-    return proc.returncode, proc.stdout, proc.stderr
+    if code is None:
+        return -1, out, f"ssh to {ssh_target} timed out after {timeout}s"
+    return code, out, err
 
 
 def jump_copy_id_command(

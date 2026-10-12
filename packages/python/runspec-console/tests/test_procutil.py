@@ -1,31 +1,29 @@
-"""The shared no-window subprocess flags (procutil.no_window_kwargs).
-
-Windows spawns a fresh console for a console child of a windowed (pythonw)
-parent; CREATE_NO_WINDOW suppresses that flash. The helper is a no-op off
-Windows so every local spawn can splat it unconditionally.
-"""
+"""run_with_deadline: a timeout kills the whole process tree and returns."""
 
 from __future__ import annotations
 
-import subprocess
+import sys
+import time
 
-import runspec_console.procutil as procutil
-
-
-def test_no_window_kwargs_off_windows(monkeypatch):
-    # No CREATE_NO_WINDOW attribute exists off Windows → empty, splat is a no-op.
-    monkeypatch.delattr(subprocess, "CREATE_NO_WINDOW", raising=False)
-    assert procutil.no_window_kwargs() == {}
+from runspec_console.procutil import run_with_deadline
 
 
-def test_no_window_kwargs_on_windows(monkeypatch):
-    # Simulate the Windows attribute being present.
-    monkeypatch.setattr(subprocess, "CREATE_NO_WINDOW", 0x08000000, raising=False)
-    assert procutil.no_window_kwargs() == {"creationflags": 0x08000000}
+def test_returns_output_and_code():
+    code, out, _err = run_with_deadline(
+        [sys.executable, "-c", "print('hi'); raise SystemExit(3)"], 10
+    )
+    assert code == 3 and out.strip() == "hi"
 
 
-def test_no_window_kwargs_is_splattable():
-    # Whatever the platform, the result is a dict of subprocess kwargs.
-    kwargs = procutil.no_window_kwargs()
-    assert isinstance(kwargs, dict)
-    assert set(kwargs) <= {"creationflags"}
+def test_timeout_does_not_wait_for_a_grandchild_holding_the_pipes():
+    # Like ssh's ProxyCommand child: it inherits stdout and outlives the parent.
+    # subprocess.run(timeout=) on Windows waited for it to close the pipe.
+    script = (
+        "import subprocess, sys, time;"
+        "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']);"
+        "time.sleep(60)"
+    )
+    started = time.monotonic()
+    code, _out, _err = run_with_deadline([sys.executable, "-c", script], 1)
+    assert code is None
+    assert time.monotonic() - started < 15

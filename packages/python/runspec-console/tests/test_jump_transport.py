@@ -11,7 +11,6 @@ connectivity.
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
@@ -157,16 +156,9 @@ def test_system_ssh_argv_bad_timeout_falls_back():
 # ── ssh_jump_run ──────────────────────────────────────────────────────────────
 
 
-class _Proc:
-    def __init__(self, code=0, out="", err=""):
-        self.returncode = code
-        self.stdout = out
-        self.stderr = err
-
-
 def test_ssh_jump_run_invokes_system_ssh_and_returns_triple():
     with patch.object(
-        executor.subprocess, "run", return_value=_Proc(0, "hello", "")
+        executor, "run_with_deadline", return_value=(0, "hello", "")
     ) as m:
         code, out, err = ssh_jump_run("svc@c6", "runspec local", jump="bastion")
     assert (code, out, err) == (0, "hello", "")
@@ -177,16 +169,97 @@ def test_ssh_jump_run_invokes_system_ssh_and_returns_triple():
 
 
 def test_ssh_jump_run_missing_ssh_binary():
-    with patch.object(executor.subprocess, "run", side_effect=FileNotFoundError()):
+    with patch.object(executor, "run_with_deadline", side_effect=FileNotFoundError()):
         code, _out, err = ssh_jump_run("h", "true", jump="j")
     assert code == -1 and "OpenSSH" in err
 
 
 def test_ssh_jump_run_timeout():
-    exc = subprocess.TimeoutExpired(cmd="ssh", timeout=15)
-    with patch.object(executor.subprocess, "run", side_effect=exc):
+    with patch.object(executor, "run_with_deadline", return_value=(None, "", "")):
         code, _out, err = ssh_jump_run("h", "true", jump="j", timeout=15)
     assert code == -1 and "timed out" in err
+
+
+_KEX = "kex_exchange_identification: Connection closed by remote host"
+
+
+def test_ssh_jump_run_retries_jump_throttle():
+    results = [(255, "", _KEX), (255, "", _KEX), (0, "ok", "")]
+    with (
+        patch.object(executor, "run_with_deadline", side_effect=results) as m,
+        patch.object(executor.time, "sleep"),
+    ):
+        code, out, _err = ssh_jump_run("h", "true", jump="j")
+    assert (code, out) == (0, "ok") and m.call_count == 3
+
+
+def test_ssh_jump_run_gives_up_after_retries():
+    with (
+        patch.object(executor, "run_with_deadline", return_value=(255, "", _KEX)) as m,
+        patch.object(executor.time, "sleep"),
+    ):
+        code, _out, err = ssh_jump_run(
+            "h", "true", jump="j", global_ssh_config={"jump_retries": 1}
+        )
+    assert code == 255 and "kex" in err and m.call_count == 2
+
+
+def test_ssh_jump_run_does_not_retry_auth_or_command_failure():
+    for result in [
+        (255, "", "Permission denied (publickey)."),
+        (1, "", "connection closed"),
+    ]:
+        with patch.object(executor, "run_with_deadline", return_value=result) as m:
+            ssh_jump_run("h", "true", jump="j")
+        assert m.call_count == 1
+
+
+def test_ssh_jump_run_caps_concurrent_connections_per_jump():
+    import threading
+    import time as _time
+
+    live = {"now": 0, "peak": 0}
+    lock = threading.Lock()
+
+    def fake(argv, timeout):
+        with lock:
+            live["now"] += 1
+            live["peak"] = max(live["peak"], live["now"])
+        _time.sleep(0.05)
+        with lock:
+            live["now"] -= 1
+        return 0, "", ""
+
+    cfg = {"jump_max_concurrent": 2}
+    with patch.object(executor, "run_with_deadline", side_effect=fake):
+        threads = [
+            threading.Thread(
+                target=ssh_jump_run,
+                args=(f"h{i}", "true"),
+                kwargs={"jump": "capjump", "global_ssh_config": cfg},
+            )
+            for i in range(8)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    assert live["peak"] == 2
+
+
+def test_jump_hop_proxy_reads_ssh_config():
+    out = "user ops\nproxycommand connect -H proxy.corp:8080 %h %p\nport 22\n"
+    with patch.object(executor, "run_with_deadline", return_value=(0, out, "")) as m:
+        found = executor.jump_hop_proxy("bastion")
+    assert found == "proxycommand connect -H proxy.corp:8080 %h %p"
+    assert m.call_args.args[0][1:] == ["-G", "bastion"]
+
+
+def test_jump_hop_proxy_none():
+    with patch.object(
+        executor, "run_with_deadline", return_value=(0, "proxycommand none\n", "")
+    ):
+        assert executor.jump_hop_proxy("bastion") == ""
 
 
 # ── run_remote jump branch ────────────────────────────────────────────────────
@@ -292,7 +365,7 @@ def test_jump_copy_id_command_includes_nondefault_port():
 
 
 def test_ssh_jump_copy_id_uses_sshpass_password_auth_and_env():
-    with patch.object(executor.subprocess, "run", return_value=_Proc(0, "", "")) as m:
+    with patch.object(executor, "run_with_deadline", return_value=(0, "", "")) as m:
         code, _out, _err = ssh_jump_copy_id("svc@c6", "bastion", "append-key", "s3cret")
     assert code == 0
     argv = m.call_args.args[0]
@@ -306,7 +379,7 @@ def test_ssh_jump_copy_id_uses_sshpass_password_auth_and_env():
 
 
 def test_ssh_jump_copy_id_missing_sshpass():
-    with patch.object(executor.subprocess, "run", side_effect=FileNotFoundError()):
+    with patch.object(executor, "run_with_deadline", side_effect=FileNotFoundError()):
         code, _out, err = ssh_jump_copy_id("h", "j", "cmd", "pw")
     assert code == -1 and "sshpass" in err
 
@@ -502,3 +575,37 @@ def test_jump_edit_reports_the_next_attempt_even_if_it_fails_the_same():
         b._check_connected({**host, "jump": "bastion2"})
     assert len(events) == 2
     assert "bastion2" in events[1]["message"]
+
+
+def test_forced_refresh_clears_connect_backoff():
+    # A profile switch or host save tries every host now; a host still in
+    # connect-backoff used to be skipped silently until a restart.
+    b = _bridge()
+    cleared = []
+    pool = type("P", (), {"clear_backoff": lambda self: cleared.append(1)})()
+    with patch.object(b, "_ssh_pool", pool), patch.object(b, "_refresh_cycle"):
+        b._kick_refresh()
+        assert cleared == []
+        b._kick_refresh(force=True)
+    assert cleared == [1]
+
+
+def test_jump_failure_names_a_proxy_from_ssh_config():
+    b = _bridge()
+    host = {"name": "c6", "ssh": "svc@c6", "jump": "bastion"}
+    events = []
+    with (
+        patch.object(b, "get_config", return_value={"ssh": {}}),
+        patch.object(b, "_emit_ssh_log", side_effect=events.append),
+        patch(
+            "runspec_console.executor.ssh_jump_run",
+            return_value=(255, "", "FATAL: failed to begin relaying via HTTP."),
+        ),
+        patch(
+            "runspec_console.executor.jump_hop_proxy",
+            return_value="proxycommand connect -H proxy:8080 %h %p",
+        ),
+    ):
+        b._check_connected(host)
+    assert "proxycommand connect -H proxy:8080" in events[0]["message"]
+    assert "ssh config" in events[0]["message"]

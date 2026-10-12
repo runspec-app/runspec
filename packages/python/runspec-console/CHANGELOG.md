@@ -9,6 +9,31 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.343.2] — 2026-10-12
+
+### Fixed
+- **Hosts behind one jump host all connect.** Each probe opened its own
+  connection through the jump, all at once, and the jump's sshd turned most of
+  them away before key exchange (`kex_exchange_identification: Connection
+  closed by remote host`), so only one or two hosts went green and they
+  flickered. At most `[ssh] jump_max_concurrent` (default 4) connections now go
+  through the same jump at a time, and a refused one is retried up to
+  `[ssh] jump_retries` times (default 2).
+- **A stuck jump probe no longer freezes host refresh.** On Windows a timed-out
+  jump probe waited for the hop's `ProxyCommand` ssh (or a proxy relay it
+  started) to close its output, which could take forever, so the refresh cycle
+  never finished: after a profile switch no host was tried and nothing was
+  logged until a restart. A timeout now kills the whole ssh process tree
+  (`procutil.run_with_deadline`).
+- **Profile switch and Refresh try backed-off hosts at once.** Every forced
+  refresh (host save, profile switch, Refresh) clears the SSH pool's
+  connect-backoff, so hosts that failed earlier are retried instead of skipped
+  without a log line.
+- **The Dev tab names a proxy from your ssh config on the jump hop.** The
+  console puts no proxy on the hop, so when its probe fails and `ssh -G` shows a
+  `ProxyCommand`/`ProxyJump` for the jump host (e.g. an HTTP `connect` relay
+  from `~/.ssh/config`), the `ssh.jump` row says so.
+
 ## [0.343.1] — 2026-10-11
 
 ### Fixed
