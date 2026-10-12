@@ -213,7 +213,7 @@ def test_create_repo_then_refresh(bridge, bare, monkeypatch):
     assert "README.md" in tree and "runspec/index.md" in tree
 
     again = bridge.memory_sync_create_repo()
-    assert not again["ok"] and "already exists" in again["error"]
+    assert not again["ok"] and "already a wiki" in again["error"]
 
     # Nothing changed since the template: nothing to push.
     assert bridge.memory_sync_refresh_docs() == {
@@ -250,3 +250,31 @@ def test_template_files_are_lf_even_from_a_crlf_checkout(tmp_path, monkeypatch):
     (tmp_path / "index.md").write_bytes(b'---\r\nokf_version: "0.2"\r\n---\r\n# x\r\n')
     monkeypatch.setattr(okf, "TEMPLATE_DIR", tmp_path)
     assert okf.template_static() == {"index.md": b'---\nokf_version: "0.2"\n---\n# x\n'}
+
+
+def test_create_into_an_existing_branch_goes_to_a_setup_branch(
+    bridge, bare, monkeypatch, tmp_path
+):
+    """A GitLab repo created with a README already has its default branch."""
+    cfg.write_memory_sync({"url": bare, "user": "Jason", "branch": "master"})
+    gitsync.push_file(bare, "master", "README.md", b"# wiki\n", LOCAL)
+    res = bridge.memory_sync_create_repo()
+    assert res["ok"] and res["review"] and res["branch"] == okf.SETUP_BRANCH
+    assert res["base"] == "master"
+    master = gitsync.fetch_dir(bare, "master", LOCAL, "", ".md").files
+    assert master == {"README.md": b"# wiki\n"}  # untouched
+    setup = gitsync.fetch_dir(
+        bare, okf.SETUP_BRANCH, LOCAL, "", ".md", recursive=True
+    ).files
+    assert "index.md" in setup and "runspec/index.md" in setup
+    from dulwich.repo import Repo
+
+    repo = Repo(bare)
+    head = repo[repo.refs[b"refs/heads/" + okf.SETUP_BRANCH.encode()]]
+    assert head.parents == [repo.refs[b"refs/heads/master"]]  # mergeable as an MR
+
+
+def test_is_wiki_root():
+    assert okf.is_wiki_root(b'---\nokf_version: "0.2"\n---\n# x\n')
+    assert not okf.is_wiki_root(b"# readme\n")
+    assert not okf.is_wiki_root(None)

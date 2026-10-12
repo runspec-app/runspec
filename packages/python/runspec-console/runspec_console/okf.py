@@ -39,6 +39,9 @@ SEED_PATH = Path(__file__).with_name("knowledge_seed.toml")
 GENERATED_DIR = "runspec"
 #: The branch a refresh pushes to, for review like any other change.
 REFRESH_BRANCH = "refresh/runspec-docs"
+#: Where Create puts the template when the team branch already exists (a repo
+#: made with a README, or a default branch the host created), for a merge request.
+SETUP_BRANCH = "setup/wiki-template"
 OKF_VERSION = "0.2"
 PRODUCER = "runspec-console-seed"
 
@@ -337,6 +340,17 @@ def refresh_changes(
         if path not in pages and path.startswith(GENERATED_DIR + "/"):
             changes[path] = None
     return changes
+
+
+def is_wiki_root(index_md: bytes | str | None) -> bool:
+    """Whether a repo's root ``index.md`` is already an OKF bundle root."""
+    if not index_md:
+        return False
+    text = (
+        index_md.decode("utf-8", "replace") if isinstance(index_md, bytes) else index_md
+    )
+    fm = lint_module().split_frontmatter(text)[0]
+    return bool(fm and lint_module().top_level_keys(fm).get("okf_version"))
 
 
 # ── lint ────────────────────────────────────────────────────────────────────

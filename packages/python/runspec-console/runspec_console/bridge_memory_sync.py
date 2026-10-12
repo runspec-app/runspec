@@ -303,9 +303,14 @@ class MemorySyncMixin:
         README, CI examples, lint and site scripts, and the generated
         ``runspec/`` pages, as one commit on the team branch.
 
-        Only into a branch that doesn't exist yet (an empty repo, or a repo whose
-        team branch is still to be made) — it never overwrites a wiki in use.
-        Returns ``{ok, branch, commit, files}`` or ``{ok: False, error}``."""
+        Into the team branch when it doesn't exist yet (an empty repo). When it
+        does (a repo created with a README, or a default branch the host made),
+        the template goes to ``setup/wiki-template`` instead, starting from the
+        team branch, for a merge request — the team branch itself is never
+        written. A team branch that is already a wiki (root ``index.md`` with
+        ``okf_version``) is refused: use Refresh runspec pages.
+        Returns ``{ok, branch, commit, files, review, base}`` (``review`` true
+        when the template went to the setup branch) or ``{ok: False, error}``."""
         from . import gitsync, okf
 
         ms = self._memory_sync()
@@ -321,32 +326,51 @@ class MemorySyncMixin:
                 "error": "the wiki template fails its own lint: "
                 + "; ".join(errors[:3]),
             }
+        auth = self._memory_sync_auth(ms)
+        target, review = ms["branch"], False
         try:
-            res = gitsync.push_files(
-                ms["url"],
-                ms["branch"],
-                dict(files),
-                self._memory_sync_auth(ms),
-                base_branch=ms["branch"],
-                message="wiki: start from the runspec-console template",
-                author=self._memory_sync_author(ms),
-                require_new=True,
-            )
+            try:
+                res = gitsync.push_files(
+                    ms["url"],
+                    ms["branch"],
+                    dict(files),
+                    auth,
+                    base_branch=ms["branch"],
+                    message="wiki: start from the runspec-console template",
+                    author=self._memory_sync_author(ms),
+                    require_new=True,
+                )
+            except gitsync.GitSyncError as exc:
+                if "already exists" not in str(exc) or isinstance(
+                    exc, gitsync.PushConflictError
+                ):
+                    raise
+                root = gitsync.fetch_dir(ms["url"], ms["branch"], auth, "", ".md")
+                if okf.is_wiki_root(root.files.get("index.md")):
+                    return {
+                        "ok": False,
+                        "error": f"{ms['branch']} is already a wiki, so it wasn't "
+                        "touched. Use Refresh runspec pages to update it.",
+                    }
+                # The team branch exists but isn't a wiki yet (a README, say):
+                # put the template on its own branch for a merge request.
+                target, review = okf.SETUP_BRANCH, True
+                res = gitsync.push_files(
+                    ms["url"],
+                    target,
+                    dict(files),
+                    auth,
+                    base_branch=ms["branch"],
+                    message="wiki: start from the runspec-console template",
+                    author=self._memory_sync_author(ms),
+                )
         except gitsync.PushConflictError as exc:
             return {
                 "ok": False,
                 "error": f"the repo changed while creating it — try again. ({exc})",
             }
         except gitsync.GitSyncError as exc:
-            text = str(exc)
-            if "already exists" in text:
-                return {
-                    "ok": False,
-                    "error": f"{ms['branch']} already exists on the repo, so it "
-                    "wasn't touched. Use Refresh runspec pages to update a wiki "
-                    "that's already set up.",
-                }
-            return {"ok": False, "error": _push_error(text)}
+            return {"ok": False, "error": _push_error(str(exc))}
         except Exception as exc:  # noqa: BLE001
             logger.exception("memory sync create repo failed")
             return {"ok": False, "error": _push_error(f"push failed: {exc}")}
@@ -355,6 +379,8 @@ class MemorySyncMixin:
             "branch": res.branch,
             "commit": res.commit,
             "files": len(files),
+            "review": review,
+            "base": ms["branch"],
         }
 
     def memory_sync_refresh_docs(self) -> dict[str, Any]:

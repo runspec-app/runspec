@@ -9,6 +9,17 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.343.3] — 2026-10-12
+
+### Fixed
+
+- **Create wiki repo works on a repo that already has its default branch.** A
+  GitLab or GitHub repo created with a README already has `main`/`master`, so
+  Create refused with "already exists". It now pushes the template to
+  `setup/wiki-template` (starting from the team branch) for a merge request,
+  and only refuses when the team branch is already a wiki
+  (`okf.is_wiki_root`). The result says which branch to merge.
+
 ## [0.343.2] — 2026-10-12
 
 ### Fixed

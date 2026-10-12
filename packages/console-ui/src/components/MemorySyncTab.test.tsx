@@ -50,5 +50,7 @@ describe('refreshText', () => {
     expect(refreshText({ ok: true, pages: 3, changed: false, branch: 'r' }).text).toMatch(/already has these changes/)
     expect(refreshText({ ok: false, error: 'nope' })).toEqual({ ok: false, text: 'nope' })
     expect(createText({ ok: false }).ok).toBe(false)
+    expect(createText({ ok: true, review: true, branch: 'setup/wiki-template', base: 'master', files: 59 }).text)
+      .toMatch(/master already exists.*merge request from setup\/wiki-template into master/)
   })
 })

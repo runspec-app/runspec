@@ -166,6 +166,13 @@ export function MemorySyncTab() {
 
 export function createText(r: WikiRepoCreateResult): SyncResult {
   if (!r.ok) return { ok: false, text: r.error || 'Could not create the wiki repo.' }
+  if (r.review) {
+    return {
+      ok: true,
+      text: `${r.base} already exists, so the template (${r.files} files) went to ${r.branch}. `
+        + `Open a merge request from ${r.branch} into ${r.base} and merge it to set up the wiki.`,
+    }
+  }
   return { ok: true, text: `Created the wiki on ${r.branch} (${r.files} files). Open the repo to see the README.` }
 }
 
@@ -202,7 +209,7 @@ export function WikiRepoSection({ save }: { save: () => Promise<boolean> }) {
         Start an empty repo from the wiki template: one Markdown page per thing in the Open
         Knowledge Format, a README, CI for GitLab and GitHub that lints changes and publishes
         a site from release tags, and pages about runspec generated from this console's
-        documentation. It only writes to a team branch that doesn't exist yet. Refresh pushes
+        documentation. If the team branch already exists it goes to <Text code>setup/wiki-template</Text> for a merge request instead. Refresh pushes
         updated runspec pages to <Text code>refresh/runspec-docs</Text> for review.
       </Paragraph>
       <Space wrap>

@@ -228,8 +228,12 @@ doubles as the Memory Sync repo (the `facts/` folder sits beside the pages).
 There are two ways to start one:
 
 - **Settings → Memory Sync → Create wiki repo** pushes the template to the team
-  branch of the configured repo as one commit. It only writes to a branch that
-  doesn't exist yet, so it never touches a wiki that's already in use.
+  branch of the configured repo as one commit. If the team branch already
+  exists (GitLab and GitHub create `main` or `master` with a README when you
+  tick "initialize with a README"), the template goes to `setup/wiki-template`
+  instead, starting from the team branch: open a merge request into the team
+  branch and merge it. The team branch itself is never written, and a branch
+  that is already a wiki is refused (use Refresh runspec pages).
 - **Copy the folder.** The template is
   `packages/python/runspec-console/runspec_console/wiki_template/` in the
   runspec repo (also inside the installed package). Copy it into a new repo and

@@ -830,6 +830,8 @@ export interface MemorySyncPushResult {
 export interface WikiRepoCreateResult {
   ok: boolean; error?: string
   branch?: string; commit?: string; files?: number
+  review?: boolean  // the team branch existed: the template went to `branch` for a merge request
+  base?: string     // the team branch to merge it into
 }
 export interface WikiRefreshResult {
   ok: boolean; error?: string
