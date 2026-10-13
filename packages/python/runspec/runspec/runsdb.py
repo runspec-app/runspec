@@ -653,6 +653,10 @@ def _normalise_row(row: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+# UPSERT (INSERT … ON CONFLICT DO UPDATE) arrived in SQLite 3.24.0.
+_HAS_UPSERT = sqlite3.sqlite_version_info >= (3, 24, 0)
+
+
 def _upsert(con: sqlite3.Connection, row: dict[str, Any]) -> None:
     """INSERT or overwrite a row by ``run_id``. ``label``, ``events`` and
     ``exception`` (and v6 ``os_user`` / ``source`` / ``exec_uid``) are written on
@@ -663,11 +667,26 @@ def _upsert(con: sqlite3.Connection, row: dict[str, Any]) -> None:
     kept = ("label", "events", "exception", "os_user", "source", "exec_uid")
     cols = ", ".join((*_COLUMNS, *kept))
     placeholders = ", ".join("?" for _ in range(len(_COLUMNS) + len(kept)))
+    kept_vals = tuple(row.get(c) if row.get(c) not in ("", None) else None for c in kept)
+    if not _HAS_UPSERT:
+        # SQLite < 3.24 (CentOS 7 ships 3.7.17) has no ON CONFLICT … DO UPDATE: the
+        # statement failed, so begin_run never wrote its row and the finish fallback
+        # left a row without user / args / agent. UPDATE then INSERT does the same in
+        # one write transaction (the UPDATE takes the write lock).
+        sets = ", ".join(f"{c}=?" for c in _COLUMNS if c != "run_id")
+        sets += "".join(f", {c}=COALESCE(?, {c})" for c in kept)
+        cur = con.execute(
+            f"UPDATE runs SET {sets} WHERE run_id=?",
+            (*(row[c] for c in _COLUMNS if c != "run_id"), *kept_vals, row["run_id"]),
+        )
+        if (cur.rowcount or 0) <= 0:
+            con.execute(f"INSERT INTO runs ({cols}) VALUES ({placeholders})", (*(row[c] for c in _COLUMNS), *kept_vals))
+        return
     updates = ", ".join(f"{c}=excluded.{c}" for c in _COLUMNS if c != "run_id")
     updates += "".join(f", {c}=COALESCE(excluded.{c}, runs.{c})" for c in kept)
     con.execute(
         f"INSERT INTO runs ({cols}) VALUES ({placeholders}) ON CONFLICT(run_id) DO UPDATE SET {updates}",
-        (*(row[c] for c in _COLUMNS), *(row.get(c) if row.get(c) not in ("", None) else None for c in kept)),
+        (*(row[c] for c in _COLUMNS), *kept_vals),
     )
 
 

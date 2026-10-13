@@ -7,6 +7,20 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.73.2] — 2026-10-13
+
+**The runs index records who ran it on SQLite older than 3.24.**
+
+- The index wrote each run's start row with `INSERT … ON CONFLICT DO UPDATE`,
+  which SQLite added in 3.24. On older SQLite (CentOS 7's 3.7.17, which a
+  self-built Python links) that statement failed silently: the start row never
+  landed, and the finish wrote a bare row with no user, run-as account, args or
+  agent flag, so the console's History showed empty Operator and Run as columns
+  for those hosts (`runspec history reindex` failed the same way). On SQLite
+  older than 3.24 the write is now an `UPDATE`, then an `INSERT` when no row
+  matched, in the same transaction. After upgrading, a reindex fills in the
+  rows already written without those fields.
+
 ## [0.73.1] — 2026-10-12
 
 **HTTP client request lines no longer print on stdout.**

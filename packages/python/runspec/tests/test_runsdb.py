@@ -64,6 +64,22 @@ class TestLifecycle:
         r = runsdb.list_runs(logs_dir, live=False)[0]
         assert (r["status"], r["exit_code"], r["duration_ms"]) == ("completed", 0, 1234)
 
+    def test_sqlite_without_upsert_keeps_the_start_row(self, logs_dir, monkeypatch):
+        # SQLite < 3.24 (CentOS 7's 3.7.17) has no ON CONFLICT … DO UPDATE. The
+        # start row (user, args, agent …) must still land and survive the finish,
+        # and a re-begin must update it in place without clearing a kept label.
+        monkeypatch.setattr(runsdb, "_HAS_UPSERT", False)
+        runsdb.begin_run(logs_dir, _row(label="sched:x"))
+        r = runsdb.list_runs(logs_dir, live=False)[0]
+        assert (r["status"], r["user"], r["label"]) == ("running", "alice", "sched:x")
+        runsdb.begin_run(logs_dir, _row(autonomy="manual"))
+        runsdb.finish_run(logs_dir, "r1", exit_code=0, duration_ms=7, status="completed")
+        rows = runsdb.list_runs(logs_dir, live=False)
+        assert len(rows) == 1
+        r = rows[0]
+        assert (r["status"], r["user"], r["autonomy"], r["label"]) == ("completed", "alice", "manual", "sched:x")
+        assert r["args"] == '{"target": "prod"}'
+
     def test_finish_without_begin_still_records(self, logs_dir):
         # A very short run whose start row lost the race is still recorded whole.
         runsdb.finish_run(logs_dir, "r-late", exit_code=1, duration_ms=5, status="failed")
