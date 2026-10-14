@@ -9,6 +9,22 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.344.2] — 2026-10-14
+
+### Fixed
+
+- **Make logs shared also lets your SSH login read the venv's logs.** When a
+  venv belongs to another account (a service account), the default *Make logs
+  shared* (the logs inbox) set up `logs/inbox` but left `logs/` itself as the
+  owner's umask made it, so the console's login could still fail to read the
+  runs index; the fix was a manual `sudo -u svc venv/bin/runspec logs share
+  --acl-user <login>`. The console now passes `--acl-user <login>` itself
+  whenever it runs the share as the owner or root (the login is read on the
+  host with `id -un`), so the owner grants the login a POSIX ACL on `logs/`
+  (the folder becomes `2775` like a group share). The result line says so,
+  and a host without `setfacl` gets a warning instead. **Provision venv…**
+  does the same at its logs-inbox step when it provisions as another account.
+
 ## [0.344.1] — 2026-10-12
 
 ### Fixed

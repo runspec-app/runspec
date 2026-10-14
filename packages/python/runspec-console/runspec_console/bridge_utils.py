@@ -1072,7 +1072,9 @@ def looks_permission_denied(text: str) -> bool:
     return bool(_PERMISSION_DENIED_RE.search(text or ""))
 
 
-def venv_escalation_cmd(runspec_path: str, tail: list[str], probe: list[str]) -> str:
+def venv_escalation_cmd(
+    runspec_path: str, tail: list[str], probe: list[str], *, acl_login: bool = False
+) -> str:
     """POSIX shell command running ``<runspec> <tail>`` **as the venv's owner** —
     the logs-inbox verbs (``logs share --inbox``, ``history sweep``) only the owner
     may run (runspec >= 0.66).
@@ -1085,10 +1087,16 @@ def venv_escalation_cmd(runspec_path: str, tail: list[str], probe: list[str]) ->
     dropping privileges first. ``probe`` is a read-only argv on the same binary
     (so the probe needs exactly the grant the real call does). The chosen tier is
     announced as ``=====AS <user>`` (:data:`DENYLIST_AS_MARKER`); exit 77 when no
-    tier is available."""
+    tier is available.
+
+    ``acl_login`` (``logs share`` only) adds ``--acl-user <login user>`` on the
+    escalated tiers, so the owner also grants the SSH login a POSIX ACL on
+    ``logs/`` — the login is who reads the runs index and runs the console's
+    runnables. Not added when the login already is the owner."""
     rp = shlex.quote(runspec_path)
     args = " ".join(shlex.quote(a) for a in tail)
     pr = " ".join(shlex.quote(a) for a in probe)
+    up = f'{args} --acl-user "$me"' if acl_login else args
     m = DENYLIST_AS_MARKER
     return (
         f'rp={rp}; r=$(dirname "$(dirname "$rp")"); '
@@ -1097,9 +1105,9 @@ def venv_escalation_cmd(runspec_path: str, tail: list[str], probe: list[str]) ->
         'if [ -z "$o" ] || [ "$o" = "$me" ]; then '
         f'echo "{m}$me"; exec "$rp" {args}; '
         f'elif sudo -n -u "$o" "$rp" {pr} >/dev/null 2>&1; then '
-        f'echo "{m}$o"; exec sudo -n -u "$o" "$rp" {args}; '
+        f'echo "{m}$o"; exec sudo -n -u "$o" "$rp" {up}; '
         f'elif sudo -n "$rp" {pr} >/dev/null 2>&1; then '
-        f'echo "{m}root"; exec sudo -n "$rp" {args}; '
+        f'echo "{m}root"; exec sudo -n "$rp" {up}; '
         'else echo "cannot escalate: the venv $r is owned by ${o:-?} and passwordless '
         "sudo (as ${o:-the owner} or root) for $rp was refused — grant it "
         "(enable-passwordless-sudo scoped), or run as ${o:-<owner>}: "

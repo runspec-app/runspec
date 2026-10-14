@@ -572,8 +572,14 @@ def install_specs(packages: list[str] | None) -> list[str]:
     return out
 
 
-def inbox_argv(dest: str) -> list[str]:
-    return [venv_paths(dest)["runspec"], "logs", "share", "--inbox"]
+def inbox_argv(dest: str, acl_user: str = "") -> list[str]:
+    """``logs share --inbox`` as the owner; ``acl_user`` (the SSH login, when it
+    isn't the owner) also gets a POSIX ACL on logs/ so it can read the runs
+    index."""
+    argv = [venv_paths(dest)["runspec"], "logs", "share", "--inbox"]
+    if acl_user:
+        argv += ["--acl-user", acl_user]
+    return argv
 
 
 def verify_argv(dest: str) -> list[str]:

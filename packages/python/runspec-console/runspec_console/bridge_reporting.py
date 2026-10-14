@@ -1477,7 +1477,12 @@ class ReportingMixin:
         and core drops a root call to the owner itself. Returns ``{ok, venv, group:
         "", as_user, output, inbox}`` or ``{ok: False, venv, group: "", error}``."""
         argv = ["logs", "share", "--scope", "venv", "--inbox", "--json"]
-        code, out, err, as_user = self._run_as_venv_owner(host, rp, argv)
+        # When the owner isn't the SSH login, the owner also grants the login an
+        # ACL on logs/ (``--acl-user``): the login reads the runs index and runs
+        # the console's runnables, and an owner's umask can leave it locked out.
+        code, out, err, as_user = self._run_as_venv_owner(
+            host, rp, argv, acl_login=True
+        )
         payload = None
         for line in reversed(out.splitlines()):
             try:
@@ -1495,14 +1500,26 @@ class ReportingMixin:
                 "repaired": "repaired",
                 "ok": "already set up",
             }.get(state, state or "set up")
+            output = f"logs inbox {verb}: {first.get('inbox_path') or first.get('dir', '')} — every account's runs now reach this venv's history"
+            warning = ""
+            acl = str(first.get("acl") or "")
+            login = ", ".join(str(u) for u in first.get("acl_users") or [])
+            if acl == "applied" and login:
+                output += f"; {login} can read and write its logs (ACL)"
+            elif acl and login:
+                warning = (
+                    f"Couldn't grant {login} access to {first.get('dir', 'logs/')} "
+                    f"({acl}). If History can't read this venv's runs, ask an admin to "
+                    f"add {login} to the logs folder's group."
+                )
             return {
                 "ok": True,
                 "venv": venv,
                 "group": "",
                 "as_user": as_user,
                 "inbox": first.get("inbox_path") or "",
-                "output": f"logs inbox {verb}: {first.get('inbox_path') or first.get('dir', '')} — every account's runs now reach this venv's history",
-                "warning": "",
+                "output": output,
+                "warning": warning,
             }
         msg = out.strip() or err.strip() or f"exit {code}"
         if code == 77 or "cannot escalate" in msg:
@@ -1521,7 +1538,13 @@ class ReportingMixin:
         return {"ok": False, "venv": venv, "group": "", "error": error}
 
     def _run_as_venv_owner(
-        self, host: str, rp: str, argv: list[str], timeout: int = 120
+        self,
+        host: str,
+        rp: str,
+        argv: list[str],
+        timeout: int = 120,
+        *,
+        acl_login: bool = False,
     ) -> tuple[int, str, str, str]:
         """Run ``<rp> <argv>`` as the venv's owner by the owner → root ladder.
         Returns ``(code, stdout, stderr, as_user)`` with the ``=====AS`` line
@@ -1529,7 +1552,9 @@ class ReportingMixin:
         entry = self._host_entry(host)
         if entry is None:
             return -1, "", f"unknown host {host}", ""
-        cmd = utils_mod.venv_escalation_cmd(rp, argv, ["logs", "status", "--json"])
+        cmd = utils_mod.venv_escalation_cmd(
+            rp, argv, ["logs", "status", "--json"], acl_login=acl_login
+        )
         if entry.get("ssh"):
             code, out, err = self._ssh_run(
                 entry["ssh"],

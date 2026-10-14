@@ -260,6 +260,18 @@ class ProvisionMixin:
         text = "\n".join(p for p in ((out or "").rstrip(), (err or "").rstrip()) if p)
         return int(code), text
 
+    def _prov_login(self, h: dict[str, Any]) -> str:
+        """The SSH login's account name (``""`` if it can't be read)."""
+        try:
+            code, out = self._prov_run(h, ["id", "-un"], timeout=_PROBE_TIMEOUT_S)
+        except Exception:  # noqa: BLE001 — best-effort; the ACL is optional
+            return ""
+        last = (out or "").strip().splitlines()[-1:] if code == 0 else []
+        try:
+            return prov.validate_user(last[0]) if last else ""
+        except prov.ProvisionError:
+            return ""
+
     def _prov_fanout(self, fn: Any, items: list[Any]) -> list[dict[str, Any]]:
         if not items:
             return []
@@ -533,6 +545,11 @@ class ProvisionMixin:
                         + (prov.tail(out, 6) or f"exit {code}")
                     )
             kw = {"run_as": plan["run_as"], "become_method": plan["become_method"]}
+            # A venv owned by another account: the owner also grants the SSH
+            # login an ACL on logs/, so this console can read the runs index.
+            login = self._prov_login(h) if plan["run_as"] else ""
+            if login == plan["run_as"]:
+                login = ""
             steps: list[tuple[str, list[str], dict[str, str] | None, int, bool]] = [
                 (
                     "create",
@@ -549,7 +566,13 @@ class ProvisionMixin:
                     _PIP_TIMEOUT_S,
                     True,
                 ),
-                ("inbox", prov.inbox_argv(dest), None, _STEP_TIMEOUT_S, False),
+                (
+                    "inbox",
+                    prov.inbox_argv(dest, acl_user=login),
+                    None,
+                    _STEP_TIMEOUT_S,
+                    False,
+                ),
                 ("verify", prov.verify_argv(dest), None, _STEP_TIMEOUT_S, True),
             ]
             version = ""

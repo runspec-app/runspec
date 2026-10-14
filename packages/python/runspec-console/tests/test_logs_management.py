@@ -513,6 +513,40 @@ class TestShareVenvLogs(unittest.TestCase):
         self.assertIn('exec sudo -n "$rp"', cmd)  # …then root
         self.assertNotIn("--group", cmd)
 
+    def test_inbox_share_grants_the_login_an_acl_when_escalated(self) -> None:
+        # The owner isn't the SSH login: the escalated tiers also pass
+        # `--acl-user "$me"`, so the login can read the runs index. The login-is-
+        # owner tier doesn't (it already owns logs/).
+        b = _make_bridge()
+        b._hosts = [_remote_entry()]
+        reply = (
+            "=====AS svc\n"
+            '{"shared": [{"dir": "/opt/venvs/deploy-core/logs", "inbox": "ok", '
+            '"inbox_path": "/opt/venvs/deploy-core/logs/inbox", "acl": "applied", '
+            '"acl_users": ["deploy"]}]}\n'
+        )
+        with patch.object(b, "_ssh_run", return_value=(0, reply, "")) as m:
+            res = b.share_venv_logs("prod-1", "deploy-core")
+        self.assertTrue(res["ok"], res)
+        self.assertIn("deploy can read and write its logs", res["output"])
+        self.assertEqual(res["warning"], "")
+        cmd = m.call_args.args[1]
+        self.assertEqual(cmd.count('--acl-user "$me"'), 2)  # owner + root tiers
+        self.assertIn('exec "$rp" logs share --scope venv --inbox --json; ', cmd)
+
+    def test_inbox_share_warns_when_the_acl_cannot_apply(self) -> None:
+        b = _make_bridge()
+        b._hosts = [_remote_entry()]
+        reply = (
+            "=====AS svc\n"
+            '{"shared": [{"dir": "/opt/venvs/deploy-core/logs", "inbox": "ok", '
+            '"acl": "unsupported: setfacl not installed", "acl_users": ["deploy"]}]}\n'
+        )
+        with patch.object(b, "_ssh_run", return_value=(0, reply, "")):
+            res = b.share_venv_logs("prod-1", "deploy-core")
+        self.assertTrue(res["ok"], res)
+        self.assertIn("setfacl not installed", res["warning"])
+
     def test_inbox_share_on_an_old_core_names_the_upgrade(self) -> None:
         b = _make_bridge()
         b._hosts = [_remote_entry()]

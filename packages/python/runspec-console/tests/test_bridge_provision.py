@@ -118,6 +118,7 @@ class _StubBridge:
     _prov_remote_hosts = Bridge._prov_remote_hosts
     _prov_host = Bridge._prov_host
     _prov_run = Bridge._prov_run
+    _prov_login = Bridge._prov_login
     _prov_fanout = Bridge._prov_fanout
     _prov_plan = Bridge._prov_plan
     _prov_preflight_one = Bridge._prov_preflight_one
@@ -498,3 +499,52 @@ def test_deprovision_falls_back_to_syslog_without_runspec_audit(app, tmp_path):
     assert len(logger_cmds) == 1
     assert "venv.deprovision" in logger_cmds[0] and "confirmed" in logger_cmds[0]
     assert not venv.exists()
+
+
+class _RunAsBridge(_StubBridge):
+    """Provision as a service account: ``sudo -n -u svc`` runs without sudo here,
+    and the SSH login reads as ``deploy``."""
+
+    def _ssh_run(self, ssh, command, *, identity_file=None, timeout=15, stdin=None):
+        if command == "id -un":
+            self.commands.append(command)
+            return 0, "deploy\n", ""
+        if command.startswith("sudo -n -u svc "):
+            self.commands.append(command)
+            command = command[len("sudo -n -u svc ") :]
+        return super()._ssh_run(
+            ssh, command, identity_file=identity_file, timeout=timeout, stdin=stdin
+        )
+
+
+def test_provision_as_another_account_grants_the_login_an_acl(app, tmp_path):
+    _hosts()
+    b = _RunAsBridge()
+    root = tmp_path / "venvs"
+    b.host_root = str(root)
+    out = b.provision_start(
+        {
+            "hosts": ["web-01"],
+            "dest": str(root / "ops"),
+            "python": sys.executable,
+            "run_as": "svc",
+        }
+    )
+    rec = _wait(b, out["op"])
+    assert rec["status"] == "finished", rec
+    inbox = [c for c in b.commands if "logs share --inbox" in c]
+    assert inbox and "--acl-user deploy" in inbox[-1]
+
+
+def test_provision_as_the_login_adds_no_acl(app, tmp_path):
+    _hosts()
+    b = _StubBridge()
+    root = tmp_path / "venvs"
+    b.host_root = str(root)
+    out = b.provision_start(
+        {"hosts": ["web-01"], "dest": str(root / "ops"), "python": sys.executable}
+    )
+    rec = _wait(b, out["op"])
+    assert rec["status"] == "finished", rec
+    assert "id -un" not in b.commands
+    assert not any("--acl-user" in c for c in b.commands)
