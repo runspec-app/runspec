@@ -238,6 +238,9 @@ def test_workspace_info_reports_paths(monkeypatch, tmp_path):
     assert out["session_id"] == "convact01"
     assert out["workspace_root"].endswith("convact01")
     assert out["documents_dir"].endswith("documents")
+    from runspec_console import config as config_mod
+
+    assert out["config_dir"] == str(config_mod.app_dir())
 
 
 def test_workspace_ls_includes_root(monkeypatch, tmp_path):

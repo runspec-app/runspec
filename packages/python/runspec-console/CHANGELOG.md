@@ -9,6 +9,18 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.344.3] — 2026-10-14
+
+### Fixed
+
+- **The agent looks in the right config folder on a white-label console.** A
+  console installed as a white-label package keeps its config in
+  `%APPDATA%\<package name>`, but nothing told the agent that, so `list_files`
+  calls went to the guessed `%APPDATA%/runspec-console` and found nothing. The
+  `list_files` description now names this console's real config folder
+  (`config.app_dir()`), and `workspace_info` returns it as `config_dir`. The
+  `--config-dir` help text no longer names `runspec-console` as the default.
+
 ## [0.344.2] — 2026-10-14
 
 ### Fixed

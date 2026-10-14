@@ -159,3 +159,14 @@ def test_listing_is_capped_with_note():
     out = json.loads(_Stub(listing=entries)._run_files_tool({}))
     assert len(out["entries"]) == _FILES_TOOL_MAX_ENTRIES
     assert out["truncated"] is True and "note" in out
+
+
+def test_description_names_the_branded_config_dir(monkeypatch, tmp_path):
+    """A white-label install's config folder is named for its package, so the
+    agent is told the real path instead of guessing %APPDATA%/runspec-console."""
+    from runspec_console import config as config_mod
+
+    branded = tmp_path / "AppData" / "Roaming" / "mycorp-console"
+    monkeypatch.setattr(config_mod, "app_dir", lambda: branded)
+    (tool,) = _Stub()._files_tools()
+    assert branded.as_posix() in tool["description"]

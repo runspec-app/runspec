@@ -2444,7 +2444,10 @@ class AgentToolsMixin:
                     "List a directory on local, a fleet host, or an ad-hoc SSH "
                     "host (reached directly — jump only if unreachable). "
                     "Read-only; returns name/type/size/mtime per entry. Use it "
-                    "to find exact paths before download_file or relay_file."
+                    "to find exact paths before download_file or relay_file. "
+                    "This console's own config/data folder on 'local' is "
+                    f"{config_mod.app_dir().as_posix()} (named for the installed "
+                    "app — don't assume %APPDATA%/runspec-console)."
                 ),
                 "input_schema": {"type": "object", "properties": props},
             }
@@ -2945,7 +2948,7 @@ class AgentToolsMixin:
                 "description": (
                     "Report this session's workspace: its id (name) and the "
                     "**absolute path** on the console machine, plus the console "
-                    "documents directory. Call this first when you need to tell the "
+                    "documents directory and its config/data directory. Call this first when you need to tell the "
                     "operator where a file is, or before open_file / "
                     "reveal_in_folder — those take a path relative to one of these "
                     "roots, so you don't need to guess the absolute location."
@@ -3365,6 +3368,7 @@ class AgentToolsMixin:
                         "session_id": root.name,
                         "workspace_root": str(root),
                         "documents_dir": str(docs),
+                        "config_dir": str(config_mod.app_dir()),
                         "subdirs": [
                             d.name
                             for d in sorted(root.iterdir())

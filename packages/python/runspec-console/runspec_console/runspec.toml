@@ -31,7 +31,7 @@ description = "Enable the Chromium inspector (right-click → Inspect / F12) in 
 [runspec-console.args.config-dir]
 type        = "path"
 required    = false
-description = "Use this directory for all console state (hosts, credentials, triggers, config.toml) instead of the default %APPDATA%/runspec-console — handy for testing against an isolated config"
+description = "Use this directory for all console state (hosts, credentials, triggers, config.toml) instead of the default %APPDATA%/<app name> (runspec-console unless a white-label package names it) — handy for testing against an isolated config"
 
 [runspec-console.args.profile-startup]
 type        = "flag"
