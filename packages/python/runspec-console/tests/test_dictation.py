@@ -817,3 +817,56 @@ def test_ensure_native_library_is_a_no_op_once_loaded():
     dictation.ensure_native_library(lib)
     dictation.ensure_native_library(lib)
     assert lib.loads == 1
+
+
+# ── Windows C++ runtime diagnosis + start-up preload ──
+
+
+def test_runtime_hint_names_an_old_winrt_runtime():
+    hint = dictation.runtime_hint(
+        lambda: (r"C:\venv\Lib\site-packages\winrt\msvcp140.dll", (14, 29, 30157, 0))
+    )
+    assert "14.29.30157.0" in hint and "14.40" in hint
+    assert "notifications extra" in hint and "restart" in hint
+
+
+def test_runtime_hint_suggests_the_redistributable_for_other_old_runtimes():
+    hint = dictation.runtime_hint(
+        lambda: (r"C:\Windows\System32\msvcp140.dll", (14, 28, 29913, 0))
+    )
+    assert "Visual C++ Redistributable" in hint
+
+
+@pytest.mark.parametrize(
+    "found",
+    [None, (r"C:\Windows\System32\msvcp140.dll", (14, 44, 35211, 0))],
+)
+def test_runtime_hint_silent_when_runtime_absent_or_new_enough(found):
+    assert dictation.runtime_hint(lambda: found) == ""
+
+
+def test_load_failure_carries_the_runtime_hint(monkeypatch):
+    monkeypatch.setattr(dictation, "runtime_hint", lambda: "old runtime loaded")
+    lib = _fake_moonshine_lib([OSError("DLL initialization routine failed")])
+    with pytest.raises(RuntimeError, match="initialization routine failed — old"):
+        dictation.ensure_native_library(lib)
+
+
+def test_preload_is_a_no_op_off_windows(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "linux")
+    called = []
+    monkeypatch.setattr(dictation, "ensure_native_library", lambda: called.append(1))
+    dictation.preload_native_library()
+    assert called == []
+
+
+def test_preload_on_windows_loads_and_never_raises(monkeypatch, caplog):
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(dictation.importlib.util, "find_spec", lambda name: object())
+
+    def boom() -> None:
+        raise RuntimeError("Moonshine's native speech library failed to load: x")
+
+    monkeypatch.setattr(dictation, "ensure_native_library", boom)
+    dictation.preload_native_library()  # logged, not raised
+    assert "failed to load" in caplog.text

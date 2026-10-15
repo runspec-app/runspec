@@ -482,6 +482,21 @@ def _startup_profiler() -> Callable[[str], None]:
     return mark
 
 
+def _preload_speech_library() -> None:
+    """Load the dictation engine's native library before anything else can pull
+    an older C++ runtime into the process (winrt ships one), which makes its
+    onnxruntime.dll fail with "DLL initialization routine failed". Only when
+    dictation is on; never blocks start-up."""
+    try:
+        from . import dictation
+        from .config import read_voice
+
+        if read_voice().get("enabled", True):
+            dictation.preload_native_library()
+    except Exception:  # noqa: BLE001 — start-up must not fail on the mic extra
+        logger.debug("speech library preload skipped", exc_info=True)
+
+
 def main() -> None:
     _ensure_std_streams()
     prof = _startup_profiler()
@@ -503,6 +518,8 @@ def main() -> None:
 
         _cfg.set_app_dir(args.config_dir.value)
         logger.info("Using config directory: %s", _cfg.app_dir())
+
+    _preload_speech_library()
 
     import webview
 

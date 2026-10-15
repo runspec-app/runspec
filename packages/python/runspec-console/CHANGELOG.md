@@ -9,6 +9,22 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.345.2] — 2026-10-15
+
+### Fixed
+
+- **Dictation no longer fails with "DLL initialization routine failed" on
+  Windows.** Moonshine's bundled `onnxruntime.dll` needs the Microsoft C++
+  runtime 14.40 or newer, but the notifications extra (`winrt-runtime`) ships
+  its own older `msvcp140.dll` (14.29). Whichever loads first is reused for the
+  whole process, so once a toast check imported winrt the speech library could
+  no longer start. The console now loads the speech library at start-up, before
+  anything else, when dictation is enabled
+  (`dictation.preload_native_library`). If loading still fails, the error now
+  names the C++ runtime that was already loaded and its version, and says what
+  to do: restart the console, or install the latest Visual C++
+  Redistributable.
+
 ## [0.345.1] — 2026-10-15
 
 ### Fixed

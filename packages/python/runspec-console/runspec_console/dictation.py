@@ -41,7 +41,9 @@ the composer can show a disabled mic with a tooltip instead of failing.
 
 from __future__ import annotations
 
+import importlib.util
 import logging
+import sys
 import threading
 import time
 import uuid
@@ -269,12 +271,104 @@ def ensure_native_library(lib_cls: Any = None) -> None:
         inst = lib_cls()
     except Exception as exc:
         lib_cls._instance = None
+        hint = runtime_hint()
         raise RuntimeError(
             f"Moonshine's native speech library failed to load: {exc}"
+            + (f" — {hint}" if hint else "")
         ) from exc
     if getattr(inst, "_lib", None) is None:
         lib_cls._instance = None
         raise RuntimeError("Moonshine's native speech library failed to load")
+
+
+# The C++ runtime Moonshine's bundled onnxruntime.dll needs. Older
+# msvcp140.dll builds still export every symbol it imports, so the loader binds
+# to them, but onnxruntime's static initialisers then fail and Windows reports
+# "DLL initialization routine failed". The usual culprit is a package that ships
+# its own old copy (winrt-runtime, the notifications extra, bundles 14.29) and
+# was imported first: Windows reuses an already-loaded msvcp140.dll by name.
+MIN_MSVCP140 = (14, 40)
+
+
+def _loaded_msvcp140() -> tuple[str, tuple[int, ...]] | None:
+    """Path and file version of the msvcp140.dll already in this process, or
+    ``None`` (not Windows, not loaded, or unreadable)."""
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.GetModuleHandleW.restype = wintypes.HMODULE
+        handle = kernel32.GetModuleHandleW("msvcp140.dll")
+        if not handle:
+            return None
+        buf = ctypes.create_unicode_buffer(1024)
+        kernel32.GetModuleFileNameW(wintypes.HMODULE(handle), buf, len(buf))
+        path = buf.value
+        version = ctypes.WinDLL("version")
+        size = version.GetFileVersionInfoSizeW(path, None)
+        if not size:
+            return path, ()
+        data = ctypes.create_string_buffer(size)
+        if not version.GetFileVersionInfoW(path, 0, size, data):
+            return path, ()
+        ptr, length = ctypes.c_void_p(), wintypes.UINT()
+        if not version.VerQueryValueW(
+            data, "\\", ctypes.byref(ptr), ctypes.byref(length)
+        ):
+            return path, ()
+        # VS_FIXEDFILEINFO: dwFileVersionMS / LS at DWORD offsets 2 and 3.
+        dwords = ctypes.cast(ptr, ctypes.POINTER(ctypes.c_uint32))
+        ms, ls = dwords[2], dwords[3]
+        return path, (ms >> 16, ms & 0xFFFF, ls >> 16, ls & 0xFFFF)
+    except Exception:
+        logger.debug("dictation: msvcp140 probe failed", exc_info=True)
+        return None
+
+
+def runtime_hint(probe: Callable[[], Any] = _loaded_msvcp140) -> str:
+    """One sentence on the likely cause of a native-library load failure on
+    Windows (an old C++ runtime already loaded), or ``""`` when there is
+    nothing useful to say."""
+    found = probe()
+    if not found:
+        return ""
+    path, ver = found
+    if ver and tuple(ver[:2]) >= MIN_MSVCP140:
+        return ""
+    shown = ".".join(str(p) for p in ver) if ver else "unknown version"
+    hint = (
+        f"an older C++ runtime is already loaded in the console ({path}, {shown}; "
+        f"the speech library needs {MIN_MSVCP140[0]}.{MIN_MSVCP140[1]} or newer)"
+    )
+    if "winrt" in path.lower():
+        hint += (
+            ". It came from the notifications extra (winrt); restart the console "
+            "so the speech library loads first"
+        )
+    else:
+        hint += (
+            ". Install the latest Microsoft Visual C++ Redistributable (x64) "
+            "and restart the console"
+        )
+    return hint
+
+
+def preload_native_library() -> None:
+    """Load Moonshine's native library at start-up, before anything else can
+    pull an older msvcp140.dll into the process (see ``MIN_MSVCP140``).
+
+    Windows only — elsewhere load order doesn't matter. Cheap (no model is
+    loaded) and best-effort: a failure is logged and the mic press retries."""
+    if sys.platform != "win32" or importlib.util.find_spec("moonshine_voice") is None:
+        return
+    try:
+        with _LOAD_LOCK:
+            ensure_native_library()
+    except Exception as exc:
+        logger.warning("dictation: %s", exc)
 
 
 def _load_transcriber(
