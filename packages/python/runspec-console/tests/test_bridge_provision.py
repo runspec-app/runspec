@@ -290,6 +290,8 @@ class _ReadOnlyParentBridge(_StubBridge):
         self.root_via = root_via
 
     def _ssh_run(self, ssh, command, *, identity_file=None, timeout=15, stdin=None):
+        if command == "id -un":  # an SSH login that isn't root
+            return 0, "operator\n", ""
         if "sudo -n true" in command:
             self.commands.append(command)
             return 0, self.root_via + "\n", ""
@@ -548,3 +550,59 @@ def test_provision_as_the_login_adds_no_acl(app, tmp_path):
     assert rec["status"] == "finished", rec
     assert "id -un" not in b.commands
     assert not any("--acl-user" in c for c in b.commands)
+
+
+class _SudoRefusedBridge(_RunAsBridge):
+    """The login's sudoers rules don't let it run ``sh`` as svc: sudo prints the
+    refused command — the whole check script — and exits 1."""
+
+    def _ssh_run(self, ssh, command, *, identity_file=None, timeout=15, stdin=None):
+        if command.startswith("sudo -n -u svc "):
+            self.commands.append(command)
+            return (
+                1,
+                "",
+                (
+                    "Sorry, user deploy is not allowed to execute '/bin/sh -c "
+                    + command[len("sudo -n -u svc sh -c ") :]
+                    + "' as svc on web-01."
+                ),
+            )
+        return super()._ssh_run(
+            ssh, command, identity_file=identity_file, timeout=timeout, stdin=stdin
+        )
+
+
+def test_check_host_sudo_refusal_is_a_sentence_and_logged(app, tmp_path, caplog):
+    _hosts()
+    b = _SudoRefusedBridge()
+    with caplog.at_level("WARNING", logger="runspec_console.bridge_const"):
+        res = b.provision_preflight(
+            {
+                "hosts": ["web-01"],
+                "dest": str(tmp_path / "venvs" / "ops"),
+                "python": sys.executable,
+                "run_as": "svc",
+            }
+        )
+    row = res["rows"][0]
+    assert not row["ok"]
+    assert row["blockers"][0].startswith("sudo refused"), row["blockers"]
+    assert "out writable" not in row["blockers"][0]
+    logged = "\n".join(r.getMessage() for r in caplog.records)
+    assert "check failed on web-01" in logged and "not allowed to execute" in logged
+
+
+def test_run_as_the_login_itself_skips_sudo(app, tmp_path):
+    _hosts()
+    b = _RunAsBridge()  # the login reads as "deploy"
+    res = b.provision_preflight(
+        {
+            "hosts": ["web-01"],
+            "dest": str(tmp_path / "venvs" / "ops"),
+            "python": sys.executable,
+            "run_as": "deploy",
+        }
+    )
+    assert res["rows"][0]["ok"], res["rows"][0]
+    assert not any(c.startswith("sudo ") for c in b.commands)

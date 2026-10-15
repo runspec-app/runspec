@@ -376,3 +376,42 @@ def test_create_script_never_chmods_through_symlinks(tmp_path):
     assert r.returncode == 0, r.stdout + r.stderr
     assert (target.stat().st_mode & 0o777) == 0o700
     assert ((dest / "bin").stat().st_mode & 0o777) == 0o755
+
+
+# ── failure text ──
+
+# What sudo prints when a sudoers rule doesn't cover ``sh``: the refused
+# command, multi-line script and all.
+_SUDO_REFUSED = (
+    "Sorry, user deploy is not allowed to execute '/bin/sh -c "
+    + prov.PREFLIGHT_SCRIPT
+    + " sh /usr/bin/python3 /opt/venvs/ops' as svc on web-01."
+)
+
+
+def test_failure_text_explains_a_sudo_refusal_without_the_script():
+    msg = prov.failure_text(_SUDO_REFUSED, 1, run_as="svc")
+    assert msg.startswith("sudo refused") and "svc" in msg
+    assert "out " not in msg and "fi" not in msg.split()
+
+
+@pytest.mark.parametrize(
+    "text,expect",
+    [
+        ("sudo: a password is required", "needs a password"),
+        ("deploy is not in the sudoers file.", "can't use sudo"),
+        ("Sorry, user deploy may not run sudo on web-01.", "can't use sudo"),
+    ],
+)
+def test_failure_text_sudo_variants(text, expect):
+    msg = prov.failure_text(text, 1, run_as="svc")
+    assert expect in msg
+
+
+def test_failure_text_drops_echoed_script_lines():
+    text = "\n".join(
+        [*prov.PREFLIGHT_SCRIPT.strip().splitlines()[-3:], "boom: no such thing"]
+    )
+    assert prov.failure_text(text, 2) == "boom: no such thing"
+    assert prov.failure_text(prov.PREFLIGHT_SCRIPT, 2) == "exit 2"
+    assert prov.failure_text("", 3) == "exit 3"

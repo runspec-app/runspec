@@ -114,10 +114,16 @@ class ProvisionMixin:
         code, out = self._prov_run(h, prov.probe_argv(extra), timeout=_PROBE_TIMEOUT_S)
         res = prov.parse_probe(out)
         if not res.user and code != 0:
+            logger.warning(
+                "provision: interpreter probe failed on %s (exit %s): %s",
+                name,
+                code,
+                prov.tail(out, 40),
+            )
             return {
                 "ok": False,
                 "host": name,
-                "error": prov.tail(out) or f"exit {code}",
+                "error": prov.failure_text(out, code, limit=12),
                 "pythons": [],
             }
         return {
@@ -245,7 +251,11 @@ class ProvisionMixin:
         timeout: int = _STEP_TIMEOUT_S,
     ) -> tuple[int, str]:
         """Run ``argv`` on host ``h`` (escalated to ``run_as`` when set) and
-        return ``(exit_code, combined_output)``."""
+        return ``(exit_code, combined_output)``. No escalation when ``run_as``
+        already is the SSH login: ``sudo -u <self>`` still needs a sudoers rule,
+        and an account without one would be refused for its own venv."""
+        if run_as and run_as == self._prov_login(h):
+            run_as = ""
         cmd, frame = mp.remote_command(
             argv, run_as=run_as, become_method=become_method, env=env
         )
@@ -261,16 +271,27 @@ class ProvisionMixin:
         return int(code), text
 
     def _prov_login(self, h: dict[str, Any]) -> str:
-        """The SSH login's account name (``""`` if it can't be read)."""
+        """The SSH login's account name (``""`` if it can't be read), cached
+        per SSH target for the session."""
+        target = str(h.get("ssh") or "")
+        cache: dict[str, str] | None = getattr(self, "_prov_logins", None)
+        if cache is None:
+            cache = {}
+            self._prov_logins = cache
+        if target in cache:
+            return cache[target]
         try:
             code, out = self._prov_run(h, ["id", "-un"], timeout=_PROBE_TIMEOUT_S)
-        except Exception:  # noqa: BLE001 — best-effort; the ACL is optional
+        except Exception:  # noqa: BLE001 — best-effort
             return ""
         last = (out or "").strip().splitlines()[-1:] if code == 0 else []
         try:
-            return prov.validate_user(last[0]) if last else ""
+            login = prov.validate_user(last[0]) if last else ""
         except prov.ProvisionError:
-            return ""
+            login = ""
+        if login:
+            cache[target] = login
+        return login
 
     def _prov_fanout(self, fn: Any, items: list[Any]) -> list[dict[str, Any]]:
         if not items:
@@ -374,9 +395,25 @@ class ProvisionMixin:
             )
             facts = prov.parse_preflight(out)
             if not facts:
+                logger.warning(
+                    "provision: check failed on %s (run as %r via %s, exit %s): %s",
+                    name,
+                    plan["run_as"],
+                    plan["become_method"],
+                    code,
+                    prov.tail(out, 40),
+                )
+                msg = prov.failure_text(
+                    out,
+                    code,
+                    run_as=plan["run_as"],
+                    become_method=plan["become_method"],
+                    limit=4,
+                )
                 row["blockers"].append(
-                    prov.tail(out, 4)
-                    or f"Preflight failed (exit {code}); check the run-as account."
+                    f"Preflight failed (exit {code}); check the run-as account."
+                    if msg == f"exit {code}"
+                    else msg
                 )
                 return row
             root_via = ""
@@ -406,6 +443,7 @@ class ProvisionMixin:
                 }
             )
         except Exception as exc:  # noqa: BLE001 — one host never breaks the table
+            logger.warning("provision: check failed on %s", name, exc_info=True)
             row["blockers"].append(str(exc))
         return row
 
@@ -481,6 +519,9 @@ class ProvisionMixin:
 
             def _fail(summary: str) -> dict[str, Any]:
                 res["summary"] = summary
+                logger.warning(
+                    "provision: %s failed at %s: %s", name, res["step"], summary
+                )
                 self._prov_progress(
                     op=op,
                     kind="provision",
@@ -542,7 +583,11 @@ class ProvisionMixin:
                 if code != 0:
                     return _fail(
                         "creating the venv folder as root failed: "
-                        + (prov.tail(out, 6) or f"exit {code}")
+                        + prov.failure_text(
+                            out,
+                            code,
+                            run_as="root" if pf.get("handoff_via") == "sudo" else "",
+                        )
                     )
             kw = {"run_as": plan["run_as"], "become_method": plan["become_method"]}
             # A venv owned by another account: the owner also grants the SSH
@@ -588,7 +633,12 @@ class ProvisionMixin:
                     code, out = -1, str(exc)
                 _emit(out)
                 if code != 0:
-                    msg = prov.tail(out, 6) or f"exit {code}"
+                    msg = prov.failure_text(
+                        out,
+                        code,
+                        run_as=plan["run_as"],
+                        become_method=plan["become_method"],
+                    )
                     if required:
                         return _fail(f"{step} failed: {msg}")
                     note = (
@@ -798,6 +848,8 @@ class ProvisionMixin:
 
             def _done(ok: bool, summary: str) -> dict[str, Any]:
                 res.update({"ok": ok, "summary": summary})
+                if not ok:
+                    logger.warning("deprovision: %s:%s failed: %s", name, root, summary)
                 self._prov_progress(
                     op=op,
                     kind="deprovision",
@@ -871,7 +923,12 @@ class ProvisionMixin:
                     op=op, kind="deprovision", host=name, phase="line", line=ln
                 )
             if code != 0:
-                return _done(False, prov.tail(out, 4) or f"exit {code}")
+                return _done(
+                    False,
+                    prov.failure_text(
+                        out, code, run_as=run_as, become_method=become, limit=4
+                    ),
+                )
             return _done(True, prov.tail(out, 1) or "removed")
 
         results: list[dict[str, Any]] = record["results"]

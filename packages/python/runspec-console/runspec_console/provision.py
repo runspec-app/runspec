@@ -797,3 +797,76 @@ def audit_record(event: str, ts: str, **fields: Any) -> dict[str, Any]:
 def tail(text: str, limit: int = 12) -> str:
     lines = [ln.rstrip() for ln in (text or "").splitlines() if ln.strip()]
     return "\n".join(lines[-limit:])
+
+
+# --------------------------------------------------------------------------- #
+# Failure text
+# --------------------------------------------------------------------------- #
+
+# Lines of the scripts this module sends. sudo's refusal message quotes the
+# whole command it refused (``Sorry, user x is not allowed to execute '/bin/sh
+# -c <script> …' as y``), so a raw tail of the output is the end of a script,
+# not an error. These lines are dropped from any failure text.
+_SCRIPT_LINES = frozenset(
+    ln.strip()
+    for s in (
+        PROBE_SCRIPT,
+        PREFLIGHT_SCRIPT,
+        ROOT_CHECK_SCRIPT,
+        HANDOFF_SCRIPT,
+        CREATE_SCRIPT,
+        INSPECT_SCRIPT,
+        REMOVE_SCRIPT,
+    )
+    for ln in s.splitlines()
+    if ln.strip()
+)
+
+
+def _echoes_script(line: str) -> bool:
+    return line.strip() in _SCRIPT_LINES
+
+
+def failure_text(
+    text: str,
+    code: int,
+    *,
+    run_as: str = "",
+    become_method: str = "sudo",
+    limit: int = 6,
+) -> str:
+    """What to show for a host command that failed: a plain sentence when the
+    escalation to ``run_as`` was refused (sudo/su), else the tail of the output
+    with any echoed script lines removed, else ``exit N``."""
+    raw = text or ""
+    low = raw.lower()
+    who = run_as or "that account"
+    method = (become_method or "sudo").strip().lower()
+    if run_as and method != "su":
+        if "is not allowed to execute" in low:
+            return (
+                f"sudo refused: the SSH login isn't allowed to run sh as {who} "
+                f"(provisioning runs sh scripts as the run-as account). Allow "
+                f"it in sudoers, or set Run as to an account the login can use."
+            )
+        if "not in the sudoers file" in low or "may not run sudo" in low:
+            return (
+                f"sudo refused: the SSH login can't use sudo, so it "
+                f"can't act as {who}. Leave Run as empty to provision as the "
+                f"SSH login itself."
+            )
+        if "a password is required" in low or "a terminal is required" in low:
+            return (
+                f"sudo needs a password to act as {who}; the console only uses "
+                f"passwordless sudo (sudo -n)."
+            )
+    if run_as and method == "su":
+        if "authentication failure" in low or "must be run from a terminal" in low:
+            return (
+                f"su needs a password to act as {who}; the console can't type "
+                f"one. Use passwordless sudo instead."
+            )
+    lines = [
+        ln.rstrip() for ln in raw.splitlines() if ln.strip() and not _echoes_script(ln)
+    ]
+    return "\n".join(lines[-limit:]) or f"exit {code}"

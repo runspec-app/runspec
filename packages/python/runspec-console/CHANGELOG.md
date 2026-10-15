@@ -9,6 +9,25 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.345.1] — 2026-10-15
+
+### Fixed
+
+- **Provision → Check host no longer shows a shell script as the error.** When
+  sudo refused to run the check as the *Run as* account, its refusal message
+  quotes the whole command it refused, and the dialog showed the last lines of
+  that, which read like a stray `if … out writable …` script. Refusals now
+  read as one sentence (sudo not allowed to run `sh` as that account, sudo
+  needs a password, the login can't use sudo, su needs a password), and any
+  other failure output has the echoed script lines removed.
+- **Run as your own SSH login skips sudo.** Provision and deprovision ran
+  `sudo -n -u <you>` even when the run-as account was the SSH login itself, so
+  an account without a sudoers rule was refused for its own venv. The login is
+  read once per host and escalation is skipped when it matches.
+- **Provision failures are logged.** A failed Check host, interpreter probe,
+  provision step or deprovision now writes a warning to `runspec-console.log`
+  with the host, run-as account, exit code and the raw output.
+
 ## [0.345.0] — 2026-10-14
 
 ### Added
