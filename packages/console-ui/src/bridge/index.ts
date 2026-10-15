@@ -606,6 +606,33 @@ export interface JumpHost {
 // seed (one versioned glob works fleet-wide); `resolved` is what those globs
 // actually match on THIS machine (machine-local), with the console's own venv
 // (`own_venv`) always first.
+// The console-wide [http] proxy (Settings → Network) for fetch_url, the
+// Marketplace, MCP servers over http/sse, the model adapters and telemetry.
+// mode: system = honour HTTPS_PROXY/HTTP_PROXY/NO_PROXY, manual = `proxy`,
+// direct = never proxy. `credential` is a Credentials id (userpass) for proxy
+// auth; `effective` is a password-free description of what's in force.
+export type HttpProxyMode = 'system' | 'manual' | 'direct'
+export interface HttpProxyConfig {
+  mode: HttpProxyMode
+  proxy: string
+  no_proxy: string[]
+  credential: string
+  effective: string
+}
+export interface HttpProxyInput {
+  mode: HttpProxyMode
+  proxy: string
+  no_proxy: string[]
+  credential: string
+}
+export interface HttpProxyTestResult {
+  ok: boolean
+  url: string
+  route: string
+  status?: number
+  error?: string
+}
+
 export interface LocalVenvConfig {
   globs: string[]
   own_venv: string
@@ -2251,6 +2278,9 @@ export interface BridgeApi {
   // validates + persists them (raises on bad input), then rediscovers.
   get_local_venv_config: () => Promise<LocalVenvConfig>
   save_local_venv_config: (globs: string[]) => Promise<LocalVenvConfig>
+  get_http_proxy_config: () => Promise<HttpProxyConfig>
+  save_http_proxy_config: (payload: HttpProxyInput) => Promise<HttpProxyConfig>
+  test_http_proxy: (payload: HttpProxyInput, url?: string) => Promise<HttpProxyTestResult>
   // Agent-tool visibility ([tool_visibility] in config.toml). get returns the
   // two hide lists; save validates + persists them (raises on bad input) — the
   // lists ride Config Sync / the config seed.

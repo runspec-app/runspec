@@ -8,6 +8,7 @@ import { ProvisionModal } from '../views/ProvisionModal'
 import { DeprovisionModal } from '../views/DeprovisionModal'
 import type { DeprovisionTarget } from '../bridge'
 import { PathInput } from '../views/PathInput'
+import { NetworkTab } from './NetworkTab'
 import { credEnvNames, initialFormValues } from '../views/formsShared'
 import { runnableHidden } from '../toolVisibility'
 import {
@@ -6367,6 +6368,7 @@ export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, co
           { key: 'llm',       label: 'Model / API',  children: <LlmTab /> },
           { key: 'jumpHosts', label: 'Jump Hosts',  children: <JumpHostsTab onHostsChanged={onHostsChanged} /> },
           { key: 'localVenvs', label: 'Local venvs', children: <LocalVenvsTab /> },
+          { key: 'network',   label: 'Network',    children: <NetworkTab /> },
           { key: 'agentTools', label: 'Tool visibility', children: <AgentToolsTab /> },
           // Self-Service (helpdesk catalogue + rooms) hidden pending approval —
           // see SHOW_HELPDESK_ROOMS. The tab component is left intact.

@@ -253,12 +253,19 @@ def apply_header_credentials(
             headers[name] = secret
 
 
-def _proxy_http_factory(proxy_url: str) -> Any:
+def _proxy_http_factory(proxy_url: str | dict[str, Any]) -> Any:
     """An ``httpx_client_factory`` (also directly callable) that builds an httpx
     AsyncClient routed through ``proxy_url``, with MCP's SSE-friendly defaults
-    (follow-redirects + long read timeout). Used only when a server sets a
-    ``proxy`` — the default (proxy-less) path keeps mcp's own client factory."""
-    import httpx
+    (follow-redirects + long read timeout). ``proxy_url`` may instead be a dict
+    of extra client kwargs (``netproxy.httpx_kwargs``: ``{"proxy": …}`` or
+    ``{"trust_env": False}``). Used only when a server sets a ``proxy`` or the
+    console-wide ``[http]`` proxy is manual/direct — otherwise mcp's own client
+    factory is kept."""
+    extra = dict(proxy_url) if isinstance(proxy_url, dict) else {"proxy": proxy_url}
+    try:  # mcp 2.x moved to httpx2 (an httpx-compatible fork); older used httpx
+        import httpx2 as httpx
+    except ImportError:
+        import httpx
 
     try:
         from mcp.shared._httpx_utils import (
@@ -269,7 +276,7 @@ def _proxy_http_factory(proxy_url: str) -> Any:
         MCP_DEFAULT_TIMEOUT, MCP_DEFAULT_SSE_READ_TIMEOUT = 30.0, 300.0
 
     def factory(headers: Any = None, timeout: Any = None, auth: Any = None) -> Any:
-        kwargs: dict[str, Any] = {"follow_redirects": True, "proxy": proxy_url}
+        kwargs: dict[str, Any] = {"follow_redirects": True, **extra}
         kwargs["timeout"] = (
             timeout
             if timeout is not None
@@ -513,7 +520,10 @@ class McpManager:
         ``cred`` (when set) supplies auth: its name-derived env vars for a stdio
         server, or an Authorization/custom header for http/sse. ``cfg['proxy']``
         routes an http/sse server through an HTTP CONNECT proxy (and is exported
-        to a stdio subprocess as the standard ``*_PROXY`` vars)."""
+        to a stdio subprocess as the standard ``*_PROXY`` vars). With no
+        per-server ``proxy`` the console-wide ``[http]`` proxy applies."""
+        from . import netproxy
+
         transport = str(cfg.get("transport") or "stdio").strip().lower()
         proxy = normalize_proxy(cfg.get("proxy"))
         if transport == "stdio":
@@ -525,7 +535,7 @@ class McpManager:
             proxy_env = (
                 {"HTTPS_PROXY": proxy, "HTTP_PROXY": proxy, "ALL_PROXY": proxy}
                 if proxy
-                else {}
+                else netproxy.env_vars()
             )
             # Merge over the current environment so the child inherits PATH etc.
             # (a bare env dict would strip the subprocess of everything else).
@@ -543,15 +553,18 @@ class McpManager:
             headers, cfg.get("header_credentials"), self._resolve_credential_id
         )
         url = str(cfg.get("url") or "")
+        # A per-server proxy wins; otherwise the console-wide [http] route
+        # ({} in system mode ⇒ mcp's own client, which reads the env).
+        route: str | dict[str, Any] = proxy or netproxy.httpx_kwargs(url)
         if transport == "sse":
             from mcp.client.sse import sse_client
 
-            if proxy:
+            if route:
                 return await stack.enter_async_context(
                     sse_client(
                         url,
                         headers=headers or None,
-                        httpx_client_factory=_proxy_http_factory(proxy),
+                        httpx_client_factory=_proxy_http_factory(route),
                     )
                 )
             return await stack.enter_async_context(
@@ -564,9 +577,9 @@ class McpManager:
         )
 
         http_client = None
-        if proxy:
+        if route:
             http_client = await stack.enter_async_context(
-                _proxy_http_factory(proxy)(headers=headers or None)
+                _proxy_http_factory(route)(headers=headers or None)
             )
         elif headers:
             http_client = await stack.enter_async_context(

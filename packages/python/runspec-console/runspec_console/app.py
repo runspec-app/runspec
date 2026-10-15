@@ -535,6 +535,14 @@ def main() -> None:
     bridge.set_debug(debug_enabled)
     prof("Bridge() constructed")
 
+    # The console-wide [http] proxy, installed before anything below opens an
+    # HTTP client (telemetry exporters, MCP servers, the model adapter). Reads
+    # the keychain only when a proxy credential is configured.
+    try:
+        bridge._apply_http_proxy()
+    except Exception:  # noqa: BLE001 — never block start-up; clients fall back to env
+        logger.warning("http proxy setup failed", exc_info=True)
+
     from . import config as _config
     from . import observability
 

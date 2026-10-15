@@ -969,6 +969,21 @@ export const mockApi: BridgeApi = {
     return { globs, own_venv: 'C:/venvs/console/Scripts/runspec.exe', resolved: [{ path: 'C:/venvs/console/Scripts/runspec.exe', venv_name: 'console' }] }
   },
 
+  get_http_proxy_config: async () => ({
+    mode: 'system', proxy: '', no_proxy: [], credential: '',
+    effective: 'system (HTTPS_PROXY / HTTP_PROXY / NO_PROXY)',
+  }),
+  save_http_proxy_config: async (payload) => {
+    console.log('[mock] save_http_proxy_config', payload)
+    return {
+      ...payload,
+      effective: payload.mode === 'manual' ? payload.proxy : payload.mode === 'direct' ? 'direct (no proxy)' : 'system (HTTPS_PROXY / HTTP_PROXY / NO_PROXY)',
+    }
+  },
+  test_http_proxy: async (payload, url) => ({
+    ok: true, url: url || 'https://pypi.org/simple/', status: 200,
+    route: payload.mode === 'manual' ? `via ${payload.proxy}` : payload.mode === 'direct' ? 'direct' : 'system (environment variables)',
+  }),
 
   // ── Marketplace ──
   get_marketplace_config: async () => ({

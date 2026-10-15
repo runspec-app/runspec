@@ -100,7 +100,7 @@ def post_phoenix_annotations(
 ) -> tuple[bool, str]:
     """POST the batch to Phoenix's ``/v1/span_annotations`` (``sync=true`` so it
     lands immediately). Best-effort — returns ``(ok, detail)`` and never raises.
-    Dependency-free: reuses ``webfetch``'s opener (proxy env + optional private-CA
+    Dependency-free: reuses ``webfetch``'s opener ([http] proxy + optional private-CA
     / TLS-intercept handling)."""
     payload = phoenix_payload(items)
     if not payload["data"]:

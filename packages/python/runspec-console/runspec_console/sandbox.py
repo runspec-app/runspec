@@ -161,7 +161,10 @@ def ensure_wasm() -> Path:
     target = dest / _WASM_FILENAME
     tmp = dest / (_WASM_FILENAME + ".part")
     try:
-        with urllib.request.urlopen(url, timeout=120) as resp:  # noqa: S310 — pinned URL
+        from . import netproxy  # the console-wide [http] proxy
+
+        opener = urllib.request.build_opener(netproxy.urllib_handler())
+        with opener.open(url, timeout=120) as resp:  # noqa: S310 — pinned URL
             data = resp.read()
     except Exception as e:  # noqa: BLE001
         raise SandboxUnavailable(

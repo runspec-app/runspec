@@ -12,8 +12,9 @@ the HTML→text conversion. Keeping it dependency-free matches the console's lea
 runtime footprint and means the capability works on a fresh, air-gapped-ish
 install with nothing extra to ``pip install``.
 
-The request honours the machine's proxy environment (``HTTPS_PROXY`` etc. via
-``urllib``'s ``ProxyHandler``) and, optionally, a private-CA bundle / a
+The request goes through the console-wide ``[http]`` proxy (see
+:mod:`runspec_console.netproxy`; by default the machine's ``HTTPS_PROXY`` /
+``NO_PROXY`` environment) and, optionally, a private-CA bundle / a
 TLS-verify escape hatch for corporate TLS-intercepting proxies — the same knobs
 Config Sync already exposes for git-over-HTTPS.
 """
@@ -25,6 +26,8 @@ import urllib.error
 import urllib.request
 from html.parser import HTMLParser
 from typing import Any
+
+from . import netproxy
 
 # Default User-Agent — some sites (and WAFs) reject the bare ``Python-urllib``
 # default, so present a plain, honest browser-ish string.
@@ -229,12 +232,18 @@ def _is_texty(content_type: str) -> bool:
 
 
 def _build_opener(
-    ca_bundle: str | None, tls_verify: bool
+    ca_bundle: str | None,
+    tls_verify: bool,
+    proxy_settings: netproxy.ProxySettings | None = None,
 ) -> urllib.request.OpenerDirector:
-    """An opener with proxy support (from the environment) and, optionally, a
-    custom CA bundle or a verification-disabled context for TLS-intercepting
-    corporate proxies. Mirrors the knobs Config Sync exposes for git-over-HTTPS."""
-    handlers: list[urllib.request.BaseHandler] = [urllib.request.ProxyHandler()]
+    """An opener routed through the console-wide ``[http]`` proxy
+    (``proxy_settings`` overrides it, e.g. to test unsaved settings) and,
+    optionally, a custom CA bundle or a verification-disabled context for
+    TLS-intercepting corporate proxies. Mirrors the knobs Config Sync exposes
+    for git-over-HTTPS."""
+    handlers: list[urllib.request.BaseHandler] = [
+        netproxy.urllib_handler(proxy_settings)
+    ]
     ctx: ssl.SSLContext | None = None
     if not tls_verify:
         ctx = ssl._create_unverified_context()
@@ -254,6 +263,7 @@ def fetch_url(
     ca_bundle: str | None = None,
     tls_verify: bool = True,
     user_agent: str = _DEFAULT_UA,
+    proxy_settings: netproxy.ProxySettings | None = None,
 ) -> dict[str, Any]:
     """GET ``url`` and return a structured, readable result.
 
@@ -280,7 +290,7 @@ def fetch_url(
         headers={"User-Agent": user_agent, "Accept": "*/*"},
         method="GET",
     )
-    opener = _build_opener(ca_bundle, tls_verify)
+    opener = _build_opener(ca_bundle, tls_verify, proxy_settings)
     try:
         with opener.open(req, timeout=timeout) as resp:
             status = getattr(resp, "status", None) or resp.getcode() or 0

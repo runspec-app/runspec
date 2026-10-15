@@ -9,6 +9,31 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.345.0] — 2026-10-14
+
+### Added
+
+- **One HTTP proxy setting for the console's web requests (`[http]`,
+  Settings → Network).** `fetch_url`, Marketplace index reads, the Phoenix eval
+  export, the sandbox's WASI download, MCP servers over http/sse, the model API
+  (Anthropic, Bedrock, LangServe) and OTLP telemetry export now all follow it.
+  `proxy = ""` (the default) keeps today's behaviour: the standard
+  `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` environment variables. A proxy URL
+  sends every request through that proxy except `no_proxy` hosts and loopback;
+  `"direct"` never uses a proxy, even when the environment sets one.
+  `credential` names a Credentials entry used for Basic proxy auth (the secret
+  stays in the keychain). The Network tab can test a URL with the unsaved
+  settings, and saving applies at once (the model client is rebuilt on the next
+  turn). An MCP server's own `proxy` still wins for that server. New
+  `netproxy.py` (stdlib) + `bridge_network.py`; JS API `get_http_proxy_config` /
+  `save_http_proxy_config` / `test_http_proxy`.
+
+### Fixed
+
+- **An MCP server with its own `proxy` failed to connect on mcp 2.3+.** The
+  proxied client imported `httpx`, which mcp no longer installs (it moved to
+  the `httpx2` fork); it now uses `httpx2` and falls back to `httpx`.
+
 ## [0.344.3] — 2026-10-14
 
 ### Fixed

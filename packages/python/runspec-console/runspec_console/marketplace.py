@@ -936,8 +936,8 @@ def default_fetch(
     timeout: float = DEFAULT_TIMEOUT_S,
 ) -> Fetch:
     """A ``fetch(url, headers=…, max_bytes=…, auth=…)`` over urllib honouring
-    the machine proxy env and the ``[marketplace]`` CA / TLS knobs."""
-    from .webfetch import _build_opener  # shared opener (proxy env + CA bundle)
+    the console-wide ``[http]`` proxy and the ``[marketplace]`` CA / TLS knobs."""
+    from .webfetch import _build_opener  # shared opener ([http] proxy + CA bundle)
 
     import base64
     import urllib.error

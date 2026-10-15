@@ -424,6 +424,27 @@ def read_web() -> dict[str, Any]:
     }
 
 
+def read_http() -> dict[str, Any]:
+    """The ``[http]`` console-wide proxy for outbound HTTP, with defaults.
+
+    ``proxy`` — ``""`` (default: honour ``HTTPS_PROXY`` / ``HTTP_PROXY`` /
+    ``NO_PROXY``), ``"direct"`` (never proxy) or a proxy URL
+    (``http://proxy.corp:8080``; ``host:port`` gains ``http://``). ``no_proxy``
+    — hosts/domains that bypass a manual proxy (TOML array or comma string).
+    ``credential`` — a Credentials id whose username + secret authenticate to
+    the proxy. Applied by :mod:`runspec_console.netproxy` to ``fetch_url``, the
+    Marketplace, MCP servers over http/sse, the model adapters and telemetry."""
+    from . import netproxy
+
+    raw = read_config().get("http")
+    cfg = dict(raw) if isinstance(raw, dict) else {}
+    return {
+        "proxy": netproxy.normalize_proxy_url(cfg.get("proxy")),
+        "no_proxy": netproxy.split_no_proxy(cfg.get("no_proxy")),
+        "credential": str(cfg.get("credential") or "").strip(),
+    }
+
+
 def read_automation() -> dict[str, Any]:
     """The ``[automation]`` settings for the trigger/schedule engine, with defaults.
 

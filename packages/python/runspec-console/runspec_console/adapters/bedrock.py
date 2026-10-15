@@ -19,6 +19,7 @@ from .base import (
     ModelAdapter,
     ModelCapabilities,
     ToolCall,
+    anthropic_http_client,
     anthropic_thinking_base,
     apply_prompt_caching,
     apply_thinking,
@@ -62,11 +63,23 @@ class BedrockAdapter(ModelAdapter):
         self._model_limits = model_limits or {}
         if base_url:
             # Corporate proxy — treat as a regular Anthropic-compatible endpoint
+            proxy_kw: dict[str, Any] = {}
+            http_client = anthropic_http_client(anthropic, base_url)
+            if http_client is not None:
+                proxy_kw["http_client"] = http_client
             self.client: anthropic.AsyncAnthropic | anthropic.AsyncAnthropicBedrock = (
-                anthropic.AsyncAnthropic(base_url=base_url, api_key=api_key or "unused")
+                anthropic.AsyncAnthropic(
+                    base_url=base_url, api_key=api_key or "unused", **proxy_kw
+                )
             )
         else:
             kwargs: dict[str, Any] = {}
+            region = aws_region or "us-east-1"
+            http_client = anthropic_http_client(
+                anthropic, f"https://bedrock-runtime.{region}.amazonaws.com"
+            )
+            if http_client is not None:
+                kwargs["http_client"] = http_client
             if aws_region:
                 kwargs["aws_region"] = aws_region
             if aws_access_key:

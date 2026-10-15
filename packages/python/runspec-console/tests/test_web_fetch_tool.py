@@ -101,7 +101,9 @@ class _FakeOpener:
 
 def _patch_opener(monkeypatch, resp):
     opener = _FakeOpener(resp)
-    monkeypatch.setattr(webfetch, "_build_opener", lambda ca, verify: opener)
+    monkeypatch.setattr(
+        webfetch, "_build_opener", lambda ca, verify, proxy=None: opener
+    )
     return opener
 
 
@@ -151,7 +153,9 @@ def test_fetch_url_wraps_http_error(monkeypatch):
         def open(self, req, timeout=None):
             raise urllib.error.HTTPError(req.full_url, 404, "Not Found", {}, None)
 
-    monkeypatch.setattr(webfetch, "_build_opener", lambda ca, verify: _Boom(None))
+    monkeypatch.setattr(
+        webfetch, "_build_opener", lambda ca, verify, proxy=None: _Boom(None)
+    )
     try:
         webfetch.fetch_url("https://h/missing")
     except webfetch.WebFetchError as e:
@@ -186,7 +190,7 @@ def test_dispatch_routes_to_web_handler(monkeypatch):
     monkeypatch.setattr(
         webfetch,
         "_build_opener",
-        lambda ca, verify: _FakeOpener(_FakeResp("<h1>Y</h1>")),
+        lambda ca, verify, proxy=None: _FakeOpener(_FakeResp("<h1>Y</h1>")),
     )
     out = Bridge._run_tool_sync(_Stub(), "fetch_url", {"url": "https://h/x"})
     assert "# Y" in json.loads(out)["text"]

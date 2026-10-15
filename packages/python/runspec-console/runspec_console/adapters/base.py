@@ -530,6 +530,26 @@ def prepare_api_key_command(
     return resolved + rest
 
 
+def anthropic_http_client(
+    anthropic_mod: Any, base_url: str | None, *, sync: bool = False
+) -> Any:
+    """An httpx client for an Anthropic SDK client that follows the console-wide
+    ``[http]`` proxy, or ``None`` to keep the SDK's own (which reads
+    ``HTTPS_PROXY`` / ``NO_PROXY`` from the environment). Built on the SDK's
+    ``Default[Async]HttpxClient`` so its timeouts and connection limits stay."""
+    from .. import netproxy
+
+    kwargs = netproxy.httpx_kwargs(base_url or "https://api.anthropic.com")
+    if not kwargs:
+        return None
+    cls = (
+        anthropic_mod.DefaultHttpxClient
+        if sync
+        else anthropic_mod.DefaultAsyncHttpxClient
+    )
+    return cls(**kwargs)
+
+
 def run_api_key_command(command: str) -> str:
     """Run ``api_key_command`` via the shell and return its stripped stdout (the key).
 

@@ -538,7 +538,11 @@ class LangServeAdapter(ModelAdapter):
         else:
             import httpx
 
-            self.client = httpx.AsyncClient(timeout=timeout)
+            from .. import netproxy
+
+            self.client = httpx.AsyncClient(
+                timeout=timeout, **netproxy.httpx_kwargs(base_url)
+            )
 
     @staticmethod
     def _endpoint(base_url: str) -> str:

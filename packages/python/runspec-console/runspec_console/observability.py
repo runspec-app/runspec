@@ -194,8 +194,13 @@ def _construct_exporter(exporter_cls: Any, cfg: dict[str, Any]) -> Any:
         kwargs["headers"] = headers
     if cfg.get("ca_bundle"):
         kwargs["certificate_file"] = cfg["ca_bundle"]
+    session = _proxy_session(str(cfg.get("endpoint") or ""))
+    if session is not None:
+        if cfg.get("tls_verify") is False:
+            session.verify = False
+        kwargs["session"] = session
     exporter = exporter_cls(**kwargs)
-    if cfg.get("tls_verify") is False:
+    if cfg.get("tls_verify") is False and session is None:
         # No public "insecure" flag on the proto-http exporters — reach into their
         # requests.Session best-effort. Guarded so an SDK internals change can't
         # break init.
@@ -204,6 +209,28 @@ def _construct_exporter(exporter_cls: Any, cfg: dict[str, Any]) -> Any:
         except Exception:  # noqa: BLE001
             logger.warning("telemetry: could not disable TLS verification on exporter")
     return exporter
+
+
+def _proxy_session(endpoint: str) -> Any:
+    """A requests session routed through the console-wide ``[http]`` proxy for
+    the exporter, or ``None`` in system mode (the exporter's own session reads
+    ``HTTPS_PROXY`` / ``NO_PROXY`` itself)."""
+    from . import netproxy
+
+    route = netproxy.proxy_for(endpoint or "http://localhost:4318")
+    if route is None:
+        return None
+    try:
+        import requests
+    except Exception:  # noqa: BLE001 — the exporter always brings requests
+        return None
+    session = requests.Session()
+    # trust_env off in both cases: requests lets env proxies override a
+    # session's own, and the route above already applied no_proxy.
+    session.trust_env = False
+    if route:
+        session.proxies = {"http": route, "https": route}
+    return session
 
 
 def _hostname() -> str:

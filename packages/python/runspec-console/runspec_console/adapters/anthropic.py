@@ -12,6 +12,7 @@ from .base import (
     ModelAdapter,
     ModelCapabilities,
     ToolCall,
+    anthropic_http_client,
     anthropic_thinking_base,
     apply_prompt_caching,
     apply_thinking,
@@ -118,10 +119,15 @@ class AnthropicAdapter(ModelAdapter):
         else:
             self.client = anthropic.AsyncAnthropic(**self._client_kwargs(api_key))
 
-    def _client_kwargs(self, api_key: str | None) -> dict[str, Any]:
+    def _client_kwargs(
+        self, api_key: str | None, *, sync: bool = False
+    ) -> dict[str, Any]:
         kwargs: dict[str, Any] = {"api_key": api_key}
         if self._base_url:
             kwargs["base_url"] = self._base_url
+        http_client = anthropic_http_client(anthropic, self._base_url, sync=sync)
+        if http_client is not None:
+            kwargs["http_client"] = http_client
         return kwargs
 
     def _refresh_key_if_needed(self) -> None:
@@ -189,7 +195,7 @@ class AnthropicAdapter(ModelAdapter):
                     key = run_api_key_command(self._api_key_command)
                     self._cached_key = key
                     self._key_fetched_at = time.monotonic()
-            kwargs = self._client_kwargs(key)
+            kwargs = self._client_kwargs(key, sync=True)
             kwargs["timeout"] = 5.0
             sync_client = anthropic.Anthropic(**kwargs)
             info = sync_client.models.retrieve(self.model)

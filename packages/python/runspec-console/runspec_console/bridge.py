@@ -51,6 +51,7 @@ from .bridge_diagram import DiagramMixin
 from .bridge_marketplace import MarketplaceMixin
 from .bridge_provision import ProvisionMixin
 from .bridge_envfile import EnvFileMixin
+from .bridge_network import NetworkMixin
 from .bridge_turn import TurnMixin
 from .dictation import DictationSession
 from .session import ChatSession
@@ -83,6 +84,7 @@ class Bridge(
     MarketplaceMixin,
     ProvisionMixin,
     EnvFileMixin,
+    NetworkMixin,
     TurnMixin,
 ):
     def __init__(self) -> None:

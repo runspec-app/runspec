@@ -105,11 +105,13 @@ TOML_FENCE = re.compile(r"```toml\n(.*?)```", re.S)
 #   suite                      → console `runspec_evals.toml` ([[suite]] fixture store)
 #   chat_history/workspace/plugins → console `config.toml` sections
 #   terminal                   → console `config.toml` ([terminal] PuTTY look)
+#   http                       → console `config.toml` ([http] outbound proxy)
 # Trade-off: a runspec runnable literally named `ssh`/`refresh`/`hosts`/`triggers`
 # would be skipped — none exist in the docs (guarded by check below), and runnable
 # names are author-chosen, so this is acceptable.
 NON_RUNSPEC_SECTIONS = {
     "project",
+    "http",
     "tool",
     "build-system",
     "hosts",

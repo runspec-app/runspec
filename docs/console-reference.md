@@ -309,6 +309,32 @@ Settings for the agent's read-only `fetch_url` web-page tool (see
 | `ca_bundle` | — | Path to a private-CA bundle for internal HTTPS hosts |
 | `tls_verify` | `true` | Set `false` to skip TLS verification (TLS-intercepting proxies) |
 
+## `[http]` {#http}
+
+The HTTP proxy the console uses for its own web requests: the agent's
+`fetch_url`, Marketplace index reads, the Phoenix eval export, the sandbox's
+WASI download, MCP servers over http/sse (unless the server sets its own
+`proxy`), the model API (Anthropic, Bedrock, LangServe) and OTLP telemetry
+export. SSH uses `[ssh] proxy`; Config Sync has its own. Edit it in
+**Settings → Network**, which can also test a URL before you save.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `proxy` | `""` | `""` = use `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` from the environment (urllib also reads the Windows Internet Options proxy); `"direct"` = never use a proxy; otherwise a proxy URL (`http://proxy.corp:8080`, or `host:port`) |
+| `no_proxy` | `[]` | With a proxy URL: hosts/domains reached directly (`corp.local` covers its subdomains, `*` = everything). Loopback (`localhost`, `127.0.0.1`) always goes direct |
+| `credential` | — | A Credentials id (username + password) sent as Basic proxy auth; the secret stays in the keychain |
+
+```toml
+[http]
+proxy = "http://proxy.corp:8080"
+no_proxy = ["corp.local", "gitlab.internal"]
+credential = "proxy-login"
+```
+
+Saving applies at once, including to the model API from the next chat turn.
+An MCP server that is already connected keeps its connection until it
+reconnects (Settings → MCP → Reconnect).
+
 ## `[marketplace]` {#marketplace}
 
 Settings for the [Marketplace tab](console-marketplace.md) — the package
