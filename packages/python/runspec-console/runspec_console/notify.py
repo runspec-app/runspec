@@ -149,7 +149,7 @@ def set_app_id() -> None:
             ctypes.c_wchar_p(_APP_ID)
         )
     except Exception:
-        logger.debug("set_app_id failed", exc_info=True)
+        logger.warning("set_app_id failed", exc_info=True)
 
 
 def _create_notifier(manager: Any) -> Any:
@@ -168,14 +168,15 @@ def _create_notifier(manager: Any) -> Any:
     return manager.create_toast_notifier()
 
 
-def notify(
-    title: str, body: str, *, on_click: Callable[[], None] | None = None
-) -> bool:
-    """Raise a desktop toast. Returns True if shown, False on any failure or
-    non-Windows. Never raises — the caller's flow must not depend on it."""
-    ok, _ = available()
+def send(title: str, body: str, *, on_click: Callable[[], None] | None = None) -> str:
+    """Raise a desktop toast. Returns ``""`` when Windows accepted it, else a
+    one-line reason (winrt missing, or the exception ``Show`` raised). Never
+    raises. A failure is also logged as a warning so it reaches
+    ``runspec-console.log`` — it used to be logged at debug, which hid why
+    toasts never appeared."""
+    ok, reason = available()
     if not ok:
-        return False
+        return reason
     try:
         from winrt.windows.data.xml.dom import XmlDocument
         from winrt.windows.ui.notifications import (
@@ -196,7 +197,16 @@ def notify(
 
             toast.add_activated(_activated)
         _create_notifier(ToastNotificationManager).show(toast)
-        return True
-    except Exception:
-        logger.debug("desktop notification failed", exc_info=True)
-        return False
+        return ""
+    except Exception as exc:
+        logger.warning("desktop notification failed: %r", exc, exc_info=True)
+        return f"{type(exc).__name__}: {exc}"
+
+
+def notify(
+    title: str, body: str, *, on_click: Callable[[], None] | None = None
+) -> bool:
+    """Raise a desktop toast. Returns True if Windows accepted it, False on any
+    failure or non-Windows. Never raises — the caller's flow must not depend on
+    it."""
+    return send(title, body, on_click=on_click) == ""

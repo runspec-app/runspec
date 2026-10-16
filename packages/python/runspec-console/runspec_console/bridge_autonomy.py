@@ -877,14 +877,19 @@ class AutonomyMixin:
         sound_available, _ = sounds.available()
         window_found = self._window_found()
 
+        # The toast is raised here, not on the thread, so the Settings result can
+        # say whether Windows accepted it (``toast_error``) — "available" only
+        # meant winrt imported, which hid every failure to show.
+        toast_error = ""
+        if toast_available:
+            toast_error = notify.send(
+                self._window_title or "runspec console",
+                "Test notification — if you can see this, toasts work.",
+                on_click=self._focus_window,
+            )
+
         def _raise() -> None:
             try:
-                if toast_available:
-                    notify.notify(
-                        self._window_title or "runspec console",
-                        "Test notification — if you can see this, toasts work.",
-                        on_click=self._focus_window,
-                    )
                 self._flash_window()
                 self._play_sound("confirm", force=True)
             except Exception:
@@ -894,6 +899,7 @@ class AutonomyMixin:
         return {
             "toast_available": toast_available,
             "toast_reason": toast_reason,
+            "toast_error": toast_error,
             "sound_available": sound_available,
             "window_found": window_found,
         }

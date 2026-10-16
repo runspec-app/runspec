@@ -9,6 +9,19 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.345.3] — 2026-10-16
+
+### Fixed
+
+- **Desktop toast failures are no longer silent.** When Windows refused a toast,
+  the console logged the error only at debug level, so nothing reached
+  `runspec-console.log` and toasts just never appeared. A failed toast is now a
+  warning with the error, and start-up logs whether toasts are available (and
+  why not). Settings → Sounds & Notifications → *Test* now raises the toast
+  itself and says whether Windows accepted it, or the error it raised — before,
+  "available" only meant the winrt package imported. New
+  `notify.send()` returns the reason; `notify.notify()` is unchanged.
+
 ## [0.345.2] — 2026-10-15
 
 ### Fixed

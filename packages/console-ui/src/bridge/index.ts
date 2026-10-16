@@ -2238,7 +2238,7 @@ export interface BridgeApi {
   // Fire a test toast + taskbar flash + confirm sound; reports which channels are
   // available (Settings → Sounds & Notifications). window_found surfaces the
   // flash/focus title-match prerequisite.
-  test_notification: () => Promise<{ toast_available: boolean; toast_reason: string; sound_available: boolean; window_found: boolean }>
+  test_notification: () => Promise<{ toast_available: boolean; toast_reason: string; toast_error?: string; sound_available: boolean; window_found: boolean }>
   // Preview one sound category (Settings row ▶). token plays the row's unsaved
   // selection ("synth:…" / "system:…" / "file:…"); omitted → the saved cue.
   test_sound: (category: string, token?: string | null) => Promise<boolean>

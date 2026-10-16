@@ -537,6 +537,12 @@ def main() -> None:
     # Pin the AppUserModelID before any toast so confirm notifications carry a
     # stable runspec identity in the Action Center.
     notify.set_app_id()
+    if sys.platform == "win32":
+        _toast_ok, _toast_reason = notify.available()
+        logger.warning(
+            "desktop toasts: %s",
+            "available" if _toast_ok else f"unavailable ({_toast_reason})",
+        )
 
     # Import the win32com machinery once, here on the main thread, before any
     # worker touches COM. The Outlook source pump imports ``win32com.client`` from

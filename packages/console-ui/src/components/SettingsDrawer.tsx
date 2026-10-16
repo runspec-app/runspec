@@ -131,7 +131,7 @@ export function SoundsTab() {
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [testing, setTesting] = useState(false)
-  const [test, setTest] = useState<{ toast_available: boolean; toast_reason: string; sound_available: boolean; window_found: boolean } | null>(null)
+  const [test, setTest] = useState<{ toast_available: boolean; toast_reason: string; toast_error?: string; sound_available: boolean; window_found: boolean } | null>(null)
 
   const loadPackInfo = (dir: string) => {
     if (!dir) { setPackInfo(null); return }
@@ -389,7 +389,7 @@ export function SoundsTab() {
       {test && (
         <pre style={{ marginTop: 12, fontSize: 13, background: 'rgba(127,127,127,0.12)', padding: 10, borderRadius: RADIUS.sm, whiteSpace: 'pre-wrap' }}>
 {`Sound:  ${test.sound_available ? 'available' : 'unavailable (not Windows?)'}
-Toast:  ${test.toast_available ? 'available' : `unavailable — ${test.toast_reason}`}
+Toast:  ${!test.toast_available ? `unavailable — ${test.toast_reason}` : test.toast_error ? `sent but Windows refused it — ${test.toast_error}` : 'sent (check the corner of the screen)'}
 Flash:  ${test.window_found ? 'window found' : 'window NOT found — title mismatch'}`}
         </pre>
       )}
