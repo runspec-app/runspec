@@ -13,7 +13,7 @@ from typing import Any
 
 from . import bridge_utils as utils_mod
 from . import knowledge as kn
-from .bridge_const import _HOT_BUILTIN_NAMES
+from .bridge_const import _HEADLESS_EXCLUDED_NAMES, _HOT_BUILTIN_NAMES
 
 from typing import TYPE_CHECKING
 
@@ -222,16 +222,22 @@ class SearchMixin:
     # unwraps to the inner tool BEFORE any decision, so the inner tool's own
     # confirm rules, Console card, and audit record apply unchanged).
 
-    def _deferred_builtin_tools(self) -> list[dict[str, Any]]:
+    def _deferred_builtin_tools(self, headless: bool = False) -> list[dict[str, Any]]:
         """The currently *available* built-in tools that are deferred in search
         mode — availability-aware (e.g. no Outlook tools off-Windows, no
         transfer tools without a remote), so use_tool can't name a tool that
-        wouldn't have been offered inline."""
+        wouldn't have been offered inline. ``headless`` (a trigger/schedule
+        turn) also leaves out the chat-only tools a headless turn never gets."""
         try:
             full = self._custom_agent_tools()
         except Exception:
             return []
-        return [t for t in full if t["name"] not in _HOT_BUILTIN_NAMES]
+        return [
+            t
+            for t in full
+            if t["name"] not in _HOT_BUILTIN_NAMES
+            and not (headless and t["name"] in _HEADLESS_EXCLUDED_NAMES)
+        ]
 
     def _builtin_meta_tools(
         self, deferred: list[dict[str, Any]]
@@ -1413,7 +1419,7 @@ class SearchMixin:
             return ""
         return "\n".join(lines)
 
-    def _build_builtin_index(self) -> str:
+    def _build_builtin_index(self, headless: bool = False) -> str:
         """Compact menu of the deferred built-ins for search mode: ``name —
         sentence``, one line each, so the agent knows they exist without their
         schemas in the tool list. Empty when built-ins are inline (deferral or
@@ -1427,15 +1433,20 @@ class SearchMixin:
                 if t.get("description")
                 else ""
             )
-            for t in self._deferred_builtin_tools()
+            for t in self._deferred_builtin_tools(headless)
         )
 
-    def _chat_index_text(self) -> str:
+    def _chat_index_text(
+        self, headless: bool = False, builtins_deferred: bool = True
+    ) -> str:
         """The full always-on menu for a search-mode agent turn: the runnable
         catalog index plus, when built-ins are deferred, a labelled deferred-tools
         section. Empty outside search mode. Composed into the system prompt as a
         trailing section (see ``_catalog_system_section``), not folded into the
         first user message — so a gateway caching only the system block caches it.
+        ``builtins_deferred=False`` (a headless turn whose built-ins are inline)
+        leaves the deferred-tools section out; ``headless`` drops the chat-only
+        tools from it.
 
         Each section labels itself; ``_catalog_system_section`` adds only a generic
         heading over the whole blob."""
@@ -1448,7 +1459,7 @@ class SearchMixin:
                 "Call search_runnables or describe_runnable for a runnable's "
                 "arguments and hosts before running it:\n" + index
             )
-        builtin_lines = self._build_builtin_index()
+        builtin_lines = self._build_builtin_index(headless) if builtins_deferred else ""
         if builtin_lines:
             block = (
                 "Built-in console tools deferred from the tool list (name — "

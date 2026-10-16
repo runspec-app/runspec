@@ -42,6 +42,7 @@ from .bridge_const import (
     _KNOWLEDGE_WRITE_TOOL_NAMES,
     _MEMORY_TOOL_NAMES,
     _RUNBOOK_READ_TOOL_NAMES,
+    _HEADLESS_EXCLUDED_NAMES,
     _STATUS_TOOL_NAMES,
     _HISTORY_TOOL_NAMES,
     _FILES_TOOL_NAMES,
@@ -1052,6 +1053,9 @@ class AutonomyMixin:
             unwrapped = self._unwrap_use_tool(tool_input)
             if isinstance(unwrapped, str):
                 return unwrapped
+            refused = self._headless_use_tool_refusal(unwrapped[0], chat_id)
+            if refused:
+                return refused
             inner_call = unwrapped
         if tool_name == "run_runnable":
             fan = self._group_fanout_calls(tool_input)
@@ -1480,6 +1484,9 @@ class AutonomyMixin:
             unwrapped = self._unwrap_use_tool(tool_input)
             if isinstance(unwrapped, str):
                 return unwrapped
+            refused = self._headless_use_tool_refusal(unwrapped[0], chat_id)
+            if refused:
+                return refused
             inner_call = unwrapped
         if tool_name == "run_runnable":
             fan = self._group_fanout_calls(tool_input)
@@ -1534,6 +1541,22 @@ class AutonomyMixin:
         if inner_call is not None:
             tool_name, tool_input = inner_call
         return self._run_tool_sync(tool_name, tool_input, chat_id)
+
+    def _headless_use_tool_refusal(self, inner: str, chat_id: str) -> str:
+        """``use_tool`` in a trigger/schedule turn must not reach a chat-only
+        built-in (config tools, load_runbook) — those are never in a headless
+        toolset, and the deferral wrapper resolves against the full deferred
+        set. Empty when the call may go ahead."""
+        if inner not in _HEADLESS_EXCLUDED_NAMES:
+            return ""
+        with self._lock:
+            origin = dict(self._run_origin.get(chat_id) or {})
+        if not origin.get("trigger"):
+            return ""
+        return (
+            f"✗ '{inner}' is chat-only: a trigger- or schedule-originated turn "
+            "may not run it."
+        )
 
     def _set_run_origin(
         self, chat_id: str, trigger: str, agent: bool, runbook: str = ""

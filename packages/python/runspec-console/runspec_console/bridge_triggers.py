@@ -2263,8 +2263,18 @@ class TriggersMixin:
         # before running it" instruction a schema-less run_runnable needs. The
         # deferred-built-ins section is empty here (headless turns keep built-ins
         # inline), so this is the runnable menu only.
+        # Built-ins are deferred (chat's short tool list) only when no
+        # action_allow scopes this turn: the allowlist can only narrow tools it
+        # can see, and use_tool would reach around it. An unscoped turn has
+        # nothing to narrow, so it saves the ~30k tokens of inline schemas.
+        defer_builtins = (
+            self._tool_mode() == "search"
+            and not allowed_runnables
+            and not action_allow
+            and self._defer_builtins_enabled()
+        )
         index_text = (
-            self._chat_index_text()
+            self._chat_index_text(headless=True, builtins_deferred=defer_builtins)
             if (self._tool_mode() == "search" and not allowed_runnables)
             else ""
         )
@@ -2302,10 +2312,15 @@ class TriggersMixin:
         cancel = threading.Event()
         with self._lock:
             self._chat_cancels[chat_id] = cancel
-        # A headless turn keeps every built-in inline even in search mode —
-        # action_allow can only narrow tools it can see, and the deferral
-        # meta-tools would let a turn reach around that narrowing.
-        tools = self._runnables_to_tools(allow=allowed_runnables, inline_builtins=True)
+        # A scoped headless turn (action_allow set) keeps every built-in inline
+        # even in search mode — action_allow can only narrow tools it can see,
+        # and the deferral meta-tools would let a turn reach around that
+        # narrowing. An unscoped one defers like chat (see defer_builtins).
+        tools = self._runnables_to_tools(
+            allow=allowed_runnables,
+            inline_builtins=not defer_builtins,
+            headless=True,
+        )
         tools = self._filter_headless_tools(tools, action_allow)
         if allowed_runnables and not tools:
             # A non-empty allowlist that matched no installed runnable — the agent
@@ -2594,17 +2609,19 @@ class TriggersMixin:
         A non-empty ``action_allow`` then narrows the governed built-in action /
         Outlook tools to that set, exactly as before; non-governed tools pass.
 
-        The chat-only deferral meta-tools (describe_tool/use_tool) are stripped
-        unconditionally too — headless turns get inline built-ins (see
+        The deferral meta-tools (describe_tool/use_tool) are stripped whenever
+        ``action_allow`` is set — such a turn gets inline built-ins (see
         ``_runnables_to_tools`` ``inline_builtins``), and a wrapper that runs
-        tools by name would reach around this filter's narrowing.
+        tools by name would reach around this filter's narrowing. An unscoped
+        turn has no narrowing to bypass, so it keeps them (deferred built-ins,
+        like chat).
         """
         tools = [
             t
             for t in tools
             if t["name"] not in _CONFIG_TOOL_NAMES
-            and t["name"] not in _BUILTIN_META_NAMES
             and t["name"] not in _RUNBOOK_READ_TOOL_NAMES
+            and not (action_allow and t["name"] in _BUILTIN_META_NAMES)
         ]
         if action_allow:
             governed = _ACTION_TOOL_NAMES | _OUTLOOK_TOOL_NAMES

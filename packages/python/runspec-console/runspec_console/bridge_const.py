@@ -444,6 +444,11 @@ _HOT_BUILTIN_NAMES = (
     | _KNOWLEDGE_HOT_NAMES
 )
 
+# Built-ins a headless (trigger/schedule) turn never gets, whichever way its
+# tools are laid out: the chat-only config tools and the raw runbook reader
+# (see _filter_headless_tools). Kept out of its deferred-tools menu too.
+_HEADLESS_EXCLUDED_NAMES = _CONFIG_TOOL_NAMES | _RUNBOOK_READ_TOOL_NAMES
+
 
 # Built-in agent tools the console's OWN MCP server may expose to an external
 # coding agent (Claude Code, …) when ``[mcp_server] expose_builtins`` is on. The

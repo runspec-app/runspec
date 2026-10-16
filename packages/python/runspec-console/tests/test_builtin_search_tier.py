@@ -69,10 +69,12 @@ class _Stub:
     _dedup_tool_aliases = Bridge._dedup_tool_aliases
     _sanitize_tool_name = staticmethod(Bridge._sanitize_tool_name)
     _effective_tool_autonomy = Bridge._effective_tool_autonomy
+    _headless_use_tool_refusal = Bridge._headless_use_tool_refusal
 
     def __init__(self, mode="search", llm_extra=None):
         self._lock = threading.Lock()
         self._runnables_cache: list = []
+        self._run_origin: dict = {}
         self._discovery_ready = True
         self._discovery_progress = (0, 0)
         self._mode = mode
@@ -464,10 +466,17 @@ def test_describe_autonomous_use_tool_gated_when_unwrapped_is_skipped():
 # ── headless: inline built-ins + defensive strip ──────────────────────────────
 
 
-def test_filter_headless_strips_meta_tools():
+def test_filter_headless_strips_meta_tools_when_scoped():
+    tools = [_tool("use_tool"), _tool("describe_tool"), _tool("workspace_ls")]
+    out = Bridge._filter_headless_tools(tools, ["emit_event"])
+    assert [t["name"] for t in out] == ["workspace_ls"]
+
+
+def test_filter_headless_keeps_meta_tools_when_unscoped():
+    """No action_allow ⇒ nothing to narrow, so the deferral meta-tools stay."""
     tools = [_tool("use_tool"), _tool("describe_tool"), _tool("workspace_ls")]
     out = Bridge._filter_headless_tools(tools, None)
-    assert [t["name"] for t in out] == ["workspace_ls"]
+    assert [t["name"] for t in out] == ["use_tool", "describe_tool", "workspace_ls"]
 
 
 # ── folded menu ───────────────────────────────────────────────────────────────
@@ -497,3 +506,37 @@ def test_chat_index_includes_deferred_menu_and_rides_the_system_section():
 
 def test_chat_index_empty_outside_search_mode():
     assert _Stub(mode="dedup")._chat_index_text() == ""
+
+
+# ── headless + unscoped: deferred like chat, minus chat-only tools ────────────
+
+
+def test_headless_deferred_layout_drops_chat_only_tools():
+    """An unscoped trigger/schedule turn gets chat's short list, but the
+    config tools never appear — not inline, not in the use_tool enum."""
+    tools = _Stub()._runnables_to_tools(headless=True)
+    names = [t["name"] for t in tools]
+    assert set(HOT) <= set(names)
+    assert "use_tool" in names and "manage_hosts" not in names
+    use_tool = next(t for t in tools if t["name"] == "use_tool")
+    enum = use_tool["input_schema"]["properties"]["name"]["enum"]
+    assert "repo_grep" in enum and "manage_hosts" not in enum
+    kept = Bridge._filter_headless_tools(tools, None)
+    assert "use_tool" in {t["name"] for t in kept}
+
+
+def test_headless_index_menu_follows_deferral():
+    stub = _Stub()
+    deferred = stub._chat_index_text(headless=True, builtins_deferred=True)
+    assert "- repo_grep" in deferred and "manage_hosts" not in deferred
+    inline = stub._chat_index_text(headless=True, builtins_deferred=False)
+    assert "use_tool" not in inline and "repo_grep" not in inline
+
+
+def test_use_tool_refuses_chat_only_tool_in_trigger_turn():
+    b = Bridge.__new__(Bridge)
+    b._lock = threading.Lock()
+    b._run_origin = {"card-1": {"trigger": "mail", "agent": True}}
+    assert "chat-only" in b._headless_use_tool_refusal("manage_hosts", "card-1")
+    assert b._headless_use_tool_refusal("repo_grep", "card-1") == ""
+    assert b._headless_use_tool_refusal("manage_hosts", "chat-1") == ""

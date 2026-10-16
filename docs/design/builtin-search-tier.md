@@ -157,32 +157,33 @@ Anyone adding a new entry point that runs tools by name inherits these
 backstops for free — the worst outcome of forgetting the unwrap is a refusal,
 not a bypass.
 
-## 6. Headless turns: deliberately excluded
+## 6. Headless turns: deferred only when unscoped
 
-Trigger/schedule agent turns keep **every built-in inline**
-(`_runnables_to_tools(allow=…, inline_builtins=True)`), even in search mode.
-This is a security decision, not a missed optimisation:
+*(Changed in console 0.346.0; until then every headless turn kept every
+built-in inline.)*
 
-- `action_allow` (the per-trigger allowlist of governed action/Outlook tools)
-  works by **filtering the tool list** (`_filter_headless_tools`). It can only
-  narrow what it can see. A run-tools-by-name wrapper in a headless toolset
-  would let a turn reach any governed tool regardless of its allowlist — a
-  side door around operator-configured scoping.
-- The chat-only config tools are stripped from headless toolsets
-  unconditionally; `use_tool` would need its own dispatch-time re-check to
-  preserve that. Keeping the wrapper out of headless turns entirely means the
-  existing two-layer enforcement (toolset strip + `_run_config_tool` origin
-  guard) stays sufficient.
+A trigger/schedule agent turn **with an `action_allow`** keeps every built-in
+inline (`_runnables_to_tools(…, inline_builtins=True)`), even in search mode:
 
-`_filter_headless_tools` also strips `_BUILTIN_META_NAMES` unconditionally as
-defense in depth — even if a future code path hands a headless turn the
-search-mode chat layout, the meta-tools don't survive the filter. (A model
-can only call tools present in its request, so the strip is the second layer,
-not the first.)
+- `action_allow` (the per-trigger allowlist of governed action/Outlook/MCP
+  tools) works by **filtering the tool list** (`_filter_headless_tools`). It
+  can only narrow what it can see; a run-tools-by-name wrapper would let a turn
+  reach any governed tool regardless of its allowlist. So a scoped turn has
+  `describe_tool`/`use_tool` stripped.
 
-Headless context cost is also structurally lower: those are bounded,
-single-purpose turns, usually further narrowed by `runnables` allowlists that
-fall back to the scoped dedup layout anyway (`agent-tool-search.md` §8).
+A turn **with no `action_allow`** (and no `runnables` allowlist) has nothing to
+narrow, so it gets chat's short list: hot kernel inline, the long tail behind
+`describe_tool`/`use_tool`, and the deferred-tools menu in its system prompt.
+On a Windows console with Outlook and external MCP servers this drops roughly
+30k tokens of schemas from every model call of the turn. The chat-only tools
+stay out either way:
+
+- `_runnables_to_tools(headless=True)` drops `_HEADLESS_EXCLUDED_NAMES`
+  (config tools + `load_runbook`) before the hot/deferred split, so they are
+  neither inline nor in the `use_tool` enum or the menu.
+- `_headless_use_tool_refusal` refuses a `use_tool` call naming one of them
+  when the turn's run origin is a trigger/schedule (the wrapper resolves against
+  the full deferred set), on top of the `_run_config_tool` origin guard.
 
 ## 7. Discovery: the folded menu
 
@@ -229,7 +230,7 @@ the cached prefix.
 | `bridge_search.py` | `_deferred_builtin_tools`, `_builtin_meta_tools`, `_run_describe_builtin_tool`, `_unwrap_use_tool`, `_build_builtin_index`, `_chat_index_text` |
 | `bridge_autonomy.py` | both gates resolve `use_tool` early, prompt under the raw name, execute the inner call post-approval; `_effective_tool_autonomy` recurses into the inner tool; `_confirm_card_view` unwraps for display; dispatch branch for `describe_tool`; fail-closed refusal for a still-wrapped `use_tool` |
 | `bridge_invoke.py` | chat turn folds `_chat_index_text()` |
-| `bridge_triggers.py` | headless turns pass `inline_builtins=True`; `_filter_headless_tools` strips `_BUILTIN_META_NAMES` |
+| `bridge_triggers.py` | headless turns defer like chat unless `action_allow`/`runnables` scope them (then `inline_builtins=True`); `_filter_headless_tools` strips `_BUILTIN_META_NAMES` only when `action_allow` is set |
 
 `tests/test_builtin_search_tier.py` covers the layout split (hot inline /
 tail deferred / enums exact), the escape hatches (`inline_builtins`,

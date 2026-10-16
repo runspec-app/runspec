@@ -26,6 +26,7 @@ from .bridge_const import (
     ToolCancelled,
     _AGENT_TOOL_OUTPUT_CAP,
     _EXEC_MAX_ROWS,
+    _HEADLESS_EXCLUDED_NAMES,
     _HOT_BUILTIN_NAMES,
     _DEFAULT_PARALLEL_TOOLS,
     _MAX_AGENT_ITERATIONS,
@@ -705,6 +706,7 @@ class AgentToolsMixin:
         self,
         allow: Collection[str] | None = None,
         inline_builtins: bool = False,
+        headless: bool = False,
     ) -> list[dict[str, Any]]:
         """Convert cached runnables to Anthropic-format tool schemas.
 
@@ -726,7 +728,9 @@ class AgentToolsMixin:
         stays inline, the long tail is deferred behind describe_tool/use_tool.
         ``inline_builtins`` (headless trigger/schedule turns) keeps every
         built-in inline instead — those turns are filtered by ``action_allow``,
-        which can only narrow tools it can see in the list.
+        which can only narrow tools it can see in the list. ``headless`` (a
+        trigger/schedule turn) drops the chat-only built-ins before the split,
+        so they are neither inline nor in the deferred set.
         """
         allowset = {str(a).strip() for a in allow} if allow else None
         self._reload_credentials()  # so per-runnable credential_id enums are current
@@ -738,6 +742,8 @@ class AgentToolsMixin:
                 full = self._custom_agent_tools()
             except Exception:
                 logger.debug("custom agent tools unavailable", exc_info=True)
+            if headless:
+                full = [t for t in full if t["name"] not in _HEADLESS_EXCLUDED_NAMES]
             if inline_builtins or not self._defer_builtins_enabled():
                 tools.extend(full)
                 return tools

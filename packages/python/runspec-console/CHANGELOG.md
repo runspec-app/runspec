@@ -9,6 +9,22 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.346.0] — 2026-10-16
+
+### Changed
+
+- **Trigger and schedule runs send the short tool list chats use.** In search
+  mode an agent-mode trigger or schedule turn used to carry every built-in
+  tool's full schema (Outlook, actions, repo, every connected MCP server's
+  tools) on every model call, about 40k tokens on a Windows console with MCP
+  servers. A turn with no `action_allow` now gets chat's layout: the hot tools
+  inline, the rest behind `describe_tool` / `use_tool` and named in the
+  deferred-tools menu. A turn that sets `action_allow` keeps the full inline
+  list, because the allowlist filters what it can see. Config tools and
+  `load_runbook` stay out of every headless turn, and `use_tool` refuses them
+  there too. Also fixes the scoped case's system prompt listing a
+  deferred-tools menu its turn couldn't use.
+
 ## [0.345.4] — 2026-10-16
 
 ### Fixed

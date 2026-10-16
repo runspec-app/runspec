@@ -529,7 +529,8 @@ def _agent_turn_stub():
     ns._workspace_guidance = lambda: ""
     # dedup mode → no catalogue index in these workspace tests.
     ns._tool_mode = lambda: "dedup"
-    ns._chat_index_text = lambda: ""
+    ns._defer_builtins_enabled = lambda: True
+    ns._chat_index_text = lambda **k: ""
     ns._catalog_system_section = Bridge._catalog_system_section  # staticmethod
     ns.captured_system = {}
 
@@ -579,7 +580,7 @@ def test_headless_search_turn_folds_catalogue_into_system():
     # messages — so a gateway caching only the system block caches it.
     ns = _agent_turn_stub()
     ns._tool_mode = lambda: "search"
-    ns._chat_index_text = lambda: "- restart-service — Restart a unit."
+    ns._chat_index_text = lambda **k: "- restart-service — Restart a unit."
     ns._trigger_run_agent_turn("card-11", "SYS", "go", draft=False)
     system = ns.captured_system["last"]
     assert system.startswith("NOW\n\nSYS")  # base composed first
@@ -592,7 +593,7 @@ def test_headless_allow_scoped_turn_gets_no_catalogue_index():
     # catalogue index is not folded even in search mode.
     ns = _agent_turn_stub()
     ns._tool_mode = lambda: "search"
-    ns._chat_index_text = lambda: "- restart-service — Restart a unit."
+    ns._chat_index_text = lambda **k: "- restart-service — Restart a unit."
     ns._trigger_run_agent_turn(
         "card-12", "SYS", "go", draft=False, allowed_runnables=["restart-service"]
     )
