@@ -328,7 +328,10 @@ print("cache_markers" in inspect.signature(LangServeAdapter).parameters)  # tier
 >    `/stream_events` (or `/stream`) route: yield `("text", delta)` per token,
 >    end with `("done", ChatResponse)` carrying stop reason and usage from the
 >    final event. Keep `chat()` as the non-streaming fallback.
-> 5. Adapter code only — don't touch console config or the agent loop. No new
+> 5. **Tools.** Send exactly the `tools` the console passes on each call,
+>    converted to the gateway's shape. Don't add tools of your own, cache the
+>    list between calls, or drop any.
+> 6. Adapter code only — don't touch console config or the agent loop. No new
 >    dependencies beyond what the adapter already uses. Keep the
 >    `runspec_console.adapters.testing` conformance checks passing.
 >

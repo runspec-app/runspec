@@ -66,6 +66,16 @@ class MyCorpAdapter(ModelAdapter):
 of tool schemas in Anthropic shape (`{"name", "description", "input_schema"}`);
 convert them to your provider's format inside the adapter.
 
+**Send exactly the tools you are given.** The console rebuilds `tools` from the
+live fleet on every call: in search mode it is a small fixed set (the
+discovery meta-tools plus the hot built-ins), and the runnables are found on
+demand. Convert those schemas, but never add tools of your own (from host or
+runnable discovery, `runspec local` / `runspec serve`, an MCP client, or the
+console's config files), never cache the list between calls, and never drop
+any. Extra tools undo search mode and inflate every request's prefix (a host's
+58 runnables added ~30k tokens per call in one deployment), and the console
+doesn't know them, so a call to one fails.
+
 The agentic loop only ever calls `stream_with_tools` for a chat turn, and
 `make_tool_turn` after it runs the tools. `chat` / `stream_chat` back them.
 
@@ -563,6 +573,7 @@ gateway team, and a copy-paste brief — is
 
 - [ ] Subclass `ModelAdapter`; implement `chat`, `stream_chat`,
       `stream_with_tools` (or inherit the default), `make_tool_turn`.
+- [ ] Send the `tools` you are passed, converted, with nothing added or cached.
 - [ ] Return `ToolCall.input` as a **dict**.
 - [ ] Set `stop_reason` to `"tool_use"` when tool calls are present; to
       `"max_tokens"` (or any `is_output_truncation` spelling) on a length cutoff;
