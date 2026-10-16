@@ -348,3 +348,16 @@ def test_caveat_notes_outlook_source_as_approximate(monkeypatch):
     out = ns._presence_caveat()
     assert "**OUTSIDE**" in out
     assert "approximate" in out
+
+
+def test_mcp_servers_line_points_at_use_tool_when_deferred(monkeypatch):
+    """In search mode external MCP tools are deferred, so the context must not
+    claim they sit in the tool list — it names describe_tool/use_tool too."""
+    ns = _stub(monkeypatch, rota={}, triggers=[], schedules=[])
+    ns.mcp_status = lambda: {
+        "servers": [{"name": "atlassian", "connected": True, "tool_count": 40}]
+    }
+    out = ns._console_context()
+    assert "External MCP servers connected: atlassian (40 tools)" in out
+    assert "use_tool" in out and "describe_tool" in out
+    assert "appear in your toolset" not in out

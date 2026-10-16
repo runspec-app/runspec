@@ -9,6 +9,17 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.345.4] — 2026-10-16
+
+### Fixed
+
+- **The agent is told how to reach external MCP tools in search mode.** With
+  `[llm] tool_mode = "search"` an external MCP server's tools are deferred (in
+  the deferred-tools menu, run with `use_tool`), but the console context told
+  the agent they "appear in your toolset" and to call them directly. It now
+  says to call one directly only when it's in the tool list, and otherwise to
+  use `describe_tool` + `use_tool`.
+
 ## [0.345.3] — 2026-10-16
 
 ### Fixed

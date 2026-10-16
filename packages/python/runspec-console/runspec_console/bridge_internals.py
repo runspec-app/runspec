@@ -1941,10 +1941,11 @@ class InternalsMixin:
             )
             lines.append(
                 f"External MCP servers connected: {summary}. Their tools are named "
-                "`mcp_<server>_<tool>` and appear in your toolset alongside the "
-                "runnables — call them like any other tool. They run on an outside "
-                "server, so most are confirm-gated unless the operator marked the "
-                "server trusted."
+                "`mcp_<server>_<tool>`. When one is in your tool list, call it like "
+                "any other tool; when it isn't, it's in the deferred-tools menu — "
+                "get its schema with describe_tool and run it with use_tool. They "
+                "run on an outside server, so most are confirm-gated unless the "
+                "operator marked the server trusted."
             )
 
         # One-liner about the per-session workspace so the agent reaches for the
