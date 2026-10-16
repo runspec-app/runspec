@@ -260,6 +260,38 @@ if args.runspec_agent and args.runspec_autonomy != "autonomous":
 
 ---
 
+## Output: return what the caller needs
+
+When an agent runs a runnable, all of stdout goes into the model's context, and it
+is sent again on every later step of that conversation. The console saves output
+over 32 KB to a file and gives the agent a preview, but anything smaller goes in
+whole. Shape the output at the source:
+
+- **Compact by default, more on request.** Return the fields a caller usually
+  needs. Add bulky parts (comments, history, attachments) through an `include`
+  arg (a `multiple` choice with `delimiter = ","`), and keep the untouched API
+  response behind a `raw` flag.
+- **One arg, not a verb per field.** Prefer `--include comments` to a separate
+  verb. Every verb is another tool the agent has to choose between.
+- **Bound every list.** Use a `limit` with a small default, and return `count`,
+  `total`, `truncated` and the offset of the next page.
+- **Preview long text, drop empties and noise.** Keep counts even at zero, so
+  the agent knows whether asking for more is worth a call.
+
+Pick the format by who's reading:
+
+| Caller | How to tell | Print |
+|---|---|---|
+| Agent (console, `runspec serve`) | `args.runspec_agent` | compact JSON |
+| Person in a terminal | `sys.stdout.isatty()` | readable text |
+| Anything else (pipe, console Forms tab, Rundeck, Ansible, cron) | neither | JSON |
+
+The Forms tab parses JSON to draw a table, so only a terminal gets text.
+`runspec-jira` is the worked example: `get-issue` takes `--include` and `--raw`,
+and `search` returns compact rows with `truncated` / `next_start`.
+
+---
+
 ## Code stub
 
 Keep `main()` thin: `parse()` → a plain function that does the work → render the

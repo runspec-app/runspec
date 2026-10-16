@@ -59,6 +59,9 @@ Grill until each of these is pinned down — ask 2–4 at a time with
 - **Where else it runs** — will it be a Rundeck job (schedule, node filter,
   failure alerts) or an Ansible task? Then it needs a `meta.rundeck` /
   `meta.ansible` table (see "Rundeck and Ansible").
+- **Output** — what a caller usually needs back, and how big a full answer can
+  get. Anything that can return a large API payload or a list needs a compact
+  default, an `include` for the rest, and a `limit` (see "Output").
 - **Failure modes** — what can go wrong, and what should happen (let it
   propagate, or catch one specific case for a remediation hint).
 - **Verification** — how we'll know it works (the test's key assertions).
@@ -236,6 +239,64 @@ For a **destructive flag**, gate it in code so an agent can't trigger it without
 if args.runspec_agent and args.runspec_autonomy != "autonomous":
     raise SystemExit("✗ --delete requires autonomy='autonomous' for agent invocation")
 ```
+
+---
+
+## Output — return what the caller needs, not everything you got
+
+When an agent runs a runnable, all of stdout goes into the model's context, and it
+is sent again on every later step of that conversation. The console saves output
+over 32 KB to a file and gives the agent a preview, but anything smaller goes in
+whole. A raw API response of 20 KB costs about 5k tokens every round, and most
+of it is empty fields and links. Shape the output at the source:
+
+- **Compact by default, more on request.** Return the fields a caller usually
+  needs. Add the bulky parts (comments, history, attachments, custom fields)
+  through an `include` arg: a `multiple` choice with `delimiter = ","`, so the
+  agent sees the part names in the schema. Keep the untouched API response
+  behind a `raw` flag for the caller who needs it.
+- **One arg, not a verb per field.** Prefer `get-issue --include comments` to a
+  `get-issue-comments` verb. Every verb is another tool the agent has to choose
+  between. Add a dedicated verb only for a question asked constantly that
+  answers in a few bytes.
+- **Bound every list.** Give lists a `limit` with a small default (10–25), and
+  return `count`, `total`, `truncated` and the offset of the next page, so the
+  agent knows there's more instead of assuming it has everything.
+- **Preview long text.** Cut long bodies and descriptions to a few hundred chars,
+  say how long the full text is, and let `include` return it in full.
+- **Drop empties and noise.** Leave out null and empty values, avatar URLs,
+  `self` links and internal ids nobody asks for. Keep counts even at zero, so
+  the agent knows whether asking for more is worth a call.
+- **Compact JSON for machines.** No `indent`. Whitespace is tokens.
+
+**Pick the format by who's reading.**
+
+| Caller | How to tell | Print |
+|---|---|---|
+| Agent (console, `runspec serve`) | `args.runspec_agent` | compact JSON |
+| Person in a terminal | `sys.stdout.isatty()` | readable text: `Label  value` lines, a table for lists |
+| Anything else (pipe, console Forms tab, Rundeck, Ansible, cron) | neither | JSON, as `output = "json"` declares |
+
+"Not an agent" doesn't mean "a person reading". The console's Forms tab parses
+JSON to draw a table, and pipes and schedulers want JSON. So only send readable
+text to a terminal. If you also add a `format` choice arg, an explicit value
+always wins.
+
+```python
+import json
+import sys
+
+def emit(result: dict, *, agent: bool, as_text) -> None:
+    if not agent and sys.stdout.isatty():
+        print(as_text(result))
+    else:
+        print(json.dumps(result, default=str))
+```
+
+`runspec-jira` is the worked example. `get-issue` returns a compact view with
+counts and a description preview, and takes `--include` and `--raw`. `search`
+returns compact rows with `truncated`/`next_start`. Both print text in a terminal.
+See `runspec_jira_core.compact` and `runspec_jira/render.py`.
 
 ---
 

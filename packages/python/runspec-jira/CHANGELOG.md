@@ -2,6 +2,22 @@
 
 All notable changes to `runspec-jira` are documented here.
 
+## [0.5.0] — 2026-10-16
+
+### Changed
+
+- **`get-issue`, `search` and `get-project-issues` return compact output by
+  default**, so an agent reading them uses a fraction of the context it did.
+  `get-issue` gives the essentials plus counts of comments, links, subtasks and
+  attachments. `--include comments,links,…` adds parts, and `--raw` (or
+  `--fields` / `--expand`, as before) returns the raw API response. `search` and
+  `get-project-issues` return compact rows with `total`, `truncated` and
+  `next_start`. Their default `limit` drops from 50 to 25, and
+  `get-project-issues` gains `--start`. Use `--raw` for the old output.
+- **Readable text in a terminal.** Run by a person in an interactive terminal,
+  `get-issue` prints `Label  value` lines and the list verbs print a table.
+  Agents, pipes, the console's Forms tab and schedulers still get JSON.
+
 ## [0.4.0] — 2026-09-26
 
 ### Added

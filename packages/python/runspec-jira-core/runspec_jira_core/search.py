@@ -25,7 +25,7 @@ def jql_search(
 
 
 @translate_errors
-def get_project_issues(config: JiraConfig, project_key: str, *, limit: int = 50) -> Any:
+def get_project_issues(config: JiraConfig, project_key: str, *, limit: int = 50, start: int = 0) -> Any:
     """List a project's issues (newest first) via JQL."""
     jql = f'project = "{project_key}" ORDER BY created DESC'
-    return build_client(config).jql(jql, limit=limit)
+    return build_client(config).jql(jql, start=start, limit=limit)

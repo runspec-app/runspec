@@ -79,7 +79,7 @@ def test_fields_multiple_collects_list() -> None:
 def test_search_limit_defaults_and_coerces() -> None:
     h = _harness()
     spec = h.expect_ok(["search", "--jql", "project = PROJ"])
-    assert spec.limit.value == 50
+    assert spec.limit.value == 25
     assert spec.start.value == 0
     spec2 = h.expect_ok(["search", "--jql", "x", "--limit", "5"])
     assert spec2.limit.value == 5

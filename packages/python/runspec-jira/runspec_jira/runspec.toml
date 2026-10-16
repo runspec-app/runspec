@@ -47,12 +47,14 @@ jira-pat = {type = "password", required = false, description = "Jira Personal Ac
 # ── issues ─────────────────────────────────────────────────────────────────
 
 [jira.commands.get-issue]
-description = "Fetch a single issue by key, optionally limiting fields or expanding sections"
+description = "Fetch a single issue by key. Returns a compact view (status, people, dates, a description preview, counts of comments/links/subtasks/attachments); add parts with --include, or get the raw API response with --raw / --fields"
 autonomy = "autonomous"
 [jira.commands.get-issue.args]
 key = {type = "str", required = true, description = "Issue key, e.g. PROJ-123"}
-fields = {type = "str", multiple = true, required = false, description = "Restrict to these fields (repeat --fields)"}
-expand = {type = "str", required = false, description = "Comma-separated expand sections (e.g. changelog,renderedFields)"}
+include = {type = "choice", options = ["description", "comments", "links", "subtasks", "attachments", "changelog", "custom"], multiple = true, delimiter = ",", required = false, description = "Add parts to the compact view: description (full text), comments (newest 20), links, subtasks, attachments, changelog, custom (non-empty custom fields by name)"}
+raw = {type = "flag", default = false, description = "Return the raw Jira REST response instead of the compact view"}
+fields = {type = "str", multiple = true, required = false, description = "Raw response restricted to these Jira field ids (repeat --fields); implies --raw"}
+expand = {type = "str", required = false, description = "Comma-separated expand sections (e.g. changelog,renderedFields); implies --raw"}
 
 [jira.commands.create-issue]
 description = "Create an issue in a project. Extra/custom fields go through --additional-fields as a JSON object."
@@ -88,21 +90,24 @@ delete-subtasks = {type = "flag", default = true, description = "Also delete sub
 # ── search ─────────────────────────────────────────────────────────────────
 
 [jira.commands.search]
-description = "Search issues with JQL; returns one page (pass --start/--limit to page)"
+description = "Search issues with JQL; returns one page of compact rows (key, summary, status, type, priority, assignee, updated) with total/truncated/next_start for paging. Use get-issue for one issue's detail"
 autonomy = "autonomous"
 [jira.commands.search.args]
 jql = {type = "str", required = true, description = "JQL query string"}
-fields = {type = "str", multiple = true, required = false, description = "Fields to return (repeat --fields; default all)"}
-limit = {type = "int", default = 50, description = "Max results (maxResults)"}
-start = {type = "int", default = 0, description = "Pagination offset (startAt)"}
-expand = {type = "str", required = false, description = "Comma-separated expand sections"}
+limit = {type = "int", default = 25, description = "Max results (maxResults)"}
+start = {type = "int", default = 0, description = "Pagination offset (startAt); pass the previous page's next_start"}
+raw = {type = "flag", default = false, description = "Return the raw Jira REST response (all fields) instead of compact rows"}
+fields = {type = "str", multiple = true, required = false, description = "Raw response with only these Jira field ids (repeat --fields); implies --raw"}
+expand = {type = "str", required = false, description = "Comma-separated expand sections; implies --raw"}
 
 [jira.commands.get-project-issues]
-description = "List a project's issues, newest first (one page)"
+description = "List a project's issues, newest first: one page of compact rows with total/truncated/next_start"
 autonomy = "autonomous"
 [jira.commands.get-project-issues.args]
 project-key = {type = "str", required = true, description = "Project key"}
-limit = {type = "int", default = 50, description = "Max results"}
+limit = {type = "int", default = 25, description = "Max results"}
+start = {type = "int", default = 0, description = "Pagination offset; pass the previous page's next_start"}
+raw = {type = "flag", default = false, description = "Return the raw Jira REST response (all fields) instead of compact rows"}
 
 # ── transitions ────────────────────────────────────────────────────────────
 

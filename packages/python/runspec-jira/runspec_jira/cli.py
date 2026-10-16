@@ -42,6 +42,7 @@ from runspec_jira_core import (
     get_all_projects,
     get_create_fields,
     get_issue,
+    get_issue_compact,
     get_link_types,
     get_project_components,
     get_project_issue_types,
@@ -60,12 +61,14 @@ from runspec_jira_core import (
     list_request_type_fields,
     list_request_types,
     list_transitions,
+    project_issues_compact,
     remove_attachment,
     remove_customers,
     remove_from_role,
     remove_issue_link,
     remove_watcher,
     search_assignable_users,
+    search_compact,
     search_fields,
     search_projects,
     transition_issue,
@@ -73,9 +76,18 @@ from runspec_jira_core import (
     update_request,
 )
 
+from runspec_jira.render import human_text
 
-def _emit(payload: Any) -> None:
-    print(json.dumps(payload, default=str))
+
+def _emit(payload: Any, *, text: str | None = None) -> None:
+    print(text if text is not None else json.dumps(payload, default=str))
+
+
+def _wants_raw(spec: rs.RunSpec) -> bool:
+    """The read verbs return a compact view unless the caller asks for the raw
+    API response (``--raw``, or ``--fields`` / ``--expand``, which only make
+    sense against it)."""
+    return bool(spec.get("raw").value or spec.get("fields").value or spec.get("expand").value)
 
 
 def _dispatch(spec: rs.RunSpec, config: JiraConfig) -> Any:
@@ -84,7 +96,9 @@ def _dispatch(spec: rs.RunSpec, config: JiraConfig) -> Any:
 
     # ── issues ──
     if command == "get-issue":
-        return get_issue(config, spec.key.value, fields=spec.fields.value or None, expand=spec.expand.value)
+        if _wants_raw(spec):
+            return get_issue(config, spec.key.value, fields=spec.fields.value or None, expand=spec.expand.value)
+        return get_issue_compact(config, spec.key.value, include=spec.include.value or [])
     if command == "create-issue":
         return create_issue(
             config,
@@ -103,6 +117,8 @@ def _dispatch(spec: rs.RunSpec, config: JiraConfig) -> Any:
 
     # ── search ──
     if command == "search":
+        if not _wants_raw(spec):
+            return search_compact(config, spec.jql.value, start=spec.start.value, limit=spec.limit.value)
         return jql_search(
             config,
             spec.jql.value,
@@ -112,7 +128,9 @@ def _dispatch(spec: rs.RunSpec, config: JiraConfig) -> Any:
             expand=spec.expand.value,
         )
     if command == "get-project-issues":
-        return get_project_issues(config, spec.project_key.value, limit=spec.limit.value)
+        if _wants_raw(spec):
+            return get_project_issues(config, spec.project_key.value, limit=spec.limit.value, start=spec.start.value)
+        return project_issues_compact(config, spec.project_key.value, start=spec.start.value, limit=spec.limit.value)
 
     # ── transitions ──
     if command == "list-transitions":
@@ -262,7 +280,12 @@ def main() -> None:
     except (JiraError, ValueError) as exc:
         _emit({"error": str(exc), "kind": type(exc).__name__})
         sys.exit(1)
-    _emit(result)
+    # A person at a terminal gets readable text; agents, pipes, the console's
+    # Forms tab and schedulers get JSON.
+    text = None
+    if not spec.runspec_agent and sys.stdout.isatty():
+        text = human_text(spec.runspec_command, result, raw=_wants_raw(spec))
+    _emit(result, text=text)
 
 
 if __name__ == "__main__":

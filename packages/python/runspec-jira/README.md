@@ -38,6 +38,21 @@ pip install runspec-jira
 | Customers | `list-customers`, `add-customers`, `remove-customers`, `list-organizations`, `add-to-organization` |
 | Attachments | `list-attachments`, `download-attachments`, `add-attachment`, `remove-attachment` |
 
+### Compact output
+
+`get-issue`, `search` and `get-project-issues` return a compact view by default,
+so an agent gets what it needs without a 20 KB API payload:
+
+```bash
+jira get-issue --key PROJ-1                          # essentials + counts of comments, links, …
+jira get-issue --key PROJ-1 --include comments,links # add parts
+jira get-issue --key PROJ-1 --raw                    # the raw Jira REST response
+jira search --jql 'project = PROJ' --start 25        # compact rows; truncated / next_start for paging
+```
+
+In an interactive terminal these print readable text. Agents, pipes, the
+console's Forms tab and schedulers get JSON.
+
 ## Auth — env vars only
 
 ```

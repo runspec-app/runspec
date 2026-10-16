@@ -62,6 +62,99 @@ def test_dispatch_get_issue(fake) -> None:
     assert kwargs["fields"] == "summary"
 
 
+def test_dispatch_get_issue_is_compact_by_default(fake) -> None:
+    jira, _ = fake
+    jira._returns["get_issue"] = {"key": "PROJ-1", "fields": {"summary": "s", "status": {"name": "Open"}, "customfield_1": None}}
+    h = _harness()
+    spec = h.expect_ok(["get-issue", "--key", "PROJ-1", "--include", "comments,links"])
+    result = cli._dispatch(spec, CLOUD)
+    h.close()
+    assert result["status"] == "Open"
+    assert result["url"] == "https://acme.atlassian.net/browse/PROJ-1"
+    assert result["comments"] == [] and result["links"] == []
+    assert "fields" not in result
+
+
+def test_dispatch_get_issue_raw_flag(fake) -> None:
+    jira, _ = fake
+    jira._returns["get_issue"] = {"key": "PROJ-1", "fields": {}}
+    h = _harness()
+    spec = h.expect_ok(["get-issue", "--key", "PROJ-1", "--raw"])
+    assert cli._dispatch(spec, CLOUD) == {"key": "PROJ-1", "fields": {}}
+    h.close()
+
+
+def test_dispatch_search_compact_and_raw(fake) -> None:
+    jira, _ = fake
+    jira._returns["jql"] = {"startAt": 0, "total": 40, "issues": [{"key": "P-1", "fields": {"summary": "s"}}]}
+    h = _harness()
+    page = cli._dispatch(h.expect_ok(["search", "--jql", "project = P"]), CLOUD)
+    assert page["issues"] == [{"key": "P-1", "summary": "s"}]
+    assert page["truncated"] is True and page["next_start"] == 1
+    assert jira.last("jql")[1]["limit"] == 25
+    raw = cli._dispatch(h.expect_ok(["search", "--jql", "project = P", "--fields", "summary"]), CLOUD)
+    h.close()
+    assert raw["issues"][0]["fields"] == {"summary": "s"}
+    assert jira.last("jql")[1]["fields"] == "summary"
+
+
+def test_dispatch_project_issues_pages(fake) -> None:
+    jira, _ = fake
+    jira._returns["jql"] = {"startAt": 25, "total": 26, "issues": [{"key": "P-1", "fields": {}}]}
+    h = _harness()
+    page = cli._dispatch(h.expect_ok(["get-project-issues", "--project-key", "P", "--start", "25"]), CLOUD)
+    h.close()
+    assert page["truncated"] is False and page["start"] == 25
+
+
+def _run_main(monkeypatch, capsys, argv, *, tty: bool, agent: bool = False) -> str:
+    monkeypatch.setenv("JIRA_URL", "https://acme.atlassian.net")
+    monkeypatch.setenv("JIRA_PERSONAL_TOKEN", "pat")
+    if agent:
+        monkeypatch.setenv("RUNSPEC_AGENT", "1")
+    else:
+        monkeypatch.delenv("RUNSPEC_AGENT", raising=False)
+    h = _harness()
+    spec = h.expect_ok(argv)
+    h.close()
+    monkeypatch.setattr(cli.rs, "parse", lambda name: spec)
+    monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: tty, raising=False)
+    cli.main()
+    return capsys.readouterr().out
+
+
+ISSUE = {"key": "PROJ-1", "fields": {"summary": "Fix login", "status": {"name": "Open"}, "assignee": {"displayName": "Sam"}}}
+
+
+def test_terminal_gets_readable_text(fake, monkeypatch, capsys) -> None:
+    fake[0]._returns["get_issue"] = ISSUE
+    out = _run_main(monkeypatch, capsys, ["get-issue", "--key", "PROJ-1"], tty=True)
+    assert out.startswith("PROJ-1  Fix login")
+    assert "Assignee" in out and "Sam" in out
+
+
+def test_pipe_gets_json(fake, monkeypatch, capsys) -> None:
+    fake[0]._returns["get_issue"] = ISSUE
+    assert json.loads(_run_main(monkeypatch, capsys, ["get-issue", "--key", "PROJ-1"], tty=False))["status"] == "Open"
+
+
+def test_agent_gets_json_even_on_a_tty(fake, monkeypatch, capsys) -> None:
+    fake[0]._returns["get_issue"] = ISSUE
+    assert json.loads(_run_main(monkeypatch, capsys, ["get-issue", "--key", "PROJ-1"], tty=True, agent=True))["status"] == "Open"
+
+
+def test_terminal_raw_stays_json(fake, monkeypatch, capsys) -> None:
+    fake[0]._returns["get_issue"] = ISSUE
+    assert json.loads(_run_main(monkeypatch, capsys, ["get-issue", "--key", "PROJ-1", "--raw"], tty=True))["key"] == "PROJ-1"
+
+
+def test_terminal_search_is_a_table(fake, monkeypatch, capsys) -> None:
+    fake[0]._returns["jql"] = {"startAt": 0, "total": 3, "issues": [ISSUE]}
+    out = _run_main(monkeypatch, capsys, ["search", "--jql", "x"], tty=True)
+    assert out.splitlines()[0].startswith("KEY")
+    assert "1 of 3 — next page: --start 1" in out
+
+
 def test_dispatch_create_issue_merges_json(fake) -> None:
     jira, _ = fake
     h = _harness()

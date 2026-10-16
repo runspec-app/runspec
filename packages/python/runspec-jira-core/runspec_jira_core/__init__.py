@@ -26,6 +26,14 @@ from runspec_jira_core.client import (
     translate_errors,
 )
 from runspec_jira_core.comments import add_comment, edit_comment
+from runspec_jira_core.compact import (
+    INCLUDE_OPTIONS,
+    compact_issue,
+    compact_search,
+    get_issue_compact,
+    project_issues_compact,
+    search_compact,
+)
 from runspec_jira_core.config import VALID_ENVS, JiraConfig, config_from_env
 from runspec_jira_core.customers import (
     add_customers,
@@ -109,6 +117,13 @@ __all__ = [
     # search
     "jql_search",
     "get_project_issues",
+    # compact (agent-sized) views
+    "INCLUDE_OPTIONS",
+    "compact_issue",
+    "compact_search",
+    "get_issue_compact",
+    "project_issues_compact",
+    "search_compact",
     # transitions
     "list_transitions",
     "transition_issue",

@@ -2,6 +2,22 @@
 
 All notable changes to `runspec-jira-core` are documented here.
 
+## [0.5.0] — 2026-10-16
+
+### Added
+
+- **Compact views for agents** (`runspec_jira_core.compact`). `compact_issue`
+  turns a raw issue into a small view: key, URL, summary, status, type,
+  priority, people, dates, labels, components, fix versions, parent, a
+  600-char description preview, and counts of comments, links, subtasks and
+  attachments. `include` adds `description` (full), `comments` (newest 20),
+  `links`, `subtasks`, `attachments`, `changelog` or `custom` (non-empty custom
+  fields by name). `compact_search` gives one row per issue plus `total`,
+  `truncated` and `next_start`. `get_issue_compact`, `search_compact` and
+  `project_issues_compact` fetch only the fields those views need. A raw issue
+  is often 15–30 KB; the compact view is usually under 1 KB.
+- `get_project_issues` takes `start` for paging.
+
 ## [0.4.0] — 2026-09-26
 
 JSM project admin helpers and **request-type signatures** — raise or edit a
