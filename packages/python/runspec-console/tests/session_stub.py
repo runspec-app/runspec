@@ -53,6 +53,7 @@ def install_sessions(stub: Any, conversation_id: str = "") -> ChatSession | None
     stub._sessions = {}
     stub._chat_session_id = ""
     stub._turn_sessions = {}
+    stub._mcp_client_sessions = {}
     stub._conv_store_lock = threading.Lock()
     if not hasattr(stub, "_dispatch"):
         stub._dispatch = lambda *a, **k: None

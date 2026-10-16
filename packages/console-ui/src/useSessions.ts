@@ -128,7 +128,11 @@ export function useSessions({ blocksRef, onSessionRemoved, onCard }: Options): S
   useEffect(() => {
     const onSession = (e: Event) => {
       const p = (e as CustomEvent).detail as SessionPayload
+      // A new MCP client's chat opens selected, so its first call (often a
+      // parked Approve/Deny) is in view; later calls only light its chip.
+      const opened = p?.kind === 'mcp' && p.state !== 'closed' && !listRef.current.some(s => s.id === p.id)
       commit(list => applySessionEvent(list, p))
+      if (opened) setSelected(p.id)
     }
     const onTriggerCard = (e: Event) => {
       const c = (e as CustomEvent).detail as TriggerCard

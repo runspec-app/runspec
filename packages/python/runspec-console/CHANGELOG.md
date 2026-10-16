@@ -9,6 +9,24 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.347.0] — 2026-10-16
+
+### Changed
+
+- **Each MCP client session gets its own chat.** Calls an external agent makes
+  through the console's MCP server (runnables and exposed built-ins) used to land
+  in whichever chat the operator had open, mixing into their own conversation.
+  Each MCP client session (keyed on its `mcp-session-id`) now gets one read-only
+  chat, labelled `MCP · <client name>` with its own chip, opened and selected on
+  the client's first call; every later call from that client lands there. A
+  client that reconnects gets a new chat, and dismissing the chip makes the next
+  call open a fresh one. New session kind `mcp`
+  (`session.new_mcp`); run cards carry the chat in `session`
+  (`bridge_mcp_server._mcp_client_session`); the calling client is read from the
+  request by `mcp_server.client_ref` and handed to the executor through a
+  context variable (`mcp_server.current_client`). An older frontend falls back
+  to the current chat.
+
 ## [0.346.0] — 2026-10-16
 
 ### Changed

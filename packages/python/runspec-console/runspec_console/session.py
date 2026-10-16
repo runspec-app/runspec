@@ -14,7 +14,9 @@ Identity rules (the invariant the UI relies on):
   workspace dir (``workspace_dir(id)``) and its transcript file share the id;
 - an **automation** session's id *is* the run card id, which the headless turn
   also uses as its ``chat_id`` — so a trigger/schedule card, its session, and
-  its streamed ``runspec:*`` events all carry one id.
+  its streamed ``runspec:*`` events all carry one id;
+- an **mcp** session (one per external MCP client session) has its own id and
+  holds many run cards — each card names it in its ``session`` field.
 
 Sessions are in-memory only: a console restart starts with none (saved
 conversations remain browsable via History and can be resumed into a new
@@ -36,13 +38,17 @@ __all__ = [
     "LABEL_LEN",
     "new_automation",
     "new_interactive",
+    "new_mcp",
     "new_session_id",
     "prune_finished",
     "session_label",
 ]
 
 #: Session kinds. ``chat`` is interactive; the rest are automation (read-only).
-AUTOMATION_KINDS = ("trigger", "schedule")
+#: ``mcp`` is one external MCP client session's calls into the console's own
+#: MCP server — long-lived (one chat per client session), so it is never
+#: ``done`` and never pruned; the operator dismisses it.
+AUTOMATION_KINDS = ("trigger", "schedule", "mcp")
 #: How many *finished* automation sessions the registry keeps (oldest evicted).
 FINISHED_AUTOMATION_CAP = 12
 #: Max label length (an interactive chat is labelled by its first message).
@@ -237,6 +243,17 @@ def new_automation(kind: str, chat_id: str, label: str) -> ChatSession:
     return ChatSession(
         id=str(chat_id),
         kind=kind,
+        label=session_label(label),
+        interactive=False,
+    )
+
+
+def new_mcp(label: str) -> ChatSession:
+    """A read-only session for one external MCP client session: every tool call
+    that client makes into the console's MCP server lands here as a run block."""
+    return ChatSession(
+        id=new_session_id(),
+        kind="mcp",
         label=session_label(label),
         interactive=False,
     )

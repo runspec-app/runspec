@@ -12,7 +12,7 @@
  */
 import { Button, Dropdown, Popconfirm, Spin, Tooltip } from 'antd'
 import type { MenuProps } from 'antd'
-import { BellOutlined, ClockCircleOutlined, CloseOutlined, DownOutlined, LoadingOutlined, MessageOutlined, ThunderboltOutlined } from '@ant-design/icons'
+import { ApiOutlined, BellOutlined, ClockCircleOutlined, CloseOutlined, DownOutlined, LoadingOutlined, MessageOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import { useIsDark, useAccent, textColor, textMuted, textSecondary, surfaces, withAlpha, MONO_FONT, RADIUS } from '../ThemeContext'
 import type { Session, SessionStatus } from '../sessions'
 
@@ -35,6 +35,7 @@ const KIND_ICON = {
   chat: MessageOutlined,
   trigger: ThunderboltOutlined,
   schedule: ClockCircleOutlined,
+  mcp: ApiOutlined,
 } as const
 
 const STATUS_TIP: Record<SessionStatus, string> = {

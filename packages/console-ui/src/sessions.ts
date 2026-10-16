@@ -113,9 +113,9 @@ export function sessionFromCard(card: TriggerCard, kind: 'trigger' | 'schedule')
  *  later ones reconcile the column / terminal state (the backend's own label,
  *  when it arrived via `runspec:session`, is kept). */
 /** Whether a run card is its own read-only session (chip). True for trigger /
- *  schedule fires; false for a console MCP-server call (`source: "mcp"`), which
- *  is an operator-facing run like a Forms run — its block lands in the
- *  operator's current chat instead, where the Approve/Deny is actually seen. */
+ *  schedule fires; false for a console MCP-server call (`source: "mcp"`),
+ *  whose block lands in its client's chat (`card.session`), else — an older
+ *  backend — in the operator's current chat. */
 export function cardHasOwnSession(card: TriggerCard): boolean {
   return card?.source !== 'mcp'
 }

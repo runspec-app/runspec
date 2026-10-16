@@ -162,6 +162,9 @@ class Bridge(
         self._sessions: dict[str, ChatSession] = {}
         self._chat_session_id: str = ""
         self._turn_sessions: dict[str, str] = {}
+        # MCP client session key (mcp-session-id) → its read-only chat's id, so
+        # each external MCP client's calls land in a chat of their own.
+        self._mcp_client_sessions: dict[str, str] = {}
         # Serialises saved-conversation file writes (read-modify-write) between
         # a turn's persist and an operator run's append from the invoke worker.
         self._conv_store_lock = threading.Lock()

@@ -228,9 +228,9 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
   //
   // placeCard creates / reconciles the block in a given session; applyCard
   // picks the session. A console MCP-server call (`source: "mcp"`) has no
-  // session of its own: its block goes into the operator's current chat (like
-  // a Forms run). As a separate chip it was never the selected session, so the
-  // confirm sound played but nothing appeared in view.
+  // session of its own: its block goes into its client's chat (`card.session`,
+  // one read-only chat per MCP client session, selected when it opens), or —
+  // an older backend that names none — the operator's current chat.
   const placeCard = useCallback((card: TriggerCard, kind: 'trigger' | 'schedule', sessionId: string) => {
     const id = card.card_id
     const isRun = cardIsRun(card, kind)
@@ -279,6 +279,10 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
     const known = blocksRef.current.find(b => b.id === id)
     if (known) {
       placeCard(card, kind, known.sessionId)
+      return
+    }
+    if (card.session) {
+      placeCard(card, kind, card.session)
       return
     }
     // First sighting: resolve the host chat once per card (later events for the

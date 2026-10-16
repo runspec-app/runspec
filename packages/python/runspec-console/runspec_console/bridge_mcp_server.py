@@ -29,7 +29,9 @@ from typing import TYPE_CHECKING, Any
 
 from . import config as config_mod
 from . import bridge_utils as utils_mod
+from . import mcp_server as mcp_server_mod
 from .bridge_const import _MCP_SERVER_BUILTIN_NAMES, logger
+from .session import new_mcp
 
 if TYPE_CHECKING:
     from .mcp_server import ExecTool
@@ -201,6 +203,9 @@ class McpServerMixin:
         caller runs it at once and finalises the card. ``args`` comes back with
         any operator edit applied."""
         card_id = uuid.uuid4().hex[:12]
+        # Open (or reuse) the calling client's own chat before the first card
+        # event, so the UI already knows the session the card names.
+        self._mcp_client_session()
         if level not in ("confirm", "supervised"):
             self._mcp_server_card(
                 card_id,
@@ -278,8 +283,10 @@ class McpServerMixin:
         ``detail.mode="rule"`` mark it a plain run (a run block, not an agent
         turn). Stored on the trigger board so a UI reload mid-approval replays it
         (the gate's own cold-start seed is :meth:`get_pending_confirms`). It opens
-        no session/chip: the Console shows it inline in the current chat."""
+        no session of its own: it names the calling client's chat in ``session``
+        (see :meth:`_mcp_client_session`), where the Console shows it."""
         now = time.time()
+        session_id = self._mcp_client_session_id()
         with self._lock:
             card = self._trigger_cards.get(card_id)
             if card is None:
@@ -287,6 +294,10 @@ class McpServerMixin:
                     "card_id": card_id,
                     "trigger": runnable,
                     "source": "mcp",
+                    # The client's own chat (see _mcp_client_session); "" when
+                    # it couldn't be opened → the UI falls back to the
+                    # operator's current chat.
+                    "session": session_id,
                     "event_type": "request",
                     "summary": f"/{runnable}" + (f" on {host}" if host else ""),
                     "column": column,
@@ -314,11 +325,46 @@ class McpServerMixin:
                 card["timeline"].append({"ts": now, "text": note})
             self._evict_trigger_cards(card_id)
             snapshot = dict(card)
-        # No automation session of its own (unlike a trigger fire): an MCP call is
-        # an operator-facing run like a Forms run, so the frontend places its block
-        # in the operator's current chat. A separate read-only session made it an
-        # unselected chip — the confirm sound played but nothing showed in view.
+        # The block lands in the calling client's own chat (`session`), not one
+        # session per card (a trigger fire's model) and no longer the
+        # operator's current chat: each MCP client session gets one chat.
         self._dispatch("runspec:trigger_card", snapshot)
+
+    def _mcp_client_session(self) -> str:
+        """The read-only chat for the MCP client session making the current call
+        — opened on the client's first call and reused for every later one, so
+        an external agent's actions don't mix into whatever chat the operator
+        has open. Keyed by the client's ``mcp-session-id`` (a client that
+        reconnects gets a new chat); dismissing the chip makes the client's next
+        call open a fresh one. Returns the session id ("" on failure)."""
+        client = mcp_server_mod.current_client()
+        key = client.key or "default"
+        created = None
+        try:
+            with self._lock:
+                owners = self._mcp_client_sessions
+                sid = owners.get(key, "")
+                session = self._sessions.get(sid) if sid else None
+                if session is None:
+                    label = f"MCP · {client.name}" if client.name else "MCP client"
+                    session = new_mcp(label)
+                    self._sessions[session.id] = session
+                    owners[key] = session.id
+                    created = session
+                sid = session.id
+        except Exception:  # noqa: BLE001 — never block a call on chat bookkeeping
+            logger.debug("mcp_server client session open failed", exc_info=True)
+            return ""
+        if created is not None:
+            self._emit_session(created)
+        return sid
+
+    def _mcp_client_session_id(self) -> str:
+        """The calling client's chat id if it is open, without opening one."""
+        key = mcp_server_mod.current_client().key or "default"
+        with self._lock:
+            sid = self._mcp_client_sessions.get(key, "")
+            return sid if sid in self._sessions else ""
 
     def _mcp_server_confirm_wait(self) -> float:
         """The bounded confirm wait: the smaller of ``[mcp_server] confirm_wait``

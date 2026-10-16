@@ -24,18 +24,26 @@ class _CardPrimitives:
     def _init_cards(self):
         self._lock = threading.Lock()
         self._trigger_cards: dict = {}
+        self._sessions: dict = {}
+        self._mcp_client_sessions: dict = {}
         self.cards: list[tuple] = []  # (event_name, payload) dispatched
+
+    def _emit_session(self, session):
+        self._dispatch("runspec:session", session.to_dict())
 
     def _dispatch(self, event, payload):
         self.cards.append((event, dict(payload)))
 
     def _sync_card_session(self, kind, card):
-        # An MCP card must never open its own session: the Console shows it
-        # inline in the operator's current chat, not as a hidden chip.
-        raise AssertionError("MCP server cards must not open a session")
+        # An MCP card never opens a per-card session: it lands in the calling
+        # client's chat (one per MCP client session) named by card["session"].
+        raise AssertionError("MCP server cards must not open a per-card session")
 
     def _evict_trigger_cards(self, keep_id):
         pass
+
+    def card_payloads(self):
+        return [p for e, p in self.cards if e == "runspec:trigger_card"]
 
     def card_columns(self):
         return [p.get("column") for e, p in self.cards if e == "runspec:trigger_card"]
@@ -148,7 +156,9 @@ def test_autonomous_runs_and_returns_output():
     assert b.runs and b.runs[0][1] == "greet" and b.runs[0][4] == "mcp"
     # Nothing to approve, but still a visible Console card, straight to running.
     assert b.card_columns() == ["running", "done"]
-    assert b.inv_ids_seen[0] == b.cards[0][1]["card_id"]  # output streams into it
+    assert (
+        b.inv_ids_seen[0] == b.card_payloads()[0]["card_id"]
+    )  # output streams into it
 
 
 def test_confirm_approved_runs():
@@ -161,7 +171,7 @@ def test_confirm_approved_runs():
     assert b.card_columns() == ["awaiting_human", "running", "done"]
     # The confirm is registered under the card id (its home), not a fixed sentinel.
     chat_id = b.registered[0][0]
-    card_id = b.cards[0][1]["card_id"]
+    card_id = b.card_payloads()[0]["card_id"]
     assert chat_id == card_id and chat_id != "__mcp_server__"
 
 
@@ -170,7 +180,7 @@ def test_confirm_gate_run_streams_into_its_card():
     # route to the card's Console run block.
     b = FakeBridge(approve=True, answer=True)
     b._mcp_server_execute(_tool(autonomy="confirm"), {"a": 1})
-    card_id = b.cards[0][1]["card_id"]
+    card_id = b.card_payloads()[0]["card_id"]
     assert b.inv_ids_seen and b.inv_ids_seen[0] == card_id
 
 
@@ -443,3 +453,81 @@ def test_discovery_file_tightens_preexisting_loose_perms(tmp_path, monkeypatch):
     os.chmod(path, 0o644)  # world-readable leftover
     _DiscoveryBridge(_FakeServer(running=True))._write_mcp_server_discovery()
     assert (path.stat().st_mode & 0o777) == 0o600
+
+
+# ── one chat per MCP client session ──────────────────────────────────────────
+
+
+def _call_as(b, key, name="Claude Code", tool=None):
+    import contextvars
+
+    from runspec_console import mcp_server as mcp_server_mod
+
+    ctx = contextvars.copy_context()
+
+    def run():
+        mcp_server_mod._CURRENT_CLIENT.set(mcp_server_mod.ClientRef(key, name))
+        return b._mcp_server_execute(tool or _tool(), {})
+
+    return ctx.run(run)
+
+
+def _sessions_opened(b):
+    return [p for e, p in b.cards if e == "runspec:session"]
+
+
+def test_each_client_session_gets_its_own_chat():
+    b = FakeBridge()
+    _call_as(b, "sess-a")
+    _call_as(b, "sess-a")
+    _call_as(b, "sess-b", name="Cursor")
+    opened = _sessions_opened(b)
+    assert [s["kind"] for s in opened] == ["mcp", "mcp"]
+    assert [s["label"] for s in opened] == ["MCP · Claude Code", "MCP · Cursor"]
+    assert all(not s["interactive"] for s in opened)
+    a_id, b_id = opened[0]["id"], opened[1]["id"]
+    # Every card names its client's chat: two from A, one from B.
+    sessions = [c["session"] for c in b.card_payloads() if "session" in c]
+    by_card = {}
+    for c in b.card_payloads():
+        by_card.setdefault(c["card_id"], c["session"])
+    assert sorted(by_card.values()) == sorted([a_id, a_id, b_id])
+    assert set(sessions) == {a_id, b_id}
+
+
+def test_closed_client_chat_reopens_on_next_call():
+    b = FakeBridge()
+    _call_as(b, "sess-a")
+    first = _sessions_opened(b)[0]["id"]
+    b._sessions.pop(first)  # the operator dismissed the chip
+    _call_as(b, "sess-a")
+    opened = _sessions_opened(b)
+    assert len(opened) == 2 and opened[1]["id"] != first
+    assert b.card_payloads()[-1]["session"] == opened[1]["id"]
+
+
+def test_unknown_client_shares_one_default_chat():
+    b = FakeBridge()
+    _call_as(b, "", name="")
+    _call_as(b, "", name="")
+    opened = _sessions_opened(b)
+    assert len(opened) == 1 and opened[0]["label"] == "MCP client"
+
+
+def test_client_ref_reads_session_header_and_name():
+    from types import SimpleNamespace
+
+    from runspec_console.mcp_server import client_ref
+
+    info = SimpleNamespace(name="claude-code", title="Claude Code")
+    ctx = SimpleNamespace(
+        session=SimpleNamespace(client_params=SimpleNamespace(client_info=info)),
+        request=SimpleNamespace(headers={"mcp-session-id": "abc123"}),
+    )
+    ref = client_ref(ctx)
+    assert (ref.key, ref.name) == ("abc123", "Claude Code")
+    # No session header (stateless): the client name keys the chat.
+    ctx.request = SimpleNamespace(headers={})
+    assert client_ref(ctx).key == "client:Claude Code"
+    # Nothing known at all.
+    assert client_ref(SimpleNamespace()).key == ""

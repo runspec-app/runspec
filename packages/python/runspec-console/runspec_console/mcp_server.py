@@ -30,6 +30,7 @@ autonomy/run wiring in ``bridge_mcp_server``.
 
 from __future__ import annotations
 
+import contextvars
 import logging
 import threading
 from collections import OrderedDict
@@ -662,6 +663,58 @@ def build_tools(
     return ordered, registry
 
 
+# ── the calling client ──────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class ClientRef:
+    """Who made the tool call being executed: ``key`` identifies one MCP client
+    session (the streamable-HTTP ``mcp-session-id``, so a client that reconnects
+    is a new session) and ``name`` is the client's self-reported name (``Claude
+    Code``…) for a label. Empty when unknown."""
+
+    key: str = ""
+    name: str = ""
+
+
+_CURRENT_CLIENT: contextvars.ContextVar[ClientRef] = contextvars.ContextVar(
+    "runspec_mcp_client", default=ClientRef()
+)
+
+
+def current_client() -> ClientRef:
+    """The client behind the tool call running on this thread. The handler sets
+    it before handing the call to a worker thread (``asyncio.to_thread`` copies
+    the context), so the injected ``execute`` callbacks can read it without a
+    signature change."""
+    return _CURRENT_CLIENT.get()
+
+
+def client_ref(ctx: Any) -> ClientRef:
+    """Read the calling client from a request context, best-effort: the
+    ``mcp-session-id`` header of the HTTP request, else the client name (a
+    stateless request carries no session id, so one client = one session), and
+    the name from the initialize params or the request's own client-info meta."""
+    name = ""
+    try:
+        params = getattr(getattr(ctx, "session", None), "client_params", None)
+        info = getattr(params, "client_info", None)
+        name = str(getattr(info, "title", None) or getattr(info, "name", "") or "")
+    except Exception:  # noqa: BLE001 — identity is best-effort
+        name = ""
+    key = ""
+    try:
+        request = getattr(ctx, "request", None)
+        headers = getattr(request, "headers", None)
+        if headers is not None:
+            key = str(headers.get("mcp-session-id") or "")
+    except Exception:  # noqa: BLE001
+        key = ""
+    if not key and name:
+        key = f"client:{name}"
+    return ClientRef(key=key, name=name)
+
+
 # ── the server host ─────────────────────────────────────────────────────────────
 
 # How often the parked/running handler emits a keep-alive progress notification
@@ -1047,6 +1100,9 @@ class ConsoleMcpServer:
             import asyncio
 
             self._capture_session(ctx)
+            # Set before the worker task is created: create_task copies the
+            # context, so execute()/execute_builtin() see who is calling.
+            _CURRENT_CLIENT.set(client_ref(ctx))
             args = dict(params.arguments or {})
             kind, tool = self._resolve_call_target(params.name)
             if kind == "unknown":

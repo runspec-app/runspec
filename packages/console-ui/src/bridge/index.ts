@@ -1440,6 +1440,9 @@ export interface TriggerCard {
   detail: Record<string, unknown>
   created_at: number
   timeline?: TimelineEntry[]   // timestamped audit trail of stage changes + steps
+  // MCP-server cards (`source: "mcp"`): the calling client's own chat — one
+  // read-only session per MCP client session. Absent on an older backend.
+  session?: string
 }
 
 // A run card in the shared run inbox (RunInbox). Schedule runs reuse the exact
@@ -1448,7 +1451,9 @@ export type RunCard = TriggerCard
 
 // ── console sessions ─────────────────────────────────────────────────────────
 // One live conversation on the backend: an interactive chat, or the read-only
-// conversation behind a trigger / schedule fire (kind 'trigger' / 'schedule').
+// conversation behind a trigger / schedule fire (kind 'trigger' / 'schedule'),
+// or one external MCP client session's calls into the console's MCP server
+// (kind 'mcp': long-lived, holds many run cards, each naming it in `session`).
 // The `runspec:session` event carries this shape on create / turn start
 // (state 'running', `turn` = the chat id) / turn end ('idle' for a chat, 'done'
 // for automation) / close; an eviction or close may arrive as the partial
@@ -1456,7 +1461,7 @@ export type RunCard = TriggerCard
 // card_id == its turn's chat id.
 export interface ChatSessionInfo {
   id: string
-  kind: 'chat' | 'trigger' | 'schedule'
+  kind: 'chat' | 'trigger' | 'schedule' | 'mcp'
   label: string
   interactive: boolean
   created_at: number   // epoch seconds

@@ -199,8 +199,13 @@ per-arg autonomy and the optional floor):
 | `manual` | refused (operator-only; run it yourself in the console) |
 | `password` args | omitted from the tool schema entirely |
 
-Every call shows as a card in the Console, in the chat you're viewing (or a new
-chat if none is open), like a Forms run. A gated call's card carries the
+Every call shows as a card in the Console, in a read-only chat of its own: each
+MCP client session (one Claude Code or Cursor window, say) gets one chat, labelled
+with the client's name, opened and selected on its first call. Later calls from
+the same client land in the same chat and light its chip (an amber bell when a
+call waits for you), so an external agent's work never mixes into the chat you
+are typing in. A client that reconnects starts a new chat; dismiss a chat's chip
+and that client's next call opens a fresh one. A gated call's card carries the
 Approve/Deny; an autonomous call's card just shows the run and its output.
 
 The denylist and `enforce_run_as` still apply on the executing host, regardless.

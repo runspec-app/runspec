@@ -217,9 +217,8 @@ describe('Console sessions', () => {
     expect(screen.queryByText(/restarted ok/)).toBeNull()
   })
 
-  // Regression: a console MCP-server call used to open its own (unselected)
-  // chip, so with a chat open the confirm sound played but nothing showed in
-  // the Console. It now lands inline in the current chat, Approve/Deny visible.
+  // Older backend (card names no `session`): a console MCP-server call lands
+  // inline in the current chat, Approve/Deny visible — never a hidden chip.
   it('an MCP-server card shows inline in the current chat, not as a hidden chip', async () => {
     mount()
     await sendMessage('hello')
@@ -270,5 +269,51 @@ describe('Console sessions', () => {
       await settle()
     })
     expect(screen.getByText(/42% used/)).toBeTruthy()
+  })
+
+  it('MCP-server cards land in their client\'s own chat, one chat per client session', async () => {
+    mount()
+    await sendMessage('hello')
+    const openMcp = async (id: string, label: string) => {
+      await act(async () => {
+        emit('runspec:session', {
+          id, kind: 'mcp', label, interactive: false,
+          created_at: Date.now() / 1000, state: 'idle', turn: '', turns: 0,
+        })
+        await settle()
+      })
+    }
+    const mcpCard = (cardId: string, session: string, runnable: string) => card({
+      card_id: cardId, source: 'mcp', trigger: runnable, event_type: 'request', session,
+      summary: `/${runnable} on web-01`, column: 'running',
+      detail: { mode: 'rule', runnable, args: {}, host: 'web-01' },
+    })
+
+    await openMcp('mA', 'MCP · Claude Code')
+    // The new client's chat opens selected; the operator's chat stays put.
+    expect(chips().map(c => c.dataset.sessionId)).toEqual(['s1', 'mA'])
+    expect(chip('mA').dataset.selected).toBe('true')
+    await act(async () => { emit('runspec:trigger_card', mcpCard('c1', 'mA', 'disk-usage')); await settle() })
+    expect(screen.getByText('/disk-usage on web-01')).toBeTruthy()
+    expect(screen.queryByText('hello')).toBeNull()
+
+    // A second client session gets a chat of its own.
+    await openMcp('mB', 'MCP · Cursor')
+    await act(async () => { emit('runspec:trigger_card', mcpCard('c2', 'mB', 'uptime')); await settle() })
+    expect(chips().map(c => c.dataset.sessionId)).toEqual(['s1', 'mA', 'mB'])
+    expect(screen.getByText('/uptime on web-01')).toBeTruthy()
+    expect(screen.queryByText('/disk-usage on web-01')).toBeNull()
+
+    // A later call from the first client goes back into its chat.
+    await act(async () => { emit('runspec:trigger_card', mcpCard('c3', 'mA', 'whoami')); await settle() })
+    await act(async () => { fireEvent.click(chip('mA')); await settle() })
+    expect(screen.getByText('/disk-usage on web-01')).toBeTruthy()
+    expect(screen.getByText('/whoami on web-01')).toBeTruthy()
+    expect(screen.queryByText('/uptime on web-01')).toBeNull()
+    // Nothing went into the operator's chat.
+    await act(async () => { fireEvent.click(chip('s1')); await settle() })
+    expect(screen.getByText('hello')).toBeTruthy()
+    expect(screen.queryByText('/whoami on web-01')).toBeNull()
+    expect(newChatSession).toHaveBeenCalledTimes(1)
   })
 })
