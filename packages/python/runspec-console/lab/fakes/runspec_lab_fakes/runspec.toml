@@ -1,0 +1,25 @@
+# Fake Jira runnables: deterministic, offline payloads shaped like the real
+# Jira REST API, sized by --comments. The agent lab installs this package into
+# its own venv so the console discovers them as ordinary local runnables.
+#
+# FAKE_JIRA_SHAPE (set by a lab variant) picks the output style:
+#   raw     — the full API-shaped issue (today's runspec-jira get-issue)
+#   compact — key/summary/status/assignee/updated + the last 3 comments,
+#             with --include to ask for more (the proposed agent-friendly style)
+
+[fake-jira-issue]
+description = "Get one Jira issue by key (fake, for the agent lab)"
+autonomy = "autonomous"
+
+[fake-jira-issue.args]
+key = { description = "Issue key, e.g. OPS-101", type = "str" }
+comments = { description = "How many comments the issue has (payload size knob)", default = 40 }
+include = { description = "Comma-separated extra fields to include in compact output (comments, description, changelog, all)", default = "" }
+
+[fake-jira-search]
+description = "Search Jira issues with JQL (fake, for the agent lab)"
+autonomy = "autonomous"
+
+[fake-jira-search.args]
+jql = { description = "JQL query", type = "str" }
+limit = { description = "Maximum issues to return", default = 50 }

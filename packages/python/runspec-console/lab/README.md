@@ -1,0 +1,52 @@
+# Agent lab
+
+Measures how the console's agent loop handles a workload — how big each model
+call is, how history grows, what a prompt cache could reuse, and whether the
+model got what it needed — so changes like spill thresholds or compact runnable
+output can be compared on numbers instead of guesses.
+
+It drives the real `Bridge` headless (no window) against **fake runnables**
+(`lab/fakes`: `fake-jira-issue` and `fake-jira-search`, deterministic and
+offline, shaped like the real Jira REST API and sized by an argument).
+
+```bash
+# from packages/python/runspec-console
+python lab/agent_lab.py                                  # scripted tier, all scenarios × variants
+python lab/agent_lab.py -s follow-up-chat -v baseline,compact
+python lab/agent_lab.py --md report.md --json runs.json  # save the table / per-call data
+```
+
+The first run builds a venv at `~/.cache/runspec-agent-lab/venv` (console,
+core library and the fakes, editable, without pywebview) and re-runs itself
+inside it; delete it to rebuild. Each variant runs in its own process.
+
+## Two tiers
+
+- **Scripted** (default): a scripted stand-in model makes each turn's `steps`,
+  greps a spilled result for any `need` string it hasn't seen, then answers.
+  No key, no network, same numbers every run. It measures the console's
+  plumbing, not model judgement. Tokens are estimates (chars / 4) of the tool
+  schemas plus messages on each call (the system prompt is left out); the
+  cache column is an estimate of what a prompt cache would bill.
+- **Live** (`--live`): a real model drives. The table shows the provider's own
+  token counts (input, cache read, cache write, output), and a turn passes when
+  the answer matches its `expect` regex. Needs `ANTHROPIC_API_KEY` (default
+  model `claude-sonnet-5-5`, change with `--model`), or `--llm my-llm.toml`
+  with an `[llm]` table for any provider the console supports — including a
+  corporate proxy, run on a machine that can reach it. Use `--samples N`:
+  live runs vary.
+
+## Files
+
+- `scenarios.toml` — chats to run. Each `[[scenario.turn]]` is one user
+  message; later turns carry earlier results in history.
+- `variants.toml` — what to compare: `config` (merged into `config.toml`),
+  `env` (the fakes read `FAKE_JIRA_SHAPE=raw|compact`), and `patch` (override
+  a code constant, for options that don't have a setting yet).
+- `fakes/` — the fake runnable package. Add a runnable there to model another
+  tool's output.
+
+Variants deliberately avoid API-side features (context editing, server-side
+tool-result clearing): some LLM proxies don't support them, and its
+prompt caching is unreliable, so read the *no cache* column as the
+production-relevant one.

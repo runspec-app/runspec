@@ -9,6 +9,16 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Agent lab (`lab/`, developer tool, not shipped in the wheel).** Runs the
+  real agent loop headless against fake Jira runnables, once per scenario per
+  variant, and reports each model call's size, history growth, an estimated
+  prompt-cache bill, and whether the model got what it needed. A scripted
+  model gives free, repeatable numbers; `--live` uses a real model and reports
+  the provider's token counts. Variants cover spill thresholds and compact
+  runnable output; scenarios and variants are TOML. See `lab/README.md`.
+
 ## [0.347.0] — 2026-10-16
 
 ### Changed

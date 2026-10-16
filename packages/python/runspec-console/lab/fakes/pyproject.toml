@@ -1,0 +1,17 @@
+[project]
+name = "runspec-lab-fakes"
+version = "0.0.0"
+description = "Fake runnables for the runspec-console agent lab (never published)"
+requires-python = ">=3.10"
+dependencies = ["runspec"]
+
+[project.scripts]
+fake-jira-issue = "runspec_lab_fakes.jira:issue_main"
+fake-jira-search = "runspec_lab_fakes.jira:search_main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["runspec_lab_fakes"]

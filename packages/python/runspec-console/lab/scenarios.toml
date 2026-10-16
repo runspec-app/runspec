@@ -1,0 +1,79 @@
+# Agent-lab scenarios. Each scenario is one chat; each [[scenario.turn]] is one
+# user message in it, so later turns carry earlier tool results in history.
+#
+#   prompt  — the user message
+#   steps   — scripted tier only: the tool calls the scripted model makes, in
+#             order ({runnable, args}); afterwards it greps a spilled result
+#             for anything in `need` it hasn't seen, then answers
+#   need    — strings the model must have *seen* to answer (scripted pass check)
+#   expect  — regex the final answer must match (live pass check)
+#
+# Payload sizes (raw shape): fake-jira-issue is ~20 KB at 10 comments, ~68 KB
+# at 40, ~196 KB at 120; fake-jira-search is ~30 KB per issue returned.
+# Compact shape is ~1.4 KB per issue (~0.5 KB per search hit).
+
+[[scenario]]
+name = "status-check"
+description = "One small question answered from a mid-size issue (under the 32 KB spill threshold when raw)"
+
+[[scenario.turn]]
+prompt = "What's the status of OPS-101?"
+steps = [{ runnable = "fake-jira-issue", args = { key = "OPS-101", comments = 12 } }]
+need = ["To Do"]
+expect = "to do"
+
+[[scenario]]
+name = "follow-up-chat"
+description = "Three turns in one chat; each earlier result rides along in every later call"
+
+[[scenario.turn]]
+prompt = "What's the status of OPS-101?"
+steps = [{ runnable = "fake-jira-issue", args = { key = "OPS-101", comments = 12 } }]
+need = ["To Do"]
+expect = "to do"
+
+[[scenario.turn]]
+prompt = "And who is OPS-102 assigned to?"
+steps = [{ runnable = "fake-jira-issue", args = { key = "OPS-102", comments = 12 } }]
+need = ["bob"]
+expect = "bob"
+
+[[scenario.turn]]
+prompt = "Is OPS-104 waiting on anyone?"
+steps = [{ runnable = "fake-jira-issue", args = { key = "OPS-104", comments = 12 } }]
+need = ["Waiting for support"]
+expect = "waiting"
+
+[[scenario]]
+name = "big-issue-latest-comment"
+description = "A long issue (spills when raw); the answer is in the newest comment"
+
+[[scenario.turn]]
+prompt = "What did the most recent comment on OPS-103 say?"
+steps = [{ runnable = "fake-jira-issue", args = { key = "OPS-103", comments = 60 } }]
+need = ["#59:"]
+expect = "rotation|97%"
+
+[[scenario]]
+name = "three-issues-one-turn"
+description = "Several mid-size results in one turn; each tool round re-sends the earlier ones"
+
+[[scenario.turn]]
+prompt = "Give me the status of OPS-101, OPS-102 and OPS-104."
+steps = [
+  { runnable = "fake-jira-issue", args = { key = "OPS-101", comments = 12 } },
+  { runnable = "fake-jira-issue", args = { key = "OPS-102", comments = 12 } },
+  { runnable = "fake-jira-issue", args = { key = "OPS-104", comments = 12 } },
+]
+need = ["To Do", "Done", "Waiting for support"]
+expect = "(?s)to do.*done|done.*to do"
+
+[[scenario]]
+name = "search-triage"
+description = "A JQL search returning many issues (spills when raw)"
+
+[[scenario.turn]]
+prompt = "List the open OPS issues and tell me which key is last in the results."
+steps = [{ runnable = "fake-jira-search", args = { jql = "project = OPS AND resolution = Unresolved", limit = 20 } }]
+need = ["OPS-119"]
+expect = "OPS-119"
