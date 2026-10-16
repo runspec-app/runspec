@@ -25,7 +25,9 @@ inside it; delete it to rebuild. Each variant runs in its own process.
 - **Scripted** (default): a scripted stand-in model makes each turn's `steps`,
   greps a spilled result for any `need` string it hasn't seen, then answers.
   No key, no network, same numbers every run. It measures the console's
-  plumbing, not model judgement. Tokens are estimates (chars / 4) of the tool
+  plumbing, not model judgement. It works in either tool layout: with
+  `tool_mode = "search"` it describes a runnable on first use in a chat, then
+  calls `run_runnable`. Tokens are estimates (chars / 4) of the tool
   schemas plus messages on each call (the system prompt is left out); the
   cache column is an estimate of what a prompt cache would bill.
 - **Live** (`--live`): a real model drives. The table shows the provider's own

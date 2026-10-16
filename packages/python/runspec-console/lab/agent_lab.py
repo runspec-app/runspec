@@ -175,16 +175,24 @@ class Meter:
 
 class ScriptedModel:
     """Makes a turn's scripted tool calls, greps a spill for what's missing,
-    then answers. Decides from what it was actually sent, like a model would."""
+    then answers. Decides from what it was actually sent, like a model would.
+
+    Works in either tool layout: with a tool per runnable it calls that tool;
+    in ``tool_mode = "search"`` (no per-runnable tools) it calls
+    ``describe_runnable`` the first time it uses a runnable in a chat, to learn
+    its arguments, then ``run_runnable``."""
 
     model = "scripted"
 
-    def __init__(self, tool_for: dict[str, str]) -> None:
-        self._tool_for = tool_for
+    def __init__(self) -> None:
         self.turn: dict[str, Any] = {}
         self._step = 0
         self._grepped: set[str] = set()
+        self._described: set[str] = set()
         self._n = 0
+
+    def new_chat(self) -> None:
+        self._described = set()
 
     def begin(self, turn: dict[str, Any]) -> None:
         self.turn, self._step, self._grepped = turn, 0, set()
@@ -196,6 +204,22 @@ class ScriptedModel:
         marker = json.dumps(self.turn["prompt"])[1:-1]
         cut = text.rfind(marker)
         return text[cut:] if cut >= 0 else text
+
+    def _runnable_call(
+        self, runnable: str, args: dict[str, Any], tool_names: set[str]
+    ) -> tuple[tuple[str, dict[str, Any]], bool]:
+        """The call for one scripted step, and whether it consumes the step."""
+        if runnable in tool_names:
+            return (runnable, args), True
+        if "run_runnable" in tool_names:
+            if runnable not in self._described:
+                self._described.add(runnable)
+                return ("describe_runnable", {"id": runnable}), False
+            return (
+                "run_runnable",
+                {"id": runnable, "host": "local", "args": args},
+            ), True
+        raise RuntimeError(f"no agent tool for runnable {runnable!r}")
 
     async def stream_with_tools(self, messages, tools, *args, **kwargs):
         from runspec_console.adapters.base import ChatResponse, ToolCall
@@ -209,11 +233,11 @@ class ScriptedModel:
         call = None
         if self._step < len(steps):
             st = steps[self._step]
-            self._step += 1
-            name = self._tool_for.get(st["runnable"])
-            if not name:
-                raise RuntimeError(f"no agent tool for runnable {st['runnable']!r}")
-            call = (name, dict(st.get("args", {})))
+            names = {t.get("name") for t in tools}
+            call, done = self._runnable_call(
+                st["runnable"], dict(st.get("args", {})), names
+            )
+            self._step += done
         elif missing and "tool-results/" in seen:
             todo = [n for n in missing if n not in self._grepped]
             if todo:
@@ -345,17 +369,12 @@ def run_variant(
         for s in t.get("steps", [])
     }
     _wait_discovery(bridge, runnables)
-    tool_for = {
-        t["name"]: t["name"]
-        for t in bridge._runnables_to_tools()
-        if t["name"] in runnables
-    }
     if args.live:
         inner = bridge._get_adapter()
         if inner is None:
             sys.exit("--live: no model adapter (check [llm] and the API key)")
     else:
-        inner = ScriptedModel(tool_for)
+        inner = ScriptedModel()
     meter = Meter(inner)
     bridge._adapter = meter
     bridge._get_adapter = lambda *a, **k: meter
@@ -365,6 +384,8 @@ def run_variant(
         for sample in range(args.samples):
             session = bridge.new_chat_session()["id"]
             meter._prev = ""
+            if isinstance(inner, ScriptedModel):
+                inner.new_chat()
             turns = []
             for turn in sc["turn"]:
                 if isinstance(inner, ScriptedModel):

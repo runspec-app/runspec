@@ -18,6 +18,9 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   model gives free, repeatable numbers; `--live` uses a real model and reports
   the provider's token counts. Variants cover spill thresholds and compact
   runnable output; scenarios and variants are TOML. See `lab/README.md`.
+- **Agent lab: search-mode variants.** `search` and `search+compact` run with
+  `[llm] tool_mode = "search"`; the scripted model describes a runnable the
+  first time it uses it in a chat, then calls `run_runnable`.
 
 ## [0.347.0] — 2026-10-16
 

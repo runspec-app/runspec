@@ -27,9 +27,9 @@ lab = _load("agent_lab", LAB / "agent_lab.py")
 jira = _load("runspec_lab_fakes_jira", LAB / "fakes" / "runspec_lab_fakes" / "jira.py")
 
 
-def _drain(model, messages):
+def _drain(model, messages, tools=()):
     async def go():
-        return [item async for item in model.stream_with_tools(messages, [])]
+        return [item async for item in model.stream_with_tools(messages, list(tools))]
 
     return asyncio.run(go())[-1][1]
 
@@ -41,14 +41,15 @@ def test_common_prefix():
 
 
 def test_scripted_model_steps_then_greps_a_spill_then_answers():
-    m = lab.ScriptedModel({"fake-jira-issue": "fake-jira-issue"})
+    m = lab.ScriptedModel()
+    tools = [{"name": "fake-jira-issue"}, {"name": "workspace_grep"}]
     turn = {
         "prompt": "status?",
         "steps": [{"runnable": "fake-jira-issue", "args": {"key": "OPS-1"}}],
         "need": ["To Do"],
     }
     m.begin(turn)
-    first = _drain(m, [{"role": "user", "content": "status?"}])
+    first = _drain(m, [{"role": "user", "content": "status?"}], tools)
     assert first.tool_calls[0].name == "fake-jira-issue"
     spilled = [
         {"role": "user", "content": "status?"},
@@ -61,8 +62,30 @@ def test_scripted_model_steps_then_greps_a_spill_then_answers():
     assert _drain(m, found).text == "ANSWERED"
 
 
+def test_scripted_model_in_search_mode_describes_once_then_runs():
+    m = lab.ScriptedModel()
+    tools = [{"name": n} for n in ("describe_runnable", "run_runnable")]
+    step = {"runnable": "fake-jira-issue", "args": {"key": "OPS-1"}}
+    m.begin({"prompt": "q", "steps": [step, step], "need": []})
+    msgs = [{"role": "user", "content": "q"}]
+    calls = [_drain(m, msgs, tools).tool_calls[0] for _ in range(3)]
+    assert [c.name for c in calls] == [
+        "describe_runnable",
+        "run_runnable",
+        "run_runnable",
+    ]
+    assert calls[1].input == {
+        "id": "fake-jira-issue",
+        "host": "local",
+        "args": {"key": "OPS-1"},
+    }
+    m.new_chat()
+    m.begin({"prompt": "q", "steps": [step], "need": []})
+    assert _drain(m, msgs, tools).tool_calls[0].name == "describe_runnable"
+
+
 def test_scripted_model_ignores_earlier_turns():
-    m = lab.ScriptedModel({})
+    m = lab.ScriptedModel()
     m.begin({"prompt": "second", "steps": [], "need": ["Done"]})
     msgs = [
         {"role": "user", "content": "first"},

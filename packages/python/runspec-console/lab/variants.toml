@@ -41,3 +41,20 @@ description = "Compact output and spill above 8 KB"
 config = { workspace = { spill_threshold = 8192 } }
 patch = { "runspec_console.bridge_autonomy._TOOL_OUTPUT_SPILL_THRESHOLD" = 8192 }
 env = { FAKE_JIRA_SHAPE = "compact" }
+
+# Search mode: the agent gets discovery tools (search_runnables /
+# describe_runnable / run_runnable) and a one-line-per-runnable catalogue
+# instead of one tool per runnable, and rarely used built-ins move behind
+# use_tool. The scripted model describes a runnable the first time it uses it
+# in a chat, then runs it through run_runnable.
+
+[[variant]]
+name = "search"
+description = "tool_mode = search, raw Jira output"
+config = { llm = { tool_mode = "search" } }
+
+[[variant]]
+name = "search+compact"
+description = "tool_mode = search and compact Jira output"
+config = { llm = { tool_mode = "search" } }
+env = { FAKE_JIRA_SHAPE = "compact" }
