@@ -1,0 +1,47 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "runspec-grafana"
+version = "0.1.0"
+requires-python = ">=3.10"
+description = "Grafana runnable for runspec — dashboards, datasources, PromQL and LogQL through Grafana, alert rules, silences, and annotations, ported from the Grafana MCP server"
+readme = "README.md"
+keywords = ["runspec", "runnable", "grafana", "prometheus", "loki", "monitoring", "observability", "mcp"]
+dependencies = [
+    # 0.73.1 keeps httpx's INFO request lines off stdout, so the JSON result
+    # is the only thing an agent reads.
+    "runspec>=0.73.1",
+    "runspec-grafana-core>=0.1.0",
+]
+
+[project.urls]
+Documentation = "https://runspec.app/"
+Source        = "https://github.com/jasonfinestone/runspec/tree/main/packages/python/runspec-grafana"
+Changelog     = "https://github.com/jasonfinestone/runspec/blob/main/packages/python/runspec-grafana/CHANGELOG.md"
+Issues        = "https://github.com/jasonfinestone/runspec/issues"
+
+[project.scripts]
+# Entry point name MUST match the runnable name in runspec.toml (`grafana`).
+grafana = "runspec_grafana.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "ruff==0.15.20",
+    "mypy",
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.10"
+
+[tool.ruff]
+line-length = 200
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

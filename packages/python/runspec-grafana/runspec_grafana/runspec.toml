@@ -1,0 +1,324 @@
+#:schema https://runspec.app/runspec.schema.json
+
+# runspec-grafana — Grafana as a runspec runnable, ported from the read tools of
+# the Grafana MCP server: https://github.com/grafana/mcp-grafana
+#
+# One runnable, `grafana`, with a verb per tool. Everything is read-only and
+# `autonomous` except create-annotation, which is `confirm`. `runspec serve`
+# re-expands each verb into its own leaf MCP tool (grafana_search-dashboards,
+# grafana_query-prometheus, …), so a runspec-console agent calls them
+# individually — over SSH on any fleet host.
+#
+# The tools are PORTED onto the Grafana HTTP API, not proxied from the MCP
+# server, so no extra process is involved. PromQL and LogQL go through Grafana's
+# datasource proxy, so only the Grafana token is needed, never the datasource's.
+# Auth is env-var driven:
+#   GRAFANA_URL (default http://127.0.0.1:3000 — right when this runs on the
+#   Grafana host), GRAFANA_SERVICE_ACCOUNT_TOKEN (or GRAFANA_TOKEN) — a service
+#   account token, Viewer role covers every read — or GRAFANA_USERNAME +
+#   GRAFANA_PASSWORD (basic), GRAFANA_ORG_ID, GRAFANA_CA_BUNDLE,
+#   GRAFANA_TLS_VERIFY, GRAFANA_PROXY. Per-instance overrides use a
+#   GRAFANA_<ENV>_ prefix, selected with --env.
+#
+# Times accept Unix seconds or milliseconds, RFC 3339, now-1h, or a duration
+# back from now (5m, 1h30m).
+
+[config]
+autonomy-default = "confirm"
+
+[config.logging]
+store = "per-run"
+
+[grafana]
+description = "Search Grafana dashboards and datasources, query Prometheus and Loki through Grafana, and read alert rules, silences, contact points, and annotations"
+output = "json"
+require-command = true
+examples = [
+  {cmd = "grafana search-dashboards --query api", description = "Find dashboards with 'api' in the title"},
+  {cmd = "grafana get-dashboard --uid abc123 --include queries", description = "A dashboard's panels with the query behind each"},
+  {cmd = "grafana query-prometheus --query 'up == 0'", description = "Which targets are down, via the default Prometheus datasource"},
+  {cmd = "grafana query-loki-logs --query '{app=\"api\"} |= \"error\"' --start 30m", description = "Recent error lines from one app"},
+  {cmd = "grafana list-alert-rules --state firing --include alerts", description = "Firing alerts and the series behind them"},
+  {cmd = "grafana --env prod create-annotation --text 'deploy v2.3' --tag deploy", description = "Mark a deploy on every dashboard that shows deploy annotations"},
+]
+
+# ── global args (inherited by every verb) ──────────────────────────────────
+[grafana.args]
+env = {type = "str", short = "-e", required = false, description = "Instance label: reads GRAFANA_<ENV>_* vars first (e.g. prod, prod-eu), falling back to GRAFANA_*"}
+url = {type = "str", required = false, description = "Grafana base URL; overrides GRAFANA_URL (default http://127.0.0.1:3000)"}
+org-id = {type = "str", required = false, description = "Organization ID (X-Grafana-Org-Id); overrides GRAFANA_ORG_ID. whoami lists the orgs you can reach"}
+grafana-token = {type = "password", required = false, description = "Service account token; overrides GRAFANA_SERVICE_ACCOUNT_TOKEN. Supplied via the runspec-console credential/secret channel (RUNSPEC_GRAFANA_ARG_GRAFANA_TOKEN), never on the command line."}
+
+# ── identity / server → autonomous ─────────────────────────────────────────
+
+[grafana.commands.whoami]
+description = "Show who the credentials are: login, server-admin flag, current org, and the orgs (with roles) they can reach"
+autonomy = "autonomous"
+
+[grafana.commands.health]
+description = "Check the Grafana server: version, commit, and database status"
+autonomy = "autonomous"
+
+# ── search / dashboards → autonomous ───────────────────────────────────────
+
+[grafana.commands.search-dashboards]
+description = "Find dashboards by title text, tag, folder, or starred; returns uid, title, folder, tags, and URL for each"
+autonomy = "autonomous"
+[grafana.commands.search-dashboards.args]
+query = {type = "str", short = "-q", required = false, description = "Text to find in the dashboard title"}
+tag = {type = "str", multiple = true, required = false, description = "Only dashboards with this tag (repeat; all must match)"}
+folder-uid = {type = "str", multiple = true, required = false, description = "Only dashboards in this folder (UID from search-folders; repeat)"}
+starred = {type = "flag", default = false, description = "Only dashboards the caller starred"}
+limit = {type = "int", default = 50, description = "Most dashboards to return (0 = all)"}
+
+[grafana.commands.search-folders]
+description = "Find dashboard folders by title text"
+autonomy = "autonomous"
+[grafana.commands.search-folders.args]
+query = {type = "str", short = "-q", required = false, description = "Text to find in the folder title"}
+limit = {type = "int", default = 50, description = "Most folders to return (0 = all)"}
+
+[grafana.commands.get-dashboard]
+description = "Show a dashboard as a compact summary: folder, tags, variables, and one row per panel (title, type, datasource, query count). Add --include queries for each panel's query text, or --raw for the full JSON"
+autonomy = "autonomous"
+[grafana.commands.get-dashboard.args]
+uid = {type = "str", short = "-u", required = true, description = "Dashboard UID (from search-dashboards or the /d/<uid>/ part of its URL)"}
+include = {type = "choice", options = ["queries", "links"], multiple = true, delimiter = ",", required = false, description = "Add parts: queries (each panel's query text + datasource), links (dashboard links)"}
+panel = {type = "int", required = false, description = "Only this panel (its id from the summary)"}
+version = {type = "int", required = false, description = "A saved version number (from list-dashboard-versions) instead of the current dashboard"}
+raw = {type = "flag", default = false, description = "Return the full dashboard JSON as the API sends it (large)"}
+
+[grafana.commands.list-dashboard-versions]
+description = "List a dashboard's saved versions, newest first: version, time, author, message"
+autonomy = "autonomous"
+[grafana.commands.list-dashboard-versions.args]
+uid = {type = "str", short = "-u", required = true, description = "Dashboard UID"}
+limit = {type = "int", default = 20, description = "Most versions to return (0 = all)"}
+
+# ── datasources → autonomous ───────────────────────────────────────────────
+
+[grafana.commands.list-datasources]
+description = "List configured datasources: uid, name, type, and which is the default"
+autonomy = "autonomous"
+[grafana.commands.list-datasources.args]
+type = {type = "str", short = "-t", required = false, description = "Only this plugin type, e.g. prometheus, loki, tempo, postgres"}
+limit = {type = "int", default = 100, description = "Most datasources to return (0 = all)"}
+
+[grafana.commands.get-datasource]
+description = "Show one datasource's settings; secrets are named only, never shown"
+autonomy = "autonomous"
+[grafana.commands.get-datasource.args]
+datasource = {type = "str", short = "-d", required = true, description = "Datasource UID or name"}
+
+[grafana.commands.check-datasource]
+description = "Run datasource health checks (Grafana's Save & test) and report which fail"
+autonomy = "autonomous"
+[grafana.commands.check-datasource.args]
+datasource = {type = "str", short = "-d", multiple = true, required = false, description = "Datasource UID or name (repeat); all datasources when omitted"}
+limit = {type = "int", default = 50, description = "Most datasources to check when none are named (0 = all)"}
+
+# ── Prometheus through Grafana → autonomous ────────────────────────────────
+
+[grafana.commands.query-prometheus]
+description = "Run a PromQL query against a Prometheus datasource. Instant by default; --query-type range summarises each series (points, first, last, min, max) unless --include-values"
+autonomy = "autonomous"
+[grafana.commands.query-prometheus.args]
+query = {type = "str", short = "-q", required = true, description = "The PromQL expression"}
+datasource = {type = "str", short = "-d", required = false, description = "Prometheus datasource UID or name; default: the default (or only) Prometheus datasource"}
+query-type = {type = "choice", options = ["instant", "range"], default = "instant", description = "instant: one value per series; range: values over a window"}
+time = {type = "str", required = false, description = "Instant query time (Unix seconds, RFC 3339, now-1h, or 1h). Default now"}
+start = {type = "str", required = false, description = "Range start, same forms. Default 1h before end"}
+end = {type = "str", required = false, description = "Range end. Default now"}
+step = {type = "str", required = false, description = "Range resolution step (e.g. 30s, 5m). Default gives about 250 points"}
+include-values = {type = "flag", default = false, description = "Range queries: return every sample, not just the per-series summary"}
+limit = {type = "int", default = 50, description = "Most series to return (0 = all)"}
+
+[grafana.commands.query-prometheus-histogram]
+description = "Compute a percentile (p50, p95, p99 …) from a histogram metric with histogram_quantile; returns the PromQL it ran"
+autonomy = "autonomous"
+[grafana.commands.query-prometheus-histogram.args]
+metric = {type = "str", short = "-m", required = true, description = "Histogram base name, e.g. http_request_duration_seconds (_bucket is added)"}
+percentile = {type = "float", default = 95.0, range = [0.1, 99.99], description = "Percentile, e.g. 50, 95, 99.9"}
+selector = {type = "str", required = false, description = "Label matchers, e.g. job=\"api\",route=\"/login\" (braces optional)"}
+by = {type = "str", multiple = true, required = false, description = "Keep series apart by this label (repeat), e.g. route"}
+rate-interval = {type = "str", default = "5m", description = "rate() window"}
+datasource = {type = "str", short = "-d", required = false, description = "Prometheus datasource UID or name; default: the default Prometheus datasource"}
+query-type = {type = "choice", options = ["instant", "range"], default = "instant", description = "instant: now (or --time); range: over --start..--end"}
+time = {type = "str", required = false, description = "Instant query time. Default now"}
+start = {type = "str", required = false, description = "Range start. Default 1h before end"}
+end = {type = "str", required = false, description = "Range end. Default now"}
+step = {type = "str", required = false, description = "Range resolution step"}
+include-values = {type = "flag", default = false, description = "Range queries: return every sample"}
+limit = {type = "int", default = 50, description = "Most series to return (0 = all)"}
+
+[grafana.commands.list-prometheus-metric-names]
+description = "List metric names in a Prometheus datasource, optionally filtered by a regex"
+autonomy = "autonomous"
+[grafana.commands.list-prometheus-metric-names.args]
+regex = {type = "str", short = "-r", required = false, description = "Keep names matching this regex (searched, case-insensitive), e.g. ^http_"}
+match = {type = "str", multiple = true, required = false, description = "Only metrics on series matching this selector (repeat)"}
+datasource = {type = "str", short = "-d", required = false, description = "Prometheus datasource UID or name"}
+start = {type = "str", required = false, description = "Window start"}
+end = {type = "str", required = false, description = "Window end"}
+limit = {type = "int", default = 100, description = "Most names to return (0 = all)"}
+
+[grafana.commands.list-prometheus-label-names]
+description = "List label names in a Prometheus datasource, optionally only those on series matching a selector"
+autonomy = "autonomous"
+[grafana.commands.list-prometheus-label-names.args]
+match = {type = "str", multiple = true, required = false, description = "Series selector to filter by (repeat)"}
+datasource = {type = "str", short = "-d", required = false, description = "Prometheus datasource UID or name"}
+start = {type = "str", required = false, description = "Window start"}
+end = {type = "str", required = false, description = "Window end"}
+limit = {type = "int", default = 100, description = "Most names to return (0 = all)"}
+
+[grafana.commands.list-prometheus-label-values]
+description = "List the values of one label (e.g. job, instance) in a Prometheus datasource"
+autonomy = "autonomous"
+[grafana.commands.list-prometheus-label-values.args]
+label = {type = "str", short = "-l", required = true, description = "Label name, e.g. job"}
+match = {type = "str", multiple = true, required = false, description = "Series selector to filter by (repeat)"}
+datasource = {type = "str", short = "-d", required = false, description = "Prometheus datasource UID or name"}
+start = {type = "str", required = false, description = "Window start"}
+end = {type = "str", required = false, description = "Window end"}
+limit = {type = "int", default = 100, description = "Most values to return (0 = all)"}
+
+[grafana.commands.list-prometheus-metric-metadata]
+description = "Show type, help text, and unit for metrics in a Prometheus datasource"
+autonomy = "autonomous"
+[grafana.commands.list-prometheus-metric-metadata.args]
+metric = {type = "str", short = "-m", required = false, description = "Metric name; all metrics when omitted"}
+datasource = {type = "str", short = "-d", required = false, description = "Prometheus datasource UID or name"}
+limit = {type = "int", default = 50, description = "Most metrics to return (0 = all)"}
+
+# ── Loki through Grafana → autonomous ──────────────────────────────────────
+
+[grafana.commands.query-loki-logs]
+description = "Run a LogQL query against a Loki datasource. Log queries return lines newest first (labels listed once per stream); metric queries return per-series summaries"
+autonomy = "autonomous"
+[grafana.commands.query-loki-logs.args]
+query = {type = "str", short = "-q", required = true, description = "LogQL, e.g. {app=\"api\"} |= \"error\""}
+datasource = {type = "str", short = "-d", required = false, description = "Loki datasource UID or name; default: the default (or only) Loki datasource"}
+start = {type = "str", required = false, description = "Window start (Unix seconds, RFC 3339, now-1h, or 1h). Default 1h before end"}
+end = {type = "str", required = false, description = "Window end. Default now"}
+direction = {type = "choice", options = ["backward", "forward"], default = "backward", description = "backward: newest first; forward: oldest first"}
+max-line-chars = {type = "int", default = 500, description = "Cut each log line to this many characters (0 = whole line)"}
+include-values = {type = "flag", default = false, description = "Metric queries: return every sample, not just the summary"}
+limit = {type = "int", default = 50, description = "Most log lines (or series) to return (0 = Loki's maximum)"}
+
+[grafana.commands.list-loki-label-names]
+description = "List log label names in a Loki datasource"
+autonomy = "autonomous"
+[grafana.commands.list-loki-label-names.args]
+query = {type = "str", short = "-q", required = false, description = "Only labels on streams matching this selector, e.g. {namespace=\"prod\"}"}
+datasource = {type = "str", short = "-d", required = false, description = "Loki datasource UID or name"}
+start = {type = "str", required = false, description = "Window start. Default 1h ago"}
+end = {type = "str", required = false, description = "Window end. Default now"}
+limit = {type = "int", default = 100, description = "Most names to return (0 = all)"}
+
+[grafana.commands.list-loki-label-values]
+description = "List the values of one log label (e.g. app, namespace) in a Loki datasource"
+autonomy = "autonomous"
+[grafana.commands.list-loki-label-values.args]
+label = {type = "str", short = "-l", required = true, description = "Label name, e.g. app"}
+query = {type = "str", short = "-q", required = false, description = "Only values on streams matching this selector"}
+datasource = {type = "str", short = "-d", required = false, description = "Loki datasource UID or name"}
+start = {type = "str", required = false, description = "Window start. Default 1h ago"}
+end = {type = "str", required = false, description = "Window end. Default now"}
+limit = {type = "int", default = 100, description = "Most values to return (0 = all)"}
+
+[grafana.commands.query-loki-stats]
+description = "Show how much a stream selector covers (streams, chunks, entries, bytes) — check before a broad log query"
+autonomy = "autonomous"
+[grafana.commands.query-loki-stats.args]
+query = {type = "str", short = "-q", required = true, description = "Stream selector, e.g. {app=\"api\"}"}
+datasource = {type = "str", short = "-d", required = false, description = "Loki datasource UID or name"}
+start = {type = "str", required = false, description = "Window start. Default 1h ago"}
+end = {type = "str", required = false, description = "Window end. Default now"}
+
+[grafana.commands.query-loki-patterns]
+description = "Show the log patterns Loki detected for a stream selector, most frequent first (needs Loki's pattern ingester)"
+autonomy = "autonomous"
+[grafana.commands.query-loki-patterns.args]
+query = {type = "str", short = "-q", required = true, description = "Stream selector, e.g. {app=\"api\"}"}
+datasource = {type = "str", short = "-d", required = false, description = "Loki datasource UID or name"}
+start = {type = "str", required = false, description = "Window start. Default 1h ago"}
+end = {type = "str", required = false, description = "Window end. Default now"}
+limit = {type = "int", default = 20, description = "Most patterns to return (0 = all)"}
+
+# ── alerting → autonomous ──────────────────────────────────────────────────
+
+[grafana.commands.list-alert-rules]
+description = "List alert rules and their state (firing first), with counts by state. Add --include alerts for the firing series"
+autonomy = "autonomous"
+[grafana.commands.list-alert-rules.args]
+state = {type = "choice", options = ["firing", "pending", "inactive", "error", "nodata"], required = false, description = "Only rules in this state (or health)"}
+search = {type = "str", short = "-s", required = false, description = "Only rules whose name contains this text"}
+folder = {type = "str", required = false, description = "Only rules in this folder (title)"}
+datasource = {type = "str", short = "-d", required = false, description = "Read a Prometheus/Loki/Mimir datasource's own rules instead of Grafana-managed rules"}
+include = {type = "choice", options = ["alerts", "query", "annotations"], multiple = true, delimiter = ",", required = false, description = "Add parts: alerts (up to 10 active alerts per rule), query, annotations"}
+limit = {type = "int", default = 100, description = "Most rules to return (0 = all)"}
+
+[grafana.commands.get-alert-rule]
+description = "Show a Grafana-managed alert rule's definition: condition, queries, labels, annotations, pending period"
+autonomy = "autonomous"
+[grafana.commands.get-alert-rule.args]
+uid = {type = "str", short = "-u", required = true, description = "Alert rule UID (from list-alert-rules)"}
+raw = {type = "flag", default = false, description = "Return the rule as the provisioning API sends it"}
+
+[grafana.commands.list-contact-points]
+description = "List notification contact points: uid, name, and type"
+autonomy = "autonomous"
+[grafana.commands.list-contact-points.args]
+name = {type = "str", short = "-n", required = false, description = "Only the contact point with this name"}
+include-settings = {type = "flag", default = false, description = "Add each contact point's settings (Grafana redacts secrets)"}
+limit = {type = "int", default = 100, description = "Most contact points to return (0 = all)"}
+
+[grafana.commands.list-silences]
+description = "List silences in Grafana's Alertmanager, with their matchers and end times"
+autonomy = "autonomous"
+[grafana.commands.list-silences.args]
+state = {type = "choice", options = ["active", "pending", "expired", "any"], default = "active", description = "Which silences to show"}
+limit = {type = "int", default = 100, description = "Most silences to return (0 = all)"}
+
+# ── annotations ────────────────────────────────────────────────────────────
+
+[grafana.commands.get-annotations]
+description = "List annotations (deploys, incidents, alert state changes) in a time window, newest first"
+autonomy = "autonomous"
+[grafana.commands.get-annotations.args]
+start = {type = "str", required = false, description = "Window start (Unix seconds or ms, RFC 3339, now-1h, or 1h). Default 24h before end"}
+end = {type = "str", required = false, description = "Window end. Default now"}
+dashboard-uid = {type = "str", required = false, description = "Only annotations on this dashboard"}
+panel = {type = "int", required = false, description = "Only annotations on this panel id"}
+tag = {type = "str", multiple = true, required = false, description = "Only annotations with this tag (repeat; all must match unless --match-any)"}
+match-any = {type = "flag", default = false, description = "Match annotations with any of the tags"}
+type = {type = "choice", options = ["annotation", "alert"], required = false, description = "annotation: made by people or tools; alert: alert state changes"}
+limit = {type = "int", default = 100, description = "Most annotations to return (0 = all)"}
+
+[grafana.commands.get-annotation-tags]
+description = "List annotation tags in use, with a count for each"
+autonomy = "autonomous"
+[grafana.commands.get-annotation-tags.args]
+tag = {type = "str", required = false, description = "Only tags starting with this text"}
+limit = {type = "int", default = 100, description = "Most tags to return"}
+
+[grafana.commands.create-annotation]
+description = "Add an annotation (e.g. a deploy marker) at a time or over a time range — on one dashboard, or organization-wide with tags"
+autonomy = "confirm"
+[grafana.commands.create-annotation.args]
+text = {type = "str", short = "-t", required = true, description = "Annotation text"}
+tag = {type = "str", multiple = true, required = false, description = "Tag (repeat), e.g. deploy"}
+dashboard-uid = {type = "str", required = false, description = "Put it on this dashboard; omit for an organization-wide annotation"}
+panel = {type = "int", required = false, description = "Put it on this panel (needs --dashboard-uid)"}
+time = {type = "str", required = false, description = "When (Unix seconds or ms, RFC 3339, now-5m, or 5m). Default now"}
+end = {type = "str", required = false, description = "End time, for a region annotation"}
+
+# ── escape hatch → autonomous (GET only) ───────────────────────────────────
+
+[grafana.commands.api-get]
+description = "GET any Grafana HTTP API path (read-only) and return its JSON as-is — for what the other verbs don't cover, e.g. /api/org, /api/teams/search"
+autonomy = "autonomous"
+[grafana.commands.api-get.args]
+path = {type = "str", short = "-p", required = true, description = "API path starting with /api/, e.g. /api/org"}
+param = {type = "str", multiple = true, required = false, description = "Query parameter as key=value (repeat)"}

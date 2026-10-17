@@ -63,6 +63,8 @@ jobs:
       gitlab-core: ${{ steps.filter.outputs.gitlab-core }}
       prometheus: ${{ steps.filter.outputs.prometheus }}
       prometheus-core: ${{ steps.filter.outputs.prometheus-core }}
+      grafana: ${{ steps.filter.outputs.grafana }}
+      grafana-core: ${{ steps.filter.outputs.grafana-core }}
       rundeck: ${{ steps.filter.outputs.rundeck }}
       rundeck-core: ${{ steps.filter.outputs.rundeck-core }}
       jira: ${{ steps.filter.outputs.jira }}
@@ -168,6 +170,11 @@ jobs:
               - 'packages/python/runspec-prometheus-core/**'
             prometheus-core:
               - 'packages/python/runspec-prometheus-core/**'
+            grafana:
+              - 'packages/python/runspec-grafana/**'
+              - 'packages/python/runspec-grafana-core/**'
+            grafana-core:
+              - 'packages/python/runspec-grafana-core/**'
               - '.github/workflows/ci.yml'
             rundeck:
               - 'packages/python/runspec-rundeck/**'
@@ -2328,6 +2335,169 @@ jobs:
           print('Wheel contents OK')
           "
 
+  # ── runspec-grafana-core ──────────────────────────────────────────────────
+
+  grafana-core-quality:
+    name: "grafana-core quality / ${{ matrix.check }}"
+    needs: changes
+    if: needs.changes.outputs.grafana-core == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [lint, format]
+    defaults:
+      run:
+        working-directory: packages/python/runspec-grafana-core
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Lint
+        if: matrix.check == 'lint'
+        run: ruff check .
+
+      - name: Format check
+        if: matrix.check == 'format'
+        run: ruff format --check .
+
+  grafana-core-test:
+    name: runspec-grafana-core test
+    needs: changes
+    if: needs.changes.outputs.grafana-core == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/python/runspec-grafana-core
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          cache: pip
+          cache-dependency-path: packages/python/runspec-grafana-core/pyproject.toml
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Type check
+        run: mypy runspec_grafana_core/
+
+      - name: Run tests
+        run: pytest
+
+      - name: Build wheel
+        run: |
+          pip install build
+          python -m build --wheel
+
+      - name: Wheel smoke test
+        run: |
+          python -m venv /tmp/smoke-core
+          /tmp/smoke-core/bin/pip install dist/*.whl
+          # The split's contract: importable helpers, but no runspec dependency,
+          # no runspec.toml, and no console scripts — so it surfaces no runnables.
+          /tmp/smoke-core/bin/python -c "
+          import importlib.metadata as m
+          from runspec_grafana_core import search_dashboards, query_prometheus
+          reqs = m.requires('runspec-grafana-core') or []
+          assert not any(r.split()[0].lower().startswith('runspec') for r in reqs), f'core must not depend on runspec: {reqs}'
+          eps = m.entry_points()
+          scripts = [e.name for e in eps.select(group='console_scripts') if e.value.startswith('runspec_grafana_core')]
+          assert not scripts, f'core must not ship console scripts: {scripts}'
+          print('core surface OK — importable, zero runnables')
+          "
+
+  # ── runspec-grafana ───────────────────────────────────────────────────────────
+
+  grafana-quality:
+    name: "grafana quality / ${{ matrix.check }}"
+    needs: changes
+    if: needs.changes.outputs.grafana == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [lint, format]
+    defaults:
+      run:
+        working-directory: packages/python/runspec-grafana
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        # runspec-grafana-core isn't published yet — install it from the sibling
+        # source so the runspec-grafana deps resolve locally.
+        run: |
+          pip install -e ../runspec-grafana-core
+          pip install -e ".[dev]"
+
+      - name: Lint
+        if: matrix.check == 'lint'
+        run: ruff check .
+
+      - name: Format check
+        if: matrix.check == 'format'
+        run: ruff format --check .
+
+  grafana-test:
+    name: runspec-grafana test
+    needs: changes
+    if: needs.changes.outputs.grafana == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/python/runspec-grafana
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          cache: pip
+          cache-dependency-path: packages/python/runspec-grafana/pyproject.toml
+          python-version: "3.12"
+
+      - name: Install dependencies
+        # runspec-grafana-core isn't published yet — install it from the sibling
+        # source so the runspec-grafana deps resolve locally.
+        run: |
+          pip install -e ../runspec-grafana-core
+          pip install -e ".[dev]"
+
+      - name: Run tests
+        run: pytest
+
+      - name: Build wheel
+        run: |
+          pip install build
+          python -m build --wheel
+
+      - name: Wheel smoke test
+        run: |
+          python -m venv /tmp/smoke
+          # Install the unpublished core dependency first, then the wheel under test.
+          /tmp/smoke/bin/pip install ../runspec-grafana-core
+          /tmp/smoke/bin/pip install dist/*.whl
+          /tmp/smoke/bin/grafana --help
+          /tmp/smoke/bin/python -c "
+          from importlib.resources import files
+          pkg = files('runspec_grafana')
+          assert (pkg / 'runspec.toml').is_file(), 'runspec.toml missing from wheel'
+          from runspec_grafana import search_dashboards
+          print('Wheel contents OK')
+          "
+
   # ── runspec-rundeck-core ─────────────────────────────────────────────────────
 
   rundeck-core-quality:
@@ -2925,7 +3095,7 @@ jobs:
 
   ci:
     name: CI
-    needs: [python-quality, python-test, node, linux-quality, linux-test, linux-core-quality, linux-core-test, linux-root-quality, linux-root-test, jsm-quality, jsm-test, snow-quality, snow-test, logops-quality, logops-test, logops-core-quality, logops-core-test, playbook-quality, playbook-test, claude-quality, claude-test, scheduler-quality, scheduler-test, mcp-quality, mcp-test, console-room-quality, console-room-test, windows-quality, windows-unit, windows-smoke, o365-quality, o365-test, console-quality, console-test, console-test-windows, console-ui, console-smoke, console-app-smoke, webops, webops-core-quality, webops-core-test, fs-core-quality, fs-core-test, fs-quality, fs-test, gitlab-core-quality, gitlab-core-test, gitlab-quality, gitlab-test, prometheus-core-quality, prometheus-core-test, prometheus-quality, prometheus-test, rundeck-core-quality, rundeck-core-test, rundeck-quality, rundeck-test, jira-core-quality, jira-core-test, jira-quality, jira-test, confluence-core-quality, confluence-core-test, confluence-quality, confluence-test, docs-check]
+    needs: [python-quality, python-test, node, linux-quality, linux-test, linux-core-quality, linux-core-test, linux-root-quality, linux-root-test, jsm-quality, jsm-test, snow-quality, snow-test, logops-quality, logops-test, logops-core-quality, logops-core-test, playbook-quality, playbook-test, claude-quality, claude-test, scheduler-quality, scheduler-test, mcp-quality, mcp-test, console-room-quality, console-room-test, windows-quality, windows-unit, windows-smoke, o365-quality, o365-test, console-quality, console-test, console-test-windows, console-ui, console-smoke, console-app-smoke, webops, webops-core-quality, webops-core-test, fs-core-quality, fs-core-test, fs-quality, fs-test, gitlab-core-quality, gitlab-core-test, gitlab-quality, gitlab-test, prometheus-core-quality, prometheus-core-test, prometheus-quality, prometheus-test, grafana-core-quality, grafana-core-test, grafana-quality, grafana-test, rundeck-core-quality, rundeck-core-test, rundeck-quality, rundeck-test, jira-core-quality, jira-core-test, jira-quality, jira-test, confluence-core-quality, confluence-core-test, confluence-quality, confluence-test, docs-check]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -2995,6 +3165,10 @@ jobs:
           check "prometheus-core-test"    "${{ needs.prometheus-core-test.result }}"
           check "prometheus-quality"  "${{ needs.prometheus-quality.result }}"
           check "prometheus-test"     "${{ needs.prometheus-test.result }}"
+          check "grafana-core-quality" "${{ needs.grafana-core-quality.result }}"
+          check "grafana-core-test"    "${{ needs.grafana-core-test.result }}"
+          check "grafana-quality"  "${{ needs.grafana-quality.result }}"
+          check "grafana-test"     "${{ needs.grafana-test.result }}"
           check "rundeck-core-quality" "${{ needs.rundeck-core-quality.result }}"
           check "rundeck-core-test"    "${{ needs.rundeck-core-test.result }}"
           check "rundeck-quality" "${{ needs.rundeck-quality.result }}"
