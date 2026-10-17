@@ -91,7 +91,7 @@ describe('TelemetryTab Save round-trip', () => {
 
     const user = userEvent.setup()
     await act(async () => {
-      await user.click(screen.getByRole('button', { name: 'Save' }))
+      await user.click(screen.getByRole('button', { name: 'Save telemetry settings' }))
     })
 
     await waitFor(() => expect(saveConfig).toHaveBeenCalledTimes(1))
@@ -144,7 +144,7 @@ describe('TelemetryTab Save round-trip', () => {
     const user = userEvent.setup()
     await user.click(await screen.findByRole('button', { name: /use local phoenix/i }))
     await act(async () => {
-      await user.click(screen.getByRole('button', { name: 'Save' }))
+      await user.click(screen.getByRole('button', { name: 'Save telemetry settings' }))
     })
     await waitFor(() => expect(saveConfig).toHaveBeenCalledTimes(1))
     const saved = saveConfig.mock.calls[0][0] as { telemetry: Record<string, unknown> }
@@ -159,7 +159,7 @@ describe('TelemetryTab Save round-trip', () => {
     const user = userEvent.setup()
     await user.click(await screen.findByRole('button', { name: /use arize ax/i }))
     await act(async () => {
-      await user.click(screen.getByRole('button', { name: 'Save' }))
+      await user.click(screen.getByRole('button', { name: 'Save telemetry settings' }))
     })
     await waitFor(() => expect(saveConfig).toHaveBeenCalledTimes(1))
     const saved = saveConfig.mock.calls[0][0] as { telemetry: Record<string, unknown> }
@@ -177,7 +177,7 @@ describe('TelemetryTab Save round-trip', () => {
     await screen.findByDisplayValue('rc-dev')
     const user = userEvent.setup()
     await act(async () => {
-      await user.click(screen.getByRole('button', { name: 'Save' }))
+      await user.click(screen.getByRole('button', { name: 'Save telemetry settings' }))
     })
     await waitFor(() => expect(saveConfig).toHaveBeenCalledTimes(1))
     const saved = saveConfig.mock.calls[0][0] as { telemetry: Record<string, unknown> }
@@ -215,6 +215,30 @@ describe('TelemetryTab Save round-trip', () => {
     await screen.findByText(/0123456789abcdef0123456789abcdef/)
   })
 
+  it('has one Save, after the metrics section, that names the whole tab', async () => {
+    render(<TelemetryTab />)
+    await screen.findByDisplayValue('https://langsmith.internal/otel/v1/traces')
+    const saves = screen.getAllByRole('button', { name: /^save/i })
+    expect(saves).toHaveLength(1)
+    const testMetric = screen.getByRole('button', { name: /send test metric/i })
+    // Save comes after the metrics controls in the document, not between sections.
+    expect(testMetric.compareDocumentPosition(saves[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(screen.getByText('Saves the trace and metrics settings together.')).toBeTruthy()
+  })
+
+  it('refreshes the credential pickers when a credential is added elsewhere', async () => {
+    render(<TelemetryTab />)
+    await screen.findByDisplayValue('https://langsmith.internal/otel/v1/traces')
+    await waitFor(() => expect(credOptions).toHaveBeenCalledTimes(1))
+    credOptions.mockResolvedValue([
+      { id: 'langsmith-key', label: 'LangSmith', kind: 'token' },
+      { id: 'grafana-key', label: 'Grafana', kind: 'userpass' },
+      { id: 'arize-key', label: 'Arize', kind: 'token' },
+    ])
+    act(() => { window.dispatchEvent(new CustomEvent('runspec:credentials-changed')) })
+    await waitFor(() => expect(credOptions).toHaveBeenCalledTimes(2))
+  })
+
   it('renders metrics-only when AI is off (traces controls hidden, metrics + Save shown)', async () => {
     await act(async () => {
       render(
@@ -231,6 +255,6 @@ describe('TelemetryTab Save round-trip', () => {
     expect(screen.getByText('Enable metrics')).toBeTruthy()
     expect(screen.getByRole('button', { name: /send test metric/i })).toBeTruthy()
     expect(screen.getByText('Instance label')).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Save' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Save telemetry settings' })).toBeTruthy()
   })
 })

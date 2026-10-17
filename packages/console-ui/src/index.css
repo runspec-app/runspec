@@ -139,6 +139,43 @@ body {
   outline-offset: -2px;
 }
 
+/* Settings modal: a fixed-height dialog whose tab strip stays put while the
+   tab content scrolls underneath it (the strip used to scroll away). */
+.rs-settings-modal .ant-modal-content {
+  height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+}
+.rs-settings-modal .ant-modal-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.rs-settings-tabs { flex: 1; min-height: 0; }
+.rs-settings-tabs > .ant-tabs-content-holder {
+  overflow-y: auto;
+  padding: 16px 8px 0 0;
+}
+.rs-settings-tabbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--rs-border);
+}
+
+/* Settings tab columns: side-by-side sections that fall back to one column
+   when the dialog is too narrow for two. */
+.rs-settings-cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 520px), 1fr));
+  column-gap: 40px;
+  row-gap: 4px;
+  align-items: start;
+}
+.rs-settings-cols > * { min-width: 0; }
+
 /* Clickable card: rests at the small shadow, lifts to the medium one on hover.
    Colour/border changes stay inline (they depend on the accent); the lift is
    pure CSS so it never re-renders. */

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
-import { Drawer, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Empty, Table, Slider, Progress } from 'antd'
+import { theme, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Empty, Table, Slider, Progress } from 'antd'
 import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, RightOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined, SearchOutlined, SoundOutlined, CloudServerOutlined, DiffOutlined } from '@ant-design/icons'
 import { VoiceConfig, VoiceDevice, bridge, type JumpHost, type LocalVenvConfig, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SyncPreview, type SyncUpdateCheck, type SeedStatus, type SeedOverride, type SeedApplyResult, type Runbook, type RunbookStep, type SavedRun, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost, type McpServer, type McpHeaderCredential, type McpStatus, type McpServerStatus, type McpCredentialOption, type ToolVisibility, type NamedSound, type MarketplaceConfig, type MarketplaceConfigInput, type MarketplaceRepo } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
@@ -16,11 +16,12 @@ import {
   runnableSelectOptions, TargetFormItems, runnablesForTarget, splitFixedAndOpen,
   type Target,
 } from '../views/RunnableAction'
-import { MONO_FONT, RADIUS, useAccent, withAlpha } from '../ThemeContext'
+import { MONO_FONT, RADIUS, textSecondary, useAccent, useIsDark, withAlpha } from '../ThemeContext'
 import { ModelSelect } from './ModelSelect'
 import { useFeatures, visibleSettingsTabs } from '../features'
 import { ConfigSyncPreviewModal } from './ConfigSyncPreview'
 import { MemorySyncTab } from './MemorySyncTab'
+import { SettingsColumns } from './SettingsColumns'
 import { TerminalLook } from './TerminalLook'
 
 const { Text, Link } = Typography
@@ -243,142 +244,146 @@ export function SoundsTab() {
   )
 
   return (
-    <div style={{ maxWidth: 560 }}>
-      <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
-        Audio cues + desktop alerts so you stay aware while the console is minimized or in the background.
-        Sounds play from the app, so they work even when minimized. The desktop <em>toast</em> needs the
-        optional <Typography.Text code>notifications</Typography.Text> extra to be installed,
-        but the <em>taskbar flash</em> and <em>sounds</em> do not. Each category can use its own
-        <Typography.Text code>.wav</Typography.Text>/<Typography.Text code>.mp3</Typography.Text> file, or point a
-        <em>sound pack</em> folder of category-named files at the whole set. Volume applies to synthesized and
-        file cues; Windows system aliases follow the system mixer. Connection cues (host/room up &amp; down) are
-        debounced — a flapping host won't chime more than once per half minute. The <em>waiting</em> cue is
-        a soft repeating ping that keeps going while something needs you (an approval, an unclaimed queue
-        caller) and stops as soon as it's cleared.
-      </Typography.Paragraph>
+    <div>
+      <SettingsColumns>
+        <div>
+          <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
+            Audio cues + desktop alerts so you stay aware while the console is minimized or in the background.
+            Sounds play from the app, so they work even when minimized. The desktop <em>toast</em> needs the
+            optional <Typography.Text code>notifications</Typography.Text> extra to be installed,
+            but the <em>taskbar flash</em> and <em>sounds</em> do not. Each category can use its own
+            <Typography.Text code>.wav</Typography.Text>/<Typography.Text code>.mp3</Typography.Text> file, or point a
+            <em>sound pack</em> folder of category-named files at the whole set. Volume applies to synthesized and
+            file cues; Windows system aliases follow the system mixer. Connection cues (host/room up &amp; down) are
+            debounced — a flapping host won't chime more than once per half minute. The <em>waiting</em> cue is
+            a soft repeating ping that keeps going while something needs you (an approval, an unclaimed queue
+            caller) and stops as soon as it's cleared.
+          </Typography.Paragraph>
 
-      {row('Enable sounds', <Switch checked={enabled} onChange={setEnabled} />)}
-      {row('Volume (synthesized + file cues)', (
-        <Slider
-          min={0} max={100} disabled={!enabled}
-          value={volume} onChange={setVolume}
-          style={{ width: 230, margin: '4px 6px' }}
-        />
-      ))}
-      {/* Sound pack: a folder of category-named files (confirm.wav, host_down.mp3, …)
-          applied to any category left on its default — one pick per personality. */}
-      {row('Sound pack folder', (
-        <Space size={4}>
-          {pack && (
-            <Typography.Text style={{ fontSize: 12, maxWidth: 150, fontFamily: MONO_FONT }} ellipsis={{ tooltip: pack }}>
-              {pack}
-            </Typography.Text>
-          )}
-          <Button size="small" disabled={!enabled} onClick={handlePickPack}>Browse…</Button>
-          {pack && <Button size="small" type="text" onClick={() => { setPack(''); setPackInfo(null) }}>Clear</Button>}
-        </Space>
-      ))}
-      {pack && packInfo && (
-        <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: -6 }}>
-          {packInfo.exists
-            ? `Covers ${Object.keys(packInfo.covered).length} of ${SOUND_CATEGORIES.length} categories (files named ${'confirm.wav'}, ${'host_down.mp3'}, …). Explicit picks below still win.`
-            : 'Folder not found on this machine.'}
-        </Typography.Paragraph>
-      )}
-      <Divider style={{ margin: '8px 0' }} />
-
-      {/* Named sounds: an operator-added .wav/.mp3 saved with an id, reusable as
-          a "My sound" pick below, in a trigger/schedule action, and by the agent's
-          play_sound tool. The registry rides Config Sync; the audio files stay
-          machine-local (imported copies), so a synced entry not present here shows
-          "missing" and plays nothing. */}
-      <Typography.Text strong style={{ fontSize: 14 }}>My sounds</Typography.Text>
-      <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: 4 }}>
-        Add your own sounds and name them, then reuse a name in the picks below, in a
-        trigger or schedule action, and in what the agent can play. The registry syncs;
-        the audio files stay on this machine (a synced name plays only where its file is present).
-      </Typography.Paragraph>
-      {named.map(s => (
-        <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-          <Input
-            size="small"
-            value={s.label}
-            onChange={e => setNamed(prev => prev.map(x => (x.id === s.id ? { ...x, label: e.target.value } : x)))}
-            onBlur={e => renameNamedSound(s.id, e.target.value.trim() || s.id)}
-            style={{ width: 200 }}
-          />
-          <Typography.Text type="secondary" style={{ fontSize: 12, fontFamily: MONO_FONT }}>
-            sound:{s.id}
-          </Typography.Text>
-          {s.exists === false && (
-            <Tooltip title="This sound's file isn't on this machine (it came from Config Sync). It will play only where the file is present.">
-              <Tag color="warning" style={{ fontSize: 11, marginInlineEnd: 0 }}>missing</Tag>
-            </Tooltip>
-          )}
-          <span style={{ flex: 1 }} />
-          <Tooltip title="Preview this sound">
-            <Button size="small" type="text" icon={<SoundOutlined />} onClick={() => bridge.preview_sound(`sound:${s.id}`).catch(() => {})} />
-          </Tooltip>
-          <Popconfirm title={`Remove "${s.label}"?`} onConfirm={() => deleteNamedSound(s.id)} okText="Remove" okButtonProps={{ danger: true }}>
-            <Button size="small" type="text" danger icon={<DeleteOutlined />} />
-          </Popconfirm>
-        </div>
-      ))}
-      <Space size={4} style={{ marginTop: named.length ? 2 : 0 }}>
-        <Input
-          size="small"
-          placeholder="Name (optional)"
-          value={newName}
-          onChange={e => setNewName(e.target.value)}
-          onPressEnter={addNamedSound}
-          style={{ width: 200 }}
-        />
-        <Button size="small" icon={<PlusOutlined />} onClick={addNamedSound}>Add from file…</Button>
-      </Space>
-
-      <Divider style={{ margin: '12px 0 8px' }} />
-      {SOUND_CATEGORIES.map(c => row(
-        c.label,
-        <Space size={4}>
-          <Select
-            size="small"
-            disabled={!enabled}
-            value={choices[c.key] ?? c.def}
-            onChange={v => handleChoice(c.key, v)}
-            options={soundOptions(c.def, choices[c.key] ?? c.def, named)}
-            popupMatchSelectWidth={false}
-            style={{ width: 230 }}
-          />
-          <Tooltip title="Preview this cue (plays the current selection, saved or not)">
-            <Button
-              size="small" type="text" icon={<SoundOutlined />}
-              onClick={() => bridge.test_sound(c.key, choices[c.key] ?? c.def).catch(() => {})}
+          {row('Enable sounds', <Switch checked={enabled} onChange={setEnabled} />)}
+          {row('Volume (synthesized + file cues)', (
+            <Slider
+              min={0} max={100} disabled={!enabled}
+              value={volume} onChange={setVolume}
+              style={{ width: 230, margin: '4px 6px' }}
             />
-          </Tooltip>
-        </Space>,
-      ))}
-      {/* The "waiting" cue loops while a tab badge needs you (a pending approval,
-          an unclaimed queue caller) and stops when it clears — this is its gap. */}
-      {row('Repeat the waiting ping every', (
-        <Space size={4}>
-          <InputNumber
-            size="small" disabled={!enabled || choices.waiting === 'off'}
-            min={WAITING_INTERVAL_MIN} max={WAITING_INTERVAL_MAX} step={1}
-            value={waitingInterval}
-            onChange={v => setWaitingInterval(typeof v === 'number' ? v : WAITING_INTERVAL_DEFAULT)}
-            style={{ width: 80 }}
-            aria-label="Waiting ping interval (seconds)"
-          />
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>seconds</Typography.Text>
-        </Space>
-      ))}
+          ))}
+          {/* Sound pack: a folder of category-named files (confirm.wav, host_down.mp3, …)
+              applied to any category left on its default — one pick per personality. */}
+          {row('Sound pack folder', (
+            <Space size={4}>
+              {pack && (
+                <Typography.Text style={{ fontSize: 12, maxWidth: 150, fontFamily: MONO_FONT }} ellipsis={{ tooltip: pack }}>
+                  {pack}
+                </Typography.Text>
+              )}
+              <Button size="small" disabled={!enabled} onClick={handlePickPack}>Browse…</Button>
+              {pack && <Button size="small" type="text" onClick={() => { setPack(''); setPackInfo(null) }}>Clear</Button>}
+            </Space>
+          ))}
+          {pack && packInfo && (
+            <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: -6 }}>
+              {packInfo.exists
+                ? `Covers ${Object.keys(packInfo.covered).length} of ${SOUND_CATEGORIES.length} categories (files named ${'confirm.wav'}, ${'host_down.mp3'}, …). Explicit picks below still win.`
+                : 'Folder not found on this machine.'}
+            </Typography.Paragraph>
+          )}
+          <Divider style={{ margin: '8px 0' }} />
 
-      <Divider style={{ margin: '12px 0 8px' }} />
-      <Typography.Text strong style={{ fontSize: 14 }}>Desktop notifications</Typography.Text>
-      <div style={{ marginTop: 8 }}>
-        {row('Toast + flash when a confirmation is waiting', <Switch checked={confirmNotif} onChange={setConfirmNotif} />)}
-        {row('Toast + flash on a chat / helpdesk message', <Switch checked={roomNotif} onChange={setRoomNotif} />)}
-      </div>
+          {/* Named sounds: an operator-added .wav/.mp3 saved with an id, reusable as
+              a "My sound" pick below, in a trigger/schedule action, and by the agent's
+              play_sound tool. The registry rides Config Sync; the audio files stay
+              machine-local (imported copies), so a synced entry not present here shows
+              "missing" and plays nothing. */}
+          <Typography.Text strong style={{ fontSize: 14 }}>My sounds</Typography.Text>
+          <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: 4 }}>
+            Add your own sounds and name them, then reuse a name in the picks below, in a
+            trigger or schedule action, and in what the agent can play. The registry syncs;
+            the audio files stay on this machine (a synced name plays only where its file is present).
+          </Typography.Paragraph>
+          {named.map(s => (
+            <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+              <Input
+                size="small"
+                value={s.label}
+                onChange={e => setNamed(prev => prev.map(x => (x.id === s.id ? { ...x, label: e.target.value } : x)))}
+                onBlur={e => renameNamedSound(s.id, e.target.value.trim() || s.id)}
+                style={{ width: 200 }}
+              />
+              <Typography.Text type="secondary" style={{ fontSize: 12, fontFamily: MONO_FONT }}>
+                sound:{s.id}
+              </Typography.Text>
+              {s.exists === false && (
+                <Tooltip title="This sound's file isn't on this machine (it came from Config Sync). It will play only where the file is present.">
+                  <Tag color="warning" style={{ fontSize: 11, marginInlineEnd: 0 }}>missing</Tag>
+                </Tooltip>
+              )}
+              <span style={{ flex: 1 }} />
+              <Tooltip title="Preview this sound">
+                <Button size="small" type="text" icon={<SoundOutlined />} onClick={() => bridge.preview_sound(`sound:${s.id}`).catch(() => {})} />
+              </Tooltip>
+              <Popconfirm title={`Remove "${s.label}"?`} onConfirm={() => deleteNamedSound(s.id)} okText="Remove" okButtonProps={{ danger: true }}>
+                <Button size="small" type="text" danger icon={<DeleteOutlined />} />
+              </Popconfirm>
+            </div>
+          ))}
+          <Space size={4} style={{ marginTop: named.length ? 2 : 0 }}>
+            <Input
+              size="small"
+              placeholder="Name (optional)"
+              value={newName}
+              onChange={e => setNewName(e.target.value)}
+              onPressEnter={addNamedSound}
+              style={{ width: 200 }}
+            />
+            <Button size="small" icon={<PlusOutlined />} onClick={addNamedSound}>Add from file…</Button>
+          </Space>
+          <Divider style={{ margin: '12px 0 8px' }} />
+          <Typography.Text strong style={{ fontSize: 14 }}>Desktop notifications</Typography.Text>
+          <div style={{ marginTop: 8 }}>
+            {row('Toast + flash when a confirmation is waiting', <Switch checked={confirmNotif} onChange={setConfirmNotif} />)}
+            {row('Toast + flash on a chat / helpdesk message', <Switch checked={roomNotif} onChange={setRoomNotif} />)}
+          </div>
+        </div>
+        <div>
+          <Typography.Text strong style={{ fontSize: 14, display: 'block', marginBottom: 8 }}>Sound per event</Typography.Text>
+          {SOUND_CATEGORIES.map(c => row(
+            c.label,
+            <Space size={4}>
+              <Select
+                size="small"
+                disabled={!enabled}
+                value={choices[c.key] ?? c.def}
+                onChange={v => handleChoice(c.key, v)}
+                options={soundOptions(c.def, choices[c.key] ?? c.def, named)}
+                popupMatchSelectWidth={false}
+                style={{ width: 230 }}
+              />
+              <Tooltip title="Preview this cue (plays the current selection, saved or not)">
+                <Button
+                  size="small" type="text" icon={<SoundOutlined />}
+                  onClick={() => bridge.test_sound(c.key, choices[c.key] ?? c.def).catch(() => {})}
+                />
+              </Tooltip>
+            </Space>,
+          ))}
+          {/* The "waiting" cue loops while a tab badge needs you (a pending approval,
+              an unclaimed queue caller) and stops when it clears — this is its gap. */}
+          {row('Repeat the waiting ping every', (
+            <Space size={4}>
+              <InputNumber
+                size="small" disabled={!enabled || choices.waiting === 'off'}
+                min={WAITING_INTERVAL_MIN} max={WAITING_INTERVAL_MAX} step={1}
+                value={waitingInterval}
+                onChange={v => setWaitingInterval(typeof v === 'number' ? v : WAITING_INTERVAL_DEFAULT)}
+                style={{ width: 80 }}
+                aria-label="Waiting ping interval (seconds)"
+              />
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>seconds</Typography.Text>
+            </Space>
+          ))}
+        </div>
+      </SettingsColumns>
 
       <Space style={{ marginTop: 8 }}>
         <Button type="primary" onClick={handleSave} loading={saving}>Save</Button>
@@ -531,202 +536,210 @@ export function LlmTab() {
 
   return (
     <Form form={form} layout="vertical" size="small" style={{ marginTop: 4 }}>
-      <Form.Item name="provider" label="Provider">
-        <Select placeholder="None — chat disabled" allowClear onChange={handleProviderChange}>
-          {providerOptions.map(o => (
-            <Select.Option key={o.value} value={o.value}>{o.label}</Select.Option>
-          ))}
-        </Select>
-      </Form.Item>
-      {!!provider && (
-        <>
-          {provider !== 'bedrock' && (
-            <Form.Item
-              name="api_key"
-              label={provider === 'langserve' ? 'API token' : 'API key'}
-              help={provider === 'langserve' ? 'Bearer token. For rotating corporate tokens, use the token command under Advanced.' : undefined}
-            >
-              <Input.Password placeholder={provider === 'anthropic' ? 'sk-ant-...' : provider === 'openai' ? 'sk-...' : 'token'} />
-            </Form.Item>
-          )}
-          {provider !== 'langserve' && (
-            <>
-              <Form.Item
-                label="Available models"
-                help="The models this console offers. Add each model id you use — the Model dropdown below selects the active one from this list."
-              >
-                <Select
-                  mode="tags"
-                  value={models}
-                  onChange={next => {
-                    setModels(next)
-                    // If the active model was removed from the list, reset it so the
-                    // strict dropdown never shows a value that isn't an option.
-                    const active = form.getFieldValue('model')
-                    if (active && !next.includes(active)) form.setFieldValue('model', next[0] ?? '')
-                  }}
-                  notFoundContent={null}
-                  tokenSeparators={[',', ' ']}
-                  placeholder={PROVIDER_MODELS[provider] ? `e.g. ${PROVIDER_MODELS[provider]}` : 'Add model ids…'}
-                  style={{ fontFamily: MONO_FONT }}
-                />
-              </Form.Item>
-              <Form.Item name="model" label="Model">
-                <Select
-                  showSearch
-                  allowClear
-                  placeholder={models.length ? 'Select a model' : 'Add a model above first'}
-                  options={models.map(m => ({ value: m, label: m }))}
-                  style={{ fontFamily: MONO_FONT }}
-                />
-              </Form.Item>
-              <Form.Item name="utility_model" label="Background model (optional)"
-                help="Used for the console's own housekeeping calls — chat compaction summaries and Improve report synthesis — which don't need the chat model. Pick a cheaper one (e.g. claude-haiku-4-5). Blank = the Model above.">
-                <Select
-                  showSearch
-                  allowClear
-                  placeholder="Same as Model"
-                  options={models.map(m => ({ value: m, label: m }))}
-                  style={{ fontFamily: MONO_FONT }}
-                />
-              </Form.Item>
-            </>
-          )}
-          <Form.Item
-            label={
-              <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                System prompt
-                {!!defaultSystem && (
-                  <Form.Item noStyle shouldUpdate={(a, b) => a.system !== b.system}>
-                    {() => (form.getFieldValue('system') ?? '').trim() !== defaultSystem.trim() && (
-                      <Button type="link" size="small" style={{ padding: 0, height: 'auto', fontSize: 12 }}
-                        onClick={() => form.setFieldValue('system', defaultSystem)}>
-                        Reset to default
-                      </Button>
-                    )}
-                  </Form.Item>
-                )}
-              </span>
-            }
-            help="Pre-filled with the built-in default that runs when nothing is configured. Editing it replaces the default wholesale (including its clarify-don't-guess guidance) — to add site policy on top instead, set `system_append` in config.toml. Guidance, not a guard: for rules you must enforce, use a runnable's autonomy level."
-          >
-            <Form.Item name="system" noStyle>
-              <Input.TextArea autoSize={{ minRows: 3, maxRows: 14 }} />
-            </Form.Item>
+      <SettingsColumns>
+        <div>
+          <Form.Item name="provider" label="Provider">
+            <Select placeholder="None — chat disabled" allowClear onChange={handleProviderChange}>
+              {providerOptions.map(o => (
+                <Select.Option key={o.value} value={o.value}>{o.label}</Select.Option>
+              ))}
+            </Select>
           </Form.Item>
-          <Form.Item
-            name="tool_mode"
-            label="Tool list mode"
-            help="How fleet runnables are exposed to the agent each turn. Dedup (default) collapses identical per-host copies; Search lists only discovery meta-tools — far fewer tokens on large, multi-package fleets."
-          >
-            <Select options={TOOL_MODE_OPTIONS} allowClear placeholder="dedup (default)" />
-          </Form.Item>
-          {(provider === 'openai' || provider === 'bedrock' || provider === 'langserve' || !BUILTIN_PROVIDERS.has(provider)) && (
-            <Form.Item
-              name="base_url"
-              label={provider === 'langserve' ? 'Endpoint URL' : 'Base URL'}
-              help={
-                provider === 'bedrock' ? 'Corporate proxy URL (optional)'
-                : provider === 'langserve' ? 'Required — the LangServe route (/invoke is appended automatically)'
-                : !BUILTIN_PROVIDERS.has(provider) ? 'Endpoint URL for this provider plugin (if it needs one)'
-                : 'Optional — for OpenAI-compatible endpoints'
-              }
-            >
-              <Input placeholder={provider === 'langserve' ? 'https://gateway.corp/my-chain' : 'https://...'} style={{ fontFamily: MONO_FONT }} />
-            </Form.Item>
-          )}
-          {provider === 'bedrock' && (
+          {!!provider && (
             <>
-              <Form.Item name="api_key" label="Proxy API key" help="Only needed if using a corporate Bedrock proxy">
-                <Input.Password placeholder="token" />
-              </Form.Item>
-              <Form.Item name="aws_region" label="AWS region">
-                <Input placeholder="us-east-1" style={{ fontFamily: MONO_FONT }} />
-              </Form.Item>
-            </>
-          )}
-
-          <Collapse
-            size="small"
-            ghost
-            style={{ marginTop: 4 }}
-            items={[{
-              key: 'advanced',
-              // Force-render the panel so its Form.Items are always mounted. Without
-              // this, antd Collapse leaves an unexpanded panel's children unmounted,
-              // so getFieldsValue() omits them at Save time and the set-or-delete loop
-              // drops hand-edited keys (api_key_command, api_key_ttl_ms, …) whenever
-              // the user saves without first opening Advanced.
-              forceRender: true,
-              label: <Text style={{ fontSize: 13 }}>Advanced</Text>,
-              children: (
+              {provider !== 'bedrock' && (
+                <Form.Item
+                  name="api_key"
+                  label={provider === 'langserve' ? 'API token' : 'API key'}
+                  help={provider === 'langserve' ? 'Bearer token. For rotating corporate tokens, use the token command under Advanced.' : undefined}
+                >
+                  <Input.Password placeholder={provider === 'anthropic' ? 'sk-ant-...' : provider === 'openai' ? 'sk-...' : 'token'} />
+                </Form.Item>
+              )}
+              {provider !== 'langserve' && (
                 <>
                   <Form.Item
-                    name="api_key_command"
-                    label="Token command"
-                    help="Run this command to vend a short-lived token instead of a static key (rotating corporate creds). Its stdout is used as the token."
+                    label="Available models"
+                    help="The models this console offers. Add each model id you use — the Model dropdown below selects the active one from this list."
                   >
-                    <Input placeholder="aws-vend-token --print" style={{ fontFamily: MONO_FONT }} />
+                    <Select
+                      mode="tags"
+                      value={models}
+                      onChange={next => {
+                        setModels(next)
+                        // If the active model was removed from the list, reset it so the
+                        // strict dropdown never shows a value that isn't an option.
+                        const active = form.getFieldValue('model')
+                        if (active && !next.includes(active)) form.setFieldValue('model', next[0] ?? '')
+                      }}
+                      notFoundContent={null}
+                      tokenSeparators={[',', ' ']}
+                      placeholder={PROVIDER_MODELS[provider] ? `e.g. ${PROVIDER_MODELS[provider]}` : 'Add model ids…'}
+                      style={{ fontFamily: MONO_FONT }}
+                    />
                   </Form.Item>
-                  <Form.Item
-                    name="api_key_ttl_ms"
-                    label="Token cache (ms)"
-                    help="How long to reuse the token command's output. 0 or blank re-runs it every request."
-                  >
-                    <InputNumber min={0} step={1000} style={{ width: '100%' }} placeholder="0" />
+                  <Form.Item name="model" label="Model">
+                    <Select
+                      showSearch
+                      allowClear
+                      placeholder={models.length ? 'Select a model' : 'Add a model above first'}
+                      options={models.map(m => ({ value: m, label: m }))}
+                      style={{ fontFamily: MONO_FONT }}
+                    />
                   </Form.Item>
-
-                  {provider === 'bedrock' && (
-                    <>
-                      <Form.Item
-                        name="aws_access_key"
-                        label="AWS access key ID"
-                        help="Optional — leave blank to use the standard AWS credential chain (env vars / shared profile / STS). Stored in plaintext in config.toml."
-                      >
-                        <Input.Password placeholder="AKIA… (optional)" />
-                      </Form.Item>
-                      <Form.Item name="aws_secret_key" label="AWS secret access key">
-                        <Input.Password placeholder="(optional)" />
-                      </Form.Item>
-                      <Form.Item name="aws_session_token" label="AWS session token">
-                        <Input.Password placeholder="(optional — for temporary STS creds)" />
-                      </Form.Item>
-                    </>
-                  )}
-
-                  {provider === 'langserve' && (
-                    <>
-                      <Divider style={{ margin: '4px 0 10px' }}>
-                        <Text type="secondary" style={{ fontSize: 12 }}>LangServe wiring</Text>
-                      </Divider>
-                      <Form.Item name="auth_header" label="Auth header" help="HTTP header the token is sent in.">
-                        <Input placeholder="Authorization" style={{ fontFamily: MONO_FONT }} />
-                      </Form.Item>
-                      <Form.Item name="auth_scheme" label="Auth scheme" help="Scheme prefix; blank sends the raw token.">
-                        <Input placeholder="Bearer" style={{ fontFamily: MONO_FONT }} />
-                      </Form.Item>
-                      <Form.Item name="input_messages_key" label="Messages key" help="Key the chat history is sent under, inside input.">
-                        <Input placeholder="messages" style={{ fontFamily: MONO_FONT }} />
-                      </Form.Item>
-                      <Form.Item name="input_tools_key" label="Tools key" help="Key the tool schemas are sent under.">
-                        <Input placeholder="tools" style={{ fontFamily: MONO_FONT }} />
-                      </Form.Item>
-                      <Form.Item
-                        name="tools_in_config"
-                        label="Tools in config"
-                        valuePropName="checked"
-                        help="When on, tools move to config.configurable instead of input."
-                      >
-                        <Switch size="small" />
-                      </Form.Item>
-                    </>
-                  )}
+                  <Form.Item name="utility_model" label="Background model (optional)"
+                    help="Used for the console's own housekeeping calls — chat compaction summaries and Improve report synthesis — which don't need the chat model. Pick a cheaper one (e.g. claude-haiku-4-5). Blank = the Model above.">
+                    <Select
+                      showSearch
+                      allowClear
+                      placeholder="Same as Model"
+                      options={models.map(m => ({ value: m, label: m }))}
+                      style={{ fontFamily: MONO_FONT }}
+                    />
+                  </Form.Item>
                 </>
-              ),
-            }]}
-          />
-        </>
-      )}
+              )}
+              <Form.Item
+                name="tool_mode"
+                label="Tool list mode"
+                help="How fleet runnables are exposed to the agent each turn. Dedup (default) collapses identical per-host copies; Search lists only discovery meta-tools — far fewer tokens on large, multi-package fleets."
+              >
+                <Select options={TOOL_MODE_OPTIONS} allowClear placeholder="dedup (default)" />
+              </Form.Item>
+              {(provider === 'openai' || provider === 'bedrock' || provider === 'langserve' || !BUILTIN_PROVIDERS.has(provider)) && (
+                <Form.Item
+                  name="base_url"
+                  label={provider === 'langserve' ? 'Endpoint URL' : 'Base URL'}
+                  help={
+                    provider === 'bedrock' ? 'Corporate proxy URL (optional)'
+                    : provider === 'langserve' ? 'Required — the LangServe route (/invoke is appended automatically)'
+                    : !BUILTIN_PROVIDERS.has(provider) ? 'Endpoint URL for this provider plugin (if it needs one)'
+                    : 'Optional — for OpenAI-compatible endpoints'
+                  }
+                >
+                  <Input placeholder={provider === 'langserve' ? 'https://gateway.corp/my-chain' : 'https://...'} style={{ fontFamily: MONO_FONT }} />
+                </Form.Item>
+              )}
+              {provider === 'bedrock' && (
+                <>
+                  <Form.Item name="api_key" label="Proxy API key" help="Only needed if using a corporate Bedrock proxy">
+                    <Input.Password placeholder="token" />
+                  </Form.Item>
+                  <Form.Item name="aws_region" label="AWS region">
+                    <Input placeholder="us-east-1" style={{ fontFamily: MONO_FONT }} />
+                  </Form.Item>
+                </>
+              )}
+
+              <Collapse
+                size="small"
+                ghost
+                style={{ marginTop: 4 }}
+                items={[{
+                  key: 'advanced',
+                  // Force-render the panel so its Form.Items are always mounted. Without
+                  // this, antd Collapse leaves an unexpanded panel's children unmounted,
+                  // so getFieldsValue() omits them at Save time and the set-or-delete loop
+                  // drops hand-edited keys (api_key_command, api_key_ttl_ms, …) whenever
+                  // the user saves without first opening Advanced.
+                  forceRender: true,
+                  label: <Text style={{ fontSize: 13 }}>Advanced</Text>,
+                  children: (
+                    <>
+                      <Form.Item
+                        name="api_key_command"
+                        label="Token command"
+                        help="Run this command to vend a short-lived token instead of a static key (rotating corporate creds). Its stdout is used as the token."
+                      >
+                        <Input placeholder="aws-vend-token --print" style={{ fontFamily: MONO_FONT }} />
+                      </Form.Item>
+                      <Form.Item
+                        name="api_key_ttl_ms"
+                        label="Token cache (ms)"
+                        help="How long to reuse the token command's output. 0 or blank re-runs it every request."
+                      >
+                        <InputNumber min={0} step={1000} style={{ width: '100%' }} placeholder="0" />
+                      </Form.Item>
+
+                      {provider === 'bedrock' && (
+                        <>
+                          <Form.Item
+                            name="aws_access_key"
+                            label="AWS access key ID"
+                            help="Optional — leave blank to use the standard AWS credential chain (env vars / shared profile / STS). Stored in plaintext in config.toml."
+                          >
+                            <Input.Password placeholder="AKIA… (optional)" />
+                          </Form.Item>
+                          <Form.Item name="aws_secret_key" label="AWS secret access key">
+                            <Input.Password placeholder="(optional)" />
+                          </Form.Item>
+                          <Form.Item name="aws_session_token" label="AWS session token">
+                            <Input.Password placeholder="(optional — for temporary STS creds)" />
+                          </Form.Item>
+                        </>
+                      )}
+
+                      {provider === 'langserve' && (
+                        <>
+                          <Divider style={{ margin: '4px 0 10px' }}>
+                            <Text type="secondary" style={{ fontSize: 12 }}>LangServe wiring</Text>
+                          </Divider>
+                          <Form.Item name="auth_header" label="Auth header" help="HTTP header the token is sent in.">
+                            <Input placeholder="Authorization" style={{ fontFamily: MONO_FONT }} />
+                          </Form.Item>
+                          <Form.Item name="auth_scheme" label="Auth scheme" help="Scheme prefix; blank sends the raw token.">
+                            <Input placeholder="Bearer" style={{ fontFamily: MONO_FONT }} />
+                          </Form.Item>
+                          <Form.Item name="input_messages_key" label="Messages key" help="Key the chat history is sent under, inside input.">
+                            <Input placeholder="messages" style={{ fontFamily: MONO_FONT }} />
+                          </Form.Item>
+                          <Form.Item name="input_tools_key" label="Tools key" help="Key the tool schemas are sent under.">
+                            <Input placeholder="tools" style={{ fontFamily: MONO_FONT }} />
+                          </Form.Item>
+                          <Form.Item
+                            name="tools_in_config"
+                            label="Tools in config"
+                            valuePropName="checked"
+                            help="When on, tools move to config.configurable instead of input."
+                          >
+                            <Switch size="small" />
+                          </Form.Item>
+                        </>
+                      )}
+                    </>
+                  ),
+                }]}
+              />
+            </>
+          )}
+        </div>
+        {!!provider && (
+          <div>
+            <Form.Item
+              label={
+                <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  System prompt
+                  {!!defaultSystem && (
+                    <Form.Item noStyle shouldUpdate={(a, b) => a.system !== b.system}>
+                      {() => (form.getFieldValue('system') ?? '').trim() !== defaultSystem.trim() && (
+                        <Button type="link" size="small" style={{ padding: 0, height: 'auto', fontSize: 12 }}
+                          onClick={() => form.setFieldValue('system', defaultSystem)}>
+                          Reset to default
+                        </Button>
+                      )}
+                    </Form.Item>
+                  )}
+                </span>
+              }
+              help="Pre-filled with the built-in default that runs when nothing is configured. Editing it replaces the default wholesale (including its clarify-don't-guess guidance) — to add site policy on top instead, set `system_append` in config.toml. Guidance, not a guard: for rules you must enforce, use a runnable's autonomy level."
+            >
+              <Form.Item name="system" noStyle>
+                <Input.TextArea autoSize={{ minRows: 8, maxRows: 28 }} />
+              </Form.Item>
+            </Form.Item>
+          </div>
+        )}
+      </SettingsColumns>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8 }}>
         <Button type="primary" size="small" loading={saving} onClick={handleSave}>Save</Button>
         {saved && <Text type="success" style={{ fontSize: 13 }}>Saved</Text>}
@@ -919,390 +932,393 @@ export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [],
 
   return (
     <Form form={form} layout="vertical" size="small" style={{ marginTop: 4 }}>
-      <Form.Item name="ssh_user" label="Default username">
-        <Input placeholder="your-username" />
-      </Form.Item>
+      <SettingsColumns>
+        <div>
+          <Form.Item name="ssh_user" label="Default username">
+            <Input placeholder="your-username" />
+          </Form.Item>
 
-      <Form.Item
-        name="ssh_proxy"
-        label="HTTP proxy"
-        help="Routes SSH — running runnables and Launch terminal — through an HTTP CONNECT proxy. Leave blank for none."
-      >
-        <Input placeholder="http://proxy.corp:8080" style={{ fontFamily: MONO_FONT }} />
-      </Form.Item>
+          <Form.Item
+            name="ssh_proxy"
+            label="HTTP proxy"
+            help="Routes SSH — running runnables and Launch terminal — through an HTTP CONNECT proxy. Leave blank for none."
+          >
+            <Input placeholder="http://proxy.corp:8080" style={{ fontFamily: MONO_FONT }} />
+          </Form.Item>
 
-      <Form.Item
-        name="ssh_use_ssh_config"
-        label="Honor ~/.ssh/config"
-        valuePropName="checked"
-        help="Also read ~/.ssh/config (HostName, User, Port, IdentityFile, ProxyCommand) when running runnables. PuTTY uses the HTTP proxy above, not ~/.ssh/config."
-      >
-        <Switch size="small" />
-      </Form.Item>
+          <Form.Item
+            name="ssh_use_ssh_config"
+            label="Honor ~/.ssh/config"
+            valuePropName="checked"
+            help="Also read ~/.ssh/config (HostName, User, Port, IdentityFile, ProxyCommand) when running runnables. PuTTY uses the HTTP proxy above, not ~/.ssh/config."
+          >
+            <Switch size="small" />
+          </Form.Item>
 
-      <Collapse
-        size="small"
-        ghost
-        items={[{
-          key: 'advanced',
-          label: <Text style={{ fontSize: 13 }}>Advanced</Text>,
-          children: (
-            <>
-              <Form.Item
-                name="ssh_host_key_checking"
-                label="Host-key checking"
-                help="accept-new (default) trusts a host the first time and rejects a changed key (TOFU). Strict rejects any host not already in known_hosts."
-              >
-                <Select
-                  allowClear
-                  placeholder="accept-new (default)"
-                  options={[
-                    { value: 'accept-new', label: 'Accept new (TOFU — default)' },
-                    { value: 'yes', label: 'Strict (known hosts only)' },
-                  ]}
-                />
-              </Form.Item>
-              <Form.Item
-                name="ssh_connect_timeout"
-                label="Connect timeout (s)"
-                help="TCP connect timeout. Default 10."
-              >
-                <InputNumber min={1} style={{ width: '100%' }} placeholder="10" />
-              </Form.Item>
-              <Form.Item
-                name="ssh_banner_timeout"
-                label="Banner timeout (s)"
-                help="Wait for the SSH banner — raise it for busy servers (sshd MaxStartups). Default 30."
-              >
-                <InputNumber min={1} style={{ width: '100%' }} placeholder="30" />
-              </Form.Item>
-              <Form.Item
-                name="ssh_auth_timeout"
-                label="Auth timeout (s)"
-                help="Wait for the authentication exchange. Default 30."
-              >
-                <InputNumber min={1} style={{ width: '100%' }} placeholder="30" />
-              </Form.Item>
+          <Collapse
+            size="small"
+            ghost
+            items={[{
+              key: 'advanced',
+              label: <Text style={{ fontSize: 13 }}>Advanced</Text>,
+              children: (
+                <>
+                  <Form.Item
+                    name="ssh_host_key_checking"
+                    label="Host-key checking"
+                    help="accept-new (default) trusts a host the first time and rejects a changed key (TOFU). Strict rejects any host not already in known_hosts."
+                  >
+                    <Select
+                      allowClear
+                      placeholder="accept-new (default)"
+                      options={[
+                        { value: 'accept-new', label: 'Accept new (TOFU — default)' },
+                        { value: 'yes', label: 'Strict (known hosts only)' },
+                      ]}
+                    />
+                  </Form.Item>
+                  <Form.Item
+                    name="ssh_connect_timeout"
+                    label="Connect timeout (s)"
+                    help="TCP connect timeout. Default 10."
+                  >
+                    <InputNumber min={1} style={{ width: '100%' }} placeholder="10" />
+                  </Form.Item>
+                  <Form.Item
+                    name="ssh_banner_timeout"
+                    label="Banner timeout (s)"
+                    help="Wait for the SSH banner — raise it for busy servers (sshd MaxStartups). Default 30."
+                  >
+                    <InputNumber min={1} style={{ width: '100%' }} placeholder="30" />
+                  </Form.Item>
+                  <Form.Item
+                    name="ssh_auth_timeout"
+                    label="Auth timeout (s)"
+                    help="Wait for the authentication exchange. Default 30."
+                  >
+                    <InputNumber min={1} style={{ width: '100%' }} placeholder="30" />
+                  </Form.Item>
 
-              <Divider style={{ margin: '4px 0 10px' }}>
-                <Text type="secondary" style={{ fontSize: 12 }}>TCP keepalive</Text>
-              </Divider>
-              <Form.Item
-                name="ssh_tcp_keepalive"
-                label="Socket keepalive"
-                valuePropName="checked"
-                help="OS-level SO_KEEPALIVE on the SSH socket — a backstop to the SSH keepalive that lets the kernel drop a silently-dead connection (NAT/VPN idle-drop, peer reboot). On by default; the probe schedule below applies where the OS supports it."
-              >
-                <Switch size="small" />
-              </Form.Item>
-              <Form.Item
-                name="ssh_tcp_keepidle"
-                label="Idle before first probe (s)"
-                help="Seconds a connection may sit idle before the first keepalive probe. Default 60."
-              >
-                <InputNumber min={1} style={{ width: '100%' }} placeholder="60" />
-              </Form.Item>
-              <Form.Item
-                name="ssh_tcp_keepintvl"
-                label="Probe interval (s)"
-                help="Seconds between keepalive probes once they start. Default 15."
-              >
-                <InputNumber min={1} style={{ width: '100%' }} placeholder="15" />
-              </Form.Item>
-              <Form.Item
-                name="ssh_tcp_keepcnt"
-                label="Probes before drop"
-                help="Unanswered probes before the socket is declared dead. Default 3. (Probe count is fixed by the OS on Windows.)"
-              >
-                <InputNumber min={1} style={{ width: '100%' }} placeholder="3" />
-              </Form.Item>
+                  <Divider style={{ margin: '4px 0 10px' }}>
+                    <Text type="secondary" style={{ fontSize: 12 }}>TCP keepalive</Text>
+                  </Divider>
+                  <Form.Item
+                    name="ssh_tcp_keepalive"
+                    label="Socket keepalive"
+                    valuePropName="checked"
+                    help="OS-level SO_KEEPALIVE on the SSH socket — a backstop to the SSH keepalive that lets the kernel drop a silently-dead connection (NAT/VPN idle-drop, peer reboot). On by default; the probe schedule below applies where the OS supports it."
+                  >
+                    <Switch size="small" />
+                  </Form.Item>
+                  <Form.Item
+                    name="ssh_tcp_keepidle"
+                    label="Idle before first probe (s)"
+                    help="Seconds a connection may sit idle before the first keepalive probe. Default 60."
+                  >
+                    <InputNumber min={1} style={{ width: '100%' }} placeholder="60" />
+                  </Form.Item>
+                  <Form.Item
+                    name="ssh_tcp_keepintvl"
+                    label="Probe interval (s)"
+                    help="Seconds between keepalive probes once they start. Default 15."
+                  >
+                    <InputNumber min={1} style={{ width: '100%' }} placeholder="15" />
+                  </Form.Item>
+                  <Form.Item
+                    name="ssh_tcp_keepcnt"
+                    label="Probes before drop"
+                    help="Unanswered probes before the socket is declared dead. Default 3. (Probe count is fixed by the OS on Windows.)"
+                  >
+                    <InputNumber min={1} style={{ width: '100%' }} placeholder="3" />
+                  </Form.Item>
 
-              <Divider style={{ margin: '4px 0 10px' }}>
-                <Text type="secondary" style={{ fontSize: 12 }}>Discovery</Text>
-              </Divider>
-              <Form.Item
-                name="refresh_interval"
-                label="Refresh interval (s)"
-                help="How often the console re-scans hosts for runnables. Default 30."
+                  <Divider style={{ margin: '4px 0 10px' }}>
+                    <Text type="secondary" style={{ fontSize: 12 }}>Discovery</Text>
+                  </Divider>
+                  <Form.Item
+                    name="refresh_interval"
+                    label="Refresh interval (s)"
+                    help="How often the console re-scans hosts for runnables. Default 30."
+                  >
+                    <InputNumber min={1} style={{ width: '100%' }} placeholder="30" />
+                  </Form.Item>
+                  <Form.Item
+                    name="refresh_jitter"
+                    label="Refresh jitter (± s)"
+                    help="Random spread on each host's scan start, to avoid a thundering herd. Default 3."
+                  >
+                    <InputNumber min={0} style={{ width: '100%' }} placeholder="3" />
+                  </Form.Item>
+                </>
+              ),
+            }]}
+          />
+
+          <Divider />
+
+          <Text strong style={{ fontSize: 14 }}>Quick connect</Text>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10 }}>
+            <Select
+              size="small"
+              value={connectedHosts.length === 0 ? undefined : selectedHost}
+              placeholder={connectedHosts.length === 0 ? 'No connected hosts' : 'Select host'}
+              disabled={connectedHosts.length === 0}
+              onChange={setSelectedHost}
+              options={connectedHosts.map(h => ({ value: h, label: h }))}
+              style={{ flex: 1, minWidth: 0 }}
+            />
+            <Button
+              size="small"
+              icon={<DesktopOutlined />}
+              disabled={connectedHosts.length === 0 || !selectedHost}
+              onClick={() => bridge.launch_terminal(selectedHost).catch(e => message.error(String(e)))}
+            >
+              Open PuTTY
+            </Button>
+          </div>
+
+          <Divider />
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <Button type="primary" size="small" loading={saving} onClick={handleSave}>Save</Button>
+            {saved && <Text type="success" style={{ fontSize: 13 }}>Saved</Text>}
+          </div>
+          <Text type="secondary" style={{ fontSize: 13, display: 'block', marginTop: 10 }}>
+            Settings are saved to <code>{configDir || '%APPDATA%/runspec-console'}</code>
+          </Text>
+        </div>
+        <div>
+          {/* SSH key section */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+            <Text strong style={{ fontSize: 14 }}>SSH key</Text>
+            {ageDays !== null && (
+              <Tag
+                color={ageDays >= 90 ? 'orange' : ageDays >= 75 ? 'gold' : 'success'}
+                icon={<KeyOutlined />}
+                style={{ margin: 0, fontSize: 12 }}
               >
-                <InputNumber min={1} style={{ width: '100%' }} placeholder="30" />
-              </Form.Item>
-              <Form.Item
-                name="refresh_jitter"
-                label="Refresh jitter (± s)"
-                help="Random spread on each host's scan start, to avoid a thundering herd. Default 3."
+                {ageDays === 0 ? 'created today' : `${ageDays}d old`}
+              </Tag>
+            )}
+          </div>
+
+          {ageDays !== null && ageDays >= 75 && (
+            <div style={{
+              padding: '6px 10px', borderRadius: RADIUS.sm, marginBottom: 10,
+              background: ageDays >= 90 ? 'rgba(250,140,22,0.1)' : 'rgba(250,219,20,0.08)',
+              border: `1px solid ${ageDays >= 90 ? 'rgba(250,140,22,0.3)' : 'rgba(250,219,20,0.3)'}`,
+              fontSize: 13, color: ageDays >= 90 ? '#fa8c16' : '#d4b106',
+            }}>
+              {ageDays >= 90 ? `Key is ${ageDays} days old — rotation recommended.` : `Key is ${ageDays} days old — consider rotating soon.`}
+            </div>
+          )}
+
+          {keyPath && (
+            <div style={{ marginBottom: 10 }}>
+              <Text type="secondary" style={{ fontSize: 12, fontFamily: MONO_FONT, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>
+                {keyPath}
+              </Text>
+            </div>
+          )}
+
+          <Space wrap style={{ marginBottom: 8 }}>
+            {!keyPath ? (
+              <Button
+                type="primary"
+                size="small"
+                icon={generating ? <LoadingOutlined /> : <KeyOutlined />}
+                disabled={generating}
+                onClick={handleGenerate}
               >
-                <InputNumber min={0} style={{ width: '100%' }} placeholder="3" />
-              </Form.Item>
-            </>
-          ),
-        }]}
-      />
+                Generate key
+              </Button>
+            ) : (
+              <Popconfirm
+                title="Generate new key?"
+                description={
+                  <span style={{ fontSize: 13 }}>
+                    The current key will be backed up and replaced immediately.<br />
+                    You'll need to add the new public key to each host manually.<br />
+                    Use <strong>Rotate key</strong> instead if your remote hosts are reachable.
+                  </span>
+                }
+                onConfirm={handleGenerate}
+                okText="Generate" cancelText="Cancel"
+                placement="bottom"
+              >
+                <Button
+                  size="small"
+                  icon={generating ? <LoadingOutlined /> : <KeyOutlined />}
+                  disabled={generating}
+                >
+                  Generate new key
+                </Button>
+              </Popconfirm>
+            )}
+            {keyPath && activeProfile ? (
+              // A scoped host profile hides its out-of-profile hosts, which would be
+              // orphaned on the old key. Offer rotation only under All hosts.
+              <Tooltip title={`Switch to the All hosts profile to rotate — the '${activeProfile}' profile hides its out-of-profile hosts, which would be left on the old key. (Copy key to hosts still works for a selection.)`}>
+                <span style={{ display: 'inline-block', cursor: 'not-allowed' }}>
+                  <Button size="small" icon={<KeyOutlined />} disabled style={{ pointerEvents: 'none' }}>
+                    Rotate key
+                  </Button>
+                </span>
+              </Tooltip>
+            ) : keyPath && (
+              <Popconfirm
+                title="Rotate SSH key?"
+                icon={disconnected.length > 0 ? <KeyOutlined style={{ color: '#fa8c16' }} /> : undefined}
+                description={
+                  disconnected.length === 0 ? (
+                    <span style={{ fontSize: 13 }}>
+                      A new key will be pushed to every connected host using the current key,<br />
+                      then verified before swapping. Active sessions stay alive throughout.
+                    </span>
+                  ) : (
+                    <span style={{ fontSize: 13, maxWidth: 320, display: 'inline-block' }}>
+                      <strong style={{ color: '#fa8c16' }}>
+                        {disconnected.length} host{disconnected.length !== 1 ? 's' : ''} disconnected:
+                      </strong>{' '}
+                      <span style={{ fontFamily: MONO_FONT }}>{disconnected.join(', ')}</span>.<br />
+                      {disconnected.length !== 1 ? 'They' : 'It'} will <strong>not</strong> receive the new key —
+                      you may be locked out until you update {disconnected.length !== 1 ? 'them' : 'it'} manually.<br />
+                      Connected hosts rotate now. Continue?
+                    </span>
+                  )
+                }
+                onConfirm={handleRotate}
+                okText={disconnected.length > 0 ? 'Rotate anyway' : 'Rotate'}
+                okButtonProps={disconnected.length > 0 ? { danger: true } : undefined}
+                cancelText="Cancel"
+                placement="bottom"
+              >
+                <Button
+                  size="small"
+                  icon={generating ? <LoadingOutlined /> : <KeyOutlined />}
+                  disabled={generating}
+                  loading={generating}
+                >
+                  {generating ? 'Rotating…' : 'Rotate key'}
+                </Button>
+              </Popconfirm>
+            )}
+            {keyPath && allRemoteHosts.length > 0 && (
+              <Tooltip title="Authorize this machine on every host at once over a one-off password — for bootstrapping a freshly synced fleet">
+                <Button
+                  size="small"
+                  icon={<KeyOutlined />}
+                  disabled={generating}
+                  onClick={() => setCopyAllOpen(true)}
+                >
+                  Copy key to all hosts…
+                </Button>
+              </Tooltip>
+            )}
+          </Space>
+
+          {/* Live rotation progress — a moving bar while the fleet-wide push/verify runs */}
+          {generating && rotateProgress && rotateProgress.total > 0 && (
+            <div style={{ marginBottom: 10 }}>
+              <Progress
+                percent={Math.round((rotateProgress.done / rotateProgress.total) * 100)}
+                size="small"
+                status="active"
+              />
+              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 2 }}>
+                Pushing &amp; verifying {rotateProgress.done}/{rotateProgress.total} host{rotateProgress.total !== 1 ? 's' : ''}
+                {rotateProgress.host ? (
+                  <> — last: <span style={{ fontFamily: MONO_FONT }}>{rotateProgress.host}</span>{rotateProgress.phase === 'failed' ? ' ✗' : ' ✓'}</>
+                ) : '…'}
+              </Text>
+            </div>
+          )}
+
+          {/* Per-host rotation results */}
+          {rotationResult && rotationResult.perHost.length > 0 && (
+            <div style={{ marginBottom: 10 }}>
+              {rotationResult.perHost.map(h => {
+                const icon = h.skipped ? '⚠' : h.verified ? '✓' : '✗'
+                const color = h.skipped ? '#d4b106' : h.verified ? '#52c41a' : '#ff4d4f'
+                return (
+                  <div key={h.host} style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginBottom: 3 }}>
+                    <span style={{ color, fontFamily: MONO_FONT, fontSize: 12, flexShrink: 0 }}>{icon} {h.host}</span>
+                    {h.error && <Text type="secondary" style={{ fontSize: 11 }}>{h.error}</Text>}
+                  </div>
+                )
+              })}
+              {!rotationResult.committed && (
+                <Text type="warning" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
+                  Old key still active — fix the failures above and retry.
+                </Text>
+              )}
+            </div>
+          )}
+
+          {/* Manual snippet — shown on partial/total failure, or when a committed rotation
+              skipped some hosts (disconnected / per-host key) that still need the new key */}
+          {rotationResult && rotationResult.publicKey &&
+            (!rotationResult.committed || rotationResult.perHost.some(h => h.skipped)) && (
+            <div style={{ marginBottom: 10 }}>
+              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
+                Run on each skipped/failing host to authorise the new key manually:
+              </Text>
+              <Typography.Paragraph
+                copyable={{ tooltips: ['Copy', 'Copied!'] }}
+                style={{
+                  fontFamily: MONO_FONT, fontSize: 11, padding: '6px 10px',
+                  background: 'rgba(255,255,255,0.04)', border: '1px solid #333',
+                  borderRadius: 4, wordBreak: 'break-all', margin: 0, color: '#52c41a',
+                }}
+              >
+                {`echo "${rotationResult.publicKey}" >> ~/.ssh/authorized_keys`}
+              </Typography.Paragraph>
+            </div>
+          )}
+
+          {/* First-time generate — show manual snippet since there are no sessions to push via */}
+          {publicKey && !rotationResult && (
+            <div style={{ marginBottom: 10 }}>
+              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
+                Run on each host to authorise this key:
+              </Text>
+              <Typography.Paragraph
+                copyable={{ tooltips: ['Copy', 'Copied!'] }}
+                style={{
+                  fontFamily: MONO_FONT, fontSize: 11, padding: '6px 10px',
+                  background: 'rgba(255,255,255,0.04)', border: '1px solid #333',
+                  borderRadius: 4, wordBreak: 'break-all', margin: 0, color: '#52c41a',
+                }}
+              >
+                {authorizedKeysLine}
+              </Typography.Paragraph>
+            </div>
+          )}
+
+          {/* Persistent public key — always available to copy, derived if no .pub */}
+          {keyPath && storedPublicKey && !publicKey && !rotationResult && (
+            <div style={{ marginBottom: 10 }}>
+              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
+                Public key — add to each host's authorized_keys:
+              </Text>
+              <Typography.Paragraph
+                copyable={{ text: storedPublicKey, tooltips: ['Copy', 'Copied!'] }}
+                style={{
+                  fontFamily: MONO_FONT, fontSize: 11, padding: '6px 10px',
+                  background: 'rgba(255,255,255,0.04)', border: '1px solid #333',
+                  borderRadius: 4, wordBreak: 'break-all', margin: 0, color: '#52c41a',
+                }}
+              >
+                {`echo "${storedPublicKey}" >> ~/.ssh/authorized_keys`}
+              </Typography.Paragraph>
+            </div>
+          )}
+        </div>
+      </SettingsColumns>
 
       <Divider />
 
       <TerminalLook />
-
-      <Divider />
-
-      {/* SSH key section */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-        <Text strong style={{ fontSize: 14 }}>SSH key</Text>
-        {ageDays !== null && (
-          <Tag
-            color={ageDays >= 90 ? 'orange' : ageDays >= 75 ? 'gold' : 'success'}
-            icon={<KeyOutlined />}
-            style={{ margin: 0, fontSize: 12 }}
-          >
-            {ageDays === 0 ? 'created today' : `${ageDays}d old`}
-          </Tag>
-        )}
-      </div>
-
-      {ageDays !== null && ageDays >= 75 && (
-        <div style={{
-          padding: '6px 10px', borderRadius: RADIUS.sm, marginBottom: 10,
-          background: ageDays >= 90 ? 'rgba(250,140,22,0.1)' : 'rgba(250,219,20,0.08)',
-          border: `1px solid ${ageDays >= 90 ? 'rgba(250,140,22,0.3)' : 'rgba(250,219,20,0.3)'}`,
-          fontSize: 13, color: ageDays >= 90 ? '#fa8c16' : '#d4b106',
-        }}>
-          {ageDays >= 90 ? `Key is ${ageDays} days old — rotation recommended.` : `Key is ${ageDays} days old — consider rotating soon.`}
-        </div>
-      )}
-
-      {keyPath && (
-        <div style={{ marginBottom: 10 }}>
-          <Text type="secondary" style={{ fontSize: 12, fontFamily: MONO_FONT, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>
-            {keyPath}
-          </Text>
-        </div>
-      )}
-
-      <Space wrap style={{ marginBottom: 8 }}>
-        {!keyPath ? (
-          <Button
-            type="primary"
-            size="small"
-            icon={generating ? <LoadingOutlined /> : <KeyOutlined />}
-            disabled={generating}
-            onClick={handleGenerate}
-          >
-            Generate key
-          </Button>
-        ) : (
-          <Popconfirm
-            title="Generate new key?"
-            description={
-              <span style={{ fontSize: 13 }}>
-                The current key will be backed up and replaced immediately.<br />
-                You'll need to add the new public key to each host manually.<br />
-                Use <strong>Rotate key</strong> instead if your remote hosts are reachable.
-              </span>
-            }
-            onConfirm={handleGenerate}
-            okText="Generate" cancelText="Cancel"
-            placement="bottom"
-          >
-            <Button
-              size="small"
-              icon={generating ? <LoadingOutlined /> : <KeyOutlined />}
-              disabled={generating}
-            >
-              Generate new key
-            </Button>
-          </Popconfirm>
-        )}
-        {keyPath && activeProfile ? (
-          // A scoped host profile hides its out-of-profile hosts, which would be
-          // orphaned on the old key. Offer rotation only under All hosts.
-          <Tooltip title={`Switch to the All hosts profile to rotate — the '${activeProfile}' profile hides its out-of-profile hosts, which would be left on the old key. (Copy key to hosts still works for a selection.)`}>
-            <span style={{ display: 'inline-block', cursor: 'not-allowed' }}>
-              <Button size="small" icon={<KeyOutlined />} disabled style={{ pointerEvents: 'none' }}>
-                Rotate key
-              </Button>
-            </span>
-          </Tooltip>
-        ) : keyPath && (
-          <Popconfirm
-            title="Rotate SSH key?"
-            icon={disconnected.length > 0 ? <KeyOutlined style={{ color: '#fa8c16' }} /> : undefined}
-            description={
-              disconnected.length === 0 ? (
-                <span style={{ fontSize: 13 }}>
-                  A new key will be pushed to every connected host using the current key,<br />
-                  then verified before swapping. Active sessions stay alive throughout.
-                </span>
-              ) : (
-                <span style={{ fontSize: 13, maxWidth: 320, display: 'inline-block' }}>
-                  <strong style={{ color: '#fa8c16' }}>
-                    {disconnected.length} host{disconnected.length !== 1 ? 's' : ''} disconnected:
-                  </strong>{' '}
-                  <span style={{ fontFamily: MONO_FONT }}>{disconnected.join(', ')}</span>.<br />
-                  {disconnected.length !== 1 ? 'They' : 'It'} will <strong>not</strong> receive the new key —
-                  you may be locked out until you update {disconnected.length !== 1 ? 'them' : 'it'} manually.<br />
-                  Connected hosts rotate now. Continue?
-                </span>
-              )
-            }
-            onConfirm={handleRotate}
-            okText={disconnected.length > 0 ? 'Rotate anyway' : 'Rotate'}
-            okButtonProps={disconnected.length > 0 ? { danger: true } : undefined}
-            cancelText="Cancel"
-            placement="bottom"
-          >
-            <Button
-              size="small"
-              icon={generating ? <LoadingOutlined /> : <KeyOutlined />}
-              disabled={generating}
-              loading={generating}
-            >
-              {generating ? 'Rotating…' : 'Rotate key'}
-            </Button>
-          </Popconfirm>
-        )}
-        {keyPath && allRemoteHosts.length > 0 && (
-          <Tooltip title="Authorize this machine on every host at once over a one-off password — for bootstrapping a freshly synced fleet">
-            <Button
-              size="small"
-              icon={<KeyOutlined />}
-              disabled={generating}
-              onClick={() => setCopyAllOpen(true)}
-            >
-              Copy key to all hosts…
-            </Button>
-          </Tooltip>
-        )}
-      </Space>
-
-      {/* Live rotation progress — a moving bar while the fleet-wide push/verify runs */}
-      {generating && rotateProgress && rotateProgress.total > 0 && (
-        <div style={{ marginBottom: 10 }}>
-          <Progress
-            percent={Math.round((rotateProgress.done / rotateProgress.total) * 100)}
-            size="small"
-            status="active"
-          />
-          <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 2 }}>
-            Pushing &amp; verifying {rotateProgress.done}/{rotateProgress.total} host{rotateProgress.total !== 1 ? 's' : ''}
-            {rotateProgress.host ? (
-              <> — last: <span style={{ fontFamily: MONO_FONT }}>{rotateProgress.host}</span>{rotateProgress.phase === 'failed' ? ' ✗' : ' ✓'}</>
-            ) : '…'}
-          </Text>
-        </div>
-      )}
-
-      {/* Per-host rotation results */}
-      {rotationResult && rotationResult.perHost.length > 0 && (
-        <div style={{ marginBottom: 10 }}>
-          {rotationResult.perHost.map(h => {
-            const icon = h.skipped ? '⚠' : h.verified ? '✓' : '✗'
-            const color = h.skipped ? '#d4b106' : h.verified ? '#52c41a' : '#ff4d4f'
-            return (
-              <div key={h.host} style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginBottom: 3 }}>
-                <span style={{ color, fontFamily: MONO_FONT, fontSize: 12, flexShrink: 0 }}>{icon} {h.host}</span>
-                {h.error && <Text type="secondary" style={{ fontSize: 11 }}>{h.error}</Text>}
-              </div>
-            )
-          })}
-          {!rotationResult.committed && (
-            <Text type="warning" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
-              Old key still active — fix the failures above and retry.
-            </Text>
-          )}
-        </div>
-      )}
-
-      {/* Manual snippet — shown on partial/total failure, or when a committed rotation
-          skipped some hosts (disconnected / per-host key) that still need the new key */}
-      {rotationResult && rotationResult.publicKey &&
-        (!rotationResult.committed || rotationResult.perHost.some(h => h.skipped)) && (
-        <div style={{ marginBottom: 10 }}>
-          <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
-            Run on each skipped/failing host to authorise the new key manually:
-          </Text>
-          <Typography.Paragraph
-            copyable={{ tooltips: ['Copy', 'Copied!'] }}
-            style={{
-              fontFamily: MONO_FONT, fontSize: 11, padding: '6px 10px',
-              background: 'rgba(255,255,255,0.04)', border: '1px solid #333',
-              borderRadius: 4, wordBreak: 'break-all', margin: 0, color: '#52c41a',
-            }}
-          >
-            {`echo "${rotationResult.publicKey}" >> ~/.ssh/authorized_keys`}
-          </Typography.Paragraph>
-        </div>
-      )}
-
-      {/* First-time generate — show manual snippet since there are no sessions to push via */}
-      {publicKey && !rotationResult && (
-        <div style={{ marginBottom: 10 }}>
-          <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
-            Run on each host to authorise this key:
-          </Text>
-          <Typography.Paragraph
-            copyable={{ tooltips: ['Copy', 'Copied!'] }}
-            style={{
-              fontFamily: MONO_FONT, fontSize: 11, padding: '6px 10px',
-              background: 'rgba(255,255,255,0.04)', border: '1px solid #333',
-              borderRadius: 4, wordBreak: 'break-all', margin: 0, color: '#52c41a',
-            }}
-          >
-            {authorizedKeysLine}
-          </Typography.Paragraph>
-        </div>
-      )}
-
-      {/* Persistent public key — always available to copy, derived if no .pub */}
-      {keyPath && storedPublicKey && !publicKey && !rotationResult && (
-        <div style={{ marginBottom: 10 }}>
-          <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
-            Public key — add to each host's authorized_keys:
-          </Text>
-          <Typography.Paragraph
-            copyable={{ text: storedPublicKey, tooltips: ['Copy', 'Copied!'] }}
-            style={{
-              fontFamily: MONO_FONT, fontSize: 11, padding: '6px 10px',
-              background: 'rgba(255,255,255,0.04)', border: '1px solid #333',
-              borderRadius: 4, wordBreak: 'break-all', margin: 0, color: '#52c41a',
-            }}
-          >
-            {`echo "${storedPublicKey}" >> ~/.ssh/authorized_keys`}
-          </Typography.Paragraph>
-        </div>
-      )}
-
-      <Divider />
-
-      <Text strong style={{ fontSize: 14 }}>Quick connect</Text>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10 }}>
-        <Select
-          size="small"
-          value={connectedHosts.length === 0 ? undefined : selectedHost}
-          placeholder={connectedHosts.length === 0 ? 'No connected hosts' : 'Select host'}
-          disabled={connectedHosts.length === 0}
-          onChange={setSelectedHost}
-          options={connectedHosts.map(h => ({ value: h, label: h }))}
-          style={{ flex: 1, minWidth: 0 }}
-        />
-        <Button
-          size="small"
-          icon={<DesktopOutlined />}
-          disabled={connectedHosts.length === 0 || !selectedHost}
-          onClick={() => bridge.launch_terminal(selectedHost).catch(e => message.error(String(e)))}
-        >
-          Open PuTTY
-        </Button>
-      </div>
-
-      <Divider />
-
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <Button type="primary" size="small" loading={saving} onClick={handleSave}>Save</Button>
-        {saved && <Text type="success" style={{ fontSize: 13 }}>Saved</Text>}
-      </div>
-      <Text type="secondary" style={{ fontSize: 13, display: 'block', marginTop: 10 }}>
-        Settings are saved to <code>{configDir || '%APPDATA%/runspec-console'}</code>
-      </Text>
 
       <CopyKeyAllModal
         open={copyAllOpen}
@@ -1697,52 +1713,56 @@ function LocalVenvsTab() {
   }
 
   return (
-    <div style={{ maxWidth: 620 }}>
-      <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
-        Discover runnables in <strong>more than one local Python venv</strong> — the same multi-venv support remote hosts
-        have, for this machine. The console's own venv is always discovered; add glob patterns below whose matched
-        directories are each scanned for a venv (probed for <code>Scripts\runspec.exe</code> / <code>bin/runspec</code>).
-      </Typography.Paragraph>
-      <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
-        These globs live in <code>config.toml</code>, so they ride <strong>Config Sync</strong> and the config seed — one
-        versioned convention (e.g. <code>C:\venvs\*</code>) works across a fleet of identical machines, and each console
-        resolves its own real venvs. The matches shown below are specific to <strong>this</strong> machine.
-      </Typography.Paragraph>
-
-      <Typography.Text strong style={{ fontSize: 14 }}>Venv search globs</Typography.Text>
-      <div style={{ marginTop: 8 }}>
-        {globs.map((g, i) => (
-          <Space key={i} align="baseline" style={{ display: 'flex', marginBottom: 6 }}>
-            <Input
-              value={g}
-              onChange={e => setGlob(i, e.target.value)}
-              placeholder="C:\venvs\*"
-              style={{ width: 420, fontFamily: MONO_FONT }}
-            />
-            <MinusCircleOutlined onClick={() => removeGlob(i)} style={{ color: 'var(--rs-text-muted)', cursor: 'pointer' }} />
-          </Space>
-        ))}
-        <Button type="dashed" size="small" onClick={addGlob} icon={<PlusOutlined />} style={{ marginTop: 2 }}>Add glob</Button>
-      </div>
-
-      <Divider style={{ margin: '16px 0' }} />
-      <Typography.Text strong style={{ fontSize: 14 }}>Resolved on this machine</Typography.Text>
-      <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: 4 }}>
-        The venvs the console will discover locally (own venv first). Save to refresh after editing the globs.
-      </Typography.Paragraph>
-      {resolved.length === 0 ? (
-        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No local venvs resolved yet" />
-      ) : (
+    <div>
+      <SettingsColumns>
         <div>
-          {resolved.map(r => (
-            <div key={r.path} style={{ display: 'flex', gap: 8, alignItems: 'baseline', marginBottom: 4 }}>
-              <Tag color="blue">{r.venv_name}</Tag>
-              <Text style={{ fontSize: 13, fontFamily: MONO_FONT, wordBreak: 'break-all' }}>{r.path}</Text>
-              {r.path === ownVenv && <Text type="secondary" style={{ fontSize: 12 }}>(console's own venv)</Text>}
-            </div>
-          ))}
+          <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
+            Discover runnables in <strong>more than one local Python venv</strong> — the same multi-venv support remote hosts
+            have, for this machine. The console's own venv is always discovered; add glob patterns below whose matched
+            directories are each scanned for a venv (probed for <code>Scripts\runspec.exe</code> / <code>bin/runspec</code>).
+          </Typography.Paragraph>
+          <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
+            These globs live in <code>config.toml</code>, so they ride <strong>Config Sync</strong> and the config seed — one
+            versioned convention (e.g. <code>C:\venvs\*</code>) works across a fleet of identical machines, and each console
+            resolves its own real venvs. The venvs listed under <strong>Resolved on this machine</strong> are specific to this one.
+          </Typography.Paragraph>
+
+          <Typography.Text strong style={{ fontSize: 14 }}>Venv search globs</Typography.Text>
+          <div style={{ marginTop: 8 }}>
+            {globs.map((g, i) => (
+              <Space key={i} align="baseline" style={{ display: 'flex', marginBottom: 6 }}>
+                <Input
+                  value={g}
+                  onChange={e => setGlob(i, e.target.value)}
+                  placeholder="C:\venvs\*"
+                  style={{ width: 420, fontFamily: MONO_FONT }}
+                />
+                <MinusCircleOutlined onClick={() => removeGlob(i)} style={{ color: 'var(--rs-text-muted)', cursor: 'pointer' }} />
+              </Space>
+            ))}
+            <Button type="dashed" size="small" onClick={addGlob} icon={<PlusOutlined />} style={{ marginTop: 2 }}>Add glob</Button>
+          </div>
         </div>
-      )}
+        <div>
+          <Typography.Text strong style={{ fontSize: 14 }}>Resolved on this machine</Typography.Text>
+          <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: 4 }}>
+            The venvs the console will discover locally (own venv first). Save to refresh after editing the globs.
+          </Typography.Paragraph>
+          {resolved.length === 0 ? (
+            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No local venvs resolved yet" />
+          ) : (
+            <div>
+              {resolved.map(r => (
+                <div key={r.path} style={{ display: 'flex', gap: 8, alignItems: 'baseline', marginBottom: 4 }}>
+                  <Tag color="blue">{r.venv_name}</Tag>
+                  <Text style={{ fontSize: 13, fontFamily: MONO_FONT, wordBreak: 'break-all' }}>{r.path}</Text>
+                  {r.path === ownVenv && <Text type="secondary" style={{ fontSize: 12 }}>(console's own venv)</Text>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </SettingsColumns>
 
       <Divider style={{ margin: '16px 0' }} />
       <Button type="primary" loading={saving} onClick={handleSave}>{saved ? 'Saved' : 'Save'}</Button>
@@ -3653,128 +3673,132 @@ export function MailboxesTab() {
 
   return (
     <div>
-      <Text type="secondary" style={{ fontSize: 13, display: 'block', marginBottom: 12 }}>
-        Monitor one Outlook inbox for the <code>new_mail</code> trigger source. Trigger
-        rules &mdash; what to do with matched mail &mdash; live in <code>runspec_triggers.toml</code>.
-      </Text>
+      <SettingsColumns>
+        <div>
+          <Text type="secondary" style={{ fontSize: 13, display: 'block', marginBottom: 12 }}>
+            Monitor one Outlook inbox for the <code>new_mail</code> trigger source. Trigger
+            rules &mdash; what to do with matched mail &mdash; live in <code>runspec_triggers.toml</code>.
+          </Text>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: enabled ? 10 : 4 }}>
-        <Switch size="small" checked={enabled} onChange={setEnabled} />
-        <MailOutlined style={{ color: 'var(--rs-text-muted)' }} />
-        <span style={{ fontSize: 14 }}>Monitor a mailbox</span>
-      </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: enabled ? 10 : 4 }}>
+            <Switch size="small" checked={enabled} onChange={setEnabled} />
+            <MailOutlined style={{ color: 'var(--rs-text-muted)' }} />
+            <span style={{ fontSize: 14 }}>Monitor a mailbox</span>
+          </div>
 
-      {!enabled && (
-        <Text type="secondary" style={{ fontSize: 13, display: 'block', marginBottom: 10, marginLeft: 34 }}>
-          Start here &mdash; turn this on to choose the primary inbox the console watches (also
-          the room / sign-up identity). The <b>Also watch</b> list below is only for extra
-          inboxes monitored alongside it.
-        </Text>
-      )}
-
-      {enabled && (
-        <Form form={form} layout="vertical" size="small" style={{ marginTop: 4 }}>
-          <Form.Item
-            name="address"
-            label="Mailbox email address"
-            help="The account or shared mailbox to monitor. Leave blank for your own default account."
-          >
-            <Input placeholder="helpdesk@corp.com (blank = my mailbox)" style={{ fontFamily: MONO_FONT }} />
-          </Form.Item>
-          <Form.Item
-            name="folders"
-            label="Folders (optional)"
-            help={'Folder paths under this mailbox, /-separated (type one and press Enter for each). Leave empty to monitor the Inbox only. Each folder is watched independently and a trigger can match on the folder it landed in.'}
-          >
-            <Select
-              mode="tags"
-              tokenSeparators={[',']}
-              placeholder="Inbox (leave empty), or e.g. Tickets/Open"
-              style={{ fontFamily: MONO_FONT, width: '100%' }}
-              open={false}
-              suffixIcon={null}
-            />
-          </Form.Item>
-          <Form.Item name="label" label="Label (optional)" help="A display name for this inbox.">
-            <Input placeholder="e.g. Helpdesk" />
-          </Form.Item>
-          <Form.Item name="once_per_thread" valuePropName="checked"
-            label="Suppress replies by default (once per thread)"
-            help="Default for this mailbox: triggers fire on the first message in a conversation and ignore later replies. Each trigger can override this.">
-            {/* Switch must be the SINGLE child of Form.Item — Ant only injects the
-                checked/onChange binding into a lone child, so a sibling <span> here
-                left the switch unbound and its value was never saved or restored. */}
-            <Switch size="small" />
-          </Form.Item>
-          {!!(address ?? '').trim() && (
-            <Alert
-              type="warning"
-              showIcon
-              style={{ marginBottom: 10 }}
-              message="Shared mailbox watched by several consoles?"
-              description={
-                <span style={{ fontSize: 13 }}>
-                  Without coordination, every console reacts to every new mail
-                  (duplicate replies / runs). Enable a <b>claim</b> on the matching
-                  trigger (Triggers tab) so
-                  one operator claims each email &mdash; the item moves to a claim folder
-                  and only the winner proceeds. Otherwise monitor one folder from one
-                  console, or let Outlook rules sort each operator's mail into a personal
-                  folder.
-                </span>
-              }
-            />
+          {!enabled && (
+            <Text type="secondary" style={{ fontSize: 13, display: 'block', marginBottom: 10, marginLeft: 34 }}>
+              Start here &mdash; turn this on to choose the primary inbox the console watches (also
+              the room / sign-up identity). The <b>Also watch</b> list below is only for extra
+              inboxes monitored alongside it.
+            </Text>
           )}
-        </Form>
-      )}
 
-      <Divider style={{ margin: '16px 0 12px' }} />
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-        <MailOutlined style={{ color: 'var(--rs-text-muted)' }} />
-        <span style={{ fontSize: 14 }}>Also watch (optional)</span>
-      </div>
-      <Text type="secondary" style={{ fontSize: 13, display: 'block', marginBottom: 10 }}>
-        Extra mailboxes/folders to monitor for <code>new_mail</code> alongside the one
-        above &mdash; e.g. your own Inbox next to a shared helpdesk mailbox. These feed
-        triggers only; the mailbox above stays the room / sign-up identity.
-      </Text>
-      {watches.length === 0 && (
-        <Text type="secondary" style={{ fontSize: 13, display: 'block', marginBottom: 8, fontStyle: 'italic' }}>
-          No extra mailboxes &mdash; optional. Use <b>Monitor a mailbox</b> above for the
-          primary inbox.
-        </Text>
-      )}
-      {watches.map((w, i) => (
-        <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 6, alignItems: 'center' }}>
-          <Input
-            size="small"
-            placeholder="address (blank = my default account)"
-            value={w.address}
-            onChange={e => setWatch(i, { address: e.target.value })}
-            style={{ fontFamily: MONO_FONT, flex: 2 }}
-          />
-          <Select
-            size="small"
-            mode="tags"
-            tokenSeparators={[',']}
-            placeholder='folders (blank = "Inbox")'
-            value={w.folders ?? []}
-            onChange={(vals: string[]) => setWatch(i, { folders: vals })}
-            style={{ fontFamily: MONO_FONT, flex: 2 }}
-            open={false}
-            suffixIcon={null}
-          />
-          <Input
-            size="small"
-            placeholder="label"
-            value={w.label}
-            onChange={e => setWatch(i, { label: e.target.value })}
-            style={{ flex: 1 }}
-          />
-          <Button size="small" type="text" danger onClick={() => removeWatch(i)}>Remove</Button>
+          {enabled && (
+            <Form form={form} layout="vertical" size="small" style={{ marginTop: 4 }}>
+              <Form.Item
+                name="address"
+                label="Mailbox email address"
+                help="The account or shared mailbox to monitor. Leave blank for your own default account."
+              >
+                <Input placeholder="helpdesk@corp.com (blank = my mailbox)" style={{ fontFamily: MONO_FONT }} />
+              </Form.Item>
+              <Form.Item
+                name="folders"
+                label="Folders (optional)"
+                help={'Folder paths under this mailbox, /-separated (type one and press Enter for each). Leave empty to monitor the Inbox only. Each folder is watched independently and a trigger can match on the folder it landed in.'}
+              >
+                <Select
+                  mode="tags"
+                  tokenSeparators={[',']}
+                  placeholder="Inbox (leave empty), or e.g. Tickets/Open"
+                  style={{ fontFamily: MONO_FONT, width: '100%' }}
+                  open={false}
+                  suffixIcon={null}
+                />
+              </Form.Item>
+              <Form.Item name="label" label="Label (optional)" help="A display name for this inbox.">
+                <Input placeholder="e.g. Helpdesk" />
+              </Form.Item>
+              <Form.Item name="once_per_thread" valuePropName="checked"
+                label="Suppress replies by default (once per thread)"
+                help="Default for this mailbox: triggers fire on the first message in a conversation and ignore later replies. Each trigger can override this.">
+                {/* Switch must be the SINGLE child of Form.Item — Ant only injects the
+                    checked/onChange binding into a lone child, so a sibling <span> here
+                    left the switch unbound and its value was never saved or restored. */}
+                <Switch size="small" />
+              </Form.Item>
+              {!!(address ?? '').trim() && (
+                <Alert
+                  type="warning"
+                  showIcon
+                  style={{ marginBottom: 10 }}
+                  message="Shared mailbox watched by several consoles?"
+                  description={
+                    <span style={{ fontSize: 13 }}>
+                      Without coordination, every console reacts to every new mail
+                      (duplicate replies / runs). Enable a <b>claim</b> on the matching
+                      trigger (Triggers tab) so
+                      one operator claims each email &mdash; the item moves to a claim folder
+                      and only the winner proceeds. Otherwise monitor one folder from one
+                      console, or let Outlook rules sort each operator's mail into a personal
+                      folder.
+                    </span>
+                  }
+                />
+              )}
+            </Form>
+          )}
         </div>
-      ))}
-      <Button size="small" onClick={addWatch} style={{ marginTop: 2 }}>+ Add extra mailbox</Button>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+            <MailOutlined style={{ color: 'var(--rs-text-muted)' }} />
+            <span style={{ fontSize: 14 }}>Also watch (optional)</span>
+          </div>
+          <Text type="secondary" style={{ fontSize: 13, display: 'block', marginBottom: 10 }}>
+            Extra mailboxes/folders to monitor for <code>new_mail</code> alongside the one
+            above &mdash; e.g. your own Inbox next to a shared helpdesk mailbox. These feed
+            triggers only; the mailbox above stays the room / sign-up identity.
+          </Text>
+          {watches.length === 0 && (
+            <Text type="secondary" style={{ fontSize: 13, display: 'block', marginBottom: 8, fontStyle: 'italic' }}>
+              No extra mailboxes &mdash; optional. Use <b>Monitor a mailbox</b> above for the
+              primary inbox.
+            </Text>
+          )}
+          {watches.map((w, i) => (
+            <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 6, alignItems: 'center' }}>
+              <Input
+                size="small"
+                placeholder="address (blank = my default account)"
+                value={w.address}
+                onChange={e => setWatch(i, { address: e.target.value })}
+                style={{ fontFamily: MONO_FONT, flex: 2 }}
+              />
+              <Select
+                size="small"
+                mode="tags"
+                tokenSeparators={[',']}
+                placeholder='folders (blank = "Inbox")'
+                value={w.folders ?? []}
+                onChange={(vals: string[]) => setWatch(i, { folders: vals })}
+                style={{ fontFamily: MONO_FONT, flex: 2 }}
+                open={false}
+                suffixIcon={null}
+              />
+              <Input
+                size="small"
+                placeholder="label"
+                value={w.label}
+                onChange={e => setWatch(i, { label: e.target.value })}
+                style={{ flex: 1 }}
+              />
+              <Button size="small" type="text" danger onClick={() => removeWatch(i)}>Remove</Button>
+            </div>
+          ))}
+          <Button size="small" onClick={addWatch} style={{ marginTop: 2 }}>+ Add extra mailbox</Button>
+        </div>
+      </SettingsColumns>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 12 }}>
         <Button type="primary" size="small" loading={saving} onClick={save}>Save</Button>
@@ -4045,71 +4069,77 @@ export function ConfigSyncTab() {
       )}
 
       <Form form={form} layout="vertical" size="small">
-        <Form.Item name="url" label="Repository URL" rules={[{ required: true, message: 'Required' }]}
-          tooltip="HTTPS (https://…) or SSH (git@host:org/repo.git). HTTPS uses the credential's token; SSH uses an SSH-key credential's deploy key (or your console SSH key when none is selected).">
-          <Input placeholder="https://github.com/acme/runspec-config.git" autoComplete="off" />
-        </Form.Item>
-        <Form.Item label="Tag / ref" required
-          tooltip="A tag (recommended, for versioned rollouts) or a branch name.">
-          <Space.Compact block>
-            <Form.Item name="ref" rules={[{ required: true, message: 'Required' }]} noStyle>
-              <AutoComplete
-                options={tags.map(t => ({ value: t }))}
-                onFocus={() => { if (!tags.length) loadTags() }}
-                placeholder="v1.4.0"
-              />
+        <SettingsColumns>
+          <div>
+            <Form.Item name="url" label="Repository URL" rules={[{ required: true, message: 'Required' }]}
+              tooltip="HTTPS (https://…) or SSH (git@host:org/repo.git). HTTPS uses the credential's token; SSH uses an SSH-key credential's deploy key (or your console SSH key when none is selected).">
+              <Input placeholder="https://github.com/acme/runspec-config.git" autoComplete="off" />
             </Form.Item>
-            <Button onClick={loadTags}>refresh tags</Button>
-          </Space.Compact>
-        </Form.Item>
-        <Form.Item name="credential_id" label="Credential"
-          tooltip="A Credentials-tab entry. For HTTPS use a token/userpass credential (username + token). For SSH use an ssh-key credential (a per-repo deploy key); without one, SSH falls back to your console SSH key.">
-          <Select allowClear placeholder="None (public / anonymous)"
-            options={creds.map(c => ({ value: c.id, label: `${c.label}${c.kind === 'ssh-key' ? ' (ssh-key)' : c.username ? ` (${c.username})` : ''}` }))} />
-        </Form.Item>
-        <Form.Item name="files" label="Files to pull"
-          tooltip="Files missing from the repo at that ref are skipped, not an error.">
-          <Select mode="multiple" options={fileOptions} placeholder="config files to sync" />
-        </Form.Item>
-        <Form.Item
-          name="preserve"
-          label="Preserve (keep local on pull)"
-          tooltip={'Keys whose local value a pull must never overwrite. Format: "<file>:<dotted.path>", with * matching any host/entry. e.g. config.toml:mailbox.folder or runspec_hosts.toml:*.room_user'}
-          help={cfg?.preserve_default?.length ? <span style={{ fontSize: 12 }}>Always protected: {cfg.preserve_default.map(p => <code key={p} style={{ marginRight: 6 }}>{p}</code>)}</span> : undefined}
-        >
-          <Select mode="tags" tokenSeparators={[',', ' ']} open={false} suffixIcon={null}
-            placeholder="config.toml:mailbox.folder  (Enter to add)" />
-        </Form.Item>
-        <Form.Item name="layers" label="Folder(s) in the repo (optional)"
-          tooltip="Where in the repo the config files live. Leave blank to read the repo root. Add one folder to read just that folder. Add several to combine them in order — a shared base first, your team's folder last — so common config is shared and your team overlays its own on top (later folders win; your local entries are always kept)."
-          help={<span style={{ fontSize: 12 }}>Blank = repo root. One folder, e.g. <code>teams/emea</code> = just that folder. Several, e.g. <code>_base</code> then <code>teams/emea</code> = shared base + your team on top (order = how they stack).</span>}>
-          <Select mode="tags" placeholder="blank = repo root  ·  or e.g. _base then teams/emea" tokenSeparators={[',']} open={false} suffixIcon={null} style={{ fontFamily: MONO_FONT }} />
-        </Form.Item>
-        <Form.Item
-          name="ca_bundle"
-          label="CA bundle (optional)"
-          tooltip="Path to a PEM file for verifying the server's TLS certificate. Needed for an internal CA or a TLS-inspecting corporate proxy — the pull uses certifi by default, not the OS/git cert store. Leave blank for public hosts. (HTTPS also reuses the SSH-tab proxy, if set.)"
-          help={<span style={{ fontSize: 12 }}>For a private GitLab / corporate proxy that gives an <code>SSL CERTIFICATE_VERIFY_FAILED</code> error — point this at your internal root CA <code>.pem</code>.</span>}
-        >
-          <Input placeholder="~/certs/corp-root-ca.pem" style={{ fontFamily: MONO_FONT }} autoComplete="off" />
-        </Form.Item>
-        <Form.Item
-          name="tls_verify"
-          label="Verify TLS"
-          valuePropName="checked"
-          tooltip="Off skips certificate verification entirely (like git's http.sslVerify=false). Insecure — only on a trusted internal network. Prefer a CA bundle above."
-          help={<span style={{ fontSize: 12 }}>Turn off only if you can't supply a CA bundle (e.g. your <code>git config</code> already sets <code>http.sslVerify false</code>).</span>}
-        >
-          <Switch size="small" />
-        </Form.Item>
-        <Form.Item
-          name="backups_keep"
-          label="Backups to keep per file"
-          tooltip="Before a pull changes a file it copies the old one to <name>.bak-<timestamp>. This caps how many of those are kept per file — older ones are pruned after each pull. A pull that changes nothing makes no backup. 0 = keep all (never prune)."
-          help={<span style={{ fontSize: 12 }}>Default 5. Set <code>0</code> to keep every backup (they'll accumulate in the config folder).</span>}
-        >
-          <InputNumber min={0} step={1} style={{ width: '100%' }} placeholder="5" />
-        </Form.Item>
+            <Form.Item label="Tag / ref" required
+              tooltip="A tag (recommended, for versioned rollouts) or a branch name.">
+              <Space.Compact block>
+                <Form.Item name="ref" rules={[{ required: true, message: 'Required' }]} noStyle>
+                  <AutoComplete
+                    options={tags.map(t => ({ value: t }))}
+                    onFocus={() => { if (!tags.length) loadTags() }}
+                    placeholder="v1.4.0"
+                  />
+                </Form.Item>
+                <Button onClick={loadTags}>refresh tags</Button>
+              </Space.Compact>
+            </Form.Item>
+            <Form.Item name="credential_id" label="Credential"
+              tooltip="A Credentials-tab entry. For HTTPS use a token/userpass credential (username + token). For SSH use an ssh-key credential (a per-repo deploy key); without one, SSH falls back to your console SSH key.">
+              <Select allowClear placeholder="None (public / anonymous)"
+                options={creds.map(c => ({ value: c.id, label: `${c.label}${c.kind === 'ssh-key' ? ' (ssh-key)' : c.username ? ` (${c.username})` : ''}` }))} />
+            </Form.Item>
+            <Form.Item name="files" label="Files to pull"
+              tooltip="Files missing from the repo at that ref are skipped, not an error.">
+              <Select mode="multiple" options={fileOptions} placeholder="config files to sync" />
+            </Form.Item>
+            <Form.Item
+              name="preserve"
+              label="Preserve (keep local on pull)"
+              tooltip={'Keys whose local value a pull must never overwrite. Format: "<file>:<dotted.path>", with * matching any host/entry. e.g. config.toml:mailbox.folder or runspec_hosts.toml:*.room_user'}
+              help={cfg?.preserve_default?.length ? <span style={{ fontSize: 12 }}>Always protected: {cfg.preserve_default.map(p => <code key={p} style={{ marginRight: 6 }}>{p}</code>)}</span> : undefined}
+            >
+              <Select mode="tags" tokenSeparators={[',', ' ']} open={false} suffixIcon={null}
+                placeholder="config.toml:mailbox.folder  (Enter to add)" />
+            </Form.Item>
+            <Form.Item name="layers" label="Folder(s) in the repo (optional)"
+              tooltip="Where in the repo the config files live. Leave blank to read the repo root. Add one folder to read just that folder. Add several to combine them in order — a shared base first, your team's folder last — so common config is shared and your team overlays its own on top (later folders win; your local entries are always kept)."
+              help={<span style={{ fontSize: 12 }}>Blank = repo root. One folder, e.g. <code>teams/emea</code> = just that folder. Several, e.g. <code>_base</code> then <code>teams/emea</code> = shared base + your team on top (order = how they stack).</span>}>
+              <Select mode="tags" placeholder="blank = repo root  ·  or e.g. _base then teams/emea" tokenSeparators={[',']} open={false} suffixIcon={null} style={{ fontFamily: MONO_FONT }} />
+            </Form.Item>
+          </div>
+          <div>
+            <Form.Item
+              name="ca_bundle"
+              label="CA bundle (optional)"
+              tooltip="Path to a PEM file for verifying the server's TLS certificate. Needed for an internal CA or a TLS-inspecting corporate proxy — the pull uses certifi by default, not the OS/git cert store. Leave blank for public hosts. (HTTPS also reuses the SSH-tab proxy, if set.)"
+              help={<span style={{ fontSize: 12 }}>For a private GitLab / corporate proxy that gives an <code>SSL CERTIFICATE_VERIFY_FAILED</code> error — point this at your internal root CA <code>.pem</code>.</span>}
+            >
+              <Input placeholder="~/certs/corp-root-ca.pem" style={{ fontFamily: MONO_FONT }} autoComplete="off" />
+            </Form.Item>
+            <Form.Item
+              name="tls_verify"
+              label="Verify TLS"
+              valuePropName="checked"
+              tooltip="Off skips certificate verification entirely (like git's http.sslVerify=false). Insecure — only on a trusted internal network. Prefer a CA bundle above."
+              help={<span style={{ fontSize: 12 }}>Turn off only if you can't supply a CA bundle (e.g. your <code>git config</code> already sets <code>http.sslVerify false</code>).</span>}
+            >
+              <Switch size="small" />
+            </Form.Item>
+            <Form.Item
+              name="backups_keep"
+              label="Backups to keep per file"
+              tooltip="Before a pull changes a file it copies the old one to <name>.bak-<timestamp>. This caps how many of those are kept per file — older ones are pruned after each pull. A pull that changes nothing makes no backup. 0 = keep all (never prune)."
+              help={<span style={{ fontSize: 12 }}>Default 5. Set <code>0</code> to keep every backup (they'll accumulate in the config folder).</span>}
+            >
+              <InputNumber min={0} step={1} style={{ width: '100%' }} placeholder="5" />
+            </Form.Item>
+          </div>
+        </SettingsColumns>
 
         <Space>
           <Button size="small" onClick={handleSave} loading={saving}>{saved ? 'Saved' : 'Save settings'}</Button>
@@ -4162,124 +4192,128 @@ export function ConfigSyncTab() {
       )}
 
       <Divider style={{ margin: '18px 0 12px' }} />
-      <Text strong style={{ fontSize: 14, display: 'block' }}>Config seed</Text>
-      <Text type="secondary" style={{ fontSize: 13, display: 'block', margin: '4px 0 10px' }}>
-        Baseline config <strong>bundled inside this install's package</strong> — applied automatically on launch when the package version changes, so a fresh or air-gapped machine is configured with no repo or index reachable. It's the lowest layer: a git pull above and your own edits always win (except the keys you protect above).
-      </Text>
-      {seed?.error && (
-        <Alert
-          type="error"
-          showIcon
-          style={{ marginBottom: 10 }}
-          message="Config seed failed to apply"
-          description={
-            <span style={{ fontSize: 13 }}>
-              A malformed bundled file aborts the whole seed, so this install
-              wasn't configured from the package. Fix the file in the package and
-              reinstall, then re-apply.<br />
-              <code style={{ fontSize: 12 }}>{seed.error}</code>
-            </span>
-          }
-        />
-      )}
-      {seed?.available ? (
-        <>
-          <Text type="secondary" style={{ fontSize: 13, display: 'block' }}>
-            Bundled: {Object.entries(seed.stamp).map(([d, v]) => <code key={d} style={{ marginRight: 6 }}>{d} v{v}</code>)}
+      <SettingsColumns>
+        <div>
+          <Text strong style={{ fontSize: 14, display: 'block' }}>Config seed</Text>
+          <Text type="secondary" style={{ fontSize: 13, display: 'block', margin: '4px 0 10px' }}>
+            Baseline config <strong>bundled inside this install's package</strong> — applied automatically on launch when the package version changes, so a fresh or air-gapped machine is configured with no repo or index reachable. It's the lowest layer: a git pull above and your own edits always win (except the keys you protect above).
           </Text>
-          {seed.last_applied && (
-            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 2 }}>
-              Last applied at {seed.last_applied}
-            </Text>
+          {seed?.error && (
+            <Alert
+              type="error"
+              showIcon
+              style={{ marginBottom: 10 }}
+              message="Config seed failed to apply"
+              description={
+                <span style={{ fontSize: 13 }}>
+                  A malformed bundled file aborts the whole seed, so this install
+                  wasn't configured from the package. Fix the file in the package and
+                  reinstall, then re-apply.<br />
+                  <code style={{ fontSize: 12 }}>{seed.error}</code>
+                </span>
+              }
+            />
           )}
-          {seed.overrides && seed.overrides.length > 0 && (() => {
-            const active = seed.overrides.filter(o => !o.preserved)
-            const kept = seed.overrides.filter(o => o.preserved)
-            const row = (o: SeedOverride, i: number) => (
-              <div key={`${o.file}:${o.path}:${i}`} style={{ fontFamily: MONO_FONT, fontSize: 12, marginTop: 3 }}>
-                <Tag style={{ margin: '0 4px 0 0', fontSize: 11 }}>{o.file}</Tag>
-                <span>{o.path}</span>: local <code>{o.local || '(empty)'}</code> → seed <code>{o.seed || '(empty)'}</code>
-                {o.preserved && <Tag color="green" style={{ marginLeft: 6, fontSize: 11 }}>protected</Tag>}
+          {seed?.available ? (
+            <>
+              <Text type="secondary" style={{ fontSize: 13, display: 'block' }}>
+                Bundled: {Object.entries(seed.stamp).map(([d, v]) => <code key={d} style={{ marginRight: 6 }}>{d} v{v}</code>)}
+              </Text>
+              {seed.last_applied && (
+                <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 2 }}>
+                  Last applied at {seed.last_applied}
+                </Text>
+              )}
+              {seed.overrides && seed.overrides.length > 0 && (() => {
+                const active = seed.overrides.filter(o => !o.preserved)
+                const kept = seed.overrides.filter(o => o.preserved)
+                const row = (o: SeedOverride, i: number) => (
+                  <div key={`${o.file}:${o.path}:${i}`} style={{ fontFamily: MONO_FONT, fontSize: 12, marginTop: 3 }}>
+                    <Tag style={{ margin: '0 4px 0 0', fontSize: 11 }}>{o.file}</Tag>
+                    <span>{o.path}</span>: local <code>{o.local || '(empty)'}</code> → seed <code>{o.seed || '(empty)'}</code>
+                    {o.preserved && <Tag color="green" style={{ marginLeft: 6, fontSize: 11 }}>protected</Tag>}
+                  </div>
+                )
+                return (
+                  <Alert
+                    type={active.length ? 'warning' : 'info'}
+                    showIcon
+                    style={{ marginTop: 8 }}
+                    message={active.length
+                      ? `${active.length} local value${active.length > 1 ? 's' : ''} would be overwritten by the seed`
+                      : 'Seeded keys differ from local (all protected)'}
+                    description={<div style={{ fontSize: 13 }}>
+                      {active.length > 0 && (
+                        <div style={{ marginBottom: kept.length ? 10 : 0 }}>
+                          <div style={{ marginBottom: 2 }}>
+                            These local edits are <strong>not</strong> protected — re-applying the seed (or the next package upgrade) reverts them to the seed value. Add the key to <em>Preserve</em> above to keep your value.
+                          </div>
+                          {active.map(row)}
+                        </div>
+                      )}
+                      {kept.length > 0 && (
+                        <div>
+                          <div style={{ marginBottom: 2 }}>Protected by a preserve rule — your local value is kept on re-apply:</div>
+                          {kept.map(row)}
+                        </div>
+                      )}
+                    </div>} />
+                )
+              })()}
+              {seed.pending && (
+                <Alert type="info" showIcon style={{ marginTop: 8 }}
+                  message="A newer seed is bundled"
+                  description={<span style={{ fontSize: 13 }}>It applies automatically on the next launch — or re-apply it now.</span>} />
+              )}
+              <div style={{ marginTop: 10 }}>
+                <Popconfirm
+                  title="Re-apply the bundled config seed?"
+                  description={<span style={{ fontSize: 13 }}>Re-asserts the package's baseline over local config (your own entries and protected keys are kept).<br />Each changed file is backed up first.</span>}
+                  onConfirm={reapplySeed} okText="Re-apply" cancelText="Cancel" placement="topLeft">
+                  <Button size="small" loading={seedBusy}>Re-apply seed</Button>
+                </Popconfirm>
               </div>
-            )
-            return (
-              <Alert
-                type={active.length ? 'warning' : 'info'}
-                showIcon
-                style={{ marginTop: 8 }}
-                message={active.length
-                  ? `${active.length} local value${active.length > 1 ? 's' : ''} would be overwritten by the seed`
-                  : 'Seeded keys differ from local (all protected)'}
-                description={<div style={{ fontSize: 13 }}>
-                  {active.length > 0 && (
-                    <div style={{ marginBottom: kept.length ? 10 : 0 }}>
-                      <div style={{ marginBottom: 2 }}>
-                        These local edits are <strong>not</strong> protected — re-applying the seed (or the next package upgrade) reverts them to the seed value. Add the key to <em>Preserve</em> above to keep your value.
-                      </div>
-                      {active.map(row)}
-                    </div>
-                  )}
-                  {kept.length > 0 && (
-                    <div>
-                      <div style={{ marginBottom: 2 }}>Protected by a preserve rule — your local value is kept on re-apply:</div>
-                      {kept.map(row)}
-                    </div>
-                  )}
-                </div>} />
-            )
-          })()}
-          {seed.pending && (
-            <Alert type="info" showIcon style={{ marginTop: 8 }}
-              message="A newer seed is bundled"
-              description={<span style={{ fontSize: 13 }}>It applies automatically on the next launch — or re-apply it now.</span>} />
+              {seedResult && seedResult.ok && seedResult.applied && (
+                <Alert type="success" showIcon style={{ marginTop: 10 }}
+                  message="Seed applied"
+                  description={<span style={{ fontSize: 13 }}>
+                    Wrote: {seedResult.written?.length ? <code>{seedResult.written.join(', ')}</code> : 'nothing'}.
+                    {seedResult.backups?.length ? <> Backed up {seedResult.backups.length} file(s).</> : null}
+                    {' '}Hosts and triggers reloaded — no restart needed.
+                  </span>} />
+              )}
+              {seedResult && seedResult.ok && !seedResult.applied && (
+                <Alert type="info" showIcon style={{ marginTop: 10 }} message="Seed already up to date" description={<span style={{ fontSize: 13 }}>Nothing changed.</span>} />
+              )}
+              {seedResult && !seedResult.ok && (
+                <Alert type="error" showIcon style={{ marginTop: 10 }} message="Seed apply failed" description={<span style={{ fontSize: 13 }}>{seedResult.error}</span>} />
+              )}
+            </>
+          ) : (
+            <Text type="secondary" style={{ fontSize: 13 }}>No config seed bundled in this install.</Text>
           )}
-          <div style={{ marginTop: 10 }}>
-            <Popconfirm
-              title="Re-apply the bundled config seed?"
-              description={<span style={{ fontSize: 13 }}>Re-asserts the package's baseline over local config (your own entries and protected keys are kept).<br />Each changed file is backed up first.</span>}
-              onConfirm={reapplySeed} okText="Re-apply" cancelText="Cancel" placement="topLeft">
-              <Button size="small" loading={seedBusy}>Re-apply seed</Button>
-            </Popconfirm>
-          </div>
-          {seedResult && seedResult.ok && seedResult.applied && (
+        </div>
+        <div>
+          <Text strong style={{ fontSize: 14, display: 'block' }}>Runbook docs</Text>
+          <Text type="secondary" style={{ fontSize: 13, display: 'block', margin: '4px 0 10px' }}>
+            Generate a plain-markdown <strong>wiki</strong> from your runbooks + fleet — grouped by tag, one page per runbook, cross-linked to the runnables and hosts each names. It's for humans to follow during an outage (when the console may be down). Output is deterministic, so re-running only changes what your runbooks changed — point it at a local clone of the config repo and commit the docs back for the team.
+          </Text>
+          <Space.Compact style={{ width: '100%' }}>
+            <Input size="small" value={docsDir} onChange={e => setDocsDir(e.target.value)}
+              placeholder={docsDefault ? `${docsDefault}  (default)` : 'output directory'}
+              style={{ fontFamily: MONO_FONT }} autoComplete="off" />
+            <Button size="small" type="primary" onClick={generateDocs} loading={docsBusy}>Generate</Button>
+          </Space.Compact>
+          {docsResult && docsResult.ok && (
             <Alert type="success" showIcon style={{ marginTop: 10 }}
-              message="Seed applied"
-              description={<span style={{ fontSize: 13 }}>
-                Wrote: {seedResult.written?.length ? <code>{seedResult.written.join(', ')}</code> : 'nothing'}.
-                {seedResult.backups?.length ? <> Backed up {seedResult.backups.length} file(s).</> : null}
-                {' '}Hosts and triggers reloaded — no restart needed.
-              </span>} />
+              message={`Wrote ${docsResult.written?.length ?? 0} file(s)`}
+              description={<span style={{ fontSize: 13 }}>Into <code>{docsResult.dir}</code>. Commit them from your repo clone to share with the team.</span>} />
           )}
-          {seedResult && seedResult.ok && !seedResult.applied && (
-            <Alert type="info" showIcon style={{ marginTop: 10 }} message="Seed already up to date" description={<span style={{ fontSize: 13 }}>Nothing changed.</span>} />
+          {docsResult && !docsResult.ok && (
+            <Alert type="error" showIcon style={{ marginTop: 10 }} message="Doc generation failed" description={<span style={{ fontSize: 13 }}>{docsResult.error}</span>} />
           )}
-          {seedResult && !seedResult.ok && (
-            <Alert type="error" showIcon style={{ marginTop: 10 }} message="Seed apply failed" description={<span style={{ fontSize: 13 }}>{seedResult.error}</span>} />
-          )}
-        </>
-      ) : (
-        <Text type="secondary" style={{ fontSize: 13 }}>No config seed bundled in this install.</Text>
-      )}
-
-      <Divider style={{ margin: '18px 0 12px' }} />
-      <Text strong style={{ fontSize: 14, display: 'block' }}>Runbook docs</Text>
-      <Text type="secondary" style={{ fontSize: 13, display: 'block', margin: '4px 0 10px' }}>
-        Generate a plain-markdown <strong>wiki</strong> from your runbooks + fleet — grouped by tag, one page per runbook, cross-linked to the runnables and hosts each names. It's for humans to follow during an outage (when the console may be down). Output is deterministic, so re-running only changes what your runbooks changed — point it at a local clone of the config repo and commit the docs back for the team.
-      </Text>
-      <Space.Compact style={{ width: '100%' }}>
-        <Input size="small" value={docsDir} onChange={e => setDocsDir(e.target.value)}
-          placeholder={docsDefault ? `${docsDefault}  (default)` : 'output directory'}
-          style={{ fontFamily: MONO_FONT }} autoComplete="off" />
-        <Button size="small" type="primary" onClick={generateDocs} loading={docsBusy}>Generate</Button>
-      </Space.Compact>
-      {docsResult && docsResult.ok && (
-        <Alert type="success" showIcon style={{ marginTop: 10 }}
-          message={`Wrote ${docsResult.written?.length ?? 0} file(s)`}
-          description={<span style={{ fontSize: 13 }}>Into <code>{docsResult.dir}</code>. Commit them from your repo clone to share with the team.</span>} />
-      )}
-      {docsResult && !docsResult.ok && (
-        <Alert type="error" showIcon style={{ marginTop: 10 }} message="Doc generation failed" description={<span style={{ fontSize: 13 }}>{docsResult.error}</span>} />
-      )}
+        </div>
+      </SettingsColumns>
     </div>
   )
 }
@@ -4692,16 +4726,19 @@ export function SavedRunsTab({ editorOnly = false, request = null }: { editorOnl
   useEffect(() => {
     load()
     bridge.get_hosts().then(setHosts).catch(() => {})
-    bridge.list_credentials().then(setCreds).catch(() => {})
+    const loadCreds = () => { bridge.list_credentials().then(setCreds).catch(() => {}) }
+    loadCreds()
     bridge.get_profiles().then(setProfiles).catch(() => {})
     const loadRunnables = () => bridge.get_runnables('all').then(setRunnables).catch(() => {})
     loadRunnables()
     const onChanged = () => { load() }
     window.addEventListener('runspec:saved_runs_changed', onChanged)
     window.addEventListener('runspec:runnables_updated', loadRunnables)
+    window.addEventListener('runspec:credentials-changed', loadCreds)
     return () => {
       window.removeEventListener('runspec:saved_runs_changed', onChanged)
       window.removeEventListener('runspec:runnables_updated', loadRunnables)
+      window.removeEventListener('runspec:credentials-changed', loadCreds)
     }
   }, [load])
 
@@ -5119,9 +5156,10 @@ export function SavedRunsTab({ editorOnly = false, request = null }: { editorOnl
   )
 }
 
-// ── Drawer ────────────────────────────────────────────────────────────────────
+// ── Settings modal ───────────────────────────────────────────────────────────
 
 export function TelemetryTab() {
+  const { token } = theme.useToken()
   const [enabled, setEnabled] = useState(false)
   const [endpoint, setEndpoint] = useState('')
   const [protocol, setProtocol] = useState('http/protobuf')
@@ -5204,7 +5242,15 @@ export function TelemetryTab() {
           : [],
       )
     })
-    bridge.mcp_credential_options().then(setCredOptions).catch(() => setCredOptions([]))
+  }, [])
+
+  // The credential pickers refresh live when a credential is added or removed
+  // in the Credentials tab (this tab stays mounted, so a mount-only load goes stale).
+  useEffect(() => {
+    const loadCreds = () => { bridge.mcp_credential_options().then(setCredOptions).catch(() => setCredOptions([])) }
+    loadCreds()
+    window.addEventListener('runspec:credentials-changed', loadCreds)
+    return () => window.removeEventListener('runspec:credentials-changed', loadCreds)
   }, [])
 
   const handleSave = async () => {
@@ -5277,276 +5323,295 @@ export function TelemetryTab() {
 
   const row = (label: string, control: ReactNode) => (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 10 }}>
-      <span style={{ fontSize: 14 }}>{label}</span>
+      <span style={{ fontSize: 14, flexShrink: 0 }}>{label}</span>
       {control}
     </div>
   )
 
   return (
-    <div style={{ maxWidth: 620 }}>
-      {ai ? (
-        <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
-          Export a trace per agent turn — <strong>turn → LLM call → tool call</strong> — over
-          OpenTelemetry (OTLP) to any OTel backend (LangSmith, Langfuse, Phoenix, Jaeger, Tempo).
-          Spans follow the OpenTelemetry GenAI conventions. Requires the optional <code>otel</code> extra
-          to be installed. Standard <code>OTEL_*</code> environment
-          variables fill in anything left blank below.
-        </Typography.Paragraph>
-      ) : (
-        <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
-          Export <strong>metrics</strong> over OpenTelemetry (OTLP) — per-runnable-run counters and
-          durations for every run this console does (Forms, MCP server, schedules, triggers). Tracing is
-          for agent turns, so it's not shown here. Requires the optional <code>otel</code> extra.
-          Configure the endpoint in the <strong>Metrics</strong> section below; the resource identity and
-          TLS settings here apply to it.
-        </Typography.Paragraph>
-      )}
+    <div>
+      <SettingsColumns>
+        <div>
+          {ai && <Typography.Title level={5} style={{ marginTop: 0 }}>Traces</Typography.Title>}
+          {ai ? (
+            <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
+              Export a trace per agent turn — <strong>turn → LLM call → tool call</strong> — over
+              OpenTelemetry (OTLP) to any OTel backend (LangSmith, Langfuse, Phoenix, Jaeger, Tempo).
+              Spans follow the OpenTelemetry GenAI conventions. Requires the optional <code>otel</code> extra
+              to be installed. Standard <code>OTEL_*</code> environment
+              variables fill in anything left blank below.
+            </Typography.Paragraph>
+          ) : (
+            <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
+              Export <strong>metrics</strong> over OpenTelemetry (OTLP) — per-runnable-run counters and
+              durations for every run this console does (Forms, MCP server, schedules, triggers). Tracing is
+              for agent turns, so it's not shown here. Requires the optional <code>otel</code> extra.
+              Configure the endpoint in the <strong>Metrics</strong> section; the resource identity and
+              TLS settings here apply to it.
+            </Typography.Paragraph>
+          )}
 
-      {ai && (
-        <div style={{ marginBottom: 12 }}>
-          <Button
-            size="small"
-            onClick={() => {
-              setEnabled(true)
-              setEndpoint('http://127.0.0.1:6006/v1/traces')
-              setCaptureContent(true)
-            }}
-          >
-            Use local Phoenix
-          </Button>
-          <Typography.Text type="secondary" style={{ fontSize: 13, marginLeft: 8 }}>
-            Fills the endpoint for a locally-run <a href="https://github.com/Arize-ai/phoenix" target="_blank" rel="noreferrer">Arize Phoenix</a> and
-            enables content capture — run <code>phoenix serve</code> in its own venv first, then Save.
-          </Typography.Text>
-          <div style={{ marginTop: 8 }}>
-            <Button
-              size="small"
-              onClick={() => {
-                // The endpoint is region-specific, so it is left for the
-                // operator to fill (the hint below lists them).
-                setEnabled(true)
-                setCaptureContent(true)
-                if (!projectName.trim()) setProjectName('runspec-console')
-                setCredentialHeader('api_key')
-                setHeaders(prev =>
-                  prev.some(h => h.k.trim().toLowerCase() === 'space_id')
-                    ? prev
-                    : [...prev, { k: 'space_id', v: '' }],
-                )
-              }}
-            >
-              Use Arize AX
-            </Button>
-            <Typography.Text type="secondary" style={{ fontSize: 13, marginLeft: 8 }}>
-              Fills the standard OTLP fields for <a href="https://arize.com/docs/ax" target="_blank" rel="noreferrer">Arize AX</a>:
-              paste your Space ID into the <code>space_id</code> header, add your API key as a{' '}
-              <code>token</code> Credential and pick it below (sent raw under <code>api_key</code>), and set the
-              endpoint for your space's region, e.g. <code>https://otlp.arize.com/v1/traces</code> (US) or{' '}
-              <code>https://otlp.eu-west-1a.arize.com/v1/traces</code> (EU). Then Save.
-            </Typography.Text>
-          </div>
-        </div>
-      )}
-
-      {ai && row('Enable tracing', <Switch checked={enabled} onChange={setEnabled} />)}
-      {ai && row('OTLP endpoint', <Input style={{ width: 380 }} placeholder="https://…/v1/traces  (blank ⇒ OTEL_EXPORTER_OTLP_ENDPOINT)" value={endpoint} onChange={e => setEndpoint(e.target.value)} disabled={!enabled} />)}
-      {ai && row('Protocol', <Select style={{ width: 180 }} value={protocol} onChange={setProtocol} disabled={!enabled} options={[{ value: 'http/protobuf', label: 'http/protobuf' }]} />)}
-      {row('Service name', <Input style={{ width: 260 }} placeholder="(defaults to the app name)" value={serviceName} onChange={e => setServiceName(e.target.value)} disabled={ai && !enabled} />)}
-      {row('Instance label', <Input style={{ width: 260 }} placeholder="(defaults to this machine's hostname)" value={label} onChange={e => setLabel(e.target.value)} disabled={ai && !enabled} />)}
-      <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: -2 }}>
-        Every span and metric carries a resource identity: <strong>service name</strong> (blank ⇒ this
-        install's app name), an <strong>instance label</strong> that becomes <code>service.instance.id</code>
-        (blank ⇒ hostname) so several consoles — even on one machine — stay distinct time series rather
-        than colliding, plus this machine's hostname and OS user (<code>host.name</code> / <code>process.owner</code>).
-      </Typography.Paragraph>
-      {ai && row('Project name', <Input style={{ width: 260 }} placeholder="(backend default project)" value={projectName} onChange={e => setProjectName(e.target.value)} disabled={!enabled} />)}
-      {ai && (
-        <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: -2 }}>
-          Sets <code>openinference.project.name</code>, the open OpenInference attribute that Phoenix and
-          Arize AX use to file traces under a project. Each trace also carries <code>session.id</code> (the
-          chat), so a conversation's turns group into one session.
-        </Typography.Paragraph>
-      )}
-      {ai && row('Sample ratio', <InputNumber min={0} max={1} step={0.1} value={sampleRatio} onChange={v => setSampleRatio(typeof v === 'number' ? v : 1)} disabled={!enabled} />)}
-
-      {ai && (
-        <>
-          <Divider style={{ margin: '14px 0' }} />
-          <Typography.Paragraph style={{ fontSize: 13, marginBottom: 6 }}>
-            <strong>Headers</strong> — extra HTTP headers on every export (e.g. a LangSmith API key
-            and project). Stored in <code>config.toml</code> like the model API key, not the OS keychain.
-          </Typography.Paragraph>
-          {headers.map((h, i) => (
-            <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
-              <Input placeholder="header" style={{ width: 220 }} value={h.k} disabled={!enabled}
-                onChange={e => setHeaders(prev => prev.map((x, j) => j === i ? { ...x, k: e.target.value } : x))} />
-              <Input.Password placeholder="value" style={{ width: 300 }} value={h.v} disabled={!enabled}
-                onChange={e => setHeaders(prev => prev.map((x, j) => j === i ? { ...x, v: e.target.value } : x))} />
-              <Button icon={<MinusCircleOutlined />} disabled={!enabled} onClick={() => setHeaders(prev => prev.filter((_, j) => j !== i))} />
+          {ai && (
+            <div style={{ marginBottom: 12 }}>
+              <Button
+                size="small"
+                onClick={() => {
+                  setEnabled(true)
+                  setEndpoint('http://127.0.0.1:6006/v1/traces')
+                  setCaptureContent(true)
+                }}
+              >
+                Use local Phoenix
+              </Button>
+              <Typography.Text type="secondary" style={{ fontSize: 13, marginLeft: 8 }}>
+                Fills the endpoint for a locally-run <a href="https://github.com/Arize-ai/phoenix" target="_blank" rel="noreferrer">Arize Phoenix</a> and
+                enables content capture — run <code>phoenix serve</code> in its own venv first, then Save.
+              </Typography.Text>
+              <div style={{ marginTop: 8 }}>
+                <Button
+                  size="small"
+                  onClick={() => {
+                    // The endpoint is region-specific, so it is left for the
+                    // operator to fill (the hint below lists them).
+                    setEnabled(true)
+                    setCaptureContent(true)
+                    if (!projectName.trim()) setProjectName('runspec-console')
+                    setCredentialHeader('api_key')
+                    setHeaders(prev =>
+                      prev.some(h => h.k.trim().toLowerCase() === 'space_id')
+                        ? prev
+                        : [...prev, { k: 'space_id', v: '' }],
+                    )
+                  }}
+                >
+                  Use Arize AX
+                </Button>
+                <Typography.Text type="secondary" style={{ fontSize: 13, marginLeft: 8 }}>
+                  Fills the standard OTLP fields for <a href="https://arize.com/docs/ax" target="_blank" rel="noreferrer">Arize AX</a>:
+                  paste your Space ID into the <code>space_id</code> header, add your API key as a{' '}
+                  <code>token</code> Credential and pick it below (sent raw under <code>api_key</code>), and set the
+                  endpoint for your space's region, e.g. <code>https://otlp.arize.com/v1/traces</code> (US) or{' '}
+                  <code>https://otlp.eu-west-1a.arize.com/v1/traces</code> (EU). Then Save.
+                </Typography.Text>
+              </div>
             </div>
-          ))}
-          <Button size="small" icon={<PlusOutlined />} disabled={!enabled} onClick={() => setHeaders(prev => [...prev, { k: '', v: '' }])}>Add header</Button>
+          )}
 
-          <Divider style={{ margin: '14px 0' }} />
-          <Typography.Paragraph style={{ fontSize: 13, marginBottom: 6 }}>
-            <strong>API key from a command</strong> — instead of storing the key above, resolve it at
-            startup from a command's output and inject it under the header named below. The config only
-            holds the <em>command</em> (e.g. <code>keyring get langsmith key</code>, <code>vault read …</code>,
-            or a bundled helper), so a config seed / sync can distribute it without ever shipping the key
-            in the clear. Mirrors the model <code>api_key_command</code>.
+          {ai && row('Enable tracing', <Switch checked={enabled} onChange={setEnabled} />)}
+          {ai && row('OTLP endpoint', <Input style={{ flex: 1, maxWidth: 600, minWidth: 0 }} placeholder="https://…/v1/traces  (blank ⇒ OTEL_EXPORTER_OTLP_ENDPOINT)" value={endpoint} onChange={e => setEndpoint(e.target.value)} disabled={!enabled} />)}
+          {ai && row('Protocol', <Select style={{ width: 180 }} value={protocol} onChange={setProtocol} disabled={!enabled} options={[{ value: 'http/protobuf', label: 'http/protobuf' }]} />)}
+          {ai && row('Project name', <Input style={{ width: 260 }} placeholder="(backend default project)" value={projectName} onChange={e => setProjectName(e.target.value)} disabled={!enabled} />)}
+          {ai && (
+            <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: -2 }}>
+              Sets <code>openinference.project.name</code>, the open OpenInference attribute that Phoenix and
+              Arize AX use to file traces under a project. Each trace also carries <code>session.id</code> (the
+              chat), so a conversation's turns group into one session.
+            </Typography.Paragraph>
+          )}
+          {ai && row('Sample ratio', <InputNumber min={0} max={1} step={0.1} value={sampleRatio} onChange={v => setSampleRatio(typeof v === 'number' ? v : 1)} disabled={!enabled} />)}
+
+          {ai && (
+            <>
+              <Divider style={{ margin: '14px 0' }} />
+              <Typography.Paragraph style={{ fontSize: 13, marginBottom: 6 }}>
+                <strong>Headers</strong> — extra HTTP headers on every export (e.g. a LangSmith API key
+                and project). Stored in <code>config.toml</code> like the model API key, not the OS keychain.
+              </Typography.Paragraph>
+              {headers.map((h, i) => (
+                <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
+                  <Input placeholder="header" style={{ width: 220 }} value={h.k} disabled={!enabled}
+                    onChange={e => setHeaders(prev => prev.map((x, j) => j === i ? { ...x, k: e.target.value } : x))} />
+                  <Input.Password placeholder="value" style={{ width: 300 }} value={h.v} disabled={!enabled}
+                    onChange={e => setHeaders(prev => prev.map((x, j) => j === i ? { ...x, v: e.target.value } : x))} />
+                  <Button icon={<MinusCircleOutlined />} disabled={!enabled} onClick={() => setHeaders(prev => prev.filter((_, j) => j !== i))} />
+                </div>
+              ))}
+              <Button size="small" icon={<PlusOutlined />} disabled={!enabled} onClick={() => setHeaders(prev => [...prev, { k: '', v: '' }])}>Add header</Button>
+
+              <Divider style={{ margin: '14px 0' }} />
+              <Typography.Paragraph style={{ fontSize: 13, marginBottom: 6 }}>
+                <strong>API key from a command</strong> — instead of storing the key above, resolve it at
+                startup from a command's output and inject it under the header named below. The config only
+                holds the <em>command</em> (e.g. <code>keyring get langsmith key</code>, <code>vault read …</code>,
+                or a bundled helper), so a config seed / sync can distribute it without ever shipping the key
+                in the clear. Mirrors the model <code>api_key_command</code>.
+              </Typography.Paragraph>
+              {row('API key command', <Input style={{ flex: 1, maxWidth: 600, minWidth: 0 }} placeholder="e.g. keyring get langsmith key" value={apiKeyCommand} onChange={e => setApiKeyCommand(e.target.value)} disabled={!enabled} />)}
+              {row('Inject under header', <Input style={{ width: 220 }} placeholder="x-api-key" value={apiKeyHeader} onChange={e => setApiKeyHeader(e.target.value)} disabled={!enabled || !apiKeyCommand.trim()} />)}
+
+              <Typography.Paragraph style={{ fontSize: 13, margin: '10px 0 6px' }}>
+                <strong>Or use a stored credential</strong> — pick a Credential (Settings → Credentials; its
+                secret stays in the OS keychain) and it's injected at startup. This is the recommended path for a
+                per-user API key you set up during onboarding (log in to LangSmith / Grafana, create a key, add it
+                as a Credential). A <code>userpass</code> credential becomes <code>Authorization: Basic</code>, a
+                <code>token</code> becomes <code>Bearer</code>, or set a header below to send the raw secret under
+                it (e.g. <code>x-api-key</code> for LangSmith).
+              </Typography.Paragraph>
+              {row('Credential', <Select style={{ width: 300 }} value={credential} onChange={setCredential} disabled={!enabled}
+                options={[{ value: '', label: 'None' }, ...credOptions.map(c => ({ value: c.id, label: `${c.label} (${c.kind})` }))]} />)}
+              {row('Inject under header', <Input style={{ width: 220 }} placeholder="Authorization (default)" value={credentialHeader} onChange={e => setCredentialHeader(e.target.value)} disabled={!enabled || !credential} />)}
+
+              <Divider style={{ margin: '14px 0' }} />
+              <Alert
+                type="warning"
+                showIcon
+                style={{ marginBottom: 12 }}
+                message="Content capture (privacy)"
+                description={
+                  <span style={{ fontSize: 13 }}>
+                    Off (default): spans carry <strong>structure only</strong> — models, token counts,
+                    tool names, decisions, durations. On: prompt / completion / tool-argument <strong>text</strong>
+                    is also exported (secret-looking arguments are scrubbed first). Only enable this if your
+                    backend is trusted — prompts and arguments can contain sensitive data.
+                  </span>
+                }
+              />
+              {row('Capture prompt / completion / argument text', <Switch checked={captureContent} onChange={setCaptureContent} disabled={!enabled} />)}
+              {row(
+                'Max captured content characters (0 = no limit)',
+                <InputNumber min={0} step={1000} value={maxContentChars} onChange={v => setMaxContentChars(typeof v === 'number' ? v : 0)} disabled={!enabled || !captureContent} />,
+              )}
+              <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: -2 }}>
+                Each captured prompt / completion / argument value is recorded in full by default, so a trace shows the
+                real prompt (including the search-mode tool menu) — not a slice. Set a ceiling only to bound span size.
+              </Typography.Paragraph>
+            </>
+          )}
+
+
+          {ai && (
+            <Space style={{ marginTop: 6 }}>
+              <Button loading={testing} disabled={!enabled} onClick={handleTest}>Send test trace</Button>
+            </Space>
+          )}
+          {ai && (
+            <Typography.Paragraph type="secondary" style={{ fontSize: 13, marginTop: 8, marginBottom: 0 }}>
+              Saves, then emits one sample <strong>turn → LLM call → tool call</strong> trace and flushes it
+              immediately — so you can confirm the backend receives it (and, with content capture on, renders
+              prompt / completion / argument text) without waiting for a real agent turn.
+            </Typography.Paragraph>
+          )}
+          {ai && testResult && (
+            <Alert
+              type={testResult.ok ? 'success' : 'error'}
+              showIcon
+              style={{ marginTop: 10 }}
+              message={testResult.ok ? 'Test trace sent' : 'Could not send a test trace'}
+              description={
+                testResult.ok ? (
+                  <span style={{ fontSize: 13 }}>
+                    Sent {testResult.spans?.length ?? 3} spans to <code>{testResult.endpoint}</code>
+                    {testResult.trace_id ? <> — trace <code>{testResult.trace_id}</code></> : null}.{' '}
+                    {testResult.capture_content
+                      ? 'Content capture is on (sample text attached; secret-looking args scrubbed).'
+                      : 'Content capture is off (structure only).'}{' '}
+                    {testResult.export?.ok
+                      ? `The backend accepted it${testResult.flushed ? '' : ' (batched — may take a moment)'}; open it and look for the trace.`
+                      : `Open your backend and look for it${testResult.flushed ? ' (flushed now)' : ' (batched — may take a moment)'}.`}
+                  </span>
+                ) : (
+                  <span style={{ fontSize: 13 }}>{testResult.reason}</span>
+                )
+              }
+            />
+          )}
+        </div>
+        <div>
+          <Typography.Title level={5} style={{ marginTop: 0 }}>{ai ? 'Traces and metrics' : 'Identity and TLS'}</Typography.Title>
+          {row('Service name', <Input style={{ width: 260 }} placeholder="(defaults to the app name)" value={serviceName} onChange={e => setServiceName(e.target.value)} disabled={ai && !enabled && !metricsEnabled} />)}
+          {row('Instance label', <Input style={{ width: 260 }} placeholder="(defaults to this machine's hostname)" value={label} onChange={e => setLabel(e.target.value)} disabled={ai && !enabled && !metricsEnabled} />)}
+          <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: -2 }}>
+            Every span and metric carries a resource identity: <strong>service name</strong> (blank ⇒ this
+            install's app name), an <strong>instance label</strong> that becomes <code>service.instance.id</code>
+            (blank ⇒ hostname) so several consoles — even on one machine — stay distinct time series rather
+            than colliding, plus this machine's hostname and OS user (<code>host.name</code> / <code>process.owner</code>).
           </Typography.Paragraph>
-          {row('API key command', <Input style={{ width: 380 }} placeholder="e.g. keyring get langsmith key" value={apiKeyCommand} onChange={e => setApiKeyCommand(e.target.value)} disabled={!enabled} />)}
-          {row('Inject under header', <Input style={{ width: 220 }} placeholder="x-api-key" value={apiKeyHeader} onChange={e => setApiKeyHeader(e.target.value)} disabled={!enabled || !apiKeyCommand.trim()} />)}
+          {row('CA bundle (private CA / TLS proxy)', <Input style={{ flex: 1, maxWidth: 600, minWidth: 0 }} placeholder="path to a .pem" value={caBundle} onChange={e => setCaBundle(e.target.value)} disabled={ai && !enabled && !metricsEnabled} />)}
+          {row('Verify TLS certificate', <Switch checked={tlsVerify} onChange={setTlsVerify} disabled={ai && !enabled && !metricsEnabled} />)}
+          <Divider style={{ margin: '14px 0 18px' }} />
+          <Typography.Title level={5} style={{ marginTop: 0 }}>Metrics</Typography.Title>
+          <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
+            Also export <strong>metrics</strong> — per-tool-run and per-turn counters and duration
+            histograms (<code>runspec.tool.runs</code>, <code>runspec.tool.duration</code>,{' '}
+            <code>runspec.agent.turns</code>, <code>runspec.agent.turn.duration</code>,{' '}
+            <code>runspec.agent.turn.tokens</code>) pushed on an interval. Metrics are a{' '}
+            <strong>separate signal with their own endpoint</strong>, so they can go to a different
+            backend than traces — many trace backends (LangSmith) ingest OTLP traces but not metrics,
+            so point these at a metrics/OTLP endpoint (a Grafana / Prometheus OTLP endpoint, or a
+            collector). Transport trust (CA bundle / TLS verify) is inherited from the trace settings
+            above; endpoint and auth are set here. Requires the same <code>otel</code> extra.
+          </Typography.Paragraph>
+          {row('Enable metrics', <Switch checked={metricsEnabled} onChange={setMetricsEnabled} />)}
+          {row('OTLP metrics endpoint', <Input style={{ flex: 1, maxWidth: 600, minWidth: 0 }} placeholder="https://…/v1/metrics  (blank ⇒ OTEL_EXPORTER_OTLP_METRICS_ENDPOINT)" value={metricsEndpoint} onChange={e => setMetricsEndpoint(e.target.value)} disabled={!metricsEnabled} />)}
+          <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: -2 }}>
+            A base URL such as Grafana Cloud's <code>https://otlp-gateway-….grafana.net/otlp</code> or a
+            collector's <code>http://host:4318</code> gets <code>/v1/metrics</code> added; any other path is
+            used as given.
+          </Typography.Paragraph>
+          {row('Export interval (seconds)', <InputNumber min={1} step={10} value={metricsInterval} onChange={v => setMetricsInterval(typeof v === 'number' ? v : 60)} disabled={!metricsEnabled} />)}
 
           <Typography.Paragraph style={{ fontSize: 13, margin: '10px 0 6px' }}>
-            <strong>Or use a stored credential</strong> — pick a Credential (Settings → Credentials; its
-            secret stays in the OS keychain) and it's injected at startup. This is the recommended path for a
-            per-user API key you set up during onboarding (log in to LangSmith / Grafana, create a key, add it
-            as a Credential). A <code>userpass</code> credential becomes <code>Authorization: Basic</code>, a
-            <code>token</code> becomes <code>Bearer</code>, or set a header below to send the raw secret under
-            it (e.g. <code>x-api-key</code> for LangSmith).
+            <strong>Metrics headers</strong> — extra HTTP headers on the metrics export (e.g. a Grafana
+            Cloud <code>Authorization: Basic …</code>). Not shared with the trace headers.
           </Typography.Paragraph>
-          {row('Credential', <Select style={{ width: 300 }} value={credential} onChange={setCredential} disabled={!enabled}
+          {metricsHeaders.map((h, i) => (
+            <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
+              <Input placeholder="header" style={{ width: 220 }} value={h.k} disabled={!metricsEnabled}
+                onChange={e => setMetricsHeaders(prev => prev.map((x, j) => j === i ? { ...x, k: e.target.value } : x))} />
+              <Input.Password placeholder="value" style={{ width: 300 }} value={h.v} disabled={!metricsEnabled}
+                onChange={e => setMetricsHeaders(prev => prev.map((x, j) => j === i ? { ...x, v: e.target.value } : x))} />
+              <Button icon={<MinusCircleOutlined />} disabled={!metricsEnabled} onClick={() => setMetricsHeaders(prev => prev.filter((_, j) => j !== i))} />
+            </div>
+          ))}
+          <Button size="small" icon={<PlusOutlined />} disabled={!metricsEnabled} onClick={() => setMetricsHeaders(prev => [...prev, { k: '', v: '' }])}>Add header</Button>
+
+          {row('Metrics API key command', <Input style={{ flex: 1, maxWidth: 600, minWidth: 0 }} placeholder="e.g. keyring get grafana key" value={metricsApiKeyCommand} onChange={e => setMetricsApiKeyCommand(e.target.value)} disabled={!metricsEnabled} />)}
+          {row('Inject under header', <Input style={{ width: 220 }} placeholder="x-api-key" value={metricsApiKeyHeader} onChange={e => setMetricsApiKeyHeader(e.target.value)} disabled={!metricsEnabled || !metricsApiKeyCommand.trim()} />)}
+          {row('Metrics credential', <Select style={{ width: 300 }} value={metricsCredential} onChange={setMetricsCredential} disabled={!metricsEnabled}
             options={[{ value: '', label: 'None' }, ...credOptions.map(c => ({ value: c.id, label: `${c.label} (${c.kind})` }))]} />)}
-          {row('Inject under header', <Input style={{ width: 220 }} placeholder="Authorization (default)" value={credentialHeader} onChange={e => setCredentialHeader(e.target.value)} disabled={!enabled || !credential} />)}
+          {row('Inject under header', <Input style={{ width: 220 }} placeholder="Authorization (default)" value={metricsCredentialHeader} onChange={e => setMetricsCredentialHeader(e.target.value)} disabled={!metricsEnabled || !metricsCredential} />)}
 
-          <Divider style={{ margin: '14px 0' }} />
-          <Alert
-            type="warning"
-            showIcon
-            style={{ marginBottom: 12 }}
-            message="Content capture (privacy)"
-            description={
-              <span style={{ fontSize: 13 }}>
-                Off (default): spans carry <strong>structure only</strong> — models, token counts,
-                tool names, decisions, durations. On: prompt / completion / tool-argument <strong>text</strong>
-                is also exported (secret-looking arguments are scrubbed first). Only enable this if your
-                backend is trusted — prompts and arguments can contain sensitive data.
-              </span>
-            }
-          />
-          {row('Capture prompt / completion / argument text', <Switch checked={captureContent} onChange={setCaptureContent} disabled={!enabled} />)}
-          {row(
-            'Max captured content characters (0 = no limit)',
-            <InputNumber min={0} step={1000} value={maxContentChars} onChange={v => setMaxContentChars(typeof v === 'number' ? v : 0)} disabled={!enabled || !captureContent} />,
-          )}
-          <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: -2 }}>
-            Each captured prompt / completion / argument value is recorded in full by default, so a trace shows the
-            real prompt (including the search-mode tool menu) — not a slice. Set a ceiling only to bound span size.
+          <Space style={{ marginTop: 10 }}>
+            <Button loading={metricsTesting} disabled={!metricsEnabled} onClick={handleTestMetric}>Send test metric</Button>
+          </Space>
+          <Typography.Paragraph type="secondary" style={{ fontSize: 13, marginTop: 8, marginBottom: 0 }}>
+            Send test metric saves first, then records one sample tool-run + turn metric and flushes it immediately — so you
+            can confirm the metrics backend receives it without waiting for the export interval.
           </Typography.Paragraph>
-        </>
-      )}
-
-      <Divider style={{ margin: '14px 0' }} />
-      {row('CA bundle (private CA / TLS proxy)', <Input style={{ width: 360 }} placeholder="path to a .pem" value={caBundle} onChange={e => setCaBundle(e.target.value)} disabled={ai && !enabled} />)}
-      {row('Verify TLS certificate', <Switch checked={tlsVerify} onChange={setTlsVerify} disabled={ai && !enabled} />)}
-
-      <Space style={{ marginTop: 6 }}>
-        <Button type="primary" loading={saving} onClick={handleSave}>{saved ? 'Saved' : 'Save'}</Button>
-        {ai && <Button loading={testing} disabled={!enabled} onClick={handleTest}>Send test trace</Button>}
-      </Space>
-      {ai && (
-        <Typography.Paragraph type="secondary" style={{ fontSize: 13, marginTop: 8, marginBottom: 0 }}>
-          Saves, then emits one sample <strong>turn → LLM call → tool call</strong> trace and flushes it
-          immediately — so you can confirm the backend receives it (and, with content capture on, renders
-          prompt / completion / argument text) without waiting for a real agent turn.
-        </Typography.Paragraph>
-      )}
-      {ai && testResult && (
-        <Alert
-          type={testResult.ok ? 'success' : 'error'}
-          showIcon
-          style={{ marginTop: 10 }}
-          message={testResult.ok ? 'Test trace sent' : 'Could not send a test trace'}
-          description={
-            testResult.ok ? (
-              <span style={{ fontSize: 13 }}>
-                Sent {testResult.spans?.length ?? 3} spans to <code>{testResult.endpoint}</code>
-                {testResult.trace_id ? <> — trace <code>{testResult.trace_id}</code></> : null}.{' '}
-                {testResult.capture_content
-                  ? 'Content capture is on (sample text attached; secret-looking args scrubbed).'
-                  : 'Content capture is off (structure only).'}{' '}
-                {testResult.export?.ok
-                  ? `The backend accepted it${testResult.flushed ? '' : ' (batched — may take a moment)'}; open it and look for the trace.`
-                  : `Open your backend and look for it${testResult.flushed ? ' (flushed now)' : ' (batched — may take a moment)'}.`}
-              </span>
-            ) : (
-              <span style={{ fontSize: 13 }}>{testResult.reason}</span>
-            )
-          }
-        />
-      )}
-
-      <Divider style={{ margin: '18px 0' }} />
-      <Typography.Title level={5} style={{ marginTop: 0 }}>Metrics</Typography.Title>
-      <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
-        Also export <strong>metrics</strong> — per-tool-run and per-turn counters and duration
-        histograms (<code>runspec.tool.runs</code>, <code>runspec.tool.duration</code>,{' '}
-        <code>runspec.agent.turns</code>, <code>runspec.agent.turn.duration</code>,{' '}
-        <code>runspec.agent.turn.tokens</code>) pushed on an interval. Metrics are a{' '}
-        <strong>separate signal with their own endpoint</strong>, so they can go to a different
-        backend than traces — many trace backends (LangSmith) ingest OTLP traces but not metrics,
-        so point these at a metrics/OTLP endpoint (a Grafana / Prometheus OTLP endpoint, or a
-        collector). Transport trust (CA bundle / TLS verify) is inherited from the trace settings
-        above; endpoint and auth are set here. Requires the same <code>otel</code> extra.
-      </Typography.Paragraph>
-      {row('Enable metrics', <Switch checked={metricsEnabled} onChange={setMetricsEnabled} />)}
-      {row('OTLP metrics endpoint', <Input style={{ width: 380 }} placeholder="https://…/v1/metrics  (blank ⇒ OTEL_EXPORTER_OTLP_METRICS_ENDPOINT)" value={metricsEndpoint} onChange={e => setMetricsEndpoint(e.target.value)} disabled={!metricsEnabled} />)}
-      <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: -2 }}>
-        A base URL such as Grafana Cloud's <code>https://otlp-gateway-….grafana.net/otlp</code> or a
-        collector's <code>http://host:4318</code> gets <code>/v1/metrics</code> added; any other path is
-        used as given.
-      </Typography.Paragraph>
-      {row('Export interval (seconds)', <InputNumber min={1} step={10} value={metricsInterval} onChange={v => setMetricsInterval(typeof v === 'number' ? v : 60)} disabled={!metricsEnabled} />)}
-
-      <Typography.Paragraph style={{ fontSize: 13, margin: '10px 0 6px' }}>
-        <strong>Metrics headers</strong> — extra HTTP headers on the metrics export (e.g. a Grafana
-        Cloud <code>Authorization: Basic …</code>). Not shared with the trace headers.
-      </Typography.Paragraph>
-      {metricsHeaders.map((h, i) => (
-        <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
-          <Input placeholder="header" style={{ width: 220 }} value={h.k} disabled={!metricsEnabled}
-            onChange={e => setMetricsHeaders(prev => prev.map((x, j) => j === i ? { ...x, k: e.target.value } : x))} />
-          <Input.Password placeholder="value" style={{ width: 300 }} value={h.v} disabled={!metricsEnabled}
-            onChange={e => setMetricsHeaders(prev => prev.map((x, j) => j === i ? { ...x, v: e.target.value } : x))} />
-          <Button icon={<MinusCircleOutlined />} disabled={!metricsEnabled} onClick={() => setMetricsHeaders(prev => prev.filter((_, j) => j !== i))} />
+          {metricsTestResult && (
+            <Alert
+              type={metricsTestResult.ok ? 'success' : 'error'}
+              showIcon
+              style={{ marginTop: 10 }}
+              message={metricsTestResult.ok ? 'Test metric sent' : 'Could not send a test metric'}
+              description={
+                metricsTestResult.ok ? (
+                  <span style={{ fontSize: 13 }}>
+                    Recorded {metricsTestResult.instruments?.length ?? 5} instruments to{' '}
+                    <code>{metricsTestResult.endpoint}</code>. Open your backend and look for them
+                    {metricsTestResult.flushed ? ' (flushed now)' : ' (batched — may take a moment)'}.
+                  </span>
+                ) : (
+                  <span style={{ fontSize: 13 }}>{metricsTestResult.reason}</span>
+                )
+              }
+            />
+          )}
         </div>
-      ))}
-      <Button size="small" icon={<PlusOutlined />} disabled={!metricsEnabled} onClick={() => setMetricsHeaders(prev => [...prev, { k: '', v: '' }])}>Add header</Button>
+      </SettingsColumns>
 
-      {row('Metrics API key command', <Input style={{ width: 380 }} placeholder="e.g. keyring get grafana key" value={metricsApiKeyCommand} onChange={e => setMetricsApiKeyCommand(e.target.value)} disabled={!metricsEnabled} />)}
-      {row('Inject under header', <Input style={{ width: 220 }} placeholder="x-api-key" value={metricsApiKeyHeader} onChange={e => setMetricsApiKeyHeader(e.target.value)} disabled={!metricsEnabled || !metricsApiKeyCommand.trim()} />)}
-      {row('Metrics credential', <Select style={{ width: 300 }} value={metricsCredential} onChange={setMetricsCredential} disabled={!metricsEnabled}
-        options={[{ value: '', label: 'None' }, ...credOptions.map(c => ({ value: c.id, label: `${c.label} (${c.kind})` }))]} />)}
-      {row('Inject under header', <Input style={{ width: 220 }} placeholder="Authorization (default)" value={metricsCredentialHeader} onChange={e => setMetricsCredentialHeader(e.target.value)} disabled={!metricsEnabled || !metricsCredential} />)}
-
-      <Space style={{ marginTop: 10 }}>
-        <Button loading={metricsTesting} disabled={!metricsEnabled} onClick={handleTestMetric}>Send test metric</Button>
-      </Space>
-      <Typography.Paragraph type="secondary" style={{ fontSize: 13, marginTop: 8, marginBottom: 0 }}>
-        The <strong>Save</strong> button above persists these metrics settings too. Send test metric
-        saves first, then records one sample tool-run + turn metric and flushes it immediately — so you
-        can confirm the metrics backend receives it without waiting for the export interval.
-      </Typography.Paragraph>
-      {metricsTestResult && (
-        <Alert
-          type={metricsTestResult.ok ? 'success' : 'error'}
-          showIcon
-          style={{ marginTop: 10 }}
-          message={metricsTestResult.ok ? 'Test metric sent' : 'Could not send a test metric'}
-          description={
-            metricsTestResult.ok ? (
-              <span style={{ fontSize: 13 }}>
-                Recorded {metricsTestResult.instruments?.length ?? 5} instruments to{' '}
-                <code>{metricsTestResult.endpoint}</code>. Open your backend and look for them
-                {metricsTestResult.flushed ? ' (flushed now)' : ' (batched — may take a moment)'}.
-              </span>
-            ) : (
-              <span style={{ fontSize: 13 }}>{metricsTestResult.reason}</span>
-            )
-          }
-        />
-      )}
+      {/* One Save for the whole tab, pinned to the bottom of the scrolling
+          Settings content so it reads as saving traces and metrics together. */}
+      <div style={{
+        position: 'sticky', bottom: 0, zIndex: 1, marginTop: 18, padding: '12px 0',
+        display: 'flex', alignItems: 'center', gap: 12,
+        background: token.colorBgElevated, borderTop: `1px solid ${token.colorBorderSecondary}`,
+      }}>
+        <Button type="primary" loading={saving} onClick={handleSave}>{saved ? 'Saved' : 'Save telemetry settings'}</Button>
+        <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+          {ai ? 'Saves the trace and metrics settings together.' : 'Saves the settings above.'}
+        </Typography.Text>
+      </div>
     </div>
   )
 }
@@ -5590,34 +5655,38 @@ function ChatHistoryTab() {
   )
 
   return (
-    <div style={{ maxWidth: 560 }}>
-      <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
-        Save each chat so you can reopen and continue past conversations from the Console's <strong>History</strong> button.
-        Transcripts are stored <strong>only on this machine</strong> (never synced) and may contain sensitive content.
-        Old conversations are pruned to the limits below.
-      </Typography.Paragraph>
-      {row('Save chat history', <Switch checked={enabled} onChange={setEnabled} />)}
-      {row('Keep at most (conversations)', <InputNumber min={0} value={maxConvs} onChange={v => setMaxConvs(Number(v) || 0)} disabled={!enabled} />)}
-      {row('Delete after (days)', <InputNumber min={0} value={maxAge} onChange={v => setMaxAge(Number(v) || 0)} disabled={!enabled} />)}
-      <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
-        0 = no limit. Disabling stops saving new conversations; existing files stay until pruned or deleted.
-      </Typography.Paragraph>
-
-      <Divider style={{ margin: '14px 0' }} />
-      <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
-        When you reopen a long conversation, the opening turns and the most recent turns are kept word-for-word;
-        the turns in between are condensed so the chat fits the model's context. <strong>The saved transcript is never changed</strong> — only what the model sees on resume.
-      </Typography.Paragraph>
-      {row('Keep opening turns verbatim on resume', <InputNumber min={0} value={keepFirst} onChange={v => setKeepFirst(Number(v) || 0)} disabled={!enabled} />)}
-      {row('Keep recent turns verbatim on resume', <InputNumber min={1} value={keepRecent} onChange={v => setKeepRecent(Number(v) || 1)} disabled={!enabled} />)}
-      {row(
-        'Summarize older turns with a model call',
-        <Switch checked={compactOnResume} onChange={setCompactOnResume} disabled={!enabled} />,
-      )}
-      <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
-        Off (default): older turns are condensed to a short note listing what they covered — no model call.
-        On: an LLM summarizes them on resume (one extra call, slight delay; falls back to the note if it fails).
-      </Typography.Paragraph>
+    <div>
+      <SettingsColumns>
+        <div>
+          <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
+            Save each chat so you can reopen and continue past conversations from the Console's <strong>History</strong> button.
+            Transcripts are stored <strong>only on this machine</strong> (never synced) and may contain sensitive content.
+            Old conversations are pruned to the limits below.
+          </Typography.Paragraph>
+          {row('Save chat history', <Switch checked={enabled} onChange={setEnabled} />)}
+          {row('Keep at most (conversations)', <InputNumber min={0} value={maxConvs} onChange={v => setMaxConvs(Number(v) || 0)} disabled={!enabled} />)}
+          {row('Delete after (days)', <InputNumber min={0} value={maxAge} onChange={v => setMaxAge(Number(v) || 0)} disabled={!enabled} />)}
+          <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+            0 = no limit. Disabling stops saving new conversations; existing files stay until pruned or deleted.
+          </Typography.Paragraph>
+        </div>
+        <div>
+          <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
+            When you reopen a long conversation, the opening turns and the most recent turns are kept word-for-word;
+            the turns in between are condensed so the chat fits the model's context. <strong>The saved transcript is never changed</strong> — only what the model sees on resume.
+          </Typography.Paragraph>
+          {row('Keep opening turns verbatim on resume', <InputNumber min={0} value={keepFirst} onChange={v => setKeepFirst(Number(v) || 0)} disabled={!enabled} />)}
+          {row('Keep recent turns verbatim on resume', <InputNumber min={1} value={keepRecent} onChange={v => setKeepRecent(Number(v) || 1)} disabled={!enabled} />)}
+          {row(
+            'Summarize older turns with a model call',
+            <Switch checked={compactOnResume} onChange={setCompactOnResume} disabled={!enabled} />,
+          )}
+          <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+            Off (default): older turns are condensed to a short note listing what they covered — no model call.
+            On: an LLM summarizes them on resume (one extra call, slight delay; falls back to the note if it fails).
+          </Typography.Paragraph>
+        </div>
+      </SettingsColumns>
       <Button type="primary" loading={saving} onClick={handleSave}>{saved ? 'Saved' : 'Save'}</Button>
     </div>
   )
@@ -6142,95 +6211,102 @@ export function McpServerTab() {
   )
 
   return (
-    <div style={{ maxWidth: 620 }}>
-      <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
-        Expose this console's fleet runnables to an external coding agent (Claude Code, Cursor)
-        as an <strong>MCP server</strong> on localhost. A <code>confirm</code>-level tool call parks
-        for your approval in the console (the same confirm card the agent uses); <code>autonomous</code> runs
-        immediately, <code>manual</code> is refused. Runs land in History tagged <code>mcp</code>. Off by default —
-        it opens a listening socket. Requires the optional <code>mcp</code> extra to be installed.
-      </Typography.Paragraph>
-
-      {row('Enable server', <Switch checked={enabled} onChange={setEnabled} />)}
-      {row('Host', <Input style={{ width: 200, fontFamily: MONO_FONT }} value={host} onChange={e => setHost(e.target.value)} disabled={!enabled} />)}
-      {row('Port', <InputNumber min={1} max={65535} value={port} onChange={v => setPort(typeof v === 'number' ? v : 8765)} disabled={!enabled} />)}
-      {row('Bearer token (optional)',
-        <Space.Compact style={{ width: 340 }}>
-          <Input.Password style={{ fontFamily: MONO_FONT }} placeholder="none — localhost only" value={token} onChange={e => setToken(e.target.value)} disabled={!enabled} />
-          <Button onClick={() => setToken(generateBearerToken())} disabled={!enabled}>Generate</Button>
-        </Space.Compact>,
-      )}
-      {row('Default autonomy floor', <Select style={{ width: 260 }} value={autonomy} onChange={setAutonomy} options={OWN_MCP_AUTONOMY} disabled={!enabled} />)}
-      {row('Confirm wait (seconds)', <InputNumber min={1} max={3600} value={confirmWait} onChange={v => setConfirmWait(typeof v === 'number' ? v : 50)} disabled={!enabled} />)}
-      <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: -2 }}>
-        How long a parked call waits for your approval before returning a resumable “awaiting
-        approval” result. Keep it under your MCP client's own tool-call timeout
-        (Claude Code's <code>MCP_TOOL_TIMEOUT</code> defaults to 60s).
-      </Typography.Paragraph>
-
-      {row('Tool style', <Select style={{ width: 360 }} value={toolStyle} onChange={setToolStyle} options={OWN_MCP_TOOL_STYLE} disabled={!enabled} />)}
-      <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: -2 }}>
-        <strong>Leaf</strong> mirrors <code>runspec serve</code> — every subcommand is its own tool,
-        once per host (<code>jira_get-issue</code>…, plus <code>host__</code> copies), so a multi-host,
-        multi-verb fleet can expose hundreds. <strong>Per runnable</strong> emits one tool per
-        <em>distinct</em> runnable with a <code>command</code> arg to pick the verb and a <code>host</code>
-        arg when it's on several hosts — collapsing both dimensions so the count matches this
-        console's own tool list. Autonomy is still resolved per chosen subcommand either way.
-      </Typography.Paragraph>
-
-      {row('Expose built-in tools', <Switch checked={exposeBuiltins} onChange={setExposeBuiltins} disabled={!enabled} />)}
-      <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: -2 }}>
-        Also publish the console's own <em>console-specific</em> built-in tools so the coding agent
-        gets your ops/fleet powers, not just the runnables: <code>console_status</code>,
-        <code>search_history</code>, memory + runbooks, host→local file transfer
-        (<code>download_file</code>/<code>relay_file</code>), Outlook, and the action tools
-        (<code>create_document</code>, <code>create_schedule</code>, …). Reads run; writes park in the
-        confirm card. The config + workspace/exec/web tools are never exposed. Off by default — it
-        widens what an external process can drive.
-      </Typography.Paragraph>
-
-      <Button type="primary" onClick={handleSave} loading={saving} style={{ marginTop: 4 }}>Save</Button>
-
-      <Divider style={{ margin: '14px 0' }} />
-      <Typography.Paragraph style={{ fontSize: 13, marginBottom: 6 }}><strong>Status</strong></Typography.Paragraph>
-      {status?.invalid_tools && status.invalid_tools.length > 0 && (
-        <Alert
-          type="warning"
-          showIcon
-          style={{ marginBottom: 10 }}
-          message={`${status.invalid_tools.length} runnable(s) not published — invalid tool schema`}
-          description={
-            <div style={{ fontSize: 13 }}>
-              <div style={{ marginBottom: 6 }}>
-                Their <code>inputSchema</code> isn't valid JSON Schema draft 2020-12, so they're
-                dropped to keep the rest of the tool list usable (otherwise the connecting agent
-                would get <em>no</em> tools at all). Fix the arg spec on each:
-              </div>
-              <ul style={{ margin: 0, paddingLeft: 18 }}>
-                {status.invalid_tools.map(t => (
-                  <li key={t.name}>
-                    <code>{t.name}</code> — {t.reason}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          }
-        />
-      )}
-      {status?.running ? (
-        <Space direction="vertical" size={2}>
-          <Space><Tag color="green">running</Tag><Typography.Text style={{ fontFamily: MONO_FONT, fontSize: 13 }}>{status.url}</Typography.Text></Space>
-          <Typography.Text type="secondary" style={{ fontSize: 13 }}>{status.tools} tool(s){status.builtins ? ` + ${status.builtins} built-in(s)` : ''} · auth {status.auth ? 'on' : 'off'}</Typography.Text>
-          <Typography.Paragraph type="secondary" style={{ fontSize: 13, marginTop: 6, marginBottom: 0 }}>
-            Connect Claude Code:&nbsp;
-            <code>claude mcp add --transport http runspec {status.url}{status.auth ? ' --header "Authorization: Bearer <token>"' : ''}</code>
+    <div>
+      <SettingsColumns>
+        <div>
+          <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
+            Expose this console's fleet runnables to an external coding agent (Claude Code, Cursor)
+            as an <strong>MCP server</strong> on localhost. A <code>confirm</code>-level tool call parks
+            for your approval in the console (the same confirm card the agent uses); <code>autonomous</code> runs
+            immediately, <code>manual</code> is refused. Runs land in History tagged <code>mcp</code>. Off by default —
+            it opens a listening socket. Requires the optional <code>mcp</code> extra to be installed.
           </Typography.Paragraph>
-        </Space>
-      ) : (
-        <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-          {status?.error ? `not running — ${status.error}` : 'not running'}
-        </Typography.Text>
-      )}
+
+          {row('Enable server', <Switch checked={enabled} onChange={setEnabled} />)}
+          {row('Host', <Input style={{ width: 200, fontFamily: MONO_FONT }} value={host} onChange={e => setHost(e.target.value)} disabled={!enabled} />)}
+          {row('Port', <InputNumber min={1} max={65535} value={port} onChange={v => setPort(typeof v === 'number' ? v : 8765)} disabled={!enabled} />)}
+          {row('Bearer token (optional)',
+            <Space.Compact style={{ width: 340 }}>
+              <Input.Password style={{ fontFamily: MONO_FONT }} placeholder="none — localhost only" value={token} onChange={e => setToken(e.target.value)} disabled={!enabled} />
+              <Button onClick={() => setToken(generateBearerToken())} disabled={!enabled}>Generate</Button>
+            </Space.Compact>,
+          )}
+          {row('Default autonomy floor', <Select style={{ width: 260 }} value={autonomy} onChange={setAutonomy} options={OWN_MCP_AUTONOMY} disabled={!enabled} />)}
+          {row('Confirm wait (seconds)', <InputNumber min={1} max={3600} value={confirmWait} onChange={v => setConfirmWait(typeof v === 'number' ? v : 50)} disabled={!enabled} />)}
+          <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: -2 }}>
+            How long a parked call waits for your approval before returning a resumable “awaiting
+            approval” result. Keep it under your MCP client's own tool-call timeout
+            (Claude Code's <code>MCP_TOOL_TIMEOUT</code> defaults to 60s).
+          </Typography.Paragraph>
+
+        </div>
+        <div>
+          {row('Tool style', <Select style={{ width: 360 }} value={toolStyle} onChange={setToolStyle} options={OWN_MCP_TOOL_STYLE} disabled={!enabled} />)}
+          <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: -2 }}>
+            <strong>Leaf</strong> mirrors <code>runspec serve</code> — every subcommand is its own tool,
+            once per host (<code>jira_get-issue</code>…, plus <code>host__</code> copies), so a multi-host,
+            multi-verb fleet can expose hundreds. <strong>Per runnable</strong> emits one tool per
+            <em>distinct</em> runnable with a <code>command</code> arg to pick the verb and a <code>host</code>
+            arg when it's on several hosts — collapsing both dimensions so the count matches this
+            console's own tool list. Autonomy is still resolved per chosen subcommand either way.
+          </Typography.Paragraph>
+
+          {row('Expose built-in tools', <Switch checked={exposeBuiltins} onChange={setExposeBuiltins} disabled={!enabled} />)}
+          <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: -2 }}>
+            Also publish the console's own <em>console-specific</em> built-in tools so the coding agent
+            gets your ops/fleet powers, not just the runnables: <code>console_status</code>,
+            <code>search_history</code>, memory + runbooks, host→local file transfer
+            (<code>download_file</code>/<code>relay_file</code>), Outlook, and the action tools
+            (<code>create_document</code>, <code>create_schedule</code>, …). Reads run; writes park in the
+            confirm card. The config + workspace/exec/web tools are never exposed. Off by default — it
+            widens what an external process can drive.
+          </Typography.Paragraph>
+
+
+          <Divider style={{ margin: '14px 0' }} />
+          <Typography.Paragraph style={{ fontSize: 13, marginBottom: 6 }}><strong>Status</strong></Typography.Paragraph>
+          {status?.invalid_tools && status.invalid_tools.length > 0 && (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginBottom: 10 }}
+              message={`${status.invalid_tools.length} runnable(s) not published — invalid tool schema`}
+              description={
+                <div style={{ fontSize: 13 }}>
+                  <div style={{ marginBottom: 6 }}>
+                    Their <code>inputSchema</code> isn't valid JSON Schema draft 2020-12, so they're
+                    dropped to keep the rest of the tool list usable (otherwise the connecting agent
+                    would get <em>no</em> tools at all). Fix the arg spec on each:
+                  </div>
+                  <ul style={{ margin: 0, paddingLeft: 18 }}>
+                    {status.invalid_tools.map(t => (
+                      <li key={t.name}>
+                        <code>{t.name}</code> — {t.reason}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              }
+            />
+          )}
+          {status?.running ? (
+            <Space direction="vertical" size={2}>
+              <Space><Tag color="green">running</Tag><Typography.Text style={{ fontFamily: MONO_FONT, fontSize: 13 }}>{status.url}</Typography.Text></Space>
+              <Typography.Text type="secondary" style={{ fontSize: 13 }}>{status.tools} tool(s){status.builtins ? ` + ${status.builtins} built-in(s)` : ''} · auth {status.auth ? 'on' : 'off'}</Typography.Text>
+              <Typography.Paragraph type="secondary" style={{ fontSize: 13, marginTop: 6, marginBottom: 0 }}>
+                Connect Claude Code:&nbsp;
+                <code>claude mcp add --transport http runspec {status.url}{status.auth ? ' --header "Authorization: Bearer <token>"' : ''}</code>
+              </Typography.Paragraph>
+            </Space>
+          ) : (
+            <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+              {status?.error ? `not running — ${status.error}` : 'not running'}
+            </Typography.Text>
+          )}
+        </div>
+      </SettingsColumns>
+      <Divider style={{ margin: '14px 0' }} />
+      <Button type="primary" onClick={handleSave} loading={saving}>Save</Button>
     </div>
   )
 }
@@ -6304,83 +6380,88 @@ export function VoiceTab() {
   )
 
   return (
-    <div style={{ maxWidth: 680 }}>
-      <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
-        <strong>Dictate into the prompt box.</strong> The composer's mic button (Ctrl+M) runs on-device speech-to-text
-        in the console process via Moonshine Voice (the <code>voice</code> extra) — no audio leaves this machine and
-        nothing auto-sends: finished lines land in the box and Enter still sends. These settings live in
-        <code>config.toml</code> under <code>[voice]</code>.
-      </Typography.Paragraph>
+    <div>
+      <SettingsColumns>
+        <div>
+          <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
+            <strong>Dictate into the prompt box.</strong> The composer's mic button (Ctrl+M) runs on-device speech-to-text
+            in the console process via Moonshine Voice (the <code>voice</code> extra) — no audio leaves this machine and
+            nothing auto-sends: finished lines land in the box and Enter still sends. These settings live in
+            <code>config.toml</code> under <code>[voice]</code>.
+          </Typography.Paragraph>
 
-      <div style={{ marginBottom: 14 }}>
-        {cfg.available ? (
-          <Space size={8}>
-            <Tag color="green">dictation available</Tag>
-            <Tag color={cfg.model_loaded ? 'blue' : undefined}>{cfg.model_loaded ? 'engine loaded — next press is instant' : 'engine not loaded'}</Tag>
-          </Space>
-        ) : (
-          <Tag color="orange" style={{ whiteSpace: 'normal' }}>unavailable — {cfg.reason}</Tag>
-        )}
-      </div>
+          <div style={{ marginBottom: 14 }}>
+            {cfg.available ? (
+              <Space size={8}>
+                <Tag color="green">dictation available</Tag>
+                <Tag color={cfg.model_loaded ? 'blue' : undefined}>{cfg.model_loaded ? 'engine loaded — next press is instant' : 'engine not loaded'}</Tag>
+              </Space>
+            ) : (
+              <Tag color="orange" style={{ whiteSpace: 'normal' }}>unavailable — {cfg.reason}</Tag>
+            )}
+          </div>
 
-      {row('Enable dictation',
-        <Switch aria-label="Enable dictation" checked={cfg.enabled} onChange={v => set('enabled', v)} />,
-        'Off hides the mic button.')}
+          {row('Enable dictation',
+            <Switch aria-label="Enable dictation" checked={cfg.enabled} onChange={v => set('enabled', v)} />,
+            'Off hides the mic button.')}
 
-      {row('Model',
-        <Select
-          aria-label="Model"
-          style={{ width: 320 }}
-          value={cfg.model}
-          onChange={v => set('model', v)}
-          options={cfg.models.map(m => ({ value: m, label: `${m}${MODEL_HINTS[m] ? ` — ${MODEL_HINTS[m]}` : ''}` }))}
-        />,
-        'Streaming sizes only (dictation needs the in-progress line). Drop a size if the live text lags on this CPU.')}
+          {row('Model',
+            <Select
+              aria-label="Model"
+              style={{ width: 320 }}
+              value={cfg.model}
+              onChange={v => set('model', v)}
+              options={cfg.models.map(m => ({ value: m, label: `${m}${MODEL_HINTS[m] ? ` — ${MODEL_HINTS[m]}` : ''}` }))}
+            />,
+            'Streaming sizes only (dictation needs the in-progress line). Drop a size if the live text lags on this CPU.')}
 
-      {row('Language',
-        <Input aria-label="Language" style={{ width: 120 }} value={cfg.language} onChange={e => set('language', e.target.value)} />,
-        <>Moonshine language code. English streaming models are MIT-licensed; other languages may fall under Moonshine's non-commercial Community License.</>)}
+          {row('Language',
+            <Input aria-label="Language" style={{ width: 120 }} value={cfg.language} onChange={e => set('language', e.target.value)} />,
+            <>Moonshine language code. English streaming models are MIT-licensed; other languages may fall under Moonshine's non-commercial Community License.</>)}
 
-      {row('Vendored model directory',
-        <Space.Compact style={{ width: '100%' }}>
-          <Input
-            aria-label="Vendored model directory"
-            value={cfg.model_dir ?? ''}
-            onChange={e => set('model_dir', e.target.value || null)}
-            placeholder="blank = download from download.moonshine.ai on first use"
-            style={{ fontFamily: MONO_FONT }}
-          />
-          <Button onClick={browse}>Browse…</Button>
-        </Space.Compact>,
-        <>For fleets that block downloads: point at a model directory shipped through the internal channel and the engine never fetches anything. Run <code>moonshine-voice download --language en</code> on a connected machine to produce one.</>)}
+          {row('Vendored model directory',
+            <Space.Compact style={{ width: '100%' }}>
+              <Input
+                aria-label="Vendored model directory"
+                value={cfg.model_dir ?? ''}
+                onChange={e => set('model_dir', e.target.value || null)}
+                placeholder="blank = download from download.moonshine.ai on first use"
+                style={{ fontFamily: MONO_FONT }}
+              />
+              <Button onClick={browse}>Browse…</Button>
+            </Space.Compact>,
+            <>For fleets that block downloads: point at a model directory shipped through the internal channel and the engine never fetches anything. Run <code>moonshine-voice download --language en</code> on a connected machine to produce one.</>)}
+        </div>
+        <div>
+          {row('Microphone',
+            <Select
+              aria-label="Microphone"
+              style={{ width: 360 }}
+              value={deviceValue}
+              onChange={v => set('device', v === '' ? null : v)}
+              options={deviceOptions}
+            />,
+            devices.length === 0 ? 'No input devices reported (capture unavailable here, or the extra is not installed).' : undefined)}
 
-      {row('Microphone',
-        <Select
-          aria-label="Microphone"
-          style={{ width: 360 }}
-          value={deviceValue}
-          onChange={v => set('device', v === '' ? null : v)}
-          options={deviceOptions}
-        />,
-        devices.length === 0 ? 'No input devices reported (capture unavailable here, or the extra is not installed).' : undefined)}
+          {row('Keep model loaded',
+            <Switch aria-label="Keep model loaded" checked={cfg.keep_loaded} onChange={v => set('keep_loaded', v)} />,
+            'Keeps the speech engine resident between sessions so the second press opens the mic instantly. Costs the model\'s RAM while idle; off reloads it on every press.')}
 
-      {row('Keep model loaded',
-        <Switch aria-label="Keep model loaded" checked={cfg.keep_loaded} onChange={v => set('keep_loaded', v)} />,
-        'Keeps the speech engine resident between sessions so the second press opens the mic instantly. Costs the model\'s RAM while idle; off reloads it on every press.')}
+          {row('Auto-off after silence',
+            <Space>
+              <InputNumber aria-label="Silence timeout" min={0} max={300} step={1} value={cfg.silence_timeout} onChange={v => set('silence_timeout', typeof v === 'number' ? v : 0)} />
+              <Text type="secondary">seconds · 0 = never</Text>
+            </Space>,
+            'The mic turns itself off after this long with no recognised speech (stopping or sending still ends it immediately).')}
 
-      {row('Auto-off after silence',
-        <Space>
-          <InputNumber aria-label="Silence timeout" min={0} max={300} step={1} value={cfg.silence_timeout} onChange={v => set('silence_timeout', typeof v === 'number' ? v : 0)} />
-          <Text type="secondary">seconds · 0 = never</Text>
-        </Space>,
-        'The mic turns itself off after this long with no recognised speech (stopping or sending still ends it immediately).')}
-
-      {row('Live-text refresh',
-        <Space>
-          <InputNumber aria-label="Update interval" min={0.1} max={5} step={0.1} value={cfg.update_interval} onChange={v => set('update_interval', typeof v === 'number' ? v : 0.5)} />
-          <Text type="secondary">seconds</Text>
-        </Space>,
-        'How often the in-progress line above the box refreshes.')}
+          {row('Live-text refresh',
+            <Space>
+              <InputNumber aria-label="Update interval" min={0.1} max={5} step={0.1} value={cfg.update_interval} onChange={v => set('update_interval', typeof v === 'number' ? v : 0.5)} />
+              <Text type="secondary">seconds</Text>
+            </Space>,
+            'How often the in-progress line above the box refreshes.')}
+        </div>
+      </SettingsColumns>
 
       <Divider style={{ margin: '16px 0' }} />
       <Button type="primary" loading={saving} onClick={handleSave}>{saved ? 'Saved' : 'Save'}</Button>
@@ -6388,6 +6469,48 @@ export function VoiceTab() {
   )
 }
 
+/** The Settings tab strip: every tab along the top, wrapping onto a second row
+ *  rather than hiding tabs behind antd's overflow "…" menu. It sits above the
+ *  scrolling content, so it stays on screen however far down a tab goes. */
+export function SettingsTabBar({ items, activeKey, onSelect }: {
+  items: { key: string; label: ReactNode }[]
+  activeKey: string
+  onSelect: (key: string) => void
+}) {
+  const isDark = useIsDark()
+  const accent = useAccent()
+  return (
+    <div role="tablist" aria-label="Settings sections" className="rs-settings-tabbar">
+      {items.map(item => {
+        const active = item.key === activeKey
+        return (
+          <button
+            key={item.key}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            className="rs-nav-tab"
+            onClick={() => onSelect(item.key)}
+            style={{
+              padding: '6px 10px', fontSize: 13,
+              fontWeight: active ? 600 : 500,
+              color: active ? accent : textSecondary(isDark),
+              borderBottom: `2px solid ${active ? accent : 'transparent'}`,
+              borderRadius: `${RADIUS.sm}px ${RADIUS.sm}px 0 0`,
+            }}
+          >
+            {item.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+// Settings is a wide modal (it was a right-hand drawer): wide enough for long
+// values like a telemetry metrics URL, with the tab strip pinned at the top
+// while the tab content scrolls underneath. The export keeps its old name so
+// App.tsx and the tests are unchanged.
 export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, connectedHosts, allRemoteHosts, activeProfile, initialTab }: SettingsDrawerProps) {
   // `[console] ai` off-switch: the agent tabs (Model / API, MCP
   // client, Chat History) are hidden; MCP Server, Telemetry and Tool visibility
@@ -6398,39 +6521,49 @@ export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, co
   // straight to the right tab on open; otherwise it keeps the last-viewed tab.
   const [activeTab, setActiveTab] = useState('ssh')
   useEffect(() => { if (open && initialTab) setActiveTab(initialTab) }, [open, initialTab])
+  // With AI off ([console] ai = false) the agent Settings tabs are simply
+  // hidden (visibleSettingsTabs) — no notice is shown. A locked-down console
+  // never advertises AI or how to re-enable it.
+  const items = visibleSettingsTabs([
+    { key: 'ssh',       label: 'SSH',        children: <SshTab onKeyChanged={onKeyChanged} connectedHosts={connectedHosts} allRemoteHosts={allRemoteHosts} activeProfile={activeProfile} /> },
+    { key: 'llm',       label: 'Model / API',  children: <LlmTab /> },
+    { key: 'jumpHosts', label: 'Jump Hosts',  children: <JumpHostsTab onHostsChanged={onHostsChanged} /> },
+    { key: 'localVenvs', label: 'Local venvs', children: <LocalVenvsTab /> },
+    { key: 'network',   label: 'Network',    children: <NetworkTab /> },
+    { key: 'agentTools', label: 'Tool visibility', children: <AgentToolsTab /> },
+    // Self-Service (helpdesk catalogue + rooms) hidden pending approval —
+    // see SHOW_HELPDESK_ROOMS. The tab component is left intact.
+    ...(SHOW_HELPDESK_ROOMS ? [{ key: 'selfService', label: 'Self-Service', children: <SelfServiceTab /> }] : []),
+    { key: 'repos',     label: 'Repos',      children: <ReposTab /> },
+    { key: 'credentials', label: 'Credentials', children: <CredentialsTab /> },
+    { key: 'mcp',       label: 'MCP',        children: <McpTab /> },
+    { key: 'mcpServer', label: 'MCP Server', children: <McpServerTab /> },
+    { key: 'configSync', label: 'Config Sync', children: <ConfigSyncTab /> },
+    { key: 'memorySync', label: 'Memory Sync', children: <MemorySyncTab /> },
+    { key: 'mailbox',   label: 'Mailbox',    children: <MailboxesTab /> },
+    { key: 'sounds',    label: 'Sounds & Notifications', children: <SoundsTab /> },
+    { key: 'voice',     label: 'Voice',      children: <VoiceTab /> },
+    { key: 'chatHistory', label: 'Chat History', children: <ChatHistoryTab /> },
+    { key: 'telemetry', label: 'Telemetry', children: <TelemetryTab /> },
+  ], features)
   return (
-    <Drawer title="Settings" placement="right" width="min(96vw, 1040px)" open={open} onClose={onClose}>
-      {/* With AI off ([console] ai = false) the agent Settings tabs are simply
-          hidden (visibleSettingsTabs below) — no notice is shown. A locked-down
-          console never advertises AI or how to re-enable it. */}
+    <Modal
+      title="Settings"
+      open={open}
+      onCancel={onClose}
+      footer={null}
+      width="min(96vw, 1480px)"
+      style={{ top: 24, paddingBottom: 0 }}
+      className="rs-settings-modal"
+    >
       <Tabs
         size="small"
-        tabPosition="left"
+        className="rs-settings-tabs"
         activeKey={activeTab}
         onChange={setActiveTab}
-        items={visibleSettingsTabs([
-          { key: 'ssh',       label: 'SSH',        children: <SshTab onKeyChanged={onKeyChanged} connectedHosts={connectedHosts} allRemoteHosts={allRemoteHosts} activeProfile={activeProfile} /> },
-          { key: 'llm',       label: 'Model / API',  children: <LlmTab /> },
-          { key: 'jumpHosts', label: 'Jump Hosts',  children: <JumpHostsTab onHostsChanged={onHostsChanged} /> },
-          { key: 'localVenvs', label: 'Local venvs', children: <LocalVenvsTab /> },
-          { key: 'network',   label: 'Network',    children: <NetworkTab /> },
-          { key: 'agentTools', label: 'Tool visibility', children: <AgentToolsTab /> },
-          // Self-Service (helpdesk catalogue + rooms) hidden pending approval —
-          // see SHOW_HELPDESK_ROOMS. The tab component is left intact.
-          ...(SHOW_HELPDESK_ROOMS ? [{ key: 'selfService', label: 'Self-Service', children: <SelfServiceTab /> }] : []),
-          { key: 'repos',     label: 'Repos',      children: <ReposTab /> },
-          { key: 'credentials', label: 'Credentials', children: <CredentialsTab /> },
-          { key: 'mcp',       label: 'MCP',        children: <McpTab /> },
-          { key: 'mcpServer', label: 'MCP Server', children: <McpServerTab /> },
-          { key: 'configSync', label: 'Config Sync', children: <ConfigSyncTab /> },
-          { key: 'memorySync', label: 'Memory Sync', children: <MemorySyncTab /> },
-          { key: 'mailbox',   label: 'Mailbox',    children: <MailboxesTab /> },
-                  { key: 'sounds',    label: 'Sounds & Notifications', children: <SoundsTab /> },
-          { key: 'voice',     label: 'Voice',      children: <VoiceTab /> },
-          { key: 'chatHistory', label: 'Chat History', children: <ChatHistoryTab /> },
-          { key: 'telemetry', label: 'Telemetry', children: <TelemetryTab /> },
-        ], features)}
+        renderTabBar={() => <SettingsTabBar items={items} activeKey={activeTab} onSelect={setActiveTab} />}
+        items={items}
       />
-    </Drawer>
+    </Modal>
   )
 }

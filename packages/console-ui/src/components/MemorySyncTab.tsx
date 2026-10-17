@@ -15,6 +15,7 @@ import {
   type WikiRefreshResult, type WikiRepoCreateResult,
 } from '../bridge'
 import { MONO_FONT } from '../ThemeContext'
+import { SettingsColumns } from './SettingsColumns'
 
 const { Text, Paragraph } = Typography
 
@@ -98,7 +99,7 @@ export function MemorySyncTab() {
   const pullFrom = (Form.useWatch('pull_from', form) as MemorySyncPullFrom | undefined) ?? 'branch'
 
   return (
-    <div style={{ maxWidth: 640 }}>
+    <div>
       <Paragraph type="secondary">
         Share your approved wiki facts with the team through a git repo of their own. Pushing
         writes one file on your own branch; nothing reaches the team until someone merges that
@@ -113,84 +114,89 @@ export function MemorySyncTab() {
         />
       )}
       <Form form={form} layout="vertical" requiredMark={false}>
-        <Form.Item name="url" label="Wiki repository" extra="HTTPS or SSH URL of an empty repo kept for the wiki.">
-          <Input placeholder="https://gitlab.example.com/ops/wiki.git" style={{ fontFamily: MONO_FONT }} />
-        </Form.Item>
-        <Form.Item name="credential_id" label="Credential" extra="A token that can push to the repo (Settings → Credentials). Over SSH, an ssh-key credential or your SSH key.">
-          <Select
-            allowClear placeholder="None"
-            options={creds.map(c => ({ value: c.id, label: `${c.label || c.id} (${c.kind})` }))}
-          />
-        </Form.Item>
-        <Space size={16} wrap style={{ width: '100%' }} align="start">
-          <Form.Item name="branch" label="Team branch" extra="Where merges land; pushes start here." style={{ width: 220 }}>
-            <Input placeholder="main" style={{ fontFamily: MONO_FONT }} />
+        <SettingsColumns>
+          <div>
+          <Form.Item name="url" label="Wiki repository" extra="HTTPS or SSH URL of an empty repo kept for the wiki.">
+            <Input placeholder="https://gitlab.example.com/ops/wiki.git" style={{ fontFamily: MONO_FONT }} />
           </Form.Item>
-          <Form.Item name="user" label="Your name in the wiki" extra={cfg ? `Blank uses ${cfg.user_default}.` : undefined} style={{ width: 260 }}>
-            <Input placeholder={cfg?.user_default} onChange={e => setUser(e.target.value)} />
+          <Form.Item name="credential_id" label="Credential" extra="A token that can push to the repo (Settings → Credentials). Over SSH, an ssh-key credential or your SSH key.">
+            <Select
+              allowClear placeholder="None"
+              options={creds.map(c => ({ value: c.id, label: `${c.label || c.id} (${c.kind})` }))}
+            />
           </Form.Item>
-        </Space>
-        <Space size={16} wrap style={{ width: '100%' }} align="start">
-          <Form.Item
-            name="pull_from" label="Pull from" style={{ width: 260 }}
-            extra={pullFrom === 'branch'
-              ? 'Every merge reaches the team at once.'
-              : pullFrom === 'latest-tag'
-                ? 'Only released facts: tag the team branch to release.'
-                : 'Stays on one release until you change the tag.'}
-          >
-            <Select options={[
-              { value: 'branch', label: 'The team branch' },
-              { value: 'latest-tag', label: 'The newest release tag' },
-              { value: 'tag', label: 'A pinned tag' },
-            ]} />
-          </Form.Item>
-          {pullFrom === 'latest-tag' && (
-            <Form.Item name="tag_prefix" label="Tag prefix" extra="Release tags look like v1.4.0." style={{ width: 160 }}>
-              <Input placeholder="v" style={{ fontFamily: MONO_FONT }} />
+          <Space size={16} wrap style={{ width: '100%' }} align="start">
+            <Form.Item name="branch" label="Team branch" extra="Where merges land; pushes start here." style={{ width: 220 }}>
+              <Input placeholder="main" style={{ fontFamily: MONO_FONT }} />
             </Form.Item>
-          )}
-          {pullFrom === 'tag' && (
+            <Form.Item name="user" label="Your name in the wiki" extra={cfg ? `Blank uses ${cfg.user_default}.` : undefined} style={{ width: 260 }}>
+              <Input placeholder={cfg?.user_default} onChange={e => setUser(e.target.value)} />
+            </Form.Item>
+          </Space>
+          <Space size={16} wrap style={{ width: '100%' }} align="start">
             <Form.Item
-              name="pull_tag" label="Tag" style={{ width: 200 }}
-              rules={[{ required: true, whitespace: true, message: 'Name the tag to pull.' }]}
+              name="pull_from" label="Pull from" style={{ width: 260 }}
+              extra={pullFrom === 'branch'
+                ? 'Every merge reaches the team at once.'
+                : pullFrom === 'latest-tag'
+                  ? 'Only released facts: tag the team branch to release.'
+                  : 'Stays on one release until you change the tag.'}
             >
-              <Input placeholder="v1.0.0" style={{ fontFamily: MONO_FONT }} />
+              <Select options={[
+                { value: 'branch', label: 'The team branch' },
+                { value: 'latest-tag', label: 'The newest release tag' },
+                { value: 'tag', label: 'A pinned tag' },
+              ]} />
             </Form.Item>
+            {pullFrom === 'latest-tag' && (
+              <Form.Item name="tag_prefix" label="Tag prefix" extra="Release tags look like v1.4.0." style={{ width: 160 }}>
+                <Input placeholder="v" style={{ fontFamily: MONO_FONT }} />
+              </Form.Item>
+            )}
+            {pullFrom === 'tag' && (
+              <Form.Item
+                name="pull_tag" label="Tag" style={{ width: 200 }}
+                rules={[{ required: true, whitespace: true, message: 'Name the tag to pull.' }]}
+              >
+                <Input placeholder="v1.0.0" style={{ fontFamily: MONO_FONT }} />
+              </Form.Item>
+            )}
+          </Space>
+          <Form.Item
+            name="email" label="Commit email"
+            extra="The email on your git account. GitLab can refuse a push whose author it doesn't recognise."
+            rules={[{ pattern: /^[^\s<>@]+@[^\s<>]+$/, message: "That doesn't look like an email." }]}
+          >
+            <Input placeholder={cfg?.email_default} style={{ maxWidth: 360 }} />
+          </Form.Item>
+          {lane && (
+            <Paragraph type="secondary" style={{ marginTop: -8 }}>
+              Pushes write <Text code>facts/{lane}.toml</Text> on the branch <Text code>contrib/{lane}</Text>.
+            </Paragraph>
           )}
-        </Space>
-        <Form.Item
-          name="email" label="Commit email"
-          extra="The email on your git account. GitLab can refuse a push whose author it doesn't recognise."
-          rules={[{ pattern: /^[^\s<>@]+@[^\s<>]+$/, message: "That doesn't look like an email." }]}
-        >
-          <Input placeholder={cfg?.email_default} style={{ maxWidth: 360 }} />
-        </Form.Item>
-        {lane && (
-          <Paragraph type="secondary" style={{ marginTop: -8 }}>
-            Pushes write <Text code>facts/{lane}.toml</Text> on the branch <Text code>contrib/{lane}</Text>.
-          </Paragraph>
-        )}
-        <Form.Item name="ca_bundle" label="CA bundle (HTTPS)" extra="A PEM file for an internal CA or a TLS-inspecting proxy.">
-          <Input placeholder="optional" style={{ fontFamily: MONO_FONT }} />
-        </Form.Item>
-        <Form.Item name="tls_verify" label="Verify TLS certificates" valuePropName="checked">
-          <Switch />
-        </Form.Item>
+          </div>
+          <div>
+          <Form.Item name="ca_bundle" label="CA bundle (HTTPS)" extra="A PEM file for an internal CA or a TLS-inspecting proxy.">
+            <Input placeholder="optional" style={{ fontFamily: MONO_FONT }} />
+          </Form.Item>
+          <Form.Item name="tls_verify" label="Verify TLS certificates" valuePropName="checked">
+            <Switch />
+          </Form.Item>
+            <Space>
+              <Button type="primary" loading={saving} onClick={save}>Save</Button>
+              <Button icon={<ApiOutlined />} loading={testing} onClick={test}>Test connection</Button>
+            </Space>
+            {result && (
+              <Alert
+                type={result.ok ? 'success' : 'error'} showIcon closable onClose={() => setResult(null)}
+                style={{ marginTop: 16 }} message={result.text}
+              />
+            )}
+            <Divider style={{ margin: '24px 0 16px' }} />
+            <WikiRepoSection save={persist} />
+          </div>
+        </SettingsColumns>
       </Form>
-      <Divider style={{ margin: '16px 0' }} />
-      <Space>
-        <Button type="primary" loading={saving} onClick={save}>Save</Button>
-        <Button icon={<ApiOutlined />} loading={testing} onClick={test}>Test connection</Button>
-      </Space>
-      {result && (
-        <Alert
-          type={result.ok ? 'success' : 'error'} showIcon closable onClose={() => setResult(null)}
-          style={{ marginTop: 16 }} message={result.text}
-        />
-      )}
-      <Divider style={{ margin: '24px 0 16px' }} />
-      <WikiRepoSection save={persist} />
     </div>
   )
 }

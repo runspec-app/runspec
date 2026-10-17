@@ -368,7 +368,10 @@ def _window_kwargs() -> dict[str, object]:
     raises ``TypeError``). See :func:`_start_kwargs`.
     """
     return {
-        "width": 1440,
+        # Wide enough for the sidebar, the full top nav and a roomy content
+        # pane. On a smaller screen Windows clamps an oversized form to the
+        # screen size.
+        "width": 1680,
         "height": 900,
         "min_size": (1024, 600),
         # Paint the window the dark-theme content colour (App.tsx contentBg) so

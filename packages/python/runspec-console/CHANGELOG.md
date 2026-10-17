@@ -22,6 +22,40 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   `[llm] tool_mode = "search"`; the scripted model describes a runnable the
   first time it uses it in a chat, then calls `run_runnable`.
 
+## [0.350.0] — 2026-10-17
+
+### Changed
+
+- **Settings is a wide modal with its tabs along the top.** It was a
+  right-hand drawer with tabs down the left that scrolled out of view on long
+  tabs. The modal is up to 1480px wide with a fixed height; the tab strip wraps
+  onto a second row instead of hiding tabs behind an overflow menu, and only
+  the tab content scrolls, so the strip stays visible. The Telemetry tab uses
+  the extra width: its endpoint, API-key-command and CA-bundle fields are wider
+  so a full OTLP URL shows without scrolling the field.
+- **Settings tabs use the width: sections sit side by side in two columns**
+  and drop to one column when the window is narrow. SSH (connection | SSH
+  key), Model / API (settings | system prompt), Network, Local venvs, MCP
+  Server, Config Sync (and Config seed | Runbook docs), Memory Sync, Mailbox
+  (main mailbox | also watch), Sounds (general | sound per event), Voice, Chat
+  History and Telemetry (traces | identity, TLS and metrics). Tabs that are a
+  list or table (Jump Hosts, Repos, Credentials, MCP, Tool visibility) keep
+  one column. Telemetry's service name, instance label and CA bundle stay
+  editable when only metrics are enabled, since metrics use them too.
+- **Telemetry has one Save for the whole tab.** It sat between the traces and
+  metrics sections, reading as if it saved only traces. It is now **Save
+  telemetry settings**, pinned to the bottom of the tab with a note that it
+  saves the trace and metrics settings together.
+
+### Fixed
+
+- **A new credential shows up in the Telemetry, Network and Saved runs
+  pickers straight away.** Those lists loaded once when Settings first opened
+  and stayed stale until a restart; they now refresh when a credential is
+  added or removed, like the MCP and Config Sync pickers already did.
+- **The console window opens wider:** 1680px by default (was 1440px). On a
+  smaller screen Windows clamps the window to the screen.
+
 ## [0.349.0] — 2026-10-17
 
 ### Changed

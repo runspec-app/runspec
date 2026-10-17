@@ -32,6 +32,11 @@ def test_window_kwargs_keeps_close_guard_and_selection():
     assert kw["min_size"] == (1024, 600)
 
 
+def test_window_opens_wide():
+    # Opens wide enough that Settings and the content pane aren't cramped.
+    assert app._window_kwargs()["width"] >= 1680
+
+
 def test_start_kwargs_disables_private_mode():
     kw = app._start_kwargs(debug=False, on_started=lambda: None, icon=None)
     # The one that shipped a black screen on Linux: must be explicitly False.
