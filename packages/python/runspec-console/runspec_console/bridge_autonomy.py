@@ -2008,11 +2008,6 @@ class AutonomyMixin:
         mode = (deliver or "auto").strip().lower()
         if mode not in ws_mod.DELIVER_MODES:
             mode = "auto"
-        # Fast path: the common small-output auto case reads no config and never
-        # touches the workspace — byte-identical to the pre-deliver behaviour.
-        if mode == "auto" and total <= _TOOL_OUTPUT_SPILL_THRESHOLD:
-            return output
-
         spill_threshold = _TOOL_OUTPUT_SPILL_THRESHOLD
         inline_max = ws_mod.INLINE_MAX_DEFAULT
         try:
@@ -2021,6 +2016,13 @@ class AutonomyMixin:
             inline_max = ws_cfg.get("inline_max", inline_max)
         except (OSError, ValueError, TypeError):
             pass
+        # Small auto output goes back as is. The configured threshold decides
+        # what is small, so a [workspace] spill_threshold below the default
+        # spills sooner (it used to be compared against the constant first).
+        if mode == "auto" and total <= (
+            spill_threshold or _TOOL_OUTPUT_SPILL_THRESHOLD
+        ):
+            return output
         # The session this turn belongs to owns the spill directory: a chat's
         # persistent conversation workspace, or a trigger/schedule card's own
         # hermetic one — a rule-mode trigger run is a session too, so it can no

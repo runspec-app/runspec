@@ -201,13 +201,19 @@ def test_auto_below_threshold_is_unchanged(finalize):
 
 def test_auto_above_threshold_spills_named_after_runnable(finalize):
     run, ws = finalize
-    # The auto path keeps the original 32768-char hard floor (config spill_threshold
-    # can only make spill *less* aggressive), so exceed it to force a spill.
-    big = "x" * 40_000
+    big = "x" * 150  # over the configured spill_threshold 100
     out = run(big, deliver="auto", spill_name="web-01__probe")
     assert "spilled to workspace" in out
     files = list((ws / "tool-results").glob("web-01__probe-*"))
     assert files, "spill file should be named after the resolved runnable"
+
+
+def test_auto_honours_threshold_below_default(finalize):
+    run, _ws = finalize
+    # 150 chars is far under the 32 KB default but over the configured 100.
+    out = run("q" * 150, deliver="auto", spill_name="web-01__probe")
+    assert "spilled to workspace" in out
+    assert run("q" * 100, deliver="auto") == "q" * 100
 
 
 def test_inline_returns_raw_up_to_cap(finalize):

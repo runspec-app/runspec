@@ -9,6 +9,16 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.350.1] — 2026-10-17
+
+### Fixed
+
+- **`[workspace] spill_threshold` below 32 KB now takes effect.** The small-output
+  shortcut compared each runnable's output against the built-in 32,768-char
+  default before reading config, so a lower configured threshold never spilled
+  anything under 32 KB. The configured value now decides what goes back inline;
+  a higher threshold and `0` (no spill) behave as before.
+
 ### Added
 
 - **Agent lab (`lab/`, developer tool, not shipped in the wheel).** Runs the
