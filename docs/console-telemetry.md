@@ -67,6 +67,7 @@ max_content_chars = 0   # 0 = capture full text; set a ceiling to bound span siz
 | `protocol` | `http/protobuf` (the shipped exporter). |
 | `service_name` | `service.name` resource attribute. Blank (default) ⇒ the install's **branded app slug** (the same source as the config directory + window title), so a white-label build self-identifies; `runspec-console` on a default install. |
 | `label` | This console's `service.instance.id`. Blank (default) ⇒ the machine hostname. Set it to run **several distinct consoles** (even on one machine) as separate, named streams. See [Resource identity](#resource-identity). |
+| `project_name` | The OpenInference `openinference.project.name` resource attribute — the project Phoenix and Arize AX file traces under. Blank (default) ⇒ unset (the backend's default project). |
 | `sample_ratio` | Head sampling ratio, 0–1. Default 1.0 (trace everything). |
 | `credential` | A named **Credential** id (secret in the OS keychain) injected as an auth header at init — the recommended per-user path. With `credential_header` set, the secret is sent raw under that header (e.g. `x-api-key`); otherwise `userpass` ⇒ `Authorization: Basic`, `token` ⇒ `Bearer`. See [Credentials](#credentials-recommended). |
 | `credential_header` | Header name for `credential`'s secret (blank ⇒ `Authorization` with the scheme above). |
@@ -103,6 +104,11 @@ The resource carries:
 | `service.instance.id` | `[telemetry] label`, or (blank) the machine hostname. |
 | `host.name` | The console machine's hostname. |
 | `process.owner` | The OS user running the console. |
+| `openinference.project.name` | `[telemetry] project_name`, only when set. Phoenix and Arize AX route traces to this project. |
+
+Each span also carries `session.id` = the chat it belongs to (the OpenInference
+session attribute), so Phoenix and Arize AX group a conversation's turns into
+one session.
 
 So each machine is its own clean time series out of the box, and to run **several
 consoles on one machine** as distinct streams you give each a different `label`.
@@ -240,12 +246,39 @@ tracing*:
 |---|---|---|---|
 | **LangSmith** | SaaS (enterprise self-host) | Yes — conversation view, token/cost, evals | Deep LLM debugging & evaluation |
 | **Langfuse**, **Arize Phoenix** | Self-hosted, OSS | Yes — render prompts/completions, token/cost | A self-hosted, LangSmith-*like* experience |
+| **Arize AX** | SaaS (free tier) | Yes — sessions, prompts/completions, evals | Hosted LLM tracing and evaluation; see [Arize AX](#arize-ax) |
 | **Grafana Tempo**, **Jaeger** | Self-hosted, OSS | No — general trace UI | Operational / audit tracing; already running Grafana |
 
 All of them ingest OTLP, so any of the above is just a different `endpoint`.
 A general trace UI (Tempo / Jaeger) shows the full `turn → llm → tool` tree with
 attributes, timings, decisions, and provenance — it just won't render a pretty
 conversation or token/cost rollups the way an LLM-native tool does.
+
+### Arize AX
+
+[Arize AX](https://arize.com/docs/ax) takes plain OTLP over HTTP, so it is
+configured with the same generic fields as any other backend — no Arize SDK.
+Settings → Telemetry → **Use Arize AX** fills these in:
+
+```toml
+[telemetry]
+enabled = true
+endpoint = "https://otlp.arize.com/v1/traces"   # EU: https://otlp.eu-west-1a.arize.com/v1/traces
+project_name = "runspec-console"
+capture_content = true
+credential = "arize-api-key"        # a `token` Credential holding the API key
+credential_header = "authorization" # sent raw, no "Bearer"
+
+[telemetry.headers]
+"arize-space-id" = "U3BhY2U6…"      # your Space ID (Space settings)
+```
+
+These are the header names Arize's own `arize-otel` exporter sends
+(`authorization` = the API key, `arize-space-id` = the Space ID); the older
+`api_key` / `space_id` names are still accepted. Without a project name, Arize
+files traces under its default project. A wrong key or space ID makes the
+export fail, and **Send test trace** now reports that as a failure with the
+backend's answer (for example `code: 401`), rather than "sent".
 
 ### Grafana + Tempo
 

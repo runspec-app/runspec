@@ -22,6 +22,33 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   `[llm] tool_mode = "search"`; the scripted model describes a runnable the
   first time it uses it in a chat, then calls `run_runnable`.
 
+## [0.348.0] — 2026-10-17
+
+### Added
+
+- **Trace project name + sessions (Phoenix / Arize AX).** A new
+  `[telemetry] project_name` sets the OpenInference `openinference.project.name`
+  resource attribute, which Phoenix and Arize AX use to file traces under a
+  project (blank ⇒ unset, as before). Every span of a turn now also carries
+  OpenInference `session.id` = the chat id, so a conversation's turns group
+  into one session (`observability._SESSION_ID`, set by `begin_turn`). Settings
+  → Telemetry gains a **Project name** field.
+- **"Use Arize AX" preset** in Settings → Telemetry. It fills only the generic
+  OTLP fields: the endpoint, project name, an `arize-space-id` header to paste
+  the Space ID into, and `credential_header = "authorization"` so a `token`
+  Credential holding the API key is sent raw (the names Arize's own exporter
+  sends). No Arize SDK or dependency. See `docs/console-telemetry.md` →
+  "Arize AX".
+
+### Fixed
+
+- **"Send test trace" reports a rejected export.** It used to say the trace was
+  sent once the flush finished, even when the backend refused it (bad API key,
+  wrong space). The span exporter is now wrapped (`_RecordingExporter`) to keep
+  each export's result and the exporter's logged reason, and the test result is
+  `ok: false` with that reason (e.g. `code: 401`) when the batch was rejected;
+  the result carries `export` either way (`observability.last_export`).
+
 ## [0.347.0] — 2026-10-16
 
 ### Changed

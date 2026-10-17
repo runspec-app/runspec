@@ -54,8 +54,10 @@ span (they live below the tool-input layer the agent sees).
 
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
+import time
 from contextlib import contextmanager
 from typing import Any, Iterator
 
@@ -75,6 +77,19 @@ _MAX_CONTENT_CHARS: int = 0
 # for any single scrubbed tool-argument string — these are meant to be short
 # attributes, not the big content blobs, so they stay bounded regardless.
 _MAX_ATTR_CHARS = 4000
+
+# The current turn's chat id, stamped as OpenInference ``session.id`` on every
+# span of the turn so Phoenix / Arize group a conversation's traces into one
+# session. Set by begin_turn, reset by end_turn; a ContextVar so it follows the
+# turn into ``asyncio.to_thread`` tool dispatch like the OTel context does.
+_SESSION_ID: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "runspec_session_id", default=""
+)
+
+# Outcome of the most recent span export (see _RecordingExporter): None until a
+# batch has been exported. Lets the "Send test trace" button report what the
+# backend actually answered, not just that the flush finished.
+_LAST_EXPORT: dict[str, Any] | None = None
 
 # ── metrics state, set once by init_metrics (all None/False = disabled no-op) ──
 # Metrics are a SEPARATE OTLP signal from traces, with their own MeterProvider,
@@ -161,7 +176,67 @@ def _build_exporter(cfg: dict[str, Any]) -> Any:
     session (the proto-http exporter has no public insecure flag)."""
     from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 
-    return _construct_exporter(OTLPSpanExporter, cfg)
+    return _RecordingExporter(_construct_exporter(OTLPSpanExporter, cfg))
+
+
+class _ExportLogCapture(logging.Handler):
+    """Keeps the last warning/error the OTLP exporter logged (e.g. ``Failed to
+    export span batch code: 401, reason: …``) so a failed export can say *why*."""
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.WARNING)
+        self.last: tuple[float, str] | None = None
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            self.last = (record.created, record.getMessage())
+        except Exception:  # noqa: BLE001
+            pass
+
+
+_EXPORT_LOG = _ExportLogCapture()
+_EXPORT_LOGGER_NAME = "opentelemetry.exporter.otlp.proto.http.trace_exporter"
+
+
+class _RecordingExporter:
+    """Span exporter wrapper that records each export's outcome in
+    ``_LAST_EXPORT``. The OTLP exporter reports a rejected batch (bad auth, wrong
+    endpoint) only as a log line and a FAILURE result, which a force-flush
+    swallows; this keeps that outcome for :func:`last_export`."""
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+        exporter_logger = logging.getLogger(_EXPORT_LOGGER_NAME)
+        if _EXPORT_LOG not in exporter_logger.handlers:
+            exporter_logger.addHandler(_EXPORT_LOG)
+
+    def export(self, spans: Any) -> Any:
+        global _LAST_EXPORT
+        started = time.time()
+        try:
+            result = self._inner.export(spans)
+        except Exception as exc:  # noqa: BLE001 — record, then let the SDK see it
+            _LAST_EXPORT = {"ok": False, "error": str(exc), "spans": len(spans)}
+            raise
+        ok = getattr(result, "name", "") == "SUCCESS"
+        error = ""
+        last = _EXPORT_LOG.last
+        if not ok and last is not None and last[0] >= started:
+            error = last[1]
+        _LAST_EXPORT = {"ok": ok, "error": error, "spans": len(spans)}
+        return result
+
+    def shutdown(self) -> None:
+        self._inner.shutdown()
+
+    def force_flush(self, timeout_millis: int = 30000) -> bool:
+        return bool(self._inner.force_flush(timeout_millis))
+
+
+def last_export() -> dict[str, Any] | None:
+    """``{"ok", "error", "spans"}`` for the most recent span export, or ``None``
+    when nothing has been exported since tracing (re)started."""
+    return dict(_LAST_EXPORT) if _LAST_EXPORT is not None else None
 
 
 def _build_metric_exporter(cfg: dict[str, Any]) -> Any:
@@ -285,6 +360,11 @@ def _build_resource(config: dict[str, Any]) -> Any:
     attrs["service.instance.id"] = (
         str(config.get("label") or "").strip() or host or "runspec-console"
     )
+    project = str(config.get("project_name") or "").strip()
+    if project:
+        # OpenInference project routing — Phoenix and Arize AX file traces under
+        # this project (absent ⇒ their "default" project).
+        attrs["openinference.project.name"] = project
     return Resource.create(attrs)
 
 
@@ -354,10 +434,12 @@ def reconfigure(config: dict[str, Any] | None = None) -> bool:
     resets to the disabled no-op state, then re-inits. Returns whatever
     ``init_tracing`` returns (``True`` when tracing is active afterwards)."""
     global _TRACER, _PROVIDER, _ENABLED, _CAPTURE_CONTENT, _MAX_CONTENT_CHARS
+    global _LAST_EXPORT
     try:
         shutdown()
     except Exception:  # noqa: BLE001 — teardown must never raise into the caller
         pass
+    _LAST_EXPORT = None
     _TRACER = None
     _PROVIDER = None
     _ENABLED = False
@@ -387,7 +469,9 @@ def init_tracing_for_test(
 def reset_for_test() -> None:
     """Tear the module back down to the disabled no-op state (test cleanup)."""
     global _TRACER, _PROVIDER, _ENABLED, _CAPTURE_CONTENT, _MAX_CONTENT_CHARS
+    global _LAST_EXPORT
     shutdown()
+    _LAST_EXPORT = None
     _TRACER = None
     _PROVIDER = None
     _ENABLED = False
@@ -445,10 +529,15 @@ def send_test_trace() -> dict[str, Any]:
     completion / tool-argument text (including a secret-looking key, to show the
     scrubbing) so content rendering can be verified too. Returns a summary dict
     (``ok``, ``trace_id``, span names, ``capture_content``, ``flushed``) for the
-    UI; ``ok=False`` with a ``reason`` when tracing is not active."""
+    UI; ``ok=False`` with a ``reason`` when tracing is not active, or when the
+    backend rejected the export (``export`` carries the exporter's outcome)."""
+    global _LAST_EXPORT
     if not enabled():
         return {"ok": False, "reason": "tracing is not active"}
     from types import SimpleNamespace
+
+    # Forget earlier exports so the result below reflects this trace's batch.
+    _LAST_EXPORT = None
 
     trace_id = ""
     try:
@@ -497,9 +586,22 @@ def send_test_trace() -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001 — surface the failure, don't raise
         return {"ok": False, "reason": f"emit failed: {exc}"}
     flushed = flush()
+    export = last_export()
+    if export is not None and not export["ok"]:
+        return {
+            "ok": False,
+            "reason": (
+                "the backend rejected the export"
+                + (f": {export['error']}" if export["error"] else "")
+                + " — check the endpoint and auth headers"
+            ),
+            "trace_id": trace_id,
+            "export": export,
+        }
     return {
         "ok": True,
         "trace_id": trace_id,
+        "export": export,
         "spans": [
             "runspec.agent.turn",
             "chat runspec-test-model",
@@ -858,11 +960,12 @@ def turn_span(
 class _TurnHandle:
     """Opaque handle for a manually-scoped turn span (see ``begin_turn``)."""
 
-    __slots__ = ("span", "token")
+    __slots__ = ("span", "token", "session_token")
 
-    def __init__(self, span: Any, token: Any) -> None:
+    def __init__(self, span: Any, token: Any, session_token: Any = None) -> None:
         self.span = span
         self.token = token
+        self.session_token = session_token
 
 
 def begin_turn(
@@ -889,13 +992,15 @@ def begin_turn(
             "runspec.turn.kind": kind,
             "runspec.chat_id": chat_id,
         }
+        if chat_id:
+            attrs["session.id"] = chat_id  # OpenInference session (Phoenix / Arize)
         if model:
             attrs["gen_ai.request.model"] = model
         attrs.update(_provenance_attrs(provenance))
         attrs.update(_disclaimer_attrs())
         span = _TRACER.start_span("runspec.agent.turn", attributes=attrs)
         token = _otel_context.attach(_otel_trace.set_span_in_context(span))
-        return _TurnHandle(span, token)
+        return _TurnHandle(span, token, _SESSION_ID.set(chat_id or ""))
     except Exception:  # noqa: BLE001
         return None
 
@@ -923,6 +1028,11 @@ def end_turn(
         except Exception:  # noqa: BLE001
             pass
         try:
+            if handle.session_token is not None:
+                _SESSION_ID.reset(handle.session_token)
+        except Exception:  # noqa: BLE001 — reset from another context
+            pass
+        try:
             handle.span.end()
         except Exception:  # noqa: BLE001
             pass
@@ -944,6 +1054,9 @@ def llm_span(*, provider: str = "", model: str = "") -> Iterator[Any]:
     if model:
         attrs["gen_ai.request.model"] = model
         attrs["llm.model_name"] = model  # OpenInference model key (Phoenix)
+    session = _SESSION_ID.get()
+    if session:
+        attrs["session.id"] = session
     with _TRACER.start_as_current_span(name or "chat", attributes=attrs) as span:
         try:
             yield span
@@ -986,6 +1099,9 @@ def tool_span(
         "tool.name": name,  # OpenInference tool key
         "runspec.chat_id": chat_id,
     }
+    session = chat_id or _SESSION_ID.get()
+    if session:
+        attrs["session.id"] = session
     if command:
         attrs["runspec.tool.command"] = command
     if name != tool_name:

@@ -153,6 +153,52 @@ describe('TelemetryTab Save round-trip', () => {
     expect(saved.telemetry.capture_content).toBe(true)
   })
 
+  it('the "Use Arize AX" preset fills generic OTLP fields: endpoint, project, space-id header, auth header', async () => {
+    getConfig.mockResolvedValue({})
+    render(<TelemetryTab />)
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: /use arize ax/i }))
+    await act(async () => {
+      await user.click(screen.getByRole('button', { name: 'Save' }))
+    })
+    await waitFor(() => expect(saveConfig).toHaveBeenCalledTimes(1))
+    const saved = saveConfig.mock.calls[0][0] as { telemetry: Record<string, unknown> }
+    expect(saved.telemetry.enabled).toBe(true)
+    expect(saved.telemetry.endpoint).toBe('https://otlp.arize.com/v1/traces')
+    expect(saved.telemetry.project_name).toBe('runspec-console')
+    expect(saved.telemetry.credential_header).toBe('authorization')
+    expect(saved.telemetry.headers).toEqual({ 'arize-space-id': '' })
+  })
+
+  it('round-trips the project name', async () => {
+    getConfig.mockResolvedValue({ telemetry: { enabled: true, project_name: 'rc-dev' } })
+    render(<TelemetryTab />)
+    await screen.findByDisplayValue('rc-dev')
+    const user = userEvent.setup()
+    await act(async () => {
+      await user.click(screen.getByRole('button', { name: 'Save' }))
+    })
+    await waitFor(() => expect(saveConfig).toHaveBeenCalledTimes(1))
+    const saved = saveConfig.mock.calls[0][0] as { telemetry: Record<string, unknown> }
+    expect(saved.telemetry.project_name).toBe('rc-dev')
+  })
+
+  it('shows a rejected export as a failure with the backend reason', async () => {
+    sendTestTrace.mockResolvedValue({
+      ok: false,
+      reason: 'the backend rejected the export: Failed to export spans batch code: 401',
+      export: { ok: false, error: 'code: 401', spans: 3 },
+    })
+    render(<TelemetryTab />)
+    await screen.findByDisplayValue('https://langsmith.internal/otel/v1/traces')
+    const user = userEvent.setup()
+    await act(async () => {
+      await user.click(screen.getByRole('button', { name: /send test trace/i }))
+    })
+    await screen.findByText(/could not send a test trace/i)
+    await screen.findByText(/batch code: 401/)
+  })
+
   it('"Send test trace" saves first, calls the bridge, and shows the result', async () => {
     render(<TelemetryTab />)
     await screen.findByDisplayValue('https://langsmith.internal/otel/v1/traces')

@@ -2228,6 +2228,9 @@ export interface BridgeApi {
     endpoint?: string
     capture_content?: boolean
     flushed?: boolean
+    // The exporter's outcome for this trace's batch (null ⇒ not observed);
+    // ok=false on the result itself when the backend rejected it.
+    export?: { ok: boolean; error: string; spans: number } | null
   }>
   // Emit one representative tool-run + turn metric to the configured
   // [telemetry.metrics] OTLP endpoint and flush it immediately — the metrics twin

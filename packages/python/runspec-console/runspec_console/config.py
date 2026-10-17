@@ -850,7 +850,9 @@ def read_telemetry() -> dict[str, Any]:
     time series), and you set it to run **several distinct instances** (e.g. more
     than one console on one machine) as separate, named streams. The console also
     stamps ``host.name`` and ``process.owner`` (OS username) on the resource
-    automatically (see ``observability._build_resource``)."""
+    automatically (see ``observability._build_resource``). ``project_name`` sets
+    the OpenInference ``openinference.project.name`` resource attribute — the
+    project Phoenix and Arize AX file the traces under (blank ⇒ their default)."""
     raw = read_config().get("telemetry")
     cfg = dict(raw) if isinstance(raw, dict) else {}
     hdrs = cfg.get("headers")
@@ -870,6 +872,9 @@ def read_telemetry() -> dict[str, Any]:
         "service_name": service,
         # Per-instance label → service.instance.id (blank ⇒ hostname at init).
         "label": str(cfg.get("label") or "").strip(),
+        # OpenInference project (resource `openinference.project.name`) that
+        # Phoenix / Arize AX file traces under; blank ⇒ the backend's default.
+        "project_name": str(cfg.get("project_name") or "").strip(),
         "sample_ratio": min(1.0, max(0.0, float(cfg.get("sample_ratio", 1.0) or 1.0))),
         "ca_bundle": ca,
         "tls_verify": tls,

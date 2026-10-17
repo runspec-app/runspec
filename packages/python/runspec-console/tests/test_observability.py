@@ -878,6 +878,87 @@ def test_build_resource_omits_unreadable_host_user(monkeypatch):
     assert a["service.instance.id"] == "runspec-console"  # last-resort fallback
 
 
+@otel_only
+def test_build_resource_project_name(monkeypatch):
+    """project_name becomes the OpenInference project attribute Phoenix / Arize AX
+    route on; blank ⇒ the attribute is absent (the backend's default project)."""
+    a = dict(
+        obs._build_resource({"service_name": "s", "project_name": "rc"}).attributes
+    )
+    assert a["openinference.project.name"] == "rc"
+    b = dict(obs._build_resource({"service_name": "s", "project_name": ""}).attributes)
+    assert "openinference.project.name" not in b
+
+
+def test_read_telemetry_project_name(monkeypatch):
+    monkeypatch.setattr(config_mod, "read_config", lambda: {})
+    assert config_mod.read_telemetry()["project_name"] == ""
+    monkeypatch.setattr(
+        config_mod,
+        "read_config",
+        lambda: {"telemetry": {"project_name": "  runspec-console "}},
+    )
+    assert config_mod.read_telemetry()["project_name"] == "runspec-console"
+
+
+@otel_only
+def test_spans_carry_session_id(exporter):
+    """Every span of a turn carries OpenInference session.id = the chat id, so a
+    conversation groups into one session in Phoenix / Arize."""
+    obs.init_tracing_for_test(exporter)
+    obs.send_test_trace()
+    spans = exporter.get_finished_spans()
+    assert len(spans) == 3
+    assert {sp.attributes.get("session.id") for sp in spans} == {"telemetry-test"}
+    # Reset after the turn: a span outside any turn carries no session.
+    with obs.llm_span(model="m"):
+        pass
+    outside = exporter.get_finished_spans()[-1]
+    assert "session.id" not in outside.attributes
+
+
+class _RejectingExporter:
+    """Stands in for an OTLP exporter the backend rejects (e.g. a 401)."""
+
+    def export(self, spans):
+        import logging
+
+        from opentelemetry.sdk.trace.export import SpanExportResult
+
+        logging.getLogger(obs._EXPORT_LOGGER_NAME).error(
+            "Failed to export span batch code: 401, reason: unauthorized"
+        )
+        return SpanExportResult.FAILURE
+
+    def shutdown(self):
+        pass
+
+    def force_flush(self, timeout_millis=30000):
+        return True
+
+
+@otel_only
+def test_send_test_trace_reports_rejected_export():
+    """A backend that rejects the batch makes the test trace fail with the
+    exporter's reason, instead of "sent" just because the flush finished."""
+    obs.init_tracing_for_test(obs._RecordingExporter(_RejectingExporter()))
+    try:
+        result = obs.send_test_trace()
+    finally:
+        obs.reset_for_test()
+    assert result["ok"] is False
+    assert "401" in result["reason"]
+    assert result["export"]["ok"] is False
+
+
+@otel_only
+def test_send_test_trace_reports_accepted_export(exporter):
+    obs.init_tracing_for_test(obs._RecordingExporter(exporter))
+    result = obs.send_test_trace()
+    assert result["ok"] is True
+    assert result["export"]["ok"] is True and result["export"]["error"] == ""
+
+
 # ── keychain-backed export credentials (mirrors [[mcp.servers]] credential) ────
 
 

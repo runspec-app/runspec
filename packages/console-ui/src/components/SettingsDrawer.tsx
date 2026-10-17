@@ -5127,6 +5127,7 @@ export function TelemetryTab() {
   const [protocol, setProtocol] = useState('http/protobuf')
   const [serviceName, setServiceName] = useState('')
   const [label, setLabel] = useState('')
+  const [projectName, setProjectName] = useState('')
   const [sampleRatio, setSampleRatio] = useState<number>(1)
   const [captureContent, setCaptureContent] = useState(false)
   const [maxContentChars, setMaxContentChars] = useState<number>(0)
@@ -5172,6 +5173,7 @@ export function TelemetryTab() {
       // Blank ⇒ the backend derives service.name from the branded app slug.
       setServiceName(typeof t.service_name === 'string' ? t.service_name : '')
       setLabel(typeof t.label === 'string' ? t.label : '')
+      setProjectName(typeof t.project_name === 'string' ? t.project_name : '')
       setSampleRatio(typeof t.sample_ratio === 'number' ? t.sample_ratio : 1)
       setCaptureContent(t.capture_content === true)
       setMaxContentChars(typeof t.max_content_chars === 'number' ? t.max_content_chars : 0)
@@ -5221,6 +5223,7 @@ export function TelemetryTab() {
           protocol: protocol.trim() || 'http/protobuf',
           service_name: serviceName.trim(),
           label: label.trim(),
+          project_name: projectName.trim(),
           sample_ratio: sampleRatio,
           capture_content: captureContent,
           max_content_chars: Math.max(0, Math.floor(maxContentChars || 0)),
@@ -5315,6 +5318,31 @@ export function TelemetryTab() {
             Fills the endpoint for a locally-run <a href="https://github.com/Arize-ai/phoenix" target="_blank" rel="noreferrer">Arize Phoenix</a> and
             enables content capture — run <code>phoenix serve</code> in its own venv first, then Save.
           </Typography.Text>
+          <div style={{ marginTop: 8 }}>
+            <Button
+              size="small"
+              onClick={() => {
+                setEnabled(true)
+                setEndpoint('https://otlp.arize.com/v1/traces')
+                setCaptureContent(true)
+                if (!projectName.trim()) setProjectName('runspec-console')
+                setCredentialHeader('authorization')
+                setHeaders(prev =>
+                  prev.some(h => h.k.trim().toLowerCase() === 'arize-space-id')
+                    ? prev
+                    : [...prev, { k: 'arize-space-id', v: '' }],
+                )
+              }}
+            >
+              Use Arize AX
+            </Button>
+            <Typography.Text type="secondary" style={{ fontSize: 13, marginLeft: 8 }}>
+              Fills the standard OTLP fields for <a href="https://arize.com/docs/ax" target="_blank" rel="noreferrer">Arize AX</a>:
+              paste your Space ID into the <code>arize-space-id</code> header, add your API key as a{' '}
+              <code>token</code> Credential and pick it below (sent raw under <code>authorization</code>), then Save.
+              EU spaces use <code>https://otlp.eu-west-1a.arize.com/v1/traces</code>.
+            </Typography.Text>
+          </div>
         </div>
       )}
 
@@ -5329,6 +5357,14 @@ export function TelemetryTab() {
         (blank ⇒ hostname) so several consoles — even on one machine — stay distinct time series rather
         than colliding, plus this machine's hostname and OS user (<code>host.name</code> / <code>process.owner</code>).
       </Typography.Paragraph>
+      {ai && row('Project name', <Input style={{ width: 260 }} placeholder="(backend default project)" value={projectName} onChange={e => setProjectName(e.target.value)} disabled={!enabled} />)}
+      {ai && (
+        <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: -2 }}>
+          Sets <code>openinference.project.name</code>, the open OpenInference attribute that Phoenix and
+          Arize AX use to file traces under a project. Each trace also carries <code>session.id</code> (the
+          chat), so a conversation's turns group into one session.
+        </Typography.Paragraph>
+      )}
       {ai && row('Sample ratio', <InputNumber min={0} max={1} step={0.1} value={sampleRatio} onChange={v => setSampleRatio(typeof v === 'number' ? v : 1)} disabled={!enabled} />)}
 
       {ai && (
@@ -5428,7 +5464,9 @@ export function TelemetryTab() {
                 {testResult.capture_content
                   ? 'Content capture is on (sample text attached; secret-looking args scrubbed).'
                   : 'Content capture is off (structure only).'}{' '}
-                Open your backend and look for it{testResult.flushed ? ' (flushed now)' : ' (batched — may take a moment)'}.
+                {testResult.export?.ok
+                  ? `The backend accepted it${testResult.flushed ? '' : ' (batched — may take a moment)'}; open it and look for the trace.`
+                  : `Open your backend and look for it${testResult.flushed ? ' (flushed now)' : ' (batched — may take a moment)'}.`}
               </span>
             ) : (
               <span style={{ fontSize: 13 }}>{testResult.reason}</span>
