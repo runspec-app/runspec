@@ -153,7 +153,7 @@ describe('TelemetryTab Save round-trip', () => {
     expect(saved.telemetry.capture_content).toBe(true)
   })
 
-  it('the "Use Arize AX" preset fills generic OTLP fields: endpoint, project, space-id header, auth header', async () => {
+  it('the "Use Arize AX" preset fills generic OTLP fields: project, space_id header, api_key header (not the endpoint)', async () => {
     getConfig.mockResolvedValue({})
     render(<TelemetryTab />)
     const user = userEvent.setup()
@@ -164,10 +164,11 @@ describe('TelemetryTab Save round-trip', () => {
     await waitFor(() => expect(saveConfig).toHaveBeenCalledTimes(1))
     const saved = saveConfig.mock.calls[0][0] as { telemetry: Record<string, unknown> }
     expect(saved.telemetry.enabled).toBe(true)
-    expect(saved.telemetry.endpoint).toBe('https://otlp.arize.com/v1/traces')
+    // Region-specific, so not defaulted.
+    expect(saved.telemetry.endpoint).toBe('')
     expect(saved.telemetry.project_name).toBe('runspec-console')
-    expect(saved.telemetry.credential_header).toBe('authorization')
-    expect(saved.telemetry.headers).toEqual({ 'arize-space-id': '' })
+    expect(saved.telemetry.credential_header).toBe('api_key')
+    expect(saved.telemetry.headers).toEqual({ space_id: '' })
   })
 
   it('round-trips the project name', async () => {

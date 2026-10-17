@@ -62,7 +62,7 @@ max_content_chars = 0   # 0 = capture full text; set a ceiling to bound span siz
 | Key | Meaning |
 |---|---|
 | `enabled` | Master switch. Default **false**. |
-| `endpoint` | OTLP **traces** URL. Blank ⇒ the SDK reads `OTEL_EXPORTER_OTLP_ENDPOINT`. |
+| `endpoint` | OTLP **traces** URL. A base URL ending in `/otlp` or with no path gets `/v1/traces` added. Blank ⇒ the SDK reads `OTEL_EXPORTER_OTLP_ENDPOINT`. |
 | `headers` | Extra HTTP headers on every export — e.g. a LangSmith API key + project. |
 | `protocol` | `http/protobuf` (the shipped exporter). |
 | `service_name` | `service.name` resource attribute. Blank (default) ⇒ the install's **branded app slug** (the same source as the config directory + window title), so a white-label build self-identifies; `runspec-console` on a default install. |
@@ -197,7 +197,7 @@ export_interval = 60                             # seconds between exports
 | Key | Meaning |
 |---|---|
 | `enabled` | Master switch for metrics. Default **false**, independent of trace `enabled`. |
-| `endpoint` | OTLP **metrics** URL (`…/v1/metrics`). Blank ⇒ the SDK reads `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`. |
+| `endpoint` | OTLP **metrics** URL (`…/v1/metrics`). A base URL — Grafana Cloud's `https://otlp-gateway-<region>.grafana.net/otlp`, or a collector's `http://host:4318` — gets `/v1/metrics` added; any other path is used as given. Blank ⇒ the SDK reads `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`. **Send test metric** reports the backend's answer, so a wrong path shows as `code: 404`. |
 | `export_interval` | Seconds between metric exports. Default 60 (min 1). |
 | `headers` | Extra HTTP headers on the metrics export. **Not** shared with the trace headers. |
 | `api_key_command` / `api_key_header` | Resolve the metrics key at runtime from a command (same "ship the command, not the key" pattern as traces); metrics-specific. |
@@ -258,27 +258,27 @@ conversation or token/cost rollups the way an LLM-native tool does.
 
 [Arize AX](https://arize.com/docs/ax) takes plain OTLP over HTTP, so it is
 configured with the same generic fields as any other backend — no Arize SDK.
-Settings → Telemetry → **Use Arize AX** fills these in:
+Settings → Telemetry → **Use Arize AX** fills in everything except the
+endpoint, which depends on your space's region:
 
 ```toml
 [telemetry]
 enabled = true
-endpoint = "https://otlp.arize.com/v1/traces"   # EU: https://otlp.eu-west-1a.arize.com/v1/traces
+endpoint = "https://otlp.eu-west-1a.arize.com/v1/traces"  # your region; US: https://otlp.arize.com/v1/traces
 project_name = "runspec-console"
 capture_content = true
-credential = "arize-api-key"        # a `token` Credential holding the API key
-credential_header = "authorization" # sent raw, no "Bearer"
+credential = "arize-api-key"   # a `token` Credential holding the API key
+credential_header = "api_key"  # sent raw, no "Bearer"
 
 [telemetry.headers]
-"arize-space-id" = "U3BhY2U6…"      # your Space ID (Space settings)
+space_id = "U3BhY2U6…"         # your Space ID (Space settings)
 ```
 
-These are the header names Arize's own `arize-otel` exporter sends
-(`authorization` = the API key, `arize-space-id` = the Space ID); the older
-`api_key` / `space_id` names are still accepted. Without a project name, Arize
-files traces under its default project. A wrong key or space ID makes the
-export fail, and **Send test trace** now reports that as a failure with the
-backend's answer (for example `code: 401`), rather than "sent".
+Arize reads the API key from the `api_key` header and the Space ID from
+`space_id`. Without a project name, Arize files traces under its default
+project. A wrong key, space ID or region makes the export fail, and **Send test
+trace** reports that as a failure with the backend's answer (for example
+`code: 401`), rather than "sent".
 
 ### Grafana + Tempo
 

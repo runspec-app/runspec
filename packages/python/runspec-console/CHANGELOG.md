@@ -22,6 +22,33 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   `[llm] tool_mode = "search"`; the scripted model describes a runnable the
   first time it uses it in a chat, then calls `run_runnable`.
 
+## [0.349.0] — 2026-10-17
+
+### Changed
+
+- **"Use Arize AX" preset uses the headers Arize reads and leaves the endpoint
+  to you.** It now sets a `space_id` header and `credential_header = "api_key"`
+  (was `arize-space-id` / `authorization`), and no longer fills in the US
+  endpoint, since the URL depends on the space's region; the hint lists the US
+  and EU URLs. Confirmed against a live EU space.
+- **An OTLP base URL gets the signal path.** The exporters POST to the endpoint
+  exactly as configured, so a base URL such as Grafana Cloud's
+  `https://otlp-gateway-….grafana.net/otlp` or a collector's
+  `http://host:4318` returned 404. A path that is empty or ends in `/otlp` now
+  gets `/v1/metrics` (metrics) or `/v1/traces` (traces) added; any other path
+  is used as given (`observability._signal_endpoint`). Repeated slashes in the
+  path are collapsed too: Grafana redirects `/otlp//v1/metrics` with a 301, the
+  client retries as a GET, and the export failed with 405. The test results
+  show the URL actually used.
+
+### Fixed
+
+- **"Send test metric" reports a rejected export.** Like the test trace in
+  0.348.0, it used to say "sent" once the flush finished even when the backend
+  answered 404 or 401. The metric exporter's `export` is now wrapped in place
+  (`_record_metric_exports`) and the result is `ok: false` with the exporter's
+  reason (`observability.last_metric_export`).
+
 ## [0.348.0] — 2026-10-17
 
 ### Added

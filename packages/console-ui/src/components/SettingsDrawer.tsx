@@ -5322,15 +5322,16 @@ export function TelemetryTab() {
             <Button
               size="small"
               onClick={() => {
+                // The endpoint is region-specific, so it is left for the
+                // operator to fill (the hint below lists them).
                 setEnabled(true)
-                setEndpoint('https://otlp.arize.com/v1/traces')
                 setCaptureContent(true)
                 if (!projectName.trim()) setProjectName('runspec-console')
-                setCredentialHeader('authorization')
+                setCredentialHeader('api_key')
                 setHeaders(prev =>
-                  prev.some(h => h.k.trim().toLowerCase() === 'arize-space-id')
+                  prev.some(h => h.k.trim().toLowerCase() === 'space_id')
                     ? prev
-                    : [...prev, { k: 'arize-space-id', v: '' }],
+                    : [...prev, { k: 'space_id', v: '' }],
                 )
               }}
             >
@@ -5338,9 +5339,10 @@ export function TelemetryTab() {
             </Button>
             <Typography.Text type="secondary" style={{ fontSize: 13, marginLeft: 8 }}>
               Fills the standard OTLP fields for <a href="https://arize.com/docs/ax" target="_blank" rel="noreferrer">Arize AX</a>:
-              paste your Space ID into the <code>arize-space-id</code> header, add your API key as a{' '}
-              <code>token</code> Credential and pick it below (sent raw under <code>authorization</code>), then Save.
-              EU spaces use <code>https://otlp.eu-west-1a.arize.com/v1/traces</code>.
+              paste your Space ID into the <code>space_id</code> header, add your API key as a{' '}
+              <code>token</code> Credential and pick it below (sent raw under <code>api_key</code>), and set the
+              endpoint for your space's region, e.g. <code>https://otlp.arize.com/v1/traces</code> (US) or{' '}
+              <code>https://otlp.eu-west-1a.arize.com/v1/traces</code> (EU). Then Save.
             </Typography.Text>
           </div>
         </div>
@@ -5490,6 +5492,11 @@ export function TelemetryTab() {
       </Typography.Paragraph>
       {row('Enable metrics', <Switch checked={metricsEnabled} onChange={setMetricsEnabled} />)}
       {row('OTLP metrics endpoint', <Input style={{ width: 380 }} placeholder="https://…/v1/metrics  (blank ⇒ OTEL_EXPORTER_OTLP_METRICS_ENDPOINT)" value={metricsEndpoint} onChange={e => setMetricsEndpoint(e.target.value)} disabled={!metricsEnabled} />)}
+      <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: -2 }}>
+        A base URL such as Grafana Cloud's <code>https://otlp-gateway-….grafana.net/otlp</code> or a
+        collector's <code>http://host:4318</code> gets <code>/v1/metrics</code> added; any other path is
+        used as given.
+      </Typography.Paragraph>
       {row('Export interval (seconds)', <InputNumber min={1} step={10} value={metricsInterval} onChange={v => setMetricsInterval(typeof v === 'number' ? v : 60)} disabled={!metricsEnabled} />)}
 
       <Typography.Paragraph style={{ fontSize: 13, margin: '10px 0 6px' }}>

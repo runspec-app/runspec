@@ -90,6 +90,8 @@ _SESSION_ID: contextvars.ContextVar[str] = contextvars.ContextVar(
 # batch has been exported. Lets the "Send test trace" button report what the
 # backend actually answered, not just that the flush finished.
 _LAST_EXPORT: dict[str, Any] | None = None
+# The same for metric exports (see _record_metric_exports).
+_LAST_METRIC_EXPORT: dict[str, Any] | None = None
 
 # ── metrics state, set once by init_metrics (all None/False = disabled no-op) ──
 # Metrics are a SEPARATE OTLP signal from traces, with their own MeterProvider,
@@ -176,7 +178,7 @@ def _build_exporter(cfg: dict[str, Any]) -> Any:
     session (the proto-http exporter has no public insecure flag)."""
     from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 
-    return _RecordingExporter(_construct_exporter(OTLPSpanExporter, cfg))
+    return _RecordingExporter(_construct_exporter(OTLPSpanExporter, cfg, "traces"))
 
 
 class _ExportLogCapture(logging.Handler):
@@ -196,6 +198,8 @@ class _ExportLogCapture(logging.Handler):
 
 _EXPORT_LOG = _ExportLogCapture()
 _EXPORT_LOGGER_NAME = "opentelemetry.exporter.otlp.proto.http.trace_exporter"
+_METRIC_EXPORT_LOG = _ExportLogCapture()
+_METRIC_EXPORT_LOGGER_NAME = "opentelemetry.exporter.otlp.proto.http.metric_exporter"
 
 
 class _RecordingExporter:
@@ -253,17 +257,81 @@ def _build_metric_exporter(cfg: dict[str, Any]) -> Any:
         OTLPMetricExporter,
     )
 
-    return _construct_exporter(OTLPMetricExporter, cfg)
+    return _record_metric_exports(
+        _construct_exporter(OTLPMetricExporter, cfg, "metrics")
+    )
 
 
-def _construct_exporter(exporter_cls: Any, cfg: dict[str, Any]) -> Any:
+def _record_metric_exports(exporter: Any) -> Any:
+    """Wrap the metric exporter's ``export`` in place so each export's outcome
+    lands in ``_LAST_METRIC_EXPORT`` (the metrics twin of
+    :class:`_RecordingExporter`). In place rather than a wrapper object because
+    the metric reader reads the exporter's temporality / aggregation settings."""
+    exporter_logger = logging.getLogger(_METRIC_EXPORT_LOGGER_NAME)
+    if _METRIC_EXPORT_LOG not in exporter_logger.handlers:
+        exporter_logger.addHandler(_METRIC_EXPORT_LOG)
+    inner = exporter.export
+
+    def export(metrics_data: Any, *args: Any, **kwargs: Any) -> Any:
+        global _LAST_METRIC_EXPORT
+        started = time.time()
+        try:
+            result = inner(metrics_data, *args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 — record, then let the SDK see it
+            _LAST_METRIC_EXPORT = {"ok": False, "error": str(exc)}
+            raise
+        ok = getattr(result, "name", "") == "SUCCESS"
+        error = ""
+        last = _METRIC_EXPORT_LOG.last
+        if not ok and last is not None and last[0] >= started:
+            error = last[1]
+        _LAST_METRIC_EXPORT = {"ok": ok, "error": error}
+        return result
+
+    exporter.export = export
+    return exporter
+
+
+def last_metric_export() -> dict[str, Any] | None:
+    """``{"ok", "error"}`` for the most recent metric export, or ``None``."""
+    return dict(_LAST_METRIC_EXPORT) if _LAST_METRIC_EXPORT is not None else None
+
+
+def _signal_endpoint(endpoint: str, signal: str) -> str:
+    """Add ``/v1/<signal>`` to an OTLP *base* URL. The exporters POST to the
+    configured endpoint exactly as given, so a base URL such as Grafana Cloud's
+    ``https://otlp-gateway-….grafana.net/otlp`` or a bare collector
+    ``http://host:4318`` would 404. A URL with any other path is left alone, since
+    some backends use their own paths (LangSmith's ``/otel/v1/traces``).
+
+    Repeated slashes in the path are collapsed: a backend that redirects
+    ``/otlp//v1/metrics`` to ``/otlp/v1/metrics`` (Grafana Cloud does, with a 301)
+    makes the HTTP client retry as a GET, which fails with 405."""
+    import re
+    from urllib.parse import urlsplit, urlunsplit
+
+    parts = urlsplit(endpoint)
+    clean = re.sub(r"/{2,}", "/", parts.path)
+    path = clean.rstrip("/")
+    if path and not path.endswith("/otlp"):
+        if clean == parts.path:
+            return endpoint
+        return urlunsplit(parts._replace(path=clean))
+    return urlunsplit(parts._replace(path=f"{path}/v1/{signal}"))
+
+
+def _construct_exporter(
+    exporter_cls: Any, cfg: dict[str, Any], signal: str = ""
+) -> Any:
     """Build an OTLP proto-http exporter (span or metric) from ``cfg``, passing a
     constructor arg only when set (so an unset value falls through to the SDK's
     own ``OTEL_*`` env reading) and honouring ``tls_verify = false`` best-effort on
-    the exporter's requests session."""
+    the exporter's requests session. ``signal`` (``traces`` / ``metrics``)
+    completes a base endpoint URL (see :func:`_signal_endpoint`)."""
     kwargs: dict[str, Any] = {}
     if cfg.get("endpoint"):
-        kwargs["endpoint"] = cfg["endpoint"]
+        endpoint = str(cfg["endpoint"])
+        kwargs["endpoint"] = _signal_endpoint(endpoint, signal) if signal else endpoint
     headers = _resolve_headers(cfg)
     if headers:
         kwargs["headers"] = headers
@@ -888,8 +956,10 @@ def send_test_metric() -> dict[str, Any]:
     helpers, then :func:`flush_metrics` so it reaches the backend right away — the
     metrics twin of :func:`send_test_trace`. Returns a UI summary dict; ``ok=False``
     with a ``reason`` when metrics are not active."""
+    global _LAST_METRIC_EXPORT
     if not metrics_enabled():
         return {"ok": False, "reason": "metrics are not active"}
+    _LAST_METRIC_EXPORT = None
     try:
         record_tool_run(
             tool="run_runnable",
@@ -907,8 +977,21 @@ def send_test_metric() -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "reason": f"emit failed: {exc}"}
     flushed = flush_metrics()
+    export = last_metric_export()
+    if export is not None and not export["ok"]:
+        return {
+            "ok": False,
+            "reason": (
+                "the backend rejected the export"
+                + (f": {export['error']}" if export["error"] else "")
+                + " — check the endpoint (a metrics URL usually ends in"
+                " /v1/metrics) and auth headers"
+            ),
+            "export": export,
+        }
     return {
         "ok": True,
+        "export": export,
         "instruments": [
             "runspec.tool.runs",
             "runspec.tool.duration",

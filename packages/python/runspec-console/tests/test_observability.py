@@ -843,6 +843,92 @@ def test_send_test_metric_emits_all_instruments(metric_reader):
     assert {"runspec.tool.runs", "runspec.agent.turns"} <= names
 
 
+@otel_only
+def test_send_test_metric_reports_rejected_export():
+    """A backend that rejects the metrics (e.g. a 404 from a base URL) makes the
+    test metric fail with the exporter's reason instead of "sent"."""
+    import logging
+
+    from opentelemetry.sdk.metrics.export import (
+        MetricExporter,
+        MetricExportResult,
+        PeriodicExportingMetricReader,
+    )
+
+    class _Rejecting(MetricExporter):
+        def export(self, metrics_data, timeout_millis=10_000, **kwargs):
+            logging.getLogger(obs._METRIC_EXPORT_LOGGER_NAME).error(
+                "Failed to export metrics batch code: 404, reason: Not Found"
+            )
+            return MetricExportResult.FAILURE
+
+        def force_flush(self, timeout_millis=10_000):
+            return True
+
+        def shutdown(self, timeout_millis=30_000, **kwargs):
+            pass
+
+    reader = PeriodicExportingMetricReader(
+        obs._record_metric_exports(_Rejecting()), export_interval_millis=3_600_000
+    )
+    obs.init_metrics_for_test(reader)
+    try:
+        result = obs.send_test_metric()
+    finally:
+        obs.reset_metrics_for_test()
+    assert result["ok"] is False
+    assert "404" in result["reason"]
+    assert result["export"]["ok"] is False
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "signal", "expected"),
+    [
+        # Base URLs get the signal path (Grafana Cloud, Mimir, a bare collector).
+        (
+            "https://otlp-gateway-prod-eu-west-2.grafana.net/otlp",
+            "metrics",
+            "https://otlp-gateway-prod-eu-west-2.grafana.net/otlp/v1/metrics",
+        ),
+        (
+            "https://mimir.internal/otlp/",
+            "metrics",
+            "https://mimir.internal/otlp/v1/metrics",
+        ),
+        ("http://127.0.0.1:4318", "traces", "http://127.0.0.1:4318/v1/traces"),
+        ("http://127.0.0.1:4318/", "metrics", "http://127.0.0.1:4318/v1/metrics"),
+        # Full or vendor-specific paths are used as given.
+        (
+            "https://otlp.arize.com/v1/traces",
+            "traces",
+            "https://otlp.arize.com/v1/traces",
+        ),
+        (
+            "https://api.smith.langchain.com/otel/v1/traces",
+            "traces",
+            "https://api.smith.langchain.com/otel/v1/traces",
+        ),
+        (
+            "https://x.example/otlp/v1/metrics",
+            "metrics",
+            "https://x.example/otlp/v1/metrics",
+        ),
+        (
+            "https://otlp-gateway-prod-gb-south-1.grafana.net/otlp//v1/metrics",
+            "metrics",
+            "https://otlp-gateway-prod-gb-south-1.grafana.net/otlp/v1/metrics",
+        ),
+        (
+            "https://x.example//otlp/",
+            "traces",
+            "https://x.example/otlp/v1/traces",
+        ),
+    ],
+)
+def test_signal_endpoint(endpoint, signal, expected):
+    assert obs._signal_endpoint(endpoint, signal) == expected
+
+
 # ── resource identity (service.name / instance.id / host / user) ──────────────
 
 

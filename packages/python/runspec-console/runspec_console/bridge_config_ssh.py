@@ -590,7 +590,12 @@ class ConfigSshMixin:
                 ),
             }
         result = observability.send_test_trace()
-        result.setdefault("endpoint", cfg.get("endpoint") or "<OTEL_* env / default>")
+        result.setdefault(
+            "endpoint",
+            observability._signal_endpoint(cfg["endpoint"], "traces")
+            if cfg.get("endpoint")
+            else "<OTEL_* env / default>",
+        )
         return result
 
     def send_test_metric(self) -> dict[str, Any]:
@@ -627,7 +632,12 @@ class ConfigSshMixin:
                 ),
             }
         result = observability.send_test_metric()
-        result.setdefault("endpoint", mcfg.get("endpoint") or "<OTEL_* env / default>")
+        result.setdefault(
+            "endpoint",
+            observability._signal_endpoint(mcfg["endpoint"], "metrics")
+            if mcfg.get("endpoint")
+            else "<OTEL_* env / default>",
+        )
         return result
 
     def _commit_ssh_fields(self, **fields: Any) -> None:
