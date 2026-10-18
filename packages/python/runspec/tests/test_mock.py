@@ -392,3 +392,28 @@ def test_cli_check_fails_on_drift(spec: Path, installed: list[str], capsys) -> N
 def test_cli_needs_a_runnable_for_record(capsys) -> None:
     code, _, err = _cli(["record"], capsys)
     assert code == 2 and "needs a runnable" in err
+
+
+def test_build_command_carries_mock_through_run_as(monkeypatch: pytest.MonkeyPatch) -> None:
+    # serve / exec escalate with sudo, which strips the environment: the mock
+    # setting must ride the env frame or the runnable would run for real.
+    from runspec.become import parse_env_frame
+    from runspec.execute import build_command
+
+    monkeypatch.setenv(mock.MOCK_ENV, "1")
+    monkeypatch.setenv(mock.MOCK_DIR_ENV, "/tmp/mocks")
+    _cmd, _extra, frame = build_command({"command": ["/opt/venv/bin/jira"], "run_as": "svc"}, [], {"RUNSPEC_AGENT": "1"})
+    assert frame is not None
+    env = parse_env_frame(frame)
+    assert env[mock.MOCK_ENV] == "1"
+    assert env[mock.MOCK_DIR_ENV] == "/tmp/mocks"
+
+
+def test_build_command_without_run_as_adds_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Without escalation the child inherits the environment, so nothing is added.
+    from runspec.execute import build_command
+
+    monkeypatch.setenv(mock.MOCK_ENV, "1")
+    _cmd, extra, frame = build_command({"command": ["/opt/venv/bin/jira"]}, [], {})
+    assert frame is None
+    assert mock.MOCK_ENV not in extra

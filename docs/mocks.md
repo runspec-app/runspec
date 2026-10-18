@@ -30,9 +30,11 @@ or use the CLI, which does the same thing:
 runspec mock play jira -- get-issue --key OPS-101
 ```
 
-Anything that runs a runnable passes the variable through: `runspec serve`,
-`runspec exec`, the console (which sends it to remote hosts in the same way as
-`RUNSPEC_AGENT`) and Rundeck jobs.
+`runspec serve` and `runspec exec` pass the variable on to the runnables they
+run. So does the console (0.351.5 or later): start it with `RUNSPEC_MOCK=1` and
+every run is mocked, including `run_as` runs and runs on remote hosts.
+`RUNSPEC_MOCK_DIR` reaches only runs on the console's own machine, because it
+names a local directory.
 
 Argument checking still happens, so `jira get-issue` with no `--key` fails with
 the usual error. A required `password` arg is not needed, and the `run_as`

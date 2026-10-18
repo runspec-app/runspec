@@ -7,6 +7,15 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.74.1] — 2026-10-18
+
+### Fixed
+
+- **Mock mode reaches `run_as` runnables run by `runspec serve` and
+  `runspec exec`.** `sudo` drops the environment, so a runnable with `run_as`
+  ran for real when `RUNSPEC_MOCK` was set. `execute.build_command` now passes
+  `RUNSPEC_MOCK` and `RUNSPEC_MOCK_DIR` in the env frame.
+
 ## [0.74.0] — 2026-10-18
 
 **Mock responses: a runnable can answer from recorded output without running.**

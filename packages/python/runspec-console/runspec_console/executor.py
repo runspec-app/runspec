@@ -470,6 +470,20 @@ def start_error(cmd: list[str], exc: OSError) -> str:
     return msg
 
 
+def mock_env(remote: bool = False) -> dict[str, str]:
+    """Mock playback set where the console was started, carried to a run.
+
+    A plain local run inherits the console's environment already; this covers
+    the runs that don't — a ``run_as`` run (sudo/su strip the environment) and
+    a remote run. ``RUNSPEC_MOCK_DIR`` names a directory on *this* machine, so
+    it is only carried to local runs.
+    """
+    env = {"RUNSPEC_MOCK": os.environ.get("RUNSPEC_MOCK", "").strip()}
+    if not remote:
+        env["RUNSPEC_MOCK_DIR"] = os.environ.get("RUNSPEC_MOCK_DIR", "").strip()
+    return {k: v for k, v in env.items() if v}
+
+
 def run_local(
     runspec_path: str,
     runnable: str,
@@ -537,6 +551,7 @@ def run_local(
         from runspec.become import build_exec_argv
 
         env = {"RUNSPEC_AGENT": "1"} if agent else {}
+        env.update(mock_env())
         env.update(prov_env)
         env.update(secrets_env)
         env.update(cred_env)
@@ -777,6 +792,7 @@ def run_remote(
     remote_bin = f"{bin_dir}/{runnable}"
     argv = args_to_argv(args, positionals)
     base_env = {"RUNSPEC_AGENT": "1"} if agent else {}
+    base_env.update(mock_env(remote=True))
     # Provenance of what caused this run → recorded in the runnable's run_summary
     # (extra.trigger = event source, extra.runbook = the saved runbook that drove it).
     # Both orthogonal to RUNSPEC_AGENT.

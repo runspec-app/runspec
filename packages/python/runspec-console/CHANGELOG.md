@@ -9,6 +9,18 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.351.5] — 2026-10-18
+
+### Fixed
+
+- **Mock playback reaches every run.** Starting the console with
+  `RUNSPEC_MOCK=1` (or `strict`) only mocked local runs without `run_as`.
+  The console now passes the setting to `run_as` runs, whose `sudo`/`su` drops
+  the environment, and to runs on remote hosts. In both cases it goes in the
+  env frame on stdin, the same way `RUNSPEC_AGENT` does. `RUNSPEC_MOCK_DIR` is
+  passed only to local runs, because it names a directory on the console
+  machine. (`executor.mock_env`)
+
 ## [0.351.4] — 2026-10-18
 
 ### Fixed

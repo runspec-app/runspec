@@ -1453,8 +1453,11 @@ Recorded responses live in **mock files**, separate from `runspec.toml`.
 | `RUNSPEC_MOCK` | unset, empty, anything else | Off — a normal run. |
 | `RUNSPEC_MOCK_DIR` | a directory | An extra, highest-priority place to look for mock files. |
 
-An executor passes `RUNSPEC_MOCK` the same way it passes `RUNSPEC_AGENT` (in
-the env frame for remote runs). The core `runspec` CLI is never mocked.
+An executor that has `RUNSPEC_MOCK` in its own environment passes it on to
+every run it starts. A run that would lose the environment (`run_as`
+escalation, a remote host) gets it in the env frame, as `RUNSPEC_AGENT` does.
+`RUNSPEC_MOCK_DIR` names a local directory, so it is passed on only to runs on
+the same machine. The core `runspec` CLI is never mocked.
 
 Mock mode **never falls through to a real run.** When no recorded response
 matches, the run fails (see No match).

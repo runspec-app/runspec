@@ -10,12 +10,14 @@ here spawns a process.
 
 from __future__ import annotations
 
+import os
 import socket
 import sysconfig
 from pathlib import Path
 from typing import Any
 
 from runspec.become import build_exec_argv, effective_run_as, escalation_target, resolve_run_as
+from runspec.mock import MOCK_DIR_ENV, MOCK_ENV
 
 
 def find_script(name: str, scripts_dir: Path | None = None) -> list[str] | None:
@@ -85,6 +87,11 @@ def build_command(
     run_as = spec.get("run_as") or ""
     stdin: bytes | None = None
     if run_as:
+        # Mock playback set for this process must survive the escalation too.
+        for key in (MOCK_ENV, MOCK_DIR_ENV):
+            value = os.environ.get(key, "").strip()
+            if value:
+                extra.setdefault(key, value)
         cmd, stdin = build_exec_argv(
             cmd,
             run_as,
