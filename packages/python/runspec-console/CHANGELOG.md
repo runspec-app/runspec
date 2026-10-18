@@ -9,6 +9,17 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.351.2] — 2026-10-18
+
+### Fixed
+
+- **A toast Windows won't display now says why.** Windows accepts a toast
+  without error even when the app's notifications are turned off, so Settings
+  → Sounds & Notifications → *Test* reported "sent" and nothing appeared. The
+  console now reads the notifier's own setting before showing the toast, and
+  the Test result names the reason (turned off for this app, off for this
+  user, or blocked by group policy). The same reason is logged as a warning
+  whenever a toast is hidden.
 ## [0.351.1] — 2026-10-18
 
 ### Fixed

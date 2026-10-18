@@ -394,7 +394,7 @@ export function SoundsTab() {
       {test && (
         <pre style={{ marginTop: 12, fontSize: 13, background: 'rgba(127,127,127,0.12)', padding: 10, borderRadius: RADIUS.sm, whiteSpace: 'pre-wrap' }}>
 {`Sound:  ${test.sound_available ? 'available' : 'unavailable (not Windows?)'}
-Toast:  ${!test.toast_available ? `unavailable — ${test.toast_reason}` : test.toast_error ? `sent but Windows refused it — ${test.toast_error}` : 'sent (check the corner of the screen)'}
+Toast:  ${!test.toast_available ? `unavailable — ${test.toast_reason}` : test.toast_error ? `not shown — ${test.toast_error}` : 'sent, and Windows says notifications are on for the app'}
 Flash:  ${test.window_found ? 'window found' : 'window NOT found — title mismatch'}`}
         </pre>
       )}

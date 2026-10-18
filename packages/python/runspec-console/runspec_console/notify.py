@@ -152,6 +152,27 @@ def set_app_id() -> None:
         logger.warning("set_app_id failed", exc_info=True)
 
 
+# Windows.UI.Notifications.NotificationSetting — the notifier's own verdict on
+# whether this app's toasts will be displayed. ``Show`` doesn't raise when they
+# won't be, so a toast can be "sent" and still never appear.
+_SETTING_REASONS = {
+    1: "Windows has notifications turned off for this app "
+    "(Settings > System > Notifications)",
+    2: "Windows has notifications turned off for this user",
+    3: "notifications are blocked by group policy",
+    4: "notifications are disabled by the app manifest",
+}
+
+
+def setting_reason(setting: Any) -> str:
+    """``""`` when a ``NotificationSetting`` value means toasts will display,
+    else a one-line reason. Unknown values read as enabled."""
+    try:
+        return _SETTING_REASONS.get(int(setting), "")
+    except (TypeError, ValueError):
+        return ""
+
+
 def _create_notifier(manager: Any) -> Any:
     """Build a ToastNotifier from the WinRT manager.
 
@@ -170,7 +191,8 @@ def _create_notifier(manager: Any) -> Any:
 
 def send(title: str, body: str, *, on_click: Callable[[], None] | None = None) -> str:
     """Raise a desktop toast. Returns ``""`` when Windows accepted it, else a
-    one-line reason (winrt missing, or the exception ``Show`` raised). Never
+    one-line reason (winrt missing, Windows' notification setting for the
+    app says it won't be displayed, or the exception ``Show`` raised). Never
     raises. A failure is also logged as a warning so it reaches
     ``runspec-console.log`` — it used to be logged at debug, which hid why
     toasts never appeared."""
@@ -196,8 +218,15 @@ def send(title: str, body: str, *, on_click: Callable[[], None] | None = None) -
                     logger.debug("toast on_click failed", exc_info=True)
 
             toast.add_activated(_activated)
-        _create_notifier(ToastNotificationManager).show(toast)
-        return ""
+        notifier = _create_notifier(ToastNotificationManager)
+        try:
+            blocked = setting_reason(notifier.setting)
+        except Exception:
+            blocked = ""
+        notifier.show(toast)
+        if blocked:
+            logger.warning("desktop notification hidden: %s", blocked)
+        return blocked
     except Exception as exc:
         logger.warning("desktop notification failed: %r", exc, exc_info=True)
         return f"{type(exc).__name__}: {exc}"

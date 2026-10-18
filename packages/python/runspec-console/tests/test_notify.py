@@ -330,3 +330,11 @@ def test_notify_room_never_raises(monkeypatch):
     )
     b = _RoomStubBridge(foreground=False)
     b._notify_room_message({"room": "ops", "text": "hi"})  # swallowed
+
+
+def test_setting_reason_maps_windows_notification_setting():
+    assert notify.setting_reason(0) == ""
+    assert "turned off for this app" in notify.setting_reason(1)
+    assert "group policy" in notify.setting_reason(3)
+    assert notify.setting_reason(99) == ""
+    assert notify.setting_reason(None) == ""
