@@ -552,6 +552,34 @@ runspec audit verify                         # check the hash chain (exit 1 if b
 
 ---
 
+## `runspec mock`
+
+Record, list, play back or check [mock responses](mocks.md). With
+`RUNSPEC_MOCK=1` set, a runnable checks its arguments and then prints a
+recorded response instead of running its code.
+
+```bash
+runspec mock record jira -- get-issue --key OPS-101   # run it for real, save the response
+runspec mock list                                     # what is recorded, where, how big
+runspec mock play jira -- get-issue --key OPS-101     # same as RUNSPEC_MOCK=1 jira get-issue --key OPS-101
+runspec mock check                                    # exit 1 if a response no longer fits its runnable
+```
+
+| Option | Description |
+|---|---|
+| `record RUNNABLE -- ARGS` | Run the runnable as an agent would and save its output and exit code |
+| `play RUNNABLE -- ARGS` | Play back a recorded response |
+| `list [RUNNABLE]` | List recorded responses (default: every installed runnable) |
+| `check [RUNNABLE]` | Check recorded responses against the current spec |
+| `--to package\|venv\|DIR` | Where `record` saves (default: the package's `mocks/` for a source checkout, else the venv) |
+| `--redact REGEX` | Replace matches with `«redacted»` before saving (repeatable) |
+| `--note TEXT` | Note saved with the response |
+| `--timeout N` | Seconds `record` waits for the runnable (default 300) |
+| `--strict` | `play`: exact argument match only |
+| `--json` | JSON output (`list`, `check`) |
+
+---
+
 ## `runspec deny`
 
 Manage the venv **denylist** — a kill switch that disables runnables installed

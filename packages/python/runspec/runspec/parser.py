@@ -14,12 +14,13 @@ from pathlib import Path
 from typing import Any
 
 from runspec import denylist, errors
+from runspec import mock as mock_mod
 from runspec.become import effective_run_as, resolve_account, resolve_run_as, verify_run_as_identity
 from runspec.env import apply_env_file
 from runspec.finder import find_config
 from runspec.inference import effective_autonomy, infer_script
 from runspec.loader import load_raw
-from runspec.logging_setup import adopt_exec_run_id, configure_logging, install_excepthook, resolve_logging_config
+from runspec.logging_setup import adopt_exec_run_id, configure_logging, install_excepthook, mark_mock_run, resolve_logging_config
 from runspec.models import Arg, Group, RunSpec
 from runspec.types import coerce
 from runspec.validator import raise_if_errors, validate_args, validate_groups
@@ -35,6 +36,7 @@ def parse(
     _check_run_as: bool = True,
     _check_denylist: bool = True,
     _implicit_logging: bool = True,
+    _mock: bool = True,
 ) -> RunSpec:
     """
     Parse arguments for the calling runnable.
@@ -61,6 +63,7 @@ def parse(
             check_run_as=_check_run_as,
             check_denylist=_check_denylist,
             implicit_logging=_implicit_logging,
+            allow_mock=_mock,
         )
     except errors.RunSpecError as e:
         print(str(e))
@@ -90,6 +93,7 @@ def _parse_impl(
     check_run_as: bool = True,
     check_denylist: bool = True,
     implicit_logging: bool = True,
+    allow_mock: bool = True,
 ) -> RunSpec:
     """Internal: full parse pipeline. Raises on error — call parse() for CLI use."""
     # 1. Find config — explicit arg > RUNSPEC_CONFIG > caller's package > cwd.
@@ -111,6 +115,11 @@ def _parse_impl(
     # is false for `enabled = false` — audit-only, the developer owns logging.
     log_cfg = resolve_logging_config(config.get("logging"), implicit=implicit_logging and not _is_core_cli(config_path))
     takeover = bool(log_cfg and log_cfg.get("enabled", True))
+
+    # 2.2. Mock playback (RUNSPEC_MOCK): the argument pipeline runs as usual,
+    # then the recorded response is written and the process exits at step 17 —
+    # the runnable's own code never runs. Never for the core CLI or introspection.
+    mock = mock_mod.mock_mode() if allow_mock and not _is_core_cli(config_path) else ""
 
     # 2.5. Install the uncaught-exception hook now — before the rest of the
     # pipeline runs — so a failure inside runspec's own parse code (inference,
@@ -187,7 +196,8 @@ def _parse_impl(
     # the wrong user. run_as/enforce_run_as are runnable-level, so they are read
     # from the root spec (not the merged subcommand leaf). Runs after --help so
     # `<name> --help` is always readable; skipped for introspection (load_spec).
-    if check_run_as:
+    # Skipped in mock mode: nothing runs, so it doesn't matter who would run it.
+    if check_run_as and not mock:
         root_spec = raw["runnables"][name]
         run_as = effective_run_as(root_spec.get("run_as"), config.get("run_as"))
         target = resolve_run_as(run_as, socket.gethostname())
@@ -260,7 +270,11 @@ def _parse_impl(
     # the environment — here, unconditionally, so it never leaks to runnables this
     # one shells out to, even when this runnable has no [config.logging].
     exec_run_id = adopt_exec_run_id()
-    if prompt_secrets:
+    if mock:
+        # Mock mode needs no secrets: a required password arg with no value is
+        # treated as present, and nothing is prompted for.
+        raw_script = {**raw_script, "args": {k: ({**v, "required": False} if v.get("type") == "password" else v) for k, v in raw_script["args"].items()}}
+    elif prompt_secrets:
         parsed_values, sources = _prompt_passwords(parsed_values, sources, raw_script["args"], agent)
 
     # 10. Pass 1 — validate individual args
@@ -337,6 +351,18 @@ def _parse_impl(
     except ValueError as e:
         raise errors.RunSpecError(str(e)) from e
 
+    # 17. Mock handoffs. `runspec mock record` runs this runnable for real with
+    # RUNSPEC_MOCK_RECORD=<file>: save the call's key (command-line args only)
+    # for it, then carry on. In mock mode, answer from the recorded responses and
+    # exit with the recorded exit code instead of returning.
+    record_file = os.environ.pop(mock_mod.MOCK_RECORD_ENV, "")
+    if record_file and not mock:
+        mock_mod.write_record_key(record_file, command_path, mock_mod.key_args(runspec_obj, sources=("cli",)))
+    if mock:
+        code = mock_mod.playback(name, command_path, mock_mod.key_args(runspec_obj), config_path, strict=mock == "strict")
+        mark_mock_run(code)
+        sys.exit(code)
+
     return runspec_obj
 
 
@@ -354,7 +380,7 @@ def load_spec(script_name: str | None = None, config_path: Path | None = None) -
     emitting schemas and listing runnables must never depend on who is running
     them or on whether the runnable is disabled for execution.
     """
-    return parse(script_name=script_name, argv=[], config_path=config_path, _enforce_required_command=False, _prompt_secrets=False, _check_run_as=False, _check_denylist=False)
+    return parse(script_name=script_name, argv=[], config_path=config_path, _enforce_required_command=False, _prompt_secrets=False, _check_run_as=False, _check_denylist=False, _mock=False)
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────

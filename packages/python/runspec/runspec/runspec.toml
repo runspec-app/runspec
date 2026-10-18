@@ -208,6 +208,29 @@ file    = {type = "path", description = "Ledger file to list/verify, or director
 limit   = {type = "int",  description = "Newest events to show for 'list'", short = "-n", default = 50}
 json    = {type = "flag", description = "Emit JSON (list: one record per line; verify: the result object)", default = false}
 
+[runspec.commands.mock]
+description = "Record, list, play back or check mock responses — RUNSPEC_MOCK=1 makes a runnable answer from them without running its code"
+autonomy    = "confirm"
+
+examples = [
+  {cmd = "runspec mock record jira -- get-issue --key OPS-1",          description = "Run 'jira get-issue' for real and save its response"},
+  {cmd = "runspec mock record jira --redact 'acme\\.com' -- search --jql 'project = OPS'", description = "Save a response with a pattern scrubbed out"},
+  {cmd = "runspec mock list",                                          description = "Every recorded response in this venv, where it lives, how big"},
+  {cmd = "runspec mock play jira -- get-issue --key OPS-1",            description = "Play back a response (the same as RUNSPEC_MOCK=1 jira get-issue --key OPS-1)"},
+  {cmd = "runspec mock check",                                         description = "Check every recorded response still fits its runnable's spec (exit 1 if not)"},
+]
+
+[runspec.commands.mock.args]
+action        = {type = "choice", description = "record | list | play | check", options = ["record", "list", "play", "check"], position = 1, default = "list"}
+runnable      = {type = "str",  description = "Runnable name (required for record and play; list/check default to every installed runnable)", position = 2, required = false}
+to            = {type = "str",  description = "Where 'record' saves: package (the spec's mocks/ folder), venv (this venv's runspec_mocks/), or a directory. Default: package for a source checkout, else venv", required = false}
+redact        = {type = "str",  description = "Regular expression to replace with «redacted» in a recorded response (repeatable)", multiple = true, required = false}
+note          = {type = "str",  description = "Note saved with a recorded response", required = false}
+timeout       = {type = "int",  description = "Seconds 'record' waits for the runnable before giving up", default = 300}
+strict        = {type = "flag", description = "'play': exact argument match only (RUNSPEC_MOCK=strict)", default = false}
+json          = {type = "flag", description = "Emit JSON (list, check)", default = false}
+runnable-args = {type = "rest", description = "The runnable's subcommand and args (after --)"}
+
 [runspec.commands.jump]
 description = "List tools on a remote host or run a tool via SSH+MCP"
 autonomy    = "confirm"

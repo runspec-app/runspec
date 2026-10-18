@@ -2,6 +2,16 @@
 
 All notable changes to `runspec-jira` are documented here.
 
+## [0.5.1] — 2026-10-18
+
+### Added
+
+- **Mock responses** (`runspec_jira/mocks/jira.json`) for `get-issue`,
+  `search`, `list-transitions`, `transition-issue`, `add-comment` and
+  `get-all-projects`, so `RUNSPEC_MOCK=1 jira …` (runspec 0.74.0+) answers with
+  realistic output and no Jira. The data is made up: it is recorded from the
+  real code against a fake Jira by `scripts/record_mocks.py`.
+
 ## [0.5.0] — 2026-10-16
 
 ### Changed

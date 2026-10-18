@@ -81,6 +81,7 @@ def main() -> None:
         "exec": cmd_exec,
         "deny": cmd_deny,
         "audit": cmd_audit,
+        "mock": cmd_mock,
     }
 
     if command not in commands:
@@ -795,6 +796,128 @@ def _kv_pairs(values: list[str] | None, flag: str) -> dict[str, str]:
             sys.exit(1)
         out[key.strip()] = val
     return out
+
+
+def cmd_mock(args: list[str]) -> None:
+    """Record, list, play back or check mock responses (see runspec/mock.py)."""
+    import subprocess
+
+    from runspec import mock as mock_mod
+    from runspec.execute import find_script
+    from runspec.parser import parse as _parse
+
+    parsed = _parse(script_name="runspec", argv=["mock"] + args, config_path=_CLI_CONFIG)
+    action = parsed.action.value or "list"
+    name: str | None = parsed.runnable.value
+    rest: list[str] = list(parsed.runnable_args.value or [])
+    as_json = bool(parsed.json.value)
+
+    def installed(want: str | None) -> list[dict[str, Any]]:
+        items = _deduplicate(_discover_installed())
+        if want is not None:
+            items = [i for i in items if i["runnable"] == want]
+            if not items:
+                print(f"✗  Runnable '{want}' is not installed in this venv.", file=sys.stderr)
+                sys.exit(2)
+        return items
+
+    if action in ("record", "play") and not name:
+        print(f"✗  runspec mock {action} needs a runnable name: runspec mock {action} <runnable> -- [command] [args]", file=sys.stderr)
+        sys.exit(2)
+    target = name or ""
+
+    if action == "play":
+        binary = find_script(target)
+        if binary is None:
+            print(f"✗  Runnable '{name}' has no entry-point binary in this venv.", file=sys.stderr)
+            sys.exit(2)
+        env = {**os.environ, mock_mod.MOCK_ENV: "strict" if parsed.strict.value else "1"}
+        sys.exit(subprocess.call([*binary, *rest], env=env))
+
+    if action == "record":
+        item = installed(target)[0]
+        binary = find_script(target)
+        if binary is None:
+            print(f"✗  Runnable '{name}' has no entry-point binary in this venv.", file=sys.stderr)
+            sys.exit(2)
+        try:
+            code, out, err, key = mock_mod.run_for_record(binary, rest, timeout=parsed.timeout.value)
+        except mock_mod.MockError as e:
+            print(f"✗  {e}", file=sys.stderr)
+            sys.exit(1)
+        if key is None:
+            sys.stdout.write(out)
+            sys.stderr.write(err)
+            print(f"✗  {name} stopped before its arguments were accepted (exit {code}) — nothing recorded.", file=sys.stderr)
+            sys.exit(1)
+        entry = mock_mod.build_entry(key, code, out, err, redact=parsed.redact.value or [], note=parsed.note.value or "")
+        dest = mock_mod.resolve_destination(target, item["source"], parsed.to.value)
+        try:
+            outcome = mock_mod.save_entry(dest, target, entry)
+        except (OSError, mock_mod.MockError) as e:
+            print(f"✗  could not save to {dest}: {e}", file=sys.stderr)
+            sys.exit(1)
+        label = " ".join([target, *entry["command"]])
+        size = len(mock_mod.render_stdout(entry["stdout"]).encode("utf-8"))
+        print(f"✓  {outcome} {label} {json.dumps(entry['args'])} → exit {code}, {size} bytes")
+        print(f"   {dest}")
+        hits = mock_mod.secret_hits(mock_mod.render_stdout(entry["stdout"]) + str(entry.get("stderr") or ""))
+        if hits:
+            print(f"⚠  the response looks like it contains a credential ({', '.join(hits[:3])}) — scrub it before committing (--redact)", file=sys.stderr)
+        return
+
+    items = installed(name)
+
+    if action == "list":
+        rows: list[dict[str, Any]] = []
+        for item in items:
+            try:
+                cands = mock_mod.load_candidates(item["runnable"], item["source"])
+            except mock_mod.MockError as e:
+                print(f"✗  {e}", file=sys.stderr)
+                sys.exit(1)
+            for c in cands:
+                rows.append(
+                    {
+                        "runnable": item["runnable"],
+                        "command": c.entry["command"],
+                        "args": c.entry["args"],
+                        "exit_code": c.entry["exit_code"],
+                        "bytes": len(mock_mod.render_stdout(c.entry.get("stdout")).encode("utf-8")),
+                        "layer": c.layer,
+                        "path": str(c.path),
+                    }
+                )
+        if as_json:
+            print(json.dumps(rows, indent=2))
+            return
+        if not rows:
+            print("No mock responses recorded" + (f" for {name}." if name else " in this venv."))
+            return
+        for r in rows:
+            label = " ".join([r["runnable"], *r["command"]])
+            print(f"{label:<32} {json.dumps(r['args']):<40} exit {r['exit_code']:<3} {r['bytes']:>8} B  {r['layer']}")
+        return
+
+    # check
+    problems: list[str] = []
+    checked = 0
+    for item in items:
+        try:
+            cands = mock_mod.load_candidates(item["runnable"], item["source"])
+        except mock_mod.MockError as e:
+            problems.append(str(e))
+            continue
+        checked += len(cands)
+        problems.extend(mock_mod.check_entries(item["runnable"], item["source"], cands))
+    if as_json:
+        print(json.dumps({"checked": checked, "problems": problems}, indent=2))
+    elif problems:
+        for p in problems:
+            print(f"✗  {p}")
+    else:
+        print(f"✓  {checked} mock response(s) checked — all fit their runnables' specs.")
+    sys.exit(1 if problems else 0)
 
 
 def cmd_audit(args: list[str]) -> None:

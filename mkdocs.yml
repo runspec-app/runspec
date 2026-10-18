@@ -71,6 +71,7 @@ nav:
     - Audit events: audit.md
     - Shared venvs — the logs inbox: logs-inbox.md
     - Testing: testing.md
+    - Mock responses: mocks.md
     - Python library: python.md
     - Node library: node.md
     - Node deployment: node-deploy.md

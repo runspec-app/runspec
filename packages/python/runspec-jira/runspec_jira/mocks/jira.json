@@ -1,0 +1,262 @@
+{
+  "runspec_mock": 1,
+  "runnable": "jira",
+  "entries": [
+    {
+      "command": [
+        "get-issue"
+      ],
+      "args": {
+        "key": "OPS-101"
+      },
+      "exit_code": 0,
+      "stdout": {
+        "key": "OPS-101",
+        "url": "https://jira.example.com/browse/OPS-101",
+        "summary": "Disk full on web-01: /var at 97%",
+        "status": "Open",
+        "status_category": "new",
+        "type": "Incident",
+        "priority": "High",
+        "reporter": "Monitoring Bot",
+        "created": "2026-10-17T06:12:00.000+0000",
+        "updated": "2026-10-17T06:40:00.000+0000",
+        "labels": [
+          "disk",
+          "web-01"
+        ],
+        "components": [
+          "Infrastructure"
+        ],
+        "description": "Alert: filesystem /var on web-01 is at 97% (threshold 90%).\nStarted 06:10 UTC. Most of the growth is under /var/log/app.",
+        "comment_count": 1,
+        "link_count": 0,
+        "subtask_count": 0,
+        "attachment_count": 0
+      },
+      "recorded": "2026-10-18T10:55:34Z",
+      "source": "record"
+    },
+    {
+      "command": [
+        "get-issue"
+      ],
+      "args": {
+        "key": "OPS-102"
+      },
+      "exit_code": 0,
+      "stdout": {
+        "key": "OPS-102",
+        "url": "https://jira.example.com/browse/OPS-102",
+        "summary": "Nightly backup failed on db-02",
+        "status": "In Progress",
+        "status_category": "indeterminate",
+        "type": "Incident",
+        "priority": "Medium",
+        "assignee": "Alex Smith",
+        "reporter": "Monitoring Bot",
+        "created": "2026-10-16T02:30:00.000+0000",
+        "updated": "2026-10-17T09:05:00.000+0000",
+        "labels": [
+          "backup",
+          "db-02"
+        ],
+        "components": [
+          "Infrastructure"
+        ],
+        "description": "backup-db exited 2 on db-02 at 02:15 UTC: 'pg_dump: connection to server failed: timeout'.",
+        "comment_count": 1,
+        "link_count": 1,
+        "subtask_count": 0,
+        "attachment_count": 0
+      },
+      "recorded": "2026-10-18T10:55:35Z",
+      "source": "record"
+    },
+    {
+      "command": [
+        "get-issue"
+      ],
+      "args": {
+        "key": "OPS-103"
+      },
+      "exit_code": 0,
+      "stdout": {
+        "key": "OPS-103",
+        "url": "https://jira.example.com/browse/OPS-103",
+        "summary": "TLS certificate for api.example.com expires in 7 days",
+        "status": "Open",
+        "status_category": "new",
+        "type": "Incident",
+        "priority": "High",
+        "assignee": "Jordan Lee",
+        "reporter": "Monitoring Bot",
+        "created": "2026-10-17T08:00:00.000+0000",
+        "updated": "2026-10-17T08:00:00.000+0000",
+        "labels": [
+          "tls"
+        ],
+        "components": [
+          "Infrastructure"
+        ],
+        "description": "cert-check reports that the api.example.com leaf certificate expires on 2026-10-24.",
+        "comment_count": 0,
+        "link_count": 0,
+        "subtask_count": 0,
+        "attachment_count": 0
+      },
+      "recorded": "2026-10-18T10:55:35Z",
+      "source": "record"
+    },
+    {
+      "command": [
+        "get-issue"
+      ],
+      "args": {},
+      "exit_code": 1,
+      "stdout": {
+        "error": "Jira 404: Issue Does Not Exist",
+        "kind": "JiraError"
+      },
+      "recorded": "2026-10-18T10:55:36Z",
+      "source": "record",
+      "note": "any other key: not found"
+    },
+    {
+      "command": [
+        "search"
+      ],
+      "args": {},
+      "exit_code": 0,
+      "stdout": {
+        "total": 3,
+        "start": 0,
+        "count": 3,
+        "issues": [
+          {
+            "key": "OPS-101",
+            "summary": "Disk full on web-01: /var at 97%",
+            "status": "Open",
+            "type": "Incident",
+            "priority": "High",
+            "updated": "2026-10-17T06:40:00.000+0000"
+          },
+          {
+            "key": "OPS-102",
+            "summary": "Nightly backup failed on db-02",
+            "status": "In Progress",
+            "type": "Incident",
+            "priority": "Medium",
+            "assignee": "Alex Smith",
+            "updated": "2026-10-17T09:05:00.000+0000"
+          },
+          {
+            "key": "OPS-103",
+            "summary": "TLS certificate for api.example.com expires in 7 days",
+            "status": "Open",
+            "type": "Incident",
+            "priority": "High",
+            "assignee": "Jordan Lee",
+            "updated": "2026-10-17T08:00:00.000+0000"
+          }
+        ],
+        "truncated": false
+      },
+      "recorded": "2026-10-18T10:55:36Z",
+      "source": "record",
+      "note": "any JQL: the three open OPS incidents"
+    },
+    {
+      "command": [
+        "list-transitions"
+      ],
+      "args": {
+        "key": "OPS-101"
+      },
+      "exit_code": 0,
+      "stdout": [
+        {
+          "name": "Start Progress",
+          "id": 11,
+          "to": "In Progress"
+        },
+        {
+          "name": "Resolve",
+          "id": 21,
+          "to": "Resolved"
+        },
+        {
+          "name": "Close",
+          "id": 31,
+          "to": "Closed"
+        }
+      ],
+      "recorded": "2026-10-18T10:55:37Z",
+      "source": "record"
+    },
+    {
+      "command": [
+        "transition-issue"
+      ],
+      "args": {
+        "key": "OPS-101",
+        "status": "In Progress"
+      },
+      "exit_code": 0,
+      "stdout": {
+        "key": "OPS-101",
+        "status": "In Progress"
+      },
+      "recorded": "2026-10-18T10:55:37Z",
+      "source": "record"
+    },
+    {
+      "command": [
+        "add-comment"
+      ],
+      "args": {
+        "key": "OPS-101"
+      },
+      "exit_code": 0,
+      "stdout": {
+        "id": "2101",
+        "author": {
+          "name": "asmith",
+          "key": "asmith",
+          "displayName": "Alex Smith",
+          "emailAddress": "asmith@example.com",
+          "active": true
+        },
+        "body": "Cleared old logs under /var/log/app; /var is now at 61%.",
+        "created": "2026-10-17T10:00:00.000+0000",
+        "updated": "2026-10-17T10:00:00.000+0000"
+      },
+      "recorded": "2026-10-18T10:55:38Z",
+      "source": "record",
+      "note": "any comment text"
+    },
+    {
+      "command": [
+        "get-all-projects"
+      ],
+      "args": {},
+      "exit_code": 0,
+      "stdout": [
+        {
+          "id": "10100",
+          "key": "OPS",
+          "name": "Operations",
+          "projectTypeKey": "software"
+        },
+        {
+          "id": "10101",
+          "key": "HELP",
+          "name": "IT Help Desk",
+          "projectTypeKey": "service_desk"
+        }
+      ],
+      "recorded": "2026-10-18T10:55:38Z",
+      "source": "record"
+    }
+  ]
+}

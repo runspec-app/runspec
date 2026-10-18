@@ -412,6 +412,14 @@ These five tests cover every decision `main()` makes without touching the
 network, credentials, or the static-data store — the boundaries are the only
 mocks.
 
+## Recorded responses for agents and evals
+
+A runnable can also ship [mock responses](mocks.md): output recorded from real
+calls (or from a fake server), played back with `RUNSPEC_MOCK=1` without running
+the runnable's code. They are for agents, evals and demos rather than for testing
+your code, but test that they still fit your spec with
+`runspec.mock.check_entries` (see [Check](mocks.md#check)).
+
 ## Validating a whole environment with `runspec test`
 
 `ParseHarness.smoke()` tests one runnable from your own test suite. When you

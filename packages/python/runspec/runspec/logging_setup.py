@@ -406,6 +406,16 @@ def configure_logging(
 _RUN_ID_RE = re.compile(r"^[0-9a-fA-F-]{8,64}$")
 
 
+def mark_mock_run(exit_code: int) -> None:
+    """Flag this run as a mock playback (``RUNSPEC_MOCK``) and pin the exit
+    code it is about to exit with, so the run record carries ``mock: true`` and
+    the recorded code. No-op when no run record is being written."""
+    state = _summary_state
+    if state is not None:
+        state["mock"] = True
+        state["exit_code"] = exit_code
+
+
 def adopt_exec_run_id() -> str | None:
     """Take the run id a ``runspec exec`` wrapper handed down in ``RUNSPEC_RUN_ID``.
 
@@ -1022,6 +1032,8 @@ def _emit_run_summary() -> None:
     # Best-effort exit code — sys.exit() sets sys.last_value; for normal exits
     # there's no reliable hook so we infer from the captured exception.
     exit_code = 1 if state["exception"] else 0
+    if state.get("exit_code") is not None:
+        exit_code = state["exit_code"]  # pinned by mark_mock_run
 
     # File record via the standard logger — picked up by the file handler only
     # (console handlers filter out runspec.runsummary by logger name). Always on;
@@ -1048,6 +1060,7 @@ def _emit_run_summary() -> None:
                     "user_target": state["user_target"],
                     "invocation_args": {k: v["value"] for k, v in invocation_args.items()},
                     "arg_sources": {k: v["source"] for k, v in invocation_args.items()},
+                    **({"mock": True} if state.get("mock") else {}),
                 },
             )
 

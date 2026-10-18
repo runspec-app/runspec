@@ -113,6 +113,23 @@ class TestEmit:
         assert s["extra"]["trigger"] == "schedule"
         assert s["extra"]["agent"] is True
 
+    def test_summary_marks_mock_run_with_its_exit_code(self, tmp_path):
+        # Mock playback (RUNSPEC_MOCK) pins the recorded exit code and flags the run.
+        configure_logging(_cfg(), runnable_name="myscript")
+        ls.mark_mock_run(69)
+        _emit_run_summary()
+        lines = [json.loads(line) for line in (tmp_path / "logs" / "myscript.log").read_text().strip().splitlines()]
+        s = next(obj for obj in lines if obj["logger"] == "runspec.runsummary")
+        assert s["extra"]["mock"] is True
+        assert s["extra"]["exit_code"] == 69
+
+    def test_summary_has_no_mock_key_on_a_real_run(self, tmp_path):
+        configure_logging(_cfg(), runnable_name="myscript")
+        _emit_run_summary()
+        lines = [json.loads(line) for line in (tmp_path / "logs" / "myscript.log").read_text().strip().splitlines()]
+        s = next(obj for obj in lines if obj["logger"] == "runspec.runsummary")
+        assert "mock" not in s["extra"]
+
     def test_summary_trigger_defaults_empty(self, tmp_path):
         configure_logging(_cfg(), runnable_name="myscript")
         logging.getLogger("test.trigger2").info("ran")

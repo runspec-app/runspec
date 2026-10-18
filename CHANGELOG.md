@@ -7,6 +7,32 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.74.0] — 2026-10-18
+
+**Mock responses: a runnable can answer from recorded output without running.**
+
+- With `RUNSPEC_MOCK=1` in the environment, `parse()` checks the arguments as
+  usual and then prints a recorded response and exits with its exit code. The
+  runnable's own code never runs, so nothing is contacted or changed and no
+  credentials are needed. It works through every caller (`runspec serve`,
+  `runspec exec`, the console, Rundeck) because they all pass the environment
+  through. `RUNSPEC_MOCK=strict` matches exact arguments only.
+- Responses live in `<runnable>.json` mock files: the package's `mocks/` folder
+  next to `runspec.toml` (shipped with it), the venv's `runspec_mocks/` folder
+  (collected on this machine) and `RUNSPEC_MOCK_DIR`. A call gets the response
+  recorded for the most specific matching set of arguments; `{}` is a command's
+  fallback. With no match the run exits 69 and lists what is recorded. It never
+  falls back to a real run.
+- In mock mode a required `password` arg isn't needed and the `run_as` check is
+  skipped. The run's `run_summary` record carries `"mock": true` and the
+  recorded exit code.
+- New `runspec mock record | list | play | check`. `record` runs the runnable
+  for real as an agent would and saves its output under the arguments you
+  typed (`--redact` scrubs patterns, `--to` picks where). `check` reports
+  responses that no longer fit the spec, keys on a `password` arg, or look like
+  they contain a credential.
+- SPEC → "Mock Playback"; docs page "Mock responses".
+
 ## [0.73.2] — 2026-10-13
 
 **The runs index records who ran it on SQLite older than 3.24.**

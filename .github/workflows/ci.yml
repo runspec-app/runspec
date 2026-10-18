@@ -2874,8 +2874,10 @@ jobs:
 
       - name: Install dependencies
         # runspec-jira-core isn't published yet — install it from the sibling
-        # source so the runspec-jira deps resolve locally.
+        # source so the runspec-jira deps resolve locally. runspec itself comes
+        # from source too: the shipped mocks are tested with its mock playback.
         run: |
+          pip install -e ../runspec
           pip install -e ../runspec-jira-core
           pip install -e ".[dev]"
 

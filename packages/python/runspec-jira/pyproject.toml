@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-jira"
-version = "0.5.0"
+version = "0.5.1"
 requires-python = ">=3.10"
 description = "Full-featured Jira runnable for runspec — issues, search, transitions, links, worklogs, projects, users, and service desk (Cloud + Server/Data Center)"
 readme = "README.md"

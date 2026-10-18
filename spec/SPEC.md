@@ -1433,6 +1433,174 @@ the denylist it edits.
 
 ---
 
+## Mock Playback
+
+A runnable can be run in **mock mode**: it accepts and validates its arguments
+exactly as usual, then prints a previously recorded response and exits with the
+recorded exit code. **None of the runnable's own code runs** — nothing is
+contacted, written or changed. Mock mode exists so agents, evals, demos and
+tests can exercise a runnable with realistic output and no credentials or side
+effects.
+
+Recorded responses live in **mock files**, separate from `runspec.toml`.
+
+### Turning it on
+
+| Variable | Value | Effect |
+|---|---|---|
+| `RUNSPEC_MOCK` | `1` / `true` / `yes` / `on` | Mock mode, best match (see Matching). |
+| `RUNSPEC_MOCK` | `strict` | Mock mode, exact match only. |
+| `RUNSPEC_MOCK` | unset, empty, anything else | Off — a normal run. |
+| `RUNSPEC_MOCK_DIR` | a directory | An extra, highest-priority place to look for mock files. |
+
+An executor passes `RUNSPEC_MOCK` the same way it passes `RUNSPEC_AGENT` (in
+the env frame for remote runs). The core `runspec` CLI is never mocked.
+
+Mock mode **never falls through to a real run.** When no recorded response
+matches, the run fails (see No match).
+
+### Where mock files are found
+
+A runnable's mock file is named `<runnable>.json`. `parse()` reads every one of
+these that exists, highest priority first:
+
+1. `$RUNSPEC_MOCK_DIR/<runnable>.json`
+2. `{sys.prefix}/runspec_mocks/<runnable>.json` — the venv overlay: mocks
+   collected on this machine, never part of a package
+3. `<directory of runspec.toml>/mocks/<runnable>.json` — shipped with the
+   package (a build backend that includes the package directory includes it)
+
+### File format
+
+```json
+{
+  "runspec_mock": 1,
+  "runnable": "jira",
+  "entries": [
+    {
+      "command": ["get-issue"],
+      "args": {"key": "OPS-1"},
+      "exit_code": 0,
+      "stdout": {"key": "OPS-1", "summary": "Disk full on web-01", "status": "Open"},
+      "recorded": "2026-10-18T09:00:00Z",
+      "source": "record",
+      "note": "compact view"
+    },
+    {
+      "command": ["get-issue"],
+      "args": {},
+      "exit_code": 1,
+      "stdout": {"error": "Issue does not exist", "kind": "JiraError"}
+    }
+  ]
+}
+```
+
+| Field | Required | Meaning |
+|---|---|---|
+| `runspec_mock` | yes | Format version. Currently `1`. |
+| `runnable` | yes | The runnable the file belongs to. |
+| `entries` | yes | Recorded responses. |
+| `entries[].command` | no (default `[]`) | Subcommand path, outermost first. `[]` for a runnable with no subcommands. |
+| `entries[].args` | no (default `{}`) | The arguments this response answers (see Matching). Never contains a `password` arg. |
+| `entries[].exit_code` | no (default `0`) | Exit code to exit with. |
+| `entries[].stdout` | no (default `""`) | A string is written verbatim. Any other JSON value is written as JSON (2-space indent) followed by a newline. |
+| `entries[].stderr` | no | Written verbatim to stderr. |
+| `entries[].recorded`, `source`, `note` | no | Informational: when and how the entry was made (`source` is `"record"` for `runspec mock record`, anything else for hand-written entries). |
+
+Implementations must ignore unknown fields.
+
+### Matching
+
+The **call's args** are the arguments whose value came from the command line or
+the environment (the provenance sources `cli`, `env` and `runspec_env`),
+excluding `password` args and the auto-injected `debug` flag. Defaults are not
+part of the call's args, so changing a default does not invalidate recordings.
+
+Arg names are compared after replacing `-` with `_`. Values are compared after
+normalising: a boolean is `true`/`false`, a number or string is its string
+form, and a list is compared element by element. So `5` and `"5"` match, but `5`
+and `5.0` do not.
+
+Among the entries whose `command` equals the call's subcommand path:
+
+- **Best match** (`RUNSPEC_MOCK=1`): an entry matches when every arg in its
+  `args` is in the call's args with an equal value. The matching entry with the
+  most `args` wins; ties go to the higher-priority file, then to the earlier
+  entry in the file. An entry with `args = {}` is therefore the command's
+  fallback answer.
+- **Strict** (`RUNSPEC_MOCK=strict`): an entry matches only when its `args` and
+  the call's args have exactly the same names and values.
+
+### What still happens in mock mode
+
+`--help`, the denylist, `require-command`, argv parsing, value resolution,
+both validation passes, coercion and autonomy all run exactly as in a normal
+run, so a bad argument fails with the usual error. Differences:
+
+- The `run_as` identity check is skipped (nothing runs as anyone).
+- Secrets are not prompted for, and a required `password` arg that has no value
+  is treated as present.
+- After logging is configured, the matched response is written and the process
+  exits. The run record (`run_summary`) carries `"mock": true` and the recorded
+  exit code.
+- When stderr is a terminal, one line on stderr says the response is a mock.
+  Nothing extra is written when stderr is a pipe or a log.
+
+### No match
+
+When no entry matches, the run exits with code **69** and writes one JSON
+object to stdout:
+
+```json
+{
+  "error": "no mock response recorded for these arguments",
+  "kind": "MockNotFound",
+  "runnable": "jira",
+  "command": ["get-issue"],
+  "args": {"key": "OPS-2"},
+  "recorded": [{"key": "OPS-1"}]
+}
+```
+
+`recorded` lists the `args` of every entry for that command, so a caller (or an
+agent) can see what is available.
+
+### Manage with the CLI
+
+```
+runspec mock record <runnable> -- [command…] [args…]   # run it for real, save the response
+runspec mock list [<runnable>]                          # what is recorded, where, how big
+runspec mock play <runnable> -- [command…] [args…]     # the same as RUNSPEC_MOCK=1 <runnable> …
+runspec mock check [<runnable>]                         # every entry still valid for the spec?
+```
+
+`record` runs the installed runnable with `RUNSPEC_AGENT=1` (so the response is
+the agent-shaped output), captures stdout, stderr and the exit code, and saves
+an entry keyed on the args given on the command line. An existing entry with the
+same command and args is replaced. It writes to the package's `mocks/` folder
+when the package is installed from a source checkout (an editable install),
+otherwise to the venv overlay; `--to package|venv|<dir>` overrides. `--redact`
+(a regular expression, repeatable) replaces matches in the saved output with
+`«redacted»`.
+
+`record` learns the key from the runnable itself: it runs it with
+`RUNSPEC_MOCK_RECORD=<file>`, and `parse()` — once the arguments are accepted —
+writes `{"command": [...], "args": {...}}` (command-line args only, same
+exclusions as matching) to that file, removes the variable from the
+environment, and carries on with the normal run. A language pack implements
+this handoff so its runnables can be recorded.
+
+`check` exits non-zero when an entry names a subcommand or arg the spec no
+longer has, a value fails validation, an entry keys on a `password` arg, or a
+response contains something that looks like a credential.
+
+Mock files are shipped in packages. Responses recorded from real systems must
+be scrubbed before they are committed; keep mocks made from private data in the
+venv overlay or in a private package.
+
+---
+
 ## Audit Events
 
 Every run is recorded by the [run audit](#logging). **Audit events** record the
