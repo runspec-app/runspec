@@ -1,14 +1,19 @@
 """
-search_rank.py — BM25(F) lexical ranking for search-mode runnable discovery.
+search_rank.py — BM25F lexical ranking for search-mode runnable discovery.
 
 Search mode (``[llm] tool_mode = "search"``) hides the fleet behind
 ``search_runnables``; the quality of what the agent finds is only as good as the
-ranking. This replaces the earlier flat substring-overlap score with a BM25-style
-ranking over a runnable's **name, description, group and argument names**, each
-field weighted (a hit in the name counts for more than one buried in description
-prose), with the usual BM25 term-frequency saturation and length normalisation so
-a long description can't dominate by sheer word count and a common term (one in
-every runnable) contributes little.
+ranking. Each runnable becomes a document of weighted fields (``runnable_doc``):
+its name, package, description and arg names, and — so a task-shaped query like
+"add a cron job" or "retry a failed pipeline" reaches a many-verb runnable — its
+subcommand names and descriptions, arg descriptions and choice options, the
+``runspec.toml`` example descriptions, and any team-wiki facts about it.
+
+Scoring is BM25F: each field's term frequency is length-normalised against that
+field's own corpus average before the fields are weighted and summed, then
+saturated once per query term and weighted by rarity (idf). Normalising per
+field matters here: a fifty-verb runnable carries pages of command text, and a
+single whole-document length would let that bulk drown its name match.
 
 Pure and dependency-free (stdlib ``math`` + ``re``), so it's unit-testable without
 the bridge, and deterministic — equal scores break ties by the caller's stable
@@ -31,14 +36,22 @@ def tokenize(text: str) -> list[str]:
 
 
 # Per-field multipliers. The operator usually queries by what they *call* the
-# runnable (its name) or the package it lives in (group); arg names are a decent
-# signal; the description is prose that mentions many incidental terms, so it's the
-# baseline weight.
+# runnable (its name) or the package it lives in (group); a subcommand name is
+# the verb they ask for ("add", "retry-pipeline"); arg names are a decent signal;
+# the description is prose that mentions many incidental terms, so it's the
+# baseline. The rest is longer text that confirms a match more than it makes one
+# — subcommand descriptions, arg descriptions and options, example descriptions,
+# wiki facts — so it weighs less than the runnable's own description.
 DEFAULT_FIELD_WEIGHTS: dict[str, float] = {
     "name": 3.0,
     "group": 2.0,
+    "commands": 2.0,
     "args": 1.5,
     "description": 1.0,
+    "command_text": 0.6,
+    "examples": 0.6,
+    "wiki": 0.5,
+    "arg_text": 0.4,
 }
 
 
@@ -54,6 +67,74 @@ def _field_tokens(doc: dict[str, Any], field: str) -> list[str]:
     return tokenize(val if isinstance(val, str) else str(val or ""))
 
 
+def _arg_text(args: Any, skip_inherited: bool = False) -> list[str]:
+    """Description and choice options of each arg (``password`` included — its
+    description says what it is for, and no value is ever indexed)."""
+    out: list[str] = []
+    for a in args or []:
+        if not isinstance(a, dict) or (skip_inherited and a.get("inherited")):
+            continue
+        if a.get("description"):
+            out.append(str(a["description"]))
+        out.extend(str(o) for o in a.get("options") or [])
+    return out
+
+
+def runnable_doc(
+    rep: dict[str, Any],
+    *,
+    groups: list[str] | None = None,
+    wiki: list[str] | None = None,
+) -> dict[str, Any]:
+    """The search document for one runnable: field → text (or list of texts).
+
+    ``rep`` is a discovery record; ``groups`` every venv/package it ships in (a
+    runnable collapsed across several is still found by any one of them);
+    ``wiki`` the team-wiki fact texts about it. Subcommands are walked to any
+    depth; a command's inherited globals are skipped since the runnable's own
+    ``args`` already carry them."""
+    commands: list[str] = []
+    command_text: list[str] = []
+
+    def walk(node: dict[str, Any]) -> None:
+        for cname, child in (node.get("commands") or {}).items():
+            if not isinstance(child, dict):
+                continue
+            commands.append(str(cname))
+            if child.get("description"):
+                command_text.append(str(child["description"]))
+            for a in child.get("args") or []:
+                if isinstance(a, dict) and not a.get("inherited") and a.get("name"):
+                    command_text.append(str(a["name"]))
+            command_text.extend(_arg_text(child.get("args"), skip_inherited=True))
+            walk(child)
+
+    walk(rep)
+    raw = rep.get("rawSpec") if isinstance(rep.get("rawSpec"), dict) else {}
+    examples = [
+        str(e.get("description") or "")
+        for e in (raw or {}).get("examples") or []
+        if isinstance(e, dict)
+    ]
+    return {
+        "name": str(rep.get("name") or ""),
+        "group": " ".join(
+            groups if groups is not None else [str(rep.get("group") or "")]
+        ),
+        "description": str(rep.get("description") or ""),
+        "args": [
+            str(a.get("name") or "")
+            for a in rep.get("args") or []
+            if isinstance(a, dict)
+        ],
+        "arg_text": _arg_text(rep.get("args")),
+        "commands": commands,
+        "command_text": command_text,
+        "examples": examples,
+        "wiki": list(wiki or []),
+    }
+
+
 def bm25f_scores(
     query: str,
     docs: list[dict[str, Any]],
@@ -62,13 +143,14 @@ def bm25f_scores(
     b: float = 0.75,
     weights: dict[str, float] | None = None,
 ) -> list[float]:
-    """BM25F-style relevance score for each doc, aligned to ``docs`` order.
+    """BM25F relevance score for each doc, aligned to ``docs`` order.
 
-    Each doc is a mapping of field → text (or, for ``args``, a list of names). The
-    score combines per-field weighted term frequencies into one BM25 saturation per
-    query term, normalised by the doc's weighted length against the corpus average.
-    An empty query (or empty corpus) returns all zeros — the caller treats that as
-    "browse" and ranks everything equally.
+    Each doc is a mapping of field → text (or a list of texts); fields missing
+    from a doc are empty. Per query term, each field's frequency is normalised by
+    that field's length against its corpus average, the fields are weighted and
+    summed, and the sum is saturated once and scaled by idf. An empty query (or
+    empty corpus) returns all zeros — the caller treats that as "browse" and
+    ranks everything equally.
 
     ``k1`` controls term-frequency saturation; ``b`` the length normalisation —
     the standard BM25 defaults. Pure/deterministic."""
@@ -80,9 +162,10 @@ def bm25f_scores(
         return [0.0] * n
 
     doc_fields = [{f: _field_tokens(d, f) for f in w} for d in docs]
-    # Weighted document length (Σ field_weight × field_token_count) and its mean.
-    dl = [sum(w[f] * len(toks) for f, toks in df.items()) for df in doc_fields]
-    avgdl = (sum(dl) / n) if n else 0.0
+    # Mean length of each field over the corpus (docs where it is empty count:
+    # a field most runnables lack has a small average, so the few long ones are
+    # normalised down hard, which is the point).
+    avg = {f: sum(len(df[f]) for df in doc_fields) / n for f in w}
 
     # Document frequency: a term counts once per doc if it appears in *any* field.
     df_count: dict[str, int] = {t: 0 for t in q_terms}
@@ -105,13 +188,16 @@ def bm25f_scores(
     }
 
     scores: list[float] = []
-    for i, df in enumerate(doc_fields):
-        norm = (1.0 - b + b * (dl[i] / avgdl)) if avgdl > 0 else 1.0
+    for df in doc_fields:
+        norm = {
+            f: (1.0 - b + b * (len(toks) / avg[f])) if avg[f] > 0 else 1.0
+            for f, toks in df.items()
+        }
         s = 0.0
         for t in q_terms:
-            wtf = sum(w[f] * toks.count(t) for f, toks in df.items())
+            wtf = sum(w[f] * toks.count(t) / norm[f] for f, toks in df.items() if toks)
             if wtf <= 0:
                 continue
-            s += idf[t] * (wtf * (k1 + 1.0)) / (wtf + k1 * norm)
+            s += idf[t] * (wtf * (k1 + 1.0)) / (wtf + k1)
         scores.append(s)
     return scores

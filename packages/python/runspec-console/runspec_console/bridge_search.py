@@ -838,30 +838,30 @@ class SearchMixin:
 
         tokens = [t for t in re.split(r"\W+", query.lower()) if t]
 
-        # BM25(F) ranking over name/description/group/arg-names (see search_rank):
-        # term-frequency saturation + length normalisation + a rarity (idf) weight,
-        # so a long description can't win on word count and a term in every runnable
-        # barely moves the score — a real improvement over the old flat substring
-        # overlap. Scores are computed for the whole deduped set in `order`, then the
+        # BM25F ranking (see search_rank): term-frequency saturation, per-field
+        # length normalisation and a rarity (idf) weight, over each runnable's
+        # name, package, description and args plus the rest of its runspec.toml —
+        # subcommand names and descriptions, arg descriptions and choice options,
+        # example descriptions — and any team-wiki facts about it, so a query
+        # phrased as a task ("add a cron job") finds the runnable whose verb does
+        # it. Scores are computed for the whole deduped set in `order`, then the
         # host/group filters select which rows to return.
-        from .search_rank import bm25f_scores
+        from .search_rank import bm25f_scores, runnable_doc
 
-        docs = [
-            {
-                "name": groups[key]["rep"].get("name") or key,  # key == the name
-                # Every venv/package this runnable ships in, so a query naming one
-                # still matches a runnable collapsed across several.
-                "group": " ".join(groups[key]["groups"]),
-                "description": groups[key]["rep"].get("description") or "",
-                "args": [
-                    str(a.get("name") or "")
-                    for a in (groups[key]["rep"].get("args") or [])
-                    if isinstance(a, dict)
-                ],
-            }
-            for key in order
-        ]
-        bm25 = bm25f_scores(query, docs)
+        bm25: list[float] = []
+        if tokens:
+            wiki = _wiki_notes_of(self, order, per_entity=kn.NOTES_PER_DESCRIBE)
+            docs = [
+                runnable_doc(
+                    groups[key]["rep"],
+                    # Every venv/package this runnable ships in, so a query naming
+                    # one still matches a runnable collapsed across several.
+                    groups=groups[key]["groups"],
+                    wiki=wiki.get(key),
+                )
+                for key in order
+            ]
+            bm25 = bm25f_scores(query, docs)
 
         # A host GROUP name is accepted wherever a host is: `host` naming a group
         # (not a literal host) keeps rows available on any member. And `group`

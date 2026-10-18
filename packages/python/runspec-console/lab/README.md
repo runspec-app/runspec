@@ -56,3 +56,20 @@ Variants deliberately avoid API-side features (context editing, server-side
 tool-result clearing): some LLM proxies don't support them, and its
 prompt caching is unreliable, so read the *no cache* column as the
 production-relevant one.
+
+## Search benchmark
+
+`search_bench.py` measures the `search_runnables` ranking on its own: it loads
+every `runspec.toml` in this repo's packages (about 110 runnables) onto one
+fake host and runs each query through the real `Bridge._search_runnables`,
+scoring the rank of the first expected runnable. No model, no network.
+
+```bash
+python lab/search_bench.py          # both query sets: hit@1/3/10, MRR, the misses
+python lab/search_bench.py --all    # every query with its top three
+```
+
+`search_queries.toml` was written alongside the ranking change;
+`search_queries_heldout.toml` was written separately, in everyday ops wording,
+so judge a change on both. Whether the agent then picks the right tool with a
+real model is the Evals tab's job.

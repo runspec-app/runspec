@@ -1,0 +1,247 @@
+# Queries for lab/search_bench.py — how well search_runnables finds the right
+# runnable, over every runspec.toml shipped in this repo.
+#
+# Each [[query]] is something an agent might pass to search_runnables, and
+# `expect` lists the runnable names that count as a correct find (more than one
+# when two runnables genuinely answer it). Queries are phrased as tasks, the way
+# an operator asks, not as runnable names — a name query is already easy.
+
+[[query]]
+q = "add a cron job"
+expect = ["cron"]
+
+[[query]]
+q = "schedule a nightly backup in the crontab"
+expect = ["cron"]
+
+[[query]]
+q = "remove a crontab entry"
+expect = ["cron"]
+
+[[query]]
+q = "create a merge request"
+expect = ["gitlab"]
+
+[[query]]
+q = "retry a failed pipeline"
+expect = ["gitlab"]
+
+[[query]]
+q = "job log for a ci pipeline job"
+expect = ["gitlab"]
+
+[[query]]
+q = "merge request diff"
+expect = ["gitlab"]
+
+[[query]]
+q = "create a jira ticket"
+expect = ["jira"]
+
+[[query]]
+q = "transition an issue to done"
+expect = ["jira", "jsm-transition-issue"]
+
+[[query]]
+q = "log work hours on an issue"
+expect = ["jira"]
+
+[[query]]
+q = "search issues with jql"
+expect = ["jira"]
+
+[[query]]
+q = "add a user to a project role"
+expect = ["jira"]
+
+[[query]]
+q = "why can't this user access the project licence"
+expect = ["jira"]
+
+[[query]]
+q = "comment on a confluence page"
+expect = ["confluence"]
+
+[[query]]
+q = "upload an attachment to a wiki page"
+expect = ["confluence"]
+
+[[query]]
+q = "page history"
+expect = ["confluence"]
+
+[[query]]
+q = "draw.io diagram on a page"
+expect = ["confluence"]
+
+[[query]]
+q = "replace text in a file"
+expect = ["filesystem"]
+
+[[query]]
+q = "show a directory tree"
+expect = ["filesystem"]
+
+[[query]]
+q = "move a file"
+expect = ["filesystem"]
+
+[[query]]
+q = "write a file"
+expect = ["filesystem"]
+
+[[query]]
+q = "run a promql query"
+expect = ["prometheus", "grafana"]
+
+[[query]]
+q = "which alerts are firing"
+expect = ["prometheus", "grafana"]
+
+[[query]]
+q = "scrape targets that are down"
+expect = ["prometheus"]
+
+[[query]]
+q = "recording and alerting rules"
+expect = ["prometheus", "grafana"]
+
+[[query]]
+q = "label values for a metric"
+expect = ["prometheus", "grafana"]
+
+[[query]]
+q = "find a dashboard"
+expect = ["grafana"]
+
+[[query]]
+q = "query loki logs"
+expect = ["grafana"]
+
+[[query]]
+q = "resume a claude code session"
+expect = ["claude-run"]
+
+[[query]]
+q = "delegate a coding task to another agent"
+expect = ["claude-run"]
+
+[[query]]
+q = "sync jobs to rundeck"
+expect = ["rundeck"]
+
+[[query]]
+q = "install the scheduler as a systemd service"
+expect = ["runspec-scheduler"]
+
+[[query]]
+q = "run a scheduled job now"
+expect = ["runspec-scheduler", "cron"]
+
+[[query]]
+q = "certificate expiry"
+expect = ["cert-check"]
+
+[[query]]
+q = "is port 443 open"
+expect = ["check-port", "test-connection"]
+
+[[query]]
+q = "what is using the most disk space"
+expect = ["find-large-files", "disk-usage", "filesystem"]
+
+[[query]]
+q = "which process is listening on port 8080"
+expect = ["open-ports", "show-connections"]
+
+[[query]]
+q = "restart nginx"
+expect = ["restart-service"]
+
+[[query]]
+q = "services that failed to start"
+expect = ["failed-units"]
+
+[[query]]
+q = "systemd journal for a unit"
+expect = ["journalctl"]
+
+[[query]]
+q = "change a kernel parameter"
+expect = ["set-sysctl"]
+
+[[query]]
+q = "upgrade all packages"
+expect = ["upgrade-packages"]
+
+[[query]]
+q = "which package owns a file"
+expect = ["owning-package"]
+
+[[query]]
+q = "is the disk an ssd"
+expect = ["block-devices"]
+
+[[query]]
+q = "mac address of the network card"
+expect = ["network-interfaces", "list-adapters"]
+
+[[query]]
+q = "unread email"
+expect = ["outlook-unread"]
+
+[[query]]
+q = "my next meeting"
+expect = ["next-meeting"]
+
+[[query]]
+q = "raise a service desk request"
+expect = ["jsm-raise-request", "jira"]
+
+[[query]]
+q = "add a work note to an incident"
+expect = ["snow-add-comment"]
+
+[[query]]
+q = "set an incident state to resolved"
+expect = ["snow-update-state"]
+
+[[query]]
+q = "deploy a python package with ansible"
+expect = ["run-playbook"]
+
+[[query]]
+q = "group repeated errors in a log"
+expect = ["summarize-log"]
+
+[[query]]
+q = "map a stack trace to source code"
+expect = ["map-trace"]
+
+[[query]]
+q = "docker container logs"
+expect = ["container-logs"]
+
+[[query]]
+q = "who is logged in"
+expect = ["who"]
+
+[[query]]
+q = "memory pressure stalls"
+expect = ["pressure"]
+
+[[query]]
+q = "list operations in an openapi spec"
+expect = ["api-spec"]
+
+[[query]]
+q = "follow redirects"
+expect = ["redirect-trace"]
+
+[[query]]
+q = "applied group policy"
+expect = ["gpresult"]
+
+[[query]]
+q = "flush the dns cache"
+expect = ["flush-dns"]

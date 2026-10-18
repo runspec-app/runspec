@@ -1,0 +1,163 @@
+# Held-out queries for lab/search_bench.py, written separately from the
+# ranking change: from the runspec.toml files only, in everyday ops wording
+# (synonyms, no copied phrases, no runnable names). See search_queries.toml.
+
+[[query]]
+q = "see output of the failed CI build step"
+expect = ["gitlab"]
+
+[[query]]
+q = "rerun the broken CI jobs on main"
+expect = ["gitlab"]
+
+[[query]]
+q = "open a code review request for my branch"
+expect = ["gitlab"]
+
+[[query]]
+q = "which files clash in the pull request"
+expect = ["gitlab"]
+
+[[query]]
+q = "move a ticket to resolved status"
+expect = ["jira", "jsm-transition-issue", "snow-update-state"]
+
+[[query]]
+q = "log hours spent working on a ticket"
+expect = ["jira"]
+
+[[query]]
+q = "list members of a project permission role"
+expect = ["jira"]
+
+[[query]]
+q = "who is allowed to view this wiki page"
+expect = ["confluence"]
+
+[[query]]
+q = "read the flowchart drawn on a wiki page"
+expect = ["confluence"]
+
+[[query]]
+q = "p99 latency from request duration buckets"
+expect = ["grafana", "prometheus"]
+
+[[query]]
+q = "which scrape endpoints are unhealthy"
+expect = ["prometheus"]
+
+[[query]]
+q = "find metrics with exploding series count"
+expect = ["prometheus"]
+
+[[query]]
+q = "mark a release on the dashboard timeline"
+expect = ["grafana"]
+
+[[query]]
+q = "is this alert notification currently muted"
+expect = ["grafana"]
+
+[[query]]
+q = "what folders eat the most space under /var"
+expect = ["filesystem", "find-large-files"]
+
+[[query]]
+q = "replace a setting inside a config file"
+expect = ["filesystem"]
+
+[[query]]
+q = "run a script every night at 2am"
+expect = ["cron", "runspec-scheduler"]
+
+[[query]]
+q = "stop a periodic job from running nightly"
+expect = ["cron", "runspec-scheduler"]
+
+[[query]]
+q = "publish our tools as jobs on the orchestration server"
+expect = ["rundeck"]
+
+[[query]]
+q = "fire a scheduled job right now to test"
+expect = ["runspec-scheduler"]
+
+[[query]]
+q = "hand off a coding subtask to another AI agent"
+expect = ["claude-run"]
+
+[[query]]
+q = "is the box running low on RAM"
+expect = ["check-memory"]
+
+[[query]]
+q = "what process is listening on port 8080"
+expect = ["open-ports", "show-connections"]
+
+[[query]]
+q = "website security certificate expiring soon"
+expect = ["cert-check"]
+
+[[query]]
+q = "is the web endpoint responding and how fast"
+expect = ["http-check"]
+
+[[query]]
+q = "show daemons that crashed after reboot"
+expect = ["failed-units"]
+
+[[query]]
+q = "which package installed this binary"
+expect = ["owning-package"]
+
+[[query]]
+q = "patch all OS packages to latest"
+expect = ["upgrade-packages"]
+
+[[query]]
+q = "log a new incident in ServiceNow"
+expect = ["snow-create-record"]
+
+[[query]]
+q = "leave an agents-only private note on the ticket"
+expect = ["snow-add-comment", "jsm-add-comment", "jira"]
+
+[[query]]
+q = "what meetings do I have today"
+expect = ["calendar-today", "calendar-upcoming"]
+
+[[query]]
+q = "check my unread emails"
+expect = ["outlook-unread"]
+
+[[query]]
+q = "find a spreadsheet in my cloud drive"
+expect = ["onedrive-search", "onedrive-recent"]
+
+[[query]]
+q = "boil down a huge app log to recurring exceptions"
+expect = ["summarize-log", "bundle-digest"]
+
+[[query]]
+q = "which source lines does this stack trace hit"
+expect = ["map-trace"]
+
+[[query]]
+q = "roll out a specific pip package version via ansible"
+expect = ["run-playbook"]
+
+[[query]]
+q = "which web proxy is this pc using"
+expect = ["proxy-settings"]
+
+[[query]]
+q = "recent crash errors in windows event viewer"
+expect = ["recent-errors", "query-eventlog"]
+
+[[query]]
+q = "terminate a frozen program by pid"
+expect = ["kill-process"]
+
+[[query]]
+q = "is this disk an SSD or spinning drive"
+expect = ["block-devices"]

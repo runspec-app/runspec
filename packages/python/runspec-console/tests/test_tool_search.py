@@ -1260,6 +1260,29 @@ def test_wiki_facts_ride_search_rows_and_describe():
     assert calls[-1] == (["confluence"], 8)  # describe gets a bigger budget
 
 
+def test_search_finds_a_runnable_by_its_subcommand_and_wiki_text():
+    # The verb that does the task lives in a subcommand's description, and the
+    # tip in a wiki fact — neither is in the runnable's name or description.
+    runnables = [
+        _rn(
+            "a",
+            "gitlab",
+            description="Read and update GitLab",
+            commands={
+                "retry-pipeline": {"description": "Retry the failed jobs of a pipeline"}
+            },
+        ),
+        _rn("a", "failed-units", description="List failed systemd units"),
+        _rn("a", "ping", description="Ping a host"),
+    ]
+    b = _Bridge(runnables)
+    b._wiki_notes = lambda names, per_entity=3: (
+        {"ping": ["Use this to check the VPN tunnel is up"]} if per_entity == 8 else {}
+    )
+    assert b._search_runnables("retry pipeline")["results"][0]["name"] == "gitlab"
+    assert b._search_runnables("vpn tunnel")["results"][0]["name"] == "ping"
+
+
 def test_no_wiki_key_when_nothing_is_known():
     b = _Bridge([_rn("a", "ping")])
     b._wiki_notes = lambda names, per_entity=3: {}

@@ -151,7 +151,10 @@ Notes:
   `name` + `description` + `group`, name-hit weighted highest. `difflib`-style
   fuzzy is enough; the core lib's fuzzy suggester in `errors.py` is a reference, not
   a dependency. Cap results and append `"_truncated": true` + a "refine your query"
-  hint when over the cap.
+  hint when over the cap. *(Since replaced by BM25F in `search_rank.py`; from
+  0.351.0 it indexes the whole runspec.toml — subcommand names and descriptions,
+  arg descriptions and choice options, example descriptions — plus wiki facts
+  about the runnable. `lab/search_bench.py` measures it.)*
 - Honors the trigger allowlist (§8): only allowed `(host, name)` rows, with `hosts`
   narrowed to allowed hosts.
 

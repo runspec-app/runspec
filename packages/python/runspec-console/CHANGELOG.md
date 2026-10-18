@@ -9,8 +9,25 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.351.0] — 2026-10-18
+
 ### Changed
 
+- **`search_runnables` searches the whole `runspec.toml`, not just names.** The
+  ranking used to read a runnable's name, package, description and arg names
+  only, so a task-shaped query ("add a cron job", "retry a failed pipeline",
+  "upload an attachment to a wiki page") missed a many-verb runnable whose verb
+  does it. It now also indexes subcommand names and descriptions (nested
+  included), arg descriptions and choice options, the `examples` descriptions,
+  and the team wiki's facts about the runnable — each field weighted (a verb
+  name counts nearly as much as the runnable's name; long text less than the
+  description). Scoring is now true BM25F: each field is length-normalised
+  against its own average, so a fifty-verb runnable's bulk can't drown another
+  runnable's name match. Measured with the new `lab/search_bench.py` over every
+  runnable in this repo: right runnable first went from 58% to 95% on its own
+  query set and from 25% to 60% on a separately written held-out set (top three:
+  68% → 98%, 40% → 75%); searching a runnable's own name still finds it first
+  for all 113. No new dependency, no embeddings.
 - **Agent lab (dev only, not shipped):** 16 KB spill variants (raw and compact);
   the lower-threshold variants use `[workspace] spill_threshold` alone now that
   0.350.1 honours it; the live table adds an input total with no prompt cache and
