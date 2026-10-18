@@ -5,9 +5,8 @@
 #   patch  — module attributes to override, for options that exist only as a
 #            code constant today ({"package.module.NAME" = value})
 #
-# Note: [workspace] spill_threshold can only *raise* the spill point today —
-# outputs up to the 32 KB constant always go inline (bridge_autonomy's fast
-# path). The lower-threshold variants patch that constant too.
+# [workspace] spill_threshold sets the spill point in either direction (a
+# value below the 32 KB default needs console 0.350.1+).
 #
 # API-side features (context editing, server-side tool-result clearing) are
 # deliberately absent: some LLM proxies don't support them, so every
@@ -19,16 +18,19 @@ name = "baseline"
 description = "Today's defaults: spill above 32 KB, raw Jira output"
 
 [[variant]]
+name = "spill-16k"
+description = "Spill above 16 KB"
+config = { workspace = { spill_threshold = 16384 } }
+
+[[variant]]
 name = "spill-8k"
 description = "Spill above 8 KB"
 config = { workspace = { spill_threshold = 8192 } }
-patch = { "runspec_console.bridge_autonomy._TOOL_OUTPUT_SPILL_THRESHOLD" = 8192 }
 
 [[variant]]
 name = "spill-4k"
 description = "Spill above 4 KB"
 config = { workspace = { spill_threshold = 4096 } }
-patch = { "runspec_console.bridge_autonomy._TOOL_OUTPUT_SPILL_THRESHOLD" = 4096 }
 
 [[variant]]
 name = "compact"
@@ -36,10 +38,15 @@ description = "Runnables return compact output by default (--include for more)"
 env = { FAKE_JIRA_SHAPE = "compact" }
 
 [[variant]]
+name = "compact+spill-16k"
+description = "Compact output and spill above 16 KB"
+config = { workspace = { spill_threshold = 16384 } }
+env = { FAKE_JIRA_SHAPE = "compact" }
+
+[[variant]]
 name = "compact+spill-8k"
 description = "Compact output and spill above 8 KB"
 config = { workspace = { spill_threshold = 8192 } }
-patch = { "runspec_console.bridge_autonomy._TOOL_OUTPUT_SPILL_THRESHOLD" = 8192 }
 env = { FAKE_JIRA_SHAPE = "compact" }
 
 # Search mode: the agent gets discovery tools (search_runnables /

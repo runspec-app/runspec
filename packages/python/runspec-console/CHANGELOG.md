@@ -9,6 +9,14 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Agent lab (dev only, not shipped):** 16 KB spill variants (raw and compact);
+  the lower-threshold variants use `[workspace] spill_threshold` alone now that
+  0.350.1 honours it; the live table adds an input total with no prompt cache and
+  a cache-priced equivalent; `--live` calls `https://api.anthropic.com` unless
+  `--base-url` is given and stops early when `ANTHROPIC_API_KEY` is missing.
+
 ## [0.350.1] — 2026-10-17
 
 ### Fixed

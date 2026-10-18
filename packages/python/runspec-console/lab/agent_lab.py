@@ -348,7 +348,9 @@ def run_variant(
     cfg_dir = Path(tempfile.mkdtemp(prefix=f"agent-lab-{variant['name']}-"))
     cfg = dict(variant.get("config", {}))
     if args.live:
-        llm = {"provider": "anthropic", "model": args.model}
+        # Explicit base_url: a Claude Code session exports ANTHROPIC_BASE_URL
+        # pointing at its own endpoint, which the SDK would otherwise pick up.
+        llm = {"provider": "anthropic", "model": args.model, "base_url": args.base_url}
         if args.llm:
             with open(args.llm, "rb") as f:
                 llm = tomllib.load(f).get("llm", llm)
@@ -461,9 +463,10 @@ def report_md(rows: list[dict[str, Any]], live: bool) -> str:
     lines = []
     if live:
         lines.append(
-            "| Scenario | Variant | Pass | Calls | Input | Cache read | Cache write | Output |"
+            "| Scenario | Variant | Pass | Calls | Input | Cache read | Cache write | Output "
+            "| Input total (no cache) | Input tok-equiv (cache) |"
         )
-        lines.append("|---|---|---|---|---|---|---|---|")
+        lines.append("|---|---|---|---|---|---|---|---|---|---|")
     else:
         lines.append(
             "| Scenario | Variant | Pass | Calls | Input tok (no cache) | Input tok-equiv (cache) | Peak call tok | History tok at end |"
@@ -481,15 +484,29 @@ def report_md(rows: list[dict[str, Any]], live: bool) -> str:
                     "output_tokens",
                 )
             }
+            read, write = u["cache_read_tokens"], u["cache_creation_tokens"]
+            total = u["input_tokens"] + read + write
+            equiv = round(u["input_tokens"] + read * _CACHE_READ + write * _CACHE_WRITE)
             lines.append(
                 f"| {sc} | {var} | {passed} | {avg(rs, 'calls')} | {u['input_tokens']:,} | "
-                f"{u['cache_read_tokens']:,} | {u['cache_creation_tokens']:,} | {u['output_tokens']:,} |"
+                f"{read:,} | {write:,} | {u['output_tokens']:,} | {total:,} | {equiv:,} |"
             )
         else:
             lines.append(
                 f"| {sc} | {var} | {passed} | {avg(rs, 'calls')} | {avg(rs, 'input_tok'):,} | "
                 f"{avg(rs, 'input_tok_cached'):,} | {avg(rs, 'peak_call_tok'):,} | {avg(rs, 'history_tok'):,} |"
             )
+    if live:
+        lines += [
+            "",
+            (
+                "Live tier: the provider's token counts, averaged over samples. "
+                "*Input total (no cache)* is input + cache read + cache write — what every call "
+                "would bill at the full input rate with no prompt cache (a proxy that drops "
+                "cache writes). *Input tok-equiv (cache)* prices cache reads at 0.1x and cache "
+                "writes at 1.25x. *Pass* means every turn's answer matched its `expect` regex."
+            ),
+        ]
     if not live:
         lines += [
             "",
@@ -531,6 +548,11 @@ def main() -> None:
         default="claude-sonnet-5-5",
         help="--live model when --llm isn't given",
     )
+    ap.add_argument(
+        "--base-url",
+        default="https://api.anthropic.com",
+        help="--live API endpoint when --llm isn't given",
+    )
     ap.add_argument("--llm", type=Path, help="TOML file with an [llm] table for --live")
     ap.add_argument("--timeout", type=float, default=300, help="seconds per turn")
     ap.add_argument("--json", type=Path, help="write raw per-call results here")
@@ -544,6 +566,8 @@ def main() -> None:
     ap.add_argument("--child-out", type=Path, help=argparse.SUPPRESS)
     args = ap.parse_args()
 
+    if args.live and not args.llm and not os.environ.get("ANTHROPIC_API_KEY"):
+        sys.exit("--live: set ANTHROPIC_API_KEY, or pass --llm with an [llm] table")
     if not os.environ.get(_IN_VENV):
         _bootstrap(args.venv, args.live)
 

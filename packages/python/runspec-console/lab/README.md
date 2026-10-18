@@ -32,8 +32,12 @@ inside it; delete it to rebuild. Each variant runs in its own process.
   cache column is an estimate of what a prompt cache would bill.
 - **Live** (`--live`): a real model drives. The table shows the provider's own
   token counts (input, cache read, cache write, output), and a turn passes when
-  the answer matches its `expect` regex. Needs `ANTHROPIC_API_KEY` (default
-  model `claude-sonnet-5-5`, change with `--model`), or `--llm my-llm.toml`
+  the answer matches its `expect` regex, plus two totals: input with no
+  prompt cache (input + cache read + cache write, what a proxy that drops
+  cache writes bills) and the cache-priced equivalent. Needs
+  `ANTHROPIC_API_KEY` (default model `claude-sonnet-5-5`, change with
+  `--model`; it calls `https://api.anthropic.com` unless `--base-url` says
+  otherwise, ignoring `ANTHROPIC_BASE_URL`), or `--llm my-llm.toml`
   with an `[llm]` table for any provider the console supports — including a
   corporate proxy, run on a machine that can reach it. Use `--samples N`:
   live runs vary.
