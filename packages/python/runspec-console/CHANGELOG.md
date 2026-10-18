@@ -9,6 +9,15 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.351.1] — 2026-10-18
+
+### Fixed
+
+- The Settings tabs fit on one row again at the default window width; the
+  last tab (Telemetry) had wrapped onto a second row. The tabs are a little
+  tighter, and **Sounds & Notifications** is now **Notifications**. The row
+  still wraps on a narrow window.
+
 ## [0.351.0] — 2026-10-18
 
 ### Changed

@@ -81,7 +81,7 @@ const TOOL_MODE_OPTIONS = [
   { value: 'search', label: 'Search — discovery meta-tools (best for large, multi-package fleets)' },
 ]
 
-// ── Sounds & Notifications tab ───────────────────────────────────────────────
+// ── Notifications tab (sounds + desktop toasts) ──────────────────────────────
 
 // Category → display label + default synthesized token (mirrors
 // config.DEFAULT_SOUND_MAP in the backend).
@@ -6492,7 +6492,7 @@ export function SettingsTabBar({ items, activeKey, onSelect }: {
             className="rs-nav-tab"
             onClick={() => onSelect(item.key)}
             style={{
-              padding: '6px 10px', fontSize: 13,
+              padding: '6px 8px', fontSize: 13, whiteSpace: 'nowrap',
               fontWeight: active ? 600 : 500,
               color: active ? accent : textSecondary(isDark),
               borderBottom: `2px solid ${active ? accent : 'transparent'}`,
@@ -6541,7 +6541,7 @@ export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, co
     { key: 'configSync', label: 'Config Sync', children: <ConfigSyncTab /> },
     { key: 'memorySync', label: 'Memory Sync', children: <MemorySyncTab /> },
     { key: 'mailbox',   label: 'Mailbox',    children: <MailboxesTab /> },
-    { key: 'sounds',    label: 'Sounds & Notifications', children: <SoundsTab /> },
+    { key: 'sounds',    label: 'Notifications', children: <SoundsTab /> },
     { key: 'voice',     label: 'Voice',      children: <VoiceTab /> },
     { key: 'chatHistory', label: 'Chat History', children: <ChatHistoryTab /> },
     { key: 'telemetry', label: 'Telemetry', children: <TelemetryTab /> },

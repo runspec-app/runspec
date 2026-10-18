@@ -159,8 +159,9 @@ body {
 }
 .rs-settings-tabbar {
   display: flex;
+  /* One row at the default window width; wraps only on a narrow window. */
   flex-wrap: wrap;
-  gap: 2px;
+  gap: 0;
   flex-shrink: 0;
   border-bottom: 1px solid var(--rs-border);
 }

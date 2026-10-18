@@ -871,7 +871,7 @@ class AutonomyMixin:
 
     def test_notification(self) -> dict[str, Any]:
         """Fire a test toast + taskbar flash + confirm sound so the operator can
-        verify each attention channel from Settings → Sounds & Notifications.
+        verify each attention channel from Settings → Notifications.
         Returns which channels are available; ``window_found`` surfaces the
         title-match prerequisite for the flash/focus. Best-effort; never raises."""
         toast_available, toast_reason = notify.available()
