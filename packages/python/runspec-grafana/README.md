@@ -72,12 +72,17 @@ token. The **Viewer** role covers every read except `list-dashboard-versions`;
 that and `create-annotation` need **Editor**.
 
 `--env <label>` reads `GRAFANA_<LABEL>_*` first (`--env prod-eu` →
-`GRAFANA_PROD_EU_URL`). `--url`, `--org-id` and `--grafana-token` override the
-environment; the token arg is a `password` type, so it comes through the
-runspec-console secret channel and never on a command line. A runspec-console
-credential labelled `Grafana` of the token kind supplies `GRAFANA_TOKEN`, and
-one of the username + password kind supplies `GRAFANA_USERNAME`/`PASSWORD`,
-with no extra configuration.
+`GRAFANA_PROD_EU_URL`). `--url`, `--org-id`, `--grafana-token`,
+`--grafana-user` and `--grafana-password` override the environment; the token
+and password args are `password` type, so they come through the
+runspec-console secret channel and never on a command line.
+
+Each auth arg declares the variables above as its `env`, so runspec-console
+applies a matching credential with no extra configuration: a token-kind
+credential labelled `Grafana` (→ `GRAFANA_TOKEN`) or `Grafana Service Account`
+(→ `GRAFANA_SERVICE_ACCOUNT_TOKEN`), or a username + password credential
+labelled `Grafana` (→ `GRAFANA_USERNAME`/`PASSWORD`). The console's Env files
+window lists the same variables for a venv's `.runspec_env`.
 
 ## Building your own runnables
 

@@ -9,6 +9,10 @@ import pytest
 from runspec_confluence_core import client as client_mod
 
 _SUFFIXES = (
+    "USER",
+    "PASSWORD",
+    "PAT",
+    "TOKEN",
     "URL",
     "USERNAME",
     "API_TOKEN",

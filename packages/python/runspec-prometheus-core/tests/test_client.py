@@ -97,3 +97,9 @@ def test_truncate_and_iso() -> None:
     assert truncate([1, 2, 3], 2) == ([1, 2], True)
     assert truncate([1, 2, 3], 0) == ([1, 2, 3], False)
     assert iso(0) == "1970-01-01T00:00:00Z"
+
+
+def test_config_from_env_explicit_basic_auth_wins(monkeypatch) -> None:
+    monkeypatch.setenv("PROMETHEUS_USERNAME", "env-user")
+    config = config_from_env(username="arg-user", password="arg-pw")
+    assert (config.username, config.password) == ("arg-user", "arg-pw")

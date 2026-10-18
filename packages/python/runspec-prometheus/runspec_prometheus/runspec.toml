@@ -41,9 +41,11 @@ examples = [
 
 # ── global args (inherited by every verb) ──────────────────────────────────
 [prometheus.args]
-env = {type = "str", short = "-e", required = false, description = "Instance label: reads PROMETHEUS_<ENV>_* vars first (e.g. prod, prod-eu), falling back to PROMETHEUS_*"}
-url = {type = "str", required = false, description = "Prometheus base URL; overrides PROMETHEUS_URL (default http://127.0.0.1:9090)"}
-prometheus-token = {type = "password", required = false, description = "Bearer token; overrides PROMETHEUS_TOKEN. Supplied via the runspec-console credential/secret channel (RUNSPEC_PROMETHEUS_ARG_PROMETHEUS_TOKEN), never on the command line."}
+env = {type = "str", short = "-e", required = false, env = "PROMETHEUS_ENV", description = "Instance label: reads PROMETHEUS_<ENV>_* vars first (e.g. prod, prod-eu), falling back to PROMETHEUS_*"}
+url = {type = "str", required = false, env = "PROMETHEUS_URL", description = "Prometheus base URL; overrides PROMETHEUS_URL (default http://127.0.0.1:9090)"}
+prometheus-token = {type = "password", required = false, env = ["PROMETHEUS_TOKEN", "PROMETHEUS_PAT"], description = "Bearer token; overrides PROMETHEUS_TOKEN. Supplied via the runspec-console credential/secret channel (RUNSPEC_PROMETHEUS_ARG_PROMETHEUS_TOKEN), never on the command line."}
+prometheus-user = {type = "str", required = false, env = ["PROMETHEUS_USERNAME", "PROMETHEUS_USER"], description = "Basic-auth username, with --prometheus-password; overrides PROMETHEUS_USERNAME"}
+prometheus-password = {type = "password", required = false, env = "PROMETHEUS_PASSWORD", description = "Basic-auth password; overrides PROMETHEUS_PASSWORD. Supplied via the runspec-console credential/secret channel (RUNSPEC_PROMETHEUS_ARG_PROMETHEUS_PASSWORD), never on the command line."}
 
 # ── queries → autonomous ───────────────────────────────────────────────────
 

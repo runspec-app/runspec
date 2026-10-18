@@ -126,3 +126,9 @@ def test_preview() -> None:
     assert preview("short", 10) == ("short", None)
     text, full = preview("x" * 20, 5)
     assert text == "xxxxx…" and full == 20
+
+
+def test_config_from_env_explicit_basic_auth_wins(monkeypatch) -> None:
+    monkeypatch.setenv("GRAFANA_USERNAME", "env-user")
+    config = config_from_env(username="arg-user", password="arg-pw")
+    assert (config.username, config.password) == ("arg-user", "arg-pw")

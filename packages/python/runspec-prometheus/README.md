@@ -54,11 +54,13 @@ export PROMETHEUS_CA_BUNDLE=/etc/pki/internal-ca.pem   # private CA
 With no URL set it talks to `http://127.0.0.1:9090`, so on a fleet host that
 runs Prometheus it works with no configuration at all. `--env <label>` reads
 `PROMETHEUS_<LABEL>_*` first (`--env prod-eu` → `PROMETHEUS_PROD_EU_URL`).
-`--url` and `--prometheus-token` override the environment; the token arg is a
-`password` type, so it comes through the runspec-console secret channel and
-never on a command line. A runspec-console credential labelled `Prometheus`
-supplies `PROMETHEUS_TOKEN` (token kind) or `PROMETHEUS_USERNAME`/`PASSWORD`
-(username + password kind) with no extra configuration.
+`--url`, `--prometheus-token`, `--prometheus-user` and `--prometheus-password`
+override the environment; the token and password args are `password` type, so
+they come through the runspec-console secret channel and never on a command
+line. Each auth arg declares the `PROMETHEUS_*` variables as its `env`, so a
+runspec-console credential labelled `Prometheus` supplies `PROMETHEUS_TOKEN`
+(token kind) or `PROMETHEUS_USERNAME`/`PASSWORD` (username + password kind)
+with no extra configuration.
 
 ## Building your own runnables
 

@@ -2,11 +2,12 @@
 httpx routed through a MockTransport (no real network), plus main()'s error path."""
 
 import json
+import os
 from pathlib import Path
 
 import httpx
 import pytest
-from runspec.testing import ParseHarness
+from runspec.testing import ParseHarness, no_run_as_check
 from runspec_prometheus_core import PrometheusConfig
 from runspec_prometheus_core import client as client_mod
 
@@ -101,3 +102,50 @@ def test_main_reports_errors_as_json(monkeypatch, capsys) -> None:
     assert info.value.code == 1
     payload = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert payload["kind"] == "PrometheusError" and "parse error" in payload["error"]
+
+
+def _config(monkeypatch, argv: list[str], env: dict[str, str]) -> PrometheusConfig:
+    """The PrometheusConfig main() builds for ``argv`` under exactly ``env``
+    (other PROMETHEUS_* vars cleared, dispatch stubbed out)."""
+    for var in list(os.environ):
+        if var.startswith(("PROMETHEUS_", "RUNSPEC_PROMETHEUS_")):
+            monkeypatch.delenv(var, raising=False)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("RUNSPEC_AUDIT", "off")
+    seen: list[PrometheusConfig] = []
+    monkeypatch.setattr(cli, "_dispatch", lambda spec, config: seen.append(config) or {})
+    monkeypatch.setattr("sys.argv", ["prometheus", *argv, "healthy"])
+    with no_run_as_check():
+        cli.main()
+    return seen[0]
+
+
+ENV = {
+    "PROMETHEUS_URL": "https://prom.dev",
+    "PROMETHEUS_TOKEN": "dev",
+    "PROMETHEUS_PROD_URL": "https://prom.prod",
+    "PROMETHEUS_PROD_TOKEN": "prod",
+}
+
+
+def test_main_reads_declared_env_vars(monkeypatch) -> None:
+    config = _config(monkeypatch, [], ENV)
+    assert (config.url, config.token) == ("https://prom.dev", "dev")
+
+
+def test_main_env_label_beats_unprefixed_aliases(monkeypatch) -> None:
+    config = _config(monkeypatch, ["--env", "prod"], ENV)
+    assert (config.url, config.token) == ("https://prom.prod", "prod")
+
+
+def test_main_secret_channel_and_cli_override_env(monkeypatch) -> None:
+    env = {**ENV, "RUNSPEC_PROMETHEUS_ARG_PROMETHEUS_TOKEN": "from-console"}
+    config = _config(monkeypatch, ["--env", "prod", "--url", "https://prom.cli"], env)
+    assert (config.url, config.token) == ("https://prom.cli", "from-console")
+
+
+def test_main_basic_auth_from_args(monkeypatch) -> None:
+    env = {"PROMETHEUS_USERNAME": "ops", "RUNSPEC_PROMETHEUS_ARG_PROMETHEUS_PASSWORD": "pw"}
+    config = _config(monkeypatch, [], env)
+    assert (config.username, config.password) == ("ops", "pw")

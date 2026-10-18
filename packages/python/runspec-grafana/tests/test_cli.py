@@ -137,3 +137,45 @@ def test_main_prints_text_at_a_terminal(monkeypatch, capsys) -> None:
     _main(monkeypatch, ["--url", "https://graf", "list-datasources"], tty=True)
     out = capsys.readouterr().out
     assert "UID" in out and "prom1" in out and "{" not in out
+
+
+def _config(monkeypatch, argv: list[str]) -> GrafanaConfig:
+    """The GrafanaConfig main() builds for ``argv`` (dispatch stubbed out)."""
+    seen: list[GrafanaConfig] = []
+    monkeypatch.setattr(cli, "_dispatch", lambda spec, config: seen.append(config) or {})
+    assert _main(monkeypatch, [*argv, "health"]) == 0
+    return seen[0]
+
+
+def test_main_reads_declared_env_vars(monkeypatch) -> None:
+    monkeypatch.setenv("GRAFANA_URL", "https://graf.internal")
+    monkeypatch.setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "glsa_x")
+    monkeypatch.setenv("GRAFANA_ORG_ID", "4")
+    config = _config(monkeypatch, [])
+    assert (config.url, config.token, config.org_id) == ("https://graf.internal", "glsa_x", "4")
+
+
+def test_main_env_label_beats_unprefixed_aliases(monkeypatch) -> None:
+    # The url/token args declare GRAFANA_URL etc. as env aliases; that must not
+    # turn the unprefixed value into an override of GRAFANA_PROD_*.
+    monkeypatch.setenv("GRAFANA_URL", "https://graf.dev")
+    monkeypatch.setenv("GRAFANA_PROD_URL", "https://graf.prod")
+    monkeypatch.setenv("GRAFANA_TOKEN", "dev")
+    monkeypatch.setenv("GRAFANA_PROD_SERVICE_ACCOUNT_TOKEN", "prod")
+    config = _config(monkeypatch, ["--env", "prod"])
+    assert (config.url, config.token) == ("https://graf.prod", "prod")
+
+
+def test_main_secret_channel_and_cli_override_env(monkeypatch) -> None:
+    monkeypatch.setenv("GRAFANA_PROD_URL", "https://graf.prod")
+    monkeypatch.setenv("GRAFANA_PROD_SERVICE_ACCOUNT_TOKEN", "prod")
+    monkeypatch.setenv("RUNSPEC_GRAFANA_ARG_GRAFANA_TOKEN", "from-console")
+    config = _config(monkeypatch, ["--env", "prod", "--url", "https://graf.cli"])
+    assert (config.url, config.token) == ("https://graf.cli", "from-console")
+
+
+def test_main_basic_auth_from_args(monkeypatch) -> None:
+    monkeypatch.setenv("GRAFANA_USERNAME", "ops")
+    monkeypatch.setenv("RUNSPEC_GRAFANA_ARG_GRAFANA_PASSWORD", "pw")
+    config = _config(monkeypatch, [])
+    assert (config.username, config.password) == ("ops", "pw")

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 from typing import Any
 
@@ -65,6 +66,18 @@ _NO_ARGS = {
     "clean-tombstones": clean_tombstones,
     "quit": quit,
 }
+
+
+def _chosen(arg: rs.Arg) -> Any:
+    """The arg's value when the caller chose it: typed on the command line, or
+    set through the automatic ``RUNSPEC_PROMETHEUS_ARG_*`` key (the console's
+    secret channel). A value runspec read from one of the declared ``PROMETHEUS_*``
+    aliases is left to :func:`config_from_env`, which reads the same variables
+    but puts ``PROMETHEUS_<ENV>_*`` first when ``--env`` is set."""
+    if arg.source == "cli":
+        return arg.value
+    auto_key = "RUNSPEC_PROMETHEUS_ARG_" + arg.name.upper().replace("-", "_")
+    return arg.value if os.environ.get(auto_key) is not None else None
 
 
 def _emit(payload: Any) -> None:
@@ -127,7 +140,13 @@ def main() -> None:
     # which would put "HTTP Request: ..." ahead of the JSON result.
     logging.getLogger("httpx").setLevel(logging.WARNING)
     try:
-        config = config_from_env(env=spec.env.value, url=spec.url.value, token=spec.prometheus_token.value)
+        config = config_from_env(
+            env=spec.env.value,
+            url=_chosen(spec.url),
+            token=_chosen(spec.prometheus_token),
+            username=_chosen(spec.prometheus_user),
+            password=_chosen(spec.prometheus_password),
+        )
         result = _dispatch(spec, config)
     except (PrometheusError, ValueError) as exc:
         _emit({"error": str(exc), "kind": type(exc).__name__})

@@ -2,6 +2,21 @@
 
 All notable changes to `runspec-jira` are documented here.
 
+## [0.6.0] — 2026-10-18
+
+- **runspec-console credentials apply without a scope.** The global args now
+  declare the variables the core reads as `env` aliases, so a credential
+  labelled `Jira` is offered to the agent and the console's Env files
+  window lists them: `--jira-pat` → `JIRA_PERSONAL_TOKEN`/`PAT`/`TOKEN`, and
+  new `--jira-url` (`JIRA_URL`), `--jira-user` (`JIRA_USERNAME`/`USER`) and
+  `--jira-password` (`password` type; `JIRA_API_TOKEN`/`PASSWORD`). Since
+  console 0.294.0 an unscoped credential applies only to a runnable that
+  declares one of its variables.
+- `--env <label>` still reads `JIRA_<ENV>_*` first: only a value typed on the
+  command line or sent on the console's secret channel (`RUNSPEC_JIRA_ARG_*`)
+  overrides the environment.
+- Needs `runspec-jira-core >= 0.6.0`.
+
 ## [0.5.1] — 2026-10-18
 
 ### Added

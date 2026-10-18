@@ -65,7 +65,14 @@ def _resolve_cloud(url: str, override: str | None) -> bool:
     return ".atlassian.net" in url.lower()
 
 
-def config_from_env(env: str | None = None, *, personal_token_override: str | None = None) -> JiraConfig:
+def config_from_env(
+    env: str | None = None,
+    *,
+    personal_token_override: str | None = None,
+    url: str | None = None,
+    username: str | None = None,
+    api_token: str | None = None,
+) -> JiraConfig:
     """Build a :class:`JiraConfig` from environment variables.
 
     When ``env`` (or the ``JIRA_ENV`` variable) selects dev/uat/prod, the
@@ -78,7 +85,12 @@ def config_from_env(env: str | None = None, *, personal_token_override: str | No
     supplied through runspec-console) — is used as the PAT and is authoritative:
     it satisfies the credential requirement on its own and takes precedence over
     any env-configured Basic credentials. The base URL is still read from the
-    environment.
+    environment unless ``url`` is given.
+
+    ``url`` / ``username`` / ``api_token`` override the matching variables.
+    Each variable also has the spelling a runspec-console credential sets:
+    ``JIRA_USER`` for ``USERNAME``, ``JIRA_PASSWORD`` for ``API_TOKEN``, and
+    ``JIRA_PAT`` / ``JIRA_TOKEN`` for ``PERSONAL_TOKEN``.
     """
     env = env or os.environ.get("JIRA_ENV")
     if env is not None:
@@ -86,14 +98,14 @@ def config_from_env(env: str | None = None, *, personal_token_override: str | No
         if env not in VALID_ENVS:
             raise JiraError(f"Invalid env {env!r} — expected one of {', '.join(VALID_ENVS)}")
 
-    def lookup(suffix: str) -> str | None:
+    def lookup(*suffixes: str) -> str | None:
         names = []
         if env:
-            names.append(f"JIRA_{env.upper()}_{suffix}")
-        names.append(f"JIRA_{suffix}")
+            names += [f"JIRA_{env.upper()}_{suffix}" for suffix in suffixes]
+        names += [f"JIRA_{suffix}" for suffix in suffixes]
         return _env_first(names)
 
-    url = lookup("URL")
+    url = url or lookup("URL")
     if not url:
         hint = f"JIRA_{env.upper()}_URL" if env else "JIRA_URL"
         raise JiraError(f"No base URL configured — set {hint}")
@@ -112,9 +124,11 @@ def config_from_env(env: str | None = None, *, personal_token_override: str | No
     if personal_token_override:
         return JiraConfig(personal_token=personal_token_override, **common)
 
-    username = lookup("USERNAME")
-    api_token = lookup("API_TOKEN")
-    personal_token = lookup("PERSONAL_TOKEN")
+    # Basic credentials passed in win over a PAT from the environment.
+    explicit_basic = bool(username and api_token)
+    username = username or lookup("USERNAME", "USER")
+    api_token = api_token or lookup("API_TOKEN", "PASSWORD")
+    personal_token = None if explicit_basic else lookup("PERSONAL_TOKEN", "PAT", "TOKEN")
     if not personal_token and not (username and api_token):
         raise JiraError("No credentials configured — set JIRA_PERSONAL_TOKEN (Server/DC PAT) or JIRA_USERNAME + JIRA_API_TOKEN (Cloud email + API token, or DC basic auth)")
 

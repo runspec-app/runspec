@@ -87,6 +87,8 @@ def config_from_env(
     url: str | None = None,
     token: str | None = None,
     org_id: str | int | None = None,
+    username: str | None = None,
+    password: str | None = None,
 ) -> GrafanaConfig:
     """Build a :class:`GrafanaConfig` from environment variables.
 
@@ -96,7 +98,8 @@ def config_from_env(
     Keys: ``URL``, ``SERVICE_ACCOUNT_TOKEN`` (or ``TOKEN``, ``PAT``,
     ``API_KEY``), ``USERNAME`` (or ``USER``), ``PASSWORD``, ``ORG_ID``,
     ``CA_BUNDLE``, ``TLS_VERIFY`` (``false`` to disable), ``PROXY``. Explicit
-    ``url`` / ``token`` / ``org_id`` arguments win over the environment.
+    ``url`` / ``token`` / ``org_id`` / ``username`` / ``password`` arguments
+    win over the environment.
     No credentials is valid (anonymous access).
     """
     env = env or os.environ.get("GRAFANA_ENV")
@@ -110,8 +113,8 @@ def config_from_env(
         names += [f"GRAFANA_{suffix}" for suffix in suffixes]
         return _env_first(names)
 
-    username = lookup("USERNAME", "USER")
-    password = lookup("PASSWORD")
+    username = username or lookup("USERNAME", "USER")
+    password = password or lookup("PASSWORD")
     if bool(username) != bool(password):
         raise GrafanaError("Basic auth needs both GRAFANA_USERNAME and GRAFANA_PASSWORD (or use GRAFANA_SERVICE_ACCOUNT_TOKEN).")
 

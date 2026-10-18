@@ -2,6 +2,14 @@
 
 All notable changes to `runspec-confluence-core` are documented here.
 
+## [0.10.0] — 2026-10-18
+
+- `config_from_env` takes `url` / `username` / `api_token` keyword overrides
+  (explicit basic credentials win over a PAT from the environment).
+- Reads the spellings a runspec-console credential sets: `CONFLUENCE_USER` for
+  `USERNAME`, `CONFLUENCE_PASSWORD` for `API_TOKEN`, and `CONFLUENCE_PAT` / `CONFLUENCE_TOKEN` for
+  `PERSONAL_TOKEN` (each also under the `CONFLUENCE_<ENV>_` prefix).
+
 ## [0.9.0] — 2026-10-09
 
 **Create diagrams** from text.

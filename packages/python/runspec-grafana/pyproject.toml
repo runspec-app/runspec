@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-grafana"
-version = "0.1.0"
+version = "0.2.0"
 requires-python = ">=3.10"
 description = "Grafana runnable for runspec — dashboards, datasources, PromQL and LogQL through Grafana, alert rules, silences, and annotations, ported from the Grafana MCP server"
 readme = "README.md"
@@ -13,7 +13,7 @@ dependencies = [
     # 0.73.1 keeps httpx's INFO request lines off stdout, so the JSON result
     # is the only thing an agent reads.
     "runspec>=0.73.1",
-    "runspec-grafana-core>=0.1.0",
+    "runspec-grafana-core>=0.2.0",
 ]
 
 [project.urls]

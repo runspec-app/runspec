@@ -2,6 +2,24 @@
 
 All notable changes to `runspec-grafana` are documented here.
 
+## [0.2.0]
+
+- **runspec-console credentials apply again without a scope.** The auth args
+  now declare the variables they read as `env` aliases: `--url` →
+  `GRAFANA_URL`, `--org-id` → `GRAFANA_ORG_ID`, `--grafana-token` →
+  `GRAFANA_SERVICE_ACCOUNT_TOKEN`/`TOKEN`/`PAT`/`API_KEY`. The console applies an
+  unscoped credential only to a runnable that declares one of its variables, so
+  a credential such as `Grafana Service Account` was never offered to the
+  agent. The console's Env files window now lists these variables too.
+- New `--grafana-user` / `--grafana-password` (`password` type) for basic auth,
+  declaring `GRAFANA_USERNAME`/`USER` and `GRAFANA_PASSWORD`, so a username +
+  password credential labelled `Grafana` applies the same way.
+- `--env <label>` still reads `GRAFANA_<LABEL>_*` before the unprefixed
+  variables: a value runspec read from a declared alias is left to the core,
+  and only a value typed on the command line or sent on the console's secret
+  channel (`RUNSPEC_GRAFANA_ARG_*`) overrides the environment.
+- Needs `runspec-grafana-core >= 0.2.0`.
+
 ## [0.1.0]
 
 First release. One runnable, `grafana`, with a verb per read tool of the

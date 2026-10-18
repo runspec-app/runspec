@@ -2,6 +2,14 @@
 
 All notable changes to `runspec-jira-core` are documented here.
 
+## [0.6.0] — 2026-10-18
+
+- `config_from_env` takes `url` / `username` / `api_token` keyword overrides
+  (explicit basic credentials win over a PAT from the environment).
+- Reads the spellings a runspec-console credential sets: `JIRA_USER` for
+  `USERNAME`, `JIRA_PASSWORD` for `API_TOKEN`, and `JIRA_PAT` / `JIRA_TOKEN` for
+  `PERSONAL_TOKEN` (each also under the `JIRA_<ENV>_` prefix).
+
 ## [0.5.0] — 2026-10-16
 
 ### Added

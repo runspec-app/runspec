@@ -161,7 +161,14 @@ def _resolve_verify_ssl(value: str | None) -> bool | str:
     return token
 
 
-def config_from_env(env: str | None = None, *, personal_token_override: str | None = None) -> ConfluenceConfig:
+def config_from_env(
+    env: str | None = None,
+    *,
+    personal_token_override: str | None = None,
+    url: str | None = None,
+    username: str | None = None,
+    api_token: str | None = None,
+) -> ConfluenceConfig:
     """Build a :class:`ConfluenceConfig` from environment variables.
 
     When ``env`` (or the ``CONFLUENCE_ENV`` variable) selects dev/uat/prod, the
@@ -174,7 +181,12 @@ def config_from_env(env: str | None = None, *, personal_token_override: str | No
     supplied through runspec-console) — is used as the PAT and is authoritative:
     it satisfies the credential requirement on its own and takes precedence over
     any env-configured Basic credentials. The base URL is still read from the
-    environment.
+    environment unless ``url`` is given.
+
+    ``url`` / ``username`` / ``api_token`` override the matching variables.
+    Each variable also has the spelling a runspec-console credential sets:
+    ``CONFLUENCE_USER`` for ``USERNAME``, ``CONFLUENCE_PASSWORD`` for ``API_TOKEN``, and
+    ``CONFLUENCE_PAT`` / ``CONFLUENCE_TOKEN`` for ``PERSONAL_TOKEN``.
     """
     env = env or os.environ.get("CONFLUENCE_ENV")
     if env is not None:
@@ -182,14 +194,14 @@ def config_from_env(env: str | None = None, *, personal_token_override: str | No
         if env not in VALID_ENVS:
             raise ConfluenceError(f"Invalid env {env!r} — expected one of {', '.join(VALID_ENVS)}")
 
-    def lookup(suffix: str) -> str | None:
+    def lookup(*suffixes: str) -> str | None:
         names = []
         if env:
-            names.append(f"CONFLUENCE_{env.upper()}_{suffix}")
-        names.append(f"CONFLUENCE_{suffix}")
+            names += [f"CONFLUENCE_{env.upper()}_{suffix}" for suffix in suffixes]
+        names += [f"CONFLUENCE_{suffix}" for suffix in suffixes]
         return _env_first(names)
 
-    url = lookup("URL")
+    url = url or lookup("URL")
     if not url:
         hint = f"CONFLUENCE_{env.upper()}_URL" if env else "CONFLUENCE_URL"
         raise ConfluenceError(f"No base URL configured — set {hint}")
@@ -216,9 +228,11 @@ def config_from_env(env: str | None = None, *, personal_token_override: str | No
     if personal_token_override:
         return ConfluenceConfig(personal_token=personal_token_override, **common)
 
-    username = lookup("USERNAME")
-    api_token = lookup("API_TOKEN")
-    personal_token = lookup("PERSONAL_TOKEN")
+    # Basic credentials passed in win over a PAT from the environment.
+    explicit_basic = bool(username and api_token)
+    username = username or lookup("USERNAME", "USER")
+    api_token = api_token or lookup("API_TOKEN", "PASSWORD")
+    personal_token = None if explicit_basic else lookup("PERSONAL_TOKEN", "PAT", "TOKEN")
     if not personal_token and not (username and api_token):
         raise ConfluenceError("No credentials configured — set CONFLUENCE_PERSONAL_TOKEN (Server/DC PAT) or CONFLUENCE_USERNAME + CONFLUENCE_API_TOKEN (Cloud email + API token, or DC basic auth)")
 

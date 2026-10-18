@@ -86,6 +86,8 @@ def config_from_env(
     *,
     url: str | None = None,
     token: str | None = None,
+    username: str | None = None,
+    password: str | None = None,
 ) -> PrometheusConfig:
     """Build a :class:`PrometheusConfig` from environment variables.
 
@@ -94,8 +96,8 @@ def config_from_env(
     ``prod-eu``) — falling back to the unprefixed ``PROMETHEUS_*`` family.
     Keys: ``URL``, ``TOKEN`` (or ``PAT``), ``USERNAME`` (or ``USER``),
     ``PASSWORD``, ``ORG_ID``, ``CA_BUNDLE``, ``TLS_VERIFY`` (``false`` to
-    disable), ``PROXY``. Explicit ``url`` / ``token`` arguments win over the
-    environment. No credentials is valid (an unsecured Prometheus).
+    disable), ``PROXY``. Explicit ``url`` / ``token`` / ``username`` / ``password``
+    arguments win over the environment. No credentials is valid (an unsecured Prometheus).
     """
     env = env or os.environ.get("PROMETHEUS_ENV")
     env = env.strip() if env else None
@@ -108,8 +110,8 @@ def config_from_env(
         names += [f"PROMETHEUS_{suffix}" for suffix in suffixes]
         return _env_first(names)
 
-    username = lookup("USERNAME", "USER")
-    password = lookup("PASSWORD")
+    username = username or lookup("USERNAME", "USER")
+    password = password or lookup("PASSWORD")
     if bool(username) != bool(password):
         raise PrometheusError("Basic auth needs both PROMETHEUS_USERNAME and PROMETHEUS_PASSWORD (or use PROMETHEUS_TOKEN).")
 

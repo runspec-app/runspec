@@ -95,3 +95,22 @@ def test_dataclass_defaults():
     cfg = JiraConfig(url="https://x", cloud=True)
     assert cfg.verify_ssl is True
     assert cfg.service_desk_id is None
+
+
+def test_console_credential_spellings(monkeypatch):
+    # A runspec-console credential labelled Jira sets JIRA_USER/JIRA_PASSWORD
+    # (username + password kind) or JIRA_PAT/JIRA_TOKEN (token kind).
+    monkeypatch.setenv("JIRA_URL", "https://jira.corp.example")
+    monkeypatch.setenv("JIRA_USER", "ops")
+    monkeypatch.setenv("JIRA_PASSWORD", "pw")
+    cfg = config_from_env()
+    assert (cfg.username, cfg.api_token, cfg.personal_token) == ("ops", "pw", None)
+    monkeypatch.setenv("JIRA_PAT", "pat")
+    assert config_from_env().personal_token == "pat"
+
+
+def test_explicit_url_and_basic_auth_win(monkeypatch):
+    monkeypatch.setenv("JIRA_URL", "https://env.example")
+    monkeypatch.setenv("JIRA_PERSONAL_TOKEN", "env-pat")
+    cfg = config_from_env(url="https://arg.example/", username="me", api_token="tok")
+    assert (cfg.url, cfg.username, cfg.api_token, cfg.personal_token) == ("https://arg.example", "me", "tok", None)

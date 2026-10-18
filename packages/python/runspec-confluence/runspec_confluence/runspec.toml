@@ -50,8 +50,11 @@ examples = [
 
 # ── global args (inherited by every verb) ──────────────────────────────────
 [confluence.args]
-env = {type = "choice", options = ["dev", "uat", "prod"], short = "-e", required = false, description = "Target environment (selects CONFLUENCE_<ENV>_* vars, falling back to CONFLUENCE_*)"}
-confluence-pat = {type = "password", required = false, description = "Confluence Personal Access Token (Server/DC). Optional; overrides CONFLUENCE_PERSONAL_TOKEN. Supplied via the runspec-console credential/secret channel (RUNSPEC_CONFLUENCE_ARG_CONFLUENCE_PAT), never on the command line."}
+env = {type = "choice", options = ["dev", "uat", "prod"], short = "-e", required = false, env = "CONFLUENCE_ENV", description = "Target environment (selects CONFLUENCE_<ENV>_* vars, falling back to CONFLUENCE_*)"}
+confluence-pat = {type = "password", required = false, env = ["CONFLUENCE_PERSONAL_TOKEN", "CONFLUENCE_PAT", "CONFLUENCE_TOKEN"], description = "Confluence Personal Access Token (Server/DC). Optional; overrides CONFLUENCE_PERSONAL_TOKEN. Supplied via the runspec-console credential/secret channel (RUNSPEC_CONFLUENCE_ARG_CONFLUENCE_PAT), never on the command line."}
+confluence-url = {type = "str", required = false, env = "CONFLUENCE_URL", description = "Confluence base URL; overrides CONFLUENCE_URL. Set it once per venv in .runspec_env (CONFLUENCE_URL, or CONFLUENCE_<ENV>_URL with --env)"}
+confluence-user = {type = "str", required = false, env = ["CONFLUENCE_USERNAME", "CONFLUENCE_USER"], description = "Basic-auth username (Cloud: account email), with --confluence-password; overrides CONFLUENCE_USERNAME"}
+confluence-password = {type = "password", required = false, env = ["CONFLUENCE_API_TOKEN", "CONFLUENCE_PASSWORD"], description = "Basic-auth password or Cloud API token; overrides CONFLUENCE_API_TOKEN. Supplied via the runspec-console credential/secret channel (RUNSPEC_CONFLUENCE_ARG_CONFLUENCE_PASSWORD), never on the command line."}
 
 # ── reads → autonomous ─────────────────────────────────────────────────────
 

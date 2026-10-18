@@ -1,5 +1,10 @@
 # Changelog — runspec-grafana-core
 
+## [0.2.0]
+
+- `config_from_env` takes `username` / `password` keyword overrides, which win
+  over `GRAFANA_USERNAME` / `GRAFANA_PASSWORD` like `url` / `token` / `org_id`.
+
 ## [0.1.0]
 
 First release. Pure-Python helpers over the Grafana HTTP API, ported from the

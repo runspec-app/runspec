@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-grafana-core"
-version = "0.1.0"
+version = "0.2.0"
 requires-python = ">=3.10"
 description = "Pure-Python Grafana HTTP API helpers — the importable core behind runspec-grafana (no runspec dependency, no runnables)"
 dependencies = [

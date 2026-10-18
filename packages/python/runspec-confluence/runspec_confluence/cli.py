@@ -12,6 +12,7 @@ JSON ``{"error": ...}`` payload + a non-zero exit.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from typing import Any
 
@@ -50,6 +51,18 @@ from runspec_confluence_core import (
     update_page,
     upload_attachment,
 )
+
+
+def _chosen(arg: rs.Arg) -> Any:
+    """The arg's value when the caller chose it: typed on the command line, or
+    set through the automatic ``RUNSPEC_CONFLUENCE_ARG_*`` key (the console's secret
+    channel). A value runspec read from one of the declared ``CONFLUENCE_*`` aliases
+    is left to :func:`config_from_env`, which reads the same variables but puts
+    ``CONFLUENCE_<ENV>_*`` first when ``--env`` is set."""
+    if arg.source == "cli":
+        return arg.value
+    auto_key = "RUNSPEC_CONFLUENCE_ARG_" + arg.name.upper().replace("-", "_")
+    return arg.value if os.environ.get(auto_key) is not None else None
 
 
 def _emit(payload: Any) -> None:
@@ -193,7 +206,13 @@ def _dispatch(spec: rs.RunSpec, config: ConfluenceConfig) -> Any:
 def main() -> None:
     spec = rs.parse("confluence")
     try:
-        config = config_from_env(env=spec.env.value, personal_token_override=spec.confluence_pat.value)
+        config = config_from_env(
+            env=spec.env.value,
+            personal_token_override=_chosen(spec.confluence_pat),
+            url=_chosen(spec.confluence_url),
+            username=_chosen(spec.confluence_user),
+            api_token=_chosen(spec.confluence_password),
+        )
         result = _dispatch(spec, config)
     except (ConfluenceError, ValueError) as exc:
         _emit({"error": str(exc), "kind": type(exc).__name__})

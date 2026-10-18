@@ -13,6 +13,7 @@ Failures (the core :class:`JiraError` and arg-shape ``ValueError``s) become a JS
 from __future__ import annotations
 
 import json
+import os
 import sys
 from typing import Any
 
@@ -77,6 +78,18 @@ from runspec_jira_core import (
 )
 
 from runspec_jira.render import human_text
+
+
+def _chosen(arg: rs.Arg) -> Any:
+    """The arg's value when the caller chose it: typed on the command line, or
+    set through the automatic ``RUNSPEC_JIRA_ARG_*`` key (the console's secret
+    channel). A value runspec read from one of the declared ``JIRA_*`` aliases
+    is left to :func:`config_from_env`, which reads the same variables but puts
+    ``JIRA_<ENV>_*`` first when ``--env`` is set."""
+    if arg.source == "cli":
+        return arg.value
+    auto_key = "RUNSPEC_JIRA_ARG_" + arg.name.upper().replace("-", "_")
+    return arg.value if os.environ.get(auto_key) is not None else None
 
 
 def _emit(payload: Any, *, text: str | None = None) -> None:
@@ -275,7 +288,13 @@ def _dispatch(spec: rs.RunSpec, config: JiraConfig) -> Any:
 def main() -> None:
     spec = rs.parse("jira")
     try:
-        config = config_from_env(env=spec.env.value, personal_token_override=spec.jira_pat.value)
+        config = config_from_env(
+            env=spec.env.value,
+            personal_token_override=_chosen(spec.jira_pat),
+            url=_chosen(spec.jira_url),
+            username=_chosen(spec.jira_user),
+            api_token=_chosen(spec.jira_password),
+        )
         result = _dispatch(spec, config)
     except (JiraError, ValueError) as exc:
         _emit({"error": str(exc), "kind": type(exc).__name__})

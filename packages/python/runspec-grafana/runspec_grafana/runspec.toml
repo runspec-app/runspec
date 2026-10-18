@@ -44,10 +44,12 @@ examples = [
 
 # ── global args (inherited by every verb) ──────────────────────────────────
 [grafana.args]
-env = {type = "str", short = "-e", required = false, description = "Instance label: reads GRAFANA_<ENV>_* vars first (e.g. prod, prod-eu), falling back to GRAFANA_*"}
-url = {type = "str", required = false, description = "Grafana base URL; overrides GRAFANA_URL (default http://127.0.0.1:3000)"}
-org-id = {type = "str", required = false, description = "Organization ID (X-Grafana-Org-Id); overrides GRAFANA_ORG_ID. whoami lists the orgs you can reach"}
-grafana-token = {type = "password", required = false, description = "Service account token; overrides GRAFANA_SERVICE_ACCOUNT_TOKEN. Supplied via the runspec-console credential/secret channel (RUNSPEC_GRAFANA_ARG_GRAFANA_TOKEN), never on the command line."}
+env = {type = "str", short = "-e", required = false, env = "GRAFANA_ENV", description = "Instance label: reads GRAFANA_<ENV>_* vars first (e.g. prod, prod-eu), falling back to GRAFANA_*"}
+url = {type = "str", required = false, env = "GRAFANA_URL", description = "Grafana base URL; overrides GRAFANA_URL (default http://127.0.0.1:3000)"}
+org-id = {type = "str", required = false, env = "GRAFANA_ORG_ID", description = "Organization ID (X-Grafana-Org-Id); overrides GRAFANA_ORG_ID. whoami lists the orgs you can reach"}
+grafana-token = {type = "password", required = false, env = ["GRAFANA_SERVICE_ACCOUNT_TOKEN", "GRAFANA_TOKEN", "GRAFANA_PAT", "GRAFANA_API_KEY"], description = "Service account token; overrides GRAFANA_SERVICE_ACCOUNT_TOKEN. Supplied via the runspec-console credential/secret channel (RUNSPEC_GRAFANA_ARG_GRAFANA_TOKEN), never on the command line."}
+grafana-user = {type = "str", required = false, env = ["GRAFANA_USERNAME", "GRAFANA_USER"], description = "Basic-auth username, with --grafana-password; overrides GRAFANA_USERNAME. A token is preferred"}
+grafana-password = {type = "password", required = false, env = "GRAFANA_PASSWORD", description = "Basic-auth password; overrides GRAFANA_PASSWORD. Supplied via the runspec-console credential/secret channel (RUNSPEC_GRAFANA_ARG_GRAFANA_PASSWORD), never on the command line."}
 
 # ── identity / server → autonomous ─────────────────────────────────────────
 

@@ -77,3 +77,21 @@ def test_histogram_percentile_range() -> None:
     assert h.expect_ok(["query-prometheus-histogram", "--metric", "lat"]).percentile.value == 95.0
     h.expect_exit(["query-prometheus-histogram", "--metric", "lat", "--percentile", "150"], contains="percentile")
     h.close()
+
+
+def test_auth_args_declare_the_env_vars_the_core_reads() -> None:
+    # runspec-console applies an unscoped credential only to a runnable that
+    # declares one of its env var names (a "Grafana Service Account" token →
+    # GRAFANA_SERVICE_ACCOUNT_TOKEN, a "Grafana" login → GRAFANA_USERNAME), and
+    # its Env files window lists only declared names.
+    args = tomllib.loads(SPEC.read_text())["grafana"]["args"]
+
+    def envs(name: str) -> list[str]:
+        env = args[name]["env"]
+        return [env] if isinstance(env, str) else env
+
+    assert envs("url") == ["GRAFANA_URL"]
+    assert envs("org-id") == ["GRAFANA_ORG_ID"]
+    assert envs("grafana-token") == ["GRAFANA_SERVICE_ACCOUNT_TOKEN", "GRAFANA_TOKEN", "GRAFANA_PAT", "GRAFANA_API_KEY"]
+    assert envs("grafana-user") == ["GRAFANA_USERNAME", "GRAFANA_USER"]
+    assert envs("grafana-password") == ["GRAFANA_PASSWORD"]

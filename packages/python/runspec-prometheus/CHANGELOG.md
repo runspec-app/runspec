@@ -2,6 +2,21 @@
 
 All notable changes to `runspec-prometheus` are documented here.
 
+## [0.2.0]
+
+- **runspec-console credentials apply again without a scope.** `--url` and
+  `--prometheus-token` now declare `PROMETHEUS_URL` and
+  `PROMETHEUS_TOKEN`/`PAT` as `env` aliases (and `--env` declares
+  `PROMETHEUS_ENV`). The console applies an unscoped credential only to a
+  runnable that declares one of its variables, so a `Prometheus` credential was
+  never offered to the agent.
+- New `--prometheus-user` / `--prometheus-password` (`password` type) for basic
+  auth, declaring `PROMETHEUS_USERNAME`/`USER` and `PROMETHEUS_PASSWORD`.
+- `--env <label>` still reads `PROMETHEUS_<LABEL>_*` first; only a value typed
+  on the command line or sent on the console's secret channel
+  (`RUNSPEC_PROMETHEUS_ARG_*`) overrides the environment.
+- Needs `runspec-prometheus-core >= 0.2.0`.
+
 ## [0.1.0]
 
 First release. One runnable, `prometheus`, with a verb per tool of the official

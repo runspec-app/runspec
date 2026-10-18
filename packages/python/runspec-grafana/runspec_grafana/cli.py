@@ -3,7 +3,7 @@
 One binary, a verb per Grafana MCP read tool. ``rs.parse("grafana")`` resolves
 the subcommand and its args; we build a :class:`GrafanaConfig` from the
 environment (scoped by the global ``--env``, with ``--url`` / ``--org-id`` /
-``--grafana-token`` overriding), unpack each ``.value`` at the boundary, and
+the auth args overriding when the caller set them — see :func:`_chosen`), unpack each ``.value`` at the boundary, and
 call the matching :mod:`runspec_grafana_core` helper.
 
 Agents, pipes, the console's Forms tab and schedulers get compact JSON; a
@@ -15,6 +15,7 @@ Failures (:class:`GrafanaError` and arg-shape ``ValueError``s) become a JSON
 from __future__ import annotations
 
 import json
+import os
 import sys
 from typing import Any
 
@@ -54,6 +55,18 @@ from runspec_grafana_core import (
 )
 
 from runspec_grafana.render import human_text
+
+
+def _chosen(arg: rs.Arg) -> Any:
+    """The arg's value when the caller chose it: typed on the command line, or
+    set through the automatic ``RUNSPEC_GRAFANA_ARG_*`` key (the console's
+    secret channel). A value runspec read from one of the declared ``GRAFANA_*``
+    aliases is left to :func:`config_from_env`, which reads the same variables
+    but puts ``GRAFANA_<ENV>_*`` first when ``--env`` is set."""
+    if arg.source == "cli":
+        return arg.value
+    auto_key = "RUNSPEC_GRAFANA_ARG_" + arg.name.upper().replace("-", "_")
+    return arg.value if os.environ.get(auto_key) is not None else None
 
 
 def _emit(payload: Any, *, text: str | None = None) -> None:
@@ -257,7 +270,14 @@ def _terminal() -> bool:
 def main() -> None:
     spec = rs.parse("grafana")
     try:
-        config = config_from_env(env=spec.env.value, url=spec.url.value, token=spec.grafana_token.value, org_id=spec.org_id.value)
+        config = config_from_env(
+            env=spec.env.value,
+            url=_chosen(spec.url),
+            token=_chosen(spec.grafana_token),
+            org_id=_chosen(spec.org_id),
+            username=_chosen(spec.grafana_user),
+            password=_chosen(spec.grafana_password),
+        )
         result = _dispatch(spec, config)
     except (GrafanaError, ValueError) as exc:
         _emit({"error": str(exc), "kind": type(exc).__name__})

@@ -66,8 +66,17 @@ export JIRA_PERSONAL_TOKEN=<pat>
 
 Cloud vs Server/DC is detected from a `.atlassian.net` host or set with
 `JIRA_CLOUD`. Every verb takes `--env`, selecting `JIRA_<ENV>_*` prefixed vars.
-The PAT can instead ride the runspec-console secret channel via the optional
-`--jira-pat` (a `password`-typed arg, refused on the CLI, kept out of logs).
+In a venv, set these in its `.runspec_env` (the console's Env files window
+lists them). `--jira-url`, `--jira-user`, `--jira-password` (password or
+API token) and `--jira-pat` override the environment; the password and PAT
+args are `password` type, so they come through the runspec-console secret
+channel and never on a command line.
+
+Each auth arg declares its variables as `env`, so a runspec-console credential
+applies with no extra configuration: one labelled `Jira` of the username +
+password kind sets `JIRA_USERNAME`/`JIRA_USER` and `JIRA_PASSWORD`, and one of the
+token kind sets `JIRA_PAT`/`JIRA_TOKEN` (read as the Personal Access Token).
+
 JSON-object args (`--additional-fields`, `--fields`, `--visibility`,
 `--worklog-json`, `--field-values`) are passed as strings and parsed in the core.
 

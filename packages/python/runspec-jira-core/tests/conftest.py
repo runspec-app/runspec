@@ -14,7 +14,7 @@ import pytest
 
 from runspec_jira_core import client as client_mod
 
-_SUFFIXES = ("URL", "USERNAME", "API_TOKEN", "PERSONAL_TOKEN", "CLOUD", "SERVICE_DESK_ID", "PROJECT_KEY", "VERIFY_SSL")
+_SUFFIXES = ("USER", "PASSWORD", "PAT", "TOKEN", "URL", "USERNAME", "API_TOKEN", "PERSONAL_TOKEN", "CLOUD", "SERVICE_DESK_ID", "PROJECT_KEY", "VERIFY_SSL")
 _ALL_VARS = ["JIRA_ENV"] + [f"JIRA_{s}" for s in _SUFFIXES]
 for _env in ("DEV", "UAT", "PROD"):
     _ALL_VARS += [f"JIRA_{_env}_{s}" for s in _SUFFIXES]

@@ -2,6 +2,21 @@
 
 All notable changes to `runspec-confluence` are documented here.
 
+## [0.9.0] — 2026-10-18
+
+- **runspec-console credentials apply without a scope.** The global args now
+  declare the variables the core reads as `env` aliases, so a credential
+  labelled `Confluence` is offered to the agent and the console's Env files
+  window lists them: `--confluence-pat` → `CONFLUENCE_PERSONAL_TOKEN`/`PAT`/`TOKEN`, and
+  new `--confluence-url` (`CONFLUENCE_URL`), `--confluence-user` (`CONFLUENCE_USERNAME`/`USER`) and
+  `--confluence-password` (`password` type; `CONFLUENCE_API_TOKEN`/`PASSWORD`). Since
+  console 0.294.0 an unscoped credential applies only to a runnable that
+  declares one of its variables.
+- `--env <label>` still reads `CONFLUENCE_<ENV>_*` first: only a value typed on the
+  command line or sent on the console's secret channel (`RUNSPEC_CONFLUENCE_ARG_*`)
+  overrides the environment.
+- Needs `runspec-confluence-core >= 0.10.0`.
+
 ## [0.8.0] — 2026-10-09
 
 ### Added

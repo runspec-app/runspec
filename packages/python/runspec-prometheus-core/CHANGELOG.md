@@ -1,5 +1,10 @@
 # Changelog — runspec-prometheus-core
 
+## [0.2.0]
+
+- `config_from_env` takes `username` / `password` keyword overrides, which win
+  over `PROMETHEUS_USERNAME` / `PROMETHEUS_PASSWORD` like `url` / `token`.
+
 ## [0.1.0]
 
 First release. Pure-Python helpers over the Prometheus HTTP API, ported from the

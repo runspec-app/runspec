@@ -104,9 +104,16 @@ export CONFLUENCE_PERSONAL_TOKEN=<pat>
 
 Cloud vs Server/DC is detected from a `.atlassian.net` host or set with
 `CONFLUENCE_CLOUD`. Every verb takes `--env`, selecting `CONFLUENCE_<ENV>_*`
-prefixed vars. The PAT can instead ride the runspec-console secret channel via
-the optional `--confluence-pat` (a `password`-typed arg, refused on the CLI,
-kept out of logs).
+prefixed vars. In a venv, set these in its `.runspec_env` (the console's Env files window
+lists them). `--confluence-url`, `--confluence-user`, `--confluence-password` (password or
+API token) and `--confluence-pat` override the environment; the password and PAT
+args are `password` type, so they come through the runspec-console secret
+channel and never on a command line.
+
+Each auth arg declares its variables as `env`, so a runspec-console credential
+applies with no extra configuration: one labelled `Confluence` of the username +
+password kind sets `CONFLUENCE_USERNAME`/`CONFLUENCE_USER` and `CONFLUENCE_PASSWORD`, and one of the
+token kind sets `CONFLUENCE_PAT`/`CONFLUENCE_TOKEN` (read as the Personal Access Token).
 
 ```
 confluence search --cql "space = OPS AND type = page"

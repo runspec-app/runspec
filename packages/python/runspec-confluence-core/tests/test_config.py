@@ -196,3 +196,22 @@ def test_diagram_settings_from_env(monkeypatch) -> None:
     monkeypatch.setenv("CONFLUENCE_PLANTUML_MACRO", "plantumlcloud")
     cfg = config_from_env()
     assert (cfg.kroki_url, cfg.diagram_mode, cfg.mermaid_macro, cfg.plantuml_macro) == ("https://kroki.example.com", "macro", "mermaid-cloud", "plantumlcloud")
+
+
+def test_console_credential_spellings(monkeypatch):
+    # A runspec-console credential labelled Confluence sets CONFLUENCE_USER/CONFLUENCE_PASSWORD
+    # (username + password kind) or CONFLUENCE_PAT/CONFLUENCE_TOKEN (token kind).
+    monkeypatch.setenv("CONFLUENCE_URL", "https://confluence.corp.example")
+    monkeypatch.setenv("CONFLUENCE_USER", "ops")
+    monkeypatch.setenv("CONFLUENCE_PASSWORD", "pw")
+    cfg = config_from_env()
+    assert (cfg.username, cfg.api_token, cfg.personal_token) == ("ops", "pw", None)
+    monkeypatch.setenv("CONFLUENCE_PAT", "pat")
+    assert config_from_env().personal_token == "pat"
+
+
+def test_explicit_url_and_basic_auth_win(monkeypatch):
+    monkeypatch.setenv("CONFLUENCE_URL", "https://env.example")
+    monkeypatch.setenv("CONFLUENCE_PERSONAL_TOKEN", "env-pat")
+    cfg = config_from_env(url="https://arg.example/", username="me", api_token="tok")
+    assert (cfg.url, cfg.username, cfg.api_token, cfg.personal_token) == ("https://arg.example", "me", "tok", None)
