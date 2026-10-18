@@ -360,6 +360,48 @@ def test_handoff_script_makes_and_refuses(tmp_path):
 
 
 @posix_only
+def test_cleanup_script_undoes_only_what_provision_made(tmp_path):
+    # Absent before: the whole folder goes, the parent mkdir -p made stays.
+    dest = tmp_path / "venvs" / "ops"
+    assert _sh(prov.create_argv(sys.executable, str(dest))).returncode == 0
+    r = _sh(prov.cleanup_argv(str(dest), "absent"))
+    assert r.returncode == 0 and "removed" in r.stdout
+    assert not dest.exists() and dest.parent.is_dir()
+    # Nothing there any more: a no-op, not an error.
+    assert _sh(prov.cleanup_argv(str(dest), "absent")).returncode == 0
+
+    # Empty before: the folder stays, emptied.
+    dest.mkdir()
+    assert _sh(prov.create_argv(sys.executable, str(dest))).returncode == 0
+    assert _sh(prov.cleanup_argv(str(dest), "empty")).returncode == 0
+    assert dest.is_dir() and not list(dest.iterdir())
+
+    # Only a kept logs/ before: logs/ and its history survive.
+    (dest / "logs").mkdir()
+    (dest / "logs" / "runs.db").write_text("history")
+    assert _sh(prov.create_argv(sys.executable, str(dest))).returncode == 0
+    assert _sh(prov.cleanup_argv(str(dest), "logs_only")).returncode == 0
+    assert [p.name for p in dest.iterdir()] == ["logs"]
+    assert (dest / "logs" / "runs.db").read_text() == "history"
+
+    # A symlink is refused, never followed.
+    link = tmp_path / "link"
+    link.symlink_to(dest)
+    r = _sh(prov.cleanup_argv(str(link), "absent"))
+    assert r.returncode == 64 and "symlink" in r.stdout
+    assert (dest / "logs").exists()
+
+
+def test_cleanup_argv_refuses_states_it_did_not_make():
+    for before in ("notempty", "symlink", "file", ""):
+        with pytest.raises(prov.ProvisionError):
+            prov.cleanup_argv("/opt/venvs/ops", before)
+    for bad in ("/", "/opt", "/home/jason"):
+        with pytest.raises(prov.ProvisionError):
+            prov.cleanup_argv(bad, "absent")
+
+
+@posix_only
 def test_create_script_never_chmods_through_symlinks(tmp_path):
     # A stand-in "python -m venv --symlinks" whose bin/python points outside the
     # venv, like the real one does at the system interpreter.

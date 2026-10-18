@@ -504,6 +504,45 @@ echo "created $dest for $owner"
 """
 
 
+# ``sh -c CLEANUP_SCRIPT sh <dest> <mode>`` after a failed provision, as the
+# account that made the folder (root when the folder step ran, else the run-as
+# account). Undoes only what this provision made, from the preflight's view of
+# the folder: ``all`` (it was absent) removes the folder, ``folder`` (it was
+# empty) empties it, ``logs`` (only a kept logs/) removes everything but logs/.
+# Missing parents that ``mkdir -p`` made stay. Re-checks the path on the host.
+CLEANUP_SCRIPT = r"""
+cd / || exit 64
+d=$1; mode=$2
+refuse() { echo "refused: $1"; exit 64; }
+case "$d" in /*) ;; *) refuse "$d is not an absolute path" ;; esac
+case "$d" in */) refuse "trailing slash" ;; esac
+[ -L "$d" ] && refuse "$d is a symlink"
+[ -e "$d" ] || { echo "nothing to remove at $d"; exit 0; }
+[ -d "$d" ] || refuse "$d is not a directory"
+real=$(cd "$d" && pwd -P) || refuse "cannot resolve $d"
+[ "$real" = "$d" ] || refuse "$d resolves to $real"
+case "$mode" in
+  all) rm -rf -- "$d" && echo "removed $d" ;;
+  folder) find "$d" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + && echo "emptied $d" ;;
+  logs) find "$d" -mindepth 1 -maxdepth 1 ! -name logs -exec rm -rf -- {} + \
+    && echo "removed the venv from $d (kept $d/logs)" ;;
+  *) refuse "unknown mode $mode" ;;
+esac
+"""
+
+_CLEANUP_MODES = {"absent": "all", "empty": "folder", "logs_only": "logs"}
+
+
+def cleanup_argv(dest: str, before: str) -> list[str]:
+    """Undo a failed provision at ``dest``. ``before`` is the preflight's
+    ``dest`` fact; any other state wasn't ours to build in, so it raises."""
+    mode = _CLEANUP_MODES.get(before)
+    if not mode:
+        raise ProvisionError(f"Not cleaning up {dest}: it held {before!r} before.")
+    check_removable(dest)
+    return ["sh", "-c", CLEANUP_SCRIPT, "sh", dest, mode]
+
+
 def handoff_argv(dest: str, owner: str) -> list[str]:
     owner = validate_user(owner)
     if not owner:

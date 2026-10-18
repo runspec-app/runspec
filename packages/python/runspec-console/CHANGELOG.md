@@ -9,6 +9,21 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.351.3] — 2026-10-18
+
+### Fixed
+
+- **A failed venv provision no longer blocks its own retry.** When a step
+  failed after the venv folder was made (a misspelt package name in the
+  install step, say), the half-built venv stayed behind: provisioning the same
+  path again was refused as "not empty", and Deprovision couldn't remove it
+  because it had no `bin/runspec`. The console now undoes what that provision
+  made: it removes a folder it created (as root when root made it under a
+  root-owned parent like `/opt/venvs`), empties a folder that was empty before,
+  and keeps a kept `logs/`. The failure message says so, and the
+  `venv.provision.failed` audit event records `cleanup`
+  (`cleaned`/`failed`/`none`). `provision.cleanup_argv`, `CLEANUP_SCRIPT`.
+
 ## [0.351.2] — 2026-10-18
 
 ### Fixed

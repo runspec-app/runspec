@@ -517,7 +517,49 @@ class ProvisionMixin:
                     op=op, kind="provision", host=name, phase="step", step=step
                 )
 
+            # Set once this run starts making the venv folder, so a failure
+            # after that point undoes it and a retry isn't refused as "not empty".
+            made: dict[str, Any] = {}
+
+            def _cleanup() -> str:
+                h, pf = made["host"], made["pf"]
+                # Whoever made the folder removes it: root under a parent the
+                # run-as account can't write, else the run-as account.
+                if pf.get("handoff"):
+                    who = "root" if pf.get("handoff_via") == "sudo" else ""
+                    via = "sudo"
+                else:
+                    who, via = plan["run_as"], plan["become_method"]
+                try:
+                    code, out = self._prov_run(
+                        h,
+                        prov.cleanup_argv(dest, pf.get("dest_state", "")),
+                        run_as=who,
+                        become_method=via,
+                        timeout=_STEP_TIMEOUT_S,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    code, out = -1, str(exc)
+                _emit(out)
+                if code == 0:
+                    return "cleaned"
+                logger.warning(
+                    "provision: cleanup of %s on %s failed: %s",
+                    dest,
+                    name,
+                    prov.tail(out),
+                )
+                return "failed"
+
             def _fail(summary: str) -> dict[str, Any]:
+                cleaned = _cleanup() if made else ""
+                if cleaned == "cleaned":
+                    summary += f" Undid the partial venv at {dest}, so you can provision again."
+                elif cleaned == "failed":
+                    summary += (
+                        f" Couldn't undo the partial venv at {dest}; remove it "
+                        "before provisioning there again."
+                    )
                 res["summary"] = summary
                 logger.warning(
                     "provision: %s failed at %s: %s", name, res["step"], summary
@@ -538,6 +580,7 @@ class ProvisionMixin:
                     step=res["step"],
                     run_as=plan["run_as"],
                     error=summary,
+                    cleanup=cleaned or "none",
                 )
                 return res
 
@@ -589,6 +632,9 @@ class ProvisionMixin:
                             run_as="root" if pf.get("handoff_via") == "sudo" else "",
                         )
                     )
+            # From here on this run owns the folder (made by the folder step,
+            # or about to be made by create), so a failure undoes it.
+            made.update(host=h, pf=pf)
             kw = {"run_as": plan["run_as"], "become_method": plan["become_method"]}
             # A venv owned by another account: the owner also grants the SSH
             # login an ACL on logs/, so this console can read the runs index.

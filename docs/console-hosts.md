@@ -97,6 +97,13 @@ set up the [logs inbox](#set-up-the-logs-inbox-for-runs-by-other-accounts)
 succeeds gets the new path added to its runspec paths; **Retry failed** re-runs
 only the failures. Linux/macOS hosts only for now.
 
+A host that fails after the venv folder was made (a misspelt package name, a
+pip error, a cancel) has its partial venv undone, so a retry at the same path
+isn't refused as "not empty": a folder the provision created is removed, a
+folder that was already there empty is emptied again, and a folder that held a
+kept `logs/` keeps it. The failure message says it was undone, or that it
+couldn't be and you need to remove it yourself.
+
 If the run-as account can't write the parent folder (say `/opt/venvs` belongs
 to root, with each service account owning only its own venv inside it), Check
 hosts asks whether your SSH login can `sudo` without a password. If it can, or

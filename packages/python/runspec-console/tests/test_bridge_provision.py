@@ -366,6 +366,72 @@ def test_provision_failure_leaves_hosts_file(app, tmp_path):
     assert hosts["web-01"]["runspec_paths"] == ["/opt/venvs/old/bin/runspec"]
     assert b.refreshed == 0
     assert [a["extra"]["event"] for a in b.audit][-1] == "venv.provision.failed"
+    # The half-built venv is gone, so the same provision can be retried.
+    assert not (tmp_path / "venvs" / "ops").exists()
+    assert "so you can provision again" in r["summary"]
+    assert b.audit[-1]["extra"]["cleanup"] == "cleaned"
+
+
+@pytest.mark.skipif(sys.version_info < (3, 10), reason="runspec needs 3.10+")
+def test_failed_provision_into_root_owned_parent_cleans_up_as_root(app, tmp_path):
+    _hosts()
+    b = _ReadOnlyParentBridge("sudo")
+    b.fail_on = "runspec runspec-gttlab"
+    dest = tmp_path / "venvs" / "ops"
+    payload = {
+        "hosts": ["web-01"],
+        "dest": str(dest),
+        "python": sys.executable,
+        "packages": ["runspec-gttlab"],
+    }
+    r = _wait(b, b.provision_start(payload)["op"])["results"][0]
+    assert not r["ok"] and r["step"] == "install"
+    assert not dest.exists() and dest.parent.is_dir()
+    root_cmds = [c for c in b.commands if c.startswith("sudo -n -u root ")]
+    assert len(root_cmds) == 2 and root_cmds[1].endswith(f"{dest} all")
+    # Nothing left in the way: the retry with the right name goes through.
+    b.fail_on = ""
+    payload["packages"] = ["runspec-gitlab"]
+    r = _wait(b, b.provision_start(payload)["op"])["results"][0]
+    assert r["ok"], r
+
+
+@pytest.mark.skipif(sys.version_info < (3, 10), reason="runspec needs 3.10+")
+def test_failed_provision_keeps_a_kept_logs_folder(app, tmp_path):
+    _hosts()
+    b = _StubBridge()
+    b.fail_on = "runspec runspec-linux"
+    dest = tmp_path / "venvs" / "ops"
+    (dest / "logs").mkdir(parents=True)
+    (dest / "logs" / "runs.db").write_text("history")
+    out = b.provision_start(
+        {
+            "hosts": ["web-01"],
+            "dest": str(dest),
+            "python": sys.executable,
+            "packages": ["runspec-linux"],
+        }
+    )
+    r = _wait(b, out["op"])["results"][0]
+    assert not r["ok"]
+    assert [p.name for p in dest.iterdir()] == ["logs"]
+    assert (dest / "logs" / "runs.db").read_text() == "history"
+
+
+@pytest.mark.skipif(sys.version_info < (3, 10), reason="runspec needs 3.10+")
+def test_preflight_failure_touches_nothing(app, tmp_path):
+    _hosts()
+    b = _StubBridge()
+    dest = tmp_path / "venvs" / "ops"
+    dest.mkdir(parents=True)
+    (dest / "mine.txt").write_text("not yours")
+    out = b.provision_start(
+        {"hosts": ["web-01"], "dest": str(dest), "python": sys.executable}
+    )
+    r = _wait(b, out["op"])["results"][0]
+    assert not r["ok"] and r["step"] == "preflight"
+    assert (dest / "mine.txt").read_text() == "not yours"
+    assert b.audit[-1]["extra"]["cleanup"] == "none"
 
 
 def test_provision_index_rides_stdin_not_argv(app, tmp_path, monkeypatch):
