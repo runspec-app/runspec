@@ -108,10 +108,14 @@ def build_room_message(payload: dict[str, Any]) -> tuple[str, str]:
 
 
 def _toast_xml(title: str, body: str) -> str:
+    # The legacy ToastText02 template (bold title + wrapped body), not the
+    # adaptive ToastGeneric one: on Windows 10 an unpackaged app's ToastGeneric
+    # toast is accepted and stored in Action Center but never shows a banner,
+    # while ToastText02 from the same process and AUMID does.
     return (
-        "<toast><visual><binding template='ToastGeneric'>"
-        f"<text>{_xml_escape(title)}</text>"
-        f"<text>{_xml_escape(body)}</text>"
+        "<toast><visual><binding template='ToastText02'>"
+        f"<text id='1'>{_xml_escape(title)}</text>"
+        f"<text id='2'>{_xml_escape(body)}</text>"
         "</binding></visual></toast>"
     )
 

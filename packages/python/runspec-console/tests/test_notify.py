@@ -98,6 +98,16 @@ def test_toast_xml_escapes_special_chars():
     assert "<tag>" not in xml
 
 
+def test_toast_xml_uses_legacy_text02_template():
+    # ToastGeneric toasts from an unpackaged app never show a banner on
+    # Windows 10; ToastText02 does. Keep the title and body in its two slots.
+    xml = notify._toast_xml("Title", "Body")
+    assert "template='ToastText02'" in xml
+    assert "ToastGeneric" not in xml
+    assert "<text id='1'>Title</text>" in xml
+    assert "<text id='2'>Body</text>" in xml
+
+
 # ── notifier overload selection (the "Invalid parameter count" fix) ───────────
 
 

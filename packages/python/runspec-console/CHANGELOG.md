@@ -9,6 +9,19 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.351.4] — 2026-10-18
+
+### Fixed
+
+- **Desktop toasts show on Windows 10.** The console built its toasts with the
+  adaptive `ToastGeneric` template. Windows 10 accepts those from an
+  unpackaged app and files them in Action Center, but never shows the banner,
+  so the Notifications *Test*, confirm-gate alerts, room messages and pages
+  raised nothing on screen while the app's notification setting read as on and
+  the toast reported as sent. Toasts now use the legacy `ToastText02` template
+  (bold title, wrapped body), which shows from the same process and app ID.
+  Click-to-focus is unchanged.
+
 ## [0.351.3] — 2026-10-18
 
 ### Fixed
