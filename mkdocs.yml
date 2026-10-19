@@ -76,6 +76,7 @@ nav:
     - Node library: node.md
     - Node deployment: node-deploy.md
     - CLI reference: cli.md
+    - Terminal forms (runspec-tui): tui.md
     - Migrating from argparse: migration.md
     - Agent integration (MCP): agents.md
     - MCP server → runnable: mcp-to-runnable.md

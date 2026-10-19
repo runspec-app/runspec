@@ -1,0 +1,53 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "runspec-tui"
+version = "0.1.0"
+requires-python = ">=3.10"
+description = "The runspec-console Forms view in a terminal: fill in and run the runspec runnables installed in this venv"
+readme = "README.md"
+keywords = ["runspec", "tui", "textual", "terminal", "forms"]
+dependencies = [
+    # 0.75.0: exec_runnable(stdin=, on_start=) so a run can't read the TUI's
+    # terminal and can be stopped from the UI.
+    "runspec>=0.75.0",
+    "textual>=8.0,<9",
+]
+
+[project.urls]
+Documentation = "https://runspec.app/tui/"
+Source        = "https://github.com/jasonfinestone/runspec/tree/main/packages/python/runspec-tui"
+Changelog     = "https://github.com/jasonfinestone/runspec/blob/main/packages/python/runspec-tui/CHANGELOG.md"
+Issues        = "https://github.com/jasonfinestone/runspec/issues"
+
+[project.scripts]
+runspec-tui = "runspec_tui.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "ruff==0.15.20",
+    "mypy",
+    "pytest>=8.0",
+    "pytest-asyncio>=1.0",
+    # Snapshot tests compare rendered SVGs, so they pin the Textual they were
+    # recorded with. Re-record (pytest --snapshot-update) when bumping it.
+    "textual==8.2.8",
+    "pytest-textual-snapshot==1.1.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.mypy]
+python_version = "3.10"
+
+[tool.ruff]
+line-length = 200
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

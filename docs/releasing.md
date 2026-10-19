@@ -52,6 +52,7 @@ publishes. Publishing is always an explicit step.
 | `runspec-confluence-core` | `packages/python/runspec-confluence-core/pyproject.toml` | `confluence-core-v` | `confluence-core-release.yml` | PyPI + GitHub Release |
 | `runspec-jsm` | `packages/python/runspec-jsm/pyproject.toml` | `jsm-v` | `jsm-release.yml` | PyPI + GitHub Release |
 | `runspec-snow` | `packages/python/runspec-snow/pyproject.toml` | `snow-v` | `snow-release.yml` | PyPI + GitHub Release |
+| `runspec-tui` | `packages/python/runspec-tui/pyproject.toml` | `tui-v` | `tui-release.yml` | PyPI + GitHub Release |
 | `runspec-console` | `packages/python/runspec-console/pyproject.toml` | `console-v` | `console-release.yml` | PyPI + GitHub Release |
 | `runspec-room` | `packages/console-room/pyproject.toml` | `room-v` | `room-release.yml` | PyPI + GitHub Release |
 | `runspec-node` | `packages/node/package.json` | `node-v` | `node-release.yml` | npm + GitHub Release |
@@ -132,6 +133,8 @@ means the tag doesn't exist yet and the run fails.
 - **`runspec-jira` depends on `runspec-jira-core`** — same rule: publish
   `runspec-jira-core` to PyPI **first**, then `runspec-jira`, so its
   `runspec-jira-core>=…` floor resolves.
+- **`runspec-tui` 0.1.0 needs `runspec` 0.75.0** (`exec_runnable`'s `stdin` and
+  `on_start`) — publish core 0.75.0 to PyPI **first**, then `runspec-tui`.
 - **`runspec-confluence` depends on `runspec-confluence-core`** — same rule:
   publish `runspec-confluence-core` to PyPI **first**, then `runspec-confluence`,
   so its `runspec-confluence-core>=…` floor resolves.

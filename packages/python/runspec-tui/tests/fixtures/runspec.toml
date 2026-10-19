@@ -1,0 +1,57 @@
+# A made-up package covering every control the form renders.
+
+[config]
+autonomy-default = "autonomous"
+run_as = ""
+
+[deploy]
+description = "Deploy a release to an environment"
+autonomy = "confirm"
+
+[deploy.args]
+target   = {type = "choice", options = ["dev", "uat", "prod"], description = "Where to deploy"}
+release  = {type = "str", description = "Release tag", pattern = "^v[0-9]+$", position = 1}
+workers  = {default = 4, range = [1, 16], description = "Parallel workers"}
+ratio    = {default = 0.5, description = "Canary ratio"}
+dry-run  = {default = false, description = "Plan only"}
+token    = {type = "password", description = "API token", required = false}
+manifest = {type = "path", description = "Manifest file", required = false}
+outdir   = {type = "path", ui = "directory", description = "Where to write the report", default = "."}
+when     = {type = "str", ui = "date", description = "Change date", required = false}
+start    = {type = "str", ui = "datetime", description = "Window start", required = false}
+at       = {type = "str", ui = "time", description = "Time of day", required = false}
+period   = {type = "str", ui = "month", description = "Billing month", required = false}
+colour   = {type = "str", ui = "color", description = "Banner colour", required = false}
+regions  = {type = "choice", options = ["eu", "us", "ap"], multiple = true, description = "Regions", required = false}
+tag      = {type = "str", multiple = true, description = "Tags", required = false}
+owner    = {default = "$DEPLOY_OWNER", description = "Owner"}
+extra    = {type = "rest", description = "Passed to the deploy tool"}
+
+[deploy.groups]
+plan-or-token = {exclusive = true, args = ["dry-run", "token"]}
+
+[db]
+description = "Database chores"
+require-command = true
+
+[db.args]
+host = {default = "localhost", description = "Database host"}
+user = {type = "str", description = "Login", required = false, env = ["DB_USER"]}
+
+[db.commands.backup]
+description = "Back up a database"
+autonomy = "confirm"
+
+[db.commands.backup.args]
+name = {type = "str", description = "Database name"}
+host = {default = "db1", description = "Overrides the global host"}
+
+[db.commands.vacuum]
+description = "Reclaim space"
+
+[db.commands.vacuum.args]
+full = {default = false, description = "VACUUM FULL"}
+
+[hidden-helper]
+description = "Internal"
+discoverable = false

@@ -23,6 +23,7 @@ import sys
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import IO, Any
 
@@ -181,11 +182,20 @@ def exec_runnable(
     env: dict[str, str] | None = None,
     stdout: Any = None,
     stderr: Any = None,
+    stdin: Any = None,
+    on_start: Callable[[subprocess.Popen[bytes]], None] | None = None,
 ) -> int:
     """Run installed runnable ``name`` with ``argv`` and record it. Returns the
     exit code to exit with (the child's; 124 on timeout; 127 when the runnable
     isn't installed; 0 when skipped). ``env`` is extra environment for the child
-    (carried through ``become`` when the runnable escalates)."""
+    (carried through ``become`` when the runnable escalates).
+
+    For an in-process caller such as a terminal UI: ``stdin`` is the child's
+    standard input when there is no env frame to feed it (``None`` inherits the
+    caller's, as the CLI wants; ``subprocess.DEVNULL`` keeps a child off a
+    terminal the caller owns), and ``on_start`` is called with the child process
+    as soon as it starts, so the caller can stop it — the run is still recorded,
+    with the exit code the child ended with."""
     out_stream = stdout if stdout is not None else sys.stdout
     err_stream = stderr if stderr is not None else sys.stderr
     label = label or None
@@ -319,7 +329,7 @@ def exec_runnable(
             proc = subprocess.Popen(
                 cmd,
                 env={**os.environ, **extra_env},
-                stdin=subprocess.PIPE if frame else None,
+                stdin=subprocess.PIPE if frame else stdin,
                 stdout=subprocess.PIPE if capture else None,
                 stderr=subprocess.PIPE if capture else None,
             )
@@ -335,6 +345,9 @@ def exec_runnable(
 
         if frame:
             _feed_stdin(proc, frame)
+        if on_start is not None:
+            with contextlib.suppress(Exception):  # a caller's bug must not orphan the run
+                on_start(proc)
         tails: list[_Tail] = []
         if capture:
             assert proc.stdout is not None and proc.stderr is not None

@@ -251,3 +251,39 @@ def test_env_reaches_child_and_self_run_as_skips_become(logs_dir, tmp_path, monk
     monkeypatch.setattr(runexec, "_effective_user", lambda: "svc")  # already the run_as account
     rc, out, _ = _run(env={"RUNSPEC_ENV_FILE": "/x/y.env"})
     assert rc == 0 and out.strip() == "/x/y.env"  # ran directly (no sudo) with the env
+
+
+class TestInProcessCaller:
+    """The hooks a terminal UI calling exec_runnable in-process relies on."""
+
+    def test_stdin_devnull_keeps_child_off_the_terminal(self, logs_dir, tmp_path, monkeypatch):
+        import subprocess
+
+        _install(monkeypatch, tmp_path, "import sys\nprint(repr(sys.stdin.read()))\n")
+        rc, out, _ = _run(stdin=subprocess.DEVNULL)
+        assert rc == 0
+        assert out.strip() == "''"
+
+    def test_on_start_receives_the_child_and_can_stop_it(self, logs_dir, tmp_path, monkeypatch):
+        _install(monkeypatch, tmp_path, "import time\ntime.sleep(30)\n")
+        seen = []
+
+        def stop(proc):
+            seen.append(proc.pid)
+            proc.terminate()
+
+        rc, _, _ = _run(on_start=stop)
+        assert seen and rc != 0
+        [row] = _rows(logs_dir)
+        assert row["status"] == "failed" and row["exit_code"] == rc
+
+    def test_a_failing_on_start_does_not_orphan_the_run(self, logs_dir, tmp_path, monkeypatch):
+        _install(monkeypatch, tmp_path, "print('ran')\n")
+
+        def broken(proc):
+            raise RuntimeError("caller bug")
+
+        rc, out, _ = _run(on_start=broken)
+        assert rc == 0 and "ran" in out
+        [row] = _rows(logs_dir)
+        assert row["status"] == "completed"

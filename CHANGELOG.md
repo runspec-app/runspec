@@ -7,6 +7,20 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.75.0] — 2026-10-19
+
+### Added
+
+- **`runexec.exec_runnable` takes `stdin` and `on_start`**, for a caller that runs
+  a runnable in-process, such as the new `runspec-tui` terminal UI. `stdin` sets
+  the child's standard input when there is no env frame to feed. The default
+  (`None`) still inherits the caller's, as `runspec exec` wants; pass
+  `subprocess.DEVNULL` so a child can't read keys from a terminal the caller
+  owns. `on_start` is called with the child process as soon as it starts, so the
+  caller can stop it. The run is still recorded, with the exit code the child
+  ended with, and an exception raised by `on_start` can't leave the run
+  unrecorded.
+
 ## [0.74.1] — 2026-10-18
 
 ### Fixed
