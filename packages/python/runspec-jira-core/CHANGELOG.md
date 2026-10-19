@@ -2,6 +2,27 @@
 
 All notable changes to `runspec-jira-core` are documented here.
 
+## [0.7.0] — 2026-10-19
+
+- **Create metadata works on Jira Data Center 9+.** `get_create_fields` called
+  the old `GET /rest/api/2/issue/createmeta?projectKeys=…` endpoint, which
+  Atlassian removed in Data Center 9.0, so field discovery failed there. It now
+  uses the paged `issue/createmeta/{project}/issuetypes` and
+  `…/issuetypes/{id}` endpoints (Data Center 8.4+ and Cloud), reading every
+  page, and falls back to the old endpoint only when the server answers 404
+  (Jira before 8.4). `get_project_issue_types` gets the same fallback, so it
+  now also works before 8.4.
+- `get_create_fields` returns the classic createmeta shape on every version
+  (`{"projects": [{"key", "issuetypes": [{…, "fields": {field id: {…}}}]}]}`),
+  so callers reading `projects[0].issuetypes[].fields` keep working. New
+  optional `issue_type` (name, case-insensitive, or id) limits it to one type:
+  on 9+ that is one fields request instead of one per issue type.
+- **Changed:** `get_project_issue_types` returns a list of issue types (all
+  pages) instead of the raw first page (`{"values": …}` on Data Center,
+  `{"issueTypes": …}` on Cloud).
+- A project that doesn't exist (or that you can't create in) is a clear
+  `JiraError` instead of an empty result.
+
 ## [0.6.0] — 2026-10-18
 
 - `config_from_env` takes `url` / `username` / `api_token` keyword overrides

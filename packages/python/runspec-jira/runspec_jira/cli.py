@@ -204,7 +204,7 @@ def _dispatch(spec: rs.RunSpec, config: JiraConfig) -> Any:
     if command == "get-project-issue-types":
         return get_project_issue_types(config, spec.project_key.value)
     if command == "get-create-fields":
-        return get_create_fields(config, spec.project_key.value)
+        return get_create_fields(config, spec.project_key.value, issue_type=spec.issue_type.value)
 
     # ── fields ──
     if command == "search-fields":

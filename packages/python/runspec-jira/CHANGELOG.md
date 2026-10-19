@@ -2,6 +2,18 @@
 
 All notable changes to `runspec-jira` are documented here.
 
+## [0.7.0] — 2026-10-19
+
+- **`get-create-fields` works on Jira Data Center 9+**, where the old createmeta
+  endpoint was removed (see runspec-jira-core 0.7.0). Output keeps the same
+  shape on every Jira version.
+- `get-create-fields` takes an optional `--issue-type` (name or id) to return
+  just that type's fields.
+- **Changed:** `get-project-issue-types` returns a plain list of issue types
+  (every page) instead of the raw first page; it now also works on Jira before
+  8.4.
+- Needs `runspec-jira-core >= 0.7.0`.
+
 ## [0.6.0] — 2026-10-18
 
 - **runspec-console credentials apply without a scope.** The global args now

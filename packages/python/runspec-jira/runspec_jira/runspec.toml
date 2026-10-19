@@ -227,10 +227,11 @@ autonomy = "autonomous"
 project-key = {type = "str", required = true, description = "Project key"}
 
 [jira.commands.get-create-fields]
-description = "Return the create-screen field metadata for a project (the discovery step before create-issue --additional-fields)"
+description = "Return the create-screen field metadata for a project (the discovery step before create-issue --additional-fields). Works on Jira Data Center 9+ (new createmeta endpoints) and older versions alike"
 autonomy = "autonomous"
 [jira.commands.get-create-fields.args]
 project-key = {type = "str", required = true, description = "Project key"}
+issue-type = {type = "str", required = false, description = "Only this issue type's fields (name, case-insensitive, or id). Pass it when you know the type: the full list fetches every type's fields"}
 
 # ── fields ─────────────────────────────────────────────────────────────────
 

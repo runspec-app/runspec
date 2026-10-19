@@ -208,3 +208,26 @@ def test_main_missing_config_emits_error(monkeypatch, capsys) -> None:
     assert exc.value.code == 1
     payload = json.loads(capsys.readouterr().out)
     assert payload["kind"] == "JiraError"
+
+
+def test_dispatch_get_create_fields_passes_issue_type(fake) -> None:
+    jira, _ = fake
+    page = {"startAt": 0, "maxResults": 50, "total": 1, "isLast": True}
+
+    def get(path: str, **kw: Any) -> Any:
+        jira.calls.append(("get", (path,), kw))
+        if path.endswith("/issuetypes"):
+            return {**page, "values": [{"id": "1", "name": "Bug"}, {"id": "3", "name": "Task"}]}
+        return {**page, "values": [{"fieldId": "summary", "required": True}]}
+
+    jira.get = get  # type: ignore[method-assign]
+    h = _harness()
+    spec = h.expect_ok(["get-create-fields", "--project-key", "PROJ", "--issue-type", "Bug"])
+    result = cli._dispatch(spec, DC)
+    h.close()
+    (bug,) = result["projects"][0]["issuetypes"]
+    assert bug["name"] == "Bug" and list(bug["fields"]) == ["summary"]
+    assert [c[1][0] for c in jira.calls if c[0] == "get"] == [
+        "rest/api/2/issue/createmeta/PROJ/issuetypes",
+        "rest/api/2/issue/createmeta/PROJ/issuetypes/1",
+    ]
