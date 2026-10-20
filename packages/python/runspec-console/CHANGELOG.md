@@ -9,6 +9,19 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.353.0] — 2026-10-20
+
+### Changed
+
+- **Tool spans carry the tool's output and the full call.** With
+  `[telemetry] capture_content` on, a tool span now records the text the model
+  got back as `output.value` and `gen_ai.tool.call.result`, so Arize, Phoenix
+  and LangSmith show a tool's output instead of an empty box
+  (`observability.add_tool_result`). A search-mode `run_runnable` span's input
+  is now `{command, host, args}` instead of the args alone, so the subcommand
+  and target host show too. With `capture_content` off, nothing changes: no
+  text is attached.
+
 ## [0.352.0] — 2026-10-20
 
 ### Added

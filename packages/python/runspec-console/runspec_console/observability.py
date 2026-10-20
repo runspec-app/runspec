@@ -649,6 +649,7 @@ def send_test_trace() -> dict[str, Any]:
                 },
             )
             set_tool_exit(_tool, "hello world\n")
+            add_tool_result(_tool, "hello world\n")
             set_tool_decision(_tool, "approved")
         end_turn(handle, usage={"input": 42, "output": 17})
     except Exception as exc:  # noqa: BLE001 — surface the failure, don't raise
@@ -1324,7 +1325,8 @@ def set_turn_usage(span: Any, usage: dict[str, int]) -> None:
 
 
 def set_tool_exit(span: Any, output: str) -> None:
-    """Record a tool's result size / truncation on its span (never the text)."""
+    """Record a tool's result size / truncation on its span. The text itself is
+    attached by :func:`add_tool_result`, only when capture_content is on."""
     if span is None:
         return
     try:
@@ -1485,6 +1487,35 @@ def add_tool_arguments(span: Any, tool_input: Any) -> None:
         span.set_attribute("input.mime_type", "application/json")
     except Exception:  # noqa: BLE001
         pass
+
+
+def add_tool_result(span: Any, output: Any) -> None:
+    """Attach a tool's result text to its span as ``gen_ai.tool.call.result`` /
+    ``output.value`` — **only when capture_content is on**. It is the same text
+    the model receives as the tool result, so it is already in the next LLM
+    span's captured prompt; this puts it on the tool span where the trace UI
+    shows a tool's output."""
+    if span is None or not _CAPTURE_CONTENT or output is None:
+        return
+    try:
+        text = output if isinstance(output, str) else json.dumps(output, default=str)
+        payload = _truncate_content(text)
+        span.set_attribute("gen_ai.tool.call.result", payload)  # generic + LangSmith
+        span.set_attribute("output.value", payload)  # OpenInference (Phoenix/Arize)
+        span.set_attribute("output.mime_type", _mime_type(text))
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _mime_type(text: str) -> str:
+    stripped = text.lstrip()
+    if stripped[:1] in ("{", "["):
+        try:
+            json.loads(text)
+            return "application/json"
+        except ValueError:
+            pass
+    return "text/plain"
 
 
 # ── cross-thread context propagation helpers ──────────────────────────────────

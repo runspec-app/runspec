@@ -20,6 +20,7 @@ The in-memory span exporter keeps every assertion network-free.
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 import types
 
@@ -518,6 +519,8 @@ def test_chat_turn_emits_connected_trace(exporter, monkeypatch):
     assert not any("gen_ai.prompt" in sp.attributes for sp in llm_spans)
     assert not any("gen_ai.completion" in sp.attributes for sp in llm_spans)
     assert "gen_ai.tool.call.arguments" not in tool.attributes
+    assert "gen_ai.tool.call.result" not in tool.attributes
+    assert "output.value" not in tool.attributes
 
 
 @otel_only
@@ -549,6 +552,59 @@ def test_capture_content_attaches_and_scrubs(exporter, monkeypatch):
     assert "web1" in args  # non-secret kept
     assert "sekret" not in args  # secret scrubbed
     assert "«redacted»" in args
+    # The tool's result rides the tool span (what the model was given).
+    assert tool.attributes["output.value"] == "ok: ran"
+    assert tool.attributes["gen_ai.tool.call.result"] == "ok: ran"
+    assert tool.attributes["output.mime_type"] == "text/plain"
+
+
+@otel_only
+def test_run_runnable_span_input_carries_command_and_host(exporter, monkeypatch):
+    """A search-mode run_runnable span's input is {command, host, args}, not just
+    the args — the subcommand was missing from the trace UI's tool input."""
+    monkeypatch.setattr(
+        config_mod, "read_config", lambda: {"llm": {"provider": "anthropic"}}
+    )
+    obs.init_tracing_for_test(exporter, capture_content=True)
+
+    s = _chat_stub()
+    s._group_fanout_calls = lambda _inp: None  # a single host, no group fan-out
+    s._preflight_run_runnable = lambda *_a, **_k: None  # args are valid
+    tc = ToolCall(
+        id="t1",
+        name="run_runnable",
+        input={
+            "id": "cron",
+            "host": "web1",
+            "command": "add",
+            "args": {"schedule": "@daily"},
+        },
+    )
+    adapter = _ScriptedAdapter([("go", "tool_use", [tc]), ("done", "end_turn")])
+    asyncio.run(s._agentic_chat_turn("chat1", "add a cron job", adapter))
+    obs.shutdown()
+
+    tool = next(
+        sp for sp in exporter.get_finished_spans() if sp.name.startswith("execute_tool")
+    )
+    assert json.loads(tool.attributes["input.value"]) == {
+        "command": "add",
+        "host": "web1",
+        "args": {"schedule": "@daily"},
+    }
+
+
+@pytest.mark.parametrize(
+    "text, mime",
+    [
+        ('{"a": 1}', "application/json"),
+        ("[1, 2]", "application/json"),
+        ("{not json", "text/plain"),
+        ("hello", "text/plain"),
+    ],
+)
+def test_tool_result_mime_type(text, mime):
+    assert obs._mime_type(text) == mime
 
 
 @otel_only

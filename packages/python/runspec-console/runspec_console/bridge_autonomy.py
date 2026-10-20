@@ -1173,8 +1173,8 @@ class AutonomyMixin:
         # name, from _confirm_card_view). Leaving the others as tool_name keeps the
         # per_host `host__name` (host info) and avoids churn. The subcommand rides
         # a top-level `command` in every tool_mode; append it for all. For a
-        # `run_runnable` envelope the real args are nested under `args` — record
-        # those, not the `{id, host, args, command}` wrapper. tool_name/tool_input
+        # `run_runnable` envelope the span input is `{command, host, args}` — the
+        # runnable is already the span name, so `id` is dropped. tool_name/tool_input
         # stay raw for dispatch, gating, and metrics below.
         _span_display = display if tool_name == "run_runnable" else ""
         _span_cmd = tool_input.get("command") if isinstance(tool_input, dict) else None
@@ -1185,7 +1185,12 @@ class AutonomyMixin:
         )
         _span_args: Any = tool_input
         if tool_name == "run_runnable" and isinstance(tool_input, dict):
-            _span_args = tool_input.get("args") or {}
+            _span_args = {
+                k: tool_input[k]
+                for k in ("command", "host", "credential_id")
+                if tool_input.get(k)
+            }
+            _span_args["args"] = tool_input.get("args") or {}
         with observability.tool_span(
             tool_name,
             chat_id,
@@ -1214,6 +1219,7 @@ class AutonomyMixin:
                     self._run_tool_sync, tool_name, tool_input, chat_id
                 )
             observability.set_tool_exit(_tool_span, out)
+            observability.add_tool_result(_tool_span, out)
             # OTLP metric for this tool run (no-op unless [telemetry.metrics] is
             # on). Host is recorded only for run_runnable — the one tool whose
             # `host` names a bounded fleet host/group; other tools may carry an

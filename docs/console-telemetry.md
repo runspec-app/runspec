@@ -74,7 +74,7 @@ max_content_chars = 0   # 0 = capture full text; set a ceiling to bound span siz
 | `header_credentials` | Array of `{header, credential}` for sending several keychain secrets under several headers. |
 | `ca_bundle` | Path to a CA bundle for a private-CA / TLS-proxy endpoint. |
 | `tls_verify` | Verify the server certificate. Default true. |
-| `capture_content` | Attach prompt / completion / tool-argument **text**. Default **false** — see [Privacy](#privacy). |
+| `capture_content` | Attach prompt / completion / tool-argument / tool-result **text**. Default **false** — see [Privacy](#privacy). |
 | `max_content_chars` | Ceiling on each captured content value (prompt / completion / tool args). **0 (default) = no limit** — the trace shows the *full* prompt, not a slice. Set a positive value only to bound span size. |
 
 ### Standard `OTEL_*` environment variables
@@ -428,10 +428,10 @@ this safe:
 
 - **`capture_content = false` (default).** Spans carry **structure only** —
   model names, token counts, tool names, autonomy/operator decisions, finish
-  reasons, durations. No prompt text, no completion text, no tool arguments.
-  You still get the full shape of every turn.
+  reasons, durations. No prompt text, no completion text, no tool arguments or
+  results. You still get the full shape of every turn.
 - **When you turn `capture_content` on**, prompt / completion / tool-argument
-  text is attached — **in full by default** (`max_content_chars = 0`), so a trace
+  and tool-result text is attached — **in full by default** (`max_content_chars = 0`), so a trace
   shows the real prompt rather than a truncated slice — and tool arguments are
   **scrubbed** first: values under secret-looking keys (`password`, `token`,
   `secret`, `api_key`, `authorization`, …) become `«redacted»`. Resolved
@@ -439,6 +439,12 @@ this safe:
   credentials) live *below* the tool-input layer the agent sees and never reach a
   span at all. Set `max_content_chars` to a positive value only if you want to
   bound very large spans.
+
+  A tool span's input is the call the agent made: for a search-mode
+  `run_runnable` call that is `{command, host, args}` (the runnable is the span
+  name). Its output (`output.value` / `gen_ai.tool.call.result`) is the text the
+  model was given as the tool result, which also appears in the next LLM span's
+  prompt.
 
 Only enable content capture when your backend is trusted. An API key placed
 directly in `[telemetry.headers]` is stored in `config.toml` (like the model API
