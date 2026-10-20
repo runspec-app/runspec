@@ -57,7 +57,10 @@ runspec-tui
 
 Each run goes through the same code as `runspec exec`, so it is **recorded**: a
 row in the venv's runs index (or a logs-inbox file when you aren't the venv
-owner) with the exit code and the tail of the output, labelled `tui`.
+owner) with the exit code and the tail of the output, labelled `tui`. The
+label shows as `label=tui` in `runspec history` and in the Label column of the
+runspec-console History tab (runspec 0.75.1 / runspec-console 0.352.0 and
+later). To list only these runs:
 
 ```
 runspec history list --label tui

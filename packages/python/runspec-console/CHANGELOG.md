@@ -9,6 +9,17 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.352.0] — 2026-10-20
+
+### Added
+
+- **History tab Label column.** A run started with `runspec exec --label` (a
+  runspec-tui run is labelled `tui`, a shared cron schedule `sched:<id>`) shows
+  its label in a new Label column, with a filter, and the search box matches
+  it. The column appears only when a run in view has a label. Runs read from
+  log files now carry the label too (it is on the `run_start` / `exec_result`
+  records, not the runnable's `run_summary`), not just runs from the runs index.
+
 ## [0.351.5] — 2026-10-18
 
 ### Fixed

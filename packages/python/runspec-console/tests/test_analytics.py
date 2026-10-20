@@ -111,6 +111,35 @@ class TestParserIncludeExtra(unittest.TestCase):
         rich_without_extra = {k: v for k, v in rich.items() if k != "extra"}
         self.assertEqual(lean, rich_without_extra)
 
+    def test_exec_label_reaches_the_record(self) -> None:
+        """`runspec exec --label` stamps the label on run_start / exec_result,
+        not on the runnable's run_summary — the History record still carries it."""
+        start = json.dumps(
+            {
+                "ts": "2026-10-20T10:00:00+00:00",
+                "level": "INFO",
+                "message": "exec started",
+                "extra": {"run_id": "r1", "event": "run_start", "label": "tui"},
+            }
+        )
+        result = json.dumps(
+            {
+                "ts": "2026-10-20T10:00:02+00:00",
+                "level": "INFO",
+                "message": "backup completed",
+                "extra": {
+                    "run_id": "r1",
+                    "event": "exec_result",
+                    "label": "tui",
+                    "exit_code": 0,
+                },
+            }
+        )
+        text = "\n".join([start, _summary_line(run_id="r1"), result])
+        self.assertEqual(_parse_log_text("backup", text, "local")[0]["label"], "tui")
+        plain = _parse_log_text("backup", _summary_line(run_id="r2"), "local")[0]
+        self.assertEqual(plain["label"], "")
+
     def test_extra_surfaces_rich_fields(self) -> None:
         text = _summary_line(
             run_id="r1",

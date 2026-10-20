@@ -561,7 +561,8 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       r.group.toLowerCase().includes(q) ||
       r.host.toLowerCase().includes(q) ||
       r.operator.toLowerCase().includes(q) ||
-      r.runAs.toLowerCase().includes(q)
+      r.runAs.toLowerCase().includes(q) ||
+      (r.label ?? '').toLowerCase().includes(q)
     )
   }, [records, search])
 
@@ -577,12 +578,13 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
     [...new Set(records.map(r => r.operator))],
     [...new Set(records.map(r => r.runAs))],
     [...new Set(records.map(r => r.runbook).filter((s): s is string => !!s))],
+    [...new Set(records.map(r => r.label).filter((s): s is string => !!s))],
   ]), [records])
   const facets = useMemo(() => {
-    const [hosts, groups, operators, runAsUsers, runbooks] = JSON.parse(facetKey) as string[][]
-    return { hosts, groups, operators, runAsUsers, runbooks }
+    const [hosts, groups, operators, runAsUsers, runbooks, labels] = JSON.parse(facetKey) as string[][]
+    return { hosts, groups, operators, runAsUsers, runbooks, labels }
   }, [facetKey])
-  const { hosts, groups, operators, runAsUsers, runbooks } = facets
+  const { hosts, groups, operators, runAsUsers, runbooks, labels } = facets
   // App passes a fresh onScopeToggle on every render; read it through a ref so an
   // unrelated App re-render doesn't rebuild the columns (same reason as above).
   const scopeToggleRef = useRef(onScopeToggle)
@@ -674,6 +676,18 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       onFilter: (value, record) => record.runbook === value,
       filteredValue: colFilters['runbook'] ?? null,
     } as ColumnType<HistoryRecord>] : []),
+    // The `runspec exec --label` tag (e.g. "tui" for runspec-tui runs, "sched:<id>"
+    // for a shared cron schedule) — shown only once some run in view carries one.
+    ...(labels.length > 0 ? [{
+      title: 'Label',
+      key: 'label',
+      render: (_: unknown, r: HistoryRecord) => r.label
+        ? <Tag style={{ fontFamily: MONO_FONT }}>{r.label}</Tag>
+        : <span style={{ color: 'var(--rs-text-faint)' }}>—</span>,
+      filters: labels.map(s => ({ text: s, value: s })),
+      onFilter: (value, record) => record.label === value,
+      filteredValue: colFilters['label'] ?? null,
+    } as ColumnType<HistoryRecord>] : []),
     {
       title: 'Host',
       dataIndex: 'host',
@@ -756,7 +770,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       sorter: (a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime(),
       defaultSortOrder: 'descend',
     },
-  ], [groups, runbooks, hosts, operators, runAsUsers, colFilters, activeScope, accent])
+  ], [groups, runbooks, labels, hosts, operators, runAsUsers, colFilters, activeScope, accent])
 
   return (
     <div>

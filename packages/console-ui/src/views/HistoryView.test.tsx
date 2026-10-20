@@ -241,6 +241,27 @@ describe('HistoryView', () => {
     expect(screen.getByText('user')).toBeTruthy()
   })
 
+  it('shows a Label column for runspec exec labels, searchable', async () => {
+    getHistorySlim.mockResolvedValue([
+      rec({ id: 'r-tui', runnable: 'backup', label: 'tui' }),
+      rec({ id: 'r-plain', runnable: 'deploy' }),
+    ])
+    const { rerender } = render(<HistoryView {...PROPS} />)
+    await screen.findByText('backup')
+    expect(screen.getByText('Label')).toBeTruthy()
+    expect(screen.getByText('tui')).toBeTruthy()
+    // The search box matches the label too.
+    rerender(<HistoryView {...PROPS} search="tui" />)
+    await waitFor(() => expect(screen.queryByText('deploy')).toBeNull())
+    expect(screen.getByText('backup')).toBeTruthy()
+  })
+
+  it('hides the Label column when no run carries a label', async () => {
+    render(<HistoryView {...PROPS} />)
+    await screen.findByText('backup')
+    expect(screen.queryByText('Label')).toBeNull()
+  })
+
   it('fetches and shows the run log lines on demand when a row is expanded', async () => {
     getRunDetail.mockResolvedValue({
       logLines: [{ ts: '2026-06-03T14:22:05+00:00', level: 'INFO', message: 'fetched line' }],

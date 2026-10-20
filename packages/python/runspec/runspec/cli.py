@@ -1275,7 +1275,9 @@ def _print_history_table(rows: list[dict[str, Any]]) -> None:
         if invoker and invoker not in (acct, "unknown"):
             who += f" via {invoker}"
         exit_part = "" if status == "running" else f" exit={r.get('exit_code')}"
-        print(f"{_HISTORY_MARK.get(status, '·')} {ts}  {status:9} {dur_s:>8}  {name}{exit_part}  [{who}]")
+        # The ``runspec exec --label`` tag (``tui``, ``sched:<id>``, …), when there is one.
+        label_part = f"  label={r['label']}" if r.get("label") else ""
+        print(f"{_HISTORY_MARK.get(status, '·')} {ts}  {status:9} {dur_s:>8}  {name}{exit_part}{label_part}  [{who}]")
 
 
 def cmd_history(args: list[str]) -> None:

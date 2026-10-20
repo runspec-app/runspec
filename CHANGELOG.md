@@ -7,6 +7,16 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.75.1] — 2026-10-20
+
+### Fixed
+
+- **`runspec history` shows a run's label.** A run started with
+  `runspec exec --label` (for example `tui` from runspec-tui, or `sched:<id>`
+  from runspec-scheduler) now shows `label=<label>` in the plain history table.
+  It was already stored, filterable with `--label` and present in `--json`, but
+  the table left it out.
+
 ## [0.75.0] — 2026-10-19
 
 ### Added

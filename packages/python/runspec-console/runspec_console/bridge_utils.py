@@ -1614,7 +1614,13 @@ def _parse_log_by_run_id(
         run_id = extra.get("run_id")
         if not run_id:
             continue
-        g = groups.setdefault(run_id, {"lines": [], "summary": None, "exc": None})
+        g = groups.setdefault(
+            run_id, {"lines": [], "summary": None, "exc": None, "label": ""}
+        )
+        # `runspec exec --label` stamps the label on its run_start / exec_result
+        # records (not on the runnable's run_summary) — keep the first one seen.
+        if not g["label"] and extra.get("label"):
+            g["label"] = str(extra["label"])
         if entry.get("exc_structured"):
             # Uncaught-exception record (runspec >=0.26): lift the structured
             # frames out, don't surface it as a generic CRITICAL log line.
@@ -1671,6 +1677,8 @@ def _parse_log_by_run_id(
             "trigger": extra.get("trigger", "") or "",
             # The saved runbook that drove the run ("" otherwise) — History "Runbook" column.
             "runbook": extra.get("runbook", "") or "",
+            # The `runspec exec --label` tag ("tui", "sched:<id>", …) — History "Label" column.
+            "label": g["label"],
             # "runnable" | "agent" | "tool" — lets History keep runnable runs and
             # agent turns visible while filtering the noisier per-tool-call rows.
             "kind": _record_kind(extra),

@@ -652,6 +652,15 @@ class TestCliDisplay:
         assert out[2].endswith("[carol@web-01]")
         assert out[3].endswith("[root@web-01]")
 
+    def test_history_line_shows_the_exec_label(self, capsys):
+        from runspec import cli
+
+        base = {"start_ts": "2026-10-20T10:00:00", "status": "completed", "runnable": "demo", "duration_ms": 5, "exit_code": 0, "host": "web-01", "user": "bob"}
+        cli._print_history_table([{**base, "label": "tui"}, base])
+        out = capsys.readouterr().out.splitlines()
+        assert out[0].endswith("demo exit=0  label=tui  [bob@web-01]")
+        assert "label=" not in out[1]
+
     def test_stats_calls_read_only_expected_in_an_inbox_venv(self, capsys):
         from runspec import cli
 
