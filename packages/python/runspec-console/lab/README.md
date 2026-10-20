@@ -42,6 +42,35 @@ inside it; delete it to rebuild. Each variant runs in its own process.
   corporate proxy, run on a machine that can reach it. Use `--samples N`:
   live runs vary.
 
+## Traces
+
+Add `--trace` to send OpenTelemetry traces from either tier: the same
+turn → model call → tool call spans the console sends, so a lab run can be
+inspected in Arize, LangSmith, Phoenix or any OTLP backend.
+
+```bash
+python lab/agent_lab.py --trace my-trace.toml -s follow-up-chat
+```
+
+`my-trace.toml` holds a `[telemetry]` table in the console's own format (keep
+it out of the repo if it carries a key):
+
+```toml
+[telemetry]
+endpoint = "https://otlp.arize.com/v1/traces"
+headers = { api_key = "...", space_id = "..." }
+# or api_key_command = "..." + api_key_header = "api_key"
+```
+
+Leave the file off (`--trace` alone) to configure the exporter only from the
+standard `OTEL_EXPORTER_OTLP_*` variables. Unless the file says otherwise, the
+lab sends to project `runspec-agent-lab` with content capture on. Each variant
+reports as its own instance (`service.instance.id` = the variant name), and
+every turn span carries `runspec.lab.variant`, `runspec.lab.scenario`,
+`runspec.lab.sample` and `runspec.lab.tier`. The scripted tier's model spans
+are named `chat scripted` and carry no token usage; live runs carry the
+provider's.
+
 ## Files
 
 - `scenarios.toml` — chats to run. Each `[[scenario.turn]]` is one user

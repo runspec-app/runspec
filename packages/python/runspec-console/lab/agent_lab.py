@@ -17,6 +17,9 @@ Two tiers:
   or ``--llm my-llm.toml`` holding an ``[llm]`` table (any provider the console
   supports, including a corporate proxy).
 
+Either tier can also export OpenTelemetry traces (``--trace``), the same spans
+the console sends, tagged with the variant and scenario.
+
 The script bootstraps its own venv (``--venv``) holding the console, the core
 library and ``lab/fakes``, then re-runs itself inside it — the console discovers
 local runnables from the venv it runs in.
@@ -24,6 +27,7 @@ local runnables from the venv it runs in.
     python lab/agent_lab.py                       # scripted, every scenario × variant
     python lab/agent_lab.py -s follow-up-chat -v baseline,compact
     python lab/agent_lab.py --live --samples 3 --md report.md
+    python lab/agent_lab.py --trace my-trace.toml  # also send traces
 """
 
 from __future__ import annotations
@@ -63,7 +67,10 @@ def _venv_python(venv: Path) -> Path:
     return venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 
 
-def _bootstrap(venv: Path, live: bool) -> None:
+_OTEL = ["opentelemetry-sdk", "opentelemetry-exporter-otlp-proto-http"]
+
+
+def _bootstrap(venv: Path, live: bool, trace: bool) -> None:
     """Create/refresh the lab venv and re-exec this script inside it."""
     py = _venv_python(venv)
     if not py.exists():
@@ -72,14 +79,16 @@ def _bootstrap(venv: Path, live: bool) -> None:
     stamp = venv / ".agent-lab-installed"
     if not stamp.exists():
         pip = [str(py), "-m", "pip", "install", "-q"]
-        deps = ["tomli-w", "paramiko", "cryptography"] + (["anthropic"] if live else [])
+        deps = ["tomli-w", "paramiko", "cryptography"]
+        deps += (["anthropic"] if live else []) + (_OTEL if trace else [])
         subprocess.run([*pip, "-e", str(CORE), *deps, "-e", str(FAKES)], check=True)
         # --no-deps: pywebview (the window) isn't needed headless and doesn't
         # build everywhere.
         subprocess.run([*pip, "--no-deps", "-e", str(CONSOLE)], check=True)
         stamp.write_text("ok\n")
-    elif live:
-        subprocess.run([str(py), "-m", "pip", "install", "-q", "anthropic"], check=True)
+    elif live or trace:
+        extra = (["anthropic"] if live else []) + (_OTEL if trace else [])
+        subprocess.run([str(py), "-m", "pip", "install", "-q", *extra], check=True)
     env = dict(os.environ, **{_IN_VENV: "1"})
     os.execve(str(py), [str(py), str(Path(__file__).resolve()), *sys.argv[1:]], env)
 
@@ -338,6 +347,48 @@ def _apply_patches(patches: dict[str, Any]) -> None:
         setattr(mod, attr, value)
 
 
+def _trace_config(args: argparse.Namespace, variant: str) -> dict[str, Any]:
+    """The ``[telemetry]`` table for a ``--trace`` run: the file's table (if a
+    file was given), switched on, with lab defaults for whatever it leaves
+    unset. Anything still unset falls back to the standard ``OTEL_*`` env vars,
+    as in the console."""
+    tel: dict[str, Any] = {}
+    if args.trace:
+        with open(args.trace, "rb") as f:
+            tel = dict(tomllib.load(f).get("telemetry", {}))
+    tel["enabled"] = True
+    tel.setdefault("project_name", "runspec-agent-lab")
+    tel.setdefault("service_name", "runspec-agent-lab")
+    tel.setdefault("label", variant)
+    tel.setdefault("capture_content", True)
+    return tel
+
+
+class _LabTags:
+    """Adds the lab's variant / scenario / sample to every turn span, so a
+    trace can be told apart from another variant's run of the same chat."""
+
+    def __init__(self, variant: str, tier: str) -> None:
+        self.attrs: dict[str, Any] = {
+            "runspec.lab.variant": variant,
+            "runspec.lab.tier": tier,
+        }
+
+    def install(self) -> None:
+        from runspec_console import observability
+
+        begin = observability.begin_turn
+
+        def begin_turn(*a: Any, **k: Any) -> Any:
+            handle = begin(*a, **k)
+            if handle is not None:
+                for key, value in self.attrs.items():
+                    handle.span.set_attribute(key, value)
+            return handle
+
+        observability.begin_turn = begin_turn
+
+
 def run_variant(
     variant: dict[str, Any], scenarios: list[dict[str, Any]], args: argparse.Namespace
 ) -> list[dict[str, Any]]:
@@ -355,6 +406,8 @@ def run_variant(
             with open(args.llm, "rb") as f:
                 llm = tomllib.load(f).get("llm", llm)
         cfg = _merge(cfg, {"llm": llm})
+    if args.trace is not None:
+        cfg = _merge(cfg, {"telemetry": _trace_config(args, variant["name"])})
     (cfg_dir / "config.toml").write_text(tomli_w.dumps(cfg))
     config_mod.set_app_dir(cfg_dir)
     _apply_patches(variant.get("patch", {}))
@@ -381,10 +434,20 @@ def run_variant(
     bridge._adapter = meter
     bridge._get_adapter = lambda *a, **k: meter
 
+    tags = _LabTags(variant["name"], "live" if args.live else "scripted")
+    if args.trace is not None:
+        from runspec_console import observability
+
+        if not observability.init_tracing(config_mod.read_telemetry()):
+            sys.exit("--trace: tracing didn't start (see the log line above)")
+        tags.install()
+
     out = []
     for sc in scenarios:
         for sample in range(args.samples):
             session = bridge.new_chat_session()["id"]
+            tags.attrs["runspec.lab.scenario"] = sc["name"]
+            tags.attrs["runspec.lab.sample"] = sample
             meter._prev = ""
             if isinstance(inner, ScriptedModel):
                 inner.new_chat()
@@ -418,6 +481,15 @@ def run_variant(
                 f"{'pass' if all(t.passed for t in turns) else 'FAIL'}",
                 file=sys.stderr,
             )
+    if args.trace is not None:
+        from runspec_console import observability
+
+        observability.shutdown()  # flushes the batch exporter before exit
+        export = observability.last_export()
+        if export is None:
+            print("  traces: nothing exported", file=sys.stderr)
+        elif not export.get("ok"):
+            print(f"  traces: export failed: {export.get('error')}", file=sys.stderr)
     return out
 
 
@@ -554,6 +626,14 @@ def main() -> None:
         help="--live API endpoint when --llm isn't given",
     )
     ap.add_argument("--llm", type=Path, help="TOML file with an [llm] table for --live")
+    ap.add_argument(
+        "--trace",
+        nargs="?",
+        const="",
+        type=str,
+        help="export OpenTelemetry traces; optional TOML file with a "
+        "[telemetry] table (endpoint, headers, ...), else the OTEL_* env vars",
+    )
     ap.add_argument("--timeout", type=float, default=300, help="seconds per turn")
     ap.add_argument("--json", type=Path, help="write raw per-call results here")
     ap.add_argument("--md", type=Path, help="write the markdown report here")
@@ -569,7 +649,7 @@ def main() -> None:
     if args.live and not args.llm and not os.environ.get("ANTHROPIC_API_KEY"):
         sys.exit("--live: set ANTHROPIC_API_KEY, or pass --llm with an [llm] table")
     if not os.environ.get(_IN_VENV):
-        _bootstrap(args.venv, args.live)
+        _bootstrap(args.venv, args.live, args.trace is not None)
 
     os.environ.setdefault("RUNSPEC_AUDIT", "off")  # don't write run audit records
     scenarios = _pick(_load(args.scenario_file, "scenario"), args.scenarios)

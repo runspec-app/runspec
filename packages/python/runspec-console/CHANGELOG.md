@@ -9,6 +9,15 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Agent lab (dev only, not shipped):** `--trace [FILE]` exports OpenTelemetry
+  traces from a lab run (scripted or live) using the console's own tracing.
+  FILE is a `[telemetry]` table; without one the `OTEL_*` env vars configure
+  the exporter. Lab traces default to project `runspec-agent-lab`, each variant
+  is its own `service.instance.id`, and turn spans carry
+  `runspec.lab.variant`/`scenario`/`sample`/`tier`.
+
 ## [0.353.0] — 2026-10-20
 
 ### Changed
