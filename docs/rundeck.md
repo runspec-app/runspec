@@ -336,8 +336,18 @@ onto plain text options with light validation:
 | `flag` | text, `values: ["true","false"]`, `enforced: true`, defaulting to the flag's boolean default |
 | `rest` | text (space-separated; word-split after `--`) |
 | `password` | **secure** option (see below) |
+| `multiple = true` | **multi-valued** option (`multivalued: true`, `delimiter`); with `options`, also `values` + `enforced` (checkboxes) |
 
-Required args set `required: true`; defaults are stringified into `value`. Range,
+Required args set `required: true`; defaults are stringified into `value`.
+A `multiple` arg's list default is joined with the option's delimiter
+(`default = ["Missing", "Stale"]` → `value: "Missing,Stale"`). The delimiter is
+the arg's own `delimiter` when it has one, else `,`; Rundeck joins the values
+picked on the run form with it, and the job script turns each delimiter into a
+line break, which is runspec's env form for a list, so the runnable gets
+`["Missing", "Stale"]`. Emit fails if a default value contains the delimiter
+(set a `delimiter` its values don't use). A multi-valued `int`/`float` option
+has no `regex`: Rundeck would test the joined text, so runspec checks each
+value instead. Range,
 pattern, and positional/rest hints that Rundeck can't model are surfaced in the
 option's description.
 
@@ -447,5 +457,3 @@ runspec emit --rundeck --venv /opt/app/.venv --run-as svc --check
 - **Group constraints** (`exclusive`, `exactly-one`, …) have no Rundeck
   equivalent; they are noted in option descriptions and still enforced by the
   runnable at runtime.
-- **`multiple`** (repeatable) args emit as a single text option (a value with
-  newlines would carry several items, but a Rundeck text option is one line).

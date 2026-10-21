@@ -7,6 +7,31 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.75.2] — 2026-10-21
+
+### Fixed
+
+- **`runspec emit --rundeck`: `multiple` args work, list defaults included.**
+  A `multiple` arg's list default was written as Python's list repr
+  (`"['Missing', 'Stale']"`), which the job passed back as one value that
+  failed to parse, and a value typed on the run form reached the runnable as
+  one item. A `multiple` arg is now a Rundeck **multi-valued** option
+  (`multivalued: true`, `delimiter` = the arg's `delimiter`, else `,`) whose
+  default is delimiter-joined (`"Missing,Stale"`); with `options` it is also
+  enforced to them. The job script turns the delimiter into line breaks, the
+  env form runspec splits back into a list, so the line-break guard and the
+  quoted-heredoc read are unchanged. Emit refuses a default value that contains
+  the delimiter, and a multi-valued `int`/`float` option has no `regex` (it
+  would test the joined text; runspec checks each value).
+
+## [node-0.44.1] — 2026-10-21
+
+### Fixed
+
+- **Node: `runspec emit --rundeck` emits `multiple` args as multi-valued
+  options**, byte-identical to Python 0.75.2 (a list default was written
+  `"Missing,Stale"` but arrived as one value).
+
 ## [0.75.1] — 2026-10-20
 
 ### Fixed

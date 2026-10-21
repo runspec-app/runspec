@@ -66,8 +66,41 @@ function optionDescription(arg: ArgSpec): string {
   if (arg.position !== undefined && arg.position !== null) notes.push(`positional #${arg.position}`);
   if (arg.range) notes.push(`range ${arg.range[0]}–${arg.range[1]}`);
   if (arg.pattern) notes.push(`pattern ${arg.pattern}`);
+  const delimiter = multiDelimiter(arg);
+  if (delimiter) notes.push(`several values separated by "${delimiter}"`);
   if (notes.length) parts.push('(' + notes.join('; ') + ')');
   return parts.join(' ');
+}
+
+/**
+ * The Rundeck delimiter for a `multiple` arg, or `undefined` for a single-value
+ * option. The arg's own `delimiter` when it is a one-line string, else `,`.
+ * `rest`, `flag` and `password` args are never multi-valued options.
+ */
+export function multiDelimiter(arg: ArgSpec): string | undefined {
+  const argType = arg.type ?? 'str';
+  if (!arg.multiple || argType === 'rest' || argType === 'flag' || argType === 'password') return undefined;
+  const d = arg.delimiter;
+  if (typeof d === 'string' && d && !d.includes('\n') && !d.includes('\r')) return d;
+  return ',';
+}
+
+/**
+ * A `multiple` arg's default (a list, or one value) as the Rundeck
+ * delimiter-joined string; `undefined` for an empty list. A value containing
+ * the delimiter would split into two, so it is refused.
+ */
+function multiDefault(name: string, def: unknown, delimiter: string): string | undefined {
+  const values = (Array.isArray(def) ? def : [def]).map((item) => String(item));
+  for (const value of values) {
+    if (value.includes(delimiter)) {
+      throw new Error(
+        `default of '${name}' has a value containing the Rundeck delimiter '${delimiter}': '${value}' ` +
+          "(set the arg's `delimiter` to a string its values don't contain)",
+      );
+    }
+  }
+  return values.length ? values.join(delimiter) : undefined;
 }
 
 /**
@@ -80,6 +113,12 @@ function optionDescription(arg: ArgSpec): string {
  * - `choice`/`options` → text option constrained to the choices (`enforced`).
  * - `int`/`float` → text option with a validating `regex`.
  * - everything else → plain text option.
+ *
+ * A `multiple` arg is a **multi-valued** option (`multivalued`, `delimiter`):
+ * Rundeck joins the values with the delimiter into its `@option.<name>@`
+ * token, the script splits them back into runspec's newline-delimited env
+ * value, and a list default is written delimiter-joined. No numeric `regex`
+ * there — it would test the joined text; runspec validates each value.
  */
 export function renderOption(name: string, arg: ArgSpec): Record<string, unknown> {
   const opt: Record<string, unknown> = { name };
@@ -98,8 +137,20 @@ export function renderOption(name: string, arg: ArgSpec): Record<string, unknown
   if (arg.required) opt['required'] = true;
 
   const def = arg.default;
+  const delimiter = multiDelimiter(arg);
 
-  if (argType === 'flag') {
+  if (delimiter) {
+    opt['multivalued'] = true;
+    opt['delimiter'] = delimiter;
+    if (arg.options && arg.options.length) {
+      opt['values'] = arg.options.map((o) => String(o));
+      opt['enforced'] = true;
+    }
+    if (def !== undefined && def !== null) {
+      const value = multiDefault(name, def, delimiter);
+      if (value !== undefined) opt['value'] = value;
+    }
+  } else if (argType === 'flag') {
     opt['values'] = ['true', 'false'];
     opt['enforced'] = true;
     opt['value'] = def === true ? 'true' : 'false';
@@ -206,6 +257,11 @@ export function shellQuote(s: string): string {
   return "'" + s.replace(/'/g, `'"'"'`) + "'";
 }
 
+/** Always single-quote, unlike `shellQuote`: a bare `/` would end the pattern of `${var//pattern/…}`. */
+function singleQuote(s: string): string {
+  return "'" + s.replace(/'/g, `'"'"'`) + "'";
+}
+
 /** `{ printf …; exit 127; }` naming the runnable, where it was looked for, and who looked. */
 function notFound(runnable: string, where: string): string {
   return (
@@ -278,6 +334,11 @@ export function renderScript(
     lines.push(`x${rdOptionToken(name)}`);
     lines.push(VALUE_EOF);
     lines.push(`${v}=\${${v}#x}`);
+    const delimiter = multiDelimiter(args[name]);
+    // Rundeck's delimiter-joined values → runspec's newline-delimited env
+    // value (SPEC "Serialisation"). Expansion only: no line break enters the
+    // script text, so the guard's count is unchanged.
+    if (delimiter) lines.push(`${v}=\${${v}//${singleQuote(delimiter)}/$'\\n'}`);
   }
 
   const target = runAs || undefined;

@@ -476,7 +476,8 @@ demonstrated in the docs.)
   never root, no sudo when already that account; `""` = no sudo) → `sudo -n -u`
   with values on stdin as the SPEC env frame (venv `bin/python` prelude);
   examples should always set it so runnables run as the service account; `password` → a Rundeck **secure
-  option**; `--node-filter` adds
+  option**; `multiple` → a **multi-valued** option (0.75.2: delimiter = the arg's `delimiter` else `,`, list
+  default delimiter-joined, the script turns the delimiter into the newline env form); `--node-filter` adds
   orchestrator **random subset=1** load-balancing; schedule + notifications
   from `[<runnable>.meta.rundeck]` (project defaults `[config.meta.rundeck]`);
   stable uuid5 so re-import updates in place; `--check` (CI drift) + `--stdout`

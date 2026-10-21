@@ -81,9 +81,36 @@ def _option_description(arg: dict[str, Any]) -> str:
         notes.append(f"range {rng[0]}–{rng[1]}")
     if arg.get("pattern"):
         notes.append(f"pattern {arg['pattern']}")
+    delimiter = multi_delimiter(arg)
+    if delimiter:
+        notes.append(f'several values separated by "{delimiter}"')
     if notes:
         parts.append("(" + "; ".join(notes) + ")")
     return " ".join(parts)
+
+
+def multi_delimiter(arg: dict[str, Any]) -> str | None:
+    """The Rundeck delimiter for a `multiple` arg, or `None` for a single-value
+    option. The arg's own `delimiter` when it is a one-line string, else `,`.
+    `rest`, `flag` and `password` args are never multi-valued options."""
+    if not arg.get("multiple") or arg.get("type", "str") in ("rest", "flag", "password"):
+        return None
+    delimiter = arg.get("delimiter")
+    if isinstance(delimiter, str) and delimiter and "\n" not in delimiter and "\r" not in delimiter:
+        return delimiter
+    return ","
+
+
+def _multi_default(name: str, default: Any, delimiter: str) -> str | None:
+    """A `multiple` arg's default (a list, or one value) as the Rundeck
+    delimiter-joined string; `None` for an empty list. A value containing the
+    delimiter would split into two, so it is refused."""
+    items = default if isinstance(default, list) else [default]
+    values = [str(item) for item in items]
+    for value in values:
+        if delimiter in value:
+            raise ValueError(f"default of '{name}' has a value containing the Rundeck delimiter {delimiter!r}: {value!r} (set the arg's `delimiter` to a string its values don't contain)")
+    return delimiter.join(values) if values else None
 
 
 def render_option(name: str, arg: dict[str, Any]) -> dict[str, Any]:
@@ -98,6 +125,13 @@ def render_option(name: str, arg: dict[str, Any]) -> dict[str, Any]:
     - `choice`/`options` → text option constrained to the choices (`enforced`).
     - `int`/`float` → text option with a validating `regex`.
     - everything else → plain text option.
+
+    A `multiple` arg is a **multi-valued** option (`multivalued`, `delimiter`):
+    Rundeck joins the values with the delimiter into its `@option.<name>@`
+    token, the script splits them back into runspec's newline-delimited env
+    value, and a list default is written delimiter-joined (never Python's
+    list repr). No numeric `regex` there — it would test the joined text;
+    runspec validates each value.
     """
     opt: dict[str, Any] = {"name": name}
     desc = _option_description(arg)
@@ -117,8 +151,19 @@ def render_option(name: str, arg: dict[str, Any]) -> dict[str, Any]:
         opt["required"] = True
 
     default = arg.get("default")
+    delimiter = multi_delimiter(arg)
 
-    if arg_type == "flag":
+    if delimiter:
+        opt["multivalued"] = True
+        opt["delimiter"] = delimiter
+        if arg.get("options"):
+            opt["values"] = [str(o) for o in arg["options"]]
+            opt["enforced"] = True
+        if default is not None:
+            value = _multi_default(name, default, delimiter)
+            if value is not None:
+                opt["value"] = value
+    elif arg_type == "flag":
         opt["values"] = ["true", "false"]
         opt["enforced"] = True
         opt["value"] = "true" if default is True else "false"
@@ -287,6 +332,12 @@ def render_script(
         lines.append(f"x{rd_option_token(name)}")
         lines.append(_VALUE_EOF)
         lines.append(f"{var}=${{{var}#x}}")
+        delimiter = multi_delimiter(args[name])
+        if delimiter:
+            # Rundeck's delimiter-joined values → runspec's newline-delimited
+            # env value (SPEC "Serialisation"). Expansion only: no line break
+            # enters the script text, so the guard's count is unchanged.
+            lines.append(f"{var}=${{{var}//{_squote(delimiter)}/$'\\n'}}")
 
     run_as = run_as or None
     lines.extend(_exists_check(runnable, invocation, venv, run_as))
@@ -325,6 +376,12 @@ def render_script(
     wrapped = " ".join([*_env_prelude_argv(invocation, venv), cmd])
     lines.append(f"rs_frame {names} | {become} {wrapped}")
     return _finish(lines)
+
+
+def _squote(text: str) -> str:
+    """Always single-quote, unlike `shlex.quote`: a bare `/` would end the
+    pattern of `${var//pattern/…}`."""
+    return "'" + text.replace("'", "'\"'\"'") + "'"
 
 
 def _finish(lines: list[str]) -> str:

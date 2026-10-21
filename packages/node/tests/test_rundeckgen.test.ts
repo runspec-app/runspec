@@ -94,6 +94,32 @@ test('password option is secure + exposed with no value', () => {
   expect('value' in opt).toBe(false);
 });
 
+test('multiple arg: multi-valued option with a delimiter-joined list default', () => {
+  const opt = renderOption('states', arg({ type: 'choice', options: ['Missing', 'Stale', 'Ok'], multiple: true, default: ['Missing', 'Stale'] }));
+  expect(opt.multivalued).toBe(true);
+  expect(opt.delimiter).toBe(',');
+  expect(opt.values).toEqual(['Missing', 'Stale', 'Ok']);
+  expect(opt.enforced).toBe(true);
+  expect(opt.value).toBe('Missing,Stale');
+  expect(opt.description).toContain('several values separated by ","');
+});
+
+test("multiple arg uses the arg's delimiter and drops the numeric regex", () => {
+  const opt = renderOption('ports', arg({ type: 'int', multiple: true, delimiter: ';', default: [80, 443] }));
+  expect(opt.delimiter).toBe(';');
+  expect(opt.value).toBe('80;443');
+  expect(opt.regex).toBeUndefined();
+  expect(renderOption('a', arg({ type: 'str', multiple: true, default: 'one' })).value).toBe('one');
+  expect(renderOption('a', arg({ type: 'str', multiple: true, default: [] })).value).toBeUndefined();
+  expect(renderOption('a', arg({ type: 'str', multiple: true, delimiter: '\n' })).delimiter).toBe(',');
+  expect(renderOption('t', arg({ type: 'password', multiple: true })).multivalued).toBeUndefined();
+  expect(renderOption('r', arg({ type: 'rest', multiple: true })).multivalued).toBeUndefined();
+});
+
+test('multiple arg default value containing the delimiter is refused', () => {
+  expect(() => renderOption('a', arg({ type: 'str', multiple: true, default: ['x,y', 'z'] }))).toThrow(/delimiter/);
+});
+
 test('option description notes constraints', () => {
   const opt = renderOption('id', arg({ type: 'str', required: true, position: 1, description: 'Host' }));
   expect(String(opt['description'])).toContain('positional #1');
@@ -182,6 +208,28 @@ function runSubstituted(dir: string, script: string, values: Record<string, stri
   fs.writeFileSync(file, script.replace(/@option\.([\w-]+)@/g, (_m, n: string) => values[n]));
   return spawnSync('bash', [file], { cwd: dir, encoding: 'utf8', env: env ?? process.env });
 }
+
+bashIt('multi-valued option values reach runspec newline-delimited', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rd-'));
+  const show = showBinary(dir);
+  const args = {
+    states: arg({ type: 'choice', options: ['Missing', 'Stale'], multiple: true, default: ['Missing', 'Stale'] }),
+    paths: arg({ type: 'str', multiple: true, delimiter: '/' }),
+    globs: arg({ type: 'str', multiple: true, delimiter: '*' }),
+    one: arg({ type: 'str' }),
+  };
+  const values = { states: String(renderOption('states', args.states).value), paths: "a/b'c/$(touch pwned)", globs: 'x*y', one: 'a,b' };
+  for (const venv of [null, dir]) {
+    const out = runSubstituted(dir, renderScript('show', [], args, show, null, venv), values);
+    expect(out.status).toBe(0);
+    const env = JSON.parse(out.stdout)[0];
+    expect(env.RUNSPEC_SHOW_ARG_STATES).toBe('Missing\nStale');
+    expect(env.RUNSPEC_SHOW_ARG_PATHS).toBe("a\nb'c\n$(touch pwned)");
+    expect(env.RUNSPEC_SHOW_ARG_GLOBS).toBe('x\ny');
+    expect(env.RUNSPEC_SHOW_ARG_ONE).toBe('a,b');
+  }
+  expect(fs.existsSync(path.join(dir, 'pwned'))).toBe(false);
+});
 
 bashIt('raw-substituted values reach the runnable env as data', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rd-'));

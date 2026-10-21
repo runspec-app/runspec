@@ -95,6 +95,49 @@ def test_option_description_notes_rest_range_pattern():
     assert "pattern ^x" in patt["description"]
 
 
+def test_option_multiple_list_default_is_delimiter_joined():
+    """A list default is written the way Rundeck's multi-valued option holds it
+    — joined by its delimiter — never Python's list repr."""
+    arg = {"type": "choice", "options": ["Missing", "Stale", "Ok"], "multiple": True, "default": ["Missing", "Stale"]}
+    opt = rundeckgen.render_option("states", arg)
+    assert opt["multivalued"] is True
+    assert opt["delimiter"] == ","
+    assert opt["values"] == ["Missing", "Stale", "Ok"]
+    assert opt["enforced"] is True
+    assert opt["value"] == "Missing,Stale"
+    assert 'several values separated by ","' in opt["description"]
+
+
+def test_option_multiple_uses_the_args_delimiter_and_no_numeric_regex():
+    opt = rundeckgen.render_option("ports", {"type": "int", "multiple": True, "delimiter": ";", "default": [80, 443]})
+    assert opt["delimiter"] == ";"
+    assert opt["value"] == "80;443"
+    assert "regex" not in opt  # would test the joined text; runspec checks each value
+
+
+def test_option_multiple_scalar_empty_and_no_default():
+    assert rundeckgen.render_option("a", {"type": "str", "multiple": True, "default": "one"})["value"] == "one"
+    assert "value" not in rundeckgen.render_option("a", {"type": "str", "multiple": True, "default": []})
+    assert "value" not in rundeckgen.render_option("a", {"type": "str", "multiple": True, "required": True})
+
+
+def test_option_multiple_line_break_delimiter_falls_back_to_comma():
+    # A line break can't reach the script (the guard refuses it).
+    assert rundeckgen.render_option("a", {"type": "str", "multiple": True, "delimiter": "\n"})["delimiter"] == ","
+
+
+def test_option_multiple_default_value_containing_delimiter_is_refused():
+    import pytest
+
+    with pytest.raises(ValueError, match="delimiter"):
+        rundeckgen.render_option("a", {"type": "str", "multiple": True, "default": ["x,y", "z"]})
+
+
+def test_option_password_and_rest_are_never_multivalued():
+    assert "multivalued" not in rundeckgen.render_option("t", {"type": "password", "multiple": True})
+    assert "multivalued" not in rundeckgen.render_option("r", {"type": "rest", "multiple": True})
+
+
 # ── script step ───────────────────────────────────────────────────────────────
 
 
@@ -216,6 +259,38 @@ def test_script_values_round_trip_through_bash(tmp_path):
         env, argv = json.loads(out.stdout)
         assert env == {"RUNSPEC_SHOW_ARG_PLAIN": "3", "RUNSPEC_SHOW_ARG_TRICKY": values["tricky"], "RUNSPEC_SHOW_ARG_DELIM": "RUNSPEC_VALUE"}
         assert argv == ["sub"]
+    assert not (tmp_path / "pwned").exists()
+
+
+def test_script_multiple_values_reach_runspec_as_a_list(tmp_path):
+    """Rundeck joins a multi-valued option with its delimiter; the script turns
+    that into runspec's newline-delimited env value, which parse() splits back
+    into the list — including for a delimiter that is a pattern character."""
+    from runspec.parser import _env_value
+
+    _needs_bash()
+    show = _show_binary(tmp_path)
+    args = {
+        "states": {"type": "choice", "options": ["Missing", "Stale"], "multiple": True, "default": ["Missing", "Stale"]},
+        "paths": {"type": "str", "multiple": True, "delimiter": "/"},
+        "globs": {"type": "str", "multiple": True, "delimiter": "*"},
+        "one": {"type": "str"},
+    }
+    values = {
+        "states": rundeckgen.render_option("states", args["states"])["value"],
+        "paths": "a/b'c/$(touch pwned)",
+        "globs": "x*y",
+        "one": "a,b",
+    }
+    for venv in (None, str(tmp_path)):
+        script = rundeckgen.render_script("show", [], args, str(show), venv=venv)
+        out = _run_substituted(tmp_path, script, values)
+        assert out.returncode == 0, out.stderr
+        env = json.loads(out.stdout)[0]
+        assert _env_value(env["RUNSPEC_SHOW_ARG_STATES"], args["states"]) == ["Missing", "Stale"]
+        assert _env_value(env["RUNSPEC_SHOW_ARG_PATHS"], args["paths"]) == ["a", "b'c", "$(touch pwned)"]
+        assert _env_value(env["RUNSPEC_SHOW_ARG_GLOBS"], args["globs"]) == ["x", "y"]
+        assert env["RUNSPEC_SHOW_ARG_ONE"] == "a,b"  # a single-value option is never split
     assert not (tmp_path / "pwned").exists()
 
 
