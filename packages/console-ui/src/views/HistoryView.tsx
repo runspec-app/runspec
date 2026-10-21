@@ -562,7 +562,8 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       r.host.toLowerCase().includes(q) ||
       r.operator.toLowerCase().includes(q) ||
       r.runAs.toLowerCase().includes(q) ||
-      (r.label ?? '').toLowerCase().includes(q)
+      (r.label ?? '').toLowerCase().includes(q) ||
+      (r.commandPath ?? []).join(' ').toLowerCase().includes(q)
     )
   }, [records, search])
 
@@ -602,7 +603,8 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       width: 280,
       ellipsis: true,
       render: (_: unknown, r: HistoryRecord) => {
-        const full = `${r.group ? r.group + '/' : ''}${r.runnable}`
+        const cmd = (r.commandPath ?? []).join(' ')
+        const full = `${r.group ? r.group + '/' : ''}${r.runnable}${cmd ? ' ' + cmd : ''}`
         return (
           <span style={{ fontFamily: MONO_FONT, fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
             {r.trigger === 'schedule' && (
@@ -613,6 +615,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
             <Tooltip title={full}>
               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {r.group && <span style={{ color: 'var(--rs-text-muted)' }}>{r.group}/</span>}{r.runnable}
+                {cmd && <span style={{ color: 'var(--rs-text-muted)' }}> {cmd}</span>}
               </span>
             </Tooltip>
           </span>

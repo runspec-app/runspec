@@ -232,6 +232,9 @@ def test_command_path_normalisation():
     assert _command_path({"command": "add"}) == ["add"]
     assert _command_path({"command": ["a", "b"]}) == ["a", "b"]
     assert _command_path({"command": ["a", "", "b"]}) == ["a", "b"]
+    # search mode's run_runnable spells a nested path as one space-separated string
+    assert _command_path({"command": "restore full"}) == ["restore", "full"]
+    assert _command_path({"command": "  add "}) == ["add"]
 
 
 def test_command_leaf_node_walks_and_falls_back():

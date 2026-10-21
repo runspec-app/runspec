@@ -77,10 +77,15 @@ function AutonomyTag({ level }: { level?: string }) {
   )
 }
 
+// A path segment the tree doesn't have stops the walk at the last node that
+// exists (App validates edit-and-rerun paths first; this keeps a stale one from
+// crashing the dialog).
 function resolveNode(root: Runnable, path: string[]): Runnable {
   let node = root
   for (const seg of path) {
-    node = node.commands![seg]
+    const next = node.commands?.[seg]
+    if (!next) break
+    node = next
   }
   return node
 }

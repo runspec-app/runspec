@@ -375,6 +375,15 @@ let MOCK_ACTIVE_PROFILE = ''
 let MOCK_ACTIVE_ROOM = 'web01'
 
 const MOCK_HISTORY: HistoryRecord[] = [
+  // A subcommand run — Edit & rerun must open `migrate › up`, not the top level.
+  {
+    id: 'sub-1', runId: 'sub-1', runnable: 'migrate', group: 'platform-core', host: 'prod-2', operator: 'Jason Finestone', runAs: 'svc-migrations',
+    exitCode: 0, durationMs: 1500, ts: new Date(Date.now() - 1800000).toISOString(),
+    initiatedBy: 'user', commandPath: ['up'],
+    args: { steps: '3', 'dry-run': 'True' },
+    argSources: { steps: 'cli', 'dry-run': 'cli' },
+    logLines: [],
+  },
   {
     id: '1', runnable: 'backup', group: 'ops-tools', host: 'local', operator: 'Jason Finestone', runAs: 'DESKTOP\\jason',
     exitCode: 0, durationMs: 3201, ts: new Date(Date.now() - 3600000).toISOString(),

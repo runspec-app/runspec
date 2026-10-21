@@ -19,6 +19,18 @@ describe('rerunFromToolEntry', () => {
     expect(r).toEqual({ host: '', runnable: 'ping', args: {}, commandPath: [] })
   })
 
+  it('reads a string command (search mode always sends one)', () => {
+    const r = rerunFromToolEntry(entry('run_runnable', {
+      id: 'jira', host: 'local', args: { key: 'OPS-1' }, command: 'get-issue',
+    }))
+    expect(r).toEqual({ host: 'local', runnable: 'jira', args: { key: 'OPS-1' }, commandPath: ['get-issue'] })
+  })
+
+  it('splits a space-separated nested command into a path', () => {
+    const r = rerunFromToolEntry(entry('run_runnable', { id: 'backup', host: 'h', command: 'restore full' }))
+    expect(r?.commandPath).toEqual(['restore', 'full'])
+  })
+
   it('returns null for a run_runnable envelope with no id', () => {
     expect(rerunFromToolEntry(entry('run_runnable', { host: 'web1' }))).toBeNull()
   })
@@ -26,6 +38,11 @@ describe('rerunFromToolEntry', () => {
   it('parses a per_host prefixed tool (prefix = host)', () => {
     const r = rerunFromToolEntry(entry('web1__deploy', { env: 'prod', command: ['rollout'] }))
     expect(r).toEqual({ host: 'web1', runnable: 'deploy', args: { env: 'prod' }, commandPath: ['rollout'] })
+  })
+
+  it('reads a flat prefixed tool\'s string command enum', () => {
+    const r = rerunFromToolEntry(entry('web1__cron', { schedule: '@daily', command: 'add' }))
+    expect(r).toEqual({ host: 'web1', runnable: 'cron', args: { schedule: '@daily' }, commandPath: ['add'] })
   })
 
   it('parses a dedup prefixed tool (prefix = venv/group), host resolved App-side', () => {

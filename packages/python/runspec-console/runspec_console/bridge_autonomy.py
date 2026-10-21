@@ -75,14 +75,17 @@ if TYPE_CHECKING:
 
 
 def _command_path(inner_args: dict[str, Any]) -> list[str]:
-    """Normalise the call's chosen subcommand to a path, mirroring
-    ``_run_tool_sync``: a ``str`` → one-element path, a ``list`` → the path as-is
-    (a saved run stores a possibly-nested path), missing/empty → ``[]``."""
+    """Normalise the call's chosen subcommand to a path, shared with
+    ``_run_tool_sync``: a ``str`` is split on whitespace (a flat dedup enum value
+    is one name; search mode's ``run_runnable`` spells a nested path
+    space-separated, ``"restore full"``), a ``list`` is the path (a nested dedup
+    tool / saved run), missing/empty → ``[]``. Subcommand names never contain
+    whitespace, so splitting is safe."""
     chosen = (inner_args or {}).get("command")
     if isinstance(chosen, list):
-        return [str(c) for c in chosen if str(c)]
-    if isinstance(chosen, str) and chosen:
-        return [chosen]
+        return [p for c in chosen for p in str(c).split()]
+    if isinstance(chosen, str):
+        return chosen.split()
     return []
 
 
@@ -1836,15 +1839,7 @@ class AutonomyMixin:
             # Dedup keys the tool by runnable name; per-host by host__name. Either is
             # already the id the Console card shows, so it names the spill as-is.
             spill_name = tool_name
-            if isinstance(chosen_command, list):
-                # A saved run stores its subcommand as a path (possibly nested).
-                command_path = [str(c) for c in chosen_command if str(c)]
-            else:
-                command_path = (
-                    [chosen_command]
-                    if isinstance(chosen_command, str) and chosen_command
-                    else []
-                )
+            command_path = _command_path({"command": chosen_command})
             dbg_env = utils_mod.pop_debug(cached_r, command_path, call_args)
         entry = self._host_entry(host)
         if entry is None:

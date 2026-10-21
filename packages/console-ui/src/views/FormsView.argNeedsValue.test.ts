@@ -94,6 +94,12 @@ describe('initialFormValues (edit-and-rerun prefill)', () => {
       .toEqual({ workers: 8, mode: 'b', verbose: true, name: 'run-42' })
   })
 
+  it('reads a History record\'s text flag values ("False" stays off)', () => {
+    expect(initialFormValues(args, { verbose: 'False' }).verbose).toBe(false)
+    expect(initialFormValues(args, { verbose: 'True' }).verbose).toBe(true)
+    expect(initialFormValues(args, { verbose: 'true' }).verbose).toBe(true)
+  })
+
   it('drops prefill keys that are not declared args', () => {
     const v = initialFormValues(args, { workers: 8, removed_arg: 'x' })
     expect(v.workers).toBe(8)

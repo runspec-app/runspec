@@ -18,6 +18,28 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   is its own `service.instance.id`, and turn spans carry
   `runspec.lab.variant`/`scenario`/`sample`/`tier`.
 
+## [0.353.1] — 2026-10-21
+
+### Fixed
+
+- **Edit & rerun opens the subcommand that ran.** The pencil on an agent's
+  tool card read the subcommand only when it was a list, but the agent sends a
+  string (search mode's `run_runnable`, and a flat runnable's `command` enum),
+  so a runnable with subcommands opened its top-level form. The Console card and
+  History both now open the recorded subcommand with its args filled in; a
+  subcommand the runnable no longer has opens the deepest one that exists, with
+  a warning (`formsMatch.toCommandPath` / `resolveCommandPath`).
+- **Edit & rerun keeps off flags off.** History records arg values as text, so
+  a flag came back as `"False"` and the switch showed it on.
+- **Search mode runs nested subcommands.** A `run_runnable` `command` of
+  `"restore full"` was passed as one argv token; it is now split into the path
+  (`bridge_autonomy._command_path`, now also used by `_run_tool_sync`).
+
+### Changed
+
+- History's Runnable column shows the subcommand (`jira get-issue`), and the
+  History search matches it.
+
 ## [0.353.0] — 2026-10-20
 
 ### Changed

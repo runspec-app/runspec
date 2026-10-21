@@ -63,3 +63,27 @@ export function matchRunnableForEdit(
   // 4. Name-only, where the given `host` is really a host or a venv/group.
   return uniqueHost(runnables.filter(r => r.name === idOrName && (r.host === host || r.group === host)))
 }
+
+// A subcommand path from whichever shape carried it: an array (a nested dedup
+// tool's `command`, a saved run, a History record) or a string (a flat dedup
+// tool's enum value, or search mode's `run_runnable` `command`, which spells a
+// nested path space-separated — "restore full"). Subcommand names never contain
+// whitespace, so splitting is safe. Anything else → [].
+export function toCommandPath(v: unknown): string[] {
+  const parts = Array.isArray(v) ? v.map(String) : typeof v === 'string' ? [v] : []
+  return parts.flatMap(p => p.split(/\s+/)).filter(Boolean)
+}
+
+// Walk `path` into `r`'s command tree. `path` is the longest prefix that exists
+// (what the Forms dialog can open); `missing` is the rest — non-empty when the
+// recorded subcommand isn't in the runnable as discovered now (renamed, or a
+// different version on that host).
+export function resolveCommandPath(r: Runnable, path: string[]): { path: string[]; missing: string[] } {
+  let node: Runnable = r
+  for (let i = 0; i < path.length; i++) {
+    const next = node.commands?.[path[i]]
+    if (!next) return { path: path.slice(0, i), missing: path.slice(i) }
+    node = next
+  }
+  return { path, missing: [] }
+}

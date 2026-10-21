@@ -2,6 +2,7 @@ import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } fro
 import { Button, Checkbox, Dropdown, Input, Tag, Tooltip, Typography, message } from 'antd'
 import type { MenuProps } from 'antd'
 import { bridge } from '../bridge'
+import { toCommandPath } from '../views/formsMatch'
 import { Markdown } from './Markdown'
 import { shortcutHint } from '../shortcuts'
 import { useIsDark, textColor, useAccent, surfaces, textFaint, textMuted, textSecondary, MONO_FONT, RADIUS } from '../ThemeContext'
@@ -596,8 +597,11 @@ export function rerunFromToolEntry(entry: ToolCallEntry): RerunData | null {
   const input = (entry.input ?? {}) as Record<string, unknown>
   const asArgs = (v: unknown): Record<string, unknown> =>
     v && typeof v === 'object' && !Array.isArray(v) ? { ...(v as Record<string, unknown>) } : {}
-  const asPath = (v: unknown): string[] =>
-    Array.isArray(v) ? (v as unknown[]).map(String) : []
+  // `command` is a string for a flat runnable (the dedup enum value, and always
+  // in search mode — space-separated when nested) and an array for a nested
+  // dedup tool; reading only arrays dropped the subcommand, so the pencil opened
+  // the runnable's top-level form.
+  const asPath = toCommandPath
 
   // search mode: the generic `run_runnable` envelope carries everything.
   if (name === 'run_runnable') {

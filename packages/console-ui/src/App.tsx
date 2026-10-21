@@ -38,7 +38,7 @@ import {
 } from '@ant-design/icons'
 import { ConsoleView } from './views/ConsoleView'
 import { useWaitingCue } from './useWaitingCue'
-import { matchRunnableForEdit } from './views/formsMatch'
+import { matchRunnableForEdit, resolveCommandPath, toCommandPath } from './views/formsMatch'
 import { openTerminals as openGroupTerminals } from './views/terminals'
 import type { PendingForm } from './views/FormsView'
 // Code-split: everything below is off the Console tab's first-paint path, so it
@@ -714,8 +714,8 @@ export default function App() {
   // previous run's values, instead of a flat plain-text arg editor.
   useEffect(() => {
     const onEditInForm = (e: Event) => {
-      const { host, runnable, args, commandPath = [] } =
-        (e as CustomEvent).detail as { host: string; runnable: string; args: Record<string, unknown>; commandPath?: string[] }
+      const { host, runnable, args, commandPath: rawPath } =
+        (e as CustomEvent).detail as { host: string; runnable: string; args: Record<string, unknown>; commandPath?: unknown }
       // `runnable` may be a plain name (human run / History) or an agent tool id —
       // a search-mode run_runnable dedup id (the sanitised runnable name, or its
       // legacy group__name spelling) or a host__name id; `host` may be a concrete
@@ -728,6 +728,13 @@ export default function App() {
         const where = host ? ` on ${host}` : ''
         message.warning(`Can't open a form for "${runnable}" — it isn't currently discovered${where}.`)
         return
+      }
+      // Open the run dialog on the recorded subcommand, not the runnable's top
+      // level. A segment the runnable no longer has (renamed, or another version
+      // on this host) opens the deepest one that exists, and says so.
+      const { path: commandPath, missing } = resolveCommandPath(found, toCommandPath(rawPath))
+      if (missing.length) {
+        message.warning(`"${found.name}" has no command "${[...commandPath, ...missing].join(' ')}" here — opening ${commandPath.length ? `"${commandPath.join(' ')}"` : 'its top level'} instead.`)
       }
       setPendingForm({ runnable: found, commandPath, prefill: args })
       setView('forms')

@@ -220,9 +220,16 @@ export function initialFormValues(
   for (const [k, v] of Object.entries(prefill ?? {})) {
     const arg = args.find(a => a.name === k)
     if (!declared.has(k) || arg?.type === 'password') continue
-    values[k] = v
+    values[k] = arg?.type === 'flag' ? flagValue(v) : v
   }
   return values
+}
+
+// A History record stores every arg as text — a flag reads "True" / "False" —
+// and the Switch shows any non-empty string as on, so an off flag came back on.
+function flagValue(v: unknown): boolean {
+  if (typeof v === 'string') return ['true', '1', 'yes', 'on'].includes(v.trim().toLowerCase())
+  return !!v
 }
 
 // ─── Arg input ───────────────────────────────────────────────────────────────
