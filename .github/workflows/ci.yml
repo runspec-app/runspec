@@ -66,6 +66,8 @@ jobs:
       prometheus-core: ${{ steps.filter.outputs.prometheus-core }}
       grafana: ${{ steps.filter.outputs.grafana }}
       grafana-core: ${{ steps.filter.outputs.grafana-core }}
+      wireshark: ${{ steps.filter.outputs.wireshark }}
+      wireshark-core: ${{ steps.filter.outputs.wireshark-core }}
       rundeck: ${{ steps.filter.outputs.rundeck }}
       rundeck-core: ${{ steps.filter.outputs.rundeck-core }}
       jira: ${{ steps.filter.outputs.jira }}
@@ -180,6 +182,13 @@ jobs:
               - 'packages/python/runspec-grafana-core/**'
             grafana-core:
               - 'packages/python/runspec-grafana-core/**'
+              - '.github/workflows/ci.yml'
+            wireshark:
+              - 'packages/python/runspec-wireshark/**'
+              - 'packages/python/runspec-wireshark-core/**'
+              - '.github/workflows/ci.yml'
+            wireshark-core:
+              - 'packages/python/runspec-wireshark-core/**'
               - '.github/workflows/ci.yml'
             rundeck:
               - 'packages/python/runspec-rundeck/**'
@@ -2594,6 +2603,184 @@ jobs:
           print('Wheel contents OK')
           "
 
+  # ── runspec-wireshark-core ────────────────────────────────────────────────
+
+  wireshark-core-quality:
+    name: "wireshark-core quality / ${{ matrix.check }}"
+    needs: changes
+    if: needs.changes.outputs.wireshark-core == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [lint, format]
+    defaults:
+      run:
+        working-directory: packages/python/runspec-wireshark-core
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Lint
+        if: matrix.check == 'lint'
+        run: ruff check .
+
+      - name: Format check
+        if: matrix.check == 'format'
+        run: ruff format --check .
+
+  wireshark-core-test:
+    name: runspec-wireshark-core test
+    needs: changes
+    if: needs.changes.outputs.wireshark-core == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/python/runspec-wireshark-core
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          cache: pip
+          cache-dependency-path: packages/python/runspec-wireshark-core/pyproject.toml
+          python-version: "3.12"
+
+      - name: Install tshark
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y tshark
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Type check
+        run: mypy runspec_wireshark_core/
+
+      - name: Run tests
+        # The integration tests read tests/data/sample.pcapng with the real tshark.
+        run: pytest
+
+      - name: Build wheel
+        run: |
+          pip install build
+          python -m build --wheel
+
+      - name: Wheel smoke test
+        run: |
+          python -m venv /tmp/smoke-core
+          /tmp/smoke-core/bin/pip install dist/*.whl
+          # The split's contract: importable helpers, but no runspec dependency,
+          # no runspec.toml, and no console scripts — so it surfaces no runnables.
+          /tmp/smoke-core/bin/python -c "
+          import importlib.metadata as m
+          from runspec_wireshark_core import summary, follow
+          reqs = m.requires('runspec-wireshark-core') or []
+          assert not any(r.split()[0].lower().startswith('runspec') for r in reqs), f'core must not depend on runspec: {reqs}'
+          eps = m.entry_points()
+          scripts = [e.name for e in eps.select(group='console_scripts') if e.value.startswith('runspec_wireshark_core')]
+          assert not scripts, f'core must not ship console scripts: {scripts}'
+          print('core surface OK — importable, zero runnables')
+          "
+
+  # ── runspec-wireshark ─────────────────────────────────────────────────────────
+
+  wireshark-quality:
+    name: "wireshark quality / ${{ matrix.check }}"
+    needs: changes
+    if: needs.changes.outputs.wireshark == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [lint, format]
+    defaults:
+      run:
+        working-directory: packages/python/runspec-wireshark
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        # runspec-wireshark-core isn't published yet — install it from the
+        # sibling source so the runspec-wireshark deps resolve locally.
+        run: |
+          pip install -e ../runspec-wireshark-core
+          pip install -e ".[dev]"
+
+      - name: Lint
+        if: matrix.check == 'lint'
+        run: ruff check .
+
+      - name: Format check
+        if: matrix.check == 'format'
+        run: ruff format --check .
+
+  wireshark-test:
+    name: runspec-wireshark test
+    needs: changes
+    if: needs.changes.outputs.wireshark == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/python/runspec-wireshark
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          cache: pip
+          cache-dependency-path: packages/python/runspec-wireshark/pyproject.toml
+          python-version: "3.12"
+
+      - name: Install tshark
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y tshark
+
+      - name: Install dependencies
+        # runspec-wireshark-core isn't published yet — install it from the
+        # sibling source so the runspec-wireshark deps resolve locally.
+        run: |
+          pip install -e ../runspec-wireshark-core
+          pip install -e ".[dev]"
+
+      - name: Run tests
+        run: pytest
+
+      - name: Check the shipped mocks
+        run: runspec mock check pcap
+
+      - name: Build wheel
+        run: |
+          pip install build
+          python -m build --wheel
+
+      - name: Wheel smoke test
+        run: |
+          python -m venv /tmp/smoke
+          # Install the unpublished core dependency first, then the wheel under test.
+          /tmp/smoke/bin/pip install ../runspec-wireshark-core
+          /tmp/smoke/bin/pip install dist/*.whl
+          /tmp/smoke/bin/pcap --help
+          /tmp/smoke/bin/python -c "
+          from importlib.resources import files
+          pkg = files('runspec_wireshark')
+          assert (pkg / 'runspec.toml').is_file(), 'runspec.toml missing from wheel'
+          assert (pkg / 'mocks' / 'pcap.json').is_file(), 'mocks/pcap.json missing from wheel'
+          from runspec_wireshark import summary
+          print('Wheel contents OK')
+          "
+
   # ── runspec-rundeck-core ─────────────────────────────────────────────────────
 
   rundeck-core-quality:
@@ -3193,7 +3380,7 @@ jobs:
 
   ci:
     name: CI
-    needs: [python-quality, python-test, node, linux-quality, linux-test, linux-core-quality, linux-core-test, linux-root-quality, linux-root-test, jsm-quality, jsm-test, snow-quality, snow-test, logops-quality, logops-test, logops-core-quality, logops-core-test, playbook-quality, playbook-test, claude-quality, claude-test, tui-quality, tui-test, scheduler-quality, scheduler-test, mcp-quality, mcp-test, console-room-quality, console-room-test, windows-quality, windows-unit, windows-smoke, o365-quality, o365-test, console-quality, console-test, console-test-windows, console-ui, console-smoke, console-app-smoke, webops, webops-core-quality, webops-core-test, fs-core-quality, fs-core-test, fs-quality, fs-test, gitlab-core-quality, gitlab-core-test, gitlab-quality, gitlab-test, prometheus-core-quality, prometheus-core-test, prometheus-quality, prometheus-test, grafana-core-quality, grafana-core-test, grafana-quality, grafana-test, rundeck-core-quality, rundeck-core-test, rundeck-quality, rundeck-test, jira-core-quality, jira-core-test, jira-quality, jira-test, confluence-core-quality, confluence-core-test, confluence-quality, confluence-test, docs-check]
+    needs: [python-quality, python-test, node, linux-quality, linux-test, linux-core-quality, linux-core-test, linux-root-quality, linux-root-test, jsm-quality, jsm-test, snow-quality, snow-test, logops-quality, logops-test, logops-core-quality, logops-core-test, playbook-quality, playbook-test, claude-quality, claude-test, tui-quality, tui-test, scheduler-quality, scheduler-test, mcp-quality, mcp-test, console-room-quality, console-room-test, windows-quality, windows-unit, windows-smoke, o365-quality, o365-test, console-quality, console-test, console-test-windows, console-ui, console-smoke, console-app-smoke, webops, webops-core-quality, webops-core-test, fs-core-quality, fs-core-test, fs-quality, fs-test, gitlab-core-quality, gitlab-core-test, gitlab-quality, gitlab-test, prometheus-core-quality, prometheus-core-test, prometheus-quality, prometheus-test, grafana-core-quality, grafana-core-test, grafana-quality, grafana-test, wireshark-core-quality, wireshark-core-test, wireshark-quality, wireshark-test, rundeck-core-quality, rundeck-core-test, rundeck-quality, rundeck-test, jira-core-quality, jira-core-test, jira-quality, jira-test, confluence-core-quality, confluence-core-test, confluence-quality, confluence-test, docs-check]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -3269,6 +3456,10 @@ jobs:
           check "grafana-core-test"    "${{ needs.grafana-core-test.result }}"
           check "grafana-quality"  "${{ needs.grafana-quality.result }}"
           check "grafana-test"     "${{ needs.grafana-test.result }}"
+          check "wireshark-core-quality" "${{ needs.wireshark-core-quality.result }}"
+          check "wireshark-core-test"    "${{ needs.wireshark-core-test.result }}"
+          check "wireshark-quality"  "${{ needs.wireshark-quality.result }}"
+          check "wireshark-test"     "${{ needs.wireshark-test.result }}"
           check "rundeck-core-quality" "${{ needs.rundeck-core-quality.result }}"
           check "rundeck-core-test"    "${{ needs.rundeck-core-test.result }}"
           check "rundeck-quality" "${{ needs.rundeck-quality.result }}"

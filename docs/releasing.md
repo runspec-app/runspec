@@ -46,6 +46,8 @@ publishes. Publishing is always an explicit step.
 | `runspec-prometheus-core` | `packages/python/runspec-prometheus-core/pyproject.toml` | `prometheus-core-v` | `prometheus-core-release.yml` | PyPI + GitHub Release |
 | `runspec-grafana` | `packages/python/runspec-grafana/pyproject.toml` | `grafana-v` | `grafana-release.yml` | PyPI + GitHub Release |
 | `runspec-grafana-core` | `packages/python/runspec-grafana-core/pyproject.toml` | `grafana-core-v` | `grafana-core-release.yml` | PyPI + GitHub Release |
+| `runspec-wireshark` | `packages/python/runspec-wireshark/pyproject.toml` | `wireshark-v` | `wireshark-release.yml` | PyPI + GitHub Release |
+| `runspec-wireshark-core` | `packages/python/runspec-wireshark-core/pyproject.toml` | `wireshark-core-v` | `wireshark-core-release.yml` | PyPI + GitHub Release |
 | `runspec-jira` | `packages/python/runspec-jira/pyproject.toml` | `jira-v` | `jira-release.yml` | PyPI + GitHub Release |
 | `runspec-jira-core` | `packages/python/runspec-jira-core/pyproject.toml` | `jira-core-v` | `jira-core-release.yml` | PyPI + GitHub Release |
 | `runspec-confluence` | `packages/python/runspec-confluence/pyproject.toml` | `confluence-v` | `confluence-release.yml` | PyPI + GitHub Release |
@@ -130,6 +132,9 @@ means the tag doesn't exist yet and the run fails.
 - **`runspec-grafana` depends on `runspec-grafana-core`** — same rule:
   publish `runspec-grafana-core` to PyPI **first**, then `runspec-grafana`,
   so its `runspec-grafana-core>=…` floor resolves.
+- **`runspec-wireshark` depends on `runspec-wireshark-core`** — same rule:
+  publish `runspec-wireshark-core` to PyPI **first**, then `runspec-wireshark`,
+  so its `runspec-wireshark-core>=…` floor resolves.
 - **`runspec-jira` depends on `runspec-jira-core`** — same rule: publish
   `runspec-jira-core` to PyPI **first**, then `runspec-jira`, so its
   `runspec-jira-core>=…` floor resolves.

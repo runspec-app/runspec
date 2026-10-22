@@ -1,0 +1,253 @@
+#:schema https://runspec.app/runspec.schema.json
+
+# runspec-wireshark — packet captures as a runspec runnable, over Wireshark's
+# tshark. The verbs follow the open-source Wireshark MCP servers
+# (mcp-wireshark, WireMCP, sharkline, wireshark-mcp), which all wrap tshark.
+#
+# One runnable, `pcap`, with a verb per tool. Reading a capture is read-only
+# and `autonomous`; the verbs that create files (capture, save-filtered, merge,
+# export-objects) are `confirm`. `runspec serve` re-expands each verb into its
+# own leaf MCP tool (pcap_summary, pcap_follow, …), so a runspec-console agent
+# calls them individually — over SSH, on the host where the capture is.
+#
+# The runnable is `pcap`, not `wireshark` or `tshark`, so it never shadows the
+# real Wireshark binaries on PATH.
+#
+# Needs tshark: `apt install tshark` / `dnf install wireshark-cli` / the
+# Wireshark installer (Windows, macOS). TSHARK_PATH points at a tshark that
+# isn't on PATH. Name resolution is off (no DNS lookups for every address);
+# --resolve-names turns it on.
+
+[config]
+autonomy-default = "confirm"
+
+[config.logging]
+store = "per-run"
+
+[pcap]
+description = "Read packet captures with Wireshark's tshark — summary, packets, one packet decoded, conversations, followed streams, DNS/HTTP/TLS problems, expert warnings — and capture, filter, or merge pcap files"
+output = "json"
+require-command = true
+examples = [
+  {cmd = "pcap summary /tmp/outage.pcapng", description = "First look: protocols, busiest hosts and connections, resets, expert warnings"},
+  {cmd = "pcap packets /tmp/outage.pcapng --filter 'tcp.flags.reset == 1'", description = "Every TCP reset, with the stream index of each connection"},
+  {cmd = "pcap follow /tmp/outage.pcapng 3", description = "The text of TCP stream 3, both directions in order"},
+  {cmd = "pcap tls /tmp/outage.pcapng --failed", description = "TLS handshakes that failed, with SNI and the alert (unknown_ca, handshake_failure …)"},
+  {cmd = "pcap http /tmp/outage.pcapng --errors", description = "HTTP requests that got a 4xx/5xx or no answer"},
+  {cmd = "pcap capture -i eth0 --duration 30 -f 'host 10.0.0.5 and port 443'", description = "Capture 30 seconds of one host's HTTPS traffic to a file"},
+]
+
+# ── global args (inherited by every verb) ──────────────────────────────────
+[pcap.args]
+tshark = {type = "str", required = false, env = ["TSHARK_PATH", "WIRESHARK_TSHARK"], description = "Path to tshark when it isn't on PATH (e.g. C:\\Program Files\\Wireshark\\tshark.exe); capinfos and mergecap are looked for next to it"}
+keylog-file = {type = "str", required = false, env = ["WIRESHARK_KEYLOG_FILE", "SSLKEYLOGFILE"], ui = "file", description = "TLS key log (SSLKEYLOGFILE format) to decrypt TLS — then follow --protocol tls and http show the payload"}
+decode-as = {type = "str", multiple = true, required = false, description = "Decode a port as a protocol, tshark -d style: tcp.port==8888,http (repeat)"}
+resolve-names = {type = "flag", default = false, description = "Resolve addresses to names (off by default: it is slow and sends DNS lookups)"}
+timeout = {type = "int", default = 120, range = [1, 3600], env = "WIRESHARK_TIMEOUT", description = "Seconds before a tshark run is stopped"}
+
+# ── install / interfaces / files → autonomous ──────────────────────────────
+
+[pcap.commands.check]
+description = "Check the install: where tshark, capinfos, mergecap and dumpcap are, and the tshark version"
+autonomy = "autonomous"
+
+[pcap.commands.list-interfaces]
+description = "List the network interfaces tshark can capture on (index and name, for capture -i)"
+autonomy = "autonomous"
+[pcap.commands.list-interfaces.args]
+all = {type = "flag", default = false, description = "Also list the extcap helpers (sshdump, randpkt …) and virtual interfaces"}
+
+[pcap.commands.file-info]
+description = "A capture file's metadata: packets, size, duration, first and last packet time, link type"
+autonomy = "autonomous"
+[pcap.commands.file-info.args]
+file = {type = "path", position = 1, ui = "file", description = "Capture file (.pcap, .pcapng, …)"}
+
+[pcap.commands.summary]
+description = "First look at a capture in one call: file info, the main protocols, busiest hosts, largest TCP/UDP conversations, reset count, expert warnings and errors"
+autonomy = "autonomous"
+[pcap.commands.summary.args]
+file = {type = "path", position = 1, ui = "file", description = "Capture file (.pcap, .pcapng, …)"}
+filter = {type = "str", short = "-Y", required = false, description = "Display filter to summarise only part of the capture (e.g. ip.addr == 10.0.0.5)"}
+top = {type = "int", default = 5, range = [1, 50], description = "How many hosts, conversations and expert messages to list"}
+
+# ── packets → autonomous ───────────────────────────────────────────────────
+
+[pcap.commands.packets]
+description = "List packets matching a display filter: number, time, source, destination, protocol, length, info, and the TCP/UDP stream index (for follow). Paged with --limit/--offset; total counts every match"
+autonomy = "autonomous"
+[pcap.commands.packets.args]
+file = {type = "path", position = 1, ui = "file", description = "Capture file (.pcap, .pcapng, …)"}
+filter = {type = "str", short = "-Y", required = false, description = "Wireshark display filter, e.g. tcp.flags.reset == 1, http.response.code >= 500, ip.addr == 10.0.0.5"}
+limit = {type = "int", default = 25, range = [0, 1000], description = "Most packets to return (0 = all)"}
+offset = {type = "int", default = 0, range = [0, 1000000000], description = "Matching packets to skip (next_offset of the previous page)"}
+absolute-time = {type = "flag", default = false, description = "Show each packet's UTC time instead of seconds since the first packet"}
+
+[pcap.commands.packet]
+description = "Decode one packet: each protocol layer's title and fields, like Wireshark's detail pane. --layer narrows it to some protocols, --depth shows nested fields"
+autonomy = "autonomous"
+[pcap.commands.packet.args]
+file = {type = "path", position = 1, ui = "file", description = "Capture file (.pcap, .pcapng, …)"}
+number = {type = "int", position = 2, range = [1, 1000000000], description = "Packet number (the no column of packets)"}
+layer = {type = "str", multiple = true, delimiter = ",", required = false, description = "Only detail these protocols, e.g. ip,tcp,http (the other layers keep just their title)"}
+depth = {type = "int", default = 1, range = [0, 10], description = "Levels of nested fields to show under each layer (0 = layer titles only)"}
+include = {type = "choice", options = ["bytes", "frame"], multiple = true, delimiter = ",", required = false, description = "Add parts: bytes (a hex dump), frame (every Frame-layer field)"}
+raw = {type = "flag", default = false, description = "Return tshark's JSON for the packet instead (large)"}
+
+[pcap.commands.fields]
+description = "Extract chosen fields (ip.src, http.host, dns.qry.name, tcp.analysis.ack_rtt …) from each matching packet, as rows. Paged with --limit/--offset"
+autonomy = "autonomous"
+[pcap.commands.fields.args]
+file = {type = "path", position = 1, ui = "file", description = "Capture file (.pcap, .pcapng, …)"}
+field = {type = "str", multiple = true, delimiter = ",", description = "Field names, repeat or comma-separate (at most 20), e.g. ip.src,tcp.dstport,http.request.uri"}
+filter = {type = "str", short = "-Y", required = false, description = "Display filter choosing the packets"}
+limit = {type = "int", default = 50, range = [0, 5000], description = "Most rows to return (0 = all)"}
+offset = {type = "int", default = 0, range = [0, 1000000000], description = "Matching packets to skip (next_offset of the previous page)"}
+max-chars = {type = "int", default = 200, range = [0, 100000], description = "Cut each value to this many characters (0 = no limit)"}
+
+[pcap.commands.top]
+description = "The most common values of one field — top talkers (ip.src), busiest hosts (http.host), most-used ports (tcp.dstport), server names (tls.handshake.extensions_server_name) — by packets or bytes"
+autonomy = "autonomous"
+[pcap.commands.top.args]
+file = {type = "path", position = 1, ui = "file", description = "Capture file (.pcap, .pcapng, …)"}
+field = {type = "str", position = 2, description = "Field to count, e.g. ip.src, tcp.dstport, http.host"}
+filter = {type = "str", short = "-Y", required = false, description = "Display filter choosing the packets"}
+by = {type = "choice", options = ["packets", "bytes"], default = "packets", description = "Count packets, or sum their bytes"}
+limit = {type = "int", default = 10, range = [0, 1000], description = "How many values to list (0 = all)"}
+
+# ── statistics → autonomous ────────────────────────────────────────────────
+
+[pcap.commands.protocols]
+description = "Protocol hierarchy: which protocols the capture holds and what share of frames and bytes each takes"
+autonomy = "autonomous"
+[pcap.commands.protocols.args]
+file = {type = "path", position = 1, ui = "file", description = "Capture file (.pcap, .pcapng, …)"}
+filter = {type = "str", short = "-Y", required = false, description = "Display filter choosing the packets"}
+max-depth = {type = "int", default = 0, range = [0, 20], description = "Leave out deeper levels (0 = all)"}
+
+[pcap.commands.conversations]
+description = "Who talked to whom: per TCP/UDP connection (with its stream index for follow) or IP/Ethernet host pair — packets and bytes each way, start, duration, and for TCP whether SYN/FIN/RST were seen. Largest first"
+autonomy = "autonomous"
+[pcap.commands.conversations.args]
+file = {type = "path", position = 1, ui = "file", description = "Capture file (.pcap, .pcapng, …)"}
+type = {type = "choice", options = ["tcp", "udp", "ip", "eth"], default = "tcp", description = "Conversation level"}
+filter = {type = "str", short = "-Y", required = false, description = "Display filter choosing the packets"}
+sort = {type = "choice", options = ["bytes", "packets", "duration", "start"], default = "bytes", description = "Order: largest bytes/packets, longest, or earliest first"}
+limit = {type = "int", default = 20, range = [0, 10000], description = "Most conversations to list (0 = all)"}
+
+[pcap.commands.endpoints]
+description = "Every address (ip/eth) or address:port (tcp/udp) seen, with packets and bytes sent and received. Busiest first"
+autonomy = "autonomous"
+[pcap.commands.endpoints.args]
+file = {type = "path", position = 1, ui = "file", description = "Capture file (.pcap, .pcapng, …)"}
+type = {type = "choice", options = ["ip", "tcp", "udp", "eth"], default = "ip", description = "Endpoint level"}
+filter = {type = "str", short = "-Y", required = false, description = "Display filter choosing the packets"}
+limit = {type = "int", default = 20, range = [0, 10000], description = "Most endpoints to list (0 = all)"}
+
+[pcap.commands.expert]
+description = "Wireshark's expert analysis — resets, retransmissions, zero windows, out-of-order and malformed packets — grouped by message, worst first, with counts and the first packet of each"
+autonomy = "autonomous"
+[pcap.commands.expert.args]
+file = {type = "path", position = 1, ui = "file", description = "Capture file (.pcap, .pcapng, …)"}
+severity = {type = "choice", options = ["chat", "note", "warning", "error"], default = "warning", description = "Lowest level to show"}
+filter = {type = "str", short = "-Y", required = false, description = "Display filter choosing the packets"}
+limit = {type = "int", default = 25, range = [0, 1000], description = "Most messages to list (0 = all)"}
+
+[pcap.commands.io]
+description = "Traffic over time: packets and bytes per interval, gaps included, with the peak — to see when traffic started, stopped or spiked"
+autonomy = "autonomous"
+[pcap.commands.io.args]
+file = {type = "path", position = 1, ui = "file", description = "Capture file (.pcap, .pcapng, …)"}
+interval = {type = "float", required = false, range = [0.000001, 86400], description = "Bucket width in seconds (default: chosen so the capture fits in --limit buckets)"}
+filter = {type = "str", short = "-Y", required = false, description = "Display filter choosing the packets"}
+limit = {type = "int", default = 60, range = [1, 10000], description = "Most buckets to return"}
+
+[pcap.commands.stats]
+description = "Any other tshark -z statistic as text — http,tree; dns,tree; io,stat,1; smb,srt; rtp,streams; sip,stat … (see tshark -z help)"
+autonomy = "autonomous"
+[pcap.commands.stats.args]
+file = {type = "path", position = 1, ui = "file", description = "Capture file (.pcap, .pcapng, …)"}
+stat = {type = "str", position = 2, description = "The -z argument, e.g. http,tree or io,stat,1,tcp.analysis.retransmission"}
+max-lines = {type = "int", default = 100, range = [0, 10000], description = "Most lines to return (0 = all)"}
+
+# ── streams and applications → autonomous ──────────────────────────────────
+
+[pcap.commands.follow]
+description = "Follow a stream: the payload of one TCP/UDP/TLS/HTTP connection as text, in order, with who sent each part. The stream index comes from packets or conversations; TLS needs --keylog-file"
+autonomy = "autonomous"
+[pcap.commands.follow.args]
+file = {type = "path", position = 1, ui = "file", description = "Capture file (.pcap, .pcapng, …)"}
+stream = {type = "int", position = 2, default = 0, range = [0, 1000000000], description = "Stream index (tcp.stream / udp.stream)"}
+protocol = {type = "choice", options = ["tcp", "udp", "tls", "http", "http2", "quic", "sip", "websocket", "dccp"], default = "tcp", description = "What to follow; tls/http2/quic need --keylog-file"}
+max-bytes = {type = "int", default = 4000, range = [0, 10000000], description = "Cut the text after this many characters (0 = all)"}
+
+[pcap.commands.dns]
+description = "DNS lookups by name and type: queries, responses, response codes (NXDOMAIN, SERVFAIL …), unanswered queries, slowest response, and answers. Failures first"
+autonomy = "autonomous"
+[pcap.commands.dns.args]
+file = {type = "path", position = 1, ui = "file", description = "Capture file (.pcap, .pcapng, …)"}
+filter = {type = "str", short = "-Y", required = false, description = "Extra display filter, e.g. ip.src == 10.0.0.5"}
+failed = {type = "flag", default = false, description = "Only lookups that failed or got no answer"}
+limit = {type = "int", default = 25, range = [0, 10000], description = "Most names to list (0 = all)"}
+
+[pcap.commands.http]
+description = "HTTP/1.x requests with their responses: method, host, URI, status, response time, plus a count by status. --errors for 4xx/5xx and unanswered, --slow-ms for slow ones"
+autonomy = "autonomous"
+[pcap.commands.http.args]
+file = {type = "path", position = 1, ui = "file", description = "Capture file (.pcap, .pcapng, …)"}
+filter = {type = "str", short = "-Y", required = false, description = "Extra display filter, e.g. http.host contains \"api\""}
+errors = {type = "flag", default = false, description = "Only 4xx/5xx responses and requests with no response"}
+slow-ms = {type = "float", required = false, range = [0, 3600000], description = "Only responses slower than this many milliseconds"}
+limit = {type = "int", default = 25, range = [0, 10000], description = "Most requests to list (0 = all)"}
+
+[pcap.commands.tls]
+description = "TLS handshakes per connection: server name (SNI), version and cipher agreed, ALPN, certificate names (TLS 1.2 and older), and alerts such as unknown_ca, handshake_failure, certificate_expired. Failures first"
+autonomy = "autonomous"
+[pcap.commands.tls.args]
+file = {type = "path", position = 1, ui = "file", description = "Capture file (.pcap, .pcapng, …)"}
+filter = {type = "str", short = "-Y", required = false, description = "Extra display filter, e.g. tls.handshake.extensions_server_name contains \"api\""}
+failed = {type = "flag", default = false, description = "Only handshakes that failed or never completed"}
+limit = {type = "int", default = 25, range = [0, 10000], description = "Most connections to list (0 = all)"}
+
+# ── verbs that create files → confirm ──────────────────────────────────────
+
+[pcap.commands.capture]
+description = "Capture live traffic on an interface to a pcapng file, stopping after --duration seconds, --count packets or --max-mb, whichever comes first. Returns the file path to read with the other verbs. Needs capture rights (root or the wireshark group; Npcap on Windows)"
+autonomy = "confirm"
+[pcap.commands.capture.args]
+interface = {type = "str", short = "-i", description = "Interface name or index from list-interfaces (e.g. eth0, any, 1)"}
+duration = {type = "int", default = 10, range = [1, 3600], description = "Seconds to capture"}
+count = {type = "int", required = false, range = [1, 100000000], description = "Stop after this many packets"}
+capture-filter = {type = "str", short = "-f", required = false, description = "BPF capture filter, e.g. host 10.0.0.5 and port 443 (not a display filter)"}
+output = {type = "str", short = "-w", required = false, description = "File to write (default: capture-<time>.pcapng in --capture-dir)"}
+capture-dir = {type = "str", required = false, env = "WIRESHARK_CAPTURE_DIR", ui = "directory", description = "Folder for the capture file when --output isn't given (default: the temp folder)"}
+max-mb = {type = "int", default = 100, range = [1, 100000], description = "Stop when the file reaches this many megabytes"}
+snaplen = {type = "int", required = false, range = [64, 262144], description = "Keep only the first N bytes of each packet (headers only: 128)"}
+overwrite = {type = "flag", default = false, description = "Replace --output if it exists"}
+
+[pcap.commands.save-filtered]
+description = "Write the packets matching a display filter to a new capture file — e.g. one connection to hand to a colleague or vendor"
+autonomy = "confirm"
+[pcap.commands.save-filtered.args]
+file = {type = "path", position = 1, ui = "file", description = "Capture file to read"}
+filter = {type = "str", short = "-Y", description = "Display filter choosing the packets to keep, e.g. tcp.stream == 3"}
+output = {type = "str", short = "-w", description = "New capture file to write"}
+overwrite = {type = "flag", default = false, description = "Replace --output if it exists"}
+
+[pcap.commands.merge]
+description = "Merge capture files into one, by timestamp (or one after the other with --append) — e.g. the client and server sides of the same problem"
+autonomy = "confirm"
+[pcap.commands.merge.args]
+input = {type = "str", multiple = true, description = "Capture files to merge (repeat: --input a.pcapng --input b.pcapng)"}
+output = {type = "str", short = "-w", description = "Merged capture file to write"}
+append = {type = "flag", default = false, description = "Concatenate in the order given instead of interleaving by time"}
+overwrite = {type = "flag", default = false, description = "Replace --output if it exists"}
+
+[pcap.commands.export-objects]
+description = "Save the files carried in a capture — HTTP bodies, SMB and TFTP transfers, email — into a new folder; returns the names and sizes. Treat them as untrusted"
+autonomy = "confirm"
+[pcap.commands.export-objects.args]
+file = {type = "path", position = 1, ui = "file", description = "Capture file (.pcap, .pcapng, …)"}
+directory = {type = "str", ui = "directory", description = "Folder to save into (new or empty)"}
+protocol = {type = "choice", options = ["http", "smb", "tftp", "imf", "dicom", "ftp-data"], default = "http", description = "Which protocol's objects to export"}
+limit = {type = "int", default = 50, range = [0, 100000], description = "Most file names to list (all are saved)"}

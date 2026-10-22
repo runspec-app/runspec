@@ -1,0 +1,2536 @@
+{
+  "runspec_mock": 1,
+  "runnable": "pcap",
+  "entries": [
+    {
+      "command": [
+        "check"
+      ],
+      "args": {},
+      "exit_code": 0,
+      "stdout": {
+        "tshark": "/usr/bin/tshark",
+        "version": "4.2.2",
+        "capinfos": "/usr/bin/capinfos",
+        "mergecap": "/usr/bin/mergecap",
+        "dumpcap": "/usr/bin/dumpcap"
+      },
+      "recorded": "2026-10-22T13:25:14Z",
+      "source": "record"
+    },
+    {
+      "command": [
+        "list-interfaces"
+      ],
+      "args": {},
+      "exit_code": 0,
+      "stdout": {
+        "count": 3,
+        "hidden": 14,
+        "interfaces": [
+          {
+            "index": 1,
+            "name": "eth0",
+            "kind": "network"
+          },
+          {
+            "index": 2,
+            "name": "any",
+            "kind": "network"
+          },
+          {
+            "index": 3,
+            "name": "lo",
+            "description": "Loopback",
+            "kind": "network"
+          }
+        ]
+      },
+      "recorded": "2026-10-22T13:25:14Z",
+      "source": "record"
+    },
+    {
+      "command": [
+        "file-info"
+      ],
+      "args": {},
+      "exit_code": 0,
+      "stdout": {
+        "file": "/var/tmp/outage.pcapng",
+        "file_type": "pcapng",
+        "encapsulation": "ether",
+        "packets": 96,
+        "file_bytes": 17812,
+        "data_bytes": 14482,
+        "duration_s": 0.581327,
+        "start": "2026-10-22T13:08:40.251520Z",
+        "end": "2026-10-22T13:08:40.832847Z",
+        "bytes_per_s": 24911.96,
+        "avg_packet_bytes": 150.85,
+        "packets_per_s": 165.14,
+        "time_ordered": true
+      },
+      "recorded": "2026-10-22T13:25:15Z",
+      "source": "record"
+    },
+    {
+      "command": [
+        "summary"
+      ],
+      "args": {},
+      "exit_code": 0,
+      "stdout": {
+        "file": "/var/tmp/outage.pcapng",
+        "info": {
+          "file_type": "pcapng",
+          "encapsulation": "ether",
+          "packets": 96,
+          "data_bytes": 14482,
+          "duration_s": 0.581327,
+          "start": "2026-10-22T13:08:40.251520Z",
+          "end": "2026-10-22T13:08:40.832847Z"
+        },
+        "protocols": [
+          {
+            "protocol": "udp",
+            "frames": 6,
+            "percent": 6.2
+          },
+          {
+            "protocol": "dns",
+            "frames": 6,
+            "percent": 6.2
+          },
+          {
+            "protocol": "tcp",
+            "frames": 90,
+            "percent": 93.8
+          },
+          {
+            "protocol": "http",
+            "frames": 8,
+            "percent": 8.3
+          },
+          {
+            "protocol": "data-text-lines",
+            "frames": 2,
+            "percent": 2.1
+          },
+          {
+            "protocol": "json",
+            "frames": 3,
+            "percent": 3.1
+          },
+          {
+            "protocol": "tls",
+            "frames": 18,
+            "percent": 18.8
+          }
+        ],
+        "packets": 96,
+        "bytes": 14482,
+        "hosts": [
+          {
+            "address": "10.20.0.15",
+            "packets": 96,
+            "bytes": 14482
+          },
+          {
+            "address": "10.20.1.43",
+            "packets": 38,
+            "bytes": 9213
+          },
+          {
+            "address": "10.20.1.80",
+            "packets": 52,
+            "bytes": 4795
+          },
+          {
+            "address": "10.20.0.53",
+            "packets": 6,
+            "bytes": 474
+          }
+        ],
+        "tcp": {
+          "connections": 8,
+          "reset": 4
+        },
+        "top_tcp": [
+          {
+            "stream": 5,
+            "a": "10.20.0.15:57183",
+            "b": "10.20.1.43:8443",
+            "packets": 15,
+            "bytes": 3736,
+            "duration": 0.004913,
+            "flags": [
+              "SYN",
+              "FIN",
+              "RST"
+            ]
+          },
+          {
+            "stream": 6,
+            "a": "10.20.0.15:57643",
+            "b": "10.20.1.43:8443",
+            "packets": 14,
+            "bytes": 2948,
+            "duration": 0.002953,
+            "flags": [
+              "SYN",
+              "FIN",
+              "RST"
+            ]
+          },
+          {
+            "stream": 7,
+            "a": "10.20.0.15:54919",
+            "b": "10.20.1.43:8443",
+            "packets": 9,
+            "bytes": 2529,
+            "duration": 0.002621,
+            "flags": [
+              "SYN",
+              "RST"
+            ]
+          },
+          {
+            "stream": 3,
+            "a": "10.20.0.15:60499",
+            "b": "10.20.1.80:8080",
+            "packets": 14,
+            "bytes": 1318,
+            "duration": 0.001456,
+            "flags": [
+              "SYN",
+              "FIN"
+            ]
+          },
+          {
+            "stream": 2,
+            "a": "10.20.0.15:43807",
+            "b": "10.20.1.80:8080",
+            "packets": 12,
+            "bytes": 1132,
+            "duration": 0.051909,
+            "flags": [
+              "SYN",
+              "FIN"
+            ]
+          }
+        ],
+        "udp": {
+          "conversations": 3
+        },
+        "top_udp": [
+          {
+            "stream": 0,
+            "a": "10.20.0.15:44939",
+            "b": "10.20.0.53:53",
+            "packets": 2,
+            "bytes": 166,
+            "duration": 0.000354
+          },
+          {
+            "stream": 1,
+            "a": "10.20.0.15:35342",
+            "b": "10.20.0.53:53",
+            "packets": 2,
+            "bytes": 156,
+            "duration": 7.4e-05
+          },
+          {
+            "stream": 2,
+            "a": "10.20.0.15:53272",
+            "b": "10.20.0.53:53",
+            "packets": 2,
+            "bytes": 152,
+            "duration": 5.1e-05
+          }
+        ],
+        "expert": {
+          "warning": 4,
+          "note": 10,
+          "chat": 33
+        },
+        "expert_top": [
+          {
+            "severity": "warning",
+            "group": "Sequence",
+            "message": "Connection reset (RST)",
+            "count": 4,
+            "first_packet": 58
+          }
+        ]
+      },
+      "recorded": "2026-10-22T13:25:15Z",
+      "source": "record",
+      "note": "any capture: the sample office traffic"
+    },
+    {
+      "command": [
+        "packets"
+      ],
+      "args": {},
+      "exit_code": 0,
+      "stdout": {
+        "file": "/var/tmp/outage.pcapng",
+        "count": 25,
+        "total": 96,
+        "offset": 0,
+        "truncated": true,
+        "next_offset": 25,
+        "packets": [
+          {
+            "no": 1,
+            "time": 0.0,
+            "src": "10.20.0.15:44939",
+            "dst": "10.20.0.53:53",
+            "proto": "DNS",
+            "len": 75,
+            "info": "Standard query 0x1a2b A api.example.com",
+            "stream": "udp 0"
+          },
+          {
+            "no": 2,
+            "time": 0.000354,
+            "src": "10.20.0.53:53",
+            "dst": "10.20.0.15:44939",
+            "proto": "DNS",
+            "len": 91,
+            "info": "Standard query response 0x1a2b A api.example.com A 10.20.1.43",
+            "stream": "udp 0"
+          },
+          {
+            "no": 3,
+            "time": 0.000539,
+            "src": "10.20.0.15:35342",
+            "dst": "10.20.0.53:53",
+            "proto": "DNS",
+            "len": 78,
+            "info": "Standard query 0x1a2c A portal.example.com",
+            "stream": "udp 1"
+          },
+          {
+            "no": 4,
+            "time": 0.000613,
+            "src": "10.20.0.53:53",
+            "dst": "10.20.0.15:35342",
+            "proto": "DNS",
+            "len": 78,
+            "info": "Standard query response 0x1a2c No such name A portal.example.com",
+            "stream": "udp 1"
+          },
+          {
+            "no": 5,
+            "time": 0.000692,
+            "src": "10.20.0.15:53272",
+            "dst": "10.20.0.53:53",
+            "proto": "DNS",
+            "len": 76,
+            "info": "Standard query 0x1a2d A nope.example.com",
+            "stream": "udp 2"
+          },
+          {
+            "no": 6,
+            "time": 0.000743,
+            "src": "10.20.0.53:53",
+            "dst": "10.20.0.15:53272",
+            "proto": "DNS",
+            "len": 76,
+            "info": "Standard query response 0x1a2d No such name A nope.example.com",
+            "stream": "udp 2"
+          },
+          {
+            "no": 7,
+            "time": 0.024796,
+            "src": "10.20.0.15:52829",
+            "dst": "10.20.1.80:8080",
+            "proto": "TCP",
+            "len": 74,
+            "info": "52829 → 8080 [SYN] Seq=0 Win=65495 Len=0 MSS=65495 SACK_PERM TSval=3679366255 TSecr=0 WS=1024",
+            "stream": "tcp 0"
+          },
+          {
+            "no": 8,
+            "time": 0.024948,
+            "src": "10.20.1.80:8080",
+            "dst": "10.20.0.15:52829",
+            "proto": "TCP",
+            "len": 74,
+            "info": "8080 → 52829 [SYN, ACK] Seq=0 Ack=1 Win=65483 Len=0 MSS=65495 SACK_PERM TSval=2003949156 TSecr=3679366255 WS=1024",
+            "stream": "tcp 0"
+          },
+          {
+            "no": 9,
+            "time": 0.024987,
+            "src": "10.20.0.15:52829",
+            "dst": "10.20.1.80:8080",
+            "proto": "TCP",
+            "len": 66,
+            "info": "52829 → 8080 [ACK] Seq=1 Ack=1 Win=65536 Len=0 TSval=3679366255 TSecr=2003949156",
+            "stream": "tcp 0"
+          },
+          {
+            "no": 10,
+            "time": 0.025195,
+            "src": "10.20.0.15:52829",
+            "dst": "10.20.1.80:8080",
+            "proto": "HTTP",
+            "len": 180,
+            "info": "GET / HTTP/1.1",
+            "stream": "tcp 0"
+          },
+          {
+            "no": 11,
+            "time": 0.025201,
+            "src": "10.20.1.80:8080",
+            "dst": "10.20.0.15:52829",
+            "proto": "TCP",
+            "len": 66,
+            "info": "8080 → 52829 [ACK] Seq=1 Ack=115 Win=65536 Len=0 TSval=2003949156 TSecr=3679366255",
+            "stream": "tcp 0"
+          },
+          {
+            "no": 12,
+            "time": 0.026285,
+            "src": "10.20.1.80:8080",
+            "dst": "10.20.0.15:52829",
+            "proto": "TCP",
+            "len": 202,
+            "info": "HTTP/1.1 200 OK  [TCP segment of a reassembled PDU]",
+            "stream": "tcp 0"
+          },
+          {
+            "no": 13,
+            "time": 0.026311,
+            "src": "10.20.0.15:52829",
+            "dst": "10.20.1.80:8080",
+            "proto": "TCP",
+            "len": 66,
+            "info": "52829 → 8080 [ACK] Seq=115 Ack=137 Win=65536 Len=0 TSval=3679366256 TSecr=2003949157",
+            "stream": "tcp 0"
+          },
+          {
+            "no": 14,
+            "time": 0.026394,
+            "src": "10.20.1.80:8080",
+            "dst": "10.20.0.15:52829",
+            "proto": "HTTP",
+            "len": 114,
+            "info": "HTTP/1.1 200 OK  (text/html)",
+            "stream": "tcp 0"
+          },
+          {
+            "no": 15,
+            "time": 0.026398,
+            "src": "10.20.0.15:52829",
+            "dst": "10.20.1.80:8080",
+            "proto": "TCP",
+            "len": 66,
+            "info": "52829 → 8080 [ACK] Seq=115 Ack=185 Win=65536 Len=0 TSval=3679366256 TSecr=2003949157",
+            "stream": "tcp 0"
+          },
+          {
+            "no": 16,
+            "time": 0.026447,
+            "src": "10.20.1.80:8080",
+            "dst": "10.20.0.15:52829",
+            "proto": "TCP",
+            "len": 66,
+            "info": "8080 → 52829 [FIN, ACK] Seq=185 Ack=115 Win=65536 Len=0 TSval=2003949157 TSecr=3679366256",
+            "stream": "tcp 0"
+          },
+          {
+            "no": 17,
+            "time": 0.026707,
+            "src": "10.20.0.15:52829",
+            "dst": "10.20.1.80:8080",
+            "proto": "TCP",
+            "len": 66,
+            "info": "52829 → 8080 [FIN, ACK] Seq=115 Ack=186 Win=65536 Len=0 TSval=3679366257 TSecr=2003949157",
+            "stream": "tcp 0"
+          },
+          {
+            "no": 18,
+            "time": 0.026848,
+            "src": "10.20.1.80:8080",
+            "dst": "10.20.0.15:52829",
+            "proto": "TCP",
+            "len": 66,
+            "info": "8080 → 52829 [ACK] Seq=186 Ack=116 Win=65536 Len=0 TSval=2003949158 TSecr=3679366257",
+            "stream": "tcp 0"
+          },
+          {
+            "no": 19,
+            "time": 0.148652,
+            "src": "10.20.0.15:57557",
+            "dst": "10.20.1.80:8080",
+            "proto": "TCP",
+            "len": 74,
+            "info": "57557 → 8080 [SYN] Seq=0 Win=65495 Len=0 MSS=65495 SACK_PERM TSval=3144900345 TSecr=0 WS=1024",
+            "stream": "tcp 1"
+          },
+          {
+            "no": 20,
+            "time": 0.148913,
+            "src": "10.20.1.80:8080",
+            "dst": "10.20.0.15:57557",
+            "proto": "TCP",
+            "len": 74,
+            "info": "8080 → 57557 [SYN, ACK] Seq=0 Ack=1 Win=65483 Len=0 MSS=65495 SACK_PERM TSval=1716227208 TSecr=3144900345 WS=1024",
+            "stream": "tcp 1"
+          },
+          {
+            "no": 21,
+            "time": 0.148925,
+            "src": "10.20.0.15:57557",
+            "dst": "10.20.1.80:8080",
+            "proto": "TCP",
+            "len": 66,
+            "info": "57557 → 8080 [ACK] Seq=1 Ack=1 Win=65536 Len=0 TSval=3144900345 TSecr=1716227208",
+            "stream": "tcp 1"
+          },
+          {
+            "no": 22,
+            "time": 0.148989,
+            "src": "10.20.0.15:57557",
+            "dst": "10.20.1.80:8080",
+            "proto": "HTTP",
+            "len": 191,
+            "info": "GET /favicon.ico HTTP/1.1",
+            "stream": "tcp 1"
+          },
+          {
+            "no": 23,
+            "time": 0.148993,
+            "src": "10.20.1.80:8080",
+            "dst": "10.20.0.15:57557",
+            "proto": "TCP",
+            "len": 66,
+            "info": "8080 → 57557 [ACK] Seq=1 Ack=126 Win=65536 Len=0 TSval=1716227208 TSecr=3144900345",
+            "stream": "tcp 1"
+          },
+          {
+            "no": 24,
+            "time": 0.150025,
+            "src": "10.20.1.80:8080",
+            "dst": "10.20.0.15:57557",
+            "proto": "TCP",
+            "len": 209,
+            "info": "HTTP/1.1 404 Not Found  [TCP segment of a reassembled PDU]",
+            "stream": "tcp 1"
+          },
+          {
+            "no": 25,
+            "time": 0.150052,
+            "src": "10.20.0.15:57557",
+            "dst": "10.20.1.80:8080",
+            "proto": "TCP",
+            "len": 66,
+            "info": "57557 → 8080 [ACK] Seq=126 Ack=144 Win=65536 Len=0 TSval=3144900346 TSecr=1716227209",
+            "stream": "tcp 1"
+          }
+        ]
+      },
+      "recorded": "2026-10-22T13:25:16Z",
+      "source": "record",
+      "note": "any capture: the first 25 packets"
+    },
+    {
+      "command": [
+        "packets"
+      ],
+      "args": {
+        "filter": "tcp.flags.reset == 1"
+      },
+      "exit_code": 0,
+      "stdout": {
+        "file": "/var/tmp/outage.pcapng",
+        "filter": "tcp.flags.reset == 1",
+        "count": 4,
+        "total": 4,
+        "offset": 0,
+        "truncated": false,
+        "packets": [
+          {
+            "no": 58,
+            "time": 0.547811,
+            "src": "10.20.1.80:9999",
+            "dst": "10.20.0.15:49141",
+            "proto": "TCP",
+            "len": 54,
+            "info": "9999 → 49141 [RST, ACK] Seq=1 Ack=1 Win=0 Len=0",
+            "stream": "tcp 4"
+          },
+          {
+            "no": 73,
+            "time": 0.55364,
+            "src": "10.20.1.43:8443",
+            "dst": "10.20.0.15:57183",
+            "proto": "TCP",
+            "len": 54,
+            "info": "8443 → 57183 [RST] Seq=2035 Win=0 Len=0",
+            "stream": "tcp 5"
+          },
+          {
+            "no": 87,
+            "time": 0.557227,
+            "src": "10.20.1.43:8443",
+            "dst": "10.20.0.15:57643",
+            "proto": "TCP",
+            "len": 54,
+            "info": "8443 → 57643 [RST] Seq=1617 Win=0 Len=0",
+            "stream": "tcp 6"
+          },
+          {
+            "no": 96,
+            "time": 0.581327,
+            "src": "10.20.0.15:54919",
+            "dst": "10.20.1.43:8443",
+            "proto": "TCP",
+            "len": 66,
+            "info": "54919 → 8443 [RST, ACK] Seq=525 Ack=1396 Win=80896 Len=0 TSval=204110877 TSecr=2136793089",
+            "stream": "tcp 7"
+          }
+        ]
+      },
+      "recorded": "2026-10-22T13:25:16Z",
+      "source": "record"
+    },
+    {
+      "command": [
+        "packets"
+      ],
+      "args": {
+        "filter": "http.response.code >= 400"
+      },
+      "exit_code": 0,
+      "stdout": {
+        "file": "/var/tmp/outage.pcapng",
+        "filter": "http.response.code >= 400",
+        "count": 2,
+        "total": 2,
+        "offset": 0,
+        "truncated": false,
+        "packets": [
+          {
+            "no": 26,
+            "time": 0.150075,
+            "src": "10.20.1.80:8080",
+            "dst": "10.20.0.15:57557",
+            "proto": "HTTP",
+            "len": 101,
+            "info": "HTTP/1.1 404 Not Found  (text/html)",
+            "stream": "tcp 1"
+          },
+          {
+            "no": 38,
+            "time": 0.324663,
+            "src": "10.20.1.80:8080",
+            "dst": "10.20.0.15:43807",
+            "proto": "HTTP/JSON",
+            "len": 94,
+            "info": "HTTP/1.1 500 Internal Server Error , JSON (application/json)",
+            "stream": "tcp 2"
+          }
+        ]
+      },
+      "recorded": "2026-10-22T13:25:17Z",
+      "source": "record"
+    },
+    {
+      "command": [
+        "packet"
+      ],
+      "args": {
+        "number": 95
+      },
+      "exit_code": 0,
+      "stdout": {
+        "no": 95,
+        "layers": [
+          {
+            "title": "Frame 95: 73 bytes on wire (584 bits), 73 bytes captured (584 bits) on interface lo, id 1",
+            "lines": [
+              "Interface id: 1 (lo)",
+              "Arrival Time: Oct 22, 2026 13:08:40.832726000 UTC",
+              "[Time since reference or first frame: 0.581206000 seconds]",
+              "Frame Length: 73 bytes (584 bits)",
+              "Capture Length: 73 bytes (584 bits)",
+              "[Protocols in frame: eth:ethertype:ip:tcp:tls]"
+            ]
+          },
+          {
+            "title": "Ethernet II, Src: 02:00:0a:14:00:0f, Dst: 02:00:0a:14:01:2b",
+            "lines": [
+              "Destination: 02:00:0a:14:01:2b",
+              "Source: 02:00:0a:14:00:0f",
+              "Type: IPv4 (0x0800)"
+            ]
+          },
+          {
+            "title": "Internet Protocol Version 4, Src: 10.20.0.15, Dst: 10.20.1.43",
+            "lines": [
+              "Version: 4",
+              "Header Length: 20 bytes (5)",
+              "Differentiated Services Field: 0x00 (DSCP: CS0, ECN: Not-ECT)",
+              "Total Length: 59",
+              "Identification: 0xb31f (45855)",
+              "Flags: 0x2, Don't fragment",
+              "Fragment Offset: 0",
+              "Time to Live: 64",
+              "Protocol: TCP (6)",
+              "Header Checksum: 0x723c [validation disabled]",
+              "[Header checksum status: Unverified]",
+              "Source Address: 10.20.0.15",
+              "Destination Address: 10.20.1.43"
+            ]
+          },
+          {
+            "title": "Transmission Control Protocol, Src Port: 54919, Dst Port: 8443, Seq: 518, Ack: 1396, Len: 7",
+            "lines": [
+              "Source Port: 54919",
+              "Destination Port: 8443",
+              "[Stream index: 7]",
+              "[Conversation completeness: Incomplete, DATA (15)]",
+              "[TCP Segment Len: 7]",
+              "Sequence Number: 518    (relative sequence number)",
+              "Sequence Number (raw): 2992095069",
+              "[Next Sequence Number: 525    (relative sequence number)]",
+              "Acknowledgment Number: 1396    (relative ack number)",
+              "Acknowledgment number (raw): 4284359450",
+              "Header Length: 32 bytes (8)",
+              "Flags: 0x018 (PSH, ACK)",
+              "Window: 79",
+              "[Calculated window size: 80896]",
+              "[Window size scaling factor: 1024]",
+              "Checksum: 0xa3a1 [unverified]",
+              "[Checksum Status: Unverified]",
+              "Urgent Pointer: 0",
+              "Options: (12 bytes), No-Operation (NOP), No-Operation (NOP), Timestamps",
+              "[Timestamps]",
+              "[SEQ/ACK analysis]",
+              "TCP payload (7 bytes)"
+            ]
+          },
+          {
+            "title": "Transport Layer Security",
+            "lines": [
+              "TLSv1.3 Record Layer: Alert (Level: Fatal, Description: Unknown CA)"
+            ]
+          }
+        ]
+      },
+      "recorded": "2026-10-22T13:25:17Z",
+      "source": "record",
+      "note": "the TLS unknown_ca alert"
+    },
+    {
+      "command": [
+        "packet"
+      ],
+      "args": {
+        "number": 34,
+        "layer": [
+          "http"
+        ]
+      },
+      "exit_code": 0,
+      "stdout": {
+        "no": 34,
+        "layers": [
+          {
+            "title": "Frame 34: 200 bytes on wire (1600 bits), 200 bytes captured (1600 bits) on interface lo, id 1"
+          },
+          {
+            "title": "Ethernet II, Src: 02:00:0a:14:00:0f, Dst: 02:00:0a:14:01:50"
+          },
+          {
+            "title": "Internet Protocol Version 4, Src: 10.20.0.15, Dst: 10.20.1.80"
+          },
+          {
+            "title": "Transmission Control Protocol, Src Port: 43807, Dst Port: 8080, Seq: 1, Ack: 1, Len: 134"
+          },
+          {
+            "title": "Hypertext Transfer Protocol",
+            "lines": [
+              "GET /api/orders?day=today HTTP/1.1\\r\\n",
+              "Accept-Encoding: identity\\r\\n",
+              "Host: portal.example.com\\r\\n",
+              "User-Agent: curl/8.5.0\\r\\n",
+              "Connection: close\\r\\n",
+              "\\r\\n",
+              "[Full request URI: http://portal.example.com/api/orders?day=today]",
+              "[HTTP request 1/1]"
+            ]
+          }
+        ]
+      },
+      "recorded": "2026-10-22T13:25:18Z",
+      "source": "record",
+      "note": "the request that got a 500"
+    },
+    {
+      "command": [
+        "fields"
+      ],
+      "args": {
+        "field": [
+          "ip.src",
+          "ip.dst",
+          "tcp.dstport",
+          "_ws.col.Info"
+        ],
+        "limit": 10
+      },
+      "exit_code": 0,
+      "stdout": {
+        "file": "/var/tmp/outage.pcapng",
+        "fields": [
+          "ip.src",
+          "ip.dst",
+          "tcp.dstport",
+          "_ws.col.Info"
+        ],
+        "count": 10,
+        "total": 96,
+        "offset": 0,
+        "truncated": true,
+        "next_offset": 10,
+        "rows": [
+          {
+            "no": 1,
+            "ip.src": "10.20.0.15",
+            "ip.dst": "10.20.0.53",
+            "_ws.col.Info": "Standard query 0x1a2b A api.example.com"
+          },
+          {
+            "no": 2,
+            "ip.src": "10.20.0.53",
+            "ip.dst": "10.20.0.15",
+            "_ws.col.Info": "Standard query response 0x1a2b A api.example.com A 10.20.1.43"
+          },
+          {
+            "no": 3,
+            "ip.src": "10.20.0.15",
+            "ip.dst": "10.20.0.53",
+            "_ws.col.Info": "Standard query 0x1a2c A portal.example.com"
+          },
+          {
+            "no": 4,
+            "ip.src": "10.20.0.53",
+            "ip.dst": "10.20.0.15",
+            "_ws.col.Info": "Standard query response 0x1a2c No such name A portal.example.com"
+          },
+          {
+            "no": 5,
+            "ip.src": "10.20.0.15",
+            "ip.dst": "10.20.0.53",
+            "_ws.col.Info": "Standard query 0x1a2d A nope.example.com"
+          },
+          {
+            "no": 6,
+            "ip.src": "10.20.0.53",
+            "ip.dst": "10.20.0.15",
+            "_ws.col.Info": "Standard query response 0x1a2d No such name A nope.example.com"
+          },
+          {
+            "no": 7,
+            "ip.src": "10.20.0.15",
+            "ip.dst": "10.20.1.80",
+            "tcp.dstport": "8080",
+            "_ws.col.Info": "52829 → 8080 [SYN] Seq=0 Win=65495 Len=0 MSS=65495 SACK_PERM TSval=3679366255 TSecr=0 WS=1024"
+          },
+          {
+            "no": 8,
+            "ip.src": "10.20.1.80",
+            "ip.dst": "10.20.0.15",
+            "tcp.dstport": "52829",
+            "_ws.col.Info": "8080 → 52829 [SYN, ACK] Seq=0 Ack=1 Win=65483 Len=0 MSS=65495 SACK_PERM TSval=2003949156 TSecr=3679366255 WS=1024"
+          },
+          {
+            "no": 9,
+            "ip.src": "10.20.0.15",
+            "ip.dst": "10.20.1.80",
+            "tcp.dstport": "8080",
+            "_ws.col.Info": "52829 → 8080 [ACK] Seq=1 Ack=1 Win=65536 Len=0 TSval=3679366255 TSecr=2003949156"
+          },
+          {
+            "no": 10,
+            "ip.src": "10.20.0.15",
+            "ip.dst": "10.20.1.80",
+            "tcp.dstport": "8080",
+            "_ws.col.Info": "GET / HTTP/1.1 "
+          }
+        ]
+      },
+      "recorded": "2026-10-22T13:25:18Z",
+      "source": "record"
+    },
+    {
+      "command": [
+        "top"
+      ],
+      "args": {
+        "field": "ip.dst",
+        "by": "bytes"
+      },
+      "exit_code": 0,
+      "stdout": {
+        "file": "/var/tmp/outage.pcapng",
+        "field": "ip.dst",
+        "by": "bytes",
+        "packets": 96,
+        "missing": 0,
+        "distinct": 4,
+        "truncated": false,
+        "values": [
+          {
+            "value": "10.20.0.15",
+            "bytes": 8810,
+            "percent": 60.8
+          },
+          {
+            "value": "10.20.1.43",
+            "bytes": 3048,
+            "percent": 21.0
+          },
+          {
+            "value": "10.20.1.80",
+            "bytes": 2395,
+            "percent": 16.5
+          },
+          {
+            "value": "10.20.0.53",
+            "bytes": 229,
+            "percent": 1.6
+          }
+        ]
+      },
+      "recorded": "2026-10-22T13:25:19Z",
+      "source": "record"
+    },
+    {
+      "command": [
+        "top"
+      ],
+      "args": {
+        "field": "tcp.dstport"
+      },
+      "exit_code": 0,
+      "stdout": {
+        "file": "/var/tmp/outage.pcapng",
+        "field": "tcp.dstport",
+        "by": "packets",
+        "packets": 96,
+        "missing": 6,
+        "distinct": 11,
+        "truncated": true,
+        "values": [
+          {
+            "value": "8080",
+            "packets": 26,
+            "percent": 28.9
+          },
+          {
+            "value": "8443",
+            "packets": 21,
+            "percent": 23.3
+          },
+          {
+            "value": "57183",
+            "packets": 7,
+            "percent": 7.8
+          },
+          {
+            "value": "57643",
+            "packets": 7,
+            "percent": 7.8
+          },
+          {
+            "value": "52829",
+            "packets": 6,
+            "percent": 6.7
+          },
+          {
+            "value": "57557",
+            "packets": 6,
+            "percent": 6.7
+          },
+          {
+            "value": "43807",
+            "packets": 6,
+            "percent": 6.7
+          },
+          {
+            "value": "60499",
+            "packets": 6,
+            "percent": 6.7
+          },
+          {
+            "value": "54919",
+            "packets": 3,
+            "percent": 3.3
+          },
+          {
+            "value": "9999",
+            "packets": 1,
+            "percent": 1.1
+          }
+        ]
+      },
+      "recorded": "2026-10-22T13:25:19Z",
+      "source": "record"
+    },
+    {
+      "command": [
+        "protocols"
+      ],
+      "args": {},
+      "exit_code": 0,
+      "stdout": {
+        "file": "/var/tmp/outage.pcapng",
+        "frames": 96,
+        "protocols": [
+          {
+            "protocol": "eth",
+            "depth": 0,
+            "frames": 96,
+            "bytes": 14482,
+            "percent": 100.0
+          },
+          {
+            "protocol": "ip",
+            "depth": 1,
+            "frames": 96,
+            "bytes": 14482,
+            "percent": 100.0
+          },
+          {
+            "protocol": "udp",
+            "depth": 2,
+            "frames": 6,
+            "bytes": 474,
+            "percent": 6.2
+          },
+          {
+            "protocol": "dns",
+            "depth": 3,
+            "frames": 6,
+            "bytes": 474,
+            "percent": 6.2
+          },
+          {
+            "protocol": "tcp",
+            "depth": 2,
+            "frames": 90,
+            "bytes": 14008,
+            "percent": 93.8
+          },
+          {
+            "protocol": "http",
+            "depth": 3,
+            "frames": 8,
+            "bytes": 1065,
+            "percent": 8.3
+          },
+          {
+            "protocol": "data-text-lines",
+            "depth": 4,
+            "frames": 2,
+            "bytes": 215,
+            "percent": 2.1
+          },
+          {
+            "protocol": "tcp.segments",
+            "depth": 5,
+            "frames": 2,
+            "bytes": 215,
+            "percent": 2.1
+          },
+          {
+            "protocol": "json",
+            "depth": 4,
+            "frames": 3,
+            "bytes": 279,
+            "percent": 3.1
+          },
+          {
+            "protocol": "tcp.segments",
+            "depth": 5,
+            "frames": 3,
+            "bytes": 279,
+            "percent": 3.1
+          },
+          {
+            "protocol": "tls",
+            "depth": 3,
+            "frames": 18,
+            "bytes": 7869,
+            "percent": 18.8
+          }
+        ]
+      },
+      "recorded": "2026-10-22T13:25:20Z",
+      "source": "record"
+    },
+    {
+      "command": [
+        "conversations"
+      ],
+      "args": {},
+      "exit_code": 0,
+      "stdout": {
+        "file": "/var/tmp/outage.pcapng",
+        "type": "tcp",
+        "count": 8,
+        "total": 8,
+        "truncated": false,
+        "conversations": [
+          {
+            "stream": 5,
+            "a": "10.20.0.15:57183",
+            "b": "10.20.1.43:8443",
+            "packets": 15,
+            "bytes": 3736,
+            "a_to_b": {
+              "packets": 8,
+              "bytes": 1245
+            },
+            "b_to_a": {
+              "packets": 7,
+              "bytes": 2491
+            },
+            "start": 0.548727,
+            "duration": 0.004913,
+            "flags": [
+              "SYN",
+              "FIN",
+              "RST"
+            ]
+          },
+          {
+            "stream": 6,
+            "a": "10.20.0.15:57643",
+            "b": "10.20.1.43:8443",
+            "packets": 14,
+            "bytes": 2948,
+            "a_to_b": {
+              "packets": 7,
+              "bytes": 875
+            },
+            "b_to_a": {
+              "packets": 7,
+              "bytes": 2073
+            },
+            "start": 0.554274,
+            "duration": 0.002953,
+            "flags": [
+              "SYN",
+              "FIN",
+              "RST"
+            ]
+          },
+          {
+            "stream": 7,
+            "a": "10.20.0.15:54919",
+            "b": "10.20.1.43:8443",
+            "packets": 9,
+            "bytes": 2529,
+            "a_to_b": {
+              "packets": 6,
+              "bytes": 928
+            },
+            "b_to_a": {
+              "packets": 3,
+              "bytes": 1601
+            },
+            "start": 0.578706,
+            "duration": 0.002621,
+            "flags": [
+              "SYN",
+              "RST"
+            ]
+          },
+          {
+            "stream": 3,
+            "a": "10.20.0.15:60499",
+            "b": "10.20.1.80:8080",
+            "packets": 14,
+            "bytes": 1318,
+            "a_to_b": {
+              "packets": 8,
+              "bytes": 736
+            },
+            "b_to_a": {
+              "packets": 6,
+              "bytes": 582
+            },
+            "start": 0.44592,
+            "duration": 0.001456,
+            "flags": [
+              "SYN",
+              "FIN"
+            ]
+          },
+          {
+            "stream": 2,
+            "a": "10.20.0.15:43807",
+            "b": "10.20.1.80:8080",
+            "packets": 12,
+            "bytes": 1132,
+            "a_to_b": {
+              "packets": 6,
+              "bytes": 538
+            },
+            "b_to_a": {
+              "packets": 6,
+              "bytes": 594
+            },
+            "start": 0.273169,
+            "duration": 0.051909,
+            "flags": [
+              "SYN",
+              "FIN"
+            ]
+          },
+          {
+            "stream": 1,
+            "a": "10.20.0.15:57557",
+            "b": "10.20.1.80:8080",
+            "packets": 12,
+            "bytes": 1111,
+            "a_to_b": {
+              "packets": 6,
+              "bytes": 529
+            },
+            "b_to_a": {
+              "packets": 6,
+              "bytes": 582
+            },
+            "start": 0.148652,
+            "duration": 0.001745,
+            "flags": [
+              "SYN",
+              "FIN"
+            ]
+          },
+          {
+            "stream": 0,
+            "a": "10.20.0.15:52829",
+            "b": "10.20.1.80:8080",
+            "packets": 12,
+            "bytes": 1106,
+            "a_to_b": {
+              "packets": 6,
+              "bytes": 518
+            },
+            "b_to_a": {
+              "packets": 6,
+              "bytes": 588
+            },
+            "start": 0.024796,
+            "duration": 0.002052,
+            "flags": [
+              "SYN",
+              "FIN"
+            ]
+          },
+          {
+            "stream": 4,
+            "a": "10.20.0.15:49141",
+            "b": "10.20.1.80:9999",
+            "packets": 2,
+            "bytes": 128,
+            "a_to_b": {
+              "packets": 1,
+              "bytes": 74
+            },
+            "b_to_a": {
+              "packets": 1,
+              "bytes": 54
+            },
+            "start": 0.5478,
+            "duration": 1.1e-05,
+            "flags": [
+              "SYN",
+              "RST"
+            ]
+          }
+        ]
+      },
+      "recorded": "2026-10-22T13:25:20Z",
+      "source": "record",
+      "note": "any capture: the TCP connections"
+    },
+    {
+      "command": [
+        "conversations"
+      ],
+      "args": {
+        "type": "ip"
+      },
+      "exit_code": 0,
+      "stdout": {
+        "file": "/var/tmp/outage.pcapng",
+        "type": "ip",
+        "count": 3,
+        "total": 3,
+        "truncated": false,
+        "conversations": [
+          {
+            "a": "10.20.0.15",
+            "b": "10.20.1.43",
+            "packets": 38,
+            "bytes": 9213,
+            "a_to_b": {
+              "packets": 21,
+              "bytes": 3048
+            },
+            "b_to_a": {
+              "packets": 17,
+              "bytes": 6165
+            },
+            "start": 0.548727,
+            "duration": 0.0326
+          },
+          {
+            "a": "10.20.0.15",
+            "b": "10.20.1.80",
+            "packets": 52,
+            "bytes": 4795,
+            "a_to_b": {
+              "packets": 27,
+              "bytes": 2395
+            },
+            "b_to_a": {
+              "packets": 25,
+              "bytes": 2400
+            },
+            "start": 0.024796,
+            "duration": 0.523015
+          },
+          {
+            "a": "10.20.0.15",
+            "b": "10.20.0.53",
+            "packets": 6,
+            "bytes": 474,
+            "a_to_b": {
+              "packets": 3,
+              "bytes": 229
+            },
+            "b_to_a": {
+              "packets": 3,
+              "bytes": 245
+            },
+            "start": 0.0,
+            "duration": 0.000743
+          }
+        ]
+      },
+      "recorded": "2026-10-22T13:25:21Z",
+      "source": "record"
+    },
+    {
+      "command": [
+        "endpoints"
+      ],
+      "args": {},
+      "exit_code": 0,
+      "stdout": {
+        "file": "/var/tmp/outage.pcapng",
+        "type": "ip",
+        "count": 4,
+        "total": 4,
+        "truncated": false,
+        "endpoints": [
+          {
+            "address": "10.20.0.15",
+            "packets": 96,
+            "bytes": 14482,
+            "tx": {
+              "packets": 51,
+              "bytes": 5672
+            },
+            "rx": {
+              "packets": 45,
+              "bytes": 8810
+            }
+          },
+          {
+            "address": "10.20.1.43",
+            "packets": 38,
+            "bytes": 9213,
+            "tx": {
+              "packets": 17,
+              "bytes": 6165
+            },
+            "rx": {
+              "packets": 21,
+              "bytes": 3048
+            }
+          },
+          {
+            "address": "10.20.1.80",
+            "packets": 52,
+            "bytes": 4795,
+            "tx": {
+              "packets": 25,
+              "bytes": 2400
+            },
+            "rx": {
+              "packets": 27,
+              "bytes": 2395
+            }
+          },
+          {
+            "address": "10.20.0.53",
+            "packets": 6,
+            "bytes": 474,
+            "tx": {
+              "packets": 3,
+              "bytes": 245
+            },
+            "rx": {
+              "packets": 3,
+              "bytes": 229
+            }
+          }
+        ]
+      },
+      "recorded": "2026-10-22T13:25:21Z",
+      "source": "record"
+    },
+    {
+      "command": [
+        "expert"
+      ],
+      "args": {},
+      "exit_code": 0,
+      "stdout": {
+        "file": "/var/tmp/outage.pcapng",
+        "severity": "warning",
+        "by_severity": {
+          "warning": 4
+        },
+        "count": 1,
+        "total": 1,
+        "truncated": false,
+        "messages": [
+          {
+            "severity": "warning",
+            "group": "Sequence",
+            "message": "Connection reset (RST)",
+            "count": 4,
+            "first_packet": 58
+          }
+        ]
+      },
+      "recorded": "2026-10-22T13:25:22Z",
+      "source": "record"
+    },
+    {
+      "command": [
+        "expert"
+      ],
+      "args": {
+        "severity": "note"
+      },
+      "exit_code": 0,
+      "stdout": {
+        "file": "/var/tmp/outage.pcapng",
+        "severity": "note",
+        "by_severity": {
+          "warning": 4,
+          "note": 10
+        },
+        "count": 3,
+        "total": 3,
+        "truncated": false,
+        "messages": [
+          {
+            "severity": "warning",
+            "group": "Sequence",
+            "message": "Connection reset (RST)",
+            "count": 4,
+            "first_packet": 58
+          },
+          {
+            "severity": "note",
+            "group": "Sequence",
+            "message": "This frame initiates the connection closing",
+            "count": 6,
+            "first_packet": 16
+          },
+          {
+            "severity": "note",
+            "group": "Sequence",
+            "message": "This frame undergoes the connection closing",
+            "count": 4,
+            "first_packet": 17
+          }
+        ]
+      },
+      "recorded": "2026-10-22T13:25:22Z",
+      "source": "record"
+    },
+    {
+      "command": [
+        "io"
+      ],
+      "args": {},
+      "exit_code": 0,
+      "stdout": {
+        "file": "/var/tmp/outage.pcapng",
+        "interval": 0.01,
+        "packets": 96,
+        "bytes": 14482,
+        "peak": {
+          "start": 0.55,
+          "packets": 24,
+          "bytes": 5821
+        },
+        "empty_buckets": 48,
+        "count": 59,
+        "total": 59,
+        "truncated": false,
+        "buckets": [
+          {
+            "start": 0.0,
+            "packets": 6,
+            "bytes": 474
+          },
+          {
+            "start": 0.01,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.02,
+            "packets": 12,
+            "bytes": 1106
+          },
+          {
+            "start": 0.03,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.04,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.05,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.06,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.07,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.08,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.09,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.1,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.11,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.12,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.13,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.14,
+            "packets": 5,
+            "bytes": 471
+          },
+          {
+            "start": 0.15,
+            "packets": 7,
+            "bytes": 640
+          },
+          {
+            "start": 0.16,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.17,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.18,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.19,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.2,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.21,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.22,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.23,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.24,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.25,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.26,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.27,
+            "packets": 5,
+            "bytes": 480
+          },
+          {
+            "start": 0.28,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.29,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.3,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.31,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.32,
+            "packets": 7,
+            "bytes": 652
+          },
+          {
+            "start": 0.33,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.34,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.35,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.36,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.37,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.38,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.39,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.4,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.41,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.42,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.43,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.44,
+            "packets": 14,
+            "bytes": 1318
+          },
+          {
+            "start": 0.45,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.46,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.47,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.48,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.49,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.5,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.51,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.52,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.53,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.54,
+            "packets": 7,
+            "bytes": 991
+          },
+          {
+            "start": 0.55,
+            "packets": 24,
+            "bytes": 5821
+          },
+          {
+            "start": 0.56,
+            "packets": 0,
+            "bytes": 0
+          },
+          {
+            "start": 0.57,
+            "packets": 5,
+            "bytes": 863
+          },
+          {
+            "start": 0.58,
+            "packets": 4,
+            "bytes": 1666
+          }
+        ]
+      },
+      "recorded": "2026-10-22T13:25:23Z",
+      "source": "record"
+    },
+    {
+      "command": [
+        "stats"
+      ],
+      "args": {
+        "stat": "http,tree"
+      },
+      "exit_code": 0,
+      "stdout": {
+        "file": "/var/tmp/outage.pcapng",
+        "stat": "http,tree",
+        "count": 20,
+        "total": 20,
+        "truncated": false,
+        "lines": [
+          "HTTP/Packet Counter:",
+          "Topic / Item                  Count         Average       Min Val       Max Val       Rate (ms)     Percent       Burst Rate    Burst Start",
+          "---------------------------------------------------------------------------------------------------------------------------------------------",
+          "Total HTTP Packets            8                                                       0.0190        100%          0.0200        0.000",
+          " HTTP Response Packets        4                                                       0.0095        50.00%        0.0100        0.000",
+          "  2xx: Success                2                                                       0.0047        50.00%        0.0100        0.000",
+          "   201 Created                1                                                       0.0024        50.00%        0.0100        0.447",
+          "   200 OK                     1                                                       0.0024        50.00%        0.0100        0.000",
+          "  5xx: Server Error           1                                                       0.0024        25.00%        0.0100        0.325",
+          "   500 Internal Server Error  1                                                       0.0024        100.00%       0.0100        0.325",
+          "  4xx: Client Error           1                                                       0.0024        25.00%        0.0100        0.150",
+          "   404 Not Found              1                                                       0.0024        100.00%       0.0100        0.150",
+          "  ???: broken                 0                                                       0.0000        0.00%         -             -",
+          "  3xx: Redirection            0                                                       0.0000        0.00%         -             -",
+          "  1xx: Informational          0                                                       0.0000        0.00%         -             -",
+          " HTTP Request Packets         4                                                       0.0095        50.00%        0.0100        0.000",
+          "  GET                         3                                                       0.0071        75.00%        0.0100        0.000",
+          "  POST                        1                                                       0.0024        25.00%        0.0100        0.446",
+          " Other HTTP Packets           0                                                       0.0000        0.00%         -             -",
+          "---------------------------------------------------------------------------------------------------------------------------------------------"
+        ]
+      },
+      "recorded": "2026-10-22T13:25:23Z",
+      "source": "record"
+    },
+    {
+      "command": [
+        "stats"
+      ],
+      "args": {
+        "stat": "dns,tree"
+      },
+      "exit_code": 0,
+      "stdout": {
+        "file": "/var/tmp/outage.pcapng",
+        "stat": "dns,tree",
+        "count": 34,
+        "total": 34,
+        "truncated": false,
+        "lines": [
+          "DNS:",
+          "Topic / Item                   Count         Average       Min Val       Max Val       Rate (ms)     Percent       Burst Rate    Burst Start",
+          "----------------------------------------------------------------------------------------------------------------------------------------------",
+          "Total Packets                  6                                                       8.0754        100%          0.0600        0.000",
+          " rcode                         6                                                       8.0754        100.00%       0.0600        0.000",
+          "  No error                     4                                                       5.3836        66.67%        0.0400        0.000",
+          "  No such name                 2                                                       2.6918        33.33%        0.0200        0.000",
+          " opcodes                       6                                                       8.0754        100.00%       0.0600        0.000",
+          "  Standard query               6                                                       8.0754        100.00%       0.0600        0.000",
+          " Query/Response                6                                                       8.0754        100.00%       0.0600        0.000",
+          "  Response                     3                                                       4.0377        50.00%        0.0300        0.000",
+          "  Query                        3                                                       4.0377        50.00%        0.0300        0.000",
+          " Query Type                    6                                                       8.0754        100.00%       0.0600        0.000",
+          "  A                            6                                                       8.0754        100.00%       0.0600        0.000",
+          " Class                         6                                                       8.0754        100.00%       0.0600        0.000",
+          "  IN                           6                                                       8.0754        100.00%       0.0600        0.000",
+          "Payload size                   6             37.00         33            49            8.0754        100%          0.0600        0.000",
+          "Query Stats                    0                                                       0.0000        100%          -             -",
+          " Qname Len                     3             16.33         15            18            4.0377                      0.0300        0.000",
+          " Label Stats                   0                                                       0.0000                      -             -",
+          "  3rd Level                    3                                                       4.0377                      0.0300        0.000",
+          "  4th Level or more            0                                                       0.0000                      -             -",
+          "  2nd Level                    0                                                       0.0000                      -             -",
+          "  1st Level                    0                                                       0.0000                      -             -",
+          "Response Stats                 0                                                       0.0000        100%          -             -",
+          " no. of questions              6             1.00          1             1             8.0754                      0.0600        0.000",
+          " no. of authorities            6             0.00          0             0             8.0754                      0.0600        0.000",
+          " no. of answers                6             0.33          0             1             8.0754                      0.0600        0.000",
+          " no. of additionals            6             0.00          0             0             8.0754                      0.0600        0.000",
+          "Service Stats                  0                                                       0.0000        100%          -             -",
+          " request-response time (msec)  3             0.16          0.051000      0.354000      4.0377                      0.0300        0.000",
+          " no. of unsolicited responses  0                                                       0.0000                      -             -",
+          " no. of retransmissions        0                                                       0.0000                      -             -",
+          "----------------------------------------------------------------------------------------------------------------------------------------------"
+        ]
+      },
+      "recorded": "2026-10-22T13:25:24Z",
+      "source": "record"
+    },
+    {
+      "command": [
+        "follow"
+      ],
+      "args": {
+        "stream": 0
+      },
+      "exit_code": 0,
+      "stdout": {
+        "file": "/var/tmp/outage.pcapng",
+        "protocol": "tcp",
+        "stream": 0,
+        "a": "10.20.0.15:52829",
+        "b": "10.20.1.80:8080",
+        "chunks_total": 3,
+        "bytes_total": 298,
+        "truncated": false,
+        "chunks": [
+          {
+            "from": "10.20.0.15:52829",
+            "bytes": 114,
+            "text": "GET / HTTP/1.1\r\nAccept-Encoding: identity\r\nHost: portal.example.com\r\nUser-Agent: curl/8.5.0\r\nConnection: close\r\n\r\n"
+          },
+          {
+            "from": "10.20.1.80:8080",
+            "bytes": 136,
+            "text": "HTTP/1.1 200 OK\r\nServer: nginx \r\nDate: Thu, 22 Oct 2026 13:08:40 GMT\r\nContent-Type: text/html\r\nContent-Length: 48\r\nConnection: close\r\n\r\n"
+          },
+          {
+            "from": "10.20.1.80:8080",
+            "bytes": 48,
+            "text": "<html><body><h1>Orders portal</h1></body></html>"
+          }
+        ]
+      },
+      "recorded": "2026-10-22T13:25:24Z",
+      "source": "record",
+      "note": "GET / → 200"
+    },
+    {
+      "command": [
+        "follow"
+      ],
+      "args": {
+        "stream": 2
+      },
+      "exit_code": 0,
+      "stdout": {
+        "file": "/var/tmp/outage.pcapng",
+        "protocol": "tcp",
+        "stream": 2,
+        "a": "10.20.0.15:43807",
+        "b": "10.20.1.80:8080",
+        "chunks_total": 3,
+        "bytes_total": 324,
+        "truncated": false,
+        "chunks": [
+          {
+            "from": "10.20.0.15:43807",
+            "bytes": 134,
+            "text": "GET /api/orders?day=today HTTP/1.1\r\nAccept-Encoding: identity\r\nHost: portal.example.com\r\nUser-Agent: curl/8.5.0\r\nConnection: close\r\n\r\n"
+          },
+          {
+            "from": "10.20.1.80:8080",
+            "bytes": 162,
+            "text": "HTTP/1.1 500 Internal Server Error\r\nServer: nginx \r\nDate: Thu, 22 Oct 2026 13:08:40 GMT\r\nContent-Type: application/json\r\nContent-Length: 28\r\nConnection: close\r\n\r\n"
+          },
+          {
+            "from": "10.20.1.80:8080",
+            "bytes": 28,
+            "text": "{\"error\":\"database timeout\"}"
+          }
+        ]
+      },
+      "recorded": "2026-10-22T13:25:25Z",
+      "source": "record",
+      "note": "GET /api/orders → 500 database timeout"
+    },
+    {
+      "command": [
+        "follow"
+      ],
+      "args": {
+        "stream": 3
+      },
+      "exit_code": 0,
+      "stdout": {
+        "file": "/var/tmp/outage.pcapng",
+        "protocol": "tcp",
+        "stream": 3,
+        "a": "10.20.0.15:60499",
+        "b": "10.20.1.80:8080",
+        "chunks_total": 4,
+        "bytes_total": 378,
+        "truncated": false,
+        "chunks": [
+          {
+            "from": "10.20.0.15:60499",
+            "bytes": 177,
+            "text": "POST /api/orders HTTP/1.1\r\nAccept-Encoding: identity\r\nContent-Length: 23\r\nHost: portal.example.com\r\nUser-Agent: curl/8.5.0\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n"
+          },
+          {
+            "from": "10.20.0.15:60499",
+            "bytes": 23,
+            "text": "{\"sku\":\"A-100\",\"qty\":2}"
+          },
+          {
+            "from": "10.20.1.80:8080",
+            "bytes": 148,
+            "text": "HTTP/1.1 201 Created\r\nServer: nginx \r\nDate: Thu, 22 Oct 2026 13:08:40 GMT\r\nContent-Type: application/json\r\nContent-Length: 30\r\nConnection: close\r\n\r\n"
+          },
+          {
+            "from": "10.20.1.80:8080",
+            "bytes": 30,
+            "text": "{\"id\":4711,\"status\":\"created\"}"
+          }
+        ]
+      },
+      "recorded": "2026-10-22T13:25:25Z",
+      "source": "record",
+      "note": "POST /api/orders → 201"
+    },
+    {
+      "command": [
+        "follow"
+      ],
+      "args": {
+        "stream": 5,
+        "protocol": "tls"
+      },
+      "exit_code": 0,
+      "stdout": {
+        "file": "/var/tmp/outage.pcapng",
+        "protocol": "tls",
+        "stream": 5,
+        "a": "10.20.1.43:8443",
+        "b": "10.20.0.15:57183",
+        "chunks_total": 2,
+        "bytes_total": 172,
+        "truncated": false,
+        "chunks": [
+          {
+            "from": "10.20.0.15:57183",
+            "bytes": 66,
+            "text": "GET /health HTTP/1.1\r\nHost: api.example.com\r\nConnection: close\r\n\r\n"
+          },
+          {
+            "from": "10.20.1.43:8443",
+            "bytes": 106,
+            "text": "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 16\r\nConnection: close\r\n\r\n{\"healthy\":true}"
+          }
+        ]
+      },
+      "recorded": "2026-10-22T13:25:25Z",
+      "source": "record",
+      "note": "decrypted with the session keys"
+    },
+    {
+      "command": [
+        "dns"
+      ],
+      "args": {},
+      "exit_code": 0,
+      "stdout": {
+        "file": "/var/tmp/outage.pcapng",
+        "rcodes": {
+          "NOERROR": 1,
+          "NXDOMAIN": 2
+        },
+        "unanswered": 0,
+        "count": 3,
+        "total": 3,
+        "truncated": false,
+        "lookups": [
+          {
+            "name": "portal.example.com",
+            "type": "A",
+            "queries": 1,
+            "responses": 1,
+            "rcodes": {
+              "NXDOMAIN": 1
+            },
+            "max_ms": 0.074,
+            "clients": 1,
+            "first_packet": 3
+          },
+          {
+            "name": "nope.example.com",
+            "type": "A",
+            "queries": 1,
+            "responses": 1,
+            "rcodes": {
+              "NXDOMAIN": 1
+            },
+            "max_ms": 0.051,
+            "clients": 1,
+            "first_packet": 5
+          },
+          {
+            "name": "api.example.com",
+            "type": "A",
+            "queries": 1,
+            "responses": 1,
+            "rcodes": {
+              "NOERROR": 1
+            },
+            "max_ms": 0.354,
+            "answers": [
+              "10.20.1.43"
+            ],
+            "clients": 1,
+            "first_packet": 1
+          }
+        ]
+      },
+      "recorded": "2026-10-22T13:25:26Z",
+      "source": "record"
+    },
+    {
+      "command": [
+        "dns"
+      ],
+      "args": {
+        "failed": true
+      },
+      "exit_code": 0,
+      "stdout": {
+        "file": "/var/tmp/outage.pcapng",
+        "rcodes": {
+          "NOERROR": 1,
+          "NXDOMAIN": 2
+        },
+        "unanswered": 0,
+        "count": 2,
+        "total": 2,
+        "truncated": false,
+        "lookups": [
+          {
+            "name": "portal.example.com",
+            "type": "A",
+            "queries": 1,
+            "responses": 1,
+            "rcodes": {
+              "NXDOMAIN": 1
+            },
+            "max_ms": 0.074,
+            "clients": 1,
+            "first_packet": 3
+          },
+          {
+            "name": "nope.example.com",
+            "type": "A",
+            "queries": 1,
+            "responses": 1,
+            "rcodes": {
+              "NXDOMAIN": 1
+            },
+            "max_ms": 0.051,
+            "clients": 1,
+            "first_packet": 5
+          }
+        ]
+      },
+      "recorded": "2026-10-22T13:25:26Z",
+      "source": "record"
+    },
+    {
+      "command": [
+        "http"
+      ],
+      "args": {},
+      "exit_code": 0,
+      "stdout": {
+        "file": "/var/tmp/outage.pcapng",
+        "requests": 4,
+        "unanswered": 0,
+        "by_status": {
+          "200": 1,
+          "201": 1,
+          "404": 1,
+          "500": 1
+        },
+        "count": 4,
+        "total": 4,
+        "truncated": false,
+        "rows": [
+          {
+            "no": 10,
+            "time": 0.025195,
+            "stream": 0,
+            "client": "10.20.0.15:52829",
+            "server": "10.20.1.80:8080",
+            "method": "GET",
+            "host": "portal.example.com",
+            "uri": "/",
+            "user_agent": "curl/8.5.0",
+            "status": 200,
+            "reason": "OK",
+            "ms": 1.199,
+            "content_type": "text/html",
+            "length": 48,
+            "server_header": "nginx",
+            "response_no": 14
+          },
+          {
+            "no": 22,
+            "time": 0.148989,
+            "stream": 1,
+            "client": "10.20.0.15:57557",
+            "server": "10.20.1.80:8080",
+            "method": "GET",
+            "host": "portal.example.com",
+            "uri": "/favicon.ico",
+            "user_agent": "curl/8.5.0",
+            "status": 404,
+            "reason": "Not Found",
+            "ms": 1.086,
+            "content_type": "text/html",
+            "length": 35,
+            "server_header": "nginx",
+            "response_no": 26
+          },
+          {
+            "no": 34,
+            "time": 0.273428,
+            "stream": 2,
+            "client": "10.20.0.15:43807",
+            "server": "10.20.1.80:8080",
+            "method": "GET",
+            "host": "portal.example.com",
+            "uri": "/api/orders?day=today",
+            "user_agent": "curl/8.5.0",
+            "status": 500,
+            "reason": "Internal Server Error",
+            "ms": 51.235,
+            "content_type": "application/json",
+            "length": 28,
+            "server_header": "nginx",
+            "response_no": 38
+          },
+          {
+            "no": 48,
+            "time": 0.446125,
+            "stream": 3,
+            "client": "10.20.0.15:60499",
+            "server": "10.20.1.80:8080",
+            "method": "POST",
+            "host": "portal.example.com",
+            "uri": "/api/orders",
+            "user_agent": "curl/8.5.0",
+            "status": 201,
+            "reason": "Created",
+            "ms": 0.988,
+            "content_type": "application/json",
+            "length": 30,
+            "server_header": "nginx",
+            "response_no": 52
+          }
+        ]
+      },
+      "recorded": "2026-10-22T13:25:27Z",
+      "source": "record"
+    },
+    {
+      "command": [
+        "http"
+      ],
+      "args": {
+        "errors": true
+      },
+      "exit_code": 0,
+      "stdout": {
+        "file": "/var/tmp/outage.pcapng",
+        "requests": 4,
+        "unanswered": 0,
+        "by_status": {
+          "200": 1,
+          "201": 1,
+          "404": 1,
+          "500": 1
+        },
+        "count": 2,
+        "total": 2,
+        "truncated": false,
+        "rows": [
+          {
+            "no": 22,
+            "time": 0.148989,
+            "stream": 1,
+            "client": "10.20.0.15:57557",
+            "server": "10.20.1.80:8080",
+            "method": "GET",
+            "host": "portal.example.com",
+            "uri": "/favicon.ico",
+            "user_agent": "curl/8.5.0",
+            "status": 404,
+            "reason": "Not Found",
+            "ms": 1.086,
+            "content_type": "text/html",
+            "length": 35,
+            "server_header": "nginx",
+            "response_no": 26
+          },
+          {
+            "no": 34,
+            "time": 0.273428,
+            "stream": 2,
+            "client": "10.20.0.15:43807",
+            "server": "10.20.1.80:8080",
+            "method": "GET",
+            "host": "portal.example.com",
+            "uri": "/api/orders?day=today",
+            "user_agent": "curl/8.5.0",
+            "status": 500,
+            "reason": "Internal Server Error",
+            "ms": 51.235,
+            "content_type": "application/json",
+            "length": 28,
+            "server_header": "nginx",
+            "response_no": 38
+          }
+        ]
+      },
+      "recorded": "2026-10-22T13:25:27Z",
+      "source": "record"
+    },
+    {
+      "command": [
+        "tls"
+      ],
+      "args": {},
+      "exit_code": 0,
+      "stdout": {
+        "file": "/var/tmp/outage.pcapng",
+        "handshakes": 3,
+        "failed": 1,
+        "alerts": {
+          "unknown_ca": 1
+        },
+        "count": 3,
+        "total": 3,
+        "truncated": false,
+        "connections": [
+          {
+            "stream": 7,
+            "client": "10.20.0.15:54919",
+            "server": "10.20.1.43:8443",
+            "first_packet": 91,
+            "sni": "api.example.com",
+            "offered": [
+              "TLS 1.3",
+              "TLS 1.2"
+            ],
+            "version": "TLS 1.3",
+            "cipher": "TLS_AES_256_GCM_SHA384",
+            "alerts": [
+              {
+                "from": "10.20.0.15:54919",
+                "alert": "unknown_ca",
+                "fatal": true,
+                "no": 95
+              }
+            ],
+            "ok": false
+          },
+          {
+            "stream": 5,
+            "client": "10.20.0.15:57183",
+            "server": "10.20.1.43:8443",
+            "first_packet": 62,
+            "sni": "api.example.com",
+            "offered": [
+              "TLS 1.3",
+              "TLS 1.2"
+            ],
+            "version": "TLS 1.3",
+            "cipher": "TLS_AES_256_GCM_SHA384",
+            "ok": true
+          },
+          {
+            "stream": 6,
+            "client": "10.20.0.15:57643",
+            "server": "10.20.1.43:8443",
+            "first_packet": 77,
+            "sni": "api.example.com",
+            "offered": [
+              "TLS 1.2"
+            ],
+            "version": "TLS 1.2",
+            "cipher": "ECDHE-RSA-AES256-GCM-SHA384",
+            "cert_names": [
+              "api.example.com",
+              "Example Corp"
+            ],
+            "ok": true
+          }
+        ]
+      },
+      "recorded": "2026-10-22T13:25:28Z",
+      "source": "record"
+    },
+    {
+      "command": [
+        "tls"
+      ],
+      "args": {
+        "failed": true
+      },
+      "exit_code": 0,
+      "stdout": {
+        "file": "/var/tmp/outage.pcapng",
+        "handshakes": 3,
+        "failed": 1,
+        "alerts": {
+          "unknown_ca": 1
+        },
+        "count": 1,
+        "total": 1,
+        "truncated": false,
+        "connections": [
+          {
+            "stream": 7,
+            "client": "10.20.0.15:54919",
+            "server": "10.20.1.43:8443",
+            "first_packet": 91,
+            "sni": "api.example.com",
+            "offered": [
+              "TLS 1.3",
+              "TLS 1.2"
+            ],
+            "version": "TLS 1.3",
+            "cipher": "TLS_AES_256_GCM_SHA384",
+            "alerts": [
+              {
+                "from": "10.20.0.15:54919",
+                "alert": "unknown_ca",
+                "fatal": true,
+                "no": 95
+              }
+            ],
+            "ok": false
+          }
+        ]
+      },
+      "recorded": "2026-10-22T13:25:28Z",
+      "source": "record"
+    },
+    {
+      "command": [
+        "save-filtered"
+      ],
+      "args": {},
+      "exit_code": 0,
+      "stdout": {
+        "file": "/var/tmp/stream2.pcapng",
+        "source": "/var/tmp/outage.pcapng",
+        "filter": "tcp.stream == 2",
+        "packets": 12,
+        "file_bytes": 1692
+      },
+      "recorded": "2026-10-22T13:25:29Z",
+      "source": "record",
+      "note": "any filter and output"
+    },
+    {
+      "command": [
+        "merge"
+      ],
+      "args": {},
+      "exit_code": 0,
+      "stdout": {
+        "file": "/var/tmp/merged.pcapng",
+        "sources": [
+          "/var/tmp/outage.pcapng",
+          "/var/tmp/stream2.pcapng"
+        ],
+        "packets": 108,
+        "file_bytes": 19452
+      },
+      "recorded": "2026-10-22T13:25:29Z",
+      "source": "record",
+      "note": "any inputs and output"
+    },
+    {
+      "command": [
+        "export-objects"
+      ],
+      "args": {},
+      "exit_code": 0,
+      "stdout": {
+        "file": "/var/tmp/outage.pcapng",
+        "protocol": "http",
+        "directory": "/var/tmp/objects",
+        "count": 5,
+        "total": 5,
+        "bytes": 164,
+        "truncated": false,
+        "objects": [
+          {
+            "name": "%2f",
+            "bytes": 48
+          },
+          {
+            "name": "favicon.ico",
+            "bytes": 35
+          },
+          {
+            "name": "orders(1)",
+            "bytes": 30
+          },
+          {
+            "name": "orders%3fday=today",
+            "bytes": 28
+          },
+          {
+            "name": "orders",
+            "bytes": 23
+          }
+        ]
+      },
+      "recorded": "2026-10-22T13:25:29Z",
+      "source": "record",
+      "note": "any capture and folder: the HTTP bodies"
+    },
+    {
+      "command": [
+        "capture"
+      ],
+      "args": {},
+      "exit_code": 0,
+      "stdout": {
+        "file": "/var/tmp/capture.pcapng",
+        "interface": "lo",
+        "capture_filter": "net 10.20.0.0/16",
+        "seconds": 4.5,
+        "packets": 96,
+        "file_bytes": 18120
+      },
+      "recorded": "2026-10-22T13:25:34Z",
+      "source": "record",
+      "note": "any interface: the sample traffic, captured live"
+    }
+  ]
+}

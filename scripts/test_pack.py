@@ -60,6 +60,7 @@ _MYPY_GATED = frozenset(
         "runspec-gitlab-core",
         "runspec-prometheus-core",
         "runspec-grafana-core",
+        "runspec-wireshark-core",
         "runspec-o365",
         "runspec-jira-core",
         "runspec-confluence-core",
