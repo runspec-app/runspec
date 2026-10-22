@@ -2745,6 +2745,8 @@ export interface BridgeApi {
   browse_ssh_binary: () => Promise<string>
   browse_key_file: () => Promise<string>
   browse_folder: () => Promise<string>
+  browse_executable: () => Promise<string>
+  check_api_key_command: (command: string) => Promise<{ command: string; executable: string; found: boolean; searched: string[]; error?: string }>
   browse_sound_file: () => Promise<string>
   // ── terminal sessions ──────────────────────────────────────────────────────
   launch_terminal: (host: string) => Promise<void>

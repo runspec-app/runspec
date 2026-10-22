@@ -22,6 +22,7 @@ import { useFeatures, visibleSettingsTabs } from '../features'
 import { ConfigSyncPreviewModal } from './ConfigSyncPreview'
 import { MemorySyncTab } from './MemorySyncTab'
 import { SettingsColumns } from './SettingsColumns'
+import { TokenCommandInput } from './TokenCommandInput'
 import { TerminalLook } from './TerminalLook'
 
 const { Text, Link } = Typography
@@ -649,9 +650,9 @@ export function LlmTab() {
                       <Form.Item
                         name="api_key_command"
                         label="Token command"
-                        help="Run this command to vend a short-lived token instead of a static key (rotating corporate creds). Its stdout is used as the token."
+                        help="Run this command to vend a short-lived token instead of a static key (rotating corporate creds). Its stdout is used as the token. A helper next to the console needs no full path; if it isn't found, Browse… to it. Check shows what would run, without running it."
                       >
-                        <Input placeholder="aws-vend-token --print" style={{ fontFamily: MONO_FONT }} />
+                        <TokenCommandInput placeholder="aws-vend-token --print" />
                       </Form.Item>
                       <Form.Item
                         name="api_key_ttl_ms"
@@ -5436,7 +5437,7 @@ export function TelemetryTab() {
                 or a bundled helper), so a config seed / sync can distribute it without ever shipping the key
                 in the clear. Mirrors the model <code>api_key_command</code>.
               </Typography.Paragraph>
-              {row('API key command', <Input style={{ flex: 1, maxWidth: 600, minWidth: 0 }} placeholder="e.g. keyring get langsmith key" value={apiKeyCommand} onChange={e => setApiKeyCommand(e.target.value)} disabled={!enabled} />)}
+              {row('API key command', <TokenCommandInput style={{ flex: 1, maxWidth: 600, minWidth: 0 }} placeholder="e.g. keyring get langsmith key" value={apiKeyCommand} onChange={setApiKeyCommand} disabled={!enabled} />)}
               {row('Inject under header', <Input style={{ width: 220 }} placeholder="x-api-key" value={apiKeyHeader} onChange={e => setApiKeyHeader(e.target.value)} disabled={!enabled || !apiKeyCommand.trim()} />)}
 
               <Typography.Paragraph style={{ fontSize: 13, margin: '10px 0 6px' }}>
@@ -5565,7 +5566,7 @@ export function TelemetryTab() {
           ))}
           <Button size="small" icon={<PlusOutlined />} disabled={!metricsEnabled} onClick={() => setMetricsHeaders(prev => [...prev, { k: '', v: '' }])}>Add header</Button>
 
-          {row('Metrics API key command', <Input style={{ flex: 1, maxWidth: 600, minWidth: 0 }} placeholder="e.g. keyring get grafana key" value={metricsApiKeyCommand} onChange={e => setMetricsApiKeyCommand(e.target.value)} disabled={!metricsEnabled} />)}
+          {row('Metrics API key command', <TokenCommandInput style={{ flex: 1, maxWidth: 600, minWidth: 0 }} placeholder="e.g. keyring get grafana key" value={metricsApiKeyCommand} onChange={setMetricsApiKeyCommand} disabled={!metricsEnabled} />)}
           {row('Inject under header', <Input style={{ width: 220 }} placeholder="x-api-key" value={metricsApiKeyHeader} onChange={e => setMetricsApiKeyHeader(e.target.value)} disabled={!metricsEnabled || !metricsApiKeyCommand.trim()} />)}
           {row('Metrics credential', <Select style={{ width: 300 }} value={metricsCredential} onChange={setMetricsCredential} disabled={!metricsEnabled}
             options={[{ value: '', label: 'None' }, ...credOptions.map(c => ({ value: c.id, label: `${c.label} (${c.kind})` }))]} />)}

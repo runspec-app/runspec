@@ -52,7 +52,7 @@ class MyCorpAdapter(LangServeAdapter):
 # ── Skeleton for a from-scratch adapter (no LangServe base) ───────────────────
 #
 # from runspec_console import ModelAdapter, ChatResponse, ToolCall
-# import subprocess, time
+# import time
 #
 # class MyCorpAdapter(ModelAdapter):
 #     def __init__(self, *, api_key=None, model="", system="",
@@ -73,9 +73,12 @@ class MyCorpAdapter(LangServeAdapter):
 #         now = time.monotonic()
 #         if self._cached and self._ttl_s > 0 and now - self._fetched_at < self._ttl_s:
 #             return self._cached
-#         self._cached = subprocess.run(
-#             self._cmd, shell=True, capture_output=True, text=True
-#         ).stdout.strip()
+#         # Use the console's runner rather than your own subprocess call: it
+#         # finds a helper shipped next to the console (venv Scripts/bin on
+#         # PATH, $RUNSPEC_PYTHON, cmd.exe path quirks) and says where it looked
+#         # when the helper is missing.
+#         from runspec_console.adapters.base import run_api_key_command
+#         self._cached = run_api_key_command(self._cmd)
 #         self._fetched_at = now
 #         return self._cached
 #

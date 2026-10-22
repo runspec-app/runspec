@@ -18,6 +18,36 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   is its own `service.instance.id`, and turn spans carry
   `runspec.lab.variant`/`scenario`/`sample`/`tier`.
 
+## [0.354.0] — 2026-10-22
+
+### Fixed
+
+- **Token command helper "not found" with a plugin adapter.** `[llm]
+  api_key_command` was only resolved (venv `Scripts`/`bin` on `PATH`, relative
+  paths, `$RUNSPEC_PYTHON`) inside `run_api_key_command`, which only the built-in
+  `anthropic`/`langserve` adapters call. A plugin adapter got the raw string and
+  ran it itself, with the console's own environment; a console started from a
+  shortcut has no venv on `PATH`, so a helper sitting next to the console exe was
+  "not recognized". The bridge now resolves the command before handing it to any
+  adapter, and a bare name (`get-key`) found in the console's own folders is
+  replaced by its absolute path (it used to be left to `PATH`). A bare name not
+  in those folders (`keyring`, `vault`) is still left to `PATH`.
+  (`adapters/base.py` `prepare_api_key_command`, `bridge_internals._get_adapter`.)
+- When the helper still isn't found (`cmd` exit 9009 / `sh` exit 127), the error
+  names the folders the console searched and points at Settings.
+- The example plugin adapter's from-scratch template now calls
+  `run_api_key_command` instead of its own `subprocess.run`.
+
+### Added
+
+- **Browse… and Check on token command fields** (Settings → Model / API →
+  Advanced → Token command, and the Telemetry trace + metrics API key commands).
+  Browse… picks the helper program and keeps the command's arguments (a path with
+  spaces is quoted); Check shows the command the console would run, or which
+  folders it looked in, without running it. New bridge methods
+  `browse_executable` / `check_api_key_command`
+  (`components/TokenCommandInput.tsx`, `adapters/base.check_api_key_command`).
+
 ## [0.353.1] — 2026-10-21
 
 ### Fixed

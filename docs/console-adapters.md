@@ -203,6 +203,17 @@ short-lived corporate tokens), `base_url`, `model`, `system`, and `max_tokens`
 (for `anthropic` / `bedrock` / `langserve` and any adapter that declares it).
 `[llm] max_continuations` is read by the loop, not the adapter.
 
+!!! tip "Running `api_key_command` in your own adapter"
+    The console resolves `api_key_command` before passing it in: a helper named
+    without a full path (`get-key`, `./get-key.exe`) that sits in one of the
+    console's own folders (the venv's `Scripts`/`bin`, the folder of the
+    console exe) arrives as its absolute path. So even a plain
+    `subprocess.run(cmd, shell=True)` finds it when the console was started from
+    a shortcut, with no venv on `PATH`. Better still, call
+    `runspec_console.adapters.base.run_api_key_command(cmd)`, which also sets
+    `$RUNSPEC_PYTHON` / `$RUNSPEC_VENV` and names the folders it searched when
+    the helper is missing. Subclassing `LangServeAdapter` does this for you.
+
 ### Built-in `anthropic` extras: `cache_ttl`, `fallbacks`, `thinking_display`
 
 Three `[llm]` keys are forwarded **only** to the built-in `anthropic` provider

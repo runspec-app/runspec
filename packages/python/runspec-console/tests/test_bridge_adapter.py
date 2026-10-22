@@ -326,3 +326,20 @@ def test_anthropic_extras_threaded_only_to_anthropic():
         _StubBridge(cfg)._get_adapter()
     _, kwargs = load.call_args
     assert not set(extras) & set(kwargs)
+
+
+def test_api_key_command_forwarded_as_absolute_path(monkeypatch, tmp_path):
+    # A plugin adapter may run the command itself with the console's bare
+    # environment; a console started from a shortcut has no venv Scripts/bin on
+    # PATH, so the bridge hands every adapter the helper's absolute path.
+    scripts = tmp_path / "Scripts"
+    scripts.mkdir()
+    helper = scripts / "get-key"
+    helper.write_text("")
+    monkeypatch.setattr(base, "api_key_command_dirs", lambda: [str(scripts)])
+    cfg = {"llm": {"provider": "mycorp", "api_key_command": "get-key --scope llm"}}
+    bridge = _StubBridge(cfg)
+    with patch(LOAD, return_value="ADAPTER") as load:
+        bridge._get_adapter()
+    _, kwargs = load.call_args
+    assert kwargs["api_key_command"] == f"{helper} --scope llm"

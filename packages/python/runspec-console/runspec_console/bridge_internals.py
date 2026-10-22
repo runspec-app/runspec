@@ -1480,7 +1480,16 @@ class InternalsMixin:
         if llm_cfg.get("base_url"):
             kwargs["base_url"] = llm_cfg["base_url"]
         if llm_cfg.get("api_key_command"):
-            kwargs["api_key_command"] = llm_cfg["api_key_command"]
+            # Resolved to the helper's absolute path here, not only inside the
+            # built-in adapters' run_api_key_command: a plugin adapter may run the
+            # command itself (plain subprocess, the console's own environment),
+            # and a console started from a shortcut has no venv Scripts/bin on
+            # PATH — so a helper sitting next to the console exe was "not found".
+            from .adapters.base import api_key_command_env, prepare_api_key_command
+
+            kwargs["api_key_command"] = prepare_api_key_command(
+                str(llm_cfg["api_key_command"]), api_key_command_env()
+            )
         if llm_cfg.get("api_key_ttl_ms") is not None:
             kwargs["api_key_ttl_ms"] = int(llm_cfg["api_key_ttl_ms"])
         # Output-token ceiling. The anthropic/bedrock/langserve built-ins accept

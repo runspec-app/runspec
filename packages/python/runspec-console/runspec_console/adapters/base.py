@@ -18,6 +18,7 @@ import sysconfig
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from shlex import quote as shlex_quote
+from shlex import split as shlex_split
 from typing import Any, AsyncIterator, Callable
 
 from ..procutil import no_window_kwargs
@@ -454,6 +455,28 @@ def _split_first_token(command: str) -> tuple[str, str, bool]:
     return m.group(0), command[m.end() :], False
 
 
+def _find_helper(
+    exe: str,
+    bases: list[str],
+    *,
+    windows: bool,
+    env: dict[str, str],
+    is_file: Callable[[str], bool],
+) -> str | None:
+    """The first ``base/exe`` (trying ``PATHEXT`` on Windows when ``exe`` has no
+    extension) that is a file, or ``None``."""
+    pathmod = ntpath if windows else posixpath
+    exts = [""]
+    if windows and not pathmod.splitext(exe)[1]:
+        exts += [e for e in env.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").split(";") if e]
+    for base in bases:
+        for ext in exts:
+            cand = pathmod.normpath(pathmod.join(base, exe + ext))
+            if is_file(cand):
+                return cand
+    return None
+
+
 def prepare_api_key_command(
     command: str,
     env: dict[str, str] | None = None,
@@ -477,10 +500,19 @@ def prepare_api_key_command(
 
     So: on Windows the ``$RUNSPEC_*`` vars are expanded; a relative executable
     path is looked up in the working directory and then each of
-    :func:`api_key_command_dirs` and replaced by the absolute file that exists
+    :func:`api_key_command_dirs`, and a bare name (``get-key``) in each of
+    :func:`api_key_command_dirs`, and replaced by the absolute file that exists
     (trying ``PATHEXT`` on Windows); a Windows path has its ``/`` turned into
-    ``\\``; a path with spaces is quoted. A bare name (``get-key``) is left to the
-    shell — the same folders lead ``PATH``. Arguments are never touched.
+    ``\\``; a path with spaces is quoted. A bare name that is not in the
+    console's folders (``keyring``, ``vault``) is left to the shell's ``PATH``.
+    Arguments are never touched.
+
+    The result names the helper by absolute path, so it runs the same however it
+    is executed — including by a plugin adapter that runs the command itself with
+    its own ``subprocess`` call and the console's bare environment (whose
+    ``PATH`` lacks the venv's ``Scripts`` when the console was started from a
+    shortcut). That is why the console resolves the command once before handing
+    it to any adapter (``Bridge._get_adapter``).
     """
     if windows is None:
         windows = os.name == "nt"
@@ -499,35 +531,104 @@ def prepare_api_key_command(
         return command
     pathmod = ntpath if windows else posixpath
     has_sep = ("/" in exe or "\\" in exe) if windows else "/" in exe
-    if not has_sep:
-        return command  # bare name: PATH (with the console's folders first)
+    dirs = search_dirs if search_dirs is not None else api_key_command_dirs()
     resolved = exe
-    if not pathmod.isabs(exe):
-        exts = [""]
-        if windows and not pathmod.splitext(exe)[1]:
-            exts += [
-                e for e in env.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").split(";") if e
-            ]
-        bases = [cwd if cwd is not None else os.getcwd()]
-        bases += search_dirs if search_dirs is not None else api_key_command_dirs()
+    if not has_sep:
+        # A bare name: the console's own folders first (where a helper shipped
+        # with the console lands), else the shell's PATH.
         found = None
-        for base in bases:
-            for ext in exts:
-                cand = pathmod.normpath(pathmod.join(base, exe + ext))
-                if is_file(cand):
-                    found = cand
-                    break
-            if found:
-                break
+        if "$" not in exe and "%" not in exe:
+            found = _find_helper(exe, dirs, windows=windows, env=env, is_file=is_file)
+        if not found:
+            return command
+        resolved = found
+    elif not pathmod.isabs(exe):
+        bases = [cwd if cwd is not None else os.getcwd(), *dirs]
+        found = _find_helper(exe, bases, windows=windows, env=env, is_file=is_file)
         if found:
             resolved = found
-    if windows:
+    if windows and has_sep:
         resolved = ntpath.normpath(resolved)
     if resolved == exe and not quoted:
         return command
     if quoted or any(c.isspace() for c in resolved):
         resolved = f'"{resolved}"' if windows else shlex_quote(resolved)
     return resolved + rest
+
+
+def check_api_key_command(command: str) -> dict[str, Any]:
+    """Say what ``api_key_command`` would run, without running it.
+
+    Returns ``{"command", "executable", "found", "searched"}``: the command after
+    :func:`prepare_api_key_command`, its executable, whether that executable
+    exists (an absolute path that is a file, or a bare name found on the
+    console's ``PATH``), and the console folders searched for a bare/relative
+    helper. Backs Settings → Model / API → Token command → Check, so an operator
+    can see why a helper "is not found" without a model call.
+    """
+    import shutil
+
+    env = api_key_command_env()
+    prepared = prepare_api_key_command(command, env)
+    exe, _rest, _quoted = _split_first_token(prepared)
+    if os.name != "nt" and prepared.startswith("'"):
+        try:  # a POSIX path with spaces comes back shlex-quoted
+            exe = shlex_split(prepared)[0]
+        except (ValueError, IndexError):
+            pass
+    if not exe:
+        found = False
+    elif os.path.isabs(exe):
+        found = os.path.isfile(exe)
+    else:
+        found = shutil.which(exe, path=env.get("PATH")) is not None
+    return {
+        "command": prepared,
+        "executable": exe,
+        "found": found,
+        "searched": api_key_command_dirs(),
+    }
+
+
+# cmd.exe exits 9009 for "'x' is not recognized …"; sh exits 127 for "not found".
+_NOT_FOUND_EXITS = (9009, 127)
+
+
+def run_api_key_command(command: str) -> str:
+    """Run ``api_key_command`` via the shell and return its stripped stdout (the key).
+
+    Executed with :func:`api_key_command_env`, so a helper shipped into the venv
+    resolves wherever the venv was created. Raises ``RuntimeError`` (exit code +
+    stderr) when the command produces no output — the shared error every adapter
+    surfaced individually before. When the shell could not find the helper, the
+    error also names the folders the console searched.
+    """
+    env = api_key_command_env()
+    prepared = prepare_api_key_command(command, env)
+    result = subprocess.run(
+        prepared,
+        capture_output=True,
+        text=True,
+        shell=True,
+        env=env,
+        **no_window_kwargs(),
+    )
+    key = result.stdout.strip()
+    if not key:
+        ran = f" [ran: {prepared}]" if prepared != command else ""
+        hint = ""
+        if result.returncode in _NOT_FOUND_EXITS:
+            dirs = "; ".join(api_key_command_dirs()) or "(none)"
+            hint = (
+                f" — the helper was not found in the console's folders ({dirs}) "
+                "or on PATH. Set its full path in Settings → Model / API → "
+                "Advanced → Token command (Browse…)."
+            )
+        raise RuntimeError(
+            f"api_key_command returned no output (exit {result.returncode}): "
+            f"{result.stderr.strip()}{ran}{hint}"
+        )
+    return key
 
 
 def anthropic_http_client(
@@ -548,34 +649,6 @@ def anthropic_http_client(
         else anthropic_mod.DefaultAsyncHttpxClient
     )
     return cls(**kwargs)
-
-
-def run_api_key_command(command: str) -> str:
-    """Run ``api_key_command`` via the shell and return its stripped stdout (the key).
-
-    Executed with :func:`api_key_command_env`, so a helper shipped into the venv
-    resolves wherever the venv was created. Raises ``RuntimeError`` (exit code +
-    stderr) when the command produces no output — the shared error every adapter
-    surfaced individually before.
-    """
-    env = api_key_command_env()
-    prepared = prepare_api_key_command(command, env)
-    result = subprocess.run(
-        prepared,
-        capture_output=True,
-        text=True,
-        shell=True,
-        env=env,
-        **no_window_kwargs(),
-    )
-    key = result.stdout.strip()
-    if not key:
-        ran = f" [ran: {prepared}]" if prepared != command else ""
-        raise RuntimeError(
-            f"api_key_command returned no output (exit {result.returncode}): "
-            f"{result.stderr.strip()}{ran}"
-        )
-    return key
 
 
 class ModelAdapter(ABC):

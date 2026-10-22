@@ -1802,6 +1802,51 @@ class ConfigSshMixin:
             chosen = str(result)
         return _normalize_path(chosen)
 
+    def browse_executable(self) -> str:
+        """Open a native file picker for a program (e.g. the API-key helper behind
+        a "Token command" / ``api_key_command``); returns the path or ''.
+
+        Programs first (``.exe``/``.cmd``/``.bat``), with an "All files" fallback
+        for a POSIX helper or a script. Path normalised to forward slashes, which
+        ``prepare_api_key_command`` turns back into backslashes for ``cmd.exe``."""
+        import webview
+
+        windows = getattr(webview, "windows", None) or []
+        if not windows:
+            return ""
+        try:
+            result = windows[0].create_file_dialog(
+                webview.FileDialog.OPEN,
+                file_types=("Programs (*.exe;*.cmd;*.bat)", "All files (*.*)"),
+            )
+        except Exception:
+            return ""
+        if not result:
+            return ""
+        if isinstance(result, (list, tuple)):
+            chosen = str(result[0]) if result else ""
+        else:
+            chosen = str(result)
+        return _normalize_path(chosen)
+
+    def check_api_key_command(self, command: str) -> dict:
+        """What a token command would run, without running it: the resolved
+        command, its executable, whether that exists, and the console folders
+        searched for a helper named without a full path. Never runs the helper
+        (its output is a secret)."""
+        from .adapters.base import check_api_key_command
+
+        try:
+            return check_api_key_command(str(command or ""))
+        except Exception as exc:  # noqa: BLE001 — a diagnostic must not raise
+            return {
+                "command": str(command or ""),
+                "executable": "",
+                "found": False,
+                "searched": [],
+                "error": str(exc),
+            }
+
     def browse_folder(self) -> str:
         """Open a native folder picker; returns the chosen directory or ''.
 

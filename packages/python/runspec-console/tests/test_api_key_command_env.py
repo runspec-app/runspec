@@ -145,6 +145,35 @@ def test_windows_bare_name_and_arguments_untouched():
     assert _win(r"keyring get a/b c\d") == r"keyring get a/b c\d"
 
 
+def test_windows_bare_name_in_console_folder_becomes_absolute():
+    # A helper shipped next to the console exe: run by full path, so it is found
+    # however the command is executed (a plugin adapter's own subprocess, a
+    # console launched from a shortcut with no venv Scripts on PATH).
+    exe = _SCRIPTS + r"\get-key.exe"
+    assert _win("get-key --scope llm", [exe]).lower() == (exe + " --scope llm").lower()
+    assert _win("get-key.exe", [exe]) == exe
+    folder = r"C:\Program Files\Corp\Scripts"
+    spaced = folder + r"\get-key.cmd"
+    assert _win("get-key a", [spaced], dirs=[folder]).lower() == f'"{spaced}" a'.lower()
+
+
+def test_windows_bare_name_ignores_working_directory():
+    # Only the console's folders, never the cwd: a shortcut's "Start in" folder
+    # must not change which helper runs.
+    here = _CWD + r"\get-key.exe"
+    assert _win("get-key", [here]) == "get-key"
+
+
+def test_resolved_command_is_stable_when_prepared_again():
+    exe = _SCRIPTS + r"\get-key.exe"
+    once = _win("get-key x", [exe])
+    assert _win(once, [exe]) == once
+    folder = r"C:\Program Files\Corp"
+    spaced = folder + r"\get-key.exe"
+    once = _win("get-key x", [spaced], dirs=[folder])
+    assert _win(once, [spaced], dirs=[folder]) == once
+
+
 def test_windows_expands_runspec_vars():
     env = {"RUNSPEC_PYTHON": r"C:\venvs\corp\Scripts\python.exe", "RUNSPEC_VENV": "x"}
     out = _win('"$RUNSPEC_PYTHON" -m corp.auth', env=env)
@@ -197,3 +226,77 @@ def test_run_api_key_command_runs_the_prepared_command(monkeypatch, tmp_path):
     monkeypatch.setattr(base.subprocess, "run", fake_run)
     assert base.run_api_key_command("./get-key") == "k"
     assert seen["cmd"] == str(helper)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell path handling")
+def test_posix_bare_name_in_console_folder_becomes_absolute(tmp_path):
+    folder = tmp_path / "my venv" / "bin"
+    folder.mkdir(parents=True)
+    helper = folder / "get-key"
+    helper.write_text("")
+    out = base.prepare_api_key_command(
+        "get-key x", {}, windows=False, search_dirs=[str(folder)]
+    )
+    assert out == f"'{helper}' x"
+
+
+def test_not_found_error_names_the_searched_folders(monkeypatch):
+    class _Result:
+        stdout = ""
+        stderr = "'get-key' is not recognized as an internal or external command"
+        returncode = 9009
+
+    monkeypatch.setattr(base.subprocess, "run", lambda *a, **k: _Result())
+    monkeypatch.setattr(base, "api_key_command_dirs", lambda: [r"C:\v\Scripts"])
+    with pytest.raises(RuntimeError) as err:
+        base.run_api_key_command("get-key")
+    msg = str(err.value)
+    assert "exit 9009" in msg
+    assert r"C:\v\Scripts" in msg
+    assert "Browse" in msg
+
+
+def test_other_failures_have_no_not_found_hint(monkeypatch):
+    class _Result:
+        stdout = ""
+        stderr = "token expired"
+        returncode = 1
+
+    monkeypatch.setattr(base.subprocess, "run", lambda *a, **k: _Result())
+    with pytest.raises(RuntimeError) as err:
+        base.run_api_key_command("get-key")
+    assert "not found" not in str(err.value)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell path handling")
+def test_check_reports_resolution_without_running(monkeypatch, tmp_path):
+    folder = tmp_path / "bin"
+    folder.mkdir()
+    helper = folder / "get-key"
+    helper.write_text("")
+    monkeypatch.setattr(base, "api_key_command_dirs", lambda: [str(folder)])
+
+    def boom(*a, **k):  # the helper's output is a secret — never run it
+        raise AssertionError("check must not run the command")
+
+    monkeypatch.setattr(base.subprocess, "run", boom)
+    out = base.check_api_key_command("get-key --scope llm")
+    assert out["command"] == f"{helper} --scope llm"
+    assert out["executable"] == str(helper)
+    assert out["found"] is True
+    assert out["searched"] == [str(folder)]
+
+    missing = base.check_api_key_command(str(tmp_path / "nope" / "get-key"))
+    assert missing["found"] is False
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell path handling")
+def test_check_finds_a_spaced_posix_path(monkeypatch, tmp_path):
+    folder = tmp_path / "my venv" / "bin"
+    folder.mkdir(parents=True)
+    helper = folder / "get-key"
+    helper.write_text("")
+    monkeypatch.setattr(base, "api_key_command_dirs", lambda: [str(folder)])
+    out = base.check_api_key_command("get-key")
+    assert out["executable"] == str(helper)
+    assert out["found"] is True

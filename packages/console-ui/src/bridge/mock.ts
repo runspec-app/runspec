@@ -1682,6 +1682,13 @@ export const mockApi: BridgeApi = {
   browse_ssh_binary: async () => '',
   browse_key_file: async () => '',
   browse_folder: async () => '',
+  browse_executable: async () => 'C:/venvs/corp/Scripts/get-key.exe',
+  check_api_key_command: async (command: string) => ({
+    command: command.replace(/^get-key\b/, 'C:\\venvs\\corp\\Scripts\\get-key.exe'),
+    executable: /^get-key\b/.test(command) ? 'C:\\venvs\\corp\\Scripts\\get-key.exe' : command.split(' ')[0],
+    found: /^get-key\b/.test(command),
+    searched: ['C:\\venvs\\corp\\Scripts'],
+  }),
   browse_sound_file: async () => '',
 
   // Mirrors the Python bridge's gate round-trip: send_chat parks a resolver
