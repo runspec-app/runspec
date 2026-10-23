@@ -53,6 +53,8 @@ Project-wide defaults. All fields optional.
 | `enforce_run_as` | string | `"error"` | Default [`enforce_run_as`](#enforce_run_as) for runnables that don't set one. |
 | `jump-hosts` | table | — | Per-alias jump host config. See [Jump Hosts](jump-hosts.md). |
 | `logging` | table | — | Logging configuration. See [Logging](logging.md). |
+| `audit` | table | — | Where audit events go besides the venv ledger. See [Audit Events](audit.md). |
+| `history` | table | — | Runs index bounds: `db` (default `true`), `retention_days` (`90`), `max_rows` (`50000`), `max_run_hours` (`24`). |
 
 ```toml
 [config]

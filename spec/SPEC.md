@@ -59,6 +59,7 @@ Project-wide defaults. All fields are optional.
 | `version` | string | `"1"` | runspec spec version |
 | `logging` | table | defaults | Logging configuration. On by default — an absent section means the defaults. See [Logging](#logging). |
 | `audit` | table | defaults | Where audit events go besides the venv ledger. See [Audit Events](#audit-events). |
+| `history` | table | defaults | The runs index (`runspec_runs.db`, beside the run logs). Fields: `db` (bool, default `true` — `false` skips the index; History falls back to parsing the logs), `retention_days` (int, `90`) and `max_rows` (int, `50000`) bound the ring-buffer prune, `max_run_hours` (int, `24`) is the age after which a `running` row a crash left behind is reaped. |
 | `runspec_env` | string | — | Path to a `.runspec_env` file. Relative paths resolve from `sys.prefix`. Per-runnable `runspec_env` wins. |
 | `meta` | table | — | Project-wide developer-defined metadata. Pass-through — runspec never interprets it. Orchestration emitters read project defaults here (e.g. `[config.meta.rundeck]` for `runspec emit --rundeck`). |
 

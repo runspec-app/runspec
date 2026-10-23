@@ -111,6 +111,36 @@
           },
           "additionalProperties": false
         },
+        "history": {
+          "type": "object",
+          "description": "The runs index (runspec_runs.db, beside the run logs) that History views read. Absent = on with the defaults.",
+          "properties": {
+            "db": {
+              "type": "boolean",
+              "description": "Write the runs index. false skips it; History then falls back to parsing the logs.",
+              "default": true
+            },
+            "retention_days": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Drop index rows older than this many days.",
+              "default": 90
+            },
+            "max_rows": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Keep at most this many rows in the index.",
+              "default": 50000
+            },
+            "max_run_hours": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "A 'running' row older than this (left behind by a crash) is reaped.",
+              "default": 24
+            }
+          },
+          "additionalProperties": false
+        },
         "jump-hosts": {
           "type": "object",
           "description": "Named jump host aliases for runspec jump. Each key is an alias name.",
@@ -171,6 +201,33 @@
       },
       "required": ["host"],
       "additionalProperties": false
+    },
+    "examples": {
+      "type": "array",
+      "description": "Usage examples rendered by --help.",
+      "items": {
+        "oneOf": [
+          {
+            "type": "string",
+            "description": "Bare string shorthand for {cmd = <string>}."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "cmd": {
+                "type": "string",
+                "description": "The example command string."
+              },
+              "description": {
+                "type": "string",
+                "description": "Optional explanation shown alongside the example."
+              }
+            },
+            "required": ["cmd"],
+            "additionalProperties": false
+          }
+        ]
+      }
     },
     "runnable": {
       "type": "object",
@@ -239,31 +296,7 @@
           "description": "Optional flags passed to the become method (e.g. \"-H\" for sudo)."
         },
         "examples": {
-          "type": "array",
-          "description": "Usage examples rendered by --help.",
-          "items": {
-            "oneOf": [
-              {
-                "type": "string",
-                "description": "Bare string shorthand for {cmd = <string>}."
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "cmd": {
-                    "type": "string",
-                    "description": "The example command string."
-                  },
-                  "description": {
-                    "type": "string",
-                    "description": "Optional explanation shown alongside the example."
-                  }
-                },
-                "required": ["cmd"],
-                "additionalProperties": false
-              }
-            ]
-          }
+          "$ref": "#/$defs/examples"
         },
         "args": {
           "type": "object",
@@ -506,6 +539,10 @@
           "type": "object",
           "description": "Argument definitions for this subcommand.",
           "additionalProperties": { "$ref": "#/$defs/arg_value" }
+        },
+        "examples": {
+          "$ref": "#/$defs/examples",
+          "description": "Usage examples rendered by --help for this subcommand."
         },
         "groups": {
           "type": "object",
