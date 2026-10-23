@@ -2,6 +2,14 @@
 
 All notable changes to `runspec-mcp` are documented here.
 
+## [0.2.3] — 2026-10-23
+
+### Added
+
+- **Runs from the gateway are labelled `mcp`.** Every run sends
+  `RUNSPEC_LABEL=mcp`, so `runspec history` and the console's History tab show
+  where it came from (needs runspec 0.76.0 on the host).
+
 ## [0.2.2] — 2026-10-07
 
 ### Fixed

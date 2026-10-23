@@ -482,10 +482,10 @@ def row_from_records(run_id: str, records: list[dict[str, Any]]) -> dict[str, An
     row["runnable"] = start.get("runnable") or src.get("runnable") or ""
     cmd = start.get("command_path") or src.get("command_path") or []
     row["command"] = " ".join(cmd) if isinstance(cmd, list) else str(cmd or "")
-    for k in ("user", "user_target", "agent", "trigger", "skill", "autonomy"):
+    for k in ("user", "user_target", "agent", "trigger", "skill", "autonomy", "label"):
         v = start.get(k)
         row[k] = v if not _empty(v) else src.get(k)
-    for k in ("pid", "host", "proc_start", "run_as", "label", "exec_uid", "venv"):
+    for k in ("pid", "host", "proc_start", "run_as", "exec_uid", "venv"):
         row[k] = start.get(k)
     args = start.get("invocation_args") or src.get("invocation_args") or {}
     row["args"] = args if isinstance(args, dict) else {}

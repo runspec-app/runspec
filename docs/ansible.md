@@ -99,7 +99,9 @@ conservative (assumes nothing would have changed).
 
 The module injects `RUNSPEC_AUTONOMY=autonomous` into the subprocess environment,
 so a runnable declared `autonomy = "confirm"` runs in a non-interactive playbook
-without any change to its `runspec.toml`.
+without any change to its `runspec.toml`. It also sets `RUNSPEC_LABEL=ansible`,
+so the run shows the label `ansible` in `runspec history` and the console's
+History tab (modules emitted before runspec 0.76.0 don't; re-emit them).
 
 ## Per-runnable settings
 

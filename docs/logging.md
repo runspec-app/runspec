@@ -416,10 +416,18 @@ runspec emits a **run summary** at process exit. It has two parts:
   runs to show per-run icons.
 
   **Provenance — `RUNSPEC_RUNBOOK`.** A further orthogonal axis: a caller can set
-  `RUNSPEC_RUNBOOK` to the id of a saved *runbook* (runbook) that drove the run; it
-  lands as `extra.runbook` (empty otherwise). runspec-console sets it when a run is
-  started from its `$` runbooks menu, so the History/Analytics tabs can attribute and
-  filter runs by runbook.
+  `RUNSPEC_RUNBOOK` to the id of a saved *runbook* that drove the run; it lands
+  as `extra.skill`, the field's older name (empty otherwise; `RUNSPEC_SKILL` is
+  the older spelling of the variable and still works). runspec-console sets it
+  when a run is started from its `$` runbooks menu, so the History/Analytics tabs
+  can attribute and filter runs by runbook. Before runspec 0.76.0 only
+  `RUNSPEC_SKILL` was read, so console runbook runs recorded no runbook.
+
+  **Label — `RUNSPEC_LABEL`.** Where the run was launched from: `console`,
+  `mcp`, `rundeck`, `ansible`, a `runspec exec --label` value such as `tui` or
+  `sched:<id>`, or `cli` when nothing set it (a shell, cron or a script). It
+  lands as `extra.label` and in the runs index's `label` column, which
+  `runspec history` and the console's History tab show. See SPEC → "Run labels".
 
 - **The console echo** (`summary_console`, default **off**) — one human-readable
   line to **stderr**:

@@ -316,7 +316,7 @@ def _handle_tools_call(
     # RUNSPEC_* vars on the child's stdin (the SPEC env frame) because sudo and
     # friends strip the environment — never on the command line.
     spec = exec_specs.get(name, {})
-    final_cmd, extra_env, frame = _build_command(spec, argv, {"RUNSPEC_AGENT": "1", **runspec_env})
+    final_cmd, extra_env, frame = _build_command(spec, argv, {"RUNSPEC_AGENT": "1", "RUNSPEC_LABEL": "mcp", **runspec_env})
     env = {**os.environ, **extra_env}
     # The child must never inherit serve's stdin: that's the MCP JSON-RPC stream.
     feed: dict[str, Any] = {"input": frame.decode("ascii")} if frame else {"stdin": subprocess.DEVNULL}

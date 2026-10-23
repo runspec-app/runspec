@@ -184,10 +184,13 @@ def test_script_no_args_just_execs():
 def test_script_run_as_sends_env_frame_on_stdin_to_venv_python():
     s = rundeckgen.render_script("deploy", ["start"], {"token": {"type": "password"}}, "/opt/app/.venv/bin/deploy", run_as="svc", venv="/opt/app/.venv")
     assert "rs_user=svc\n" in s
-    assert 'rs_frame RUNSPEC_DEPLOY_ARG_TOKEN | sudo -n -u "$rs_user" /opt/app/.venv/bin/python -c "$RS_PRELUDE" /opt/app/.venv/bin/deploy start' in s
-    # sudo resets the environment, so values ride stdin; the only export is the
-    # no-sudo branch taken when the Rundeck user already is the account.
-    assert s.count("export") == 1
+    assert "\nRUNSPEC_LABEL=rundeck\n" in s
+    assert 'rs_frame RUNSPEC_DEPLOY_ARG_TOKEN RUNSPEC_LABEL | sudo -n -u "$rs_user" /opt/app/.venv/bin/python -c "$RS_PRELUDE" /opt/app/.venv/bin/deploy start' in s
+    # sudo resets the environment, so values (and the label) ride stdin; the only
+    # exports are in the no-sudo branch taken when the Rundeck user already is
+    # the account.
+    assert s.count("export") == 2
+    assert "  export RUNSPEC_LABEL=rundeck\n" in s
     assert 'if [ "$rs_user" = "$(id -un)" ]; then' in s
 
 
@@ -197,9 +200,19 @@ def test_script_run_as_without_venv_uses_shell_prelude():
     assert "command -v" not in s  # sudo's PATH isn't the Rundeck user's
 
 
-def test_script_run_as_no_args_execs_sudo():
+def test_script_run_as_no_args_sends_only_the_label():
+    """With the venv known the venv-python prelude is covered by a venv `bin/`
+    sudoers rule, so even a job with no options sends its label in the frame."""
     s = rundeckgen.render_script("deploy", [], {}, "/opt/v/bin/deploy", run_as="svc", venv="/opt/v")
-    assert s.strip().endswith('exec sudo -n -u "$rs_user" /opt/v/bin/deploy')
+    assert s.strip().endswith('rs_frame RUNSPEC_LABEL | sudo -n -u "$rs_user" /opt/v/bin/python -c "$RS_PRELUDE" /opt/v/bin/deploy')
+
+
+def test_script_run_as_no_args_no_venv_execs_sudo():
+    """Without the venv the prelude would be `sh`, which a sudoers rule may
+    refuse, so a job with no options runs the binary directly (label "cli")."""
+    s = rundeckgen.render_script("deploy", [], {}, "deploy", run_as="svc")
+    assert s.strip().endswith('exec sudo -n -u "$rs_user" deploy')
+    assert "RS_PRELUDE" not in s
 
 
 def test_script_run_as_rejects_shell_metacharacters():
@@ -227,7 +240,7 @@ def _show_binary(tmp_path):
 
     show = tmp_path / "bin" / "show"
     show.parent.mkdir(exist_ok=True)
-    show.write_text(f"#!{sys.executable}\nimport json, os, sys\nprint(json.dumps([{{k: v for k, v in os.environ.items() if k.startswith('RUNSPEC_SHOW_')}}, sys.argv[1:]]))\n")
+    show.write_text(f"#!{sys.executable}\nimport json, os, sys\nprint(json.dumps([{{k: v for k, v in os.environ.items() if k.startswith('RUNSPEC_SHOW_') or k == 'RUNSPEC_LABEL'}}, sys.argv[1:]]))\n")
     show.chmod(0o755)
     return show
 
@@ -257,7 +270,7 @@ def test_script_values_round_trip_through_bash(tmp_path):
         out = _run_substituted(tmp_path, script, values)
         assert out.returncode == 0, out.stderr
         env, argv = json.loads(out.stdout)
-        assert env == {"RUNSPEC_SHOW_ARG_PLAIN": "3", "RUNSPEC_SHOW_ARG_TRICKY": values["tricky"], "RUNSPEC_SHOW_ARG_DELIM": "RUNSPEC_VALUE"}
+        assert env == {"RUNSPEC_SHOW_ARG_PLAIN": "3", "RUNSPEC_SHOW_ARG_TRICKY": values["tricky"], "RUNSPEC_SHOW_ARG_DELIM": "RUNSPEC_VALUE", "RUNSPEC_LABEL": "rundeck"}
         assert argv == ["sub"]
     assert not (tmp_path / "pwned").exists()
 
@@ -324,7 +337,7 @@ def test_script_guard_tolerates_blank_lines(tmp_path):
     script = rundeckgen.render_script("show", [], {"a": {"type": "str"}}, str(show)) + "\n\n"
     out = _run_substituted(tmp_path, script, {"a": "\n"})
     assert out.returncode == 0, out.stderr
-    assert json.loads(out.stdout)[0] == {}
+    assert json.loads(out.stdout)[0] == {"RUNSPEC_LABEL": "rundeck"}
 
 
 def test_script_guard_count_matches_rendered_script():
@@ -380,7 +393,7 @@ def test_script_owner_runs_directly_when_already_the_owner(tmp_path):
         env = {**os.environ, "PATH": f"{tmp_path}/bin:/usr/bin:/bin"}
         out = _run_substituted(tmp_path, script, {"a": "v"}, env=env)
         assert out.returncode == 0, out.stderr
-        assert json.loads(out.stdout) == [{"RUNSPEC_SHOW_ARG_A": "v"}, ["sub"]]
+        assert json.loads(out.stdout) == [{"RUNSPEC_SHOW_ARG_A": "v", "RUNSPEC_LABEL": "rundeck"}, ["sub"]]
 
 
 def test_script_owner_escalates_to_the_venv_owner(tmp_path):
@@ -404,7 +417,7 @@ def test_script_owner_escalates_to_the_venv_owner(tmp_path):
         script = rundeckgen.render_script("show", ["sub"], {"a": {"type": "str"}, "b": {"type": "password"}}, invocation, run_as="@owner", venv=venv)
         out = _run_substituted(tmp_path, script, {"a": "v", "b": "s3cret"}, env=env)
         assert out.returncode == 0, out.stderr
-        assert json.loads(out.stdout) == [{"RUNSPEC_SHOW_ARG_A": "v", "RUNSPEC_SHOW_ARG_B": "s3cret"}, ["sub"]]
+        assert json.loads(out.stdout) == [{"RUNSPEC_SHOW_ARG_A": "v", "RUNSPEC_SHOW_ARG_B": "s3cret", "RUNSPEC_LABEL": "rundeck"}, ["sub"]]
         sudo_argv = (tmp_path / "sudo.log").read_text()
         assert sudo_argv.startswith("-n -u svc-owner ")
         assert "s3cret" not in sudo_argv and str(show) in sudo_argv

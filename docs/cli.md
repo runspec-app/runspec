@@ -810,7 +810,10 @@ What it adds over running the binary directly:
   `--skip-if-running` (runs-index check), a run that can't start because the
   previous one is still going is recorded with status `skipped` and exits 0.
 - **Labels.** `--label` tags the run; find them with
-  `runspec history list --label <label>`.
+  `runspec history list --label <label>`. Without `--label` the run takes the
+  caller's `RUNSPEC_LABEL`, else `cli`, and the runnable gets the same label in
+  `RUNSPEC_LABEL`. Runs started without `runspec exec` are labelled too: see
+  SPEC → "Run labels".
 
 The wrapper and the runnable share one run id (handed down in `RUNSPEC_RUN_ID`),
 so each run is one row: the runnable's own details (command, args, log file) plus

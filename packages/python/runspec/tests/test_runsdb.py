@@ -210,6 +210,7 @@ class TestReindex:
                     "trigger": "schedule",
                     "skill": "",
                     "autonomy": "autonomous",
+                    "label": "rundeck",
                     "exception": None,
                     "user": "svc",
                     "invocation_args": {},
@@ -230,7 +231,8 @@ class TestReindex:
         assert n == 2
         rows = {r["run_id"]: r for r in runsdb.list_runs(logs_dir, live=False)}
         assert rows["h1"]["status"] == "completed" and rows["h1"]["agent"] == 1
-        assert rows["h1"]["trigger"] == "schedule"
+        assert rows["h1"]["trigger"] == "schedule" and rows["h1"]["label"] == "rundeck"
+        assert rows["h2"]["label"] is None  # a summary from before labels
         assert rows["h2"]["status"] == "failed" and rows["h2"]["command"] == "push"
 
     def test_reindex_skips_records_without_run_id(self, logs_dir):

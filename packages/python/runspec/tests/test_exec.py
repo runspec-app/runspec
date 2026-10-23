@@ -26,6 +26,7 @@ def logs_dir(tmp_path, monkeypatch):
     d.mkdir()
     monkeypatch.setattr(runexec, "_resolve_log_dir", lambda: d)
     monkeypatch.delenv("RUNSPEC_TRIGGER", raising=False)
+    monkeypatch.delenv("RUNSPEC_LABEL", raising=False)
     return d
 
 
@@ -119,6 +120,44 @@ class TestPlainChild:
         assert list(logs_dir.glob("demo.*.log"))
 
 
+class TestLabel:
+    """The run's label: --label, else the launcher's RUNSPEC_LABEL, else "cli" —
+    recorded on the row and handed to the child as RUNSPEC_LABEL."""
+
+    _BODY = "import os\nprint(os.environ.get('RUNSPEC_LABEL', '<unset>'))\n"
+
+    def test_unlabelled_run_is_cli(self, logs_dir, tmp_path, monkeypatch):
+        _install(monkeypatch, tmp_path, self._BODY)
+        _, out, _ = _run()
+        [row] = _rows(logs_dir)
+        assert row["label"] == "cli" and out.strip() == "cli"
+
+    def test_launcher_label_from_env(self, logs_dir, tmp_path, monkeypatch):
+        _install(monkeypatch, tmp_path, self._BODY)
+        monkeypatch.setenv("RUNSPEC_LABEL", "console")
+        _, out, _ = _run()
+        [row] = _rows(logs_dir)
+        assert row["label"] == "console" and out.strip() == "console"
+
+    def test_explicit_label_wins(self, logs_dir, tmp_path, monkeypatch):
+        _install(monkeypatch, tmp_path, self._BODY)
+        monkeypatch.setenv("RUNSPEC_LABEL", "console")
+        _, out, _ = _run(label="tui")
+        [row] = _rows(logs_dir)
+        assert row["label"] == "tui" and out.strip() == "tui"
+
+    def test_unlabelled_runs_do_not_skip_each_other(self, logs_dir, tmp_path, monkeypatch):
+        # --skip-if-running keys on --label only, so the "cli" default never
+        # makes one unlabelled runnable wait on another.
+        _install(monkeypatch, tmp_path, "print('ran')\n")
+        runsdb.begin_run(
+            logs_dir,
+            {"run_id": "live1", "runnable": "other", "status": "running", "pid": os.getpid(), "host": runsdb._hostname(), "proc_start": runsdb.proc_start_token(), "label": "cli"},
+        )
+        _, out, _ = _run(skip_if_running=True)
+        assert "ran" in out
+
+
 class TestNotRunnable:
     def test_not_installed_is_recorded(self, logs_dir, monkeypatch):
         monkeypatch.setattr(runexec, "find_runnable", lambda name: None)
@@ -190,6 +229,26 @@ class TestHandoff:
         assert row["label"] == "sched:x"  # the child's upsert didn't clear it
         assert row["command"] == "sub"  # the child's own detail kept
         assert row["events"] == '{"INFO": 2}'  # the wrapper's finalize kept the child's events
+
+    def test_child_label_does_not_replace_the_wrappers(self, logs_dir, tmp_path, monkeypatch):
+        # A child that records its own label (an older wrapper never handed one
+        # down, so parse() fell back to "cli") must not overwrite --label.
+        body = f"""
+        import os, sys
+        sys.path.insert(0, {str(Path(runsdb.__file__).parent.parent)!r})
+        from pathlib import Path
+        from runspec import runsdb
+        from runspec.logging_setup import adopt_exec_run_id
+        rid = adopt_exec_run_id()
+        d = Path({str(logs_dir)!r})
+        runsdb.begin_run(d, {{"run_id": rid, "runnable": "demo", "status": "running", "label": "cli",
+                              "pid": os.getpid(), "host": runsdb._hostname()}})
+        runsdb.finish_run(d, rid, exit_code=0, duration_ms=1, status="completed")
+        """
+        _install(monkeypatch, tmp_path, body)
+        _run(label="sched:x")
+        [row] = _rows(logs_dir)
+        assert row["label"] == "sched:x"
 
     def test_older_child_row_is_adopted(self, logs_dir, tmp_path, monkeypatch):
         # What a <= 0.61 child does: ignore RUNSPEC_RUN_ID and mint its own id.

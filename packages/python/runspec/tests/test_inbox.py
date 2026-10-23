@@ -101,6 +101,11 @@ class TestParser:
         assert row["label"] == "sched:x" and row["command"] == "sub" and row["args"] == {"a": "b"}
         assert row["exec"]["exit_code"] == 137
 
+    def test_label_comes_from_the_summary_when_the_start_has_none(self):
+        rid = _rid()
+        row = inbox.row_from_records(rid, [json.loads(_rec(rid, "run_start", runnable="demo")), json.loads(_rec(rid, "run_summary", exit_code=0, label="console"))])
+        assert row is not None and row["label"] == "console"
+
     def test_history_db_false_marker(self):
         rid = _rid()
         row = inbox.row_from_records(rid, [json.loads(_rec(rid, "run_start", history_db=False)), json.loads(_rec(rid, "run_summary", exit_code=0))])

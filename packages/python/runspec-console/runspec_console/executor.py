@@ -538,8 +538,11 @@ def run_local(
     cred_env = cred_env or {}
     # Provenance of what caused this run → recorded in the runnable's run_summary
     # (extra.trigger = event source, extra.runbook = the saved runbook that drove it).
-    # Both orthogonal to RUNSPEC_AGENT.
-    prov_env = {"RUNSPEC_TRIGGER": trigger} if trigger else {}
+    # Both orthogonal to RUNSPEC_AGENT. RUNSPEC_LABEL records where the run was
+    # launched from (the console); the runs index shows it as the run's label.
+    prov_env = {"RUNSPEC_LABEL": "console"}
+    if trigger:
+        prov_env["RUNSPEC_TRIGGER"] = trigger
     if runbook:
         prov_env["RUNSPEC_RUNBOOK"] = runbook
     extra_env: dict[str, str] = {}
@@ -795,7 +798,9 @@ def run_remote(
     base_env.update(mock_env(remote=True))
     # Provenance of what caused this run → recorded in the runnable's run_summary
     # (extra.trigger = event source, extra.runbook = the saved runbook that drove it).
-    # Both orthogonal to RUNSPEC_AGENT.
+    # Both orthogonal to RUNSPEC_AGENT. RUNSPEC_LABEL records where the run was
+    # launched from (the console); the runs index shows it as the run's label.
+    base_env["RUNSPEC_LABEL"] = "console"
     if trigger:
         base_env["RUNSPEC_TRIGGER"] = trigger
     if runbook:

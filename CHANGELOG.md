@@ -15,6 +15,40 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.76.0] — 2026-10-23
+
+### Added
+
+- **Every run records where it was launched from.** `parse()` reads
+  `RUNSPEC_LABEL` and records it as the run's label (`extra.label` on
+  `run_start`/`run_summary`, the runs index's `label` column that `runspec
+  history` and the console's History tab show). A run nobody labelled was
+  started from a shell, cron or a script and records `cli`; before, only
+  `runspec exec --label` runs had a label. Launchers set it: `runspec serve`
+  sends `mcp`, jobs from `runspec emit --rundeck` export `rundeck` (sent in the
+  env frame behind `sudo`), and modules from `runspec emit --ansible` set
+  `ansible`. Re-emit existing jobs and modules to pick it up (`--check` shows
+  the drift). runspec-console 0.355.0 and runspec-mcp 0.2.3 send `console` and
+  `mcp`. See SPEC → "Run labels".
+- **`runspec exec` labels every run.** Without `--label` it records the
+  caller's `RUNSPEC_LABEL`, else `cli`, and passes the label to the runnable in
+  `RUNSPEC_LABEL`. `--skip-if-running` still keys on `--label` only, so
+  unlabelled runs don't hold each other off.
+
+### Changed
+
+- **A run's label is set once.** Once a runs-index row has a label, a later
+  write to the same run (the runnable's own begin/finish, a sweep, a reindex)
+  never replaces it, so a runnable's `cli` never overwrites its `runspec exec`
+  wrapper's `--label`.
+
+### Fixed
+
+- **Runbook runs are attributed again.** runspec-console sends the runbook id
+  as `RUNSPEC_RUNBOOK` (skills were renamed to runbooks), but `parse()` only
+  read `RUNSPEC_SKILL`, so console runbook runs recorded no runbook.
+  `RUNSPEC_RUNBOOK` is now read too (it lands in `extra.skill`, as before).
+
 ## [0.75.2] — 2026-10-21
 
 ### Fixed

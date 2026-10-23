@@ -24,6 +24,8 @@ Design points
   `check_mode` short-circuits to `changed=false` (conservative).
 - **Non-interactive:** the module injects `RUNSPEC_AUTONOMY=autonomous` so a
   `confirm` runnable runs in a playbook without prompting.
+- **Label:** it sets `RUNSPEC_LABEL=ansible`, so the run is labelled `ansible`
+  in the runs index.
 """
 
 from __future__ import annotations
@@ -279,6 +281,7 @@ def build_command(params):
 def build_env(params):
     env = dict(os.environ)
     env["RUNSPEC_AUTONOMY"] = "autonomous"
+    env["RUNSPEC_LABEL"] = "ansible"
     for param, kind, _cli, _position, secret_env in ARGS:
         if kind == "secret" and params.get(param) is not None:
             env[secret_env] = str(params[param])

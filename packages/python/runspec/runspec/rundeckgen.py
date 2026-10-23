@@ -241,6 +241,11 @@ def rd_option_token(name: str) -> str:
     return f"@option.{name}@"
 
 
+# Recorded as the run's label in the runs index (SPEC "Run labels"), so History
+# shows the run came from Rundeck.
+_LABEL_ASSIGN = "RUNSPEC_LABEL=rundeck"
+
+
 def _env_prelude_argv(invocation: str, venv: str | None) -> list[str]:
     """The env-prelude wrapper for a run behind `sudo` (SPEC "Command
     building"): the venv's own `bin/python` when the venv is known, so a sudoers
@@ -273,13 +278,15 @@ def _exists_check(runnable: str, invocation: str, venv: str | None, run_as: str 
 
 def _direct(env_vars: list[tuple[str, str]], cmd: str, indent: str = "") -> list[str]:
     """Export the non-empty values (an empty option stays unset so the
-    runnable's own default applies) and exec the binary as this account."""
+    runnable's own default applies) and the run's label, and exec the binary as
+    this account."""
     lines: list[str] = []
     if env_vars:
         names = " ".join(var for var, _ in env_vars)
         lines.append(f"{indent}for rs_var in {names}; do")
         lines.append(f'{indent}  if [ -n "${{!rs_var}}" ]; then export "$rs_var"; else unset "$rs_var"; fi')
         lines.append(f"{indent}done")
+    lines.append(f"{indent}export {_LABEL_ASSIGN}")
     lines.append(f"{indent}exec {cmd}")
     return lines
 
@@ -324,7 +331,6 @@ def render_script(
     path.
     """
     env_vars = [(secret_env_var(runnable, name), name) for name in args]
-    names = " ".join(var for var, _ in env_vars)
 
     lines = ["#!/bin/bash", _PRIVATE, _GUARD, "set -e"]
     for var, name in env_vars:
@@ -366,15 +372,20 @@ def render_script(
     lines.append("fi")
 
     become = 'sudo -n -u "$rs_user"'
-    if not env_vars:
+    if not env_vars and not venv:
+        # Nothing to send but the label, and the `sh` prelude would need a
+        # sudoers rule that allows a shell: run the binary directly (the run then
+        # records the "cli" label).
         lines.append(f"exec {become} {cmd}")
         return _finish(lines)
 
     prelude = PY_ENV_PRELUDE if venv else ENV_PRELUDE
     lines.append(f"RS_PRELUDE='{prelude}'")
     lines.append(_FRAME_FUNC)
+    lines.append(_LABEL_ASSIGN)
     wrapped = " ".join([*_env_prelude_argv(invocation, venv), cmd])
-    lines.append(f"rs_frame {names} | {become} {wrapped}")
+    frame_vars = " ".join([*(var for var, _ in env_vars), "RUNSPEC_LABEL"])
+    lines.append(f"rs_frame {frame_vars} | {become} {wrapped}")
     return _finish(lines)
 
 

@@ -24,6 +24,20 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   is its own `service.instance.id`, and turn spans carry
   `runspec.lab.variant`/`scenario`/`sample`/`tier`.
 
+## [0.355.0] — 2026-10-23
+
+### Added
+
+- **Runs started from the console are labelled `console`.** Every local and
+  remote run sends `RUNSPEC_LABEL=console`, so History's Label column (and
+  `runspec history` on the host) shows where the run came from; whether a
+  person or the agent asked for it stays in the Run by column. Needs runspec
+  0.76.0 on the host to be recorded; older runspec ignores it. Runs on the same
+  venv from elsewhere show `cli`, `mcp`, `rundeck`, `ansible` or their
+  `runspec exec --label`. A run with no other env now always uses the env
+  prelude (the venv's `bin/python` for a venv runnable) to carry the label,
+  as agent runs already did. (`executor.run_local`/`run_remote`.)
+
 ## [0.354.0] — 2026-10-22
 
 ### Fixed

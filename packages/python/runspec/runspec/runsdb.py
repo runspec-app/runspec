@@ -657,13 +657,19 @@ def _normalise_row(row: dict[str, Any]) -> dict[str, Any]:
 _HAS_UPSERT = sqlite3.sqlite_version_info >= (3, 24, 0)
 
 
+# Kept columns where the value already on the row wins over a later upsert's.
+_FIRST_WINS = ("label",)
+
+
 def _upsert(con: sqlite3.Connection, row: dict[str, Any]) -> None:
     """INSERT or overwrite a row by ``run_id``. ``label``, ``events`` and
     ``exception`` (and v6 ``os_user`` / ``source`` / ``exec_uid``) are written on
     insert but only ever *kept* on conflict: under
     ``runspec exec`` the wrapper writes the labelled row first and the child's own
     begin/finish upserts (which don't know the label) must not clear it — and a
-    begin that races a finish must not clear the finish's events."""
+    begin that races a finish must not clear the finish's events. ``label`` goes
+    further: the first non-empty value stays, so a child's own label (``cli`` when
+    nothing set ``RUNSPEC_LABEL``) never replaces the wrapper's ``--label``."""
     kept = ("label", "events", "exception", "os_user", "source", "exec_uid")
     cols = ", ".join((*_COLUMNS, *kept))
     placeholders = ", ".join("?" for _ in range(len(_COLUMNS) + len(kept)))
@@ -674,7 +680,7 @@ def _upsert(con: sqlite3.Connection, row: dict[str, Any]) -> None:
         # left a row without user / args / agent. UPDATE then INSERT does the same in
         # one write transaction (the UPDATE takes the write lock).
         sets = ", ".join(f"{c}=?" for c in _COLUMNS if c != "run_id")
-        sets += "".join(f", {c}=COALESCE(?, {c})" for c in kept)
+        sets += "".join(f", {c}=COALESCE({c}, ?)" if c in _FIRST_WINS else f", {c}=COALESCE(?, {c})" for c in kept)
         cur = con.execute(
             f"UPDATE runs SET {sets} WHERE run_id=?",
             (*(row[c] for c in _COLUMNS if c != "run_id"), *kept_vals, row["run_id"]),
@@ -683,7 +689,7 @@ def _upsert(con: sqlite3.Connection, row: dict[str, Any]) -> None:
             con.execute(f"INSERT INTO runs ({cols}) VALUES ({placeholders})", (*(row[c] for c in _COLUMNS), *kept_vals))
         return
     updates = ", ".join(f"{c}=excluded.{c}" for c in _COLUMNS if c != "run_id")
-    updates += "".join(f", {c}=COALESCE(excluded.{c}, runs.{c})" for c in kept)
+    updates += "".join(f", {c}=COALESCE(runs.{c}, excluded.{c})" if c in _FIRST_WINS else f", {c}=COALESCE(excluded.{c}, runs.{c})" for c in kept)
     con.execute(
         f"INSERT INTO runs ({cols}) VALUES ({placeholders}) ON CONFLICT(run_id) DO UPDATE SET {updates}",
         (*(row[c] for c in _COLUMNS), *kept_vals),
@@ -1277,6 +1283,7 @@ def reindex(log_dir: Path, records: list[dict[str, Any]]) -> int:
                             "trigger": rec.get("trigger", ""),
                             "skill": rec.get("skill", ""),
                             "autonomy": rec.get("autonomy", ""),
+                            "label": rec.get("label"),
                             "args": rec.get("invocation_args") or {},
                             "events": rec.get("events"),
                             "exception": exc,

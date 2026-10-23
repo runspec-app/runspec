@@ -53,7 +53,7 @@ def test_remote_run_carries_mock(monkeypatch):
             on_line=lambda line, stream: None,
             on_done=lambda code, ms: None,
         )
-    assert seen["env"] == {"RUNSPEC_MOCK": "1"}
+    assert seen["env"] == {"RUNSPEC_MOCK": "1", "RUNSPEC_LABEL": "console"}
 
 
 def test_run_as_local_run_carries_mock(monkeypatch):

@@ -154,6 +154,7 @@ def test_render_module_is_valid_python():
     assert "from ansible.module_utils.basic import AnsibleModule" in src
     assert "supports_check_mode=True" in src
     assert "RUNSPEC_AUTONOMY" in src  # non-interactive
+    assert 'env["RUNSPEC_LABEL"] = "ansible"' in src  # the run is labelled ansible
 
 
 def test_render_module_secret_via_env_not_argv():

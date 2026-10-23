@@ -91,7 +91,10 @@ def test_run_local_injects_secret_into_env_not_argv(monkeypatch):
     assert "s3cr3t; rm -rf" not in " ".join(captured["cmd"])
     assert "db-password" not in " ".join(captured["cmd"])
     # It is supplied via the child environment instead.
-    assert captured["extra_env"] == {"RUNSPEC_DEPLOY_ARG_DB_PASSWORD": "s3cr3t; rm -rf"}
+    assert captured["extra_env"] == {
+        "RUNSPEC_DEPLOY_ARG_DB_PASSWORD": "s3cr3t; rm -rf",
+        "RUNSPEC_LABEL": "console",
+    }
 
 
 # ── run_remote: secret becomes a shell-safe env prefix, never an argv flag ────────

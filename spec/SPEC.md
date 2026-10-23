@@ -251,6 +251,30 @@ Two records support this. Neither is counted in the run summary's `events`:
 The Node pack does not implement the inbox yet: its log directory is the
 project root and it keeps no runs index.
 
+#### Run labels
+
+Every run records a **label** saying where it was launched from: the
+`label` field of `run_start` and `run_summary`, and the runs index's `label`
+column. `parse()` reads it from `RUNSPEC_LABEL`; a run with no `RUNSPEC_LABEL`
+was started from a shell, cron or a script and records `cli`. Launchers set it:
+
+| Label | Set by |
+|---|---|
+| `cli` | nothing (the default) |
+| `console` | runspec-console, for every run it starts (whether a person or its agent asked for it is the separate `agent` field) |
+| `mcp` | `runspec serve` and the runspec-mcp gateway |
+| `rundeck` | jobs written by `runspec emit --rundeck` |
+| `ansible` | modules written by `runspec emit --ansible` |
+| any | `runspec exec --label <label>` |
+
+`runspec exec` records `--label`, else the caller's `RUNSPEC_LABEL`, else `cli`,
+and hands the same label to the child in `RUNSPEC_LABEL`. Once a row has a
+label, a later write to the same run never replaces it, so a child's own label
+never overwrites the wrapper's. The label is not removed from the environment,
+so a runnable started by another runnable records the same label.
+
+The Node pack does not record labels yet.
+
 #### Console routing
 
 A single `logger.X` call works in both CLI mode and agent mode — the language
@@ -1254,6 +1278,7 @@ error — the tool should never be reached).
 | Variable | Set when | Purpose |
 |---|---|---|
 | `RUNSPEC_AGENT=1` | always (every `runspec serve` invocation) | The runnable can branch on agent vs. human invocation. |
+| `RUNSPEC_LABEL=<label>` | by the launcher (`runspec serve` sets `mcp`) | Recorded as the run's label (see "Run labels"); `cli` when unset. |
 | `RUNSPEC_CONFIG=/abs/path/to/runspec.toml` | `runspec serve` subprocesses the runnable | Points `parse()` at the spec file directly, bypassing the lookup cascade. Without this, the subprocess inherits SSH's `$HOME` cwd and the cwd-walk fallback would fail. |
 
 `parse()` consults `RUNSPEC_CONFIG` after an explicit `config_path=` arg, then

@@ -316,6 +316,7 @@ def test_tools_call_no_run_as_does_not_escalate(monkeypatch, tmp_path):
     # The env rides the child's environment; the child never inherits serve's
     # stdin (the MCP JSON-RPC stream).
     assert captured["kw"]["env"]["RUNSPEC_AGENT"] == "1"
+    assert captured["kw"]["env"]["RUNSPEC_LABEL"] == "mcp"
     assert captured["kw"]["stdin"] is subprocess.DEVNULL
 
 

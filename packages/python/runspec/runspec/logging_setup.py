@@ -155,6 +155,7 @@ def configure_logging(
     agent: bool = False,
     trigger: str = "",
     skill: str = "",
+    label: str = "",
     command_path: list[str] | None = None,
     invocation_args: dict[str, Any] | None = None,
     history_cfg: dict[str, Any] | None = None,
@@ -366,6 +367,8 @@ def configure_logging(
             # The saved skill that drove this run (RUNSPEC_SKILL), "" otherwise — a
             # further provenance axis alongside trigger/agent.
             "skill": skill,
+            # Where the run was launched from (RUNSPEC_LABEL, "cli" when unset).
+            "label": label,
             "command_path": list(command_path or []),
             "exception": None,
             "emitted": False,
@@ -516,6 +519,7 @@ def _write_run_start(state: dict[str, Any], *, indexed: bool) -> None:
                 "agent": state["agent"],
                 "trigger": state["trigger"],
                 "skill": state.get("skill", ""),
+                "label": state.get("label") or None,
                 "autonomy": state["autonomy"],
                 "run_as": state.get("run_as") or "",
                 "invocation_args": {k: v["value"] for k, v in state.get("invocation_args", {}).items()},
@@ -1004,6 +1008,7 @@ def _begin_history_row(state: dict[str, Any], log_dir: Path, log_file: str) -> N
                 "agent": state["agent"],
                 "trigger": state["trigger"],
                 "skill": state.get("skill", ""),
+                "label": state.get("label") or None,
                 "autonomy": state["autonomy"],
                 "pid": os.getpid(),
                 "host": socket.gethostname(),
@@ -1053,6 +1058,7 @@ def _emit_run_summary() -> None:
                     "agent": state["agent"],
                     "trigger": state["trigger"],
                     "skill": state.get("skill", ""),
+                    "label": state.get("label") or None,
                     "autonomy": state["autonomy"],
                     "exception": state["exception"],
                     "events": dict(state["counter"].counts),

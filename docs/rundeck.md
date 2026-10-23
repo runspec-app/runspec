@@ -280,6 +280,17 @@ Use an option's `regex` / `values` to restrict what it accepts where you can.
     delete, such as after a killed job. Values never appear in `ps`, the sudo
     log or the Rundeck job definition.
 
+### The run's label
+
+Each job also sets `RUNSPEC_LABEL=rundeck`, so the run shows the label
+`rundeck` in `runspec history` and the console's History tab. A job behind
+`sudo` sends it with the option values on stdin. The one exception is a job
+with no options, a `run_as` account and no known venv: it runs the binary
+straight through `sudo`, because sending only the label would need a sudoers
+rule that allows `sh`, so that run records `cli`. Jobs emitted before runspec
+0.76.0 don't set the label; re-emit them (`runspec emit --rundeck --check`
+shows the drift).
+
 ### Running as the service account
 
 Runnables should run as the service account that owns their venv, not as the

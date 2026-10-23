@@ -159,6 +159,16 @@ class TestEmit:
         s = next(obj for obj in lines if obj["logger"] == "runspec.runsummary")
         assert s["extra"]["skill"] == ""
 
+    def test_start_and_summary_record_the_label(self, tmp_path):
+        # `label` is where the run was launched from (RUNSPEC_LABEL, "cli" when
+        # unset — parse() fills that default); the run records carry it.
+        configure_logging(_cfg(), runnable_name="myscript", label="console")
+        _emit_run_summary()
+        lines = [json.loads(line) for line in (tmp_path / "logs" / "myscript.log").read_text().strip().splitlines()]
+        recs = [obj["extra"] for obj in lines if obj["logger"] == "runspec.runsummary"]
+        assert "run_summary" in {r["event"] for r in recs}
+        assert all(r["label"] == "console" for r in recs)
+
     def test_summary_console_writes_line_to_stderr(self, capsys):
         configure_logging(_cfg(summary_console=True), runnable_name="myscript")
         logging.getLogger("test.stderr").info("ran")
@@ -362,6 +372,35 @@ class TestEarlyExcepthookCoverage:
         assert seen["hook"] is not sys.__excepthook__
 
 
+class TestParseProvenance:
+    """parse() reads the launcher's provenance env vars and hands them to
+    configure_logging."""
+
+    def _kwargs(self, tmp_path, monkeypatch):
+        import runspec.parser as parser
+
+        cfg = tmp_path / "runspec.toml"
+        cfg.write_text("[demo]\n")
+        seen: dict[str, object] = {}
+        monkeypatch.setattr(parser, "configure_logging", lambda *a, **kw: seen.update(kw))
+        parser.parse(script_name="demo", argv=[], config_path=cfg)
+        return seen
+
+    def test_unlabelled_run_is_cli(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("RUNSPEC_LABEL", raising=False)
+        assert self._kwargs(tmp_path, monkeypatch)["label"] == "cli"
+
+    def test_launcher_label(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("RUNSPEC_LABEL", " console ")
+        assert self._kwargs(tmp_path, monkeypatch)["label"] == "console"
+
+    def test_runbook_env_is_the_skill(self, tmp_path, monkeypatch):
+        # The console sends RUNSPEC_RUNBOOK; RUNSPEC_SKILL is the older spelling.
+        monkeypatch.delenv("RUNSPEC_SKILL", raising=False)
+        monkeypatch.setenv("RUNSPEC_RUNBOOK", "restart-web")
+        assert self._kwargs(tmp_path, monkeypatch)["skill"] == "restart-web"
+
+
 class TestExcStructuredHelpers:
     def test_build_exc_structured_shape(self):
         try:
@@ -516,6 +555,13 @@ class TestRunsIndexHook:
         done = next(r for r in runsdb.list_runs(logs_dir, live=False) if r["run_id"] == run_id)
         assert done["status"] == "completed" and done["exit_code"] == 0
         assert isinstance(done["duration_ms"], int)
+
+    def test_row_carries_the_label(self, tmp_path):
+        from runspec import runsdb
+
+        configure_logging(_cfg(summary=True), runnable_name="demo", history_cfg={"db": True}, label="console")
+        _emit_run_summary()
+        assert runsdb.list_runs(tmp_path / "logs", live=False)[0]["label"] == "console"
 
     def test_failure_finalizes_as_failed(self, tmp_path):
         from runspec import runsdb

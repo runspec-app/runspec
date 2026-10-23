@@ -265,7 +265,14 @@ def _parse_impl(
     # The skill (saved runbook) that drove this run, when started from the console's
     # `$` skills menu. Recorded in run_summary as `extra.skill` — another provenance
     # axis alongside `trigger`/`agent`, so History/Analytics can attribute runs to it.
-    skill = os.environ.get("RUNSPEC_SKILL", "").strip()
+    # The console sends the runbook id as RUNSPEC_RUNBOOK (skills were renamed to
+    # runbooks); RUNSPEC_SKILL is the older spelling, still honoured.
+    skill = (os.environ.get("RUNSPEC_SKILL", "") or os.environ.get("RUNSPEC_RUNBOOK", "")).strip()
+    # Where the run was launched from (RUNSPEC_LABEL, set by each launcher: the
+    # console, `runspec serve`, a Rundeck job, ...); a run nobody labelled was
+    # started from a shell, cron or a script, so it records "cli". Stored in the
+    # runs index's `label` column, the one `runspec exec --label` fills.
+    label = os.environ.get("RUNSPEC_LABEL", "").strip() or "cli"
     # A `runspec exec` wrapper's run id (RUNSPEC_RUN_ID). Taken — and removed from
     # the environment — here, unconditionally, so it never leaks to runnables this
     # one shells out to, even when this runnable has no [config.logging].
@@ -341,6 +348,7 @@ def _parse_impl(
             agent=agent,
             trigger=trigger,
             skill=skill,
+            label=label,
             command_path=command_path,
             invocation_args=invocation_args,
             history_cfg=config.get("history"),

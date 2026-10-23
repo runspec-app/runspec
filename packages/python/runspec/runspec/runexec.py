@@ -199,6 +199,11 @@ def exec_runnable(
     out_stream = stdout if stdout is not None else sys.stdout
     err_stream = stderr if stderr is not None else sys.stderr
     label = label or None
+    # The label recorded on the run and handed to the child: --label, else the
+    # launcher's RUNSPEC_LABEL, else "cli" (what the child's parse() would record).
+    # `label` alone stays the --skip-if-running key, so an unlabelled run never
+    # waits on every other unlabelled run.
+    run_label = label or os.environ.get("RUNSPEC_LABEL", "").strip() or "cli"
     trigger = trigger if trigger is not None else os.environ.get("RUNSPEC_TRIGGER", "").strip()
     run_id = str(uuid.uuid4())
     start = _now()
@@ -237,7 +242,7 @@ def exec_runnable(
         "pid": os.getpid(),
         "host": socket.gethostname(),
         "proc_start": runsdb.proc_start_token(),
-        "label": label,
+        "label": run_label,
         "run_as": (spec or {}).get("run_as") or None,
         "os_user": inbox.effective_user() or None,
         "source": "direct",
@@ -268,7 +273,7 @@ def exec_runnable(
                 _record(
                     message,
                     run_id,
-                    {"event": "exec_result", "status": status, "exit_code": exit_code, "duration_ms": 0, "label": label, "trigger": trigger, "reason": reason},
+                    {"event": "exec_result", "status": status, "exit_code": exit_code, "duration_ms": 0, "label": run_label, "trigger": trigger, "reason": reason},
                     level="INFO" if status == "skipped" else "ERROR",
                 )
             ],
@@ -322,6 +327,7 @@ def exec_runnable(
             child_env["RUNSPEC_RUN_LOG"] = str(box.path)
         if trigger:
             child_env["RUNSPEC_TRIGGER"] = trigger
+        child_env["RUNSPEC_LABEL"] = run_label
         cmd, extra_env, frame = build_command(spec, list(argv), child_env)
         capture = capture_bytes > 0
         t0 = time.monotonic()
@@ -337,7 +343,7 @@ def exec_runnable(
             if write_row:  # drop the running placeholder; record the launch failure
                 runsdb.finish_run(log_dir, run_id, exit_code=EXIT_NOT_EXECUTABLE, duration_ms=0, status="failed", cfg=history_cfg, runnable=name)
             log_path = box.path if box is not None else _log_file_for(log_dir, None, name, start, run_id)
-            result = {"event": "exec_result", "status": "failed", "exit_code": EXIT_NOT_EXECUTABLE, "duration_ms": 0, "label": label, "trigger": trigger, "reason": "launch_error"}
+            result = {"event": "exec_result", "status": "failed", "exit_code": EXIT_NOT_EXECUTABLE, "duration_ms": 0, "label": run_label, "trigger": trigger, "reason": "launch_error"}
             sink.write(log_path, [_record(f"could not start '{name}': {exc}", run_id, result, level="ERROR")])
             with contextlib.suppress(Exception):
                 err_stream.write(f"runspec exec: could not start '{name}': {exc}\n")
@@ -381,7 +387,7 @@ def exec_runnable(
         if write_row and row is not None and row.get("pid") == os.getpid() and row.get("status") == "running":
             # The child never touched our row — no logging, failed before logging,
             # or an older runspec that minted its own id. Adopt the latter.
-            adopted = runsdb.adopt_child_row(log_dir, run_id, runnable=name, since_ts=start_iso, label=label)
+            adopted = runsdb.adopt_child_row(log_dir, run_id, runnable=name, since_ts=start_iso, label=run_label)
             if adopted:
                 target_id = adopted
         if write_row:
@@ -405,7 +411,7 @@ def exec_runnable(
             _record(
                 result_msg,
                 target_id,
-                {"event": "exec_result", "status": status, "exit_code": rc, "duration_ms": duration_ms, "label": label, "trigger": trigger, "reason": "timeout" if timed_out else ""},
+                {"event": "exec_result", "status": status, "exit_code": rc, "duration_ms": duration_ms, "label": run_label, "trigger": trigger, "reason": "timeout" if timed_out else ""},
                 level="INFO" if rc == 0 else "ERROR",
             )
         )
