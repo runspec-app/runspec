@@ -230,7 +230,7 @@ Layout of the wiki repo:
 ```text
 facts/
   alice.toml     # merged from contrib/alice
-  jason.toml     # merged from contrib/jason
+  alice.toml     # merged from contrib/alice
 ```
 
 ## The wiki repo template

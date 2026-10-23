@@ -315,8 +315,8 @@ titles the **sidebar** heading (top-left, under the title bar), so reusing it fo
 the window title would only duplicate it. Name your distribution what you want
 the window title to read.
 
-Your **config folder** is named the same way: a seed package `jason-console`
-stores its state in `%APPDATA%\jason-console\`, so different white-label consoles
+Your **config folder** is named the same way: a seed package `acme-console`
+stores its state in `%APPDATA%\acme-console\`, so different white-label consoles
 on one machine stay isolated under the writable app-data root without any flag
 (see [config reference](console-reference.md)). The folder name follows the
 config-seed distribution name — not `brand_name`, which is a display string —

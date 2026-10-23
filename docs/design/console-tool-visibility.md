@@ -5,7 +5,7 @@
 `runspec-console` discovers every runnable installed in the fleet's venvs and
 turns each into an agent tool. Some of those runnables are unusable in a given
 environment — the classic case is the Microsoft 365 / Graph runnables when
-Microsoft Graph is blocked by tenant policy. They add dead weight to the agent: every
+Microsoft Graph is blocked by the organisation's tenant policy. They add dead weight to the agent: every
 schema is spent context, and the agent will try tools that can only fail.
 
 The existing **denylist** does *not* solve this. The denylist is a run-time

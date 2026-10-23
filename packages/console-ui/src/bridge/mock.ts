@@ -830,7 +830,7 @@ export const mockApi: BridgeApi = {
     const entries = [
       { name: 'archive', type: 'directory' as const, size: 4096, mtime: 1717000000 },
       { name: 'sessions', type: 'directory' as const, size: 4096, mtime: 1717000100 },
-      { name: 'fix.log', type: 'file' as const, size: 204800, mtime: 1717000500 },
+      { name: 'server.log', type: 'file' as const, size: 204800, mtime: 1717000500 },
       { name: 'exceptions.log', type: 'file' as const, size: 10240, mtime: 1717000400 },
       // Only visible under the service account — demonstrates the identity toggle.
       ...(asServiceAccount ? [{ name: 'svc-only.key', type: 'file' as const, size: 2048, mtime: 1717000600 }] : []),

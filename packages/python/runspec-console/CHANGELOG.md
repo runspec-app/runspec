@@ -9,6 +9,12 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Docs, docstrings, the relay-template placeholder and test fixtures use
+  neutral sample names (`acme-console`, `/srv/prod/...`, `/var/log/app`)
+  instead of site-specific ones. No behaviour change.
+
 ### Added
 
 - **Agent lab (dev only, not shipped):** `--trace [FILE]` exports OpenTelemetry
@@ -11573,7 +11579,8 @@ tabs are gone and everything an operator acts on lives in one place.
   multi-select: pick several hosts and the chosen source file(s) are uploaded to
   the same destination folder on **all of them in parallel** (one SFTP transfer
   per host over its own pooled transport). The dialog shows a **per-host progress
-  bar** and a ✓/✗ per host at the end. The cluster move: push an updated config or reference-data file to every server in one action.
+  bar** and a ✓/✗ per host at the end. The typical use: push an updated config or
+  reference-data file to every server in a cluster in one action.
   A **pre-flight check** verifies the destination folder exists on each selected
   host (the dialog only browses it on the first host) and skips — with a clear
   warning — any host whose layout differs, so a mismatch is caught before sending.

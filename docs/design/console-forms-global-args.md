@@ -13,7 +13,7 @@ mock design session on the PC and pick a direction before implementing._
 > the existing `binary <command path> <flags>` order already parses correctly
 > because core resolves command tokens first, then matches all flags against the
 > merged effective set. Picked C over A because the real target tree
-> (`static-data`) is `require-command` at every non-leaf and only 1–2 levels
+> (`catalog`) is `require-command` at every non-leaf and only 1–2 levels
 > deep, so "drill to reach a global" costs nothing.
 
 ## TL;DR

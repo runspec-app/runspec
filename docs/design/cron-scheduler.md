@@ -21,7 +21,7 @@ The daemon answer (per-venv `systemctl --user` service) carried two costs that
 this design removes:
 
 1. **A process to own** — the `systemctl --user` + `XDG_RUNTIME_DIR` + D-Bus +
-   lingering setup is fiddly, and it is *worst* on the fleet we target (see
+   lingering setup is fiddly, and it is *worst* on older enterprise Linux (see
    [Fleet reality](#fleet-reality-centos-7--rhel-9)).
 2. **A shared-credential blast radius** — a shared daemon that holds every
    schedule's secrets is exactly the trust risk that got the console→daemon
@@ -168,9 +168,10 @@ correct *local write*; fleet-scale secret management is deliberately out of scop
 until feedback says a governed central store is warranted. That is the "regroup"
 trigger.
 
-## Fleet reality: CentOS 7 → RHEL 9
+## Fleet reality: old and new enterprise Linux
 
-Many fleets still run CentOS 7 alongside RHEL 9. This directly
+Many fleets still run a lot of CentOS 7 (systemd 219) beside newer RHEL 9
+(systemd 252) hosts. This directly
 argues for user cron over the tempting `systemctl --user` timer alternative:
 
 | Approach | Root-free? | CentOS 7 (systemd 219) | RHEL 9 (systemd 252) |
@@ -260,8 +261,8 @@ Deferred deliberately, each with a clear later home:
 - **AI actions** (`prompt` / `runbook` / `eval`) — need the agent runtime.
 - **Central / governed credential store** and **fleet-scale secret
   distribution** — external in v1.
-- **`systemctl --user` timers** — the natural **v2**, adopted as RHEL 9 becomes
-  the fleet majority (where they are reliable) and which *also* solves the
+- **`systemctl --user` timers** — the natural **v2**, adopted once systemd 252+
+  hosts are the norm (where they are reliable) and which *also* solves the
   `every`-interval gap (`OnUnitActiveSec`). A clean progression: cron backend
   now, add a systemd-user-timer backend behind the same translator later.
 - **Cross-host orchestration engine** — per-host crontabs + writing marked lines
@@ -303,7 +304,7 @@ are no longer in the config — all keyed by the `runspec:sched:<id>` marker.
 Ship, then watch for the signals that justify the deferred work:
 
 - Operators asking for `every N` / sub-daily intervals → prioritise the
-  systemd-user-timer backend (and time it with the EL9 majority).
+  systemd-user-timer backend (and time it with systemd 252+ hosts being the norm).
 - Secret-distribution toil at fleet scale, or a request for audited shared
   secrets → design the governed central credential store.
 - Timezone/DST confusion from system-TZ scheduling → revisit `CRON_TZ` support

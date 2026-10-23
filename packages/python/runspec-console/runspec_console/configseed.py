@@ -41,9 +41,9 @@ def branding_dist() -> meta.Distribution | None:
     This is the white-label identity for a package that ships a config seed
     rather than an LLM adapter: it names **both** the window title (see
     ``branding.resolve_branding``) **and** the ``%APPDATA%`` config folder (see
-    ``config.app_dir``), so the two always agree — install ``jason-console`` and
-    the title reads "Jason Console" while its config lives in
-    ``%APPDATA%/jason-console``.
+    ``config.app_dir``), so the two always agree — install ``acme-console`` and
+    the title reads "Acme Console" while its config lives in
+    ``%APPDATA%/acme-console``.
 
     Returns the one config-seed contributor whose distribution isn't
     ``runspec-console`` itself; ``None`` when there are none, or more than one
@@ -68,7 +68,7 @@ def branding_dist() -> meta.Distribution | None:
 
 
 def branding_dist_name() -> str | None:
-    """The distribution name of :func:`branding_dist` (e.g. ``jason-console``),
+    """The distribution name of :func:`branding_dist` (e.g. ``acme-console``),
     stripped, or ``None``."""
     dist = branding_dist()
     name = getattr(dist, "name", None)

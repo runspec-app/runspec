@@ -16,9 +16,8 @@ repos:
       - id: ruff-check
         args: [--fix]
         files: '^packages/.*\.py$'
-  # Secret + internal-identifier scanning. Uses .gitleaks.toml (default ruleset
-  # plus a tripwire for internal hostnames/domains and the service-account
-  # name). Scans staged changes on commit. Bump with `pre-commit autoupdate`.
+  # Secret scanning. Uses .gitleaks.toml (the gitleaks default ruleset). Scans
+  # staged changes on commit. Bump with `pre-commit autoupdate`.
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.18.4
     hooks:
@@ -26,6 +25,14 @@ repos:
 
   - repo: local
     hooks:
+      # Your own private tripwire rules, kept out of the repo in an untracked
+      # .gitleaks.local.toml (see .gitleaks.toml). Skipped when the file or a
+      # local gitleaks binary is missing.
+      - id: gitleaks-local
+        name: gitleaks (local rules)
+        entry: sh -c 'if [ -f .gitleaks.local.toml ] && command -v gitleaks >/dev/null; then gitleaks git --staged --no-banner --config .gitleaks.local.toml; fi'
+        language: system
+        pass_filenames: false
       - id: docs-drift-check
         name: docs drift check
         entry: python scripts/check_docs.py

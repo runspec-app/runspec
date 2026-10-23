@@ -3,9 +3,9 @@
 ## Why
 
 The working-hours rota answers *when* automation may run; this answers *whether a
-human is present* when it does. The goal, in the operator's words: "we all walk
-away from our desks and forget to turn off the rota — our PCs auto-lock, and while
-they're locked the console must not act on our behalf." So while the workstation
+human is present* when it does. The goal: operators walk away from their desks and
+forget to turn off the rota; their workstations auto-lock, and while they're locked
+the console must not act on their behalf. So while the workstation
 is **locked**, reactive triggers don't fire. This is the presence half of a small
 control set — denylist (*what* may run), rota (*when*), lock-suspend (*present*),
 confirm-gates (*approval*) — and it produces an audit trail that the control fired.

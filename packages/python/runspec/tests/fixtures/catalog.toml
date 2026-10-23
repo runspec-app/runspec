@@ -1,0 +1,136 @@
+#:schema https://runspec.app/runspec.schema.json
+[config]
+autonomy-default = "confirm"
+
+[config.logging]
+store = "per-run"
+summary = true
+
+[catalog]
+description = "Product catalogue operations. Create, update, and query items in the catalogue store."
+run_as = "svc"
+enforce_run_as = "off"      # fixture is parsed directly in tests as the test user, not 'svc'
+become_method = "sudo"      # default — also: su, pbrun, dzdo
+autonomy = "confirm"
+output = "text"
+require-command = true
+
+[catalog.args]
+region = { type = "choice", short = "-r", options = ["europe", "asia", "americas", "australia", "asia_and_australia"], description = "Target region" }
+env = { type = "choice", short = "-e", options = ["dev", "qa", "uat", "prod", "staging", "production", "development"], description = "Target environment" }
+source = { type = "choice", default = "sku", options = ["sku", "barcode", "supplier_code", "unique_id", "ean", "upc", "gtin", "mpn"], description = "Item key type" }
+jira = { type = "str", short = "-j", required = false, description = "Jira key, e.g. OPS-1234", pattern = '^([A-Z]{2,}|[A-Z]+[0-9]+)-[0-9]+$' }
+
+[catalog.args.jira-env]
+type = "choice"
+default = "dev"
+options = ["prod", "uat", "dev"]
+description = "Jira environment"
+meta = {prod = {jira_url = "https://jira.example.com:8443"}, uat = {jira_url = "https://jira-uat.example.com:8443"}, dev = {jira_url = "https://jira-dev.example.com:8443"}}
+
+[catalog.commands.show]
+description = "Show item fields and values."
+autonomy = "autonomous"
+
+[catalog.commands.show.args]
+skus = {  type = "str",  description = "SKU list",  multiple = true,  delimiter = ",", required = true, short = "-s",  pattern = '^(?!.*\s)(?!.*\.\.)(?!.*\.$)[A-Z0-9./]+$' }
+
+[catalog.commands.default]
+description = "Show the default template item."
+autonomy = "autonomous"
+
+[catalog.commands.default.args]
+skus = {  type = "str",  description = "SKU list",  multiple = true,  delimiter = ",", required = true, short = "-s",  pattern = '^(?!.*\s)(?!.*\.\.)(?!.*\.$)[A-Z0-9./]+$' }
+
+[catalog.commands.clone]
+description = "Add an item from the template item or supplied values."
+autonomy = "confirm"
+
+[catalog.commands.clone.args]
+skus = {  type = "str",  description = "SKU list",  multiple = true,  delimiter = ",", required = true, short = "-s",  pattern = '^(?!.*\s)(?!.*\.\.)(?!.*\.$)[A-Z0-9./]+$' }
+price = { type = "float", short = "-p", required = false, description = "Reference price" }
+launch_date = { type = "str", short = "-i", required = false, description = "Launch date YYYYMMDD", pattern = '^20\d{2}(0[1-9]|1[0-2])(0[1-9]|[12][0-9]|3[01])$' }
+persist = { type = "flag", short = "-w", default = false, description = "Persist stats for one week" }
+zero_stock = { type = "flag", short = "-z", default = false, description = "Set stock fields to zero" }
+
+[catalog.commands.create]
+description = "Create an item from supplied sales/orders figures or defaults."
+autonomy = "confirm"
+
+[catalog.commands.create.args]
+skus = {  type = "str",  description = "SKU list",  multiple = true,  delimiter = ",", required = true, short = "-s",  pattern = '^(?!.*\s)(?!.*\.\.)(?!.*\.$)[A-Z0-9./]+$' }
+price = { type = "float", short = "-p", required = false, description = "Reference price" }
+avg_sales = { type = "float", short = "-a", required = false, description = "Average daily sales" }
+avg_orders = { type = "float", short = "-t", required = false, description = "Average daily orders" }
+launch_date = { type = "str", short = "-i", required = false, description = "Launch date YYYYMMDD", pattern = '^20\d{2}(0[1-9]|1[0-2])(0[1-9]|[12][0-9]|3[01])$' }
+persist = { type = "flag", short = "-w", default = false, description = "Persist stats for one week" }
+zero_stock = { type = "flag", short = "-z", default = false, description = "Set stock fields to zero" }
+
+[catalog.commands.setup]
+description = "Set up item values and add the item if missing."
+autonomy = "confirm"
+
+[catalog.commands.setup.args]
+skus = {  type = "str",  description = "SKU list",  multiple = true,  delimiter = ",", required = true, short = "-s",  pattern = '^(?!.*\s)(?!.*\.\.)(?!.*\.$)[A-Z0-9./]+$' }
+price = { type = "float", short = "-p", required = false, description = "Reference price" }
+avg_sales = { type = "float", short = "-a", required = false, description = "Average daily sales" }
+avg_orders = { type = "float", short = "-t", required = false, description = "Average daily orders" }
+launch_date = { type = "str", short = "-i", required = false, description = "Launch date YYYYMMDD", pattern = '^20\d{2}(0[1-9]|1[0-2])(0[1-9]|[12][0-9]|3[01])$' }
+persist = { type = "flag", short = "-w", default = false, description = "Persist stats for one week" }
+zero_stock = { type = "flag", short = "-z", default = false, description = "Set stock fields to zero" }
+
+[catalog.commands.copy]
+description = "Copy template values to the item and add it if missing."
+autonomy = "confirm"
+
+[catalog.commands.copy.args]
+skus = {  type = "str",  description = "SKU list",  multiple = true,  delimiter = ",", required = true, short = "-s",  pattern = '^(?!.*\s)(?!.*\.\.)(?!.*\.$)[A-Z0-9./]+$' }
+price = { type = "float", short = "-p", required = false, description = "Reference price" }
+launch_date = { type = "str", short = "-i", required = false, description = "Launch date YYYYMMDD", pattern = '^20\d{2}(0[1-9]|1[0-2])(0[1-9]|[12][0-9]|3[01])$' }
+persist = { type = "flag", short = "-w", default = false, description = "Persist stats for one week" }
+zero_stock = { type = "flag", short = "-z", default = false, description = "Set stock fields to zero" }
+
+[catalog.commands.price]
+description = "Update ListPrice and SalePrice."
+autonomy = "confirm"
+
+[catalog.commands.price.args]
+skus = {  type = "str",  description = "SKU list",  multiple = true,  delimiter = ",", required = true, short = "-s",  pattern = '^(?!.*\s)(?!.*\.\.)(?!.*\.$)[A-Z0-9./]+$' }
+price = { type = "float", short = "-p", description = "Reference price" }
+
+[catalog.commands.stock]
+description = "Update StockOnHand and StockReserved."
+autonomy = "confirm"
+
+[catalog.commands.stock.args]
+skus = {  type = "str",  description = "SKU list",  multiple = true,  delimiter = ",", required = true, short = "-s",  pattern = '^(?!.*\s)(?!.*\.\.)(?!.*\.$)[A-Z0-9./]+$' }
+quantity = { type = "int", short = "-v", description = "Stock quantity" }
+persist = { type = "flag", short = "-w", default = false, description = "Persist stats for one week" }
+
+[catalog.commands.field]
+description = "Update a catalogue field with a supplied value."
+autonomy = "confirm"
+
+[catalog.commands.field.args]
+skus = {  type = "str",  description = "SKU list",  multiple = true,  delimiter = ",", required = true, short = "-s",  pattern = '^(?!.*\s)(?!.*\.\.)(?!.*\.$)[A-Z0-9./]+$' }
+field = { type = "str", short = "-f", description = "Field name" }
+value = { type = "str", short = "-v", description = "Field value" }
+persist = { type = "flag", short = "-w", default = false, description = "Persist stats for one week" }
+
+[catalog.commands.launch-date]
+description = "Set the launch date."
+autonomy = "confirm"
+
+[catalog.commands.launch-date.args]
+skus = {  type = "str",  description = "SKU list",  multiple = true,  delimiter = ",", required = true, short = "-s",  pattern = '^(?!.*\s)(?!.*\.\.)(?!.*\.$)[A-Z0-9./]+$' }
+launch_date = { type = "str", short = "-i", description = "Launch date YYYYMMDD", pattern = '^20\d{2}(0[1-9]|1[0-2])(0[1-9]|[12][0-9]|3[01])$' }
+persist = { type = "flag", short = "-w", default = false, description = "Persist stats for one week" }
+
+[catalog.commands.refresh]
+description = "Refresh catalogue clients."
+autonomy = "confirm"
+
+[catalog.commands.refresh.args]
+skus = {  type = "str",  description = "SKU list",  multiple = true,  delimiter = ",", required = true, short = "-s",  pattern = '^(?!.*\s)(?!.*\.\.)(?!.*\.$)[A-Z0-9./]+$' }
+
+

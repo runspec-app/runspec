@@ -21,12 +21,12 @@ def test_push_plan_local_to_remote():
 
 def test_pull_plan_remote_to_local():
     plan = plan_transfer(
-        "prod-1", ["/var/log/app/fix.log"], "local", "/home/me/pulled"
+        "prod-1", ["/var/log/app/server.log"], "local", "/home/me/pulled"
     )
     assert plan.direction == "pull"
     assert plan.remote_host == "prod-1"
-    assert plan.items[0].dst == "/home/me/pulled/fix.log"
-    assert plan.items[0].name == "fix.log"
+    assert plan.items[0].dst == "/home/me/pulled/server.log"
+    assert plan.items[0].name == "server.log"
 
 
 def test_multiple_files():
@@ -43,8 +43,8 @@ def test_windows_local_source_basename():
 
 
 def test_pull_to_windows_local_dest():
-    plan = plan_transfer("prod-1", ["/var/log/fix.log"], "local", "C:\\pulled")
-    assert plan.items[0].dst == "C:\\pulled\\fix.log"
+    plan = plan_transfer("prod-1", ["/var/log/server.log"], "local", "C:\\pulled")
+    assert plan.items[0].dst == "C:\\pulled\\server.log"
 
 
 def test_empty_selection_raises():
@@ -70,9 +70,11 @@ def test_remote_to_remote_rejected():
 
 
 def test_relay_items():
-    items = relay_items(["/var/log/app/fix.log", "/var/log/app/err.log"], "/incoming")
+    items = relay_items(
+        ["/var/log/app/server.log", "/var/log/app/err.log"], "/incoming"
+    )
     assert [(i.src, i.dst, i.name) for i in items] == [
-        ("/var/log/app/fix.log", "/incoming/fix.log", "fix.log"),
+        ("/var/log/app/server.log", "/incoming/server.log", "server.log"),
         ("/var/log/app/err.log", "/incoming/err.log", "err.log"),
     ]
 
@@ -98,15 +100,15 @@ def test_plan_transfer_renames_single_file():
 
 def test_pull_renames_on_local():
     plan = plan_transfer(
-        "prod-1", ["/var/log/fix.log"], "local", "/home/me", "fix-2026.log"
+        "prod-1", ["/var/log/server.log"], "local", "/home/me", "server-2026.log"
     )
-    assert plan.items[0].dst == "/home/me/fix-2026.log"
+    assert plan.items[0].dst == "/home/me/server-2026.log"
 
 
 def test_relay_items_renames_single_file():
-    items = relay_items(["/var/log/app/fix.log"], "/incoming", "renamed.log")
+    items = relay_items(["/var/log/app/server.log"], "/incoming", "renamed.log")
     assert (items[0].src, items[0].dst, items[0].name) == (
-        "/var/log/app/fix.log",
+        "/var/log/app/server.log",
         "/incoming/renamed.log",
         "renamed.log",
     )

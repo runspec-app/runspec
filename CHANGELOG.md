@@ -5,6 +5,14 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Version numbers follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- Docs and test examples use neutral sample data (a product-catalogue
+  runnable, SKU values) in place of domain-specific ones. No behaviour
+  change.
+
 ---
 
 ## [0.75.2] — 2026-10-21

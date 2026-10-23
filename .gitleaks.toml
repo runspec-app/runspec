@@ -1,45 +1,21 @@
 # gitleaks configuration for runspec.
 #
-# Two jobs:
-#   1. Secret scanning via the gitleaks default ruleset (API keys, tokens, etc.).
-#   2. A tripwire for the specific internal identifiers that must never be
-#      committed to this repo again — internal hostnames/domains and the
-#      service-account name. (Added after these leaked into PR-only refs; the
-#      data was scrubbed and the repo taken private.)
-#
+# Secret scanning via the gitleaks default ruleset (API keys, tokens, etc.).
 # Runs as a pre-commit hook (see .pre-commit-config.yaml) and can also run in CI.
 # Scan staged changes manually with:  gitleaks git --staged --verbose
 #
-# NOTE: the rules tagged `internal-identifier` necessarily contain the names
-# they deny. The repo is private; if it is ever made public again, move those
-# rule blocks into a local, untracked gitleaks config and reference it with
-# --config instead of committing them here.
+# Private tripwires (internal hostnames, account names, anything that must never
+# be committed) don't belong in a public repo, because a rule has to name what it
+# denies. Put them in an untracked `.gitleaks.local.toml` (gitignored) that
+# starts with
+#
+#     [extend]
+#     path = ".gitleaks.toml"
+#
+# and add your own [[rules]]. The `gitleaks-local` pre-commit hook runs it when
+# the file exists.
 
 title = "runspec gitleaks config"
 
 [extend]
 useDefault = true
-
-[[rules]]
-id = "internal-corp-domain"
-description = "Internal corporate hostname/domain (examplecorp.com / examplecorp.com)"
-regex = '''(?i)\b[a-z0-9._-]*\.(examplecorp|examplecorp)\.com\b'''
-tags = ["internal-identifier", "hostname"]
-
-[[rules]]
-id = "internal-corp-name"
-description = "Internal company / product name reference"
-regex = '''(?i)\b(examplecorp|examplecorp)\b'''
-tags = ["internal-identifier", "name"]
-
-[[rules]]
-id = "internal-service-account"
-description = "Internal service-account name in a run-as / become context"
-regex = '''(?i)\b(run[_-]?as|become[_-]?user|sudo[_-]?user)\b\s*[=:]\s*["']?svc_app\b'''
-tags = ["internal-identifier", "account"]
-
-[allowlist]
-description = "Do not flag this config file, which necessarily names the patterns"
-paths = [
-    '''\.gitleaks\.toml''',
-]

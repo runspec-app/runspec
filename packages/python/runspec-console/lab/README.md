@@ -82,9 +82,9 @@ provider's.
   tool's output.
 
 Variants deliberately avoid API-side features (context editing, server-side
-tool-result clearing): some LLM proxies don't support them, and its
-prompt caching is unreliable, so read the *no cache* column as the
-production-relevant one.
+tool-result clearing): many LLM proxies and gateways don't pass them through,
+and their prompt caching can be unreliable, so read the *no cache* column as the
+safe, provider-independent one.
 
 ## Search benchmark
 

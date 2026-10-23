@@ -28,8 +28,8 @@ is `int`, choices become `Literal[...]`, and a typo (`args.wrokers`) is a hard
 All three are merged to `main`. **`0.41.0` is the version that matches the full
 guide** (`0.40.0` is just the command). The `v0.41.0` tag exists (auto-tag);
 PyPI publish is **manual** (maintainer dispatches `release.yml` on `v0.41.0` —
-see `releasing.md`). As of this note the maintainer is publishing it to reach an
-internal Nexus on a work PC.
+see `releasing.md`). Private indexes (e.g. a Nexus mirror) pick it up from
+PyPI after that.
 
 ### File map
 

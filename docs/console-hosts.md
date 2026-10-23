@@ -342,7 +342,7 @@ How a filter runs:
 
 Because the quoted value lands inside your command as a single argument,
 **regex alternation is how you match "multiple values"**: with the
-`grep -E -- {{arg}}` filter above, supplying `12345|Jason` as the value
+`grep -E -- {{arg}}` filter above, supplying `12345|alice` as the value
 matches lines containing either — the `|` is regex alternation *inside* the
 pattern, safely quoted on its way there. (With `grep -F` the value is matched
 literally, `|` included — use `-E`/`egrep` semantics when you want
@@ -350,7 +350,7 @@ alternation.)
 
 Ask the agent:
 
-> Download /var/log/app/audit.log from app-01 using the id-lines filter with the value 12345|Jason.
+> Download /var/log/app/audit.log from app-01 using the id-lines filter with the value 12345|alice.
 
 ---
 

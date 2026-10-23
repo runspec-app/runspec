@@ -9,8 +9,8 @@
 # value below the 32 KB default needs console 0.350.1+).
 #
 # API-side features (context editing, server-side tool-result clearing) are
-# deliberately absent: some LLM proxies don't support them, so every
-# variant here works with any provider. Each result is scored with prompt
+# deliberately absent: many LLM proxies and gateways don't pass them through,
+# so every variant here works with any provider. Each result is scored with prompt
 # caching on and off.
 
 [[variant]]

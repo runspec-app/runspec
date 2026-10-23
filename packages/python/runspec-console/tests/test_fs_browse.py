@@ -33,7 +33,7 @@ def _sample_stdout():
         [
             "/var/log/app",
             "d\t4096\t1717000000.0\tarchive",
-            "f\t2048\t1717000500.5\tfix.log",
+            "f\t2048\t1717000500.5\tserver.log",
             "f\t100\t1717000400\talpha.log",
             "d\t4096\t1717000100\tBeta",  # capital — case-insensitive sort
         ]
@@ -50,16 +50,16 @@ def test_parse_remote_listing_cwd_and_parent():
 def test_parse_remote_listing_sorts_dirs_first_then_caseless():
     result = parse_remote_listing(_sample_stdout())
     names = [e["name"] for e in result["entries"]]
-    # Directories first (archive, Beta), then files (alpha.log, fix.log).
-    assert names == ["archive", "Beta", "alpha.log", "fix.log"]
+    # Directories first (archive, Beta), then files (alpha.log, server.log).
+    assert names == ["archive", "Beta", "alpha.log", "server.log"]
 
 
 def test_parse_remote_listing_types_sizes_mtime():
     entries = {e["name"]: e for e in parse_remote_listing(_sample_stdout())["entries"]}
     assert entries["archive"]["type"] == "directory"
-    assert entries["fix.log"]["type"] == "file"
-    assert entries["fix.log"]["size"] == 2048
-    assert entries["fix.log"]["mtime"] == 1717000500  # float epoch truncated to int
+    assert entries["server.log"]["type"] == "file"
+    assert entries["server.log"]["size"] == 2048
+    assert entries["server.log"]["mtime"] == 1717000500  # float epoch truncated to int
 
 
 def test_parse_remote_listing_dirs_only():
@@ -188,9 +188,7 @@ def test_list_sftp_dirs_only():
 def test_remote_list_command_service_account_wraps_in_become():
     # Needs core runspec for build_become_argv; CI's console-test env omits it.
     pytest.importorskip("runspec")
-    cmd = remote_list_command(
-        "/var/log/app", run_as="svc_app", become_method="sudo"
-    )
+    cmd = remote_list_command("/var/log/app", run_as="svc_app", become_method="sudo")
     assert cmd.startswith("sudo ")
     assert "-u svc_app" in cmd
     assert "sh -c" in cmd

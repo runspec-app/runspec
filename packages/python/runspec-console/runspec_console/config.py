@@ -5,7 +5,7 @@ By default persistent state lives under the writable per-user app-data root
 (%APPDATA%\ on Windows, ~/AppData/Roaming/ elsewhere) in a folder named for the
 white-label package: `%APPDATA%\<dist-name>\`, defaulting to `runspec-console`.
 A package that ships a config seed brands the folder with its own distribution
-name (e.g. `jason-console`) — the same source that names the window title — so
+name (e.g. `acme-console`) — the same source that names the window title — so
 two different white-label installs are isolated under one writable root without
 any flag (see :func:`app_dir` / :func:`_app_slug`). The app-data root is used
 deliberately rather than the venv, which can be read-only for a non-admin
@@ -105,7 +105,7 @@ def _app_slug() -> str:
 
     Defaults to ``runspec-console``; a white-label package that ships a config
     seed brands the folder with **its own distribution name** (e.g.
-    ``jason-console``) — the *same* source that names the window title, so the two
+    ``acme-console``) — the *same* source that names the window title, so the two
     always agree. Two different white-label installs get separate folders under
     one writable root; the same package shares one. Derived from installed
     metadata only (`configseed.branding_dist_name`), so it is stable, cheap, and

@@ -50,13 +50,13 @@
   emission (mirrors `email`/`claimed`), gated on the email draft-on-claim being
   confirmed. Release `runspec-room` + `runspec-console` together (deployment
   coupling — see `helpdesk-rooms.md` §4).
-- **Verified on a real Exchange box** (this session): live `NewMailEx` **does**
+- **Verified against Exchange**: live `NewMailEx` **does**
   fire for the shared mailbox (no scan needed); claim ack round-trips and ownership
   flips; the claim-gated agent turn proposes a reply on the next message.
 - **Blocked / unconfirmed:** **draft-on-claim** (the `email`/`claimed` agent turn)
   — needs the event-log `email:claimed` row (`fired: draft-on-claim` vs `no match`)
-  to tell config-vs-code. The tester's work PC (Outlook/Windows login) broke mid-
-  test (corporate migration), so this is paused until a working box.
+  to tell config-vs-code. Testing
+  is paused until a Windows + Outlook test machine is available.
 
 **Open work, when testing resumes:**
 

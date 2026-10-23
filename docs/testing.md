@@ -26,12 +26,12 @@ The single most useful thing you can do for testability is keep `main()` thin:
 import json
 import runspec as rs
 
-def create_symbols(region, symbols, *, price=None):   # plain function, plain values
-    return _store_call(region, "create", symbols, price=price)   # the one I/O call
+def create_items(region, skus, *, price=None):   # plain function, plain values
+    return _store_call(region, "create", skus, price=price)   # the one I/O call
 
 def main():
-    spec = rs.parse("static-data")
-    print(json.dumps(create_symbols(spec.region.value, spec.symbols.value, price=spec.price.value)))
+    spec = rs.parse("catalog")
+    print(json.dumps(create_items(spec.region.value, spec.skus.value, price=spec.price.value)))
 ```
 
 With the work in a plain function, you test it directly with ordinary Python
@@ -47,17 +47,17 @@ assert on parses and on clean error exits:
 from pathlib import Path
 from runspec.testing import ParseHarness
 
-SPEC = Path(__file__).parent / "fixtures" / "static_data.toml"
+SPEC = Path(__file__).parent / "fixtures" / "catalog.toml"
 
 def test_create_parses():
-    h = ParseHarness(script_name="static-data", config_path=SPEC)
-    spec = h.expect_ok(["create", "-s", "AAPL,MSFT", "--region", "americas", "--env", "prod"])
+    h = ParseHarness(script_name="catalog", config_path=SPEC)
+    spec = h.expect_ok(["create", "-s", "WIDGET1,GADGET2", "--region", "americas", "--env", "prod"])
     assert spec.runspec_command == "create"
-    assert spec.symbols.value == ["AAPL", "MSFT"]   # multiple + delimiter -> list
+    assert spec.skus.value == ["WIDGET1", "GADGET2"]   # multiple + delimiter -> list
 
 def test_bad_choice_is_rejected():
-    h = ParseHarness(script_name="static-data", config_path=SPEC)
-    h.expect_exit(["create", "-s", "AAPL", "--region", "mars", "--env", "prod"],
+    h = ParseHarness(script_name="catalog", config_path=SPEC)
+    h.expect_exit(["create", "-s", "WIDGET1", "--region", "mars", "--env", "prod"],
                   contains="--region")
 ```
 
@@ -96,10 +96,10 @@ each leaf is also exercised with a full, valid invocation:
 
 ```python
 def test_smoke():
-    h = ParseHarness(script_name="static-data", config_path=SPEC)
+    h = ParseHarness(script_name="catalog", config_path=SPEC)
     performed = h.smoke(values={
-        "region": "americas", "env": "prod", "symbols": "AAPL",
-        "price": "12.5", "volume": "100", "ipo_date": "20240101",
+        "region": "americas", "env": "prod", "skus": "WIDGET1",
+        "price": "12.5", "quantity": "100", "launch_date": "20240101",
     })
     assert len(performed) > 20            # guard against checking nothing
 ```
@@ -220,14 +220,14 @@ harness gives you a parsed `RunSpec` to feed it when you want a realistic input:
 ```python
 from unittest.mock import patch
 from runspec.testing import ParseHarness
-import mypkg.static_data as ei   # your module: main() + plain functions
+import mypkg.catalog as ei   # your module: main() + plain functions
 
 def test_create_calls_store_once():
-    h = ParseHarness(script_name="static-data", config_path=SPEC)
-    spec = h.expect_ok(["create", "-s", "AAPL,MSFT", "--region", "americas", "--env", "prod"])
+    h = ParseHarness(script_name="catalog", config_path=SPEC)
+    spec = h.expect_ok(["create", "-s", "WIDGET1,GADGET2", "--region", "americas", "--env", "prod"])
 
     with patch.object(ei, "_store_call", return_value={"ok": True}) as m:
-        result = ei.create_symbols(spec.region.value, spec.symbols.value)
+        result = ei.create_items(spec.region.value, spec.skus.value)
 
     assert result == {"ok": True}
     m.assert_called_once()
@@ -254,7 +254,7 @@ from runspec.testing import ParseHarness
 # Your package's real runspec.toml. __file__.parent.parent assumes tests/ sits
 # inside the package dir next to runspec.toml — adjust if your layout differs.
 SPEC = Path(__file__).resolve().parent.parent / "runspec.toml"
-RUNNABLE = "static-data"
+RUNNABLE = "catalog"
 
 
 @pytest.fixture()
@@ -282,12 +282,12 @@ Then a parse-layer test file is just:
 ```python
 # tests/test_static_data.py
 def test_create_parses(h):
-    spec = h.expect_ok(["create", "-s", "AAPL,MSFT", "--region", "americas", "--env", "prod"])
+    spec = h.expect_ok(["create", "-s", "WIDGET1,GADGET2", "--region", "americas", "--env", "prod"])
     assert spec.runspec_command == "create"
 
 def test_smoke(h):
-    h.smoke(values={"region": "americas", "env": "prod", "symbols": "AAPL",
-                    "price": "12.5", "volume": "100", "ipo_date": "20240101"})
+    h.smoke(values={"region": "americas", "env": "prod", "skus": "WIDGET1",
+                    "price": "12.5", "quantity": "100", "launch_date": "20240101"})
 ```
 
 ## Worked example — testing a `main()` with real branching logic
@@ -298,33 +298,33 @@ to refactor it to test it: drive `main()` directly, mock only its two I/O
 boundaries, and vary the argv. Here is a real `main()` and the tests for it.
 
 ```python
-# static_data/main.py  (the runnable under test)
+# catalog/main.py  (the runnable under test)
 from runspec import parse, errors
-from static_data.functions import actions, user
+from catalog.functions import actions, user
 import logging
 
 logger = logging.getLogger(__name__)
 
 def main() -> int:
-    args = parse("static-data")
+    args = parse("catalog")
     service_user = user.get_service_user(env=args.env.value)     # boundary 1: credentials
     if service_user.username is None or service_user.password is None:
         raise errors.RunSpecError("* Missing service credentials: ...")
     action = args.runspec_command
     if action is None:
         raise errors.RunSpecError("* Missing RunSpec Command. For choices see --help")
-    symbols = args.symbols.value
-    if action in {"clone", "create", "setup", "copy"} and len(symbols) > 1 and args.price.value is not None:
-        logger.warning(f"Ignoring --price for {action} with {len(symbols)} symbols. ...")
+    skus = args.skus.value
+    if action in {"clone", "create", "setup", "copy"} and len(skus) > 1 and args.price.value is not None:
+        logger.warning(f"Ignoring --price for {action} with {len(skus)} skus. ...")
     if args.region.value == "asia_and_australia":                   # fan-out
-        return (actions.multi(args=args, user=service_user, symbols=symbols, region="asia", action=action)
-                + actions.multi(args=args, user=service_user, symbols=symbols, region="australia", action=action))
-    return actions.multi(args=args, user=service_user, symbols=symbols, region=args.region.value, action=action)  # boundary 2: the work
+        return (actions.multi(args=args, user=service_user, skus=skus, region="asia", action=action)
+                + actions.multi(args=args, user=service_user, skus=skus, region="australia", action=action))
+    return actions.multi(args=args, user=service_user, skus=skus, region=args.region.value, action=action)  # boundary 2: the work
 ```
 
 The two things to mock are `user.get_service_user` (credential lookup) and
 `actions.multi` (the work). Everything between them — the credential guard, the
-multi-symbol price-drop rule, and the `asia_and_australia` fan-out — is the
+multi-SKU price-drop rule, and the `asia_and_australia` fan-out — is the
 logic worth testing, and it runs for real:
 
 ```python
@@ -337,7 +337,7 @@ import pytest
 
 from runspec import errors
 from runspec.testing import no_run_as_check
-import static_data.main as main_mod        # <-- adjust to your module path
+import catalog.main as main_mod        # <-- adjust to your module path
 
 SPEC = Path(main_mod.__file__).resolve().parent / "runspec.toml"   # or import from conftest
 
@@ -348,9 +348,9 @@ def drive_main(monkeypatch, argv, *, username="svc", password="pw", multi_return
     Returns (exit_code, [calls]) where each call records what main() decided to
     pass to actions.multi — including the post-rule price.
     """
-    # main() calls parse("static-data") off sys.argv; point it at the real spec.
+    # main() calls parse("catalog") off sys.argv; point it at the real spec.
     monkeypatch.setenv("RUNSPEC_CONFIG", str(SPEC))
-    monkeypatch.setattr(sys, "argv", ["static-data", *argv])
+    monkeypatch.setattr(sys, "argv", ["catalog", *argv])
 
     monkeypatch.setattr(
         main_mod.user, "get_service_user",
@@ -358,11 +358,11 @@ def drive_main(monkeypatch, argv, *, username="svc", password="pw", multi_return
     )
     calls: list[dict] = []
 
-    def fake_multi(*, args, user, symbols, region, action):
+    def fake_multi(*, args, user, skus, region, action):
         price = getattr(args, "price", None)
         price = getattr(price, "value", price)        # an Arg, or None after the drop rule
         calls.append({"region": region, "action": action,
-                      "symbols": list(symbols), "price": price})
+                      "skus": list(skus), "price": price})
         return multi_return
 
     monkeypatch.setattr(main_mod.actions, "multi", fake_multi)
@@ -375,11 +375,11 @@ def drive_main(monkeypatch, argv, *, username="svc", password="pw", multi_return
 
 def test_missing_credentials_raises(monkeypatch):
     with pytest.raises(errors.RunSpecError, match="Credentials"):
-        drive_main(monkeypatch, ["create", "-s", "AAPL", "-r", "americas", "-e", "prod"], username=None)
+        drive_main(monkeypatch, ["create", "-s", "WIDGET1", "-r", "americas", "-e", "prod"], username=None)
 
 
 def test_single_region_calls_multi_once(monkeypatch):
-    code, calls = drive_main(monkeypatch, ["show", "-s", "AAPL", "-r", "americas", "-e", "prod"])
+    code, calls = drive_main(monkeypatch, ["show", "-s", "WIDGET1", "-r", "americas", "-e", "prod"])
     assert code == 0
     assert len(calls) == 1
     assert calls[0]["region"] == "americas"
@@ -388,28 +388,28 @@ def test_single_region_calls_multi_once(monkeypatch):
 
 def test_asia_and_australia_fans_out(monkeypatch):
     code, calls = drive_main(
-        monkeypatch, ["show", "-s", "AAPL", "-r", "asia_and_australia", "-e", "prod"], multi_return=1
+        monkeypatch, ["show", "-s", "WIDGET1", "-r", "asia_and_australia", "-e", "prod"], multi_return=1
     )
     assert [c["region"] for c in calls] == ["asia", "australia"]
     assert code == 2                                   # exit codes summed
 
 
-def test_price_dropped_for_multi_symbol_create(monkeypatch):
+def test_price_dropped_for_multi_sku_create(monkeypatch):
     _, calls = drive_main(
-        monkeypatch, ["create", "-s", "AAPL,MSFT", "-p", "12.5", "-r", "americas", "-e", "prod"]
+        monkeypatch, ["create", "-s", "WIDGET1,GADGET2", "-p", "12.5", "-r", "americas", "-e", "prod"]
     )
-    assert calls[0]["price"] is None                  # the >1-symbol rule applied
+    assert calls[0]["price"] is None                  # the >1-SKU rule applied
 
 
-def test_price_kept_for_single_symbol_create(monkeypatch):
+def test_price_kept_for_single_sku_create(monkeypatch):
     _, calls = drive_main(
-        monkeypatch, ["create", "-s", "AAPL", "-p", "12.5", "-r", "americas", "-e", "prod"]
+        monkeypatch, ["create", "-s", "WIDGET1", "-p", "12.5", "-r", "americas", "-e", "prod"]
     )
     assert calls[0]["price"] == 12.5
 ```
 
 These five tests cover every decision `main()` makes without touching the
-network, credentials, or the static-data store — the boundaries are the only
+network, credentials, or the catalog store — the boundaries are the only
 mocks.
 
 ## Recorded responses for agents and evals

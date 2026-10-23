@@ -4,7 +4,7 @@ Everything the console persists lives in one folder under the **writable
 per-user app-data root** — `%APPDATA%\<name>\` on Windows (macOS/Linux:
 `~/AppData/Roaming/<name>/`). `<name>` is `runspec-console` by default; a
 white-label package that ships a config seed brands the folder with **its own
-distribution name** (e.g. `%APPDATA%\jason-console\`), the same source that names
+distribution name** (e.g. `%APPDATA%\acme-console\`), the same source that names
 the window title — so two different white-label installs stay isolated under one
 writable root without any flag, while two copies of the same package share one
 profile. (The app-data root is used deliberately rather than the venv, which can

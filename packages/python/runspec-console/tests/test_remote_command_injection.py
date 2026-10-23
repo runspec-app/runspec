@@ -17,7 +17,7 @@ import shlex
 
 from runspec_console.executor import args_to_argv, shell_join
 
-BIN = "/home/svc/.venv/bin/static-data"
+BIN = "/home/svc/.venv/bin/catalog"
 # What build_become_argv(..., run_as="svc", "sudo", env={"RUNSPEC_AGENT": "1"})
 # prepends to the bare command.
 SUDO_PREFIX = ["sudo", "-u", "svc", "env", "RUNSPEC_AGENT=1"]
@@ -51,11 +51,11 @@ def test_payloads_survive_as_single_tokens():
 
 
 def test_escalation_prefix_intact_and_safe():
-    cmd = _remote_cmd({"symbol": "AAPL; shutdown now"})
+    cmd = _remote_cmd({"sku": "WIDGET1; shutdown now"})
     tokens = shlex.split(cmd)
     assert tokens[:5] == SUDO_PREFIX
     assert BIN in tokens
-    assert "AAPL; shutdown now" in tokens
+    assert "WIDGET1; shutdown now" in tokens
     # No bare "shutdown" token leaked out of the quoted value.
     assert "shutdown" not in tokens
 
@@ -75,5 +75,5 @@ def test_roundtrip_equals_intended_argv():
 
 def test_plain_values_are_not_needlessly_mangled():
     # A benign value round-trips unchanged (and stays a single token).
-    cmd = shell_join([BIN, "show", "--symbol", "AAPL"])
-    assert cmd == f"{BIN} show --symbol AAPL"
+    cmd = shell_join([BIN, "show", "--sku", "WIDGET1"])
+    assert cmd == f"{BIN} show --sku WIDGET1"
