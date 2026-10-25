@@ -5,11 +5,12 @@
  * every venv at once and saves each venv only its own changes.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, act, waitFor, fireEvent } from '@testing-library/react'
+import { render, screen, act, waitFor, fireEvent, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import {
-  EnvFilesModal, cellToken, draftChanges, draftFromView, gridCell, gridChanges, looksSecret, rowSummary, validKey, withEdit, type GridDraft,
+  EnvFilesModal, cellToken, draftChanges, draftFromView, gridCell, gridChanges, looksSecret, rowSummary, validKey, valueGroups, venvColumns,
+  venvSignature, withEdit, type GridDraft,
 } from './EnvFilesModal'
 import type { EnvFileView, Host } from '../bridge'
 
@@ -160,6 +161,50 @@ describe('EnvFilesModal', () => {
       { host: 'local', runspec_path: '/l/console/bin/runspec', sha: 'abc', set: { REGION: 'eu' }, unset: [] },
     ] })
   })
+  it('across venvs: identical venvs share a column, an edit there saves to each, and a variable lists its values', { timeout: 30000 }, async () => {
+    const ops = (host: string, region: string, sha: string): EnvFileView => ({
+      ...VIEW, host, runspec_path: '/opt/venvs/ops/bin/runspec', venv: 'ops', path: '/opt/venvs/ops/.runspec_env', sha,
+      entries: [
+        { key: 'JIRA_URL', value: 'https://jira.example.com/a/very/long/path/that/would/once/have/been/cut/off', secret: false, masked: false, line: 1, duplicates: 0, readers: [] },
+        { key: 'REGION', value: region, secret: false, masked: false, line: 2, duplicates: 0, readers: [] },
+      ],
+    })
+    const opsTarget = (host: string) => ({ ...TARGETS[1], host })
+    api.env_file_targets.mockResolvedValue([TARGETS[0], opsTarget('web-01'), opsTarget('web-02'), opsTarget('web-03')])
+    api.env_file_read_many.mockResolvedValue({ views: [VIEW, ops('web-01', 'eu', 's1'), ops('web-02', 'eu', 's2'), ops('web-03', 'us', 's3')] })
+    api.env_file_save_many.mockResolvedValue({ ok: 2, saved: 2, failed: 0, rows: [] })
+    render(<EnvFilesModal open onClose={() => {}} hosts={HOSTS} />)
+    await screen.findByText('/l/console/.runspec_env')
+    const user = userEvent.setup()
+    await act(async () => { await user.click(screen.getByText('Across venvs')) })
+    await screen.findByText('REGION')
+    // web-01 and web-02 hold the same file: one column for both.
+    expect(screen.getByText('4 venvs in 3 columns')).toBeTruthy()
+    expect(screen.getAllByText('2 hosts').length).toBeGreaterThan(0)
+    // Values wrap rather than being cut off.
+    expect(screen.getAllByText('https://jira.example.com/a/very/long/path/that/would/once/have/been/cut/off')).toHaveLength(2)
+
+    // Click REGION: each value with the venvs holding it.
+    await act(async () => { await user.click(screen.getByRole('button', { name: 'Show REGION across venvs' })) })
+    const dialog = (await screen.findByText(/across 4 venvs/)).closest('.ant-modal') as HTMLElement
+    expect(within(dialog).getByText('2 of 4 venvs')).toBeTruthy()
+    expect(within(dialog).getByText('web-02 · ops')).toBeTruthy()
+    expect(within(dialog).getByText('not set')).toBeTruthy()
+    await act(async () => { await user.click(within(dialog).getByText('Close')) })
+
+    // An edit in the shared column goes to both venvs.
+    await act(async () => { await user.click(screen.getByRole('button', { name: 'Edit REGION on ops on 2 hosts' })) })
+    const input = screen.getByLabelText('Value of REGION on ops on 2 hosts')
+    await act(async () => { await user.clear(input); await user.type(input, 'ap{Enter}') })
+    await act(async () => { await user.click(screen.getByRole('button', { name: /Save \(2\)/ })) })
+    await screen.findByText(/Save 2 changes in 2 venvs\?/)
+    await act(async () => { await user.click(screen.getAllByRole('button', { name: 'Save' }).slice(-1)[0]) })
+    await waitFor(() => expect(api.env_file_save_many).toHaveBeenCalledTimes(1))
+    expect(api.env_file_save_many.mock.calls[0][0]).toEqual({ changes: [
+      { host: 'web-01', runspec_path: '/opt/venvs/ops/bin/runspec', sha: 's1', set: { REGION: 'ap' }, unset: [] },
+      { host: 'web-02', runspec_path: '/opt/venvs/ops/bin/runspec', sha: 's2', set: { REGION: 'ap' }, unset: [] },
+    ] })
+  })
 })
 
 describe('grid helpers', () => {
@@ -187,5 +232,32 @@ describe('grid helpers', () => {
     expect(gridChanges(d, { r: v })).toEqual([{ host: 'local', runspec_path: '/l/console/bin/runspec', sha: 'abc', set: { A: '9' }, unset: ['B'] }])
     d = withEdit(withEdit(d, v, 'r', 'A', undefined), v, 'r', 'B', undefined)
     expect(d).toEqual({})
+  })
+  it('merges venvs with the same file, edits and writability into one column', () => {
+    const a = view([e('A', '1'), e('T', '', { masked: true, fp: 'x' })])
+    const b = view([e('T', '', { masked: true, fp: 'x' }), e('A', '1')])
+    const c = view([e('A', '1'), e('T', '', { masked: true, fp: 'y' })])
+    const ro = { ...a, writable: false }
+    const bad = { ...a, ok: false }
+    expect(venvSignature(a, undefined)).toBe(venvSignature(b, {}))
+    expect(venvSignature(a, undefined)).not.toBe(venvSignature(c, undefined))
+    expect(venvSignature(a, undefined)).not.toBe(venvSignature(ro, undefined))
+    expect(venvSignature(a, undefined)).not.toBe(venvSignature(a, { A: '2' }))
+    expect(venvSignature(bad, undefined)).toBeNull()
+    const views = { a, b, c, ro, bad, bad2: bad }
+    expect(venvColumns(['a', 'c', 'b', 'ro', 'bad', 'bad2'], views, {}, true)).toEqual([
+      { id: 'a', refs: ['a', 'b'] }, { id: 'c', refs: ['c'] }, { id: 'ro', refs: ['ro'] }, { id: 'bad', refs: ['bad'] }, { id: 'bad2', refs: ['bad2'] },
+    ])
+    // A pending edit on one splits it off; switching merging off gives a column each.
+    expect(venvColumns(['a', 'b'], views, { b: { A: '2' } }, true)).toHaveLength(2)
+    expect(venvColumns(['a', 'b'], views, {}, false)).toHaveLength(2)
+  })
+
+  it('groups a variable by value, most common first and unset last', () => {
+    const views = { a: view([e('R', 'eu')]), b: view([e('R', 'us')]), c: view([]), d: view([e('R', 'us')]) }
+    expect(valueGroups(['a', 'b', 'c', 'd'], views, {}, 'R')).toEqual([
+      { token: 'v:us', refs: ['b', 'd'] }, { token: 'v:eu', refs: ['a'] }, { token: null, refs: ['c'] },
+    ])
+    expect(valueGroups(['a', 'c'], views, { c: { R: 'eu' } }, 'R')).toEqual([{ token: 'v:eu', refs: ['a', 'c'] }])
   })
 })

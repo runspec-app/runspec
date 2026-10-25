@@ -24,6 +24,23 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   is its own `service.instance.id`, and turn spans carry
   `runspec.lab.variant`/`scenario`/`sample`/`tier`.
 
+## [0.357.0] — 2026-10-25
+
+### Changed
+
+- **Env files: Across venvs copes with many same-named venvs.** Venvs whose
+  `.runspec_env` files are identical (same values, same hidden secrets by
+  fingerprint, same pending edits, same writability) now share one grid
+  column, headed e.g. `ops · 37 hosts` with every host listed in its tooltip;
+  an edit, undo, remove or reveal in that column applies to each of its venvs.
+  A **Group identical venvs** switch (on by default) turns it off. The venv
+  picker gains a **Venv** section (`ops (40)`) and is searchable. Long values
+  wrap instead of being cut off. Clicking a variable name opens a view of each
+  value it has, with the venvs holding it (and those that don't set it), plus
+  **Use everywhere** to copy a value to every venv shown. The save summary
+  lists identical changes once. Frontend only. See `docs/console-hosts.md` →
+  "Env files".
+
 ## [0.356.0] — 2026-10-25
 
 ### Changed

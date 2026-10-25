@@ -191,8 +191,18 @@ pinned while you scroll sideways.
   every venv shown and the bin removes it from all of them. **Add a variable
   row** suggests names the venvs' runnables read. Edited cells are coloured
   (green added, amber changed, red removed) until you save or undo them.
-- The venv picker narrows the columns to a group, a profile or one host.
-  Venvs that can only be read show a lock in their header and can't be edited.
+- Venvs whose files are identical share one column, headed with the venv
+  name and how many hosts it covers (for example `ops · 37 hosts`; hover the
+  header for the list). Editing, undoing, removing or revealing a cell there
+  does it in each of those venvs, so a column splits off as soon as one of its
+  venvs differs. Turn **Group identical venvs** off to get one column per venv.
+- Long values wrap rather than being cut off.
+- Click a variable name to see every value it has across the venvs shown,
+  with the venvs holding each value and those that don't set it. **Use
+  everywhere** copies a value to every venv shown (as an unsaved edit).
+- The venv picker narrows the columns to a venv name, a group, a profile or
+  one host; type to search it. Venvs that can only be read show a lock in
+  their header and can't be edited.
 - **Save** lists the changes per venv first, then writes each file with just
   its own changed variables. Each file is only written if it hasn't changed
   since the grid loaded it, so a venv someone edited meanwhile is refused and

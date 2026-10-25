@@ -651,6 +651,18 @@ const _mockEnvFiles = new Map<string, Record<string, string>>([
   ['prod-1|/opt/venvs/tools/bin/runspec', { JIRA_URL: 'https://jira.example.com', REGION: 'eu-west', HTTPS_PROXY: 'http://proxy.corp:3128' }],
   ['prod-2|/opt/venvs/ops/bin/runspec', { JIRA_URL: 'https://jira.example.com', RUNSPEC_JIRA_ARG_JIRA_PAT: 'old-token', REGION: 'us-east', HTTPS_PROXY: 'http://proxy.corp:3128', GRAFANA_URL: 'https://grafana.corp' }],
 ])
+// A fleet of `ops` venvs that mostly hold the same file (so the Across venvs
+// grid has identical venvs to merge into one column).
+const _MOCK_ENV_FLEET = Array.from({ length: 14 }, (_, i) => `app-${String(i + 1).padStart(2, '0')}`)
+for (const [i, host] of _MOCK_ENV_FLEET.entries()) {
+  _mockEnvFiles.set(`${host}|/opt/venvs/ops/bin/runspec`, {
+    JIRA_URL: 'https://jira.example.com',
+    RUNSPEC_JIRA_ARG_JIRA_PAT: i === 13 ? 'old-token' : 'hunter2',
+    REGION: i === 12 ? 'us-east' : 'eu-west',
+    HTTPS_PROXY: 'http://proxy.corp:3128',
+    JAVA_OPTS: '-Xms512m -Xmx4g -XX:+UseG1GC -Dhttps.proxyHost=proxy.corp -Dhttps.proxyPort=3128 -Dhttp.nonProxyHosts=*.corp|localhost',
+  })
+}
 // Stand-in for the backend's keyed fingerprint of a masked value.
 const _mockFp = (key: string, value: string) =>
   [...`${key}=${value}`].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7).toString(16).padStart(8, '0')
@@ -1087,13 +1099,13 @@ export const mockApi: BridgeApi = {
   }),
   deprovision_start: async (payload: DeprovisionPayload) => mockProvisionOp('deprovision', payload.targets.map(t => t.host), payload.targets[0]?.runspec_path ?? ''),
   env_file_targets: async (hosts) => {
-    const names = ['local', ...(hosts ?? MOCK_HOSTS.filter(h => h.name !== 'local').map(h => h.name))]
+    const names = ['local', ...(hosts ?? MOCK_HOSTS.filter(h => h.name !== 'local').map(h => h.name)), ..._MOCK_ENV_FLEET]
     return names.flatMap(host => {
       const roots = host === 'local' ? ['/home/me/.venvs/console'] : host === 'prod-1' ? ['/opt/venvs/ops', '/opt/venvs/tools'] : ['/opt/venvs/ops']
       const h = MOCK_HOSTS.find(x => x.name === host)
       return roots.map(root => ({
         host, runspec_path: `${root}/bin/runspec`, venv: root.split('/').pop() ?? '', root,
-        path: `${root}/.runspec_env`, group: h?.group ?? '', profiles: h?.profiles ?? [],
+        path: `${root}/.runspec_env`, group: h?.group ?? (host.startsWith('app-') ? 'Production' : ''), profiles: h?.profiles ?? [],
         local: host === 'local', connected: true, supported: true, reason: '',
       }))
     })

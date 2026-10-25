@@ -13,9 +13,13 @@
  *  - **Across venvs** — a variables × venvs grid of every venv in scope, read
  *    in one go. Cells are edited in place (or a row is set / removed in every
  *    venv shown), variables whose venvs disagree are tagged, and hidden secrets
- *    are compared by fingerprint without being revealed. Save sends each venv
+ *    are compared by fingerprint without being revealed. Venvs whose files are
+ *    identical share one column (an edit there changes each of them), so a
+ *    fleet of same-named venvs reads as a few columns, and clicking a variable
+ *    lists each value it has with the venvs holding it. Save sends each venv
  *    just its own changed keys, compare-and-swap, so one stale venv doesn't
- *    hold up the rest. Columns can be narrowed to a group, profile or host.
+ *    hold up the rest. Columns can be narrowed to a venv name, group, profile
+ *    or host.
  *
  * Scope is the local venvs plus the connected remote hosts it is given.
  */
@@ -515,20 +519,63 @@ export function gridChanges(draft: GridDraft, views: Record<string, EnvFileView>
   return out
 }
 
+/** What makes two venvs share a grid column: the same file as loaded (secrets
+ *  by fingerprint), the same pending edits and the same writability. `null`
+ *  for a venv that wasn't read, which always gets a column of its own. */
+export function venvSignature(view: EnvFileView | undefined, edits: Record<string, CellEdit> | undefined): string | null {
+  if (!view?.ok) return null
+  const loaded = (view.entries ?? []).map(e => `${e.key}=${e.masked ? `fp:${e.fp ?? ''}` : `v:${e.value}`}`).sort()
+  const pending = Object.entries(edits ?? {}).map(([k, v]) => `${k}=${v === null ? 'rm' : `v:${v}`}`).sort()
+  return JSON.stringify([!!view.writable, loaded, pending])
+}
+
+/** One grid column: a venv, or several venvs with identical files. */
+export interface VenvColumn { id: string; refs: string[] }
+
+/** The grid's columns, in venv order. With `merge`, venvs with the same
+ *  signature share one column (an edit there applies to each of them). */
+export function venvColumns(refs: string[], views: Record<string, EnvFileView>, draft: GridDraft, merge: boolean): VenvColumn[] {
+  const out: VenvColumn[] = []
+  const bySig = new Map<string, VenvColumn>()
+  for (const ref of refs) {
+    const sig = merge ? venvSignature(views[ref], draft[ref]) : null
+    const col = sig === null ? undefined : bySig.get(sig)
+    if (col) { col.refs.push(ref); continue }
+    const fresh = { id: ref, refs: [ref] }
+    if (sig !== null) bySig.set(sig, fresh)
+    out.push(fresh)
+  }
+  return out
+}
+
+/** The venvs holding each value of one variable, most common first; the
+ *  venvs that don't set it (`token: null`) last. */
+export function valueGroups(refs: string[], views: Record<string, EnvFileView>, draft: GridDraft, key: string): { token: string | null; refs: string[] }[] {
+  const by = new Map<string | null, string[]>()
+  for (const ref of refs) {
+    const t = cellToken(gridCell(views[ref], key, draft[ref]?.[key]))
+    by.set(t, [...(by.get(t) ?? []), ref])
+  }
+  return [...by.entries()].map(([token, rs]) => ({ token, refs: rs }))
+    .sort((a, b) => (a.token === null ? 1 : 0) - (b.token === null ? 1 : 0) || b.refs.length - a.refs.length)
+}
+
 const EDIT_BG = {
   added: 'rgba(82, 196, 26, 0.16)',
   changed: 'rgba(250, 173, 20, 0.18)',
   removed: 'rgba(255, 77, 79, 0.14)',
 }
-const COL_W = 190
+const COL_W = 240
 const KEY_W = 300
+const WRAP = { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } as const
 
-type Scope = string  // 'all' | 'group:<g>' | 'profile:<p>' | 'host:<h>'
+type Scope = string  // 'all' | 'venv:<v>' | 'group:<g>' | 'profile:<p>' | 'host:<h>'
 
 function inScope(t: EnvFileTarget, scope: Scope): boolean {
   if (scope === 'all') return true
   const [kind, ...rest] = scope.split(':')
   const v = rest.join(':')
+  if (kind === 'venv') return t.venv === v
   if (kind === 'group') return !t.local && t.group === v
   if (kind === 'profile') return t.profiles.includes(v)
   if (kind === 'host') return t.host === v
@@ -546,8 +593,10 @@ function AcrossVenvs({ targets, loadingTargets }: { targets: EnvFileTarget[]; lo
   const [scope, setScope] = useState<Scope>('all')
   const [filter, setFilter] = useState('')
   const [onlyDiff, setOnlyDiff] = useState(false)
-  const [editing, setEditing] = useState<{ ref: string; key: string } | null>(null)
+  const [merge, setMerge] = useState(true)
+  const [editing, setEditing] = useState<{ refs: string[]; key: string } | null>(null)
   const [editValue, setEditValue] = useState('')
+  const [detailKey, setDetailKey] = useState<string | null>(null)
   const [newKey, setNewKey] = useState('')
   const [saving, setSaving] = useState(false)
   const [problems, setProblems] = useState<string[]>([])
@@ -572,19 +621,24 @@ function AcrossVenvs({ targets, loadingTargets }: { targets: EnvFileTarget[]; lo
   // eslint-disable-next-line react-hooks/exhaustive-deps -- targetKey stands in for supported
   useEffect(() => { load(supported) }, [targetKey, load])
 
+  const targetOf = useMemo(() => new Map(supported.map(t => [refOf(t), t])), [supported])
   const shown = supported.filter(t => inScope(t, scope))
   const shownRefs = shown.map(refOf)
+  const cols = venvColumns(shownRefs, views, draft, merge)
   const editCount = Object.values(draft).reduce((n, e) => n + Object.keys(e).length, 0)
   const venvsEdited = Object.keys(draft).length
 
+  const count = (s: Scope) => supported.filter(t => inScope(t, s)).length
+  const venvNames = [...new Set(supported.map(t => t.venv))].sort()
   const groups = [...new Set(supported.filter(t => !t.local && t.group).map(t => t.group))].sort()
   const profiles = [...new Set(supported.flatMap(t => t.profiles))].sort()
   const hostNames = [...new Set(supported.map(t => t.host))]
   const scopeOptions = [
     { value: 'all', label: `All venvs (${supported.length})` },
-    ...(groups.length ? [{ label: 'Group', options: groups.map(g => ({ value: `group:${g}`, label: `${g} (${supported.filter(t => inScope(t, `group:${g}`)).length})` })) }] : []),
-    ...(profiles.length ? [{ label: 'Profile', options: profiles.map(p => ({ value: `profile:${p}`, label: `${p} (${supported.filter(t => inScope(t, `profile:${p}`)).length})` })) }] : []),
-    { label: 'Host', options: hostNames.map(h => ({ value: `host:${h}`, label: `${h} (${supported.filter(t => t.host === h).length})` })) },
+    { label: 'Venv', options: venvNames.map(v => ({ value: `venv:${v}`, label: `${v} (${count(`venv:${v}`)})` })) },
+    ...(groups.length ? [{ label: 'Group', options: groups.map(g => ({ value: `group:${g}`, label: `${g} (${count(`group:${g}`)})` })) }] : []),
+    ...(profiles.length ? [{ label: 'Profile', options: profiles.map(p => ({ value: `profile:${p}`, label: `${p} (${count(`profile:${p}`)})` })) }] : []),
+    { label: 'Host', options: hostNames.map(h => ({ value: `host:${h}`, label: `${h} (${count(`host:${h}`)})` })) },
   ]
 
   // Every key any shown venv sets (or has a pending edit for), plus keys added here.
@@ -624,43 +678,62 @@ function AcrossVenvs({ targets, loadingTargets }: { targets: EnvFileTarget[]; lo
   }).filter(r => (!filter || r.key.toUpperCase().includes(filter.toUpperCase()))
     && (!onlyDiff || r.summary.distinct > 1 || r.summary.setIn < r.summary.total))
 
-  const writable = (ref: string) => !!views[ref]?.ok && !!views[ref]?.writable
-  const edit = (ref: string, key: string, e: CellEdit | undefined) => setDraft(d => withEdit(d, views[ref], ref, key, e))
+  // Hidden values that differ get a letter each (A, B, …), the same letter
+  // for the same fingerprint, so venvs can be compared without revealing.
+  const fpLetters = (key: string) => {
+    const m = new Map<string, string>()
+    for (const r of readable) {
+      const c = gridCell(views[r], key, undefined)
+      if (c.masked && !m.has(c.fp)) m.set(c.fp, String.fromCharCode(65 + m.size))
+    }
+    return m
+  }
 
-  const startEdit = (ref: string, key: string) => {
-    const c = gridCell(views[ref], key, draft[ref]?.[key])
-    const rv = revealed[`${ref}|${key}`]
+  const writable = (ref: string) => !!views[ref]?.ok && !!views[ref]?.writable
+  const venvLabel = (ref: string) => { const t = targetOf.get(ref); return t ? `${t.host} · ${t.venv}` : ref }
+  /** How a column is named in labels: `host · venv`, or `ops on 37 hosts`. */
+  const colLabel = (refs: string[]) => {
+    if (refs.length === 1) return venvLabel(refs[0])
+    const ts = refs.map(r => targetOf.get(r)).filter((t): t is EnvFileTarget => !!t)
+    const venvs = new Set(ts.map(t => t.venv))
+    const hosts = new Set(ts.map(t => t.host))
+    return venvs.size === 1 && hosts.size === refs.length ? `${ts[0].venv} on ${refs.length} hosts` : `${refs.length} venvs`
+  }
+  const edit = (refs: string[], key: string, e: CellEdit | undefined) =>
+    setDraft(d => refs.reduce((acc, ref) => withEdit(acc, views[ref], ref, key, e), d))
+
+  const startEdit = (refs: string[], key: string) => {
+    const c = gridCell(views[refs[0]], key, draft[refs[0]]?.[key])
+    const rv = revealed[`${refs[0]}|${key}`]
     setEditValue(c.edit != null ? c.edit : c.masked ? (rv ?? '') : c.value)
-    setEditing({ ref, key })
+    setEditing({ refs, key })
   }
   const commitEdit = () => {
     if (!editing) return
-    const { ref, key } = editing
-    const c = gridCell(views[ref], key, undefined)
-    const rv = revealed[`${ref}|${key}`]
+    const { refs, key } = editing
+    const c = gridCell(views[refs[0]], key, undefined)
+    const rv = revealed[`${refs[0]}|${key}`]
     // An untouched hidden secret (or one revealed and left alone) is no edit.
-    if (c.masked && (editValue === '' || editValue === rv) && draft[ref]?.[key] === undefined) { setEditing(null); return }
-    edit(ref, key, c.masked && editValue === rv ? undefined : editValue)
+    if (c.masked && (editValue === '' || editValue === rv) && draft[refs[0]]?.[key] === undefined) { setEditing(null); return }
+    edit(refs, key, c.masked && editValue === rv ? undefined : editValue)
     setEditing(null)
   }
 
-  const reveal = async (ref: string, key: string) => {
-    const v = views[ref]
+  // Venvs sharing a fingerprint hold the same value, so one reveal serves them all.
+  const reveal = async (refs: string[], key: string) => {
+    const v = views[refs[0]]
     if (!v) return
     try {
       const res = await bridge.env_file_reveal({ host: v.host, runspec_path: v.runspec_path, key })
-      setRevealed(prev => ({ ...prev, [`${ref}|${key}`]: res.value }))
+      setRevealed(prev => ({ ...prev, ...Object.fromEntries(refs.map(r => [`${r}|${key}`, res.value])) }))
     } catch (err) {
       message.error((err as Error)?.message || 'could not reveal')
     }
   }
 
-  const setEverywhere = (key: string, value: string) =>
-    setDraft(d => shownRefs.filter(writable).reduce((acc, ref) => withEdit(acc, views[ref], ref, key, value), d))
-  const removeEverywhere = (key: string) =>
-    setDraft(d => shownRefs.filter(writable).reduce((acc, ref) => withEdit(acc, views[ref], ref, key, null), d))
-  const undoRow = (key: string) =>
-    setDraft(d => shownRefs.reduce((acc, ref) => withEdit(acc, views[ref], ref, key, undefined), d))
+  const setEverywhere = (key: string, value: string) => edit(shownRefs.filter(writable), key, value)
+  const removeEverywhere = (key: string) => edit(shownRefs.filter(writable), key, null)
+  const undoRow = (key: string) => edit(shownRefs, key, undefined)
 
   const suggestions = useMemo(() => {
     const present = new Set(allKeys)
@@ -676,6 +749,19 @@ function AcrossVenvs({ targets, loadingTargets }: { targets: EnvFileTarget[]; lo
   }
 
   const changes = gridChanges(draft, views)
+  // The save summary lists identical changes once, with the venvs they go to.
+  const changeGroups = useMemo(() => {
+    const by = new Map<string, { set: string[]; unset: string[]; refs: string[] }>()
+    for (const c of changes) {
+      const set = Object.keys(c.set).sort()
+      const unset = [...c.unset].sort()
+      const k = JSON.stringify([set, unset])
+      const g = by.get(k) ?? { set, unset, refs: [] }
+      g.refs.push(refOf(c))
+      by.set(k, g)
+    }
+    return [...by.values()]
+  }, [changes])
   const save = async () => {
     setSaving(true)
     try {
@@ -710,19 +796,21 @@ function AcrossVenvs({ targets, loadingTargets }: { targets: EnvFileTarget[]; lo
     Modal.confirm({ title: 'Discard unsaved changes?', okText: 'Discard and reload', onOk: () => load(supported) })
   }
 
-  const renderCell = (ref: string, key: string, common: string | null, distinct: number, fpLetters: Map<string, string>) => {
+  const renderCell = (refs: string[], key: string, common: string | null, distinct: number, letters: Map<string, string>) => {
+    const ref = refs[0]
     const view = views[ref]
     if (!view) return null
     if (!view.ok) return <Text type="secondary" style={{ fontSize: 12 }}>unreadable</Text>
+    const label = colLabel(refs)
     const c = gridCell(view, key, draft[ref]?.[key])
     const canEdit = !!view.writable
-    if (editing && editing.ref === ref && editing.key === key) {
+    if (editing && editing.refs[0] === ref && editing.key === key) {
       const inputProps = {
         size: 'small' as const,
         autoFocus: true,
         value: editValue,
         placeholder: c.masked ? 'new value' : '',
-        'aria-label': `Value of ${key} on ${view.host} · ${view.venv}`,
+        'aria-label': `Value of ${key} on ${label}`,
         onChange: (e: React.ChangeEvent<HTMLInputElement>) => setEditValue(e.target.value),
         onPressEnter: commitEdit,
         onBlur: commitEdit,
@@ -737,29 +825,29 @@ function AcrossVenvs({ targets, loadingTargets }: { targets: EnvFileTarget[]; lo
     const rv = revealed[`${ref}|${key}`]
     let body: React.ReactNode
     if (c.edit === null) {
-      body = <Text delete type="secondary" style={{ fontFamily: MONO_FONT, fontSize: 12 }}>{c.masked ? (rv ?? '••••••') : c.value || '""'}</Text>
+      body = <Text delete type="secondary" style={{ fontFamily: MONO_FONT, fontSize: 12, ...WRAP }}>{c.masked ? (rv ?? '••••••') : c.value || '""'}</Text>
     } else if (c.edit !== undefined) {
-      body = <span style={{ fontFamily: MONO_FONT, fontSize: 12 }}>{secretKey(key) ? '•'.repeat(Math.min(Math.max(c.edit.length, 6), 12)) : c.edit || <Text type="secondary">""</Text>}</span>
+      body = <span style={{ fontFamily: MONO_FONT, fontSize: 12, ...WRAP }}>{secretKey(key) ? '•'.repeat(Math.min(Math.max(c.edit.length, 6), 12)) : c.edit || <Text type="secondary">""</Text>}</span>
     } else if (!c.present) {
       body = <Text type="secondary" style={{ fontSize: 12 }}>–</Text>
     } else if (c.masked) {
-      const letter = distinct > 1 ? fpLetters.get(c.fp) : undefined
+      const letter = distinct > 1 ? letters.get(c.fp) : undefined
       body = (
         <Space size={2}>
           {rv !== undefined
-            ? <Text type={odd ? 'warning' : undefined} style={{ fontFamily: MONO_FONT, fontSize: 12 }}>{rv}</Text>
+            ? <Text type={odd ? 'warning' : undefined} style={{ fontFamily: MONO_FONT, fontSize: 12, ...WRAP }}>{rv}</Text>
             : <Text type={odd ? 'warning' : 'secondary'} style={{ fontSize: 12 }}>••••••{letter && <Tooltip title={`Hidden value ${letter} — venvs marked with the same letter hold the same secret`}><Tag style={{ marginLeft: 4, fontSize: 10, lineHeight: '14px', padding: '0 3px' }}>{letter}</Tag></Tooltip>}</Text>}
           {rv === undefined && (
             <Tooltip title="Reveal">
-              <Button size="small" type="text" icon={<EyeOutlined />} aria-label={`Reveal ${key} on ${view.host} · ${view.venv}`}
-                onClick={e => { e.stopPropagation(); reveal(ref, key) }} style={{ height: 18, width: 18, minWidth: 18 }} />
+              <Button size="small" type="text" icon={<EyeOutlined />} aria-label={`Reveal ${key} on ${label}`}
+                onClick={e => { e.stopPropagation(); reveal(refs, key) }} style={{ height: 18, width: 18, minWidth: 18 }} />
             </Tooltip>
           )}
         </Space>
       )
     } else {
       body = (
-        <Text type={odd ? 'warning' : undefined} style={{ fontFamily: MONO_FONT, fontSize: 12 }} ellipsis={{ tooltip: c.value }}>
+        <Text type={odd ? 'warning' : undefined} style={{ fontFamily: MONO_FONT, fontSize: 12, ...WRAP }}>
           {c.value === '' ? <Text type="secondary">""</Text> : c.value}
         </Text>
       )
@@ -768,29 +856,68 @@ function AcrossVenvs({ targets, loadingTargets }: { targets: EnvFileTarget[]; lo
       <div
         role={canEdit ? 'button' : undefined}
         tabIndex={canEdit ? 0 : undefined}
-        aria-label={canEdit ? `Edit ${key} on ${view.host} · ${view.venv}` : undefined}
-        onClick={canEdit ? () => startEdit(ref, key) : undefined}
-        onKeyDown={canEdit ? e => { if (e.key === 'Enter') startEdit(ref, key) } : undefined}
+        aria-label={canEdit ? `Edit ${key} on ${label}` : undefined}
+        onClick={canEdit ? () => startEdit(refs, key) : undefined}
+        onKeyDown={canEdit ? e => { if (e.key === 'Enter') startEdit(refs, key) } : undefined}
         style={{
-          display: 'flex', alignItems: 'center', gap: 4, minHeight: 24, margin: '-4px -8px', padding: '4px 8px',
+          display: 'flex', alignItems: 'flex-start', gap: 4, minHeight: 24, margin: '-4px -8px', padding: '4px 8px',
           cursor: canEdit ? 'pointer' : 'default', background: editKind ? EDIT_BG[editKind] : undefined,
         }}
       >
-        <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>{body}</div>
+        <div style={{ flex: 1, minWidth: 0 }}>{body}</div>
         {editKind && (
-          <Tooltip title="Undo this change">
-            <Button size="small" type="text" icon={<UndoOutlined />} aria-label={`Undo ${key} on ${view.host} · ${view.venv}`}
-              onClick={e => { e.stopPropagation(); edit(ref, key, undefined) }} style={{ height: 18, width: 18, minWidth: 18 }} />
+          <Tooltip title={refs.length > 1 ? `Undo this change in all ${refs.length} venvs` : 'Undo this change'}>
+            <Button size="small" type="text" icon={<UndoOutlined />} aria-label={`Undo ${key} on ${label}`}
+              onClick={e => { e.stopPropagation(); edit(refs, key, undefined) }} style={{ height: 18, width: 18, minWidth: 18 }} />
           </Tooltip>
         )}
         {!editKind && canEdit && c.present && (
-          <Tooltip title="Remove from this venv">
-            <Button size="small" type="text" icon={<DeleteOutlined />} aria-label={`Remove ${key} on ${view.host} · ${view.venv}`}
+          <Tooltip title={refs.length > 1 ? `Remove from all ${refs.length} venvs` : 'Remove from this venv'}>
+            <Button size="small" type="text" icon={<DeleteOutlined />} aria-label={`Remove ${key} on ${label}`}
               className="rs-env-cell-remove"
-              onClick={e => { e.stopPropagation(); edit(ref, key, null) }} style={{ height: 18, width: 18, minWidth: 18 }} />
+              onClick={e => { e.stopPropagation(); edit(refs, key, null) }} style={{ height: 18, width: 18, minWidth: 18 }} />
           </Tooltip>
         )}
       </div>
+    )
+  }
+
+  const colHeader = (refs: string[]) => {
+    const v = views[refs[0]]
+    const ts = refs.map(r => targetOf.get(r)).filter((t): t is EnvFileTarget => !!t)
+    const t = ts[0]
+    const pending = draft[refs[0]] ? Object.keys(draft[refs[0]]).length : 0
+    const many = refs.length > 1
+    const hosts = [...new Set(ts.map(x => x.host))]
+    const venvs = [...new Set(ts.map(x => x.venv))]
+    const LIST_MAX = 40
+    const tip = (
+      <span>
+        {many
+          ? <>Same file in these {refs.length} venvs; an edit here changes all of them.<br />
+            {ts.slice(0, LIST_MAX).map(x => <span key={refOf(x)}>{x.host} · {x.path}<br /></span>)}
+            {ts.length > LIST_MAX && <>…and {ts.length - LIST_MAX} more<br /></>}</>
+          : t?.path}
+        {v?.as_user ? <><br />read and written as {v.as_user}</> : null}
+        {v?.error ? <><br />{v.error}</> : null}
+        {v?.ok && !v.writable ? <><br />{v.write_error || 'read-only'}</> : null}
+      </span>
+    )
+    return (
+      <Tooltip title={tip} styles={{ root: { maxWidth: 520 }, body: { maxHeight: 360, overflowY: 'auto' } }}>
+        <div style={{ lineHeight: 1.25 }}>
+          <div style={{ fontSize: 12, ...WRAP }}>
+            {v && !v.ok && <ExclamationCircleOutlined style={{ color: '#ff4d4f', marginRight: 4 }} />}
+            {v?.ok && !v.writable && <LockOutlined style={{ marginRight: 4 }} />}
+            {many ? (venvs.length === 1 ? venvs[0] : `${refs.length} venvs`) : t?.host}
+            {many && <Tag color="blue" style={{ marginLeft: 4, fontSize: 10, lineHeight: '14px', padding: '0 3px' }}>{hosts.length} host{hosts.length === 1 ? '' : 's'}</Tag>}
+            {pending > 0 && <Tag color="gold" style={{ marginLeft: 4, fontSize: 10, lineHeight: '14px', padding: '0 3px' }}>{pending}</Tag>}
+          </div>
+          <Text type="secondary" style={{ fontSize: 11, fontWeight: 'normal', ...WRAP }}>
+            {many ? `${hosts.slice(0, 2).join(', ')}${hosts.length > 2 ? ` +${hosts.length - 2}` : ''}` : t?.venv}
+          </Text>
+        </div>
+      </Tooltip>
     )
   }
 
@@ -808,13 +935,16 @@ function AcrossVenvs({ targets, loadingTargets }: { targets: EnvFileTarget[]; lo
         return (
           <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <Tooltip title={readers.length ? <ReaderTags readers={readers} /> : 'No runnable in these venvs declares it'}>
-                <span style={{ fontFamily: MONO_FONT, fontSize: 12, wordBreak: 'break-all' }}>
+              <Tooltip title={<span>{readers.length ? <ReaderTags readers={readers} /> : 'No runnable in these venvs declares it.'}<br />Click for every value it has and where.</span>}>
+                <a
+                  role="button" aria-label={`Show ${r.key} across venvs`} onClick={() => setDetailKey(r.key)}
+                  style={{ fontFamily: MONO_FONT, fontSize: 12, wordBreak: 'break-all', color: 'inherit' }}
+                >
                   {r.secret && <LockOutlined style={{ marginRight: 4 }} />}{r.key}
-                </span>
+                </a>
               </Tooltip>
               <div style={{ marginTop: 2 }}>
-                {distinct > 1 && <Tag color="gold" style={{ fontSize: 10, lineHeight: '15px', padding: '0 4px' }}>{distinct} values</Tag>}
+                {distinct > 1 && <Tag color="gold" style={{ fontSize: 10, lineHeight: '15px', padding: '0 4px', cursor: 'pointer' }} onClick={() => setDetailKey(r.key)}>{distinct} values</Tag>}
                 {total > 0 && setIn < total && <Tag style={{ fontSize: 10, lineHeight: '15px', padding: '0 4px' }}>set in {setIn} of {total}</Tag>}
               </div>
             </div>
@@ -833,38 +963,15 @@ function AcrossVenvs({ targets, loadingTargets }: { targets: EnvFileTarget[]; lo
         )
       },
     },
-    ...shown.map(t => {
-      const ref = refOf(t)
-      const v = views[ref]
-      return {
-        key: ref,
-        width: COL_W,
-        title: (
-          <Tooltip title={<span>{t.path}{v?.as_user ? <><br />read and written as {v.as_user}</> : null}{v?.error ? <><br />{v.error}</> : null}{v?.ok && !v.writable ? <><br />{v.write_error || 'read-only'}</> : null}</span>}>
-            <div style={{ lineHeight: 1.25 }}>
-              <div style={{ fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {v && !v.ok && <ExclamationCircleOutlined style={{ color: '#ff4d4f', marginRight: 4 }} />}
-                {v?.ok && !v.writable && <LockOutlined style={{ marginRight: 4 }} />}
-                {t.host}
-                {draft[ref] && <Tag color="gold" style={{ marginLeft: 4, fontSize: 10, lineHeight: '14px', padding: '0 3px' }}>{Object.keys(draft[ref]).length}</Tag>}
-              </div>
-              <Text type="secondary" style={{ fontSize: 11, fontWeight: 'normal' }}>{t.venv}</Text>
-            </div>
-          </Tooltip>
-        ),
-        render: (_: unknown, r: Row) => {
-          const fpLetters = new Map<string, string>()
-          if (r.summary.distinct > 1) {
-            for (const rr of readable) {
-              const c = gridCell(views[rr], r.key, undefined)
-              if (c.masked && !fpLetters.has(c.fp)) fpLetters.set(c.fp, String.fromCharCode(65 + fpLetters.size))
-            }
-          }
-          return renderCell(ref, r.key, r.summary.common, r.summary.distinct, fpLetters)
-        },
-      }
-    }),
+    ...cols.map(col => ({
+      key: col.id,
+      width: COL_W,
+      title: colHeader(col.refs),
+      render: (_: unknown, r: Row) => renderCell(col.refs, r.key, r.summary.common, r.summary.distinct, r.summary.distinct > 1 ? fpLetters(r.key) : new Map()),
+    })),
   ]
+
+  const merged = cols.length < shownRefs.length
 
   return (
     <div>
@@ -874,12 +981,20 @@ function AcrossVenvs({ targets, loadingTargets }: { targets: EnvFileTarget[]; lo
           size="small" allowClear style={{ width: 240 }} placeholder="Filter variables" prefix={<SearchOutlined />}
           value={filter} onChange={e => setFilter(e.target.value)} aria-label="Filter variables"
         />
-        <Select size="small" style={{ minWidth: 200 }} value={scope} onChange={setScope} options={scopeOptions} aria-label="Venvs shown" />
+        <Select
+          size="small" style={{ minWidth: 220 }} value={scope} onChange={setScope} options={scopeOptions} aria-label="Venvs shown"
+          showSearch optionFilterProp="label" popupMatchSelectWidth={false}
+        />
+        <Space size={4}>
+          <Switch size="small" checked={merge} onChange={setMerge} aria-label="Group identical venvs" />
+          <Text style={{ fontSize: 12 }}>Group identical venvs</Text>
+        </Space>
         <Space size={4}>
           <Switch size="small" checked={onlyDiff} onChange={setOnlyDiff} aria-label="Only differences" />
           <Text style={{ fontSize: 12 }}>Only differences</Text>
         </Space>
         <Button size="small" icon={<ReloadOutlined />} loading={loading} onClick={reload}>Reload</Button>
+        {merged && <Text type="secondary" style={{ fontSize: 12 }}>{shownRefs.length} venvs in {cols.length} column{cols.length === 1 ? '' : 's'}</Text>}
         {unsupported > 0 && <Text type="secondary" style={{ fontSize: 12 }}>{unsupported} venv{unsupported === 1 ? '' : 's'} can't be managed here (see One venv)</Text>}
       </Space>
 
@@ -902,7 +1017,7 @@ function AcrossVenvs({ targets, loadingTargets }: { targets: EnvFileTarget[]; lo
             columns={columns}
             dataSource={rows}
             pagination={false}
-            scroll={{ x: KEY_W + COL_W * shown.length, y: '52vh' }}
+            scroll={{ x: KEY_W + COL_W * cols.length, y: '52vh' }}
             locale={{ emptyText: filter || onlyDiff ? 'No variable matches.' : 'No variables set in these venvs.' }}
             style={{ marginBottom: 8 }}
           />
@@ -932,22 +1047,21 @@ function AcrossVenvs({ targets, loadingTargets }: { targets: EnvFileTarget[]; lo
         />
         <Button size="small" icon={<PlusOutlined />} disabled={!newKey} onClick={() => addKey(newKey)}>Add</Button>
         <div style={{ flex: 1 }} />
-        <Text type="secondary" style={{ fontSize: 12 }}>Click a cell to edit it.</Text>
+        <Text type="secondary" style={{ fontSize: 12 }}>Click a cell to edit it, or a variable to see all its values.</Text>
         <Button size="small" disabled={!editCount} onClick={() => setDraft({})}>Discard</Button>
         <Popconfirm
           title={`Save ${editCount} change${editCount === 1 ? '' : 's'} in ${venvsEdited} venv${venvsEdited === 1 ? '' : 's'}?`}
           description={
             <div style={{ fontSize: 13, maxHeight: 260, overflowY: 'auto', maxWidth: 520 }}>
-              {changes.map(c => {
-                const v = views[refOf(c)]
-                return (
-                  <div key={refOf(c)} style={{ marginBottom: 4 }}>
-                    <Text strong>{c.host} · {v?.venv}</Text>
-                    {Object.keys(c.set).length > 0 && <> set <Text code>{Object.keys(c.set).join(', ')}</Text></>}
-                    {c.unset.length > 0 && <> remove <Text code>{c.unset.join(', ')}</Text></>}
-                  </div>
-                )
-              })}
+              {changeGroups.map(g => (
+                <div key={g.refs[0]} style={{ marginBottom: 4 }}>
+                  <Tooltip title={g.refs.length > 1 ? g.refs.map(venvLabel).join(', ') : undefined}>
+                    <Text strong>{colLabel(g.refs)}</Text>
+                  </Tooltip>
+                  {g.set.length > 0 && <> set <Text code>{g.set.join(', ')}</Text></>}
+                  {g.unset.length > 0 && <> remove <Text code>{g.unset.join(', ')}</Text></>}
+                </div>
+              ))}
               <Text type="secondary" style={{ fontSize: 12 }}>Each file changes only these keys, and only if it hasn't changed since it was loaded.</Text>
             </div>
           }
@@ -960,6 +1074,89 @@ function AcrossVenvs({ targets, loadingTargets }: { targets: EnvFileTarget[]; lo
           </Button>
         </Popconfirm>
       </Space>
+
+      <Modal
+        open={detailKey !== null}
+        onCancel={() => setDetailKey(null)}
+        footer={<Button onClick={() => setDetailKey(null)}>Close</Button>}
+        width={760}
+        title={detailKey && <span><span style={{ fontFamily: MONO_FONT }}>{detailKey}</span> across {readable.length} venv{readable.length === 1 ? '' : 's'}</span>}
+      >
+        {detailKey && (
+          <VariableValues
+            keyName={detailKey}
+            secret={secretKey(detailKey)}
+            readers={readerMap.get(detailKey) ?? []}
+            groups={valueGroups(readable, views, draft, detailKey)}
+            letters={fpLetters(detailKey)}
+            revealed={revealed}
+            pending={ref => draft[ref]?.[detailKey] !== undefined}
+            venvLabel={venvLabel}
+            writableCount={readable.filter(writable).length}
+            onReveal={refs => reveal(refs, detailKey)}
+            onUseEverywhere={v => setEverywhere(detailKey, v)}
+          />
+        )}
+      </Modal>
+    </div>
+  )
+}
+
+/** One variable across the venvs shown: each value it has, and where. */
+function VariableValues({ keyName, secret, readers, groups, letters, revealed, pending, venvLabel, writableCount, onReveal, onUseEverywhere }: {
+  keyName: string
+  secret: boolean
+  readers: EnvFileReader[]
+  groups: { token: string | null; refs: string[] }[]
+  letters: Map<string, string>
+  revealed: Record<string, string>
+  pending: (ref: string) => boolean
+  venvLabel: (ref: string) => string
+  writableCount: number
+  onReveal: (refs: string[]) => void
+  onUseEverywhere: (value: string) => void
+}) {
+  const total = groups.reduce((n, g) => n + g.refs.length, 0)
+  return (
+    <div>
+      <div style={{ marginBottom: 12 }}>
+        {readers.length ? <ReaderTags readers={readers} /> : <Text type="secondary">No runnable in these venvs declares it.</Text>}
+      </div>
+      {groups.map(g => {
+        const t = g.token
+        const rv = t?.startsWith('fp:') ? revealed[`${g.refs[0]}|${keyName}`] : undefined
+        const value = t?.startsWith('v:') ? t.slice(2) : rv
+        const anyPending = g.refs.some(pending)
+        let shown: React.ReactNode
+        if (t === null) shown = <Text type="secondary">not set</Text>
+        else if (t.startsWith('fp:') && rv === undefined) {
+          const letter = letters.get(t.slice(3))
+          shown = (
+            <Space size={4}>
+              <Text type="secondary">•••••• hidden{letters.size > 1 && letter ? ` value ${letter}` : ''}</Text>
+              <Button size="small" type="link" icon={<EyeOutlined />} onClick={() => onReveal(g.refs)} aria-label={`Reveal ${keyName} value ${letter ?? ''}`.trim()}>Reveal</Button>
+            </Space>
+          )
+        } else if (secret && t.startsWith('v:')) shown = <Text>{'•'.repeat(Math.min(Math.max((value ?? '').length, 6), 12))}</Text>
+        else shown = <span style={{ fontFamily: MONO_FONT, fontSize: 13, ...WRAP }}>{value === '' ? <Text type="secondary">""</Text> : value}</span>
+        return (
+          <div key={t ?? '∅'} style={{ borderTop: '1px solid var(--rs-divider)', padding: '10px 0' }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>{shown}</div>
+              {anyPending && <Tag color="gold">unsaved</Tag>}
+              <Tag>{g.refs.length} of {total} venv{total === 1 ? '' : 's'}</Tag>
+              {value !== undefined && (
+                <Tooltip title={`Set this value in every venv shown (${writableCount})`}>
+                  <Button size="small" disabled={!writableCount || g.refs.length === total} onClick={() => onUseEverywhere(value)}>Use everywhere</Button>
+                </Tooltip>
+              )}
+            </div>
+            <div style={{ marginTop: 6, maxHeight: 96, overflowY: 'auto', display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+              {g.refs.map(r => <Tag key={r} style={{ margin: 0, fontSize: 11 }}>{venvLabel(r)}</Tag>)}
+            </div>
+          </div>
+        )
+      })}
     </div>
   )
 }
