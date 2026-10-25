@@ -9,6 +9,7 @@ from atlassian import Jira
 from runspec_jira_core.client import build_client, translate_errors
 from runspec_jira_core.config import JiraConfig
 from runspec_jira_core.errors import JiraError
+from runspec_jira_core.issues import edit_issue_fields
 
 
 @translate_errors
@@ -71,14 +72,14 @@ def link_to_epic(
     """
     client = build_client(config)
     if epic_link_field:
-        client.edit_issue(issue_key, {epic_link_field: epic_key})
+        edit_issue_fields(client, issue_key, {epic_link_field: epic_key})
     elif config.cloud:
-        client.edit_issue(issue_key, {"parent": {"key": epic_key}})
+        edit_issue_fields(client, issue_key, {"parent": {"key": epic_key}})
     else:
         field_id = _epic_link_field_id(client)
         if not field_id:
             raise JiraError("Could not find the 'Epic Link' field — pass --epic-link-field customfield_XXXXX")
-        client.edit_issue(issue_key, {field_id: epic_key})
+        edit_issue_fields(client, issue_key, {field_id: epic_key})
     return {"issue": issue_key, "epic": epic_key}
 
 

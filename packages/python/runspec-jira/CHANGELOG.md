@@ -2,6 +2,19 @@
 
 All notable changes to `runspec-jira` are documented here.
 
+## [0.8.0] — 2026-10-25
+
+- **`update-issue` works with plain fields** (`--fields '{"labels":["test"]}'`
+  used to get Jira 400; see runspec-jira-core 0.8.0). Jira's operations form
+  still works for adding or removing values. `assign-issue` on Server/DC and
+  `link-to-epic` are fixed the same way.
+- `add-worklog --started` defaults to now.
+- atlassian-python-api's INFO log lines ("Adding attachment: …", "Linking
+  issue …") no longer land on stdout ahead of the JSON result; `--debug` keeps
+  them.
+- A Jira HTML error page is cut to one line.
+- Needs `runspec-jira-core >= 0.8.0`.
+
 ## [0.7.0] — 2026-10-19
 
 - **`get-create-fields` works on Jira Data Center 9+**, where the old createmeta

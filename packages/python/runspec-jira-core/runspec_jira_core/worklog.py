@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from runspec_jira_core.client import build_client, parse_json_arg, translate_errors
@@ -25,8 +26,9 @@ def add_worklog(
     comment: str | None = None,
     worklog_json: str | None = None,
 ) -> Any:
-    """Log work on an issue. Provide ``--time-sec`` (with optional ``--started`` /
-    ``--comment``), or a full ``--worklog-json`` object for advanced payloads."""
+    """Log work on an issue. Provide ``--time-sec`` (with optional ``--started``,
+    default now, and ``--comment``), or a full ``--worklog-json`` object for
+    advanced payloads."""
     client = build_client(config)
     if worklog_json:
         payload = parse_json_arg("worklog-json", worklog_json)
@@ -34,5 +36,6 @@ def add_worklog(
     if time_sec is None:
         raise JiraError("add-worklog needs --time-sec (seconds) or --worklog-json")
     if not started:
-        raise JiraError("add-worklog needs --started (ISO 8601, e.g. 2026-08-07T09:00:00.000+0000) with --time-sec")
+        # Jira's own "Log work" dialog defaults the start to now.
+        started = datetime.now().astimezone().strftime("%Y-%m-%dT%H:%M:%S.000%z")
     return client.issue_worklog(key, started, time_sec, comment=comment)

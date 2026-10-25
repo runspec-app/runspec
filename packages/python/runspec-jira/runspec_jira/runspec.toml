@@ -74,7 +74,7 @@ description = "Update an issue's fields from a JSON object"
 autonomy = "confirm"
 [jira.commands.update-issue.args]
 key = {type = "str", required = true, description = "Issue key"}
-fields = {type = "str", required = true, description = "JSON object of fields to set, e.g. '{\"summary\":\"New title\"}'"}
+fields = {type = "str", required = true, description = "JSON object of fields to set; a plain value replaces the field, e.g. '{\"summary\":\"New title\",\"labels\":[\"a\",\"b\"]}'. Jira's operations form also works for adding or removing, e.g. '{\"labels\":[{\"add\":\"urgent\"}]}'"}
 
 [jira.commands.assign-issue]
 description = "Assign an issue to a user (accountId on Cloud, username on Server/DC)"
@@ -198,7 +198,7 @@ autonomy = "confirm"
 [jira.commands.add-worklog.args]
 key = {type = "str", required = true, description = "Issue key"}
 time-sec = {type = "int", required = false, description = "Time spent in seconds"}
-started = {type = "str", required = false, description = "Start time (ISO 8601, e.g. 2026-08-07T09:00:00.000+0000)"}
+started = {type = "str", required = false, description = "Start time (ISO 8601, e.g. 2026-08-07T09:00:00.000+0000); default now"}
 comment = {type = "str", required = false, description = "Worklog comment"}
 worklog-json = {type = "str", required = false, description = "Full worklog JSON object (overrides the scalar args)"}
 

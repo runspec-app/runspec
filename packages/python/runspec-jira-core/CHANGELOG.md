@@ -2,6 +2,23 @@
 
 All notable changes to `runspec-jira-core` are documented here.
 
+## [0.8.0] — 2026-10-25
+
+- **`update_issue` sends plain fields.** It called the SDK's `edit_issue`, which
+  wraps everything as `{"update": …}` (Jira's operations form), so a plain
+  value such as `{"labels": ["test"]}` or `{"summary": "New"}` got Jira 400.
+  It now sends `PUT /rest/api/2/issue/{key}` with plain values under `fields`;
+  values in the operations form (`[{"add": "urgent"}]`) go under `update`, and
+  a full `{"fields": …, "update": …}` body is sent as it is. New helpers
+  `edit_body` / `edit_issue_fields`.
+- The Server/DC `assign_issue` path and `link_to_epic` had the same bug and use
+  the new helper.
+- `add_worklog` defaults `started` to now (as Jira's "Log work" dialog does)
+  instead of refusing without it.
+- An HTML error page (a 403 from a site without Jira Service Management, a
+  login page) is reported as one line naming the URL and page title instead of
+  the whole page.
+
 ## [0.7.0] — 2026-10-19
 
 - **Create metadata works on Jira Data Center 9+.** `get_create_fields` called

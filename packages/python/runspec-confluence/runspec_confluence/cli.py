@@ -12,6 +12,7 @@ JSON ``{"error": ...}`` payload + a non-zero exit.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 from typing import Any
@@ -205,6 +206,11 @@ def _dispatch(spec: rs.RunSpec, config: ConfluenceConfig) -> Any:
 
 def main() -> None:
     spec = rs.parse("confluence")
+    # runspec routes INFO logging to stdout; atlassian-python-api logs at INFO
+    # ("Adding attachment: ...", REST paths), which would land ahead of the JSON
+    # result. --debug (root at DEBUG) keeps them, plus the SDK's curl lines.
+    if logging.getLogger().getEffectiveLevel() > logging.DEBUG:
+        logging.getLogger("atlassian").setLevel(logging.WARNING)
     try:
         config = config_from_env(
             env=spec.env.value,

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import functools
 import json
+import re
 from collections.abc import Callable
 from typing import Any, TypeVar
 
@@ -70,7 +71,10 @@ def _message(exc: requests.HTTPError) -> str:
     try:
         body = resp.json()
     except Exception:
-        return f"Jira {resp.status_code}: {resp.text[:500]}"
+        text = resp.text or ""
+        if _looks_like_html(text):
+            return f"Jira {resp.status_code}: {_html_note(text, getattr(resp, 'url', ''))}"
+        return f"Jira {resp.status_code}: {text[:500]}"
     if isinstance(body, dict):
         parts: list[str] = list(body.get("errorMessages") or [])
         errors = body.get("errors")
@@ -83,6 +87,25 @@ def _message(exc: requests.HTTPError) -> str:
         if message:
             return f"Jira {resp.status_code}: {message}"
     return f"Jira {resp.status_code}: {str(body)[:500]}"
+
+
+def _looks_like_html(text: str) -> bool:
+    head = text.lstrip()[:200].lower()
+    return head.startswith("<!doctype html") or head.startswith("<html")
+
+
+def _html_note(text: str, url: str = "") -> str:
+    """One line for an HTML page where JSON was expected — never the page itself
+    (a Jira web-app page is tens of KB of script)."""
+    match = re.search(r"<title[^>]*>(.*?)</title>", text[:20000], re.IGNORECASE | re.DOTALL)
+    title = " ".join(match.group(1).split())[:120] if match else ""
+    where = f" from {url}" if url else ""
+    titled = f" (title: {title!r})" if title and title != "(null)" else ""
+    return (
+        f"got an HTML page{where}{titled} instead of a REST API response — the URL is "
+        "not a Jira REST endpoint, or this account or site can't use it (check JIRA_URL, "
+        "permissions, and that the product, e.g. Jira Service Management, is enabled)"
+    )
 
 
 def translate_errors(fn: Callable[..., _T]) -> Callable[..., _T]:

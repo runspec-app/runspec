@@ -1,6 +1,8 @@
 """Operation wiring: each core op calls the right SDK method with the right args,
 parses JSON-string params, branches Cloud vs DC, and translates errors."""
 
+import re
+
 import pytest
 import requests
 
@@ -74,6 +76,29 @@ def test_create_issue_bad_json_raises(install):
         create_issue(CLOUD, "P", "s", "Bug", additional_fields="{oops")
 
 
+def test_update_issue_sends_plain_fields(install):
+    # The SDK's edit_issue wraps fields as {"update": ...}; Jira 400s on plain values.
+    jira, _, _ = install()
+    assert update_issue(CLOUD, "P-1", fields_json='{"labels": ["test"], "summary": "New"}') == {"key": "P-1", "updated": True}
+    args, kwargs = jira.last("put")
+    assert args == ("rest/api/2/issue/P-1",)
+    assert kwargs == {"data": {"fields": {"labels": ["test"], "summary": "New"}}}
+
+
+def test_update_issue_passes_operations_through(install):
+    jira, _, _ = install()
+    update_issue(CLOUD, "P-1", fields_json='{"summary": "New", "labels": [{"add": "urgent"}, {"remove": "old"}]}')
+    _, kwargs = jira.last("put")
+    assert kwargs == {"data": {"fields": {"summary": "New"}, "update": {"labels": [{"add": "urgent"}, {"remove": "old"}]}}}
+
+
+def test_update_issue_accepts_a_full_body(install):
+    jira, _, _ = install()
+    update_issue(CLOUD, "P-1", fields_json='{"update": {"summary": [{"set": "New"}]}}')
+    _, kwargs = jira.last("put")
+    assert kwargs == {"data": {"update": {"summary": [{"set": "New"}]}}}
+
+
 def test_update_issue_requires_object(install):
     install()
     with pytest.raises(JiraError, match="must be a JSON object"):
@@ -91,8 +116,9 @@ def test_assign_issue_cloud_uses_account_id(install):
 def test_assign_issue_dc_edits_name(install):
     jira, _, _ = install()
     assign_issue(DC, "P-1", "jbloggs")
-    args, _ = jira.last("edit_issue")
-    assert args == ("P-1", {"assignee": {"name": "jbloggs"}})
+    args, kwargs = jira.last("put")
+    assert args == ("rest/api/2/issue/P-1",)
+    assert kwargs == {"data": {"fields": {"assignee": {"name": "jbloggs"}}}}
 
 
 # ── transitions / comments ───────────────────────────────────────────────────
@@ -131,15 +157,15 @@ def test_create_issue_link_builds_payload(install):
 def test_link_to_epic_cloud_uses_parent(install):
     jira, _, _ = install()
     link_to_epic(CLOUD, "P-1", "EPIC-1")
-    args, _ = jira.last("edit_issue")
-    assert args == ("P-1", {"parent": {"key": "EPIC-1"}})
+    _, kwargs = jira.last("put")
+    assert kwargs == {"data": {"fields": {"parent": {"key": "EPIC-1"}}}}
 
 
 def test_link_to_epic_dc_discovers_field(install):
     jira, _, _ = install(returns={"get_all_fields": [{"id": "customfield_10014", "name": "Epic Link"}]})
     link_to_epic(DC, "P-1", "EPIC-1")
-    args, _ = jira.last("edit_issue")
-    assert args == ("P-1", {"customfield_10014": "EPIC-1"})
+    _, kwargs = jira.last("put")
+    assert kwargs == {"data": {"fields": {"customfield_10014": "EPIC-1"}}}
 
 
 def test_link_to_epic_dc_missing_field_raises(install):
@@ -155,6 +181,14 @@ def test_add_worklog_needs_time_or_json(install):
     install()
     with pytest.raises(JiraError, match="time-sec"):
         add_worklog(CLOUD, "P-1")
+
+
+def test_add_worklog_defaults_started_to_now(install):
+    jira, _, _ = install(returns={"issue_worklog": {"id": "1"}})
+    add_worklog(CLOUD, "P-1", time_sec=1800)
+    args, _ = jira.last("issue_worklog")
+    assert args[0] == "P-1" and args[2] == 1800
+    assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.000[+-]\d{4}", args[1])
 
 
 def test_search_projects_filters(install):
@@ -202,6 +236,27 @@ def test_http_error_becomes_jira_error(install):
     install(returns={"get_issue": err})
     with pytest.raises(JiraError, match="Field 'x' is required"):
         get_issue(CLOUD, "P-1")
+
+
+def test_html_error_page_becomes_one_line(install):
+    page = "\n\n<html>\n<head>\n<title> (null)</title>\n<script>var contextPath = '';</script>" + "x" * 5000
+    resp = FakeResp(403, None)
+    resp.text = page
+    resp.url = "https://acme.atlassian.net/rest/servicedeskapi/servicedesk"
+
+    def no_json():
+        raise ValueError("not JSON")
+
+    resp.json = no_json
+    err = requests.HTTPError("boom")
+    err.response = resp
+    install(returns={"get_issue": err})
+    with pytest.raises(JiraError) as info:
+        get_issue(CLOUD, "P-1")
+    message = str(info.value)
+    assert message.startswith("Jira 403: got an HTML page from https://acme.atlassian.net/rest/servicedeskapi/servicedesk")
+    assert "<html>" not in message and "(null)" not in message
+    assert len(message) < 400
 
 
 def test_servicedesk_error_message_shape(install):

@@ -2,6 +2,12 @@
 
 All notable changes to `runspec-confluence` are documented here.
 
+## [0.9.2] — 2026-10-25
+
+- atlassian-python-api's INFO log lines (REST paths such as
+  `rest/api/content/…/child/page`) no longer land on stdout ahead of the JSON
+  result; `--debug` keeps them.
+
 ## [0.9.1] — 2026-10-25
 
 - Requires `runspec-confluence-core>=0.10.2`, which keeps atlassian-python-api
