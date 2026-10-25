@@ -9,6 +9,16 @@ import { triggerToForm, formToTrigger, parseRun, composeRun, argsForRun, literal
 import type { Runnable } from '../bridge'
 
 describe('TriggersEditor form mapping', () => {
+  it('round-trips the Outlook categories tri-state', () => {
+    expect(triggerToForm({ name: 'a' }).categories).toBe('default')
+    expect(triggerToForm({ name: 'a', categories: true }).categories).toBe('on')
+    const off = triggerToForm({ name: 'a', categories: false })
+    expect(off.categories).toBe('off')
+    expect(formToTrigger(off).categories).toBe(false)
+    expect(formToTrigger({ ...off, categories: 'on' }).categories).toBe(true)
+    expect('categories' in formToTrigger({ ...off, categories: 'default' })).toBe(false)
+  })
+
   it('derives rule_kind=list and maps actions/action_mode/pre_turn from a trigger', () => {
     const form = triggerToForm({
       name: 'nightly',

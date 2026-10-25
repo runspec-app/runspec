@@ -188,6 +188,56 @@ flips to **"claimed by X"** and its Claim button disappears.
 This is the reliable, opt-in replacement for coordinating a shared helpdesk
 mailbox across a team.
 
+The claim also writes a **`Claimed: <name>`** category on the email, using the
+claimer's Outlook display name (`Ruiz, Ana` is written as `Ana Ruiz`; the
+Windows login is used when Outlook can't say). After the move the action runs
+against the moved email, so a drafted reply finds it.
+
+### Outlook categories — see progress on the email
+
+Turn on **Settings → Mailbox → Outlook categories** to tag each email a trigger
+handles, so anyone looking at the mailbox in Outlook can see what happened
+without opening the console:
+
+| Category | When |
+|---|---|
+| `runspec: <trigger>` | The trigger matched the email (stays) |
+| `runspec: awaiting claim` | A claim trigger parked it behind a Claim button |
+| `Claimed: <name>` | Someone claimed it (also clears the status) |
+| `runspec: done` | The action finished |
+| `runspec: failed` | The action failed |
+| `runspec: needs a person` | A step was declined, timed out at the approval, or is manual-only |
+| `runspec: skipped` | This console held back (outside working hours or the screen was locked) |
+| `runspec: reply drafted` | A reply was saved to Drafts |
+
+Only one status (`awaiting claim`, `done`, `failed`, `needs a person`,
+`skipped`) is on an email at a time; a new one replaces the old. `skipped` never
+replaces another status, so an off-shift console doesn't hide what an on-shift
+one is doing. A trigger can turn categories on or off for itself (**Outlook
+categories** in the Triggers editor, or `categories = true/false`).
+
+```toml
+[mail_categories]
+enabled = true
+prefix  = "runspec"   # the text before the colon
+colors  = true        # add the categories, with colours, to the category lists
+```
+
+How it behaves with a shared mailbox:
+
+- The category names are saved on the email in Exchange, so everyone with
+  access sees them in classic Outlook, new Outlook and Outlook on the web. In
+  cached mode they usually show up within a minute.
+- Colours come from a master category list. With `colors = true` the console
+  adds its categories to your own list and tries the mailbox's list too. For a
+  shared mailbox opened with full access, Outlook shows the mailbox's own list;
+  with only folder access, each person sees their own list. A name that isn't in
+  the list shows without a colour.
+- Writing a category needs permission to edit items in the folder.
+- Writes happen in the background and are best-effort: an email that has moved
+  or can't be saved is logged and skipped, never failing the run. "Trigger now"
+  test runs don't write categories.
+
 ### Scoping a trigger to one mailbox
 
 Every `new_mail` event is tagged with **both** `mailbox` and `folder`. A trigger

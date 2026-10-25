@@ -40,7 +40,11 @@ Why a move is the right primitive:
   cross-console protocol.
 - **Owner is recorded.** The winner stamps a `Claimed: <operator>` category on the
   item before moving, so the poll (and a loser) can read *who* won and show
-  "claimed by X".
+  "claimed by X". The operator is the Outlook display name (`Last, First` →
+  `First Last`, since a comma would split the category), falling back to the
+  Windows login. The same save drops any lifecycle status category
+  (`runspec: awaiting claim`, see `mail_categories.py`), and the claim updates the
+  event's `entry_id` to the moved email so the action (e.g. a drafted reply) finds it.
 - **Declutters.** The claimed mail leaves the shared Inbox for a work folder — a
   natural helpdesk workflow.
 

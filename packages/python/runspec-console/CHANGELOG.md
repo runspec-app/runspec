@@ -24,6 +24,38 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   is its own `service.instance.id`, and turn spans carry
   `runspec.lab.variant`/`scenario`/`sample`/`tier`.
 
+## [0.359.0] — 2026-10-25
+
+### Added
+
+- **Outlook categories on handled emails** (`[mail_categories]`, Settings →
+  Mailbox → Outlook categories; off by default). Each email a trigger handles
+  gets `runspec: <trigger>` when it matches and one status at a time:
+  `awaiting claim`, `done`, `failed`, `needs a person` (a step was declined,
+  timed out at the approval, or is manual-only) or `skipped` (rota or locked
+  screen; it never replaces another status), plus `reply drafted`. A trigger's
+  own `categories = true/false` overrides the setting (Triggers editor → Outlook
+  categories). `prefix` changes the `runspec` text; `colors` adds the categories
+  with colours to your master category list and, best-effort, the mailbox's.
+  Writes run in order on a background thread and never fail a run; "Trigger
+  now" test runs write none. New `mail_categories.py`, `bridge_mail_categories.py`
+  (`get_mail_categories`/`save_mail_categories`), `sources.outlook.update_categories`,
+  and the engine's `on_stage` hook (`triggers.outcome_stage`).
+
+### Changed
+
+- A claim's `Claimed: <name>` category now uses the Outlook display name
+  (`Last, First` written as `First Last`) instead of the Windows login, which is
+  still the fallback. The claim also clears the `awaiting claim` status in the
+  same save.
+
+### Fixed
+
+- After a claim moves an email, the trigger's action now gets the moved email's
+  entry id. Before, a drafted reply on a claim trigger looked up the old id,
+  which no longer exists after the move.
+- A claim category save failure is logged as a warning (was debug).
+
 ## [0.358.0] — 2026-10-25
 
 ### Fixed

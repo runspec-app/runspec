@@ -974,6 +974,8 @@ export const mockApi: BridgeApi = {
   get_mailbox: async () => ({ address: 'helpdesk@corp.com', folder: 'Tickets/Open', label: 'Helpdesk', once_per_thread: true }),
 
   save_mailbox: async (mailbox) => { console.log('[mock] save_mailbox', mailbox) },
+  get_mail_categories: async () => ({ enabled: true, prefix: 'runspec', colors: true }),
+  save_mail_categories: async (settings) => { console.log('[mock] save_mail_categories', settings); return settings },
 
   get_watches: async () => ([{ address: '', folder: 'Inbox', label: 'My inbox' }]),
 

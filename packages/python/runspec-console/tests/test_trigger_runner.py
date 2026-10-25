@@ -752,3 +752,56 @@ def test_handler_no_pre_turn_skips_extraction():
     card, _ = _card("nopre")
     make_handler(ops)(card, t, Event.new("schedule", "alert", {}))
     assert ops.pre_turn_calls == []
+
+
+# ── needs a person (Outlook "runspec: needs a person" category) ──────────────
+
+
+def test_handler_rule_declined_flags_needs_person():
+    ops = FakeOps(
+        tool_output="✗ The user declined to run 'check' (autonomy = confirm)."
+    )
+    t = Trigger.from_config(
+        {
+            "name": "r",
+            "source": "outlook",
+            "event": "new_mail",
+            "mode": "rule",
+            "run": "host__check",
+        }
+    )
+    card, _moves = _card("r")
+    make_handler(ops)(card, t, Event.new("outlook", "new_mail", {"subject": "x"}))
+    assert card.column == Column.DONE
+    assert card.detail.get("needs_person") is True
+
+
+def test_handler_rule_success_does_not_flag():
+    ops = FakeOps(tool_output="all good")
+    t = Trigger.from_config(
+        {
+            "name": "r",
+            "source": "outlook",
+            "event": "new_mail",
+            "mode": "rule",
+            "run": "host__check",
+        }
+    )
+    card, _moves = _card("r")
+    make_handler(ops)(card, t, Event.new("outlook", "new_mail", {"subject": "x"}))
+    assert "needs_person" not in card.detail
+
+
+def test_handler_agent_declined_step_flags_needs_person():
+    class DecliningOps(FakeOps):
+        def run_agent_turn(self, *a, record=None, **kw):
+            record(
+                "restart → ✗ The user declined to run 'restart' (autonomy = confirm)."
+            )
+            return "I could not restart it."
+
+    t = Trigger.from_config({"name": "a", "source": "outlook", "event": "new_mail"})
+    card, _moves = _card("a")
+    make_handler(DecliningOps())(card, t, Event.new("outlook", "new_mail", {}))
+    assert card.column == Column.DONE
+    assert card.detail.get("needs_person") is True

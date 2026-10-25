@@ -286,6 +286,10 @@ class Trigger:
     # See docs/design/email-claim-move.md.
     claim: bool = False
     claim_folder: str = ""
+    # Outlook categories showing this trigger's progress on the email (see
+    # mail_categories.py). Tri-state like ``once_per_thread``: ``None`` follows
+    # ``[mail_categories] enabled``; ``True`` / ``False`` override it.
+    categories: bool | None = None
     # Optional audio cue played when this trigger fires (both rule and agent
     # modes) — a named sound id (from runspec_sounds.toml), a bundled cue name, or
     # a full "sound:"/"synth:"/"system:"/"file:" token. Best-effort + Windows-only,
@@ -461,6 +465,8 @@ class Trigger:
         # explicit per-trigger override.
         opt_raw = data.get("once_per_thread")
         once_per_thread = bool(opt_raw) if opt_raw is not None else None
+        cat_raw = data.get("categories")
+        categories = bool(cat_raw) if cat_raw is not None else None
 
         reply_raw = data.get("reply") or {}
         reply = ReplySettings(
@@ -512,6 +518,7 @@ class Trigger:
             reply=reply,
             claim=claim,
             claim_folder=claim_folder,
+            categories=categories,
             sound=str(data.get("sound") or "").strip(),
             model=str(data.get("model") or "").strip(),
         )
@@ -677,6 +684,23 @@ class _MemoryThreadStore:
 # column (DONE on return, FAILED on exception) if the handler left one unset.
 Handler = Callable[[TriggerCard, Trigger, Event], None]
 
+# on_stage(stage, trigger, event, card) reports a trigger's lifecycle for an event
+# — "matched", "awaiting_claim", "skipped" (card None), then "done" / "failed" /
+# "needs_person" when the run ends (stage names from mail_categories.py). The
+# bridge uses it to tag the email with Outlook categories.
+StageHook = Callable[[str, Trigger, Event, "TriggerCard | None"], None]
+
+
+def outcome_stage(card: TriggerCard) -> str:
+    """The lifecycle stage a finished card reports: ``failed`` for a FAILED card,
+    ``needs_person`` when the run flagged that a person must act (a declined or
+    manual-only step), else ``done``."""
+    if card.column == Column.FAILED:
+        return "failed"
+    if card.detail.get("needs_person"):
+        return "needs_person"
+    return "done"
+
 
 class TriggerEngine:
     """Owns the live sources and routes their events to trigger runs."""
@@ -699,10 +723,13 @@ class TriggerEngine:
         always_start: set[str] | None = None,
         thread_store: Any | None = None,
         default_once_per_thread: bool = False,
+        on_stage: StageHook | None = None,
     ) -> None:
         self._triggers = list(triggers)
         self._handler = handler
         self._on_card = on_card
+        # Lifecycle hook (see StageHook). Best-effort: a raising hook is logged.
+        self._on_stage = on_stage
         # Called once per incoming event with its disposition (matched / skipped
         # by rota / no match) — the audit feed of everything the engine sees.
         self._on_event = on_event
@@ -842,7 +869,7 @@ class TriggerEngine:
         if trigger is None:
             return None
         self._record_event(event, [name], [], [])
-        return self._dispatch(trigger, event, claim_gate=False)
+        return self._dispatch(trigger, event, claim_gate=False, notify=False)
 
     def fire_paste(self, name: str, event: Event) -> dict[str, Any]:
         """Dispatch one named ``source = "paste"`` trigger with an operator-pasted
@@ -926,11 +953,13 @@ class TriggerEngine:
                 skipped.append(trigger.name)
                 skip_reasons[trigger.name] = "screen locked"
                 logger.info("trigger '%s' skipped: session locked", trigger.name)
+                self._stage("skipped", trigger, event, None)
                 continue
             if not clock_ok and not trigger.ignore_rota:
                 skipped.append(trigger.name)
                 skip_reasons[trigger.name] = "working hours"
                 logger.info("trigger '%s' skipped: outside working hours", trigger.name)
+                self._stage("skipped", trigger, event, None)
                 continue
             # once_per_thread: fire for the first message in a thread, skip later
             # replies. Resolve the trigger's tri-state against the mailbox default;
@@ -985,8 +1014,26 @@ class TriggerEngine:
         except Exception:
             logger.exception("trigger event-audit hook failed")
 
+    def _stage(
+        self, stage: str, trigger: Trigger, event: Event, card: TriggerCard | None
+    ) -> None:
+        """Report a lifecycle stage to the ``on_stage`` hook (never raises)."""
+        if self._on_stage is None:
+            return
+        if card is not None and card.detail.get("no_stages"):
+            return
+        try:
+            self._on_stage(stage, trigger, event, card)
+        except Exception:
+            logger.exception("trigger stage hook failed")
+
     def _dispatch(
-        self, trigger: Trigger, event: Event, *, claim_gate: bool = True
+        self,
+        trigger: Trigger,
+        event: Event,
+        *,
+        claim_gate: bool = True,
+        notify: bool = True,
     ) -> Future[None] | None:
         card = TriggerCard(
             id=uuid.uuid4().hex[:12],
@@ -1000,6 +1047,9 @@ class TriggerEngine:
             detail={"mode": trigger.mode},
             _on_change=self._on_card,
         )
+        if not notify:
+            # A test fire (synthetic event) reports no lifecycle stages.
+            card.detail["no_stages"] = True
         if self._on_card is not None:
             self._on_card(card)  # initial TRIGGERED card
         logger.info(
@@ -1022,7 +1072,9 @@ class TriggerEngine:
                 mailbox=str(event.payload.get("mailbox") or ""),
                 folder=str(event.payload.get("folder") or ""),
             )
+            self._stage("awaiting_claim", trigger, event, card)
             return None
+        self._stage("matched", trigger, event, card)
         return self._executor.submit(self._run, card, trigger, event)
 
     def _run(self, card: TriggerCard, trigger: Trigger, event: Event) -> None:
@@ -1037,6 +1089,8 @@ class TriggerEngine:
             except Exception as exc:  # noqa: BLE001 — surface on the card, don't crash the worker
                 logger.exception("trigger '%s' card %s failed", trigger.name, card.id)
                 card.move(Column.FAILED, error=str(exc))
+            if card.terminal:
+                self._stage(outcome_stage(card), trigger, event, card)
 
     # -- claim gate (shared-mailbox coordination) --
 

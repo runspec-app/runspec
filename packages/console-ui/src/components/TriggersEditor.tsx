@@ -73,6 +73,8 @@ interface TriggerForm {
   match_folder?: string
   claim?: boolean
   claim_folder?: string
+  // Tri-state override of [mail_categories] enabled (Outlook categories on the email).
+  categories?: 'default' | 'on' | 'off'
   // Optional attention cue played when the trigger fires (a named sound id or a
   // built-in cue). Empty = no sound.
   sound?: string
@@ -104,6 +106,7 @@ export const triggerToForm = (t: Record<string, unknown>): TriggerForm => {
     match_folder: matchFolder,
     claim: !!t.claim,
     claim_folder: t.claim_folder ? String(t.claim_folder) : '',
+    categories: typeof t.categories === 'boolean' ? (t.categories ? 'on' : 'off') : 'default',
     // Absent → inherit the mailbox default; an explicit bool → on/off override.
     once_per_thread: typeof t.once_per_thread === 'boolean' ? (t.once_per_thread ? 'on' : 'off') : 'default',
     rules: t.rules ? String(t.rules) : '',
@@ -149,6 +152,8 @@ export const formToTrigger = (v: TriggerForm): Record<string, unknown> => {
   // trigger inherits the mailbox default.
   if (v.once_per_thread === 'on') base.once_per_thread = true
   else if (v.once_per_thread === 'off') base.once_per_thread = false
+  if (v.categories === 'on') base.categories = true
+  else if (v.categories === 'off') base.categories = false
   // Shared-mailbox claim gate (only meaningful for outlook/new_mail).
   if (v.claim) {
     base.claim = true
@@ -626,7 +631,7 @@ export function TriggersEditor({
     setEditName(null); setErr('')
     form.resetFields()
     form.setFieldsValue({
-      mode: ai ? 'agent' : 'rule', autonomy: 'confirm', enabled: true, match: [], once_per_thread: 'default',
+      mode: ai ? 'agent' : 'rule', autonomy: 'confirm', enabled: true, match: [], once_per_thread: 'default', categories: 'default',
       runnables: [], map: [], reply_draft: false,
       rule_kind: 'single', action_mode: 'sequential', actions: [], action_allow: [], pre_turn: '',
       match_mailbox: '', match_folder: '', claim: false, claim_folder: '',
@@ -787,6 +792,10 @@ export function TriggersEditor({
                   <Input placeholder="Tickets/Claimed" style={{ fontFamily: MONO_FONT }} />
                 </Form.Item>
               )}
+              <Form.Item name="categories" label="Outlook categories" style={{ marginBottom: 10 }}
+                help="Tag the email with this trigger's name and its progress (awaiting claim, done, failed, needs a person, skipped, reply drafted) so it shows in Outlook. Default follows Settings → Mailbox.">
+                <Segmented options={[{ label: 'Mailbox default', value: 'default' }, { label: 'On', value: 'on' }, { label: 'Off', value: 'off' }]} />
+              </Form.Item>
             </>
           )}
 

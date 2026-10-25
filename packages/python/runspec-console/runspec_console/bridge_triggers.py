@@ -144,6 +144,8 @@ class TriggersMixin:
             default_once_per_thread=bool(mailbox.get("once_per_thread"))
             if mailbox
             else False,
+            # Outlook categories on the emails triggers handle ([mail_categories]).
+            on_stage=self._on_trigger_stage,
         )
         problems = engine.start()
         with self._lock:
@@ -1776,6 +1778,9 @@ class TriggersMixin:
         # mailbox default" (anything non-bool, e.g. omitted/null) leaves it unset.
         if isinstance(trigger.get("once_per_thread"), bool):
             out["once_per_thread"] = trigger["once_per_thread"]
+        # Same tri-state for Outlook categories ([mail_categories] enabled).
+        if isinstance(trigger.get("categories"), bool):
+            out["categories"] = trigger["categories"]
         # Shared-mailbox claim gate. Only emit the pair when claim is on (the
         # destination folder a claimed item is moved into); off is the default.
         if bool(trigger.get("claim")):
@@ -1970,11 +1975,20 @@ class TriggersMixin:
 
     @staticmethod
     def _claim_operator() -> str:
-        """The name recorded as the claimer — the console operator's OS login, so
-        operators on different consoles are distinguishable. Falls back to
+        """The name recorded as the claimer (and shown in Outlook as ``Claimed:
+        <name>``) — the signed-in Outlook user's display name, else the OS login,
+        so operators on different consoles are distinguishable. Falls back to
         ``"operator"``."""
         import getpass
 
+        from .sources import outlook as ol
+
+        try:
+            name = ol.outlook_user_name()
+        except Exception:
+            name = ""
+        if name:
+            return name
         try:
             return getpass.getuser() or "operator"
         except Exception:
@@ -2024,12 +2038,19 @@ class TriggersMixin:
                 mailbox=mailbox,
                 source_folder=folder,
                 claim_folder=trigger.claim_folder,
+                **self._claim_category_args(owner),
             )
         except Exception as exc:  # noqa: BLE001 — surface to the operator; card stays parked
             logger.warning("claim_email failed for card %s", card_id, exc_info=True)
             return {"claimed": False, "error": str(exc)}
 
         if res.get("claimed"):
+            # The move gave the email a new entry id; point the event at it so the
+            # action (a draft reply, a later category) finds the moved email.
+            new_id = str(res.get("entry_id") or "")
+            if new_id:
+                payload["claimed_from_entry_id"] = entry_id
+                payload["entry_id"] = new_id
             engine.resume_claim(card_id)
             return {"claimed": True, "owner": owner}
         other = str(res.get("owner") or "") or ol.claim_owner(
@@ -2685,6 +2706,8 @@ class TriggersMixin:
         result = await asyncio.to_thread(
             self._save_reply_draft, reply_to, body, from_mailbox
         )
+        if result.get("ok"):
+            self._mail_stage_for_card(chat_id, "reply_drafted")
         # Hand the saved draft to the card so it can offer a Send button — the
         # human reviews the draft and sends it from the card (never the agent).
         if result.get("ok") and result.get("entry_id"):

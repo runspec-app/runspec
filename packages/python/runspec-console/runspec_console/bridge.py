@@ -41,6 +41,7 @@ from .bridge_config_tools import ConfigToolsMixin
 from .bridge_search import SearchMixin
 from .bridge_internals import InternalsMixin
 from .bridge_triggers import TriggersMixin
+from .bridge_mail_categories import MailCategoriesMixin
 from .bridge_improve import ImproveMixin
 from .bridge_knowledge import KnowledgeMixin
 from .bridge_memory_sync import MemorySyncMixin
@@ -74,6 +75,7 @@ class Bridge(
     SearchMixin,
     InternalsMixin,
     TriggersMixin,
+    MailCategoriesMixin,
     ImproveMixin,
     KnowledgeMixin,
     MemorySyncMixin,

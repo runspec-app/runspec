@@ -32,6 +32,28 @@ _RESULT_CAP = 2000
 # it stays a flat fire-and-collect batch, not a workflow.
 _MAX_FANOUT_CALLS = 100
 
+# Gate outputs meaning a person has to act: the operator declined a step (or the
+# confirm timed out), or the runnable is manual-only (bridge_autonomy /
+# bridge_triggers phrase these).
+_PERSON_MARKERS = (
+    "✗ the user declined to",
+    "✗ you declined to",
+    "is manual-only (autonomy = manual)",
+    "is manual-only — the",
+)
+
+
+def needs_person(text: str) -> bool:
+    """True when a gate output / card step says a person must act."""
+    low = str(text or "").lower()
+    return any(m in low for m in _PERSON_MARKERS)
+
+
+def _person_flag(*outputs: str) -> dict[str, Any]:
+    """``{"needs_person": True}`` when any output needs a person, else ``{}`` —
+    splatted into the card's terminal ``move`` (read by triggers.outcome_stage)."""
+    return {"needs_person": True} if any(needs_person(o) for o in outputs) else {}
+
 
 def _fanout_block(targets: list[str], outputs: list[str]) -> str:
     """Join per-host fan-out outputs with a host header per section."""
@@ -359,7 +381,9 @@ def make_handler(
                             card.id, calls, trigger=event.source
                         )
                         output = _fanout_block(targets, outputs)
-                card.move(Column.DONE, result=output[:_RESULT_CAP])
+                card.move(
+                    Column.DONE, result=output[:_RESULT_CAP], **_person_flag(output)
+                )
                 if trigger.post_to_chat:
                     # Mirror as a standard slash-command run card.
                     ops.mirror_to_chat(
@@ -405,7 +429,9 @@ def make_handler(
                 f"• {name.split('__', 1)[-1]}:\n{out}"
                 for (name, _), out in zip(calls, outputs)
             )
-            card.move(Column.DONE, result=joined[:_RESULT_CAP])
+            card.move(
+                Column.DONE, result=joined[:_RESULT_CAP], **_person_flag(*outputs)
+            )
             if trigger.post_to_chat:
                 ops.mirror_to_chat(
                     "run",
@@ -441,6 +467,14 @@ def make_handler(
             event=event,
         )
         card.move(Column.TRIAGE)
+        person: dict[str, Any] = {}
+
+        def record(step: str) -> None:
+            # Per-tool/gate steps onto the card timeline; a declined or manual-only
+            # step marks the run as needing a person.
+            person.update(_person_flag(step))
+            card.log(step)
+
         summary = ops.run_agent_turn(
             card.id,
             system,
@@ -454,7 +488,7 @@ def make_handler(
             allowed_runnables=trigger.runnables or None,
             # Non-empty = restrict the built-in action/Outlook tools to this set.
             action_allow=trigger.action_allow or None,
-            record=card.log,  # per-tool/gate steps onto the card timeline
+            record=record,  # per-tool/gate steps onto the card timeline
             stage=lambda col: card.move(col),  # awaiting_human → running stages
             trigger=event.source,  # provenance recorded on each runnable the agent runs
             # The trigger's own model, when set; otherwise the [llm] model.
@@ -462,7 +496,10 @@ def make_handler(
         )
         # The agent's reply + any actions land on the card — a trigger turn has no
         # chat transcript, so this is where its output is visible.
-        card.move(Column.DONE, result=summary) if summary else card.move(Column.DONE)
+        if summary:
+            card.move(Column.DONE, result=summary, **person)
+        else:
+            card.move(Column.DONE, **person)
         if trigger.post_to_chat:
             # Mirror as an agent/chat card — the same shape as an LLM turn.
             label = f"Trigger '{trigger.name}' · {event.type}"

@@ -470,6 +470,18 @@ export interface Mailbox {
   once_per_thread?: boolean
 }
 
+// [mail_categories] — Outlook categories that show a trigger's progress on the
+// email (runspec: <trigger>, awaiting claim, done, failed, needs a person,
+// skipped, reply drafted; the claim writes "Claimed: <name>"). A trigger's own
+// `categories` overrides `enabled`. See mail_categories.py.
+export interface MailCategories {
+  enabled: boolean
+  // Text before the colon in every category ("runspec" → "runspec: done").
+  prefix: string
+  // Add the categories, with colours, to the master category lists.
+  colors: boolean
+}
+
 // An additional watch-only mailbox/folder the Outlook source monitors, on top of
 // the primary [mailbox] — e.g. the operator's own Inbox alongside a shared
 // helpdesk mailbox. Same shape minus once_per_thread: these feed new_mail
@@ -2176,6 +2188,8 @@ export interface BridgeApi {
   // watched folder; pass null to stop monitoring.
   get_mailbox: () => Promise<Mailbox | null>
   save_mailbox: (mailbox: Mailbox | null) => Promise<void>
+  get_mail_categories: () => Promise<MailCategories>
+  save_mail_categories: (settings: MailCategories) => Promise<MailCategories>
   // Additional watch-only mailboxes monitored on top of the primary [mailbox]
   // (Settings → Mailbox). Saving restarts the trigger engine; pass [] to clear.
   get_watches: () => Promise<Watch[]>

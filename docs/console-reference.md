@@ -407,6 +407,18 @@ only; no room/sign-up role): same `address` / `folders` / `label` keys, no
 Shared mailboxes watched by several consoles should enable a **claim** on the
 matching trigger (below) so exactly one operator handles each email.
 
+## `[mail_categories]` — Outlook categories {#mail-categories}
+
+Tag the emails triggers handle with Outlook categories showing their progress.
+Set in **Settings → Mailbox → Outlook categories**. See
+[Outlook categories](console-automation.md#outlook-categories-see-progress-on-the-email).
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | `false` | Write categories (`runspec: <trigger>`, then `awaiting claim` / `done` / `failed` / `needs a person` / `skipped`, plus `reply drafted`). A trigger's `categories` overrides this |
+| `prefix` | `"runspec"` | The text before the colon in each category |
+| `colors` | `true` | Add the categories, with colours, to your master category list and (best-effort) the mailbox's |
+
 ## `[triggers.<name>]` — mailbox claim keys {#trigger-claim}
 
 Triggers live in `runspec_triggers.toml` (Triggers tab). The claim gate for a
@@ -417,6 +429,7 @@ shared-mailbox `outlook` / `new_mail` trigger adds two keys — see
 |---|---|---|
 | `claim` | `false` | Park each matched mail behind a **Claim** button; the winning operator's console claims it and runs the action |
 | `claim_folder` | — | **Required when `claim = true`**: an **existing** folder a claimed email is moved into (the move is the claim). Also requires `match.folder` (the folder to scope to) |
+| `categories` | — | `true` / `false` turns [Outlook categories](#mail-categories) on or off for this trigger; absent follows `[mail_categories] enabled` |
 
 ## `[chat_history]`
 

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { theme, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Empty, Table, Slider, Progress } from 'antd'
 import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, RightOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined, SearchOutlined, SoundOutlined, CloudServerOutlined, DiffOutlined } from '@ant-design/icons'
-import { VoiceConfig, VoiceDevice, bridge, type JumpHost, type LocalVenvConfig, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SyncPreview, type SyncUpdateCheck, type SeedStatus, type SeedOverride, type SeedApplyResult, type Runbook, type RunbookStep, type SavedRun, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost, type McpServer, type McpHeaderCredential, type McpStatus, type McpServerStatus, type McpCredentialOption, type ToolVisibility, type NamedSound, type MarketplaceConfig, type MarketplaceConfigInput, type MarketplaceRepo } from '../bridge'
+import { VoiceConfig, VoiceDevice, bridge, type JumpHost, type LocalVenvConfig, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type MailCategories, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SyncPreview, type SyncUpdateCheck, type SeedStatus, type SeedOverride, type SeedApplyResult, type Runbook, type RunbookStep, type SavedRun, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost, type McpServer, type McpHeaderCredential, type McpStatus, type McpServerStatus, type McpCredentialOption, type ToolVisibility, type NamedSound, type MarketplaceConfig, type MarketplaceConfigInput, type MarketplaceRepo } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
 import { CopyKeyAllModal } from '../views/CopyKeyAllModal'
 import { ProvisionModal } from '../views/ProvisionModal'
@@ -3611,6 +3611,8 @@ export function MailboxesTab() {
   // Additional watch-only mailboxes (the [[watch]] extras) — e.g. the operator's
   // own Inbox alongside the shared mailbox above. No room/verify-from role.
   const [watches, setWatches] = useState<Watch[]>([])
+  // [mail_categories]: Outlook categories showing each trigger's progress on the email.
+  const [cats, setCats] = useState<MailCategories>({ enabled: false, prefix: 'runspec', colors: true })
 
   // Live address — drives the shared-mailbox warning (a non-default address).
   const address = Form.useWatch('address', form)
@@ -3640,6 +3642,7 @@ export function MailboxesTab() {
     bridge.get_watches().then(ws => setWatches(ws.map(w => ({ ...w, folders: foldersOf(w) })))).catch(console.error)
   }, [])
   useEffect(() => { bridge.config_dir().then(setConfigDir) }, [])
+  useEffect(() => { bridge.get_mail_categories().then(c => { if (c) setCats(c) }).catch(console.error) }, [])
 
   const setWatch = (i: number, patch: Partial<Watch>) =>
     setWatches(ws => ws.map((w, j) => (j === i ? { ...w, ...patch } : w)))
@@ -3665,6 +3668,8 @@ export function MailboxesTab() {
         folders: cleanFolders(w.folders),
         label: (w.label ?? '').trim(),
       })))
+      const savedCats = await bridge.save_mail_categories({ ...cats, prefix: cats.prefix.trim() || 'runspec' })
+      if (savedCats) setCats(savedCats)
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     } finally {
@@ -3798,6 +3803,31 @@ export function MailboxesTab() {
             </div>
           ))}
           <Button size="small" onClick={addWatch} style={{ marginTop: 2 }}>+ Add extra mailbox</Button>
+
+          <Divider style={{ margin: '16px 0 12px' }} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+            <Switch size="small" aria-label="Outlook categories" checked={cats.enabled} onChange={v => setCats(c => ({ ...c, enabled: v }))} />
+            <span style={{ fontSize: 14 }}>Outlook categories</span>
+          </div>
+          <Text type="secondary" style={{ fontSize: 13, display: 'block', marginBottom: 8 }}>
+            Tag each email a trigger handles so anyone looking at the mailbox sees what
+            happened: <code>{cats.prefix || 'runspec'}: &lt;trigger&gt;</code> when it matches, then one
+            status &mdash; <i>awaiting claim</i>, <i>done</i>, <i>failed</i>, <i>needs a person</i> (a step
+            was declined or is manual-only) or <i>skipped</i> (rota or locked screen) &mdash; plus{' '}
+            <i>reply drafted</i>. A claim always adds <code>Claimed: &lt;your name&gt;</code>. Categories
+            are stored on the email, so everyone with access to a shared mailbox sees them. Each
+            trigger can override this.
+          </Text>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 6 }}>
+            <span style={{ fontSize: 13, width: 60 }}>Prefix</span>
+            <Input size="small" value={cats.prefix} placeholder="runspec"
+              onChange={e => setCats(c => ({ ...c, prefix: e.target.value }))}
+              style={{ fontFamily: MONO_FONT, maxWidth: 200 }} />
+          </div>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            <Switch size="small" aria-label="Category colours" checked={cats.colors} onChange={v => setCats(c => ({ ...c, colors: v }))} />
+            <span style={{ fontSize: 13 }}>Add them to the category lists with colours</span>
+          </div>
         </div>
       </SettingsColumns>
 

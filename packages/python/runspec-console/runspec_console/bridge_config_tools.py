@@ -219,7 +219,9 @@ class ConfigToolsMixin:
                             "action_allow (allowed action tools), match "
                             "({field: regex}), map ({arg: template}), reply "
                             "({draft, style}), enabled, post_to_chat, "
-                            "ignore_rota, once_per_thread, pre_turn."
+                            "ignore_rota, once_per_thread, categories "
+                            "(Outlook categories on/off; omit to follow "
+                            "[mail_categories]), pre_turn."
                         ),
                     },
                 },

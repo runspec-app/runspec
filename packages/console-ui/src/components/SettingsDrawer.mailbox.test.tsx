@@ -10,12 +10,14 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 
 import { MailboxesTab } from './SettingsDrawer'
 
-const { getMailbox, getWatches, configDir, saveMailbox, saveWatches } = vi.hoisted(() => ({
+const { getMailbox, getWatches, configDir, saveMailbox, saveWatches, getCats, saveCats } = vi.hoisted(() => ({
   getMailbox: vi.fn(),
   getWatches: vi.fn(),
   configDir: vi.fn(),
   saveMailbox: vi.fn(),
   saveWatches: vi.fn(),
+  getCats: vi.fn(),
+  saveCats: vi.fn(),
 }))
 
 vi.mock('../bridge', () => ({
@@ -27,6 +29,8 @@ vi.mock('../bridge', () => ({
       if (prop === 'config_dir') return configDir
       if (prop === 'save_mailbox') return saveMailbox
       if (prop === 'save_watches') return saveWatches
+      if (prop === 'get_mail_categories') return getCats
+      if (prop === 'save_mail_categories') return saveCats
       return vi.fn().mockResolvedValue(undefined)
     },
   }),
@@ -38,6 +42,8 @@ beforeEach(() => {
   configDir.mockReset().mockResolvedValue('%APPDATA%/runspec-console')
   saveMailbox.mockReset().mockResolvedValue(undefined)
   saveWatches.mockReset().mockResolvedValue(undefined)
+  getCats.mockReset().mockResolvedValue({ enabled: false, prefix: 'runspec', colors: true })
+  saveCats.mockReset().mockImplementation(async (s: unknown) => s)
 })
 
 describe('Settings → Mail (first run)', () => {
@@ -59,7 +65,7 @@ describe('Settings → Mail (first run)', () => {
     render(<MailboxesTab />)
     await screen.findByText(/Start here/)
 
-    fireEvent.click(screen.getByRole('switch'))
+    fireEvent.click(screen.getAllByRole('switch')[0])
 
     expect(await screen.findByLabelText('Mailbox email address')).toBeTruthy()
     await waitFor(() => expect(screen.queryByText(/Start here/)).toBeNull())
@@ -72,5 +78,18 @@ describe('Settings → Mail (first run)', () => {
     fireEvent.click(screen.getByText('+ Add extra mailbox'))
 
     await waitFor(() => expect(screen.queryByText(/No extra mailboxes/)).toBeNull())
+  })
+
+  it('saves the Outlook categories settings', async () => {
+    render(<MailboxesTab />)
+    await screen.findByText(/Start here/)
+    await waitFor(() => expect(getCats).toHaveBeenCalled())
+
+    fireEvent.click(screen.getByRole('switch', { name: 'Outlook categories' }))
+    fireEvent.click(screen.getByText('Save'))
+
+    await waitFor(() =>
+      expect(saveCats).toHaveBeenCalledWith({ enabled: true, prefix: 'runspec', colors: true }),
+    )
   })
 })

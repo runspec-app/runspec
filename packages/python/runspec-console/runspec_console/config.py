@@ -463,6 +463,35 @@ def read_automation() -> dict[str, Any]:
     }
 
 
+def read_mail_categories() -> dict[str, Any]:
+    """The ``[mail_categories]`` settings — Outlook categories that show a
+    trigger's progress on the email (see mail_categories.py)::
+
+        [mail_categories]
+        enabled = true        # default false
+        prefix  = "runspec"   # categories read "runspec: done", …
+        colors  = true        # add them to the master category lists
+
+    A trigger's own ``categories = true/false`` overrides ``enabled``."""
+    from .mail_categories import read_settings
+
+    return read_settings(read_config().get("mail_categories"))
+
+
+def write_mail_categories(settings: dict[str, Any]) -> dict[str, Any]:
+    """Replace the ``[mail_categories]`` table (normalised; defaults are still
+    written so the file says what's in effect). Returns the saved settings."""
+    from .mail_categories import read_settings
+
+    clean = read_settings(settings)
+
+    def mutate(cfg: dict[str, Any]) -> None:
+        cfg["mail_categories"] = dict(clean)
+
+    update_config(mutate)
+    return clean
+
+
 def read_marketplace() -> dict[str, Any]:
     """The ``[marketplace]`` settings for the Marketplace tab, with defaults.
 

@@ -1760,6 +1760,141 @@ def categorize_message(
         pythoncom.CoUninitialize()
 
 
+# ── trigger lifecycle categories (see mail_categories.py) ─────────────────────
+
+# Master category lists already holding the console's categories this process,
+# keyed by store id ("" = the operator's own list), so the lists are read once.
+_ENSURED: dict[str, set[str]] = {}
+
+
+def _missing_categories(categories: Any, wanted: dict[str, int]) -> dict[str, int]:
+    """The entries of ``wanted`` (name → colour) not in a COM ``Categories``
+    collection, matched case-insensitively. Pure over a duck-typed iterable."""
+    have = {_str(_attr(c, "Name")).lower() for c in categories}
+    return {n: col for n, col in wanted.items() if n.lower() not in have}
+
+
+def _ensure_in_list(categories: Any, key: str, wanted: dict[str, int]) -> None:
+    """Add ``wanted`` names (with their colours) to one master category list.
+    Best-effort: a list that can't be read or written is skipped."""
+    done = _ENSURED.setdefault(key, set())
+    todo = {n: c for n, c in wanted.items() if n.lower() not in done}
+    if not todo:
+        return
+    try:
+        for name, color in _missing_categories(categories, todo).items():
+            categories.Add(name, color)
+        done.update(n.lower() for n in todo)
+    except Exception:
+        logger.debug("outlook: could not update category list %r", key, exc_info=True)
+
+
+def _ensure_colors(ns: Any, item: Any, colors: dict[str, int]) -> None:
+    """Put ``colors`` (name → OlCategoryColor) on the operator's own master
+    category list and, best-effort, on the list of the store the item is in (a
+    shared mailbox opened with full access shows its own list)."""
+    if not colors:
+        return
+    try:
+        _ensure_in_list(ns.Categories, "", colors)
+    except Exception:
+        logger.debug("outlook: own category list unavailable", exc_info=True)
+    try:
+        store = item.Parent.Store
+        key = _str(_attr(store, "StoreID")) or _str(_attr(store, "DisplayName"))
+        if key:
+            _ensure_in_list(store.Categories, key, colors)
+    except Exception:
+        logger.debug("outlook: mailbox category list unavailable", exc_info=True)
+
+
+def update_categories(
+    entry_id: str,
+    *,
+    add: tuple[str, ...] | list[str] = (),
+    status: str = "",
+    statuses: tuple[str, ...] | list[str] = (),
+    weak: bool = False,
+    remove: tuple[str, ...] | list[str] = (),
+    colors: dict[str, int] | None = None,
+) -> dict[str, Any]:
+    """Apply a lifecycle category change to the message ``entry_id`` (see
+    ``mail_categories.merge``) and save it only if it changed. ``colors`` also adds
+    those names to the master category lists. Returns ``{changed, categories}``.
+    Windows-only; raises when the item can't be found."""
+    from .. import mail_categories as mc
+
+    if sys.platform != "win32":
+        raise RuntimeError("Outlook categories require Windows (Outlook COM)")
+    if not entry_id:
+        raise RuntimeError("update_categories needs an entry_id")
+
+    import pythoncom
+    import win32com.client
+
+    pythoncom.CoInitialize()
+    try:
+        app = win32com.client.Dispatch("Outlook.Application")
+        ns = app.GetNamespace("MAPI")
+        item = ns.GetItemFromID(entry_id)
+        before = _str(_attr(item, "Categories"))
+        after = mc.merge(
+            before,
+            add=add,
+            status=status,
+            statuses=statuses,
+            weak=weak,
+            remove=remove,
+        )
+        changed = mc.split(after) != mc.split(before)
+        if changed:
+            item.Categories = after
+            item.Save()
+        _ensure_colors(ns, item, colors or {})
+        return {"changed": changed, "categories": mc.split(after)}
+    finally:
+        pythoncom.CoUninitialize()
+
+
+_USER_NAME: list[str] = []  # cached Outlook display name (empty until read)
+
+
+def outlook_user_name() -> str:
+    """The signed-in Outlook user's display name (``Session.CurrentUser.Name``),
+    cached once read; ``""`` when Outlook can't say. Windows-only."""
+    if _USER_NAME:
+        return _USER_NAME[0]
+    if sys.platform != "win32":
+        return ""
+    try:
+        import pythoncom
+        import win32com.client
+    except Exception:
+        return ""
+    pythoncom.CoInitialize()
+    try:
+        app = win32com.client.Dispatch("Outlook.Application")
+        name = _str(_attr(app.GetNamespace("MAPI").CurrentUser, "Name")).strip()
+    except Exception:
+        logger.debug("outlook: current user name unavailable", exc_info=True)
+        return ""
+    finally:
+        pythoncom.CoUninitialize()
+    name = _natural_name(name)
+    if name:
+        _USER_NAME.append(name)
+    return name
+
+
+def _natural_name(name: str) -> str:
+    """``"Last, First"`` (a common directory format) → ``"First Last"``; any other
+    name is returned trimmed. Commas would split a category in two."""
+    parts = [p.strip() for p in _str(name).split(",")]
+    if len(parts) == 2 and all(parts):
+        return f"{parts[1]} {parts[0]}"
+    return " ".join(_str(name).replace(",", " ").split())
+
+
 def move_message(entry_id: str, mailbox: str = "", folder: str = "") -> dict[str, Any]:
     """Move a message to another folder (resolved like a watch: ``mailbox`` store +
     a ``/``-separated ``folder`` path). Returns the destination plus the moved
@@ -1812,8 +1947,8 @@ _CLAIM_PREFIX = "Claimed:"  # category marker prefix stamped on a claimed item
 def _claim_category(owner: str) -> str:
     """The category string stamped on a claimed item (``"Claimed: <owner>"``). A
     stable, human-readable marker that also shows in Outlook. Pure/testable."""
-    who = _str(owner).strip() or "unknown"
-    return f"{_CLAIM_PREFIX} {who}"
+    who = " ".join(_str(owner).replace(",", " ").replace(";", " ").split())
+    return f"{_CLAIM_PREFIX} {who or 'unknown'}"
 
 
 def _owner_from_categories(categories: Any) -> str:
@@ -1845,9 +1980,15 @@ def claim_message(
     mailbox: str = "",
     source_folder: str = "",
     claim_folder: str = "",
+    remove: tuple[str, ...] | list[str] = (),
+    colors: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     """Attempt to claim the shared message ``entry_id`` by moving it into
     ``claim_folder`` (which **must already exist**).
+
+    ``remove`` names categories dropped in the same save as the ``Claimed:`` stamp
+    (the lifecycle status, e.g. ``runspec: awaiting claim``); ``colors`` adds
+    names to the master category lists (see :func:`update_categories`).
 
     Returns ``{claimed, owner, entry_id}``. ``claimed`` is ``True`` only when this
     call won the item; ``False`` when it was already claimed elsewhere (the item no
@@ -1901,13 +2042,17 @@ def claim_message(
 
         # Stamp the owner marker (survives the move) then move — the move is the
         # atomic claim. A move that raises means another console beat us to it.
-        item.Categories = _merge_categories(
-            _attr(item, "Categories"), _claim_category(owner), replace=False
+        from .. import mail_categories as mc
+
+        item.Categories = mc.merge(
+            _attr(item, "Categories"), add=[_claim_category(owner)], remove=remove
         )
         try:
             item.Save()
         except Exception:
-            logger.debug("outlook: claim category save failed", exc_info=True)
+            logger.warning("outlook: claim category save failed", exc_info=True)
+        if colors:
+            _ensure_colors(ns, item, colors)
         try:
             moved = item.Move(dest)
         except Exception:
