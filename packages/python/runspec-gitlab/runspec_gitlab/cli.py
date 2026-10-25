@@ -107,6 +107,7 @@ def _dispatch(spec: rs.RunSpec, config: GitlabConfig) -> Any:
             membership=spec.membership.value,
             per_page=spec.per_page.value,
             page=spec.page.value,
+            owned=spec.owned.value,
         )
     if command == "list-issues":
         return list_issues(

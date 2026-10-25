@@ -2,6 +2,16 @@
 
 All notable changes to `runspec-gitlab` are documented here.
 
+## [0.5.0] — 2026-10-25
+
+- **`search-projects` lists your projects.** `--search` is now optional: leave
+  it out to list the projects you are a member of, most recently active first.
+  The agent had no way to do that, so it guessed project names and found
+  nothing. A search term now also matches the group/namespace path, so
+  `--search finejason` finds projects under that namespace. New `--owned` flag.
+  The descriptions say that GitLab matches a term under 3 characters only as an
+  exact name. Requires `runspec-gitlab-core>=0.5.0`.
+
 ## [0.4.0] — 2026-10-25
 
 - **runspec-console credentials apply without a scope.** The global args now

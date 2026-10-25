@@ -53,6 +53,23 @@ def test_search_projects_encodes_membership(monkeypatch):
     assert seen["path"] == "/api/v4/projects"
     assert seen["query"]["search"] == "runspec"
     assert seen["query"]["membership"] == "true"
+    assert seen["query"]["search_namespaces"] == "true"
+    assert "owned" not in seen["query"]
+
+
+def test_search_projects_without_term_lists_member_projects(monkeypatch):
+    seen = _capture(monkeypatch, httpx.Response(200, json=[]))
+    search_projects(CFG)
+    assert seen["query"]["membership"] == "true"
+    assert "search" not in seen["query"]
+    assert "search_namespaces" not in seen["query"]
+
+
+def test_search_projects_term_without_membership_leaves_it_off(monkeypatch):
+    seen = _capture(monkeypatch, httpx.Response(200, json=[]))
+    search_projects(CFG, "runspec", owned=True)
+    assert "membership" not in seen["query"]
+    assert seen["query"]["owned"] == "true"
 
 
 def test_list_issues_uses_default_project_and_filters(monkeypatch):

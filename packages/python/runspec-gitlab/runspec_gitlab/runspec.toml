@@ -60,11 +60,12 @@ autonomy = "autonomous"
 project = {type = "str", short = "-p", required = false, description = "Project id or path (falls back to GITLAB_PROJECT)"}
 
 [gitlab.commands.search-projects]
-description = "Search visible projects by name/path"
+description = "Search projects by name or group/namespace path, or list your own projects (omit --search)"
 autonomy = "autonomous"
 [gitlab.commands.search-projects.args]
-search = {type = "str", required = true, description = "Text to match against project name/path"}
-membership = {type = "flag", default = false, description = "Only projects the token's user is a member of"}
+search = {type = "str", required = false, description = "Text to match against project name, path or group/namespace path. Omit to list the projects you are a member of. Under 3 characters matches exact names only"}
+membership = {type = "flag", default = false, description = "Only projects the token's user is a member of (always on when --search is omitted)"}
+owned = {type = "flag", default = false, description = "Only projects the token's user owns"}
 per-page = {type = "int", default = 20, description = "Results per page (GitLab caps at 100)"}
 page = {type = "int", default = 1, description = "Page number"}
 

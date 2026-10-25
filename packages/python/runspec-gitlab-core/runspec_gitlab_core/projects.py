@@ -47,27 +47,32 @@ def get_project(config: GitlabConfig, project: str | None = None) -> dict[str, A
 
 def search_projects(
     config: GitlabConfig,
-    search: str,
+    search: str | None = None,
     membership: bool = False,
     per_page: int = 20,
     page: int = 1,
+    owned: bool = False,
 ) -> list[dict[str, Any]]:
-    """Search visible projects by name/path.
+    """Search or list projects, most recently active first.
 
-    ``membership`` limits results to projects the token's user is a member of.
+    ``search`` matches the project name or path, including its group/namespace
+    path (so ``"finejason"`` finds projects under that user's namespace). GitLab
+    matches a term shorter than 3 characters only as an exact name. With no
+    ``search`` the call lists the token user's projects: ``membership`` is
+    implied, since listing every visible project on a public instance is
+    useless. ``owned`` limits results to projects the user owns.
     """
-    return gitlab_request(
-        "GET",
-        "/projects",
-        config=config,
-        params={
-            "search": search,
-            "membership": membership,
-            "order_by": "last_activity_at",
-            "per_page": per_page,
-            "page": page,
-        },
-    )
+    params: dict[str, Any] = {
+        "membership": membership or not search or None,
+        "owned": owned or None,
+        "order_by": "last_activity_at",
+        "per_page": per_page,
+        "page": page,
+    }
+    if search:
+        params["search"] = search
+        params["search_namespaces"] = True
+    return gitlab_request("GET", "/projects", config=config, params=params)
 
 
 def resolve_user_ids(config: GitlabConfig, usernames: list[str] | None) -> list[int] | None:

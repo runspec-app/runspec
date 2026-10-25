@@ -54,6 +54,19 @@ def test_dispatch_list_issues_unpacks_args(monkeypatch) -> None:
     assert seen["query"]["labels"] == "bug"
 
 
+def test_dispatch_search_projects_without_term_lists_mine(monkeypatch) -> None:
+    seen = _capture(monkeypatch, httpx.Response(200, json=[{"id": 1}]))
+    h = _harness()
+    spec = h.expect_ok(["search-projects", "--owned"])
+    result = cli._dispatch(spec, CFG)
+    h.close()
+    assert result == [{"id": 1}]
+    assert seen["path"] == "/api/v4/projects"
+    assert seen["query"]["membership"] == "true"
+    assert seen["query"]["owned"] == "true"
+    assert "search" not in seen["query"]
+
+
 def test_dispatch_get_job_log_tail(monkeypatch) -> None:
     _capture(monkeypatch, httpx.Response(200, text="a\nb\nc\nd"))
     h = _harness()

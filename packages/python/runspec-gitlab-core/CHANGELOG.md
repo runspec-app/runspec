@@ -2,6 +2,14 @@
 
 All notable changes to `runspec-gitlab-core` are documented here.
 
+## [0.5.0] — 2026-10-25
+
+- `search_projects` can list the token user's projects: `search` is now
+  optional, and with no term the call asks for member projects only (listing
+  every visible project on gitlab.com is no use). A term also matches the
+  group/namespace path (`search_namespaces`), so a username or group name finds
+  the projects under it. New `owned` parameter limits results to owned projects.
+
 ## [0.4.0] — 2026-10-25
 
 - `config_from_env` reads the token from `GITLAB_TOKEN` or `GITLAB_PAT` (each
