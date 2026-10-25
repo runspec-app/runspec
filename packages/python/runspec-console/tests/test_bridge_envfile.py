@@ -187,29 +187,92 @@ def test_local_venv_in_process(fleet):
     assert not [c for c in stub.commands if "-c" in c]
 
 
-def test_bulk_preview_and_apply(fleet):
+def test_read_many_and_save_many(fleet):
     stub, tmp, (local, a, b) = fleet
-    (tmp / "web" / "ops" / ".runspec_env").write_text("KEEP=1\nREGION=eu\n")
+    (tmp / "web" / "ops" / ".runspec_env").write_text(
+        "KEEP=1\nREGION=eu\nRUNSPEC_JIRA_ARG_JIRA_PAT=hunter2\n"
+    )
+    (tmp / "db" / "ops" / ".runspec_env").write_text(
+        "REGION=us\nRUNSPEC_JIRA_ARG_JIRA_PAT=hunter2\n"
+    )
     targets = [
         {"host": "web-01", "runspec_path": a},
         {"host": "db-01", "runspec_path": b},
         {"host": "local", "runspec_path": local},
     ]
-    prev = stub.env_file_bulk_preview(
-        {"key": "REGION", "action": "set", "value": "eu", "targets": targets}
+    views = stub.env_file_read_many({"targets": targets})["views"]
+    assert [v["host"] for v in views] == ["web-01", "db-01", "local"]
+    assert all(v["ok"] for v in views)
+    assert "hunter2" not in json.dumps(views)
+    pat = "RUNSPEC_JIRA_ARG_JIRA_PAT"
+    fps = [next(e["fp"] for e in v["entries"] if e["key"] == pat) for v in views[:2]]
+    # db-01 has no jira reader, so its PAT is masked by name alone; same secret,
+    # same fingerprint.
+    assert fps[0] == fps[1] and len(fps[0]) == 12
+
+    res = stub.env_file_save_many(
+        {
+            "changes": [
+                {
+                    "host": "web-01",
+                    "runspec_path": a,
+                    "sha": views[0]["sha"],
+                    "set": {"REGION": "us"},
+                    "unset": ["KEEP"],
+                },
+                {
+                    "host": "db-01",
+                    "runspec_path": b,
+                    "sha": "stale",
+                    "set": {"REGION": "eu"},
+                },
+                {
+                    "host": "local",
+                    "runspec_path": local,
+                    "sha": views[2]["sha"],
+                    "set": {"REGION": "us"},
+                },
+            ]
+        }
     )
-    assert [r["state"] for r in prev["rows"]] == ["same", "absent", "absent"]
-    res = stub.env_file_bulk_apply(
-        {"key": "REGION", "action": "set", "value": "eu", "targets": targets}
+    assert (res["ok"], res["saved"], res["failed"]) == (2, 2, 1)
+    web, db, loc = res["rows"]
+    assert web["saved"] and web["changes"] == {
+        "added": [],
+        "changed": ["REGION"],
+        "removed": ["KEEP"],
+    }
+    assert (tmp / "web" / "ops" / ".runspec_env").read_text() == (
+        "REGION=us\nRUNSPEC_JIRA_ARG_JIRA_PAT=hunter2\n"
     )
-    assert res["ok"] == 3 and res["changed"] == 2
-    assert (tmp / "web" / "ops" / ".runspec_env").read_text() == "KEEP=1\nREGION=eu\n"
-    assert (tmp / "db" / "ops" / ".runspec_env").read_text() == "REGION=eu\n"
-    res = stub.env_file_bulk_apply(
-        {"key": "REGION", "action": "unset", "targets": targets[:1]}
-    )
-    assert res["changed"] == 1
-    assert (tmp / "web" / "ops" / ".runspec_env").read_text() == "KEEP=1\n"
+    # A venv changed since the grid loaded is refused; the others still save.
+    assert not db["ok"] and db["conflict"]
+    assert (tmp / "db" / "ops" / ".runspec_env").read_text().startswith("REGION=us")
+    assert loc["saved"] and loc["view"]["entries"][0]["value"] == "us"
+    assert web["view"]["sha"] != views[0]["sha"]
+
+
+def test_read_many_isolates_failures(fleet):
+    stub, tmp, (local, a, b) = fleet
+    (tmp / "web" / "ops" / "bin" / "python").unlink()
+    views = stub.env_file_read_many(
+        {
+            "targets": [
+                {"host": "web-01", "runspec_path": a},
+                {"host": "local", "runspec_path": local},
+            ]
+        }
+    )["views"]
+    assert not views[0]["ok"] and views[0]["error"]
+    assert views[1]["ok"]
+
+
+def test_save_many_needs_changes(fleet):
+    stub, _tmp, (local, _a, _b) = fleet
+    with pytest.raises(ValueError):
+        stub.env_file_save_many({"changes": [{"host": "local", "runspec_path": local}]})
+    with pytest.raises(ValueError):
+        stub.env_file_read_many({"targets": []})
 
 
 def test_unknown_path_and_bad_key(fleet):
@@ -217,13 +280,8 @@ def test_unknown_path_and_bad_key(fleet):
     with pytest.raises(ValueError):
         stub.env_file_read({"host": "web-01", "runspec_path": "/elsewhere/bin/runspec"})
     with pytest.raises(ValueError):
-        stub.env_file_bulk_apply(
-            {
-                "key": "1X",
-                "action": "set",
-                "value": "",
-                "targets": [{"host": "web-01", "runspec_path": a}],
-            }
+        stub.env_file_save_many(
+            {"changes": [{"host": "web-01", "runspec_path": a, "set": {"1X": ""}}]}
         )
 
 

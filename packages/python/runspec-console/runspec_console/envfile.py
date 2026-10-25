@@ -339,14 +339,3 @@ def entry_rows(
         "suggestions": suggestions,
         "has_secrets": any(r["secret"] and r["key"] in present for r in rows),
     }
-
-
-def key_state(text: str, key: str, value: str | None) -> str:
-    """For a bulk preview: ``absent`` / ``same`` / ``differs`` (``value`` None =
-    a removal, which reports ``absent`` or ``present``)."""
-    vals = parse(text).values()
-    if key not in vals:
-        return "absent"
-    if value is None:
-        return "present"
-    return "same" if vals[key] == value else "differs"

@@ -153,13 +153,6 @@ def test_entry_rows_masks_secrets_and_suggests():
     assert rows["has_secrets"]
 
 
-def test_key_state():
-    assert ef.key_state("A=1\n", "A", "1") == "same"
-    assert ef.key_state("A=1\n", "A", "2") == "differs"
-    assert ef.key_state("", "A", "2") == "absent"
-    assert ef.key_state("A=1\n", "A", None) == "present"
-
-
 def test_roots():
     assert ef.remote_root("/opt/venvs/ops/bin/runspec") == "/opt/venvs/ops"
     with pytest.raises(ef.EnvFileError):

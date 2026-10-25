@@ -1,14 +1,16 @@
 /**
  * Tests for the Env files modal (.runspec_env manager). The bridge is mocked:
  * a save sends only the changed keys plus the loaded hash, a masked secret is
- * fetched only on Reveal, a conflict reloads, and the across-venvs flow
- * previews before it applies.
+ * fetched only on Reveal, a conflict reloads, and the across-venvs grid shows
+ * every venv at once and saves each venv only its own changes.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, act, waitFor, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
-import { EnvFilesModal, draftChanges, draftFromView, looksSecret, validKey } from './EnvFilesModal'
+import {
+  EnvFilesModal, cellToken, draftChanges, draftFromView, gridCell, gridChanges, looksSecret, rowSummary, validKey, withEdit, type GridDraft,
+} from './EnvFilesModal'
 import type { EnvFileView, Host } from '../bridge'
 
 const { api } = vi.hoisted(() => ({
@@ -17,8 +19,8 @@ const { api } = vi.hoisted(() => ({
     env_file_read: vi.fn(),
     env_file_reveal: vi.fn(),
     env_file_save: vi.fn(),
-    env_file_bulk_preview: vi.fn(),
-    env_file_bulk_apply: vi.fn(),
+    env_file_read_many: vi.fn(),
+    env_file_save_many: vi.fn(),
   } as Record<string, ReturnType<typeof vi.fn>>,
 }))
 
@@ -104,35 +106,86 @@ describe('EnvFilesModal', () => {
     expect(api.env_file_save.mock.calls[0][0].unset).toEqual(['JIRA_URL'])
   })
 
-  it('across venvs: previews, then applies the one key to the picked venvs', async () => {
-    api.env_file_bulk_preview.mockResolvedValue({ key: 'REGION', action: 'set', rows: [
-      { host: 'web-01', runspec_path: '/opt/venvs/ops/bin/runspec', venv: 'ops', path: '', ok: true, state: 'absent', as_user: 'svc-ops' },
-    ] })
-    api.env_file_bulk_apply.mockResolvedValue({ key: 'REGION', action: 'set', ok: 1, changed: 1, failed: 0, rows: [
-      { host: 'web-01', runspec_path: '/opt/venvs/ops/bin/runspec', venv: 'ops', path: '', ok: true, changed: true },
+  it('across venvs: shows every venv in one grid, edits cells and saves each venv its own changes', { timeout: 30000 }, async () => {
+    const web: EnvFileView = {
+      ...VIEW, host: 'web-01', runspec_path: '/opt/venvs/ops/bin/runspec', venv: 'ops', path: '/opt/venvs/ops/.runspec_env', sha: 'w1',
+      entries: [
+        { key: 'JIRA_URL', value: 'https://jira', secret: false, masked: false, line: 1, duplicates: 0, readers: [] },
+        { key: 'JIRA_PAT', value: '', secret: true, masked: true, fp: 'bbb', line: 2, duplicates: 0, readers: [] },
+        { key: 'REGION', value: 'us', secret: false, masked: false, line: 3, duplicates: 0, readers: [] },
+      ],
+    }
+    const local: EnvFileView = { ...VIEW, entries: VIEW.entries!.map(e => (e.masked ? { ...e, fp: 'aaa' } : e)) }
+    api.env_file_read_many.mockResolvedValue({ views: [local, web] })
+    api.env_file_save_many.mockResolvedValue({ ok: 2, saved: 2, failed: 0, rows: [
+      { host: 'local', runspec_path: '/l/console/bin/runspec', venv: 'console', path: '', ok: true, saved: true },
+      { host: 'web-01', runspec_path: '/opt/venvs/ops/bin/runspec', venv: 'ops', path: '', ok: true, saved: true },
     ] })
     render(<EnvFilesModal open onClose={() => {}} hosts={HOSTS} />)
     await screen.findByText('/l/console/.runspec_env')
     const user = userEvent.setup()
     await act(async () => { await user.click(screen.getByText('Across venvs')) })
-    fireEvent.change(screen.getByLabelText('Variable name'), { target: { value: 'REGION' } })
-    fireEvent.change(screen.getByLabelText('Value'), { target: { value: 'eu' } })
-    // Pick by group.
-    await act(async () => {
-      await user.click(screen.getByRole('combobox', { name: 'Add a group' }))
-      await user.click(await screen.findByTitle('Web'))
-    })
-    const apply = screen.getByRole('button', { name: 'Apply' })
-    expect(apply.hasAttribute('disabled')).toBe(true)
-    await act(async () => { await user.click(screen.getByRole('button', { name: 'Preview' })) })
-    await screen.findByText('not set')
-    expect(api.env_file_bulk_preview.mock.calls[0][0]).toEqual({
-      key: 'REGION', action: 'set', value: 'eu', targets: [{ host: 'web-01', runspec_path: '/opt/venvs/ops/bin/runspec' }],
-    })
-    await act(async () => { await user.click(screen.getByRole('button', { name: 'Apply' })) })
-    await screen.findByText(/Set REGION in 1 venv\?/)
-    await act(async () => { await user.click(screen.getAllByRole('button', { name: 'Apply' }).slice(-1)[0]) })
-    await waitFor(() => expect(api.env_file_bulk_apply).toHaveBeenCalledTimes(1))
-    await screen.findByText('changed')
+    await screen.findByText('REGION')
+    expect(api.env_file_read_many).toHaveBeenCalledWith({ targets: [
+      { host: 'local', runspec_path: '/l/console/bin/runspec' },
+      { host: 'web-01', runspec_path: '/opt/venvs/ops/bin/runspec' },
+    ] })
+    // Every venv's values at once; the two hidden PATs differ (A / B), REGION is only on web-01.
+    expect(screen.getAllByText('https://jira')).toHaveLength(2)
+    expect(screen.getByText('2 values')).toBeTruthy()
+    expect(screen.getByText('A')).toBeTruthy()
+    expect(screen.getByText('B')).toBeTruthy()
+    expect(screen.getAllByText('set in 1 of 2').length).toBeGreaterThan(0)
+
+    // Only differences hides JIRA_URL (same everywhere).
+    await act(async () => { await user.click(screen.getByRole('switch', { name: 'Only differences' })) })
+    expect(screen.queryByText('JIRA_URL')).toBeNull()
+    await act(async () => { await user.click(screen.getByRole('switch', { name: 'Only differences' })) })
+
+    // Edit one cell in place.
+    await act(async () => { await user.click(screen.getByRole('button', { name: 'Edit JIRA_URL on web-01 · ops' })) })
+    const input = screen.getByLabelText('Value of JIRA_URL on web-01 · ops')
+    await act(async () => { await user.clear(input); await user.type(input, 'https://new{Enter}') })
+
+    // Set REGION everywhere: local gains it, web-01 changes.
+    await act(async () => { await user.click(screen.getByRole('button', { name: 'Set REGION everywhere' })) })
+    await act(async () => { await user.type(screen.getByLabelText('Value of REGION for every venv'), 'eu{Enter}') })
+
+    await act(async () => { await user.click(screen.getByRole('button', { name: /Save \(3\)/ })) })
+    await screen.findByText(/Save 3 changes in 2 venvs\?/)
+    await act(async () => { await user.click(screen.getAllByRole('button', { name: 'Save' }).slice(-1)[0]) })
+    await waitFor(() => expect(api.env_file_save_many).toHaveBeenCalledTimes(1))
+    expect(api.env_file_save_many.mock.calls[0][0]).toEqual({ changes: [
+      { host: 'web-01', runspec_path: '/opt/venvs/ops/bin/runspec', sha: 'w1', set: { JIRA_URL: 'https://new', REGION: 'eu' }, unset: [] },
+      { host: 'local', runspec_path: '/l/console/bin/runspec', sha: 'abc', set: { REGION: 'eu' }, unset: [] },
+    ] })
+  })
+})
+
+describe('grid helpers', () => {
+  const view = (entries: Partial<EnvFileView['entries'] & object>): EnvFileView => ({ ...VIEW, entries: entries as EnvFileView['entries'] })
+  const e = (key: string, value: string, extra = {}) => ({ key, value, secret: false, masked: false, line: 1, duplicates: 0, readers: [], ...extra })
+
+  it('compares secrets by fingerprint and typed values by text', () => {
+    const a = gridCell(view([e('T', '', { masked: true, fp: 'x' })]), 'T', undefined)
+    const b = gridCell(view([e('T', '', { masked: true, fp: 'x' })]), 'T', undefined)
+    const c = gridCell(view([]), 'T', undefined)
+    expect(rowSummary([a, b, c])).toEqual({ setIn: 2, total: 3, distinct: 1, common: 'fp:x' })
+    expect(cellToken(gridCell(view([]), 'T', 'typed'))).toBe('v:typed')
+    expect(cellToken(gridCell(view([e('T', 'v')]), 'T', null))).toBeNull()
+  })
+
+  it('drops edits that put a cell back, and builds one change per venv', () => {
+    const v = view([e('A', '1'), e('B', '2')])
+    let d: GridDraft = {}
+    d = withEdit(d, v, 'r', 'A', '1')         // same value: no edit
+    expect(d).toEqual({})
+    d = withEdit(d, v, 'r', 'A', '9')
+    d = withEdit(d, v, 'r', 'B', null)
+    d = withEdit(d, v, 'r', 'C', null)        // removing an absent key: no edit
+    expect(d).toEqual({ r: { A: '9', B: null } })
+    expect(gridChanges(d, { r: v })).toEqual([{ host: 'local', runspec_path: '/l/console/bin/runspec', sha: 'abc', set: { A: '9' }, unset: ['B'] }])
+    d = withEdit(withEdit(d, v, 'r', 'A', undefined), v, 'r', 'B', undefined)
+    expect(d).toEqual({})
   })
 })

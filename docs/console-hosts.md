@@ -173,10 +173,31 @@ the active profile).
   and runnables that name their own env file in `runspec.toml` and so don't
   read this one.
 
-**Across venvs** sets or removes one variable in many venvs at once. Pick the
-venvs directly, or add all of a group or profile. **Preview** shows each venv's
-current state (not set, already this value, a different value) without showing
-any value, and **Apply** changes only that variable in each file.
+**Across venvs** shows every venv's file at once as a grid: one row per
+variable, one column per venv (host and venv name), with the variable column
+pinned while you scroll sideways.
+
+- Each cell shows that venv's value, or `–` when it doesn't set the variable.
+  A variable whose venvs disagree is tagged **N values** (the odd ones out are
+  highlighted), and **set in N of M** marks one that only some venvs set.
+  **Only differences** hides the variables that are the same everywhere.
+- Secret values stay hidden in the grid. The console still tells you whether
+  they match: hidden values are compared by a fingerprint computed on the
+  console (never sent anywhere, and useless outside the running console), and
+  when they differ each cell gets a letter, so cells with the same letter hold
+  the same secret. The eye icon reveals one cell.
+- Click a cell to edit it (Enter keeps the edit, Esc drops it); the bin icon
+  removes the variable from that venv. On a row, the pencil sets one value in
+  every venv shown and the bin removes it from all of them. **Add a variable
+  row** suggests names the venvs' runnables read. Edited cells are coloured
+  (green added, amber changed, red removed) until you save or undo them.
+- The venv picker narrows the columns to a group, a profile or one host.
+  Venvs that can only be read show a lock in their header and can't be edited.
+- **Save** lists the changes per venv first, then writes each file with just
+  its own changed variables. Each file is only written if it hasn't changed
+  since the grid loaded it, so a venv someone edited meanwhile is refused and
+  reloaded (its edits stay, for you to check and save again) while the others
+  are saved.
 
 How the files are written:
 

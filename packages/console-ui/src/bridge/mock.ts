@@ -1,4 +1,4 @@
-import type { BridgeApi, ProvisionOpRecord, ProvisionPayload, DeprovisionPayload, ProvisionResult, ChatSessionInfo, MarketplaceRepo, MarketplaceEntry, MarketplaceTarget, MarketplaceInstalledTarget, MarketplaceOpRecord, MarketplaceOpPayload, MarketplaceOpResult, Host, JumpHost, Runnable, HistoryRecord, RunningRun, Schedule, InFlightRecord, TestResult, AnalyticsData, AnalyticsBucket, TriggerCard, KnowledgeFact, KnowledgeNode, KnowledgeEdge, KnowledgeFactInput } from './index'
+import type { BridgeApi, ProvisionOpRecord, ProvisionPayload, DeprovisionPayload, ProvisionResult, ChatSessionInfo, MarketplaceRepo, MarketplaceEntry, MarketplaceTarget, MarketplaceInstalledTarget, MarketplaceOpRecord, MarketplaceOpPayload, MarketplaceOpResult, Host, JumpHost, Runnable, HistoryRecord, RunningRun, Schedule, InFlightRecord, TestResult, AnalyticsData, AnalyticsBucket, TriggerCard, KnowledgeFact, KnowledgeNode, KnowledgeEdge, KnowledgeFactInput, EnvFileSaveRow } from './index'
 
 // Facts the knowledge_overview mock built, so knowledge_page / knowledge_search agree with it.
 let _mockKnowledgeFacts: KnowledgeFact[] = []
@@ -646,8 +646,14 @@ let invocationCounter = 0
 // request_id → resolver, for the simulated autonomy-confirm round-trip.
 // Mock .runspec_env files, keyed `host|runspec_path`.
 const _mockEnvFiles = new Map<string, Record<string, string>>([
-  ['local|/home/me/.venvs/console/bin/runspec', { JIRA_URL: 'https://jira.example.com', RUNSPEC_JIRA_ARG_JIRA_PAT: 'hunter2' }],
+  ['local|/home/me/.venvs/console/bin/runspec', { JIRA_URL: 'https://jira.example.com', RUNSPEC_JIRA_ARG_JIRA_PAT: 'hunter2', REGION: 'eu-west', LOG_FORMAT: 'json' }],
+  ['prod-1|/opt/venvs/ops/bin/runspec', { JIRA_URL: 'https://jira.example.com', RUNSPEC_JIRA_ARG_JIRA_PAT: 'hunter2', REGION: 'eu-west', HTTPS_PROXY: 'http://proxy.corp:3128', GRAFANA_URL: 'https://grafana.corp' }],
+  ['prod-1|/opt/venvs/tools/bin/runspec', { JIRA_URL: 'https://jira.example.com', REGION: 'eu-west', HTTPS_PROXY: 'http://proxy.corp:3128' }],
+  ['prod-2|/opt/venvs/ops/bin/runspec', { JIRA_URL: 'https://jira.example.com', RUNSPEC_JIRA_ARG_JIRA_PAT: 'old-token', REGION: 'us-east', HTTPS_PROXY: 'http://proxy.corp:3128', GRAFANA_URL: 'https://grafana.corp' }],
 ])
+// Stand-in for the backend's keyed fingerprint of a masked value.
+const _mockFp = (key: string, value: string) =>
+  [...`${key}=${value}`].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7).toString(16).padStart(8, '0')
 
 const _pendingConfirms = new Map<string, (approved: boolean) => void>()
 
@@ -1082,14 +1088,14 @@ export const mockApi: BridgeApi = {
   deprovision_start: async (payload: DeprovisionPayload) => mockProvisionOp('deprovision', payload.targets.map(t => t.host), payload.targets[0]?.runspec_path ?? ''),
   env_file_targets: async (hosts) => {
     const names = ['local', ...(hosts ?? MOCK_HOSTS.filter(h => h.name !== 'local').map(h => h.name))]
-    return names.map(host => {
-      const root = host === 'local' ? '/home/me/.venvs/console' : '/opt/venvs/ops'
+    return names.flatMap(host => {
+      const roots = host === 'local' ? ['/home/me/.venvs/console'] : host === 'prod-1' ? ['/opt/venvs/ops', '/opt/venvs/tools'] : ['/opt/venvs/ops']
       const h = MOCK_HOSTS.find(x => x.name === host)
-      return {
+      return roots.map(root => ({
         host, runspec_path: `${root}/bin/runspec`, venv: root.split('/').pop() ?? '', root,
         path: `${root}/.runspec_env`, group: h?.group ?? '', profiles: h?.profiles ?? [],
         local: host === 'local', connected: true, supported: true, reason: '',
-      }
+      }))
     })
   },
   env_file_read: async (ref) => {
@@ -1099,9 +1105,11 @@ export const mockApi: BridgeApi = {
     return {
       ...ref, venv: ref.runspec_path.split('/').slice(-3, -2)[0] ?? '', path: ref.runspec_path.replace(/bin\/runspec$/, '.runspec_env'),
       ok: true, exists: Object.keys(text).length > 0, owner: 'svc-ops', user: 'deploy', as_user: ref.host === 'local' ? '' : 'svc-ops',
-      mode: '0600', sha: JSON.stringify(text), writable: true, warnings: [], overrides: [],
+      mode: '0600', sha: JSON.stringify(text), writable: !ref.runspec_path.includes('/tools/'),
+      write_error: ref.runspec_path.includes('/tools/') ? 'deploy can\'t write /opt/venvs/tools/.runspec_env, and passwordless sudo as svc-tools or root was refused.' : '', warnings: [], overrides: [],
       entries: Object.entries(text).map(([key, value], i) => ({
         key, value: secret(key) ? '' : value, secret: secret(key), masked: secret(key), line: i + 1, duplicates: 0,
+        ...(secret(key) ? { fp: _mockFp(key, value) } : {}),
         readers: key === 'RUNSPEC_JIRA_ARG_JIRA_PAT' ? [reader] : [],
       })),
       suggestions: 'RUNSPEC_JIRA_ARG_JIRA_PAT' in text ? [] : [{ key: 'RUNSPEC_JIRA_ARG_JIRA_PAT', secret: true, readers: [reader] }],
@@ -1120,25 +1128,19 @@ export const mockApi: BridgeApi = {
     const view = await mockApi.env_file_read(payload)
     return { ...view, saved: true, changes: { added: Object.keys(payload.set), changed: [], removed: payload.unset } }
   },
-  env_file_bulk_preview: async (payload) => ({
-    key: payload.key, action: payload.action,
-    rows: payload.targets.map(t => {
-      const text = _mockEnvFiles.get(`${t.host}|${t.runspec_path}`) ?? {}
-      const has = payload.key in text
-      const state = payload.action === 'unset' ? (has ? 'present' : 'absent') : !has ? 'absent' : text[payload.key] === payload.value ? 'same' : 'differs'
-      return { ...t, venv: 'ops', path: '.runspec_env', ok: true, state, writable: true, as_user: 'svc-ops', exists: true }
-    }),
+  env_file_read_many: async ({ targets }) => ({
+    views: await Promise.all(targets.map(t => mockApi.env_file_read(t))),
   }),
-  env_file_bulk_apply: async (payload) => {
-    const rows = payload.targets.map(t => {
-      const k = `${t.host}|${t.runspec_path}`
-      const text = { ...(_mockEnvFiles.get(k) ?? {}) }
-      if (payload.action === 'unset') delete text[payload.key]
-      else text[payload.key] = payload.value ?? ''
-      _mockEnvFiles.set(k, text)
-      return { ...t, venv: 'ops', path: '.runspec_env', ok: true, changed: true, as_user: 'svc-ops' }
-    })
-    return { key: payload.key, action: payload.action, rows, ok: rows.length, changed: rows.length, failed: 0 }
+  env_file_save_many: async ({ changes }) => {
+    const rows: EnvFileSaveRow[] = await Promise.all(changes.map(async (c): Promise<EnvFileSaveRow> => {
+      const before = await mockApi.env_file_read(c)
+      if (c.sha !== before.sha) {
+        return { ...c, venv: before.venv, path: before.path, ok: false, conflict: true, error: `${before.path} changed since you opened it.`, view: before }
+      }
+      const view = await mockApi.env_file_save(c)
+      return { ...c, venv: view.venv, path: view.path, ok: true, saved: true, changes: view.changes, as_user: view.as_user, view }
+    }))
+    return { rows, ok: rows.filter(r => r.ok).length, saved: rows.filter(r => r.saved).length, failed: rows.filter(r => !r.ok).length }
   },
 
   get_tool_visibility: async () => ({ hidden_from_agent: ['get-alerts'], hidden_from_all: ['flush-dns'] }),

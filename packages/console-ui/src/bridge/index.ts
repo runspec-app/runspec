@@ -1773,6 +1773,9 @@ export interface EnvFileEntry {
   value: string
   secret: boolean
   masked: boolean
+  // Masked only: a keyed fingerprint of the value, equal across venvs when the
+  // secret is equal (lets the grid compare secrets it never sees).
+  fp?: string
   line: number
   duplicates: number
   readers: EnvFileReader[]
@@ -1809,27 +1812,24 @@ export interface EnvFileView {
 
 export interface EnvFileRef { host: string; runspec_path: string }
 
-export interface EnvFileBulkPayload {
-  key: string
-  action: 'set' | 'unset'
-  value?: string
-  targets: EnvFileRef[]
+// One venv's change in an across-venvs save (env_file_save_many).
+export interface EnvFileVenvChange extends EnvFileRef {
+  sha: string
+  set: Record<string, string>
+  unset: string[]
 }
 
-export interface EnvFileBulkRow {
-  host: string
-  runspec_path: string
+export interface EnvFileSaveRow extends EnvFileRef {
   venv: string
   path: string
   ok: boolean
+  saved?: boolean
+  conflict?: boolean
   error?: string
-  // preview: absent | same | differs (set) or absent | present (unset)
-  state?: string
-  writable?: boolean
   as_user?: string
-  exists?: boolean
-  // apply: whether the file was rewritten
-  changed?: boolean
+  changes?: { added: string[]; changed: string[]; removed: string[] }
+  // The venv re-read after the save (absent only if that read threw).
+  view?: EnvFileView
 }
 
 
@@ -2323,8 +2323,8 @@ export interface BridgeApi {
   env_file_read: (payload: EnvFileRef) => Promise<EnvFileView>
   env_file_reveal: (payload: EnvFileRef & { key: string }) => Promise<{ key: string; value: string; found: boolean }>
   env_file_save: (payload: EnvFileRef & { sha: string; set: Record<string, string>; unset: string[] }) => Promise<EnvFileView>
-  env_file_bulk_preview: (payload: EnvFileBulkPayload) => Promise<{ key: string; action: string; rows: EnvFileBulkRow[] }>
-  env_file_bulk_apply: (payload: EnvFileBulkPayload) => Promise<{ key: string; action: string; rows: EnvFileBulkRow[]; ok: number; changed: number; failed: number }>
+  env_file_read_many: (payload: { targets: EnvFileRef[] }) => Promise<{ views: EnvFileView[] }>
+  env_file_save_many: (payload: { changes: EnvFileVenvChange[] }) => Promise<{ rows: EnvFileSaveRow[]; ok: number; saved: number; failed: number }>
   get_tool_visibility: () => Promise<ToolVisibility>
   save_tool_visibility: (payload: ToolVisibility) => Promise<ToolVisibility>
   // Canonical host-group registry (runspec_groups.toml) — the controlled

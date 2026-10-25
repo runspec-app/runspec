@@ -24,6 +24,24 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   is its own `service.instance.id`, and turn spans carry
   `runspec.lab.variant`/`scenario`/`sample`/`tier`.
 
+## [0.356.0] — 2026-10-25
+
+### Changed
+
+- **Env files: Across venvs is now a grid of every venv.** Instead of picking
+  one variable and a set of venvs, the Across venvs view loads every venv's
+  `.runspec_env` at once (`env_file_read_many`) and shows a variables × venvs
+  grid: values side by side, `N values` / `set in N of M` tags, an **Only
+  differences** filter, and a group / profile / host column picker. Cells edit
+  in place; a row can be set or removed in every venv shown. Masked secrets
+  carry a keyed per-process fingerprint (`fp`) so the grid can show which
+  venvs share a secret (lettered A, B, …) without revealing it. **Save** lists
+  each venv's changes, then `env_file_save_many` patches each venv by key,
+  compare-and-swap against the hash the grid loaded, so a venv changed
+  meanwhile is refused and reloaded without blocking the others.
+  `env_file_bulk_preview` / `env_file_bulk_apply` and `envfile.key_state` are
+  removed (the grid replaces them). See `docs/console-hosts.md` → "Env files".
+
 ## [0.355.0] — 2026-10-23
 
 ### Added

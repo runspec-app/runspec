@@ -6,8 +6,10 @@ connected remote hosts:
 
 * one venv at a time — a key/value table showing which runnables read each
   variable, with secret-looking values masked;
-* one key across many venvs — set or remove it everywhere you pick (by host,
-  group or profile), previewed first, touching no other key.
+* every venv at once — a variables × venvs grid (``env_file_read_many``) whose
+  edits save per venv, each by key and compare-and-swap
+  (``env_file_save_many``), so venvs that disagree stand out and one value can
+  be set or removed everywhere.
 
 Pure parsing / patching lives in :mod:`envfile`; the file itself is read and
 written by :mod:`_envfile_worker` — in-process for a local venv, and on a remote
@@ -19,13 +21,17 @@ stdin, never the command line, and lands as a temp file renamed over the old
 one only if the file still matches what was read (no lost updates).
 
 Secrets: a masked value is never sent to the frontend unless the operator
-reveals it, and the audit records (console + the venv's own ledger via
+reveals it (the grid compares secrets by a keyed fingerprint, ``fp``, that is
+useless outside this process), and the audit records (console + the venv's own ledger via
 ``runspec audit record``) carry key names only, never values.
 """
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
+import secrets
 import subprocess
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -45,6 +51,7 @@ if TYPE_CHECKING:
 
 _SSH_TIMEOUT_S = 30
 _WORKER_SRC: str | None = None
+_FP_KEY = secrets.token_bytes(32)
 
 
 def _worker_source() -> str:
@@ -52,6 +59,14 @@ def _worker_source() -> str:
     if _WORKER_SRC is None:
         _WORKER_SRC = Path(worker.__file__).read_text(encoding="utf-8")
     return _WORKER_SRC
+
+
+def _fingerprint(key: str, value: str) -> str:
+    """A short, per-process keyed hash of a masked value: equal across venvs
+    when the secret is equal, meaningless outside this console process."""
+    return hmac.new(_FP_KEY, f"{key}\0{value}".encode(), hashlib.sha256).hexdigest()[
+        :12
+    ]
 
 
 def _parse_worker_output(out: str) -> dict[str, Any] | None:
@@ -151,68 +166,77 @@ class EnvFileMixin:
         view["saved"] = out.get("written", False)
         return view
 
-    def env_file_bulk_preview(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """Read-only: for one key change across ``targets`` (``[{host,
-        runspec_path}]``), each venv's current state — ``absent`` / ``same`` /
-        ``differs`` for a set, ``absent`` / ``present`` for a removal — and
-        whether it can be written. Values are compared, never returned."""
-        targets, key, value = self._env_bulk_args(payload)
+    def env_file_read_many(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Every venv of ``targets`` (``[{host, runspec_path}]``) read at once,
+        for the across-venvs grid: ``{views: [view, …]}`` in the order given,
+        each the same shape as :meth:`env_file_read`. A venv that can't be read
+        comes back with ``ok`` false and ``error`` — it never fails the rest.
+        Masked values carry a ``fp`` fingerprint so the grid can tell whether
+        two venvs hold the same secret without seeing it."""
+        targets = self._env_target_list(payload)
 
         def _one(t: dict[str, Any]) -> dict[str, Any]:
-            row = self._env_row(t)
             try:
                 res, as_user = self._env_access(t, need_write=True)
-                if not res.get("ok") or not res.get("readable") or res.get("error"):
-                    row["error"] = res.get("error") or "unreadable"
-                    return row
-                row.update(
-                    ok=True,
-                    state=ef.key_state(res.get("text") or "", key, value),
-                    writable=bool(res.get("writable")),
-                    as_user=as_user or str(res.get("user") or ""),
-                    exists=bool(res.get("exists")),
-                )
-                if not res.get("writable"):
-                    row["error"] = res.get("write_error") or "not writable"
-            except Exception as exc:  # noqa: BLE001 — one venv never breaks the table
-                row["error"] = str(exc)
-            return row
+                return self._env_view(t, res, as_user)
+            except Exception as exc:  # noqa: BLE001 — one venv never breaks the grid
+                view = self._env_row(t)
+                view.update(error=str(exc), writable=False, entries=[])
+                return view
 
-        return {
-            "key": key,
-            "action": "set" if value is not None else "unset",
-            "rows": self._env_fanout(_one, targets),
-        }
+        return {"views": self._env_fanout(_one, targets)}
 
-    def env_file_bulk_apply(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """Set or remove one key in every venv of ``targets``; each file is read
-        fresh, patched by key and written back only if unchanged in between. A
-        venv already in the wanted state isn't rewritten."""
-        targets, key, value = self._env_bulk_args(payload)
-        sets = {key: value} if value is not None else {}
-        drops = [] if value is not None else [key]
+    def env_file_save_many(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Save the grid: ``changes`` is ``[{host, runspec_path, sha, set,
+        unset}]``, one per venv with edits. Each venv is patched by key and
+        written only if it still matches ``sha`` (the hash the grid loaded), so
+        a venv changed meanwhile is refused (``conflict``) without holding up
+        the others. Every row carries the venv's fresh ``view``."""
+        items: list[tuple[dict[str, Any], dict[str, str], list[str], str]] = []
+        seen: set[tuple[str, str]] = set()
+        for raw in (payload or {}).get("changes") or []:
+            if not isinstance(raw, dict):
+                continue
+            t = self._env_target(raw)
+            k = (t["host"], t["runspec_path"])
+            if k in seen:
+                raise ValueError(f"{t['host']} · {t['venv']} is listed twice.")
+            seen.add(k)
+            try:
+                sets, drops = ef.normalize_changes(raw.get("set"), raw.get("unset"))
+            except ef.EnvFileError as exc:
+                raise ValueError(f"{t['host']} · {t['venv']}: {exc}") from exc
+            if sets or drops:
+                items.append((t, sets, drops, str(raw.get("sha") or "")))
+        if not items:
+            raise ValueError("Nothing to save.")
 
-        def _one(t: dict[str, Any]) -> dict[str, Any]:
+        def _one(
+            item: tuple[dict[str, Any], dict[str, str], list[str], str],
+        ) -> dict[str, Any]:
+            t, sets, drops, sha = item
             row = self._env_row(t)
             try:
-                out = self._env_patch_one(t, sets, drops, expect=None)
+                out = self._env_patch_one(t, sets, drops, expect=sha)
                 row.update(
                     ok=bool(out.get("ok")),
-                    changed=bool(out.get("written")),
+                    saved=bool(out.get("written")),
+                    conflict=bool(out.get("conflict")),
+                    changes=out.get("changes"),
                     as_user=out.get("as_user", ""),
-                    error=out.get("error", ""),
+                    error=str(out.get("error") or ""),
                 )
-            except Exception as exc:  # noqa: BLE001
+                res, as_user = self._env_access(t, need_write=True)
+                row["view"] = self._env_view(t, res, as_user)
+            except Exception as exc:  # noqa: BLE001 — one venv never breaks the save
                 row["error"] = str(exc)
             return row
 
-        rows = self._env_fanout(_one, targets)
+        rows = self._env_fanout(_one, items)
         return {
-            "key": key,
-            "action": "set" if value is not None else "unset",
             "rows": rows,
             "ok": sum(1 for r in rows if r.get("ok")),
-            "changed": sum(1 for r in rows if r.get("changed")),
+            "saved": sum(1 for r in rows if r.get("saved")),
             "failed": sum(1 for r in rows if not r.get("ok")),
         }
 
@@ -254,21 +278,10 @@ class EnvFileMixin:
             "ok": False,
         }
 
-    def _env_bulk_args(
-        self, payload: dict[str, Any] | None
-    ) -> tuple[list[dict[str, Any]], str, str | None]:
-        p = dict(payload or {})
-        try:
-            key = ef.validate_key(str(p.get("key") or ""))
-            action = str(p.get("action") or "set")
-            if action not in ("set", "unset"):
-                raise ef.EnvFileError("Action must be set or unset.")
-            value = ef.validate_value(key, p.get("value")) if action == "set" else None
-        except ef.EnvFileError as exc:
-            raise ValueError(str(exc)) from exc
+    def _env_target_list(self, payload: dict[str, Any] | None) -> list[dict[str, Any]]:
         targets = []
         seen: set[tuple[str, str]] = set()
-        for raw in p.get("targets") or []:
+        for raw in (payload or {}).get("targets") or []:
             if not isinstance(raw, dict):
                 continue
             t = self._env_target(raw)
@@ -278,7 +291,7 @@ class EnvFileMixin:
                 targets.append(t)
         if not targets:
             raise ValueError("Pick at least one venv.")
-        return targets, key, value
+        return targets
 
     def _env_fanout(self, fn: Any, items: list[Any]) -> list[dict[str, Any]]:
         if not items:
@@ -329,7 +342,12 @@ class EnvFileMixin:
         view["ok"] = True
         records = self._env_records(t)
         readers = ef.readers(records)
-        view.update(ef.entry_rows(res.get("text") or "", readers))
+        text = res.get("text") or ""
+        view.update(ef.entry_rows(text, readers))
+        values = ef.parse(text).values()
+        for e in view["entries"]:
+            if e["masked"]:
+                e["fp"] = _fingerprint(e["key"], values.get(e["key"], ""))
         view["overrides"] = ef.overrides(records)
         warnings: list[str] = view["warnings"]
         if res.get("symlink"):
