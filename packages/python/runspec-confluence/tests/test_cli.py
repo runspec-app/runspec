@@ -89,11 +89,14 @@ def test_dispatch_delete_page(fake) -> None:
 
 
 def test_dispatch_whoami(fake) -> None:
-    fake._returns["get_current_user"] = {"displayName": "Ada"}
+    # CFG is Cloud, where the core requests the v1 REST path directly.
+    fake._returns["get"] = {"displayName": "Ada"}
     h = _harness()
     spec = h.expect_ok(["whoami"])
     assert cli._dispatch(spec, CFG) == {"displayName": "Ada"}
     h.close()
+    args, _ = fake.last("get")
+    assert args == ("rest/api/user/current",)
 
 
 def test_dispatch_list_spaces(fake) -> None:

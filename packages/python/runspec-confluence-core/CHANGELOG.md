@@ -2,6 +2,13 @@
 
 All notable changes to `runspec-confluence-core` are documented here.
 
+## [0.10.1] — 2026-10-25
+
+- **Fix:** `get_current_user` on Cloud returned nothing. atlassian-python-api's
+  Cloud client requests the bare `user/current` (resolving to
+  `…/wiki/user/current`, not an API path, empty body); Cloud now requests
+  `rest/api/user/current` like the other ops. Server/DC unchanged.
+
 ## [0.10.0] — 2026-10-18
 
 - `config_from_env` takes `url` / `username` / `api_token` keyword overrides
