@@ -40,6 +40,7 @@ from .adapters.base import (
 from .bridge_const import CURRENT_CALL_ID, logger
 from .session import (
     ChatSession,
+    history_limits,
     new_automation,
     new_interactive,
     prune_finished,
@@ -808,7 +809,7 @@ class TurnMixin(_Base):
 
                 session.sync_tags(chat_id)
                 if spec.interactive:
-                    session.trim()
+                    session.trim(*history_limits(self.get_config()))
                     # Only when there is one, so older call shapes still fit.
                     persist_extra: dict[str, Any] = {}
                     if reply_thinking:

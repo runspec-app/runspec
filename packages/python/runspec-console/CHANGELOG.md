@@ -24,6 +24,25 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   is its own `service.instance.id`, and turn spans carry
   `runspec.lab.variant`/`scenario`/`sample`/`tier`.
 
+## [0.358.0] — 2026-10-25
+
+### Fixed
+
+- **Long chats keep their prompt cache.** A chat's history was cut to the
+  newest 60 messages after every turn once it passed 60, so the first message
+  the model saw changed on every turn and the cached prompt was thrown away.
+  Arize traces showed 3 of 5 turns re-writing about 52k tokens of cache. The
+  history is now cut back to half the cap when it passes it, so its start stays
+  the same for many turns between cuts.
+- **The original task survives a trim.** The chat's first message is folded
+  into the new first message after a cut, clipped to 2,000 characters, so the
+  agent still sees what it was asked to do.
+
+### Added
+
+- `[llm] history_max_messages` (default 60) and `[llm] history_trim_to`
+  (default half of it) set the cap and how far a cut goes.
+
 ## [0.357.0] — 2026-10-25
 
 ### Changed

@@ -34,7 +34,9 @@ from typing import Any
 __all__ = [
     "AUTOMATION_KINDS",
     "FINISHED_AUTOMATION_CAP",
+    "HISTORY_MAX_MESSAGES",
     "ChatSession",
+    "history_limits",
     "LABEL_LEN",
     "new_automation",
     "new_interactive",
@@ -53,6 +55,15 @@ AUTOMATION_KINDS = ("trigger", "schedule", "mcp")
 FINISHED_AUTOMATION_CAP = 12
 #: Max label length (an interactive chat is labelled by its first message).
 LABEL_LEN = 60
+#: An interactive chat's rolling history is trimmed once it passes this many
+#: messages (``[llm] history_max_messages``) ...
+HISTORY_MAX_MESSAGES = 60
+#: ... and the chat's first message rides the trimmed history, clipped to this.
+OPENING_NOTE_CHARS = 2000
+_OPENING_HEAD = (
+    "[Older turns of this chat were dropped to save space. It began with:]\n"
+)
+_OPENING_TAIL = "\n[End of the chat's first message. The current message follows.]\n\n"
 
 
 def new_session_id() -> str:
@@ -95,6 +106,9 @@ class ChatSession:
     current_turn: str = ""
     #: Completed turns (an interactive label is set on the first).
     turns: int = 0
+    #: The chat's first user message, remembered at the first trim so it can
+    #: ride the trimmed history (the original task stays in view).
+    opening: str = ""
 
     # ── identity ──────────────────────────────────────────────────────────
 
@@ -158,21 +172,39 @@ class ChatSession:
             kept.pop(0)
         return kept or self.history
 
-    def trim(self, max_messages: int = 60) -> None:
+    def trim(self, max_messages: int = HISTORY_MAX_MESSAGES, keep: int = 0) -> None:
         """Bound the rolling history so a long-lived session doesn't grow
-        context without limit. Trims the oldest messages, then any leading
-        assistant / tool-result turn so the kept history still starts on a plain
-        user message (keeps tool_use/tool_result pairs intact). The aligned tags
-        are trimmed in lockstep. Mutates in place."""
+        context without limit. Once it passes ``max_messages`` it is cut back to
+        the newest ``keep`` (default half of ``max_messages``), then past any
+        leading assistant / tool-result turn so it still starts on a plain user
+        message (keeps tool_use/tool_result pairs intact). The aligned tags are
+        trimmed in lockstep. Mutates in place.
+
+        Cutting well below the cap, rather than to it, keeps the history's start
+        unchanged for many turns: a cut every turn would change the prompt
+        prefix every turn and throw away the model's prompt cache. The chat's
+        first message is folded into the new first message so the original task
+        isn't lost."""
         hist = self.history
         if len(hist) <= max_messages:
             return
-        drop = len(hist) - max_messages
+        keep = keep if 0 < keep <= max_messages else max(1, max_messages // 2)
+        if not self.opening and hist and _is_user_text(hist[0]):
+            self.opening = str(hist[0]["content"])
+        drop = len(hist) - keep
         del hist[:drop]
         while hist and not _is_user_text(hist[0]):
             hist.pop(0)
             drop += 1
         del self.turn_ids[:drop]
+        if hist and self.opening:
+            opening = self.opening
+            if len(opening) > OPENING_NOTE_CHARS:
+                opening = opening[: OPENING_NOTE_CHARS - 1].rstrip() + "…"
+            hist[0] = {
+                **hist[0],
+                "content": f"{_OPENING_HEAD}{opening}{_OPENING_TAIL}{hist[0]['content']}",
+            }
 
     def drop_turns(self, turn_ids: set[str]) -> int:
         """Physically remove every message of the given turns (and their tags),
@@ -218,6 +250,27 @@ class ChatSession:
 
     def owns_turn(self, chat_id: str) -> bool:
         return chat_id == self.current_turn or chat_id in self.turn_ids
+
+
+def history_limits(config: dict[str, Any]) -> tuple[int, int]:
+    """``(max_messages, keep)`` for :meth:`ChatSession.trim`, from the console
+    config: ``[llm] history_max_messages`` (default ``HISTORY_MAX_MESSAGES``,
+    floored at 4) and ``[llm] history_trim_to`` (default half the cap). The gap
+    between the two keeps the history's start, and so the prompt cache,
+    unchanged across the turns between cuts."""
+    llm = (config or {}).get("llm", {}) or {}
+    try:
+        cap = int(llm.get("history_max_messages", HISTORY_MAX_MESSAGES))
+    except (TypeError, ValueError):
+        cap = HISTORY_MAX_MESSAGES
+    cap = max(4, cap)
+    try:
+        keep = int(llm.get("history_trim_to", 0) or 0)
+    except (TypeError, ValueError):
+        keep = 0
+    if not 0 < keep < cap:
+        keep = cap // 2
+    return cap, keep
 
 
 def _is_user_text(msg: dict[str, Any]) -> bool:

@@ -7,6 +7,7 @@ finished-automation pruning the registry applies.
 from __future__ import annotations
 
 from runspec_console.session import (
+    history_limits,
     FINISHED_AUTOMATION_CAP,
     ChatSession,
     new_automation,
@@ -114,11 +115,76 @@ def test_trim_mutates_in_place_and_keeps_tags_aligned():
     s.history = _hist(40)
     s.turn_ids = [f"c{i // 2}" for i in range(80)]
     hist_obj, tags_obj = s.history, s.turn_ids
-    s.trim(max_messages=10)
+    s.trim(max_messages=10, keep=6)
     assert s.history is hist_obj and s.turn_ids is tags_obj  # same objects
-    assert len(s.history) == 10 == len(s.turn_ids)
+    assert len(s.history) == 6 == len(s.turn_ids)
     assert s.history[0]["role"] == "user"
     assert s.turn_ids[-1] == "c39"
+
+
+def test_trim_cuts_to_half_so_the_start_stays_put():
+    # Cutting to the cap would change the history's first message on every
+    # turn (and lose the prompt cache); cutting to half leaves it alone until
+    # the history grows back past the cap.
+    s = ChatSession(id="s")
+    s.history = _hist(31)  # 62 messages
+    s.turn_ids = [f"c{i // 2}" for i in range(62)]
+    s.trim(max_messages=60)
+    assert len(s.history) == 30
+    first = s.history[0]
+    for i in range(31, 45):  # 14 more exchanges → 58 messages, under the cap
+        s.history += [
+            {"role": "user", "content": f"q{i}"},
+            {"role": "assistant", "content": f"a{i}"},
+        ]
+        s.turn_ids += [f"c{i}", f"c{i}"]
+        s.trim(max_messages=60)
+        assert s.history[0] is first
+
+
+def test_trim_folds_the_opening_message_into_the_new_start():
+    s = ChatSession(id="s")
+    s.history = _hist(40)
+    s.turn_ids = [f"c{i // 2}" for i in range(80)]
+    s.trim(max_messages=10, keep=4)
+    assert s.opening == "q0"
+    first = s.history[0]["content"]
+    assert first.startswith("[Older turns of this chat were dropped")
+    assert "\nq0\n" in first and first.endswith("q38")
+    # A second trim folds the original opening again, never the folded text.
+    for i in range(40, 50):
+        s.history += [
+            {"role": "user", "content": f"q{i}"},
+            {"role": "assistant", "content": f"a{i}"},
+        ]
+        s.turn_ids += [f"c{i}", f"c{i}"]
+    s.trim(max_messages=10, keep=4)
+    first = s.history[0]["content"]
+    assert (
+        first.count("[Older turns") == 1 and "\nq0\n" in first and first.endswith("q48")
+    )
+
+
+def test_history_limits_from_config():
+    assert history_limits({}) == (60, 30)
+    assert history_limits({"llm": {"history_max_messages": 100}}) == (100, 50)
+    assert history_limits(
+        {"llm": {"history_max_messages": 100, "history_trim_to": 70}}
+    ) == (100, 70)
+    # keep must sit below the cap, else no gap and a cut every turn again
+    assert history_limits(
+        {"llm": {"history_max_messages": 40, "history_trim_to": 40}}
+    ) == (40, 20)
+    assert history_limits({"llm": {"history_max_messages": 1}}) == (4, 2)
+    assert history_limits({"llm": {"history_max_messages": "x"}}) == (60, 30)
+
+
+def test_trim_clips_a_long_opening():
+    s = ChatSession(id="s")
+    s.history = [{"role": "user", "content": "x" * 5000}] + _hist(10)[1:]
+    s.turn_ids = [""] * len(s.history)
+    s.trim(max_messages=6, keep=2)
+    assert len(s.history[0]["content"]) < 2300
 
 
 def test_trim_drops_orphaned_tool_result_prefix():
@@ -132,11 +198,10 @@ def test_trim_drops_orphaned_tool_result_prefix():
         {"role": "assistant", "content": "a1"},
     ]
     s.turn_ids = ["c0"] * 4 + ["c1"] * 2
-    s.trim(max_messages=4)
-    assert s.history == [
-        {"role": "user", "content": "q1"},
-        {"role": "assistant", "content": "a1"},
-    ]
+    s.trim(max_messages=4, keep=3)
+    assert [m["role"] for m in s.history] == ["user", "assistant"]
+    assert s.history[0]["content"].endswith("q1")
+    assert s.history[1] == {"role": "assistant", "content": "a1"}
     assert s.turn_ids == ["c1", "c1"]
 
 

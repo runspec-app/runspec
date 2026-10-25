@@ -335,10 +335,10 @@ def test_trim_drops_orphaned_tool_result_prefix():
         {"role": "user", "content": "q1"},
         {"role": "assistant", "content": "final"},
     ]
-    _S(b).trim(max_messages=4)
-    # After dropping the oldest 2, the slice would start on an orphaned
+    _S(b).trim(max_messages=4, keep=3)
+    # After dropping the oldest 3, the slice would start on an orphaned
     # tool_result — trim must skip forward to the next real user message.
-    assert _S(b).history[0] == {"role": "user", "content": "q1"}
+    assert _S(b).history[0]["content"].endswith("q1")
     assert [m["role"] for m in _S(b).history] == ["user", "assistant"]
 
 

@@ -36,7 +36,7 @@ from .bridge_turn import TurnSpec
 from .bridge_utils import (
     _iso_now,
 )
-from .session import ChatSession, new_interactive
+from .session import ChatSession, history_limits, new_interactive
 
 from typing import TYPE_CHECKING
 
@@ -1294,7 +1294,7 @@ class InvokeMixin:
         # so never excluded → always visible); new turns get their own chat_id
         # via sync_tags.
         session.replace_history(rebuilt)
-        session.trim()
+        session.trim(*history_limits(self.get_config()))
         with self._lock:
             self._sessions[session.id] = session
             self._chat_session_id = session.id
