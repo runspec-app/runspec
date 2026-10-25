@@ -2,6 +2,21 @@
 
 All notable changes to `runspec-confluence-core` are documented here.
 
+## [0.10.2] — 2026-10-25
+
+- **Fix: Cloud broke on atlassian-python-api 5.x.** 5.0 (August 2026) swapped in
+  a new Cloud client whose requests miss the REST API: `list_spaces` returned an
+  unread generator, CQL search got a 404 web page, `get_space` got the
+  web-app page, and the page/comment/label methods the ops call don't exist on
+  it. The dependency is now `atlassian-python-api>=3.41,<5`, and `build_client`
+  refuses an SDK client without the v1 methods with an install hint instead
+  of failing op by op.
+- `get_current_user` requests `rest/api/user/current` on Server/DC too
+  (atlassian-python-api 4.x has no `get_current_user`).
+- An HTML page where JSON was expected (as an error body or a 200 body) is now
+  a one-line `ConfluenceError` naming the URL and page title, not the page.
+- `list_spaces` reads a lazily paged SDK result into one bounded page.
+
 ## [0.10.1] — 2026-10-25
 
 - **Fix:** `get_current_user` on Cloud returned nothing. atlassian-python-api's

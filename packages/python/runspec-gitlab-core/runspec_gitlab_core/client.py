@@ -7,7 +7,7 @@ credentials and call the same functions the CLI runnable's verbs call.
 
 Auth is environment-variable driven (see :func:`config_from_env`) but a caller is
 free to build a :class:`GitlabConfig` by hand. A single personal-access token
-(``GITLAB_TOKEN``) is sent as the ``PRIVATE-TOKEN`` header; the instance URL
+(``GITLAB_TOKEN`` or ``GITLAB_PAT``) is sent as the ``PRIVATE-TOKEN`` header; the instance URL
 (``GITLAB_URL``) defaults to ``https://gitlab.com`` for the SaaS case.
 
 This mirrors the read tools of GitLab's own (hosted) MCP server, but ports them
@@ -65,13 +65,16 @@ def _env_first(names: list[str]) -> str | None:
     return None
 
 
-def config_from_env(env: str | None = None) -> GitlabConfig:
+def config_from_env(env: str | None = None, *, url: str | None = None, token: str | None = None) -> GitlabConfig:
     """Build a :class:`GitlabConfig` from environment variables.
 
     When ``env`` (or the ``GITLAB_ENV`` variable) selects dev/uat/prod, the
     environment-prefixed variables are read first (e.g. ``GITLAB_UAT_TOKEN``),
     falling back to the unprefixed ``GITLAB_*`` family for single-instance
-    setups. ``GITLAB_URL`` defaults to ``https://gitlab.com`` when unset. Raises
+    setups. The token is read from ``GITLAB_TOKEN`` or ``GITLAB_PAT`` (the two
+    names a runspec-console token credential labelled ``GitLab`` sets).
+    ``GITLAB_URL`` defaults to ``https://gitlab.com`` when unset. Explicit
+    ``url`` / ``token`` arguments win over the environment. Raises
     :class:`GitlabError` with an actionable message when the env label is invalid
     or the token is missing.
     """
@@ -81,19 +84,19 @@ def config_from_env(env: str | None = None) -> GitlabConfig:
         if env not in VALID_ENVS:
             raise GitlabError(f"Invalid env {env!r} — expected one of {', '.join(VALID_ENVS)}")
 
-    def lookup(suffix: str) -> str | None:
+    def lookup(*suffixes: str) -> str | None:
         names = []
         if env:
-            names.append(f"GITLAB_{env.upper()}_{suffix}")
-        names.append(f"GITLAB_{suffix}")
+            names += [f"GITLAB_{env.upper()}_{suffix}" for suffix in suffixes]
+        names += [f"GITLAB_{suffix}" for suffix in suffixes]
         return _env_first(names)
 
-    token = lookup("TOKEN")
+    token = token or lookup("TOKEN", "PAT")
     if not token:
         hint = f"GITLAB_{env.upper()}_TOKEN" if env else "GITLAB_TOKEN"
-        raise GitlabError(f"No token configured — set {hint} (a GitLab personal access token)")
+        raise GitlabError(f"No token configured — set {hint} (a GitLab personal access token), or add a runspec-console token credential labelled GitLab")
 
-    base_url = lookup("URL") or DEFAULT_URL
+    base_url = url or lookup("URL") or DEFAULT_URL
 
     return GitlabConfig(
         base_url=base_url.rstrip("/"),

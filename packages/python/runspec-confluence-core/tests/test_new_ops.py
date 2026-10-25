@@ -104,11 +104,13 @@ def test_get_current_user_cloud_uses_rest_api_path(install):
     assert "get_current_user" not in [c[0] for c in client.calls]
 
 
-def test_get_current_user_server_uses_sdk(install):
-    client, _ = install(returns={"get_current_user": {"displayName": "Me"}})
+def test_get_current_user_server_uses_rest_api_path(install):
+    # atlassian-python-api 4.x has no get_current_user; DC serves the same v1 path.
+    client, _ = install(returns={"get": {"displayName": "Me"}})
     dc = ConfluenceConfig(url="https://wiki.corp", cloud=False, personal_token="p")
     assert get_current_user(dc) == {"displayName": "Me"}
-    client.last("get_current_user")
+    args, _ = client.last("get")
+    assert args == ("rest/api/user/current",)
 
 
 def test_get_page_children_typed(install):

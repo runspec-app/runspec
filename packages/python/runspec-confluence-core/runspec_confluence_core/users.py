@@ -11,9 +11,7 @@ from runspec_confluence_core.config import ConfluenceConfig
 @translate_errors
 def get_current_user(config: ConfluenceConfig) -> Any:
     """Return the authenticated user (a "whoami" for the configured credentials)."""
-    client = build_client(config)
-    if config.cloud:
-        # atlassian-python-api's Cloud client requests the bare "user/current",
-        # which misses the v1 REST root; name the full path like the other ops do.
-        return client.get("rest/api/user/current")
-    return client.get_current_user()
+    # rest/api/user/current is the v1 endpoint on Cloud and Server/DC alike.
+    # (atlassian-python-api 4.x has no get_current_user, and 5.x's Cloud client
+    # requests the bare "user/current", which isn't an API path.)
+    return build_client(config).get("rest/api/user/current")

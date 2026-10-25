@@ -2,6 +2,14 @@
 
 All notable changes to `runspec-gitlab-core` are documented here.
 
+## [0.4.0] — 2026-10-25
+
+- `config_from_env` reads the token from `GITLAB_TOKEN` or `GITLAB_PAT` (each
+  also under the `GITLAB_<ENV>_` prefix) — the two names a runspec-console token
+  credential labelled `GitLab` sets — and takes `url` / `token` keyword
+  overrides that win over the environment.
+- The "No token configured" error also names the console credential route.
+
 ## [0.3.0]
 
 Write helpers, each taking a `GitlabConfig` first like the reads.

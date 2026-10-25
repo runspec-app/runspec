@@ -13,7 +13,13 @@ from runspec_confluence_core.config import ConfluenceConfig
 def list_spaces(config: ConfluenceConfig, *, space_type: str | None = None, start: int = 0, limit: int = 25, expand: str | None = None) -> Any:
     """List spaces (one page of results). ``space_type`` filters to ``global`` or
     ``personal`` when given; ``expand`` requests extra sections."""
-    return build_client(config).get_all_spaces(space_type=space_type, start=start, limit=_cap_limit(limit), expand=expand)
+    capped = _cap_limit(limit)
+    spaces = build_client(config).get_all_spaces(space_type=space_type, start=start, limit=capped, expand=expand)
+    if isinstance(spaces, (dict, list)) or spaces is None:
+        return spaces
+    # Some SDK versions page lazily (a generator); read one bounded page so the
+    # result is JSON, not "<generator object ...>".
+    return {"results": list(itertools.islice(spaces, capped))}
 
 
 @translate_errors

@@ -2,6 +2,18 @@
 
 All notable changes to `runspec-gitlab` are documented here.
 
+## [0.4.0] — 2026-10-25
+
+- **runspec-console credentials apply without a scope.** The global args now
+  declare the variables the core reads as `env` aliases: new `--gitlab-url`
+  (`GITLAB_URL`) and `--gitlab-token` (`password` type; `GITLAB_TOKEN`/`GITLAB_PAT`),
+  and `--env` reads `GITLAB_ENV`. A token credential labelled `GitLab` worked
+  when picked in Forms but never reached the agent, which only gets scoped
+  credentials or ones the runnable declares (console 0.294.0), so `whoami`
+  failed with "No token configured". Only a command-line or
+  `RUNSPEC_GITLAB_ARG_*` value overrides the environment, so `--env` still
+  reads `GITLAB_<ENV>_*` first. Requires `runspec-gitlab-core>=0.4.0`.
+
 ## [0.3.0] — 2026-10-10
 
 ### Added

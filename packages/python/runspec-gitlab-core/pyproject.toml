@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-gitlab-core"
-version = "0.3.0"
+version = "0.4.0"
 requires-python = ">=3.10"
 description = "Pure-Python GitLab REST helpers — the importable core behind runspec-gitlab (no runspec dependency, no runnables)"
 dependencies = [

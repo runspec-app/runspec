@@ -9,7 +9,7 @@ import pytest
 
 from runspec_gitlab_core import client as client_mod
 
-_SUFFIXES = ("URL", "TOKEN", "PROJECT")
+_SUFFIXES = ("URL", "TOKEN", "PAT", "PROJECT")
 _ALL_VARS = ["GITLAB_ENV"] + [f"GITLAB_{s}" for s in _SUFFIXES]
 for _env in ("DEV", "UAT", "PROD"):
     _ALL_VARS += [f"GITLAB_{_env}_{s}" for s in _SUFFIXES]

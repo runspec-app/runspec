@@ -12,8 +12,9 @@
 #
 # The tools are PORTED onto the GitLab REST API (v4), not proxied from GitLab's
 # hosted MCP server, so no extra process is involved. Auth is env-var driven:
-#   GITLAB_URL  (default https://gitlab.com) + GITLAB_TOKEN  (a personal access
-#   token). Per-environment overrides use a GITLAB_<ENV>_ prefix (e.g.
+#   GITLAB_URL  (default https://gitlab.com) + GITLAB_TOKEN or GITLAB_PAT  (a
+#   personal access token). Both are declared as env aliases on --gitlab-url /
+#   --gitlab-token, so a runspec-console credential labelled GitLab applies. Per-environment overrides use a GITLAB_<ENV>_ prefix (e.g.
 #   GITLAB_UAT_TOKEN), selected with the global --env (dev/uat/prod) arg.
 #
 # `project` accepts a numeric id or a URL-path (`group/subgroup/project`); it
@@ -42,7 +43,9 @@ examples = [
 
 # ── global args (inherited by every verb) ──────────────────────────────────
 [gitlab.args]
-env = {type = "choice", options = ["dev", "uat", "prod"], short = "-e", required = false, description = "Target environment (selects GITLAB_<ENV>_* vars)"}
+env = {type = "choice", options = ["dev", "uat", "prod"], short = "-e", required = false, env = "GITLAB_ENV", description = "Target environment (selects GITLAB_<ENV>_* vars)"}
+gitlab-url = {type = "str", required = false, env = "GITLAB_URL", description = "GitLab base URL; overrides GITLAB_URL (default https://gitlab.com). Set it once per venv in .runspec_env (GITLAB_URL, or GITLAB_<ENV>_URL with --env)"}
+gitlab-token = {type = "password", required = false, env = ["GITLAB_TOKEN", "GITLAB_PAT"], description = "Personal access token; overrides GITLAB_TOKEN. Supplied via the runspec-console credential/secret channel (RUNSPEC_GITLAB_ARG_GITLAB_TOKEN), never on the command line."}
 
 # ── identity / projects ────────────────────────────────────────────────────
 

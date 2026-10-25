@@ -2,7 +2,7 @@
 """
 check_docs.py — guard the docs against drifting from the source of truth.
 
-Four independent checks, each reported separately; the script exits non-zero
+Five independent checks, each reported separately; the script exits non-zero
 if any fails:
 
   1. version-sync       — every package manifest version has a matching
@@ -15,6 +15,10 @@ if any fails:
                           against schema/runspec.schema.json.
   4. format-reference   — the argument-field and type tables in docs/format.md
                           match the schema, so the reference can't silently rot.
+  5. credential-env     — every credential variable a runnable package (or its
+                          -core) names, e.g. GITLAB_TOKEN, is declared as an arg
+                          `env` alias in its runspec.toml, so a runspec-console
+                          credential reaches the agent without a scope.
 
 Run from the repo root:  python scripts/check_docs.py
 Dependencies: jsonschema (tomllib is stdlib on 3.11+).
@@ -521,11 +525,63 @@ def check_format_reference() -> list[str]:
     return errors
 
 
+# ── credential-env ──────────────────────────────────────────────────────────
+# runspec-console applies an unscoped credential only to a runnable that
+# declares one of its name-derived env vars (console 0.294.0). A package whose
+# core reads <PREFIX>_TOKEN but whose runspec.toml declares nothing works when
+# the credential is picked in Forms and silently fails for the agent — found in
+# grafana/prometheus/jira/confluence (#812) and again in gitlab.
+CREDENTIAL_SUFFIXES = ("TOKEN", "PAT", "PASSWORD", "USERNAME", "USER", "API_TOKEN", "PERSONAL_TOKEN", "API_KEY")
+# Packages with the same gap, not yet fixed. Remove an entry once its
+# runspec.toml declares the variables.
+CREDENTIAL_ENV_KNOWN_GAPS = {"runspec-jsm", "runspec-snow", "runspec-rundeck"}
+
+
+def _declared_envs(node: object, acc: set[str]) -> None:
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key == "env" and isinstance(value, str):
+                acc.add(value)
+            elif key == "env" and isinstance(value, list):
+                acc.update(v for v in value if isinstance(v, str))
+            else:
+                _declared_envs(value, acc)
+    elif isinstance(node, list):
+        for item in node:
+            _declared_envs(item, acc)
+
+
+def check_credential_env() -> list[str]:
+    """Credential variables a package names must be declared in its runspec.toml."""
+    errors: list[str] = []
+    python = REPO / "packages" / "python"
+    for spec in sorted(python.glob("runspec-*/runspec_*/runspec.toml")):
+        pkg = spec.parent.parent
+        if pkg.name in CREDENTIAL_ENV_KNOWN_GAPS:
+            continue
+        prefix = pkg.name.removeprefix("runspec-").upper().replace("-", "_")
+        pattern = re.compile(rf"\b{prefix}_(?:{'|'.join(CREDENTIAL_SUFFIXES)})\b")
+        sources = [spec, *pkg.glob("runspec_*/**/*.py")]
+        core = python / f"{pkg.name}-core"
+        sources += list(core.glob("runspec_*/**/*.py"))
+        named = {m for src in sources for m in pattern.findall(src.read_text(encoding="utf-8", errors="ignore"))}
+        declared: set[str] = set()
+        _declared_envs(tomllib.loads(spec.read_text(encoding="utf-8")), declared)
+        missing = sorted(named - declared)
+        if missing:
+            errors.append(
+                f"{pkg.name}: {', '.join(missing)} named in the package but not declared as an arg "
+                f"`env` alias in {spec.relative_to(REPO)} — a console credential won't reach the agent"
+            )
+    return errors
+
+
 CHECKS = [
     ("version-sync", check_versions),
     ("changelog-updated", check_changelog_updated),
     ("toml-examples", check_toml_examples),
     ("format-reference", check_format_reference),
+    ("credential-env", check_credential_env),
 ]
 
 

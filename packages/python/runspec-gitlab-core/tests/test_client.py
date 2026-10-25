@@ -68,6 +68,30 @@ def test_missing_token_raises(monkeypatch):
 # ── encode_project ──────────────────────────────────────────────────────────
 
 
+def test_token_read_from_gitlab_pat(monkeypatch):
+    # A runspec-console token credential labelled "GitLab" sets GITLAB_TOKEN and GITLAB_PAT.
+    monkeypatch.setenv("GITLAB_PAT", "pat-tok")
+    assert config_from_env().token == "pat-tok"
+
+
+def test_env_prefixed_pat_beats_unprefixed_token(monkeypatch):
+    monkeypatch.setenv("GITLAB_TOKEN", "shared")
+    monkeypatch.setenv("GITLAB_UAT_PAT", "uat-pat")
+    assert config_from_env(env="uat").token == "uat-pat"
+
+
+def test_explicit_url_and_token_win(monkeypatch):
+    monkeypatch.setenv("GITLAB_TOKEN", "env-tok")
+    monkeypatch.setenv("GITLAB_URL", "https://env.example.com")
+    cfg = config_from_env(url="https://cli.example.com/", token="cli-tok")
+    assert (cfg.base_url, cfg.token) == ("https://cli.example.com", "cli-tok")
+
+
+def test_missing_token_names_the_console_credential(monkeypatch):
+    with pytest.raises(GitlabError, match="credential labelled GitLab"):
+        config_from_env()
+
+
 def test_encode_project_path():
     assert encode_project("group/sub/app") == "group%2Fsub%2Fapp"
 

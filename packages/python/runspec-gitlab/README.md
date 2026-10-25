@@ -49,17 +49,24 @@ owners/admins and refuses protected or default branches.
 conflicts endpoint, so it relays the web-UI endpoint and returns its JSON
 verbatim.
 
-## Auth — env vars only
+## Auth
 
 ```
 export GITLAB_URL=https://gitlab.example.com        # default https://gitlab.com
-export GITLAB_TOKEN=<personal-or-project-access-token>
+export GITLAB_TOKEN=<personal-or-project-access-token>   # or GITLAB_PAT
 export GITLAB_PROJECT=group/subgroup/project        # optional default
 ```
 
 Every verb takes `--env`, selecting `GITLAB_<ENV>_*` prefixed vars. `--project`
 accepts a numeric id or a `group/project` path and falls back to
 `GITLAB_PROJECT`.
+
+In runspec-console, a **token** credential labelled `GitLab` sets `GITLAB_TOKEN`
+and `GITLAB_PAT`. The runnable declares both (on `--gitlab-token`), so the
+credential applies to the agent without a scope, not only when picked in Forms.
+`--gitlab-token` (password type) takes the token through the console's secret
+channel and is refused on the command line; `--gitlab-url` overrides
+`GITLAB_URL`.
 
 ```
 gitlab whoami

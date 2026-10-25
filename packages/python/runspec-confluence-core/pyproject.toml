@@ -4,11 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-confluence-core"
-version = "0.10.1"
+version = "0.10.2"
 requires-python = ">=3.10"
 description = "Pure-Python Confluence helpers (over atlassian-python-api) — the importable core behind runspec-confluence (no runspec dependency, no runnables)"
 dependencies = [
-    "atlassian-python-api>=3.41",
+    # 5.0 moved Cloud onto a new client whose paths miss the REST API (list-spaces
+    # returned a generator, search 404'd, page/comment methods are gone); stay on
+    # the v1 client until the ops are ported.
+    "atlassian-python-api>=3.41,<5",
     # Markdown → Confluence storage (XHTML) conversion for --content-format markdown (writes).
     "markdown>=3.4",
     # Confluence HTML → Markdown conversion for read-side summarise.html_to_markdown.

@@ -12,6 +12,7 @@ Failures (the ``runspec_gitlab_core`` :class:`GitlabError` and arg-shape
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -58,6 +59,18 @@ from runspec_gitlab_core import (
     whoami,
     write_file,
 )
+
+
+def _chosen(arg: rs.Arg) -> Any:
+    """The arg's value when the caller chose it: typed on the command line, or
+    set through the automatic ``RUNSPEC_GITLAB_ARG_*`` key (the console's secret
+    channel). A value runspec read from one of the declared ``GITLAB_*`` aliases
+    is left to :func:`config_from_env`, which reads the same variables but puts
+    ``GITLAB_<ENV>_*`` first when ``--env`` is set."""
+    if arg.source == "cli":
+        return arg.value
+    auto_key = "RUNSPEC_GITLAB_ARG_" + arg.name.upper().replace("-", "_")
+    return arg.value if os.environ.get(auto_key) is not None else None
 
 
 def _emit(payload: Any) -> None:
@@ -318,7 +331,7 @@ def _dispatch(spec: rs.RunSpec, config: GitlabConfig) -> Any:
 def main() -> None:
     spec = rs.parse("gitlab")
     try:
-        config = config_from_env(env=spec.env.value)
+        config = config_from_env(env=spec.env.value, url=_chosen(spec.gitlab_url), token=_chosen(spec.gitlab_token))
         result = _dispatch(spec, config)
     except (GitlabError, ValueError, OSError) as exc:
         _emit({"error": str(exc), "kind": type(exc).__name__})

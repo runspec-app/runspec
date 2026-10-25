@@ -2,6 +2,13 @@
 
 All notable changes to `runspec-confluence` are documented here.
 
+## [0.9.1] — 2026-10-25
+
+- Requires `runspec-confluence-core>=0.10.2`, which keeps atlassian-python-api
+  below 5. On 5.x every Cloud verb except `whoami` failed: `list-spaces`
+  printed `<generator object …>`, `search`/`search-text` returned a 404 web
+  page and `get-space` returned the 889 KB web-app page.
+
 ## [0.9.0] — 2026-10-18
 
 - **runspec-console credentials apply without a scope.** The global args now
