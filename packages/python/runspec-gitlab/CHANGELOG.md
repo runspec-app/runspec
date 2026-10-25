@@ -2,6 +2,20 @@
 
 All notable changes to `runspec-gitlab` are documented here.
 
+## [0.6.0] — 2026-10-25
+
+- **New `list-projects` verb** lists the projects you are a member of (or own
+  with `--owned`), most recently active first, in a short form (`--full` for
+  everything). `--search` filters by name, path or namespace. The agent
+  didn't think to run `search-projects` without a term, so finding your own
+  projects now has its own verb and the `search-projects` description points
+  to it.
+- **Fix:** `search-projects --search X` without `--membership` failed with
+  GitLab 500 after about 16 seconds on gitlab.com (0.5.0 regression: the
+  namespace match across every public project times out). The namespace match
+  now applies only within your own projects. Requires
+  `runspec-gitlab-core>=0.6.0`.
+
 ## [0.5.0] — 2026-10-25
 
 - **`search-projects` lists your projects.** `--search` is now optional: leave

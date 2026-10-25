@@ -2,6 +2,16 @@
 
 All notable changes to `runspec-gitlab-core` are documented here.
 
+## [0.6.0] — 2026-10-25
+
+- New `list_projects`: the token user's member (or owned) projects, optionally
+  filtered by a term that also matches the namespace path, in GitLab's short
+  form unless `full`.
+- `search_projects` adds the namespace match (`search_namespaces`) only within
+  the user's own projects. Across every visible project it made gitlab.com
+  time out with a 500 after about 16 seconds (0.5.0 regression). New `simple`
+  parameter.
+
 ## [0.5.0] — 2026-10-25
 
 - `search_projects` can list the token user's projects: `search` is now

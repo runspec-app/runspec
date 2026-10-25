@@ -52,27 +52,57 @@ def search_projects(
     per_page: int = 20,
     page: int = 1,
     owned: bool = False,
+    simple: bool = False,
 ) -> list[dict[str, Any]]:
     """Search or list projects, most recently active first.
 
-    ``search`` matches the project name or path, including its group/namespace
-    path (so ``"finejason"`` finds projects under that user's namespace). GitLab
-    matches a term shorter than 3 characters only as an exact name. With no
-    ``search`` the call lists the token user's projects: ``membership`` is
-    implied, since listing every visible project on a public instance is
-    useless. ``owned`` limits results to projects the user owns.
+    ``search`` matches the project name or path. GitLab matches a term shorter
+    than 3 characters only as an exact name. With no ``search`` the call lists
+    the token user's projects: ``membership`` is implied, since listing every
+    visible project on a public instance is useless. ``owned`` limits results
+    to projects the user owns. Within the user's own projects (``membership``
+    or ``owned``) a term also matches the group/namespace path; across every
+    visible project that match times out on gitlab.com, so it is left off.
+    ``simple`` asks GitLab for its short project representation.
     """
+    mine = membership or owned or not search
     params: dict[str, Any] = {
-        "membership": membership or not search or None,
+        "membership": mine or None,
         "owned": owned or None,
+        "simple": simple or None,
         "order_by": "last_activity_at",
         "per_page": per_page,
         "page": page,
     }
     if search:
         params["search"] = search
-        params["search_namespaces"] = True
+        if mine:
+            params["search_namespaces"] = True
     return gitlab_request("GET", "/projects", config=config, params=params)
+
+
+def list_projects(
+    config: GitlabConfig,
+    search: str | None = None,
+    owned: bool = False,
+    per_page: int = 20,
+    page: int = 1,
+    full: bool = False,
+) -> list[dict[str, Any]]:
+    """List the projects the token user is a member of (or owns), most recently
+    active first, optionally filtered by ``search`` (name, path or namespace).
+
+    Returns GitLab's short project representation unless ``full``.
+    """
+    return search_projects(
+        config,
+        search=search,
+        membership=True,
+        per_page=per_page,
+        page=page,
+        owned=owned,
+        simple=not full,
+    )
 
 
 def resolve_user_ids(config: GitlabConfig, usernames: list[str] | None) -> list[int] | None:

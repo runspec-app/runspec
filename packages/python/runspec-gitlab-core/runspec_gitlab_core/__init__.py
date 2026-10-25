@@ -56,7 +56,14 @@ from runspec_gitlab_core.pipelines import (
     retry_job,
     retry_pipeline,
 )
-from runspec_gitlab_core.projects import get_project, resolve_project_path, resolve_user_ids, search_projects, whoami
+from runspec_gitlab_core.projects import (
+    get_project,
+    list_projects,
+    resolve_project_path,
+    resolve_user_ids,
+    search_projects,
+    whoami,
+)
 from runspec_gitlab_core.repository import (
     create_branch,
     delete_branch,
@@ -80,6 +87,7 @@ __all__ = [
     # identity / projects
     "whoami",
     "get_project",
+    "list_projects",
     "search_projects",
     # issues
     "list_issues",

@@ -59,12 +59,22 @@ autonomy = "autonomous"
 [gitlab.commands.get-project.args]
 project = {type = "str", short = "-p", required = false, description = "Project id or path (falls back to GITLAB_PROJECT)"}
 
+[gitlab.commands.list-projects]
+description = "List my projects: the projects you (the token's user) are a member of or own, most recently active first. Start here to find a project to work in"
+autonomy = "autonomous"
+[gitlab.commands.list-projects.args]
+search = {type = "str", required = false, description = "Only projects whose name, path or group/namespace path matches this text"}
+owned = {type = "flag", default = false, description = "Only projects you own"}
+per-page = {type = "int", default = 20, description = "Results per page (GitLab caps at 100)"}
+page = {type = "int", default = 1, description = "Page number"}
+full = {type = "flag", default = false, description = "Return GitLab's full project details instead of the short form"}
+
 [gitlab.commands.search-projects]
-description = "Search projects by name or group/namespace path, or list your own projects (omit --search)"
+description = "Search every project visible to you by name or path (on gitlab.com that is every public project). To find your own projects use list-projects"
 autonomy = "autonomous"
 [gitlab.commands.search-projects.args]
-search = {type = "str", required = false, description = "Text to match against project name, path or group/namespace path. Omit to list the projects you are a member of. Under 3 characters matches exact names only"}
-membership = {type = "flag", default = false, description = "Only projects the token's user is a member of (always on when --search is omitted)"}
+search = {type = "str", required = false, description = "Text to match against project name or path. Under 3 characters matches exact names only. Omit to list the projects you are a member of"}
+membership = {type = "flag", default = false, description = "Only projects the token's user is a member of (always on when --search is omitted); the term then also matches the group/namespace path"}
 owned = {type = "flag", default = false, description = "Only projects the token's user owns"}
 per-page = {type = "int", default = 20, description = "Results per page (GitLab caps at 100)"}
 page = {type = "int", default = 1, description = "Page number"}

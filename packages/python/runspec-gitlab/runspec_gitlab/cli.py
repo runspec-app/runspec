@@ -48,6 +48,7 @@ from runspec_gitlab_core import (
     list_issues,
     list_merge_requests,
     list_pipelines,
+    list_projects,
     list_tree,
     merge_merge_request,
     play_job,
@@ -100,6 +101,15 @@ def _dispatch(spec: rs.RunSpec, config: GitlabConfig) -> Any:
         return whoami(config)
     if command == "get-project":
         return get_project(config, project=spec.project.value)
+    if command == "list-projects":
+        return list_projects(
+            config,
+            search=spec.search.value,
+            owned=spec.owned.value,
+            per_page=spec.per_page.value,
+            page=spec.page.value,
+            full=spec.full.value,
+        )
     if command == "search-projects":
         return search_projects(
             config,

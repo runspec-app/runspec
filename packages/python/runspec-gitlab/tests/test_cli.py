@@ -67,6 +67,18 @@ def test_dispatch_search_projects_without_term_lists_mine(monkeypatch) -> None:
     assert "search" not in seen["query"]
 
 
+def test_dispatch_list_projects(monkeypatch) -> None:
+    seen = _capture(monkeypatch, httpx.Response(200, json=[{"id": 2}]))
+    h = _harness()
+    spec = h.expect_ok(["list-projects", "--search", "cli"])
+    result = cli._dispatch(spec, CFG)
+    h.close()
+    assert result == [{"id": 2}]
+    assert seen["query"]["membership"] == "true"
+    assert seen["query"]["simple"] == "true"
+    assert seen["query"]["search"] == "cli"
+
+
 def test_dispatch_get_job_log_tail(monkeypatch) -> None:
     _capture(monkeypatch, httpx.Response(200, text="a\nb\nc\nd"))
     h = _harness()

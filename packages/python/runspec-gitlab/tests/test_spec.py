@@ -92,7 +92,7 @@ def test_list_tree_recursive_flag() -> None:
 
 
 READ_VERBS = {
-    "whoami", "get-project", "search-projects", "list-issues", "get-issue",
+    "whoami", "get-project", "list-projects", "search-projects", "list-issues", "get-issue",
     "list-merge-requests", "get-merge-request", "get-merge-request-diffs",
     "get-merge-request-commits", "get-merge-request-notes",
     "get-merge-request-pipelines", "get-merge-request-conflicts",

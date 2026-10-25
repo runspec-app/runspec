@@ -2,14 +2,14 @@
 
 A GitLab runnable for [runspec](https://pypi.org/project/runspec/), ported onto
 the GitLab REST API (v4) — **not** proxying GitLab's hosted MCP server. One
-runnable — **`gitlab`** — with 17 read verbs (`autonomy = "autonomous"`), 15
+runnable — **`gitlab`** — with 18 read verbs (`autonomy = "autonomous"`), 15
 write verbs (`autonomy = "confirm"`, so an agent asks before each one) and 4
 delete verbs (`autonomy = "manual"`, so only a person can run them). `pip install` it into a venv and it's discoverable by `runspec
 local`, `runspec serve` (MCP), and runspec-console.
 
 `runspec serve` flattens each verb into a leaf MCP tool (`gitlab_get-issue`, …).
 Verb names are reconciled against GitLab's canonical MCP tool registry; the
-extras (`whoami`, `get-project`, `search-projects`, `list-issues`, `get-file`,
+extras (`whoami`, `get-project`, `list-projects`, `search-projects`, `list-issues`, `get-file`,
 `list-tree`) are useful REST reads GitLab has no MCP tool for.
 
 ## Install
@@ -22,7 +22,7 @@ pip install runspec-gitlab
 
 | Area | Verbs |
 |---|---|
-| Account / project | `whoami`, `get-project`, `search-projects`, `get-file`, `list-tree` |
+| Account / project | `whoami`, `get-project`, `list-projects`, `search-projects`, `get-file`, `list-tree` |
 | Issues | `list-issues`, `get-issue` |
 | Merge requests | `list-merge-requests`, `get-merge-request`, `get-merge-request-diffs`, `get-merge-request-commits`, `get-merge-request-notes`, `get-merge-request-pipelines`, `get-merge-request-conflicts` |
 | Pipelines | `list-pipelines`, `get-pipeline-jobs`, `get-job-log` |

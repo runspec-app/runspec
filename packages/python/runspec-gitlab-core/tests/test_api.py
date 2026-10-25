@@ -19,6 +19,7 @@ from runspec_gitlab_core import (
     get_merge_request_pipelines,
     list_issues,
     list_pipelines,
+    list_projects,
     list_tree,
     search_projects,
     whoami,
@@ -65,11 +66,29 @@ def test_search_projects_without_term_lists_member_projects(monkeypatch):
     assert "search_namespaces" not in seen["query"]
 
 
-def test_search_projects_term_without_membership_leaves_it_off(monkeypatch):
+def test_search_projects_plain_term_searches_everything_by_name(monkeypatch):
+    # search_namespaces across every public gitlab.com project times out (500)
     seen = _capture(monkeypatch, httpx.Response(200, json=[]))
-    search_projects(CFG, "runspec", owned=True)
+    search_projects(CFG, "runspec")
+    assert seen["query"]["search"] == "runspec"
     assert "membership" not in seen["query"]
+    assert "search_namespaces" not in seen["query"]
+
+
+def test_list_projects_is_mine_and_short(monkeypatch):
+    seen = _capture(monkeypatch, httpx.Response(200, json=[]))
+    list_projects(CFG, "cli", owned=True)
+    assert seen["query"]["membership"] == "true"
     assert seen["query"]["owned"] == "true"
+    assert seen["query"]["simple"] == "true"
+    assert seen["query"]["search_namespaces"] == "true"
+
+
+def test_list_projects_full(monkeypatch):
+    seen = _capture(monkeypatch, httpx.Response(200, json=[]))
+    list_projects(CFG, full=True)
+    assert "simple" not in seen["query"]
+    assert "search" not in seen["query"]
 
 
 def test_list_issues_uses_default_project_and_filters(monkeypatch):
