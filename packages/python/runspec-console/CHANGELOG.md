@@ -24,6 +24,15 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   is its own `service.instance.id`, and turn spans carry
   `runspec.lab.variant`/`scenario`/`sample`/`tier`.
 
+## [0.359.1] — 2026-10-25
+
+### Fixed
+
+- **Env files → Across venvs** grouped venvs with different names into one
+  column when their files matched (the local console venv beside every host's
+  `ops-tools`, say). A column now only groups venvs with the same name and
+  identical files.
+
 ## [0.359.0] — 2026-10-25
 
 ### Added

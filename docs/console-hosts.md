@@ -191,11 +191,12 @@ pinned while you scroll sideways.
   every venv shown and the bin removes it from all of them. **Add a variable
   row** suggests names the venvs' runnables read. Edited cells are coloured
   (green added, amber changed, red removed) until you save or undo them.
-- Venvs whose files are identical share one column, headed with the venv
-  name and how many hosts it covers (for example `ops · 37 hosts`; hover the
+- Venvs with the same name and identical files share one column, headed
+  with the venv name and how many hosts it covers (for example `ops · 37 hosts`; hover the
   header for the list). Editing, undoing, removing or revealing a cell there
   does it in each of those venvs, so a column splits off as soon as one of its
-  venvs differs. Turn **Group identical venvs** off to get one column per venv.
+  venvs differs. Venvs with different names never share a column, even when
+  their files match. Turn **Group identical venvs** off to get one column per venv.
 - Long values wrap rather than being cut off.
 - Click a variable name to see every value it has across the venvs shown,
   with the venvs holding each value and those that don't set it. **Use

@@ -13,8 +13,8 @@
  *  - **Across venvs** — a variables × venvs grid of every venv in scope, read
  *    in one go. Cells are edited in place (or a row is set / removed in every
  *    venv shown), variables whose venvs disagree are tagged, and hidden secrets
- *    are compared by fingerprint without being revealed. Venvs whose files are
- *    identical share one column (an edit there changes each of them), so a
+ *    are compared by fingerprint without being revealed. Venvs with the same
+ *    name and identical files share one column (an edit there changes each of them), so a
  *    fleet of same-named venvs reads as a few columns, and clicking a variable
  *    lists each value it has with the venvs holding it. Save sends each venv
  *    just its own changed keys, compare-and-swap, so one stale venv doesn't
@@ -533,12 +533,15 @@ export function venvSignature(view: EnvFileView | undefined, edits: Record<strin
 export interface VenvColumn { id: string; refs: string[] }
 
 /** The grid's columns, in venv order. With `merge`, venvs with the same
- *  signature share one column (an edit there applies to each of them). */
-export function venvColumns(refs: string[], views: Record<string, EnvFileView>, draft: GridDraft, merge: boolean): VenvColumn[] {
+ *  name (`nameOf`) and the same signature share one column (an edit there
+ *  applies to each of them); venvs with different names never share one,
+ *  even when their files match. */
+export function venvColumns(refs: string[], views: Record<string, EnvFileView>, draft: GridDraft, merge: boolean, nameOf: (ref: string) => string = () => ''): VenvColumn[] {
   const out: VenvColumn[] = []
   const bySig = new Map<string, VenvColumn>()
   for (const ref of refs) {
-    const sig = merge ? venvSignature(views[ref], draft[ref]) : null
+    const file = merge ? venvSignature(views[ref], draft[ref]) : null
+    const sig = file === null ? null : JSON.stringify([nameOf(ref), file])
     const col = sig === null ? undefined : bySig.get(sig)
     if (col) { col.refs.push(ref); continue }
     const fresh = { id: ref, refs: [ref] }
@@ -624,7 +627,7 @@ function AcrossVenvs({ targets, loadingTargets }: { targets: EnvFileTarget[]; lo
   const targetOf = useMemo(() => new Map(supported.map(t => [refOf(t), t])), [supported])
   const shown = supported.filter(t => inScope(t, scope))
   const shownRefs = shown.map(refOf)
-  const cols = venvColumns(shownRefs, views, draft, merge)
+  const cols = venvColumns(shownRefs, views, draft, merge, ref => targetOf.get(ref)?.venv ?? ref)
   const editCount = Object.values(draft).reduce((n, e) => n + Object.keys(e).length, 0)
   const venvsEdited = Object.keys(draft).length
 

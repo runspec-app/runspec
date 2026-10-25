@@ -253,6 +253,15 @@ describe('grid helpers', () => {
     expect(venvColumns(['a', 'b'], views, {}, false)).toHaveLength(2)
   })
 
+  it('never merges venvs with different names, even with the same file', () => {
+    const f = view([e('A', '1')])
+    const views = { local: f, h1: f, h2: f, u1: f, u2: f }
+    const name: Record<string, string> = { local: 'console', h1: 'ops-tools', h2: 'ops-tools', u1: 'linux-utils', u2: 'linux-utils' }
+    expect(venvColumns(['local', 'h1', 'u1', 'h2', 'u2'], views, {}, true, r => name[r])).toEqual([
+      { id: 'local', refs: ['local'] }, { id: 'h1', refs: ['h1', 'h2'] }, { id: 'u1', refs: ['u1', 'u2'] },
+    ])
+  })
+
   it('groups a variable by value, most common first and unset last', () => {
     const views = { a: view([e('R', 'eu')]), b: view([e('R', 'us')]), c: view([]), d: view([e('R', 'us')]) }
     expect(valueGroups(['a', 'b', 'c', 'd'], views, {}, 'R')).toEqual([
