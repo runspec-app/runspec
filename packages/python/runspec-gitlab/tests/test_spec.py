@@ -92,7 +92,7 @@ def test_list_tree_recursive_flag() -> None:
 
 
 READ_VERBS = {
-    "whoami", "get-project", "list-projects", "search-projects", "list-issues", "get-issue",
+    "whoami", "get-project", "list-projects", "search-projects", "search-code", "list-issues", "get-issue",
     "list-merge-requests", "get-merge-request", "get-merge-request-diffs",
     "get-merge-request-commits", "get-merge-request-notes",
     "get-merge-request-pipelines", "get-merge-request-conflicts",
@@ -135,4 +135,16 @@ def test_repeatable_labels_and_unset_is_empty() -> None:
     spec = h.expect_ok(["create-issue", "--project", "grp/app", "--title", "t", "--label", "a", "--label", "b"])
     assert list(spec.label.value) == ["a", "b"]
     assert not spec.assignee.value
+    h.close()
+
+
+def test_search_code_needs_exactly_one_of_group_or_project() -> None:
+    h = _harness()
+    h.expect_exit(["search-code", "--search", "x"], contains="group")
+    h.expect_exit(["search-code", "--search", "x", "--group", "g", "--project", "p"], contains="group")
+    spec = h.expect_ok(["search-code", "--search", "acme", "-g", "platform", "--file-path", "pyproject.toml"])
+    assert spec.group.value == "platform"
+    assert spec.mode.value == "auto"
+    assert spec.limit.value == 50
+    assert spec.workers.value == 8
     h.close()

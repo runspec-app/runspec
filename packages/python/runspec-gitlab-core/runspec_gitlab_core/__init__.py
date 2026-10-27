@@ -7,7 +7,8 @@ helper functions for import without surfacing any runnables (it is invisible to
 and wraps each helper as a verb of the ``gitlab`` runnable.
 
 The helpers port the tools of GitLab's own (hosted) MCP server onto the public
-REST API, plus REST reads and writes it has no tool for. Every operation takes an explicit :class:`GitlabConfig` first
+REST API, plus REST reads and writes it has no tool for (e.g. :func:`search_code`, which
+finds text across every project in a group even without Advanced Search). Every operation takes an explicit :class:`GitlabConfig` first
 argument, so a private (e.g. Nexus-hosted) wrapper package can inject credentials
 in code, bake in a default ``project`` / ``env``, and build "one runnable per
 project" on top without re-implementing the REST plumbing. Each function does the
@@ -72,6 +73,7 @@ from runspec_gitlab_core.repository import (
     list_tree,
     write_file,
 )
+from runspec_gitlab_core.search import group_projects, search_code
 
 __all__ = [
     # client / config
@@ -89,6 +91,9 @@ __all__ = [
     "get_project",
     "list_projects",
     "search_projects",
+    # code search
+    "search_code",
+    "group_projects",
     # issues
     "list_issues",
     "get_issue",

@@ -2,6 +2,22 @@
 
 All notable changes to `runspec-gitlab` are documented here.
 
+## [0.7.0] — 2026-10-27
+
+- **New `search-code` verb** finds text in the code of every project in a
+  group (subgroups included), or of one project with `--project`. GitLab's own
+  group code search needs Advanced Search, so without it the web UI finds
+  nothing across a group. The verb tries the group search first and, when
+  GitLab refuses it or it finds nothing, searches each project in turn
+  (`--workers` at once, `--max-projects` at most, archived projects skipped
+  unless `--include-archived`). `--file-path pyproject.toml` skips search and
+  reads that one file in every project, which needs no search index at all:
+  the surest way to find which projects use a dependency. `--filename` keeps
+  only files with that name (glob allowed), `--ref` searches another branch,
+  `--mode` forces one strategy. Output is one entry per matching file with its
+  matching lines, capped by `--limit` (`truncated` says there were more); the
+  result says which strategy ran and why. Requires `runspec-gitlab-core>=0.7.0`.
+
 ## [0.6.0] — 2026-10-25
 
 - **New `list-projects` verb** lists the projects you are a member of (or own

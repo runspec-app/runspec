@@ -36,6 +36,8 @@ examples = [
   {cmd = "gitlab get-merge-request-diffs --project 42 --mr-iid 17", description = "Show a merge request's diffs"},
   {cmd = "gitlab get-job-log --project group/app --job-id 9001 --tail 100", description = "Tail the last 100 lines of a CI job log"},
   {cmd = "gitlab get-file --project group/app --file-path src/main.py --ref main", description = "Read a repository file at a ref"},
+  {cmd = "gitlab search-code --group platform --file-path pyproject.toml --search acme-auth", description = "Find which projects in a group depend on acme-auth"},
+  {cmd = "gitlab search-code --group platform --search OLD_API_URL", description = "Find a string in the code of every project in a group"},
   {cmd = "gitlab create-issue --project group/app --title 'Login fails' --label bug", description = "Open an issue"},
   {cmd = "gitlab create-merge-request --project group/app --source-branch fix --target-branch main --title 'Fix login'", description = "Open a merge request"},
   {cmd = "gitlab retry-pipeline --project group/app --pipeline-id 9000", description = "Retry a pipeline's failed jobs"},
@@ -78,6 +80,26 @@ membership = {type = "flag", default = false, description = "Only projects the t
 owned = {type = "flag", default = false, description = "Only projects the token's user owns"}
 per-page = {type = "int", default = 20, description = "Results per page (GitLab caps at 100)"}
 page = {type = "int", default = 1, description = "Page number"}
+
+[gitlab.commands.search-code]
+description = "Find text in the code of every project in a group (subgroups included), or of one project. Works without Advanced Search: when GitLab's group code search is unavailable or finds nothing, each project is searched in turn. With --file-path, reads that one file (e.g. pyproject.toml) in every project instead of searching, the surest way to find a dependency"
+autonomy = "autonomous"
+[gitlab.commands.search-code.args]
+search = {type = "str", required = true, description = "Text to find (plain text, matched case-insensitively unless --case-sensitive)"}
+group = {type = "str", short = "-g", required = false, description = "Group id or full path (e.g. platform/backend); its subgroups are searched too"}
+project = {type = "str", short = "-p", required = false, description = "Search one project instead of a group (id or path)"}
+file-path = {type = "str", required = false, description = "Read this file in each project (e.g. pyproject.toml, requirements.txt) and match its lines; no search index needed"}
+filename = {type = "str", required = false, description = "Only matches in files with this name; a glob such as *.toml is allowed"}
+ref = {type = "str", required = false, description = "Branch or tag to search (default: each project's default branch)"}
+mode = {type = "choice", options = ["auto", "group", "projects"], default = "auto", description = "auto = group code search, else each project; group = group code search only; projects = search each project only"}
+include-archived = {type = "flag", default = false, description = "Also search archived projects"}
+case-sensitive = {type = "flag", default = false, description = "Only matches with the same upper/lower case"}
+limit = {type = "int", default = 50, description = "Most matching files to return (truncated says there were more)"}
+max-projects = {type = "int", default = 500, description = "Most projects of the group to search"}
+workers = {type = "int", default = 8, description = "Projects searched at once (max 32)"}
+[gitlab.commands.search-code.groups.scope]
+exactly-one = true
+args = ["group", "project"]
 
 # ── issues ─────────────────────────────────────────────────────────────────
 

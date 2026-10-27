@@ -54,6 +54,7 @@ from runspec_gitlab_core import (
     play_job,
     retry_job,
     retry_pipeline,
+    search_code,
     search_projects,
     update_issue,
     update_merge_request,
@@ -118,6 +119,22 @@ def _dispatch(spec: rs.RunSpec, config: GitlabConfig) -> Any:
             per_page=spec.per_page.value,
             page=spec.page.value,
             owned=spec.owned.value,
+        )
+    if command == "search-code":
+        return search_code(
+            config,
+            search=spec.search.value,
+            group=spec.group.value,
+            project=spec.project.value,
+            file_path=spec.file_path.value,
+            filename=spec.filename.value,
+            ref=spec.ref.value,
+            mode=spec.mode.value,
+            include_archived=spec.include_archived.value,
+            case_sensitive=spec.case_sensitive.value,
+            limit=spec.limit.value,
+            max_projects=spec.max_projects.value,
+            workers=spec.workers.value,
         )
     if command == "list-issues":
         return list_issues(

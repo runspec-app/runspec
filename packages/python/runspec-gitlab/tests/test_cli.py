@@ -122,6 +122,17 @@ def test_dispatch_get_file_decodes(monkeypatch) -> None:
     assert result["content"] == "print('hi')"
 
 
+def test_dispatch_search_code_reads_the_file_in_a_project(monkeypatch) -> None:
+    seen = _capture(monkeypatch, httpx.Response(200, text='dependencies = [\n  "acme-auth>=1.4",\n]\n'))
+    h = _harness()
+    spec = h.expect_ok(["search-code", "--project", "grp/app", "--file-path", "pyproject.toml", "--search", "acme-auth"])
+    result = cli._dispatch(spec, CFG)
+    h.close()
+    assert seen["path"] == "/api/v4/projects/grp%2Fapp/repository/files/pyproject.toml/raw"
+    assert result["strategy"] == "files"
+    assert result["matches"] == [{"project": "grp/app", "file": "pyproject.toml", "lines": [{"line": 2, "text": '"acme-auth>=1.4",'}]}]
+
+
 # ── writes ──────────────────────────────────────────────────────────────────
 
 

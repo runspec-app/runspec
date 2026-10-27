@@ -2,6 +2,20 @@
 
 All notable changes to `runspec-gitlab-core` are documented here.
 
+## [0.7.0] — 2026-10-27
+
+- New `search_code`: find text in the code of a group's projects (subgroups
+  included) or of one project. Tries GitLab's group code search
+  (`/groups/:id/search?scope=blobs`, which needs Advanced Search or exact code
+  search) and, on a 400/403/404 or no results, searches each project
+  (`/projects/:id/search?scope=blobs`) on a thread pool. `file_path` reads that
+  file in every project instead (`/repository/files/:path/raw`) and matches its
+  lines locally. `filename` (glob allowed), `ref`, `mode`
+  (`auto`/`group`/`projects`), `include_archived`, `case_sensitive`, `limit`,
+  `max_projects`, `workers`. Returns one match per file with its matching lines.
+- New `group_projects`: the projects in a group and its subgroups (short form,
+  archived left out by default), paged, with a `max_projects` cap.
+
 ## [0.6.0] — 2026-10-25
 
 - New `list_projects`: the token user's member (or owned) projects, optionally
