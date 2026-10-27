@@ -547,7 +547,8 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
     // the record itself, so skip the (pointless) get_run_detail fetch.
     if (!record.runId || record.logPrunedAt || details[key] !== undefined || detailLoading[key]) return
     setDetailLoading(d => ({ ...d, [key]: true }))
-    bridge.get_run_detail(record.host, record.runId)
+    // logFile (from the runs index) lets the backend read just this run's file.
+    bridge.get_run_detail(record.host, record.runId, record.group, record.logFile)
       .then(res => setDetails(d => ({ ...d, [key]: res.logLines ?? [] })))
       .catch(() => setDetails(d => ({ ...d, [key]: [] })))
       .finally(() => setDetailLoading(d => { const n = { ...d }; delete n[key]; return n }))

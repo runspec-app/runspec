@@ -263,6 +263,7 @@ describe('HistoryView', () => {
   })
 
   it('fetches and shows the run log lines on demand when a row is expanded', async () => {
+    getHistorySlim.mockResolvedValue([rec({ logFile: 'backup.x.run-1.log' })])
     getRunDetail.mockResolvedValue({
       logLines: [{ ts: '2026-06-03T14:22:05+00:00', level: 'INFO', message: 'fetched line' }],
     })
@@ -270,8 +271,9 @@ describe('HistoryView', () => {
     const user = userEvent.setup()
     const expandBtn = await screen.findByLabelText(/Expand row/i)
     await act(async () => { await user.click(expandBtn) })
-    // Expanding fetches just this run's log (the bulk payload ships slim rows).
-    await waitFor(() => expect(getRunDetail).toHaveBeenCalledWith('local', 'run-1'))
+    // Expanding fetches just this run's log (the bulk payload ships slim rows),
+    // naming the venv + log file so the backend reads only that file.
+    await waitFor(() => expect(getRunDetail).toHaveBeenCalledWith('local', 'run-1', 'ops-tools', 'backup.x.run-1.log'))
     expect(await screen.findByText('fetched line')).toBeTruthy()
   })
 

@@ -2172,7 +2172,9 @@ export interface BridgeApi {
   history_sync_status: () => Promise<Record<string, HistorySyncState>>
   // Heavy per-run detail (the recorded log lines) for one run, fetched on demand
   // when a History row is expanded — the bulk read ships slim rows without them.
-  get_run_detail: (host: string, run_id: string) => Promise<{ logLines: HistoryLogLine[] }>
+  // `group` + `log_file` (a row's venv and runs-index log file) let it read only
+  // that run's file instead of scanning the host's newest logs.
+  get_run_detail: (host: string, run_id: string, group?: string, log_file?: string) => Promise<{ logLines: HistoryLogLine[] }>
   // Live "what's running" across the fleet — the in-flight runs the per-venv runs
   // index holds, newest-started first, for the History tab's "Running now" strip.
   // Fleet-wide and index-sourced (every connected host's running rows, whoever

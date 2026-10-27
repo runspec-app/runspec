@@ -24,6 +24,17 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   is its own `service.instance.id`, and turn spans carry
   `runspec.lab.variant`/`scenario`/`sample`/`tier`.
 
+## [0.359.2] — 2026-10-27
+
+### Fixed
+
+- **History row expand is fast again.** Opening a row used to read the
+  host's newest ~250 log files (every runnable, every venv; over SSH on a
+  remote) to find one run, and an older run outside those files showed "no
+  log lines". It now reads only that run's file, which the runs index names
+  (`log_file`): a direct read locally, one small SSH exec on a remote. Rows
+  without an index entry (log-parsed hosts) still use the old scan.
+
 ## [0.359.1] — 2026-10-25
 
 ### Fixed

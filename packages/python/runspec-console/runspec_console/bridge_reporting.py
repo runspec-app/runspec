@@ -798,18 +798,38 @@ class ReportingMixin:
             )
         return rows
 
-    def get_run_detail(self, host: str, run_id: str) -> dict[str, Any]:
+    def get_run_detail(
+        self,
+        host: str,
+        run_id: str,
+        group: str | None = None,
+        log_file: str | None = None,
+    ) -> dict[str, Any]:
         """Heavy per-run detail (the recorded ``logLines``) for one run, fetched
         on demand when a History row is expanded — ``get_history_all`` ships slim
         rows, so this fills in the log for just the one run the operator opened.
 
-        Cheap: the local read is served from the warm (mtime,size) parse cache,
-        and a connected remote from the short-TTL remote-history cache the bulk
-        read just populated — so expanding a row is not a fresh SSH round-trip in
-        the common case. Empty when the run isn't found (aged out of the window /
-        pruned) or ``run_id`` is blank (a legacy no-run_id log)."""
+        With the row's ``log_file`` (the runs index names each run's file —
+        History rows read from the index carry it) only that one file is read:
+        a direct read locally, one small SSH exec on a remote, looked for in the
+        row's venv (``group``) inbox + logs dir and ``~/logs``. Without it (a
+        log-parsed row), or when the file no longer holds the run, the read
+        falls back to scanning the host's newest logs via :meth:`get_history`,
+        which on a remote streams up to a couple of hundred files. Empty when the
+        run isn't found (aged out / pruned) or ``run_id`` is blank (a legacy
+        no-run_id log)."""
         if not run_id:
             return {"logLines": []}
+        name = utils_mod.safe_log_basename(log_file or "")
+        if name:
+            try:
+                lines = self._run_detail_from_file(host, run_id, group or "", name)
+                if lines is not None:
+                    return {"logLines": lines}
+            except Exception:
+                logger.exception(
+                    "history: run-detail file read failed for %s/%s", host, run_id
+                )
         try:
             for r in self.get_history(host):  # no window — find the run regardless
                 if r.get("runId") == run_id:
@@ -817,6 +837,52 @@ class ReportingMixin:
         except Exception:
             logger.exception("history: run-detail read failed for %s/%s", host, run_id)
         return {"logLines": []}
+
+    def _run_detail_from_file(
+        self, host: str, run_id: str, group: str, name: str
+    ) -> list[dict[str, Any]] | None:
+        """``logLines`` of ``run_id`` from the log file ``name`` (a checked
+        basename), or ``None`` when no candidate file holds that run.
+
+        Candidates are the row's venv inbox + logs dir (every venv's when
+        ``group`` is unknown) and the home ``~/logs`` fallback — the same dirs
+        :func:`log_layout` gives the History read."""
+        entry = self._host_entry(host)
+        if entry is None:
+            return None
+        remote = bool(entry.get("ssh"))
+        layout = utils_mod.log_layout(utils_mod._paths(entry), remote=remote)
+        dirs = [d for d, g, kind in layout if kind == "home" or not group or g == group]
+        records: list[dict[str, Any]] = []
+        if remote:
+            script = utils_mod._remote_files_script([f"{d}/{name}" for d in dirs])
+            _, stdout, _ = self._ssh_run(
+                entry["ssh"],
+                script,
+                identity_file=entry.get("identityFile"),
+                timeout=20,
+            )
+            records = self._parse_remote_stream(stdout, entry["name"], group)
+        else:
+            for d in dirs:
+                path = Path(d) / name
+                try:
+                    st = path.lstat()
+                except OSError:
+                    continue
+                # Same rules as _history_files: a regular file only, and no hard
+                # link out of the world-writable inbox.
+                if not stat.S_ISREG(st.st_mode) or (
+                    Path(d).name == "inbox" and st.st_nlink != 1
+                ):
+                    continue
+                records.extend(
+                    self._parse_log_cached(path, host, st.st_mtime, st.st_size, group)
+                )
+        for r in records:
+            if r.get("runId") == run_id:
+                return r.get("logLines", [])
+        return None
 
     def _remote_log_dirs(
         self, entry: dict[str, Any], rp: str, timeout: int = 30

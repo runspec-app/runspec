@@ -446,28 +446,60 @@ def _remote_log_script(
     """
     dirs = [log_dir] if isinstance(log_dir, str) else list(log_dir)
     patterns = " ".join(f"{d}/{g}" for d in dirs for g in _log_globs(runnable))
-    # Frames carry a per-call nonce generated *on the host* and announced first
-    # (``\x00RUNSPEC_NONCE:<n>``): a log file's content — which, with the logs
-    # inbox, any local account can write — can't forge a frame boundary it can't
-    # predict. ``[ -f ]`` also rejects a symlink's missing target; ``-L`` skips a
-    # symlink outright (the inbox is world-writable). The NUL is written as the
-    # octal ``\\000`` — POSIX printf; dash's printf has no ``\\x`` escapes.
-    body = (
-        '[ -f "$f" ] && [ ! -L "$f" ] || continue; '
-        'printf "\\000RUNSPEC_LOG:%s:%s\\n" "$n" "$(basename "$f" .log)"; '
-        'case "$f" in *.gz) gzip -dc "$f";; *) cat "$f";; esac; '
-    )
-    nonce = (
-        "n=$(od -An -N8 -tx1 /dev/urandom 2>/dev/null | tr -d ' \\n'); "
-        '[ -n "$n" ] || n=$$$(date +%s%N 2>/dev/null); '
-        'printf "\\000RUNSPEC_NONCE:%s\\n" "$n"; '
-    )
+    body, nonce = _FRAME_BODY, _FRAME_NONCE
     if limit is not None:
         return (
             f"{nonce}ls -1t {patterns} 2>/dev/null | head -n {int(limit)} | "
             f"while IFS= read -r f; do {body}done 2>/dev/null"
         )
     return f"{nonce}for f in {patterns}; do {body}done 2>/dev/null"
+
+
+# Frames carry a per-call nonce generated *on the host* and announced first
+# (``\x00RUNSPEC_NONCE:<n>``): a log file's content — which, with the logs
+# inbox, any local account can write — can't forge a frame boundary it can't
+# predict. ``[ -f ]`` also rejects a symlink's missing target; ``-L`` skips a
+# symlink outright (the inbox is world-writable). The NUL is written as the
+# octal ``\\000`` — POSIX printf; dash's printf has no ``\\x`` escapes.
+_FRAME_BODY = (
+    '[ -f "$f" ] && [ ! -L "$f" ] || continue; '
+    'printf "\\000RUNSPEC_LOG:%s:%s\\n" "$n" "$(basename "$f" .log)"; '
+    'case "$f" in *.gz) gzip -dc "$f";; *) cat "$f";; esac; '
+)
+_FRAME_NONCE = (
+    "n=$(od -An -N8 -tx1 /dev/urandom 2>/dev/null | tr -d ' \\n'); "
+    '[ -n "$n" ] || n=$$$(date +%s%N 2>/dev/null); '
+    'printf "\\000RUNSPEC_NONCE:%s\\n" "$n"; '
+)
+
+# A runs-index ``log_file`` is a bare basename (core writes ``log_path.name``).
+# Anything else — a path separator, a leading dot, shell metacharacters — is
+# refused before it reaches a shell or a filesystem join.
+_LOG_BASENAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._@+-]*")
+
+
+def safe_log_basename(name: str) -> str | None:
+    """``name`` when it is a plain log-file basename, else ``None``."""
+    name = (name or "").strip()
+    return name if _LOG_BASENAME.fullmatch(name) else None
+
+
+def _remote_files_script(paths: list[str]) -> str:
+    """Like :func:`_remote_log_script`, but streams the named files only — the
+    one-run read behind a History row expand. ``paths`` are double-quoted, so a
+    leading ``$HOME`` still expands while every other ``$``/quote/backtick is
+    escaped; a missing file is skipped by the frame body's ``[ -f ]`` guard."""
+
+    def quote(p: str) -> str:
+        head = ""
+        if p.startswith("$HOME/"):
+            head, p = "$HOME", p[len("$HOME") :]
+        for ch in ("\\", '"', "$", "`"):
+            p = p.replace(ch, "\\" + ch)
+        return f'"{head}{p}"'
+
+    files = " ".join(quote(p) for p in paths)
+    return f"{_FRAME_NONCE}for f in {files}; do {_FRAME_BODY}done 2>/dev/null"
 
 
 _NONCE_HEAD = "\x00RUNSPEC_NONCE:"
