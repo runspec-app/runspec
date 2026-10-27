@@ -7,8 +7,22 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+---
+
+## [0.76.1] — 2026-10-27
+
 ### Changed
 
+- **`runspec logs <runnable> --run` accepts the run id shown in the output.**
+  The text view prints the first 8 characters of each run id (`run=3f2a9c1e`);
+  `--run` now takes that, or any longer prefix, as long as it names one run of
+  that runnable (case-insensitive). A full id works as before. A prefix shared
+  by several runs is refused with their full ids, and an id that matches no run
+  is now an error (`no run matching '…' in deploy's logs`, exit 1) instead of
+  empty output.
+- **`runspec logs` with no runnable lists the runnables that have logs** under
+  the "A runnable is required" error, so you don't have to look in the logs
+  folder.
 - Docs and test examples use neutral sample data (a product-catalogue
   runnable, SKU values) in place of domain-specific ones. No behaviour
   change.

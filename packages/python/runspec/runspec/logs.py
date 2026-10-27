@@ -266,7 +266,8 @@ def collect_records(
 ) -> list[tuple[dict[str, Any], str]]:
     """Merge a runnable's files into one timestamp-sorted list of (record, raw).
 
-    Filters: ``since`` (records newer than now-since), ``run`` (one run_id),
+    Filters: ``since`` (records newer than now-since), ``run`` (one run_id, or
+    a unique prefix of one — the 8 characters the text view prints are enough),
     ``user`` (every record of any run that user launched — resolved from the
     run_summary's ``extra.user``).
     """
@@ -293,6 +294,9 @@ def collect_records(
             user_of_run[extra["run_id"]] = extra.get("user", "")
         parsed.append((rec, ln))
 
+    if run:
+        run = resolve_run_id(run, (_line_extra(rec).get("run_id", "") for rec, _ in parsed), runnable)
+
     cutoff = datetime.now(timezone.utc) - since if since else None
 
     def keep(rec: dict[str, Any]) -> bool:
@@ -311,6 +315,35 @@ def collect_records(
     parsed = [(r, ln) for (r, ln) in parsed if keep(r)]
     parsed.sort(key=lambda pair: pair[0].get("ts", ""))
     return parsed
+
+
+def _line_extra(rec: dict[str, Any]) -> dict[str, Any]:
+    extra = rec.get("extra")
+    return extra if isinstance(extra, dict) else {}
+
+
+def resolve_run_id(run: str, run_ids: Iterable[str], runnable: str | None = None) -> str:
+    """The full run id ``run`` names among ``run_ids``: an exact id, else the one
+    id it is a prefix of (case-insensitive, like the hex it is). Raises
+    ``ValueError`` when the prefix matches several runs (naming them) or none."""
+    ids = {rid for rid in run_ids if rid}
+    if run in ids:
+        return run
+    want = run.strip().lower()
+    matches = sorted(rid for rid in ids if want and rid.lower().startswith(want))
+    if len(matches) == 1:
+        return matches[0]
+    where = f" in {runnable}'s logs" if runnable else ""
+    if not matches:
+        raise ValueError(f"no run matching {run!r}{where}")
+    shown = ", ".join(matches[:10]) + (f" (+{len(matches) - 10} more)" if len(matches) > 10 else "")
+    raise ValueError(f"{run!r} matches {len(matches)} runs{where}: {shown} — give more of the id")
+
+
+def runnables_with_logs(dirs: Iterable[Path]) -> list[str]:
+    """Sorted names of the runnables that have log files in ``dirs`` (per-run,
+    archive or single-mode, including the inbox) — what ``runspec logs`` can show."""
+    return sorted({_runnable_of(f) for f in _discover(dirs, None, include_inbox=True)} - {""})
 
 
 def _file_run_id(name: str) -> str | None:
@@ -411,6 +444,10 @@ def view(
         out.flush()
         if not follow:
             return
+        if run and records:
+            # Keep following the run the prefix named, even if a later run's id
+            # happens to share it.
+            run = _line_extra(records[0][0]).get("run_id") or run
         seen = {(r.get("ts", ""), r.get("extra", {}).get("run_id", ""), r.get("message", "")) for r, _ in records}
         while True:
             time.sleep(poll_interval)

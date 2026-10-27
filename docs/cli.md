@@ -651,9 +651,14 @@ runspec logs deploy                       # merged, timestamp-sorted, one record
 runspec logs deploy --follow              # live tail across invocations
 runspec logs deploy --since 1h            # only the last hour
 runspec logs deploy --user alice          # only runs alice launched
-runspec logs deploy --run <run_id>        # one invocation
+runspec logs deploy --run 3f2a9c1e        # one invocation (its id, or a unique prefix)
 runspec logs deploy --json                # raw JSON lines (for jq)
 ```
+
+Each text line shows the first 8 characters of its run id (`run=3f2a9c1e`);
+`--run` accepts that prefix, or any longer one, as long as it names one run of
+that runnable. A prefix shared by several runs is refused with their full ids.
+`runspec logs` with no runnable lists the runnables that have logs.
 
 The view is a plain stdout stream that composes with the usual tools — it's
 TTY-aware and SIGPIPE-clean, so piping to `grep`/`head`/`less` just works, and

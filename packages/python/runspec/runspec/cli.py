@@ -1188,6 +1188,11 @@ def cmd_logs(args: list[str]) -> None:
         if verb == "view":
             if not runnable:
                 print("✗  A runnable is required: runspec logs <runnable>")
+                names = _logs.runnables_with_logs(_logs.scope_dirs(parsed.scope.value, destructive=False) or _logs.log_dirs())
+                if names:
+                    print("   Runnables with logs: " + ", ".join(names))
+                else:
+                    print("   No runnable has logs here yet.")
                 sys.exit(1)
             since = _logs.parse_duration(parsed.since.value) if parsed.since.value else None
             _logs.view(

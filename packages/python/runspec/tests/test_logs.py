@@ -112,6 +112,32 @@ class TestView:
         recs = logs.collect_records([tmp_path], "deploy", run=_id("r2"))
         assert [r["extra"]["run_id"] for r, _ in recs] == [_id("r2")]
 
+    def test_run_filter_accepts_the_printed_prefix(self, tmp_path):
+        _write_run(tmp_path, "deploy", "r1", "20260601T100000Z", _summary("r1", "deploy", ts="2026-06-01T10:00:00+00:00"))
+        _write_run(tmp_path, "deploy", "r2", "20260601T110000Z", _summary("r2", "deploy", ts="2026-06-01T11:00:00+00:00"))
+        recs = logs.collect_records([tmp_path], "deploy", run=_id("r2")[:8].upper())
+        assert [r["extra"]["run_id"] for r, _ in recs] == [_id("r2")]
+
+    def test_run_filter_unknown_prefix_is_an_error(self, tmp_path):
+        _write_run(tmp_path, "deploy", "r1", "20260601T100000Z", _summary("r1", "deploy", ts="2026-06-01T10:00:00+00:00"))
+        with pytest.raises(ValueError, match="no run matching 'zzzz' in deploy's logs"):
+            logs.collect_records([tmp_path], "deploy", run="zzzz")
+
+    def test_resolve_run_id(self):
+        ids = ["3f2a9c1e-aaaa", "3f2a0000-bbbb", "77777777-cccc"]
+        assert logs.resolve_run_id("77", ids) == "77777777-cccc"
+        assert logs.resolve_run_id("3f2a9", ids) == "3f2a9c1e-aaaa"
+        assert logs.resolve_run_id("3f2a0000-bbbb", ids) == "3f2a0000-bbbb"
+        with pytest.raises(ValueError, match="matches 2 runs: 3f2a0000-bbbb, 3f2a9c1e-aaaa"):
+            logs.resolve_run_id("3f2a", ids)
+
+    def test_runnables_with_logs(self, tmp_path):
+        _write_run(tmp_path, "deploy", "r1", "20260601T100000Z", _summary("r1", "deploy", ts="2026-06-01T10:00:00+00:00"))
+        _write_run(tmp_path, "backup.web", "r2", "20260601T100000Z", _summary("r2", "backup.web", ts="2026-06-01T10:00:00+00:00"))
+        (tmp_path / "single.log").write_text("", encoding="utf-8")
+        (tmp_path / "audit.jsonl").write_text("", encoding="utf-8")
+        assert logs.runnables_with_logs([tmp_path]) == ["backup.web", "deploy", "single"]
+
     def test_json_passthrough(self, tmp_path):
         raw = _summary(_id("r1"), "deploy", ts="2026-06-01T10:00:00+00:00")
         _write_run(tmp_path, "deploy", "r1", "20260601T100000Z", raw)
