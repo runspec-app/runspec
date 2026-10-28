@@ -181,14 +181,14 @@ def test_preflight_verdict_root_handoff():
 def test_root_check_and_handoff_argv():
     assert prov.parse_root_check("noise\nsudo\n") == "sudo"
     assert prov.parse_root_check("") == "no"
-    assert prov.handoff_argv("/opt/venvs/x", "svc-ops")[-2:] == [
+    assert prov.handoff_argv("/usr/bin/python3", "/opt/venvs/x", "svc-ops")[-2:] == [
         "/opt/venvs/x",
         "svc-ops",
     ]
     with pytest.raises(prov.ProvisionError):
-        prov.handoff_argv("/opt/venvs/x", "")
+        prov.handoff_argv("/usr/bin/python3", "/opt/venvs/x", "")
     with pytest.raises(prov.ProvisionError):
-        prov.handoff_argv("/opt/venvs/x", "bad;name")
+        prov.handoff_argv("/usr/bin/python3", "/opt/venvs/x", "bad;name")
 
 
 def test_audit_argv():
@@ -290,7 +290,7 @@ def test_preflight_create_inspect_remove_roundtrip(tmp_path):
     assert info["kind"] == "venv"
     assert info["owner"]
 
-    removed = _sh(prov.remove_argv(dest, keep_logs=True))
+    removed = _sh(prov.remove_argv(sys.executable, dest, keep_logs=True))
     assert removed.returncode == 0, removed.stdout
     assert sorted(p.name for p in (tmp_path / "ops").iterdir()) == ["logs"]
     assert (tmp_path / "ops" / "logs" / "run.log").exists()
@@ -303,7 +303,7 @@ def test_preflight_create_inspect_remove_roundtrip(tmp_path):
     runspec.write_text("#!/bin/sh\necho runspec 0.0\n")
     runspec.chmod(0o755)
 
-    removed = _sh(prov.remove_argv(dest, keep_logs=False))
+    removed = _sh(prov.remove_argv(sys.executable, dest, keep_logs=False))
     assert removed.returncode == 0, removed.stdout
     assert not (tmp_path / "ops").exists()
 
@@ -313,7 +313,7 @@ def test_remove_script_refuses_non_venvs(tmp_path):
     plain = tmp_path / "plain"
     plain.mkdir()
     (plain / "keep.txt").write_text("precious")
-    r = _sh(prov.remove_argv(str(plain), keep_logs=False))
+    r = _sh(prov.remove_argv(sys.executable, str(plain), keep_logs=False))
     assert r.returncode == 64 and "not a venv" in r.stdout
     assert (plain / "keep.txt").exists()
 
@@ -323,7 +323,7 @@ def test_remove_script_refuses_non_venvs(tmp_path):
     (venv / "bin" / "runspec").write_text("")
     link = tmp_path / "link"
     link.symlink_to(venv)
-    r = _sh(prov.remove_argv(str(link), keep_logs=False))
+    r = _sh(prov.remove_argv(sys.executable, str(link), keep_logs=False))
     assert r.returncode == 64 and "symlink" in r.stdout
     assert venv.exists()
 
@@ -331,7 +331,7 @@ def test_remove_script_refuses_non_venvs(tmp_path):
 def test_remove_argv_refuses_protected():
     for bad in ("/", "/opt", "/home/jason", "relative"):
         with pytest.raises(prov.ProvisionError):
-            prov.remove_argv(bad, keep_logs=False)
+            prov.remove_argv("/usr/bin/python3", bad, keep_logs=False)
 
 
 @posix_only
@@ -340,19 +340,21 @@ def test_handoff_script_makes_and_refuses(tmp_path):
 
     me = getpass.getuser()
     dest = tmp_path / "parent" / "venv"
-    r = _sh(prov.handoff_argv(str(dest), me))
+    r = _sh(prov.handoff_argv(sys.executable, str(dest), me))
     assert r.returncode == 0, r.stdout + r.stderr
     assert dest.is_dir() and oct(dest.stat().st_mode & 0o777) == "0o755"
     # Idempotent on an empty dir, refuses anything else.
-    assert _sh(prov.handoff_argv(str(dest), me)).returncode == 0
+    assert _sh(prov.handoff_argv(sys.executable, str(dest), me)).returncode == 0
     (dest / "f").write_text("x")
-    r = _sh(prov.handoff_argv(str(dest), me))
+    r = _sh(prov.handoff_argv(sys.executable, str(dest), me))
     assert r.returncode == 64 and "not empty" in r.stdout
     link = tmp_path / "link"
     link.symlink_to(tmp_path / "parent")
-    r = _sh(prov.handoff_argv(str(link), me))
+    r = _sh(prov.handoff_argv(sys.executable, str(link), me))
     assert r.returncode == 64 and "symlink" in r.stdout
-    r = _sh(prov.handoff_argv(str(tmp_path / "other"), "no-such-user-xyz"))
+    r = _sh(
+        prov.handoff_argv(sys.executable, str(tmp_path / "other"), "no-such-user-xyz")
+    )
     assert r.returncode == 64 and "no such user" in r.stdout
     assert not (tmp_path / "other").exists()
     r = _sh(["sh", "-c", prov.ROOT_CHECK_SCRIPT, "sh"])
@@ -364,30 +366,32 @@ def test_cleanup_script_undoes_only_what_provision_made(tmp_path):
     # Absent before: the whole folder goes, the parent mkdir -p made stays.
     dest = tmp_path / "venvs" / "ops"
     assert _sh(prov.create_argv(sys.executable, str(dest))).returncode == 0
-    r = _sh(prov.cleanup_argv(str(dest), "absent"))
+    r = _sh(prov.cleanup_argv(sys.executable, str(dest), "absent"))
     assert r.returncode == 0 and "removed" in r.stdout
     assert not dest.exists() and dest.parent.is_dir()
     # Nothing there any more: a no-op, not an error.
-    assert _sh(prov.cleanup_argv(str(dest), "absent")).returncode == 0
+    assert _sh(prov.cleanup_argv(sys.executable, str(dest), "absent")).returncode == 0
 
     # Empty before: the folder stays, emptied.
     dest.mkdir()
     assert _sh(prov.create_argv(sys.executable, str(dest))).returncode == 0
-    assert _sh(prov.cleanup_argv(str(dest), "empty")).returncode == 0
+    assert _sh(prov.cleanup_argv(sys.executable, str(dest), "empty")).returncode == 0
     assert dest.is_dir() and not list(dest.iterdir())
 
     # Only a kept logs/ before: logs/ and its history survive.
     (dest / "logs").mkdir()
     (dest / "logs" / "runs.db").write_text("history")
     assert _sh(prov.create_argv(sys.executable, str(dest))).returncode == 0
-    assert _sh(prov.cleanup_argv(str(dest), "logs_only")).returncode == 0
+    assert (
+        _sh(prov.cleanup_argv(sys.executable, str(dest), "logs_only")).returncode == 0
+    )
     assert [p.name for p in dest.iterdir()] == ["logs"]
     assert (dest / "logs" / "runs.db").read_text() == "history"
 
     # A symlink is refused, never followed.
     link = tmp_path / "link"
     link.symlink_to(dest)
-    r = _sh(prov.cleanup_argv(str(link), "absent"))
+    r = _sh(prov.cleanup_argv(sys.executable, str(link), "absent"))
     assert r.returncode == 64 and "symlink" in r.stdout
     assert (dest / "logs").exists()
 
@@ -395,10 +399,10 @@ def test_cleanup_script_undoes_only_what_provision_made(tmp_path):
 def test_cleanup_argv_refuses_states_it_did_not_make():
     for before in ("notempty", "symlink", "file", ""):
         with pytest.raises(prov.ProvisionError):
-            prov.cleanup_argv("/opt/venvs/ops", before)
+            prov.cleanup_argv("/usr/bin/python3", "/opt/venvs/ops", before)
     for bad in ("/", "/opt", "/home/jason"):
         with pytest.raises(prov.ProvisionError):
-            prov.cleanup_argv(bad, "absent")
+            prov.cleanup_argv("/usr/bin/python3", bad, "absent")
 
 
 @posix_only
@@ -414,7 +418,9 @@ def test_create_script_never_chmods_through_symlinks(tmp_path):
     )
     fake_py.chmod(0o755)
     dest = tmp_path / "v"
-    r = _sh(prov.create_argv(str(fake_py), str(dest)))
+    argv = prov.create_argv(str(fake_py), str(dest))
+    argv[0] = sys.executable  # the script runs on Python; fake_py only makes the venv
+    r = _sh(argv)
     assert r.returncode == 0, r.stdout + r.stderr
     assert (target.stat().st_mode & 0o777) == 0o700
     assert ((dest / "bin").stat().st_mode & 0o777) == 0o755
@@ -422,19 +428,58 @@ def test_create_script_never_chmods_through_symlinks(tmp_path):
 
 # ── failure text ──
 
-# What sudo prints when a sudoers rule doesn't cover ``sh``: the refused
+# What sudo prints when a sudoers rule doesn't cover the command: the refused
 # command, multi-line script and all.
 _SUDO_REFUSED = (
-    "Sorry, user deploy is not allowed to execute '/bin/sh -c "
+    "Sorry, user deploy is not allowed to execute '/usr/bin/python3.12 -I -S -c "
     + prov.PREFLIGHT_SCRIPT
-    + " sh /usr/bin/python3 /opt/venvs/ops' as svc on web-01."
+    + " /opt/venvs/ops' as svc on web-01."
 )
 
 
 def test_failure_text_explains_a_sudo_refusal_without_the_script():
     msg = prov.failure_text(_SUDO_REFUSED, 1, run_as="svc")
     assert msg.startswith("sudo refused") and "svc" in msg
-    assert "out " not in msg and "fi" not in msg.split()
+    assert "/usr/bin/python3.12" in msg
+    assert "import" not in msg and "out(" not in msg
+    assert "run that command as svc" in prov.failure_text(
+        "user deploy is not allowed to execute", 1, run_as="svc"
+    )
+
+
+def test_escalated_steps_never_run_a_shell():
+    """Every step that runs as another account runs Python, not ``sh -c`` — a
+    sudoers rule that refuses shells must still cover provisioning."""
+    py = "/usr/bin/python3.12"
+    argvs = [
+        prov.preflight_argv(py, "/opt/venvs/ops"),
+        prov.create_argv(py, "/opt/venvs/ops"),
+        prov.handoff_argv(py, "/opt/venvs/ops", "svc"),
+        prov.cleanup_argv(py, "/opt/venvs/ops", "absent"),
+        prov.remove_argv("/opt/venvs/ops/bin/python", "/opt/venvs/ops", keep_logs=True),
+    ]
+    for argv in argvs:
+        assert argv[0].endswith(("python3.12", "/bin/python"))
+        assert argv[1:4] == ["-I", "-S", "-c"]
+    with pytest.raises(prov.ProvisionError):
+        prov.remove_argv("", "/opt/venvs/ops", keep_logs=True)
+
+
+@posix_only
+def test_scripts_are_python36_syntax():
+    """A too-old interpreter must still run the preflight to say it is too old,
+    so the escalated scripts avoid syntax newer than 3.6 (no f-strings, walrus)."""
+    import ast
+
+    for script in (
+        prov.PREFLIGHT_SCRIPT,
+        prov.CREATE_SCRIPT,
+        prov.HANDOFF_SCRIPT,
+        prov.CLEANUP_SCRIPT,
+        prov.REMOVE_SCRIPT,
+    ):
+        ast.parse(script, feature_version=(3, 6))
+        assert 'f"' not in script and "f'" not in script
 
 
 @pytest.mark.parametrize(

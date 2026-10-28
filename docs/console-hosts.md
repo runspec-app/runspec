@@ -83,7 +83,11 @@ You choose:
   runspec needs Python 3.10 or newer, so an older interpreter is flagged and
   blocked (on RHEL 9 pick 3.12, not the system 3.9).
 - **Run as**: the account that will own the venv, e.g. a service account
-  (reached with `sudo -n -u` or `su`). Blank means your SSH user.
+  (reached with `sudo -n -u` or `su`). Blank means your SSH user. Every step
+  that runs as that account runs the chosen Python (or, later, the venv's own
+  `bin/python` and `bin/runspec`), never a shell, so a sudoers rule that lets
+  your login act as the account but refuses shells (`NOPASSWD: ALL, !/bin/sh,
+  …`) is enough. Deprovision runs the venv's own `bin/python`.
 - **Packages** (runspec is always installed) and the **package index** (a
   Marketplace repo, or the host's own pip config).
 

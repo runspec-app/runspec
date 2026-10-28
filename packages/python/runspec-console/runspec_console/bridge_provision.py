@@ -533,7 +533,7 @@ class ProvisionMixin:
                 try:
                     code, out = self._prov_run(
                         h,
-                        prov.cleanup_argv(dest, pf.get("dest_state", "")),
+                        prov.cleanup_argv(pf["python"], dest, pf.get("dest_state", "")),
                         run_as=who,
                         become_method=via,
                         timeout=_STEP_TIMEOUT_S,
@@ -613,7 +613,7 @@ class ProvisionMixin:
                 try:
                     code, out = self._prov_run(
                         h,
-                        prov.handoff_argv(dest, owner),
+                        prov.handoff_argv(pf["python"], dest, owner),
                         # Root via passwordless sudo, or directly when the
                         # SSH login already is root.
                         run_as="root" if pf.get("handoff_via") == "sudo" else "",
@@ -830,6 +830,7 @@ class ProvisionMixin:
                 "kind": kind,
                 "owner": facts.get("owner", ""),
                 "user": facts.get("user", ""),
+                "python": facts.get("python", ""),
                 "size_kb": _to_int(facts.get("size_kb")),
                 "logs_kb": _to_int(facts.get("logs_kb")),
             }
@@ -957,7 +958,9 @@ class ProvisionMixin:
             try:
                 code, out = self._prov_run(
                     self._prov_host(name),
-                    prov.remove_argv(root, keep_logs=keep_logs),
+                    prov.remove_argv(
+                        str(info.get("python") or ""), root, keep_logs=keep_logs
+                    ),
                     run_as=run_as,
                     become_method=become,
                     timeout=_CREATE_TIMEOUT_S,

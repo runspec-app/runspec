@@ -24,6 +24,33 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   is its own `service.instance.id`, and turn spans carry
   `runspec.lab.variant`/`scenario`/`sample`/`tier`.
 
+## [0.359.4] — 2026-10-28
+
+### Fixed
+
+- **Provisioning works under a sudoers rule that refuses shells.**
+  - **What broke:** with a rule like `(svc) NOPASSWD: ALL, !/bin/sh, …`,
+    **Check hosts** said "sudo refused: the SSH login isn't allowed to run sh
+    as svc". Console 0.310.0 had moved runs and Marketplace installs off `sh`
+    for this rule shape, but provisioning (added in 0.312.0) still ran its
+    preflight, create, undo-after-failure and deprovision steps as
+    `sudo -n -u <account> sh -c '<script>'`.
+  - **The fix:** every step that runs as another account (the run-as account,
+    or root for the folder step) is now a small stdlib Python script run on the
+    interpreter you picked: `sudo -n -u svc /usr/bin/python3.12 -I -S -c
+    '<script>' …`. Deprovision runs the venv's own `bin/python`, so a rule
+    scoped to the venv's `bin/` covers it too. Steps that run as your SSH
+    login itself (the interpreter probe, the root check, the deprovision
+    inspect) still use `sh`. The guards are unchanged: the delete and undo
+    steps re-check on the host that the path is absolute, not a symlink and
+    resolves to itself, and never follow a symlink while deleting.
+  - **When sudo still refuses,** the message names the program it refused
+    (e.g. `/usr/bin/python3.12`) instead of `sh`.
+  - **What you need:** an upgrade of the console only.
+  (`provision._py_argv`; `PREFLIGHT_SCRIPT`/`CREATE_SCRIPT`/`HANDOFF_SCRIPT`/
+  `CLEANUP_SCRIPT`/`REMOVE_SCRIPT` are Python; `INSPECT_SCRIPT` reports the
+  venv's `python`.)
+
 ## [0.359.3] — 2026-10-28
 
 ### Fixed

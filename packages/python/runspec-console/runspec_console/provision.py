@@ -2,8 +2,14 @@
 provision.py — build and remove runspec venvs on fleet hosts.
 
 Pure logic behind Settings → Jump Hosts → *Provision venv…* / *Deprovision…*:
-validation, the POSIX shell scripts each step runs on a host, and the parsers
-for their output. The bridge (:mod:`bridge_provision`) owns the I/O — it runs
+validation, the scripts each step runs on a host, and the parsers for their
+output. Steps that run as another account (the run-as account, or root for the
+folder step) are small stdlib Python scripts run on the chosen interpreter
+(``<python> -I -S -c <script>``), never ``sh -c``: a sudoers rule that lets the
+SSH login act as a service account but refuses shells still covers them, the
+same reason runspec 0.70.0 moved the run env prelude onto the venv's python.
+Steps that run as the SSH login itself (probe, root check, inspect) stay POSIX
+``sh``. The bridge (:mod:`bridge_provision`) owns the I/O — it runs
 each script over the host's pooled SSH connection through
 :func:`marketplace.remote_command`, so a ``run_as`` service account is reached
 with ``sudo -n -u`` / ``su`` and the package-index URL (which can carry a
@@ -39,7 +45,7 @@ pip).
 
 A deprovision deletes a venv the console already knows (one of a host's
 ``runspec_paths``), behind guards that are enforced here *and* re-checked on
-the host in the same shell command as the ``rm``: an absolute, non-system path,
+the host in the same command as the delete: an absolute, non-system path,
 not a symlink, containing ``pyvenv.cfg`` + ``bin/runspec``. ``keep_logs``
 removes everything except ``logs/`` so the folder stays with its history (and
 a later provision at the same path builds around it).
@@ -337,43 +343,64 @@ def pick_interpreter(pythons: list[Interpreter], wanted: str) -> Interpreter | N
 
 PREFLIGHT_MARK = "RSPF"
 
-# ``sh -c PREFLIGHT_SCRIPT sh <python> <dest>`` as the run-as account. Prints
-# ``RSPF<TAB>key<TAB>value`` lines; never changes anything.
+# ``<python> -I -S -c PREFLIGHT_SCRIPT <dest>`` as the run-as account, on the
+# interpreter the venv will be built from (so a sudoers rule that refuses
+# shells still covers it). Prints ``RSPF<TAB>key<TAB>value`` lines; never
+# changes anything. Python 3.6-compatible: an older interpreter must still
+# report its version so the verdict can say "too old".
 PREFLIGHT_SCRIPT = r"""
-cd / 2>/dev/null
-py=$1; dest=$2
-out() { printf 'RSPF\t%s\t%s\n' "$1" "$2"; }
-out user "$(id -un 2>/dev/null)"
-if [ -f "$py" ] && [ -x "$py" ]; then
-  out python_version "$("$py" -c 'import sys;print("%d.%d.%d" % sys.version_info[:3])' 2>/dev/null)"
-  if "$py" -c 'import venv, ensurepip' >/dev/null 2>&1; then out venv ok; else out venv missing; fi
-else
-  out python_version ""
-  out venv missing
-fi
-if [ -L "$dest" ]; then
-  out dest symlink
-elif [ -e "$dest" ] && [ ! -d "$dest" ]; then
-  out dest file
-elif [ -d "$dest" ]; then
-  extra=$(ls -A "$dest" 2>/dev/null | grep -vx logs | head -n 1)
-  if [ -n "$extra" ]; then out dest notempty
-  elif [ -d "$dest/logs" ]; then out dest logs_only
-  else out dest empty
-  fi
-else
-  out dest absent
-fi
-a=$dest
-while [ ! -e "$a" ] && [ "$a" != "/" ]; do a=$(dirname "$a"); done
-if [ -d "$dest" ]; then a=$dest; fi
-out ancestor "$a"
-if [ -w "$a" ]; then out writable yes; else out writable no; fi
+import os, sys
+os.chdir("/")
+dest = sys.argv[1]
+def out(k, v):
+    sys.stdout.write("RSPF\t%s\t%s\n" % (k, v))
+try:
+    import pwd
+    out("user", pwd.getpwuid(os.geteuid()).pw_name)
+except (ImportError, KeyError):
+    out("user", "")
+out("python_version", "%d.%d.%d" % tuple(sys.version_info[:3]))
+try:
+    import venv, ensurepip
+    out("venv", "ok")
+except ImportError:
+    out("venv", "missing")
+if os.path.islink(dest):
+    out("dest", "symlink")
+elif os.path.exists(dest) and not os.path.isdir(dest):
+    out("dest", "file")
+elif os.path.isdir(dest):
+    try:
+        names = os.listdir(dest)
+    except OSError:
+        names = []
+    if [n for n in names if n != "logs"]:
+        out("dest", "notempty")
+    elif os.path.isdir(os.path.join(dest, "logs")):
+        out("dest", "logs_only")
+    else:
+        out("dest", "empty")
+else:
+    out("dest", "absent")
+a = dest
+while not os.path.exists(a) and a != "/":
+    a = os.path.dirname(a)
+out("ancestor", a)
+out("writable", "yes" if os.access(a, os.W_OK) else "no")
 """
 
 
+def _py_argv(python: str, script: str, *args: str) -> list[str]:
+    """Run ``script`` on ``python``: isolated (``-I``: no PYTHON* env, no user
+    site, no cwd on the path) and without ``site`` (``-S``), stdlib only.
+    Escalated steps run this way rather than through ``sh -c``, the way runspec
+    0.70.0's env prelude does, so a sudoers rule that refuses shells for the
+    run-as account still lets the console provision as it."""
+    return [python, "-I", "-S", "-c", script, *args]
+
+
 def preflight_argv(python: str, dest: str) -> list[str]:
-    return ["sh", "-c", PREFLIGHT_SCRIPT, "sh", python, dest]
+    return _py_argv(python, PREFLIGHT_SCRIPT, dest)
 
 
 def parse_preflight(text: str) -> dict[str, str]:
@@ -480,82 +507,144 @@ def parse_root_check(text: str) -> str:
     return "no"
 
 
-# ``sh -c HANDOFF_SCRIPT sh <dest> <owner>`` as root: make the venv folder (and
-# any missing parents, root-owned 755) and give just that folder to the owner,
-# so the rest of the build runs as the owner. Refuses a symlink, a non-directory
-# and a folder that already holds anything — it only ever chowns an empty dir.
+# ``<python> -I -S -c HANDOFF_SCRIPT <dest> <owner>`` as root: make the venv
+# folder (and any missing parents, root-owned 755) and give just that folder to
+# the owner, so the rest of the build runs as the owner. Refuses a symlink, a
+# non-directory and a folder that already holds anything — it only ever chowns
+# an empty dir.
 HANDOFF_SCRIPT = r"""
-cd / || exit 64
-dest=$1; owner=$2
-refuse() { echo "refused: $1"; exit 64; }
-case "$dest" in /*) ;; *) refuse "$dest is not an absolute path" ;; esac
-[ -L "$dest" ] && refuse "$dest is a symlink"
-if [ -e "$dest" ]; then
-  [ -d "$dest" ] || refuse "$dest is not a directory"
-  [ -z "$(ls -A "$dest" 2>/dev/null)" ] || refuse "$dest is not empty"
-fi
-group=$(id -gn "$owner" 2>/dev/null) || refuse "no such user: $owner"
-umask 022
-mkdir -p "$dest" || exit 1
-[ -L "$dest" ] && refuse "$dest is a symlink"
-chown "$owner:$group" "$dest" || exit 1
-chmod 0755 "$dest" || exit 1
-echo "created $dest for $owner"
+import os, sys
+os.chdir("/")
+dest, owner = sys.argv[1], sys.argv[2]
+def refuse(msg):
+    print("refused: " + msg)
+    sys.exit(64)
+if not dest.startswith("/"):
+    refuse(dest + " is not an absolute path")
+if os.path.islink(dest):
+    refuse(dest + " is a symlink")
+if os.path.exists(dest):
+    if not os.path.isdir(dest):
+        refuse(dest + " is not a directory")
+    if os.listdir(dest):
+        refuse(dest + " is not empty")
+import pwd
+try:
+    pw = pwd.getpwnam(owner)
+except KeyError:
+    refuse("no such user: " + owner)
+os.umask(0o022)
+if not os.path.isdir(dest):
+    os.makedirs(dest)
+if os.path.islink(dest):
+    refuse(dest + " is a symlink")
+os.chown(dest, pw.pw_uid, pw.pw_gid)
+os.chmod(dest, 0o755)
+print("created %s for %s" % (dest, owner))
 """
 
 
-# ``sh -c CLEANUP_SCRIPT sh <dest> <mode>`` after a failed provision, as the
-# account that made the folder (root when the folder step ran, else the run-as
-# account). Undoes only what this provision made, from the preflight's view of
-# the folder: ``all`` (it was absent) removes the folder, ``folder`` (it was
-# empty) empties it, ``logs`` (only a kept logs/) removes everything but logs/.
-# Missing parents that ``mkdir -p`` made stay. Re-checks the path on the host.
-CLEANUP_SCRIPT = r"""
-cd / || exit 64
-d=$1; mode=$2
-refuse() { echo "refused: $1"; exit 64; }
-case "$d" in /*) ;; *) refuse "$d is not an absolute path" ;; esac
-case "$d" in */) refuse "trailing slash" ;; esac
-[ -L "$d" ] && refuse "$d is a symlink"
-[ -e "$d" ] || { echo "nothing to remove at $d"; exit 0; }
-[ -d "$d" ] || refuse "$d is not a directory"
-real=$(cd "$d" && pwd -P) || refuse "cannot resolve $d"
-[ "$real" = "$d" ] || refuse "$d resolves to $real"
-case "$mode" in
-  all) rm -rf -- "$d" && echo "removed $d" ;;
-  folder) find "$d" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + && echo "emptied $d" ;;
-  logs) find "$d" -mindepth 1 -maxdepth 1 ! -name logs -exec rm -rf -- {} + \
-    && echo "removed the venv from $d (kept $d/logs)" ;;
-  *) refuse "unknown mode $mode" ;;
-esac
+# Shared by CLEANUP_SCRIPT and REMOVE_SCRIPT: ``rm -rf`` of one entry, never
+# following a symlink (a link is unlinked, not its target emptied).
+_RM_PY = r"""
+import shutil, stat
+def rm(p):
+    if stat.S_ISDIR(os.lstat(p).st_mode):
+        shutil.rmtree(p)
+    else:
+        os.unlink(p)
+def rm_children(d, keep=()):
+    for n in os.listdir(d):
+        if n not in keep:
+            rm(os.path.join(d, n))
 """
+
+# Shared guard: an absolute, normalised, non-symlink directory that resolves to
+# itself (no symlinked parent). The script defines ``refuse`` first.
+_DIR_GUARD_PY = r"""
+if not d.startswith("/"):
+    refuse(d + " is not an absolute path")
+if d.endswith("/"):
+    refuse("trailing slash")
+if os.path.islink(d):
+    refuse(d + " is a symlink")
+"""
+_DIR_RESOLVE_PY = r"""
+if not os.path.isdir(d):
+    refuse(d + " is not a directory")
+real = os.path.realpath(d)
+if real != d:
+    refuse("%s resolves to %s" % (d, real))
+"""
+
+
+# ``<python> -I -S -c CLEANUP_SCRIPT <dest> <mode>`` after a failed provision,
+# as the account that made the folder (root when the folder step ran, else the
+# run-as account). Undoes only what this provision made, from the preflight's
+# view of the folder: ``all`` (it was absent) removes the folder, ``folder`` (it
+# was empty) empties it, ``logs`` (only a kept logs/) removes everything but
+# logs/. Missing parents that the create step made stay. Re-checks the path on
+# the host.
+CLEANUP_SCRIPT = (
+    r"""
+import os, sys
+os.chdir("/")
+d, mode = sys.argv[1], sys.argv[2]
+def refuse(msg):
+    print("refused: " + msg)
+    sys.exit(64)
+"""
+    + _DIR_GUARD_PY
+    + r"""
+if not os.path.lexists(d):
+    print("nothing to remove at " + d)
+    sys.exit(0)
+"""
+    + _DIR_RESOLVE_PY
+    + _RM_PY
+    + r"""
+if mode == "all":
+    rm(d)
+    print("removed " + d)
+elif mode == "folder":
+    rm_children(d)
+    print("emptied " + d)
+elif mode == "logs":
+    rm_children(d, keep=("logs",))
+    print("removed the venv from %s (kept %s/logs)" % (d, d))
+else:
+    refuse("unknown mode " + mode)
+"""
+)
 
 _CLEANUP_MODES = {"absent": "all", "empty": "folder", "logs_only": "logs"}
 
 
-def cleanup_argv(dest: str, before: str) -> list[str]:
-    """Undo a failed provision at ``dest``. ``before`` is the preflight's
-    ``dest`` fact; any other state wasn't ours to build in, so it raises."""
+def cleanup_argv(python: str, dest: str, before: str) -> list[str]:
+    """Undo a failed provision at ``dest`` (run on ``python``, the interpreter
+    the venv was being built from). ``before`` is the preflight's ``dest``
+    fact; any other state wasn't ours to build in, so it raises."""
     mode = _CLEANUP_MODES.get(before)
     if not mode:
         raise ProvisionError(f"Not cleaning up {dest}: it held {before!r} before.")
     check_removable(dest)
-    return ["sh", "-c", CLEANUP_SCRIPT, "sh", dest, mode]
+    return _py_argv(python, CLEANUP_SCRIPT, dest, mode)
 
 
-def handoff_argv(dest: str, owner: str) -> list[str]:
+def handoff_argv(python: str, dest: str, owner: str) -> list[str]:
     owner = validate_user(owner)
     if not owner:
         raise ProvisionError("No account to hand the venv folder to.")
-    return ["sh", "-c", HANDOFF_SCRIPT, "sh", dest, owner]
+    return _py_argv(python, HANDOFF_SCRIPT, dest, owner)
 
 
 # --------------------------------------------------------------------------- #
 # Create / install / inbox / verify
 # --------------------------------------------------------------------------- #
 
-# ``sh -c CREATE_SCRIPT sh <python> <dest>`` as the run-as account. The recipe
-# the removed create-venv runnable used: always --symlinks, then the tree is
+# ``<python> -I -S -c CREATE_SCRIPT <python> <dest>`` as the run-as account.
+# The recipe the removed create-venv runnable used: always --symlinks (via the
+# interpreter path as given, so the venv's home matches it), then the tree is
 # normalised to u=rwX,go=rX (sudo -n -u <svc> often lands at umask 027, which
 # would leave the venv 750 and lock other consoles out). A kept logs/ folder is
 # pruned from the chmod so its inbox keeps its mode, and symlinks are skipped:
@@ -563,20 +652,38 @@ def handoff_argv(dest: str, owner: str) -> list[str]:
 # service account, and never ours to change; ``chmod -R`` skips them too).
 # ``logs share --inbox`` (a later step) sets up / repairs logs/ itself.
 CREATE_SCRIPT = r"""
-set -e
-cd /
-py=$1; dest=$2
-umask 022
-mkdir -p "$dest"
-"$py" -m venv --symlinks "$dest"
-find "$dest" -path "$dest/logs" -prune -o ! -type l -exec chmod u=rwX,go=rX {} +
-mkdir -p "$dest/logs"
-echo "created $dest"
+import os, stat, subprocess, sys
+os.chdir("/")
+py, dest = sys.argv[1], sys.argv[2]
+os.umask(0o022)
+if not os.path.isdir(dest):
+    os.makedirs(dest)
+rc = subprocess.call([py, "-m", "venv", "--symlinks", dest])
+if rc:
+    sys.exit(rc)
+def norm(p):
+    st = os.lstat(p)
+    if stat.S_ISLNK(st.st_mode):
+        return
+    is_dir = stat.S_ISDIR(st.st_mode)
+    x = 0o111 if is_dir or st.st_mode & 0o111 else 0
+    keep = st.st_mode & 0o7000 if is_dir else 0
+    os.chmod(p, keep | 0o644 | x)
+norm(dest)
+for top, dirs, files in os.walk(dest):
+    if top == dest and "logs" in dirs:
+        dirs.remove("logs")
+    for n in dirs + files:
+        norm(os.path.join(top, n))
+logs = os.path.join(dest, "logs")
+if not os.path.isdir(logs):
+    os.mkdir(logs)
+print("created " + dest)
 """
 
 
 def create_argv(python: str, dest: str) -> list[str]:
-    return ["sh", "-c", CREATE_SCRIPT, "sh", python, dest]
+    return _py_argv(python, CREATE_SCRIPT, python, dest)
 
 
 def pip_upgrade_argv(dest: str) -> list[str]:
@@ -712,34 +819,56 @@ else out kind other
 fi
 out owner "$(stat -c %U "$r" 2>/dev/null || stat -f %Su "$r" 2>/dev/null)"
 out user "$(id -un 2>/dev/null)"
+if [ -x "$r/bin/python" ]; then out python "$r/bin/python"
+else out python "$(command -v python3 2>/dev/null)"
+fi
 out size_kb "$(du -sk "$r" 2>/dev/null | cut -f1)"
 if [ -d "$r/logs" ]; then out logs_kb "$(du -sk "$r/logs" 2>/dev/null | cut -f1)"; else out logs_kb 0; fi
 """
 
-# ``sh -c REMOVE_SCRIPT sh <root> <keep_logs 1|0>`` as the venv owner. Re-checks
+# ``<python> -I -S -c REMOVE_SCRIPT <root> <keep_logs 1|0>`` as the venv owner,
+# on the venv's own ``bin/python`` (the inspect step's ``python`` fact). Re-checks
 # every guard on the host in the same command as the delete, so the check and
 # the rm can't diverge (a swapped-in symlink, a path that stopped being a venv).
-REMOVE_SCRIPT = r"""
-cd / || exit 64
-r=$1; keep=$2
-refuse() { echo "refused: $1"; exit 64; }
-case "$r" in /*) ;; *) refuse "not an absolute path";; esac
-case "$r" in */) refuse "trailing slash";; esac
-[ -L "$r" ] && refuse "$r is a symlink"
-[ -d "$r" ] || refuse "$r does not exist"
-real=$(cd "$r" && pwd -P) || refuse "cannot resolve $r"
-[ "$real" = "$r" ] || refuse "$r resolves to $real"
-[ -f "$r/pyvenv.cfg" ] || refuse "$r has no pyvenv.cfg (not a venv)"
-[ -e "$r/bin/runspec" ] || refuse "$r has no bin/runspec"
-[ "$r" = "$HOME" ] && refuse "$r is the home directory"
-if [ "$keep" = 1 ]; then
-  find "$r" -mindepth 1 -maxdepth 1 ! -name logs -exec rm -rf -- {} +
-  echo "removed $r (kept $r/logs)"
-else
-  rm -rf -- "$r"
-  echo "removed $r"
-fi
+REMOVE_SCRIPT = (
+    r"""
+import os, sys
+os.chdir("/")
+d, keep = sys.argv[1], sys.argv[2]
+def refuse(msg):
+    print("refused: " + msg)
+    sys.exit(64)
 """
+    + _DIR_GUARD_PY
+    + r"""
+if not os.path.isdir(d):
+    refuse(d + " does not exist")
+"""
+    + _DIR_RESOLVE_PY
+    + r"""
+if not os.path.isfile(os.path.join(d, "pyvenv.cfg")):
+    refuse(d + " has no pyvenv.cfg (not a venv)")
+if not os.path.exists(os.path.join(d, "bin", "runspec")):
+    refuse(d + " has no bin/runspec")
+homes = set([os.environ.get("HOME", "")])
+try:
+    import pwd
+    homes.add(pwd.getpwuid(os.geteuid()).pw_dir)
+except (ImportError, KeyError):
+    pass
+if d in homes:
+    refuse(d + " is the home directory")
+"""
+    + _RM_PY
+    + r"""
+if keep == "1":
+    rm_children(d, keep=("logs",))
+    print("removed %s (kept %s/logs)" % (d, d))
+else:
+    rm(d)
+    print("removed " + d)
+"""
+)
 
 
 def inspect_argv(root: str) -> list[str]:
@@ -763,9 +892,14 @@ def check_removable(root: str) -> str:
     return norm
 
 
-def remove_argv(root: str, *, keep_logs: bool) -> list[str]:
+def remove_argv(python: str, root: str, *, keep_logs: bool) -> list[str]:
+    """Delete the venv at ``root`` on ``python`` — the venv's own interpreter
+    (from :func:`parse_inspect`), which a sudoers rule scoped to the venv's
+    ``bin/`` also allows."""
     check_removable(root)
-    return ["sh", "-c", REMOVE_SCRIPT, "sh", root, "1" if keep_logs else "0"]
+    if not (python or "").startswith("/"):
+        raise ProvisionError(f"No Python found on the host to remove {root} with.")
+    return _py_argv(python, REMOVE_SCRIPT, root, "1" if keep_logs else "0")
 
 
 def venv_name(root: str) -> str:
@@ -853,6 +987,7 @@ _SCRIPT_LINES = frozenset(
         PREFLIGHT_SCRIPT,
         ROOT_CHECK_SCRIPT,
         HANDOFF_SCRIPT,
+        CLEANUP_SCRIPT,
         CREATE_SCRIPT,
         INSPECT_SCRIPT,
         REMOVE_SCRIPT,
@@ -864,6 +999,13 @@ _SCRIPT_LINES = frozenset(
 
 def _echoes_script(line: str) -> bool:
     return line.strip() in _SCRIPT_LINES
+
+
+def _refused_program(text: str) -> str:
+    """The program sudo refused, from ``… not allowed to execute '<prog> …'``
+    (``"that command"`` when it can't be read)."""
+    m = re.search(r"not allowed to execute '([^' \t\n]+)", text or "")
+    return m.group(1) if m else "that command"
 
 
 def failure_text(
@@ -883,10 +1025,12 @@ def failure_text(
     method = (become_method or "sudo").strip().lower()
     if run_as and method != "su":
         if "is not allowed to execute" in low:
+            prog = _refused_program(raw)
             return (
-                f"sudo refused: the SSH login isn't allowed to run sh as {who} "
-                f"(provisioning runs sh scripts as the run-as account). Allow "
-                f"it in sudoers, or set Run as to an account the login can use."
+                f"sudo refused: the SSH login isn't allowed to run {prog} as "
+                f"{who} (provisioning runs the chosen Python as the run-as "
+                f"account). Allow it in sudoers, or set Run as to an account "
+                f"the login can use."
             )
         if "not in the sudoers file" in low or "may not run sudo" in low:
             return (
