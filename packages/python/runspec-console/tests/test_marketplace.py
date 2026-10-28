@@ -859,3 +859,44 @@ def test_summarize_pip_output_keeps_the_verdict_lines():
         mp.summarize_pip_output(out)
         == "Installing collected packages: runspec-linux\nSuccessfully installed runspec-linux-0.13.2"
     )
+
+
+def test_outdated_packages_compares_normalised_names_and_skips_failed_probes():
+    entries = [
+        {"name": "runspec-acme", "version": "1.2.0"},
+        {"name": "runspec-beta", "version": "2.0"},
+        {"name": "runspec-gone", "version": ""},
+    ]
+    targets = [
+        {
+            "id": "a",
+            "host": "web-01",
+            "venv": "ops",
+            "ok": True,
+            "dists": {"runspec_acme": "1.1.0", "runspec-beta": "2.0"},
+        },
+        {
+            "id": "b",
+            "host": "web-02",
+            "venv": "ops",
+            "ok": True,
+            "dists": {"runspec-beta": "2.1"},
+        },
+        {
+            "id": "c",
+            "host": "db-01",
+            "venv": "db",
+            "ok": False,
+            "dists": {"runspec-acme": "0.1"},
+        },
+    ]
+    out = mp.outdated_packages(entries, targets)
+    assert out == [
+        {
+            "name": "runspec-acme",
+            "latest": "1.2.0",
+            "targets": [
+                {"id": "a", "host": "web-01", "venv": "ops", "installed": "1.1.0"}
+            ],
+        }
+    ]

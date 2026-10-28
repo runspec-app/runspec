@@ -67,6 +67,50 @@ export function targetStates(entry: MarketplaceEntry, installed: MarketplaceInst
 
 export type ScopeFilter = 'all' | 'installed' | 'updates' | 'available'
 
+/** The search box split into free text and `host:` / `group:` tokens. */
+export interface ParsedSearch {
+  text: string
+  hosts: string[]
+  groups: string[]
+}
+
+export function parseSearch(q: string): ParsedSearch {
+  const out: ParsedSearch = { text: '', hosts: [], groups: [] }
+  const words: string[] = []
+  for (const w of (q || '').trim().split(/\s+/)) {
+    const m = /^(host|group):(.*)$/i.exec(w)
+    if (!m) { if (w) words.push(w); continue }
+    const v = m[2].trim().toLowerCase()
+    if (!v) continue  // "host:" while still typing — no filter yet
+    if (m[1].toLowerCase() === 'host') out.hosts.push(v)
+    else out.groups.push(v)
+  }
+  out.text = words.join(' ')
+  return out
+}
+
+/** Which venvs a `host:` / `group:` search keeps, or null when it names none.
+ *  Each value is a case-insensitive substring (`host:web` = web-01, web-02);
+ *  several of one kind are OR'd, host and group together are AND'd. */
+export function targetFilter(
+  p: ParsedSearch,
+  groupOf: (host: string) => string | undefined,
+): ((t: MarketplaceInstalledTarget) => boolean) | null {
+  if (!p.hosts.length && !p.groups.length) return null
+  return t => {
+    const host = t.host.toLowerCase()
+    if (p.hosts.length && !p.hosts.some(h => host.includes(h))) return false
+    const group = (groupOf(t.host) || '').toLowerCase()
+    if (p.groups.length && !(group && p.groups.some(g => group.includes(g)))) return false
+    return true
+  }
+}
+
+/** How many packages have an update on at least one of the given venvs. */
+export function countUpdates(entries: MarketplaceEntry[], states: (e: MarketplaceEntry) => TargetState[]): number {
+  return entries.filter(e => states(e).some(s => s.state === 'outdated')).length
+}
+
 export function searchMatch(e: MarketplaceEntry, q: string): boolean {
   const s = q.trim().toLowerCase()
   if (!s) return true
@@ -112,9 +156,10 @@ const INSTALL_CHIPS_MAX_H = 96  // ~4 rows of chips, then scroll
 
 // ── cards ──────────────────────────────────────────────────────────────────
 
-function PackageCard({ entry, states, running, onInstall, onUninstall, onDetails, onOpenOp }: {
+function PackageCard({ entry, states, filtered, running, onInstall, onUninstall, onDetails, onOpenOp }: {
   entry: MarketplaceEntry
   states: TargetState[]
+  filtered?: boolean  // states are narrowed by a host:/group: search
   running?: MarketplaceOpRecord[]
   onOpenOp?: (op: string) => void
   onInstall: () => void
@@ -180,7 +225,7 @@ function PackageCard({ entry, states, running, onInstall, onUninstall, onDetails
       )}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 2 }}>
         {installedRows.length === 0 ? (
-          <Text style={{ fontSize: 11, color: textMuted(isDark) }}>Not installed on any venv</Text>
+          <Text style={{ fontSize: 11, color: textMuted(isDark) }}>{filtered ? 'Not installed on the filtered hosts' : 'Not installed on any venv'}</Text>
         ) : (
           <>
             {installedRows.length > INSTALL_CHIPS_SCROLL_AT && (
@@ -278,10 +323,13 @@ export function defaultRunAs(t: MarketplaceInstalledTarget): string {
 /** Pick the venvs + options, start the op, hand its id back. The op then runs
  *  in the background: the picker closes and the activity view follows it, so
  *  the operator can start the next one without waiting. */
-function OpModal({ entry, action, states, onClose, onStarted }: {
+function OpModal({ entry, action, states, focus, onClose, onStarted }: {
   entry: MarketplaceEntry
   action: 'install' | 'uninstall'
   states: TargetState[]
+  // A host:/group: search in force: only its venvs start ticked (the rest are
+  // still listed, so widening the pick is one click).
+  focus?: ((t: MarketplaceInstalledTarget) => boolean) | null
   onClose: () => void
   onStarted: (op: string) => void
 }) {
@@ -294,7 +342,9 @@ function OpModal({ entry, action, states, onClose, onStarted }: {
   const [choice, setChoice] = useState<Record<string, RowChoice>>(() => {
     const init: Record<string, RowChoice> = {}
     for (const s of eligible) {
-      const preselect = action === 'uninstall' ? true : s.state === 'outdated' || (s.state === 'absent' && !states.some(x => x.installed))
+      const inFocus = !focus || focus(s.target)
+      const pool = focus ? states.filter(x => focus(x.target)) : states
+      const preselect = inFocus && (action === 'uninstall' ? true : s.state === 'outdated' || (s.state === 'absent' && !pool.some(x => x.installed)))
       init[s.target.id] = { checked: preselect, run_as: defaultRunAs(s.target), become_method: 'sudo' }
     }
     return init
@@ -703,10 +753,32 @@ export function MarketplaceView({ hosts, onOpenSettings, activeProfile }: { host
     }
   }, [probe])
 
-  const statesFor = useCallback((e: MarketplaceEntry) => targetStates(e, installed), [installed])
-  const entries = catalog?.entries ?? []
-  const filtered = useMemo(() => filterEntries(entries, { search, repo, scope }, statesFor), [entries, search, repo, scope, statesFor])
-  const updates = useMemo(() => entries.filter(e => statesFor(e).some(s => s.state === 'outdated')).length, [entries, statesFor])
+  // `host:` / `group:` in the search box narrow the venvs every card, count and
+  // scope looks at; the rest of the search still matches package fields.
+  const parsed = useMemo(() => parseSearch(search), [search])
+  const groupOf = useMemo(() => {
+    const m = new Map(hosts.map(h => [h.name, h.group || '']))
+    return (host: string) => m.get(host)
+  }, [hosts])
+  const venvFilter = useMemo(() => targetFilter(parsed, groupOf), [parsed, groupOf])
+  const allStatesFor = useCallback((e: MarketplaceEntry) => targetStates(e, installed), [installed])
+  const statesFor = useCallback(
+    (e: MarketplaceEntry) => (venvFilter ? allStatesFor(e).filter(s => venvFilter(s.target)) : allStatesFor(e)),
+    [allStatesFor, venvFilter],
+  )
+  const entries = useMemo(() => catalog?.entries ?? [], [catalog])
+  const filtered = useMemo(() => filterEntries(entries, { search: parsed.text, repo, scope }, statesFor), [entries, parsed.text, repo, scope, statesFor])
+  const updates = useMemo(() => countUpdates(entries, statesFor), [entries, statesFor])
+  const matchedVenvs = useMemo(
+    () => (venvFilter && installed ? installed.targets.filter(venvFilter) : null),
+    [venvFilter, installed],
+  )
+  // Keep the Marketplace tab badge in step with what the cards show (fleet-wide,
+  // whatever the search).
+  useEffect(() => {
+    if (!installed || !catalog) return
+    window.dispatchEvent(new CustomEvent('runspec:marketplace_updates', { detail: { count: countUpdates(entries, allStatesFor) } }))
+  }, [installed, catalog, entries, allStatesFor])
 
   const refreshAll = () => { loadCatalog(true); probe(true) }
   const onOpStarted = useCallback((op: string) => {
@@ -727,7 +799,9 @@ export function MarketplaceView({ hosts, onOpenSettings, activeProfile }: { host
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div style={{ marginBottom: 12, flexShrink: 0, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-        <Input prefix={<SearchOutlined />} placeholder="Search name, summary, keywords…" value={search} onChange={e => setSearch(e.target.value)} allowClear style={{ maxWidth: 320 }} />
+        <Tooltip title="Matches name, summary and keywords. host:<name> or group:<name> limits the install state, counts and Installed / Updates to those hosts' venvs (part of a name is enough).">
+          <Input prefix={<SearchOutlined />} placeholder="Search packages, or host:<name>…" value={search} onChange={e => setSearch(e.target.value)} allowClear style={{ maxWidth: 320 }} />
+        </Tooltip>
         <Select value={repo} onChange={setRepo} style={{ minWidth: 160 }}
           options={[{ value: '', label: 'All repos' }, ...(catalog?.repos ?? []).map(r => ({ value: r.id, label: `${r.name} (${r.count})` }))]} />
         <Segmented value={scope} onChange={v => setScope(v as ScopeFilter)}
@@ -752,6 +826,20 @@ export function MarketplaceView({ hosts, onOpenSettings, activeProfile }: { host
           </Tooltip>
         ))}
         {installed && <span>venvs probed {ago(installed.probed_at)} · {installed.targets.filter(t => t.ok).length}/{installed.targets.length} reachable</span>}
+        {matchedVenvs && (
+          <Tooltip title={matchedVenvs.length ? matchedVenvs.map(t => `${t.host}/${t.venv}`).join(', ') : 'No probed venv is on a matching host. Hosts outside the active profile, or not connected, are not probed.'}>
+            <Tag color={matchedVenvs.length ? 'blue' : 'red'} closable onClose={() => setSearch(parsed.text)} style={{ fontSize: 11, margin: 0 }}>
+              {[...parsed.hosts.map(h => `host:${h}`), ...parsed.groups.map(g => `group:${g}`)].join(' ')} · {matchedVenvs.length} venv{matchedVenvs.length === 1 ? '' : 's'}
+            </Tag>
+          </Tooltip>
+        )}
+        {updates > 0 && scope !== 'updates' && (
+          <Tooltip title="Show only packages with a newer version than a venv has">
+            <Tag color="orange" style={{ fontSize: 11, margin: 0, cursor: 'pointer' }} onClick={() => setScope('updates')}>
+              ↑ {updates} update{updates === 1 ? '' : 's'} available
+            </Tag>
+          </Tooltip>
+        )}
         {activeProfile && (
           <Tooltip title={`Install state covers only the venvs in the active host profile "${activeProfile}". A runnable installed on a host outside this profile shows as "not installed" until you switch to a profile that includes it (or pick "All hosts").`}>
             <Tag style={{ fontSize: 11, margin: 0 }}>profile: {activeProfile}</Tag>
@@ -786,13 +874,16 @@ export function MarketplaceView({ hosts, onOpenSettings, activeProfile }: { host
           <div style={{ textAlign: 'center' }}>
             <AppstoreAddOutlined style={{ fontSize: 32, marginBottom: 12, display: 'block' }} />
             <Text type="secondary">{entries.length === 0 ? 'No runnable packages found in the configured indexes.' : 'Nothing matches the current filter.'}</Text>
+            {entries.length > 0 && !venvFilter && parsed.text && hosts.some(h => parsed.text.toLowerCase().split(/\s+/).includes(h.name.toLowerCase())) && (
+              <Text type="secondary" style={{ display: 'block', fontSize: 12, marginTop: 4 }}>To filter by a host, type <code>host:{parsed.text.split(/\s+/).find(w => hosts.some(h => h.name.toLowerCase() === w.toLowerCase()))}</code>.</Text>
+            )}
           </div>
         </div>
       ) : (
         <div style={{ flex: 1, overflowY: 'auto' }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 10 }}>
             {filtered.map(e => (
-              <PackageCard key={`${e.repo}/${e.name}`} entry={e} states={statesFor(e)}
+              <PackageCard key={`${e.repo}/${e.name}`} entry={e} states={statesFor(e)} filtered={!!venvFilter}
                 running={runningByPackage.get(e.name.toLowerCase())} onOpenOp={setViewOp}
                 onInstall={() => setOpFor({ entry: e, action: 'install' })}
                 onUninstall={() => setOpFor({ entry: e, action: 'uninstall' })}
@@ -804,7 +895,7 @@ export function MarketplaceView({ hosts, onOpenSettings, activeProfile }: { host
 
       <DetailsModal entry={details} onClose={() => setDetails(null)} />
       {opFor && (
-        <OpModal entry={opFor.entry} action={opFor.action} states={statesFor(opFor.entry)}
+        <OpModal entry={opFor.entry} action={opFor.action} states={allStatesFor(opFor.entry)} focus={venvFilter}
           onClose={() => setOpFor(null)} onStarted={onOpStarted} />
       )}
       {activityOpen && (

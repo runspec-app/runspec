@@ -3188,6 +3188,7 @@ export function MarketplaceTab() {
         enabled: cfg.enabled, auto_pip: cfg.auto_pip, patterns: cfg.patterns, exclude: cfg.exclude,
         hide: cfg.hide,
         require_runspec: cfg.require_runspec, include_prerelease: cfg.include_prerelease, cache_ttl: cfg.cache_ttl,
+        update_check: cfg.update_check,
         timeout: cfg.timeout, ca_bundle: cfg.ca_bundle, tls_verify: cfg.tls_verify,
         repos: cfg.declared_repos,
         ...patch,
@@ -3271,6 +3272,15 @@ export function MarketplaceTab() {
           </Space.Compact>
           <Button size="small" onClick={clearCache}>Clear catalogue cache</Button>
         </span>
+        <Tooltip title="How often the console checks the connected venvs for outdated packages in the background, for the update count on the Marketplace tab. It reads the cached catalogue only (no index fetch). 0 = check only while the tab is open.">
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+            <span>Check for updates every</span>
+            <Space.Compact size="small">
+              <InputNumber size="small" min={0} step={15} value={cfg.update_check} onChange={v => { if (v !== null) persist({ update_check: v }) }} style={{ width: 80 }} aria-label="update check minutes" />
+              <Space.Addon>min</Space.Addon>
+            </Space.Compact>
+          </span>
+        </Tooltip>
       </Space>
 
       <div style={{ marginTop: 12, marginBottom: 4, maxWidth: 620 }}>

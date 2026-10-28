@@ -353,6 +353,11 @@ export default function App() {
   // Schedules badge: how many schedule runs are currently in flight (mirrors the
   // Triggers badge). Lives here, not in SchedulesView, since that view unmounts.
   const [scheduleRunning, setScheduleRunning] = useState(0)
+  // Marketplace badge: how many packages some connected venv has an update for.
+  // Lives here so it shows from any tab; the open Marketplace view pushes its own
+  // count (runspec:marketplace_updates) so the two never disagree.
+  const [marketplaceUpdates, setMarketplaceUpdates] = useState(0)
+  const [marketplaceCheckMin, setMarketplaceCheckMin] = useState(0)
   const inFlight = useInFlight()
   // Loop the gentle "waiting" ping while an attention badge needs the operator
   // (Triggers approvals / queue callers, or any live Approve/Deny card).
@@ -865,6 +870,49 @@ export default function App() {
     return () => window.removeEventListener('runspec:schedule_card', onCard)
   }, [])
 
+  // Marketplace update badge. The backend reads the cached catalogue only (never
+  // an index fetch) and re-probes the connected venvs when its probe is stale;
+  // the first probe waits a minute so the fleet has connected.
+  useEffect(() => {
+    let alive = true
+    const check = (probe: boolean) => {
+      bridge.marketplace_updates(probe).then(r => {
+        if (!alive) return
+        setMarketplaceUpdates(r.enabled ? r.count : 0)
+        setMarketplaceCheckMin(r.enabled ? r.update_check : 0)
+      }).catch(() => { /* an older backend: no badge */ })
+    }
+    check(false)
+    const first = window.setTimeout(() => check(true), 60_000)
+    const onPush = (e: Event) => {
+      const n = (e as CustomEvent).detail?.count
+      if (typeof n === 'number') setMarketplaceUpdates(n)
+    }
+    // An install/uninstall finished: the open Marketplace view re-probes and
+    // pushes its count; otherwise re-check here.
+    const onDone = () => { if (viewRef.current !== 'marketplace') check(true) }
+    const onCfg = () => check(false)
+    window.addEventListener('runspec:marketplace_updates', onPush)
+    window.addEventListener('runspec:marketplace_done', onDone)
+    window.addEventListener('runspec:marketplace_config_changed', onCfg)
+    return () => {
+      alive = false
+      window.clearTimeout(first)
+      window.removeEventListener('runspec:marketplace_updates', onPush)
+      window.removeEventListener('runspec:marketplace_done', onDone)
+      window.removeEventListener('runspec:marketplace_config_changed', onCfg)
+    }
+  }, [])
+  useEffect(() => {
+    if (!marketplaceCheckMin) return
+    const id = window.setInterval(() => {
+      // The open view runs its own probes; don't double the SSH fan-out.
+      if (viewRef.current === 'marketplace') return
+      bridge.marketplace_updates(true).then(r => setMarketplaceUpdates(r.enabled ? r.count : 0)).catch(() => {})
+    }, marketplaceCheckMin * 60_000)
+    return () => window.clearInterval(id)
+  }, [marketplaceCheckMin])
+
   // Shell chrome sits one level below the content (sunken vs base) so the
   // sidebar / tab bar / footer read as a frame around the work area.
   const sf = surfaces(isDark)
@@ -921,7 +969,13 @@ export default function App() {
     { key: 'evals'     as ViewKey, label: 'Evals',     icon: <ExperimentOutlined /> },
     { key: 'specs'     as ViewKey, label: 'Specs',     icon: <AppstoreOutlined /> },
     { key: 'forms'     as ViewKey, label: 'Forms',     icon: <FormOutlined /> },
-    { key: 'marketplace' as ViewKey, label: 'Marketplace', icon: <AppstoreAddOutlined /> },
+    {
+      key: 'marketplace' as ViewKey,
+      label: 'Marketplace',
+      icon: marketplaceUpdates > 0
+        ? <Badge count={marketplaceUpdates} size="small" offset={[2, -1]} color="gold" title={`${marketplaceUpdates} package update${marketplaceUpdates === 1 ? '' : 's'} available`}><AppstoreAddOutlined /></Badge>
+        : <AppstoreAddOutlined />,
+    },
     {
       key: 'schedules' as ViewKey,
       label: 'Schedules',

@@ -526,6 +526,10 @@ def read_marketplace() -> dict[str, Any]:
     - ``include_prerelease`` (default false): consider pre-release versions.
     - ``cache_ttl`` (seconds, default 86400): how long a fetched catalogue is
       reused before the tab re-reads the indexes (Refresh forces it).
+    - ``update_check`` (minutes, default 30): how often the console checks the
+      connected venvs for outdated packages in the background, for the
+      Marketplace tab's update badge. Uses the cached catalogue only (never an
+      index fetch); 0 = only while the tab is open.
     - ``timeout`` / ``max_index_bytes`` / ``max_wheel_bytes``: bounds on one
       index fetch (pypi.org's root listing is ~45 MB; a wheel is downloaded only
       when an index publishes no PEP 658 metadata).
@@ -560,6 +564,9 @@ def read_marketplace() -> dict[str, Any]:
         "require_runspec": bool(cfg.get("require_runspec", True)),
         "include_prerelease": bool(cfg.get("include_prerelease", False)),
         "cache_ttl": max(0.0, float(cfg.get("cache_ttl", mp.DEFAULT_CACHE_TTL_S) or 0)),
+        "update_check": max(
+            0, int(cfg.get("update_check", mp.DEFAULT_UPDATE_CHECK_MIN) or 0)
+        ),
         "timeout": max(
             1.0, float(cfg.get("timeout", mp.DEFAULT_TIMEOUT_S) or mp.DEFAULT_TIMEOUT_S)
         ),
@@ -615,6 +622,9 @@ def write_marketplace(section: dict[str, Any] | None) -> None:
         ttl = sec.get("cache_ttl")
         if ttl is not None and float(ttl) != float(mp.DEFAULT_CACHE_TTL_S):
             table["cache_ttl"] = float(ttl)
+        check = sec.get("update_check")
+        if check is not None and int(check) != mp.DEFAULT_UPDATE_CHECK_MIN:
+            table["update_check"] = max(0, int(check))
         for key, default in (
             ("timeout", mp.DEFAULT_TIMEOUT_S),
             ("max_index_bytes", mp.DEFAULT_MAX_INDEX_BYTES),

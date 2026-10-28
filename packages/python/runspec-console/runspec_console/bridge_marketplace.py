@@ -200,6 +200,41 @@ class MarketplaceMixin:
         self._marketplace_installed = result
         return result
 
+    def marketplace_updates(self, probe: bool = True) -> dict[str, Any]:
+        """Packages with an update for some probed venv — drives the Marketplace
+        tab badge: ``{enabled, count, packages: [{name, latest, targets}],
+        probed_at, update_check}``.
+
+        Reads the catalogue from the machine-local cache only (never an index
+        fetch, so a console that never opened the tab costs nothing). ``probe``
+        re-probes the connected venvs when the last probe is stale (the same
+        bounded, row-reusing probe the tab runs); false uses only what's already
+        in memory (``probed_at`` null when nothing was probed yet)."""
+        cfg = config_mod.read_marketplace()
+        if not cfg["enabled"]:
+            return {
+                "enabled": False,
+                "count": 0,
+                "packages": [],
+                "probed_at": None,
+                "update_check": cfg["update_check"],
+            }
+        with self._marketplace_lock:
+            catalog = self._read_catalog(cfg, refresh=False, cache_only=True)
+        installed = (
+            self.marketplace_installed(False) if probe else self._marketplace_installed
+        )
+        packages = mp.outdated_packages(
+            catalog["entries"], list((installed or {}).get("targets") or [])
+        )
+        return {
+            "enabled": True,
+            "count": len(packages),
+            "packages": packages,
+            "probed_at": (installed or {}).get("probed_at"),
+            "update_check": cfg["update_check"],
+        }
+
     def marketplace_install(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Start installing / updating / reinstalling a package on one or more
         targets; returns ``{op}`` immediately and streams
@@ -489,7 +524,12 @@ class MarketplaceMixin:
             except Exception:
                 pass
 
-    def _read_catalog(self, cfg: dict[str, Any], *, refresh: bool) -> dict[str, Any]:
+    def _read_catalog(
+        self, cfg: dict[str, Any], *, refresh: bool, cache_only: bool = False
+    ) -> dict[str, Any]:
+        """Assemble the catalogue. ``cache_only`` serves each repo from whatever
+        is cached (fresh or stale) and never touches the network — a repo with
+        no cache contributes nothing (the background update check uses it)."""
         cache = mp.CatalogCache(
             config_mod.marketplace_cache_path(), ttl_s=cfg["cache_ttl"]
         )
@@ -537,7 +577,11 @@ class MarketplaceMixin:
                 "stale": False,
                 "error": None,
             }
-            hit = None if refresh else cache.get(repo.simple_url, now=now)
+            hit: dict[str, Any] | None
+            if cache_only:
+                hit = cache.get_stale(repo.simple_url) or {"entries": [], "errors": []}
+            else:
+                hit = None if refresh else cache.get(repo.simple_url, now=now)
             entries: list[dict[str, Any]]
             if hit is not None:
                 entries = list(hit.get("entries") or [])

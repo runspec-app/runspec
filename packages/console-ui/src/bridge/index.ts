@@ -1877,6 +1877,7 @@ export interface MarketplaceConfig {
   require_runspec: boolean
   include_prerelease: boolean
   cache_ttl: number
+  update_check: number               // minutes between background update checks (0 = only while the tab is open)
   timeout: number
   max_index_bytes: number
   max_wheel_bytes: number
@@ -1898,6 +1899,7 @@ export interface MarketplaceConfigInput {
   require_runspec?: boolean
   include_prerelease?: boolean
   cache_ttl?: number
+  update_check?: number
   timeout?: number
   ca_bundle?: string | null
   tls_verify?: boolean
@@ -1973,6 +1975,15 @@ export interface MarketplaceInstalledTarget extends MarketplaceTarget {
 export interface MarketplaceInstalled {
   targets: MarketplaceInstalledTarget[]
   probed_at: number
+}
+
+// Packages some probed venv has at an older version (the Marketplace tab badge).
+export interface MarketplaceUpdates {
+  enabled: boolean
+  count: number
+  packages: { name: string; latest: string; targets: { id: string; host: string; venv: string; installed: string }[] }[]
+  probed_at: number | null
+  update_check: number   // minutes; 0 = no background check
 }
 
 export interface MarketplaceOpTarget {
@@ -2316,6 +2327,9 @@ export interface BridgeApi {
   marketplace_catalog: (refresh?: boolean) => Promise<MarketplaceCatalog>
   marketplace_targets: () => Promise<MarketplaceTarget[]>
   marketplace_installed: (refresh?: boolean) => Promise<MarketplaceInstalled>
+  // Outdated packages from the cached catalogue (never an index fetch); `probe`
+  // (default true) re-probes the connected venvs when the last probe is stale.
+  marketplace_updates: (probe?: boolean) => Promise<MarketplaceUpdates>
   marketplace_install: (payload: MarketplaceOpPayload) => Promise<{ op: string; targets: string[] }>
   marketplace_uninstall: (payload: MarketplaceOpPayload) => Promise<{ op: string; targets: string[] }>
   marketplace_op: (op: string) => Promise<MarketplaceOpRecord | null>

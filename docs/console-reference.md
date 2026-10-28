@@ -353,6 +353,7 @@ indexes are `[[marketplace.repos]]` tables (keys documented on that page).
 | `require_runspec` | `true` | Only list distributions that depend on `runspec` (or carry the `runspec-runnable` keyword); `false` lists every explicitly named `packages` entry regardless |
 | `include_prerelease` | `false` | Offer pre-release versions |
 | `cache_ttl` | 86400 | Seconds a fetched catalogue is reused before the indexes are re-read (Refresh forces it) |
+| `update_check` | 30 | Minutes between background checks of the connected venvs for outdated packages (the Marketplace tab badge). Reads the cached catalogue only, never an index; 0 = only while the tab is open |
 | `timeout` | 20 | Seconds before one index fetch is aborted |
 | `max_index_bytes` | 134217728 | Cap on one index page (pypi.org's root listing is ~45 MB) |
 | `max_wheel_bytes` | 20971520 | Largest wheel downloaded to read metadata when an index publishes no PEP 658 sidecar |

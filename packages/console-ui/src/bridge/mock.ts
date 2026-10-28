@@ -1026,6 +1026,7 @@ export const mockApi: BridgeApi = {
     require_runspec: true,
     include_prerelease: false,
     cache_ttl: 86400,
+    update_check: 30,
     timeout: 20,
     max_index_bytes: 134217728,
     max_wheel_bytes: 20971520,
@@ -1058,6 +1059,16 @@ export const mockApi: BridgeApi = {
     console.log('[mock] marketplace_installed', refresh)
     await new Promise(r => setTimeout(r, 300))
     return { targets: MOCK_MARKET_INSTALLED, probed_at: Date.now() / 1000 }
+  },
+  marketplace_updates: async (probe) => {
+    console.log('[mock] marketplace_updates', probe)
+    // Mock rule: an installed version that differs from the catalogue's is behind.
+    const packages = MOCK_MARKET_ENTRIES.map(e => ({
+      name: e.name, latest: e.version,
+      targets: MOCK_MARKET_INSTALLED.filter(t => t.ok && t.dists[e.name] && t.dists[e.name] !== e.version)
+        .map(t => ({ id: t.id, host: t.host, venv: t.venv, installed: t.dists[e.name] })),
+    })).filter(p => p.targets.length)
+    return { enabled: true, count: packages.length, packages, probed_at: Date.now() / 1000, update_check: 30 }
   },
   marketplace_install: async (payload) => mockMarketplaceOp('install', payload),
   marketplace_uninstall: async (payload) => mockMarketplaceOp('uninstall', payload),

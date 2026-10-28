@@ -191,6 +191,7 @@ EXPECTED = {
     "marketplace_ops",
     "marketplace_targets",
     "marketplace_uninstall",
+    "marketplace_updates",
     "mcp_credential_options",
     "mcp_install_venv",
     "mcp_reload",

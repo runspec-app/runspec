@@ -24,6 +24,25 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   is its own `service.instance.id`, and turn spans carry
   `runspec.lab.variant`/`scenario`/`sample`/`tier`.
 
+## [0.360.0] — 2026-10-28
+
+### Added
+
+- **Marketplace update badge:** the Marketplace tab shows a gold count of
+  packages that some connected venv has an older version of, visible from any
+  tab. A background check every `[marketplace] update_check` minutes (default
+  30, 0 = off; Settings → *Check for updates every*) compares the venvs with
+  the **cached** catalogue only, so it never fetches an index. New bridge
+  method `marketplace_updates(probe)` (pure helper
+  `marketplace.outdated_packages`); the open tab pushes its own count
+  (`runspec:marketplace_updates`) so the badge and the cards agree. The status
+  line also shows **↑ N updates available**, which switches to *Updates*.
+- **Marketplace host filter:** `host:<name>` / `group:<name>` in the search
+  box limit the chips, update count and *Installed* / *Updates* scopes to the
+  matching hosts' venvs (case-insensitive part of a name; several combine).
+  The status line shows how many venvs matched, with × to clear it, and the
+  install picker ticks only those venvs.
+
 ## [0.359.4] — 2026-10-28
 
 ### Fixed

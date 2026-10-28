@@ -90,6 +90,9 @@ through another package, say)."""
 
 DEFAULT_CACHE_TTL_S = 24 * 3600
 DEFAULT_TIMEOUT_S = 20.0
+# How often the console re-checks the fleet for package updates in the background
+# (minutes; 0 = only when the Marketplace tab is open). Drives the tab badge.
+DEFAULT_UPDATE_CHECK_MIN = 30
 DEFAULT_MAX_INDEX_BYTES = 128 * 1024 * 1024  # a root index — pypi.org is ~45 MB
 DEFAULT_MAX_WHEEL_BYTES = 20 * 1024 * 1024  # tier-3 wheel download cap
 DEFAULT_MAX_DESCRIPTION_CHARS = 24_000  # README kept per entry in the cache
@@ -683,6 +686,42 @@ def is_runnable(
     if RUNNABLE_KEYWORD in {k.lower() for k in keywords_of(meta)}:
         return True
     return requires_runspec(meta)
+
+
+def outdated_packages(
+    entries: list[dict[str, Any]], targets: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """The catalogue packages that some probed venv has at an older version.
+
+    ``entries`` are catalogue rows (``name`` + latest ``version``); ``targets``
+    are probe rows (``ok`` + ``dists`` = normalised name → installed version).
+    One row per outdated package, sorted by name: ``{name, latest, targets:
+    [{id, host, venv, installed}]}``. Pure — the same rule as the tab's orange
+    "update available" tag, so the badge and the cards agree."""
+    out: list[dict[str, Any]] = []
+    for e in entries:
+        name = normalize_name(str(e.get("name") or ""))
+        latest = str(e.get("version") or "")
+        if not name or not latest:
+            continue
+        rows = []
+        for t in targets:
+            if not t.get("ok"):
+                continue
+            dists = {normalize_name(k): v for k, v in (t.get("dists") or {}).items()}
+            have = dists.get(name)
+            if have and compare_versions(str(have), latest) < 0:
+                rows.append(
+                    {
+                        "id": t.get("id"),
+                        "host": t.get("host"),
+                        "venv": t.get("venv"),
+                        "installed": have,
+                    }
+                )
+        if rows:
+            out.append({"name": e.get("name"), "latest": latest, "targets": rows})
+    return sorted(out, key=lambda r: str(r["name"]))
 
 
 def is_hidden(name: str, patterns: tuple[str, ...] | list[str]) -> bool:

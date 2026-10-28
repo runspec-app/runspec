@@ -102,6 +102,7 @@ class _StubBridge:
     marketplace_installed = Bridge.marketplace_installed
     marketplace_install = Bridge.marketplace_install
     marketplace_uninstall = Bridge.marketplace_uninstall
+    marketplace_updates = Bridge.marketplace_updates
     marketplace_op = Bridge.marketplace_op
     marketplace_ops = Bridge.marketplace_ops
     _marketplace_venv_lock = Bridge._marketplace_venv_lock
@@ -512,6 +513,72 @@ def test_installed_probe_local_real_and_remote_canned(app):
     for t in local:
         assert t["ok"], t["error"]
         assert "runspec" in t["dists"]
+
+
+def test_updates_count_outdated_from_cached_catalogue_without_fetching(
+    app, monkeypatch
+):
+    fetch = _CannedFetch(_nexus_routes())
+    monkeypatch.setattr(mp, "default_fetch", lambda **kw: fetch)
+    _write_marketplace(
+        {
+            "auto_pip": False,
+            "repos": [{"name": "Nexus", "url": "https://nexus.corp/simple"}],
+        }
+    )
+    _write_hosts(
+        [
+            {
+                "name": "web-01",
+                "ssh": "ops@web-01",
+                "runspec_paths": ["/opt/venvs/ops/bin/runspec"],
+            }
+        ]
+    )
+    b = _StubBridge()
+    b.ssh_reply = (
+        0,
+        'RSMP{"prefix": "/opt/venvs/ops", "python": "3.12.1", "owner": "svc", "user": "ops", "dists": {"runspec": "0.50.0", "runspec-acme": "1.1.0"}}',
+        "",
+    )
+
+    # No catalogue cached yet: nothing to compare against, and no index fetch.
+    res = b.marketplace_updates()
+    assert res["enabled"] and res["count"] == 0 and fetch.calls == []
+    assert res["update_check"] == mp.DEFAULT_UPDATE_CHECK_MIN
+
+    b.marketplace_catalog()  # the tab reads the indexes once
+    n = len(fetch.calls)
+    res = b.marketplace_updates()
+    assert len(fetch.calls) == n  # the badge never fetches
+    assert res["count"] == 1 and res["probed_at"]
+    (pkg,) = res["packages"]
+    assert pkg["name"] == "runspec-acme" and pkg["latest"] == "1.2.0"
+    assert pkg["targets"] == [
+        {
+            "id": "web-01::/opt/venvs/ops",
+            "host": "web-01",
+            "venv": "ops",
+            "installed": "1.1.0",
+        }
+    ]
+
+    # probe=False uses only what's in memory: no new SSH.
+    calls = len(b.ssh_calls)
+    assert b.marketplace_updates(probe=False)["count"] == 1
+    assert len(b.ssh_calls) == calls
+
+    _write_marketplace({"enabled": False})
+    off = b.marketplace_updates()
+    assert off["enabled"] is False and off["count"] == 0
+
+
+def test_update_check_round_trips(app):
+    assert config_mod.read_marketplace()["update_check"] == mp.DEFAULT_UPDATE_CHECK_MIN
+    config_mod.write_marketplace({"update_check": 0})
+    assert config_mod.read_marketplace()["update_check"] == 0
+    config_mod.write_marketplace({"update_check": mp.DEFAULT_UPDATE_CHECK_MIN})
+    assert "update_check" not in (config_mod.read_config().get("marketplace") or {})
 
 
 def _wait_op(b, op, timeout=20):

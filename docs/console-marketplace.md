@@ -31,6 +31,36 @@ Updates / Not installed**). **Refresh** re-reads the indexes and re-probes
 every venv; the status line shows when each repo was last read and how many
 venvs were reachable.
 
+### Updates
+
+When any venv has an older version than the index, the **Marketplace** tab
+shows a gold count badge (from any tab), and the status line shows
+**↑ N updates available** — click it to switch to the **Updates** scope.
+
+The badge comes from a background check every
+`[marketplace] update_check` minutes (default 30; Settings → *Check for
+updates every*). It compares the connected venvs against the **cached**
+catalogue only, so it never fetches an index: a console whose Marketplace was
+never opened has no catalogue yet and shows no badge. The check re-probes a
+venv only when its last probe is older than a minute, and skips while the
+tab is open (the tab probes on its own). `update_check = 0` turns the
+background check off; the badge then updates only while the tab is open.
+
+### Filtering by host
+
+Put `host:<name>` in the search box to look at one host's venvs: the chips,
+the update count, *Installed* and *Updates* all count only the venvs on that
+host. Part of a name is enough (`host:web` matches `web-01` and `web-02`);
+`group:<name>` does the same for a host group, and several tokens combine
+(`host:web host:db`, or `group:prod jira`). The status line shows how many
+venvs matched, with an × to drop the filter. *All* still lists every
+package, so you can see what to install there; pick *Installed* to list only
+what that host has. The install picker lists every venv as usual but ticks
+only the filtered ones.
+
+Only probed venvs can match: a host outside the active profile, or one that
+isn't connected, shows as **0 venvs**.
+
 ## Targets — which venvs
 
 A package can be installed into:
@@ -278,7 +308,8 @@ the wheel itself.
 ## Settings & knobs
 
 The Marketplace tab's **Settings** button edits the `[marketplace]` section (declared repos,
-the pip-config switch, pre-releases, the cache period, clear cache). The full
+the pip-config switch, pre-releases, the cache period, the update-check
+interval, clear cache). The full
 key list is in the [config reference](console-reference.md#marketplace).
 
 The catalogue cache (`marketplace_cache.json`) is machine-local and never

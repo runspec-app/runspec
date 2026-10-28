@@ -8,7 +8,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, act, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
-import { MarketplaceView, cmpVersion, targetStates, filterEntries, defaultRunAs, opLabel, opOutcome, applyProgress } from './MarketplaceView'
+import { MarketplaceView, cmpVersion, targetStates, filterEntries, defaultRunAs, opLabel, opOutcome, applyProgress, parseSearch, targetFilter, countUpdates } from './MarketplaceView'
 import type { MarketplaceEntry, MarketplaceInstalled, MarketplaceInstalledTarget, MarketplaceOpRecord } from '../bridge'
 
 const { catalog, installed, install, uninstall, cancel, opRec, opsList } = vi.hoisted(() => ({
@@ -75,7 +75,7 @@ const INSTALLED: MarketplaceInstalled = {
 
 const HOSTS = [
   { name: 'local', connected: true, runnableCount: 1, groups: ['console'] },
-  { name: 'web-01', connected: true, runnableCount: 1, groups: ['ops'] },
+  { name: 'web-01', connected: true, runnableCount: 1, groups: ['ops'], group: 'Production' },
   { name: 'db-01', connected: false, runnableCount: 0, groups: ['db'] },
 ]
 
@@ -106,6 +106,29 @@ describe('pure helpers', () => {
     expect(names({ search: '', repo: 'nexus', scope: 'all' })).toEqual(['acme-ops'])
     expect(names({ search: 'jira', repo: '', scope: 'all' })).toEqual(['runspec-jira'])
     expect(names({ search: 'internal acme', repo: '', scope: 'all' })).toEqual(['acme-ops'])
+  })
+
+  it('splits host: / group: tokens out of the search', () => {
+    expect(parseSearch('jira host:WEB group:prod linux')).toEqual({ text: 'jira linux', hosts: ['web'], groups: ['prod'] })
+    expect(parseSearch('host:')).toEqual({ text: '', hosts: [], groups: [] })
+    expect(parseSearch('  ')).toEqual({ text: '', hosts: [], groups: [] })
+  })
+
+  it('keeps the venvs on matching hosts / groups', () => {
+    const groupOf = (h: string) => (h === 'web-01' ? 'Production' : undefined)
+    const hosts = (q: string) => INSTALLED.targets.filter(targetFilter(parseSearch(q), groupOf)!).map(t => t.host)
+    expect(targetFilter(parseSearch('jira'), groupOf)).toBeNull()
+    expect(hosts('host:web')).toEqual(['web-01'])
+    expect(hosts('host:web host:db')).toEqual(['web-01', 'db-01'])
+    expect(hosts('group:prod')).toEqual(['web-01'])
+    expect(hosts('group:prod host:db')).toEqual([])
+  })
+
+  it('counts updates on the venvs it is given', () => {
+    const all = (e: MarketplaceEntry) => targetStates(e, INSTALLED)
+    expect(countUpdates(ENTRIES, all)).toBe(1)
+    const localOnly = (e: MarketplaceEntry) => all(e).filter(s => s.target.host === 'local')
+    expect(countUpdates(ENTRIES, localOnly)).toBe(0)
   })
 
   it('pre-fills run-as from a remote venv owned by someone else', () => {
@@ -154,9 +177,67 @@ describe('MarketplaceView', () => {
     render(<MarketplaceView hosts={HOSTS} />)
     await screen.findByText('runspec-linux')
     const user = userEvent.setup()
-    await act(async () => { await user.type(screen.getByPlaceholderText(/Search name/), 'acme') })
+    await act(async () => { await user.type(screen.getByPlaceholderText(/Search packages/), 'acme') })
     await waitFor(() => expect(screen.queryByText('runspec-linux')).toBeNull())
     expect(screen.getByText('acme-ops')).toBeTruthy()
+  })
+
+  it('limits install state to the hosts named by host:', async () => {
+    render(<MarketplaceView hosts={HOSTS} />)
+    await screen.findByText('update available')
+    const user = userEvent.setup()
+    await act(async () => { await user.type(screen.getByPlaceholderText(/Search packages/), 'host:local') })
+    expect(await screen.findByText(/host:local · 1 venv/)).toBeTruthy()
+    // web-01's outdated install is out of scope now; local's runspec-jira stays.
+    await waitFor(() => expect(screen.queryByText('update available')).toBeNull())
+    expect(screen.queryByText(/web-01\/ops/)).toBeNull()
+    expect(screen.getByText(/local\/console 0\.3\.0/)).toBeTruthy()
+    // Every package still lists (scope "All"); "Installed" narrows to local's.
+    expect(screen.getByText('runspec-linux')).toBeTruthy()
+    await act(async () => { await user.click(screen.getByText('Installed')) })
+    await waitFor(() => expect(screen.queryByText('runspec-linux')).toBeNull())
+    expect(screen.getByText('runspec-jira')).toBeTruthy()
+  })
+
+  it('filters by group: from the host list', async () => {
+    render(<MarketplaceView hosts={HOSTS} />)
+    await screen.findByText('update available')
+    const user = userEvent.setup()
+    await act(async () => { await user.type(screen.getByPlaceholderText(/Search packages/), 'group:production') })
+    expect(await screen.findByText(/group:production · 1 venv/)).toBeTruthy()
+    expect(screen.getByText('update available')).toBeTruthy()
+    expect(screen.queryByText(/local\/console/)).toBeNull()
+  })
+
+  it('shows the update count, jumps to Updates, and tells the tab badge', async () => {
+    const seen: number[] = []
+    const onCount = (e: Event) => seen.push((e as CustomEvent).detail.count)
+    window.addEventListener('runspec:marketplace_updates', onCount)
+    try {
+      render(<MarketplaceView hosts={HOSTS} />)
+      const tag = await screen.findByText(/1 update available/)
+      await waitFor(() => expect(seen.at(-1)).toBe(1))
+      const user = userEvent.setup()
+      await act(async () => { await user.click(tag) })
+      await waitFor(() => expect(screen.queryByText('runspec-jira')).toBeNull())
+      expect(screen.getByText('runspec-linux')).toBeTruthy()
+    } finally {
+      window.removeEventListener('runspec:marketplace_updates', onCount)
+    }
+  })
+
+  it('pre-selects only the filtered host in the install picker', async () => {
+    render(<MarketplaceView hosts={HOSTS} />)
+    await screen.findByText('runspec-linux')
+    await waitFor(() => expect(installed).toHaveBeenCalled())
+    const user = userEvent.setup()
+    await act(async () => { await user.type(screen.getByPlaceholderText(/Search packages/), 'host:local') })
+    await screen.findByText(/host:local · 1 venv/)
+    // acme-ops is installed nowhere: without a filter both venvs would be ticked.
+    const card = screen.getByText('acme-ops').closest('.rs-card-lift') as HTMLElement
+    await act(async () => { await user.click(within(card).getByRole('button', { name: /Install…/ })) })
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getAllByRole('checkbox').map(b => (b as HTMLInputElement).checked)).toEqual([true, false])
   })
 
   it('opens the update picker with the outdated venv pre-selected and starts the install', async () => {
