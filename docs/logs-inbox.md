@@ -179,6 +179,44 @@ for you: it builds the venv as the run-as account with normalised permissions
 and runs `runspec logs share --inbox` as the last step. (runspec-linux's
 `create-venv` did this too until it was removed in 0.20.0.)
 
+### From Ansible
+
+Run the venv's own `runspec` after pip has installed your runnables. There's
+nothing extra to install: every runnable package depends on `runspec`, so
+`{venv}/bin/runspec` is already there. Call that path, not a `runspec` on
+`PATH`, because the command sets up the venv it lives in.
+
+```yaml
+- name: Build the venv as its owner
+  ansible.builtin.pip:
+    name: ["runspec>=0.66.1", "my-runnables"]
+    virtualenv: /opt/venvs/app
+    virtualenv_command: python3 -m venv
+    umask: "0022"
+  become: true
+  become_user: svc
+
+- name: Set up the runspec logs inbox
+  ansible.builtin.command:
+    argv: [/opt/venvs/app/bin/runspec, logs, share, --inbox, --owner-only, --json]
+  become: true
+  register: rs_inbox
+  changed_when: (rs_inbox.stdout | from_json).shared[0].inbox != "ok"
+```
+
+The inbox task runs as root on purpose. Root switches to the venv owner before
+it touches `logs/`, so everything it creates still belongs to the owner, and
+you avoid Ansible's temp-file problems when becoming an unprivileged user.
+`--json` prints `{"shared": [{"inbox": "created" | "repaired" | "ok", …}]}`, and
+the command is safe to run on every play: an inbox that's already right is left
+alone.
+
+You could make the two folders with `ansible.builtin.file` instead
+(`logs` mode `0755`, then `logs/inbox` mode `01777`, both owned by the venv
+owner). The command is better: it also removes a `.no-inbox` marker, refuses a
+symlink or a folder owned by another account at that path, writes a
+`logs.share` audit record, and keeps up if the layout ever changes.
+
 ### From the console
 
 For a venv on a connected host, **Logs → Make logs shared** with the group left
