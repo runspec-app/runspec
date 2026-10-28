@@ -9,6 +9,19 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.76.2] — 2026-10-28
+
+### Fixed
+
+- **`runspec logs` with no runnable no longer lists other scripts' logs.** The
+  list added in 0.76.1 took the name of every `.log` file in the venv's
+  `logs/` and in `~/logs`, so logs other tools write to the shared `~/logs`
+  showed up as runnables. A plain `{name}.log` is now listed only when its
+  first lines are runspec records (JSON with a run id); per-run files and
+  archives are still known by their names.
+
+---
+
 ## [0.76.1] — 2026-10-27
 
 ### Changed

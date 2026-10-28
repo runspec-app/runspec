@@ -342,8 +342,38 @@ def resolve_run_id(run: str, run_ids: Iterable[str], runnable: str | None = None
 
 def runnables_with_logs(dirs: Iterable[Path]) -> list[str]:
     """Sorted names of the runnables that have log files in ``dirs`` (per-run,
-    archive or single-mode, including the inbox) — what ``runspec logs`` can show."""
-    return sorted({_runnable_of(f) for f in _discover(dirs, None, include_inbox=True)} - {""})
+    archive or single-mode, including the inbox) — what ``runspec logs`` can show.
+
+    ``~/logs`` is shared with whatever else logs there, so a plain ``{name}.log``
+    counts only when it holds runspec records (see :func:`_is_runspec_log`);
+    per-run files and archives are known by their names."""
+    names: set[str] = set()
+    for f in _discover(dirs, None, include_inbox=True):
+        name = _runnable_of(f)
+        if name and name not in names and (_is_managed(f) or _is_runspec_log(f)):
+            names.add(name)
+    return sorted(names)
+
+
+def _is_runspec_log(path: Path, *, max_lines: int = 5) -> bool:
+    """True when one of the first ``max_lines`` lines of ``path`` is a runspec
+    JSON record — an object with ``ts``/``level``/``message`` and an
+    ``extra.run_id``, which runspec stamps on every record it writes."""
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as fh:
+            for _ in range(max_lines):
+                line = fh.readline(65536)
+                if not line:
+                    return False
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(rec, dict) and {"ts", "level", "message"} <= rec.keys() and _line_extra(rec).get("run_id"):
+                    return True
+    except OSError:
+        pass
+    return False
 
 
 def _file_run_id(name: str) -> str | None:

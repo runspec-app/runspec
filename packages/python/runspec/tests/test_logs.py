@@ -134,8 +134,13 @@ class TestView:
     def test_runnables_with_logs(self, tmp_path):
         _write_run(tmp_path, "deploy", "r1", "20260601T100000Z", _summary("r1", "deploy", ts="2026-06-01T10:00:00+00:00"))
         _write_run(tmp_path, "backup.web", "r2", "20260601T100000Z", _summary("r2", "backup.web", ts="2026-06-01T10:00:00+00:00"))
-        (tmp_path / "single.log").write_text("", encoding="utf-8")
+        (tmp_path / "single.log").write_text(_line(_id("r3"), "hi", ts="2026-06-01T10:00:00+00:00") + "\n", encoding="utf-8")
         (tmp_path / "audit.jsonl").write_text("", encoding="utf-8")
+        # Other scripts' logs (shared ~/logs) aren't runnables: plain text, JSON
+        # without a run id, empty.
+        (tmp_path / "backup-script.log").write_text("2026-06-01 10:00 starting backup\n", encoding="utf-8")
+        (tmp_path / "other.log").write_text(json.dumps({"ts": "x", "level": "INFO", "message": "m"}) + "\n", encoding="utf-8")
+        (tmp_path / "empty.log").write_text("", encoding="utf-8")
         assert logs.runnables_with_logs([tmp_path]) == ["backup.web", "deploy", "single"]
 
     def test_json_passthrough(self, tmp_path):
