@@ -24,6 +24,21 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   is its own `service.instance.id`, and turn spans carry
   `runspec.lab.variant`/`scenario`/`sample`/`tier`.
 
+## [0.359.3] — 2026-10-28
+
+### Fixed
+
+- **Forms time and date-time pickers keep the time you pick.** A `ui = "time"`
+  or `ui = "datetime"` field waited for its OK button (antd's default for
+  pickers with a time), so picking a new hour or minute and clicking away
+  reset the field. On a defaulted arg this looked like the time snapping back
+  to the default unless you cleared it first. The pick now applies as you
+  make it; `date` and `month` pickers already did.
+- **Optional choice fields can be cleared.** A single-value choice arg that
+  isn't required now has a clear (×) button, so a picked option can be taken
+  back; the run then leaves the arg out (its default, if any, applies). Only
+  multi-select choices had one before. Required choices still have none.
+
 ## [0.359.2] — 2026-10-27
 
 ### Fixed

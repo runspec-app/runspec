@@ -280,7 +280,9 @@ export function ArgInput({ arg, host, runnable, runAs, group, value, error, onCh
       <Select
         size="small"
         mode={multi ? 'multiple' : undefined}
-        allowClear={multi}
+        // A single optional choice can be cleared too, so a picked option can be
+        // taken back (the run then omits the arg). A required one can't.
+        allowClear={multi || !arg.required}
         value={multi ? multiValue : (value as string | undefined)}
         onChange={onChange}
         placeholder={multi ? 'Select one or more…' : 'Select…'}
@@ -384,6 +386,10 @@ export function ArgInput({ arg, host, runnable, runAs, group, value, error, onCh
         size="small"
         value={dt && dt.isValid() ? dt : null}
         showTime={withTime}
+        // antd makes a time-bearing picker wait for OK by default; without this
+        // a pick closed without OK reverted to the value (the default "snapped
+        // back"). Commit what the operator picked instead.
+        needConfirm={false}
         onChange={d => onChange(d ? (withTime ? d.toISOString() : d.format('YYYY-MM-DD')) : undefined)}
         placeholder={placeholder ?? (withTime ? 'Select date & time…' : 'Select date…')}
         style={{ width: '100%', ...inputStyle }}
@@ -418,6 +424,8 @@ export function ArgInput({ arg, host, runnable, runAs, group, value, error, onCh
       <TimePicker
         size="small"
         value={t && t.isValid() ? t : null}
+        // Commit the picked time without an OK click (see the date-time picker).
+        needConfirm={false}
         onChange={d => onChange(d ? d.format('HH:mm:ss') : undefined)}
         placeholder={placeholder ?? 'Select time…'}
         style={{ width: '100%', ...inputStyle }}
