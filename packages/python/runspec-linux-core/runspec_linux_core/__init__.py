@@ -9,6 +9,14 @@ Each function does the work and returns plain data; failures raise (see
 ``runspec_linux_core.errors``).
 """
 
+# Removed in 0.14.0. Kept importable (they raise when called) so an older
+# runspec-linux that imports them still loads; not in __all__.
+from runspec_linux_core._removed import (  # noqa: F401
+    configure_pip,
+    create_venv,
+    install_into_venv,
+    share_venv_logs,
+)
 from runspec_linux_core.become import (
     BecomeError,
     build_become,

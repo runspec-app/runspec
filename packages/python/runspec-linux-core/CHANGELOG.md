@@ -1,5 +1,19 @@
 # runspec-linux-core Changelog
 
+## [0.14.1] — 2026-10-28
+
+### Fixed
+
+- **runspec-linux 0.19.0 and older load again.** They import `create_venv`,
+  `install_into_venv`, `configure_pip` and `share_venv_logs` from this package
+  at start-up, so upgrading runspec-linux-core to 0.14.0 on its own (for
+  example by installing runspec-linux-root, which only asks for >= 0.13.0)
+  broke every runspec-linux runnable with `cannot import name
+  'configure_pip'`. The four names are back as stand-ins: importing works,
+  calling one raises `LinuxCoreError` saying venv provisioning moved to
+  runspec-console. They are not in `__all__`. Upgrading runspec-linux to
+  0.20.0 is still the real fix.
+
 ## [0.14.0] — 2026-10-02
 
 ### Removed
