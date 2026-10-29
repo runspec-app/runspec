@@ -87,6 +87,43 @@ claude mcp add --transport http runspec http://127.0.0.1:8765/mcp \
   --header "Authorization: Bearer <token>"
 ```
 
+### Stop Claude Code asking before every tool
+
+Claude Code asks before it calls an MCP tool it hasn't been allowed yet, whatever
+the runnable's autonomy is in the console. "Yes, and don't ask again" saves a rule
+for **that one tool** in that folder's `.claude/settings.local.json` (on Windows,
+the folder you started Claude Code in), so a new tool, or the same tool from
+another folder, asks again. With `leaf` tools that is one prompt per verb per host.
+
+To let Claude Code call every console tool without asking, add one rule to your
+user settings, `~/.claude/settings.json` (`%USERPROFILE%\.claude\settings.json`
+on Windows), which applies in every folder:
+
+```json
+{
+  "permissions": {
+    "allow": ["mcp__runspec__*"]
+  }
+}
+```
+
+Use the server name you gave `claude mcp add` (`runspec` above). This doesn't
+skip the console's own gate: an `autonomous` runnable runs straight away, a
+`confirm` one still waits for you to approve it in the console, and a `manual` one
+is still refused. To keep Claude Code's own prompt for some tools, allow those
+you want to skip one by one instead (`"mcp__runspec__which"`), or add an `ask`
+rule for the ones you want to see (`"ask": ["mcp__runspec__cron_add"]`).
+
+**Plan mode.** In plan mode Claude Code asks on every call of a tool that might
+change something, even one an allow rule covers. Turn on **Let autonomous tools
+run in plan mode** (`[mcp_server] plan_mode_autonomous = true`) and the console
+marks the tools of `autonomous` runnables read-only (`readOnlyHint`; in
+`runnable` style, only when every subcommand is autonomous), so with the rule
+above they run during planning too. It's off by default because autonomous
+doesn't always mean read-only: an autonomous restart or cleanup would also run
+while Claude is still planning. Tools for `confirm` runnables always ask in plan
+mode.
+
 Any MCP client that speaks streamable-HTTP works the same way. The console must be
 **running** for the endpoint to be up — this is a desktop, not a daemon; open the
 console when you want the agent to reach the fleet.
@@ -99,8 +136,10 @@ matches the brand.
 The tools are **serve-identical** to `runspec serve` / [`runspec-mcp`](mcp.md):
 subcommands are flattened to `parent_child` leaf tools, `password` args never
 appear in a tool schema, and each tool carries its runnable's autonomy. The same
-runnable discovered on several fleet hosts is exposed once per host (the extra
-hosts get a `<host>__` prefix). `[tool_visibility]` hides carry over (a runnable
+runnable discovered on several fleet hosts is exposed once per host: `local` keeps
+the plain name when it has the runnable (otherwise the first host by name does),
+and the other hosts get a `<host>__` prefix. The names don't depend on which host
+answered discovery first, so they stay the same from one console launch to the next. `[tool_visibility]` hides carry over (a runnable
 hidden from the agent is not published here either).
 
 ---

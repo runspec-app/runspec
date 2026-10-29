@@ -538,6 +538,8 @@ class McpServerMixin:
             section["tool_style"] = tool_style
         if data.get("expose_builtins"):
             section["expose_builtins"] = True
+        if data.get("plan_mode_autonomous"):
+            section["plan_mode_autonomous"] = True
 
         def _mutate(cfg: dict[str, Any]) -> None:
             cfg["mcp_server"] = section

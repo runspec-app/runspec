@@ -1280,7 +1280,7 @@ export const mockApi: BridgeApi = {
 
   get_mcp_server_config: async () => ({
     enabled: false, host: '127.0.0.1', port: 8765, token: null,
-    default_autonomy: null, confirm_wait: 50, tool_style: 'leaf', expose_builtins: false,
+    default_autonomy: null, confirm_wait: 50, tool_style: 'leaf', expose_builtins: false, plan_mode_autonomous: false,
   }),
   save_mcp_server_config: async (payload) => {
     console.log('[mock] save_mcp_server_config', payload)

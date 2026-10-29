@@ -259,6 +259,15 @@ class ExecTool:
             "inputSchema": self.input_schema,
         }
 
+    def runs_unattended(self) -> bool:
+        """True when every call of this tool is ``autonomous`` (in ``runnable``
+        style: every subcommand too). Published as ``readOnlyHint`` when
+        ``[mcp_server] plan_mode_autonomous`` is on — Claude Code asks on every
+        call in plan mode, saved "don't ask again" rules included, unless a tool
+        says it changes nothing."""
+        levels = [self.autonomy, *self.command_autonomy.values()]
+        return all(lvl == "autonomous" for lvl in levels)
+
     def resolve_call(
         self, arguments: dict[str, Any]
     ) -> tuple[str, list[str], str, dict[str, Any], str]:
@@ -597,6 +606,13 @@ def _tool_identity(tool: ExecTool) -> tuple[str, tuple[str, ...], str, str]:
     return (tool.host, tuple(tool.command_path), tool.runnable, tool.group)
 
 
+def _host_order(runnable: dict[str, Any]) -> tuple[bool, str]:
+    """Sort key putting the console's own machine (``local``/no host) first, then
+    hosts by name. ``sorted`` is stable, so each host's own order is kept."""
+    host = str(runnable.get("host") or "")
+    return (host not in ("", "local"), host.lower())
+
+
 def build_tools(
     runnables: list[dict[str, Any]],
     *,
@@ -619,6 +635,13 @@ def build_tools(
     per-command autonomy too."""
     registry: dict[str, ExecTool] = {}
     ordered: list[ExecTool] = []
+    # The console's cache lists hosts in the order their discovery finished, which
+    # changes from launch to launch. Name collisions are settled by registration
+    # order (first host keeps the bare name, the rest get ``<host>__``), so sort by
+    # host first: otherwise the same tool name points at a different host after a
+    # restart, and a client that keys approvals on the name (Claude Code's "don't
+    # ask again") asks again — or runs a remembered approval on another host.
+    runnables = sorted(runnables or [], key=_host_order)
 
     def _register(tool: ExecTool, qualifier: str) -> None:
         if default_autonomy:
@@ -848,6 +871,7 @@ class ConsoleMcpServer:
         self._state = _State()
         self._default_autonomy: str | None = None
         self._tool_style: str = "leaf"
+        self._plan_mode_autonomous = False
         # For pushing tools/list_changed when discovery updates: the serving event
         # loop + the most-recently-seen client session (captured during a request).
         self._loop: Any = None
@@ -958,6 +982,7 @@ class ConsoleMcpServer:
             self._state.token = cfg.get("token") or None
             self._default_autonomy = cfg.get("default_autonomy") or None
             self._tool_style = cfg.get("tool_style") or "leaf"
+            self._plan_mode_autonomous = bool(cfg.get("plan_mode_autonomous"))
         self._stopping = False  # a fresh serve is not a shutdown
         self._thread = threading.Thread(
             target=self._run, name="mcp-server", daemon=True
@@ -1090,8 +1115,27 @@ class ConsoleMcpServer:
             valid, invalid = drop_invalid_tools(candidates)
             with self._lock:
                 self._state.invalid_tools = invalid
+            # Opt-in ([mcp_server] plan_mode_autonomous): autonomous runnables say
+            # they're read-only, so Claude Code's plan mode honours the operator's
+            # allow rules for them instead of asking on every call. Off by default:
+            # autonomous isn't read-only (an autonomous restart would run while
+            # planning). Confirm-level tools never carry it.
+            read_only = (
+                {n for n, t in registry.items() if t.runs_unattended()}
+                if self._plan_mode_autonomous
+                else set()
+            )
             tools = [
-                types.Tool(name=name, description=desc or None, input_schema=schema)
+                types.Tool(
+                    name=name,
+                    description=desc or None,
+                    input_schema=schema,
+                    annotations=(
+                        types.ToolAnnotations(readOnlyHint=True)
+                        if name in read_only
+                        else None
+                    ),
+                )
                 for name, desc, schema in valid
             ]
             return types.ListToolsResult(tools=tools)

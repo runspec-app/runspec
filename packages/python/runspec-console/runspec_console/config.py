@@ -1198,7 +1198,13 @@ def read_mcp_server() -> dict[str, Any]:
       external agent gets the console's ops/fleet powers, not just the runnables.
       Opt-in: it widens what an external process can drive. Each built-in keeps its
       own autonomy (reads run, writes park in the confirm card). The config +
-      search-meta tools and the workspace/exec/web tools are never exposed."""
+      search-meta tools and the workspace/exec/web tools are never exposed.
+    - ``plan_mode_autonomous`` (default **false**) — mark the tools of
+      ``autonomous`` runnables read-only (MCP ``readOnlyHint``). Claude Code's plan
+      mode asks on every call of a tool that might change something, even one its
+      allow rules cover; with this on, those rules apply to autonomous tools in
+      plan mode too. Opt-in because ``autonomous`` doesn't mean read-only: an
+      autonomous restart or cleanup would then also run while planning."""
     raw = read_config().get("mcp_server")
     cfg = dict(raw) if isinstance(raw, dict) else {}
     autonomy = str(cfg.get("default_autonomy") or "").strip().lower()
@@ -1222,6 +1228,7 @@ def read_mcp_server() -> dict[str, Any]:
         "confirm_wait": max(1.0, float(cfg.get("confirm_wait", 50) or 50)),
         "tool_style": tool_style,
         "expose_builtins": expose_builtins,
+        "plan_mode_autonomous": bool(cfg.get("plan_mode_autonomous", False)),
     }
 
 

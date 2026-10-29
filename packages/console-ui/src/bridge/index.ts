@@ -336,6 +336,7 @@ export interface OwnMcpServerConfig {
   confirm_wait: number
   tool_style: string        // 'leaf' (serve-identical) | 'runnable' (one tool per runnable + command arg)
   expose_builtins: boolean  // also publish the console's console-specific built-in agent tools
+  plan_mode_autonomous?: boolean  // mark autonomous runnables read-only so Claude Code's plan mode runs them
 }
 export interface OwnMcpServerStatus {
   running: boolean

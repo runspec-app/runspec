@@ -9,6 +9,38 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.366.0] — 2026-10-29
+
+### Fixed
+
+- **MCP server tool names no longer change between launches.** When a runnable
+  is on more than one host, one host's tool keeps the plain name (`which`) and
+  the others get a `<host>__` prefix. Which host got the plain name depended on
+  which host finished discovery first, so after a restart `which` could point at
+  another host and the prefixed names changed. Claude Code remembers "don't ask
+  again" by tool name, so it asked again, or ran a remembered approval on a
+  different host. The console's own machine now always keeps the plain name,
+  then hosts in name order (`mcp_server.build_tools`).
+- **Opt-in: let autonomous MCP tools run in Claude Code's plan mode.** Plan
+  mode asks for any tool that might change something, saved "don't ask again"
+  rules included. With `[mcp_server] plan_mode_autonomous = true` (Settings →
+  MCP Server → *Let autonomous tools run in plan mode*, off by default) tools
+  for `autonomous` runnables are published with `readOnlyHint` (in `runnable`
+  style, only when every subcommand is autonomous), so plan mode applies the
+  allow rules to them. Off by default because autonomous isn't read-only: an
+  autonomous restart would also run while planning. `confirm` tools never
+  carry it (`ExecTool.runs_unattended`).
+
+### Added
+
+- **Settings → MCP Server says how to stop Claude Code prompting.** Claude Code
+  asks before each tool it hasn't been allowed, whatever the runnable's
+  autonomy in the console, and "don't ask again" covers only that one tool in
+  that one folder. The tab (and `docs/console-mcp-server.md`) now gives the one
+  user-settings rule, `"mcp__runspec__*"` in `~/.claude/settings.json`, that
+  allows every console tool in every folder; the console's own confirm gate
+  still applies.
+
 ## [0.365.0] — 2026-10-29
 
 ### Added

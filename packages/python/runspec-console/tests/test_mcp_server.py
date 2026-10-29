@@ -5,6 +5,8 @@ test_mcp_server.py — pure-helper tests for the console-as-MCP-server module
 
 from __future__ import annotations
 
+import pytest
+
 import runspec_console.mcp_server as m
 
 
@@ -208,6 +210,77 @@ def test_same_leaf_on_two_hosts_is_host_disambiguated():
     assert any(n != "df" for n in names)  # second host-prefixed
     hosts = {t.host for t in tools}
     assert hosts == {"web1", "web2"}  # both reachable
+
+
+def test_leaf_names_do_not_depend_on_discovery_order():
+    # The cache lists hosts in the order their discovery finished. Tool names (what
+    # Claude Code keys "don't ask again" on) must be the same whichever came first.
+    local = _runnable("which", host="local")
+    web = _runnable("which", host="web-01")
+    db = _runnable("which", host="db-01")
+    want = {"which": "local", "db-01__which": "db-01", "web-01__which": "web-01"}
+    for order in ([local, web, db], [web, db, local], [db, local, web]):
+        _, registry = m.build_tools(order)
+        assert {n: t.host for n, t in registry.items()} == want
+
+
+def test_runnable_style_host_options_are_stable():
+    a = _runnable("which", host="web-01")
+    b = _runnable("which", host="local")
+    for order in ([a, b], [b, a]):
+        tools, _ = m.build_tools(order, style="runnable")
+        assert tools[0].host_options == ["local", "web-01"]
+
+
+def test_runs_unattended_only_when_every_call_is_autonomous():
+    (auto,), _ = m.build_tools([_runnable("df", autonomy="autonomous")])
+    (gated,), _ = m.build_tools([_runnable("rm", autonomy="confirm")])
+    assert auto.runs_unattended() and not gated.runs_unattended()
+    mixed = _runnable(
+        "cron",
+        autonomy="autonomous",
+        requireCommand=True,
+        commands={
+            "list": {"name": "list", "autonomy": "autonomous", "args": []},
+            "add": {"name": "add", "autonomy": "confirm", "args": []},
+        },
+    )
+    (tool,), _ = m.build_tools([mixed], style="runnable")
+    assert not tool.runs_unattended()  # one confirm verb gates the whole tool
+    leaves, _ = m.build_tools([mixed])
+    assert {t.name: t.runs_unattended() for t in leaves} == {
+        "cron_list": True,
+        "cron_add": False,
+    }
+
+
+@pytest.mark.parametrize(
+    ("plan_mode_autonomous", "want"),
+    [(False, {"df": None, "rm": None}), (True, {"df": True, "rm": None})],
+)
+def test_list_tools_read_only_hint_is_opt_in(plan_mode_autonomous, want):
+    # Claude Code's plan mode asks on every call, saved allow rules included,
+    # unless the tool carries readOnlyHint. Autonomous isn't read-only, so the
+    # hint is published only with [mcp_server] plan_mode_autonomous.
+    pytest.importorskip("mcp")
+    import asyncio
+
+    srv = m.ConsoleMcpServer(
+        config_reader=dict,
+        tools_provider=lambda: [
+            _runnable("df", autonomy="autonomous"),
+            _runnable("rm", autonomy="confirm"),
+        ],
+        execute=lambda tool, args: ("", False),
+    )
+    srv._plan_mode_autonomous = plan_mode_autonomous  # as start() reads it
+    handler = srv._build_server()._request_handlers["tools/list"].handler
+    result = asyncio.run(handler(None, None))
+    hints = {
+        t.name: (t.annotations.read_only_hint if t.annotations else None)
+        for t in result.tools
+    }
+    assert hints == want
 
 
 def test_available_returns_tuple():

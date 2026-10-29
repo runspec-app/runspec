@@ -6203,6 +6203,7 @@ export function McpServerTab() {
   const [confirmWait, setConfirmWait] = useState<number>(50)
   const [toolStyle, setToolStyle] = useState('leaf')
   const [exposeBuiltins, setExposeBuiltins] = useState(false)
+  const [planModeAutonomous, setPlanModeAutonomous] = useState(false)
   const [saving, setSaving] = useState(false)
   const [status, setStatus] = useState<Awaited<ReturnType<typeof bridge.mcp_server_status>> | null>(null)
 
@@ -6218,6 +6219,7 @@ export function McpServerTab() {
       setConfirmWait(typeof c.confirm_wait === 'number' ? c.confirm_wait : 50)
       setToolStyle(c.tool_style || 'leaf')
       setExposeBuiltins(!!c.expose_builtins)
+      setPlanModeAutonomous(!!c.plan_mode_autonomous)
     })
     loadStatus()
     const t = setInterval(loadStatus, 4000)
@@ -6236,6 +6238,7 @@ export function McpServerTab() {
         confirm_wait: Math.max(1, Math.floor(confirmWait || 50)),
         tool_style: toolStyle || 'leaf',
         expose_builtins: exposeBuiltins,
+        plan_mode_autonomous: planModeAutonomous,
       })
       setStatus(st)
       message.success('Saved')
@@ -6303,6 +6306,14 @@ export function McpServerTab() {
             widens what an external process can drive.
           </Typography.Paragraph>
 
+          {row('Let autonomous tools run in plan mode', <Switch checked={planModeAutonomous} onChange={setPlanModeAutonomous} disabled={!enabled} />)}
+          <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: -2 }}>
+            In plan mode Claude Code asks before every call of a tool that might change something,
+            even one you allowed. This marks the tools of <code>autonomous</code> runnables as read-only,
+            so your allow rules cover them while planning too. Autonomous doesn't always mean
+            read-only: an autonomous restart or cleanup would also run during planning. Off by default.
+          </Typography.Paragraph>
+
 
           <Divider style={{ margin: '14px 0' }} />
           <Typography.Paragraph style={{ fontSize: 13, marginBottom: 6 }}><strong>Status</strong></Typography.Paragraph>
@@ -6337,6 +6348,13 @@ export function McpServerTab() {
               <Typography.Paragraph type="secondary" style={{ fontSize: 13, marginTop: 6, marginBottom: 0 }}>
                 Connect Claude Code:&nbsp;
                 <code>claude mcp add --transport http runspec {status.url}{status.auth ? ' --header "Authorization: Bearer <token>"' : ''}</code>
+              </Typography.Paragraph>
+              <Typography.Paragraph type="secondary" style={{ fontSize: 13, marginTop: 6, marginBottom: 0 }}>
+                Claude Code asks before each tool it hasn't seen, and "don't ask again" only covers that
+                one tool in that one folder. To let it call every console tool without asking, add{' '}
+                <code>"mcp__runspec__*"</code> to <code>permissions.allow</code> in{' '}
+                <code>~/.claude/settings.json</code> (use the name you gave in <code>claude mcp add</code>).
+                The console still applies each runnable's autonomy: confirm tools wait for you here.
               </Typography.Paragraph>
             </Space>
           ) : (

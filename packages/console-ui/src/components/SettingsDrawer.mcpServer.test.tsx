@@ -69,6 +69,7 @@ describe('McpServerTab', () => {
       confirm_wait: 50,
       tool_style: 'leaf',
       expose_builtins: false,
+      plan_mode_autonomous: false,
     })
   })
 
