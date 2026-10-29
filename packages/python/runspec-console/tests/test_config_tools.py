@@ -503,3 +503,107 @@ def test_manage_saved_runs_is_chat_only(tmp_path, monkeypatch):
     b._run_origin["chat1"] = {"trigger": "outlook"}
     out = b._run_config_tool("manage_saved_runs", {"action": "list"}, "chat1")
     assert "chat-only" in out
+
+
+# ── manage_saved_transfers ────────────────────────────────────────────────────
+
+
+class _SavedTransferConfigBridge(_ConfigBridge):
+    _config_manage_saved_transfers = Bridge._config_manage_saved_transfers
+    save_saved_transfer = Bridge.save_saved_transfer
+    delete_saved_transfer = Bridge.delete_saved_transfer
+
+    def _dispatch(self, ev, payload):
+        self.dispatched.append((ev, payload))
+
+
+def _saved_transfer_bridge(tmp_path, monkeypatch, rows=None):
+    from runspec_console import savedtransfers
+
+    monkeypatch.setattr(
+        "runspec_console.config.saved_transfers_path",
+        lambda: tmp_path / "runspec_saved_transfers.toml",
+    )
+    if rows:
+        savedtransfers.save_saved_transfers(rows)
+    return _SavedTransferConfigBridge()
+
+
+def test_manage_saved_transfers_in_registry_and_schema(tmp_path, monkeypatch):
+    b = _saved_transfer_bridge(
+        tmp_path, monkeypatch, [{"id": "logs", "host": "h", "paths": ["/x"]}]
+    )
+    assert "manage_saved_transfers" in _CONFIG_TOOL_NAMES
+    tool = next(t for t in b._config_tools() if t["name"] == "manage_saved_transfers")
+    assert tool["input_schema"]["properties"]["id"]["enum"] == ["logs"]
+    auto = b._effective_tool_autonomy
+    assert auto("manage_saved_transfers", {"action": "list"}) == "autonomous"
+    assert auto("manage_saved_transfers", {"action": "get"}) == "autonomous"
+    assert auto("manage_saved_transfers", {"action": "save"}) == "confirm"
+    assert auto("manage_saved_transfers", {"action": "delete"}) == "confirm"
+
+
+def test_manage_saved_transfers_list_get_save_rename_delete(tmp_path, monkeypatch):
+    from runspec_console import savedtransfers
+
+    b = _saved_transfer_bridge(tmp_path, monkeypatch)
+    run = b._run_config_tool
+    out = run(
+        "manage_saved_transfers",
+        {
+            "action": "save",
+            "saved_transfer": {
+                "id": "push",
+                "host": "local",
+                "paths": ["out/*.csv"],
+                "to_group": "web",
+                "dest_dir": "/srv/in",
+                "password": "never-stored",
+            },
+        },
+        "chat1",
+    )
+    assert out.startswith("✓ Saved saved transfer 'push'"), out
+    assert "group web:/srv/in" in out
+    assert "password" not in savedtransfers.load_saved_transfer("push")
+
+    listed = json.loads(run("manage_saved_transfers", {"action": "list"}, "c"))
+    row = listed["saved_transfers"][0]
+    assert row["direction"] == "push" and row["summary"].startswith("this computer")
+    got = json.loads(
+        run("manage_saved_transfers", {"action": "get", "id": "push"}, "c")
+    )
+    assert got["to_group"] == "web"
+
+    # Same id updates in place; a new id in the entry with 'id' = old renames.
+    out = run(
+        "manage_saved_transfers",
+        {
+            "action": "save",
+            "id": "push",
+            "saved_transfer": {**got, "id": "push-cfg", "title": "Push config"},
+        },
+        "c",
+    )
+    assert out.startswith("✓ Updated"), out
+    assert [r["id"] for r in savedtransfers.load_saved_transfers()] == ["push-cfg"]
+
+    out = run("manage_saved_transfers", {"action": "delete", "id": "push-cfg"}, "c")
+    assert out.startswith("✓")
+    assert savedtransfers.load_saved_transfers() == []
+    assert "No saved transfer" in run(
+        "manage_saved_transfers", {"action": "get", "id": "push-cfg"}, "c"
+    )
+
+
+def test_manage_saved_transfers_rejects_invalid_and_is_chat_only(tmp_path, monkeypatch):
+    b = _saved_transfer_bridge(tmp_path, monkeypatch)
+    out = b._run_config_tool(
+        "manage_saved_transfers",
+        {"action": "save", "saved_transfer": {"id": "x", "paths": ["/a"]}},
+        "chat1",
+    )
+    assert out.startswith("✗") and "exactly one source" in out
+    b._run_origin["chat1"] = {"trigger": "schedule"}
+    out = b._run_config_tool("manage_saved_transfers", {"action": "list"}, "chat1")
+    assert "chat-only" in out

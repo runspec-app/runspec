@@ -6,7 +6,7 @@
  * when the console can't reach the target directly.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, act } from '@testing-library/react'
+import { render, screen, act, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { TransferModal } from './TransferModal'
@@ -34,9 +34,11 @@ beforeEach(() => {
   listCredentials.mockReset().mockResolvedValue([])
 })
 
-// Open the source-side "kind" Select (the first combobox) and choose an option.
+// Open the source-side "kind" Select (the first combobox in the Source row —
+// the Saved row above it has its own) and choose an option.
 async function pickSourceKind(user: ReturnType<typeof userEvent.setup>, label: string) {
-  const combos = screen.getAllByRole('combobox')
+  const row = screen.getByText('Source').parentElement as HTMLElement
+  const combos = within(row).getAllByRole('combobox')
   await act(async () => { await user.click(combos[0]) })
   const option = await screen.findByText(label, { selector: '.ant-select-item-option-content' })
   await act(async () => { await user.click(option) })

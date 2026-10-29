@@ -368,6 +368,7 @@ _CONFIG_TOOL_NAMES = frozenset(
         "manage_triggers",
         "manage_rota",
         "manage_saved_runs",
+        "manage_saved_transfers",
     }
 )
 

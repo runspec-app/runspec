@@ -9,6 +9,20 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.365.0] — 2026-10-29
+
+### Added
+
+- **Manage saved transfers.** The Transfer dialog's Saved row gains
+  **Manage…**: every saved transfer in one searchable list (where it copies
+  from and to, its parameters, what the agent may do) with run, edit,
+  duplicate and delete, and **New…** to build one from scratch. The Saved row
+  now shows even before the first one is saved.
+- **`manage_saved_transfers` agent tool.** A chat-only config tool, like
+  `manage_saved_runs`: `list` / `get` run without asking, `save` (add, update
+  or rename by id, validated first, never stores a password) and `delete`
+  ask first. Triggers and schedules can't use it.
+
 ## [0.364.0] — 2026-10-29
 
 ### Added

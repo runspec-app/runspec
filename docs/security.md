@@ -458,12 +458,12 @@ Key properties, all verified in `bridge_autonomy.py`:
 | **Write** a runbook | `save_runbook` | **confirm** — a runbook is a procedure the agent (and every console it syncs to) will later follow |
 | Session-workspace files | `workspace_ls`, `workspace_read`, `workspace_grep`, `workspace_write`, … | **autonomous** (read-only or path-jailed to the current session's workspace) |
 | Denylist **read** | `manage_denylist action=list` | **autonomous** |
-| Console-config **read** | `manage_hosts`/`manage_groups`/`manage_triggers`/`manage_saved_runs` `action=list`, `manage_rota action=get` | **autonomous** (read-only; see §7.4) |
+| Console-config **read** | `manage_hosts`/`manage_groups`/`manage_triggers`/`manage_saved_runs`/`manage_saved_transfers` `action=list`, `manage_rota action=get` | **autonomous** (read-only; see §7.4) |
 | Read-only workspace SQL | `run_sql_sandboxed` (SELECT/EXPLAIN, read-only connection, in the WASM sandbox) | **autonomous** |
 | **Write** to M365 | `outlook_draft`, `outlook_send`, `outlook_move`, `outlook_categorize`, … | **confirm** |
 | **Write** to repo / files | `repo_write`, `repo_sync`, `download_file`, `relay_file` | **confirm** |
 | Denylist **mutate**, schedules, documents, events, desktop actions | `manage_denylist add/all/clear/mode`, `create_schedule`, `create_document`, `emit_event`, `open_url`, `open_file`, `reveal_in_folder` | **confirm** |
-| Console-config **mutate** | `manage_hosts`/`manage_groups`/`manage_triggers`/`manage_rota`/`manage_saved_runs` mutations | **confirm** — and chat-only (§7.4) |
+| Console-config **mutate** | `manage_hosts`/`manage_groups`/`manage_triggers`/`manage_rota`/`manage_saved_runs`/`manage_saved_transfers` mutations | **confirm** — and chat-only (§7.4) |
 | Sandboxed code execution | `run_python_sandboxed` (any snippet, in a WASM sandbox); `run_sql_sandboxed` writes/DDL | **always confirm** — the code runs in a WASI capability sandbox (workspace-only, no network, no host access, hard-timeout in a killable subprocess), *and* the confirm gate governs on top. Fail-closed: dropped entirely when the sandbox runtime is unavailable or `[workspace] code_exec = false` / `[sandbox] enabled = false`. See `docs/console-sandbox.md` |
 | Run a runnable | `run_runnable` | **inherited from the target runnable's spec** |
 | Gather files with a saved transfer | `run_saved_transfer` | **preview autonomous** (it only lists matches); a run takes the scenario's own `autonomy`, **confirm** unless the operator set it to `autonomous` (`manual` refuses). Copies only into the chat workspace or the scenario's own folder, refusing past `max_files` |
@@ -475,7 +475,7 @@ consistent: **reads are free; writes and executions are gated.**
 ### 7.4 Automation cannot rewrite itself
 
 The agent's console-configuration tools (`manage_hosts`, `manage_groups`,
-`manage_triggers`, `manage_rota`, `manage_saved_runs`) are **chat-only**,
+`manage_triggers`, `manage_rota`, `manage_saved_runs`, `manage_saved_transfers`) are **chat-only**,
 enforced in two independent layers (`bridge_const.py`, `bridge_triggers.py`,
 `bridge_config_tools.py`):
 

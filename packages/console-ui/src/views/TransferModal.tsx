@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { Modal, Select, Button, Progress, Typography, Tag, Input, Popconfirm, Tooltip, message } from 'antd'
-import { SwapOutlined, FolderOpenOutlined, SaveOutlined, PlayCircleOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons'
+import { SwapOutlined, FolderOpenOutlined, SaveOutlined, PlayCircleOutlined, EditOutlined, DeleteOutlined, UnorderedListOutlined } from '@ant-design/icons'
 import type { Host, TransferProgress, TransferEnd, TransferEndpoint, RelaySource, Credential, SavedTransfer } from '../bridge'
 import { bridge } from '../bridge'
 import { PathInput, BrowseModal } from './PathInput'
 import { FilterPicker, humanBytes } from './FilterPicker'
 import { AdHocHostFields, emptyAdHoc, adHocValid, adHocToEndpoint, type AdHocState } from './AdHocHostFields'
 import { MONO_FONT } from '../ThemeContext'
-import { SaveTransferModal, SavedTransferRunModal } from './SavedTransferModals'
+import { SaveTransferModal, SavedTransferRunModal, SavedTransfersListModal } from './SavedTransferModals'
 import { remoteTarget } from './savedTransfers'
 
 const { Text } = Typography
@@ -68,6 +68,7 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
   const [savedId, setSavedId] = useState('')
   const [editing, setEditing] = useState<{ draft: SavedTransfer; replaceId?: string } | null>(null)
   const [runningSaved, setRunningSaved] = useState<SavedTransfer | null>(null)
+  const [managing, setManaging] = useState(false)
   const checkRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Fan-out (one local source → several configured hosts) is the only many-target
@@ -305,27 +306,27 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
         <Text type="secondary">No remote hosts configured — add one to transfer files.</Text>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          {saved.length > 0 && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingBottom: 10, borderBottom: '1px solid var(--rs-border, rgba(128,128,128,.25))' }}>
-              <Text style={{ fontSize: 13, width: 76 }}>Saved</Text>
-              <Select
-                size="small"
-                showSearch
-                allowClear
-                value={savedId || undefined}
-                onChange={v => setSavedId(v ?? '')}
-                placeholder={`${saved.length} saved transfer${saved.length === 1 ? '' : 's'}`}
-                style={{ flex: 1, minWidth: 0 }}
-                optionFilterProp="label"
-                options={saved.map(t => ({ value: t.id, label: `${t.title || t.id} — ${t.source ?? ''}${t.direction && t.direction !== 'pull' ? ` → ${t.dest ?? ''}` : ''}` }))}
-              />
-              <Button size="small" type="primary" icon={<PlayCircleOutlined />} disabled={!selectedSaved} onClick={() => selectedSaved && setRunningSaved(selectedSaved)}>Run…</Button>
-              <Tooltip title="Edit"><Button size="small" icon={<EditOutlined />} disabled={!selectedSaved} onClick={() => selectedSaved && setEditing({ draft: selectedSaved, replaceId: selectedSaved.id })} /></Tooltip>
-              <Popconfirm title={`Delete saved transfer '${savedId}'?`} disabled={!selectedSaved} onConfirm={() => deleteSaved(savedId)}>
-                <Tooltip title="Delete"><Button size="small" danger icon={<DeleteOutlined />} disabled={!selectedSaved} /></Tooltip>
-              </Popconfirm>
-            </div>
-          )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingBottom: 10, borderBottom: '1px solid var(--rs-border, rgba(128,128,128,.25))' }}>
+            <Text style={{ fontSize: 13, width: 76 }}>Saved</Text>
+            <Select
+              size="small"
+              showSearch
+              allowClear
+              value={savedId || undefined}
+              onChange={v => setSavedId(v ?? '')}
+              placeholder={saved.length ? `${saved.length} saved transfer${saved.length === 1 ? '' : 's'}` : 'None yet — pick files below and Save as scenario…'}
+              disabled={saved.length === 0}
+              style={{ flex: 1, minWidth: 0 }}
+              optionFilterProp="label"
+              options={saved.map(t => ({ value: t.id, label: `${t.title || t.id} — ${t.source ?? ''}${t.direction && t.direction !== 'pull' ? ` → ${t.dest ?? ''}` : ''}` }))}
+            />
+            <Button size="small" type="primary" icon={<PlayCircleOutlined />} disabled={!selectedSaved} onClick={() => selectedSaved && setRunningSaved(selectedSaved)}>Run…</Button>
+            <Tooltip title="Edit"><Button size="small" icon={<EditOutlined />} disabled={!selectedSaved} onClick={() => selectedSaved && setEditing({ draft: selectedSaved, replaceId: selectedSaved.id })} /></Tooltip>
+            <Popconfirm title={`Delete saved transfer '${savedId}'?`} disabled={!selectedSaved} onConfirm={() => deleteSaved(savedId)}>
+              <Tooltip title="Delete"><Button size="small" danger icon={<DeleteOutlined />} disabled={!selectedSaved} /></Tooltip>
+            </Popconfirm>
+            <Tooltip title="All saved transfers: run, edit, copy, delete or create one"><Button size="small" icon={<UnorderedListOutlined />} onClick={() => setManaging(true)}>Manage…</Button></Tooltip>
+          </div>
           {/* Source */}
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
@@ -493,6 +494,15 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
             </Text>
           )}
         </div>
+      )}
+      {managing && (
+        <SavedTransfersListModal
+          saved={saved}
+          onClose={() => setManaging(false)}
+          onRun={t => setRunningSaved(t)}
+          onEdit={(t, replaceId) => setEditing({ draft: t, replaceId })}
+          onNew={() => setEditing({ draft: { id: '', paths: [] } })}
+        />
       )}
       {editing && (
         <SaveTransferModal

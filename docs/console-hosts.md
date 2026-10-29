@@ -426,7 +426,9 @@ keeps its folder below the common parent so nothing is overwritten.
 
 **Run one:** the **Saved** row at the top of the dialog lists them. **Run…**
 asks for the parameters; **Preview** lists the matching files, sizes and
-dates without copying anything.
+dates without copying anything. **Manage…** opens the whole list, with search,
+to run, edit, duplicate or delete any of them, or start a new one with
+**New…**.
 
 Scenarios live in `runspec_saved_transfers.toml`, which rides
 [Config Sync](console-team.md) (merged by `id`), so a team can share one set:
@@ -452,7 +454,9 @@ The agent runs them with `run_saved_transfer` (`id`, `values`, and
 `autonomy` is `autonomous`; a preview never asks. The tool reports where each
 file landed, so the agent can read them with the workspace tools straight
 away. The console's MCP server offers the same tool, and a trigger can be
-allowed to use it through its action allowlist.
+allowed to use it through its action allowlist. In a chat the agent can also
+list, create, edit and delete scenarios with `manage_saved_transfers`; every
+change asks you first, and triggers and schedules can't use it.
 
 > Use the app-logs saved transfer for last Tuesday, then find the first error after 14:00.
 

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Modal, Input, Select, Radio, InputNumber, Button, Typography, Tag, Alert, message } from 'antd'
-import { PlusOutlined, DeleteOutlined, CalendarOutlined } from '@ant-design/icons'
+import { Modal, Input, Select, Radio, InputNumber, Button, Typography, Tag, Alert, Table, Tooltip, Popconfirm, message, type TableColumnsType } from 'antd'
+import { PlusOutlined, DeleteOutlined, CalendarOutlined, PlayCircleOutlined, EditOutlined, CopyOutlined } from '@ant-design/icons'
 import type { Credential, Host, SavedTransfer, SavedTransferPreview, TransferEnd, TransferProgress } from '../bridge'
 import { bridge } from '../bridge'
 import { ParamRow, paramModalWidth } from './RunbookRunModal'
@@ -472,5 +472,108 @@ function PreviewList({ preview }: { preview: SavedTransferPreview }) {
         </div>
       ))}
     </div>
+  )
+}
+
+// Every saved transfer in one list, to run, edit, copy, delete or start a new
+// one from scratch. The Transfer dialog's Saved row is the quick picker; this is
+// the place to look after the set as it grows.
+export function SavedTransfersListModal({ saved, onClose, onRun, onEdit, onNew }: {
+  saved: SavedTransfer[]
+  onClose: () => void
+  onRun: (t: SavedTransfer) => void
+  onEdit: (t: SavedTransfer, replaceId?: string) => void
+  onNew: () => void
+}) {
+  const [query, setQuery] = useState('')
+  const q = query.trim().toLowerCase()
+  const rows = q
+    ? saved.filter(t => [t.id, t.title, t.description, t.source, t.dest, ...(t.paths ?? [])]
+      .some(v => (v ?? '').toLowerCase().includes(q)))
+    : saved
+  const remove = async (id: string) => {
+    const res = await bridge.delete_saved_transfer(id)
+    if (!res.ok) message.error(res.error || 'Could not delete')
+  }
+  const duplicate = (t: SavedTransfer) => {
+    const ids = new Set(saved.map(s => s.id))
+    let id = `${t.id}-copy`
+    for (let n = 2; ids.has(id); n++) id = `${t.id}-copy-${n}`
+    onEdit({ ...t, id, title: t.title ? `${t.title} (copy)` : undefined })
+  }
+  const columns: TableColumnsType<SavedTransfer> = [
+    {
+      title: 'Saved transfer', key: 'name',
+      render: (_, t) => (
+        <div style={{ minWidth: 0 }}>
+          <div>
+            <Text strong style={{ fontSize: 13 }}>{t.title || t.id}</Text>
+            {t.title && <Text type="secondary" style={{ fontSize: 12, fontFamily: MONO_FONT }}> {t.id}</Text>}
+          </div>
+          {t.description && <Text type="secondary" style={{ fontSize: 12 }}>{t.description}</Text>}
+          {t.error && <div><Text type="danger" style={{ fontSize: 12 }}>{t.error}</Text></div>}
+        </div>
+      ),
+    },
+    {
+      title: 'From → to', key: 'where', width: 260,
+      render: (_, t) => (
+        <Text style={{ fontSize: 12 }}>
+          {t.source ?? '—'} <Text type="secondary">→</Text> {t.dest ?? '—'}
+        </Text>
+      ),
+    },
+    {
+      title: 'Parameters', key: 'params', width: 130,
+      render: (_, t) => (t.params ?? []).length
+        ? (t.params ?? []).map(p => <Tag key={p.name} style={{ fontSize: 11, marginBottom: 2 }}>{p.name}</Tag>)
+        : <Text type="secondary" style={{ fontSize: 12 }}>none</Text>,
+    },
+    {
+      title: 'Agent', key: 'autonomy', width: 90,
+      render: (_, t) => {
+        const a = t.autonomy ?? 'confirm'
+        return <Tag color={a === 'autonomous' ? 'green' : a === 'manual' ? 'default' : 'gold'} style={{ fontSize: 11 }}>{a === 'confirm' ? 'asks first' : a === 'autonomous' ? 'runs' : 'never'}</Tag>
+      },
+    },
+    {
+      title: '', key: 'actions', width: 150, align: 'right',
+      render: (_, t) => (
+        <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
+          <Tooltip title="Run"><Button size="small" type="primary" icon={<PlayCircleOutlined />} disabled={!!t.error} onClick={() => onRun(t)} aria-label={`Run ${t.id}`} /></Tooltip>
+          <Tooltip title="Edit"><Button size="small" icon={<EditOutlined />} onClick={() => onEdit(t, t.id)} aria-label={`Edit ${t.id}`} /></Tooltip>
+          <Tooltip title="Duplicate"><Button size="small" icon={<CopyOutlined />} onClick={() => duplicate(t)} aria-label={`Duplicate ${t.id}`} /></Tooltip>
+          <Popconfirm title={`Delete saved transfer '${t.id}'?`} onConfirm={() => remove(t.id)}>
+            <Tooltip title="Delete"><Button size="small" danger icon={<DeleteOutlined />} aria-label={`Delete ${t.id}`} /></Tooltip>
+          </Popconfirm>
+        </div>
+      ),
+    },
+  ]
+  return (
+    <Modal
+      open
+      onCancel={onClose}
+      width="min(980px, 96vw)"
+      title="Saved transfers"
+      footer={<Button onClick={onClose}>Close</Button>}
+    >
+      <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+        <Input size="small" allowClear value={query} onChange={e => setQuery(e.target.value)} placeholder="Search by name, host or path" style={{ flex: 1 }} />
+        <Button size="small" icon={<PlusOutlined />} onClick={onNew}>New…</Button>
+      </div>
+      <Table<SavedTransfer>
+        size="small"
+        rowKey="id"
+        columns={columns}
+        dataSource={rows}
+        pagination={rows.length > 12 ? { pageSize: 12, size: 'small' } : false}
+        scroll={{ x: 760 }}
+        locale={{ emptyText: saved.length ? 'No saved transfer matches' : 'No saved transfers yet. Pick files in the Transfer dialog and click Save as scenario…, or click New….' }}
+      />
+      <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 8 }}>
+        Stored in runspec_saved_transfers.toml, which Config Sync can share with your team. The assistant can list and change them too (it asks first).
+      </Text>
+    </Modal>
   )
 }

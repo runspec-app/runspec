@@ -191,7 +191,7 @@ text = "To fetch a log whose exact path is unknown, use list_files on the host f
 [[fact]]
 kind = "note"
 about = ["app:runspec-console", "feature:agent", "feature:files"]
-text = "Saved transfers are file-gathering scenarios built in the Transfer dialog (Save as scenario): a source host, group or ad-hoc host, path patterns with wildcards and date placeholders such as {{day:%Y-%m-%d}}, and parameters. The agent runs one with run_saved_transfer (preview=true lists the matches first) and the files land in the chat workspace."
+text = "Saved transfers are file-copy scenarios built in the Transfer dialog (Save as scenario): a source host, group, ad-hoc host or this computer, path patterns with wildcards and date placeholders such as {{day:%Y-%m-%d}}, parameters, and optionally a remote destination (an upload from this computer, or a copy between two hosts). The agent runs one with run_saved_transfer (preview=true lists the matches first); a pull lands in the chat workspace. The agent lists, creates, edits and deletes them with manage_saved_transfers (chat only, changes ask first)."
 
 [[fact]]
 kind = "procedure"

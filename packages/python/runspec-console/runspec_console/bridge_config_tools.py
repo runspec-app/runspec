@@ -1,13 +1,14 @@
 """bridge_config_tools.py — ConfigToolsMixin: agent tools that edit console config.
 
-Four chat-only, confirm-gated built-in tools let the agent manage config that
-was previously Settings-UI-only:
+Chat-only, confirm-gated built-in tools let the agent manage config that was
+previously UI-only:
 
   manage_hosts      — the fleet (runspec_hosts.toml)
   manage_groups     — the group-name registry (runspec_groups.toml)
   manage_triggers   — event triggers (runspec_triggers.toml)
   manage_rota       — the working-hours rota
   manage_saved_runs — the saved-run registry (runspec_saved_runs.toml)
+  manage_saved_transfers — saved transfers (runspec_saved_transfers.toml)
 
 Read actions (``list``/``get``) run autonomously; every mutation confirm-gates
 (see ``_effective_tool_autonomy``). Handlers are thin: they validate agent
@@ -309,12 +310,73 @@ class ConfigToolsMixin:
                 "required": ["action"],
             },
         }
+        saved_transfer_ids: list[str] = []
+        try:
+            from . import savedtransfers as savedtransfers_mod
+
+            saved_transfer_ids = [
+                str(r.get("id"))
+                for r in savedtransfers_mod.load_saved_transfers()
+                if r.get("id")
+            ]
+        except Exception:
+            logger.debug("config tools: saved-transfer enum unavailable", exc_info=True)
+        manage_saved_transfers = {
+            "name": "manage_saved_transfers",
+            "description": (
+                "List or edit saved transfers (runspec_saved_transfers.toml) — "
+                "file-copy scenarios that you (run_saved_transfer), the operator "
+                "and schedules (action='saved_transfer') can run. 'save' adds or "
+                "replaces one by id — give the full entry; it is validated before "
+                "anything is written. A pull copies from a remote source to this "
+                "computer; host='local' with a to_* destination uploads; a remote "
+                "source with a to_* destination copies between hosts."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["list", "get", "save", "delete"],
+                    },
+                    "id": {
+                        "type": "string",
+                        "description": (
+                            "Saved-transfer id (required for get / delete). For "
+                            "save, a different id here than in the entry renames it."
+                        ),
+                        **({"enum": saved_transfer_ids} if saved_transfer_ids else {}),
+                    },
+                    "saved_transfer": {
+                        "type": "object",
+                        "description": (
+                            "For save: the full entry. Keys: id, title, description, "
+                            "one source — host (a fleet host, or 'local' for this "
+                            "computer) / group / adhoc (+ jump, user, port, "
+                            "credential_id) — paths (list of path patterns: "
+                            "wildcards * ? [..], placeholders {{param}}, "
+                            "{{day:%Y-%m-%d}}, {{today}}, {{yesterday}}, {{host}}), "
+                            "optionally one destination — to_host / to_group / "
+                            "to_adhoc (+ to_jump, to_user, to_port, "
+                            "to_credential_id) — dest_dir (pull: a local folder, "
+                            "unset = the chat workspace; else an absolute folder on "
+                            "the destination), subdir, latest, max_files, filter, "
+                            "filter_arg, autonomy (confirm / autonomous / manual) "
+                            "and params (a runspec args table, e.g. {day: {default: "
+                            "'yesterday'}}). Never include a password."
+                        ),
+                    },
+                },
+                "required": ["action"],
+            },
+        }
         return [
             manage_hosts,
             manage_groups,
             manage_triggers,
             manage_rota,
             manage_saved_runs,
+            manage_saved_transfers,
         ]
 
     # ── dispatch + origin guard ───────────────────────────────────────────────
@@ -330,8 +392,8 @@ class ConfigToolsMixin:
         if origin.get("trigger"):
             return (
                 "✗ Config tools are chat-only: a trigger- or schedule-originated "
-                "turn may not edit hosts, groups, triggers, saved runs, or the "
-                "rota."
+                "turn may not edit hosts, groups, triggers, saved runs, saved "
+                "transfers, or the rota."
             )
         action = str(tool_input.get("action") or "").strip().lower()
         try:
@@ -345,6 +407,8 @@ class ConfigToolsMixin:
                 return self._config_manage_rota(action, tool_input)
             if tool_name == "manage_saved_runs":
                 return self._config_manage_saved_runs(action, tool_input)
+            if tool_name == "manage_saved_transfers":
+                return self._config_manage_saved_transfers(action, tool_input)
         except Exception as exc:  # pragma: no cover - defensive
             logger.exception("config tool %s failed", tool_name)
             return f"✗ {tool_name} failed: {exc}"
@@ -538,4 +602,56 @@ class ConfigToolsMixin:
             if not result.get("ok"):
                 return f"✗ Not deleted: {result.get('error') or 'unknown error'}"
             return f"✓ Deleted saved run '{sid}'."
+        return f"✗ Unknown action '{action}'."
+
+    def _config_manage_saved_transfers(self, action: str, ti: dict[str, Any]) -> str:
+        from . import savedtransfers as st_mod
+
+        rows = st_mod.load_saved_transfers()
+        if action == "list":
+            out = []
+            for r in rows:
+                item = dict(r)
+                try:
+                    e = st_mod.parse_saved_transfer(r)
+                    item["direction"] = e.direction
+                    item["summary"] = f"{e.source_summary()} → {e.dest_summary()}"
+                except ValueError as exc:
+                    item["error"] = str(exc)
+                out.append(item)
+            return json.dumps({"saved_transfers": out}, ensure_ascii=False)
+        sid = str(ti.get("id") or "").strip()
+        if action == "save":
+            entry = ti.get("saved_transfer")
+            if not isinstance(entry, dict):
+                return "✗ 'saved_transfer' (object) is required for save."
+            entry = dict(entry)
+            new_id = str(entry.get("id") or "").strip() or sid
+            entry["id"] = new_id
+            # An existing id in 'id' and a different one in the entry = rename.
+            known = {str(r.get("id")) for r in rows}
+            replace_id = sid if sid in known else (new_id if new_id in known else "")
+            result = self.save_saved_transfer(entry, replace_id)
+            if not result.get("ok"):
+                return f"✗ Not saved: {result.get('error') or 'unknown error'}"
+            parsed = st_mod.parse_saved_transfer(
+                st_mod.load_saved_transfer(new_id) or {}
+            )
+            verb = "Updated" if replace_id else "Saved"
+            return (
+                f"✓ {verb} saved transfer '{parsed.id}' "
+                f"({parsed.source_summary()} → {parsed.dest_summary()})."
+            )
+        if not sid:
+            return "✗ 'id' is required."
+        match = next((r for r in rows if str(r.get("id")) == sid), None)
+        if match is None:
+            return f"✗ No saved transfer with id '{sid}'."
+        if action == "get":
+            return json.dumps(match, ensure_ascii=False)
+        if action == "delete":
+            result = self.delete_saved_transfer(sid)
+            if not result.get("ok"):
+                return f"✗ Not deleted: {result.get('error') or 'unknown error'}"
+            return f"✓ Deleted saved transfer '{sid}'."
         return f"✗ Unknown action '{action}'."
