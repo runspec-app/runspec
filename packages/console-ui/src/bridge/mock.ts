@@ -820,6 +820,12 @@ const _mockSavedTransfers: SavedTransfer[] = [
     params: [{ name: 'day', type: 'str', required: false, default: 'yesterday', description: 'today, yesterday, -3d or a date' }],
     paramsRaw: { day: { default: 'yesterday', description: 'today, yesterday, -3d or a date' } },
   },
+  {
+    id: 'push-config', title: 'Push app config', description: 'Upload the edited config to every production host',
+    host: 'local', paths: ['config/app-*.yaml'], to_group: 'Production', dest_dir: '/srv/app/config',
+    source: 'this computer', dest: 'group Production:/srv/app/config', direction: 'push', autonomy: 'confirm',
+    params: [], paramsRaw: {},
+  },
 ]
 
 export const mockApi: BridgeApi = {
@@ -1972,7 +1978,14 @@ export const mockApi: BridgeApi = {
     window.dispatchEvent(new CustomEvent('runspec:saved_transfers_changed', { detail: { id } }))
     return { ok: i >= 0 }
   },
-  preview_saved_transfer: async (id) => ({
+  preview_saved_transfer: async (id) => id === 'push-config' ? ({
+    id, direction: 'push', dest: 'prod-1, prod-2:/srv/app/config', targets: ['prod-1', 'prod-2'], total: 1,
+    sources: [{
+      host: 'local',
+      files: [{ path: '/home/me/.runspec-console/workspaces/demo/config/app-prod.yaml', size: 2_048, mtime: 1761696000, dest: '/srv/app/config/app-prod.yaml' }],
+      unmatched: [],
+    }],
+  }) : ({
     id, dest: '/home/me/.runspec-console/workspaces/demo', total: 2,
     sources: [{
       host: 'prod-1',

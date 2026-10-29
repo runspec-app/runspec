@@ -2,12 +2,19 @@
 savedtransfers.py — read/validate ``runspec_saved_transfers.toml``, the
 saved-transfer registry, and the pure helpers a saved transfer runs on.
 
-A **saved transfer** is a reusable "gather these files" scenario: a remote
-source (a fleet host, every host in a group, or an ad-hoc SSH host), one or
-more path *patterns*, an optional saved filter, and a local destination (the
-current chat's workspace by default). Like a saved run it may declare open
-*params* the operator (or agent) fills at run time, so one entry covers
-"yesterday's app log on web-01" and "the 3rd of last month's" alike.
+A **saved transfer** is a reusable file-copy scenario. The common one gathers
+files onto this machine (a **pull**): a remote source (a fleet host, every host
+in a group, or an ad-hoc SSH host), one or more path *patterns*, an optional
+saved filter, and a local destination (the current chat's workspace by
+default). Like a saved run it may declare open *params* the operator (or
+agent) fills at run time, so one entry covers "yesterday's app log on web-01"
+and "the 3rd of last month's" alike.
+
+Naming a remote **destination** (``to_host`` / ``to_group`` / ``to_adhoc``)
+turns it around: with ``host = "local"`` the files go *from* this machine (a
+**push** — local paths, or paths relative to the chat workspace), and with a
+remote source they are copied host to host through the console (a **relay**).
+Either way ``dest_dir`` is then an absolute folder on the destination host.
 
   [[saved_transfer]]
   id          = "app-logs"
@@ -29,10 +36,19 @@ current chat's workspace by default). Like a saved run it may declare open
 An ad-hoc source names ``adhoc = "<hostname>"`` plus optional ``jump`` (a
 configured host to tunnel through), ``user``, ``port`` and ``credential_id``
 (a Credentials-tab id — the secret stays in the keychain, never in this file).
+An ad-hoc destination uses the same keys with a ``to_`` prefix.
+
+  [[saved_transfer]]                   # a push: workspace report → every web host
+  id       = "publish-report"
+  host     = "local"
+  paths    = ["report-{{today}}.csv"]  # relative = the chat's workspace
+  to_group = "web"
+  dest_dir = "/srv/app/incoming"
 
 **Templates.** ``paths``, ``subdir``, ``dest_dir`` and ``filter_arg`` take
 ``{{name}}`` / ``{{name:FORMAT}}`` placeholders. ``name`` is a param, or one of
-the built-ins ``today`` / ``yesterday`` / ``now`` / ``host`` (the source host).
+the built-ins ``today`` / ``yesterday`` / ``now`` / ``host`` (the remote host
+being worked on: the source for a pull or relay, the destination for a push).
 With ``:FORMAT`` (strftime) the value is read as a date — ``today``,
 ``yesterday``, ``now``, ``-3d`` / ``+1d`` / ``-12h`` / ``-2w``, or an ISO date /
 date-time — so a date picker, a typed "-1d" and the default "yesterday" all work.
@@ -83,6 +99,8 @@ MAX_LISTINGS = 500
 
 BUILTINS = ("today", "yesterday", "now", "host")
 
+DIRECTIONS = ("pull", "push", "relay")
+
 
 @dataclass(frozen=True)
 class SavedTransfer:
@@ -99,6 +117,16 @@ class SavedTransfer:
     user: str = ""
     port: int = 0
     credential_id: str = ""
+    # A remote destination (push / relay) — at most one of to_host / to_group /
+    # to_adhoc; the to_jump / to_user / to_port / to_credential_id keys only
+    # apply to to_adhoc. None set = a pull onto this machine.
+    to_host: str = ""
+    to_group: str = ""
+    to_adhoc: str = ""
+    to_jump: str = ""
+    to_user: str = ""
+    to_port: int = 0
+    to_credential_id: str = ""
     paths: list[str] = field(default_factory=list)
     latest: int = 0
     max_files: int = DEFAULT_MAX_FILES
@@ -109,8 +137,19 @@ class SavedTransfer:
     autonomy: str = "confirm"
     params: dict[str, Any] = field(default_factory=dict)
 
+    @property
+    def direction(self) -> str:
+        """``pull`` (onto this machine), ``push`` (from it) or ``relay``."""
+        if self.host == "local":
+            return "push"
+        if self.to_host or self.to_group or self.to_adhoc:
+            return "relay"
+        return "pull"
+
     def source_summary(self) -> str:
         """One-line human description of where the files come from."""
+        if self.host == "local":
+            return "this computer"
         if self.host:
             return self.host
         if self.group:
@@ -118,8 +157,22 @@ class SavedTransfer:
         via = f" via {self.jump}" if self.jump else ""
         return f"{self.adhoc} (ad-hoc{via})"
 
+    def target_summary(self) -> str:
+        """The remote destination (push / relay), "" for a pull."""
+        if self.to_host:
+            return self.to_host
+        if self.to_group:
+            return f"group {self.to_group}"
+        if self.to_adhoc:
+            via = f" via {self.to_jump}" if self.to_jump else ""
+            return f"{self.to_adhoc} (ad-hoc{via})"
+        return ""
+
     def dest_summary(self) -> str:
-        base = self.dest_dir or "chat workspace"
+        if self.direction != "pull":
+            base = f"{self.target_summary()}:{self.dest_dir}"
+        else:
+            base = self.dest_dir or "chat workspace"
         return f"{base}/{self.subdir}" if self.subdir else base
 
 
@@ -154,10 +207,38 @@ def parse_saved_transfer(data: dict[str, Any]) -> SavedTransfer:
             "host), 'group' (every host in a host group) or 'adhoc' (an SSH host "
             "that isn't in the fleet)"
         )
-    if host == "local":
+    to_host = str(data.get("to_host") or "").strip()
+    to_group = str(data.get("to_group") or "").strip()
+    to_adhoc = str(data.get("to_adhoc") or "").strip()
+    remote_dest = bool(to_host or to_group or to_adhoc)
+    if sum((bool(to_host), bool(to_group), bool(to_adhoc))) > 1:
         raise ValueError(
-            f"saved transfer '{sid}': the source must be a remote host — saved "
-            "transfers gather files onto this machine"
+            f"saved transfer '{sid}' names more than one destination — use one of "
+            "'to_host', 'to_group' or 'to_adhoc'"
+        )
+    if to_host == "local":
+        raise ValueError(
+            f"saved transfer '{sid}': to copy onto this machine leave to_host out "
+            "and set dest_dir (or nothing, for the chat workspace)"
+        )
+    if host == "local" and not remote_dest:
+        raise ValueError(
+            f"saved transfer '{sid}': a source of this computer (host = \"local\") "
+            "needs a remote destination — 'to_host', 'to_group' or 'to_adhoc'"
+        )
+    if group and remote_dest:
+        raise ValueError(
+            f"saved transfer '{sid}': copying from a whole group to another host "
+            "isn't supported — use one source host"
+        )
+    to_jump = str(data.get("to_jump") or "").strip()
+    to_user = str(data.get("to_user") or "").strip()
+    to_credential_id = str(data.get("to_credential_id") or "").strip()
+    to_port = _int(data.get("to_port"), "to_port", sid)
+    if not to_adhoc and (to_jump or to_user or to_credential_id or to_port):
+        raise ValueError(
+            f"saved transfer '{sid}': to_jump / to_user / to_port / "
+            "to_credential_id only apply to a 'to_adhoc' destination"
         )
     jump = str(data.get("jump") or "").strip()
     user = str(data.get("user") or "").strip()
@@ -209,6 +290,13 @@ def parse_saved_transfer(data: dict[str, Any]) -> SavedTransfer:
         user=user,
         port=port,
         credential_id=credential_id,
+        to_host=to_host,
+        to_group=to_group,
+        to_adhoc=to_adhoc,
+        to_jump=to_jump,
+        to_user=to_user,
+        to_port=to_port,
+        to_credential_id=to_credential_id,
         paths=paths,
         latest=_int(data.get("latest"), "latest", sid),
         max_files=max_files,
@@ -230,6 +318,11 @@ def parse_saved_transfer(data: dict[str, Any]) -> SavedTransfer:
                     f"saved transfer '{sid}' uses {{{{{name}}}}} but has no param "
                     f"named '{name}' (built-ins: {', '.join(BUILTINS)})"
                 )
+    if remote_dest and not entry.dest_dir.startswith("/"):
+        raise ValueError(
+            f"saved transfer '{sid}': copying to a remote host needs dest_dir, an "
+            "absolute folder on that host (e.g. /srv/app/incoming)"
+        )
     if entry.subdir and entry.subdir.replace("\\", "/").startswith("/"):
         raise ValueError(
             f"saved transfer '{sid}': subdir must be relative (use dest_dir for "
@@ -248,6 +341,13 @@ def entry_to_row(entry: SavedTransfer) -> dict[str, Any]:
         row["port"] = entry.port
     if entry.credential_id:
         row["credential_id"] = entry.credential_id
+    for key in ("to_host", "to_group", "to_adhoc", "to_jump", "to_user"):
+        if getattr(entry, key):
+            row[key] = getattr(entry, key)
+    if entry.to_port:
+        row["to_port"] = entry.to_port
+    if entry.to_credential_id:
+        row["to_credential_id"] = entry.to_credential_id
     row["paths"] = list(entry.paths)
     if entry.latest:
         row["latest"] = entry.latest
@@ -408,6 +508,12 @@ class RemoteFile:
 # listdir(dir) -> [(name, is_dir, size, mtime)]; stat(path) -> (is_dir, size, mtime) | None
 ListDir = Callable[[str], list[tuple[str, bool, int, int]]]
 Stat = Callable[[str], "tuple[bool, int, int] | None"]
+
+
+def is_absolute(path: str) -> bool:
+    """An absolute path on either side: ``/…``, ``\\…`` or a drive ``C:/…``."""
+    p = path.replace("\\", "/")
+    return p.startswith("/") or bool(re.match(r"^[A-Za-z]:/", p))
 
 
 def has_magic(text: str) -> bool:

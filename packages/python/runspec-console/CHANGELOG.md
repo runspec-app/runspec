@@ -9,6 +9,25 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.364.0] — 2026-10-29
+
+### Added
+
+- **Saved uploads and relays.** A saved transfer can now upload files from
+  this computer (`host = "local"`) to a host, every host in a group, or an
+  ad-hoc host, or copy files from one remote host to another, streamed through
+  the console. The destination is set with `to_host` / `to_group` /
+  `to_adhoc` (+ `to_jump` / `to_user` / `to_port` / `to_credential_id`) and an
+  absolute remote `dest_dir`; missing folders are made on the destination. An
+  upload's relative paths are read from the chat workspace (a scheduled run:
+  `documents/transfers/<id>/`), so the agent can write a file and upload it.
+  `{{host}}` is each destination for an upload and the source for a relay.
+  The Transfer dialog's **Save as scenario…** now saves uploads and relays
+  too (one host, or a whole group), the save dialog gains *This computer* as a
+  source and a destination picker, and preview / run text and the
+  `run_saved_transfer` tool say "upload" / "copy" with each file's
+  destination. Uploads and relays ask first by default, like pulls.
+
 ## [0.363.0] — 2026-10-29
 
 ### Changed

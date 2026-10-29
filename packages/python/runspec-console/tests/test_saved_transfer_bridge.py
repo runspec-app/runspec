@@ -20,11 +20,25 @@ from runspec_console.bridge import Bridge
 from runspec_console.bridge_const import _BUILTIN_TOOL_NAMES
 
 
+# Upload / relay destinations must be POSIX folders, so the tests write to a
+# virtual /dst tree that the fake maps under a temp dir (works on Windows too).
+DST = "/dst"
+
+
 class _FakeSftp:
     """The paramiko SFTPClient calls the mixin and the download helper use,
-    over the local filesystem (remote paths are real local paths)."""
+    over the local filesystem (remote paths are real local paths, except
+    ``/dst/…``, which lands under ``dest_root``)."""
+
+    dest_root = ""
+
+    def _p(self, path):
+        if path == DST or path.startswith(DST + "/"):
+            return os.path.join(self.dest_root, path[len(DST) :].lstrip("/"))
+        return path
 
     def listdir_attr(self, d):
+        d = self._p(d)
         out = []
         for name in os.listdir(d):
             a = os.lstat(os.path.join(d, name))
@@ -39,10 +53,24 @@ class _FakeSftp:
         return out
 
     def stat(self, path):
-        return os.stat(path)
+        return os.stat(self._p(path))
+
+    def put(self, src, dst, callback=None):
+        with open(src, "rb") as fh:
+            data = fh.read()
+        with open(self._p(dst), "wb") as out:
+            out.write(data)
+        if callback:
+            callback(len(data), len(data))
+
+    def mkdir(self, path):
+        os.mkdir(self._p(path))
+
+    def open(self, path, mode="rb"):
+        return open(self._p(path), mode)
 
     def getfo(self, src, fdst, callback=None):
-        with open(src, "rb") as fh:
+        with open(self._p(src), "rb") as fh:
             data = fh.read()
         fdst.write(data)
         if callback:
@@ -73,6 +101,11 @@ _METHODS = (
     "_normalise_transfer_side",
     "_invoke_scheduled_transfer",
     "_run_scheduled_transfer",
+    "_saved_transfer_sides",
+    "_saved_transfer_source_files",
+    "_saved_pull_one",
+    "_saved_send_one",
+    "_relay_one",
 )
 
 
@@ -90,6 +123,9 @@ def env(tmp_path, monkeypatch):
         setattr(ns, name, types.MethodType(getattr(Bridge, name), ns))
     ns._format_saved_preview = Bridge._format_saved_preview
     ns._saved_transfer_root = Bridge._saved_transfer_root
+    ns._saved_transfer_files = Bridge._saved_transfer_files
+    ns._saved_transfer_remote_dests = Bridge._saved_transfer_remote_dests
+    ns._saved_transfer_target_text = Bridge._saved_transfer_target_text
     ns._scheduled_transfer_dir = Bridge._scheduled_transfer_dir
     ns.cards = []
     ns._on_schedule_card = lambda card: ns.cards.append(dict(card))
@@ -116,6 +152,9 @@ def env(tmp_path, monkeypatch):
     ns._open_source_conn = open_conn
     ns.remote = remote
     ns.ws = ws
+    ns.dst = tmp_path / "dst"
+    ns.dst.mkdir()
+    monkeypatch.setattr(_FakeSftp, "dest_root", str(ns.dst))
     return ns
 
 
@@ -391,3 +430,124 @@ def test_scheduled_run_dest_override_and_failures(env, tmp_path):
     env.cards.clear()
     env._invoke_scheduled_transfer(_job(saved_transfer="a", transfer_dest="rel/dir"))
     assert "must be an absolute path" in env.cards[-1]["detail"]["error"]
+
+
+# ── uploads (push) and relays ──────────────────────────────────────────────────
+
+
+def test_push_workspace_files_to_group(env):
+    _write(env.ws / "out" / "report-2026-10-28.csv", "r1")
+    _write(env.ws / "out" / "report-2026-10-27.csv", "r0")
+    inbox = env.dst / "in"
+    _save(
+        env,
+        id="reports",
+        host="local",
+        paths=["out/report-{{day}}.csv"],
+        to_group="web",
+        dest_dir=f"{DST}/in/{{{{host}}}}",
+        subdir="daily",
+        params={"day": {"default": "today"}},
+    )
+    prev = env.preview_saved_transfer("reports", {"day": "2026-10-28"})
+    assert prev["direction"] == "push"
+    assert prev["targets"] == ["web-01", "web-02"]  # local skipped
+    assert prev["total"] == 1
+    assert prev["sources"][0]["files"][0]["dest"] == (
+        f"{DST}/in/web-01/daily/report-2026-10-28.csv"
+    )
+    assert not inbox.exists()  # preview copies nothing
+
+    detail = _wait(env, env.run_saved_transfer("reports", {"day": "2026-10-28"})["id"])
+    assert detail["ok"] and detail["files"] == 2, detail["saved"]
+    assert detail["saved"]["direction"] == "push"
+    for host in ("web-01", "web-02"):  # folders made on each destination
+        got = inbox / host / "daily"
+        assert os.listdir(got) == ["report-2026-10-28.csv"]
+        assert (got / "report-2026-10-28.csv").read_text() == "r1"
+
+
+def test_push_absolute_local_path_to_adhoc(env, tmp_path):
+    src = tmp_path / "local-out"
+    _write(src / "a.txt", "a")
+    drop = env.dst / "drop"
+    _save(
+        env,
+        id="up",
+        host="local",
+        paths=[f"{src}/*.txt"],
+        to_adhoc="10.0.0.9",
+        to_user="ops",
+        dest_dir=f"{DST}/drop",
+    )
+    env._current_workspace_root = lambda chat_id="": None  # no chat needed
+    detail = _wait(env, env.run_saved_transfer("up")["id"])
+    assert detail["ok"], detail
+    assert (drop / "a.txt").read_text() == "a"
+    assert env.opened[-1]["kind"] == "adhoc"
+    assert env.opened[-1]["host"] == "10.0.0.9"
+
+
+def test_push_relative_path_needs_a_workspace(env):
+    _save(env, id="up", host="local", paths=["x.csv"], to_host="web-01", dest_dir="/i")
+    env._current_workspace_root = lambda chat_id="": None
+    res = env.run_saved_transfer("up")
+    assert "relative to the chat workspace" in res["error"]
+
+
+def test_relay_host_to_host(env):
+    logs = env.remote / "src" / "logs"
+    _write(logs / "app-2026-10-28.log", "y")
+    _write(logs / "app-2026-10-29.log", "t")
+    drop = env.dst / "archive"
+    _save(
+        env,
+        id="ship",
+        host="web-01",
+        paths=[f"{logs}/app-{{{{day:%Y-%m-%d}}}}.log"],
+        to_host="backup-01",
+        dest_dir=f"{DST}/archive/{{{{host}}}}",
+        params={"day": {"default": "today"}},
+    )
+    detail = _wait(env, env.run_saved_transfer("ship", {"day": "2026-10-28"})["id"])
+    assert detail["ok"], detail
+    assert detail["saved"]["direction"] == "relay"
+    # {{host}} is the source for a relay (the host the scenario is "about").
+    assert (drop / "web-01" / "app-2026-10-28.log").read_text() == "y"
+    assert detail["saved"]["dest"] == f"backup-01:{DST}/archive/web-01"
+    hosts = {d["host"] for d in env.opened}
+    assert hosts == {"web-01", "backup-01"}
+    text = env._format_saved_result("ship", detail, "")
+    assert text.startswith("✓ Saved transfer 'ship' copied 1 file(s) to backup-01:")
+    preview = env.preview_saved_transfer("ship", {"day": "2026-10-28"})
+    text = env._format_saved_preview(preview)
+    assert "would copy 1 file(s) to backup-01:" in text
+    assert f"→ {DST}/archive/web-01/app-2026-10-28.log" in text
+
+
+def test_remote_dest_must_be_absolute_after_render(env):
+    _save(env, id="r", host="web-01", paths=["/x"], to_host="b", dest_dir="/i")
+    res = env.run_saved_transfer("r")
+    assert "id" in res  # starts
+    _wait(env, res["id"])
+    res = env._start_saved_transfer("r", None, dest="rel/dir")
+    assert "absolute path on the remote host" in res["error"]
+
+
+def test_scheduled_push_reads_from_documents(env, tmp_path, monkeypatch):
+    monkeypatch.setattr("runspec_console.config.app_dir", lambda: tmp_path / "app")
+    outbox = tmp_path / "app" / "documents" / "transfers" / "nightly"
+    _write(outbox / "export.csv", "e")
+    drop = env.dst / "inbox"
+    _save(
+        env,
+        id="nightly",
+        host="local",
+        paths=["*.csv"],
+        to_host="web-01",
+        dest_dir=f"{DST}/inbox",
+    )
+    env._invoke_scheduled_transfer(_job(saved_transfer="nightly"))
+    card = _wait_card(env)
+    assert card["column"] == "done", card
+    assert (drop / "export.csv").read_text() == "e"

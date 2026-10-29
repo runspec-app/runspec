@@ -39,7 +39,36 @@ def test_parse_minimal_defaults():
         ({"id": "", "host": "h", "paths": ["/x"]}, "missing an 'id'"),
         ({"id": "a", "paths": ["/x"]}, "exactly one source"),
         ({"id": "a", "host": "h", "group": "g", "paths": ["/x"]}, "exactly one"),
-        ({"id": "a", "host": "local", "paths": ["/x"]}, "must be a remote host"),
+        ({"id": "a", "host": "local", "paths": ["/x"]}, "needs a remote destination"),
+        (
+            {"id": "a", "host": "h", "to_host": "g", "to_group": "w", "paths": ["/x"]},
+            "more than one destination",
+        ),
+        (
+            {"id": "a", "host": "h", "to_host": "local", "paths": ["/x"]},
+            "onto this machine",
+        ),
+        (
+            {
+                "id": "a",
+                "group": "w",
+                "to_host": "g",
+                "paths": ["/x"],
+                "dest_dir": "/i",
+            },
+            "group",
+        ),
+        ({"id": "a", "host": "local", "to_host": "g", "paths": ["x"]}, "dest_dir"),
+        (
+            {
+                "id": "a",
+                "host": "local",
+                "to_host": "g",
+                "to_jump": "j",
+                "paths": ["x"],
+            },
+            "to_adhoc",
+        ),
         ({"id": "a", "host": "h", "paths": []}, "no 'paths'"),
         ({"id": "a", "host": "h", "jump": "j", "paths": ["/x"]}, "only apply"),
         ({"id": "a", "host": "h", "paths": ["/x"], "autonomy": "yolo"}, "autonomy"),
@@ -253,3 +282,29 @@ def test_registry_round_trip_and_sync(monkeypatch, tmp_path):
         "saved_transfer",
         "id",
     )
+
+
+# ── push / relay ───────────────────────────────────────────────────────────────
+
+
+def test_directions_and_summaries():
+    pull = _entry()
+    assert pull.direction == "pull"
+    push = _entry(host="local", paths=["out/*.csv"], to_group="web", dest_dir="/in")
+    assert push.direction == "push"
+    assert push.source_summary() == "this computer"
+    assert push.target_summary() == "group web"
+    assert push.dest_summary() == "group web:/in"
+    relay = _entry(to_adhoc="10.0.0.9", to_user="ops", dest_dir="/drop", subdir="x")
+    assert relay.direction == "relay"
+    assert relay.dest_summary().endswith(":/drop/x")
+    row = st.entry_to_row(relay)
+    assert row["to_adhoc"] == "10.0.0.9" and row["to_user"] == "ops"
+    assert st.parse_saved_transfer(row) == relay
+
+
+def test_is_absolute():
+    assert st.is_absolute("/srv/x")
+    assert st.is_absolute("C:/logs/a")
+    assert st.is_absolute("C:\\logs\\a")
+    assert not st.is_absolute("out/a.csv")

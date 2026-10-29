@@ -95,7 +95,8 @@ export interface SavedTransfer {
   id: string
   title?: string
   description?: string
-  // Exactly one of host / group / adhoc is set.
+  // Exactly one of host / group / adhoc is set. host = "local" is this
+  // computer (an upload, which then needs a to_* destination).
   host?: string
   group?: string
   adhoc?: string
@@ -103,24 +104,36 @@ export interface SavedTransfer {
   user?: string
   port?: number
   credential_id?: string
+  // A remote destination (an upload, or a relay between two hosts): at most
+  // one of to_host / to_group / to_adhoc; unset = this computer (a pull).
+  to_host?: string
+  to_group?: string
+  to_adhoc?: string
+  to_jump?: string
+  to_user?: string
+  to_port?: number
+  to_credential_id?: string
   paths: string[]
   latest?: number           // 0 / unset = every match; N = newest N per pattern
   max_files?: number        // refuse (not truncate) past this many per host
   filter?: string
   filter_arg?: string
-  dest_dir?: string         // local folder; unset = the chat's workspace
+  dest_dir?: string         // pull: local folder (unset = the chat's workspace); else the remote folder
   subdir?: string
   autonomy?: 'confirm' | 'autonomous' | 'manual'
   params?: ArgDef[]                   // parsed param defs (from get_saved_transfers)
   paramsRaw?: Record<string, unknown> // stored params table (faithful round-trip)
   source?: string           // human summary, computed bridge-side
   dest?: string
+  direction?: 'pull' | 'push' | 'relay'
   error?: string            // set when the entry failed to validate
 }
 
 export interface SavedTransferPreview {
   id?: string
+  direction?: 'pull' | 'push' | 'relay'
   dest?: string
+  targets?: string[]        // push / relay: the destination hosts
   total?: number
   sources?: {
     host: string

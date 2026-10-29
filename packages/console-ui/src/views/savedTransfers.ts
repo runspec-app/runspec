@@ -97,3 +97,21 @@ export function defaultValues(entry: SavedTransfer): Record<string, unknown> {
   }
   return d
 }
+
+// The Transfer dialog's picked destination hosts as a saved-transfer target: one
+// host → to_host, every remote member of one group → to_group, anything else
+// (a hand-picked subset) → null, since a scenario names one host or one group.
+export function remoteTarget(
+  picked: string[],
+  hosts: { name: string; group?: string }[],
+): Pick<SavedTransfer, 'to_host' | 'to_group'> | null {
+  if (picked.length === 1) return { to_host: picked[0] }
+  if (picked.length === 0) return null
+  const groups = new Set(picked.map(n => hosts.find(h => h.name === n)?.group ?? ''))
+  if (groups.size !== 1) return null
+  const [group] = [...groups]
+  if (!group) return null
+  const members = hosts.filter(h => h.name !== 'local' && h.group === group).map(h => h.name)
+  const all = members.length === picked.length && members.every(m => picked.includes(m))
+  return all ? { to_group: group } : null
+}

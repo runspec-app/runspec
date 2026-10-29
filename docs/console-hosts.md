@@ -390,13 +390,14 @@ Ask the agent:
 
 ### Saved transfers
 
-A **saved transfer** is a pull you build once in the Transfer files dialog and
+A **saved transfer** is a copy you build once in the Transfer files dialog and
 run again later, by hand or by the agent. Use it for the files you keep
 fetching while you investigate, such as yesterday's app log from every web
-host.
+host. It can also upload files or copy them between two hosts (see
+[Uploads and relays](#uploads-and-relays) below).
 
-**Build one:** pick a remote source, choose the files, set *This computer* as
-the destination and click **Save as scenario…**. The picked paths become the
+**Build one:** pick a source, choose the files, pick a destination and click
+**Save as scenario…**. The picked paths become the
 scenario's path patterns, which you can edit:
 
 - **Wildcards** `*`, `?` and `[..]` match on the source host, a folder at a
@@ -461,8 +462,9 @@ choose the scenario and fill its parameters. A date parameter set to
 schedule has no chat, so a scenario that saves to the chat workspace saves to
 `documents/transfers/<id>/` in the console's data folder instead, unless you
 set **Save files to** on the schedule (an absolute folder, placeholders
-allowed). Each run shows a card with the file count and folder, or what went
-wrong. It runs without asking, like any schedule.
+allowed). A scheduled upload reads its relative paths from that same folder.
+Each run shows a card with the file count and folder, or what went wrong. It
+runs without asking, like any schedule.
 
 ```toml
 [[schedule]]
@@ -473,6 +475,44 @@ values         = { day = "yesterday" }
 transfer_dest  = "D:/collect/{{today:%Y-%m-%d}}"   # optional
 when           = { cron = "15 6 * * mon-fri" }
 ```
+
+#### Uploads and relays
+
+A saved transfer can also go the other way:
+
+- **Upload** (source *This computer*): sends local files to one host, every
+  host in a group, or an ad-hoc host. A relative path is read from the chat's
+  workspace, so the agent can write a file there and upload it; an absolute
+  path is any file on this machine.
+- **Relay** (a remote source and a remote destination): copies files from one
+  host to another. The bytes stream through this computer, so the two hosts
+  never need to reach each other.
+
+Either way, set an absolute **folder** on the destination; missing folders are
+made. `{{host}}` is each destination host for an upload and the source host
+for a relay. A filter works too: an upload runs it here (it needs `sh`), a
+relay runs it on the source. Uploads and relays ask first by default, like a
+pull, and **Preview** shows each file with where it would land.
+
+```toml
+[[saved_transfer]]
+id       = "push-config"
+title    = "Push app config"
+host     = "local"                        # this computer
+paths    = ["config/app-*.yaml"]          # relative = the chat workspace
+to_group = "web"                          # or to_host = "web-01", or to_adhoc = "db7.corp"
+dest_dir = "/srv/app/config"              # absolute folder on the destination
+
+[[saved_transfer]]
+id       = "ship-logs"
+host     = "web-01"
+paths    = ["/var/log/app/app-{{yesterday:%Y-%m-%d}}.log"]
+to_host  = "archive-01"
+dest_dir = "/archive/{{host}}"            # {{host}} = web-01, the source
+```
+
+An ad-hoc destination takes `to_jump`, `to_user`, `to_port` and
+`to_credential_id`, the same as an ad-hoc source.
 
 ---
 

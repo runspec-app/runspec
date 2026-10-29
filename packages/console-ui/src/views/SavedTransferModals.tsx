@@ -13,7 +13,8 @@ import {
 
 const { Text } = Typography
 
-type SourceKind = 'host' | 'group' | 'adhoc'
+type SourceKind = 'local' | 'host' | 'group' | 'adhoc'
+type DestKind = 'local' | 'host' | 'group' | 'adhoc'
 
 const label = (t: string) => <Text style={{ fontSize: 13 }}>{t}</Text>
 const hint = (t: React.ReactNode) => <Text type="secondary" style={{ fontSize: 12 }}>{t}</Text>
@@ -36,8 +37,21 @@ export function SaveTransferModal({ initial, replaceId, hosts, workspacePath, on
   const [id, setId] = useState(initial.id ?? '')
   const idTouched = useRef(!!initial.id)
   const [description, setDescription] = useState(initial.description ?? '')
-  const [kind, setKind] = useState<SourceKind>(initial.group ? 'group' : initial.adhoc ? 'adhoc' : 'host')
-  const [host, setHost] = useState(initial.host ?? '')
+  const [kind, setKindState] = useState<SourceKind>(initial.host === 'local' ? 'local' : initial.group ? 'group' : initial.adhoc ? 'adhoc' : 'host')
+  const [toKind, setToKind] = useState<DestKind>(initial.to_group ? 'group' : initial.to_adhoc ? 'adhoc' : initial.to_host ? 'host' : 'local')
+  const [toHost, setToHost] = useState(initial.to_host ?? '')
+  const [toGroup, setToGroup] = useState(initial.to_group ?? '')
+  const [toAdhoc, setToAdhoc] = useState(initial.to_adhoc ?? '')
+  const [toJump, setToJump] = useState(initial.to_jump ?? '')
+  const [toUser, setToUser] = useState(initial.to_user ?? '')
+  const [toCredentialId, setToCredentialId] = useState(initial.to_credential_id ?? '')
+  // This computer → a remote destination only; a group source → this computer only.
+  const setKind = (k: SourceKind) => {
+    setKindState(k)
+    if (k === 'local' && toKind === 'local') setToKind('host')
+    if (k === 'group') setToKind('local')
+  }
+  const [host, setHost] = useState(initial.host === 'local' ? '' : (initial.host ?? ''))
   const [group, setGroup] = useState(initial.group ?? (remote.find(h => h.name === initial.host)?.group ?? ''))
   const [adhoc, setAdhoc] = useState(initial.adhoc ?? '')
   const [jump, setJump] = useState(initial.jump ?? '')
@@ -47,7 +61,8 @@ export function SaveTransferModal({ initial, replaceId, hosts, workspacePath, on
   const [rows, setRows] = useState<ParamRowState[]>(() => rowsFromParams(initial.paramsRaw))
   const [latest, setLatest] = useState(initial.latest ?? 0)
   const [maxFiles, setMaxFiles] = useState<number | null>(initial.max_files ?? null)
-  const [destMode, setDestMode] = useState<'workspace' | 'folder'>(initial.dest_dir ? 'folder' : 'workspace')
+  const remoteDest = toKind !== 'local'
+  const [destMode, setDestMode] = useState<'workspace' | 'folder'>(initial.dest_dir && !(initial.to_host || initial.to_group || initial.to_adhoc) ? 'folder' : 'workspace')
   const [destDir, setDestDir] = useState(initial.dest_dir ?? '')
   const [subdir, setSubdir] = useState(initial.subdir ?? '')
   const [filterArg, setFilterArg] = useState(initial.filter_arg ?? '')
@@ -57,7 +72,8 @@ export function SaveTransferModal({ initial, replaceId, hosts, workspacePath, on
 
   const paths = pathsText.split('\n').map(p => p.trim()).filter(Boolean)
   const dates = detectDates(paths)
-  const missing = missingParams([...paths, subdir, destMode === 'folder' ? destDir : '', filterArg], rows)
+  const missing = missingParams([...paths, subdir, remoteDest || destMode === 'folder' ? destDir : '', filterArg], rows)
+  const remoteDirOk = !remoteDest || destDir.trim().startsWith('/')
   const canWiden = paths.some(p => widenToRotations(p) !== p)
 
   const useDateParam = () => {
@@ -81,12 +97,15 @@ export function SaveTransferModal({ initial, replaceId, hosts, workspacePath, on
       max_files: maxFiles || undefined,
       filter: initial.filter || undefined,
       filter_arg: initial.filter ? (filterArg || undefined) : undefined,
-      dest_dir: destMode === 'folder' ? destDir.trim() || undefined : undefined,
+      dest_dir: remoteDest || destMode === 'folder' ? destDir.trim() || undefined : undefined,
       subdir: subdir.trim() || undefined,
       autonomy,
-      ...(kind === 'host' ? { host } : kind === 'group' ? { group } : {
+      ...(kind === 'local' ? { host: 'local' } : kind === 'host' ? { host } : kind === 'group' ? { group } : {
         adhoc: adhoc.trim(), jump: jump || undefined, user: user.trim() || undefined, credential_id: credentialId || undefined,
       }),
+      ...(toKind === 'host' ? { to_host: toHost } : toKind === 'group' ? { to_group: toGroup } : toKind === 'adhoc' ? {
+        to_adhoc: toAdhoc.trim(), to_jump: toJump || undefined, to_user: toUser.trim() || undefined, to_credential_id: toCredentialId || undefined,
+      } : {}),
     }
     setSaving(true)
     try {
@@ -108,7 +127,7 @@ export function SaveTransferModal({ initial, replaceId, hosts, workspacePath, on
       onCancel={() => onClose()}
       onOk={save}
       okText="Save"
-      okButtonProps={{ loading: saving, disabled: !id.trim() || paths.length === 0 }}
+      okButtonProps={{ loading: saving, disabled: !id.trim() || paths.length === 0 || !remoteDirOk }}
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <div style={{ display: 'flex', gap: 8 }}>
@@ -131,7 +150,8 @@ export function SaveTransferModal({ initial, replaceId, hosts, workspacePath, on
         <div>
           {label('Source')}
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
-            <Select size="small" value={kind} onChange={setKind} style={{ width: 150 }} options={[
+            <Select size="small" value={kind} onChange={setKind} style={{ width: 200 }} options={[
+              { label: 'This computer', value: 'local' },
               { label: 'Fleet host', value: 'host' },
               { label: 'Every host in a group', value: 'group', disabled: groupNames.length === 0 },
               { label: 'Ad-hoc host', value: 'adhoc' },
@@ -150,6 +170,7 @@ export function SaveTransferModal({ initial, replaceId, hosts, workspacePath, on
               </>
             )}
           </div>
+          {kind === 'local' && hint('Upload files from here. Relative paths are read from the chat workspace (from documents/transfers/<id> when a schedule runs it).')}
           {kind === 'group' && hint('Each host’s files land in a folder named after the host.')}
           {kind === 'adhoc' && hint('Key/agent auth, or a saved credential — a typed password is never saved.')}
         </div>
@@ -169,7 +190,7 @@ export function SaveTransferModal({ initial, replaceId, hosts, workspacePath, on
             )}
           </div>
           <div style={{ marginTop: 4 }}>
-            {hint(<>Wildcards <Text code>*</Text> <Text code>?</Text> <Text code>[..]</Text> match on the source host. Placeholders: <Text code>{'{{param}}'}</Text>, <Text code>{'{{day:%Y%m%d}}'}</Text> (a date param in any strftime format), and built-ins <Text code>{'{{today}}'}</Text> <Text code>{'{{yesterday}}'}</Text> <Text code>{'{{host}}'}</Text>.</>)}
+            {hint(<>Wildcards <Text code>*</Text> <Text code>?</Text> <Text code>[..]</Text> match on the source. Placeholders: <Text code>{'{{param}}'}</Text>, <Text code>{'{{day:%Y%m%d}}'}</Text> (a date param in any strftime format), and built-ins <Text code>{'{{today}}'}</Text> <Text code>{'{{yesterday}}'}</Text> <Text code>{'{{host}}'}</Text>.</>)}
           </div>
         </div>
 
@@ -216,17 +237,46 @@ export function SaveTransferModal({ initial, replaceId, hosts, workspacePath, on
 
         <div>
           {label('Destination')}
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 4 }}>
-            <Radio.Group size="small" value={destMode} onChange={e => setDestMode(e.target.value)}>
-              <Radio value="workspace">This chat’s workspace</Radio>
-              <Radio value="folder">A folder</Radio>
-            </Radio.Group>
-            {destMode === 'folder' && (
-              <Input size="small" value={destDir} onChange={e => setDestDir(e.target.value)} placeholder="C:\\cases or /home/me/cases" style={{ width: 240, fontFamily: MONO_FONT }} />
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
+            <Select size="small" value={toKind} onChange={setToKind} style={{ width: 200 }} options={[
+              { label: 'This computer', value: 'local', disabled: kind === 'local' },
+              { label: 'Fleet host', value: 'host', disabled: kind === 'group' },
+              { label: 'Every host in a group', value: 'group', disabled: kind !== 'local' || groupNames.length === 0 },
+              { label: 'Ad-hoc host', value: 'adhoc', disabled: kind === 'group' },
+            ]} />
+            {toKind === 'host' && <Select size="small" value={toHost || undefined} onChange={setToHost} placeholder="host" style={{ minWidth: 170 }} options={hostOptions} showSearch />}
+            {toKind === 'group' && <Select size="small" value={toGroup || undefined} onChange={setToGroup} placeholder="group" style={{ minWidth: 170 }} options={groupNames.map(g => ({ label: g, value: g }))} />}
+            {toKind === 'adhoc' && (
+              <>
+                <Input size="small" value={toAdhoc} onChange={e => setToAdhoc(e.target.value)} placeholder="target hostname" style={{ width: 170, fontFamily: MONO_FONT }} />
+                <Select size="small" value={toJump || undefined} onChange={v => setToJump(v ?? '')} allowClear placeholder="jump host (optional)" style={{ minWidth: 150 }} options={hostOptions} />
+                <Input size="small" value={toUser} onChange={e => setToUser(e.target.value)} placeholder="user (optional)" style={{ width: 120 }} />
+                {creds.length > 0 && (
+                  <Select size="small" value={toCredentialId || undefined} onChange={v => setToCredentialId(v ?? '')} allowClear placeholder="saved credential" style={{ width: 170 }}
+                    options={creds.map(c => ({ label: c.label, value: c.id }))} />
+                )}
+              </>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 6 }}>
+            {remoteDest ? (
+              <Input size="small" value={destDir} onChange={e => setDestDir(e.target.value)} addonBefore="folder" placeholder="/srv/app/incoming"
+                status={destDir.trim() && !remoteDirOk ? 'error' : undefined} style={{ width: 300, fontFamily: MONO_FONT }} />
+            ) : (
+              <>
+                <Radio.Group size="small" value={destMode} onChange={e => setDestMode(e.target.value)}>
+                  <Radio value="workspace">This chat’s workspace</Radio>
+                  <Radio value="folder">A folder</Radio>
+                </Radio.Group>
+                {destMode === 'folder' && (
+                  <Input size="small" value={destDir} onChange={e => setDestDir(e.target.value)} placeholder="C:\\cases or /home/me/cases" style={{ width: 240, fontFamily: MONO_FONT }} />
+                )}
+              </>
             )}
             <Input size="small" value={subdir} onChange={e => setSubdir(e.target.value)} addonBefore="subfolder" placeholder="optional, e.g. logs" style={{ width: 260, fontFamily: MONO_FONT }} />
           </div>
-          {destMode === 'workspace' && workspacePath && hint('Files land where the agent can read them.')}
+          {remoteDest && hint(<>An absolute folder on the destination, made if missing. <Text code>{'{{host}}'}</Text> is {kind === 'local' ? 'each destination host' : 'the source host'}.{kind !== 'local' ? ' The files stream through this computer — the two hosts never connect.' : ''}</>)}
+          {!remoteDest && destMode === 'workspace' && workspacePath && hint('Files land where the agent can read them.')}
         </div>
 
         {initial.filter && (
@@ -255,6 +305,13 @@ export function SaveTransferModal({ initial, replaceId, hosts, workspacePath, on
   )
 }
 
+// direction → (past tense, preposition, infinitive), for the run dialog's text.
+const VERBS = {
+  pull: ['Fetched', 'into', 'fetch'],
+  push: ['Uploaded', 'to', 'upload'],
+  relay: ['Copied', 'to', 'copy'],
+} as const
+
 type Prog = { file: string; index: number; count: number; transferred: number; total: number; host?: string }
 
 // Run a saved transfer: fill its params, optionally preview the matches, then
@@ -274,6 +331,7 @@ export function SavedTransferRunModal({ entry, hostNames, onClose }: {
   const [prog, setProg] = useState<Prog | null>(null)
   const [result, setResult] = useState<TransferEnd | null>(null)
   const runRef = useRef<string | null>(null)
+  const verbs = VERBS[entry.direction ?? 'pull']
 
   useEffect(() => {
     const onProgress = (e: Event) => {
@@ -287,7 +345,7 @@ export function SavedTransferRunModal({ entry, hostNames, onClose }: {
       if (d.id !== runRef.current) return
       setResult(d)
       setRunId(null)
-      if (d.ok) message.success(`Fetched ${d.files} file${d.files === 1 ? '' : 's'}`)
+      if (d.ok) message.success(`${verbs[0]} ${d.files} file${d.files === 1 ? '' : 's'}`)
     }
     window.addEventListener('runspec:transfer_progress', onProgress)
     window.addEventListener('runspec:transfer_end', onEnd)
@@ -295,7 +353,7 @@ export function SavedTransferRunModal({ entry, hostNames, onClose }: {
       window.removeEventListener('runspec:transfer_progress', onProgress)
       window.removeEventListener('runspec:transfer_end', onEnd)
     }
-  }, [])
+  }, [verbs])
 
   const change = (name: string, v: unknown) => {
     setValues(prev => ({ ...prev, [name]: v }))
@@ -356,7 +414,7 @@ export function SavedTransferRunModal({ entry, hostNames, onClose }: {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 12 }}>
         <div>
           <Text type="secondary" style={{ fontSize: 13 }}>from </Text><Tag style={{ margin: 0 }}>{entry.source}</Tag>
-          <Text type="secondary" style={{ fontSize: 13 }}> into </Text><Tag style={{ margin: 0 }}>{entry.dest}</Tag>
+          <Text type="secondary" style={{ fontSize: 13 }}> {verbs[1]} </Text><Tag style={{ margin: 0 }}>{entry.dest}</Tag>
           {entry.filter && <><Text type="secondary" style={{ fontSize: 13 }}> through filter </Text><Tag style={{ margin: 0 }}>{entry.filter}</Tag></>}
         </div>
         {entry.paths.map(p => <Text key={p} code style={{ fontSize: 12, fontFamily: MONO_FONT }}>{p}</Text>)}
@@ -382,7 +440,7 @@ export function SavedTransferRunModal({ entry, hostNames, onClose }: {
           {running && !prog && <Text type="secondary" style={{ fontSize: 12 }}>Finding matches…</Text>}
           {result && (
             <Text type={result.ok ? 'success' : 'danger'} style={{ fontSize: 13 }}>
-              {result.ok ? `Done — ${result.files} file${result.files === 1 ? '' : 's'} in ${dest}` : `Failed: ${result.error}`}
+              {result.ok ? `Done — ${verbs[0].toLowerCase()} ${result.files} file${result.files === 1 ? '' : 's'} ${verbs[1]} ${dest}` : `Failed: ${result.error}`}
             </Text>
           )}
         </div>
@@ -394,9 +452,10 @@ export function SavedTransferRunModal({ entry, hostNames, onClose }: {
 function PreviewList({ preview }: { preview: SavedTransferPreview }) {
   if (preview.error) return <Alert type="error" showIcon message={preview.error} />
   const sources = preview.sources ?? []
+  const pull = (preview.direction ?? 'pull') === 'pull'
   return (
     <div style={{ border: '1px solid var(--rs-border, rgba(128,128,128,.3))', borderRadius: 6, padding: 8, maxHeight: 240, overflow: 'auto' }}>
-      <Text style={{ fontSize: 12 }}>{preview.total} file{preview.total === 1 ? '' : 's'} would land in </Text>
+      <Text style={{ fontSize: 12 }}>{preview.total} file{preview.total === 1 ? '' : 's'} would {pull ? 'land in' : `${VERBS[preview.direction ?? 'pull'][2]} to`} </Text>
       <Text code style={{ fontSize: 12 }}>{preview.dest}</Text>
       {sources.map(s => (
         <div key={s.host} style={{ marginTop: 6 }}>
@@ -404,7 +463,7 @@ function PreviewList({ preview }: { preview: SavedTransferPreview }) {
           {s.error && <div><Text type="danger" style={{ fontSize: 12 }}>{s.error}</Text></div>}
           {s.files.map(f => (
             <div key={f.path} style={{ fontSize: 12, fontFamily: MONO_FONT, display: 'flex', gap: 8 }}>
-              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={f.path}>{f.path}</span>
+              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={pull ? f.path : `${f.path} → ${f.dest}`}>{f.path}</span>
               <Text type="secondary" style={{ fontSize: 12 }}>{humanBytes(f.size)}</Text>
               <Text type="secondary" style={{ fontSize: 12 }}>{new Date(f.mtime * 1000).toLocaleString()}</Text>
             </div>

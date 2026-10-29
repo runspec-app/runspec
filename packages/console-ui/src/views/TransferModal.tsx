@@ -8,6 +8,7 @@ import { FilterPicker, humanBytes } from './FilterPicker'
 import { AdHocHostFields, emptyAdHoc, adHocValid, adHocToEndpoint, type AdHocState } from './AdHocHostFields'
 import { MONO_FONT } from '../ThemeContext'
 import { SaveTransferModal, SavedTransferRunModal } from './SavedTransferModals'
+import { remoteTarget } from './savedTransfers'
 
 const { Text } = Typography
 const LOCAL = 'local'
@@ -238,21 +239,29 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
   const endpointLabel = (kind: Kind, host: string, adhoc: AdHocState) =>
     kind === 'local' ? 'local' : kind === 'host' ? (host || '—') : (adhoc.target.trim() || 'ad-hoc')
 
-  // A scenario saves a pull into this machine: a remote source, a local
-  // destination and at least one picked file (the paths become its patterns).
-  const canSaveScenario = srcKind !== 'local' && dstKind === 'local' && srcOk && sourcePaths.length > 0
+  // A scenario saves the picked files as patterns: a pull (remote → this
+  // computer), an upload (this computer → a host or a whole group) or a relay
+  // (host → host). A hand-picked subset of hosts can't be saved — a scenario
+  // names one host or one group.
+  const pickedTarget = dstKind === 'host' ? remoteTarget(dstHosts, hosts) : null
+  const canSaveScenario = !bothLocal && !relayDestUnsupported && srcOk && dstOk && sourcePaths.length > 0
+    && (dstKind !== 'host' || !!pickedTarget) && (dstKind === 'local' || !!destDir.trim())
   const scenarioDraft = (): SavedTransfer => ({
     id: '',
     paths: sourcePaths,
-    ...(srcKind === 'host' ? { host: srcHost } : {
+    ...(srcKind === 'local' ? { host: LOCAL } : srcKind === 'host' ? { host: srcHost } : {
       adhoc: srcAdhoc.target.trim(), jump: srcAdhoc.jump || undefined,
       user: srcAdhoc.user.trim() || undefined, credential_id: srcAdhoc.credentialId || undefined,
     }),
+    ...(dstKind === 'host' ? pickedTarget : dstKind === 'adhoc' ? {
+      to_adhoc: dstAdhoc.target.trim(), to_jump: dstAdhoc.jump || undefined,
+      to_user: dstAdhoc.user.trim() || undefined, to_credential_id: dstAdhoc.credentialId || undefined,
+    } : {}),
     filter: filterName || undefined,
     filter_arg: filterArg || undefined,
     // A local folder other than the chat workspace is kept; the workspace default is not
     // (it changes per chat — the scenario follows whichever chat runs it).
-    dest_dir: destDir && destDir !== workspacePath ? destDir : undefined,
+    dest_dir: dstKind !== 'local' ? destDir.trim() : destDir && destDir !== workspacePath ? destDir : undefined,
   })
   const selectedSaved = saved.find(t => t.id === savedId)
   const deleteSaved = async (id: string) => {
@@ -272,7 +281,11 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
       footer={
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Tooltip title={canSaveScenario ? 'Save this pull — with wildcards, dates and parameters — to run again later (you or the agent)' : 'Pick a remote source, files, and This computer as the destination to save a scenario'}>
+            <Tooltip title={canSaveScenario
+              ? 'Save this transfer — with wildcards, dates and parameters — to run again later (you or the agent)'
+              : dstKind === 'host' && dstHosts.length > 1 && !pickedTarget
+                ? 'A scenario sends to one host or every host in one group — pick one of those to save it'
+                : 'Pick a source, files and a destination (a folder, for a remote one) to save a scenario'}>
               <Button icon={<SaveOutlined />} disabled={!canSaveScenario} onClick={() => setEditing({ draft: scenarioDraft() })}>Save as scenario…</Button>
             </Tooltip>
             <Text type="secondary" style={{ fontSize: 12 }}>
@@ -304,7 +317,7 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
                 placeholder={`${saved.length} saved transfer${saved.length === 1 ? '' : 's'}`}
                 style={{ flex: 1, minWidth: 0 }}
                 optionFilterProp="label"
-                options={saved.map(t => ({ value: t.id, label: `${t.title || t.id} — ${t.source ?? ''}` }))}
+                options={saved.map(t => ({ value: t.id, label: `${t.title || t.id} — ${t.source ?? ''}${t.direction && t.direction !== 'pull' ? ` → ${t.dest ?? ''}` : ''}` }))}
               />
               <Button size="small" type="primary" icon={<PlayCircleOutlined />} disabled={!selectedSaved} onClick={() => selectedSaved && setRunningSaved(selectedSaved)}>Run…</Button>
               <Tooltip title="Edit"><Button size="small" icon={<EditOutlined />} disabled={!selectedSaved} onClick={() => selectedSaved && setEditing({ draft: selectedSaved, replaceId: selectedSaved.id })} /></Tooltip>

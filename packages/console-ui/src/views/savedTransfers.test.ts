@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   detectDates, templatizeDates, widenToRotations, placeholderNames, missingParams,
-  rowsFromParams, paramsFromRows, slugify, defaultValues,
+  rowsFromParams, remoteTarget, paramsFromRows, slugify, defaultValues,
 } from './savedTransfers'
 
 describe('date detection', () => {
@@ -55,4 +55,25 @@ describe('params', () => {
 
 it('slugifies a title into an id', () => {
   expect(slugify('App logs — for a Day!')).toBe('app-logs-for-a-day')
+})
+
+describe('remoteTarget', () => {
+  const hosts = [
+    { name: 'local' },
+    { name: 'web-01', group: 'web' },
+    { name: 'web-02', group: 'web' },
+    { name: 'db-01', group: 'db' },
+    { name: 'solo' },
+  ]
+  it('maps one host to to_host', () => {
+    expect(remoteTarget(['db-01'], hosts)).toEqual({ to_host: 'db-01' })
+  })
+  it('maps a whole group to to_group', () => {
+    expect(remoteTarget(['web-02', 'web-01'], hosts)).toEqual({ to_group: 'web' })
+  })
+  it('refuses a hand-picked subset or a mix', () => {
+    expect(remoteTarget([], hosts)).toBeNull()
+    expect(remoteTarget(['web-01', 'db-01'], hosts)).toBeNull()
+    expect(remoteTarget(['solo', 'web-01'], hosts)).toBeNull()
+  })
 })
