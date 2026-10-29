@@ -72,9 +72,17 @@ def new_session_id() -> str:
     return uuid.uuid4().hex[:16]
 
 
+def first_line(text: str) -> str:
+    """The first non-blank line of ``text``, stripped (``""`` when none)."""
+    for line in str(text or "").splitlines():
+        if line.strip():
+            return line.strip()
+    return ""
+
+
 def session_label(text: str, limit: int = LABEL_LEN) -> str:
     """First line of ``text``, whitespace-collapsed and clipped for a chip."""
-    line = " ".join(str(text or "").strip().split())
+    line = " ".join(first_line(text).split())
     if len(line) <= limit:
         return line
     return line[: limit - 1].rstrip() + "…"

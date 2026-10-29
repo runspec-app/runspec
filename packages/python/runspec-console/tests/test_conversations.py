@@ -35,6 +35,16 @@ def test_append_creates_then_appends_and_titles(tmp_path):
     assert [t["user"] for t in rec["turns"]] == ["first question", "second question"]
 
 
+def test_title_is_the_first_line_of_a_multiline_prompt(tmp_path):
+    cid = conv.new_id()
+    conv.append_turn(
+        tmp_path,
+        cid,
+        _turn("\nweb-01 throws 502s.  Can you:\n- check nginx\n- check disk"),
+    )
+    assert conv.load(tmp_path, cid)["title"] == "web-01 throws 502s. Can you:"
+
+
 def test_list_meta_newest_first_with_preview(tmp_path, monkeypatch):
     # list_meta sorts by the `updated` ISO timestamp. Windows' coarse
     # datetime.now() resolution can hand two back-to-back appends the same

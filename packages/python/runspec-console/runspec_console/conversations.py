@@ -97,6 +97,10 @@ def chat_turns(turns: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [t for t in (turns or []) if is_chat_turn(t)]
 
 
+def _first_line(text: str) -> str:
+    return next((ln.strip() for ln in text.splitlines() if ln.strip()), "")
+
+
 def _title_from(turn: dict[str, Any]) -> str:
     if not is_chat_turn(turn):
         runnable = str(turn.get("runnable", "")).strip()
@@ -104,7 +108,9 @@ def _title_from(turn: dict[str, Any]) -> str:
         if runnable:
             return f"Ran {runnable}" + (f" on {host}" if host else "")
         return "New conversation"
-    text = str(turn.get("user", "")).strip().replace("\n", " ")
+    # The first line only: a multi-line prompt (a pasted log, a list) reads
+    # badly squashed into one row.
+    text = " ".join(_first_line(str(turn.get("user", ""))).split())
     if not text:
         return "New conversation"
     return text[:_TITLE_LEN] + "…" if len(text) > _TITLE_LEN else text

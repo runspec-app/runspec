@@ -1438,6 +1438,65 @@ function ToolCallBlock({
   )
 }
 
+// A chat card's header shows only the prompt's first line, cut off with "…",
+// so collapsed cards stay one row tall and easy to scan. A prompt that doesn't
+// fit there (more lines, or longer than PROMPT_TITLE_MAX) is shown in full at the
+// top of the body as a "You" message, rendered as markdown like the replies.
+export const PROMPT_TITLE_MAX = 100
+// The "You" message is capped at this many lines until "Show all" is clicked.
+export const PROMPT_CLAMP_LINES = 6
+const PROMPT_CLAMP_CHARS = 600
+
+/** The header title for a card label: its first non-empty line, minus a
+ *  leading markdown heading / quote marker. */
+export function promptTitle(label: string): string {
+  const first = label.split('\n').map(l => l.trim()).find(l => l.length > 0) ?? ''
+  return first.replace(/^(#{1,6}|>)\s+/, '')
+}
+
+/** Whether a prompt needs the full "You" message in the body, because the
+ *  one-line header title would lose some of it. */
+export function promptNeedsBody(label: string): boolean {
+  const lines = label.trim().split('\n').filter(l => l.trim().length > 0)
+  return lines.length > 1 || promptTitle(label).length > PROMPT_TITLE_MAX
+}
+
+/** The operator's prompt, in full, at the top of a chat card's body. */
+export function PromptMessage({ text }: { text: string }) {
+  const c = useCardTheme()
+  const [open, setOpen] = useState(false)
+  const lineCount = text.trim().split('\n').length
+  const long = lineCount > PROMPT_CLAMP_LINES || text.length > PROMPT_CLAMP_CHARS
+  const clamped = long && !open
+  // 14px text at line-height 1.6 (Markdown's), so N lines = N × 1.6em.
+  const fade = 'linear-gradient(to bottom, #000 65%, transparent)'
+  return (
+    <div data-testid="prompt-message" style={{
+      borderLeft: '3px solid var(--rs-accent)', borderRadius: RADIUS.sm,
+      background: c.rowAlt, padding: '6px 12px', marginBottom: 2,
+    }}>
+      <div style={{ fontSize: 11, color: c.dim, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 2 }}>
+        You
+      </div>
+      <div style={clamped ? {
+        maxHeight: `${1.6 * PROMPT_CLAMP_LINES}em`, fontSize: 14, overflow: 'hidden',
+        maskImage: fade, WebkitMaskImage: fade,
+      } : undefined}>
+        <Markdown color={c.text} fontSize={14}>{text}</Markdown>
+      </div>
+      {long && (
+        <Button
+          type="link" size="small" aria-expanded={open}
+          onClick={() => setOpen(o => !o)}
+          style={{ padding: 0, height: 'auto', fontSize: 12.5 }}
+        >
+          {open ? 'Show less' : `Show all (${lineCount} line${lineCount !== 1 ? 's' : ''})`}
+        </Button>
+      )}
+    </div>
+  )
+}
+
 // Shared chat-transcript renderer: interleaved markdown text + tool-call blocks +
 // the live streaming tail. Used by the console BlockCard *and* the Triggers panel
 // (RunInbox) so an agent interaction looks identical in both. `pendingConfirm` is
@@ -1776,6 +1835,9 @@ const BlockCard = memo(function BlockCard({
     && !!parsed && parsed.kind !== 'raw'
 
   const moreItems = cardMoreItems(block, { canRerun: !!onRerun, canEditInForm })
+  // The operator's own prompt (not a trigger's summary) that the one-line
+  // header can't show in full.
+  const showPrompt = block.type === 'chat' && !block.trigger && promptNeedsBody(block.label)
   const onMoreClick = (key: string) => {
     if (key === 'copy-prompt') copyToClipboard(block.label)
     else if (key === 'edit-resend') loadToComposer()
@@ -1830,11 +1892,19 @@ const BlockCard = memo(function BlockCard({
         )}
 
         {statusIcon}
+        {/* One line: a chat prompt's first line (the full prompt is the "You"
+            message in the body), a run's command in mono. */}
         <Text
-          style={{ color: c.text, fontFamily: MONO_FONT, fontSize: 14, cursor: 'pointer', flex: 1 }}
+          data-testid="card-title"
+          title={showPrompt ? undefined : block.label}
+          style={{
+            color: c.text, fontSize: 14, cursor: 'pointer', flex: 1, minWidth: 0,
+            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+            ...(block.type === 'run' ? { fontFamily: MONO_FONT } : {}),
+          }}
           onClick={() => setCollapsed(v => !v)}
         >
-          {block.label}
+          {promptTitle(block.label)}
         </Text>
         {block.operatorOnly && (
           <Tooltip title="A run you launched yourself — saved for your review, never part of the assistant’s context">
@@ -2080,6 +2150,12 @@ const BlockCard = memo(function BlockCard({
                   </div>
                 )}
               </Fragment>
+            )}
+
+            {showPrompt && (
+              <div style={{ padding: '10px 14px 0' }}>
+                <PromptMessage text={block.label} />
+              </div>
             )}
 
             {/* chat block: interleaved text segments + tool call blocks */}

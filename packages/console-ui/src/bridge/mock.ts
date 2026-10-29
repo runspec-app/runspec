@@ -2018,7 +2018,7 @@ export const mockApi: BridgeApi = {
     }
     const active = { id, session, cancelled: false }
     _activeChats.set(id, active)
-    _patchSession(session, { state: 'running', turn: id, label: sinfo.label || message.slice(0, 40) })
+    _patchSession(session, { state: 'running', turn: id, label: sinfo.label || (message.split('\n').find(l => l.trim()) ?? '').trim().slice(0, 40) })
     const finish = (exit_code: number, duration_ms: number, stopped = false) => {
       dispatch('runspec:run_end', { id, session, exit_code, duration_ms, stopped })
       _activeChats.delete(id)

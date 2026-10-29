@@ -9,6 +9,27 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.363.0] — 2026-10-29
+
+### Changed
+
+- **Prompts in Console cards are easier to read.** A card's header now shows
+  only the first line of the prompt, on one line, cut off with "…", in the
+  normal UI font (run cards like `/find-large-files on web-01` keep the
+  monospace font). Before, the whole prompt sat in the header as one block of
+  monospace text: line breaks and lists were lost, a pasted log became one
+  long paragraph, and a long prompt made the header grow without limit.
+  - A prompt that doesn't fit in the header (more than one line, or longer
+    than 100 characters) is shown in full at the top of the card's body as a
+    **You** message, formatted as Markdown like the replies (line breaks,
+    lists, `code`, links). It shows up to 6 lines, with **Show all** /
+    **Show less**, and the text can be selected. A short one-line prompt is
+    not repeated.
+  - Trigger and schedule cards keep their summary title and get no **You**
+    message.
+  - Session chips and the chat History list are named after the first line
+    of the prompt instead of all its lines run together.
+
 ## [0.362.0] — 2026-10-29
 
 ### Added

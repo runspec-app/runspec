@@ -62,7 +62,9 @@ def test_to_dict_is_the_session_event_shape():
 
 
 def test_session_label_collapses_and_clips():
-    assert session_label("  hello\n  world  ") == "hello world"
+    assert session_label("  hello   there  ") == "hello there"
+    # A multi-line prompt is labelled by its first non-blank line only.
+    assert session_label("\n  hello\n  world  ") == "hello"
     long = "x" * 100
     assert session_label(long).endswith("…") and len(session_label(long)) == 60
 
