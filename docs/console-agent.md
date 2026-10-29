@@ -68,6 +68,7 @@ which is which.
 | Create **[schedules](console-automation.md#schedules)** — cron/interval, running a runnable, a prompt, or a runbook | |
 | Manage the fleet **denylist** (disable/re-enable runnables per host) | |
 | Transfer files between hosts (`download_file`, `relay_file`) | |
+| Gather files with a **[saved transfer](console-hosts.md#saved-transfers)** into the chat workspace (`run_saved_transfer`) | |
 | Read and locally edit registered **git repos** (`repo_*` tools) | |
 | Work with session **workspace files** — list, read, grep, write | |
 | Execute **Python and SQL** in the session workspace (confirm-gated) | |

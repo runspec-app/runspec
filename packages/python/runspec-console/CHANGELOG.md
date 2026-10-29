@@ -9,20 +9,50 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Changed
-
-- Docs, docstrings, the relay-template placeholder and test fixtures use
-  neutral sample names (`acme-console`, `/srv/prod/...`, `/var/log/app`)
-  instead of site-specific ones. No behaviour change.
+## [0.361.0] — 2026-10-29
 
 ### Added
 
+- **Saved transfers:** save a pull from the Transfer files dialog as a
+  reusable scenario (**Save as scenario…**) and run it again from the dialog's
+  new **Saved** row, or let the agent run it.
+  - A scenario has a remote source (a host, every host in a group, or an
+    ad-hoc host with its jump, user and saved-credential id), path patterns,
+    parameters, an optional filter, and a destination (the chat workspace by
+    default, or a folder, plus an optional subfolder).
+  - Paths take `*`, `?` and `[..]` wildcards, matched on the source host over
+    SFTP, and `{{param}}` / `{{param:%Y%m%d}}` placeholders. A date value can
+    be `today`, `yesterday`, `-3d` or an ISO date; `{{today}}`,
+    `{{yesterday}}`, `{{now}}` and `{{host}}` need no parameter. So
+    `/var/log/app/app-{{day:%Y-%m-%d}}*.log` finds a day's log and its
+    rotations.
+  - The save dialog spots a date in a picked file name and offers to turn it
+    into a `day` parameter, and can widen a name to match rotated files.
+  - `latest` keeps the newest N matches per path; `max_files` (default 50 per
+    host) refuses a run that would fetch more. A group source puts each host's
+    files in a folder named after it; matches sharing a file name keep their
+    folders.
+  - **Preview** lists what would be fetched without copying anything.
+  - The agent gets `run_saved_transfer` (`id`, `values`, `preview`), offered
+    when at least one scenario exists. A run asks first unless the scenario's
+    `autonomy` is `autonomous`; a preview never asks. It is also on the
+    console's MCP server and can be allowed for a trigger.
+  - Stored in `runspec_saved_transfers.toml`, which rides Config Sync (merged
+    by `id`). New `savedtransfers.py` and `bridge_saved_transfers.py`; JS API
+    `get_saved_transfers` / `save_saved_transfer` / `delete_saved_transfer` /
+    `preview_saved_transfer` / `run_saved_transfer`.
 - **Agent lab (dev only, not shipped):** `--trace [FILE]` exports OpenTelemetry
   traces from a lab run (scripted or live) using the console's own tracing.
   FILE is a `[telemetry]` table; without one the `OTEL_*` env vars configure
   the exporter. Lab traces default to project `runspec-agent-lab`, each variant
   is its own `service.instance.id`, and turn spans carry
   `runspec.lab.variant`/`scenario`/`sample`/`tier`.
+
+### Changed
+
+- Docs, docstrings, the relay-template placeholder and test fixtures use
+  neutral sample names (`acme-console`, `/srv/prod/...`, `/var/log/app`)
+  instead of site-specific ones. No behaviour change.
 
 ## [0.360.0] — 2026-10-28
 

@@ -257,6 +257,13 @@ def saved_runs_path() -> Path:
     return app_dir() / "runspec_saved_runs.toml"
 
 
+def saved_transfers_path() -> Path:
+    """The saved-transfer registry (`runspec_saved_transfers.toml`) — a
+    `[[saved_transfer]]` collection of reusable "gather these files" scenarios
+    (source + path patterns + params). Rides Config Sync, merged by `id`."""
+    return app_dir() / "runspec_saved_transfers.toml"
+
+
 def sounds_registry_path() -> Path:
     """The named-sound registry (`runspec_sounds.toml`) — a `[[sound]]` collection
     mapping a stable `id` + `label` to an audio `file` on this machine, so the

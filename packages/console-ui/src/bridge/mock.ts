@@ -1,4 +1,4 @@
-import type { BridgeApi, ProvisionOpRecord, ProvisionPayload, DeprovisionPayload, ProvisionResult, ChatSessionInfo, MarketplaceRepo, MarketplaceEntry, MarketplaceTarget, MarketplaceInstalledTarget, MarketplaceOpRecord, MarketplaceOpPayload, MarketplaceOpResult, Host, JumpHost, Runnable, HistoryRecord, RunningRun, Schedule, InFlightRecord, TestResult, AnalyticsData, AnalyticsBucket, TriggerCard, KnowledgeFact, KnowledgeNode, KnowledgeEdge, KnowledgeFactInput, EnvFileSaveRow } from './index'
+import type { BridgeApi, ProvisionOpRecord, ProvisionPayload, DeprovisionPayload, ProvisionResult, ChatSessionInfo, MarketplaceRepo, MarketplaceEntry, MarketplaceTarget, MarketplaceInstalledTarget, MarketplaceOpRecord, MarketplaceOpPayload, MarketplaceOpResult, Host, JumpHost, Runnable, HistoryRecord, RunningRun, Schedule, InFlightRecord, TestResult, AnalyticsData, AnalyticsBucket, TriggerCard, KnowledgeFact, KnowledgeNode, KnowledgeEdge, KnowledgeFactInput, EnvFileSaveRow, SavedTransfer } from './index'
 
 // Facts the knowledge_overview mock built, so knowledge_page / knowledge_search agree with it.
 let _mockKnowledgeFacts: KnowledgeFact[] = []
@@ -810,6 +810,16 @@ function mockProvisionOp(kind: 'provision' | 'deprovision', hosts: string[], pat
   }, delay + 100)
   return Promise.resolve({ op, hosts })
 }
+
+const _mockSavedTransfers: SavedTransfer[] = [
+  {
+    id: 'app-logs', title: 'App logs for a day', description: 'The app log (and its rotations) for one day',
+    host: 'prod-1', paths: ['/var/log/app/app-{{day:%Y-%m-%d}}*.log'], subdir: 'logs',
+    source: 'prod-1', dest: 'chat workspace/logs', autonomy: 'autonomous',
+    params: [{ name: 'day', type: 'str', required: false, default: 'yesterday', description: 'today, yesterday, -3d or a date' }],
+    paramsRaw: { day: { default: 'yesterday', description: 'today, yesterday, -3d or a date' } },
+  },
+]
 
 export const mockApi: BridgeApi = {
   get_hosts: async () => MOCK_ACTIVE_PROFILE
@@ -1943,6 +1953,39 @@ export const mockApi: BridgeApi = {
     },
   ],
   save_saved_runs: async () => ({ ok: true, count: 0 }),
+  get_saved_transfers: async () => [..._mockSavedTransfers],
+  save_saved_transfer: async (row, replaceId) => {
+    const keep = _mockSavedTransfers.filter(t => t.id !== row.id && t.id !== replaceId)
+    const params = Object.entries(row.paramsRaw ?? {}).map(([name, spec]) => {
+      const sp = (spec ?? {}) as { default?: string; description?: string }
+      return { name, type: 'str', required: !sp.default, default: sp.default, description: sp.description }
+    })
+    _mockSavedTransfers.splice(0, _mockSavedTransfers.length, ...keep, { ...row, params, source: row.host || (row.group ? `group ${row.group}` : `${row.adhoc} (ad-hoc)`), dest: row.dest_dir || 'chat workspace' })
+    window.dispatchEvent(new CustomEvent('runspec:saved_transfers_changed', { detail: { id: row.id } }))
+    return { ok: true, id: row.id }
+  },
+  delete_saved_transfer: async (id) => {
+    const i = _mockSavedTransfers.findIndex(t => t.id === id)
+    if (i >= 0) _mockSavedTransfers.splice(i, 1)
+    window.dispatchEvent(new CustomEvent('runspec:saved_transfers_changed', { detail: { id } }))
+    return { ok: i >= 0 }
+  },
+  preview_saved_transfer: async (id) => ({
+    id, dest: '/home/me/.runspec-console/workspaces/demo', total: 2,
+    sources: [{
+      host: 'prod-1',
+      files: [
+        { path: '/var/log/app/app-2026-10-28.log', size: 182_340, mtime: 1761696000, dest: 'logs/app-2026-10-28.log' },
+        { path: '/var/log/app/app-2026-10-28.1.log', size: 1_048_576, mtime: 1761650000, dest: 'logs/app-2026-10-28.1.log' },
+      ],
+      unmatched: [],
+    }],
+  }),
+  run_saved_transfer: async (id) => {
+    const tid = `mock-st-${Date.now()}`
+    setTimeout(() => window.dispatchEvent(new CustomEvent('runspec:transfer_end', { detail: { id: tid, ok: true, files: 2, total: 2, error: null } })), 600)
+    return { id: tid, dest: `/workspace (${id})` }
+  },
   run_saved_run: async (id, _values) => ({ id, runnable: 'mock', runs: [{ host: 'local', inv_id: `mock-saved-${id}` }] }),
   cancel_chat: async (chatId: string) => {
     const targets = chatId ? [_activeChats.get(chatId)].filter(Boolean) : [..._activeChats.values()]

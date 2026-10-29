@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
-import { Modal, Select, Button, Progress, Typography, Tag, Input, message } from 'antd'
-import { SwapOutlined, FolderOpenOutlined } from '@ant-design/icons'
-import type { Host, TransferProgress, TransferEnd, TransferEndpoint, RelaySource, Credential } from '../bridge'
+import { Modal, Select, Button, Progress, Typography, Tag, Input, Popconfirm, Tooltip, message } from 'antd'
+import { SwapOutlined, FolderOpenOutlined, SaveOutlined, PlayCircleOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons'
+import type { Host, TransferProgress, TransferEnd, TransferEndpoint, RelaySource, Credential, SavedTransfer } from '../bridge'
 import { bridge } from '../bridge'
 import { PathInput, BrowseModal } from './PathInput'
 import { FilterPicker, humanBytes } from './FilterPicker'
 import { AdHocHostFields, emptyAdHoc, adHocValid, adHocToEndpoint, type AdHocState } from './AdHocHostFields'
 import { MONO_FONT } from '../ThemeContext'
+import { SaveTransferModal, SavedTransferRunModal } from './SavedTransferModals'
 
 const { Text } = Typography
 const LOCAL = 'local'
@@ -60,6 +61,12 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
   const [destChecks, setDestChecks] = useState<Record<string, { exists: boolean; error?: string | null }> | null>(null)
   const [checking, setChecking] = useState(false)
   const idRef = useRef<string | null>(null)
+  // Saved transfers (scenarios): the picker row, the save/edit dialog and the
+  // run dialog. `editing` holds the draft (and the id being replaced, if any).
+  const [saved, setSaved] = useState<SavedTransfer[]>([])
+  const [savedId, setSavedId] = useState('')
+  const [editing, setEditing] = useState<{ draft: SavedTransfer; replaceId?: string } | null>(null)
+  const [runningSaved, setRunningSaved] = useState<SavedTransfer | null>(null)
   const checkRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Fan-out (one local source → several configured hosts) is the only many-target
@@ -88,6 +95,14 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
     // lands in the workspace the agent can then act on ('' when no active chat).
     bridge.current_workspace_path().then(setWorkspacePath).catch(() => { /* optional */ })
   }, [open, hosts])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!open) return
+    const load = () => { bridge.get_saved_transfers().then(setSaved).catch(() => {}) }
+    load()
+    window.addEventListener('runspec:saved_transfers_changed', load)
+    return () => window.removeEventListener('runspec:saved_transfers_changed', load)
+  }, [open])
 
   // Changing which machine the source is clears the picked (host-specific) paths.
   useEffect(() => { setSourcePaths([]); setDestName(''); setProgress(null); setHostProgress({}); setResult(null); setFilterName(''); setFilterArg('') },
@@ -223,6 +238,29 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
   const endpointLabel = (kind: Kind, host: string, adhoc: AdHocState) =>
     kind === 'local' ? 'local' : kind === 'host' ? (host || '—') : (adhoc.target.trim() || 'ad-hoc')
 
+  // A scenario saves a pull into this machine: a remote source, a local
+  // destination and at least one picked file (the paths become its patterns).
+  const canSaveScenario = srcKind !== 'local' && dstKind === 'local' && srcOk && sourcePaths.length > 0
+  const scenarioDraft = (): SavedTransfer => ({
+    id: '',
+    paths: sourcePaths,
+    ...(srcKind === 'host' ? { host: srcHost } : {
+      adhoc: srcAdhoc.target.trim(), jump: srcAdhoc.jump || undefined,
+      user: srcAdhoc.user.trim() || undefined, credential_id: srcAdhoc.credentialId || undefined,
+    }),
+    filter: filterName || undefined,
+    filter_arg: filterArg || undefined,
+    // A local folder other than the chat workspace is kept; the workspace default is not
+    // (it changes per chat — the scenario follows whichever chat runs it).
+    dest_dir: destDir && destDir !== workspacePath ? destDir : undefined,
+  })
+  const selectedSaved = saved.find(t => t.id === savedId)
+  const deleteSaved = async (id: string) => {
+    const res = await bridge.delete_saved_transfer(id)
+    if (!res.ok) message.error(res.error || 'Could not delete')
+    else setSavedId('')
+  }
+
   const runLabel = isFanout ? `Push to ${validHosts.length} host${validHosts.length === 1 ? '' : 's'}` : bothRemote ? 'Relay' : 'Transfer'
 
   return (
@@ -233,9 +271,14 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
       title={<span style={{ display: 'flex', alignItems: 'center', gap: 8 }}><SwapOutlined /> Transfer files</span>}
       footer={
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            {bothRemote ? 'Bytes stream through this machine — the two hosts never connect directly.' : ''}
-          </Text>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Tooltip title={canSaveScenario ? 'Save this pull — with wildcards, dates and parameters — to run again later (you or the agent)' : 'Pick a remote source, files, and This computer as the destination to save a scenario'}>
+              <Button icon={<SaveOutlined />} disabled={!canSaveScenario} onClick={() => setEditing({ draft: scenarioDraft() })}>Save as scenario…</Button>
+            </Tooltip>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {bothRemote ? 'Bytes stream through this machine — the two hosts never connect directly.' : ''}
+            </Text>
+          </div>
           <div style={{ display: 'flex', gap: 8 }}>
             <Button onClick={handleClose}>Close</Button>
             {running
@@ -249,6 +292,27 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
         <Text type="secondary">No remote hosts configured — add one to transfer files.</Text>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {saved.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingBottom: 10, borderBottom: '1px solid var(--rs-border, rgba(128,128,128,.25))' }}>
+              <Text style={{ fontSize: 13, width: 76 }}>Saved</Text>
+              <Select
+                size="small"
+                showSearch
+                allowClear
+                value={savedId || undefined}
+                onChange={v => setSavedId(v ?? '')}
+                placeholder={`${saved.length} saved transfer${saved.length === 1 ? '' : 's'}`}
+                style={{ flex: 1, minWidth: 0 }}
+                optionFilterProp="label"
+                options={saved.map(t => ({ value: t.id, label: `${t.title || t.id} — ${t.source ?? ''}` }))}
+              />
+              <Button size="small" type="primary" icon={<PlayCircleOutlined />} disabled={!selectedSaved} onClick={() => selectedSaved && setRunningSaved(selectedSaved)}>Run…</Button>
+              <Tooltip title="Edit"><Button size="small" icon={<EditOutlined />} disabled={!selectedSaved} onClick={() => selectedSaved && setEditing({ draft: selectedSaved, replaceId: selectedSaved.id })} /></Tooltip>
+              <Popconfirm title={`Delete saved transfer '${savedId}'?`} disabled={!selectedSaved} onConfirm={() => deleteSaved(savedId)}>
+                <Tooltip title="Delete"><Button size="small" danger icon={<DeleteOutlined />} disabled={!selectedSaved} /></Tooltip>
+              </Popconfirm>
+            </div>
+          )}
           {/* Source */}
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
@@ -416,6 +480,18 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
             </Text>
           )}
         </div>
+      )}
+      {editing && (
+        <SaveTransferModal
+          initial={editing.draft}
+          replaceId={editing.replaceId}
+          hosts={hosts}
+          workspacePath={workspacePath}
+          onClose={id => { setEditing(null); if (id) setSavedId(id) }}
+        />
+      )}
+      {runningSaved && (
+        <SavedTransferRunModal entry={runningSaved} hostNames={hosts.map(h => h.name)} onClose={() => setRunningSaved(null)} />
       )}
     </Modal>
   )

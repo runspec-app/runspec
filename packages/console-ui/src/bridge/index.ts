@@ -85,6 +85,52 @@ export interface SavedRun {
   argsError?: string       // set when the entry failed to validate/parse
 }
 
+// A saved transfer — a reusable "gather these files" scenario stored in synced
+// runspec_saved_transfers.toml: a remote source (host / group / ad-hoc), path
+// patterns with {{param}} / {{day:%Y-%m-%d}} placeholders and * ? [..]
+// wildcards, an optional filter, and a local destination (the chat workspace by
+// default). Built and run from the Transfer dialog; the agent runs them via
+// run_saved_transfer.
+export interface SavedTransfer {
+  id: string
+  title?: string
+  description?: string
+  // Exactly one of host / group / adhoc is set.
+  host?: string
+  group?: string
+  adhoc?: string
+  jump?: string
+  user?: string
+  port?: number
+  credential_id?: string
+  paths: string[]
+  latest?: number           // 0 / unset = every match; N = newest N per pattern
+  max_files?: number        // refuse (not truncate) past this many per host
+  filter?: string
+  filter_arg?: string
+  dest_dir?: string         // local folder; unset = the chat's workspace
+  subdir?: string
+  autonomy?: 'confirm' | 'autonomous' | 'manual'
+  params?: ArgDef[]                   // parsed param defs (from get_saved_transfers)
+  paramsRaw?: Record<string, unknown> // stored params table (faithful round-trip)
+  source?: string           // human summary, computed bridge-side
+  dest?: string
+  error?: string            // set when the entry failed to validate
+}
+
+export interface SavedTransferPreview {
+  id?: string
+  dest?: string
+  total?: number
+  sources?: {
+    host: string
+    files: { path: string; size: number; mtime: number; dest: string }[]
+    unmatched: string[]
+    error?: string
+  }[]
+  error?: string
+}
+
 // A named sound in the runspec_sounds.toml registry — an operator-added audio
 // file with a stable id, referenced by "sound:<id>" everywhere the console plays
 // cues. `exists` is false for a synced entry whose file isn't on this machine.
@@ -2636,6 +2682,15 @@ export interface BridgeApi {
   // All saved runs with their params parsed to ArgDef[] — feeds the Forms lane,
   // the run modal, the Schedules picker, and the Settings editor.
   get_saved_runs: () => Promise<SavedRun[]>
+  // ── saved transfers (Transfer dialog scenarios) ────────────────────────────
+  get_saved_transfers: () => Promise<SavedTransfer[]>
+  // Add/update one; `replaceId` names the entry being edited (a rename replaces it).
+  save_saved_transfer: (row: SavedTransfer, replaceId?: string) => Promise<{ ok: boolean; id?: string; error?: string }>
+  delete_saved_transfer: (id: string) => Promise<{ ok: boolean; error?: string }>
+  // What a run would fetch (per source host), copying nothing.
+  preview_saved_transfer: (id: string, values?: Record<string, unknown>) => Promise<SavedTransferPreview>
+  // Start a run — progress/outcome arrive as runspec:transfer_progress / transfer_end.
+  run_saved_transfer: (id: string, values?: Record<string, unknown>) => Promise<{ id?: string; dest?: string; error?: string }>
   // Persist the whole collection from the Settings editor (each entry validated;
   // rejected with {ok:false,error} if one is invalid).
   save_saved_runs: (savedRuns: SavedRun[]) => Promise<{ ok: boolean; count?: number; error?: string }>

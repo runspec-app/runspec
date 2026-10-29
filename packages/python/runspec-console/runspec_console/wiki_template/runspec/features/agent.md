@@ -5,8 +5,8 @@ description: "The console agent runs runnables through search_runnables, describ
 tags: [runspec, feature]
 status: stable
 generated:
-  by: runspec-console-seed/05d02b8e446a
-  at: "2026-10-09"
+  by: runspec-console-seed/03b6edc07273
+  at: "2026-10-29"
 ---
 # agent
 
@@ -23,6 +23,8 @@ Tool output can feed the next call: read a value from one runnable's or tool's r
 ## Notes
 
 Built-in file tools: list_files browses a directory on the local machine or any host, download_file copies a file from a host, and relay_file copies between hosts, optionally through a file filter.
+
+Saved transfers are file-gathering scenarios built in the Transfer dialog (Save as scenario): a source host, group or ad-hoc host, path patterns with wildcards and date placeholders such as {{day:%Y-%m-%d}}, and parameters. The agent runs one with run_saved_transfer (preview=true lists the matches first) and the files land in the chat workspace.
 
 Each chat has a workspace folder for files the agent makes or receives: workspace_ls, workspace_read, workspace_head, workspace_tail, workspace_grep, workspace_json_get, workspace_write, workspace_materialize and workspace_info. run_python_sandboxed and run_sql_sandboxed run code in a WASM sandbox that can only see the workspace.
 

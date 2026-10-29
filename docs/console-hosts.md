@@ -388,6 +388,73 @@ Ask the agent:
 
 > Download /var/log/app/audit.log from app-01 using the id-lines filter with the value 12345|alice.
 
+### Saved transfers
+
+A **saved transfer** is a pull you build once in the Transfer files dialog and
+run again later, by hand or by the agent. Use it for the files you keep
+fetching while you investigate, such as yesterday's app log from every web
+host.
+
+**Build one:** pick a remote source, choose the files, set *This computer* as
+the destination and click **Save as scenario…**. The picked paths become the
+scenario's path patterns, which you can edit:
+
+- **Wildcards** `*`, `?` and `[..]` match on the source host, a folder at a
+  time, like a shell glob (a leading `.` is only matched on purpose).
+- **Placeholders** `{{name}}` take a *parameter's* value when the scenario
+  runs. `{{name:FORMAT}}` reads the value as a date and formats it with
+  strftime, so `{{day:%Y%m%d}}` becomes `20261028`. A date value can be
+  `today`, `yesterday`, `-3d`, `+1d`, `-12h`, `-2w` or an ISO date. Built-ins
+  that need no parameter: `{{today}}`, `{{yesterday}}`, `{{now}}` and
+  `{{host}}` (the source host). A parameter's value always matches literally,
+  even if it contains `*`.
+- If a picked file name contains a date, **Turn 2026-10-28 into a date
+  parameter** swaps it for `{{day:…}}` in the same format and adds a `day`
+  parameter (default `yesterday`). **Also match rotated files** adds a `*`
+  before the extension, so `app-2026-10-28.log` also matches
+  `app-2026-10-28.1.log`.
+
+The source can be one host, **every host in a group** (each host's files land
+in a folder named after it), or an **ad-hoc host** (jump, user and a saved
+credential are kept; a typed password never is). Files go to the chat's
+workspace unless you pick a folder, with an optional subfolder that can use
+placeholders too. **Newest** keeps only the newest N matches per path, and
+**Max files** (default 50 per host) refuses a run that would fetch more,
+rather than cutting the list short. If two matches share a file name, each
+keeps its folder below the common parent so nothing is overwritten.
+
+**Run one:** the **Saved** row at the top of the dialog lists them. **Run…**
+asks for the parameters; **Preview** lists the matching files, sizes and
+dates without copying anything.
+
+Scenarios live in `runspec_saved_transfers.toml`, which rides
+[Config Sync](console-team.md) (merged by `id`), so a team can share one set:
+
+```toml
+[[saved_transfer]]
+id          = "app-logs"
+title       = "App logs for a day"
+group       = "web"                     # or host = "web-01", or adhoc = "db7.corp"
+paths       = ["/var/log/app/app-{{day:%Y-%m-%d}}*.log"]
+subdir      = "logs/{{day:%Y-%m-%d}}"
+latest      = 0                         # 0 = every match, N = newest N per path
+max_files   = 50
+filter      = "id-lines"                # optional, with filter_arg = "{{txn}}"
+autonomy    = "autonomous"              # what the agent may do: confirm (default) / autonomous / manual
+
+[saved_transfer.params]
+day = { default = "yesterday", description = "today, yesterday, -3d or a date" }
+```
+
+The agent runs them with `run_saved_transfer` (`id`, `values`, and
+`preview = true` to list first). A run asks you first unless the scenario's
+`autonomy` is `autonomous`; a preview never asks. The tool reports where each
+file landed, so the agent can read them with the workspace tools straight
+away. The console's MCP server offers the same tool, and a trigger can be
+allowed to use it through its action allowlist.
+
+> Use the app-logs saved transfer for last Tuesday, then find the first error after 14:00.
+
 ---
 
 ## Groups

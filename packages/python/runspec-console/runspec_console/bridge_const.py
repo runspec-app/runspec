@@ -183,6 +183,12 @@ _HISTORY_TOOL_NAMES = frozenset({"search_history"})
 # browser use. No side effects, so the autonomy gate runs it without a prompt.
 _FILES_TOOL_NAMES = frozenset({"list_files"})
 
+# Run an operator-built saved transfer (savedtransfers.py) — pull the files its
+# path patterns match into the session workspace. The gate takes the entry's own
+# ``autonomy`` (confirm unless opted down); ``preview`` only lists, so it never
+# asks. Governed by a trigger's ``action_allow`` like the action tools.
+_SAVED_TRANSFER_TOOL_NAMES = frozenset({"run_saved_transfer"})
+
 # Read-only web-page fetch: GET an http(s) URL on the console machine's network
 # and hand back its readable text (HTML stripped to headings/lists/paragraphs),
 # so the agent can read an online doc — e.g. a GitLab Pages / wiki page — and
@@ -403,6 +409,7 @@ _BUILTIN_TOOL_NAMES = (
     | _STATUS_TOOL_NAMES
     | _HISTORY_TOOL_NAMES
     | _FILES_TOOL_NAMES
+    | _SAVED_TRANSFER_TOOL_NAMES
     | _WEB_TOOL_NAMES
     | _DIAGRAM_TOOL_NAMES
     | _IMPROVE_TOOL_NAMES
@@ -428,6 +435,9 @@ _HOT_BUILTIN_NAMES = (
     _STATUS_TOOL_NAMES
     | _HISTORY_TOOL_NAMES
     | _FILES_TOOL_NAMES
+    # run_saved_transfer: offered only when the operator has saved a scenario,
+    # and its description is the menu — kept zero-hop like list_files.
+    | _SAVED_TRANSFER_TOOL_NAMES
     # fetch_url: read-only web read, the entry point of "make a runbook from this
     # doc" tasks — kept zero-hop so the agent reads the page without a discovery
     # detour through describe_tool/use_tool.
@@ -475,6 +485,7 @@ _MCP_SERVER_BUILTIN_NAMES = (
     | _KNOWLEDGE_TOOL_NAMES
     | _DIAGRAM_TOOL_NAMES
     | frozenset({"download_file", "relay_file"})
+    | _SAVED_TRANSFER_TOOL_NAMES
 )
 
 

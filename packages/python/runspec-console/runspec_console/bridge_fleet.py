@@ -1643,6 +1643,10 @@ class FleetMixin:
             from .savedruns import load_saved_runs
 
             return {"saved_run": load_saved_runs()}
+        if name == "runspec_saved_transfers.toml":
+            from .savedtransfers import load_saved_transfers
+
+            return {"saved_transfer": load_saved_transfers()}
         if name == "runspec_sounds.toml":
             from .sounds_registry import load_rows
 
@@ -1709,6 +1713,10 @@ class FleetMixin:
             from .savedruns import save_saved_runs
 
             save_saved_runs(rows("saved_run"))
+        elif name == "runspec_saved_transfers.toml":
+            from .savedtransfers import save_saved_transfers
+
+            save_saved_transfers(rows("saved_transfer"))
         elif name == "runspec_sounds.toml":
             from .sounds_registry import save_rows
 

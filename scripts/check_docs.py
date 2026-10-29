@@ -93,6 +93,7 @@ TOML_FENCE = re.compile(r"```toml\n(.*?)```", re.S)
 #   host                       → console `runspec_hosts.toml` ([[host]] fleet entries)
 #   group / profile            → console `runspec_groups.toml` / `runspec_profiles.toml`
 #   filter                     → console `runspec_filters.toml` ([[filter]])
+#   saved_transfer             → console `runspec_saved_transfers.toml` ([[saved_transfer]])
 #   credential                 → console `runspec_credentials.toml` ([[credential]] metadata)
 #   repo                       → console `runspec_repos.toml` ([[repo]] registry)
 #   self_service               → console `runspec_self_service.toml`
@@ -127,6 +128,7 @@ NON_RUNSPEC_SECTIONS = {
     "schedule",
     "runbook",
     "saved_run",
+    "saved_transfer",  # console runspec_saved_transfers.toml ([[saved_transfer]])
     "rota",
     "mailboxes",
     "mailbox",

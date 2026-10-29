@@ -862,6 +862,7 @@ class AgentToolsMixin:
                 *self._status_tools(),
                 *self._history_tools(),
                 *self._files_tools(),
+                *self._saved_transfer_tools(),
                 *self._web_tools(),
                 *self._diagram_tools(),
                 *self._improve_tools(),

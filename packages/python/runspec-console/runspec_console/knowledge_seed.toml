@@ -189,6 +189,11 @@ about = ["app:runspec-console", "feature:agent", "feature:files"]
 text = "To fetch a log whose exact path is unknown, use list_files on the host first (or a runnable that reports where the app logs), take the path from its output, then pass that path to download_file or relay_file; never guess a path."
 
 [[fact]]
+kind = "note"
+about = ["app:runspec-console", "feature:agent", "feature:files"]
+text = "Saved transfers are file-gathering scenarios built in the Transfer dialog (Save as scenario): a source host, group or ad-hoc host, path patterns with wildcards and date placeholders such as {{day:%Y-%m-%d}}, and parameters. The agent runs one with run_saved_transfer (preview=true lists the matches first) and the files land in the chat workspace."
+
+[[fact]]
 kind = "procedure"
 about = ["app:runspec-console", "feature:agent"]
 text = "Tool output can feed the next call: read a value from one runnable's or tool's result (a path, an id, a host name) and pass it as an argument to the next. Long output is saved to the chat workspace, where workspace_grep, workspace_json_get or workspace_tail pull out just the value needed."

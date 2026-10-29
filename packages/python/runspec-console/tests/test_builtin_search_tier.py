@@ -127,6 +127,9 @@ def test_hot_kernel_is_pinned_exactly():
         "console_status",
         "search_history",
         "list_files",
+        # run_saved_transfer: offered only when the operator saved a scenario,
+        # its description is the menu — zero-hop like list_files.
+        "run_saved_transfer",
         # fetch_url: read-only web read, the entry point of "make a runbook from
         # this doc" tasks — kept zero-hop so the agent reads the page directly.
         "fetch_url",

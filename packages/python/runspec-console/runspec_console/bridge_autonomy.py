@@ -46,6 +46,7 @@ from .bridge_const import (
     _STATUS_TOOL_NAMES,
     _HISTORY_TOOL_NAMES,
     _FILES_TOOL_NAMES,
+    _SAVED_TRANSFER_TOOL_NAMES,
     _WEB_TOOL_NAMES,
     _DIAGRAM_TOOL_NAMES,
     _IMPROVE_TOOL_NAMES,
@@ -177,6 +178,9 @@ class AutonomyMixin:
             return "autonomous"  # read-only history search — no side effects
         if tool_name in _FILES_TOOL_NAMES:
             return "autonomous"  # read-only directory listing — no side effects
+        if tool_name in _SAVED_TRANSFER_TOOL_NAMES:
+            # preview lists only; a run takes the scenario's own autonomy
+            return self._saved_transfer_autonomy(tool_input)
         if tool_name in _WEB_TOOL_NAMES:
             return "autonomous"  # read-only web GET — no side effects
         if tool_name in _DIAGRAM_TOOL_NAMES:
@@ -1720,6 +1724,10 @@ class AutonomyMixin:
             return self._run_history_tool(dict(tool_input or {}))
         if tool_name in _FILES_TOOL_NAMES:
             return self._run_files_tool(dict(tool_input or {}))
+        if tool_name in _SAVED_TRANSFER_TOOL_NAMES:
+            return self._run_saved_transfer_tool(
+                dict(tool_input or {}), chat_id=chat_id, cancel_event=cancel_event
+            )
         if tool_name in _WEB_TOOL_NAMES:
             return self._run_web_tool(dict(tool_input or {}))
         if tool_name in _DIAGRAM_TOOL_NAMES:

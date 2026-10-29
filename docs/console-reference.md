@@ -31,6 +31,7 @@ to read, seed, or sync them directly. All files are plain TOML.
 | `runspec_triggers.toml` | `[triggers.<name>]` tables | Yes | Triggers tab |
 | `runspec_rota.toml` | Working-hours rota | No — machine-local | Rota tab |
 | `runspec_filters.toml` | [Transfer filters](console-hosts.md#file-transfer-filters) — source-side pipelines | Yes | Transfer files → Manage filters… |
+| `runspec_saved_transfers.toml` | [Saved transfers](console-hosts.md#saved-transfers) — reusable file-gathering scenarios | Yes (by `id`) | Transfer files → Save as scenario… |
 | `runspec_credentials.toml` | Credential **metadata** (secrets live in the OS keychain) | Yes | Settings → Credentials |
 | `runspec_runbooks.toml` | `[[runbook]]` collection | Yes (by `id`) | Agent / Forms tab (runbook editor) |
 | `runspec_repos.toml` | Agent-accessible repo registry | Yes (checkout paths are machine-local) | Settings → Repos |

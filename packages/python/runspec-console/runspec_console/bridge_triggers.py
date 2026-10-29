@@ -25,6 +25,7 @@ from .bridge_const import (
     AI_OFF_MESSAGE,
     _AUTONOMY_RANK,
     _OUTLOOK_TOOL_NAMES,
+    _SAVED_TRANSFER_TOOL_NAMES,
     _ACTION_TOOL_NAMES,
     _BUILTIN_META_NAMES,
     _MCP_PREFIX,
@@ -1706,6 +1707,10 @@ class TriggersMixin:
             {"name": "create_document", "label": "Create document"},
             {"name": "run_runbook", "label": "Run runbook (runbook)"},
             {"name": "run_saved_run", "label": "Run saved run (preset)"},
+            {
+                "name": "run_saved_transfer",
+                "label": "Run saved transfer (gather files)",
+            },
             {"name": "create_schedule", "label": "Create schedule"},
             {"name": "emit_event", "label": "Emit event"},
             {"name": "open_url", "label": "Open URL in browser"},
@@ -2645,7 +2650,9 @@ class TriggersMixin:
             and not (action_allow and t["name"] in _BUILTIN_META_NAMES)
         ]
         if action_allow:
-            governed = _ACTION_TOOL_NAMES | _OUTLOOK_TOOL_NAMES
+            governed = (
+                _ACTION_TOOL_NAMES | _OUTLOOK_TOOL_NAMES | _SAVED_TRANSFER_TOOL_NAMES
+            )
             allow = set(action_allow)
             # External MCP tools are governed too — a scoped trigger must name
             # one to keep it. Their names are dynamic, but every MCP display name

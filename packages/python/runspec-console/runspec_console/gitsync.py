@@ -52,6 +52,7 @@ KNOWN_FILES: tuple[str, ...] = (
     "runspec_credentials.toml",
     "runspec_runbooks.toml",
     "runspec_saved_runs.toml",
+    "runspec_saved_transfers.toml",
     "runspec_sounds.toml",
     "runspec_repos.toml",
     "runspec_self_service.toml",

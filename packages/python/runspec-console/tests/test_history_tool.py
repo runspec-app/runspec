@@ -105,6 +105,7 @@ def test_history_tool_offered_by_custom_agent_tools():
         "_memory_tools",
         "_knowledge_tools",
         "_files_tools",
+        "_saved_transfer_tools",
         "_web_tools",
         "_diagram_tools",
         "_improve_tools",
