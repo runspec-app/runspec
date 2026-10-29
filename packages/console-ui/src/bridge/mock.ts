@@ -615,6 +615,7 @@ let MOCK_SCHEDULES: Schedule[] = [
   { id: 'rs-backup-daily', action: 'runnable', runnable: 'backup', host: 'local', when: { cron: '0 2 * * *' }, args: { db: 'postgres-main' }, enabled: true, nextRun: new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString() },
   { id: 'rs-log-rotate-weekly', action: 'runnable', runnable: 'log-rotate', host: 'prod-1', when: { cron: '0 3 * * 0' }, args: { keep: 7 }, enabled: false },
   { id: 'rs-nightly-report', action: 'event', event: 'nightly_report', when: { cron: '0 2 * * *', timezone: 'Europe/London' }, fields: { scope: 'prod', report: 'billing' }, enabled: true, nextRun: new Date(Date.now() + 11 * 60 * 60 * 1000).toISOString() },
+  { id: 'rs-gather-app-logs', name: 'Gather app logs', action: 'saved_transfer', saved_transfer: 'app-logs', values: { day: 'yesterday' }, when: { cron: '15 6 * * mon-fri' }, enabled: true, nextRun: new Date(Date.now() + 5 * 60 * 60 * 1000).toISOString() },
 ]
 
 const MOCK_IN_FLIGHT: InFlightRecord[] = [
@@ -1352,6 +1353,7 @@ export const mockApi: BridgeApi = {
     const s = MOCK_SCHEDULES.find(x => x.id === id)
     console.log('[mock] run_schedule_now', id)
     if (s?.action === 'event') return { action: 'event', event: s.event }
+    if (s?.action === 'saved_transfer') return { action: 'saved_transfer', inv_id: `xfer-${Date.now()}`, runnable: s.saved_transfer, host: 'saved transfer' }
     return { action: 'runnable', inv_id: `inv-${Date.now()}`, host: s?.host, runnable: s?.runnable }
   },
 

@@ -14,7 +14,11 @@ the bridge surface over it:
   ``runspec:transfer_progress`` / ``runspec:transfer_end`` events;
 * the ``run_saved_transfer`` agent tool (schema + handler) — the same job, run
   into the calling session's workspace and awaited, gated by the entry's own
-  ``autonomy`` (``preview`` is always autonomous — it only lists).
+  ``autonomy`` (``preview`` is always autonomous — it only lists);
+* ``_invoke_scheduled_transfer`` — the Schedules ``saved_transfer`` action:
+  the same job with no chat behind it, so a workspace-bound scenario lands in
+  ``{app_dir}/documents/transfers/<id>/`` (or the schedule's ``transfer_dest``),
+  reported on a Schedules run card.
 
 Copying reuses the Transfer dialog's per-file helpers (``_transfer_one`` /
 ``_transfer_one_filtered``) and connection opener (``_open_source_conn``), so a
@@ -26,12 +30,15 @@ from __future__ import annotations
 import os
 import stat as stat_mod
 import threading
+import time
 import uuid
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import datetime
 from typing import Any
 
+from . import config as config_mod
 from . import savedtransfers as st_mod
 from .bridge_const import _CANCEL_KEY, logger
 from .bridge_utils import _iso_now
@@ -243,8 +250,23 @@ class SavedTransfersMixin:
         except ValueError as exc:
             return f"saved transfer '{sid}' is invalid — {exc}"
 
+    @staticmethod
+    def _scheduled_transfer_dir(sid: str) -> str:
+        """Where a scheduled run of a workspace-bound scenario lands: a stable
+        per-scenario folder under the console's documents dir (the same root
+        ``open_file`` / ``reveal_in_folder`` reach)."""
+        return str(
+            config_mod.app_dir() / "documents" / "transfers" / st_mod.safe_subdir(sid)
+        )
+
     def _saved_transfer_prepare(
-        self, sid: str, values: dict[str, Any] | None, chat_id: str = ""
+        self,
+        sid: str,
+        values: dict[str, Any] | None,
+        chat_id: str = "",
+        *,
+        dest: str = "",
+        no_chat: bool = False,
     ) -> (
         tuple[
             st_mod.SavedTransfer,
@@ -257,10 +279,18 @@ class SavedTransfersMixin:
         """Validate a run request → ``(entry, values, dest_root, sources)``,
         or an error string. ``dest_root`` is the absolute local folder (the
         rendered ``dest_dir``, else the session workspace); each source is the
-        ``(label, opener descriptor, password)`` ``_open_source_conn`` takes."""
+        ``(label, opener descriptor, password)`` ``_open_source_conn`` takes.
+
+        ``dest`` overrides the entry's destination (a schedule's
+        ``transfer_dest``); ``no_chat`` (a scheduled run) sends a
+        workspace-bound entry to :meth:`_scheduled_transfer_dir` instead."""
         entry = self._saved_transfer_entry(sid)
         if isinstance(entry, str):
             return entry
+        if dest:
+            entry = replace(entry, dest_dir=dest)
+        elif no_chat and not entry.dest_dir:
+            entry = replace(entry, dest_dir=self._scheduled_transfer_dir(entry.id))
         try:
             vals = st_mod.resolve_values(entry, values)
         except ValueError as exc:
@@ -380,13 +410,22 @@ class SavedTransfersMixin:
         values: dict[str, Any] | None,
         chat_id: str = "",
         cancel_event: threading.Event | None = None,
+        *,
+        dest: str = "",
+        no_chat: bool = False,
+        operator: str = "",
+        on_done: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         """Validate, then start the background job. Returns ``{id, dest}`` or
         ``{error}``. The job's ``transfer_end`` detail carries a ``saved``
-        block (dest, written files, unmatched patterns) for the agent's report."""
+        block (dest, written files, unmatched patterns) for the agent's report;
+        ``on_done`` (if given) receives that same detail when the job ends.
+        ``dest`` / ``no_chat`` are passed to :meth:`_saved_transfer_prepare`."""
         from .fs_transfer import TransferItem, render_pipeline
 
-        prep = self._saved_transfer_prepare(sid, values, chat_id)
+        prep = self._saved_transfer_prepare(
+            sid, values, chat_id, dest=dest, no_chat=no_chat
+        )
         if isinstance(prep, str):
             return {"error": prep}
         entry, vals, dest_root, sources = prep
@@ -402,7 +441,7 @@ class SavedTransfersMixin:
                 "runnable": f"saved transfer · {entry.id}",
                 "group": "",
                 "host": entry.source_summary(),
-                "operator": self._current_user(),
+                "operator": operator or self._current_user(),
                 "runAs": "",
                 "startedAt": _iso_now(),
                 "args": {
@@ -526,9 +565,86 @@ class SavedTransfersMixin:
                     for r in results
                 ]
             self._emit_transfer_end(tid, detail)
+            if on_done is not None:
+                try:
+                    on_done(detail)
+                except Exception:
+                    logger.exception("saved transfer %s: on_done failed", tid)
 
         threading.Thread(target=run, daemon=True).start()
         return {"id": tid, "dest": dest_root}
+
+    # ── schedules ─────────────────────────────────────────────────────────────
+
+    def _run_scheduled_transfer(self, job: Any) -> None:
+        """ScheduleSource's ``run_transfer`` callback (the timer path)."""
+        self._invoke_scheduled_transfer(job)
+
+    def _invoke_scheduled_transfer(self, job: Any) -> str:
+        """Run a ``saved_transfer`` schedule: start the saved transfer with the
+        schedule's ``values`` (and ``transfer_dest``, if set) and track it on a
+        Schedules run card that ends ``done`` / ``failed`` with what was
+        written. Returns the transfer id (``""`` when it couldn't start — the
+        card then says why). Runs without asking: scheduling it is the
+        authorization, as for a saved run."""
+        from .sources.schedule import schedule_label
+
+        sid = str(getattr(job, "saved_transfer", "") or "")
+        card_id = uuid.uuid4().hex[:12]
+        created = time.time()
+        card: dict[str, Any] = {
+            "card_id": card_id,
+            "trigger": schedule_label(job),
+            "source": "schedule",
+            "event_type": "saved_transfer",
+            "summary": f"saved transfer: {sid}",
+            "column": "running",
+            "detail": {
+                "action": "saved_transfer",
+                "saved_transfer": sid,
+                "values": dict(getattr(job, "values", {}) or {}),
+                "schedule_id": job.id,
+            },
+            "created_at": created,
+            "timeline": [{"ts": created, "text": "running"}],
+        }
+        self._on_schedule_card(card)
+
+        def finish(column: str, **detail: Any) -> None:
+            now = time.time()
+            card["column"] = column
+            card["detail"] = {**card["detail"], **detail}
+            card["timeline"] = [*card["timeline"], {"ts": now, "text": column}]
+            self._on_schedule_card(card)
+
+        def done(detail: dict[str, Any]) -> None:
+            saved = detail.get("saved") or {}
+            n = int(detail.get("files") or 0)
+            dest = str(saved.get("dest") or "")
+            result = f"{n} file(s) → {dest}"
+            if detail.get("ok"):
+                finish("done", result=result, dest=dest)
+            else:
+                finish(
+                    "failed",
+                    result=result if n else "",
+                    dest=dest,
+                    error=str(detail.get("error") or "transfer failed"),
+                )
+
+        started = self._start_saved_transfer(
+            sid,
+            dict(getattr(job, "values", {}) or {}),
+            dest=str(getattr(job, "transfer_dest", "") or ""),
+            no_chat=True,
+            operator="Scheduled Task",
+            on_done=done,
+        )
+        if started.get("error"):
+            logger.warning("schedule '%s': %s", job.id, started["error"])
+            finish("failed", error=str(started["error"]))
+            return ""
+        return str(started.get("id") or "")
 
     # ── agent tool ────────────────────────────────────────────────────────────
 

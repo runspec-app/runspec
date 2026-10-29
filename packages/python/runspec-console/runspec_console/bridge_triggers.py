@@ -173,6 +173,8 @@ class TriggersMixin:
                 run_agent=self._run_scheduled_agent,
                 # Saved-run schedules fire the preset deterministically (no agent).
                 run_saved=self._run_scheduled_saved,
+                # Saved-transfer schedules pull their files (no agent).
+                run_transfer=self._run_scheduled_transfer,
                 # Eval schedules run a fixture against the live agent (dry run).
                 run_eval=self._run_scheduled_eval,
                 # Same working-hours gate the engine uses, so schedules and

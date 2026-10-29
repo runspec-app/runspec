@@ -24,7 +24,7 @@ Two reasons to want this:
 |---|---|
 | **Console** tab as the run-output pane (command bar `/` runnables and `>` saved runs, Forms runs, History reruns) | Chat: plain text in the command bar, conversation History, "Ask the assistant", include-in-context toggles, the context gauge |
 | **Forms**, **History**, **Logs**, **Analytics**, **Specs**, **Dev** | **Improve**, **Evals**, **Triggers** and **Rota** tabs |
-| **Schedules** — `runnable`, `saved_run` actions | `prompt`, `runbook` and `eval` schedules (refused as invalid); the `event` action is hidden (its only consumer is a Triggers rule) |
+| **Schedules** — `runnable`, `saved_run`, `saved_transfer` actions | `prompt`, `runbook` and `eval` schedules (refused as invalid); the `event` action is hidden (its only consumer is a Triggers rule) |
 | A seeded **rule trigger still runs** in the backend (fixed run, claim gate, replies) — it just has no tab | The **Triggers** editor; agent-mode triggers and a rule's LLM `pre_turn` (refused as invalid); the **Rota** gate goes inert, so it never suppresses a runnable schedule |
 | **Rooms** — join, read, reply; portal requests for runnables are enacted | Runbooks in the room catalog; agent replies / claim cards from agent-mode chat triggers |
 | Settings: SSH, Jump Hosts, Local venvs, Agent tools, Saved runs, Self-Service, Filters, Repos, Credentials, Denylist, **MCP Server**, Config Sync, Teams, Sounds, Telemetry (metrics only) | Settings: Model / API, Runbooks, MCP (client), Chat History, **Voice**, **Mailbox** |

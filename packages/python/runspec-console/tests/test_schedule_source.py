@@ -28,6 +28,7 @@ from runspec_console.sources.schedule import (
     event_payload,
     parse_schedule_entry,
     parse_when,
+    schedule_label,
 )
 from runspec_console.triggers import Trigger, TriggerEngine
 
@@ -865,6 +866,55 @@ def test_record_saved_run_summary():
     assert records[0]["type"] == "saved_run"
     assert records[0]["summary"] == "saved run: restart-web"
     assert records[0]["matched"] == ["s1"]
+
+
+# ── saved_transfer action ─────────────────────────────────────────────────────
+
+
+def test_parse_entry_saved_transfer():
+    job = parse_schedule_entry(
+        {
+            "id": "gather-logs",
+            "action": "saved_transfer",
+            "saved_transfer": "app-logs",
+            "values": {"day": "yesterday"},
+            "transfer_dest": "/srv/collect/{{today}}",
+            "when": {"cron": "15 6 * * *"},
+        }
+    )
+    assert job.action == "saved_transfer"
+    assert job.saved_transfer == "app-logs"
+    assert job.values == {"day": "yesterday"}
+    assert job.transfer_dest == "/srv/collect/{{today}}"
+    assert schedule_label(job) == "saved transfer app-logs"
+
+
+def test_parse_entry_saved_transfer_requires_id():
+    with pytest.raises(ValueError, match="'saved_transfer' id"):
+        parse_schedule_entry(
+            {"id": "x", "action": "saved_transfer", "when": {"every": "5m"}}
+        )
+
+
+def test_fire_saved_transfer_calls_run_transfer_and_records():
+    fired: list[str] = []
+    records: list[dict] = []
+    src = ScheduleSource(
+        [
+            {
+                "id": "s1",
+                "action": "saved_transfer",
+                "saved_transfer": "app-logs",
+                "when": {"every": "5m"},
+            }
+        ],
+        run_transfer=lambda job: fired.append(job.saved_transfer),
+        on_event=records.append,
+    )
+    src._fire("s1")
+    assert fired == ["app-logs"]
+    assert records[0]["type"] == "saved_transfer"
+    assert records[0]["summary"] == "saved transfer: app-logs"
 
 
 # ── runnable-action subcommand path ───────────────────────────────────────────

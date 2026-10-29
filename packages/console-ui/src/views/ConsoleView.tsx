@@ -34,7 +34,7 @@ function runBodyToLines(
 
 // Schedule cards whose run is a runnable invocation (not an agent turn) render
 // as run blocks filled from the card's terminal result, like rule triggers.
-const SCHEDULE_RUN_TYPES: ReadonlySet<string> = new Set(['runnable', 'saved_run', 'eval'])
+const SCHEDULE_RUN_TYPES: ReadonlySet<string> = new Set(['runnable', 'saved_run', 'saved_transfer', 'eval'])
 
 // Whether a run card is a plain run (run block) or an agent turn (chat block).
 function cardIsRun(card: TriggerCard, kind: 'trigger' | 'schedule'): boolean {

@@ -3754,6 +3754,7 @@ class AgentToolsMixin:
             "prompt",
             "runbook",
             "saved_run",
+            "saved_transfer",
             "eval",
         ]
         if not getattr(self, "_ai_enabled", True):
@@ -3929,6 +3930,11 @@ class AgentToolsMixin:
         from . import savedruns as savedruns_mod
 
         saved_runs = [r for r in savedruns_mod.load_saved_runs() if r.get("id")]
+        from . import savedtransfers as savedtransfers_mod
+
+        saved_transfers = [
+            t for t in savedtransfers_mod.load_saved_transfers() if t.get("id")
+        ]
         # Stored eval fixtures (suite names) — the enum for action='eval'.
         try:
             eval_fixtures = [f["id"] for f in self.list_eval_fixtures() if f.get("id")]
@@ -4008,11 +4014,14 @@ class AgentToolsMixin:
                     "(the assistant) check or do something later (action='prompt'); "
                     "run a saved runbook as an agent turn (action='runbook'); "
                     "fire a saved run — a deterministic preset with its own stored "
-                    "targeting — (action='saved_run'); or run a tool-selection eval "
+                    "targeting — (action='saved_run'); pull the files a saved transfer "
+                    "matches (action='saved_transfer'); or run a tool-selection eval "
                     "fixture against the live agent (action='eval'). Use "
                     "'prompt' to schedule a reminder-to-act in natural language, "
                     "'runbook' to re-run an existing runbook on a cadence, "
-                    "'saved_run' to put an existing preset on a cadence, and 'eval' "
+                    "'saved_run' to put an existing preset on a cadence, "
+                    "'saved_transfer' to gather files (e.g. daily logs) on a cadence, "
+                    "and 'eval' "
                     "to run a nightly tool-selection regression check. For a "
                     "runnable, target exactly one of: a single 'host', a 'group' "
                     "(runs on every member), 'hosts' (a candidate list — runs on the "
@@ -4035,7 +4044,11 @@ class AgentToolsMixin:
                                 "the saved runbook named by 'runbook' as an agent turn; "
                                 "saved_run = fire the saved run named by 'saved_run' "
                                 "deterministically (its stored targeting decides the "
-                                "hosts); eval = run the eval fixture named by "
+                                "hosts); saved_transfer = pull the files the saved "
+                                "transfer named by 'saved_transfer' matches (a "
+                                "scenario bound to the chat workspace lands in "
+                                "documents/transfers/<id>/ unless 'transfer_dest' "
+                                "is set); eval = run the eval fixture named by "
                                 "'eval_fixture' against the live agent (a dry run — "
                                 "never executes a runnable)."
                             ),
@@ -4150,12 +4163,34 @@ class AgentToolsMixin:
                                 "Saved-run id to fire (action='saved_run')."
                             ),
                         },
+                        "saved_transfer": {
+                            "type": "string",
+                            **(
+                                {"enum": [t["id"] for t in saved_transfers]}
+                                if saved_transfers
+                                else {}
+                            ),
+                            "description": (
+                                "Saved-transfer id to run (action='saved_transfer')."
+                            ),
+                        },
+                        "transfer_dest": {
+                            "type": "string",
+                            "description": (
+                                "Optional absolute local folder the files land in "
+                                "(action='saved_transfer'); may use {{today}} etc. "
+                                "Overrides the saved transfer's own destination."
+                            ),
+                        },
                         "values": {
                             "type": "object",
                             "description": (
                                 "Values for the runbook's {{name}} parameters "
-                                "(action='runbook') or the saved run's open params "
-                                "(action='saved_run')."
+                                "(action='runbook'), the saved run's open params "
+                                "(action='saved_run') or the saved transfer's params "
+                                "(action='saved_transfer'). A date param may be "
+                                "'today' / 'yesterday' / '-1d' so each run picks "
+                                "its own day."
                             ),
                         },
                         "eval_fixture": {
@@ -4557,6 +4592,8 @@ class AgentToolsMixin:
             "prompt",
             "runbook",
             "saved_run",
+            "saved_transfer",
+            "transfer_dest",
             "values",
             "eval_fixture",
             "eval_samples",

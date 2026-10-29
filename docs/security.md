@@ -466,6 +466,7 @@ Key properties, all verified in `bridge_autonomy.py`:
 | Console-config **mutate** | `manage_hosts`/`manage_groups`/`manage_triggers`/`manage_rota`/`manage_saved_runs` mutations | **confirm** — and chat-only (§7.4) |
 | Sandboxed code execution | `run_python_sandboxed` (any snippet, in a WASM sandbox); `run_sql_sandboxed` writes/DDL | **always confirm** — the code runs in a WASI capability sandbox (workspace-only, no network, no host access, hard-timeout in a killable subprocess), *and* the confirm gate governs on top. Fail-closed: dropped entirely when the sandbox runtime is unavailable or `[workspace] code_exec = false` / `[sandbox] enabled = false`. See `docs/console-sandbox.md` |
 | Run a runnable | `run_runnable` | **inherited from the target runnable's spec** |
+| Gather files with a saved transfer | `run_saved_transfer` | **preview autonomous** (it only lists matches); a run takes the scenario's own `autonomy`, **confirm** unless the operator set it to `autonomous` (`manual` refuses). Copies only into the chat workspace or the scenario's own folder, refusing past `max_files` |
 | Run a saved preset | `run_saved_run` | **inherited from the underlying runnable(s)** — the gate expands the preset and resolves each target's autonomy (one grouped, editable confirm across a fan-out; most-restrictive wins; `manual` blocks), never a blanket action-tool prompt |
 
 *(Classification: `bridge_const.py`, `bridge_autonomy.py`.)* The pattern is

@@ -9,6 +9,23 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.362.0] — 2026-10-29
+
+### Added
+
+- **Schedule a saved transfer.** Schedules gain a `saved_transfer` action:
+  pick a saved transfer and fill its parameters, and it pulls the matching
+  files on the schedule's cadence with no agent and no confirm (a date param
+  set to `yesterday` / `-1d` picks its own day each time). A schedule has no
+  chat, so a scenario that saves to the chat workspace saves to
+  `{app_dir}/documents/transfers/<id>/` instead, unless the schedule sets
+  `transfer_dest` (an absolute folder; placeholders allowed). Each fire shows
+  a Schedules run card that ends with the file count and folder, or the
+  error. The agent's `create_schedule` tool offers the action too
+  (`saved_transfer`, `transfer_dest`, `values`). `sources.schedule`
+  (`ScheduleJob.saved_transfer`/`transfer_dest`, `run_transfer` callback,
+  `SCHEDULE_ACTIONS`), `bridge_saved_transfers._invoke_scheduled_transfer`.
+
 ## [0.361.0] — 2026-10-29
 
 ### Added

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Table, Tag, Button, Modal, Form, Select, Input, InputNumber, Space, Segmented, Switch, Tooltip, Popconfirm, Collapse, Typography, message } from 'antd'
 import { DeleteOutlined, PlusOutlined, MinusCircleOutlined, EditOutlined, PlayCircleOutlined, CalendarOutlined, ReloadOutlined } from '@ant-design/icons'
-import { bridge, type ArgDef, type Credential, type Host, type Runnable, type Schedule, type ScheduleWhen, type Runbook, type SavedRun, type RunCard, type TriggerEvent, type EvalFixtureMeta } from '../bridge'
+import { bridge, type ArgDef, type Credential, type Host, type Runnable, type Schedule, type ScheduleWhen, type Runbook, type SavedRun, type SavedTransfer, type RunCard, type TriggerEvent, type EvalFixtureMeta } from '../bridge'
 import { useIsDark, useAccent, textMuted, textSecondary, MONO_FONT } from '../ThemeContext'
 import { useFeatures, visibleScheduleActions } from '../features'
 import { RunInbox } from '../components/RunInbox'
@@ -42,7 +42,7 @@ const CRON_PRESETS = [
   { label: 'Custom…',          value: '__custom__' },
 ]
 
-type Action = 'runnable' | 'event' | 'prompt' | 'runbook' | 'saved_run' | 'eval'
+type Action = 'runnable' | 'event' | 'prompt' | 'runbook' | 'saved_run' | 'saved_transfer' | 'eval'
 type WhenKind = 'cron' | 'every'
 
 // Front-line validation of a runnable/runbook arg map — required + numeric range,
@@ -96,6 +96,9 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
   const [savedRuns, setSavedRuns] = useState<SavedRun[]>([])
   const [savedRunValues, setSavedRunValues] = useState<Record<string, unknown>>({})
   const [savedRunErrors, setSavedRunErrors] = useState<Record<string, string>>({})
+  const [savedTransfers, setSavedTransfers] = useState<SavedTransfer[]>([])
+  const [transferValues, setTransferValues] = useState<Record<string, unknown>>({})
+  const [transferErrors, setTransferErrors] = useState<Record<string, string>>({})
   // Console credentials to apply to a runnable-action run (secret injected from the
   // keychain at fire time). Same explicit-selection model as the Forms tab; only
   // the ids are persisted on the schedule, never a secret.
@@ -117,6 +120,8 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
     bridge.get_runbooks().then(setRunbooks).catch(console.error)
     // Saved runs, for the "Fire a saved run" action's picker.
     bridge.get_saved_runs().then(setSavedRuns).catch(() => setSavedRuns([]))
+    // Saved transfers, for the "Saved transfer" action's picker.
+    bridge.get_saved_transfers().then(setSavedTransfers).catch(() => setSavedTransfers([]))
     // Eval fixtures, for the "Run evals" action's picker.
     bridge.list_eval_fixtures().then(setEvalFixtures).catch(() => setEvalFixtures([]))
   }, [open])
@@ -141,6 +146,9 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
   // Same derivation for the chosen saved run — its open params drive the value inputs.
   const savedRunId: string = Form.useWatch('saved_run', form) ?? ''
   const selectedSavedRun = savedRuns.find(s => s.id === savedRunId) ?? null
+  // …and for the chosen saved transfer's params.
+  const savedTransferId: string = Form.useWatch('saved_transfer', form) ?? ''
+  const selectedTransfer = savedTransfers.find(s => s.id === savedTransferId) ?? null
   // The runnable picker offers what the chosen target can run: a single host's
   // runnables, or (group / any-of-hosts mode) every runnable present on any of the
   // targeted hosts. Shared derivation with the saved-run editor.
@@ -176,6 +184,8 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
     setRunbookErrors({})
     setSavedRunValues({})
     setSavedRunErrors({})
+    setTransferValues({})
+    setTransferErrors({})
     setCredentialIds([])
     setEvalFixture('')
     setEvalSamples(1)
@@ -239,6 +249,7 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
     // respective list has loaded — their args come from the selected entry.
     setRunbookErrors({})
     setSavedRunErrors({})
+    setTransferErrors({})
     const fv: Record<string, unknown> = {
       host: editing.host ?? defaultHost,
       group: editing.group ?? '',
@@ -253,6 +264,8 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
       prompt: editing.prompt ?? '',
       runbook: editing.runbook ?? undefined,
       saved_run: editing.saved_run ?? undefined,
+      saved_transfer: editing.saved_transfer ?? undefined,
+      transfer_dest: editing.transfer_dest ?? '',
       name: editing.name ?? '',
       sound: editing.sound ?? '',
       model: editing.model ?? '',
@@ -284,6 +297,16 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
     setSavedRunErrors({})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, selectedSavedRun?.id])
+
+  // Same seeding for the chosen saved transfer's params.
+  useEffect(() => {
+    if (!open) return
+    if (!selectedTransfer) { setTransferValues({}); return }
+    const prefill = editing?.saved_transfer === selectedTransfer.id ? editing.values : undefined
+    setTransferValues(initialFormValues(selectedTransfer.params ?? [], prefill))
+    setTransferErrors({})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, selectedTransfer?.id])
 
   const handleRunnableChange = (name: string) => {
     const r = hostRunnables.find(x => x.name === name) ?? null
@@ -329,6 +352,11 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
   const changeRunbookValue = (name: string, v: unknown) => {
     setRunbookValues(prev => ({ ...prev, [name]: v }))
     setRunbookErrors(prev => { const next = { ...prev }; delete next[name]; return next })
+  }
+
+  const changeTransferValue = (name: string, v: unknown) => {
+    setTransferValues(prev => ({ ...prev, [name]: v }))
+    setTransferErrors(prev => { const next = { ...prev }; delete next[name]; return next })
   }
 
   const changeSavedRunValue = (name: string, v: unknown) => {
@@ -395,6 +423,21 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
       base.saved_run = savedRun
       base.values = vals
       if (!base.id) base.id = `rs-${savedRun}-${Date.now()}`
+    } else if (action === 'saved_transfer') {
+      const transfer = String(values.saved_transfer ?? '').trim()
+      if (!transfer) { form.setFields([{ name: 'saved_transfer', errors: ['Required'] }]); return }
+      const errs = validateArgs(selectedTransfer?.params ?? [], transferValues)
+      if (Object.keys(errs).length > 0) { setTransferErrors(errs); return }
+      const vals: Record<string, unknown> = {}
+      for (const a of selectedTransfer?.params ?? []) {
+        const v = transferValues[a.name]
+        if (v !== undefined && v !== '') vals[a.name] = v
+      }
+      base.saved_transfer = transfer
+      base.values = vals
+      const dest = String(values.transfer_dest ?? '').trim()
+      if (dest) base.transfer_dest = dest
+      if (!base.id) base.id = `rs-${transfer}-${Date.now()}`
     } else if (action === 'eval') {
       if (!evalFixture) { message.error('Pick an eval fixture'); return }
       base.eval_fixture = evalFixture
@@ -489,6 +532,7 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
             options={visibleScheduleActions([
               { label: 'Run a runnable', value: 'runnable' },
               { label: 'Saved run', value: 'saved_run', disabled: savedRuns.length === 0 },
+              { label: 'Saved transfer', value: 'saved_transfer', disabled: savedTransfers.length === 0 },
               { label: 'Run a prompt', value: 'prompt' },
               { label: 'Run a runbook', value: 'runbook' },
               { label: 'Run evals', value: 'eval', disabled: evalFixtures.length === 0 },
@@ -500,6 +544,8 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
               ? 'Runs the chosen runnable directly (no agent, no confirm gate).'
               : action === 'saved_run'
               ? 'Fires a saved run — a deterministic preset with its own stored targeting — directly (no agent, no confirm gate). Fill its open params below.'
+              : action === 'saved_transfer'
+              ? 'Pulls the files a saved transfer matches, directly (no agent, no confirm gate). A date param set to today / yesterday / -1d picks its day each time it fires.'
               : action === 'prompt'
               ? 'Runs an agent turn on a fixed instruction — schedule the assistant to check or do something later. It still confirms before anything destructive.'
               : action === 'runbook'
@@ -667,6 +713,48 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
                 </div>
               </>
             )}
+          </>
+        )}
+
+        {/* ── Saved-transfer action ── */}
+        {action === 'saved_transfer' && (
+          <>
+            <Form.Item name="saved_transfer" label="Saved transfer" rules={[{ required: true, message: 'Required' }]}
+              help={savedTransfers.length === 0 ? 'No saved transfers yet — save one from the Transfer dialog.' : undefined}>
+              <Select placeholder="Select a saved transfer" showSearch
+                filterOption={(input, opt) => (opt?.value as string ?? '').toLowerCase().includes(input.toLowerCase())}>
+                {savedTransfers.map(s => (
+                  <Select.Option key={s.id} value={s.id} disabled={!!s.error}>
+                    <code>{s.id}</code>
+                    <span style={{ ...labelStyle, marginLeft: 8 }}>from {s.source}</span>
+                  </Select.Option>
+                ))}
+              </Select>
+            </Form.Item>
+            {selectedTransfer && (selectedTransfer.params ?? []).length > 0 && (
+              <>
+                <div style={{ ...labelStyle, marginBottom: 8, marginTop: 4 }}>Parameters</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginBottom: 14 }}>
+                  {(selectedTransfer.params ?? []).map(a => (
+                    <ArgFieldRow key={a.name} arg={a} error={transferErrors[a.name]}>
+                      <RunbookField
+                        arg={a}
+                        hostNames={hosts.map(h => h.name)}
+                        value={transferValues[a.name]}
+                        error={transferErrors[a.name]}
+                        onChange={v => changeTransferValue(a.name, v)}
+                      />
+                    </ArgFieldRow>
+                  ))}
+                </div>
+              </>
+            )}
+            <Form.Item name="transfer_dest" label="Save files to"
+              extra={selectedTransfer?.dest_dir
+                ? `Blank = its own folder (${selectedTransfer.dest_dir}).`
+                : `Blank = documents/transfers/${selectedTransfer?.id || '<id>'}/ (a schedule has no chat workspace).`}>
+              <Input placeholder="optional absolute folder, may use {{today}}" />
+            </Form.Item>
           </>
         )}
 
@@ -892,6 +980,7 @@ export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewP
       else if (res.action === 'prompt') message.success('Running the scheduled prompt…')
       else if (res.action === 'runbook') message.success(`Running runbook ${res.runnable}…`)
       else if (res.action === 'saved_run') message.success(`Running saved run ${res.runnable}…`)
+      else if (res.action === 'saved_transfer') message.success(`Running saved transfer ${res.runnable}…`)
       else message.success(`Running /${res.runnable} on ${res.host}…`)
     } catch (e) {
       message.error(String(e))
@@ -907,7 +996,7 @@ export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewP
 
   const detailFor = (s: Schedule): Record<string, unknown> =>
     s.action === 'event' ? (s.fields ?? {})
-      : s.action === 'runbook' || s.action === 'saved_run' ? (s.values ?? {})
+      : s.action === 'runbook' || s.action === 'saved_run' || s.action === 'saved_transfer' ? (s.values ?? {})
       : s.action === 'prompt' ? {}
       : (s.args ?? {})
 
@@ -942,6 +1031,8 @@ export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewP
           ? <Space size={6}><Tag color="gold">runbook</Tag><code>{s.runbook}</code></Space>
           : s.action === 'saved_run'
           ? <Space size={6}><Tag color="blue">saved run</Tag><code>{s.saved_run}</code></Space>
+          : s.action === 'saved_transfer'
+          ? <Space size={6}><Tag color="green">saved transfer</Tag><code>{s.saved_transfer}</code></Space>
           : s.action === 'eval'
           ? <Space size={6}><Tag color="magenta">evals</Tag><code>{s.eval_fixture}</code></Space>
           : <Space size={6}><Tag>run</Tag><code>/{s.runnable}{s.command?.length ? ` ${s.command.join(' ')}` : ''}</code></Space>
@@ -981,6 +1072,8 @@ export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewP
           ? <Tag color="cyan">agent</Tag>
           : s.action === 'saved_run'
           ? <Tag color="blue">preset target</Tag>
+          : s.action === 'saved_transfer'
+          ? <Tag color="green">transfer source</Tag>
           : <span style={{ color: dimCol }}>—</span>,
     },
         {

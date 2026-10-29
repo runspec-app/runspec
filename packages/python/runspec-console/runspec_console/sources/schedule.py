@@ -2,7 +2,7 @@
 sources/schedule.py — the time-based (cron / interval) event source.
 
 A *schedule* is configured in the **Schedules tab** (``runspec_schedules.toml``),
-not as a trigger. When it fires it does one of four things, chosen by ``action``:
+not as a trigger. When it fires it does one of these things, chosen by ``action``:
 
   - ``action = "event"`` → emit a rich, matchable :class:`~runspec_console.events.Event`
     into the trigger engine, exactly like a new mail arriving. Triggers with
@@ -32,6 +32,14 @@ not as a trigger. When it fires it does one of four things, chosen by ``action``
     Runs **directly and autonomously** like a runnable action (no agent, no
     confirm gate), with the schedule's ``values`` filling the preset's open
     params. The bridge supplies the run via the ``run_saved`` callback.
+
+  - ``action = "saved_transfer"`` → run a saved transfer (by id) from
+    ``runspec_saved_transfers.toml``: pull the files its patterns match (with the
+    schedule's ``values`` filling its params) **directly**, no agent. A scenario
+    that targets the chat workspace has no chat here, so its files land in
+    ``{app_dir}/documents/transfers/<id>/`` unless the schedule sets
+    ``transfer_dest``. The bridge supplies the run via the ``run_transfer``
+    callback.
 
 The ``prompt`` and ``runbook`` actions both run an agent turn via the bridge's
 ``run_agent`` callback. The source reads the schedule list, builds one APScheduler
@@ -91,6 +99,10 @@ AgentFn = Callable[["ScheduleJob"], None]
 # preset's own targeting deterministically — same no-agent path as a runnable.
 SavedFn = Callable[["ScheduleJob"], None]
 
+# What a saved_transfer-action schedule calls to run the saved transfer. The
+# bridge gets the whole parsed job (id + values + optional destination folder).
+TransferFn = Callable[["ScheduleJob"], None]
+
 # What an eval-action schedule calls to run the fixture against the live agent.
 # The bridge gets the whole job (it needs eval_fixture + the run options).
 EvalFn = Callable[["ScheduleJob"], None]
@@ -126,8 +138,9 @@ class ScheduleJob:
 
     ``action`` is ``"event"`` (emit a matchable event), ``"runnable"`` (run a
     specific runnable directly), ``"prompt"`` (run an agent turn on a fixed
-    prompt), ``"runbook"`` (run a saved runbook as an agent turn), or
-    ``"saved_run"`` (fire a saved run — a deterministic preset — directly).
+    prompt), ``"runbook"`` (run a saved runbook as an agent turn),
+    ``"saved_run"`` (fire a saved run — a deterministic preset — directly), or
+    ``"saved_transfer"`` (pull the files a saved transfer matches).
     The other-action fields are simply empty.
     """
 
@@ -173,6 +186,11 @@ class ScheduleJob:
     values: dict[str, Any] = field(default_factory=dict)
     # action == "saved_run" — the saved-run (preset) id from runspec_saved_runs.toml.
     saved_run: str = ""
+    # action == "saved_transfer" — the saved-transfer id from
+    # runspec_saved_transfers.toml (``values`` fills its params), plus an optional
+    # absolute local folder that overrides where the files land.
+    saved_transfer: str = ""
+    transfer_dest: str = ""
     # action == "eval" — the eval fixture (suite name) to run against the live
     # agent, plus the run options (samples per case / preflight-validate / emit an
     # OTLP trace per case). A dry run — it never executes a runnable.
@@ -237,6 +255,17 @@ def parse_when(table: dict[str, Any]) -> When:
 # when the console's AI off-switch (`[console] ai = false`) is set.
 AI_SCHEDULE_ACTIONS: frozenset[str] = frozenset({"prompt", "runbook", "eval"})
 
+# Every action a [[schedule]] entry may name.
+SCHEDULE_ACTIONS: tuple[str, ...] = (
+    "event",
+    "runnable",
+    "prompt",
+    "runbook",
+    "saved_run",
+    "saved_transfer",
+    "eval",
+)
+
 
 def parse_schedule_entry(
     data: dict[str, Any], *, ai_enabled: bool = True
@@ -261,10 +290,11 @@ def parse_schedule_entry(
     # action="skill" schedule and treat it as a runbook.
     if action == "skill":
         action = "runbook"
-    if action not in ("event", "runnable", "prompt", "runbook", "saved_run", "eval"):
+    if action not in SCHEDULE_ACTIONS:
         raise ValueError(
-            f"schedule '{sid}' has unknown action '{action}' "
-            "(expected 'event', 'runnable', 'prompt', 'runbook', 'saved_run' or 'eval')"
+            f"schedule '{sid}' has unknown action '{action}' (expected "
+            "'event', 'runnable', 'prompt', 'runbook', 'saved_run', "
+            "'saved_transfer' or 'eval')"
         )
     if not ai_enabled and action in AI_SCHEDULE_ACTIONS:
         raise ValueError(
@@ -288,6 +318,8 @@ def parse_schedule_entry(
     runbook = ""
     values: dict[str, Any] = {}
     saved_run = ""
+    saved_transfer = ""
+    transfer_dest = ""
     eval_fixture = ""
     eval_samples = 1
     eval_validate = False
@@ -346,6 +378,15 @@ def parse_schedule_entry(
                 f"schedule '{sid}' uses action='saved_run' but has no 'saved_run' id"
             )
         values = dict(data.get("values") or {})
+    elif action == "saved_transfer":
+        saved_transfer = str(data.get("saved_transfer") or "").strip()
+        if not saved_transfer:
+            raise ValueError(
+                f"schedule '{sid}' uses action='saved_transfer' but has no "
+                "'saved_transfer' id"
+            )
+        values = dict(data.get("values") or {})
+        transfer_dest = str(data.get("transfer_dest") or "").strip()
     elif action == "eval":
         eval_fixture = str(data.get("eval_fixture") or "").strip()
         if not eval_fixture:
@@ -385,6 +426,8 @@ def parse_schedule_entry(
         runbook=runbook,
         values=values,
         saved_run=saved_run,
+        saved_transfer=saved_transfer,
+        transfer_dest=transfer_dest,
         eval_fixture=eval_fixture,
         eval_samples=eval_samples,
         eval_validate=eval_validate,
@@ -425,6 +468,8 @@ def schedule_label(entry: Any) -> str:
         return f"runbook {get('runbook') or get('skill')}"
     elif action == "saved_run" and get("saved_run"):
         return f"saved run {get('saved_run')}"
+    elif action == "saved_transfer" and get("saved_transfer"):
+        return f"saved transfer {get('saved_transfer')}"
     elif action == "eval" and get("eval_fixture"):
         return f"eval {get('eval_fixture')}"
     elif action == "event" and get("event"):
@@ -517,6 +562,7 @@ class ScheduleSource:
         run_runnable: RunFn | None = None,
         run_agent: AgentFn | None = None,
         run_saved: SavedFn | None = None,
+        run_transfer: TransferFn | None = None,
         run_eval: EvalFn | None = None,
         clock_ok: ClockFn | None = None,
         on_event: ScheduleEventFn | None = None,
@@ -539,6 +585,8 @@ class ScheduleSource:
         self._run_agent = run_agent
         # Saved-run schedules fire the preset deterministically through this one.
         self._run_saved = run_saved
+        # Saved-transfer schedules pull their files through this one.
+        self._run_transfer = run_transfer
         # Eval-action schedules run a fixture against the live agent (dry run).
         self._run_eval = run_eval
         # Working-hours gate + per-fire audit hook (both bridge-owned). When
@@ -640,6 +688,9 @@ class ScheduleSource:
             elif job.action == "saved_run":
                 if self._run_saved is not None:
                     self._run_saved(job)
+            elif job.action == "saved_transfer":
+                if self._run_transfer is not None:
+                    self._run_transfer(job)
             elif job.action == "eval":
                 if self._run_eval is not None:
                     self._run_eval(job)
@@ -677,6 +728,9 @@ class ScheduleSource:
         elif job.action == "saved_run":
             etype = "saved_run"
             summary = f"saved run: {job.saved_run}"
+        elif job.action == "saved_transfer":
+            etype = "saved_transfer"
+            summary = f"saved transfer: {job.saved_transfer}"
         elif job.action == "eval":
             etype = "eval"
             summary = f"eval: {job.eval_fixture}"

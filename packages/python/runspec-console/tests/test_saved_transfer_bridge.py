@@ -71,6 +71,8 @@ _METHODS = (
     "_emit_transfer_end",
     "_await_transfer",
     "_normalise_transfer_side",
+    "_invoke_scheduled_transfer",
+    "_run_scheduled_transfer",
 )
 
 
@@ -88,6 +90,9 @@ def env(tmp_path, monkeypatch):
         setattr(ns, name, types.MethodType(getattr(Bridge, name), ns))
     ns._format_saved_preview = Bridge._format_saved_preview
     ns._saved_transfer_root = Bridge._saved_transfer_root
+    ns._scheduled_transfer_dir = Bridge._scheduled_transfer_dir
+    ns.cards = []
+    ns._on_schedule_card = lambda card: ns.cards.append(dict(card))
     ns._SPECIAL_FILE_CAP = Bridge._SPECIAL_FILE_CAP
     ns._lock = threading.Lock()
     ns._in_flight = {}
@@ -308,3 +313,81 @@ def test_cancel_stops_before_next_file(env):
     detail = _wait(env, env._start_saved_transfer("c", None, cancel_event=ev)["id"])
     assert not detail["ok"] and "cancelled" in detail["error"]
     assert not any(env.ws.iterdir())
+
+
+def _job(**kw):
+    from runspec_console.sources.schedule import parse_schedule_entry
+
+    return parse_schedule_entry(
+        {"id": "nightly", "action": "saved_transfer", "when": {"every": "1d"}, **kw}
+    )
+
+
+def _wait_card(env, column_in=("done", "failed")):
+    import time
+
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        if env.cards and env.cards[-1]["column"] in column_in:
+            return env.cards[-1]
+        time.sleep(0.02)
+    raise AssertionError(f"card never finished: {env.cards}")
+
+
+def test_scheduled_run_lands_in_documents(env, tmp_path, monkeypatch):
+    monkeypatch.setattr("runspec_console.config.app_dir", lambda: tmp_path / "app")
+    logs = env.remote / "logs"
+    _write(logs / "app-2026-10-28.log", "yday")
+    _write(logs / "app-2026-10-29.log", "today")
+    _save(
+        env,
+        id="app-logs",
+        host="web-01",
+        paths=[f"{logs}/app-{{{{day:%Y-%m-%d}}}}.log"],
+        params={"day": {"default": "today"}},
+    )
+    tid = env._invoke_scheduled_transfer(
+        _job(saved_transfer="app-logs", values={"day": "2026-10-28"})
+    )
+    assert tid
+    card = _wait_card(env)
+    assert env.cards[0]["column"] == "running"
+    assert card["column"] == "done", card
+    want = tmp_path / "app" / "documents" / "transfers" / "app-logs"
+    assert card["detail"]["dest"] == str(want)
+    assert card["detail"]["result"].startswith("1 file(s)")
+    assert (want / "app-2026-10-28.log").read_text() == "yday"
+    assert not any(env.ws.iterdir())  # never the chat workspace
+    assert env.dispatched[-1][1]["saved"]["dest"] == str(want)
+
+
+def test_scheduled_run_dest_override_and_failures(env, tmp_path):
+    logs = env.remote / "logs"
+    _write(logs / "a.log", "a")
+    _save(env, id="a", host="web-01", paths=[f"{logs}/*.log"])
+    out = tmp_path / "out"
+    env._invoke_scheduled_transfer(
+        _job(saved_transfer="a", transfer_dest=f"{out}/{{{{today:%Y}}}}")
+    )
+    card = _wait_card(env)
+    assert card["column"] == "done"
+    year = os.listdir(out)[0]
+    assert os.listdir(out / year) == ["a.log"]
+
+    # Nothing matched → the card fails and says so.
+    env.cards.clear()
+    _save(env, id="none", host="web-01", paths=[f"{logs}/*.nope"])
+    env._invoke_scheduled_transfer(_job(saved_transfer="none", transfer_dest=str(out)))
+    card = _wait_card(env)
+    assert card["column"] == "failed"
+    assert card["detail"]["error"] == "no files matched"
+
+    # An unknown id fails at once, without starting a job.
+    env.cards.clear()
+    assert env._invoke_scheduled_transfer(_job(saved_transfer="gone")) == ""
+    assert env.cards[-1]["column"] == "failed"
+    assert "no saved transfer with id 'gone'" in env.cards[-1]["detail"]["error"]
+    # A relative override is refused.
+    env.cards.clear()
+    env._invoke_scheduled_transfer(_job(saved_transfer="a", transfer_dest="rel/dir"))
+    assert "must be an absolute path" in env.cards[-1]["detail"]["error"]

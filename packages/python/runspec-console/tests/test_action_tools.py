@@ -473,7 +473,15 @@ def test_create_schedule_action_enum_includes_prompt_and_runbook(monkeypatch):
     b = _ActionBridge()
     cs = next(t for t in b._action_tools() if t["name"] == "create_schedule")
     enum = cs["input_schema"]["properties"]["action"]["enum"]
-    assert {"event", "runnable", "prompt", "runbook", "saved_run", "eval"} == set(enum)
+    assert {
+        "event",
+        "runnable",
+        "prompt",
+        "runbook",
+        "saved_run",
+        "saved_transfer",
+        "eval",
+    } == set(enum)
     # The runbook field offers the saved runbook ids as an enum.
     assert cs["input_schema"]["properties"]["runbook"]["enum"] == ["build-report"]
 

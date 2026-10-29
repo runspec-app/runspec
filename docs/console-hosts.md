@@ -455,6 +455,25 @@ allowed to use it through its action allowlist.
 
 > Use the app-logs saved transfer for last Tuesday, then find the first error after 14:00.
 
+**Schedule one:** in the Schedules tab, pick **Saved transfer** as the action,
+choose the scenario and fill its parameters. A date parameter set to
+`yesterday` or `-1d` picks its own day each time the schedule fires. A
+schedule has no chat, so a scenario that saves to the chat workspace saves to
+`documents/transfers/<id>/` in the console's data folder instead, unless you
+set **Save files to** on the schedule (an absolute folder, placeholders
+allowed). Each run shows a card with the file count and folder, or what went
+wrong. It runs without asking, like any schedule.
+
+```toml
+[[schedule]]
+id             = "gather-app-logs"
+action         = "saved_transfer"
+saved_transfer = "app-logs"
+values         = { day = "yesterday" }
+transfer_dest  = "D:/collect/{{today:%Y-%m-%d}}"   # optional
+when           = { cron = "15 6 * * mon-fri" }
+```
+
 ---
 
 ## Groups

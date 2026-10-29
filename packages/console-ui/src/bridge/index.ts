@@ -794,7 +794,7 @@ export interface Schedule {
   // the action, never the generated id).
   name?: string
   enabled?: boolean
-  action: 'runnable' | 'event' | 'prompt' | 'runbook' | 'saved_run' | 'eval'
+  action: 'runnable' | 'event' | 'prompt' | 'runbook' | 'saved_run' | 'saved_transfer' | 'eval'
   when: ScheduleWhen
   // action === 'runnable' — exactly one of host / group / hosts / selected_hosts.
   // group fans the run out across every member of the host group; hosts is a
@@ -820,10 +820,16 @@ export interface Schedule {
   prompt?: string
   // action === 'runbook' — the saved runbook id + values for its {{placeholders}}.
   runbook?: string
-  // Shared with action === 'saved_run' (there it fills the preset's open params).
+  // Shared with action === 'saved_run' (there it fills the preset's open params)
+  // and action === 'saved_transfer' (the saved transfer's params).
   values?: Record<string, unknown>
   // action === 'saved_run' — the saved-run (preset) id; targeting lives on the preset.
   saved_run?: string
+  // action === 'saved_transfer' — the saved-transfer id, plus an optional absolute
+  // local folder the files land in (else its own destination, or
+  // documents/transfers/<id>/ when it targets the chat workspace).
+  saved_transfer?: string
+  transfer_dest?: string
   // action === 'eval' — the eval fixture (suite name) to run against the live
   // agent, plus the run options (a dry run — never executes a runnable).
   eval_fixture?: string
@@ -2350,7 +2356,7 @@ export interface BridgeApi {
   delete_schedule: (id: string) => Promise<void>
   // Fire a schedule immediately — runs the runnable (returns inv_id) or emits the
   // event (returns event), regardless of the schedule's enabled flag.
-  run_schedule_now: (id: string) => Promise<{ action: 'runnable' | 'event' | 'prompt' | 'runbook' | 'saved_run'; inv_id?: string; event?: string; host?: string; runnable?: string }>
+  run_schedule_now: (id: string) => Promise<{ action: 'runnable' | 'event' | 'prompt' | 'runbook' | 'saved_run' | 'saved_transfer'; inv_id?: string; event?: string; host?: string; runnable?: string }>
   get_jump_hosts: () => Promise<JumpHost[]>
   save_jump_hosts: (hosts: JumpHost[]) => Promise<void>
   import_jump_hosts: (tomlContent: string) => Promise<JumpHost[]>

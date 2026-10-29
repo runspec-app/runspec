@@ -215,6 +215,15 @@ class SchedulesMixin:
                 "runnable": job.saved_run,
                 "host": "saved run",
             }
+        if job.action == "saved_transfer":
+            inv_id = self._invoke_scheduled_transfer(job)
+            self._record_schedule_fire(job)
+            return {
+                "action": "saved_transfer",
+                "inv_id": inv_id,
+                "runnable": job.saved_transfer,
+                "host": "saved transfer",
+            }
         if job.action == "eval":
             result = self._run_scheduled_eval(job)
             self._record_schedule_fire(job)
@@ -258,6 +267,9 @@ class SchedulesMixin:
             etype, summary = "runbook", f"runbook: {job.runbook}"
         elif job.action == "saved_run":
             etype, summary = "saved_run", f"saved run: {job.saved_run}"
+        elif job.action == "saved_transfer":
+            etype = "saved_transfer"
+            summary = f"saved transfer: {job.saved_transfer}"
         elif job.action == "eval":
             etype, summary = "eval", f"eval: {job.eval_fixture}"
         else:

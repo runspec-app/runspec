@@ -1847,6 +1847,8 @@ class InternalsMixin:
                     target = f"agent runbook {s.get('runbook')}"
                 elif action == "saved_run":
                     target = f"saved run {s.get('saved_run')}"
+                elif action == "saved_transfer":
+                    target = f"saved transfer {s.get('saved_transfer')}"
                 else:
                     where = (
                         f"group:{s.get('group')}" if s.get("group") else s.get("host")
