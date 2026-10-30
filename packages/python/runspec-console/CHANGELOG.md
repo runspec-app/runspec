@@ -9,6 +9,23 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.367.0] — 2026-10-30
+
+### Added
+
+- **Run cards show the args they were called with.** A run card in the
+  Console now has a one-line strip under its header — `issue=OPS-101
+  include=comments` — so ten calls of the same tool no longer look the same.
+  Click it to see one arg per line with full values. It shows for Forms runs,
+  reruns, saved runs, rule-trigger runs and calls from an outside agent over
+  the console's MCP server, and stays visible when the card is collapsed.
+  `password` args and secret-looking names (`*-pat`, `token`, `api_key`, …)
+  show as `••••••`.
+- **MCP-server cards name the subcommand and say "MCP call".** The label is
+  `/jira get-issue on local`, not `/jira on local`, and the tag reads
+  "MCP call" instead of "trigger: jira". Saved-run cards name their subcommand
+  too.
+
 ## [0.366.0] — 2026-10-29
 
 ### Fixed

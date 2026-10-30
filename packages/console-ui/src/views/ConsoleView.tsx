@@ -3,7 +3,7 @@ import { Button, Drawer, Empty, List, Popconfirm, Tag, Tooltip, Typography, mess
 import { CloseOutlined, LoadingOutlined, PlusOutlined, ClockCircleOutlined, HistoryOutlined, DeleteOutlined } from '@ant-design/icons'
 import { bridge, type ChatConversation, type ConversationMeta, type InFlightRecord, type Runnable, type TriggerCard } from '../bridge'
 import { useFeatures } from '../features'
-import { OutputPanel, useInvocationBlocks, type RerunData, type InvocationBlock, type BlockSegment } from '../components/OutputPanel'
+import { OutputPanel, useInvocationBlocks, maskCallArgs, type RerunData, type InvocationBlock, type BlockSegment } from '../components/OutputPanel'
 import { useIsDark, MONO_FONT, RADIUS } from '../ThemeContext'
 import { useSessions } from '../useSessions'
 import { SessionStrip } from '../components/SessionStrip'
@@ -42,6 +42,26 @@ function cardIsRun(card: TriggerCard, kind: 'trigger' | 'schedule'): boolean {
   return String(card.detail?.mode ?? 'agent') === 'rule'
 }
 
+// The `password`-typed args a run of `runnable` (at `commandPath`) can take —
+// the runnable's own globals plus each command level's — masked on its card.
+export function secretArgNames(runnable: Runnable, commandPath: string[] = []): string[] {
+  const names = runnable.args.filter(a => a.type === 'password').map(a => a.name)
+  let level: Runnable | undefined = runnable
+  for (const cmd of commandPath) {
+    level = level?.commands?.[cmd]
+    if (!level) break
+    names.push(...level.args.filter(a => a.type === 'password').map(a => a.name))
+  }
+  return names
+}
+
+// The args a run card shows: the card's `detail.args` (an MCP-server call or a
+// rule trigger's run), secrets masked. Undefined when the card names none.
+export function cardCallArgs(card: TriggerCard): Record<string, unknown> | undefined {
+  const a = card.detail?.args
+  return a && typeof a === 'object' && !Array.isArray(a) ? maskCallArgs(a as Record<string, unknown>) : undefined
+}
+
 // The Console block label for a run card. Trigger cards share the chip label
 // (`/tool` for a rule run, "Trigger <name> · <event>" for an agent run); a
 // schedule run reads best as its summary ("/backup-db on db01").
@@ -77,6 +97,7 @@ export function conversationToBlocks(conv: ChatConversation): InvocationBlock[] 
         done: true,
         exitCode: typeof t.exit_code === 'number' ? t.exit_code : undefined,
         durationMs: typeof t.duration_ms === 'number' ? t.duration_ms : undefined,
+        callArgs: maskCallArgs(t.args),
         operatorOnly: true,
         inContext: false,
       }
@@ -245,7 +266,12 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
       currentText: '',
       done: false,
       trigger: { name: card.trigger, source: card.source },
+      ...(isRun ? { callArgs: cardCallArgs(card) } : {}),
     }))
+    // An operator may edit the args on the Approve card: a later event for the
+    // same card carries what actually ran.
+    const callArgs = isRun ? cardCallArgs(card) : undefined
+    if (callArgs) updateBlockRef.current(id, { callArgs })
     if (card.column === 'done' || card.column === 'failed') {
       const failed = card.column === 'failed'
       updateBlockRef.current(id, b => {
@@ -461,7 +487,7 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
       const sessionId = await targetSession()
       if (!sessionId) return
       const id = await bridge.invoke_runnable(runnable.host, runnable.name, args, commandPath, runnable.group, credentialIds && credentialIds.length ? credentialIds : undefined)
-      addBlockRef.current({ id, sessionId, type: 'run', label, startedAt: new Date().toISOString(), lines: [], segments: [], currentText: '', done: false, rerunData: { host: runnable.host, runnable: runnable.name, args, commandPath } })
+      addBlockRef.current({ id, sessionId, type: 'run', label, startedAt: new Date().toISOString(), lines: [], segments: [], currentText: '', done: false, rerunData: { host: runnable.host, runnable: runnable.name, args, commandPath }, callArgs: maskCallArgs(args, secretArgNames(runnable, commandPath)) })
       window.dispatchEvent(new CustomEvent('runspec:in_flight_updated'))
     }
     window.addEventListener('runspec:invoke_runnable', onInvoke)
@@ -529,12 +555,14 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
         message.error(res.error || 'Could not start saved run')
         return
       }
+      const cmd = [res.runnable, ...(res.command ?? [])].join(' ')
       for (const run of res.runs) {
         addBlockRef.current({
           id: run.inv_id, sessionId, type: 'run',
-          label: `/${res.runnable} on ${run.host}`,
+          label: `/${cmd} on ${run.host}`,
           startedAt: new Date().toISOString(),
           lines: [], segments: [], currentText: '', done: false,
+          callArgs: maskCallArgs(res.args),
         })
       }
       window.dispatchEvent(new CustomEvent('runspec:in_flight_updated'))
@@ -599,7 +627,7 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
       const sessionId = await targetSession()
       if (!sessionId) return
       const id = await bridge.invoke_runnable(host, runnable, args, commandPath)
-      addBlockRef.current({ id, sessionId, type: 'run', label, startedAt: new Date().toISOString(), lines: [], segments: [], currentText: '', done: false, rerunData: { host, runnable, args, commandPath } })
+      addBlockRef.current({ id, sessionId, type: 'run', label, startedAt: new Date().toISOString(), lines: [], segments: [], currentText: '', done: false, rerunData: { host, runnable, args, commandPath }, callArgs: maskCallArgs(args) })
       window.dispatchEvent(new CustomEvent('runspec:in_flight_updated'))
     }
     window.addEventListener('runspec:rerun', onRerun)

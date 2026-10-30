@@ -581,6 +581,11 @@ export interface InvocationBlock {
   // runspec:trigger_card). Drives a distinguishing "Trigger" tag; the run/chat
   // content still streams through the normal id-keyed handlers.
   trigger?: { name: string; source: string }
+  // The args a run was called with (Forms, rerun, MCP-server call, rule
+  // trigger), shown as a one-line strip under a run card's header so several
+  // runs of the same tool can be told apart. Secrets are already masked when
+  // the block is made (see maskCallArgs).
+  callArgs?: Record<string, unknown>
 }
 
 /** Derive an edit-and-rerun target from an agent tool-call entry, or null when
@@ -631,6 +636,48 @@ export function rerunFromToolEntry(entry: ToolCallEntry): RerunData | null {
 export function fmtThought(ms: number | undefined): string {
   if (!ms || ms <= 0) return ''
   return ms < 1000 ? '<1s' : `${Math.round(ms / 1000)}s`
+}
+
+// Arg names that look like secrets. Over-masking a harmless name
+// (`max-tokens`) is the safe way round: a run card is on screen and in
+// screenshots, and a password arg must never show there.
+const SECRET_ARG_RE = /(password|passwd|passphrase|secret|token|(^|[-_])pat($|[-_])|api[-_]?key|private[-_]?key|credential|(^|[-_])auth($|[-_])|cookie)/i
+export const MASKED_ARG = '••••••'
+
+/** Copy of a run's args with secret values replaced by MASKED_ARG: every name
+ *  in `secretNames` (the runnable's `password`-typed args) and every name that
+ *  looks secret. Empty and unset values are dropped (nothing to show). */
+export function maskCallArgs(
+  args: Record<string, unknown> | null | undefined,
+  secretNames: Iterable<string> = [],
+): Record<string, unknown> {
+  const secret = new Set(secretNames)
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(args ?? {})) {
+    if (v === undefined || v === null || v === '') continue
+    if (Array.isArray(v) && v.length === 0) continue
+    out[k] = secret.has(k) || SECRET_ARG_RE.test(k) ? MASKED_ARG : v
+  }
+  return out
+}
+
+/** One arg value as card text: strings as-is (the full view keeps line
+ *  breaks), everything else as JSON. */
+export function argText(v: unknown): string {
+  if (typeof v === 'string') return v
+  try { return JSON.stringify(v) } catch { return String(v) }
+}
+
+/** The one-line form of a run's args: `name=value` pairs, the same shape as an
+ *  agent tool row. A string with spaces or line breaks is quoted. */
+export function callArgsSummary(args: Record<string, unknown>): string {
+  return Object.entries(args)
+    .map(([k, v]) => {
+      if (v === true) return k
+      const t = argText(v)
+      return `${k}=${typeof v === 'string' && /[\s"]/.test(v) ? JSON.stringify(v) : t}`
+    })
+    .join(' ')
 }
 
 /**
@@ -1640,6 +1687,40 @@ function RenderingPlaceholder({ chars, lines }: { chars: number; lines: number }
   )
 }
 
+/** The args strip under a run card's header: the `name=value` summary on one
+ *  line (ellipsised), or — after a click — one arg per line with full values. */
+function RunArgsStrip({ args, borderBottom }: { args: Record<string, unknown>; borderBottom: boolean }) {
+  const c = useCardTheme()
+  const [open, setOpen] = useState(false)
+  const summary = callArgsSummary(args)
+  return (
+    <div
+      data-testid="run-args"
+      role="button"
+      tabIndex={0}
+      aria-expanded={open}
+      title={open ? 'Hide the argument list' : 'Show each argument on its own line'}
+      onClick={() => setOpen(v => !v)}
+      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(v => !v) } }}
+      style={{
+        padding: '4px 14px 4px 36px', background: c.headerBg, cursor: 'pointer',
+        borderBottom: borderBottom ? `1px solid ${c.cardBorder}` : 'none',
+        fontFamily: MONO_FONT, fontSize: 12, color: c.dim,
+      }}
+    >
+      {open ? (
+        Object.entries(args).map(([k, v]) => (
+          <div key={k} data-testid="run-arg" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+            <span style={{ color: c.text }}>{k}</span> = {argText(v)}
+          </div>
+        ))
+      ) : (
+        <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{summary}</div>
+      )}
+    </div>
+  )
+}
+
 // Memoised: a streamed token now re-creates only the streaming block's object
 // (useInvocationBlocks' setBlocks keeps stable refs for untouched blocks), so with
 // stable callbacks every OTHER card skips re-render. Without this, a long
@@ -1709,6 +1790,7 @@ const BlockCard = memo(function BlockCard({
 
   const args = block.rerunData?.args ?? {}
   const hasArgs = Object.keys(args).length > 0
+  const callArgs = block.type === 'run' ? Object.keys(block.callArgs ?? {}) : []
   // A subcommand runnable's intent lives in its verb path, not in --flag args, so
   // a verb-only run (e.g. `service restart`) has no args. Offer Edit-&-rerun when
   // there are args OR a command path, else the pencil never shows for subcommands.
@@ -1853,7 +1935,7 @@ const BlockCard = memo(function BlockCard({
         display: 'flex', alignItems: 'center', gap: 8,
         padding: '8px 14px',
         background: c.headerBg,
-        borderBottom: collapsed ? 'none' : `1px solid ${c.cardBorder}`,
+        borderBottom: collapsed && callArgs.length === 0 ? 'none' : `1px solid ${c.cardBorder}`,
         userSelect: 'none',
       }}>
         {/* Collapse toggle */}
@@ -1911,7 +1993,12 @@ const BlockCard = memo(function BlockCard({
             <Tag color="default" style={{ fontSize: 11, marginLeft: 4 }}>operator run · not sent to agent</Tag>
           </Tooltip>
         )}
-        {block.trigger && (
+        {block.trigger?.source === 'mcp' && (
+          <Tooltip title="Called by an outside agent (e.g. Claude Code) through the console's MCP server">
+            <Tag color="purple" style={{ fontSize: 11, marginLeft: 4 }}>MCP call</Tag>
+          </Tooltip>
+        )}
+        {block.trigger && block.trigger.source !== 'mcp' && (
           <Tooltip title={`Fired automatically by the “${block.trigger.name}” trigger (${block.trigger.source})`}>
             <Tag color="gold" style={{ fontSize: 11, marginLeft: 4 }}>trigger: {block.trigger.name}</Tag>
           </Tooltip>
@@ -2033,6 +2120,13 @@ const BlockCard = memo(function BlockCard({
           </span>
         )}
       </div>
+
+      {/* The args this run was called with — one line, click for one per line.
+          Shown even when the card is collapsed: it's what tells several runs
+          of the same tool apart. */}
+      {block.type === 'run' && callArgs.length > 0 && (
+        <RunArgsStrip args={block.callArgs!} borderBottom={!collapsed} />
+      )}
 
       {/* Body — hidden when collapsed */}
       {!collapsed && (

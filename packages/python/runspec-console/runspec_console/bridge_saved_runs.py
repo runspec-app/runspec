@@ -173,6 +173,9 @@ class SavedRunsMixin:
         return {
             "id": entry.id,
             "runnable": entry.runnable,
+            # What ran, for the run cards' label + args strip.
+            "command": list(entry.command or []),
+            "args": merged,
             "runs": [{"host": h, "inv_id": inv} for h, inv in runs],
         }
 

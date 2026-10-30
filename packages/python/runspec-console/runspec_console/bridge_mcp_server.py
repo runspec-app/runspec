@@ -86,6 +86,7 @@ class McpServerMixin:
             level=level,
             runnable=tool.runnable,
             host=host or tool.host,
+            command=list(command_path),
         )
         if not approved:
             if timed_out:
@@ -184,6 +185,7 @@ class McpServerMixin:
         level: str,
         runnable: str,
         host: str,
+        command: list[str] | None = None,
     ) -> tuple[str, bool, dict[str, Any], bool, str]:
         """Gate an MCP call behind a **visible** Console card, returning
         ``(card_id, approved, args, timed_out, decline_reason)`` — the reason is
@@ -212,6 +214,7 @@ class McpServerMixin:
                 runnable=runnable,
                 args=args,
                 host=host,
+                command=command,
                 column="running",
                 note="autonomous — running",
             )
@@ -221,6 +224,7 @@ class McpServerMixin:
             runnable=runnable,
             args=args,
             host=host,
+            command=command,
             column="awaiting_human",
             note="awaiting operator approval",
         )
@@ -269,6 +273,7 @@ class McpServerMixin:
         runnable: str,
         args: dict[str, Any] | None = None,
         host: str | None = None,
+        command: list[str] | None = None,
         column: str,
         result: str | None = None,
         error: str | None = None,
@@ -299,13 +304,18 @@ class McpServerMixin:
                     # operator's current chat.
                     "session": session_id,
                     "event_type": "request",
-                    "summary": f"/{runnable}" + (f" on {host}" if host else ""),
+                    # The subcommand belongs in the label: `/jira get-issue`,
+                    # not `/jira`, or every verb's card reads the same.
+                    "summary": "/"
+                    + " ".join([runnable, *(command or [])])
+                    + (f" on {host}" if host else ""),
                     "column": column,
                     "detail": {
                         "mode": "rule",
                         "runnable": runnable,
                         "args": dict(args or {}),
                         "host": host or "",
+                        "command": list(command or []),
                     },
                     "created_at": now,
                     "timeline": [],

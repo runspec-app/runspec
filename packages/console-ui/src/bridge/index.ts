@@ -2721,7 +2721,7 @@ export interface BridgeApi {
   run_saved_run: (
     id: string,
     values?: Record<string, unknown>,
-  ) => Promise<{ id?: string; runnable?: string; runs?: { host: string; inv_id: string }[]; error?: string }>
+  ) => Promise<{ id?: string; runnable?: string; command?: string[]; args?: Record<string, unknown>; runs?: { host: string; inv_id: string }[]; error?: string }>
   // Resolve a parked autonomy-gate confirm. `editedInput` (optional) replaces the
   // agent's proposed tool_input when approving — the operator can tweak the args
   // before the call runs (editable confirmations). Ignored on a deny.

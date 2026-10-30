@@ -249,6 +249,17 @@ def test_collapsed_confirm_command_parks_and_runs_on_approval():
     assert b.runs and b.runs[0][3] == ("bye",)
 
 
+def test_card_names_the_subcommand_and_args():
+    """The Console card says which verb ran with which args — otherwise many
+    calls of one tool read the same."""
+    b = FakeBridge()
+    b._mcp_server_execute(_collapsed(), {"command": "hello", "name": "x"})
+    card = b.card_payloads()[0]
+    assert card["summary"] == "/greeter hello on local"
+    assert card["detail"]["command"] == ["hello"]
+    assert card["detail"]["args"] == {"name": "x"}
+
+
 def test_collapsed_missing_command_errors_without_running():
     b = FakeBridge()
     text, is_error = b._mcp_server_execute(_collapsed(), {})
