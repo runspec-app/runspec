@@ -7,6 +7,7 @@ instance, so ``self`` carries all shared state.
 from __future__ import annotations
 
 import json
+import shlex
 import sys
 import threading
 import time
@@ -21,6 +22,7 @@ else:
 
 from . import bridge_utils as utils_mod
 from . import config as config_mod
+from . import executor as executor_mod
 from . import hosts as hosts_mod
 
 from .bridge_const import (
@@ -887,7 +889,16 @@ class SchedulesMixin:
         else:
             local = Path(rp)
             binary = str(local.with_name("runspec-scheduler" + local.suffix))
-        code, stdout, stderr = self._run_logs(host, binary, ["status"], timeout=45)
+        # runspec-scheduler runs as its venv's owner (core `@owner` +
+        # enforce_run_as), so a service-account venv refuses the login user —
+        # escalate to the owner the way a runnable run does.
+        owner = self._scheduler_owner(host, group, remote)
+        if owner:
+            code, stdout, stderr = self._run_scheduler_as(
+                host, binary, ["status"], owner, remote
+            )
+        else:
+            code, stdout, stderr = self._run_logs(host, binary, ["status"], timeout=45)
         for line in reversed(stdout.splitlines()):
             line = line.strip()
             if not line.startswith("{"):
@@ -914,7 +925,68 @@ class SchedulesMixin:
                 f" — this venv's runspec-scheduler predates `status` (needs "
                 f">= {self._SHARED_SCHED_MIN}); upgrade it to see its schedules here."
             )
+        elif owner and "sudo" in low and "password" in low:
+            err = (
+                f"runspec-scheduler runs as this venv's owner {owner!r}, and "
+                f"passwordless sudo to {owner!r} was refused — the same grant "
+                f"running this venv's runnables needs. ({err})"
+            )
         return {"group": group, "available": True, "ok": False, "error": err}
+
+    def _scheduler_owner(self, host: str, group: str, remote: bool) -> str:
+        """The account ``runspec-scheduler`` must run as in this venv: the venv
+        root's owner, ``""`` when that is the login user, root (``@owner`` never
+        escalates to root) or unknown — then it runs as the login user."""
+        if not remote and sys.platform == "win32":
+            return ""
+        info = self.venv_owner(host, group)
+        owner = str(info.get("owner") or "")
+        if not info.get("ok") or owner in ("", "root", info.get("self")):
+            return ""
+        return owner
+
+    def _run_scheduler_as(
+        self, host: str, binary: str, argv: list[str], owner: str, remote: bool
+    ) -> tuple[int, str, str]:
+        """``<binary> <argv>`` as ``owner``, built like a runnable run
+        (``executor.remote_exec_command``): ``sudo -n -u <owner> {venv}/bin/python
+        -c <prelude> <binary> …`` with the env frame on stdin, so whatever sudoers
+        rule lets the console run this venv's runnables also covers this. A
+        missing binary reports ``not found`` with exit 127 before any sudo."""
+        from runspec.become import build_exec_argv
+
+        parts, frame = build_exec_argv(
+            [binary, *argv], owner, "sudo", "-n", env={"RUNSPEC_LABEL": "console"}
+        )
+        if remote:
+            entry = self._host_entry(host)
+            if entry is None:
+                return -1, "", f"unknown host {host}"
+            b = shlex.quote(binary)
+            command = (
+                f"if [ ! -e {b} ]; then echo {b}: not found >&2; exit 127; fi; "
+                + executor_mod.shell_join(parts)
+            )
+            return self._ssh_run(
+                entry["ssh"],
+                command,
+                identity_file=entry.get("identityFile"),
+                timeout=45,
+                stdin=frame,
+            )
+        if not Path(binary).exists():
+            return 127, "", f"{binary}: not found"
+        import subprocess
+
+        try:
+            proc = subprocess.run(parts, input=frame, capture_output=True, timeout=45)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return -1, "", str(exc)
+        return (
+            proc.returncode,
+            proc.stdout.decode("utf-8", "replace"),
+            proc.stderr.decode("utf-8", "replace"),
+        )
 
     def get_today(self, host: str, group: str) -> dict[str, Any] | None:
         entry = self._host_entry(host)

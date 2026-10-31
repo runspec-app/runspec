@@ -22,6 +22,8 @@ def _make_bridge(entry):
         b = Bridge()
     b._ssh_pool = None
     b._hosts = [entry]
+    # The login user owns every venv unless a test says otherwise (no SSH stat).
+    b.venv_owner = lambda host, group: {"ok": True, "owner": "u", "self": "u"}
     return b
 
 
@@ -89,6 +91,54 @@ class TestSharedSchedules(unittest.TestCase):
             [r] = b.shared_schedules("ws")
         self.assertTrue(m.call_args.args[1].endswith("runspec-scheduler"))
         self.assertFalse(r["available"])
+
+    def test_service_account_venv_runs_as_its_owner(self) -> None:
+        b = _make_bridge({**REMOTE, "runspec_paths": ["/opt/venvs/ops/bin/runspec"]})
+        b.venv_owner = lambda host, group: {"ok": True, "owner": "svc", "self": "u"}
+        with (
+            patch.object(b, "_run_logs") as direct,
+            patch.object(
+                b, "_ssh_run", return_value=(0, json.dumps(STATUS), "")
+            ) as ssh,
+        ):
+            [r] = b.shared_schedules("prod-1")
+        direct.assert_not_called()
+        self.assertTrue(r["ok"])
+        command = ssh.call_args.args[1]
+        # Same shape as a runnable run: sudo to the owner, the venv's python
+        # prelude, the env frame on stdin — and a not-found guard first.
+        self.assertIn("[ ! -e /opt/venvs/ops/bin/runspec-scheduler ]", command)
+        self.assertIn("sudo -n -u svc /opt/venvs/ops/bin/python -c", command)
+        self.assertTrue(command.endswith("/opt/venvs/ops/bin/runspec-scheduler status"))
+        self.assertIn(b"RUNSPEC_LABEL=", ssh.call_args.kwargs["stdin"])
+
+    def test_owner_venv_without_scheduler_is_not_available(self) -> None:
+        b = _make_bridge({**REMOTE, "runspec_paths": ["/opt/venvs/ops/bin/runspec"]})
+        b.venv_owner = lambda host, group: {"ok": True, "owner": "svc", "self": "u"}
+        miss = (127, "", "/opt/venvs/ops/bin/runspec-scheduler: not found")
+        with patch.object(b, "_ssh_run", return_value=miss):
+            [r] = b.shared_schedules("prod-1")
+        self.assertEqual(r, {"group": "ops", "available": False, "ok": True})
+
+    def test_refused_sudo_names_the_owner(self) -> None:
+        b = _make_bridge({**REMOTE, "runspec_paths": ["/opt/venvs/ops/bin/runspec"]})
+        b.venv_owner = lambda host, group: {"ok": True, "owner": "svc", "self": "u"}
+        refused = (1, "", "sudo: a password is required")
+        with patch.object(b, "_ssh_run", return_value=refused):
+            [r] = b.shared_schedules("prod-1")
+        self.assertFalse(r["ok"])
+        self.assertIn("'svc'", r["error"])
+        self.assertIn("passwordless sudo", r["error"])
+
+    def test_root_owned_venv_runs_as_the_login_user(self) -> None:
+        b = _make_bridge({**REMOTE, "runspec_paths": ["/opt/venvs/ops/bin/runspec"]})
+        b.venv_owner = lambda host, group: {"ok": True, "owner": "root", "self": "u"}
+        with patch.object(
+            b, "_run_logs", return_value=(0, json.dumps(STATUS), "")
+        ) as direct:
+            [r] = b.shared_schedules("prod-1")
+        direct.assert_called_once()
+        self.assertTrue(r["ok"])
 
     def test_unknown_host(self) -> None:
         self.assertEqual(_make_bridge(REMOTE).shared_schedules("nope"), [])
