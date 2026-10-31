@@ -2844,8 +2844,8 @@ Initial release.
 - **`load_spec()`** — loads spec without parsing `sys.argv` (for tooling).
 - Python 3.10–3.13 support. Zero runtime dependencies on Python 3.11+.
 
-[0.7.0]: https://github.com/JasonFinestone/runspec/releases/tag/v0.7.0
-[0.5.0]: https://github.com/JasonFinestone/runspec/releases/tag/v0.5.0
-[0.2.0]: https://github.com/JasonFinestone/runspec/releases/tag/v0.2.0
-[0.1.1]: https://github.com/JasonFinestone/runspec/releases/tag/v0.1.1
-[0.1.0]: https://github.com/JasonFinestone/runspec/releases/tag/v0.1.0
+[0.7.0]: https://github.com/runspec-app/runspec/releases/tag/v0.7.0
+[0.5.0]: https://github.com/runspec-app/runspec/releases/tag/v0.5.0
+[0.2.0]: https://github.com/runspec-app/runspec/releases/tag/v0.2.0
+[0.1.1]: https://github.com/runspec-app/runspec/releases/tag/v0.1.1
+[0.1.0]: https://github.com/runspec-app/runspec/releases/tag/v0.1.0

@@ -1,6 +1,6 @@
 # runspec-webops
 
-HTTPS/TLS certificate and web-endpoint runnables for [runspec](https://github.com/JasonFinestone/runspec), built on Node's built-in `tls` / `https` — **zero runtime dependencies** beyond `runspec-node`.
+HTTPS/TLS certificate and web-endpoint runnables for [runspec](https://github.com/runspec-app/runspec), built on Node's built-in `tls` / `https` — **zero runtime dependencies** beyond `runspec-node`.
 
 | Runnable | What it does |
 |---|---|

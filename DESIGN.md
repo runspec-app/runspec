@@ -1266,7 +1266,7 @@ Design phase complete. Core ideas, strategy, and build order are settled. Ready 
 
 ### Mono-repo on GitHub
 
-The project lives in a single GitHub repository at `github.com/JasonFinestone/runspec`. A mono-repo is the right choice because the entire value of runspec depends on all language packs implementing the same spec identically — a change to an inference rule is one commit that updates core, all language packs, and all tests atomically. Multi-repo would cause constant drift.
+The project lives in a single GitHub repository at `github.com/runspec-app/runspec`. A mono-repo is the right choice because the entire value of runspec depends on all language packs implementing the same spec identically — a change to an inference rule is one commit that updates core, all language packs, and all tests atomically. Multi-repo would cause constant drift.
 
 GitHub is chosen over GitLab for ecosystem fit — npm, PyPI, and pkg.go.dev all have native GitHub integrations, GitHub Actions handles matrix builds across languages cleanly, and open source discoverability is better there.
 

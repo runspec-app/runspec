@@ -17,7 +17,7 @@ Older versions do not receive backports — upgrade to the latest minor to pick 
 
 Use GitHub's private vulnerability reporting:
 
-1. Go to the [Security tab](https://github.com/jasonfinestone/runspec/security) of this repo
+1. Go to the [Security tab](https://github.com/runspec-app/runspec/security) of this repo
 2. Click **Report a vulnerability**
 3. Describe the issue, ideally with a reproduction and the affected version
 

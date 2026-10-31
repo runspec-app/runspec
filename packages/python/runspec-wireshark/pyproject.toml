@@ -17,9 +17,9 @@ dependencies = [
 
 [project.urls]
 Documentation = "https://runspec.app/"
-Source        = "https://github.com/jasonfinestone/runspec/tree/main/packages/python/runspec-wireshark"
-Changelog     = "https://github.com/jasonfinestone/runspec/blob/main/packages/python/runspec-wireshark/CHANGELOG.md"
-Issues        = "https://github.com/jasonfinestone/runspec/issues"
+Source        = "https://github.com/runspec-app/runspec/tree/main/packages/python/runspec-wireshark"
+Changelog     = "https://github.com/runspec-app/runspec/blob/main/packages/python/runspec-wireshark/CHANGELOG.md"
+Issues        = "https://github.com/runspec-app/runspec/issues"
 
 [project.scripts]
 # Entry point name MUST match the runnable name in runspec.toml (`pcap`). Not

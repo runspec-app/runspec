@@ -26,7 +26,7 @@ packs must then be updated to match, and all compliance fixtures must pass.
 ## Getting Started — Python
 
 ```bash
-git clone https://github.com/JasonFinestone/runspec
+git clone https://github.com/runspec-app/runspec
 cd runspec/packages/python
 
 # Create a virtual environment

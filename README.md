@@ -6,7 +6,7 @@
 [![Python](https://img.shields.io/pypi/v/runspec?label=pip%20install%20runspec)](https://pypi.org/project/runspec)
 [![Node](https://img.shields.io/npm/v/runspec-node?label=npm%20install%20runspec-node)](https://www.npmjs.com/package/runspec-node)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![CI](https://github.com/JasonFinestone/runspec/actions/workflows/python.yml/badge.svg)](https://github.com/JasonFinestone/runspec/actions)
+[![CI](https://github.com/runspec-app/runspec/actions/workflows/python.yml/badge.svg)](https://github.com/runspec-app/runspec/actions)
 [![Docs](https://img.shields.io/badge/docs-mkdocs-blue)](https://runspec.app)
 
 ---
@@ -113,7 +113,7 @@ This is a mono-repo containing all official runspec language packs:
 |---|---|---|
 | `runspec` (Python) | `pip install runspec` | Active — 0.11.0 on PyPI |
 | `runspec-node` | `npm install runspec-node` | Active — 0.10.0 on npm |
-| `runspec-go` | `go get github.com/JasonFinestone/runspec/go` | Planned |
+| `runspec-go` | `go get github.com/runspec-app/runspec/packages/go` | Planned |
 
 ## Documentation
 

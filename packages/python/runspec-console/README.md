@@ -202,5 +202,5 @@ overridable per-install in `%APPDATA%\runspec-console\config.toml`:
 docs_url = "https://docs.internal.corp/runspec/"
 ```
 
-See the main [runspec docs](https://github.com/JasonFinestone/runspec) for the
+See the main [runspec docs](https://github.com/runspec-app/runspec) for the
 runspec format, the SSH jump-host model, and logging.

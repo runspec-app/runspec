@@ -1,6 +1,6 @@
 # runspec-registry
 
-A lightweight HTTP registry for [runspec](https://JasonFinestone.github.io/runspec) agents.
+A lightweight HTTP registry for [runspec](https://runspec.app) agents.
 
 When `runspec serve` starts on a host it registers itself here. The registry tracks which tools are available, on which hosts, and with what execution metadata. Clients (Chainlit apps, orchestrators, CI pipelines) query the registry to discover agents and route tool calls.
 
@@ -88,6 +88,6 @@ runspec serve --registry https://myserver:8765 --registry-cert ca.pem
 
 ## Links
 
-- [Documentation](https://JasonFinestone.github.io/runspec/registry)
+- [Documentation](https://runspec.app)
 - [runspec on PyPI](https://pypi.org/project/runspec/)
-- [Source](https://github.com/JasonFinestone/runspec)
+- [Source](https://github.com/runspec-app/runspec)

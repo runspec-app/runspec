@@ -45,7 +45,7 @@ You'll need to authenticate with your Anthropic account the first time you run i
 
 1. Go to https://github.com/new
 2. Repository name: `runspec`
-3. Owner: `JasonFinestone`
+3. Owner: `runspec-app`
 4. Visibility: Public
 5. **Do not** initialise with README, .gitignore, or licence — the scaffold has these
 6. Click **Create repository**
@@ -66,7 +66,7 @@ git init
 git add .
 git commit -m "chore: initial mono-repo scaffold"
 git branch -M main
-git remote add origin https://github.com/JasonFinestone/runspec.git
+git remote add origin https://github.com/runspec-app/runspec.git
 git push -u origin main
 ```
 
@@ -249,7 +249,7 @@ pip install -e ".[dev]"
 
 ## Project Links
 
-- GitHub: https://github.com/JasonFinestone/runspec
+- GitHub: https://github.com/runspec-app/runspec
 - Design doc: `DESIGN.md` in the repo root
 - Format spec: `spec/SPEC.md` in the repo root
 - Claude context: `CLAUDE.md` in the repo root

@@ -1878,7 +1878,7 @@ def _init_claude_md(project_root: Path, pkg_name: str) -> None:
     path.write_text(
         "# AI Context\n"
         "\n"
-        "This project uses [runspec](https://github.com/JasonFinestone/runspec) for CLI interfaces.\n"
+        "This project uses [runspec](https://github.com/runspec-app/runspec) for CLI interfaces.\n"
         "\n"
         "## Key files\n"
         f"- `{pkg_name}/runspec.toml` — defines runnables: args, types, autonomy levels\n"

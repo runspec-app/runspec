@@ -40,10 +40,10 @@ dev = [
 runspec-registry = "runspec_registry.cli:main"
 
 [project.urls]
-Homepage      = "https://JasonFinestone.github.io/runspec"
-Documentation = "https://JasonFinestone.github.io/runspec/registry"
-Repository    = "https://github.com/JasonFinestone/runspec"
-Issues        = "https://github.com/JasonFinestone/runspec/issues"
+Homepage      = "https://runspec.app"
+Documentation = "https://runspec.app"
+Repository    = "https://github.com/runspec-app/runspec"
+Issues        = "https://github.com/runspec-app/runspec/issues"
 
 [build-system]
 requires      = ["setuptools>=69.0.2", "wheel"]
