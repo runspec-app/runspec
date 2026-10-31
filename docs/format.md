@@ -2,7 +2,7 @@
 
 The runspec format is TOML. It is identical across Python and Node — only the
 install step differs. This page is the working reference; the canonical spec
-lives at [`spec/SPEC.md`](https://github.com/JasonFinestone/runspec/blob/main/spec/SPEC.md).
+lives at [`spec/SPEC.md`](https://github.com/runspec-app/runspec/blob/main/spec/SPEC.md).
 
 ---
 
@@ -430,7 +430,7 @@ When fields are omitted, runspec infers them. Rules apply in this order:
     Bool is checked before int — `false` and `true` are flags, not integers.
 
 The canonical definition of these rules lives in
-[`spec/SPEC.md`](https://github.com/JasonFinestone/runspec/blob/main/spec/SPEC.md);
+[`spec/SPEC.md`](https://github.com/runspec-app/runspec/blob/main/spec/SPEC.md);
 every language pack is tested against it, and the table above mirrors it.
 
 ---

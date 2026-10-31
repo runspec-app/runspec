@@ -17,9 +17,9 @@ dependencies = [
 
 [project.urls]
 Documentation = "https://runspec.app/"
-Source        = "https://github.com/jasonfinestone/runspec/tree/main/packages/python/runspec-windows"
-Changelog     = "https://github.com/jasonfinestone/runspec/blob/main/packages/python/runspec-windows/CHANGELOG.md"
-Issues        = "https://github.com/jasonfinestone/runspec/issues"
+Source        = "https://github.com/runspec-app/runspec/tree/main/packages/python/runspec-windows"
+Changelog     = "https://github.com/runspec-app/runspec/blob/main/packages/python/runspec-windows/CHANGELOG.md"
+Issues        = "https://github.com/runspec-app/runspec/issues"
 
 [project.optional-dependencies]
 # Microsoft 365 / Graph runnables moved to the standalone `runspec-o365` package

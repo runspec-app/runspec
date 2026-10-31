@@ -1,3 +1,3 @@
-module github.com/JasonFinestone/runspec/go
+module github.com/runspec-app/runspec/packages/go
 
 go 1.22

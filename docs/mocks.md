@@ -13,7 +13,7 @@ Use it to:
 - give someone a working demo of a runnable that talks to a system they can't
   reach.
 
-The format is defined in [SPEC → Mock Playback](https://github.com/jasonfinestone/runspec/blob/main/spec/SPEC.md#mock-playback).
+The format is defined in [SPEC → Mock Playback](https://github.com/runspec-app/runspec/blob/main/spec/SPEC.md#mock-playback).
 Mock playback needs runspec 0.74.0 or later; the Node pack does not support it yet.
 
 ## Play back
