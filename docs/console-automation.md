@@ -334,8 +334,13 @@ sidebar, each venv that has `runspec-scheduler` (≥ 0.3.0) installed:
   run's captured **stdout/stderr** and errors;
 - crontab lines left over from schedules no longer in the config.
 
-It reads `runspec-scheduler status` over SSH as your login user and changes
-nothing. Schedules are managed on the host (`runspec-scheduler add` / `remove` /
+It reads `runspec-scheduler status` over SSH and changes nothing. In a venv
+owned by a service account the scheduler only runs as that owner, so the
+console runs `status` as the owner the same way it runs the venv's runnables
+(`sudo -n -u <owner> {venv}/bin/python …`); if that sudo is refused, the venv
+shows an error naming the owner. A venv without `runspec-scheduler` is listed
+at the bottom; install it there from the **Marketplace** to schedule that
+venv's runnables. Schedules are managed on the host (`runspec-scheduler add` / `remove` /
 `sync`). Every fire runs through `runspec exec`, so it also appears in
 **History**, where a skipped fire shows as *skipped* rather than as a success.
 

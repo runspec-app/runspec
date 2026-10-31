@@ -9,6 +9,20 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.368.1] — 2026-10-31
+
+### Fixed
+
+- **Shared (host cron) schedules in a service-account venv.** The view ran
+  `runspec-scheduler status` as the SSH login, but the scheduler runs only as
+  its venv's owner (core `@owner` + `enforce_run_as`), so every venv owned by
+  a service account showed a run-as error. It now runs `status` as the owner,
+  built like a runnable run (`sudo -n -u <owner> {venv}/bin/python -c
+  <prelude> … status`, env frame on stdin), so the sudoers rule that runs the
+  venv's runnables covers it. A refused sudo names the owner; a root-owned or
+  login-owned venv runs as before. A venv without the scheduler now says to
+  install it from the Marketplace.
+
 ## [0.368.0] — 2026-10-31
 
 ### Added

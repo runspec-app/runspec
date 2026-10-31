@@ -178,7 +178,7 @@ export function SharedSchedulesView({ host }: { host: string }) {
       {venvs === null ? (
         <div style={{ display: 'flex', justifyContent: 'center', padding: 60 }}><Spin /></div>
       ) : withScheduler.length === 0 ? (
-        <Empty description={`No venv on ${host} has runspec-scheduler installed`} />
+        <Empty description={`No venv on ${host} has runspec-scheduler installed. Install it into a venv from the Marketplace.`} />
       ) : (
         withScheduler.map(v => {
           const st = v.status
@@ -215,7 +215,7 @@ export function SharedSchedulesView({ host }: { host: string }) {
         })
       )}
       {without.length > 0 && (
-        <Text type="secondary" style={{ fontSize: 12 }}>No runspec-scheduler in: {without.join(', ')}</Text>
+        <Text type="secondary" style={{ fontSize: 12 }}>No runspec-scheduler in: {without.join(', ')}. Install it into a venv from the Marketplace to schedule that venv's runnables.</Text>
       )}
     </div>
   )
