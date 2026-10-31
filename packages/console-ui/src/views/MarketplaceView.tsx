@@ -14,6 +14,9 @@ import { AppstoreAddOutlined, UnorderedListOutlined, BookOutlined, CodeOutlined,
 import { bridge, type Host, type MarketplaceCatalog, type MarketplaceEntry, type MarketplaceInstalled, type MarketplaceInstalledTarget, type MarketplaceOpPayload, type MarketplaceOpRecord, type MarketplaceOpTarget } from '../bridge'
 import { useIsDark, useAccent, withAlpha, surfaces, RADIUS, textSecondary, textMuted, MONO_FONT } from '../ThemeContext'
 import { Markdown } from '../components/Markdown'
+import { hasTargetTokens, hostPasses, parseSearch, type ParsedSearch } from '../searchTokens'
+
+export { parseSearch, type ParsedSearch }
 
 const { Text, Link } = Typography
 
@@ -67,28 +70,6 @@ export function targetStates(entry: MarketplaceEntry, installed: MarketplaceInst
 
 export type ScopeFilter = 'all' | 'installed' | 'updates' | 'available'
 
-/** The search box split into free text and `host:` / `group:` tokens. */
-export interface ParsedSearch {
-  text: string
-  hosts: string[]
-  groups: string[]
-}
-
-export function parseSearch(q: string): ParsedSearch {
-  const out: ParsedSearch = { text: '', hosts: [], groups: [] }
-  const words: string[] = []
-  for (const w of (q || '').trim().split(/\s+/)) {
-    const m = /^(host|group):(.*)$/i.exec(w)
-    if (!m) { if (w) words.push(w); continue }
-    const v = m[2].trim().toLowerCase()
-    if (!v) continue  // "host:" while still typing — no filter yet
-    if (m[1].toLowerCase() === 'host') out.hosts.push(v)
-    else out.groups.push(v)
-  }
-  out.text = words.join(' ')
-  return out
-}
-
 /** Which venvs a `host:` / `group:` search keeps, or null when it names none.
  *  Each value is a case-insensitive substring (`host:web` = web-01, web-02);
  *  several of one kind are OR'd, host and group together are AND'd. */
@@ -96,14 +77,8 @@ export function targetFilter(
   p: ParsedSearch,
   groupOf: (host: string) => string | undefined,
 ): ((t: MarketplaceInstalledTarget) => boolean) | null {
-  if (!p.hosts.length && !p.groups.length) return null
-  return t => {
-    const host = t.host.toLowerCase()
-    if (p.hosts.length && !p.hosts.some(h => host.includes(h))) return false
-    const group = (groupOf(t.host) || '').toLowerCase()
-    if (p.groups.length && !(group && p.groups.some(g => group.includes(g)))) return false
-    return true
-  }
+  if (!hasTargetTokens(p)) return null
+  return t => hostPasses(p, t.host, groupOf(t.host))
 }
 
 /** How many packages have an update on at least one of the given venvs. */

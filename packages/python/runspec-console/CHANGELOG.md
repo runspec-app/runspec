@@ -9,6 +9,25 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.368.0] — 2026-10-31
+
+### Added
+
+- **Forms search across every host in the profile.** The Forms tab used to
+  show only the runnables on the host selected in the sidebar. A toggle next
+  to the search box now switches between that host and **All hosts** (**All
+  in <profile>** when a host profile is loaded), and the choice is
+  remembered. In the all-hosts view a runnable found on several hosts is one
+  card with an **N hosts** tag; clicking it asks which host to run on. While
+  searching one host, a line under the box says how many matches are on other
+  hosts, with a link to widen the search. The Marketplace's `host:` and
+  `group:` filters work in the Forms search too and always search the whole
+  profile. Search now needs every word to match (anywhere in the name,
+  description, venv, host or a subcommand) instead of the whole text as one
+  phrase. Pure selection logic in `console-ui/src/views/formsSearch.ts`; the
+  `host:`/`group:` parser moved to `console-ui/src/searchTokens.ts`, shared
+  with the Marketplace.
+
 ## [0.367.0] — 2026-10-30
 
 ### Added

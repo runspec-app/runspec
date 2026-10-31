@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Button, Checkbox, Collapse, Input, Modal, Select, Tag, Tooltip, Typography, message } from 'antd'
+import { Button, Checkbox, Collapse, Dropdown, Input, Modal, Segmented, Select, Tag, Tooltip, Typography, message } from 'antd'
 import { SearchOutlined, RightOutlined, ArrowLeftOutlined, AppstoreOutlined, EditOutlined, PlusOutlined, DownOutlined } from '@ant-design/icons'
 import type { ArgDef, Host, Runnable, Runbook, SavedRun } from '../bridge'
 import { bridge } from '../bridge'
 import { useIsDark, useAccent, withAlpha, surfaces, RADIUS, textSecondary, MONO_FONT } from '../ThemeContext'
 import { runnableHidden } from '../toolVisibility'
+import { selectForms, loadFormsScope, saveFormsScope, type FormsEntry, type FormsScope } from './formsSearch'
 import { useFeatures } from '../features'
 import {
   RUNBOOKS_SECTION,
@@ -597,17 +598,19 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
 
 // ─── Runnable card ────────────────────────────────────────────────────────────
 
-function RunnableCard({ runnable, hosts, onClick }: {
-  runnable: Runnable
+function RunnableCard({ entry, hosts, onPick }: {
+  entry: FormsEntry
   hosts: Host[]
-  onClick: () => void
+  onPick: (runnable: Runnable) => void
 }) {
   const isDark = useIsDark()
   const accent = useAccent()
   const [hovered, setHovered] = useState(false)
 
-  const hostObj = hosts.find(h => h.name === runnable.host)
-  const connected = hostObj?.connected ?? true
+  const runnable = entry.records[0]
+  const isConnected = (host: string) => hosts.find(h => h.name === host)?.connected ?? true
+  const connected = entry.records.some(r => isConnected(r.host))
+  const multi = entry.records.length > 1
   const argCount = (runnable.args ?? []).length
   const requiredCount = (runnable.args ?? []).filter(a => a.required).length
   const subCount = Object.keys(runnable.commands ?? {}).length
@@ -620,10 +623,11 @@ function RunnableCard({ runnable, hosts, onClick }: {
     ? withAlpha(accent, isDark ? 0.05 : 0.03)
     : sf.raised
 
-  return (
+  const card = (
     <div
-      onClick={onClick}
+      onClick={multi ? undefined : () => onPick(runnable)}
       className="rs-card-lift"
+      data-rs-forms-card={entry.key}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
@@ -652,7 +656,13 @@ function RunnableCard({ runnable, hosts, onClick }: {
         <Text type="secondary" style={{ fontSize: 13, lineHeight: 1.4 }}>{runnable.description}</Text>
       )}
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 2, alignItems: 'center' }}>
-        <Tag style={{ fontSize: 11, margin: 0 }}>{runnable.host}</Tag>
+        {multi ? (
+          <Tooltip title={entry.records.map(r => r.host).join(', ')}>
+            <Tag color="blue" style={{ fontSize: 11, margin: 0 }}>{entry.records.length} hosts</Tag>
+          </Tooltip>
+        ) : (
+          <Tag style={{ fontSize: 11, margin: 0 }}>{runnable.host}</Tag>
+        )}
         {argCount > 0 && (
           <Tag color={requiredCount > 0 ? 'orange' : 'default'} style={{ fontSize: 11, margin: 0 }}>
             {argCount} arg{argCount !== 1 ? 's' : ''}{requiredCount > 0 ? ` · ${requiredCount} req` : ''}
@@ -674,6 +684,33 @@ function RunnableCard({ runnable, hosts, onClick }: {
         )}
       </div>
     </div>
+  )
+  if (!multi) return card
+  // On several hosts: clicking the card asks which host to run it on.
+  return (
+    <Dropdown
+      trigger={['click']}
+      menu={{
+        items: [
+          { key: '__label', type: 'group', label: 'Run on which host?' },
+          ...entry.records.map(r => ({
+            key: r.host,
+            label: (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontSize: 9, color: isConnected(r.host) ? '#52c41a' : '#595959' }}>●</span>
+                <span style={{ fontFamily: MONO_FONT }}>{r.host}</span>
+              </span>
+            ),
+          })),
+        ],
+        onClick: ({ key }) => {
+          const pick = entry.records.find(r => r.host === key)
+          if (pick) onPick(pick)
+        },
+      }}
+    >
+      {card}
+    </Dropdown>
   )
 }
 
@@ -824,6 +861,8 @@ interface FormsViewProps {
   hosts: Host[]
   selectedHost: string
   activeScope: string[]
+  /** The active host profile's name ('' = All hosts), for the scope toggle's label. */
+  activeProfile?: string
   onRunRunnable: (runnable: Runnable, args: Record<string, unknown>, commandPath: string[], credentialIds?: string[]) => void
   pendingForm?: PendingForm | null
   onPendingFormClear?: () => void
@@ -887,7 +926,7 @@ function FormsSection({ title, count, collapsed, onToggle, children }: {
 }
 
 export function FormsView({
-  runnables, hosts, selectedHost, activeScope,
+  runnables, hosts, selectedHost, activeScope, activeProfile = '',
   onRunRunnable, pendingForm, onPendingFormClear,
   runbooks = [], onOpenRunbook,
   savedRuns = [], onOpenSavedRun,
@@ -895,6 +934,11 @@ export function FormsView({
 }: FormsViewProps) {
   const { ai } = useFeatures()
   const [search, setSearch] = useState('')
+  const [scopePref, setScopePref] = useState<FormsScope>(() => loadFormsScope())
+  const updateScope = (next: FormsScope) => {
+    setScopePref(next)
+    saveFormsScope(next)
+  }
   const [sections, setSections] = useState<FormsSectionsState>(() => loadFormsSections())
   const updateSections = (next: FormsSectionsState) => {
     setSections(next)
@@ -960,30 +1004,14 @@ export function FormsView({
     ? runnables.filter(r => !runnableHidden(r.name, r.group, r.host, hiddenAll))
     : runnables
 
-  // Filter by host selection and group scope
-  const hostFiltered = selectedHost
-    ? visibleRunnables.filter(r => r.host === selectedHost)
-    : visibleRunnables
-
-  const scopeFiltered = activeScope.length > 0
-    ? hostFiltered.filter(r => activeScope.includes(r.group))
-    : hostFiltered
-
-  // Text search — also searches subcommand names/descriptions
-  const searchMatch = (r: Runnable, q: string): boolean => {
-    const low = q.toLowerCase()
-    if (r.name.toLowerCase().includes(low)) return true
-    if ((r.description ?? '').toLowerCase().includes(low)) return true
-    if (r.host.toLowerCase().includes(low)) return true
-    if (r.group.toLowerCase().includes(low)) return true
-    return Object.entries(r.commands ?? {}).some(([name, cmd]) =>
-      name.includes(low) || (cmd.description ?? '').toLowerCase().includes(low)
-    )
-  }
-
-  const filtered = search
-    ? scopeFiltered.filter(r => searchMatch(r, search))
-    : scopeFiltered
+  // Host scope (selected host, or every host in the profile) + text search,
+  // collapsed to one card per runnable — see formsSearch.ts.
+  const selection = selectForms({
+    runnables: visibleRunnables, hosts, selectedHost,
+    scope: scopePref, activeScope, search,
+  })
+  const filtered = selection.entries
+  const allHostsLabel = activeProfile ? `All in ${activeProfile}` : 'All hosts'
 
   // Runbooks are host-agnostic, so they ignore the host/scope filters — only the
   // text search narrows them. Shown as their own swimlane above the runnables.
@@ -1004,10 +1032,10 @@ export function FormsView({
     : []
 
   // Group into swimlanes preserving existing group order
-  const groupMap = new Map<string, Runnable[]>()
-  for (const r of filtered) {
-    if (!groupMap.has(r.group)) groupMap.set(r.group, [])
-    groupMap.get(r.group)!.push(r)
+  const groupMap = new Map<string, FormsEntry[]>()
+  for (const e of filtered) {
+    if (!groupMap.has(e.group)) groupMap.set(e.group, [])
+    groupMap.get(e.group)!.push(e)
   }
 
   // Sections currently on screen, for the bulk collapse/expand toggle.
@@ -1027,12 +1055,27 @@ export function FormsView({
       <div style={{ marginBottom: 16, flexShrink: 0, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         <Input
           prefix={<SearchOutlined />}
-          placeholder="Search name, group, host, description…"
+          placeholder="Search name, description, subcommand… (host:web group:prod)"
           value={search}
           onChange={e => setSearch(e.target.value)}
           allowClear
           style={{ maxWidth: 360, flex: '1 1 240px' }}
         />
+        {selectedHost && (
+          <Tooltip title={selection.scope === 'profile' && scopePref === 'host'
+            ? 'A host: or group: filter searches every host in the profile'
+            : 'Show runnables on the selected host, or on every host in the current profile'}>
+            <Segmented
+              size="middle"
+              value={selection.scope}
+              onChange={v => updateScope(v as FormsScope)}
+              options={[
+                { label: selectedHost, value: 'host' },
+                { label: allHostsLabel, value: 'profile' },
+              ]}
+            />
+          </Tooltip>
+        )}
         {onEditSavedRun && (
           <Button icon={<PlusOutlined />} onClick={() => onEditSavedRun('')}>New saved run</Button>
         )}
@@ -1050,6 +1093,17 @@ export function FormsView({
           </Button>
         )}
       </div>
+
+      {selection.elsewhere > 0 && (
+        <div style={{ marginTop: -8, marginBottom: 12, fontSize: 12, flexShrink: 0 }}>
+          <Text type="secondary">
+            {selection.elsewhere} more {selection.elsewhere === 1 ? 'match' : 'matches'} on other hosts.{' '}
+          </Text>
+          <Button type="link" size="small" style={{ padding: 0, height: 'auto', fontSize: 12 }} onClick={() => updateScope('profile')}>
+            Search {activeProfile ? `all of ${activeProfile}` : 'all hosts'}
+          </Button>
+        </div>
+      )}
 
       {filtered.length === 0 && filteredRunbooks.length === 0 && filteredSavedRuns.length === 0 ? (
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--rs-text-faint)' }}>
@@ -1074,14 +1128,14 @@ export function FormsView({
               ))}
             </FormsSection>
           )}
-          {[...groupMap.entries()].map(([group, groupRunnables]) => (
-            <FormsSection key={group} title={group} count={groupRunnables.length} {...sectionProps(groupSection(group))}>
-              {groupRunnables.map(r => (
+          {[...groupMap.entries()].map(([group, groupEntries]) => (
+            <FormsSection key={group} title={group} count={groupEntries.length} {...sectionProps(groupSection(group))}>
+              {groupEntries.map(e => (
                 <RunnableCard
-                  key={`${r.host}/${r.group}/${r.name}`}
-                  runnable={r}
+                  key={e.key}
+                  entry={e}
                   hosts={hosts}
-                  onClick={() => handleCardClick(r)}
+                  onPick={handleCardClick}
                 />
               ))}
             </FormsSection>

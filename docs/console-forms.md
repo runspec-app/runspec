@@ -25,6 +25,27 @@ tools. The dialog gives you:
   an older runspec) ignores it rather than failing. A runnable that declares its
   own `debug` argument shows that field instead.
 
+### Finding a runnable
+
+The search box at the top of the tab searches the host selected in the
+sidebar. Every word you type must match the runnable's name, description,
+venv or one of its subcommands. Next to the box, switch between that host and
+**All hosts** (named **All in <profile>** when a
+[host profile](design/host-profiles.md) is loaded) to search every host in
+the sidebar instead. The choice is remembered.
+
+While you search one host, a line under the box says how many matches are on
+other hosts, with a link that widens the search. In the all-hosts view a
+runnable found on several hosts is one card with an **N hosts** tag; clicking
+it asks which host to run on, then opens the form for that host. The sidebar
+selection does not change.
+
+The `host:` and `group:` filters from the Marketplace work here too:
+`host:web` keeps hosts whose name contains "web", `group:prod` keeps hosts in
+a sidebar group whose name contains "prod". Either one always searches every
+host in the profile, so `group:prod restart` finds restart tools across your
+production hosts.
+
 Results render as [tables](console-agent.md#how-runnable-output-is-rendered)
 with raw/copy toggles. From **History** (or a run card's pencil), **Edit &
 rerun** reopens the same form pre-filled with the previous run's values —
