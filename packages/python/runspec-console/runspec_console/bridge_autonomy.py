@@ -1947,6 +1947,11 @@ class AutonomyMixin:
         )
         ssh = entry.get("ssh")
         if ssh:
+            # Same transport as Forms runs: a channel on the host's warm pooled
+            # connection (a group fan-out used to open one fresh SSH connection
+            # per host, outside the pool's handshake cap and backoff), or the
+            # system-ssh transport for a jump host that needs it.
+            jump, session_factory = self._remote_session(entry)
             executor_mod.run_remote(
                 ssh,
                 rp,
@@ -1970,7 +1975,8 @@ class AutonomyMixin:
                 cred_env=cred_env,
                 trigger=run_trigger,
                 runbook=run_runbook,
-                jump=utils_mod.host_jump(getattr(self, "_hosts", None), entry),
+                session_factory=session_factory,
+                jump=jump,
             )
         else:
             executor_mod.run_local(

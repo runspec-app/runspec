@@ -254,6 +254,25 @@ def host_jump(hosts: list[dict[str, Any]] | None, entry: dict[str, Any] | None) 
     return jump
 
 
+def host_jump_entry(
+    hosts: list[dict[str, Any]] | None, entry: dict[str, Any] | None
+) -> dict[str, Any] | None:
+    """The fleet host a host entry's ``jump`` names (as :func:`host_jump`
+    resolves it), or None when the jump is an ssh alias / ``user@host`` / a
+    chain. Used to reach the jump with *its* own identity file."""
+    jump = str((entry or {}).get("jump") or "").strip()
+    if not jump or "," in jump:
+        return None
+    own = str((entry or {}).get("name") or "")
+    for h in hosts or []:
+        name = str(h.get("name") or "")
+        if name and name != own and name.lower() == jump.lower():
+            if str(h.get("ssh") or "").strip() and not str(h.get("jump") or "").strip():
+                return h
+            return None
+    return None
+
+
 def _putty_jump_proxy_command(
     plink: str,
     jump: str,

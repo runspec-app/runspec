@@ -94,7 +94,9 @@ take effect on the next refresh cycle without a restart (the pool rebuilds when
 | `tcp_keepalive` | `[ssh]` | `true` | `true` | `true` | OS-level `SO_KEEPALIVE` on the transport socket — a backstop to `keepalive` that lets the kernel reap a silently-dead peer. Leave on; the SSH keepalive usually fires first. |
 | `tcp_keepidle` / `tcp_keepintvl` / `tcp_keepcnt` | `[ssh]` | `60` / `15` / `3` | default | default | The OS keepalive probe schedule (idle before first probe / interval between probes / unanswered probes before the socket is declared dead). Only applied where the OS exposes it. |
 | `idle_ttl` | `[ssh]` | `300` | `300` | `600` | How long an unused transport is kept before reaping. Longer is more forgiving on flaky links at the cost of holding more idle FDs. |
-| `jump_max_concurrent` | `[ssh]` | `4` | `4` | `4–8` | Connections at once through one jump host (hosts with a `jump` set don't use the pool, so each check is a new connection through the jump). Keep it under the jump's `sshd MaxStartups`. |
+| `tcp_nodelay` | `[ssh]` | `true` | `true` | `true` | Sends small SSH packets immediately instead of waiting on Nagle + delayed ACK (~40 ms per command on a warm connection when off). Leave on. |
+| `jump_pool` | `[ssh]` | `true` | `true` | `true` | Hosts with a `jump` reach their target through a tunnel over the jump's one pooled connection. A host that only works over system `ssh` (CentOS 6 keys, a jump chain, an `~/.ssh/config`-only jump) falls back on its own. `false` puts every jump host on system `ssh`. |
+| `jump_max_concurrent` | `[ssh]` | `4` | `4` | `4–8` | System-ssh connections at once through one jump host (only jump hosts on system `ssh` open one per check). Keep it under the jump's `sshd MaxStartups`. |
 | `jump_retries` | `[ssh]` | `2` | `2` | `2–3` | Retries when a jump host refuses a connection before key exchange (`kex_exchange_identification`). |
 | `interval` | `[refresh]` | `30` | `30–45` | `60–120` | How often the cycle runs. Longer = less discovery chatter and fewer connects per minute. |
 | `jitter` | `[refresh]` | `3` | `5` | `10–15` | Spreads per-host handshakes across the window so `max_concurrent` isn't the startup bottleneck. |
@@ -117,6 +119,8 @@ max_concurrent = 5      # max concurrent NEW handshakes across the fleet
 max_sessions   = 8      # max concurrent channels per transport (< sshd MaxSessions)
 keepalive      = 30     # s; SSH-layer transport keepalive (0 disables)
 tcp_keepalive  = true   # OS SO_KEEPALIVE on the socket (backstop to keepalive)
+tcp_nodelay    = true   # no Nagle delay on small SSH packets
+jump_pool      = true   # jump hosts ride a tunnel over the jump's pooled connection
 tcp_keepidle   = 60     # s idle before the first OS keepalive probe
 tcp_keepintvl  = 15     # s between OS keepalive probes
 tcp_keepcnt    = 3      # unanswered probes before the socket is declared dead

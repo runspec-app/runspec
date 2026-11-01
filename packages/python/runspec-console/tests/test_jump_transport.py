@@ -452,14 +452,18 @@ def test_push_key_non_jump_host_still_uses_paramiko():
 # ── bridge routing (discovery + connectivity) ─────────────────────────────────
 
 
-def _bridge():
+def _bridge(pool=None):
+    """A Bridge whose jump hosts use the system-ssh transport (no SSH pool),
+    unless ``pool`` supplies a (fake) pool for the pooled-tunnel path."""
     from runspec_console.bridge import Bridge
 
     with (
         patch("runspec_console.hosts.load_hosts", return_value=[]),
         patch.object(Bridge, "_start_refresh_watcher"),
     ):
-        return Bridge()
+        b = Bridge()
+    b._ssh_pool = pool
+    return b
 
 
 def test_check_connected_routes_jump_host_through_system_ssh():
@@ -609,3 +613,154 @@ def test_jump_failure_names_a_proxy_from_ssh_config():
         b._check_connected(host)
     assert "proxycommand connect -H proxy:8080" in events[0]["message"]
     assert "ssh config" in events[0]["message"]
+
+
+# ── pooled jump tunnel (0.369.0) ──────────────────────────────────────────────
+
+
+class _FakePool:
+    def __init__(self, connectable=True, error=""):
+        self._ok = connectable
+        self._error = error
+        self.connect_calls = []
+        self.sessions = []
+
+    def connectable(self, ssh, *, identity_file=None, global_ssh_config=None):
+        self.connect_calls.append(ssh)
+        return self._ok
+
+    def last_error(self, ssh, *, identity_file=None, global_ssh_config=None):
+        return self._error
+
+    def open_session(self, ssh, *, identity_file=None, global_ssh_config=None):
+        self.sessions.append(ssh)
+        return object(), lambda: None
+
+    def clear_backoff(self):
+        pass
+
+    def close_all(self):
+        pass
+
+
+def test_jump_host_probes_over_the_pooled_tunnel():
+    pool = _FakePool(connectable=True)
+    b = _bridge(pool)
+    host = {"name": "c7", "ssh": "svc@c7", "jump": "bastion"}
+    with (
+        patch.object(b, "get_config", return_value={"ssh": {}}),
+        patch(
+            "runspec_console.executor.ssh_jump_run",
+            side_effect=AssertionError("system ssh must not run"),
+        ),
+    ):
+        assert b._check_connected(host) is True
+    assert pool.connect_calls == ["svc@c7"]
+    assert b._jump_mode(host, {}) == "pool"
+
+
+def test_jump_host_falls_back_to_system_ssh_and_remembers():
+    pool = _FakePool(connectable=False, error="Incompatible ssh peer")
+    b = _bridge(pool)
+    host = {"name": "c6", "ssh": "svc@c6", "jump": "bastion"}
+    events = []
+    with (
+        patch.object(b, "get_config", return_value={"ssh": {}}),
+        patch.object(b, "_emit_ssh_log", side_effect=events.append),
+        patch("runspec_console.executor.ssh_jump_run", return_value=(0, "", "")) as m,
+    ):
+        assert b._check_connected(host) is True
+        assert m.call_count == 1
+        assert b._jump_mode(host, {}) == "ssh"
+        # Next probe goes straight to system ssh.
+        assert b._check_connected(host) is True
+    assert pool.connect_calls == ["svc@c6"]
+    fallback = [e for e in events if "using system ssh" in e["message"]]
+    assert len(fallback) == 1 and "Incompatible ssh peer" in fallback[0]["message"]
+    # A forced refresh (host save / profile switch / Refresh) tries the tunnel again.
+    with patch.object(b, "_refresh_cycle"):
+        b._kick_refresh(force=True)
+    assert b._jump_mode(host, {}) == "pool"
+
+
+def test_jump_host_down_both_ways_is_not_pinned():
+    pool = _FakePool(connectable=False, error="timed out")
+    b = _bridge(pool)
+    host = {"name": "c7", "ssh": "svc@c7", "jump": "bastion"}
+    with (
+        patch.object(b, "get_config", return_value={"ssh": {}}),
+        patch(
+            "runspec_console.executor.ssh_jump_run", return_value=(255, "", "no route")
+        ),
+    ):
+        assert b._check_connected(host) is False
+    assert b._jump_mode(host, {}) == "pool"
+
+
+def test_jump_mode_stays_on_system_ssh_for_chains_and_the_off_switch():
+    b = _bridge(_FakePool())
+    assert b._jump_mode({"name": "x", "jump": "a,b"}, {}) == "ssh"
+    assert b._jump_mode({"name": "x", "jump": "a"}, {"jump_pool": False}) == "ssh"
+    assert b._jump_mode({"name": "x"}, {}) == ""
+    assert _bridge(None)._jump_mode({"name": "x", "jump": "a"}, {}) == "ssh"
+
+
+def test_ssh_route_uses_the_jump_hosts_own_key():
+    b = _bridge(_FakePool())
+    b._hosts = [
+        {"name": "bastion", "ssh": "ops@bastion.corp:2200", "identityFile": "~/k/b"},
+        {"name": "c7", "ssh": "svc@c7", "jump": "Bastion", "identityFile": "~/k/t"},
+        {"name": "c8", "ssh": "svc@c8", "jump": "edge-alias", "identityFile": "~/k/t"},
+        {"name": "c9", "ssh": "svc@c9"},
+    ]
+    assert b._ssh_route("svc@c7", "~/k/t", {}) == ("ops@bastion.corp:2200", "~/k/b")
+    # An alias jump is reached with the target's key, as the system-ssh hop is.
+    assert b._ssh_route("svc@c8", "~/k/t", {}) == ("edge-alias", "~/k/t")
+    assert b._ssh_route("svc@c9", None, {}) is None
+    assert b._ssh_route("ops@bastion.corp:2200", "~/k/b", {}) is None
+    assert b._ssh_route("svc@c7", "~/k/t", {"jump_pool": False}) is None
+
+
+def test_remote_session_pools_runs_unless_system_ssh():
+    pool = _FakePool()
+    b = _bridge(pool)
+    b._hosts = [{"name": "c7", "ssh": "svc@c7", "jump": "bastion"}]
+    jump, factory = b._remote_session(b._hosts[0], {})
+    assert jump == "" and factory is not None
+    factory()
+    assert pool.sessions == ["svc@c7"]
+    b._pin_jump_ssh("c7")
+    jump, factory = b._remote_session(b._hosts[0], {})
+    assert jump == "bastion" and factory is None
+    # A plain host gets a pooled factory (agent runs used to open a fresh
+    # connection per run).
+    jump, factory = b._remote_session({"name": "web", "ssh": "svc@web"}, {})
+    assert jump == "" and factory is not None
+
+
+def test_discover_one_pool_mode_jump_host_uses_the_pool():
+    pool = _FakePool()
+    calls = []
+
+    def run(target, command, **kw):
+        calls.append((target, command))
+        return (0, "[]", "")
+
+    pool.run = run
+    b = _bridge(pool)
+    b._connected_cache["c7"] = True
+    host = {
+        "name": "c7",
+        "ssh": "svc@c7",
+        "jump": "bastion",
+        "runspec_paths": ["/opt/bin/runspec"],
+    }
+    with (
+        patch.object(b, "get_config", return_value={"ssh": {}}),
+        patch(
+            "runspec_console.executor.ssh_jump_run",
+            side_effect=AssertionError("system ssh must not run"),
+        ),
+    ):
+        b._discover_one(host)
+    assert calls and calls[0][0] == "svc@c7"

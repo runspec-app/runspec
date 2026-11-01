@@ -206,3 +206,45 @@ Host keys are not the cause: both hops run with
 keys are accepted. PuTTY (and `plink -batch` in the PuTTY jump session) keeps
 its own host-key cache in the registry, which is why a PuTTY terminal asks
 about an uncached key even when the console's probes connect.
+
+## Update (console 0.369.0): pooled tunnel first, system ssh as fallback
+
+The system-ssh transport made every probe, discovery call and run behind a
+jump a new `ssh` process with two handshakes (jump + target). Measured on
+loopback that's ~450 ms per command, and the jump's sshd sees one login per
+host per check — hence the `jump_max_concurrent` throttle above. Only CentOS
+6-era targets actually need OpenSSH; most hosts behind a bastion speak modern
+algorithms.
+
+So a `jump` host now defaults to the **pool**:
+
+- `SSHConnectionPool` takes a `route(ssh_target, identity_file, cfg)` resolver
+  (the bridge's `_ssh_route`, built from the host list). For a routed host,
+  `_connect` first obtains the **jump's own pooled connection** (outside the
+  handshake semaphore, so the two can't deadlock), opens a `direct-tcpip`
+  channel to the target (`PooledConnection.open_tunnel`), and runs the target
+  handshake over it (`_make_ssh_client(..., tunnel=fn)` — the tunnel gets the
+  hostname/port after `~/.ssh/config` resolution). Every host behind one jump
+  shares that one jump connection: one login on the bastion, keepalive,
+  backoff, channel reuse. ~44 ms per command through the tunnel on loopback.
+- Tunnels don't take session slots (`MaxSessions` counts exec/shell/subsystem,
+  not forwards — a slot per tunnel would cap a jump at 8 hosts), and a jump
+  with live tunnels is never idle-reaped. Closing or reaping a tunnelled
+  connection releases its channel.
+- The route is part of the pool key, so editing a host's jump opens a fresh
+  connection. Because the routing lives in the pool, every pooled path
+  (history, logs, transfers, env files, …) reaches jump hosts too; before, those
+  paths connected to the target directly and failed when it wasn't routable.
+- The jump is reached with the jump fleet host's own `identityFile`, or the
+  target's key for an alias / `user@host` jump (what the system-ssh hop used).
+
+**Fallback.** In `_check_connected`, a jump host whose pooled connect fails is
+tried over system ssh; if that succeeds the host is pinned to system ssh for
+the session (`_jump_mode` → `"ssh"`) with one Dev-tab row naming the pooled
+error. A forced refresh (host save, profile switch, Refresh) clears the pins.
+A host down both ways isn't pinned. Jump chains (`a,b`) and
+`[ssh] jump_pool = false` always use system ssh. Runs pick their transport
+from the same mode (`_remote_session`), so a pinned host streams over system
+ssh and everything else over a pooled channel — which also gave **agent**
+runnable runs pooling: they used to open a fresh SSH connection per run, so a
+group fan-out was a handshake burst outside the pool's cap and backoff.

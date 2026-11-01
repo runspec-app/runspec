@@ -565,3 +565,154 @@ def test_refresh_settings_discovery_interval():
     assert refresh_settings({"discovery_interval": 0})["discovery_interval"] == 0
     assert refresh_settings({"discovery_interval": -5})["discovery_interval"] == 0
     assert refresh_settings({"discovery_interval": "x"})["discovery_interval"] == 300
+
+
+# ── jump routing (pooled tunnel through a jump host) ──────────────────────────
+
+
+class FakeTunnelChan:
+    def __init__(self, dest):
+        self.dest = dest
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+
+
+class JumpTransport(FakeTransport):
+    def __init__(self):
+        super().__init__()
+        self.channels = []
+
+    def open_channel(self, kind, dest, src):
+        assert kind == "direct-tcpip"
+        ch = FakeTunnelChan(dest)
+        self.channels.append(ch)
+        return ch
+
+
+class JumpClient(FakeClient):
+    def __init__(self):
+        super().__init__()
+        self.transport = JumpTransport()
+
+
+def _routed_pool(routes, **kw):
+    """A pool whose make_client builds a JumpClient for the jump and a FakeClient
+    for targets — calling ``tunnel`` the way executor._make_ssh_client does."""
+    made = {"jump": [], "targets": [], "tunnels": []}
+
+    def make_client(target, idf, cfg, tunnel=None):
+        if tunnel is None:
+            c = JumpClient()
+            made["jump"].append((target, idf, c))
+            return c
+        host, _, port = target.partition("@")[2].partition(":")
+        made["tunnels"].append(tunnel(host, int(port or 22)))
+        c = FakeClient()
+        made["targets"].append((target, c))
+        return c
+
+    def route(target, idf, cfg):
+        return routes.get(target)
+
+    pool = make_pool(make_client=make_client, route=route, **kw)
+    return pool, made
+
+
+def test_jump_hosts_share_one_pooled_jump_connection():
+    pool, made = _routed_pool(
+        {
+            "svc@a": ("ops@bastion", "~/.ssh/bastion"),
+            "svc@b": ("ops@bastion", "~/.ssh/bastion"),
+        }
+    )
+    assert pool.run("svc@a", "true")[0] == 0
+    assert pool.run("svc@b", "true")[0] == 0
+    assert pool.run("svc@a", "true")[0] == 0  # reuses a's tunnelled transport
+    # One login on the bastion (with the bastion's own key), one tunnel per host.
+    assert [(t, i) for t, i, _ in made["jump"]] == [("ops@bastion", "~/.ssh/bastion")]
+    assert [ch.dest for ch in made["tunnels"]] == [("a", 22), ("b", 22)]
+    assert len(made["targets"]) == 2
+
+
+def test_tunnels_do_not_take_jump_session_slots():
+    # MaxSessions counts exec/shell sessions, not forwards — a slot per tunnel
+    # would cap a jump at max_sessions hosts behind it.
+    routes = {f"svc@h{i}": ("ops@bastion", None) for i in range(4)}
+    pool, made = _routed_pool(routes, settings_overrides={"max_sessions": 1})
+    for target in routes:
+        assert pool.connectable(target)
+    assert len(made["tunnels"]) == 4
+    assert pool.run("ops@bastion", "true")[0] == 0  # the slot is still free
+
+
+def test_jump_with_live_tunnels_is_not_idle_reaped():
+    now = {"t": 0.0}
+    pool, made = _routed_pool(
+        {"svc@a": ("ops@bastion", None)},
+        settings_overrides={"idle_ttl": 10},
+        clock=lambda: now["t"],
+    )
+    pool.run("svc@a", "true")
+    jump_client = made["jump"][0][2]
+    now["t"] = 12.0
+    # Both are idle past the TTL, but the jump carries a's tunnel: only the
+    # target is reaped (which releases the tunnel); the jump stays warm.
+    assert pool.reap() == 1
+    assert made["tunnels"][0].closed is True
+    assert jump_client.closed is False
+    assert pool.reap() == 0  # releasing the tunnel counted as a use
+
+
+def test_target_close_releases_its_tunnel():
+    pool, made = _routed_pool({"svc@a": ("ops@bastion", None)})
+    pool.run("svc@a", "true")
+    pool.drop("svc@a")
+    assert made["tunnels"][0].closed is True
+    assert made["jump"][0][2].closed is False  # the jump stays warm
+
+
+def test_jump_failure_fails_target_with_reason_and_backoff():
+    events = []
+
+    def make_client(target, idf, cfg, tunnel=None):
+        raise OSError("Authentication failed.")
+
+    pool = make_pool(
+        make_client=make_client,
+        route=lambda t, i, c: ("ops@bastion", None) if t == "svc@a" else None,
+        on_event=events.append,
+        rng=lambda a, b: 0.0,
+    )
+    code, _out, err = pool.run("svc@a", "true")
+    assert code == -1
+    assert "jump host ops@bastion" in err and "Authentication failed" in err
+    assert "jump host ops@bastion" in pool.last_error("svc@a")
+    # The target is now in backoff too: the next call fails fast.
+    code, _out, err = pool.run("svc@a", "true")
+    assert "backoff" in err
+
+
+def test_target_handshake_failure_releases_the_tunnel():
+    made = []
+
+    def make_client(target, idf, cfg, tunnel=None):
+        if tunnel is None:
+            return JumpClient()
+        made.append(tunnel("legacy", 22))
+        raise OSError("Incompatible ssh peer (no acceptable host key)")
+
+    pool = make_pool(
+        make_client=make_client,
+        route=lambda t, i, c: ("ops@bastion", None) if t == "svc@legacy" else None,
+        rng=lambda a, b: 0.0,
+    )
+    assert pool.connectable("svc@legacy") is False
+    assert made and all(ch.closed for ch in made)
+    assert "Incompatible ssh peer" in pool.last_error("svc@legacy")
+
+
+def test_unrouted_key_is_unchanged():
+    pool = make_pool(make_client=lambda *a: FakeClient(), route=lambda t, i, c: None)
+    assert pool._key("u@h", None, {}) == ("u@h", "", "", "", "", False)

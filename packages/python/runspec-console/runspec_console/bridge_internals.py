@@ -879,9 +879,10 @@ class InternalsMixin:
         if not connected:
             return []
         jump = utils_mod.host_jump(getattr(self, "_hosts", None), h)
-        if jump:
+        if jump and self._jump_mode(h, ssh_cfg) == "ssh":
             # System-ssh transport: discover over the jump host's OpenSSH so a
             # legacy target's ssh-rsa/ssh-dss handshake works (paramiko can't).
+            # A "pool" jump host falls through to the pool, which tunnels it.
             def runner(
                 target: str,
                 command: str,
@@ -975,10 +976,11 @@ class InternalsMixin:
     def _transport_generation(
         self, h: dict[str, Any], ssh_cfg: dict[str, Any] | None
     ) -> int:
-        """The pool's transport generation for ``h`` (0 for local / jump / no pool)."""
+        """The pool's transport generation for ``h`` (0 for local / system-ssh
+        jump / no pool)."""
         pool = self._ssh_pool
         ssh = h.get("ssh")
-        if pool is None or not ssh or str(h.get("jump") or "").strip():
+        if pool is None or not ssh or self._jump_mode(h, ssh_cfg) == "ssh":
             return 0
         try:
             return pool.generation(
@@ -1045,6 +1047,9 @@ class InternalsMixin:
             pool = getattr(self, "_ssh_pool", None)
             if pool is not None:
                 pool.clear_backoff()
+            # …and gives jump hosts that fell back to system ssh another try
+            # at the pooled tunnel (the jump or target may have been fixed).
+            self._clear_jump_ssh_pins()
         threading.Thread(
             target=lambda: self._refresh_cycle(force=force), daemon=True
         ).start()
@@ -1311,6 +1316,112 @@ class InternalsMixin:
         if self._adhoc_pool is not None:
             self._adhoc_pool.reap()
 
+    # ── jump-host routing ──────────────────────────────────────────────────────
+    #
+    # A host with ``jump`` is reached one of two ways:
+    #
+    # * "pool" — over the console's SSH pool: a ``direct-tcpip`` tunnel through
+    #   the jump host's own warm pooled connection. One jump login serves every
+    #   host behind it, with keepalive, backoff and channel reuse, and every
+    #   pooled path (history, logs, transfers, runs) reaches the host too.
+    # * "ssh"  — the system OpenSSH client per call (``executor.ssh_jump_run``),
+    #   for targets paramiko can't negotiate (CentOS 6: ssh-rsa/ssh-dss only),
+    #   jump chains (``a,b``), or a jump only ``~/.ssh/config`` knows how to
+    #   reach.
+    #
+    # Default is "pool"; a host whose pooled connect fails while system ssh
+    # works is switched to "ssh" for the session (until a host save, profile
+    # switch or Refresh). ``[ssh] jump_pool = false`` keeps every jump host on
+    # system ssh, the pre-0.369.0 behaviour.
+
+    def _jump_mode(
+        self, entry: dict[str, Any] | None, ssh_cfg: dict[str, Any] | None = None
+    ) -> str:
+        """``""`` (no jump), ``"pool"`` or ``"ssh"`` for this host entry."""
+        jump = str((entry or {}).get("jump") or "").strip()
+        if not jump:
+            return ""
+        if getattr(self, "_ssh_pool", None) is None or "," in jump:
+            return "ssh"
+        if ssh_cfg is None:
+            try:
+                ssh_cfg = self.get_config().get("ssh")
+            except Exception:  # noqa: BLE001 — routing must never raise
+                ssh_cfg = None
+        if (ssh_cfg or {}).get("jump_pool", True) is False:
+            return "ssh"
+        name = str((entry or {}).get("name") or "")
+        with self._lock:
+            pinned = getattr(self, "_jump_ssh_hosts", None) or set()
+            if name in pinned:
+                return "ssh"
+        return "pool"
+
+    def _ssh_route(
+        self,
+        ssh_target: str,
+        identity_file: str | None,
+        ssh_cfg: dict[str, Any] | None = None,
+    ) -> tuple[str, str | None] | None:
+        """The pool's route resolver: ``(jump_target, jump_identity)`` for a
+        fleet host in "pool" jump mode, else None. The jump is reached with the
+        jump fleet host's own key, or the target's key for an alias /
+        ``user@host`` jump (the same key the system-ssh hop uses)."""
+        hosts = getattr(self, "_hosts", None) or []
+        entry = None
+        for h in hosts:
+            if str(h.get("ssh") or "") == ssh_target:
+                if str(h.get("identityFile") or "") == str(identity_file or ""):
+                    entry = h
+                    break
+                if entry is None:
+                    entry = h
+        if entry is None or self._jump_mode(entry, ssh_cfg or {}) != "pool":
+            return None
+        jump = utils_mod.host_jump(hosts, entry)
+        if not jump:
+            return None
+        jump_entry = utils_mod.host_jump_entry(hosts, entry)
+        jump_idf = (
+            jump_entry.get("identityFile") if jump_entry is not None else identity_file
+        )
+        return jump, (jump_idf or None)
+
+    def _pin_jump_ssh(self, name: str, pinned: bool = True) -> None:
+        with self._lock:
+            hosts = getattr(self, "_jump_ssh_hosts", None)
+            if hosts is None:
+                hosts = self._jump_ssh_hosts = set()
+            if pinned:
+                hosts.add(name)
+            else:
+                hosts.discard(name)
+
+    def _clear_jump_ssh_pins(self) -> None:
+        with self._lock:
+            self._jump_ssh_hosts = set()
+
+    def _remote_session(
+        self, entry: dict[str, Any], ssh_cfg: dict[str, Any] | None = None
+    ) -> tuple[str, Any]:
+        """``(jump, session_factory)`` for streaming a run on ``entry``:
+        system-ssh jump hosts get ``(jump, None)``; everything else gets a pooled
+        channel factory (``("", None)`` when pooling is off)."""
+        if ssh_cfg is None:
+            ssh_cfg = self.get_config().get("ssh")
+        if self._jump_mode(entry, ssh_cfg) == "ssh":
+            return utils_mod.host_jump(getattr(self, "_hosts", None), entry), None
+        pool = self._ssh_pool
+        ssh = entry.get("ssh")
+        if pool is None or not ssh:
+            return "", None
+        idf = entry.get("identityFile")
+
+        def session_factory() -> tuple[Any, Any]:
+            return pool.open_session(ssh, identity_file=idf, global_ssh_config=ssh_cfg)
+
+        return "", session_factory
+
     def _report_jump_probe(
         self, host: dict[str, Any], jump: str, code: int, detail: str
     ) -> None:
@@ -1370,6 +1481,30 @@ class InternalsMixin:
         except Exception:
             logger.debug("could not forward jump probe event", exc_info=True)
 
+    def _report_jump_fallback(
+        self, host: dict[str, Any], jump: str, pool_err: str
+    ) -> None:
+        """One Dev-tab row when a jump host moves from the pooled tunnel to
+        system ssh, saying why (the pooled connect's error)."""
+        name = str(host.get("name") or "")
+        reason = pool_err or "pooled connect failed"
+        message = (
+            f"{name}: using system ssh through jump host {jump} — the pooled "
+            f"tunnel failed ({reason}). Refresh or a host save tries the tunnel again."
+        )
+        logger.info("ssh.jump %s", message)
+        try:
+            self._emit_ssh_log(
+                {
+                    "level": "INFO",
+                    "logger": "ssh.jump",
+                    "message": message,
+                    "host": name,
+                }
+            )
+        except Exception:  # noqa: BLE001 — diagnostics never block the probe
+            logger.debug("could not forward jump fallback event", exc_info=True)
+
     def _check_connected(
         self, host: dict[str, Any], *, ssh_cfg: dict[str, Any] | None = None
     ) -> bool:
@@ -1379,7 +1514,36 @@ class InternalsMixin:
         if ssh_cfg is None:
             ssh_cfg = self.get_config().get("ssh")
         jump = utils_mod.host_jump(getattr(self, "_hosts", None), host)
-        if jump:
+        mode = self._jump_mode(host, ssh_cfg) if jump else ""
+        if mode == "pool":
+            # Pooled tunnel through the jump's warm connection. If it can't be
+            # built but system ssh gets through (a legacy target, or a jump only
+            # ~/.ssh/config can reach), this host uses system ssh from now on.
+            pool = self._ssh_pool
+            if pool.connectable(
+                ssh, identity_file=host.get("identityFile"), global_ssh_config=ssh_cfg
+            ):
+                self._report_jump_probe(host, jump, 0, "")
+                return True
+            pool_err = pool.last_error(
+                ssh, identity_file=host.get("identityFile"), global_ssh_config=ssh_cfg
+            )
+            code, out, err = executor_mod.ssh_jump_run(
+                ssh,
+                "true",
+                jump=jump,
+                identity_file=host.get("identityFile"),
+                global_ssh_config=ssh_cfg,
+                timeout=8,
+            )
+            if code == 0:
+                self._pin_jump_ssh(str(host.get("name") or ""))
+                self._report_jump_fallback(host, jump, pool_err)
+            self._report_jump_probe(
+                host, jump, code, (err or out or pool_err or "").strip()
+            )
+            return code == 0
+        if mode == "ssh":
             # System-ssh transport (not pooled): a successful `ssh … true` over
             # the jump host IS the connectivity check. Uses OpenSSH so legacy
             # algorithms in ~/.ssh/config apply — see executor._system_ssh_argv.
