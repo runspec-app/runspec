@@ -592,6 +592,33 @@ export interface Host {
 // A PuTTY colour theme ([terminal] theme); colours are #rrggbb. `ansi` is the
 // 8 normal colours then the 8 bright ones (black, red, green, yellow, blue,
 // magenta, cyan, white).
+// Settings → SSH → PuTTY sessions: `[putty]` in config.toml (runspec_console/putty_sync.py).
+export interface PuttySyncConfig {
+  sync: boolean
+  profiles: string[]
+  keepalive: number
+  prefix: string
+}
+
+export interface PuttySyncResult {
+  ok: boolean
+  supported: boolean
+  error?: string
+  written: { host: string; session: string }[]
+  removed: string[]
+  skipped: { host: string; reason: string }[]
+  at?: string
+}
+
+export interface PuttySyncStatus {
+  supported: boolean  // false off Windows (PuTTY sessions live in the registry)
+  putty: string       // putty.exe path, '' when not found
+  plink: string       // plink.exe path (needed for jump hosts), '' when not found
+  config: PuttySyncConfig
+  sessions: string[]  // saved sessions the console wrote
+  last: PuttySyncResult | null
+}
+
 export interface TerminalTheme {
   id: string
   label: string
@@ -2864,6 +2891,11 @@ export interface BridgeApi {
   launch_local_terminal: () => Promise<void>
   // PuTTY colour themes for Settings → SSH → Terminal look (the preview).
   terminal_themes: () => Promise<TerminalTheme[]>
+  // PuTTY saved sessions, one per console host (Windows). `now` syncs even when
+  // automatic sync is off; `remove` deletes only the sessions the console wrote.
+  putty_sync_status: () => Promise<PuttySyncStatus>
+  putty_sync_now: () => Promise<PuttySyncResult>
+  putty_sync_remove: () => Promise<PuttySyncResult>
   // ── dev tools ────────────────────────────────────────────────────────────
   is_debug_enabled: () => Promise<boolean>
   open_devtools: () => Promise<void>

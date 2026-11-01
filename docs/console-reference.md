@@ -266,6 +266,53 @@ jump host sessions) and, for other hosts, into one called
 group with its own theme gets its own session (`…--red-alert`). An unknown
 theme or cursor value is ignored, never an error.
 
+## `[putty]` — PuTTY saved sessions {#putty}
+
+Saves every console host as a PuTTY saved session, so PuTTY opened on its own
+(Start menu, taskbar, a quick connection without switching profiles) lists
+every host with everything already set. Set in Settings → SSH → **PuTTY
+sessions**, or in config.toml. Windows only (PuTTY keeps sessions in the
+registry, `HKCU\Software\SimonTatham\PuTTY\Sessions`).
+
+| Key | Default | Meaning |
+|---|---|---|
+| `sync` | `false` | Re-sync automatically whenever the hosts or the config change (a host save, a Config Sync pull, a key change). **Sync now** in Settings works either way |
+| `profiles` | `[]` | Only hosts in these host profiles. Empty = every remote host, in every profile |
+| `keepalive` | 30 | Seconds between keepalives (PuTTY's *Seconds between keepalives* plus TCP keepalives), so idle sessions survive firewall idle timers. 0 = off |
+| `prefix` | `""` | Put in front of every session name, e.g. `rs/`, to keep them apart from your own sessions |
+
+```toml
+[putty]
+sync = true
+keepalive = 30
+```
+
+Each session is named `group/host` (just `host` for an ungrouped host), so
+PuTTY's alphabetical list reads by group, and carries:
+
+- the host name, port and user (the host's own user, else `[ssh] user`);
+- the key: the host's own `identityFile`, else `[ssh] identityFile`, using the
+  `.ppk` beside it when there is one (keys the console generates always have a
+  PPK v2 copy, which every PuTTY version can read; PuTTY before 0.75 can't read
+  an OpenSSH key at all);
+- the keepalive;
+- the `[ssh] proxy`, or for a host with a `jump`, a **Local** proxy command
+  (`plink -nc %host:%port <jump>`). That's how old PuTTY reaches a host through
+  a jump host: Connection → Proxy → Proxy type *Local*, which PuTTY has had
+  since 0.58; the *SSH* proxy type only arrived in 0.77. It needs `plink.exe`,
+  which ships with PuTTY;
+- the [`[terminal]`](#terminal) look, including the host group's theme.
+
+Like the console's own terminal sessions, each starts as a copy of your PuTTY
+**Default Settings**, so your other choices (window size, keyboard, …) carry
+over. Every session the console writes is marked as its own (a
+`RunspecConsoleSync` registry value), and a sync only ever changes or deletes
+marked sessions: a host that is removed (or leaves the chosen profiles) loses
+its session, and a session you made yourself with the same name is left alone
+and listed as skipped. Edits you make in PuTTY to a synced session are
+overwritten on the next sync; **Remove synced sessions** deletes only the
+console's. A host behind a chain of jump hosts (`a,b`) is skipped.
+
 ## `[automation]`
 
 The trigger/schedule engine's execution pool.

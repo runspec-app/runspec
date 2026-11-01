@@ -2129,6 +2129,20 @@ export const mockApi: BridgeApi = {
   launch_terminal: async (host: string): Promise<void> => {
     console.log('mock: launch_terminal', host)
   },
+  putty_sync_status: async () => ({
+    supported: true,
+    putty: 'C:\\Program Files\\PuTTY\\putty.exe',
+    plink: 'C:\\Program Files\\PuTTY\\plink.exe',
+    config: { sync: false, profiles: [], keepalive: 30, prefix: '' },
+    sessions: [],
+    last: null,
+  }),
+  putty_sync_now: async () => ({
+    ok: true, supported: true,
+    written: MOCK_JUMP_HOSTS.map(h => ({ host: h.name, session: h.group ? `${h.group}/${h.name}` : h.name })),
+    removed: [], skipped: [], at: new Date().toISOString(),
+  }),
+  putty_sync_remove: async () => ({ ok: true, supported: true, written: [], removed: [], skipped: [] }),
   terminal_themes: async () => [
     {
       id: 'one-half-dark', label: 'One Half Dark', fg: '#dcdfe4', bg: '#282c34', cursor: '#ffffff',

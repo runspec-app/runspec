@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { theme, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Empty, Table, Slider, Progress } from 'antd'
+import type { SelectProps } from 'antd'
 import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, RightOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined, SearchOutlined, SoundOutlined, CloudServerOutlined, DiffOutlined } from '@ant-design/icons'
 import { VoiceConfig, VoiceDevice, bridge, type JumpHost, type LocalVenvConfig, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type MailCategories, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SyncPreview, type SyncUpdateCheck, type SeedStatus, type SeedOverride, type SeedApplyResult, type Runbook, type RunbookStep, type SavedRun, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost, type McpServer, type McpHeaderCredential, type McpStatus, type McpServerStatus, type McpCredentialOption, type ToolVisibility, type NamedSound, type MarketplaceConfig, type MarketplaceConfigInput, type MarketplaceRepo } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
@@ -24,6 +25,7 @@ import { MemorySyncTab } from './MemorySyncTab'
 import { SettingsColumns } from './SettingsColumns'
 import { TokenCommandInput } from './TokenCommandInput'
 import { TerminalLook } from './TerminalLook'
+import { PuttySync } from './PuttySync'
 
 const { Text, Link } = Typography
 
@@ -759,6 +761,29 @@ function keyAgeDays(createdAt: string | null): number | null {
   return Math.floor((Date.now() - new Date(createdAt).getTime()) / (1000 * 60 * 60 * 24))
 }
 
+type QuickOption = { value: string; label: ReactNode; search: string }
+
+// Quick connect's host list: every remote host grouped by host group (ungrouped
+// last), sorted, with connected hosts marked. Pure + exported for the test.
+export function quickConnectOptions(
+  hosts: JumpHost[], connected: string[],
+): NonNullable<SelectProps['options']> {
+  const live = new Set(connected)
+  const byGroup = new Map<string, QuickOption[]>()
+  for (const h of [...hosts].filter(h => h.name && h.name !== 'local').sort((a, b) => a.name.localeCompare(b.name))) {
+    const g = h.group ?? ''
+    const opt: QuickOption = {
+      value: h.name,
+      label: live.has(h.name) ? <span>{h.name} <Text type="success" title="Connected">●</Text></span> : h.name,
+      search: `${h.name} ${h.hostname ?? ''} ${g}`.toLowerCase(),
+    }
+    byGroup.set(g, [...(byGroup.get(g) ?? []), opt])
+  }
+  const groups = [...byGroup.keys()].sort((a, b) => (a === '' ? 1 : b === '' ? -1 : a.localeCompare(b)))
+  if (groups.length <= 1) return byGroup.get(groups[0] ?? '') ?? []
+  return groups.map(g => ({ label: g || 'Ungrouped', options: byGroup.get(g) ?? [] }))
+}
+
 export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [], activeProfile = '' }: { onKeyChanged?: () => void; connectedHosts?: string[]; allRemoteHosts?: string[]; activeProfile?: string }) {
   const [form] = Form.useForm()
   const [saving, setSaving] = useState(false)
@@ -776,6 +801,13 @@ export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [],
   // bar instead of a frozen "Rotating…" button.
   const [rotateProgress, setRotateProgress] = useState<{ done: number; total: number; host: string; phase: string } | null>(null)
   const [copyAllOpen, setCopyAllOpen] = useState(false)
+  // Quick connect lists every configured remote host, not just the active
+  // profile's connected ones — PuTTY makes its own connection.
+  const [allHosts, setAllHosts] = useState<JumpHost[]>([])
+  useEffect(() => {
+    bridge.get_jump_hosts().then(hs => setAllHosts(hs ?? [])).catch(() => setAllHosts([]))
+  }, [])
+  const quickOptions = useMemo(() => quickConnectOptions(allHosts, connectedHosts), [allHosts, connectedHosts])
 
   const loadConfig = () => {
     bridge.get_config().then(cfg => {
@@ -1058,20 +1090,26 @@ export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [],
           <Divider />
 
           <Text strong style={{ fontSize: 14 }}>Quick connect</Text>
+          <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 2 }}>
+            Every host, in any profile. PuTTY makes its own connection, so a host outside the current profile opens fine.
+          </Text>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10 }}>
             <Select
               size="small"
-              value={connectedHosts.length === 0 ? undefined : selectedHost}
-              placeholder={connectedHosts.length === 0 ? 'No connected hosts' : 'Select host'}
-              disabled={connectedHosts.length === 0}
+              showSearch
+              aria-label="Quick connect host"
+              value={quickOptions.length === 0 ? undefined : (selectedHost || undefined)}
+              placeholder={quickOptions.length === 0 ? 'No hosts' : 'Search hosts'}
+              disabled={quickOptions.length === 0}
               onChange={setSelectedHost}
-              options={connectedHosts.map(h => ({ value: h, label: h }))}
+              options={quickOptions}
+              optionFilterProp="search"
               style={{ flex: 1, minWidth: 0 }}
             />
             <Button
               size="small"
               icon={<DesktopOutlined />}
-              disabled={connectedHosts.length === 0 || !selectedHost}
+              disabled={quickOptions.length === 0 || !selectedHost}
               onClick={() => bridge.launch_terminal(selectedHost).catch(e => message.error(String(e)))}
             >
               Open PuTTY
@@ -1320,6 +1358,10 @@ export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [],
       <Divider />
 
       <TerminalLook />
+
+      <Divider />
+
+      <PuttySync />
 
       <CopyKeyAllModal
         open={copyAllOpen}

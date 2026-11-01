@@ -9,6 +9,33 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.370.0] — 2026-11-01
+
+### Added
+
+- **Console hosts as PuTTY saved sessions.** Settings → SSH → **PuTTY
+  sessions** saves every console host as a PuTTY saved session, so PuTTY on
+  its own lists every host, in every profile, with the host name, port, user,
+  `.ppk` key, keepalive (30 s plus TCP keepalives), HTTP proxy or jump host and
+  terminal look already set. Sessions are named `group/host`. A host with a
+  `jump` gets PuTTY's *Local* proxy type with a `plink -nc` command, which old
+  PuTTY versions without the *SSH* proxy type (0.77+) support. `[putty] sync =
+  true` re-syncs whenever the hosts or config change; **Sync now** and
+  **Remove synced sessions** work either way. `profiles` limits it to some
+  host profiles, `keepalive` sets the interval and `prefix` puts something in
+  front of every name. Only sessions the console wrote (marked with a
+  `RunspecConsoleSync` value) are ever changed or deleted, so a session you
+  made yourself under the same name is left alone and reported as skipped.
+  Windows only. See `docs/console-reference.md` → `[putty]`.
+
+### Changed
+
+- **Quick connect lists every host.** Settings → SSH → Quick connect showed
+  only connected hosts, so only the active profile's. It now lists every
+  remote host, grouped and searchable, with connected ones marked.
+- **A terminal uses the host's own key.** Opening PuTTY on a host with its own
+  `identityFile` used the `[ssh]` key instead.
+
 ## [0.369.0] — 2026-11-01
 
 ### Changed

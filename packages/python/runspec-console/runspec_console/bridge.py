@@ -52,6 +52,7 @@ from .bridge_voice import VoiceMixin
 from .bridge_diagram import DiagramMixin
 from .bridge_marketplace import MarketplaceMixin
 from .bridge_provision import ProvisionMixin
+from .bridge_putty import PuttySyncMixin
 from .bridge_envfile import EnvFileMixin
 from .bridge_network import NetworkMixin
 from .bridge_turn import TurnMixin
@@ -87,6 +88,7 @@ class Bridge(
     DiagramMixin,
     MarketplaceMixin,
     ProvisionMixin,
+    PuttySyncMixin,
     EnvFileMixin,
     NetworkMixin,
     TurnMixin,
@@ -194,6 +196,11 @@ class Bridge(
         # so the next subscribe republishes from scratch.
         self._published_catalogs: dict[str, list[dict[str, Any]]] = {}
         self._hosts: list[dict[str, Any]] = []
+        # PuTTY session sync (bridge_putty): one background pass at a time.
+        self._putty_sync_guard = threading.Lock()
+        self._putty_sync_running = False
+        self._putty_sync_dirty = False
+        self._putty_sync_last: dict[str, Any] | None = None
         # Named source-side stream filters (runspec_filters.toml). Loaded once at
         # startup and reloaded on save; resolved by name when a relay/download
         # selects one. See filters_store.py for the schema.
