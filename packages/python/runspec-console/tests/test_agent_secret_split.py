@@ -18,6 +18,10 @@ from runspec_console.bridge import Bridge
 
 class _AgentBridge:
     _run_tool_sync = Bridge._run_tool_sync
+    # Transport choice for remote runs (pooled channel / system-ssh jump).
+    _remote_session = Bridge._remote_session
+    _jump_mode = Bridge._jump_mode
+    _ssh_pool = None
 
     _finalize_tool_output = Bridge._finalize_tool_output
     _tool_output_cap = Bridge._tool_output_cap

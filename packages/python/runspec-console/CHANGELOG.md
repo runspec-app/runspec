@@ -9,6 +9,37 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.369.0] — 2026-11-01
+
+### Changed
+
+- **Hosts behind a jump host share one pooled connection.** A host with a
+  `jump` used to open a new system `ssh` (two handshakes) for every check,
+  discovery and run — about half a second each, and one login on the jump per
+  host. The console now keeps one pooled connection to the jump and tunnels
+  each host behind it over that connection (~10× faster per command, one login
+  on the jump), with the pool's keepalive, backoff and reuse. History, logs,
+  transfers and the other pooled paths now reach jump hosts too. A host that
+  only works over system `ssh` (a CentOS 6 target with `ssh-rsa`/`ssh-dss`
+  keys, a jump chain, a jump only `~/.ssh/config` can reach) switches to it on
+  its own, with one Dev-tab line saying why; a host save, profile switch or
+  Refresh tries the tunnel again. `[ssh] jump_pool = false` keeps every jump
+  host on system `ssh`.
+- **Agent runs use the connection pool.** A runnable the agent ran on a remote
+  host opened a fresh SSH connection per run, so a run across a group was a
+  burst of new handshakes outside the pool's handshake cap and backoff. Agent
+  runs now stream over the host's warm pooled connection, like Forms runs.
+
+### Fixed
+
+- **~40 ms wait on every SSH command.** The console never set `TCP_NODELAY`, so
+  each command on a warm connection waited on Nagle + delayed ACK. It now sets
+  it (48.7 → 5.3 ms per command measured; `[ssh] tcp_nodelay = false` turns it
+  off).
+- **`use_ssh_config` with a `ProxyCommand` failed after connecting.** The TCP
+  keepalive set-up called `setsockopt` on the ProxyCommand pipe, which has
+  none. Socket options are now skipped for anything that isn't a socket.
+
 ## [0.368.1] — 2026-10-31
 
 ### Fixed

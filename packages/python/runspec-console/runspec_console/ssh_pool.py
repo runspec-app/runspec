@@ -153,6 +153,11 @@ class PooledConnection:
         # pooled jump channel that tunnels an ad-hoc target). Never raises.
         self._on_close = on_close
         self.last_used = clock()
+        # Open jump tunnels (direct-tcpip channels carrying another pooled
+        # host's SSH connection). A transport with live tunnels is in use even
+        # if no command ran on it lately, so the idle reaper leaves it alone.
+        self._tunnels = 0
+        self._tunnel_lock = threading.Lock()
 
     def is_alive(self, idle_ttl: int) -> bool:
         """True if the transport is still usable and not stale.
@@ -164,6 +169,8 @@ class PooledConnection:
         transport = self._client.get_transport()
         if transport is None or not transport.is_active():
             return False
+        if self._tunnels > 0:
+            return True
         if idle_ttl and (self._clock() - self.last_used) > idle_ttl:
             return False
         return True
@@ -282,6 +289,43 @@ class PooledConnection:
 
         return chan, release
 
+    def open_tunnel(
+        self, dest_host: str, dest_port: int
+    ) -> tuple[Any, Callable[[], None]]:
+        """Open a ``direct-tcpip`` channel that carries a whole pooled SSH
+        connection to ``dest_host:dest_port`` (fleet host behind this jump).
+
+        Unlike :meth:`open_direct_tcpip`, this does **not** take a session slot:
+        a tunnel lives as long as the tunnelled connection (minutes to hours),
+        and sshd's ``MaxSessions`` counts shell/exec/subsystem sessions, not
+        forwarded channels — holding a slot would cap a jump at 8 hosts behind
+        it. Returns ``(channel, release)``; ``release()`` closes the channel.
+        """
+        transport = self._client.get_transport()
+        if transport is None:
+            raise OSError("jump transport closed")
+        chan = transport.open_channel(
+            "direct-tcpip", (dest_host, dest_port), ("127.0.0.1", 0)
+        )
+        with self._tunnel_lock:
+            self._tunnels += 1
+        self.last_used = self._clock()
+
+        released = threading.Event()
+
+        def release() -> None:
+            if not released.is_set():
+                released.set()
+                try:
+                    chan.close()
+                except Exception:
+                    pass
+                with self._tunnel_lock:
+                    self._tunnels -= 1
+                self.last_used = self._clock()
+
+        return chan, release
+
     def open_exec(self, command: str) -> tuple[Any, Callable[[], None]]:
         """Open a session channel and ``exec`` ``command`` on this transport.
 
@@ -345,9 +389,20 @@ class SSHConnectionPool:
         clock: Callable[[], float] = time.monotonic,
         rng: Callable[[float, float], float] = random.uniform,
         on_event: Callable[[dict[str, Any]], None] | None = None,
+        route: Callable[
+            [str, str | None, dict[str, Any]], tuple[str, str | None] | None
+        ]
+        | None = None,
     ):
         self._settings = settings
         self._make_client = make_client
+        # ``route(ssh_target, identity_file, cfg)`` → ``(jump_target, jump_identity)``
+        # when the host is reached through a jump host, else None. The bridge
+        # supplies it from the host list, so every pooled call (probe,
+        # discovery, runs, history, logs, transfers) reaches a jump host the
+        # same way without each call site knowing about jumps.
+        self._route = route
+        self._last_error: dict[tuple, str] = {}
         self._clock = clock
         self._rng = rng
         self._on_event = on_event
@@ -363,6 +418,34 @@ class SSHConnectionPool:
         # discovered (reconnect after a drop / reap), so discovery reruns without
         # the cycle having to track connection identity itself.
         self._generation: dict[tuple, int] = {}
+
+    # ── jump routing ───────────────────────────────────────────────────────────
+
+    def _route_for(
+        self, ssh_target: str, identity_file: str | None, cfg: dict[str, Any]
+    ) -> tuple[str, str | None] | None:
+        """The ``(jump_target, jump_identity)`` for this host, or None. Never
+        raises; a jump that points back at the host itself is ignored."""
+        if self._route is None:
+            return None
+        try:
+            route = self._route(ssh_target, identity_file, cfg)
+        except Exception:
+            return None
+        if not route or not route[0] or route[0] == ssh_target:
+            return None
+        return (str(route[0]), route[1] or None)
+
+    def _key(
+        self, ssh_target: str, identity_file: str | None, cfg: dict[str, Any]
+    ) -> tuple:
+        """Pool key: the connection-shaping fields plus the jump route, so a
+        changed (or removed) jump opens a fresh transport."""
+        base = _host_key(ssh_target, identity_file, cfg)
+        route = self._route_for(ssh_target, identity_file, cfg)
+        if route is None:
+            return base
+        return (*base, route[0], route[1] or "")
 
     def _event(self, level: str, message: str) -> None:
         """Surface a pool-lifecycle event (reuse / connect / backoff / reap).
@@ -391,14 +474,18 @@ class SSHConnectionPool:
     # ── connection lifecycle ───────────────────────────────────────────────────
 
     def _acquire_conn(
-        self, ssh_target: str, identity_file: str | None, cfg: dict[str, Any]
+        self,
+        ssh_target: str,
+        identity_file: str | None,
+        cfg: dict[str, Any],
+        _depth: int = 0,
     ) -> PooledConnection:
         """Return a live pooled connection, reconnecting/connecting as needed.
 
         Raises ``BackoffError`` when the host is in its backoff window, or the
         underlying connect exception on a fresh handshake failure.
         """
-        key = _host_key(ssh_target, identity_file, cfg)
+        key = self._key(ssh_target, identity_file, cfg)
         idle_ttl = self._settings["idle_ttl"]
 
         # Fast path: a live connection, no per-host lock needed.
@@ -429,7 +516,7 @@ class SSHConnectionPool:
                 )
                 raise BackoffError(f"host in connect-backoff for {remaining:.0f}s")
 
-            conn = self._connect(ssh_target, identity_file, cfg)
+            conn = self._connect(ssh_target, identity_file, cfg, _depth)
             self._event(
                 "INFO" if had_dead else "DEBUG",
                 f"reconnected to {ssh_target} (previous transport dropped)"
@@ -442,14 +529,23 @@ class SSHConnectionPool:
             return conn
 
     def _handshake_once(
-        self, ssh_target: str, identity_file: str | None, cfg: dict[str, Any]
+        self,
+        ssh_target: str,
+        identity_file: str | None,
+        cfg: dict[str, Any],
+        tunnel: Callable[[str, int], Any] | None = None,
     ) -> Any:
         """One bounded handshake attempt — holds the global handshake semaphore
         only for the duration of the connect so a retry sleep never occupies a
         storm-cap slot."""
         self._handshakes.acquire()
         try:
-            client = self._make_client(ssh_target, identity_file, cfg)
+            if tunnel is not None:
+                client = self._make_client(
+                    ssh_target, identity_file, cfg, tunnel=tunnel
+                )
+            else:
+                client = self._make_client(ssh_target, identity_file, cfg)
             keepalive = self._settings["keepalive"]
             if keepalive:
                 transport = client.get_transport()
@@ -460,7 +556,11 @@ class SSHConnectionPool:
             self._handshakes.release()
 
     def _connect(
-        self, ssh_target: str, identity_file: str | None, cfg: dict[str, Any]
+        self,
+        ssh_target: str,
+        identity_file: str | None,
+        cfg: dict[str, Any],
+        _depth: int = 0,
     ) -> PooledConnection:
         """Open a fresh transport, retrying a *transient* handshake failure a few
         times before giving up and recording backoff.
@@ -472,16 +572,52 @@ class SSHConnectionPool:
         on a profile switch. Retrying the transient case inline clears the blip
         without a user-visible failure; a durable error (auth, no route,
         non-SSH banner) still fails fast on the first attempt.
+
+        A host behind a jump (see ``route``) is reached over a ``direct-tcpip``
+        channel through the jump's own pooled connection: the jump connection
+        is obtained first (outside the handshake semaphore, so the two can't
+        deadlock), then the target handshake runs over the tunnel. Every host
+        behind one jump shares that single jump connection — the jump's sshd
+        sees one login, not one per host per probe.
         """
         from .executor import is_transient_ssh_error
 
-        key = _host_key(ssh_target, identity_file, cfg)
+        key = self._key(ssh_target, identity_file, cfg)
         retries = int(self._settings.get("connect_retries", DEFAULT_CONNECT_RETRIES))
+        route = self._route_for(ssh_target, identity_file, cfg) if _depth < 2 else None
+        jump_conn: PooledConnection | None = None
+        if route is not None:
+            try:
+                jump_conn = self._acquire_conn(route[0], route[1], cfg, _depth + 1)
+            except BackoffError as exc:
+                raise BackoffError(f"jump host {route[0]}: {exc}") from exc
+            except Exception as exc:
+                delay = self._record_failure(key)
+                msg = f"jump host {route[0]}: {exc}"
+                with self._map_lock:
+                    self._last_error[key] = msg
+                self._event(
+                    "WARNING",
+                    f"SSH connect to {ssh_target} failed ({msg}); backing off {delay:.0f}s",
+                )
+                raise OSError(msg) from exc
         last_exc: BaseException | None = None
         for attempt in range(retries + 1):
+            releases: list[Callable[[], None]] = []
+            tunnel: Callable[[str, int], Any] | None = None
+            if jump_conn is not None:
+                jc = jump_conn
+
+                def tunnel(host: str, port: int) -> Any:
+                    chan, rel = jc.open_tunnel(host, port)
+                    releases.append(rel)
+                    return chan
+
             try:
-                client = self._handshake_once(ssh_target, identity_file, cfg)
+                client = self._handshake_once(ssh_target, identity_file, cfg, tunnel)
             except Exception as exc:
+                for rel in releases:
+                    rel()
                 last_exc = exc
                 transient = is_transient_ssh_error(exc)
                 if transient and attempt < retries:
@@ -498,10 +634,22 @@ class SSHConnectionPool:
                 break
             else:
                 self._record_success(key)
+                with self._map_lock:
+                    self._last_error.pop(key, None)
+                on_close = None
+                if releases:
+                    rels = list(releases)
+
+                    def on_close() -> None:
+                        for rel in rels:
+                            rel()
+
                 return PooledConnection(
-                    client, self._settings["max_sessions"], self._clock
+                    client, self._settings["max_sessions"], self._clock, on_close
                 )
         delay = self._record_failure(key)
+        with self._map_lock:
+            self._last_error[key] = str(last_exc)
         self._event(
             "WARNING",
             f"SSH connect to {ssh_target} failed ({last_exc}); backing off {delay:.0f}s",
@@ -670,14 +818,27 @@ class SSHConnectionPool:
         """How many transports have been opened for this host's connection key
         (``0`` = never connected). Compared across refresh cycles to detect a
         reconnect without holding on to connection objects."""
-        key = _host_key(ssh_target, identity_file, global_ssh_config or {})
+        key = self._key(ssh_target, identity_file, global_ssh_config or {})
         with self._map_lock:
             return self._generation.get(key, 0)
+
+    def last_error(
+        self,
+        ssh_target: str,
+        *,
+        identity_file: str | None = None,
+        global_ssh_config: dict[str, Any] | None = None,
+    ) -> str:
+        """The most recent connect failure for this host (``""`` once it has
+        connected) — lets a caller say *why* a pooled connect failed."""
+        key = self._key(ssh_target, identity_file, global_ssh_config or {})
+        with self._map_lock:
+            return self._last_error.get(key, "")
 
     def _drop(
         self, ssh_target: str, identity_file: str | None, cfg: dict[str, Any]
     ) -> None:
-        key = _host_key(ssh_target, identity_file, cfg)
+        key = self._key(ssh_target, identity_file, cfg)
         with self._map_lock:
             conn = self._conns.pop(key, None)
         if conn is not None:

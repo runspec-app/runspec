@@ -131,6 +131,9 @@ class InfraMixin:
             settings=settings,
             make_client=_make_ssh_client,
             on_event=self._on_pool_event,
+            # Hosts with a ``jump`` are tunnelled through the jump's own pooled
+            # connection (see InternalsMixin._ssh_route).
+            route=self._ssh_route,
         )
 
     def _build_adhoc_pool(self) -> Any:

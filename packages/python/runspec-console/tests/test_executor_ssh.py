@@ -416,3 +416,56 @@ def test_ssh_run_routes_through_proxy(monkeypatch):
         )
     assert inst.connect.call_args.kwargs["sock"] is sentinel
     assert code == 0 and sout == "ok"
+
+
+# ── TCP_NODELAY + jump tunnel socket ──────────────────────────────────────────
+
+
+def test_connect_sets_tcp_nodelay_by_default():
+    # Without it every pooled command waited ~40 ms on Nagle + delayed ACK.
+    with patch("paramiko.SSHClient") as MockClient:
+        _make_ssh_client("deploy@prod-1", None, {})
+    sock = MockClient.return_value.get_transport.return_value.sock
+    opts = [c.args for c in sock.setsockopt.call_args_list]
+    assert (socket.IPPROTO_TCP, socket.TCP_NODELAY, 1) in opts
+
+
+def test_tcp_nodelay_off_switch():
+    with patch("paramiko.SSHClient") as MockClient:
+        _make_ssh_client("deploy@prod-1", None, {"tcp_nodelay": False})
+    sock = MockClient.return_value.get_transport.return_value.sock
+    opts = [c.args for c in sock.setsockopt.call_args_list]
+    assert (socket.IPPROTO_TCP, socket.TCP_NODELAY, 1) not in opts
+
+
+def test_socket_options_skip_a_sock_without_setsockopt():
+    # A ProxyCommand pipe or a jump channel has no setsockopt; the keepalive
+    # helper used to raise AttributeError after a successful connect.
+    transport = MagicMock()
+    transport.sock = object()
+    executor._apply_socket_keepalive(transport, {})
+    executor._apply_tcp_nodelay(object(), {})
+    executor._apply_tcp_nodelay(None, {})
+
+
+def test_connect_over_tunnel_uses_its_channel_and_skips_the_proxy(monkeypatch):
+    calls = []
+    chan = object()
+
+    def tunnel(host, port):
+        calls.append((host, port))
+        return chan
+
+    monkeypatch.setattr(
+        executor,
+        "_http_connect_sock",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("proxy must not be used")),
+    )
+    with patch("paramiko.SSHClient") as MockClient:
+        MockClient.return_value.get_transport.return_value.sock = chan
+        _make_ssh_client(
+            "svc@c7:2201", None, {"proxy": "http://proxy.corp:8080"}, tunnel=tunnel
+        )
+    kwargs = MockClient.return_value.connect.call_args.kwargs
+    assert kwargs["sock"] is chan
+    assert calls == [("c7", 2201)]

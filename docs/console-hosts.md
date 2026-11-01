@@ -564,7 +564,10 @@ connect_timeout = 10   # raise these behind slow proxies / VPNs
 banner_timeout  = 30
 auth_timeout    = 30
 
-jump_max_concurrent = 4  # ssh connections at once through one jump host
+tcp_nodelay    = true  # send small SSH packets at once (off adds ~40 ms per command)
+
+jump_pool           = true  # reach jump hosts through a pooled tunnel (see below)
+jump_max_concurrent = 4  # system-ssh connections at once through one jump host
 jump_retries        = 2  # retries when a jump host refuses a connection
 
 [refresh]
@@ -594,16 +597,31 @@ gradually rather than disabling the pool.
 
 ### Hosts behind a jump host
 
-A host with a **Jump host (ProxyJump)** set connects through the system `ssh`
-rather than the connection pool, so every check and discovery opens a new
-connection through the jump. The jump's sshd only lets a few unfinished logins
-in at once (`MaxStartups`, default 10) and closes the rest before key exchange,
-which shows up as *`kex_exchange_identification: Connection closed by remote
+A host with a **Jump host (ProxyJump)** set is reached through the
+connection pool: the console keeps **one** connection to the jump host and
+opens a tunnel through it for each host behind it, so the jump's sshd sees a
+single login however many hosts sit behind it. Checks, discovery, runs,
+history, logs and transfers all reuse those warm connections. A command
+through a pooled tunnel takes tens of milliseconds where a new `ssh` through
+the jump took about half a second.
+
+Some targets can't be reached that way: a CentOS 6 host that offers only
+`ssh-rsa`/`ssh-dss` keys, a jump chain (`a,b`), or a jump that only your
+`~/.ssh/config` knows how to reach. When the pooled tunnel fails but the
+system `ssh` gets through, the console uses system `ssh` for that host and
+says so once in the Dev tab. A host save, a profile switch or a Refresh tries
+the tunnel again. `[ssh] jump_pool = false` keeps every jump host on system
+`ssh`, as before 0.369.0.
+
+On system `ssh`, every check and discovery opens a new connection through the
+jump. The jump's sshd only lets a few unfinished logins in at once
+(`MaxStartups`, default 10) and closes the rest before key exchange, which
+shows up as *`kex_exchange_identification: Connection closed by remote
 host`* and hosts that go green and then drop. So the console sends at most
-`jump_max_concurrent` connections through any one jump host at a time and
-retries a refused one `jump_retries` times after a short pause. Lower
-`jump_max_concurrent` if hosts behind a busy jump still fail; raise it if the
-jump allows more and many hosts sit behind it.
+`jump_max_concurrent` system-ssh connections through any one jump host at a
+time and retries a refused one `jump_retries` times after a short pause.
+Lower `jump_max_concurrent` if hosts behind a busy jump still fail; raise it
+if the jump allows more and many hosts sit behind it.
 
 New host keys are accepted automatically for both the jump and the host behind
 it, into the console's own known_hosts. PuTTY keeps a separate host-key cache,

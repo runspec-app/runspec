@@ -13,14 +13,16 @@ A host entry:
   [[host]]
   name          = "old-centos6-1"
   ssh           = "svc@old-centos6-1"
-  jump          = "bastion"         # reach this host via system-ssh ProxyJump
+  jump          = "bastion"         # reach this host through a jump host
   runspec_paths = ["/opt/venvs/ops/bin/runspec"]
 
-  # `jump` selects the system-ssh transport (OpenSSH, not paramiko), so
-  # ~/.ssh/config legacy algorithms apply — the way to reach CentOS 6 hosts
-  # offering only ssh-rsa/ssh-dss, which paramiko 4+/5 can't negotiate. Put the
-  # legacy `HostKeyAlgorithms +ssh-rsa` etc. on the target's Host block in
-  # ~/.ssh/config. Requires an OpenSSH client on the console machine.
+  # `jump` hosts ride a tunnel over the jump's one pooled connection. A target
+  # paramiko can't negotiate (CentOS 6 offering only ssh-rsa/ssh-dss), a jump
+  # chain, or a jump only ~/.ssh/config can reach falls back to the system-ssh
+  # transport (OpenSSH), where ~/.ssh/config legacy algorithms apply — put
+  # `HostKeyAlgorithms +ssh-rsa` etc. on the target's Host block. The fallback
+  # needs an OpenSSH client on the console machine. `[ssh] jump_pool = false`
+  # keeps every jump host on system ssh.
 
   [[host]]
   name          = "local-ops"
