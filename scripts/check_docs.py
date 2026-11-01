@@ -110,6 +110,7 @@ TOML_FENCE = re.compile(r"```toml\n(.*?)```", re.S)
 #   suite                      → console `runspec_evals.toml` ([[suite]] fixture store)
 #   chat_history/workspace/plugins → console `config.toml` sections
 #   terminal                   → console `config.toml` ([terminal] PuTTY look)
+#   putty                      → console `config.toml` ([putty] PuTTY session sync)
 #   http                       → console `config.toml` ([http] outbound proxy)
 #   mail_categories            → console `config.toml` ([mail_categories] Outlook categories)
 # Trade-off: a runspec runnable literally named `ssh`/`refresh`/`hosts`/`triggers`
@@ -159,6 +160,7 @@ NON_RUNSPEC_SECTIONS = {
     "local",
     "tool_visibility",
     "terminal",
+    "putty",
     "improve",
     "gateway",
     "eval",  # console eval fixture ([[eval]] tool-selection cases)

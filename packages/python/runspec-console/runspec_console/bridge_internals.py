@@ -88,18 +88,7 @@ class InternalsMixin:
         if not user:
             user = cfg_ssh.get("user", "")
 
-        # Prefer PPK v2 (works with all PuTTY versions) over raw OpenSSH key.
-        key_file: Path | None = None
-        idf = cfg_ssh.get("identityFile", "")
-        if idf:
-            expanded = Path(idf).expanduser()
-            ppk = Path(str(expanded) + ".ppk")
-            key_file = ppk if ppk.exists() else expanded
-            if not key_file.exists():
-                raise ValueError(
-                    f"SSH key file not found: {idf}\n"
-                    "Generate a new key in Settings → SSH."
-                )
+        key_file = self._putty_key_file(entry, cfg_ssh)
 
         cmd = [str(putty)]
         # Route through the HTTP proxy by loading a saved session that carries
@@ -170,6 +159,25 @@ class InternalsMixin:
         if key_file is not None:
             cmd.extend(["-i", str(key_file)])
         return cmd
+
+    @staticmethod
+    def _putty_key_file(entry: dict[str, Any], cfg_ssh: dict[str, Any]) -> Path | None:
+        """The key file PuTTY should use for ``entry``: the host's own
+        ``identityFile`` if it has one, else the ``[ssh]`` key. The ``.ppk``
+        beside it wins (PPK v2 works with every PuTTY; before 0.75 PuTTY can't
+        read an OpenSSH key at all). None when no key is configured; raises
+        ``ValueError`` when the configured key file is missing."""
+        idf = str(entry.get("identityFile") or cfg_ssh.get("identityFile") or "")
+        if not idf:
+            return None
+        expanded = Path(idf).expanduser()
+        ppk = Path(str(expanded) + ".ppk")
+        key_file = ppk if ppk.exists() else expanded
+        if not key_file.exists():
+            raise ValueError(
+                f"SSH key file not found: {idf}\nGenerate a new key in Settings → SSH."
+            )
+        return key_file
 
     def launch_terminal(self, host: str) -> None:
         """Launch PuTTY in a separate window connected to the host.
@@ -251,6 +259,10 @@ class InternalsMixin:
 
     def _reload_hosts(self) -> None:
         self._hosts = hosts_mod.load_hosts(config_mod.hosts_path())
+        # Keep PuTTY's saved sessions in step (bridge_putty; absent on test stubs).
+        sync = getattr(self, "_putty_sync_auto", None)
+        if sync is not None:
+            sync()
 
     def _reload_filters(self) -> None:
         from .filters_store import load_filters
