@@ -76,6 +76,27 @@ def test_parse_minimal_defaults():
         ({"id": "a", "host": "h", "paths": ["/x"], "subdir": "/abs"}, "relative"),
         ({"id": "a", "host": "h", "paths": ["/x"], "max_files": 5000}, "at most"),
         ({"id": "a", "host": "h", "paths": ["/x"], "latest": -1}, "negative"),
+        ({"id": "a", "adhoc": "{{srv}}", "paths": ["/x"]}, "declared param"),
+        ({"id": "a", "adhoc": "db-{{today}}", "paths": ["/x"]}, "declared param"),
+        (
+            {"id": "a", "host": "h", "paths": ["/x"], "params": {"host": {}}},
+            "only works with an ad-hoc host",
+        ),
+        (
+            {"id": "a", "adhoc": "db7", "paths": ["/x"], "params": {"host": {}}},
+            "only works with an ad-hoc host",
+        ),
+        (
+            {
+                "id": "a",
+                "host": "local",
+                "to_host": "g",
+                "dest_dir": "/i",
+                "paths": ["x"],
+                "params": {"host": {}},
+            },
+            "only works with an ad-hoc host",
+        ),
     ],
 )
 def test_parse_rejects(data, msg):
@@ -308,3 +329,46 @@ def test_is_absolute():
     assert st.is_absolute("C:/logs/a")
     assert st.is_absolute("C:\\logs\\a")
     assert not st.is_absolute("out/a.csv")
+
+
+def test_templated_adhoc_host():
+    e = st.parse_saved_transfer(
+        {
+            "id": "any",
+            "adhoc": "{{host}}",
+            "paths": ["/var/log/{{host}}/app.log"],
+            "params": {"host": {"required": True}},
+        }
+    )
+    assert st.parse_saved_transfer(st.entry_to_row(e)) == e
+    push = st.parse_saved_transfer(
+        {
+            "id": "up",
+            "host": "local",
+            "to_adhoc": "db-{{n}}.corp",
+            "dest_dir": "/in",
+            "paths": ["x"],
+            "params": {"n": {}},
+        }
+    )
+    assert push.to_adhoc == "db-{{n}}.corp"
+
+
+@pytest.mark.parametrize(
+    "template, values, expected",
+    [
+        ("db7.corp", {}, "db7.corp"),
+        ("{{host}}", {"host": "web-03"}, "web-03"),
+        ("db-{{n}}.corp", {"n": "2"}, "db-2.corp"),
+        ("{{ip}}", {"ip": "10.0.0.5"}, "10.0.0.5"),
+        ("{{ip}}", {"ip": "[fe80::1%eth0]"}, "[fe80::1%eth0]"),
+    ],
+)
+def test_render_hostname(template, values, expected):
+    assert st.render_hostname(template, values) == expected
+
+
+@pytest.mark.parametrize("value", ["-oProxyCommand=x", "a b", "me@host", "", "x;rm"])
+def test_render_hostname_rejects(value):
+    with pytest.raises(ValueError):
+        st.render_hostname("{{h}}", {"h": value})

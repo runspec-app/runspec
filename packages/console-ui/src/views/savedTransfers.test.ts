@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   detectDates, templatizeDates, widenToRotations, placeholderNames, missingParams,
-  rowsFromParams, remoteTarget, paramsFromRows, slugify, defaultValues,
+  rowsFromParams, remoteTarget, paramsFromRows, slugify, defaultValues, filterParamName, isPlaceholder,
 } from './savedTransfers'
 
 describe('date detection', () => {
@@ -32,6 +32,25 @@ describe('params', () => {
   it('lists placeholders and the ones not declared yet', () => {
     expect(placeholderNames(['/l/{{svc}}/{{ day:%Y }}', '{{host}}'])).toEqual(['svc', 'day', 'host'])
     expect(missingParams(['/l/{{svc}}/{{day:%Y}}-{{today}}'], [{ name: 'day', default: '', description: '' }])).toEqual(['svc'])
+  })
+
+  it('counts every placeholder in an ad-hoc host name, even {{host}}', () => {
+    expect(missingParams(['/l/{{host}}.log'], [], ['{{host}}'])).toEqual(['host'])
+    expect(missingParams([], [{ name: 'host', default: '', description: '' }], ['{{host}}'])).toEqual([])
+  })
+
+  it('names a filter value param from its label without clashing', () => {
+    expect(filterParamName('Transaction ID', [])).toBe('transaction_id')
+    expect(filterParamName('', [])).toBe('value')
+    expect(filterParamName('day', [{ name: 'day', default: '', description: '' }])).toBe('day_2')
+    expect(filterParamName('2nd key', [])).toBe('_2nd_key')
+  })
+
+  it('tells a placeholder value from a typed one', () => {
+    expect(isPlaceholder('{{txn}}')).toBe(true)
+    expect(isPlaceholder(' {{ day:%Y }} ')).toBe(true)
+    expect(isPlaceholder('abc-{{txn}}')).toBe(false)
+    expect(isPlaceholder('abc')).toBe(false)
   })
 
   it('round-trips a params table, keeping keys the editor does not show', () => {

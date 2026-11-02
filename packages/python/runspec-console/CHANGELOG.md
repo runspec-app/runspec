@@ -9,6 +9,22 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.371.0] — 2026-11-02
+
+### Added
+- **Filters in the saved-transfer editor.** The Save / Edit dialog now has the
+  same filter picker as the Transfer dialog, so a scenario can gain, change or
+  drop a filter there. Before, a filter could only be kept if it was already
+  picked when you clicked Save as scenario. For a filter that takes a value,
+  **Ask for "…" each run** turns the value into a parameter named after the
+  filter's value label (`{{transaction_id}}`), with the typed value as its
+  default.
+- **Ad-hoc host from a parameter.** `adhoc` / `to_adhoc` may use a declared
+  param (`adhoc = "{{host}}"`, `"db-{{n}}.corp"`), filled in when the run
+  starts and checked to be a plain host name or IP. A param called `host` is
+  allowed only as the ad-hoc host name (`adhoc = "{{host}}"`), and then fills
+  `{{host}}` everywhere. The editor offers **Add host** for it.
+
 ## [0.370.0] — 2026-11-01
 
 ### Added

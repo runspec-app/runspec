@@ -54,6 +54,11 @@ With ``:FORMAT`` (strftime) the value is read as a date — ``today``,
 date-time — so a date picker, a typed "-1d" and the default "yesterday" all work.
 A built-in date with no format renders ``%Y-%m-%d``.
 
+An ad-hoc host name may use a param too (``adhoc = "{{server}}"``), so one
+scenario reaches whichever host the run names. A param called ``host`` is
+allowed only as that name (``adhoc = "{{host}}"``), and fills ``{{host}}``
+everywhere.
+
 **Wildcards.** After rendering, ``*`` / ``?`` / ``[...]`` in a path match on the
 remote host (component by component over SFTP, like a shell glob: a leading
 ``.`` is matched only explicitly). A value substituted from a param is escaped
@@ -318,6 +323,27 @@ def parse_saved_transfer(data: dict[str, Any]) -> SavedTransfer:
                     f"saved transfer '{sid}' uses {{{{{name}}}}} but has no param "
                     f"named '{name}' (built-ins: {', '.join(BUILTINS)})"
                 )
+    # An ad-hoc host name may come from a param (``adhoc = "{{server}}"``) —
+    # a declared one only: the built-ins are dates, or the host itself.
+    declared = {_norm(p) for p in params}
+    for key in ("adhoc", "to_adhoc"):
+        for name, _fmt in placeholders(getattr(entry, key)):
+            if _norm(name) not in declared:
+                raise ValueError(
+                    f"saved transfer '{sid}': {key} uses {{{{{name}}}}} — an "
+                    "ad-hoc host name can only use a declared param"
+                )
+    # A param named "host" replaces the built-in {{host}} everywhere, so it only
+    # makes sense when the host the scenario is about is ad-hoc (that param then
+    # *is* the host name, so it must be used there); for a fleet host or a group
+    # {{host}} is filled in.
+    about = adhoc if entry.direction != "push" else to_adhoc
+    if "host" in declared and "host" not in {_norm(n) for n, _ in placeholders(about)}:
+        raise ValueError(
+            f"saved transfer '{sid}': a param named 'host' only works with an "
+            'ad-hoc host (adhoc = "{{{{host}}}}") — otherwise {{{{host}}}} is '
+            "filled in for you"
+        )
     if remote_dest and not entry.dest_dir.startswith("/"):
         raise ValueError(
             f"saved transfer '{sid}': copying to a remote host needs dest_dir, an "
@@ -436,6 +462,22 @@ def parse_when(value: Any, now: datetime) -> datetime:
     raise ValueError(
         f"'{text}' isn't a date — use today, yesterday, -3d, or YYYY-MM-DD"
     )
+
+
+_HOSTNAME = re.compile(r"^[A-Za-z0-9_\[][A-Za-z0-9._:%\[\]-]*$")
+
+
+def render_hostname(template: str, values: dict[str, Any]) -> str:
+    """Fill a templated ad-hoc host name (``"{{server}}"``, ``"db-{{n}}.corp"``)
+    from param values and check the result is a plain host name or IP — no
+    spaces, ``@`` or a leading ``-`` that ssh could read as an option. A name
+    with no placeholder is returned unchanged. Raises ``ValueError``."""
+    if not placeholders(template):
+        return template
+    out = render(template, values).strip()
+    if not _HOSTNAME.match(out):
+        raise ValueError(f"'{out}' isn't a valid host name")
+    return out
 
 
 def glob_escape(text: str) -> str:

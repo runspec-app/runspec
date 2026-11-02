@@ -4,11 +4,11 @@ import { PlusOutlined, DeleteOutlined, CalendarOutlined, PlayCircleOutlined, Edi
 import type { Credential, Host, SavedTransfer, SavedTransferPreview, TransferEnd, TransferProgress } from '../bridge'
 import { bridge } from '../bridge'
 import { ParamRow, paramModalWidth } from './RunbookRunModal'
-import { humanBytes } from './FilterPicker'
+import { FilterPicker, humanBytes } from './FilterPicker'
 import { MONO_FONT } from '../ThemeContext'
 import {
   type ParamRowState, detectDates, templatizeDates, widenToRotations, missingParams,
-  rowsFromParams, paramsFromRows, slugify, defaultValues,
+  rowsFromParams, paramsFromRows, slugify, defaultValues, filterParamName, isPlaceholder,
 } from './savedTransfers'
 
 const { Text } = Typography
@@ -65,6 +65,7 @@ export function SaveTransferModal({ initial, replaceId, hosts, workspacePath, on
   const [destMode, setDestMode] = useState<'workspace' | 'folder'>(initial.dest_dir && !(initial.to_host || initial.to_group || initial.to_adhoc) ? 'folder' : 'workspace')
   const [destDir, setDestDir] = useState(initial.dest_dir ?? '')
   const [subdir, setSubdir] = useState(initial.subdir ?? '')
+  const [filterName, setFilterName] = useState(initial.filter ?? '')
   const [filterArg, setFilterArg] = useState(initial.filter_arg ?? '')
   const [autonomy, setAutonomy] = useState(initial.autonomy ?? 'confirm')
   const [saving, setSaving] = useState(false)
@@ -72,7 +73,11 @@ export function SaveTransferModal({ initial, replaceId, hosts, workspacePath, on
 
   const paths = pathsText.split('\n').map(p => p.trim()).filter(Boolean)
   const dates = detectDates(paths)
-  const missing = missingParams([...paths, subdir, remoteDest || destMode === 'folder' ? destDir : '', filterArg], rows)
+  const missing = missingParams(
+    [...paths, subdir, remoteDest || destMode === 'folder' ? destDir : '', filterName ? filterArg : ''],
+    rows,
+    [kind === 'adhoc' ? adhoc : '', toKind === 'adhoc' ? toAdhoc : ''],
+  )
   const remoteDirOk = !remoteDest || destDir.trim().startsWith('/')
   const canWiden = paths.some(p => widenToRotations(p) !== p)
 
@@ -95,8 +100,8 @@ export function SaveTransferModal({ initial, replaceId, hosts, workspacePath, on
       paramsRaw: paramsFromRows(rows),
       latest: latest || undefined,
       max_files: maxFiles || undefined,
-      filter: initial.filter || undefined,
-      filter_arg: initial.filter ? (filterArg || undefined) : undefined,
+      filter: filterName || undefined,
+      filter_arg: filterName ? (filterArg || undefined) : undefined,
       dest_dir: remoteDest || destMode === 'folder' ? destDir.trim() || undefined : undefined,
       subdir: subdir.trim() || undefined,
       autonomy,
@@ -160,7 +165,7 @@ export function SaveTransferModal({ initial, replaceId, hosts, workspacePath, on
             {kind === 'group' && <Select size="small" value={group || undefined} onChange={setGroup} placeholder="group" style={{ minWidth: 170 }} options={groupNames.map(g => ({ label: g, value: g }))} />}
             {kind === 'adhoc' && (
               <>
-                <Input size="small" value={adhoc} onChange={e => setAdhoc(e.target.value)} placeholder="target hostname" style={{ width: 170, fontFamily: MONO_FONT }} />
+                <Input size="small" value={adhoc} onChange={e => setAdhoc(e.target.value)} placeholder="hostname or {{host}}" style={{ width: 170, fontFamily: MONO_FONT }} />
                 <Select size="small" value={jump || undefined} onChange={v => setJump(v ?? '')} allowClear placeholder="jump host (optional)" style={{ minWidth: 150 }} options={hostOptions} />
                 <Input size="small" value={user} onChange={e => setUser(e.target.value)} placeholder="user (optional)" style={{ width: 120 }} />
                 {creds.length > 0 && (
@@ -172,7 +177,7 @@ export function SaveTransferModal({ initial, replaceId, hosts, workspacePath, on
           </div>
           {kind === 'local' && hint('Upload files from here. Relative paths are read from the chat workspace (from documents/transfers/<id> when a schedule runs it).')}
           {kind === 'group' && hint('Each host’s files land in a folder named after the host.')}
-          {kind === 'adhoc' && hint('Key/agent auth, or a saved credential — a typed password is never saved.')}
+          {kind === 'adhoc' && hint(<>Key/agent auth, or a saved credential — a typed password is never saved. Write <Text code>{'{{host}}'}</Text> (or any param) as the hostname to ask for the host each run.</>)}
         </div>
 
         <div>
@@ -248,7 +253,7 @@ export function SaveTransferModal({ initial, replaceId, hosts, workspacePath, on
             {toKind === 'group' && <Select size="small" value={toGroup || undefined} onChange={setToGroup} placeholder="group" style={{ minWidth: 170 }} options={groupNames.map(g => ({ label: g, value: g }))} />}
             {toKind === 'adhoc' && (
               <>
-                <Input size="small" value={toAdhoc} onChange={e => setToAdhoc(e.target.value)} placeholder="target hostname" style={{ width: 170, fontFamily: MONO_FONT }} />
+                <Input size="small" value={toAdhoc} onChange={e => setToAdhoc(e.target.value)} placeholder="hostname or {{host}}" style={{ width: 170, fontFamily: MONO_FONT }} />
                 <Select size="small" value={toJump || undefined} onChange={v => setToJump(v ?? '')} allowClear placeholder="jump host (optional)" style={{ minWidth: 150 }} options={hostOptions} />
                 <Input size="small" value={toUser} onChange={e => setToUser(e.target.value)} placeholder="user (optional)" style={{ width: 120 }} />
                 {creds.length > 0 && (
@@ -279,13 +284,22 @@ export function SaveTransferModal({ initial, replaceId, hosts, workspacePath, on
           {!remoteDest && destMode === 'workspace' && workspacePath && hint('Files land where the agent can read them.')}
         </div>
 
-        {initial.filter && (
-          <div>
-            {label(`Filter: ${initial.filter}`)}
-            <Input size="small" value={filterArg} onChange={e => setFilterArg(e.target.value)} addonBefore="value" placeholder="{{txn}}" style={{ fontFamily: MONO_FONT, marginTop: 4 }} />
-            {hint('Leave blank if the filter takes no value; placeholders work here too.')}
-          </div>
-        )}
+        <FilterPicker
+          filterName={filterName}
+          filterArg={filterArg}
+          onFilterName={setFilterName}
+          onFilterArg={setFilterArg}
+          argExtra={f => !isPlaceholder(filterArg) && (
+            <Button size="small" onClick={() => {
+              const name = filterParamName(f.param_label, rows)
+              setRows(r => [...r, { name, default: filterArg.trim(), description: f.param_label || `${f.name} value` }])
+              setFilterArg(`{{${name}}}`)
+            }}>
+              Ask for {f.param_label ? `“${f.param_label}”` : 'it'} each run
+            </Button>
+          )}
+          note={filterName ? <>The value can be a placeholder such as <Text code>{'{{txn}}'}</Text>, filled in each run.</> : undefined}
+        />
 
         <div>
           {label('When the agent runs it')}
