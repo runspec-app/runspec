@@ -311,6 +311,24 @@ def test_adhoc_source_descriptor(env):
     }
 
 
+def test_templated_adhoc_source(env):
+    _write(env.remote / "web-03/a.log", "a")
+    _save(
+        env,
+        id="any",
+        adhoc="{{host}}",
+        paths=[f"{env.remote}/{{{{host}}}}/a.log"],
+        params={"host": {"required": True}},
+    )
+    res = env.run_saved_transfer("any", {"host": "web-03"})
+    detail = _wait(env, res["id"])
+    assert env.opened[-1]["host"] == "web-03"
+    assert detail["saved"]["unmatched"] == []
+    assert (env.ws / "a.log").read_text() == "a"
+    bad = env.run_saved_transfer("any", {"host": "-oProxyCommand=x"})
+    assert "isn't a valid host name" in bad["error"]
+
+
 def test_agent_tool_schema_autonomy_and_result(env):
     assert env._saved_transfer_tools() == []
     assert "run_saved_transfer" in _BUILTIN_TOOL_NAMES

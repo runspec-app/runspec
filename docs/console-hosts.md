@@ -417,12 +417,21 @@ scenario's path patterns, which you can edit:
 
 The source can be one host, **every host in a group** (each host's files land
 in a folder named after it), or an **ad-hoc host** (jump, user and a saved
-credential are kept; a typed password never is). Files go to the chat's
-workspace unless you pick a folder, with an optional subfolder that can use
-placeholders too. **Newest** keeps only the newest N matches per path, and
+credential are kept; a typed password never is). An ad-hoc host name can be a
+parameter, such as `{{host}}`, so one scenario reaches whichever host you name
+when it runs. **Add host** adds the parameter. A parameter called `host` can
+only be used as an ad-hoc host name, and it then fills `{{host}}` everywhere.
+Files go to the chat's workspace unless you pick a folder, with an optional
+subfolder that can use placeholders too. **Newest** keeps only the newest N matches per path, and
 **Max files** (default 50 per host) refuses a run that would fetch more,
 rather than cutting the list short. If two matches share a file name, each
 keeps its folder below the common parent so nothing is overwritten.
+
+**Filter:** pick one of your saved [filters](#file-transfer-filters) in the
+scenario to cut each file down on the source before it is copied. If the
+filter takes a value, type a fixed one, or click **Ask for "…" each run** to
+turn it into a parameter named after the filter's value label. The value then
+reads `{{transaction_id}}`, and whatever you had typed becomes the default.
 
 **Run one:** the **Saved** row at the top of the dialog lists them. **Run…**
 asks for the parameters; **Preview** lists the matching files, sizes and
@@ -442,11 +451,24 @@ paths       = ["/var/log/app/app-{{day:%Y-%m-%d}}*.log"]
 subdir      = "logs/{{day:%Y-%m-%d}}"
 latest      = 0                         # 0 = every match, N = newest N per path
 max_files   = 50
-filter      = "id-lines"                # optional, with filter_arg = "{{txn}}"
+filter      = "id-lines"                # optional saved filter
+filter_arg  = "{{txn}}"                 # its value, if it takes one
 autonomy    = "autonomous"              # what the agent may do: confirm (default) / autonomous / manual
 
 [saved_transfer.params]
 day = { default = "yesterday", description = "today, yesterday, -3d or a date" }
+txn = { description = "Transaction ID" }
+```
+
+```toml
+[[saved_transfer]]
+id     = "any-host-app-log"
+adhoc  = "{{host}}"                     # the host is asked for each run
+jump   = "bastion"
+paths  = ["/var/log/app/app.log"]
+
+[saved_transfer.params]
+host = { description = "Host to read from" }
 ```
 
 The agent runs them with `run_saved_transfer` (`id`, `values`, and

@@ -434,6 +434,13 @@ class SavedTransfersMixin:
             entry = replace(entry, dest_dir=self._scheduled_transfer_dir(entry.id))
         try:
             vals = st_mod.resolve_values(entry, values)
+            # A templated ad-hoc host is filled in here, so everything after
+            # (connections, {{host}}, labels) sees the real name.
+            entry = replace(
+                entry,
+                adhoc=st_mod.render_hostname(entry.adhoc, vals),
+                to_adhoc=st_mod.render_hostname(entry.to_adhoc, vals),
+            )
         except ValueError as exc:
             return str(exc)
         if entry.filter and self._filter_entry(entry.filter) is None:

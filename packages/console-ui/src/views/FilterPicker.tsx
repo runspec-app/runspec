@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Button, Modal, Select, Input, Typography } from 'antd'
 import { FilterOutlined } from '@ant-design/icons'
 import { bridge, type Filter } from '../bridge'
@@ -27,11 +27,18 @@ export function FilterPicker({
   filterArg,
   onFilterName,
   onFilterArg,
+  argExtra,
+  note,
 }: {
   filterName: string
   filterArg: string
   onFilterName: (name: string) => void
   onFilterArg: (arg: string) => void
+  // Shown beside the value box of a filter that takes one (the saved-transfer
+  // editor's "ask each run" button).
+  argExtra?: (filter: Filter) => ReactNode
+  // A line under the picker.
+  note?: ReactNode
 }) {
   const [filters, setFilters] = useState<Filter[]>([])
   const [manageOpen, setManageOpen] = useState(false)
@@ -69,6 +76,7 @@ export function FilterPicker({
             style={{ width: 220, fontFamily: MONO_FONT }}
           />
         )}
+        {needsArg && selected && argExtra?.(selected)}
         <Button size="small" type="link" icon={<FilterOutlined />} onClick={() => setManageOpen(true)}>
           Manage filters…
         </Button>
@@ -76,6 +84,7 @@ export function FilterPicker({
       {selected?.description && (
         <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>{selected.description}</Text>
       )}
+      {note && <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>{note}</Text>}
       <Modal
         open={manageOpen}
         title="Filters"

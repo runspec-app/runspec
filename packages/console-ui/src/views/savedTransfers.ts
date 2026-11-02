@@ -49,10 +49,30 @@ export function placeholderNames(texts: string[]): string[] {
 export const BUILTIN_PLACEHOLDERS = ['today', 'yesterday', 'now', 'host']
 
 // Params used in templates but not declared (and not built-ins) — offered as
-// rows so the operator never has to type a name twice.
-export function missingParams(texts: string[], rows: ParamRowState[]): string[] {
+// rows so the operator never has to type a name twice. `hostTexts` are ad-hoc
+// host names: there even {{host}} must be a declared param (the built-ins are
+// dates, or the host itself).
+export function missingParams(texts: string[], rows: ParamRowState[], hostTexts: string[] = []): string[] {
   const declared = new Set(rows.map(r => r.name.trim().replace(/-/g, '_')))
-  return placeholderNames(texts).filter(n => !declared.has(n.replace(/-/g, '_')) && !BUILTIN_PLACEHOLDERS.includes(n))
+  const undeclared = (n: string) => !declared.has(n.replace(/-/g, '_'))
+  const out = placeholderNames(texts).filter(n => undeclared(n) && !BUILTIN_PLACEHOLDERS.includes(n))
+  for (const n of placeholderNames(hostTexts)) if (undeclared(n) && !out.includes(n)) out.push(n)
+  return out
+}
+
+// A param name for a filter's value, from the filter's value label
+// ("Transaction ID" → transaction_id), not clashing with an existing row.
+export function filterParamName(label: string | undefined, rows: ParamRowState[]): string {
+  const base = slugify(label ?? '').replace(/-/g, '_').replace(/^(\d)/, '_$1') || 'value'
+  const taken = new Set(rows.map(r => r.name.trim().replace(/-/g, '_')))
+  let name = base
+  for (let i = 2; taken.has(name); i++) name = `${base}_${i}`
+  return name
+}
+
+// Whether a filter value is already a single {{param}} placeholder.
+export function isPlaceholder(text: string): boolean {
+  return /^\s*\{\{\s*[A-Za-z_][\w-]*\s*(?::[^}]*)?\}\}\s*$/.test(text)
 }
 
 // Stored params table → editor rows.
