@@ -253,15 +253,97 @@ def apply_header_credentials(
             headers[name] = secret
 
 
-def _proxy_http_factory(proxy_url: str | dict[str, Any]) -> Any:
+def _stdlib_ssl_context_class() -> type:
+    """The standard library's ``ssl.SSLContext``, even when something has put
+    a subclass in its place (``truststore.inject_into_ssl()``, gevent…)."""
+    import ssl
+
+    for cls in ssl.SSLContext.__mro__:
+        if cls.__module__ == "ssl" and cls.__name__ == "SSLContext":
+            return cls
+    return ssl.SSLContext
+
+
+_tls_note_logged = False
+
+
+def tls_verify_context() -> Any:
+    """The ``verify=`` context to give the MCP client's httpx2, or ``None`` to
+    keep httpx2's own default.
+
+    httpx2's default (no ``SSL_CERT_FILE``/``SSL_CERT_DIR``) is its own copy of
+    ``truststore``. When a *different* truststore copy was injected into
+    ``ssl`` before that one loaded — ``pip-system-certs`` does this at
+    interpreter start with pip's vendored truststore — the second copy takes
+    the first one's class for the stdlib ``SSLContext``. On Windows its
+    handshake then sets ``verify_mode`` through the stdlib property, which
+    looks ``ssl.SSLContext`` up again and calls itself until Python gives up:
+    ``start_tls failed exception=RecursionError``. So when ``ssl.SSLContext``
+    has been replaced, build the context the same way the rest of the process
+    does (``ssl.create_default_context()``, i.e. through whatever was
+    injected), which never touches httpx2's truststore copy."""
+    import ssl
+
+    if ssl.SSLContext is _stdlib_ssl_context_class():
+        return None
+    if os.environ.get("SSL_CERT_FILE") or os.environ.get("SSL_CERT_DIR"):
+        return None  # httpx2 already uses ssl.create_default_context() here
+    global _tls_note_logged
+    if not _tls_note_logged:
+        _tls_note_logged = True
+        logger.info(
+            "ssl.SSLContext is replaced by %s.%s; MCP HTTPS connections use "
+            "ssl.create_default_context() instead of httpx2's truststore",
+            ssl.SSLContext.__module__,
+            ssl.SSLContext.__qualname__,
+        )
+    return ssl.create_default_context()
+
+
+def _default_http_factory(verify: Any) -> Any:
+    """mcp's ``create_mcp_http_client`` (same timeouts, redirects left to the
+    transport) with an explicit ``verify`` context — see ``tls_verify_context``."""
+    try:
+        import httpx2 as httpx
+    except ImportError:
+        import httpx
+
+    try:
+        from mcp.shared._httpx_utils import (
+            MCP_DEFAULT_SSE_READ_TIMEOUT,
+            MCP_DEFAULT_TIMEOUT,
+        )
+    except Exception:  # noqa: BLE001 — fall back to MCP's documented defaults
+        MCP_DEFAULT_TIMEOUT, MCP_DEFAULT_SSE_READ_TIMEOUT = 30.0, 300.0
+
+    def factory(headers: Any = None, timeout: Any = None, auth: Any = None) -> Any:
+        kwargs: dict[str, Any] = {"verify": verify}
+        kwargs["timeout"] = (
+            timeout
+            if timeout is not None
+            else httpx.Timeout(MCP_DEFAULT_TIMEOUT, read=MCP_DEFAULT_SSE_READ_TIMEOUT)
+        )
+        if headers is not None:
+            kwargs["headers"] = headers
+        if auth is not None:
+            kwargs["auth"] = auth
+        return httpx.AsyncClient(**kwargs)
+
+    return factory
+
+
+def _proxy_http_factory(proxy_url: str | dict[str, Any], verify: Any = None) -> Any:
     """An ``httpx_client_factory`` (also directly callable) that builds an httpx
     AsyncClient routed through ``proxy_url``, with MCP's SSE-friendly defaults
     (follow-redirects + long read timeout). ``proxy_url`` may instead be a dict
     of extra client kwargs (``netproxy.httpx_kwargs``: ``{"proxy": …}`` or
     ``{"trust_env": False}``). Used only when a server sets a ``proxy`` or the
     console-wide ``[http]`` proxy is manual/direct — otherwise mcp's own client
-    factory is kept."""
+    factory is kept. ``verify`` (when set) is the TLS context from
+    ``tls_verify_context``."""
     extra = dict(proxy_url) if isinstance(proxy_url, dict) else {"proxy": proxy_url}
+    if verify is not None:
+        extra["verify"] = verify
     try:  # mcp 2.x moved to httpx2 (an httpx-compatible fork); older used httpx
         import httpx2 as httpx
     except ImportError:
@@ -556,15 +638,23 @@ class McpManager:
         # A per-server proxy wins; otherwise the console-wide [http] route
         # ({} in system mode ⇒ mcp's own client, which reads the env).
         route: str | dict[str, Any] = proxy or netproxy.httpx_kwargs(url)
+        verify = tls_verify_context()
+        factory = (
+            _proxy_http_factory(route, verify=verify)
+            if route
+            else _default_http_factory(verify)
+            if verify is not None
+            else None
+        )
         if transport == "sse":
             from mcp.client.sse import sse_client
 
-            if route:
+            if factory is not None:
                 return await stack.enter_async_context(
                     sse_client(
                         url,
                         headers=headers or None,
-                        httpx_client_factory=_proxy_http_factory(route),
+                        httpx_client_factory=factory,
                     )
                 )
             return await stack.enter_async_context(
@@ -577,9 +667,9 @@ class McpManager:
         )
 
         http_client = None
-        if route:
+        if factory is not None:
             http_client = await stack.enter_async_context(
-                _proxy_http_factory(route)(headers=headers or None)
+                factory(headers=headers or None)
             )
         elif headers:
             http_client = await stack.enter_async_context(
