@@ -263,6 +263,8 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
     // A local folder other than the chat workspace is kept; the workspace default is not
     // (it changes per chat — the scenario follows whichever chat runs it).
     dest_dir: dstKind !== 'local' ? destDir.trim() : destDir && destDir !== workspacePath ? destDir : undefined,
+    // The dialog's "Rename on …" carries over (it only shows for one file).
+    dest_name: sourcePaths.length === 1 ? (destName.trim() || undefined) : undefined,
   })
   const selectedSaved = saved.find(t => t.id === savedId)
   const deleteSaved = async (id: string) => {

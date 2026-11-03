@@ -372,3 +372,22 @@ def test_render_hostname(template, values, expected):
 def test_render_hostname_rejects(value):
     with pytest.raises(ValueError):
         st.render_hostname("{{h}}", {"h": value})
+
+
+def test_dest_name_round_trip_and_rename():
+    entry = st.parse_saved_transfer(
+        {"id": "r", "host": "h", "paths": ["/x"], "dest_name": " out-{{today}}.log "}
+    )
+    assert entry.dest_name == "out-{{today}}.log"
+    assert st.entry_to_row(entry)["dest_name"] == "out-{{today}}.log"
+    assert "dest_name" not in st.entry_to_row(
+        st.parse_saved_transfer({"id": "r", "host": "h", "paths": ["/x"]})
+    )
+    one = [st.RemoteFile("/a/b.log")]
+    assert st.dest_names(one, "c.log") == ["c.log"]
+    assert st.dest_names([], "c.log") == []
+    with pytest.raises(ValueError, match="2 files matched"):
+        st.dest_names(one * 2, "c.log", "r")
+    for bad in ("a/b", "a\\b", "..", "C:x", "  "):
+        with pytest.raises(ValueError):
+            st.safe_filename(bad)

@@ -27,6 +27,7 @@ Either way ``dest_dir`` is then an absolute folder on the destination host.
   filter_arg  = "{{txn}}"              # its {{arg}} value — a template too
   dest_dir    = ""                     # local folder; "" = the chat's workspace
   subdir      = "logs/{{day:%Y%m%d}}"  # optional, relative, under dest
+  dest_name   = ""                     # optional: save the one file under this name
   autonomy    = "confirm"              # agent gate: confirm | autonomous | manual
 
   [saved_transfer.params]              # open params — the runspec arg grammar
@@ -45,7 +46,13 @@ An ad-hoc destination uses the same keys with a ``to_`` prefix.
   to_group = "web"
   dest_dir = "/srv/app/incoming"
 
-**Templates.** ``paths``, ``subdir``, ``dest_dir`` and ``filter_arg`` take
+**Rename.** ``dest_name`` saves the file under a name of your own (a bare
+filename, a template like the rest: ``"orders-{{txn}}-{{day:%Y%m%d}}.log"``),
+so several scenarios can extract from one remote file into different local
+files. It renames one file: a run that matches more than one file per source
+fails before copying anything (set ``latest = 1`` or narrow the pattern).
+
+**Templates.** ``paths``, ``subdir``, ``dest_dir``, ``dest_name`` and ``filter_arg`` take
 ``{{name}}`` / ``{{name:FORMAT}}`` placeholders. ``name`` is a param, or one of
 the built-ins ``today`` / ``yesterday`` / ``now`` / ``host`` (the remote host
 being worked on: the source for a pull or relay, the destination for a push).
@@ -139,6 +146,7 @@ class SavedTransfer:
     filter_arg: str = ""
     dest_dir: str = ""
     subdir: str = ""
+    dest_name: str = ""
     autonomy: str = "confirm"
     params: dict[str, Any] = field(default_factory=dict)
 
@@ -178,7 +186,8 @@ class SavedTransfer:
             base = f"{self.target_summary()}:{self.dest_dir}"
         else:
             base = self.dest_dir or "chat workspace"
-        return f"{base}/{self.subdir}" if self.subdir else base
+        base = f"{base}/{self.subdir}" if self.subdir else base
+        return f"{base}/{self.dest_name}" if self.dest_name else base
 
 
 def _int(value: Any, what: str, sid: str) -> int:
@@ -309,6 +318,7 @@ def parse_saved_transfer(data: dict[str, Any]) -> SavedTransfer:
         filter_arg=str(data.get("filter_arg") or ""),
         dest_dir=str(data.get("dest_dir") or "").strip(),
         subdir=str(data.get("subdir") or "").strip(),
+        dest_name=str(data.get("dest_name") or "").strip(),
         autonomy=autonomy,
         params=params,
     )
@@ -316,7 +326,13 @@ def parse_saved_transfer(data: dict[str, Any]) -> SavedTransfer:
     # Every placeholder must name a param or a built-in — caught at save time so
     # a typo doesn't surface only when someone runs the scenario.
     known = {_norm(p) for p in params} | set(BUILTINS)
-    for text in (*paths, entry.subdir, entry.dest_dir, entry.filter_arg):
+    for text in (
+        *paths,
+        entry.subdir,
+        entry.dest_dir,
+        entry.dest_name,
+        entry.filter_arg,
+    ):
         for name, _fmt in placeholders(text):
             if _norm(name) not in known:
                 raise ValueError(
@@ -349,6 +365,13 @@ def parse_saved_transfer(data: dict[str, Any]) -> SavedTransfer:
             f"saved transfer '{sid}': copying to a remote host needs dest_dir, an "
             "absolute folder on that host (e.g. /srv/app/incoming)"
         )
+    if entry.dest_name:
+        try:
+            # The literal text around the placeholders must already be a bare
+            # name; the rendered value is checked again at run time.
+            safe_filename(re.sub(r"\{\{[^}]*\}\}", "x", entry.dest_name))
+        except ValueError as exc:
+            raise ValueError(f"saved transfer '{sid}': {exc}") from None
     if entry.subdir and entry.subdir.replace("\\", "/").startswith("/"):
         raise ValueError(
             f"saved transfer '{sid}': subdir must be relative (use dest_dir for "
@@ -379,7 +402,7 @@ def entry_to_row(entry: SavedTransfer) -> dict[str, Any]:
         row["latest"] = entry.latest
     if entry.max_files != DEFAULT_MAX_FILES:
         row["max_files"] = entry.max_files
-    for key in ("filter", "filter_arg", "dest_dir", "subdir"):
+    for key in ("filter", "filter_arg", "dest_dir", "subdir", "dest_name"):
         if getattr(entry, key):
             row[key] = getattr(entry, key)
     if entry.autonomy != "confirm":
@@ -537,6 +560,24 @@ def safe_subdir(text: str) -> str:
     return "/".join(parts)
 
 
+def safe_filename(text: str) -> str:
+    """Validate a rendered ``dest_name`` — a bare filename, no folder part.
+    Returns it stripped."""
+    name = text.strip()
+    if not name:
+        raise ValueError("the new filename is empty")
+    if (
+        re.search(r"[\\/]", name)
+        or name in (".", "..")
+        or re.match(r"^[A-Za-z]:", name)
+    ):
+        raise ValueError(
+            f"the new filename '{name}' must be a bare filename, not a path "
+            "(use subdir for a folder)"
+        )
+    return name
+
+
 # ── wildcard expansion (remote, injected I/O) ──────────────────────────────────
 
 
@@ -671,10 +712,22 @@ def _basename(path: str) -> str:
     return path.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
 
 
-def dest_names(files: list[RemoteFile]) -> list[str]:
+def dest_names(files: list[RemoteFile], rename: str = "", sid: str = "") -> list[str]:
     """Relative destination path for each file: its basename, unless two
     selected files share a basename — then every file keeps its path relative
-    to the common folder of all of them, so nothing overwrites anything."""
+    to the common folder of all of them, so nothing overwrites anything.
+
+    ``rename`` (a rendered ``dest_name``) saves the one file under that name;
+    with more than one file it raises ``ValueError``."""
+    if rename:
+        name = safe_filename(rename)
+        if len(files) > 1:
+            raise ValueError(
+                f"saved transfer '{sid}' saves to one file name ({name}) but "
+                f"{len(files)} files matched — set latest = 1 or narrow the "
+                "pattern"
+            )
+        return [name for _ in files]
     names = [_basename(f.path) for f in files]
     if len(set(names)) == len(names):
         return names
