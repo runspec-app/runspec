@@ -179,6 +179,21 @@ proxy; for a `stdio` server it's exported to the subprocess as `HTTPS_PROXY` /
 `HTTP_PROXY` / `ALL_PROXY` (so a local server that itself calls out uses it too).
 Leave it unset to use the machine's default egress.
 
+## HTTPS servers
+
+`http` and `sse` servers can use `https://` URLs. The certificate is checked
+against the operating system's trust store, so a company root CA deployed to
+Windows works without extra settings. To use a PEM bundle instead, set
+`SSL_CERT_FILE` (or `SSL_CERT_DIR`) in the console's environment.
+
+If the console's venv has a package that swaps in its own certificate handling
+at startup, such as `pip-system-certs`, the MCP client uses that one for HTTPS
+too (from 0.371.1; before that, a connection failed on Windows with
+`start_tls failed exception=RecursionError`).
+
+The console's own [MCP server](console-mcp-server.md), the one Claude Code
+connects to, is plain `http://127.0.0.1` on loopback and has no HTTPS option.
+
 ## Config seed & sync
 
 `[mcp]` lives in `config.toml`, which is one of the files carried by **Config

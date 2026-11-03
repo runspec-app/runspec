@@ -149,6 +149,125 @@ def test_normalize_proxy_adds_scheme_and_passes_through():
     assert mcp_client.normalize_proxy(None) == ""
 
 
+# ── TLS: an ssl module with truststore (or similar) injected ────────────────
+
+
+def test_tls_verify_context_none_when_ssl_untouched(monkeypatch):
+    monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+    monkeypatch.delenv("SSL_CERT_DIR", raising=False)
+    assert mcp_client.tls_verify_context() is None
+
+
+def test_tls_verify_context_uses_injected_class(monkeypatch):
+    import ssl
+
+    stdlib = ssl.SSLContext
+    base = super(stdlib, stdlib)
+
+    def _passthrough(name: str) -> property:
+        # Like truststore: set through the C base, never ssl.py's property
+        # (which looks ssl.SSLContext up again and would recurse).
+        return property(
+            lambda self: getattr(base, name).__get__(self),
+            lambda self, v: getattr(base, name).__set__(self, v),
+        )
+
+    # What truststore.inject_into_ssl() leaves behind as ssl.SSLContext.
+    Injected = type(
+        "Injected",
+        (stdlib,),
+        {n: _passthrough(n) for n in ("options", "verify_flags", "verify_mode")},
+    )
+
+    monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+    monkeypatch.delenv("SSL_CERT_DIR", raising=False)
+    monkeypatch.setattr(ssl, "SSLContext", Injected)
+    assert mcp_client._stdlib_ssl_context_class() is stdlib
+    ctx = mcp_client.tls_verify_context()
+    assert isinstance(ctx, Injected)
+    assert ctx.verify_mode == ssl.CERT_REQUIRED and ctx.check_hostname
+
+
+def test_tls_verify_context_leaves_ssl_cert_file_to_httpx(monkeypatch):
+    import ssl
+
+    monkeypatch.setattr(ssl, "SSLContext", type("Injected", (ssl.SSLContext,), {}))
+    monkeypatch.setenv("SSL_CERT_FILE", "/some/bundle.pem")
+    assert mcp_client.tls_verify_context() is None
+
+
+def test_http_factories_pass_verify_through(monkeypatch):
+    pytest.importorskip("httpx2")
+    import httpx2
+
+    seen: list[dict] = []
+    monkeypatch.setattr(httpx2, "AsyncClient", lambda **kw: seen.append(kw) or kw)
+    ctx = object()
+    mcp_client._default_http_factory(ctx)(headers={"a": "b"})
+    mcp_client._proxy_http_factory("http://p:3128", verify=ctx)()
+    mcp_client._proxy_http_factory("http://p:3128")()
+    assert seen[0]["verify"] is ctx and seen[0]["headers"] == {"a": "b"}
+    assert "follow_redirects" not in seen[0]  # like mcp's own client
+    assert seen[1]["verify"] is ctx and seen[1]["proxy"] == "http://p:3128"
+    assert "verify" not in seen[2]
+
+
+_TWO_TRUSTSTORES = """
+import shutil, ssl, sys
+import truststore as _probe  # locate the installed copy, then forget it
+src = _probe.__path__[0]
+for name in [m for m in sys.modules if m == "truststore" or m.startswith("truststore.")]:
+    del sys.modules[name]
+shutil.copytree(src, sys.argv[1] + "/truststore_a")
+sys.path.insert(0, sys.argv[1])
+
+# pip-system-certs: inject pip's vendored truststore at interpreter start …
+import truststore_a
+truststore_a.inject_into_ssl()
+# … then httpx2 imports the standalone copy, which takes truststore_a's class
+# for the stdlib SSLContext. Its Windows handshake sets verify_mode this way:
+import truststore
+from truststore._ssl_constants import _set_ssl_context_verify_mode
+plain = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)._ctx
+try:
+    _set_ssl_context_verify_mode(plain, ssl.CERT_NONE)
+    print("BUG-NOT-REPRODUCED")
+except RecursionError:
+    print("BUG-REPRODUCED")
+
+from runspec_console import mcp_client
+ctx = mcp_client.tls_verify_context()
+assert isinstance(ctx, truststore_a.SSLContext), type(ctx)
+ctx.verify_mode = ssl.CERT_REQUIRED  # no recursion through the injected class
+print("FIXED")
+"""
+
+
+def test_two_truststore_copies_get_the_injected_context(tmp_path):
+    """Reproduces the Windows ``start_tls failed exception=RecursionError``
+    precondition with two truststore copies, and checks the MCP client avoids
+    httpx2's copy. Runs in a subprocess: the injection is process-wide."""
+    import os
+    import subprocess
+
+    pytest.importorskip("truststore")
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("SSL_CERT_FILE", "SSL_CERT_DIR")
+    }
+    out = subprocess.run(
+        [sys.executable, "-c", _TWO_TRUSTSTORES, str(tmp_path)],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=60,
+        check=False,
+    )
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.split() == ["BUG-REPRODUCED", "FIXED"]
+
+
 # ── pure: credential header application ──────────────────────────────────────
 
 

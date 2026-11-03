@@ -9,6 +9,20 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.371.1] — 2026-11-03
+
+### Fixed
+- **HTTPS MCP servers on Windows with `pip-system-certs` installed.** Connecting
+  to an `https://` server in Settings → MCP failed with `start_tls failed
+  exception=RecursionError('maximum recursion depth exceeded')`. That package
+  replaces `ssl.SSLContext` with pip's copy of `truststore` when Python starts;
+  the MCP library then loads its own copy of `truststore`, which takes pip's
+  class for the standard one, and on Windows the handshake calls itself until
+  Python gives up. When `ssl.SSLContext` has been replaced, the MCP client now
+  builds its TLS context with `ssl.create_default_context()`, the same way the
+  rest of the console does, so the second copy is never used
+  (`mcp_client.tls_verify_context`). Nothing changes when `ssl` is untouched.
+
 ## [0.371.0] — 2026-11-02
 
 ### Added
