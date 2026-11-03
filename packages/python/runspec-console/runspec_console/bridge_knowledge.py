@@ -703,12 +703,7 @@ class KnowledgeMixin:
         except Exception as exc:  # noqa: BLE001
             logger.warning("knowledge capture: history read failed", exc_info=True)
             return {"ok": False, "error": f"could not read run history: {exc}"}
-        try:
-            with self._lock:  # type: ignore[attr-defined]
-                records = list(getattr(self, "_runnables_cache", []) or [])
-        except Exception:  # noqa: BLE001
-            records = []
-        facts = kn.observe(history, defaults=kn.arg_defaults(records))
+        facts = kn.observe(history)
         cfg = self._knowledge_config()
         catalog = self._knowledge_catalog(cfg)
         facts += kn.observe_config(**cfg, catalog=catalog)

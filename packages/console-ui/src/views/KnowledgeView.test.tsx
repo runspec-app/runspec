@@ -8,8 +8,10 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { GraphCanvas, KnowledgeView, staleCheck } from './KnowledgeView'
 import type { KnowledgeFact } from '../bridge'
 
-const { overview, page, review, distill, pin } = vi.hoisted(() => ({
+const { overview, page, review, distill, pin, search, retire } = vi.hoisted(() => ({
   pin: vi.fn(),
+  search: vi.fn(),
+  retire: vi.fn(),
   overview: vi.fn(),
   page: vi.fn(),
   review: vi.fn(),
@@ -24,6 +26,8 @@ vi.mock('../bridge', () => ({
       if (p === 'knowledge_review') return review
       if (p === 'knowledge_distill') return distill
       if (p === 'knowledge_pin') return pin
+      if (p === 'knowledge_search') return search
+      if (p === 'knowledge_retire') return retire
       return vi.fn(async () => ({ ok: true }))
     },
   }),
@@ -36,6 +40,8 @@ const fact = (id: string, text: string, about: string[], status = 'approved') =>
 
 beforeEach(() => {
   overview.mockReset(); page.mockReset(); review.mockReset(); distill.mockReset(); pin.mockReset()
+  search.mockReset(); retire.mockReset()
+  retire.mockResolvedValue({ ok: true })
   pin.mockResolvedValue({ ok: true })
   overview.mockResolvedValue({
     stats: { approved: 1, observed: 0, pending: 1, retired: 0, entities: 3, fts: true },
@@ -71,6 +77,24 @@ describe('KnowledgeView', () => {
     await waitFor(() => expect(screen.getByText('orders logs live in /var/log/orders')).toBeTruthy())
     fireEvent.click(screen.getByLabelText('Pin fact'))
     await waitFor(() => expect(pin).toHaveBeenCalledWith('k_1', true))
+  })
+
+  it('a retired fact leaves the search results and the open page', async () => {
+    const keep = fact('k_keep', 'orders config is in /etc/orders', ['app:orders'])
+    const gone = fact('k_gone', 'orders logs live in /var/log/orders', ['app:orders'], 'observed')
+    search.mockResolvedValueOnce([gone, keep]).mockResolvedValue([keep])
+    render(<KnowledgeView active aiEnabled />)
+    await waitFor(() => expect(overview).toHaveBeenCalled())
+    const box = screen.getByPlaceholderText(/Search the wiki/)
+    fireEvent.change(box, { target: { value: 'orders' } })
+    fireEvent.keyDown(box, { key: 'Enter', code: 'Enter', keyCode: 13 })
+    await waitFor(() => expect(screen.getByText('2 result(s) for “orders”')).toBeTruthy())
+    fireEvent.click(screen.getAllByLabelText('Retire fact')[0])
+    fireEvent.click(await screen.findByText('OK'))
+    await waitFor(() => expect(retire).toHaveBeenCalledWith('k_gone'))
+    await waitFor(() => expect(screen.queryByText('orders logs live in /var/log/orders')).toBeNull())
+    expect(screen.getByText('1 result(s) for “orders”')).toBeTruthy()
+    expect(search).toHaveBeenCalledTimes(2) // re-run after the write
   })
 
   it('draws the graph and opens a page on click', async () => {

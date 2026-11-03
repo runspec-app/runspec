@@ -19,7 +19,7 @@ text   orders logs are in /var/log/orders/app.log on web-01
 Entities are written `type:name`. The types the tab colours are `host`, `group`,
 `profile`, `runnable`, `file`, `term` (team jargon), `app`, `service`, `team`,
 `trigger`, `schedule`, `runbook` and `topic`. A fact's **kind** is one of `location`, `glossary`, `pairing`, `host`,
-`effect` (knock-on effects), `arg-habit`, `procedure` or `note`.
+`effect` (knock-on effects), `arg-habit` (kept for older facts; Capture no longer makes them), `procedure` or `note`.
 
 Each entity gets a page listing every fact about it, the entities it links to, and
 who contributed. The same fact proposed twice, or by two people, is recognised and
@@ -32,7 +32,7 @@ wiki is meant to be shared.
 
 | Source | How | Goes to |
 |---|---|---|
-| **Capture** | Mines run history over the range picked next to the button (7, 30 or 90 days, or all history; 30 by default): the arguments a runnable is usually run with (never a username, email or run-as account, or a value that is your own account, since those differ per person, and never an argument left at the runnable's own default) and what usually runs after what. Also reads your config: what each trigger and schedule runs and where, what each runbook is for and which runnables it uses, and the saved file filters. Which hosts a runnable runs on, and which hosts are in each group and profile, are left out: History, the sidebar and the agent's `search_history` / `console_status` already show them. No AI. Also re-runs on its own, in the background, over the same range, when the tab opens and the last capture is over an hour old; the tab opens straight away and refreshes when it lands. | The wiki, marked *observed* |
+| **Capture** | Mines run history over the range picked next to the button (7, 30 or 90 days, or all history; 30 by default) for what usually runs after what (the same person running B within 15 minutes of A, at least 3 times). The arguments people usually pass are left out: which project, space or path someone picks is their habit, not a fact about the tool. Also reads your config: what each trigger and schedule runs and where, what each runbook is for and which runnables it uses, and the saved file filters. Which hosts a runnable runs on, and which hosts are in each group and profile, are left out: History, the sidebar and the agent's `search_history` / `console_status` already show them. No AI. Also re-runs on its own, in the background, over the same range, when the tab opens and the last capture is over an hour old; the tab opens straight away and refreshes when it lands. | The wiki, marked *observed* |
 | **Built in** | Ships with the console: what runspec is, the `runspec.toml` format, how to write a runnable (the `add-runnable` skill's steps) or install one from the Marketplace, what each console feature does, and every built-in agent tool. | The wiki, marked source *seed* |
 | **The agent** | `propose_fact`, whenever it learns something reusable | The inbox |
 | **Claude Code** (via the [console MCP server](console-mcp-server.md)) | the same `propose_fact` tool | The inbox |

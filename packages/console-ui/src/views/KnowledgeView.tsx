@@ -81,6 +81,10 @@ export function KnowledgeView({ active, aiEnabled, onOpenSettings }: KnowledgeVi
   const [page, setPage] = useState<KnowledgePage | null>(null)
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<KnowledgeFact[] | null>(null)
+  // The query and results the side panel shows now, so a write can re-run the
+  // search (a retired or edited fact must leave the list, not linger in it).
+  const searchRef = useRef<{ query: string; open: boolean }>({ query: '', open: false })
+  searchRef.current.open = results !== null
   const [hidden, setHidden] = useState<Set<string>>(new Set())
   const [hideStale, setHideStale] = useState(false)
   const [busy, setBusy] = useState<'' | 'capture' | 'distill'>('')
@@ -109,17 +113,33 @@ export function KnowledgeView({ active, aiEnabled, onOpenSettings }: KnowledgeVi
   useEffect(() => { if (active) refresh() }, [active, refresh])
   useEffect(() => { loadPage(selected) }, [selected, loadPage])
 
+  // Re-run the open search, if any, after a write.
+  const rerunSearch = useCallback(async () => {
+    const { query: q, open } = searchRef.current
+    if (!open || !q.trim()) return
+    try {
+      const fresh = await bridge.knowledge_search(q)
+      if (searchRef.current.open && searchRef.current.query === q) setResults(fresh)
+    } catch { /* keep what is shown */ }
+  }, [])
+
   // The backend emits this after any write (agent, MCP client or this tab).
   useEffect(() => {
-    const onUpdate = () => { refresh(); loadPage(selected) }
+    const onUpdate = () => { refresh(); loadPage(selected); rerunSearch() }
     window.addEventListener('runspec:knowledge_updated', onUpdate)
     return () => window.removeEventListener('runspec:knowledge_updated', onUpdate)
-  }, [refresh, loadPage, selected])
+  }, [refresh, loadPage, rerunSearch, selected])
 
   const runSearch = async (q: string) => {
     setQuery(q)
+    searchRef.current.query = q
     if (!q.trim()) { setResults(null); return }
     try { setResults(await bridge.knowledge_search(q)) } catch { setResults([]) }
+  }
+
+  // After any write: the counts and graph, the open page, and the open search.
+  const reloadAll = async () => {
+    await Promise.all([refresh(), loadPage(selected), rerunSearch()])
   }
 
   const capture = async () => {
@@ -151,10 +171,16 @@ export function KnowledgeView({ active, aiEnabled, onOpenSettings }: KnowledgeVi
   }
 
   const retire = async (fact: KnowledgeFact) => {
-    await bridge.knowledge_retire(fact.id)
-    message.success('Fact retired.')
-    await refresh()
-    await loadPage(selected)
+    const r = await bridge.knowledge_retire(fact.id)
+    if (!r.ok) {
+      message.error('That fact no longer exists.')
+    } else {
+      // Drop it from what is on screen straight away; the reload confirms it.
+      setResults(prev => (prev ? prev.filter(f => f.id !== fact.id) : prev))
+      setPage(prev => (prev ? { ...prev, facts: prev.facts.filter(f => f.id !== fact.id) } : prev))
+      message.success('Fact retired.')
+    }
+    await reloadAll()
   }
 
   const pin = async (fact: KnowledgeFact, on: boolean) => {
@@ -168,8 +194,7 @@ export function KnowledgeView({ active, aiEnabled, onOpenSettings }: KnowledgeVi
   const review = async (fact: KnowledgeFact, approve: boolean) => {
     const r = await bridge.knowledge_review(fact.id, approve)
     if (!r.ok) message.error(r.error || 'Review failed.')
-    await refresh()
-    await loadPage(selected)
+    await reloadAll()
   }
 
   const types = overview?.entity_types ?? []
@@ -313,7 +338,7 @@ export function KnowledgeView({ active, aiEnabled, onOpenSettings }: KnowledgeVi
           suggestions={entitySuggestions}
           defaultAbout={editing.fact ? undefined : selected}
           onClose={() => setEditing(null)}
-          onSaved={async () => { setEditing(null); await refresh(); await loadPage(selected) }}
+          onSaved={async () => { setEditing(null); await reloadAll() }}
         />
       )}
     </div>

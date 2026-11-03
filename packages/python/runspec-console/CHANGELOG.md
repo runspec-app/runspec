@@ -9,6 +9,34 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.372.0] — 2026-11-03
+
+### Changed
+- **Capture no longer records the arguments a runnable is usually run with.**
+  The "X is usually run with arg = value" facts described one person's or one
+  team's habits (their project, their space, their paths), not the tool, and
+  rode every `search_runnables` row to the agent as if they were advice. Capture
+  now keeps only what generalises: which runnable usually follows which (from
+  run history), and how triggers, schedules, runbooks and file filters are set
+  up (from config). The next capture drops the old habit facts from the wiki;
+  any you approved or edited stay until you retire them. Suggest from chats is
+  told the same: no "usually run with" facts, and `arg-habit` is no longer
+  offered as a kind (`kn.observe`, `kn.build_distill_prompt`).
+- **A pairing fact no longer carries its run count in the text** ("b is often
+  run after a." — the count is the ×N shown beside it), so it keeps one id from
+  capture to capture.
+
+### Fixed
+- **A deleted (retired) fact stayed on screen.** Retiring a fact from search
+  results left it in the list: the tab reloaded the graph and the open page but
+  never re-ran the search. It now drops from the results and the page at once,
+  and the search re-runs after any write (retire, edit, review, or a change from
+  the agent or Claude Code).
+- **A deleted captured fact came back.** Its id was a hash of its text, and the
+  text included the run count, so the hourly background capture re-created it
+  under a new id. Counts are out of the text now, and a capture retired before
+  this release stays hidden too (`kn.capture_key`).
+
 ## [0.371.1] — 2026-11-03
 
 ### Fixed

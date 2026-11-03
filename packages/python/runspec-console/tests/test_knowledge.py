@@ -196,14 +196,16 @@ def _run(runnable, ts, host="web-01", op="jason", args=None, rid=None):
     }
 
 
-def test_observe_mines_habits_and_pairings(kn):
+def test_observe_mines_pairings_not_arg_habits(kn):
+    """Capture keeps how tools chain; the args someone usually passes are their
+    habit (project, space, path, account), never a fact."""
     hist = []
     for day in range(1, 5):
         hist.append(
             _run(
                 "tail-log",
                 f"2026-10-0{day}T09:00:00+00:00",
-                args={"path": "/var/log/app.log", "lines": 100 + day},
+                args={"path": "/var/log/app.log", "space": "OPS", "username": "jason"},
             )
         )
         hist.append(
@@ -215,94 +217,73 @@ def test_observe_mines_habits_and_pairings(kn):
         )
     hist.append(_run("chat", "2026-10-01T10:00:00+00:00"))
     facts = kn.observe(hist)
-    texts = [f["text"] for f in facts]
-    assert any(
-        "tail-log is usually run with path = '/var/log/app.log'" in t for t in texts
-    )
-    assert not any("lines" in t for t in texts)  # varies every run
+    assert [f["text"] for f in facts] == [
+        "restart-service is often run after tail-log."
+    ]
+    assert not any(f["kind"] == "arg-habit" for f in facts)
     # Where a runnable runs is History's job, not a fact (it swamped the wiki).
-    assert not any(" is used on " in t for t in texts)
     assert not any(f["kind"] == "host" for f in facts)
-    assert any(
-        "restart-service is often run after tail-log (4 times)" in t for t in texts
-    )
-    habit = next(f for f in facts if "path =" in f["text"])
-    assert "file:/var/log/app.log" in habit["about"]
-    assert habit["status"] == "observed" and habit["confirmations"] == 4
-    assert (
-        habit["first_seen"] == "2026-10-01" and habit["last_confirmed"] == "2026-10-04"
-    )
+    pair = facts[0]
+    assert pair["status"] == "observed" and pair["confirmations"] == 4
+    assert pair["first_seen"] == "2026-10-01" and pair["last_confirmed"] == "2026-10-04"
     assert kn.observe(hist) == facts  # deterministic
     assert kn.observe(hist[:2]) == []  # below threshold
 
 
-def test_observe_skips_per_person_args(kn):
-    """A username, email or run-as value differs per person, so it never becomes
-    a habit fact — by arg name, or because the value is the operator's account."""
-    hist = [
-        _run(
-            "tool-one",
-            f"2026-10-0{day}T09:00:00+00:00",
-            args={
-                "username": "jason",
-                "user-email": "jason@corp.com",
-                "run_as": "svc-app",
-                "target": "CORP\\Jason",  # the operator, by value
-                "space": "OPS",
-            },
-        )
-        for day in range(1, 5)
-    ]
-    texts = [f["text"] for f in kn.observe(hist)]
-    habits = [t for t in texts if "usually run with" in t]
-    assert habits == ["tool-one is usually run with space = 'OPS' (4 of 4 runs)."]
+def test_pairing_id_is_stable_across_counts(kn):
+    """The run count lives in confirmations, not the text, so one more run keeps
+    the same id — pins and retirements stick from capture to capture."""
+
+    def hist(days):
+        out = []
+        for day in range(1, days + 1):
+            out.append(_run("a", f"2026-10-0{day}T09:00:00+00:00"))
+            out.append(_run("b", f"2026-10-0{day}T09:01:00+00:00"))
+        return out
+
+    four, five = kn.observe(hist(4)), kn.observe(hist(5))
+    assert four[0]["id"] == five[0]["id"]
+    assert (four[0]["confirmations"], five[0]["confirmations"]) == (4, 5)
 
 
-def test_observe_skips_unchanged_defaults(kn):
-    """An arg left at the runnable's declared default is not a habit — only a
-    value the operator actually chose is. Subcommands inherit parent defaults."""
-    records = [
-        {
-            "name": "report",
-            "args": [
-                {"name": "format", "default": "json"},
-                {"name": "verbose", "default": False},
-                {"name": "space"},
-            ],
-            "commands": {
-                "send": {"args": [{"name": "--max-rows", "default": 100}]},
-            },
-        }
-    ]
-    defaults = kn.arg_defaults(records)
-    assert defaults["report"] == {"format": {"json"}, "verbose": {"False"}}
-    assert defaults["report send"]["max_rows"] == {"100"}
-    assert defaults["report send"]["format"] == {"json"}
-
-    hist = []
-    for day in range(1, 5):
-        hist.append(
-            _run(
-                "report",
-                f"2026-10-0{day}T09:00:00+00:00",
-                args={"format": "json", "space": "OPS"},
-            )
-        )
-        r = _run(
-            "report",
-            f"2026-10-0{day}T10:00:00+00:00",
-            args={"format": "csv", "max-rows": 100},
-        )
-        r["commandPath"] = ["send"]
-        hist.append(r)
-    texts = [f["text"] for f in kn.observe(hist, defaults=defaults)]
-    habits = sorted(t for t in texts if "usually run with" in t)
-    assert habits == [
-        "report is usually run with space = 'OPS' (4 of 4 runs).",
-        "report send is usually run with format = 'csv' (4 of 4 runs).",
-    ]
-    # Without the defaults the unchanged ones would show up.
-    assert any("format = 'json'" in f["text"] for f in kn.observe(hist))
+def test_deleted_capture_stays_deleted(kn, tmp_path):
+    """Retiring a captured fact hides it after the next capture too — including
+    one retired before 0.372.0, whose text still carried the run count."""
+    store = kn.KnowledgeStore(tmp_path / "knowledge", seed=False)
+    old = kn.make_fact(
+        kind="pairing",
+        about=["runnable:a", "runnable:b"],
+        text="b is often run after a (4 times).",
+        status="observed",
+        source="capture",
+    )
+    store.write_observed([old])
+    assert store.retire(old["id"])
+    fresh = kn.make_fact(
+        kind="pairing",
+        about=["runnable:a", "runnable:b"],
+        text="b is often run after a.",
+        status="observed",
+        source="capture",
+    )
+    other = kn.make_fact(
+        kind="pairing",
+        about=["runnable:c", "runnable:d"],
+        text="d is often run after c.",
+        status="observed",
+        source="capture",
+    )
+    store.write_observed([fresh, other])
+    live = [f for f in store.all_facts() if f.get("status") != "retired"]
+    assert [f["text"] for f in live] == ["d is often run after c."]
+    idx = store.index()
+    try:
+        assert [f["text"] for f in idx.search("often run after")] == [
+            "d is often run after c."
+        ]
+        assert idx.page("runnable:a")["facts"] == []
+    finally:
+        idx.close()
 
 
 def test_parse_distill(kn):
@@ -459,8 +440,12 @@ def test_tool_roundtrip_and_sources(bridge_stub):
 
 def test_overview_captures_and_operator_facts(bridge_stub):
     bridge_stub.history = [
-        _run("tail-log", f"2026-10-0{d}T09:00:00+00:00", args={"path": "/var/log/a"})
+        r
         for d in range(1, 5)
+        for r in (
+            _run("tail-log", f"2026-10-0{d}T09:00:00+00:00"),
+            _run("restart-service", f"2026-10-0{d}T09:01:00+00:00"),
+        )
     ]
     ov = bridge_stub.knowledge_overview()
     assert ov["capturing"] is True  # in the background, so the tab paints at once
