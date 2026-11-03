@@ -491,6 +491,8 @@ class SavedTransfersMixin:
                     )
             if entry.subdir:
                 st_mod.safe_subdir(st_mod.render(entry.subdir, vals, host="h"))
+            if entry.dest_name:
+                st_mod.safe_filename(st_mod.render(entry.dest_name, vals, host="h"))
             if entry.filter_arg:
                 st_mod.render(entry.filter_arg, vals, host="h")
         except ValueError as exc:
@@ -598,9 +600,10 @@ class SavedTransfersMixin:
             )
         root = self._saved_transfer_root(entry, vals, host, dest_root)
         base = st_mod.local_join(root, sub) if sub else root
+        rename = self._saved_transfer_rename(entry, vals, host, now)
         items = [
             (f, st_mod.local_join(base, rel))
-            for f, rel in zip(chosen, st_mod.dest_names(chosen))
+            for f, rel in zip(chosen, st_mod.dest_names(chosen, rename, entry.id))
         ]
         return {"items": items, "unmatched": unmatched}
 
@@ -641,7 +644,25 @@ class SavedTransfersMixin:
             sub = st_mod.safe_subdir(st_mod.render(entry.subdir, vals, host=host))
             if sub:
                 base = posixpath.join(base, sub)
-        return [posixpath.join(base, rel) for rel in st_mod.dest_names(files)]
+        rename = SavedTransfersMixin._saved_transfer_rename(entry, vals, host)
+        return [
+            posixpath.join(base, rel)
+            for rel in st_mod.dest_names(files, rename, entry.id)
+        ]
+
+    @staticmethod
+    def _saved_transfer_rename(
+        entry: st_mod.SavedTransfer,
+        vals: dict[str, Any],
+        host: str,
+        now: datetime | None = None,
+    ) -> str:
+        """The rendered ``dest_name`` for one host ("" = keep each file's name)."""
+        if not entry.dest_name:
+            return ""
+        return st_mod.safe_filename(
+            st_mod.render(entry.dest_name, vals, host=host, now=now)
+        )
 
     @staticmethod
     def _saved_transfer_target_text(plan: _Plan) -> str:

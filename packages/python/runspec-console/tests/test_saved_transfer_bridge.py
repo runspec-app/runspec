@@ -125,6 +125,7 @@ def env(tmp_path, monkeypatch):
     ns._saved_transfer_root = Bridge._saved_transfer_root
     ns._saved_transfer_files = Bridge._saved_transfer_files
     ns._saved_transfer_remote_dests = Bridge._saved_transfer_remote_dests
+    ns._saved_transfer_rename = Bridge._saved_transfer_rename
     ns._saved_transfer_target_text = Bridge._saved_transfer_target_text
     ns._scheduled_transfer_dir = Bridge._scheduled_transfer_dir
     ns.cards = []
@@ -569,3 +570,95 @@ def test_scheduled_push_reads_from_documents(env, tmp_path, monkeypatch):
     card = _wait_card(env)
     assert card["column"] == "done", card
     assert (drop / "export.csv").read_text() == "e"
+
+
+def test_dest_name_saves_under_a_chosen_name(env):
+    log = env.remote / "var/log/app.log"
+    _write(log, "all of it")
+    for sid, txn in (("orders", "A1"), ("refunds", "B2")):
+        _save(
+            env,
+            id=sid,
+            host="web-01",
+            paths=[str(log)],
+            dest_name=f"{sid}-{{{{txn}}}}-{{{{day:%Y%m%d}}}}.log",
+            params={"txn": {"required": True}, "day": {"default": "today"}},
+        )
+    # Two scenarios read one remote file into two different local files.
+    for sid, txn in (("orders", "A1"), ("refunds", "B2")):
+        vals = {"txn": txn, "day": "2026-10-28"}
+        prev = env.preview_saved_transfer(sid, vals)
+        assert prev["sources"][0]["files"][0]["dest"].endswith(
+            f"{sid}-{txn}-20261028.log"
+        )
+        detail = _wait(env, env.run_saved_transfer(sid, vals)["id"])
+        assert detail["ok"], detail
+    assert sorted(os.listdir(env.ws)) == [
+        "orders-A1-20261028.log",
+        "refunds-B2-20261028.log",
+    ]
+    assert (env.ws / "orders-A1-20261028.log").read_text() == "all of it"
+    assert st.parse_saved_transfer(st.load_saved_transfer("orders")).dest_summary() == (
+        "chat workspace/orders-{{txn}}-{{day:%Y%m%d}}.log"
+    )
+
+
+def test_dest_name_needs_one_file(env):
+    _write(env.remote / "m/a.log", "a", 100)
+    _write(env.remote / "m/b.log", "b", 200)
+    _save(env, id="two", host="h", paths=[f"{env.remote}/m/*.log"], dest_name="x.log")
+    prev = env.preview_saved_transfer("two")
+    assert "2 files matched" in prev["sources"][0]["error"]
+    detail = _wait(env, env.run_saved_transfer("two")["id"])
+    assert not detail["ok"]
+    assert not any(env.ws.iterdir())  # nothing copied
+    # latest = 1 picks the newest and renames it
+    _save(
+        env,
+        id="one",
+        host="h",
+        paths=[f"{env.remote}/m/*.log"],
+        latest=1,
+        dest_name="newest.log",
+    )
+    detail = _wait(env, env.run_saved_transfer("one")["id"])
+    assert detail["ok"], detail
+    assert (env.ws / "newest.log").read_text() == "b"
+
+
+def test_dest_name_must_be_a_bare_name(env):
+    res = env.save_saved_transfer(
+        {"id": "bad", "host": "h", "paths": ["/x"], "dest_name": "sub/x.log"}
+    )
+    assert "bare filename" in res["error"]
+    res = env.save_saved_transfer(
+        {"id": "bad", "host": "h", "paths": ["/x"], "dest_name": "{{nope}}.log"}
+    )
+    assert "no param named 'nope'" in res["error"]
+    # a param value can't smuggle in a folder either
+    _write(env.remote / "x.log")
+    _save(
+        env,
+        id="p",
+        host="h",
+        paths=[f"{env.remote}/x.log"],
+        dest_name="{{name}}",
+        params={"name": {"required": True}},
+    )
+    assert "bare filename" in env.run_saved_transfer("p", {"name": "../evil"})["error"]
+
+
+def test_push_with_dest_name(env):
+    _write(env.ws / "report.csv", "r")
+    _save(
+        env,
+        id="up",
+        host="local",
+        paths=["report.csv"],
+        to_host="web-01",
+        dest_dir=f"{DST}/in",
+        dest_name="report-{{host}}.csv",
+    )
+    detail = _wait(env, env.run_saved_transfer("up")["id"])
+    assert detail["ok"], detail
+    assert (env.dst / "in" / "report-web-01.csv").read_text() == "r"

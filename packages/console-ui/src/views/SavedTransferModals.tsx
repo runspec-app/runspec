@@ -65,6 +65,7 @@ export function SaveTransferModal({ initial, replaceId, hosts, workspacePath, on
   const [destMode, setDestMode] = useState<'workspace' | 'folder'>(initial.dest_dir && !(initial.to_host || initial.to_group || initial.to_adhoc) ? 'folder' : 'workspace')
   const [destDir, setDestDir] = useState(initial.dest_dir ?? '')
   const [subdir, setSubdir] = useState(initial.subdir ?? '')
+  const [destName, setDestName] = useState(initial.dest_name ?? '')
   const [filterName, setFilterName] = useState(initial.filter ?? '')
   const [filterArg, setFilterArg] = useState(initial.filter_arg ?? '')
   const [autonomy, setAutonomy] = useState(initial.autonomy ?? 'confirm')
@@ -74,17 +75,19 @@ export function SaveTransferModal({ initial, replaceId, hosts, workspacePath, on
   const paths = pathsText.split('\n').map(p => p.trim()).filter(Boolean)
   const dates = detectDates(paths)
   const missing = missingParams(
-    [...paths, subdir, remoteDest || destMode === 'folder' ? destDir : '', filterName ? filterArg : ''],
+    [...paths, subdir, destName, remoteDest || destMode === 'folder' ? destDir : '', filterName ? filterArg : ''],
     rows,
     [kind === 'adhoc' ? adhoc : '', toKind === 'adhoc' ? toAdhoc : ''],
   )
   const remoteDirOk = !remoteDest || destDir.trim().startsWith('/')
+  const destNameBad = /[\\/]/.test(destName.replace(/\{\{[^}]*\}\}/g, 'x')) || ['.', '..'].includes(destName.trim())
   const canWiden = paths.some(p => widenToRotations(p) !== p)
 
   const useDateParam = () => {
     const name = rows.some(r => r.name === 'day') ? 'date' : 'day'
     setPathsText(templatizeDates(paths, name).join('\n'))
     setSubdir(s => templatizeDates([s], name)[0])
+    setDestName(s => templatizeDates([s], name)[0])
     setRows(r => [...r, { name, default: 'yesterday', description: 'today, yesterday, -3d or a date (YYYY-MM-DD)' }])
   }
 
@@ -104,6 +107,7 @@ export function SaveTransferModal({ initial, replaceId, hosts, workspacePath, on
       filter_arg: filterName ? (filterArg || undefined) : undefined,
       dest_dir: remoteDest || destMode === 'folder' ? destDir.trim() || undefined : undefined,
       subdir: subdir.trim() || undefined,
+      dest_name: destName.trim() || undefined,
       autonomy,
       ...(kind === 'local' ? { host: 'local' } : kind === 'host' ? { host } : kind === 'group' ? { group } : {
         adhoc: adhoc.trim(), jump: jump || undefined, user: user.trim() || undefined, credential_id: credentialId || undefined,
@@ -132,7 +136,7 @@ export function SaveTransferModal({ initial, replaceId, hosts, workspacePath, on
       onCancel={() => onClose()}
       onOk={save}
       okText="Save"
-      okButtonProps={{ loading: saving, disabled: !id.trim() || paths.length === 0 || !remoteDirOk }}
+      okButtonProps={{ loading: saving, disabled: !id.trim() || paths.length === 0 || !remoteDirOk || destNameBad }}
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <div style={{ display: 'flex', gap: 8 }}>
@@ -279,7 +283,12 @@ export function SaveTransferModal({ initial, replaceId, hosts, workspacePath, on
               </>
             )}
             <Input size="small" value={subdir} onChange={e => setSubdir(e.target.value)} addonBefore="subfolder" placeholder="optional, e.g. logs" style={{ width: 260, fontFamily: MONO_FONT }} />
+            <Input size="small" allowClear value={destName} onChange={e => setDestName(e.target.value)} addonBefore="save as"
+              placeholder="keep each file's name" status={destNameBad ? 'error' : undefined} aria-label="save as"
+              style={{ width: 300, fontFamily: MONO_FONT }} />
           </div>
+          {destName.trim() && hint(<>Saves the one matched file under this name. A run that matches more than one file fails{latest === 1 ? '' : ' — set “newest” to 1 if the pattern can match several'}. Use params like <Text code>{'{{txn}}'}</Text> to give each run its own file.</>)}
+          {destNameBad && <Text type="danger" style={{ fontSize: 12 }}>A file name only, no folder — use subfolder for that.</Text>}
           {remoteDest && hint(<>An absolute folder on the destination, made if missing. <Text code>{'{{host}}'}</Text> is {kind === 'local' ? 'each destination host' : 'the source host'}.{kind !== 'local' ? ' The files stream through this computer — the two hosts never connect.' : ''}</>)}
           {!remoteDest && destMode === 'workspace' && workspacePath && hint('Files land where the agent can read them.')}
         </div>

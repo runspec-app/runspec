@@ -120,6 +120,7 @@ export interface SavedTransfer {
   filter_arg?: string
   dest_dir?: string         // pull: local folder (unset = the chat's workspace); else the remote folder
   subdir?: string
+  dest_name?: string        // save the one matched file under this name (a template too)
   autonomy?: 'confirm' | 'autonomous' | 'manual'
   params?: ArgDef[]                   // parsed param defs (from get_saved_transfers)
   paramsRaw?: Record<string, unknown> // stored params table (faithful round-trip)

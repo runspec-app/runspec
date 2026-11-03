@@ -65,4 +65,20 @@ describe('SaveTransferModal', () => {
     expect(row.adhoc).toBe('{{host}}')
     expect(row.paramsRaw).toEqual({ host: {} })
   })
+
+  it('saves the file under a templated name', async () => {
+    const initial: SavedTransfer = { id: 'orders', host: 'prod-1', paths: ['/var/log/app.log'] }
+    render(<SaveTransferModal initial={initial} hosts={HOSTS} onClose={vi.fn()} />)
+    const saveAs = screen.getByLabelText('save as')
+    fireEvent.change(saveAs, { target: { value: 'logs/x.log' } })
+    expect(screen.getByText(/A file name only, no folder/)).toBeTruthy()
+    expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.change(saveAs, { target: { value: 'orders-{{txn}}.log' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add txn' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(saveSaved).toHaveBeenCalled())
+    const row = saveSaved.mock.calls[0][0]
+    expect(row.dest_name).toBe('orders-{{txn}}.log')
+    expect(row.paramsRaw).toEqual({ txn: {} })
+  })
 })

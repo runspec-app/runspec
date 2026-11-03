@@ -427,6 +427,15 @@ subfolder that can use placeholders too. **Newest** keeps only the newest N matc
 rather than cutting the list short. If two matches share a file name, each
 keeps its folder below the common parent so nothing is overwritten.
 
+**Save as** gives the file a name of your own instead of the source's, and
+takes placeholders too: `orders-{{txn}}-{{day:%Y%m%d}}.log`. The Transfer
+dialog's **Rename on this computer** carries over when you save a scenario.
+Several scenarios can then extract from the same remote file, each with its
+own filter, into different files. It names one file, so a run that matches
+more than one (per host) fails before copying anything; set **Newest** to 1
+if the path can match several. It is a file name only: put folders in the
+subfolder.
+
 **Filter:** pick one of your saved [filters](#file-transfer-filters) in the
 scenario to cut each file down on the source before it is copied. If the
 filter takes a value, type a fixed one, or click **Ask for "…" each run** to
@@ -449,6 +458,7 @@ title       = "App logs for a day"
 group       = "web"                     # or host = "web-01", or adhoc = "db7.corp"
 paths       = ["/var/log/app/app-{{day:%Y-%m-%d}}*.log"]
 subdir      = "logs/{{day:%Y-%m-%d}}"
+dest_name   = ""                        # optional: save the one file under this name
 latest      = 0                         # 0 = every match, N = newest N per path
 max_files   = 50
 filter      = "id-lines"                # optional saved filter

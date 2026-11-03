@@ -9,6 +9,21 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.373.0] — 2026-11-03
+
+### Added
+
+- **Saved transfers can save to a file name of your own.** A scenario's new
+  **Save as** field (`dest_name`) names the file it saves, instead of keeping
+  the source's name, and takes placeholders like the other fields
+  (`"orders-{{txn}}-{{day:%Y%m%d}}.log"`). So several scenarios can extract
+  from the same remote file, each with its own filter, into different files.
+  The Transfer dialog's **Rename on this computer** now carries over to
+  **Save as scenario**. It names one file: a run that matches more than one
+  file per host fails before copying anything (set **Newest** to 1). The name
+  must be a bare file name, checked again after a param fills it in. Works for
+  pulls, uploads and relays, and `manage_saved_transfers` knows the field.
+
 ## [0.372.0] — 2026-11-03
 
 ### Changed
