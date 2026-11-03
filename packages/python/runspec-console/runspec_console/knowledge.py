@@ -105,7 +105,7 @@ FACT_KINDS = (
     "pairing",  # tools that go together / run after one another
     "host",  # discovered info about a host, group or profile
     "effect",  # knock-on effects of changing something
-    "arg-habit",  # the args a runnable is usually run with
+    "arg-habit",  # the args a runnable is usually run with (no longer captured)
     "procedure",  # how the team does something (lighter than a runbook)
     "note",
 )
@@ -114,11 +114,7 @@ STATUSES = ("approved", "pending", "observed", "retired")
 
 # Mechanical-capture thresholds: a pattern must repeat this often to be worth a fact.
 MIN_RUNS = 3
-HABIT_SHARE = (
-    0.6  # an arg value must appear in at least this share of a runnable's runs
-)
 PAIR_WINDOW_S = 15 * 60  # "run after" = the same operator, within 15 minutes
-MAX_VALUE_LEN = 160
 
 _WORD = re.compile(r"[a-z0-9]+")
 
@@ -205,6 +201,20 @@ def secret_reason(text: str) -> str:
         if pat.search(text or ""):
             return what
     return ""
+
+
+_RUN_COUNT = re.compile(r"\s*\((?:\d+ of \d+ runs|\d+ times?)\)(?=\.?$)")
+
+
+def capture_key(fact: dict[str, Any]) -> tuple[str, tuple[str, ...], str]:
+    """A captured fact's identity without its run count, so "B is often run
+    after A (4 times)." and "B is often run after A." are the same fact."""
+    text = _RUN_COUNT.sub("", " ".join(str(fact.get("text") or "").split()))
+    return (
+        str(fact.get("kind") or ""),
+        tuple(sorted(str(a) for a in fact.get("about") or [])),
+        text,
+    )
 
 
 def make_fact(
@@ -454,9 +464,20 @@ class KnowledgeStore:
             merged[str(r.get("id"))] = dict(r)
         for r in self.team_facts():
             merged[str(r.get("id"))] = dict(r)
+        own = self.own_facts()
+        # A retired capture whose wording only differed by its run count (before
+        # 0.372.0 the count was in the text, so every capture minted a new id
+        # and a deleted fact came straight back) stays retired.
+        retired = {
+            capture_key(r)
+            for r in own
+            if r.get("status") == "retired" and r.get("source") == "capture"
+        }
         for r in self.observed():
+            if r.get("source") == "capture" and capture_key(r) in retired:
+                continue
             merged.setdefault(str(r.get("id")), dict(r))
-        for r in self.own_facts():
+        for r in own:
             rid = str(r.get("id"))
             team = merged.get(rid)
             row = dict(r)
@@ -1151,129 +1172,29 @@ def _parse_ts(ts: Any) -> datetime | None:
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
-# Arg names whose value says who ran it rather than how a runnable is used — a
-# username, an email, a run-as account. Those differ per person, so a habit
-# built on one ("search is usually run with username = jason") is only true for
-# whoever ran it and would be wrong in the team wiki.
-_PERSONAL_ARG_WORDS = frozenset(
-    {
-        "user",
-        "username",
-        "userid",
-        "uid",
-        "login",
-        "email",
-        "mail",
-        "upn",
-        "owner",
-        "account",
-        "principal",
-        "author",
-        "assignee",
-        "reporter",
-        "runas",
-    }
-)
-
-
-def _bare_account(v: str) -> str:
-    """``DOMAIN\\jason`` / ``jason@corp.com`` / ``Jason`` → ``jason``."""
-    v = v.strip().lower().rsplit("\\", 1)[-1]
-    return v.split("@", 1)[0]
-
-
-def _personal_arg(name: str, value: str, run: dict[str, Any]) -> bool:
-    """True when ``name = value`` describes the person running, not the run: the
-    arg is named like a user/account field, or its value is the operator's or
-    run-as account."""
-    norm = name.lower().replace("-", "_")
-    words = {w for w in norm.split("_") if w}
-    if words & _PERSONAL_ARG_WORDS or norm.replace("_", "") in _PERSONAL_ARG_WORDS:
-        return True
-    bare = _bare_account(value)
-    if not bare:
-        return False
-    people = {
-        _bare_account(str(run.get(k) or "")) for k in ("operator", "runAs", "user")
-    }
-    return bare in people - {""}
-
-
-def _looks_like_path(v: str) -> bool:
-    return (
-        bool(re.match(r"^(/[^\s]+|[A-Za-z]:[\\/][^\n]*|~/[^\s]+)$", v)) and len(v) > 2
-    )
-
-
-def _runnable_label(row: dict[str, Any]) -> str:
-    name = str(row.get("runnable") or "").strip()
-    path = [str(p) for p in (row.get("commandPath") or []) if str(p).strip()]
-    return " ".join([name, *path]) if path else name
-
-
-def _arg_key(name: str) -> str:
-    return str(name).strip().lstrip("-").replace("-", "_").lower()
-
-
-def _value_str(v: Any) -> str:
-    return ", ".join(map(str, v)) if isinstance(v, list) else str(v)
-
-
-def arg_defaults(records: list[dict[str, Any]]) -> dict[str, dict[str, set[str]]]:
-    """Each runnable's declared arg defaults, from discovered runnable records
-    (``_runnables_cache`` shape), keyed like ``_runnable_label``: ``name`` for
-    the top level and ``name sub …`` for each subcommand (which inherits its
-    parents' args). Values are stringified as ``observe`` stringifies history
-    args; a runnable found in several venvs keeps every default it declares."""
-    out: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
-
-    def walk(node: dict[str, Any], label: str, inherited: dict[str, set[str]]) -> None:
-        mine = {k: set(v) for k, v in inherited.items()}
-        for a in node.get("args") or []:
-            if not isinstance(a, dict) or not a.get("name") or "default" not in a:
-                continue
-            d = a.get("default")
-            if d is None:
-                continue
-            mine.setdefault(_arg_key(a["name"]), set()).add(_value_str(d))
-        for k, vals in mine.items():
-            out[label][k] |= vals
-        for seg, sub in (node.get("commands") or {}).items():
-            if isinstance(sub, dict):
-                walk(sub, f"{label} {seg}", mine)
-
-    for r in records or []:
-        if isinstance(r, dict) and r.get("name"):
-            walk(r, str(r["name"]), {})
-    return {k: dict(v) for k, v in out.items()}
-
-
 def observe(
     history: list[dict[str, Any]],
     *,
-    defaults: dict[str, dict[str, set[str]]] | None = None,
     min_runs: int = MIN_RUNS,
-    habit_share: float = HABIT_SHARE,
     pair_window_s: int = PAIR_WINDOW_S,
 ) -> list[dict[str, Any]]:
     """Mine run-history rows (``get_history_all`` shape) into ``observed`` facts:
+    **pairings** — runnable B is often run after A by the same operator within
+    ``pair_window_s`` (≥ ``min_runs`` times). That is how tools chain, which
+    holds whoever runs them.
 
-    * **arg habits** — a runnable is usually run with ``arg=value`` (a value seen
-      in ≥ ``habit_share`` of its runs, at least ``min_runs`` times); path values
-      also link a ``file:`` entity. Args that name the person running (a
-      username, email or run-as account, or a value equal to the operator) are
-      skipped: they differ per person, so they are never a team fact. So
-      are args left at the runnable's declared default (``defaults``, from
-      ``arg_defaults``) — "usually run with format = 'json'" when json is the
-      default says nothing,
-    * **pairings** — runnable B is often run after A by the same operator within
-      ``pair_window_s`` (≥ ``min_runs`` times).
+    Deliberately *not* facts:
 
-    Which runnable runs on which host is deliberately *not* a fact: History,
-    ``search_history`` and discovery already answer it, and as facts it buried
-    the wiki in "X is used on H" rows.
+    * the args a runnable is usually run with — they describe one person's or
+      one team's habits (their project, their space, their paths), not the
+      tool, and rode every search result to the agent as if they were advice
+      (removed in 0.372.0);
+    * which runnable runs on which host — History, ``search_history`` and
+      discovery already answer it, and as facts it buried the wiki.
 
-    Deterministic: same history → same facts (ids are content hashes)."""
+    The text carries no run count (that is ``confirmations``), so the same
+    pairing keeps one id from capture to capture and a retired one stays
+    retired. Deterministic: same history → same facts."""
     rows = [
         r
         for r in history
@@ -1310,47 +1231,6 @@ def observe(
         except ValueError:
             pass  # e.g. a value that looks like a secret — never stored
 
-    by_runnable: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for r in rows:
-        by_runnable[_runnable_label(r)].append(r)
-
-    for label, runs in sorted(by_runnable.items()):
-        base = str(runs[0].get("runnable"))
-        n = len(runs)
-        declared = (defaults or {}).get(label) or {}
-        # arg habits
-        if n >= min_runs:
-            values: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
-            for r in runs:
-                args = r.get("args") or {}
-                if not isinstance(args, dict):
-                    continue
-                for k, v in args.items():
-                    if v is None or v is False or v == "" or v == []:
-                        continue
-                    sv = _value_str(v)
-                    if len(sv) > MAX_VALUE_LEN:
-                        continue
-                    if sv in declared.get(_arg_key(str(k)), ()):
-                        continue  # unchanged default — not a habit
-                    if _personal_arg(str(k), sv, r):
-                        continue  # per-person, never a team fact
-                    values[(str(k), sv)].append(r)
-            for (k, sv), vruns in sorted(values.items()):
-                c = len(vruns)
-                if c >= min_runs and c / n >= habit_share:
-                    about = [f"runnable:{base}"]
-                    if _looks_like_path(sv):
-                        about.append(f"file:{sv}")
-                    shown = "on" if sv == "True" else repr(sv)
-                    add(
-                        "arg-habit",
-                        about,
-                        f"{label} is usually run with {k} = {shown} ({c} of {n} runs).",
-                        c,
-                        vruns,
-                    )
-
     # pairings: consecutive runs by the same operator inside the window
     seq = sorted(
         ((t, r) for r in rows if (t := _parse_ts(r.get("ts"))) is not None),
@@ -1372,7 +1252,7 @@ def observe(
             add(
                 "pairing",
                 [f"runnable:{a}", f"runnable:{b}"],
-                f"{b} is often run after {a} ({len(pruns)} times).",
+                f"{b} is often run after {a}.",
                 len(pruns),
                 pruns,
             )
@@ -1815,7 +1695,7 @@ def build_distill_prompt(
         transcript = render_turns(turns or [])[-max_chars:]
     known_block = "\n".join(f"- {k}" for k in known[:80]) or "(none yet)"
     entity_block = ", ".join((entities or [])[:300]) or "(none listed)"
-    kinds = ", ".join(FACT_KINDS)
+    kinds = ", ".join(k for k in FACT_KINDS if k != "arg-habit")
     types = ", ".join(ENTITY_TYPES)
     return (
         "You maintain a team knowledge wiki for an operations console. Read the "
@@ -1831,8 +1711,9 @@ def build_distill_prompt(
         "- Nothing that differs per person: no usernames, emails or accounts "
         "someone ran a tool as, and no 'X usually runs Y'. It must hold for "
         "everyone on the team.\n"
-        "- No argument values a tool already uses by default — only values "
-        "someone chose.\n"
+        "- No 'tool X is usually run with arg = value' facts: the project, "
+        "space, path or filter someone passes is their habit, not a fact about "
+        "the tool.\n"
         "- One or two sentences each, specific (name hosts, paths, runnables).\n"
         "- Skip anything already in the known list.\n"
         f"- kind is one of: {kinds}.\n"
