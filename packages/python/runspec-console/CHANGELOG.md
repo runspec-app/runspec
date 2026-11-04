@@ -9,6 +9,34 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.374.0] — 2026-11-04
+
+### Added
+
+- **Settings → Credentials helps you work out which credentials you need.**
+  A new **What your runnables need** column reads the runnables discovered on
+  the connected hosts and shows one card per service they read a credential
+  for (from each arg's `env` aliases), with the kinds that would match, the
+  exact names each sets, which runnables and hosts read them, and whether a
+  saved credential already covers it. **Add token** / **Add username +
+  password** opens the dialog pre-filled with a matching label; a `password`
+  arg with no env var gets a card that adds a credential bound to that
+  argument and scoped to the runnable. Non-secret vars under the same prefix
+  (`JIRA_URL`) are listed with a pointer to Env files.
+- Each saved credential now shows what it is **used by**: runnables (and why:
+  env var, bound argument or scope) and console features that name it
+  (Config Sync, Memory Sync, Repos, Marketplace indexes, MCP servers,
+  Telemetry, Network proxy, saved transfers). A credential nothing uses is
+  flagged, with a **Fix…** that suggests the label/kind it probably meant
+  (`Jira PAT` → `Jira`). A feature pointing at a deleted credential or one
+  with no secret is listed with a link to its tab.
+- The credential dialog shows live which runnables would pick the credential
+  up, or warns when none would.
+- New bridge methods `credential_guide()` / `credential_matches(entry)`,
+  backed by the pure `credguide` module. The unscoped-credential rule
+  (`Bridge._declared_use` / `_has_scope` / `_scope_matches`) now lives there
+  too, so the tab and the run path can't disagree.
+
 ## [0.373.0] — 2026-11-03
 
 ### Added

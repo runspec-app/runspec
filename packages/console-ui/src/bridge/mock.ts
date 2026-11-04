@@ -1245,7 +1245,53 @@ export const mockApi: BridgeApi = {
 
   list_credentials: async () => [
     { id: 'svc-prod', label: 'Service account (prod)', kind: 'userpass', username: 'svc_runner', username_arg: 'service-username', secret_arg: 'user-password', scope_hosts: ['prod-*'], scope_runnables: ['deploy'], has_secret: true },
+    { id: 'jira', label: 'Jira', kind: 'token', scope_hosts: [], scope_runnables: [], has_secret: true },
+    { id: 'gitlab-pat', label: 'GitLab PAT', kind: 'token', scope_hosts: [], scope_runnables: [], has_secret: true },
   ],
+  credential_guide: async () => ({
+    hosts: ['local', 'web-01', 'web-02'],
+    needs: [
+      { prefix: 'GITLAB', label: 'Gitlab', runnables: [{ name: 'gitlab', hosts: ['local'] }],
+        options: [{ kind: 'token', matches: ['GITLAB_TOKEN', 'GITLAB_PAT'], hint: 'GitLab personal access token.' }],
+        reads: ['GITLAB_PAT', 'GITLAB_TOKEN'], other_env: ['GITLAB_ENV', 'GITLAB_PROJECT', 'GITLAB_URL'], covered_by: [] },
+      { prefix: 'GRAFANA', label: 'Grafana', runnables: [{ name: 'grafana', hosts: ['local', 'web-01'] }],
+        options: [
+          { kind: 'token', matches: ['GRAFANA_TOKEN', 'GRAFANA_PAT'], hint: 'Service account token.' },
+          { kind: 'userpass', matches: ['GRAFANA_USERNAME', 'GRAFANA_USER', 'GRAFANA_PASSWORD'], hint: 'Basic-auth password.' },
+        ],
+        reads: ['GRAFANA_API_KEY', 'GRAFANA_PASSWORD', 'GRAFANA_PAT', 'GRAFANA_SERVICE_ACCOUNT_TOKEN', 'GRAFANA_TOKEN', 'GRAFANA_USER', 'GRAFANA_USERNAME'],
+        other_env: ['GRAFANA_ENV', 'GRAFANA_ORG_ID', 'GRAFANA_URL'], covered_by: [] },
+      { prefix: 'JIRA', label: 'Jira', runnables: [{ name: 'jira', hosts: ['local', 'web-01', 'web-02'] }],
+        options: [
+          { kind: 'token', matches: ['JIRA_TOKEN', 'JIRA_PAT'], hint: 'Jira Personal Access Token (Server/DC).' },
+          { kind: 'userpass', matches: ['JIRA_USERNAME', 'JIRA_USER', 'JIRA_PASSWORD'], hint: 'Basic-auth password or Cloud API token; overrides JIRA_API_TOKEN.' },
+        ],
+        reads: ['JIRA_API_TOKEN', 'JIRA_PASSWORD', 'JIRA_PAT', 'JIRA_PERSONAL_TOKEN', 'JIRA_TOKEN', 'JIRA_USER', 'JIRA_USERNAME'],
+        other_env: ['JIRA_ENV', 'JIRA_URL'], covered_by: [{ id: 'jira', label: 'Jira', has_secret: true }] },
+    ],
+    bindings: [
+      { runnable: 'deploy-app', hosts: ['web-01', 'web-02'], arg: 'password', username_arg: 'user', hint: 'Deploy account password.', label: 'Deploy App', covered_by: [] },
+    ],
+    usage: {
+      'svc-prod': { runnables: [{ name: 'deploy', hosts: ['prod-01'], via: 'scope', envs: [] }], features: [], hint: null },
+      jira: { runnables: [{ name: 'jira', hosts: ['local', 'web-01', 'web-02'], via: 'env', envs: ['JIRA_PAT', 'JIRA_TOKEN'] }], features: [{ feature: 'MCP server atlassian (X-Jira-Token header)', tab: 'mcp' }], hint: null },
+      'gitlab-pat': { runnables: [], features: [], hint: { label: 'Gitlab', kind: 'token', why: "the label 'GitLab PAT' sets GITLAB_PAT_…; the runnables read GITLAB_TOKEN, GITLAB_PAT" } },
+    },
+    features: [
+      { feature: 'MCP server atlassian (X-Jira-Token header)', tab: 'mcp', credential: 'jira', status: 'ok' },
+      { feature: 'Config Sync', tab: 'configSync', credential: 'config-repo', status: 'missing' },
+    ],
+  }),
+  credential_matches: async (entry) => {
+    const label = (entry.label ?? '').replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '').toUpperCase()
+    const known: Record<string, { name: string; hosts: string[] }> = {
+      JIRA: { name: 'jira', hosts: ['local', 'web-01', 'web-02'] }, GRAFANA: { name: 'grafana', hosts: ['local', 'web-01'] }, GITLAB: { name: 'gitlab', hosts: ['local'] },
+    }
+    const hit = known[label]
+    if (!hit || entry.kind === 'ssh-key') return []
+    const envs = entry.kind === 'token' ? [`${label}_PAT`, `${label}_TOKEN`] : entry.kind === 'userpass' ? [`${label}_PASSWORD`, `${label}_USER`, `${label}_USERNAME`] : [`${label}_PASSWORD`]
+    return [{ ...hit, via: 'env' as const, envs }]
+  },
   credentials_for_runnable: async (host, runnable) => { console.log('[mock] credentials_for_runnable', host, runnable); return [{ id: 'svc-prod', label: 'Service account (prod)', has_secret: true, secret_arg: 'password', username_arg: '', username: '' }] },
   save_credential: async (entry) => { console.log('[mock] save_credential', { ...entry, secret: entry.secret ? '***' : undefined }); return { id: entry.id || 'mock-' + Date.now() } },
   delete_credential: async (id) => { console.log('[mock] delete_credential', id) },
