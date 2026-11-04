@@ -9,6 +9,16 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.374.1] — 2026-11-04
+
+### Fixed
+
+- **A wide sub-table on a Console card can be scrolled sideways.** When a run
+  printed a JSON object and you expanded one of its keys into a table wider
+  than the window, the extra columns were cut off with no way to reach them.
+  The object view's value column now shrinks to the card, so the sub-table
+  scrolls horizontally inside it (`JsonObject` `minmax(0, 1fr)`).
+
 ## [0.374.0] — 2026-11-04
 
 ### Added

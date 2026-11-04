@@ -394,14 +394,17 @@ function JsonTable({ rows }: { rows: Record<string, unknown>[] }) {
   )
 }
 
-/** Key-value view for JSON objects. */
+/** Key-value view for JSON objects. The value column is `minmax(0, 1fr)` and its
+ *  cells `minWidth: 0` so an expanded sub-table wider than the card scrolls inside
+ *  its own `overflowX: auto` wrapper; a plain `1fr` column grows to the table's
+ *  width instead, and the card (`overflow: hidden`) clips the rest unreachably. */
 function JsonObject({ obj }: { obj: Record<string, unknown> }) {
   const c = useCardTheme()
   return (
-    <div style={{ padding: '8px 14px', display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '4px 16px', fontFamily: MONO_FONT, fontSize: 13 }}>
+    <div style={{ padding: '8px 14px', display: 'grid', gridTemplateColumns: 'max-content minmax(0, 1fr)', gap: '4px 16px', fontFamily: MONO_FONT, fontSize: 13 }}>
       {Object.entries(obj).map(([k, v]) => [
         <span key={`k-${k}`} style={{ color: c.tableHead, whiteSpace: 'nowrap' }}>{k.replace(/_/g, ' ')}</span>,
-        <span key={`v-${k}`} style={{ color: c.mono }}><JsonCell keyName={k} value={v} /></span>,
+        <span key={`v-${k}`} style={{ color: c.mono, minWidth: 0 }}><JsonCell keyName={k} value={v} /></span>,
       ])}
     </div>
   )
