@@ -52,3 +52,22 @@ describe('JsonTable row cap', () => {
     expect(screen.queryByText(/show .* more/)).toBeNull()
   })
 })
+
+describe('JsonObject wide sub-table', () => {
+  // A key-value object whose value expands into a sub-table. The value column
+  // must be allowed to shrink below the table's width (minmax(0, 1fr) +
+  // minWidth 0) so the sub-table's own overflowX wrapper scrolls; a plain `1fr`
+  // column grew to the table's width and the card clipped the rest.
+  it('lets the value column shrink so an expanded sub-table scrolls', async () => {
+    const user = userEvent.setup()
+    const items = Array.from({ length: 3 }, (_, i) => ({ id: i, name: 'n'.repeat(200) }))
+    render(<StructuredOutput text={JSON.stringify({ host: 'web-01', meta: { a: 1 }, items })} />)
+    const grid = screen.getByText('host').parentElement as HTMLElement
+    expect(grid.style.gridTemplateColumns).toBe('max-content minmax(0, 1fr)')
+    await user.click(screen.getByText(/\[3\]/))
+    const table = screen.getByRole('table')
+    expect((table.parentElement as HTMLElement).style.overflowX).toBe('auto')
+    const valueCell = table.closest('[style*="min-width"]') as HTMLElement
+    expect(['0', '0px']).toContain(valueCell?.style.minWidth)
+  })
+})
