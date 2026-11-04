@@ -76,6 +76,27 @@ pip install "runspec-console[credentials]"
 A credential has a **kind** — `userpass`, `token`, or an SSH key — and a
 **label**. Two mechanisms apply them to runs:
 
+### Finding out what you need
+
+**Settings → Credentials** reads the runnables discovered on your connected
+hosts and lists, on the right, **What your runnables need**: one card per
+service a runnable reads a credential for (`Jira`, `Grafana`, …), the names it
+reads, which runnables and hosts read them, and whether a saved credential
+already covers it. Each card has an **Add token** / **Add username +
+password** button that opens the dialog with a label that matches, so you only
+type the secret. Non-secret settings the same runnables read (`JIRA_URL`,
+`GRAFANA_ORG_ID`) are listed too; set those in the venv's
+[Env files](console-hosts.md#env-files-runspec_env). A `password` argument that reads no env var
+gets its own card, whose button adds a credential bound to that argument.
+
+Each saved credential shows what it is **used by** (runnables, plus console
+features such as Config Sync, MCP servers and Telemetry). One that nothing uses
+is flagged, often with the label it was probably meant to have: `Jira PAT`
+sets `JIRA_PAT_TOKEN`, which nothing reads, while `Jira` sets `JIRA_TOKEN` and
+`JIRA_PAT`. While you edit a credential, the dialog shows which runnables would
+pick it up. Only connected hosts are read, so connect a host (or switch to a
+profile that includes it) to see its runnables' needs.
+
 ### Name-derived environment variables
 
 The credential's label derives environment variables by convention, injected

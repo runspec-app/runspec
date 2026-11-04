@@ -73,6 +73,8 @@ EXPECTED = {
     "copy_ssh_id",
     "copy_ssh_id_all",
     "create_schedule",
+    "credential_guide",
+    "credential_matches",
     "credentials_backend",
     "credentials_for_runnable",
     "current_workspace_path",

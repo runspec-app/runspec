@@ -794,6 +794,156 @@ class FleetMixin:
             for c in self._scoped_credentials(host, runnable)
         ]
 
+    def _credential_feature_refs(self) -> list[dict[str, str]]:
+        """Every place a console feature names a credential by id —
+        ``{feature, tab, credential}`` (``tab`` = the Settings tab key, or ``""``
+        when the setting lives elsewhere). Each reader is best-effort: a broken
+        section only drops its own rows."""
+        refs: list[dict[str, str]] = []
+
+        def add(feature: str, tab: str, cid: Any) -> None:
+            cid = str(cid or "").strip()
+            if cid:
+                refs.append({"feature": feature, "tab": tab, "credential": cid})
+
+        def headers(feature: str, tab: str, sec: dict[str, Any]) -> None:
+            add(feature, tab, sec.get("credential"))
+            for b in sec.get("header_credentials") or []:
+                add(
+                    f"{feature} ({b.get('header', '')} header)",
+                    tab,
+                    b.get("credential"),
+                )
+
+        readers: list[Callable[[], None]] = [
+            lambda: add(
+                "Config Sync", "configSync", config_mod.read_sync().get("credential_id")
+            ),
+            lambda: add(
+                "Memory Sync",
+                "memorySync",
+                config_mod.read_memory_sync().get("credential_id"),
+            ),
+            lambda: add(
+                "Network proxy", "network", config_mod.read_http().get("credential")
+            ),
+        ]
+
+        def repos() -> None:
+            from . import repos as repos_mod
+
+            for r in repos_mod.read_repos():
+                add(f"Repo {r.get('name', '')}", "repos", r.get("credential_id"))
+
+        def market() -> None:
+            for r in config_mod.read_marketplace().get("repos") or []:
+                add(f"Marketplace index {r.get('name', '')}", "", r.get("credential"))
+
+        def mcp() -> None:
+            for s in config_mod.read_mcp().get("servers") or []:
+                headers(f"MCP server {s.get('name', '')}", "mcp", s)
+
+        def telemetry() -> None:
+            t = config_mod.read_telemetry()
+            headers("Telemetry traces", "telemetry", t)
+            headers("Telemetry metrics", "telemetry", t.get("metrics") or {})
+
+        def transfers() -> None:
+            from . import savedtransfers
+
+            for t in savedtransfers.load_saved_transfers():
+                name = t.get("name") or t.get("id") or ""
+                add(f"Saved transfer {name}", "", t.get("credential_id"))
+                add(
+                    f"Saved transfer {name} (destination)",
+                    "",
+                    t.get("to_credential_id"),
+                )
+
+        readers += [repos, market, mcp, telemetry, transfers]
+        for read in readers:
+            try:
+                read()
+            except Exception:  # noqa: BLE001 — one broken section must not hide the rest
+                logger.debug("credential guide: a feature reader failed", exc_info=True)
+        return refs
+
+    def credential_guide(self) -> dict[str, Any]:
+        """Settings → Credentials helper: what the discovered runnables need and
+        what each saved credential is used by. Metadata only — never a secret.
+
+        ``{needs, bindings, usage, features, hosts}`` — ``needs``/``bindings``
+        from :func:`credguide.needs`; ``usage`` maps each credential id to
+        ``{runnables, features, hint}`` (``hint`` = a likely label/kind fix when
+        it is used by nothing); ``features`` lists every credential reference
+        from a console feature with ``status`` ``ok``/``no_secret``/``missing``;
+        ``hosts`` = the hosts whose runnables were read (connected ones only)."""
+        from . import credentials as cred
+        from . import credguide
+
+        self._reload_credentials()
+        creds = list(self._credentials)
+        with self._lock:
+            runnables = list(getattr(self, "_runnables_cache", []) or [])
+        secrets = {
+            str(c.get("id"))
+            for c in creds
+            if c.get("id") and cred.has_secret(str(c["id"]))
+        }
+        found = credguide.needs(runnables, creds, secrets)
+        refs = self._credential_feature_refs()
+        ids = {str(c.get("id")) for c in creds}
+        features = [
+            {
+                **r,
+                "status": (
+                    "missing"
+                    if r["credential"] not in ids
+                    else "ok"
+                    if r["credential"] in secrets
+                    else "no_secret"
+                ),
+            }
+            for r in refs
+        ]
+        usage: dict[str, Any] = {}
+        for c in creds:
+            cid = str(c.get("id") or "")
+            used = credguide.applies_to(c, runnables)
+            feats = [f for f in features if f["credential"] == cid]
+            usage[cid] = {
+                "runnables": used,
+                "features": [{"feature": f["feature"], "tab": f["tab"]} for f in feats],
+                "hint": (
+                    credguide.label_hint(c, found["needs"])
+                    if not used and not feats
+                    else None
+                ),
+            }
+        hosts = sorted(
+            {str(r.get("host") or "local") for r in runnables},
+            key=lambda h: (h != "local", h),
+        )
+        return {**found, "usage": usage, "features": features, "hosts": hosts}
+
+    def credential_matches(self, entry: dict[str, Any]) -> list[dict[str, Any]]:
+        """The runnables a credential being edited would auto-apply to — the
+        Credentials dialog's live "picked up by" preview. ``entry`` is the
+        unsaved form (label, kind, username_arg, secret_arg, scopes)."""
+        from . import credguide
+
+        with self._lock:
+            runnables = list(getattr(self, "_runnables_cache", []) or [])
+        draft = {
+            "label": str(entry.get("label") or ""),
+            "kind": str(entry.get("kind") or "userpass"),
+            "username_arg": str(entry.get("username_arg") or ""),
+            "secret_arg": str(entry.get("secret_arg") or ""),
+            "scope_hosts": _clean_str_list(entry.get("scope_hosts")),
+            "scope_runnables": _clean_str_list(entry.get("scope_runnables")),
+        }
+        return credguide.applies_to(draft, runnables)
+
     def save_credential(self, entry: dict[str, Any]) -> dict[str, Any]:
         """Create or update one credential (upsert by ``id``).
 

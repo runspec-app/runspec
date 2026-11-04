@@ -250,6 +250,52 @@ export interface Credential {
   secret?: string   // write-only; never returned by list_credentials
 }
 
+// Settings → Credentials helper (credential_guide / credential_matches): what the
+// discovered runnables need and what each saved credential is used by. Metadata
+// only — never a secret.
+export interface CredentialRunnableUse {
+  name: string
+  hosts: string[]
+  via: 'env' | 'arg' | 'scope'
+  envs: string[]          // the credential's env vars this runnable declares
+}
+export interface CredentialRef { id: string; label: string; has_secret: boolean }
+export interface CredentialNeed {
+  prefix: string          // env var prefix, e.g. JIRA
+  label: string           // a label that maps to it, e.g. Jira
+  runnables: { name: string; hosts: string[] }[]
+  options: { kind: 'token' | 'userpass' | 'password'; matches: string[]; hint: string }[]
+  reads: string[]         // credential-looking vars declared under the prefix
+  other_env: string[]     // non-secret vars under the prefix (URL, org id…)
+  covered_by: CredentialRef[]
+}
+export interface CredentialBindingNeed {
+  runnable: string
+  hosts: string[]
+  arg: string             // a password arg with no env var
+  username_arg: string    // a sibling user arg, or ''
+  hint: string
+  label: string
+  covered_by: CredentialRef[]
+}
+export interface CredentialFeatureRef {
+  feature: string
+  tab: string             // Settings tab key, '' when the setting lives elsewhere
+  credential: string
+  status: 'ok' | 'no_secret' | 'missing'
+}
+export interface CredentialGuide {
+  needs: CredentialNeed[]
+  bindings: CredentialBindingNeed[]
+  usage: Record<string, {
+    runnables: CredentialRunnableUse[]
+    features: { feature: string; tab: string }[]
+    hint: { label: string; kind: Credential['kind']; why: string } | null
+  }>
+  features: CredentialFeatureRef[]
+  hosts: string[]
+}
+
 export interface CredentialBackend {
   available: boolean
   backend: string
@@ -2495,6 +2541,10 @@ export interface BridgeApi {
   // In-scope credentials for a runnable (id + label) — for the Forms run dialog's
   // optional credential override. In-scope credentials auto-apply on run anyway.
   credentials_for_runnable: (host: string, runnable: string) => Promise<{ id: string; label: string; has_secret: boolean; secret_arg: string; username_arg: string; username: string }[]>
+  // What the discovered runnables need + what each credential is used by.
+  credential_guide: () => Promise<CredentialGuide>
+  // Live preview for the edit dialog: runnables an unsaved credential would reach.
+  credential_matches: (entry: Partial<Credential>) => Promise<CredentialRunnableUse[]>
   save_credential: (entry: Credential) => Promise<{ id?: string; error?: string }>
   delete_credential: (id: string) => Promise<void>
   credentials_backend: () => Promise<CredentialBackend>

@@ -386,23 +386,18 @@ class InternalsMixin:
     @staticmethod
     def _scope_matches(patterns: Any, value: str) -> bool:
         """True if ``value`` matches any fnmatch pattern (empty list = matches all)."""
-        import fnmatch
+        from . import credguide
 
-        pats = [str(p).strip() for p in (patterns or []) if str(p).strip()]
-        if not pats:
-            return True
-        return any(fnmatch.fnmatchcase(value, p) for p in pats)
+        return credguide.scope_matches(patterns, value)
 
     @staticmethod
     def _has_scope(entry: dict[str, Any]) -> bool:
         """True when a credential names at least one scope pattern (host or
         runnable). ``["*"]`` counts — it's how an operator deliberately says
         "everywhere"."""
-        return any(
-            str(p).strip()
-            for key in ("scope_hosts", "scope_runnables")
-            for p in (entry.get(key) or [])
-        )
+        from . import credguide
+
+        return credguide.has_scope(entry)
 
     def _declared_interface(
         self, host: str, runnable: str
@@ -435,22 +430,11 @@ class InternalsMixin:
     def _declared_use(entry: dict[str, Any], envs: set[str], names: set[str]) -> bool:
         """True when the runnable's own interface asks for this credential: an
         arg ``env`` equal to one of the credential's name-derived env vars, or an
-        arg the credential binds via ``username_arg``/``secret_arg``."""
-        from . import credentials as cred
+        arg the credential binds via ``username_arg``/``secret_arg``. The rule
+        lives in :mod:`credguide` so the Credentials tab's "used by" agrees."""
+        from . import credguide
 
-        wanted = {
-            n.upper()
-            for n in cred.env_var_names(
-                str(entry.get("label", "")), str(entry.get("kind", ""))
-            )
-        }
-        if wanted & envs:
-            return True
-        return any(
-            str(entry.get(k) or "").strip() in names
-            for k in ("username_arg", "secret_arg")
-            if str(entry.get(k) or "").strip()
-        )
+        return credguide.declared_use(entry, envs, names)
 
     def _scoped_credentials(self, host: str, runnable: str) -> list[dict[str, Any]]:
         """Credentials that auto-apply to ``(host, runnable)``.

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, 
 import { theme, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Empty, Table, Slider, Progress } from 'antd'
 import type { SelectProps } from 'antd'
 import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, RightOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined, SearchOutlined, SoundOutlined, CloudServerOutlined, DiffOutlined } from '@ant-design/icons'
-import { VoiceConfig, VoiceDevice, bridge, type JumpHost, type LocalVenvConfig, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type MailCategories, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SyncPreview, type SyncUpdateCheck, type SeedStatus, type SeedOverride, type SeedApplyResult, type Runbook, type RunbookStep, type SavedRun, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost, type McpServer, type McpHeaderCredential, type McpStatus, type McpServerStatus, type McpCredentialOption, type ToolVisibility, type NamedSound, type MarketplaceConfig, type MarketplaceConfigInput, type MarketplaceRepo } from '../bridge'
+import { VoiceConfig, VoiceDevice, bridge, type JumpHost, type LocalVenvConfig, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type CredentialGuide, type Mailbox, type MailCategories, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SyncPreview, type SyncUpdateCheck, type SeedStatus, type SeedOverride, type SeedApplyResult, type Runbook, type RunbookStep, type SavedRun, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost, type McpServer, type McpHeaderCredential, type McpStatus, type McpServerStatus, type McpCredentialOption, type ToolVisibility, type NamedSound, type MarketplaceConfig, type MarketplaceConfigInput, type MarketplaceRepo } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
 import { CopyKeyAllModal } from '../views/CopyKeyAllModal'
 import { ProvisionModal } from '../views/ProvisionModal'
@@ -23,6 +23,7 @@ import { useFeatures, visibleSettingsTabs } from '../features'
 import { ConfigSyncPreviewModal } from './ConfigSyncPreview'
 import { MemorySyncTab } from './MemorySyncTab'
 import { SettingsColumns } from './SettingsColumns'
+import { CredentialFeatureProblems, CredentialMatchPreview, CredentialNeedsPanel, CredentialUsageLine, type CredentialPrefill } from './CredentialGuide'
 import { TokenCommandInput } from './TokenCommandInput'
 import { TerminalLook } from './TerminalLook'
 import { PuttySync } from './PuttySync'
@@ -3453,17 +3454,25 @@ interface CredFormValues {
   secret?: string
 }
 
-function CredentialsTab() {
+export function CredentialsTab({ onOpenTab }: { onOpenTab?: (tab: string) => void } = {}) {
   const [creds, setCreds] = useState<Credential[]>([])
+  const [guide, setGuide] = useState<CredentialGuide | null>(null)
   const [backend, setBackend] = useState<{ available: boolean; backend: string } | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)  // '' = new, id = edit
   const [form] = Form.useForm<CredFormValues>()
 
-  const reload = useCallback(() => { bridge.list_credentials().then(setCreds) }, [])
+  const reload = useCallback(() => {
+    bridge.list_credentials().then(setCreds)
+    bridge.credential_guide().then(setGuide).catch(() => setGuide(null))
+  }, [])
   useEffect(() => { reload() }, [reload])
   useEffect(() => { bridge.credentials_backend().then(setBackend) }, [])
 
-  const startAdd = () => { form.resetFields(); form.setFieldValue('kind', 'userpass'); setEditingId('') }
+  const startAdd = (prefill?: CredentialPrefill) => {
+    form.resetFields()
+    form.setFieldsValue({ kind: 'userpass', ...(prefill ?? {}) })
+    setEditingId('')
+  }
   const startEdit = (c: Credential) => {
     form.setFieldsValue({
       label: c.label, kind: c.kind, username: c.username,
@@ -3473,6 +3482,11 @@ function CredentialsTab() {
       secret: '',  // write-only: blank means "keep the stored value"
     })
     setEditingId(c.id)
+  }
+  // "Fix…" on a credential no runnable reads: open it with the suggested label/kind.
+  const startFix = (c: Credential, hint: { label: string; kind: Credential['kind'] }) => {
+    startEdit(c)
+    form.setFieldsValue({ label: hint.label, kind: hint.kind })
   }
   const cancel = () => { setEditingId(null); form.resetFields() }
 
@@ -3520,14 +3534,19 @@ function CredentialsTab() {
   // credential section / agent). Derived from the label by the same strict
   // convention the run path uses.
   const envNames = !isSshKey ? credEnvNames(label ?? '', kind ?? 'userpass') : []
+  const usernameArg = Form.useWatch('username_arg', form)
+  const secretArg = Form.useWatch('secret_arg', form)
+  const scopeHosts = Form.useWatch('scope_hosts', form)
+  const scopeRunnables = Form.useWatch('scope_runnables', form)
 
   return (
+    <SettingsColumns>
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 12 }}>
         <Text type="secondary" style={{ fontSize: 13 }}>
           Secrets are stored in the OS keychain{backend?.backend ? <> (<code>{backend.backend}</code>)</> : null}; only metadata is saved to <code>runspec_credentials.toml</code>.
         </Text>
-        <Button size="small" icon={<PlusOutlined />} onClick={startAdd} disabled={isEditing}>Add</Button>
+        <Button size="small" icon={<PlusOutlined />} onClick={() => startAdd()} disabled={isEditing}>Add</Button>
       </div>
 
       {backend && !backend.available && (
@@ -3602,6 +3621,9 @@ function CredentialsTab() {
                   <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
                     Name it to match what the runnable reads from the environment.
                   </Text>
+                  {isEditing && (
+                    <CredentialMatchPreview draft={{ label, kind, username_arg: usernameArg, secret_arg: secretArg, scope_hosts: scopeHosts, scope_runnables: scopeRunnables }} />
+                  )}
                 </div>
                 <Divider style={{ margin: '4px 0 12px' }} />
                 <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
@@ -3630,7 +3652,8 @@ function CredentialsTab() {
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
         {creds.map(c => (
-          <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: RADIUS.sm, border: '1px solid #2a2a2a', background: editingId === c.id ? 'rgba(255,255,255,0.03)' : 'transparent' }}>
+          <div key={c.id} data-testid={`cred-row-${c.id}`} style={{ padding: '7px 10px', borderRadius: RADIUS.sm, border: '1px solid #2a2a2a', background: editingId === c.id ? 'rgba(255,255,255,0.03)' : 'transparent' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <KeyOutlined style={{ color: 'var(--rs-text-muted)', fontSize: 13, flexShrink: 0 }} />
             <Text style={{ fontSize: 13, minWidth: 110, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.label}</Text>
             <Tag style={{ margin: 0, fontSize: 11 }}>{c.kind}</Tag>
@@ -3645,9 +3668,16 @@ function CredentialsTab() {
               <Button type="text" size="small" icon={<DeleteOutlined />} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} danger />
             </Popconfirm>
           </div>
+          <CredentialUsageLine usage={guide?.usage[c.id]} onFix={hint => startFix(c, hint)} onOpenTab={onOpenTab} />
+          </div>
         ))}
       </div>
+      {guide && <CredentialFeatureProblems features={guide.features} onOpenTab={onOpenTab} />}
     </div>
+    <div>
+      <CredentialNeedsPanel guide={guide} onAdd={p => startAdd(p)} />
+    </div>
+    </SettingsColumns>
   )
 }
 
@@ -6636,7 +6666,7 @@ export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, co
     // see SHOW_HELPDESK_ROOMS. The tab component is left intact.
     ...(SHOW_HELPDESK_ROOMS ? [{ key: 'selfService', label: 'Self-Service', children: <SelfServiceTab /> }] : []),
     { key: 'repos',     label: 'Repos',      children: <ReposTab /> },
-    { key: 'credentials', label: 'Credentials', children: <CredentialsTab /> },
+    { key: 'credentials', label: 'Credentials', children: <CredentialsTab onOpenTab={setActiveTab} /> },
     { key: 'mcp',       label: 'MCP',        children: <McpTab /> },
     { key: 'mcpServer', label: 'MCP Server', children: <McpServerTab /> },
     { key: 'configSync', label: 'Config Sync', children: <ConfigSyncTab /> },
