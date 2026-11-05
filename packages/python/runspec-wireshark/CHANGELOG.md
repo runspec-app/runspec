@@ -2,6 +2,14 @@
 
 All notable changes to `runspec-wireshark` are documented here.
 
+## [0.1.1]
+
+- Works on Ubuntu 25.10 and later (incl. 26.04), where tshark's AppArmor
+  profile only lets it open files in `/tmp`: requires `runspec-wireshark-core`
+  0.1.1, which pipes captures into tshark and stages its writes under `/tmp`.
+  The README says so, and that a live `capture --output` should keep its
+  `.pcap`/`.pcapng` extension (dumpcap's part of the profile).
+
 ## [0.1.0]
 
 First release. One runnable, `pcap`, over Wireshark's tshark, with a verb per

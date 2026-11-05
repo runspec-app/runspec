@@ -7,15 +7,40 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import stat
+import sys
+import tempfile
+from pathlib import Path
 
 import pytest
 
 import runspec_wireshark_core as ws
-from runspec_wireshark_core import WiresharkConfig, WiresharkError
+from runspec_wireshark_core import WiresharkConfig, WiresharkError, client
 
 from .conftest import KEYS, needs_tshark
 
 pytestmark = needs_tshark
+
+
+@pytest.fixture(autouse=True, params=["direct", "confined"])
+def mode(request, monkeypatch) -> str:
+    """Run every test twice: as tshark normally runs here, and as a confined
+    tshark (Ubuntu 25.10+ AppArmor) runs — the capture piped in on stdin,
+    writes and the key log staged under /tmp. On a confined runner both
+    modes are the confined path."""
+    if request.param == "confined":
+        monkeypatch.setattr(client, "confined", lambda tshark: True)
+    monkeypatch.setattr(client, "_denied_seen", False)
+    return request.param
+
+
+@pytest.fixture
+def outdir():
+    """An output folder outside /tmp — the only place a confined tshark may
+    write — so the write verbs' staging is exercised."""
+    folder = tempfile.mkdtemp(prefix="out-", dir=Path(__file__).parent)
+    yield Path(folder)
+    shutil.rmtree(folder, ignore_errors=True)
 
 
 def test_check(config) -> None:
@@ -199,8 +224,8 @@ def test_summary(config, sample) -> None:
     assert len(json.dumps(out)) < 4000
 
 
-def test_save_filtered_and_merge(config, sample, tmp_path) -> None:
-    one = tmp_path / "s2.pcapng"
+def test_save_filtered_and_merge(config, sample, outdir, tmp_path) -> None:
+    one = outdir / "s2.pcapng"
     out = ws.save_filtered(config, sample, "tcp.stream == 2", str(one))
     assert out["packets"] == 12 and one.is_file()
     with pytest.raises(WiresharkError, match="--overwrite"):
@@ -214,11 +239,12 @@ def test_save_filtered_and_merge(config, sample, tmp_path) -> None:
         ws.merge(config, [sample], str(tmp_path / "x.pcapng"))
 
 
-def test_export_objects(config, sample, tmp_path) -> None:
-    out = ws.export_objects(config, sample, str(tmp_path / "objs"))
+def test_export_objects(config, sample, outdir) -> None:
+    out = ws.export_objects(config, sample, str(outdir / "objs"))
     assert out["total"] == 5 and out["objects"][0]["bytes"] == 48
+    assert sorted(p.name for p in (outdir / "objs").iterdir()) == sorted(o["name"] for o in out["objects"])
     with pytest.raises(WiresharkError, match="not empty"):
-        ws.export_objects(config, sample, str(tmp_path / "objs"))
+        ws.export_objects(config, sample, str(outdir / "objs"))
 
 
 def test_capture_validates_before_running(config, tmp_path) -> None:
@@ -240,3 +266,54 @@ def test_timeout(sample) -> None:
     with pytest.raises(WiresharkError, match="took longer"):
         # 1 ms is too short for any tshark start-up.
         ws.summary(WiresharkConfig(timeout=0.001), sample)
+
+
+def _refusing_tshark(folder: Path) -> str:
+    """A tshark stand-in that refuses to open a capture by name, the way
+    Ubuntu's AppArmor profile does, but reads one from stdin."""
+    real = shutil.which("tshark")
+    script = folder / "tshark"
+    body = [
+        f"#!{sys.executable}",
+        "import os, sys",
+        "args = sys.argv[1:]",
+        "if '-r' in args and args[args.index('-r') + 1] != '-':",
+        "    path = args[args.index('-r') + 1]",
+        "    sys.stderr.write(f'tshark: You don' + chr(39) + f't have permission to read the file \"{path}\".' + chr(10))",
+        "    sys.exit(2)",
+        f"os.execv({real!r}, [{real!r}] + args)",
+    ]
+    script.write_text("\n".join(body) + "\n", encoding="utf-8")
+    script.chmod(script.stat().st_mode | stat.S_IXUSR)
+    return str(script)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the stand-in is a POSIX script")
+def test_refused_read_falls_back_to_stdin(mode, sample, tmp_path) -> None:
+    if mode == "confined":
+        pytest.skip("covers the unconfined path")
+    cfg = WiresharkConfig(tshark=_refusing_tshark(tmp_path))
+    assert not client.confined(cfg.tshark)
+    assert ws.packets(cfg, sample, limit=3)["total"] == 96  # iter_lines retries
+    assert client.confined(cfg.tshark)  # the rest of the process pipes
+    assert ws.protocols(cfg, sample)["protocols"]  # run() pipes from the start
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the stand-in is a POSIX script")
+def test_refused_unreadable_file_is_not_retried(mode, tmp_path) -> None:
+    if mode == "confined" or getattr(os, "geteuid", lambda: 0)() == 0:
+        pytest.skip("root can read any file")
+    locked = tmp_path / "locked.pcapng"
+    locked.write_bytes(b"")
+    locked.chmod(0)
+    with pytest.raises(WiresharkError, match="permission"):
+        ws.packets(WiresharkConfig(tshark=_refusing_tshark(tmp_path)), str(locked))
+    assert not client._denied_seen
+
+
+def test_piped_error_names_the_file(mode, outdir) -> None:
+    broken = outdir / "broken.pcapng"
+    broken.write_bytes(b"not a capture at all, just text" * 10)
+    with pytest.raises(WiresharkError) as info:
+        ws.packets(WiresharkConfig(), str(broken))
+    assert '"-"' not in str(info.value)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import pytest
 
@@ -154,3 +155,50 @@ def test_missing_capture_file(config) -> None:
 
     with pytest.raises(WiresharkError, match="not found"):
         packets(config, "/nonexistent/x.pcapng")
+
+
+def test_confined_needs_profile_apparmor_and_usr_bin_tshark(tmp_path, monkeypatch) -> None:
+    client = client_mod
+    enabled = tmp_path / "enabled"
+    profile = tmp_path / "tshark"
+    monkeypatch.setattr(client, "_APPARMOR_ENABLED", str(enabled))
+    monkeypatch.setattr(client, "_APPARMOR_PROFILE", str(profile))
+    monkeypatch.setattr(client, "_denied_seen", False)
+    monkeypatch.setattr(client.sys, "platform", "linux")
+    monkeypatch.setattr(client.os.path, "realpath", lambda p: p)
+    enabled.write_text("Y\n")
+    profile.write_text("profile tshark /usr/bin/tshark {}\n")
+    assert client.confined("/usr/bin/tshark")
+    assert not client.confined("/opt/wireshark/bin/tshark")  # the profile attaches by path
+    enabled.write_text("N\n")
+    assert not client.confined("/usr/bin/tshark")
+    enabled.write_text("Y\n")
+    profile.unlink()
+    assert not client.confined("/usr/bin/tshark")
+    client._note_denied()  # a refused read anywhere switches the process over
+    assert client.confined("/opt/wireshark/bin/tshark")
+
+
+def test_keylog_copied_under_tmp_when_confined(tmp_path, monkeypatch) -> None:
+    client = client_mod
+    keys = tmp_path / "keys.log"
+    keys.write_text("CLIENT_RANDOM aa bb\n")
+    monkeypatch.setattr(client, "_STAGE_ROOT", str(tmp_path / "stage"))
+    (tmp_path / "stage").mkdir()
+    monkeypatch.setattr(client, "_keylog_copies", {})
+    monkeypatch.setattr(client, "confined", lambda tshark: False)
+    assert client._keylog_for("tshark", str(keys)) == str(keys)
+    monkeypatch.setattr(client, "confined", lambda tshark: True)
+    copy = client._keylog_for("tshark", str(keys))
+    assert copy != str(keys) and os.path.dirname(copy) == str(tmp_path / "stage")
+    assert Path(copy).read_text() == keys.read_text() and (os.stat(copy).st_mode & 0o077) == 0
+    assert client._keylog_for("tshark", str(keys)) == copy  # reused while unchanged
+    client._remove_keylog_copies()
+    assert not os.path.exists(copy)
+
+
+def test_parse_phs_drops_the_frame_root() -> None:
+    # tshark 4.6 puts "frame" above the link layer.
+    text = "frame  frames:10 bytes:1000\n  eth  frames:10 bytes:1000\n    ip  frames:10 bytes:1000\n"
+    rows = parse_phs(text)
+    assert [(r["protocol"], r["depth"]) for r in rows] == [("eth", 0), ("ip", 1)]

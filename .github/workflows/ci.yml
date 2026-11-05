@@ -2640,10 +2640,9 @@ jobs:
     name: runspec-wireshark-core test
     needs: changes
     if: needs.changes.outputs.wireshark-core == 'true'
-    # ubuntu-26.04 (ubuntu-latest since 2026-11) refuses tshark reads of the
-    # sample capture ("You don't have permission to read the file"); pinned
-    # until that is understood.
-    runs-on: ubuntu-24.04
+    # The default ubuntu-latest (26.04) confines tshark with AppArmor; the tests
+    # cover both that and the unconfined path.
+    runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: packages/python/runspec-wireshark-core
@@ -2733,8 +2732,7 @@ jobs:
     name: runspec-wireshark test
     needs: changes
     if: needs.changes.outputs.wireshark == 'true'
-    # See runspec-wireshark-core test: pinned off ubuntu-26.04.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: packages/python/runspec-wireshark
