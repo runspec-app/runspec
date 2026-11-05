@@ -9,6 +9,22 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.77.1] — 2026-11-05
+
+### Fixed
+
+- **The PyPI page has a project description again (it never had one).**
+  `pyproject.toml` has said `readme = "README.md"` since 0.1.0, but there was
+  never a README in `packages/python/runspec` (the repo README sits two levels
+  up). setuptools only warns about a missing readme, so every release uploaded
+  an empty description. The package now has its own `README.md` with links that
+  work on PyPI.
+- The licence is declared as `license = "MIT"`. The old
+  `license = { file = "../../LICENSE" }` pointed outside the package, so the
+  wheel (built from the sdist) never carried the licence text.
+
+---
+
 ## [0.77.0] — 2026-11-05
 
 ### Added

@@ -2,7 +2,7 @@
 
 Pure-Python HTTPS/TLS certificate + web-endpoint helpers — the importable logic
 core behind the cross-platform web runnables in
-[`runspec-linux`](../runspec-linux) and [`runspec-windows`](../runspec-windows).
+[`runspec-linux`](https://pypi.org/project/runspec-linux/) and [`runspec-windows`](https://pypi.org/project/runspec-windows/).
 
 Stdlib only (`ssl` / `socket` / `http.client`) — **no `runspec` dependency, no
 `runspec.toml`, and no entry points**, so installing it exposes the helper
