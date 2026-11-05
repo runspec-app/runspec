@@ -169,7 +169,7 @@ resolved under a `[llm] provider` name three ways:
 
 A "LangServe-ish but not vanilla" gateway can subclass `LangServeAdapter` and
 override only `_build_payload` / `_parse_output`. See
-[`examples/console-adapter-plugin/`](examples/console-adapter-plugin/) for a
+[`examples/console-adapter-plugin/`](https://github.com/runspec-app/runspec/tree/main/packages/python/runspec-console/examples/console-adapter-plugin) for a
 ready-to-copy template — it includes an `AGENTS.md` brief and a Copilot prompt
 file for building the adapter with an AI agent, and conformance helpers
 (`runspec_console.adapters.testing`) to validate it without a live gateway.

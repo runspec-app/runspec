@@ -434,7 +434,7 @@ the coerced value — an unset optional is then a real `None`.
 
 **Docs drift checks.** `scripts/check_docs.py` guards the MkDocs site against
 drift and runs in CI (`docs-check` job, gated by a `docs` paths filter that
-includes `packages/**`) and optionally via `.pre-commit-config.yaml`. Five
+includes `packages/**`) and optionally via `.pre-commit-config.yaml`. Six
 checks: (1) **version-sync** — every package manifest version must have a
 matching `## [..]` changelog entry: the core lib + Node pack check the repo-root
 `CHANGELOG.md` (`## [x]` / `## [node-x]`), and every other package (console,
@@ -456,7 +456,7 @@ match the schema; (5) **credential-env** — every `<PREFIX>_TOKEN`/`_PAT`/`_PAS
 `_USER(NAME)`/`_API_TOKEN`/`_PERSONAL_TOKEN`/`_API_KEY` a runnable package or its
 `-core` names (prefix from the package name) must be declared as an arg `env`
 alias in its `runspec.toml`, or a console credential never reaches the agent
-(`CREDENTIAL_ENV_KNOWN_GAPS` lists jsm/snow/rundeck, not yet fixed). Practical upshot: when you change a package's code, add a
+(`CREDENTIAL_ENV_KNOWN_GAPS` lists jsm/snow/rundeck, not yet fixed). (6) **package-readme** — every Python package's `pyproject.toml` declares a `readme` that exists next to it (setuptools only warns on a missing one and hatchling publishes nothing without the key, so PyPI silently showed no description for runspec and runspec-console; `README_KNOWN_GAPS` lists the -core packages with no README yet). Practical upshot: when you change a package's code, add a
 CHANGELOG entry (and bump the version) in the same branch; and when you add or
 change a format field/type, update `schema/runspec.schema.json` and the
 `docs/format.md` tables in the same change — or `docs-check` fails.

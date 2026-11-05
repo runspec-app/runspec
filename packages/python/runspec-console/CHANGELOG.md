@@ -9,6 +9,15 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.375.1] — 2026-11-05
+
+### Fixed
+
+- **The PyPI page has a project description.** `pyproject.toml` never declared
+  `readme`, `description` or project URLs, so PyPI showed no description since
+  the first release. It now uses the package README, plus a one-line summary,
+  the MIT licence and links to the docs, source, issues and changelog.
+
 ## [0.375.0] — 2026-11-05
 
 ### Added

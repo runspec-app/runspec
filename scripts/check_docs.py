@@ -2,7 +2,7 @@
 """
 check_docs.py — guard the docs against drifting from the source of truth.
 
-Five independent checks, each reported separately; the script exits non-zero
+Six independent checks, each reported separately; the script exits non-zero
 if any fails:
 
   1. version-sync       — every package manifest version has a matching
@@ -19,6 +19,8 @@ if any fails:
                           -core) names, e.g. GITLAB_TOKEN, is declared as an arg
                           `env` alias in its runspec.toml, so a runspec-console
                           credential reaches the agent without a scope.
+  6. package-readme     — every Python package declares a `readme` that exists,
+                          so its PyPI page has a project description.
 
 Run from the repo root:  python scripts/check_docs.py
 Dependencies: jsonschema (tomllib is stdlib on 3.11+).
@@ -591,12 +593,60 @@ def check_credential_env() -> list[str]:
     return errors
 
 
+# ── package-readme ──────────────────────────────────────────────────────────
+# setuptools only *warns* when `readme` names a missing file, and hatchling
+# publishes no description at all without a `readme` key — both upload fine and
+# leave PyPI showing "The author of this package has not provided a project
+# description". runspec shipped that way from 0.1.0 (readme pointed at a
+# README.md that never existed in packages/python/runspec) and runspec-console
+# never declared one.
+README_IGNORE = {"packages/registry"}  # archived
+# Packages with no README yet. Remove an entry once it has one and declares it.
+README_KNOWN_GAPS = {
+    "runspec-confluence-core",
+    "runspec-fs-core",
+    "runspec-gitlab-core",
+    "runspec-grafana-core",
+    "runspec-jira-core",
+    "runspec-linux-core",
+    "runspec-logops-core",
+    "runspec-prometheus-core",
+    "runspec-rundeck-core",
+}
+
+
+def check_package_readme() -> list[str]:
+    """Every pyproject declares a `readme` file that exists next to it."""
+    errors: list[str] = []
+    manifests = sorted({*REPO.glob("packages/*/pyproject.toml"), *REPO.glob("packages/*/*/pyproject.toml")})
+    for manifest in manifests:
+        pkgdir = manifest.parent
+        rel = pkgdir.relative_to(REPO).as_posix()
+        if rel in README_IGNORE or "node_modules" in pkgdir.parts:
+            continue
+        project = tomllib.loads(manifest.read_text(encoding="utf-8")).get("project", {})
+        name = str(project.get("name", pkgdir.name))
+        readme = project.get("readme")
+        if isinstance(readme, dict):
+            readme = readme.get("file")
+        if not readme:
+            if name not in README_KNOWN_GAPS:
+                errors.append(f"{rel}/pyproject.toml: no `readme` — {name}'s PyPI page will have no description")
+            continue
+        if not (pkgdir / str(readme)).is_file():
+            errors.append(f"{rel}/pyproject.toml: readme = {readme!r} does not exist — PyPI will get an empty description")
+        elif name in README_KNOWN_GAPS:
+            errors.append(f"{name} now has a readme — remove it from README_KNOWN_GAPS in scripts/check_docs.py")
+    return errors
+
+
 CHECKS = [
     ("version-sync", check_versions),
     ("changelog-updated", check_changelog_updated),
     ("toml-examples", check_toml_examples),
     ("format-reference", check_format_reference),
     ("credential-env", check_credential_env),
+    ("package-readme", check_package_readme),
 ]
 
 

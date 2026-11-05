@@ -4,9 +4,10 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-webops-core"
-version = "0.3.0"
+version = "0.3.1"
 requires-python = ">=3.10"
 description = "Pure-Python HTTPS/TLS certificate + web-endpoint helpers — the importable core behind the runspec web runnables (no runspec dependency, no runnables)"
+readme = "README.md"
 dependencies = []
 
 [project.optional-dependencies]

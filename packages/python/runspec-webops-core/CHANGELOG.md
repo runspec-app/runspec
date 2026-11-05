@@ -1,5 +1,11 @@
 # runspec-webops-core Changelog
 
+## [0.3.1] — 2026-11-05
+
+### Fixed
+
+- The PyPI page shows the README (`pyproject.toml` didn't declare it).
+
 ## [0.3.0] — 2026-09-01
 
 ### Added — custom CA bundle for TLS verification
