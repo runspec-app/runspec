@@ -2,6 +2,16 @@
 
 All notable changes to `runspec-mcp` are documented here.
 
+## [0.2.4] — 2026-11-05
+
+### Fixed
+
+- **Saved transfers merge by id across config layers.** The vendored config
+  merge now lists `runspec_saved_transfers.toml` as a collection file (merged by
+  `id`), matching runspec-console 0.361.0. Without it a seed or synced layer
+  replaced the whole file instead of merging entries, and the parity test with
+  the console failed.
+
 ## [0.2.3] — 2026-10-23
 
 ### Added
