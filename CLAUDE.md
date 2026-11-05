@@ -185,7 +185,7 @@ mode `runspec serve` captures stdout as the MCP tool response, so `logger.info`
 lines reach the agent automatically. File handler (JSON) is always on as
 the audit trail; its level follows the same `--debug` toggle as stdout
 (INFO by default — keeps third-party library DEBUG noise out of the audit
-log). `[config.logging]` auto-adds a `--debug` flag (also `RUNSPEC_ARG_DEBUG=1`)
+log). `[config.logging]` auto-adds a `--debug` flag (also `RUNSPEC_<RUNNABLE>_ARG_DEBUG=1`)
 that flips DEBUG on everywhere — stdout, tracebacks, and the audit file —
 in one shot. Stderr stays pinned at WARNING regardless. No `level` knob —
 silencing INFO would break agent responses.
@@ -245,7 +245,7 @@ Node mirrors the Python public API: `parse()`, `loadSpec()`, `registerType()`, `
 CLI commands: `init`, `local`, `emit`, `jump`, `serve` (renamed in 0.8.0 to mirror Python).
 `[config.logging]` implemented in 0.9.0 — runnables call `getLogger(name)` from `runspec-node`.
 Extra fields (0.10.0): `logger.info('msg', { user_id: '42' })` — `error` key extracts an Error; all other keys appear under `"extra"` in the JSON log.
-Console routing (0.11.0) mirrors Python: INFO → stdout; WARNING+ → stderr with level prefix. No `level` knob. `[config.logging]` auto-adds a `--debug` flag (`RUNSPEC_ARG_DEBUG=1`) that flips DEBUG on everywhere — stdout *and* the audit file (the file defaults to INFO, same as stdout, so external library DEBUG noise stays out of the log).
+Console routing (0.11.0) mirrors Python: INFO → stdout; WARNING+ → stderr with level prefix. No `level` knob. `[config.logging]` auto-adds a `--debug` flag (`RUNSPEC_<RUNNABLE>_ARG_DEBUG=1`) that flips DEBUG on everywhere — stdout *and* the audit file (the file defaults to INFO, same as stdout, so external library DEBUG noise stays out of the log).
 Run summary (0.12.0): same closing-line + audit-record shape as Python 0.12.3. `[config.logging] summary = true` (default on). Log file now lands at `{project_root}/logs/{runnable}.log` — the nearest ancestor `package.json` skipping `node_modules`, falling back to `~/logs/`. `runspec serve` returns a `_meta.runspec` block on every `tools/call` response (`tool`, `duration_ms`, `exit_code`). Record/console split (node-0.29.0): mirrors Python 0.33.0 — `summary` (default true) gates the audit record; `summary_console` (default false) gates the human-readable stderr echo (off by default so stdout stays clean for pipes and the line never hits Rundeck's stderr=ERROR tagging). Per-invocation `--no-summary` flag removed in node-0.32.0 (mirrors Python 0.36.0) — suppression is package-level only (`summary = false`).
 
 ---

@@ -781,7 +781,7 @@ export interface ConfigureLoggingOptions {
  *   WARNING+ → stderr (prefixed with the level name)
  *
  * DEBUG is suppressed by default on both stdout and the file. Pass
- * `debug: true` (set by the auto-added `--debug` flag / RUNSPEC_ARG_DEBUG env
+ * `debug: true` (set by the auto-added `--debug` flag / RUNSPEC_<RUNNABLE>_ARG_DEBUG env
  * var) to include DEBUG records (and tracebacks on stdout) everywhere.
  * One knob — stdout and file move together. Stderr stays pinned at
  * WARNING regardless.
