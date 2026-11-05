@@ -7,6 +7,15 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Docs
+
+- **Env var names fixed where they still used the pre-0.16.0 form.** SPEC,
+  `docs/cli.md`, `docs/format.md`, CLAUDE.md and code comments named the
+  per-arg variable `RUNSPEC_ARG_<NAME>` (or `RUNSPEC_<NAME>`); the real name
+  has included the runnable since it was renamed: `RUNSPEC_<RUNNABLE>_ARG_<NAME>`
+  (e.g. `RUNSPEC_BACKUP_LOGS_ARG_DRY_RUN`). Documentation and comments only, no
+  behaviour change.
+
 ---
 
 ## [0.77.1] — 2026-11-05

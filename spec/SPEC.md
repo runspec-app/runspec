@@ -1249,11 +1249,11 @@ These variables serve two purposes:
 - **Input (user-settable):** Set `RUNSPEC_BACKUP_LOGS_ARG_QUALITY=95` in your shell to make that your persistent default whenever no CLI arg is passed.
 - **Output (runtime-injected):** `runspec serve` and `runspec jump` inject resolved values into the subprocess environment so bash/node/any-language scripts can read them directly without a library.
 
-The `env` field on an arg declares additional aliases checked after `RUNSPEC_ARG_*`. Accepts a string or list of strings:
+The `env` field on an arg declares additional aliases checked after `RUNSPEC_<RUNNABLE>_ARG_<NAME>`. Accepts a string or list of strings:
 
 ```toml
 [compress.args.quality]
-env = ["CI_QUALITY", "ANSIBLE_QUALITY"]  # also checked if RUNSPEC_ARG_QUALITY unset
+env = ["CI_QUALITY", "ANSIBLE_QUALITY"]  # also checked if RUNSPEC_COMPRESS_ARG_QUALITY unset
 ```
 
 ### Serialisation
@@ -1267,7 +1267,7 @@ env = ["CI_QUALITY", "ANSIBLE_QUALITY"]  # also checked if RUNSPEC_ARG_QUALITY u
 | `str`, `int`, `float`, `path`, `choice` | any value | natural string form |
 | `multiple = true` | list of values | newline-delimited string |
 
-The same formats are accepted on the input side — a user setting `RUNSPEC_ARG_DRY_RUN=1` or `RUNSPEC_ARG_DRY_RUN=true` both coerce correctly to a flag.
+The same formats are accepted on the input side — a user setting `RUNSPEC_BACKUP_LOGS_ARG_DRY_RUN=1` or `RUNSPEC_BACKUP_LOGS_ARG_DRY_RUN=true` both coerce correctly to a flag.
 
 Defaults from the spec are always set, even when the caller did not pass the arg
 explicitly. A required arg that was not provided is not set (this is a validation

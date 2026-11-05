@@ -533,7 +533,7 @@ environment variables:
 ### Runtime env injection
 
 When a runnable is invoked via `runspec serve` or `runspec jump`, every
-resolved argument is also exported as `RUNSPEC_<ARG_NAME_UPPERCASED>` before
+resolved argument is also exported as `RUNSPEC_<RUNNABLE>_ARG_<NAME>` before
 the process starts. Bash, Python, Node, or anything else can read those
 without a language-specific library. Hyphens become underscores;
 `flag`/`bool` values become `0`/`1`; `multiple = true` lists are

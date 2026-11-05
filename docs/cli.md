@@ -394,12 +394,13 @@ list. See [Jump Hosts](jump-hosts.md) for the remote-execution model.
 Before running a script, `serve` injects:
 
 ```
-RUNSPEC_<ARG_NAME_UPPERCASED>=<value>   # for every arg declared in the spec
-RUNSPEC_AGENT=1                          # always, so the runnable can branch
+RUNSPEC_<RUNNABLE>_ARG_<NAME>=<value>   # for every arg declared in the spec
+RUNSPEC_AGENT=1                         # always, so the runnable can branch
 RUNSPEC_CONFIG=/abs/path/to/runspec.toml # so parse() finds the spec in the subprocess
 ```
 
-Hyphens become underscores; `flag`/`bool` values are `0` or `1`;
+Names are uppercased and hyphens become underscores (runnable `backup-logs`,
+arg `dry-run` → `RUNSPEC_BACKUP_LOGS_ARG_DRY_RUN`); `flag`/`bool` values are `0` or `1`;
 `multiple = true` lists are newline-delimited. Defaults are always set even
 when the caller didn't pass the arg.
 

@@ -13,9 +13,9 @@ but run in the normal ``pytest`` suite without any extra markers or CI changes.
 Covers:
   - tools/list includes the test tool
   - explicit MCP arg flows through to subprocess stdout
-  - RUNSPEC_ARG_* env var in the server env reaches the subprocess
-  - explicit MCP arg overrides RUNSPEC_ARG_* already in the server env
-  - spec default does NOT overwrite RUNSPEC_ARG_* in the server env (regression guard)
+  - RUNSPEC_<RUNNABLE>_ARG_* env var in the server env reaches the subprocess
+  - explicit MCP arg overrides RUNSPEC_<RUNNABLE>_ARG_* already in the server env
+  - spec default does NOT overwrite RUNSPEC_<RUNNABLE>_ARG_* in the server env (regression guard)
   - _meta.runspec block is present on every tools/call response
   - log file is created at {sys.prefix}/logs/{tool_name}.log after a tool call
 """
