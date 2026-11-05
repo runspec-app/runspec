@@ -6,7 +6,7 @@ import os
 import re
 from typing import Any
 
-from runspec_wireshark_core.client import WiresharkConfig, read_argv, run
+from runspec_wireshark_core.client import WiresharkConfig, WiresharkError, iter_fields, read_argv, run
 
 FOLLOW_PROTOCOLS = ("tcp", "udp", "tls", "http", "http2", "quic", "sip", "websocket", "dccp")
 DEFAULT_MAX_BYTES = 4000
@@ -59,6 +59,20 @@ def parse_follow(text: str) -> dict[str, Any]:
     return {"nodes": nodes, "chunks": chunks}
 
 
+def tls_stream_index(config: WiresharkConfig, file: str | os.PathLike[str], tcp_stream: int) -> int:
+    """The index ``-z follow,tls`` wants for the TLS session on TCP stream
+    ``tcp_stream``. tshark 4.6 numbers TLS sessions on their own
+    (``tls.stream``: 0, 1, … over the TLS connections only); older versions
+    follow TLS by the TCP stream index, and have no ``tls.stream`` field."""
+    try:
+        for (value,) in iter_fields(config, file, ["tls.stream"], filter=f"tcp.stream == {int(tcp_stream)} && tls.stream"):
+            if value.split(",")[0].isdigit():
+                return int(value.split(",")[0])
+    except WiresharkError:
+        pass  # no tls.stream field: this tshark follows by TCP stream
+    return int(tcp_stream)
+
+
 def follow(
     config: WiresharkConfig,
     file: str | os.PathLike[str],
@@ -74,7 +88,8 @@ def follow(
     ``truncated`` set."""
     if protocol not in FOLLOW_PROTOCOLS:
         raise ValueError(f"protocol must be one of {', '.join(FOLLOW_PROTOCOLS)}")
-    text = run(read_argv(config, file) + ["-q", "-z", f"follow,{protocol},ascii,{int(stream)}"], timeout=config.timeout)
+    index = tls_stream_index(config, file, stream) if protocol == "tls" else int(stream)
+    text = run(read_argv(config, file) + ["-q", "-z", f"follow,{protocol},ascii,{index}"], timeout=config.timeout)
     parsed = parse_follow(text)
     # tshark prints "Node 0: :0" when it found nothing to follow.
     nodes = [n for n in parsed["nodes"] if n and not n.startswith(":")]

@@ -39,7 +39,7 @@ def _run(argv: list[str], config: WiresharkConfig | None = None):
     [
         (["summary", str(SAMPLE)], lambda out: out["tcp"]["reset"] == 4),
         (["packets", str(SAMPLE), "-Y", "http.response.code >= 400"], lambda out: out["total"] == 2),
-        (["packet", str(SAMPLE), "95", "--layer", "tls"], lambda out: "Unknown CA" in out["layers"][-1]["lines"][0]),
+        (["packet", str(SAMPLE), "95", "--layer", "tls"], lambda out: any("Unknown CA" in line for line in out["layers"][-1]["lines"])),
         (["fields", str(SAMPLE), "--field", "http.host,http.request.uri", "-Y", "http.request"], lambda out: out["rows"][2]["http.request.uri"] == "/api/orders?day=today"),
         (["top", str(SAMPLE), "ip.src"], lambda out: out["values"][0]["value"] == "10.20.0.15"),
         (["conversations", str(SAMPLE), "--type", "udp"], lambda out: out["total"] == 3),

@@ -14,6 +14,12 @@
   If tshark is refused a file this process can read anywhere else, the helper
   retries through the pipe and the rest of the process pipes too. Errors from
   a piped read still name the real file.
+- **tshark 4.6 (Ubuntu 26.04's tshark):** `follow` with `protocol="tls"` now
+  maps the TCP stream index you pass to tshark 4.6's own TLS session index
+  (`tls.stream`; 4.6 numbers TLS sessions separately), so it no longer
+  returns nothing; older tshark is unchanged. `protocols` (and `summary`)
+  drop the `frame` root tshark 4.6 adds to the protocol hierarchy, so depth 0
+  is still the link layer and `max_depth` means the same on every version.
 
 ## [0.1.0]
 

@@ -195,3 +195,10 @@ def test_keylog_copied_under_tmp_when_confined(tmp_path, monkeypatch) -> None:
     assert client._keylog_for("tshark", str(keys)) == copy  # reused while unchanged
     client._remove_keylog_copies()
     assert not os.path.exists(copy)
+
+
+def test_parse_phs_drops_the_frame_root() -> None:
+    # tshark 4.6 puts "frame" above the link layer.
+    text = "frame  frames:10 bytes:1000\n  eth  frames:10 bytes:1000\n    ip  frames:10 bytes:1000\n"
+    rows = parse_phs(text)
+    assert [(r["protocol"], r["depth"]) for r in rows] == [("eth", 0), ("ip", 1)]

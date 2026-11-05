@@ -35,13 +35,17 @@ REFUSED_STATS = ("credentials",)
 def parse_phs(text: str) -> list[dict[str, Any]]:
     """``-z io,phs`` text → ``[{protocol, depth, frames, bytes}]`` in tree order
     (depth 0 = the link layer)."""
-    rows = []
+    found: list[tuple[str, int, int, int]] = []
     for line in text.splitlines():
         match = re.match(r"^(\s*)(\S+)\s+frames:(\d+)\s+bytes:(\d+)\s*$", line)
         if match:
             indent, proto, frames, size = match.groups()
-            rows.append({"protocol": proto, "depth": len(indent) // 2, "frames": int(frames), "bytes": int(size)})
-    return rows
+            found.append((proto, len(indent) // 2, int(frames), int(size)))
+    # tshark 4.6 roots the tree at "frame"; drop it so depth 0 stays the link layer.
+    shift = 0
+    if found and found[0][:2] == ("frame", 0) and all(depth > 0 for _p, depth, _f, _b in found[1:]):
+        found, shift = found[1:], 1
+    return [{"protocol": p, "depth": depth - shift, "frames": f, "bytes": b} for p, depth, f, b in found]
 
 
 def protocols(config: WiresharkConfig, file: str | os.PathLike[str], *, filter: str | None = None, max_depth: int = 0) -> dict[str, Any]:
