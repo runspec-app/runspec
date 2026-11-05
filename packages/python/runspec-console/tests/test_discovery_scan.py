@@ -403,3 +403,106 @@ def test_scanned_runnables_carry_identity():
     ]
     [r] = _runnables_from_tomls(files, {"hello"}, "prod-1", "ops", "svc", "alice")
     assert (r["configRunAs"], r["venvOwner"], r["loginUser"]) == ("", "svc", "alice")
+
+
+# ── include + shared-args (core 0.77.0) ───────────────────────────────────────
+
+_COMPOSED = (
+    Path(__file__).parents[4] / "tests" / "integration" / "fixtures" / "composed"
+)
+
+
+def _composed_venv(root: Path) -> str:
+    """A fake venv whose package splits its runspec.toml with ``include`` (the
+    shared compliance fixture). The last fragment has no trailing newline, so
+    the scan's file markers must still land on their own lines."""
+    sp = root / "lib/python3.11/site-packages"
+    shutil.copytree(_COMPOSED, sp / "scripts_pkg")
+    last = sp / "scripts_pkg" / "runnables" / "disk-usage-args.toml"
+    last.write_text(last.read_text(encoding="utf-8").rstrip("\n"), encoding="utf-8")
+    b = root / "bin"
+    b.mkdir()
+    for name in ("bash-scripts", "disk-usage", "runspec"):
+        (b / name).write_text("#!/bin/sh\n")
+    return str(b / "runspec")
+
+
+def _by_name(runnables: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {r["name"]: r for r in runnables}
+
+
+def test_local_scan_resolves_includes(tmp_path: Path):
+    rp = _composed_venv(tmp_path)
+    with patch.object(
+        subprocess, "run", side_effect=AssertionError("CLI must not run")
+    ):
+        out = _by_name(discover_local(rp, "local"))
+    assert sorted(out) == ["bash-scripts", "disk-usage"]
+    europe = out["bash-scripts"]["commands"]["europe"]
+    assert europe["description"] == "Scripts for the European estate"
+    delete = europe["commands"]["delete-nodes"]
+    args = {a["name"]: a for a in delete["args"]}
+    assert args["cluster"]["required"] is True
+    assert args["timeout"]["inherited"] is True
+    assert {a["name"] for a in out["disk-usage"]["args"]} == {"path", "timeout"}
+
+
+def test_composed_scan_matches_load_raw(tmp_path: Path):
+    rp = _composed_venv(tmp_path)
+    toml = tmp_path / "lib/python3.11/site-packages/scripts_pkg/runspec.toml"
+    raw = load_raw(toml)
+    expected = []
+    for name, spec in raw["runnables"].items():
+        expected.extend(
+            discovery._spec_to_runnables(
+                name, spec, "local", tmp_path.name, raw["config"]["autonomy_default"]
+            )
+        )
+    got = discover_local(rp, "local")
+    for r in got:
+        for k in ("configRunAs", "venvOwner", "loginUser"):
+            r.pop(k, None)
+    assert got == expected
+
+
+@needs_sh
+def test_scan_command_ships_included_files(tmp_path: Path):
+    rp = _composed_venv(tmp_path)
+    proc = subprocess.run(
+        [_SH, "-c", _scan_command(rp)], capture_output=True, text=True, check=True
+    )
+    parsed = _parse_scan_output(proc.stdout)
+    assert parsed is not None
+    bin_names, _editable, files = parsed
+    names = sorted(Path(p).name for p, _ in files)
+    assert "find-nodes.toml" in names and "disk-usage-args.toml" in names
+    owner, user = _parse_scan_identity(proc.stdout)
+    via_sh = _runnables_from_tomls(
+        files, bin_names, "local", tmp_path.name, owner, user
+    )
+    assert via_sh == discover_local(rp, "local")
+    assert sorted(_by_name(via_sh)) == ["bash-scripts", "disk-usage"]
+
+
+@needs_sh
+def test_scan_command_skips_fragments_without_include(tmp_path: Path):
+    rp = _venv(tmp_path)
+    extra = tmp_path / "lib/python3.11/site-packages/mypkg/other.toml"
+    extra.write_text("x = 1\n", encoding="utf-8")
+    proc = subprocess.run(
+        [_SH, "-c", _scan_command(rp)], capture_output=True, text=True, check=True
+    )
+    parsed = _parse_scan_output(proc.stdout)
+    assert parsed is not None
+    assert all(Path(p).name == "runspec.toml" for p, _ in parsed[2])
+
+
+def test_missing_fragment_skips_the_package(caplog):
+    files = [
+        (
+            "/v/lib/python3.11/site-packages/p/runspec.toml",
+            '[r]\ninclude = "gone.toml"\n',
+        )
+    ]
+    assert _runnables_from_tomls(files, {"r"}, "h", "g") == []
+    assert "gone.toml" in caplog.text

@@ -195,6 +195,164 @@ Inside `main()`, `args.runspec_command` is the chosen subcommand name.
 
 ---
 
+## Big specs — `shared-args` and `include` (runspec 0.77.0+)
+
+Two tools keep a large `runspec.toml` readable. Both are resolved when the spec
+loads, so `--help`, `serve`, stubs, emit and the console see one ordinary spec.
+
+**`shared-args` + `use` — when the same arg repeats on several commands.** Define
+it once and reference it; keys next to `use` override:
+
+```toml
+[gitlab.shared-args]
+project = {type = "str", required = false, env = "GITLAB_PROJECT", description = "Project id or group/project path"}
+
+[gitlab.commands.get-issue.args]
+project = {use = "project"}
+
+[gitlab.commands.create-issue.args]
+project = {use = "project", required = true}
+```
+
+Use this instead of copying an arg, and instead of lifting it to the runnable's
+`args` when not every command takes it (a parent's args go on *every* child and
+must come before the command token). `[config.shared-args]` shares across all
+runnables in the file; a `shared-args` table on a command is visible to that
+command and everything below it.
+
+**`include` — when one file gets too long, or each command belongs next to its
+own code.** A runnable or command table can say `include = "path.toml"`; that
+file holds the table's body with no `[x.commands.y]` prefix. Start each included
+file with `#:schema https://runspec.app/runspec-fragment.schema.json`. Paths are
+relative to the including file, use `/`, end in `.toml`, and must stay inside
+the package directory. Never set the same key in both files.
+
+Packaging: the included files must ship next to `runspec.toml`. Hatchling ships
+every file in the package directory; with setuptools add `"**/*.toml"` to
+`package-data`. Add `runspec>=0.77.0` to the package's dependencies, and test
+that `load_spec("<runnable>")` loads from the built wheel.
+
+---
+
+## Wrapping existing scripts — one runnable, a command per script
+
+To put a folder of existing bash (or other) scripts behind one runnable, make
+**each folder a command level and each script a leaf command**, and pass the args
+to the script as **environment variables**. Don't take the folder or script name
+as an arg (`--folder-name europe script-name`): runspec can't know which commands
+or args exist for a given value, so `--help`, validation, the console's Forms
+and the MCP tools would all lose each script's own args.
+
+```
+bash_scripts/
+  __init__.py
+  cli.py                  # the one entry point: bash-scripts = "bash_scripts.cli:main"
+  runspec.toml            # [bash-scripts] + shared-args + one include per folder
+  scripts/
+    europe/
+      europe.toml         # description, require-command, one include per script
+      find-nodes.sh
+      find-nodes.toml     # this script's description, autonomy, args
+      delete-nodes.sh
+      delete-nodes.toml
+```
+
+```toml
+# bash_scripts/runspec.toml
+[bash-scripts]
+description     = "Collection of bash scripts for appname management"
+require-command = true
+
+[bash-scripts.shared-args]
+cluster = {type = "str", default = "main", description = "Cluster to act on"}
+
+[bash-scripts.commands.europe]
+include = "scripts/europe/europe.toml"
+```
+
+```toml
+#:schema https://runspec.app/runspec-fragment.schema.json
+# bash_scripts/scripts/europe/europe.toml
+description     = "Scripts for the European estate"
+require-command = true
+
+[commands.find-nodes]
+include = "find-nodes.toml"
+
+[commands.delete-nodes]
+include = "delete-nodes.toml"
+```
+
+```toml
+#:schema https://runspec.app/runspec-fragment.schema.json
+# bash_scripts/scripts/europe/delete-nodes.toml
+description = "Delete nodes matching a pattern from a cluster"
+autonomy    = "confirm"
+
+[args]
+pattern = {description = "Node name glob, e.g. web*"}
+cluster = {use = "cluster", required = true}
+```
+
+```python
+# bash_scripts/cli.py
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+from runspec import parse
+
+SCRIPTS = Path(__file__).parent / "scripts"
+
+
+def script_env(args) -> dict[str, str]:
+    """Each arg of the chosen command as ARG_<NAME> (dry-run → ARG_DRY_RUN)."""
+    env = dict(os.environ)
+    for name in args.runspec_spec["args"]:  # effective args: globals + this command's
+        value = args.get(name).value
+        if value is None:
+            continue
+        if isinstance(value, bool):
+            text = "1" if value else ""
+        elif isinstance(value, list):
+            text = "\n".join(map(str, value))
+        else:
+            text = str(value)
+        env["ARG_" + name.replace("-", "_").upper()] = text
+    return env
+
+
+def main() -> None:
+    args = parse("bash-scripts")
+    *folders, name = args.runspec_command_path
+    script = SCRIPTS.joinpath(*folders, f"{name}.sh")
+    sys.exit(subprocess.run(["bash", str(script)], env=script_env(args)).returncode)
+```
+
+```bash
+# bash_scripts/scripts/europe/delete-nodes.sh
+set -euo pipefail
+echo "Deleting nodes matching ${ARG_PATTERN} on ${ARG_CLUSTER}"
+```
+
+Rules for this pattern:
+
+- **`ARG_` prefix, always.** A bare `$PATH`/`$HOME`-style name would clobber the
+  script's environment. Flags are `1` or empty (`[ -n "$ARG_FORCE" ]`); a
+  `multiple` arg is newline-separated.
+- **Run `bash script.sh`**, don't rely on the exec bit: wheels don't reliably keep
+  it for package data.
+- **Every script's `.toml` sets `autonomy`.** Read-only scripts `autonomous`;
+  anything that changes or deletes stays `confirm` (or `manual`).
+- **Keep the tree shallow.** `runspec serve` flattens it into tool names like
+  `bash-scripts_europe_delete-nodes`, and agent APIs cap tool names at 64
+  characters.
+- Secrets: a `type = "password"` arg reaches the script as `ARG_<NAME>` in its
+  environment, never on its command line.
+
+---
+
 ## Groups (mutually-exclusive / co-required args)
 
 Declare relationships between args under `[<name>.groups.<group>]` with one of

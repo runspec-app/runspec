@@ -24,9 +24,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import posixpath
 import shlex
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -76,7 +78,8 @@ def _scan_command(runspec_path: str) -> str:
     """The one-shot POSIX shell command that dumps everything the scan needs
     from a remote venv: the ``bin/`` listing (entry-point filter), any editable
     install marker (⇒ fall back to the CLI), every ``runspec.toml`` under
-    ``lib/python*/site-packages`` with its contents, and — first — the venv
+    ``lib/python*/site-packages`` with its contents (plus the other ``.toml``
+    files of a package whose runspec.toml uses ``include``), and — first — the venv
     root's owner and the login account (see :func:`_parse_scan_identity`).
 
     Portable ``sh``: no bashisms, ``find -exec … +`` (no ``-print0``/``xargs``),
@@ -100,8 +103,15 @@ def _scan_command(runspec_path: str) -> str:
         f"echo {_SCAN_EDITABLE}; "
         'find "$r"/lib/python*/site-packages -maxdepth 2 -name direct_url.json '
         "-exec grep -l '\"editable\": *true' {} + 2>/dev/null; "
+        # Each runspec.toml, then — only when it uses `include` — every other
+        # .toml under its package directory, so the included files can be
+        # resolved here without a second round trip.
         'find "$r"/lib/python*/site-packages -maxdepth 3 -name runspec.toml '
-        f'-exec sh -c \'for f; do echo "{_SCAN_FILE}$f"; cat "$f"; done\' _ {{}} + '
+        f'-exec sh -c \'for f; do echo "{_SCAN_FILE}$f"; cat "$f"; '
+        'if grep -q "^[[:space:]]*include[[:space:]]*=" "$f"; then echo; '
+        'find "$(dirname "$f")" -name "*.toml" ! -name runspec.toml | '
+        f'while IFS= read -r g; do echo "{_SCAN_FILE}$g"; cat "$g"; echo; done; fi; '
+        "done' _ {} + "
         "2>/dev/null; "
         f"echo {_SCAN_END}"
     )
@@ -230,11 +240,29 @@ def stamp_identity(
     return runnables
 
 
-def _normalise_toml_text(text: str) -> dict[str, Any] | None:
-    """``runspec.loader.load_raw`` for TOML *text*: the same two normalisers the
-    CLI runs per package, so the spec shape matches ``runspec local``'s JSON
-    exactly. ``None`` when the file isn't a runspec.toml (or runspec's loader
-    can't be imported), so the caller skips it."""
+def _normalise_toml_text(
+    text: str, reader: Callable[[str], str | None] | None = None
+) -> dict[str, Any] | None:
+    """``runspec.loader.load_raw`` for TOML *text*: the same resolve + normalise
+    steps the CLI runs per package, so the spec shape matches ``runspec local``'s
+    JSON exactly. ``reader`` reads an ``include``d file by its path relative to
+    the runspec.toml directory. ``None`` when the file isn't a runspec.toml, an
+    include can't be resolved, or runspec's loader can't be imported, so the
+    caller skips it."""
+    try:
+        from runspec.loader import load_text
+    except ImportError:  # pragma: no cover — core older than 0.77.0
+        return _normalise_toml_text_legacy(text)
+    try:
+        return load_text(text, reader)
+    except Exception as e:  # noqa: BLE001 — malformed / non-runspec TOML ⇒ skip
+        if isinstance(e, ValueError) and "include" in str(e):
+            logger.warning("discovery: can't resolve a runspec.toml include: %s", e)
+        return None
+
+
+def _normalise_toml_text_legacy(text: str) -> dict[str, Any] | None:
+    """Pre-0.77.0 core: no ``load_text`` (and no include / shared-args)."""
     try:
         from runspec.loader import _normalise_config, _normalise_runnables
     except ImportError:  # pragma: no cover — loader layout changed
@@ -252,6 +280,31 @@ def _normalise_toml_text(text: str) -> dict[str, Any] | None:
         return None
 
 
+def _fragment_reader(
+    root: str, files: dict[str, str], local: bool
+) -> Callable[[str], str | None]:
+    """Reads a file ``include``d by the runspec.toml at ``root``: from the scan
+    reply (``files``, keyed by path), or — for a local venv — from disk."""
+    if local:
+        base = Path(root).parent
+
+        def read_local(rel: str) -> str | None:
+            target = base.joinpath(*rel.split("/"))
+            try:
+                return target.read_text(encoding="utf-8")
+            except OSError:
+                return None
+
+        return read_local
+    base_dir = posixpath.dirname(root)
+    return lambda rel: files.get(posixpath.join(base_dir, rel))
+
+
+def _base_name(path: str) -> str:
+    """Last path component, for a POSIX (remote) or native (local) path."""
+    return path.replace("\\", "/").rsplit("/", 1)[-1]
+
+
 def _is_core_toml(path: str) -> bool:
     """The core package's own ``…/site-packages/runspec/runspec.toml``."""
     parts = Path(path).parts
@@ -265,6 +318,7 @@ def _runnables_from_tomls(
     group: str,
     venv_owner: str | None = None,
     login_user: str = "",
+    local: bool = False,
 ) -> list[dict[str, Any]]:
     """Turn scanned ``(path, toml_text)`` pairs into Runnable dicts, applying the
     same filters ``runspec local --format json`` does: only runnables with an
@@ -272,10 +326,14 @@ def _runnables_from_tomls(
     (path, name), minus the console's own / the core control-plane runnable."""
     out: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
+    by_path = dict(files)
     for path, text in files:
-        if _is_core_toml(path):
+        # The scan also returns the files a runspec.toml includes; they are
+        # read through the reader, never loaded as specs of their own.
+        if _base_name(path) != "runspec.toml" or _is_core_toml(path):
             continue
-        raw = _normalise_toml_text(text)
+        reader = _fragment_reader(path, by_path, local)
+        raw = _normalise_toml_text(text, reader)
         if not raw or not raw["runnables"]:
             continue
         config_autonomy = raw["config"].get("autonomy_default")
@@ -336,7 +394,7 @@ def _scan_local(runspec_path: str, host: str) -> list[dict[str, Any]] | None:
         bin_names = set()
     owner, user = local_identity(runspec_path)
     return _runnables_from_tomls(
-        files, bin_names, host, venv_name(runspec_path), owner, user
+        files, bin_names, host, venv_name(runspec_path), owner, user, local=True
     )
 
 

@@ -20,10 +20,16 @@ if sys.version_info >= (3, 11):
 else:
     import tomli as tomllib  # type: ignore[no-redef]
 
+from runspec.compose import Reader, fs_reader, resolve
+
 
 def load_raw(config_path: Path) -> dict[str, Any]:
     """
     Read runspec.toml and return the normalised spec dict.
+
+    ``include`` and ``shared-args`` / ``use`` are resolved first (see
+    :mod:`runspec.compose`), so the result looks the same as if the spec had
+    been written as one file.
 
     Args:
         config_path: Path to runspec.toml
@@ -32,12 +38,36 @@ def load_raw(config_path: Path) -> dict[str, Any]:
         Normalised dict with keys: config, runnables
 
     Raises:
-        ValueError: if the runspec section is malformed
+        ValueError: if the runspec section is malformed, or an include / use
+            can't be resolved
         FileNotFoundError: if config_path does not exist
     """
+    return normalise(read_resolved(config_path))
+
+
+def read_resolved(config_path: Path) -> dict[str, Any]:
+    """Read runspec.toml as a raw TOML dict with ``include`` and ``use`` resolved.
+
+    For callers that need keys the normaliser drops (e.g. ``meta`` tables).
+    """
+    config_path = Path(config_path)
     with open(config_path, "rb") as f:
         data = tomllib.load(f)
+    return resolve(data, fs_reader(config_path.parent), config_path.name)
 
+
+def load_text(text: str, reader: Reader | None = None) -> dict[str, Any]:
+    """:func:`load_raw` for runspec.toml *text*.
+
+    ``reader`` reads an included file by its path relative to the runspec.toml
+    directory (``None`` when missing); without one, a spec that uses
+    ``include`` raises ``ValueError``.
+    """
+    return normalise(resolve(tomllib.loads(text), reader))
+
+
+def normalise(data: dict[str, Any]) -> dict[str, Any]:
+    """Normalise a parsed (and resolved) runspec.toml dict."""
     runnables_raw = {key: value for key, value in data.items() if key != "config" and isinstance(value, dict)}
 
     return {

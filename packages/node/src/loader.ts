@@ -1,11 +1,30 @@
 import * as fs from 'fs';
+import * as path from 'path';
 import { parse as parseTOML } from 'smol-toml';
+import { fsReader, resolve, type Reader } from './compose';
 import type { RawConfig, RawSpec, ScriptSpec, ArgSpec, GroupSpec, LoggingConfig } from './models';
 
+/** Read runspec.toml and return the normalised spec; `include` and
+ *  `shared-args` / `use` are resolved first (see compose.ts). */
 export function loadRaw(configPath: string): RawSpec {
+  return normalise(readResolved(configPath));
+}
+
+/** runspec.toml as a raw TOML object with `include` and `use` resolved — for
+ *  callers that need keys the normaliser drops (e.g. `meta`). */
+export function readResolved(configPath: string): Record<string, unknown> {
   const content = fs.readFileSync(configPath, 'utf-8');
   const raw = parseTOML(content) as Record<string, unknown>;
+  return resolve(raw, fsReader(path.dirname(configPath)), path.basename(configPath));
+}
 
+/** `loadRaw` for runspec.toml text; `reader` reads included files. */
+export function loadText(text: string, reader?: Reader): RawSpec {
+  return normalise(resolve(parseTOML(text) as Record<string, unknown>, reader));
+}
+
+/** Normalise a parsed (and resolved) runspec.toml object. */
+export function normalise(raw: Record<string, unknown>): RawSpec {
   const runnablesRaw: Record<string, Record<string, unknown>> = {};
   for (const [key, value] of Object.entries(raw)) {
     if (key !== 'config' && typeof value === 'object' && value !== null && !Array.isArray(value)) {

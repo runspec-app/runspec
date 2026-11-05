@@ -1,0 +1,3 @@
+[args]
+path = {default = "/", description = "Where to start"}
+timeout = {use = "timeout", default = 60}

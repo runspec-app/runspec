@@ -9,6 +9,46 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.77.0] — 2026-11-05
+
+### Added
+
+- **`shared-args` and `use`: define an arg once, use it on many commands.** A
+  `shared-args` table on a runnable, on any command, or in `[config]` holds arg
+  definitions; an arg written as `project = {use = "project"}` takes the
+  nearest one, and keys next to `use` override it (`{use = "project",
+  required = true}`). Unlike a parent's inherited args, a shared arg goes only
+  on the commands that declare it and is passed after the command token. An
+  unknown name is a load error with a "did you mean".
+- **`include`: split a runspec.toml into files.** A runnable or command table
+  can say `include = "scripts/europe/europe.toml"`; the file holds that
+  table's body (no `[x.commands.y]` prefix) and may include others. Paths are
+  relative to the including file and must stay inside the package directory
+  (symlinks out are refused); a cycle, a chain deeper than 8 files, a missing
+  file and a key set in both files are errors that name the files.
+- Both are resolved when the spec loads (new `runspec/compose.py`), so parsing,
+  `--help`, `serve`, stubs, emit and `runspec local` see one ordinary spec. A
+  spec that uses neither loads exactly as before: a test resolves every
+  runspec.toml in the repo and checks the result is unchanged.
+- `runspec.loader.load_text(text, reader)` loads runspec.toml text whose
+  included files come from a callback (the console's remote scan uses it), and
+  `read_resolved(path)` returns the resolved raw TOML (`runspec emit` reads
+  `meta` tables through it, so `meta` in an included file is honoured).
+- `schema/runspec.schema.json` gains `include`, `shared-args` and the arg field
+  `use`; a new `runspec-fragment.schema.json` (published at
+  runspec.app) validates included files. SPEC → "Composing a Spec".
+- Shared compliance fixture `tests/integration/fixtures/composed/` must load the
+  same as `composed_flat.toml` in both packs.
+
+## [node-0.45.0] — 2026-11-05
+
+### Added
+
+- **Node: `include` and `shared-args` / `use`**, at parity with Python 0.77.0
+  (`src/compose.ts`, same rules and messages). `loadRaw` resolves them;
+  `loadText(text, reader)` and `readResolved(path)` are exported, and
+  `runspec emit` reads `meta` through the resolved spec.
+
 ## [0.76.2] — 2026-10-28
 
 ### Fixed

@@ -1,0 +1,7 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://runspec.app/runspec-fragment.schema.json",
+  "title": "runspec.toml include file",
+  "description": "A file named by include = \"…\" in a runspec.toml: the body of one runnable or command table (description, args, commands, …) with no [runnable.commands.x] prefix. See https://runspec.app/format/#splitting-a-spec-include",
+  "$ref": "https://runspec.app/runspec.schema.json#/$defs/runnable"
+}

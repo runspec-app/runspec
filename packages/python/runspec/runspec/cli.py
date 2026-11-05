@@ -288,8 +288,10 @@ def _emit_meta(source: str, runnable: str, key: str) -> tuple[dict[str, Any], di
     Runnable-level `meta` is a pass-through the loader drops from the normalised
     spec (loader `_normalise_script`), so the emitter reads it straight from the
     raw TOML — keeping every platform-specific setting out of the core spec."""
+    from runspec.loader import read_resolved
+
     try:
-        raw = _load_toml_file(Path(source))
+        raw = read_resolved(Path(source))
     except Exception:
         return {}, {}
     config_meta = (raw.get("config", {}) or {}).get("meta", {}) or {}
