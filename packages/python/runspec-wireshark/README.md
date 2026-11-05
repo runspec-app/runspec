@@ -36,6 +36,13 @@ PATH, set `TSHARK_PATH` (or `--tshark`) to it; capinfos and mergecap are looked
 for in the same folder. The usual Windows and macOS install folders are tried
 too.
 
+On Ubuntu 25.10 and later, tshark runs under an AppArmor profile that only lets
+it open files in `/tmp`. pcap works around it: it pipes the capture into tshark
+and has tshark write to a private folder in `/tmp` before moving the result to
+where you asked. You don't need to change the profile. A live `capture` is
+written by dumpcap, which the profile only allows to write files ending in
+`.pcap` or `.pcapng`, so keep that extension on `--output`.
+
 ## Verbs
 
 Reading a capture is read-only and `autonomous`. The four verbs that create

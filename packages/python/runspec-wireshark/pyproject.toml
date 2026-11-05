@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-wireshark"
-version = "0.1.0"
+version = "0.1.1"
 requires-python = ">=3.10"
 description = "Wireshark runnable for runspec — read pcap files with tshark (summary, packets, decoded packets, conversations, followed streams, DNS/HTTP/TLS problems, expert info) and capture, filter, or merge them"
 readme = "README.md"
@@ -12,7 +12,7 @@ keywords = ["runspec", "runnable", "wireshark", "tshark", "pcap", "packet-captur
 dependencies = [
     # 0.74.0 plays back the shipped mocks (runspec_wireshark/mocks/pcap.json).
     "runspec>=0.74.0",
-    "runspec-wireshark-core>=0.1.0",
+    "runspec-wireshark-core>=0.1.1",
 ]
 
 [project.urls]

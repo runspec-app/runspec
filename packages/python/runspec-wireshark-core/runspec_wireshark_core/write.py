@@ -8,12 +8,13 @@ exists is refused unless ``overwrite``.
 from __future__ import annotations
 
 import os
+import shutil
 import tempfile
 import time
 from pathlib import Path
 from typing import Any
 
-from runspec_wireshark_core.client import WiresharkConfig, WiresharkError, capture_file, find_tool, output_path, read_argv, run
+from runspec_wireshark_core.client import WiresharkConfig, WiresharkError, capture_file, find_tool, output_path, read_argv, run, staging
 from runspec_wireshark_core.info import file_info
 
 MAX_DURATION = 3600
@@ -102,7 +103,12 @@ def save_filtered(
     if os.path.abspath(output) == os.path.abspath(source):
         raise ValueError("output must be a different file from the input")
     path = output_path(output, overwrite=overwrite)
-    run(read_argv(config, source, filter=filter) + ["-w", path], timeout=config.timeout)
+    with staging(config) as stage:
+        # A confined tshark can't write outside /tmp: write there, then move.
+        target = os.path.join(stage, os.path.basename(path)) if stage else path
+        run(read_argv(config, source, filter=filter) + ["-w", target], timeout=config.timeout)
+        if stage:
+            shutil.move(target, path)
     info = file_info(config, path)
     return {"file": path, "source": source, "filter": filter, "packets": info.get("packets", 0), "file_bytes": info.get("file_bytes", os.path.getsize(path))}
 
@@ -150,7 +156,12 @@ def export_objects(
     if folder.exists() and any(folder.iterdir()):
         raise WiresharkError(f"{folder} is not empty — choose a new or empty folder")
     folder.mkdir(parents=True, exist_ok=True)
-    run(read_argv(config, file) + ["-q", "--export-objects", f"{protocol},{folder}"], timeout=config.timeout)
+    with staging(config) as stage:
+        # A confined tshark can't write outside /tmp: export there, then move.
+        run(read_argv(config, file) + ["-q", "--export-objects", f"{protocol},{stage or folder}"], timeout=config.timeout)
+        if stage:
+            for item in Path(stage).iterdir():
+                shutil.move(str(item), str(folder / item.name))
     sizes = sorted(((p.stat().st_size, p.name) for p in folder.iterdir() if p.is_file()), key=lambda t: (-t[0], t[1]))
     written = [{"name": name, "bytes": size} for size, name in sizes]
     shown = written[:limit] if limit else written

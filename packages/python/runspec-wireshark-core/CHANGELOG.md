@@ -1,5 +1,20 @@
 # Changelog — runspec-wireshark-core
 
+## [0.1.1]
+
+- **Works on Ubuntu 25.10 and later (incl. 26.04).** Ubuntu ships an AppArmor
+  profile for `/usr/bin/tshark` that only lets it open files in `/tmp`, so
+  every helper that read a capture failed with "You don't have permission to
+  read the file". When tshark is confined (the profile is installed and
+  AppArmor is on — new `client.confined()`), a capture is now piped in on
+  stdin (`tshark -r -`); `save_filtered` and `export_objects` have tshark write
+  into a private folder under `/tmp` (`client.staging()`) and move the result
+  into place; and a TLS key log is read from a private owner-only copy under
+  `/tmp`, deleted at exit (before, a confined tshark silently didn't decrypt).
+  If tshark is refused a file this process can read anywhere else, the helper
+  retries through the pipe and the rest of the process pipes too. Errors from
+  a piped read still name the real file.
+
 ## [0.1.0]
 
 First release. Pure-Python helpers over Wireshark's tshark, capinfos and
