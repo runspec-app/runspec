@@ -1,0 +1,21 @@
+# Compliance fixture for `include` and `shared-args` / `use`.
+# Loading this must give exactly the same spec as composed_flat.toml.
+
+[config.shared-args]
+timeout = {default = 30, description = "Seconds to wait"}
+
+[bash-scripts]
+description = "Collection of bash scripts"
+require-command = true
+
+[bash-scripts.shared-args]
+cluster = {type = "str", default = "main", description = "Cluster to act on"}
+
+[bash-scripts.args]
+timeout = {use = "timeout"}
+
+[bash-scripts.commands.europe]
+include = "scripts/europe/europe.toml"
+
+[disk-usage]
+include = "runnables/disk-usage.toml"

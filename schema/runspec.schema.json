@@ -150,6 +150,11 @@
           "type": "string",
           "description": "Path to a .runspec_env file (KEY=VALUE dotenv format). Loaded at parse time; existing env vars win. Relative paths resolve from sys.prefix. Per-runnable runspec_env wins over this setting."
         },
+        "shared-args": {
+          "type": "object",
+          "description": "Shared by every runnable in this file. Arg definitions shared by name. An arg written as {use = \"<name>\"} takes the definition; keys next to use override it. The nearest table wins: the command's own, then each parent up to the runnable, then [config.shared-args]. A shared arg can't itself use another one.",
+          "additionalProperties": { "$ref": "#/$defs/arg_value" }
+        },
         "meta": {
           "type": "object",
           "description": "Project-wide developer-defined metadata. Pass-through — runspec never interprets the contents. Orchestration emitters read project defaults here (e.g. [config.meta.rundeck] for runspec emit --rundeck)."
@@ -233,6 +238,11 @@
       "type": "object",
       "description": "A runnable tool — a script, application, or MCP tool described by this file.",
       "properties": {
+        "include": {
+          "type": "string",
+          "pattern": "^[^/\\\\].*\\.toml$",
+          "description": "Path of a .toml file holding the rest of this table (description, args, commands, …, with no [runnable.commands.x] prefix). Relative to the file that names it, using '/', and inside the directory holding runspec.toml. Included files may include others; a cycle is an error, and so is a key set both here and in the included file."
+        },
         "description": {
           "type": "string",
           "description": "Human and agent readable description of what this tool does."
@@ -301,6 +311,11 @@
         "args": {
           "type": "object",
           "description": "Argument definitions. Each value is a bare default (type inferred) or a full arg definition.",
+          "additionalProperties": { "$ref": "#/$defs/arg_value" }
+        },
+        "shared-args": {
+          "type": "object",
+          "description": "Arg definitions shared by name. An arg written as {use = \"<name>\"} takes the definition; keys next to use override it. The nearest table wins: the command's own, then each parent up to the runnable, then [config.shared-args]. A shared arg can't itself use another one.",
           "additionalProperties": { "$ref": "#/$defs/arg_value" }
         },
         "groups": {
@@ -470,6 +485,10 @@
           "type": "string",
           "description": "Placeholder / hint text shown in a UI form field (e.g. an example value). Advisory for str/path/password types; never affects parsing or validation."
         },
+        "use": {
+          "type": "string",
+          "description": "Take this arg's definition from a shared-args table by name; any other keys set here override it."
+        },
         "meta": {
           "type": "object",
           "description": "Developer-defined metadata. Pass-through — runspec never interprets the contents."
@@ -518,6 +537,11 @@
       "type": "object",
       "description": "A subcommand under a runnable (e.g. [pipeline.commands.run]).",
       "properties": {
+        "include": {
+          "type": "string",
+          "pattern": "^[^/\\\\].*\\.toml$",
+          "description": "Path of a .toml file holding the rest of this table (description, args, commands, …, with no [runnable.commands.x] prefix). Relative to the file that names it, using '/', and inside the directory holding runspec.toml. Included files may include others; a cycle is an error, and so is a key set both here and in the included file."
+        },
         "description": {
           "type": "string",
           "description": "Human and agent readable description."
@@ -538,6 +562,11 @@
         "args": {
           "type": "object",
           "description": "Argument definitions for this subcommand.",
+          "additionalProperties": { "$ref": "#/$defs/arg_value" }
+        },
+        "shared-args": {
+          "type": "object",
+          "description": "Arg definitions shared by name. An arg written as {use = \"<name>\"} takes the definition; keys next to use override it. The nearest table wins: the command's own, then each parent up to the runnable, then [config.shared-args]. A shared arg can't itself use another one.",
           "additionalProperties": { "$ref": "#/$defs/arg_value" }
         },
         "examples": {

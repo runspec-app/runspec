@@ -4,10 +4,9 @@ import * as readline from 'readline';
 import { spawnSync } from 'child_process';
 import { findConfig } from './finder';
 import * as logs from './logs';
-import { loadRaw } from './loader';
+import { loadRaw, readResolved } from './loader';
 import { inferScript } from './inference';
 import { parse } from './parser';
-import { parse as parseTOML } from 'smol-toml';
 import * as rundeckgen from './rundeckgen';
 import * as ansiblegen from './ansiblegen';
 import type { ScriptSpec, ArgSpec, ParsedArgs } from './models';
@@ -597,7 +596,7 @@ function emitAll(discovered: Array<{ source: string; runnable: string; spec: Scr
 function emitMeta(source: string, runnable: string, key: string): [Record<string, unknown>, Record<string, unknown>] {
   let raw: Record<string, unknown>;
   try {
-    raw = parseTOML(fs.readFileSync(source, 'utf-8')) as Record<string, unknown>;
+    raw = readResolved(source);
   } catch {
     return [{}, {}];
   }

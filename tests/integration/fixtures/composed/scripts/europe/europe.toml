@@ -1,0 +1,11 @@
+description = "Scripts for the European estate"
+require-command = true
+
+[shared-args]
+pattern = {description = "Node name glob"}
+
+[commands.find-nodes]
+include = "find-nodes.toml"
+
+[commands.delete-nodes]
+include = "delete-nodes.toml"

@@ -215,6 +215,7 @@ jobs:
               - 'docs/**'
               - 'mkdocs.yml'
               - 'schema/runspec.schema.json'
+              - 'schema/runspec-fragment.schema.json'
               - 'spec/SPEC.md'
               - 'CHANGELOG.md'
               - 'scripts/check_docs.py'

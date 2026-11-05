@@ -9,6 +9,19 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.375.0] — 2026-11-05
+
+### Added
+
+- **Runnables whose runspec.toml uses `include` show up complete.** The venv
+  scan (local and over SSH) now also reads the files a runspec.toml includes,
+  so their commands, args and descriptions reach Forms, the agent's tools and
+  the MCP server. The remote scan only fetches the package's other `.toml`
+  files when its runspec.toml has an `include` line, so other venvs cost the
+  same as before. `shared-args` / `use` need nothing extra. A spec whose
+  include can't be resolved is skipped with a warning in the log. Needs
+  runspec 0.77.0 (the dependency floor is raised).
+
 ## [0.374.1] — 2026-11-04
 
 ### Fixed

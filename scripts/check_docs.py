@@ -37,6 +37,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 DOCS = REPO / "docs"
 SCHEMA_PATH = REPO / "schema" / "runspec.schema.json"
+FRAGMENT_SCHEMA_LINE = "#:schema https://runspec.app/runspec-fragment.schema.json"
 CHANGELOG = REPO / "CHANGELOG.md"
 
 # Package manifest → CHANGELOG heading prefix. The Node pack is tagged
@@ -428,6 +429,9 @@ def check_toml_examples() -> list[str]:
 
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
     validator = jsonschema.Draft7Validator(schema)
+    # A block whose first line is the include-file #:schema line is the body of
+    # one runnable/command table — validate it against that definition.
+    fragment_validator = jsonschema.Draft7Validator({"$ref": "#/$defs/runnable", "$defs": schema["$defs"]})
     errors: list[str] = []
 
     for md, line, block in _toml_blocks():
@@ -440,8 +444,13 @@ def check_toml_examples() -> list[str]:
             continue
         if data.keys() & NON_RUNSPEC_SECTIONS:
             continue  # non-runspec config format (manifest / chat / console)
-        data = _normalize_custom_types(data)
-        block_errors = sorted(validator.iter_errors(data), key=lambda e: list(e.path))
+        is_fragment = block.lstrip().startswith(FRAGMENT_SCHEMA_LINE)
+        if is_fragment:
+            data = _normalize_custom_types({"_": data})["_"]
+        else:
+            data = _normalize_custom_types(data)
+        check = fragment_validator if is_fragment else validator
+        block_errors = sorted(check.iter_errors(data), key=lambda e: list(e.path))
         for err in block_errors:
             where = "/".join(str(p) for p in err.path) or "(root)"
             errors.append(f"{loc}: schema violation at {where}: {err.message}")

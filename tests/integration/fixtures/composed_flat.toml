@@ -1,0 +1,35 @@
+# The single-file equivalent of composed/runspec.toml (compliance fixture).
+
+[bash-scripts]
+description = "Collection of bash scripts"
+require-command = true
+
+[bash-scripts.args]
+timeout = {default = 30, description = "Seconds to wait"}
+
+[bash-scripts.commands.europe]
+description = "Scripts for the European estate"
+require-command = true
+
+[bash-scripts.commands.europe.commands.find-nodes]
+description = "Find nodes matching a pattern"
+autonomy = "autonomous"
+
+[bash-scripts.commands.europe.commands.find-nodes.args]
+pattern = {description = "Node name glob"}
+cluster = {type = "str", default = "main", description = "Cluster to act on"}
+
+[bash-scripts.commands.europe.commands.delete-nodes]
+description = "Delete nodes"
+autonomy = "confirm"
+
+[bash-scripts.commands.europe.commands.delete-nodes.args]
+pattern = {description = "Node name glob", required = true}
+cluster = {type = "str", default = "main", description = "Cluster to act on", required = true}
+
+[disk-usage]
+description = "Show disk usage"
+
+[disk-usage.args]
+path = {default = "/", description = "Where to start"}
+timeout = {default = 60, description = "Seconds to wait"}

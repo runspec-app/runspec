@@ -235,6 +235,7 @@ description = "Output quality. Values below 60 are rarely useful."
 | `hint` | string | Placeholder text for a UI form field. Advisory for `str`/`path`/`password`; never affects parsing. |
 | `meta` | table | Developer-defined pass-through metadata. runspec never reads it. |
 | `position` | int | 1-based positional index. Makes the arg positional (it may still be passed as `--name`). |
+| `use` | string | Take the definition from a `shared-args` table by name; other keys set next to it override it. See [Shared arguments](#shared-arguments-shared-args-use). |
 
 ### Positional arguments
 
@@ -690,6 +691,113 @@ unaffected, so agent tooling still sees the runnable.
 
 !!! note "Availability"
     `require-command` was added in **runspec 0.23.0** and **node-0.18.0**.
+
+### Shared arguments (`shared-args`, `use`)
+
+When the same arg appears on many commands, define it once in a
+`shared-args` table and point to it with `use`. Keys written next to `use`
+override the shared definition, and the arg may have a different name from
+the definition it uses:
+
+```toml
+[gitlab]
+description = "GitLab REST API"
+
+[gitlab.shared-args]
+project  = {type = "str", required = false, env = "GITLAB_PROJECT", description = "Project id or group/project path"}
+per-page = {default = 20, description = "Items per page"}
+
+[gitlab.commands.get-issue.args]
+project   = {use = "project"}
+issue-iid = {type = "int", description = "Issue number"}
+
+[gitlab.commands.list-issues.args]
+project  = {use = "project"}
+per-page = {use = "per-page"}
+
+[gitlab.commands.create-issue.args]
+project        = {use = "project", required = true}   # override one key
+source-project = {use = "project"}                    # same definition, another name
+```
+
+A `shared-args` table can sit on a runnable, on any command, or in `[config]`
+(shared by every runnable in the file). `use` takes the nearest definition:
+the command's own table, then each parent up to the runnable, then
+`[config.shared-args]`. A sibling command's table is not visible. A shared arg
+can't itself `use` another one, and an unknown name is a load error with a
+"did you mean" hint.
+
+This is different from [inherited arguments](#subcommands): an arg on a parent
+is inherited by every child and must be passed before the command token
+(`gitlab --project x get-issue`). A shared arg is declared only on the
+commands that take it, and is passed after the command like any of its own
+args.
+
+### Splitting a spec (`include`)
+
+A runnable or command table can keep its body in another file:
+
+```toml
+#:schema https://runspec.app/runspec.schema.json
+[bash-scripts]
+description     = "Collection of bash scripts for appname management"
+require-command = true
+
+[bash-scripts.shared-args]
+cluster = {type = "str", default = "main", description = "Cluster to act on"}
+
+[bash-scripts.commands.europe]
+include = "scripts/europe/europe.toml"
+```
+
+The included file holds the table's body (`description`, `args`, `commands`,
+…) with no `[bash-scripts.commands.europe]` prefix:
+
+```toml
+#:schema https://runspec.app/runspec-fragment.schema.json
+description     = "Scripts for the European estate"
+require-command = true
+
+[commands.find-nodes]
+include = "find-nodes.toml"
+
+[commands.delete-nodes]
+description = "Delete nodes"
+autonomy    = "confirm"
+
+[commands.delete-nodes.args]
+pattern = {description = "Node name glob"}
+cluster = {use = "cluster", required = true}
+```
+
+Rules:
+
+- The path is relative to the file that names it, uses `/`, ends in `.toml`,
+  and must stay inside the directory holding `runspec.toml`: no absolute
+  paths and no `..` out of it (a symlink pointing out is refused too).
+- Included files may include others. A cycle is an error that prints the
+  chain (`a.toml → b.toml → a.toml`), and the chain is capped at 8 files.
+- A key set both in the table and in its included file is an error. Use
+  `use` overrides to vary an arg, not a second definition.
+- `include` works on a runnable table too, so a file with many runnables can
+  keep one file per runnable.
+- `shared-args` tables from the parents are visible inside included files.
+
+Includes and shared args are resolved when the spec is loaded, so `--help`,
+validation, `runspec serve`, stubs, emit and the console all see the same
+spec as if it were written in one file. The included files must ship in the
+package next to `runspec.toml`. Hatchling ships every file in the package
+directory by default; with setuptools, list `**/*.toml` in `package-data`.
+A missing file fails at load time with the file it was named in. The
+`#:schema` line on an included file points editors at
+`runspec-fragment.schema.json`.
+
+!!! note "Availability"
+    `include` and `shared-args` were added in **runspec 0.77.0** and
+    **node-0.45.0**. runspec-console 0.375.0 reads included files when it
+    scans a venv; an older console shows the commands of a split spec
+    without their args. A package that uses either feature should depend on
+    `runspec>=0.77.0`.
 
 ---
 

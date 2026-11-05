@@ -1,0 +1,6 @@
+description = "Delete nodes"
+autonomy = "confirm"
+
+[args]
+pattern = {use = "pattern", required = true}
+cluster = {use = "cluster", required = true}

@@ -1863,6 +1863,84 @@ parent of the same name) — matching what `parse()` accepts at runtime.
 
 ---
 
+## Composing a Spec: `include` and `shared-args`
+
+Two authoring features let a large `runspec.toml` be split into files and stop
+repeating arg definitions. Both are resolved when the spec is **loaded**,
+before inference, so every consumer (parsing, help, validation, emitted
+schemas, `serve`, discovery) sees the same spec as if it had been written as
+one file. A spec that uses neither loads exactly as before.
+
+Resolution order: all `include`s first (over the whole tree), then all `use`s.
+After resolution no `include`, `shared-args` or `use` key remains.
+
+### `include`
+
+A runnable table or a command table (at any depth) may contain
+
+```toml
+include = "relative/path.toml"
+```
+
+The named file is parsed as TOML and its top-level keys are merged into the
+table. It holds the table's **body** (`description`, `autonomy`, `args`,
+`groups`, `commands`, `shared-args`, `meta`, …), without the
+`[<runnable>.commands.<c>]` prefix.
+
+| Rule | Behaviour |
+|---|---|
+| Path base | Relative to the file that contains the `include` (`runspec.toml` or another included file) |
+| Path form | `/`-separated, relative, ends in `.toml`. A backslash, an absolute path or a drive letter is an error |
+| Boundary | After normalisation the path must stay inside the directory holding `runspec.toml`. Implementations reading the real filesystem also refuse a path that resolves (through a symlink) outside it |
+| Nesting | An included file may itself contain `include` (at its top level, or on its own `commands`). Paths in it are relative to that file |
+| Cycles | A file already on the chain from `runspec.toml` to the current table is an error naming the chain (`a.toml → b.toml → a.toml`) |
+| Depth | At most 8 included files on one chain; deeper is an error |
+| Conflicts | A key present both in the table and in the included file is an error. There is no override between files |
+| Missing file | An error naming the file and the file that included it |
+
+`include` is not allowed in `[config]` or inside `args`.
+
+### `shared-args` and `use`
+
+A `shared-args` table maps names to arg definitions, in any form an `args`
+entry accepts (bare default or full table):
+
+```toml
+[config.shared-args]          # visible to every runnable in the file
+proxy = {required = false, description = "HTTP proxy, host:port or 'direct'"}
+
+[gitlab.shared-args]          # visible to gitlab and all its commands
+project = {type = "str", required = false, env = "GITLAB_PROJECT"}
+
+[gitlab.commands.create-issue.args]
+project        = {use = "project", required = true}
+source-project = {use = "project"}
+```
+
+An arg whose definition is a table containing `use = "<name>"` is replaced by
+a copy of the named shared definition, then every other key in that table is
+applied on top (local keys win). The arg keeps its own name.
+
+Lookup: the `shared-args` of the table that holds the arg, then of each
+parent up to the runnable, then `[config.shared-args]`; the nearest match
+wins. Tables on sibling commands are not visible. Since includes are resolved
+first, a `shared-args` table in a parent file is visible in included files.
+
+Errors: an unknown name (implementations should suggest a close match), a
+`use` value that is not a non-empty string, and a shared definition that
+itself contains `use`. An unused shared definition is not an error.
+
+### Tooling
+
+- The JSON Schema for included files is published at
+  `https://runspec.app/runspec-fragment.schema.json` (it references the main
+  schema's runnable definition).
+- Discovery that reads `runspec.toml` text without a filesystem (e.g. the
+  console's remote scan) must also fetch the included files; implementations
+  expose a text loader that takes a reader callback for this.
+
+---
+
 ## Form Control Inference
 
 When `ui` is not declared, implementations should infer the form control:

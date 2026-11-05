@@ -6,6 +6,10 @@ so they are served as plain downloads (not rendered Markdown/HTML):
   * ``schema/runspec.schema.json`` → ``https://runspec.app/runspec.schema.json``
     — the URL used by the ``#:schema`` line in generated ``runspec.toml`` files
     and by editor TOML validators (Even Better TOML / Taplo).
+  * ``schema/runspec-fragment.schema.json`` →
+    ``https://runspec.app/runspec-fragment.schema.json`` — the schema for a file
+    a runspec.toml pulls in with ``include = "…"`` (one runnable or command
+    table's body); it points back at the main schema's runnable definition.
   * ``.claude/skills/add-runnable/SKILL.md`` →
     ``https://runspec.app/skills/add-runnable.md`` — the raw add-runnable skill,
     so an agent on a machine without access to the (private) source repo can
@@ -31,6 +35,7 @@ from pathlib import Path
 # (source path relative to repo root, path served under the site root)
 ASSETS = [
     (Path("schema") / "runspec.schema.json", Path("runspec.schema.json")),
+    (Path("schema") / "runspec-fragment.schema.json", Path("runspec-fragment.schema.json")),
     (Path(".claude") / "skills" / "add-runnable" / "SKILL.md", Path("skills") / "add-runnable.md"),
     (Path(".claude") / "skills" / "mcp-to-runnable" / "SKILL.md", Path("skills") / "mcp-to-runnable.md"),
 ]

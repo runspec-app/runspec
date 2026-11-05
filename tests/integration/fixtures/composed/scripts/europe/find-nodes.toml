@@ -1,0 +1,6 @@
+description = "Find nodes matching a pattern"
+autonomy = "autonomous"
+
+[args]
+pattern = {use = "pattern"}
+cluster = {use = "cluster"}
