@@ -349,22 +349,34 @@ class HistoryCache:
     # ── reads ─────────────────────────────────────────────────────────────────
 
     def read(
-        self, host: str, *, since_date: str | None, limit: int
+        self,
+        host: str,
+        *,
+        since_date: str | None,
+        limit: int,
+        exclude: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """``host``'s cached records, newest first, ``ts`` on/after ``since_date``
         (``YYYY-MM-DD``), at most ``limit`` — the indexed records plus the pending
-        (logs-inbox) snapshot for runs the index doesn't have yet."""
+        (logs-inbox) snapshot for runs the index doesn't have yet. Records whose
+        ``runnable`` is in ``exclude`` are left out before the limit."""
+        skip = [str(n) for n in (exclude or [])]
 
         def q(con: sqlite3.Connection) -> list[dict[str, Any]]:
             win = " AND ts >= ?" if since_date else ""
+            marks = ",".join("?" * len(skip))
+            ex = (
+                f" AND json_extract(rec, '$.runnable') NOT IN ({marks})" if skip else ""
+            )
             sql = (
-                f"SELECT rec, ts FROM recs WHERE host=?{win} "
-                f"UNION ALL SELECT p.rec, p.ts FROM pending p WHERE p.host=?{win.replace('ts', 'p.ts')} "
+                f"SELECT rec, ts FROM recs WHERE host=?{win}{ex} "
+                f"UNION ALL SELECT p.rec, p.ts FROM pending p WHERE p.host=?{win.replace('ts', 'p.ts')}"
+                f"{ex.replace('rec,', 'p.rec,')} "
                 "AND NOT EXISTS (SELECT 1 FROM recs r WHERE r.host=p.host AND r.key=p.key) "
                 "ORDER BY 2 DESC LIMIT ?"
             )
-            params: list[Any] = [host] + ([since_date] if since_date else [])
-            params += [host] + ([since_date] if since_date else [])
+            params: list[Any] = [host] + ([since_date] if since_date else []) + skip
+            params += [host] + ([since_date] if since_date else []) + skip
             params.append(max(1, int(limit)))
             out = []
             for blob, _ts in con.execute(sql, params):

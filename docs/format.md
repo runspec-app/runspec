@@ -54,7 +54,7 @@ Project-wide defaults. All fields optional.
 | `jump-hosts` | table | — | Per-alias jump host config. See [Jump Hosts](jump-hosts.md). |
 | `logging` | table | — | Logging configuration. See [Logging](logging.md). |
 | `audit` | table | — | Where audit events go besides the venv ledger. See [Audit Events](audit.md). |
-| `history` | table | — | Runs index bounds: `db` (default `true`), `retention_days` (`90`), `max_rows` (`50000`), `max_run_hours` (`24`). |
+| `history` | table | — | Runs index bounds: `db` (default `true`), `retention_days` (`90`), `max_rows_per_runnable` (`50000`, per runnable), `max_rows` (`1000000`, the whole venv), `max_run_hours` (`24`). |
 
 ```toml
 [config]
@@ -155,6 +155,13 @@ internal helper off the agent surface even though its package is installed);
 `runspec local` still lists everything, annotating a hidden one as `[hidden]`, and
 emits `x-discoverable: false` for it in the agent schemas (omitted otherwise).
 Metadata only — it adds no runtime behaviour to the runnable.
+
+**runspec-console** (0.376.0+) keeps a `discoverable = false` runnable off
+every console surface: no Forms card, not in the agent's tools, its own MCP
+server or a room catalog, and its runs are left out of the **History** tab
+(switch on *Show hidden* to see them). Use it for a job cron runs every minute
+on many hosts, so it doesn't fill History. Its runs are still logged and
+audited as usual, and `runspec logs` / `runspec history` still show them.
 
 Marking a runnable for a **self-service** audience (e.g. a help-desk visitor
 catalog) is *not* a `runspec.toml` concern — the catalog's consumer (e.g.

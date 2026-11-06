@@ -7,6 +7,32 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+---
+
+## [0.78.0] — 2026-11-06
+
+### Changed
+
+- **The runs index caps rows per runnable, so one busy runnable can't push the
+  others out.** A venv's runs index (`runspec_runs.db`) used to keep at most
+  50,000 rows *in total*: a job cron runs every minute filled that in about 35
+  days, and every other runnable in the venv lost its history past that point.
+  Now each runnable keeps its own newest `max_rows_per_runnable` rows (default
+  50,000), and `max_rows` is the whole venv's ceiling, raised to 1,000,000
+  (about 300 MB at ~300 bytes a row). `retention_days` (90) still applies to
+  every row. An explicit `max_rows` in `[config.history]` keeps its meaning (the
+  whole index). `runspec history prune` gains `--max-rows-per-runnable`.
+- **The finalize prune is cheaper.** The row-cap trim used to walk the whole
+  row budget on every run (about 10 ms at 50,000 rows, 0.4 s at 2 million). A
+  new `(runnable, start_ts)` index finds a runnable's cut-off in about a
+  millisecond; the whole-index ceiling is counted first and, once passed, trimmed
+  to 98% of it so the walk isn't repeated on every run. Measured on a 2-million-row
+  index: 15–18 ms per run including the start and finish writes.
+- **The inbox sweep prunes too.** Runs another account writes reach the index
+  only through the venv owner's sweep, never through a finalize on the index, so
+  the sweep now applies the per-runnable cap to the runnables it indexed
+  (`runsdb.ring_prune`).
+
 ### Docs
 
 - **Env var names fixed where they still used the pre-0.16.0 form.** SPEC,

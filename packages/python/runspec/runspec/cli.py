@@ -1357,12 +1357,14 @@ def cmd_history(args: list[str]) -> None:
 
     retention_days = 0
     max_rows = 0
+    max_rows_per_runnable = 0
     if verb == "prune":
         if parsed.older_than.value:
             retention_days = max(0, int(_logs.parse_duration(parsed.older_than.value).total_seconds() // 86400))
         max_rows = parsed.max_rows.value or 0
-        if not retention_days and not max_rows:
-            print("✗  prune needs --older-than (day-granular) and/or --max-rows")
+        max_rows_per_runnable = parsed.max_rows_per_runnable.value or 0
+        if not retention_days and not max_rows and not max_rows_per_runnable:
+            print("✗  prune needs --older-than (day-granular), --max-rows and/or --max-rows-per-runnable")
             sys.exit(1)
 
     # The write helpers are best-effort (0 on failure), so name an unwritable
@@ -1374,7 +1376,7 @@ def cmd_history(args: list[str]) -> None:
             results.append({"dir": str(d), "count": 0, "error": err})
             continue
         if verb == "prune":
-            n = runsdb.prune_now(d, retention_days=retention_days, max_rows=max_rows)
+            n = runsdb.prune_now(d, retention_days=retention_days, max_rows=max_rows, max_rows_per_runnable=max_rows_per_runnable)
         elif verb == "reap":
             n = runsdb.reap_now(d)
         else:  # reindex — rebuild each dir's index from its audit records (never the inbox)

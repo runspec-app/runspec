@@ -148,6 +148,7 @@ EXPECTED = {
     "get_trigger_events",
     "get_voice_config",
     "get_watches",
+    "history_hidden_runnables",
     "history_targets",
     "history_sync_status",
     "import_filters",

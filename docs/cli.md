@@ -846,6 +846,7 @@ runspec history list --label sched:nightly        # runs recorded by `runspec ex
 runspec history stats                             # index health: rows, size, span, stale rows
 runspec history prune --older-than 30d            # drop finished rows older than 30 days
 runspec history prune --max-rows 10000            # keep only the newest 10k rows
+runspec history prune --max-rows-per-runnable 5000  # keep each runnable's newest 5k rows
 runspec history reap                              # crash 'running' rows whose process is gone
 runspec history sweep                             # index finished runs from the logs inbox (venv owner)
 runspec history reindex                           # rebuild the index from the audit logs
@@ -853,7 +854,8 @@ runspec history reindex                           # rebuild the index from the a
 
 **You rarely need to run these.** Every run's finalize already does the
 maintenance automatically: it reaps orphaned `running` rows, ring-prunes to the
-`[config.history]` bounds (`retention_days` 90, `max_rows` 50000 by default), and
+`[config.history]` bounds (`retention_days` 90, `max_rows_per_runnable` 50000,
+`max_rows` 1000000 for the whole venv by default), and
 reclaims space incrementally. The verbs are for on-demand repair — shrinking a
 retention after the fact, clearing orphans on a quiet venv, or rebuilding an
 index that was deleted or damaged.

@@ -128,6 +128,8 @@ CREATE TABLE IF NOT EXISTS runs (
 CREATE INDEX IF NOT EXISTS runs_start_ts ON runs (start_ts);
 CREATE INDEX IF NOT EXISTS runs_status   ON runs (status);
 CREATE INDEX IF NOT EXISTS runs_runnable ON runs (runnable);
+-- Per-runnable ring prune: find a runnable's Nth-newest row from the index alone.
+CREATE INDEX IF NOT EXISTS runs_runnable_start ON runs (runnable, start_ts);
 """
 
 
@@ -598,7 +600,7 @@ def finish_run(
                     (run_id, runnable or "", command or "", status, exit_code, end_ts, end_ts, duration_ms, ev, exc),
                 )
             con.commit()
-            _maintain(con, cfg or {})
+            _maintain(con, cfg or {}, run_id=run_id)
             con.commit()
         finally:
             con.close()
@@ -699,9 +701,38 @@ def _upsert(con: sqlite3.Connection, row: dict[str, Any]) -> None:
 # ── maintenance: reap orphans + ring-prune ──────────────────────────────────────
 
 
-def _maintain(con: sqlite3.Connection, cfg: dict[str, Any]) -> None:
+# Defaults for the ring prune ([config.history]); see SPEC → config.history.
+_RETENTION_DAYS = 90
+_MAX_ROWS_PER_RUNNABLE = 50000
+_MAX_ROWS = 1_000_000
+# When the whole index passes ``max_rows``, the finalize prune trims it to this
+# fraction of the ceiling, so the (index-walking) trim runs once per ~2% of growth
+# instead of on every run once the index is full.
+_CEILING_TRIM = 0.98
+
+
+def _maintain(con: sqlite3.Connection, cfg: dict[str, Any], *, run_id: str = "") -> None:
     _reap(con, _int(cfg.get("max_run_hours"), 24))
-    _prune(con, _int(cfg.get("retention_days"), 90), _int(cfg.get("max_rows"), 50000))
+    runnable = None
+    if run_id:
+        with contextlib.suppress(sqlite3.Error):
+            got = con.execute("SELECT runnable FROM runs WHERE run_id=?", (run_id,)).fetchone()
+            runnable = got[0] if got and got[0] else None
+    ring_prune(con, cfg, [runnable] if runnable else [])
+
+
+def ring_prune(con: sqlite3.Connection, cfg: dict[str, Any], runnables: list[str]) -> None:
+    """The automatic ring prune to the ``[config.history]`` bounds in ``cfg``, with
+    the per-runnable cap applied to ``runnables`` (the ones that just gained rows —
+    the finalized run's, or the runnables an inbox sweep indexed)."""
+    _prune(
+        con,
+        _int(cfg.get("retention_days"), _RETENTION_DAYS),
+        _int(cfg.get("max_rows"), _MAX_ROWS),
+        max_rows_per_runnable=_int(cfg.get("max_rows_per_runnable"), _MAX_ROWS_PER_RUNNABLE),
+        runnables=runnables,
+        ceiling_trim=_CEILING_TRIM,
+    )
     _trim_tombstones(con)
     with contextlib.suppress(sqlite3.Error):
         con.execute("PRAGMA incremental_vacuum")
@@ -728,19 +759,65 @@ def _reap(con: sqlite3.Connection, max_run_hours: int) -> None:
             )
 
 
-def _prune(con: sqlite3.Connection, retention_days: int, max_rows: int) -> None:
-    """Ring-buffer trim of finished rows: drop those older than the age bound, then
-    any beyond the row cap (oldest first). ``running`` rows are never pruned."""
+def _prune(
+    con: sqlite3.Connection,
+    retention_days: int,
+    max_rows: int,
+    *,
+    max_rows_per_runnable: int = 0,
+    runnables: list[str] | None = None,
+    ceiling_trim: float = 1.0,
+) -> None:
+    """Ring-buffer trim of finished rows, oldest first; ``running`` rows are never
+    pruned. Three bounds, each skipped when ``0``:
+
+    * ``retention_days`` — drop rows older than the age bound.
+    * ``max_rows_per_runnable`` — each runnable in ``runnables`` (``None`` = every
+      runnable in the index) keeps its newest N rows, so a job that runs every
+      minute can't push every other runnable's history out of a shared index. The
+      Nth-newest row is found from the ``(runnable, start_ts)`` index alone, so the
+      check costs about a millisecond.
+    * ``max_rows`` — the whole index's ceiling. Counted first (cheap); only when
+      over does it walk the index, trimming to ``ceiling_trim`` × the ceiling so
+      the walk isn't repeated on every run once the index is full.
+
+    ``running`` rows count toward a bound but are kept, so a bound is exceeded by
+    at most the runs still in flight."""
     if retention_days > 0:
         cutoff = _iso_hours_ago(retention_days * 24)
         with contextlib.suppress(sqlite3.Error):
             con.execute("DELETE FROM runs WHERE status != 'running' AND start_ts < ?", (cutoff,))
+    if max_rows_per_runnable > 0:
+        names = runnables
+        if names is None:
+            with contextlib.suppress(sqlite3.Error):
+                names = [r[0] for r in con.execute("SELECT DISTINCT runnable FROM runs").fetchall()]
+        for name in names or []:
+            with contextlib.suppress(sqlite3.Error):
+                _trim_to(con, max_rows_per_runnable, runnable=name)
     if max_rows > 0:
         with contextlib.suppress(sqlite3.Error):
-            con.execute(
-                "DELETE FROM runs WHERE run_id IN (  SELECT run_id FROM runs WHERE status != 'running'   ORDER BY start_ts DESC LIMIT -1 OFFSET ?)",
-                (max_rows,),
-            )
+            total: int = con.execute("SELECT count(*) FROM runs").fetchone()[0]
+            if total > max_rows:
+                _trim_to(con, max(1, int(max_rows * ceiling_trim)))
+
+
+def _trim_to(con: sqlite3.Connection, keep: int, *, runnable: str | None = None) -> None:
+    """Delete finished rows older than the ``keep``-th newest — of one runnable, or
+    of the whole index. The cut-off ``(start_ts, rowid)`` comes from a walk of a
+    covering index (no table reads; ``rowid`` breaks ties between runs that started
+    in the same instant), then one ranged delete."""
+    where, params = ("", ()) if runnable is None else ("WHERE runnable=? ", (runnable,))
+    row = con.execute(
+        f"SELECT start_ts, rowid FROM runs {where}ORDER BY start_ts DESC, rowid DESC LIMIT 1 OFFSET ?",
+        (*params, keep - 1),
+    ).fetchone()
+    if row:
+        scope = "" if runnable is None else "runnable=? AND "
+        con.execute(
+            f"DELETE FROM runs WHERE {scope}status != 'running' AND (start_ts < ? OR (start_ts = ? AND rowid < ?))",
+            (*params, row[0], row[0], row[1]),
+        )
 
 
 def reap_now(log_dir: Path, cfg: dict[str, Any] | None = None) -> int:
@@ -763,15 +840,17 @@ def reap_now(log_dir: Path, cfg: dict[str, Any] | None = None) -> int:
         return 0
 
 
-def prune_now(log_dir: Path, *, retention_days: int, max_rows: int) -> int:
-    """Explicit prune (the ``runspec history prune`` verb). Returns rows deleted."""
+def prune_now(log_dir: Path, *, retention_days: int, max_rows: int, max_rows_per_runnable: int = 0) -> int:
+    """Explicit prune (the ``runspec history prune`` verb), exact to the bounds
+    given (``max_rows_per_runnable`` applies to every runnable). Returns rows
+    deleted."""
     try:
         con = _connect(db_path(log_dir))
         if con is None:
             return 0
         try:
             before: int = con.execute("SELECT count(*) FROM runs").fetchone()[0]
-            _prune(con, retention_days, max_rows)
+            _prune(con, retention_days, max_rows, max_rows_per_runnable=max_rows_per_runnable, runnables=None)
             con.commit()
             with contextlib.suppress(sqlite3.Error):
                 con.execute("PRAGMA incremental_vacuum")

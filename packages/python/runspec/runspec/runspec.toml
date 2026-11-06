@@ -337,5 +337,6 @@ limit      = {type = "int", description = "Max rows to show (list / running)", d
 failed     = {type = "flag", description = "Only failed/crashed runs (list)", default = false}
 older-than = {type = "str", description = "Age threshold for prune (day-granular), e.g. 30d, 90d", required = false}
 max-rows   = {type = "int", description = "Keep only the newest N rows (prune)", required = false}
+max-rows-per-runnable = {type = "int", description = "Keep only the newest N rows of each runnable (prune)", required = false}
 json       = {type = "flag", description = "Emit JSON instead of text (list / running: one row per line; stats / prune / reindex / reap / sweep: one result object)", default = false}
 scope      = {options = ["venv", "home", "all"], description = "Which logs dir(s): 'venv' ({sys.prefix}/logs), 'home' (~/logs), or 'all'. Reads (list/running/stats) default to all; prune/reindex/reap default to 'venv'.", required = false}

@@ -59,7 +59,7 @@ Project-wide defaults. All fields are optional.
 | `version` | string | `"1"` | runspec spec version |
 | `logging` | table | defaults | Logging configuration. On by default — an absent section means the defaults. See [Logging](#logging). |
 | `audit` | table | defaults | Where audit events go besides the venv ledger. See [Audit Events](#audit-events). |
-| `history` | table | defaults | The runs index (`runspec_runs.db`, beside the run logs). Fields: `db` (bool, default `true` — `false` skips the index; History falls back to parsing the logs), `retention_days` (int, `90`) and `max_rows` (int, `50000`) bound the ring-buffer prune, `max_run_hours` (int, `24`) is the age after which a `running` row a crash left behind is reaped. |
+| `history` | table | defaults | The runs index (`runspec_runs.db`, beside the run logs). Fields: `db` (bool, default `true` — `false` skips the index; History falls back to parsing the logs), `retention_days` (int, `90`), `max_rows_per_runnable` (int, `50000` — each runnable keeps at most this many of its own rows, so one busy runnable can't push the others out; `0` = no per-runnable cap) and `max_rows` (int, `1000000` — the whole venv's ceiling) bound the ring-buffer prune, `max_run_hours` (int, `24`) is the age after which a `running` row a crash left behind is reaped. |
 | `runspec_env` | string | — | Path to a `.runspec_env` file. Relative paths resolve from `sys.prefix`. Per-runnable `runspec_env` wins. |
 | `meta` | table | — | Project-wide developer-defined metadata. Pass-through — runspec never interprets it. Orchestration emitters read project defaults here (e.g. `[config.meta.rundeck]` for `runspec emit --rundeck`). |
 
@@ -612,6 +612,9 @@ discoverable = false                           # internal helper — hidden from
   view), annotating a hidden one as `[hidden]`. Its emitted schemas
   (`--format mcp`/`openai`/`anthropic`) carry `x-discoverable: false` for a hidden
   runnable (omitted otherwise, since `true` is the default).
+- Other consumers of the discovery data should treat a hidden runnable the same
+  way: runspec-mcp and runspec-tui leave it out, and runspec-console keeps it
+  off Forms, its agent and MCP server, and out of its History view.
 
 This is metadata only — it adds no runtime behaviour to the runnable itself.
 

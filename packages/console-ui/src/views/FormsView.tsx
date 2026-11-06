@@ -1000,9 +1000,11 @@ export function FormsView({
 
   // Drop runnables hidden everywhere ([tool_visibility] hidden_from_all) before
   // any other filtering, so they never appear as Forms cards.
-  const visibleRunnables = hiddenAll.length > 0
-    ? runnables.filter(r => !runnableHidden(r.name, r.group, r.host, hiddenAll))
-    : runnables
+  // A runnable whose runspec.toml says `discoverable = false` (an internal
+  // helper) is never a Forms card either.
+  const visibleRunnables = runnables.filter(r =>
+    r.rawSpec?.discoverable !== false &&
+    !(hiddenAll.length > 0 && runnableHidden(r.name, r.group, r.host, hiddenAll)))
 
   // Host scope (selected host, or every host in the profile) + text search,
   // collapsed to one card per runnable — see formsSearch.ts.

@@ -2311,10 +2311,16 @@ export interface BridgeApi {
   // a time (get_history_slim) so it can render each host as it arrives and show a
   // per-host fetch time — one slow/offline host no longer blocks the whole view.
   history_targets: () => Promise<string[]>
+  // Per host, the runnables whose runs History leaves out by default (declared
+  // `discoverable = false` there), so the tab can say what it is hiding. Hosts
+  // with nothing hidden are omitted; `hosts` defaults to history_targets().
+  history_hidden_runnables: (hosts?: string[]) => Promise<Record<string, string[]>>
   // One host's slim, runnable-only history rows (same shape/filtering as
   // get_history_all, scoped to a single host) — the per-host unit the History tab
   // fetches. Heavy logLines are dropped; fetch them on expand via get_run_detail.
-  get_history_slim: (host: string, since_days?: number) => Promise<HistoryRecord[]>
+  // Runs of runnables declared `discoverable = false` are left out (before the
+  // row cap) unless `include_hidden` — the tab's "Show hidden" switch.
+  get_history_slim: (host: string, since_days?: number, include_hidden?: boolean) => Promise<HistoryRecord[]>
   // Per remote host whose History comes from the console's local cache (pulled
   // incrementally from each venv's runs index — runspec >= 0.63.0): when it was
   // last pulled and the last pull's error. A host absent from the map is read
@@ -2332,7 +2338,8 @@ export interface BridgeApi {
   // launched them), liveness-filtered so a crashed run never shows; index-only, so
   // a venv without the index contributes nothing (a running run has no run_summary
   // to log-parse yet). Distinct from get_in_flight (this console's own launches).
-  get_running_runs: () => Promise<RunningRun[]>
+  // Hidden (`discoverable = false`) runnables are left out unless `include_hidden`.
+  get_running_runs: (include_hidden?: boolean) => Promise<RunningRun[]>
   get_schedules: () => Promise<Schedule[]>
   get_config: () => Promise<Record<string, unknown>>
   config_dir: () => Promise<string>

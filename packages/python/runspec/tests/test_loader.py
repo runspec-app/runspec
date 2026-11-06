@@ -63,13 +63,13 @@ max_run_hours = 6
 description = "hi"
 """)
         hist = load_raw(p)["config"]["history"]
-        assert hist == {"db": False, "retention_days": 30, "max_rows": 1000, "max_run_hours": 6}
+        assert hist == {"db": False, "retention_days": 30, "max_rows_per_runnable": 50000, "max_rows": 1000, "max_run_hours": 6}
 
     def test_history_defaults_within_section(self, tmp_path):
         p = tmp_path / "runspec.toml"
         p.write_text("[config.history]\nretention_days = 7\n\n[greet]\ndescription = 'hi'\n")
         hist = load_raw(p)["config"]["history"]
-        assert hist == {"db": True, "retention_days": 7, "max_rows": 50000, "max_run_hours": 24}
+        assert hist == {"db": True, "retention_days": 7, "max_rows_per_runnable": 50000, "max_rows": 1000000, "max_run_hours": 24}
 
     def test_multiple_runnables(self, tmp_path):
         p = tmp_path / "runspec.toml"

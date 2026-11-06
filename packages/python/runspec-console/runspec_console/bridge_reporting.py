@@ -221,19 +221,37 @@ class ReportingMixin:
         d = datetime.now(timezone.utc) - timedelta(days=max(0, since_days - 1))
         return d.date().isoformat()
 
+    # How far a local runs-index read widens its LIMIT looking for enough rows
+    # once hidden runnables are left out (a job every minute fills 200 rows in a
+    # few hours). Past this the tab shows what it found.
+    _HIDDEN_SCAN_MAX = 50_000
+
+    def _history_hidden(self, host: str) -> frozenset[str]:
+        """Runnables on ``host`` declared ``discoverable = false`` — the History
+        tab leaves their runs out unless asked to show hidden runnables."""
+        with self._lock:
+            cache = list(self._runnables_cache)
+        return frozenset(utils_mod.hidden_runnable_names(cache, host))
+
     def get_history(
-        self, host: str, runnable: str | None = None, since_days: int | None = None
+        self,
+        host: str,
+        runnable: str | None = None,
+        since_days: int | None = None,
+        exclude: frozenset[str] = frozenset(),
     ) -> list[dict[str, Any]]:
         """Per-host run history, newest first. ``since_days`` bounds the read to
         the last N days (``None`` = no window — the default kept for the
         Forms/Logs callers); ``get_history_all`` passes the History tab's window
-        so a first visit reads only a week of logs."""
+        so a first visit reads only a week of logs. ``exclude`` names runnables
+        whose runs are left out *before* the row cap, so a busy hidden job can't
+        push everything else out."""
         entry = self._host_entry(host)
         if entry is None:
             return []
         since_date = self._since_date(since_days)
         if entry.get("ssh"):
-            return self._get_remote_history(entry, runnable, since_date)
+            return self._get_remote_history(entry, runnable, since_date, exclude)
         paths = utils_mod._paths(entry)
         globs = _log_globs(runnable)
         # Scan every venv's logs dir (tagged with its venv group) AND ~/logs. A
@@ -256,7 +274,7 @@ class ReportingMixin:
             # single / archive file's mtime is >= its newest run's ts, so an
             # mtime older than the cutoff can't hold an in-window run.
             files = [f for f in files if _mtime_iso(f[1])[:10] >= since_date]
-        records = self._read_newest(files, host)
+        records = self._read_newest(files, host, exclude)
         records.sort(key=lambda r: r.get("ts", ""), reverse=True)
         self._prune_history_cache(live)
         if since_date:
@@ -311,7 +329,10 @@ class ReportingMixin:
         return out
 
     def _read_newest(
-        self, files: list[tuple[Path, float, int, bool, str]], host: str
+        self,
+        files: list[tuple[Path, float, int, bool, str]],
+        host: str,
+        exclude: frozenset[str] = frozenset(),
     ) -> list[dict[str, Any]]:
         """Read only the newest files needed to fill _HISTORY_CAP run rows.
 
@@ -337,7 +358,10 @@ class ReportingMixin:
                     ][-1]
                     if _mtime_iso(mtime) < cutoff:
                         break
-                records.extend(self._parse_log_cached(path, host, mtime, size, group))
+                parsed = self._parse_log_cached(path, host, mtime, size, group)
+                if exclude:
+                    parsed = [r for r in parsed if r.get("runnable") not in exclude]
+                records.extend(parsed)
 
         consume(fresh)
         if len(records) < self._HISTORY_CAP:
@@ -466,8 +490,27 @@ class ReportingMixin:
         self._history_forget_hosts()  # removed / renamed hosts leave the cache
         return names
 
+    def history_hidden_runnables(
+        self, hosts: list[str] | None = None
+    ) -> dict[str, list[str]]:
+        """Per host, the runnables whose runs the History tab leaves out by default
+        (declared ``discoverable = false`` there) — so the tab can say what it is
+        hiding instead of hiding it silently. ``hosts`` defaults to
+        :meth:`history_targets`; hosts with nothing hidden are omitted."""
+        if hosts is None:
+            hosts = self.history_targets()
+        out: dict[str, list[str]] = {}
+        for host in hosts:
+            names = sorted(self._history_hidden(str(host)))
+            if names:
+                out[str(host)] = names
+        return out
+
     def get_history_slim(
-        self, host: str, since_days: int | None = _HISTORY_DEFAULT_DAYS
+        self,
+        host: str,
+        since_days: int | None = _HISTORY_DEFAULT_DAYS,
+        include_hidden: bool = False,
     ) -> list[dict[str, Any]]:
         """One host's slim, runnable-only history rows — the per-host unit the
         History tab fetches (via :meth:`history_targets`) so it can render each
@@ -482,16 +525,20 @@ class ReportingMixin:
         for any venv without a (populated) DB, and entirely to the log parse when
         no venv has one (or the DB read fails). The full :meth:`get_history` +
         :meth:`get_run_detail` stay log-parse-based, so a row-expand still fetches
-        ``logLines`` from the file (the index carries none)."""
+        ``logLines`` from the file (the index carries none).
+
+        Runs of runnables declared ``discoverable = false`` are left out unless
+        ``include_hidden`` (the tab's "Show hidden" switch)."""
+        exclude = frozenset() if include_hidden else self._history_hidden(host)
         try:
-            recs = self._slim_history_db(host, since_days)
+            recs = self._slim_history_db(host, since_days, exclude)
             if recs is not None:
                 return recs
         except Exception:
             logger.exception(
                 "history: DB slim read failed for %s; using log parse", host
             )
-        rows = self.get_history(host, since_days=since_days)
+        rows = self.get_history(host, since_days=since_days, exclude=exclude)
         return [
             self._slim_history_row(r)
             for r in rows
@@ -513,7 +560,12 @@ class ReportingMixin:
         return groups
 
     def _db_records_local(
-        self, log_dir: Path, group: str, since_date: str | None, host: str
+        self,
+        log_dir: Path,
+        group: str,
+        since_date: str | None,
+        host: str,
+        exclude: frozenset[str] = frozenset(),
     ) -> list[dict[str, Any]] | None:
         """Finished-run records from one venv's ``runspec_runs.db`` (in-process,
         ``mode=ro``), or ``None`` when the DB is absent / empty / unreadable — so
@@ -531,9 +583,22 @@ class ReportingMixin:
             # index ∪ logs inbox (runspec >= 0.66): other accounts' finished runs
             # show before the owner's sweep indexes them.
             reader = getattr(runsdb, "list_runs_with_inbox", runsdb.list_runs)
-            rows = reader(log_dir, since=since_iso, limit=self._HISTORY_CAP, live=False)
-            if not rows:
-                return None
+            limit = self._HISTORY_CAP
+            while True:
+                rows = reader(log_dir, since=since_iso, limit=limit, live=False)
+                if not rows:
+                    return None
+                # Hidden runnables are dropped here; widen the read until enough
+                # rows are left (or the index runs out).
+                kept = [r for r in rows if r.get("runnable") not in exclude]
+                if (
+                    len(kept) >= self._HISTORY_CAP
+                    or len(rows) < limit
+                    or limit >= self._HIDDEN_SCAN_MAX
+                ):
+                    rows = kept
+                    break
+                limit = min(limit * 5, self._HIDDEN_SCAN_MAX)
             return [
                 utils_mod.db_row_to_record(r, group, host)
                 for r in rows
@@ -543,7 +608,10 @@ class ReportingMixin:
             return None
 
     def _slim_history_db(
-        self, host: str, since_days: int | None
+        self,
+        host: str,
+        since_days: int | None,
+        exclude: frozenset[str] = frozenset(),
     ) -> list[dict[str, Any]] | None:
         """Slim, runnable-only History rows read from the per-venv runs index where
         present, log-parsing any venv without one. Returns ``None`` to signal "no
@@ -556,10 +624,10 @@ class ReportingMixin:
         if entry.get("ssh"):
             # 7d/30d from the local cache (pulled incrementally) when the host has a
             # v4 index; otherwise, and for wider windows, the direct read.
-            cached = self._history_from_cache(entry, since_days)
+            cached = self._history_from_cache(entry, since_days, exclude)
             if cached is not None:
                 return cached
-            return self._slim_history_db_remote(entry, since_days)
+            return self._slim_history_db_remote(entry, since_days, exclude)
         since_date = self._since_date(since_days)
         records: list[dict[str, Any]] = []
         fallback_groups: list[tuple[Path, str]] = []
@@ -569,7 +637,7 @@ class ReportingMixin:
             if log_dir in seen:
                 continue
             seen.add(log_dir)
-            db_recs = self._db_records_local(log_dir, group, since_date, host)
+            db_recs = self._db_records_local(log_dir, group, since_date, host, exclude)
             if db_recs is None:
                 fallback_groups.append((log_dir, group))
             else:
@@ -581,7 +649,7 @@ class ReportingMixin:
             files = self._history_files(fallback_groups, _log_globs(None))
             if since_date:
                 files = [f for f in files if _mtime_iso(f[1])[:10] >= since_date]
-            parsed = self._read_newest(files, host)
+            parsed = self._read_newest(files, host, exclude)
             if since_date:
                 parsed = [r for r in parsed if r.get("ts", "")[:10] >= since_date]
             records.extend(parsed)
@@ -590,7 +658,10 @@ class ReportingMixin:
         return [self._slim_history_row(r) for r in records[: self._HISTORY_CAP]]
 
     def _slim_history_db_remote(
-        self, entry: dict[str, Any], since_days: int | None
+        self,
+        entry: dict[str, Any],
+        since_days: int | None,
+        exclude: frozenset[str] = frozenset(),
     ) -> list[dict[str, Any]] | None:
         """Remote counterpart of the local DB read: one ``{venv}/bin/python -c``
         query (stdlib ``sqlite3``, ``mode=ro``, no remote runspec) reads every venv's
@@ -608,7 +679,9 @@ class ReportingMixin:
         dirs, dir_group, primary_group, sv_python = layout
         since_date = self._since_date(since_days)
         since_iso = f"{since_date}T00:00:00+00:00" if since_date else None
-        cmd = utils_mod.db_read_cmd(sv_python, dirs, since_iso, self._HISTORY_CAP)
+        cmd = utils_mod.db_read_cmd(
+            sv_python, dirs, since_iso, self._HISTORY_CAP, exclude=sorted(exclude)
+        )
         try:
             _, out, _ = self._ssh_run(ssh, cmd, identity_file=idf, timeout=20)
             results = json.loads(out) if out.strip() else {}
@@ -651,13 +724,18 @@ class ReportingMixin:
                 logger.exception(
                     "history: remote DB fallback parse failed for %s", host
                 )
-        records = [r for r in records if r.get("kind", "runnable") == "runnable"]
+        records = [
+            r
+            for r in records
+            if r.get("kind", "runnable") == "runnable"
+            and r.get("runnable") not in exclude
+        ]
         records.sort(key=lambda r: r.get("ts", ""), reverse=True)
         return [self._slim_history_row(r) for r in records[: self._HISTORY_CAP]]
 
     # ── live "what's running" (the History tab's Running-now strip, part 2b) ────
 
-    def get_running_runs(self) -> list[dict[str, Any]]:
+    def get_running_runs(self, include_hidden: bool = False) -> list[dict[str, Any]]:
         """Live "what's running" across the fleet — the in-flight runs the per-venv
         runs index holds, newest-started first, for the History tab's "Running now"
         strip (Phase 3 part 2b).
@@ -677,10 +755,14 @@ class ReportingMixin:
 
         def _read_one(name: str) -> list[dict[str, Any]]:
             try:
-                return self._running_runs_host(name)
+                rows = self._running_runs_host(name)
             except Exception:
                 logger.exception("running: read failed for host %s", name)
                 return []
+            if include_hidden:
+                return rows
+            hidden = self._history_hidden(name)
+            return [r for r in rows if r.get("runnable") not in hidden]
 
         rows: list[dict[str, Any]] = []
         if len(names) <= 1:
@@ -943,20 +1025,21 @@ class ReportingMixin:
         entry: dict[str, Any],
         runnable: str | None,
         since_date: str | None = None,
+        exclude: frozenset[str] = frozenset(),
     ) -> list[dict[str, Any]]:
         import time
 
         # Reuse a recent stream+parse for this (host, runnable) — the window is
         # applied *after* the cache so the bulk read (windowed) and get_run_detail
         # (unwindowed) share one entry. A miss-race just re-reads (same result).
-        cache_key = (entry.get("name", ""), runnable or "")
+        cache_key = (entry.get("name", ""), runnable or "", tuple(sorted(exclude)))
         now = time.monotonic()
         with self._remote_history_lock:
             cached = self._remote_history_cache.get(cache_key)
         if cached is not None and (now - cached[0]) < self._REMOTE_HISTORY_TTL:
             records = cached[1]
         else:
-            records = self._read_remote_history(entry, runnable)
+            records = self._read_remote_history(entry, runnable, exclude)
             with self._remote_history_lock:
                 self._remote_history_cache[cache_key] = (now, records)
         if since_date:
@@ -964,7 +1047,10 @@ class ReportingMixin:
         return records[: self._HISTORY_CAP]
 
     def _read_remote_history(
-        self, entry: dict[str, Any], runnable: str | None
+        self,
+        entry: dict[str, Any],
+        runnable: str | None,
+        exclude: frozenset[str] = frozenset(),
     ) -> list[dict[str, Any]]:
         ssh = entry["ssh"]
         idf = entry.get("identityFile")
@@ -993,6 +1079,8 @@ class ReportingMixin:
         # single-venv case). Lets History's "View full log" drill resolve a venv.
         group = PurePosixPath(paths[0]).parent.parent.name if paths and paths[0] else ""
         records = self._parse_remote_stream(stdout, entry["name"], group)
+        if exclude:
+            records = [r for r in records if r.get("runnable") not in exclude]
         records.sort(key=lambda r: r.get("ts", ""), reverse=True)
         return records[: self._HISTORY_CAP]
 

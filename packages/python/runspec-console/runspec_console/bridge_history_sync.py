@@ -129,18 +129,29 @@ class HistorySyncMixin:
     # ── the read ──────────────────────────────────────────────────────────────
 
     def _history_from_cache(
-        self: Bridge, entry: dict[str, Any], since_days: int | None
+        self: Bridge,
+        entry: dict[str, Any],
+        since_days: int | None,
+        exclude: frozenset[str] = frozenset(),
     ) -> list[dict[str, Any]] | None:
         """Slim History rows for a remote host from the cache, or ``None`` to read
         the host directly (cache off, a window wider than the cache, no v4 index on
-        the host, or the first pull failed)."""
-        records = self._cached_records(entry, since_days, limit=_HISTORY_CACHE_CAP)
+        the host, or the first pull failed). Runs of ``exclude`` runnables are left
+        out before the row limit."""
+        records = self._cached_records(
+            entry, since_days, limit=_HISTORY_CACHE_CAP, exclude=exclude
+        )
         if records is None:
             return None
         return [self._slim_history_row(r) for r in records]
 
     def _cached_records(
-        self: Bridge, entry: dict[str, Any], since_days: int | None, *, limit: int
+        self: Bridge,
+        entry: dict[str, Any],
+        since_days: int | None,
+        *,
+        limit: int,
+        exclude: frozenset[str] = frozenset(),
     ) -> list[dict[str, Any]] | None:
         """A remote host's full cached records (``extra`` included — what Analytics
         aggregates), newest first, within ``since_days``; ``None`` when the host
@@ -166,7 +177,9 @@ class HistorySyncMixin:
             if not capable:
                 return None
         since_date = self._since_date(since_days)
-        records = cache.read(host, since_date=since_date, limit=limit)
+        records = cache.read(
+            host, since_date=since_date, limit=limit, exclude=sorted(exclude)
+        )
         return [r for r in records if r.get("kind", "runnable") == "runnable"]
 
     # ── the pull ──────────────────────────────────────────────────────────────

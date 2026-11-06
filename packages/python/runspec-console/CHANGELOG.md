@@ -9,6 +9,33 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.376.0] — 2026-11-06
+
+### Added
+
+- **`discoverable = false` hides a runnable from the console.** A runnable whose
+  `runspec.toml` says `discoverable = false` no longer gets a Forms card and isn't
+  in the agent's tools, the console's MCP server or a room catalog
+  (`Bridge._visible_runnables`, `bridge_utils.runnable_discoverable`). Before, the
+  console ignored the flag (only `runspec serve`, runspec-mcp and runspec-tui
+  honoured it). The Specs view still lists it with its lock icon.
+- **History leaves hidden runnables' runs out.** Runs of a runnable hidden on that
+  host (`bridge_utils.hidden_runnable_names`) are dropped on every read path
+  *before* the 200-row cap, so a job cron runs every minute on many hosts no
+  longer pushes every other run out of History: the local runs index (the read
+  widens its limit until enough rows are left), the remote index snippet (SQL
+  `runnable NOT IN`), the History cache (`HistoryCache.read(exclude=)`), and the
+  log-parse fallbacks. The Running-now strip skips them too. A **Show hidden**
+  switch on the tab (remembered per viewer) brings them back
+  (`get_history_slim(..., include_hidden)`, `get_running_runs(include_hidden)`).
+  The hiding is never silent: a **Hiding: heartbeat** (or *Hiding N runnables*)
+  note beside the switch names what's left out and on which hosts, and clicking it
+  shows them (`history_hidden_runnables`, `HistoryView.hiddenSummary`).
+  Analytics is unchanged.
+- **History filters by runnable.** The Runnable column has a filter with a search
+  box, and a `-name` word in the search box leaves out every runnable whose name
+  contains it (`HistoryView.parseHistorySearch`).
+
 ## [0.375.1] — 2026-11-05
 
 ### Fixed

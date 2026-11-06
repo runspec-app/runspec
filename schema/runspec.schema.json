@@ -126,11 +126,17 @@
               "description": "Drop index rows older than this many days.",
               "default": 90
             },
+            "max_rows_per_runnable": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Keep at most this many rows per runnable, so one busy runnable can't push the others out. 0 = no per-runnable cap.",
+              "default": 50000
+            },
             "max_rows": {
               "type": "integer",
               "minimum": 1,
-              "description": "Keep at most this many rows in the index.",
-              "default": 50000
+              "description": "Keep at most this many rows in the whole index (every runnable in the venv).",
+              "default": 1000000
             },
             "max_run_hours": {
               "type": "integer",

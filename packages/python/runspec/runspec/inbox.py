@@ -888,6 +888,7 @@ def sweep_inbox(
         con = runsdb._connect(runsdb.db_path(log_dir))
         now = time.time()
         taken: dict[int, int] = {}
+        indexed: set[str] = set()  # runnables that gained rows → per-runnable prune
         for name in sorted(os.listdir(dfd)):
             if deadline is not None and time.monotonic() > deadline:
                 result["deferred"] += 1
@@ -953,10 +954,18 @@ def sweep_inbox(
             runsdb.apply_inbox_row(con, row, os_user=os_user, uid=uid, decision=decision)
             with contextlib.suppress(Exception):
                 con.commit()
+            if row.get("runnable"):
+                indexed.add(str(row["runnable"]))
             if row["status"] == "crashed":
                 result["crashed"] += 1
             else:
                 result["swept"] += 1
+        # Swept runs never pass through a finalize on this index, so the busy
+        # runnable a non-owner crontab runs is held to its per-runnable cap here.
+        if con is not None and indexed:
+            with contextlib.suppress(Exception):
+                runsdb.ring_prune(con, cfg, sorted(indexed))
+                con.commit()
     except Exception as exc:  # noqa: BLE001 — a sweep must never raise into a run
         result["error"] = f"{type(exc).__name__}: {exc}"
     finally:
