@@ -1,7 +1,19 @@
+<p align="center"><img src="docs/assets/favicon.svg" width="72" height="72" alt="runspec"></p>
+
 # runspec
 
-> A language-agnostic, TOML-based interface specification for anything runnable —
-> scripts, applications, and MCP tools — readable by humans and AI agents without conversion.
+**You decide what runs.** Approved tools, not a shell. Every run on record.
+
+runspec turns your team's scripts into an allow list of tools, each with its
+autonomy set in advance: reads run on their own, changes wait for approval, and
+some only a person can start. `runspec-console` runs them on the servers you've
+added, from typed forms, schedules or an AI agent, and records who ran what,
+where and as whom. It's built for application support and DevOps teams in
+regulated environments, where nobody hands a shell to an agent.
+
+Underneath is the **runspec spec**: a language-agnostic, TOML-based interface
+specification for anything runnable (scripts, applications and MCP tools),
+readable by humans and AI agents without conversion.
 
 [![Python](https://img.shields.io/pypi/v/runspec?label=pip%20install%20runspec)](https://pypi.org/project/runspec)
 [![Node](https://img.shields.io/npm/v/runspec-node?label=npm%20install%20runspec-node)](https://www.npmjs.com/package/runspec-node)

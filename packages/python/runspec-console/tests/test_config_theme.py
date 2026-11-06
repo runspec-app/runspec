@@ -175,8 +175,8 @@ def test_icon_colour_follows_accent(monkeypatch, tmp_path):
     from runspec_console import app as app_mod
 
     _cfg_path(monkeypatch, tmp_path)
-    # default (no theme) → runspec blue
-    assert app_mod._icon_rgb() == (9, 88, 217)
+    # default (no theme) → runspec deep teal, the gate-mark tile
+    assert app_mod._icon_rgb() == (0x0E, 0x8F, 0x80)
 
     cfg.write_config({"console": {"theme": {"accent_color": "#b3001b"}}})
     assert app_mod._icon_rgb() == (0xB3, 0x00, 0x1B)

@@ -1,0 +1,32 @@
+/* runspec brand colours for the docs site (see docs/design/brand.md).
+   Material's palette is set to "custom"; these fill it in. */
+:root,
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color: #0b7a6e;
+  --md-primary-fg-color--light: #0e8f80;
+  --md-primary-fg-color--dark: #08594f;
+  --md-accent-fg-color: #0e8f80;
+  --md-typeset-a-color: #0b7a6e;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #111418;
+  --md-primary-fg-color--light: #1a1e24;
+  --md-primary-fg-color--dark: #0b0d10;
+  --md-default-bg-color: #111418;
+  --md-accent-fg-color: #3cc7b6;
+  --md-typeset-a-color: #3cc7b6;
+}
+
+/* The wordmark: Inter Bold, set tight. */
+.md-header__topic:first-child {
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+
+/* Page titles in the brand's Inter Bold, full-strength ink. */
+.md-typeset h1 {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--md-default-fg-color);
+}

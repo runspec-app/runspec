@@ -46,6 +46,22 @@ def test_generated_icon_loads_through_gdkpixbuf(monkeypatch, tmp_path):
     assert pixbuf.get_height() == 32
 
 
+def test_unbranded_gate_icon_loads_through_gdkpixbuf(monkeypatch, tmp_path):
+    """The unbranded console's gate-mark icon (no accent_color) must decode with
+    gdk-pixbuf too."""
+    import runspec_console.config as cfg
+    from runspec_console import app
+
+    monkeypatch.setattr(cfg, "config_path", lambda: tmp_path / "config.toml")
+    monkeypatch.setattr(cfg, "app_dir", lambda: tmp_path)
+    icon = app._build_icon()
+    assert icon is not None and icon.suffix == ".png"
+
+    pixbuf = GdkPixbuf.Pixbuf.new_from_file(str(icon))
+    assert pixbuf.get_width() == 64
+    assert pixbuf.get_has_alpha()
+
+
 def test_windows_style_png_ico_is_rejected_by_gdkpixbuf(monkeypatch, tmp_path):
     """Document the root cause: the Windows-style PNG-compressed `.ico` — what
     every platform used to get — genuinely fails in gdk-pixbuf. This is why the

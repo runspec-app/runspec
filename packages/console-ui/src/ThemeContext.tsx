@@ -16,9 +16,15 @@ export const textMuted = (isDark: boolean) => (isDark ? '#888' : '#999')      //
 export const textFaint = (isDark: boolean) => (isDark ? '#555' : '#bbb')      // faintest: placeholders, carets, off-state icons
 
 // The app's signature accent (sidebar title, active nav tab, links, arg names).
-// A white-label accent_color overrides the built-in blue pair — App.tsx provides
-// the resolved value so every view honours the brand, not just the shell chrome.
-export const DEFAULT_ACCENT = { dark: '#4fc1ff', light: '#0958d9' }
+// A white-label accent_color overrides the built-in runspec teal pair — App.tsx
+// provides the resolved value so every view honours the brand, not just the
+// shell chrome. See docs/design/brand.md.
+export const DEFAULT_ACCENT = { dark: '#3cc7b6', light: '#0b7a6e' }
+
+// Ant's colorPrimary (filled buttons, switches, checkboxes) for an unbranded
+// console. Darker than the dark-theme accent so white button text stays legible
+// (5.2:1); a white-label accent_color replaces it.
+export const BRAND_PRIMARY = '#0b7a6e'
 
 export const AccentContext = createContext(DEFAULT_ACCENT.dark)
 
