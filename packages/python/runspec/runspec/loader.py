@@ -117,8 +117,9 @@ def _normalise_history(raw: dict[str, Any] | None) -> dict[str, Any] | None:
     "what's running" view. See docs/design/console-history-db.md.
 
     `db` (default true) writes the index; set false to skip it (History falls back
-    to parsing the audit logs). `retention_days` (90) / `max_rows` (50000) bound
-    the ring-buffer prune that keeps the file small; `max_run_hours` (24) is the
+    to parsing the audit logs). `retention_days` (90) / `max_rows_per_runnable` (50000,
+    each runnable's own rows) / `max_rows` (1000000, the whole index) bound the
+    ring-buffer prune that keeps the file small; `max_run_hours` (24) is the
     orphan age ceiling for reaping a `running` row a crash left behind. A `None`
     section still means "on with defaults" — the write is best-effort, so it never
     affects a run.
@@ -128,7 +129,8 @@ def _normalise_history(raw: dict[str, Any] | None) -> dict[str, Any] | None:
     return {
         "db": bool(raw.get("db", True)),
         "retention_days": int(raw.get("retention_days", 90)),
-        "max_rows": int(raw.get("max_rows", 50000)),
+        "max_rows_per_runnable": int(raw.get("max_rows_per_runnable", 50000)),
+        "max_rows": int(raw.get("max_rows", 1000000)),
         "max_run_hours": int(raw.get("max_run_hours", 24)),
     }
 

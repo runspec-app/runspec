@@ -54,7 +54,7 @@ Project-wide defaults. All fields optional.
 | `jump-hosts` | table | — | Per-alias jump host config. See [Jump Hosts](jump-hosts.md). |
 | `logging` | table | — | Logging configuration. See [Logging](logging.md). |
 | `audit` | table | — | Where audit events go besides the venv ledger. See [Audit Events](audit.md). |
-| `history` | table | — | Runs index bounds: `db` (default `true`), `retention_days` (`90`), `max_rows` (`50000`), `max_run_hours` (`24`). |
+| `history` | table | — | Runs index bounds: `db` (default `true`), `retention_days` (`90`), `max_rows_per_runnable` (`50000`, per runnable), `max_rows` (`1000000`, the whole venv), `max_run_hours` (`24`). |
 
 ```toml
 [config]

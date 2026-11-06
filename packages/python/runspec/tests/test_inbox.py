@@ -685,3 +685,32 @@ class TestCliDisplay:
         assert "(no index yet)" in out and "inbox: 2 pending file(s), 2 finished awaiting sweep" in out
         cli._print_history_stats([{"path": "/v/logs/runspec_runs.db", "exists": False, "inbox": {"state": "no-logs"}}])
         assert "runspec logs share --inbox" in capsys.readouterr().out
+
+
+class TestSweepPerRunnableCap:
+    """Runs a non-owner crontab writes reach the index only via the sweep, never a
+    finalize on it — so the sweep holds the runnables it indexed to their cap."""
+
+    @pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() != 0, reason="needs root to write another account's run file")
+    def test_sweep_prunes_the_runnables_it_indexed(self, venv):
+        from runspec import runsdb
+
+        logs_dir = venv / "logs"
+        assert inbox.ensure_inbox(logs_dir) == "created"
+        ids = []
+        for i in range(5):
+            rid = _rid()
+            ids.append(rid)
+            ts = f"2026-09-01T10:0{i}:00+00:00"
+            lines = [
+                _rec(rid, "run_start", ts=ts, runnable="heartbeat", start_ts=ts, user="svc", pid=1, host="h"),
+                _rec(rid, "run_summary", ts=ts, runnable="heartbeat", exit_code=0, duration_ms=5),
+            ]
+            f = logs_dir / "inbox" / f"heartbeat.20260901T10000{i}Z.{rid}.log"
+            f.write_text("\n".join(lines) + "\n")
+            os.chmod(f, 0o644)
+            os.chown(f, 4242, 4242)  # another account's run file (the owner's own are refused)
+        result = inbox.sweep_inbox(logs_dir, {"max_rows_per_runnable": 2, "retention_days": 0})
+        assert result["swept"] == 5, json.dumps(result)
+        kept = {r["run_id"] for r in runsdb.list_runs(logs_dir, live=False)}
+        assert kept == set(ids[-2:])

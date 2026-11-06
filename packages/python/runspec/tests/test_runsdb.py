@@ -195,6 +195,72 @@ class TestPrune:
         assert any(r["run_id"] == "live" for r in runsdb.list_runs(logs_dir, live=False))
 
 
+def _finished(logs_dir, run_id, runnable, minute, cfg=None):
+    """A finished run starting ``minute`` minutes into a fixed hour (distinct, ordered
+    start times), finalized with ``cfg`` so the finalize prune runs."""
+    ts = f"2026-01-01T{minute // 60:02d}:{minute % 60:02d}:00+00:00"
+    runsdb.begin_run(logs_dir, _row(run_id=run_id, runnable=runnable, start_ts=ts))
+    runsdb.finish_run(
+        logs_dir,
+        run_id,
+        exit_code=0,
+        duration_ms=1,
+        status="completed",
+        cfg={"retention_days": 0, **(cfg or {})},
+    )
+
+
+def _ids(logs_dir, runnable=None):
+    return {r["run_id"] for r in runsdb.list_runs(logs_dir, live=False, limit=10_000) if runnable is None or r["runnable"] == runnable}
+
+
+class TestPerRunnableCap:
+    """A busy runnable keeps only its own newest N rows; it can't push the other
+    runnables in the venv out of the shared index."""
+
+    def test_busy_runnable_trims_only_itself(self, logs_dir):
+        _finished(logs_dir, "b0", "backup", 0)
+        for i in range(10):
+            _finished(logs_dir, f"hb{i}", "heartbeat", 1 + i, cfg={"max_rows_per_runnable": 3})
+        assert _ids(logs_dir, "heartbeat") == {"hb7", "hb8", "hb9"}
+        assert _ids(logs_dir, "backup") == {"b0"}
+
+    def test_default_cap_is_per_runnable(self, logs_dir):
+        assert runsdb._MAX_ROWS_PER_RUNNABLE == 50000
+        assert runsdb._MAX_ROWS == 1_000_000
+        for i in range(3):
+            _finished(logs_dir, f"r{i}", "backup", i, cfg={})
+        assert len(_ids(logs_dir)) == 3  # nothing near a default bound
+
+    def test_zero_turns_the_per_runnable_cap_off(self, logs_dir):
+        for i in range(5):
+            _finished(logs_dir, f"hb{i}", "heartbeat", i, cfg={"max_rows_per_runnable": 0})
+        assert len(_ids(logs_dir)) == 5
+
+    def test_running_row_of_the_runnable_survives(self, logs_dir):
+        runsdb.begin_run(logs_dir, _row(run_id="live", runnable="heartbeat", start_ts="2000-01-01T00:00:00+00:00"))
+        for i in range(4):
+            _finished(logs_dir, f"hb{i}", "heartbeat", i, cfg={"max_rows_per_runnable": 2, "max_run_hours": 0})
+        assert "live" in _ids(logs_dir, "heartbeat")
+
+    def test_ceiling_trims_with_slack(self, logs_dir, monkeypatch):
+        """Over the whole-index ceiling, the finalize trims to 98% of it, so the
+        index walk doesn't repeat on every run once the index is full."""
+        for i in range(100):
+            _finished(logs_dir, f"r{i}", f"job{i % 4}", i, cfg={"max_rows": 1000, "max_rows_per_runnable": 0})
+        _finished(logs_dir, "last", "job0", 200, cfg={"max_rows": 50, "max_rows_per_runnable": 0})
+        assert len(_ids(logs_dir)) == 49  # int(50 * 0.98)
+        assert "last" in _ids(logs_dir)
+
+    def test_prune_now_per_runnable_is_exact_for_every_runnable(self, logs_dir):
+        for i in range(6):
+            _finished(logs_dir, f"a{i}", "a", i, cfg={"max_rows_per_runnable": 0})
+            _finished(logs_dir, f"b{i}", "b", 10 + i, cfg={"max_rows_per_runnable": 0})
+        deleted = runsdb.prune_now(logs_dir, retention_days=0, max_rows=0, max_rows_per_runnable=2)
+        assert deleted == 8
+        assert _ids(logs_dir) == {"a4", "a5", "b4", "b5"}
+
+
 class TestReindex:
     def test_reindex_from_run_summaries(self, logs_dir):
         n = runsdb.reindex(
@@ -416,6 +482,13 @@ class TestHistoryCliJson:
         cli.cmd_history(["prune", "--max-rows", "1", "--json"])
         out = self._json(capsys)
         assert out == {"verb": "prune", "count": 2, "dirs": [{"dir": str(logs_dir), "count": 2}], "ok": True}
+
+    def test_prune_per_runnable_flag(self, cli, logs_dir, capsys):
+        for i in range(3):
+            for name in ("a", "b"):
+                runsdb.begin_run(logs_dir, _row(run_id=f"{name}{i}", runnable=name, status="completed", start_ts=f"2026-01-0{i + 1}T00:00:00+00:00"))
+        cli.cmd_history(["prune", "--max-rows-per-runnable", "1", "--json"])
+        assert self._json(capsys)["count"] == 4
 
     def test_reap_and_reindex_json(self, cli, logs_dir, capsys):
         runsdb.begin_run(logs_dir, _row(run_id="dead", pid=2**22 + 12345, proc_start=""))

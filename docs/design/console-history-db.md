@@ -302,7 +302,8 @@ core stays zero-dep), all defaulting on/generous:
 [config.history]
 db = true              # write the runs DB (master gate)
 retention_days = 90    # ring-buffer age bound (0 = no age bound)
-max_rows = 50000       # ring-buffer row cap (0 = no row cap)
+max_rows_per_runnable = 50000  # per-runnable row cap (0 = none; core 0.78.0)
+max_rows = 1000000     # whole-index row ceiling (0 = no row cap; 50000 before core 0.78.0)
 max_run_hours = 24     # orphan age ceiling for the reaper (0 = never age-reap)
 ```
 
