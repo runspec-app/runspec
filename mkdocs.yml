@@ -5,11 +5,34 @@ repo_name: runspec-app/runspec
 
 theme:
   name: material
+  # runspec brand: the gate mark, Inter + JetBrains Mono, teal on light and
+  # slate on dark (docs/design/brand.md; colours in stylesheets/brand.css).
+  logo: assets/logo.svg
+  favicon: assets/favicon.svg
+  font:
+    text: Inter
+    code: JetBrains Mono
   features:
     - navigation.sections
     - navigation.top
   palette:
-    primary: indigo
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+extra_css:
+  - stylesheets/brand.css
 
 markdown_extensions:
   - admonition

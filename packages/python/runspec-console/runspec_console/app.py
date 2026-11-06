@@ -106,18 +106,26 @@ def _start_static_server(dist: Path) -> int:
     return port
 
 
-def _icon_rgb() -> tuple[int, int, int]:
-    """The icon square's colour: the white-label `[console.theme] accent_color`
-    when set (so the app icon matches the brand), else runspec blue."""
+def _accent_rgb() -> tuple[int, int, int] | None:
+    """The white-label `[console.theme] accent_color` as RGB, or None when unset
+    (an unbranded console)."""
     from .config import theme_config, valid_accent
 
     accent = valid_accent(theme_config().get("accent_color"))
-    if accent:
-        h = accent.lstrip("#")
-        if len(h) == 3:  # #rgb → #rrggbb
-            h = "".join(c * 2 for c in h)
-        return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
-    return 9, 88, 217  # runspec blue
+    if not accent:
+        return None
+    h = accent.lstrip("#")
+    if len(h) == 3:  # #rgb → #rrggbb
+        h = "".join(c * 2 for c in h)
+    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+
+
+def _icon_rgb() -> tuple[int, int, int]:
+    """The icon's tile colour: the white-label `[console.theme] accent_color`
+    when set (so the app icon matches the brand), else runspec deep teal."""
+    from .brandmark import TILE_RGB
+
+    return _accent_rgb() or TILE_RGB
 
 
 def _resolve_icon_override(value: str) -> Path | None:
@@ -177,9 +185,9 @@ def _build_icon() -> Path | None:
     A white-label install can override the icon outright with `[console.theme]
     icon` — a readable `.ico`/`.png` path, or a `pkg:<module>:<relpath>`
     reference to an icon bundled in a package (see `_resolve_icon_override`).
-    Otherwise a solid 32×32 square is painted in `accent_color` (the brand
-    colour) or runspec blue. The cache key includes the colour, so changing
-    `accent_color` regenerates it."""
+    Otherwise a white-label `accent_color` paints a solid 32×32 square in that
+    colour (the cache key includes the colour, so changing it regenerates), and
+    an unbranded console gets the runspec gate mark (`brandmark`)."""
     import struct
     import zlib
 
@@ -192,6 +200,26 @@ def _build_icon() -> Path | None:
         if p is not None:
             return p
 
+    is_windows = sys.platform == "win32"
+    ext = "ico" if is_windows else "png"
+    if _accent_rgb() is None:
+        # Unbranded: the runspec gate mark. `-v1` in the name lets a later
+        # redraw of the mark replace the cached file.
+        cache = config_path().parent / f"runspec_console-gate-v1.{ext}"
+        if cache.exists():
+            return cache
+        try:
+            from . import brandmark
+
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            # Windows: a multi-size .ico. Elsewhere a bare .png — see below for
+            # why GTK can't take an .ico.
+            payload = brandmark.ico_bytes() if is_windows else brandmark.png_bytes(64)
+            cache.write_bytes(payload)
+            return cache
+        except Exception:
+            return None
+
     r, g, b = _icon_rgb()
     w = 32
     # Windows gets a real `.ico` (WebView2 taskbar icon); every other backend gets
@@ -201,8 +229,6 @@ def _build_icon() -> Path | None:
     # exception aborts window creation, leaving a blank 10×10 stub window with no
     # visible error. A `.png` loads cleanly on GTK and Qt alike. (Qt/WebKit are
     # equally happy with a PNG, so anything non-Windows takes this path.)
-    is_windows = sys.platform == "win32"
-    ext = "ico" if is_windows else "png"
     # `-rgba` in the name forces a regenerate over any stale pre-0.155.1 cache,
     # which declared 32bpp but embedded a 24-bit RGB PNG (no alpha) — Windows
     # filled the missing alpha with garbage, rendering the square with a dark-grey
@@ -256,7 +282,7 @@ def _apply_dwm_title_bar(title: str) -> None:
     The caption colour is the white-label `[console.theme] title_bar_color`
     when set — an **independent** hex, deliberately separate from `accent_color`
     so a brand can pair e.g. a blue accent UI with a red title bar — else
-    runspec blue. The caption text colour follows the caption's luminance
+    runspec teal. The caption text colour follows the caption's luminance
     (`config.title_bar_colors`). The 1px window border DWM draws around the
     frame is tinted to the same caption colour: left at its default it stays
     near-white on a light Windows theme and shows as pale edge lines beside
@@ -278,8 +304,8 @@ def _apply_dwm_title_bar(title: str) -> None:
 
     from .config import title_bar_colors
 
-    # COLORREF is 0x00BBGGRR. Runspec blue #0958D9 → 0x00D95809, white text.
-    caption, text = title_bar_colors() or (0x00D95809, 0x00FFFFFF)
+    # COLORREF is 0x00BBGGRR. Runspec teal #0B7A6E → 0x006E7A0B, white text.
+    caption, text = title_bar_colors() or (0x006E7A0B, 0x00FFFFFF)
 
     # pywebview starts the ``started`` thread *before* it builds the native
     # form, so the window may not exist yet. Poll for it rather than a single

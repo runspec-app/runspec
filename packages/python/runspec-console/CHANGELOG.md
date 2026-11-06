@@ -9,6 +9,26 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.377.0] — 2026-11-06
+
+### Changed
+
+- **runspec brand.** An unbranded console now carries the runspec gate mark (a
+  run triangle behind a gate bar) and teal instead of the default blue:
+  - The app icon is the mark on a deep-teal tile (`brandmark.py`, pure stdlib
+    rasteriser): a 16/32/48/64 px `.ico` on Windows, a 64 px `.png` elsewhere,
+    cached as `runspec_console-gate-v1.*`. A white-label `accent_color` keeps its
+    colour square and `icon` still wins, both unchanged.
+  - The sidebar shows the mark next to the "runspec" wordmark in Inter Bold. A
+    white-label `brand_name` keeps the old mono title in its accent.
+  - The accent is teal (`#3cc7b6` dark, `#0b7a6e` light) and Ant's
+    `colorPrimary` defaults to `#0b7a6e`, so filled buttons, switches and links
+    are teal rather than Ant blue (`ThemeContext.DEFAULT_ACCENT`/`BRAND_PRIMARY`,
+    `components/GateMark.tsx`).
+  - The default Windows title bar is teal (`#0b7a6e`) instead of blue.
+  - Dev mock: `?brand=0` previews an unbranded console.
+  The brand rules are in `docs/design/brand.md`.
+
 ## [0.376.0] — 2026-11-06
 
 ### Added

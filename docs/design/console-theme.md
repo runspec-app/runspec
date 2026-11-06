@@ -20,7 +20,7 @@ The seed can carry the values; this change makes four surfaces honour them:
 | Content watermark | `watermark_text`, `watermark_logo`, `watermark_style` | `App.tsx` `BrandWatermark`: `tiled` (Ant `<Watermark>`, default), `banner` (single large mark, upper third of the content area), or `center` (single large mark, middle); a logo image is used instead of text when given |
 | Sidebar brand name | `brand_name` | the sidebar title (`App.tsx`) — unset keeps the literal `runspec`, so default installs are unchanged |
 | App icon | `icon` (path or `pkg:` ref) + `accent_color` | `app.py _build_icon` / `_resolve_icon_override` — an explicit `icon` wins (a filesystem path, or `pkg:<module>:<relpath>` for an icon **bundled in a package**, copied into app-data so pywebview gets a stable path even from a zipped wheel); else the generated square is painted in `accent_color` (the "blue square" becomes the brand colour, now emitted as opaque RGBA) |
-| Native title bar | `title_bar_color` (hex) | `app.py _apply_dwm_title_bar` tints the Windows 11 caption via DWM `CAPTION_COLOR`/`TEXT_COLOR` — an **independent** hex, deliberately *not* derived from `accent_color`, so a brand can pair e.g. a blue accent UI with a red title bar; unset → the default runspec-blue caption. The (caption, text) COLORREFs come from the pure `config.title_bar_colors` (text picked black/white by luminance). Windows 11 22000+ only; a no-op elsewhere |
+| Native title bar | `title_bar_color` (hex) | `app.py _apply_dwm_title_bar` tints the Windows 11 caption via DWM `CAPTION_COLOR`/`TEXT_COLOR` — an **independent** hex, deliberately *not* derived from `accent_color`, so a brand can pair e.g. a blue accent UI with a red title bar; unset → the default runspec-teal caption. The (caption, text) COLORREFs come from the pure `config.title_bar_colors` (text picked black/white by luminance). Windows 11 22000+ only; a no-op elsewhere |
 
 **Source is config only.** The frontend reads a new `brand_theme()` bridge method
 (parallel to `app_title`/`docs_url`); the sidebar name reuses the same channel. No
@@ -66,7 +66,8 @@ so the rules can't drift, and unit-tested directly:
 * `app.py _build_icon()`: the cache key includes the resolved colour
   (`runspec_console-<hex>.ico`) so a changed `accent_color` regenerates; an explicit
   `theme.icon` path (a readable `.ico`) is used verbatim and wins. Default (no theme)
-  → the existing runspec-blue square, byte-identical, same cache.
+  → the runspec gate mark on a deep-teal tile (`brandmark.py`, since 0.377.0; it was
+  a plain runspec-blue square before).
 
 ## 5. Frontend — `App.tsx`
 

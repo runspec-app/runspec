@@ -85,7 +85,8 @@ import { DisclaimerGate } from './components/DisclaimerGate'
 import { RUNNING_STATUSES } from './components/runShared'
 import { useInFlight } from './bridge/useInFlight'
 import { bridge, type HistoryRecord, type Host, type HostProfile, type Runnable, type Runbook, type SavedRun, type RoomInfo, type BrandTheme, type Disclaimer, type SyncUpdateCheck } from './bridge'
-import { ThemeContext, AccentContext, DEFAULT_ACCENT, UI_FONT, MONO_FONT, RADIUS, surfaces, withAlpha, textMuted, textSecondary, textFaint } from './ThemeContext'
+import { ThemeContext, AccentContext, DEFAULT_ACCENT, BRAND_PRIMARY, UI_FONT, MONO_FONT, RADIUS, surfaces, withAlpha, textMuted, textSecondary, textFaint } from './ThemeContext'
+import GateMark from './components/GateMark'
 import {
   anyExpanded, isGroupCollapsed, loadSidebarGroups, saveSidebarGroups, setAllGroups, toggleGroupState,
   type GroupsMode, type SidebarGroupsState,
@@ -1125,8 +1126,9 @@ export default function App() {
             motionDurationFast: '0.1s',
             motionDurationMid: '0.16s',
             motionDurationSlow: '0.24s',
-            // White-label accent → drives buttons, links, active tabs, switches.
-            ...(brandTheme.accent_color ? { colorPrimary: brandTheme.accent_color } : {}),
+            // Buttons, links, active tabs, switches: the white-label accent, else
+            // runspec teal.
+            colorPrimary: brandTheme.accent_color || BRAND_PRIMARY,
           },
           components: {
             Card: { colorBgContainer: sf.raised, colorBorderSecondary: sf.border, boxShadowTertiary: sf.shadowSm },
@@ -1167,12 +1169,26 @@ export default function App() {
               padding: '13px 12px 12px 16px',
               fontWeight: 700, fontSize: 14, color: titleCol,
               borderBottom: `1px solid ${borderCol}`, flexShrink: 0,
-              fontFamily: MONO_FONT,  // wordmark keeps the terminal identity
-              display: 'flex', alignItems: 'center', gap: 4,
+              // A white-label brand_name keeps the mono title in its accent; the
+              // unbranded console shows the runspec gate mark + wordmark.
+              fontFamily: brandTheme.brand_name ? MONO_FONT : UI_FONT,
+              display: 'flex', alignItems: 'center', gap: brandTheme.brand_name ? 4 : 8,
             }}>
-              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {brandTheme.brand_name || 'runspec'}
-              </span>
+              {brandTheme.brand_name ? (
+                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {brandTheme.brand_name}
+                </span>
+              ) : (
+                <>
+                  <GateMark size={18} barColor={isDark ? '#e8ebef' : '#111418'} triangleColor={titleCol} />
+                  <span style={{
+                    flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    fontSize: 16, letterSpacing: '-0.04em', color: isDark ? '#e8ebef' : '#111418',
+                  }}>
+                    runspec
+                  </span>
+                </>
+              )}
               {sortedGroupKeys.length > 1 && (() => {
                 const expanded = anyExpanded(groupsState, sortedGroupKeys)
                 return (

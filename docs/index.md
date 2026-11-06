@@ -1,13 +1,18 @@
-# runspec
+# You decide what runs.
 
-**A desktop console where an AI agent runs your operations — safely.**
+**Approved tools, not a shell. Every run on record.**
 
-`runspec-console` discovers every runnable tool on your machine and across
-your SSH fleet, and puts an AI agent in front of them: ask for something in
-plain language, approve what it proposes, and let it automate the rest with
-schedules, triggers, and shared runbooks. Underneath is **runspec** — a
-single TOML interface specification that turns any script into a validated
-CLI, a typed form, and an agent tool at once.
+runspec turns your team's scripts into an allow list of tools, each with its
+autonomy set in advance: reads run on their own, changes wait for approval,
+and some only a person can start. `runspec-console` runs them on the servers
+you've added, from typed forms, schedules or an AI agent, and records who ran
+what, where and as whom.
+
+It's built for application support and DevOps teams in regulated
+environments, where nobody hands a shell to an agent and every change needs
+an owner. Underneath is **runspec**, a single TOML interface specification
+that turns any script into a validated CLI, a typed form and an agent tool at
+once.
 
 <div class="grid cards" markdown>
 
@@ -24,6 +29,33 @@ CLI, a typed form, and an agent tool at once.
   [White-label walkthrough →](white-label.md)
 
 </div>
+
+## Approved tools, not a shell
+
+- **An allow list, not a shell.** Each tool is a script with a
+  [`runspec.toml`](format.md) that declares its arguments and limits. The
+  agent picks from that list and fills in typed arguments; it never gets a
+  prompt to type into. Each server needs only a Python environment holding
+  the tools: no containers and no agent service.
+- **Fast where it's safe. Careful where it counts.** Autonomy is set per tool,
+  and per argument, before anyone runs it: `autonomous`, `confirm` or
+  `manual`. A risky argument raises the level. The approval card shows the
+  exact server, account and arguments, and you can edit them before you
+  approve.
+- **Automation you sign off on.** Every run is logged with who started it,
+  from where, as which account, and its exit code. [Audit events](audit.md)
+  go to a hash-chained log and syslog. Secrets never appear on a command
+  line, and a [denylist](denylist.md) switches tools off across the fleet in
+  one step.
+
+| | Agent with a shell | Agent in a sandbox | runspec |
+|---|---|---|---|
+| **The agent gets** | Any command | Any command, in an isolated copy | Only the tools on the list |
+| **Runs on** | Your machine or server | A container or VM | Only the servers you've added |
+| **Great for** | Writing and changing code | Trying things without risk | Supporting production, where every change needs an owner |
+
+There are great agents that work with a shell or in a sandbox, and we use
+them too. runspec is for the servers where you can't hand one over.
 
 !!! info "Versions"
     This documentation tracks the latest published releases:

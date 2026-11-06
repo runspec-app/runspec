@@ -37,7 +37,7 @@ html, body, #root {
 /* Theme variables — App.tsx stamps data-theme on <html> and keeps --rs-accent
    in sync with the (possibly white-labelled) accent colour. */
 :root {
-  --rs-accent: #4fc1ff;
+  --rs-accent: #3cc7b6;
   --rs-hover: rgba(255, 255, 255, 0.05);
   --rs-scroll-thumb: #3a3a3a;
   --rs-scroll-thumb-hover: #4a4a4a;
