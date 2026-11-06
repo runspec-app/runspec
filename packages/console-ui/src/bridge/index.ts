@@ -2311,6 +2311,10 @@ export interface BridgeApi {
   // a time (get_history_slim) so it can render each host as it arrives and show a
   // per-host fetch time — one slow/offline host no longer blocks the whole view.
   history_targets: () => Promise<string[]>
+  // Per host, the runnables whose runs History leaves out by default (declared
+  // `discoverable = false` there), so the tab can say what it is hiding. Hosts
+  // with nothing hidden are omitted; `hosts` defaults to history_targets().
+  history_hidden_runnables: (hosts?: string[]) => Promise<Record<string, string[]>>
   // One host's slim, runnable-only history rows (same shape/filtering as
   // get_history_all, scoped to a single host) — the per-host unit the History tab
   // fetches. Heavy logLines are dropped; fetch them on expand via get_run_detail.

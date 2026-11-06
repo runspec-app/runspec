@@ -272,6 +272,23 @@ class TestHistoryCacheExclude(unittest.TestCase):
             c.close()
 
 
+class TestHiddenIndicator(unittest.TestCase):
+    def test_names_per_history_target(self) -> None:
+        b = _make_bridge()
+        b._runnables_cache = [
+            _runnable("heartbeat", "local", hidden=True),
+            _runnable("backup", "local", hidden=False),
+            _runnable("probe", "prod-1", hidden=True),
+            _runnable("heartbeat", "prod-1", hidden=True),
+        ]
+        with patch.object(b, "history_targets", return_value=["local", "prod-1"]):
+            self.assertEqual(
+                b.history_hidden_runnables(),
+                {"local": ["heartbeat"], "prod-1": ["heartbeat", "probe"]},
+            )
+        self.assertEqual(b.history_hidden_runnables(["other"]), {})
+
+
 class TestRunningStrip(unittest.TestCase):
     def test_hidden_running_rows_left_out(self) -> None:
         b = _make_bridge()

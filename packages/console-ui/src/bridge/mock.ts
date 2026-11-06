@@ -879,6 +879,7 @@ export const mockApi: BridgeApi = {
     const hosts = [...new Set(MOCK_HISTORY.map(h => h.host))]
     return ['local', ...hosts.filter(h => h !== 'local')]
   },
+  history_hidden_runnables: async () => ({}),
   get_history_slim: async (host, _since_days) =>
     MOCK_HISTORY.filter(h => h.host === host).map(({ logLines: _l, ...r }) => ({ ...r, logLines: [] })),
   history_sync_status: async () => ({}),

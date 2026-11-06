@@ -396,6 +396,20 @@ function saveShowHidden(on: boolean): void {
   try { localStorage.setItem(SHOW_HIDDEN_KEY, on ? '1' : '0') } catch { /* storage blocked */ }
 }
 
+/** What the "Hiding" indicator says for the runnables History leaves out
+ *  (per host, from history_hidden_runnables): the names across hosts, each with
+ *  the hosts it's hidden on, and a short label — the name when one, else a count.
+ *  `null` when nothing is hidden on the hosts read. */
+export function hiddenSummary(byHost: Record<string, string[]>, hosts: string[]): { label: string; names: { name: string; hosts: string[] }[] } | null {
+  const where = new Map<string, string[]>()
+  for (const host of hosts) {
+    for (const name of byHost[host] ?? []) where.set(name, [...(where.get(name) ?? []), host])
+  }
+  if (where.size === 0) return null
+  const names = [...where.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([name, h]) => ({ name, hosts: h }))
+  return { label: names.length === 1 ? `Hiding: ${names[0].name}` : `Hiding ${names.length} runnables`, names }
+}
+
 /** The History search box: words starting with `-` leave out the runs whose
  *  runnable name contains them (`-heartbeat -sync`); the rest is matched as one
  *  substring across runnable, venv, host, operator, run-as, label and command,
@@ -443,6 +457,9 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
   // Runs of runnables declared `discoverable = false` (internal helpers, e.g. a
   // job cron runs every minute) are left out server-side unless this is on.
   const [showHidden, setShowHidden] = useState(loadShowHidden)
+  // Per host, what that switch is hiding — so the tab never hides silently.
+  const [hiddenByHost, setHiddenByHost] = useState<Record<string, string[]>>({})
+  const hidden = useMemo(() => hiddenSummary(hiddenByHost, targets), [hiddenByHost, targets])
   // Per-run log lines fetched lazily when a row expands (the bulk payload ships
   // slim rows), keyed by rowKeyOf(r); detailLoading tracks the in-flight fetch.
   const [details, setDetails] = useState<Record<string, HistoryLogLine[]>>({})
@@ -510,6 +527,9 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       try { hosts = await bridge.history_targets() } catch { hosts = ['local'] }
       if (cancelled) return
       setTargets(hosts)
+      Promise.resolve(bridge.history_hidden_runnables(hosts))
+        .then(h => { if (!cancelled) setHiddenByHost(h && typeof h === 'object' ? h : {}) })
+        .catch(() => {})
       if (showSpinner) {
         setHostStatus(Object.fromEntries(hosts.map(h => [h, { status: 'loading' as const }])))
       }
@@ -841,6 +861,26 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
             <Text type="secondary" style={{ fontSize: 12 }}>Show hidden</Text>
           </span>
         </Tooltip>
+        {hidden && !showHidden && (
+          <Tooltip
+            title={
+              <div>
+                <div style={{ marginBottom: 4 }}>Runs of these runnables (discoverable = false) are left out. Click to show them.</div>
+                {hidden.names.map(n => (
+                  <div key={n.name}><span style={{ fontFamily: MONO_FONT }}>{n.name}</span> on {n.hosts.join(', ')}</div>
+                ))}
+              </div>
+            }
+          >
+            <Tag
+              data-testid="history-hiding"
+              style={{ cursor: 'pointer', margin: 0, fontSize: 12 }}
+              onClick={() => { setShowHidden(true); saveShowHidden(true) }}
+            >
+              {hidden.label}
+            </Tag>
+          </Tooltip>
+        )}
       </div>
       {/* Live "Running now" strip — in-flight runs from the runs index (see
           RunningNowStrip). Shown only when something is running so it stays

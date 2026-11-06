@@ -28,6 +28,9 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   log-parse fallbacks. The Running-now strip skips them too. A **Show hidden**
   switch on the tab (remembered per viewer) brings them back
   (`get_history_slim(..., include_hidden)`, `get_running_runs(include_hidden)`).
+  The hiding is never silent: a **Hiding: heartbeat** (or *Hiding N runnables*)
+  note beside the switch names what's left out and on which hosts, and clicking it
+  shows them (`history_hidden_runnables`, `HistoryView.hiddenSummary`).
   Analytics is unchanged.
 - **History filters by runnable.** The Runnable column has a filter with a search
   box, and a `-name` word in the search box leaves out every runnable whose name

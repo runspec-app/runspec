@@ -9,10 +9,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, act, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
-import { HistoryView, accountNote, agoLabel, parseHistorySearch, syncNote } from './HistoryView'
+import { HistoryView, accountNote, agoLabel, hiddenSummary, parseHistorySearch, syncNote } from './HistoryView'
 import type { HistoryRecord, RunningRun } from '../bridge'
 
-const { historyTargets, getHistorySlim, getRunDetail, logsView, getRunningRuns, historySyncStatus } = vi.hoisted(() => ({
+const { historyTargets, getHistorySlim, getRunDetail, logsView, getRunningRuns, historySyncStatus, historyHidden } = vi.hoisted(() => ({
+  historyHidden: vi.fn(),
   historySyncStatus: vi.fn(),
   historyTargets: vi.fn(),
   getHistorySlim: vi.fn(),
@@ -30,6 +31,7 @@ vi.mock('../bridge', () => ({
       if (p === 'logs_view') return logsView
       if (p === 'get_running_runs') return getRunningRuns
       if (p === 'history_sync_status') return historySyncStatus
+      if (p === 'history_hidden_runnables') return historyHidden
       return vi.fn()
     },
   }),
@@ -66,6 +68,7 @@ beforeEach(() => {
   logsView.mockReset().mockResolvedValue({ ok: true, records: [] })
   getRunningRuns.mockReset().mockResolvedValue([])   // nothing running by default → no strip
   historySyncStatus.mockReset().mockResolvedValue({})  // every host read directly
+  historyHidden.mockReset().mockResolvedValue({})      // nothing hidden by default
 })
 
 afterEach(() => { vi.useRealTimers() })
@@ -89,6 +92,28 @@ describe('HistoryView', () => {
     expect(getRunningRuns).toHaveBeenCalledWith(true)
     expect(localStorage.getItem('rs.history.showHidden')).toBe('1')
     localStorage.removeItem('rs.history.showHidden')
+  })
+
+  it('says what it is hiding, and clicking the note shows hidden runs', async () => {
+    localStorage.removeItem('rs.history.showHidden')
+    historyHidden.mockResolvedValue({ local: ['heartbeat'] })
+    render(<HistoryView {...PROPS} />)
+    await screen.findByText('backup')
+    expect(historyHidden).toHaveBeenCalledWith(['local'])
+    const tag = await screen.findByTestId('history-hiding')
+    expect(tag.textContent).toBe('Hiding: heartbeat')
+    const user = userEvent.setup()
+    await act(async () => { await user.click(tag) })
+    await waitFor(() => expect(getHistorySlim).toHaveBeenCalledWith('local', 7, true))
+    expect(screen.queryByTestId('history-hiding')).toBeNull()
+    localStorage.removeItem('rs.history.showHidden')
+  })
+
+  it('shows no hiding note when nothing is hidden', async () => {
+    render(<HistoryView {...PROPS} />)
+    await screen.findByText('backup')
+    await flush()
+    expect(screen.queryByTestId('history-hiding')).toBeNull()
   })
 
   it('leaves out runnables named with -word in the search box', async () => {
@@ -388,5 +413,17 @@ describe('parseHistorySearch', () => {
     expect(parseHistorySearch('Backup')).toEqual({ text: 'backup', exclude: [] })
     expect(parseHistorySearch(' -Heartbeat  prod-1 -sync ')).toEqual({ text: 'prod-1', exclude: ['heartbeat', 'sync'] })
     expect(parseHistorySearch('df -')).toEqual({ text: 'df -', exclude: [] })
+  })
+})
+
+describe('hiddenSummary', () => {
+  it('merges hosts per name and only counts the hosts being read', () => {
+    expect(hiddenSummary({}, ['local'])).toBeNull()
+    expect(hiddenSummary({ gone: ['x'] }, ['local'])).toBeNull()
+    const one = hiddenSummary({ local: ['heartbeat'], 'web-01': ['heartbeat'] }, ['local', 'web-01'])
+    expect(one).toEqual({ label: 'Hiding: heartbeat', names: [{ name: 'heartbeat', hosts: ['local', 'web-01'] }] })
+    const many = hiddenSummary({ local: ['sync', 'heartbeat'], 'web-01': ['probe'] }, ['local', 'web-01'])
+    expect(many?.label).toBe('Hiding 3 runnables')
+    expect(many?.names.map(n => n.name)).toEqual(['heartbeat', 'probe', 'sync'])
   })
 })

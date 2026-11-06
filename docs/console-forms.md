@@ -27,8 +27,9 @@ tools. The dialog gives you:
 
 A runnable whose `runspec.toml` says `discoverable = false` (an internal
 helper) gets no Forms card, isn't offered to the agent, and its runs are left
-out of the **History** tab. History's **Show hidden** switch brings those runs
-back. To hide a runnable from the console without touching its `runspec.toml`,
+out of the **History** tab. A **Hiding: …** note beside History's **Show
+hidden** switch names what's being left out and on which hosts; the switch (or
+a click on the note) brings those runs back. To hide a runnable from the console without touching its `runspec.toml`,
 use `[tool_visibility] hidden_from_all` (Settings → Agent tools); that hides
 it from Forms and the agent but not from History.
 

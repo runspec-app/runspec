@@ -490,6 +490,22 @@ class ReportingMixin:
         self._history_forget_hosts()  # removed / renamed hosts leave the cache
         return names
 
+    def history_hidden_runnables(
+        self, hosts: list[str] | None = None
+    ) -> dict[str, list[str]]:
+        """Per host, the runnables whose runs the History tab leaves out by default
+        (declared ``discoverable = false`` there) — so the tab can say what it is
+        hiding instead of hiding it silently. ``hosts`` defaults to
+        :meth:`history_targets`; hosts with nothing hidden are omitted."""
+        if hosts is None:
+            hosts = self.history_targets()
+        out: dict[str, list[str]] = {}
+        for host in hosts:
+            names = sorted(self._history_hidden(str(host)))
+            if names:
+                out[str(host)] = names
+        return out
+
     def get_history_slim(
         self,
         host: str,
