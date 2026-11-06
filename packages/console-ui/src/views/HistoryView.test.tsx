@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, act, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
-import { HistoryView, accountNote, agoLabel, syncNote } from './HistoryView'
+import { HistoryView, accountNote, agoLabel, parseHistorySearch, syncNote } from './HistoryView'
 import type { HistoryRecord, RunningRun } from '../bridge'
 
 const { historyTargets, getHistorySlim, getRunDetail, logsView, getRunningRuns, historySyncStatus } = vi.hoisted(() => ({
@@ -74,17 +74,40 @@ describe('HistoryView', () => {
   it('renders rows after the first per-host fetch (default 7-day window)', async () => {
     render(<HistoryView {...PROPS} />)
     expect(await screen.findByText('backup')).toBeTruthy()
-    expect(getHistorySlim).toHaveBeenCalledWith('local', 7)
+    expect(getHistorySlim).toHaveBeenCalledWith('local', 7, false)
     expect(getHistorySlim).toHaveBeenCalledTimes(1)
+  })
+
+  it('refetches with hidden runnables when "Show hidden" is switched on', async () => {
+    localStorage.removeItem('rs.history.showHidden')
+    render(<HistoryView {...PROPS} />)
+    await screen.findByText('backup')
+    expect(getRunningRuns).toHaveBeenCalledWith(false)
+    const user = userEvent.setup()
+    await act(async () => { await user.click(screen.getByRole('switch', { name: 'Show hidden runnables' })) })
+    await waitFor(() => expect(getHistorySlim).toHaveBeenCalledWith('local', 7, true))
+    expect(getRunningRuns).toHaveBeenCalledWith(true)
+    expect(localStorage.getItem('rs.history.showHidden')).toBe('1')
+    localStorage.removeItem('rs.history.showHidden')
+  })
+
+  it('leaves out runnables named with -word in the search box', async () => {
+    getHistorySlim.mockResolvedValue([
+      rec(),
+      rec({ id: 'row2', runId: 'run-2', runnable: 'heartbeat' }),
+    ])
+    render(<HistoryView {...PROPS} search="-heart" />)
+    expect(await screen.findByText('backup')).toBeTruthy()
+    expect(screen.queryByText('heartbeat')).toBeNull()
   })
 
   it('refetches with the selected window when the range changes', async () => {
     render(<HistoryView {...PROPS} />)
     await screen.findByText('backup')
-    expect(getHistorySlim).toHaveBeenCalledWith('local', 7)
+    expect(getHistorySlim).toHaveBeenCalledWith('local', 7, false)
     const user = userEvent.setup()
     await act(async () => { await user.click(screen.getByText('30d')) })
-    await waitFor(() => expect(getHistorySlim).toHaveBeenCalledWith('local', 30))
+    await waitFor(() => expect(getHistorySlim).toHaveBeenCalledWith('local', 30, false))
   })
 
   it('renders each connected host incrementally and shows a per-host fetch strip', async () => {
@@ -140,7 +163,7 @@ describe('HistoryView', () => {
       await flush()
     })
     expect(getHistorySlim).toHaveBeenCalledTimes(1)
-    expect(getHistorySlim).toHaveBeenCalledWith('web-01', 7)
+    expect(getHistorySlim).toHaveBeenCalledWith('web-01', 7, false)
     expect(await screen.findByText('rotate-certs')).toBeTruthy()
     expect(screen.getByText('backup')).toBeTruthy()  // local untouched
   })
@@ -356,5 +379,14 @@ describe('accountNote', () => {
     expect(accountNote({ account: 'alice', operator: 'alice', runAs: '' })).toBe('')
     expect(accountNote({ account: 'root', operator: 'alice', runAs: 'root' })).toBe('')
     expect(accountNote({ operator: 'alice', runAs: '' })).toBe('')
+  })
+})
+
+describe('parseHistorySearch', () => {
+  it('splits -word exclusions from the substring', () => {
+    expect(parseHistorySearch('')).toEqual({ text: '', exclude: [] })
+    expect(parseHistorySearch('Backup')).toEqual({ text: 'backup', exclude: [] })
+    expect(parseHistorySearch(' -Heartbeat  prod-1 -sync ')).toEqual({ text: 'prod-1', exclude: ['heartbeat', 'sync'] })
+    expect(parseHistorySearch('df -')).toEqual({ text: 'df -', exclude: [] })
   })
 })

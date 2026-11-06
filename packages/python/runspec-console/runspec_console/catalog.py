@@ -186,9 +186,9 @@ def build_full_catalog(
     (the console's ``runspec_self_service.toml`` designation) *and* it passes the
     optional ``self_service_allowlist`` (the ``room_catalog`` visitor-narrowing
     knob) — visible to everyone; otherwise ``"operator"`` — visible only to operator
-    sessions. Every discovered runnable is at least operator-visible (a hidden
-    ``discoverable = false`` runnable never reaches the console, having been filtered
-    by ``runspec local``). One entry per name keeps the room's name-keyed dedup
+    sessions. Every runnable passed in is at least operator-visible (a hidden
+    ``discoverable = false`` runnable is dropped earlier, by
+    ``Bridge._visible_runnables``). One entry per name keeps the room's name-keyed dedup
     stable; the operator set is deliberately *not* narrowed by the self-service
     allowlist.
 

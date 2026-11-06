@@ -612,6 +612,9 @@ discoverable = false                           # internal helper — hidden from
   view), annotating a hidden one as `[hidden]`. Its emitted schemas
   (`--format mcp`/`openai`/`anthropic`) carry `x-discoverable: false` for a hidden
   runnable (omitted otherwise, since `true` is the default).
+- Other consumers of the discovery data should treat a hidden runnable the same
+  way: runspec-mcp and runspec-tui leave it out, and runspec-console keeps it
+  off Forms, its agent and MCP server, and out of its History view.
 
 This is metadata only — it adds no runtime behaviour to the runnable itself.
 

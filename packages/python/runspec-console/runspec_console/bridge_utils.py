@@ -25,6 +25,30 @@ from .bridge_const import (
 )
 
 
+def runnable_discoverable(r: dict[str, Any]) -> bool:
+    """False when a discovered runnable declares ``discoverable = false`` in its
+    runspec.toml — an internal helper the console keeps out of Forms, the agent,
+    its MCP server, catalogs and History (it stays installed and runnable)."""
+    return (r.get("rawSpec") or {}).get("discoverable") is not False
+
+
+def hidden_runnable_names(runnables: list[dict[str, Any]], host: str) -> set[str]:
+    """Names of the runnables on ``host`` that are hidden (``discoverable =
+    false``) in every venv they were found in — the History tab leaves their runs
+    out. A name visible in any venv on the host stays, so no run is hidden just
+    because another venv carries a hidden runnable of the same name."""
+    hidden: set[str] = set()
+    shown: set[str] = set()
+    for r in runnables:
+        if r.get("host") != host:
+            continue
+        name = str(r.get("name") or "")
+        if not name:
+            continue
+        (shown if runnable_discoverable(r) else hidden).add(name)
+    return hidden - shown
+
+
 def runnable_hidden(
     name: str,
     group: str | None,
@@ -845,12 +869,13 @@ import json, os, sqlite3, sys
 a = json.loads(sys.argv[1])
 since = a.get("since")
 limit = int(a.get("limit") or 500)
+skip = [str(n) for n in (a.get("exclude") or [])]
 out = {}
 for d in a.get("dirs", []):
     db = os.path.join(os.path.expanduser(d), "runspec_runs.db")
     # The inbox first, then the index (a run swept in between is seen once, not
     # zero times — the index wins the dedupe on the console side).
-    e = {"has_db": os.path.exists(db), "rows": [], "pending": [r for r in _rs_inbox(d) if r["status"] != "running"]}
+    e = {"has_db": os.path.exists(db), "rows": [], "pending": [r for r in _rs_inbox(d) if r["status"] != "running" and r.get("runnable") not in skip]}
     if e["has_db"] and _rs_unsafe(os.path.expanduser(d)):
         e["has_db"] = False; e["error"] = "refusing a runs index in a world-writable or sticky dir"
     if e["has_db"]:
@@ -861,6 +886,8 @@ for d in a.get("dirs", []):
             pr = []
             if since:
                 q += " AND start_ts >= ?"; pr.append(since)
+            if skip:
+                q += " AND runnable NOT IN (" + ",".join("?" * len(skip)) + ")"; pr.extend(skip)
             q += " ORDER BY start_ts DESC LIMIT ?"; pr.append(limit)
             e["rows"] = [{k: r[k] for k in r.keys()} for r in con.execute(q, pr).fetchall()]
             con.close()
@@ -872,14 +899,22 @@ sys.stdout.write(json.dumps(out))
 
 
 def db_read_cmd(
-    python_path: str, dirs: list[str], since: str | None, limit: int
+    python_path: str,
+    dirs: list[str],
+    since: str | None,
+    limit: int,
+    exclude: list[str] | None = None,
 ) -> str:
     """The command to read the per-venv runs index on a remote host —
     ``{python} -c <snippet> <json-arg>`` (stdlib ``sqlite3`` only, ``mode=ro``, no
     runspec import). ``dirs`` are the venv logs dirs (+ ``~/logs``); the snippet
     expands ``~`` and keys its JSON result by the input dir. ``since`` is an ISO
-    lower bound on ``start_ts``."""
-    arg = json.dumps({"dirs": list(dirs), "since": since, "limit": int(limit)})
+    lower bound on ``start_ts``; runs of the ``exclude`` runnables are left out
+    before ``limit``."""
+    payload: dict[str, Any] = {"dirs": list(dirs), "since": since, "limit": int(limit)}
+    if exclude:
+        payload["exclude"] = list(exclude)
+    arg = json.dumps(payload)
     return f"{shlex.quote(python_path)} -c {shlex.quote(_INBOX_FRAGMENT + _DB_READ_SNIPPET)} {shlex.quote(arg)}"
 
 

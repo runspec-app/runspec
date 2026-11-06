@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Table, Tag, Typography, Button, Tooltip, message, Input, Drawer, Spin, Empty, Alert, Segmented } from 'antd'
+import { Table, Tag, Typography, Button, Tooltip, message, Input, Drawer, Spin, Empty, Alert, Segmented, Switch } from 'antd'
 import { RedoOutlined, CopyOutlined, RobotOutlined, UserOutlined, SearchOutlined, EditOutlined, ClockCircleOutlined, ProfileOutlined } from '@ant-design/icons'
 import type { ColumnType } from 'antd/es/table'
 import type { FilterValue } from 'antd/es/table/interface'
@@ -385,6 +385,31 @@ interface HistoryViewProps {
   active: boolean
 }
 
+// Remembers the "Show hidden" switch across sessions (a per-viewer convenience).
+const SHOW_HIDDEN_KEY = 'rs.history.showHidden'
+
+function loadShowHidden(): boolean {
+  try { return localStorage.getItem(SHOW_HIDDEN_KEY) === '1' } catch { return false }
+}
+
+function saveShowHidden(on: boolean): void {
+  try { localStorage.setItem(SHOW_HIDDEN_KEY, on ? '1' : '0') } catch { /* storage blocked */ }
+}
+
+/** The History search box: words starting with `-` leave out the runs whose
+ *  runnable name contains them (`-heartbeat -sync`); the rest is matched as one
+ *  substring across runnable, venv, host, operator, run-as, label and command,
+ *  as before. A lone `-` is plain text. */
+export function parseHistorySearch(search: string): { text: string; exclude: string[] } {
+  const exclude: string[] = []
+  const rest: string[] = []
+  for (const word of search.trim().split(/\s+/)) {
+    if (word.length > 1 && word.startsWith('-')) exclude.push(word.slice(1).toLowerCase())
+    else if (word) rest.push(word)
+  }
+  return { text: rest.join(' ').toLowerCase(), exclude }
+}
+
 /** Status-column filter: 0 = ok, 1 = error, -1 = skipped (a `runspec exec` run
  *  that never started — exit 0 but not a success). */
 export function historyStatusMatches(record: Pick<HistoryRecord, 'exitCode' | 'status'>, value: number): boolean {
@@ -415,6 +440,9 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
   // Read window in days (0 = all) — bounds the backend read so a first visit is
   // quick. Changing it refetches (see the effect's deps).
   const [sinceDays, setSinceDays] = useState(7)
+  // Runs of runnables declared `discoverable = false` (internal helpers, e.g. a
+  // job cron runs every minute) are left out server-side unless this is on.
+  const [showHidden, setShowHidden] = useState(loadShowHidden)
   // Per-run log lines fetched lazily when a row expands (the bulk payload ships
   // slim rows), keyed by rowKeyOf(r); detailLoading tracks the in-flight fetch.
   const [details, setDetails] = useState<Record<string, HistoryLogLine[]>>({})
@@ -449,7 +477,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
     // Fleet-wide live running rows — one call (not per-host), tolerant of the
     // mock/proxy returning a non-array. Shares runLoad's cadence.
     const loadRunning = () => {
-      Promise.resolve(bridge.get_running_runs())
+      Promise.resolve(bridge.get_running_runs(showHidden))
         .then(rows => { if (!cancelled) setRunning(Array.isArray(rows) ? rows : []) })
         .catch(() => { if (!cancelled) setRunning([]) })
     }
@@ -463,7 +491,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
     // One host's rows (a remote on the History cache returns instantly).
     const fetchHost = (name: string) => {
       const t0 = performance.now()
-      return bridge.get_history_slim(name, sinceDays)
+      return bridge.get_history_slim(name, sinceDays, showHidden)
         .then(rows => {
           if (cancelled) return
           setRecordsByHost(prev => ({ ...prev, [name]: rows }))
@@ -527,7 +555,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       window.removeEventListener('runspec:run_end', onRunEnd)
       window.removeEventListener('runspec:history_updated', onHistoryUpdated)
     }
-  }, [active, sinceDays])
+  }, [active, sinceDays, showHidden])
 
   // Merge every host's slim rows into one newest-first list (capped so a large
   // fleet can't build an unbounded table). Recomputes as each host resolves.
@@ -555,16 +583,18 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
   }
 
   const filtered = useMemo(() => {
-    if (!search) return records
-    const q = search.toLowerCase()
+    const { text: q, exclude } = parseHistorySearch(search)
+    if (!q && exclude.length === 0) return records
     return records.filter(r =>
+      !exclude.some(x => r.runnable.toLowerCase().includes(x)) && (
+      !q ||
       r.runnable.toLowerCase().includes(q) ||
       r.group.toLowerCase().includes(q) ||
       r.host.toLowerCase().includes(q) ||
       r.operator.toLowerCase().includes(q) ||
       r.runAs.toLowerCase().includes(q) ||
       (r.label ?? '').toLowerCase().includes(q) ||
-      (r.commandPath ?? []).join(' ').toLowerCase().includes(q)
+      (r.commandPath ?? []).join(' ').toLowerCase().includes(q))
     )
   }, [records, search])
 
@@ -575,6 +605,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
   // pull's history_updated arrives every few seconds on 7d/30d) undid a tick or
   // untick before the operator could press OK.
   const facetKey = useMemo(() => JSON.stringify([
+    [...new Set(records.map(r => r.runnable))].sort(),
     [...new Set(records.map(r => r.host))],
     [...new Set(records.map(r => r.group))],
     [...new Set(records.map(r => r.operator))],
@@ -583,10 +614,10 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
     [...new Set(records.map(r => r.label).filter((s): s is string => !!s))],
   ]), [records])
   const facets = useMemo(() => {
-    const [hosts, groups, operators, runAsUsers, runbooks, labels] = JSON.parse(facetKey) as string[][]
-    return { hosts, groups, operators, runAsUsers, runbooks, labels }
+    const [runnableNames, hosts, groups, operators, runAsUsers, runbooks, labels] = JSON.parse(facetKey) as string[][]
+    return { runnableNames, hosts, groups, operators, runAsUsers, runbooks, labels }
   }, [facetKey])
-  const { hosts, groups, operators, runAsUsers, runbooks, labels } = facets
+  const { runnableNames, hosts, groups, operators, runAsUsers, runbooks, labels } = facets
   // App passes a fresh onScopeToggle on every render; read it through a ref so an
   // unrelated App re-render doesn't rebuild the columns (same reason as above).
   const scopeToggleRef = useRef(onScopeToggle)
@@ -623,6 +654,10 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
         )
       },
       sorter: (a, b) => `${a.group}/${a.runnable}`.localeCompare(`${b.group}/${b.runnable}`),
+      filters: runnableNames.map(n => ({ text: n, value: n })),
+      filterSearch: true,
+      onFilter: (value, record) => record.runnable === value,
+      filteredValue: colFilters['runnable'] ?? null,
     },
     {
       // Dedicated column so "run by agent vs operator" is always visible — the
@@ -774,14 +809,14 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       sorter: (a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime(),
       defaultSortOrder: 'descend',
     },
-  ], [groups, runbooks, labels, hosts, operators, runAsUsers, colFilters, activeScope, accent])
+  ], [runnableNames, groups, runbooks, labels, hosts, operators, runAsUsers, colFilters, activeScope, accent])
 
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
         <Input
           prefix={<SearchOutlined />}
-          placeholder="Search runnable, host, operator, run-as…"
+          placeholder="Search runnable, host, operator… (-name excludes)"
           value={search}
           onChange={e => onSearchChange(e.target.value)}
           allowClear
@@ -794,6 +829,17 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
             onChange={v => setSinceDays(v as number)}
             options={RANGE_OPTIONS}
           />
+        </Tooltip>
+        <Tooltip title="Also show runs of runnables marked discoverable = false in their runspec.toml (internal helpers, such as a job cron runs every minute). They're left out by default.">
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}>
+            <Switch
+              size="small"
+              checked={showHidden}
+              onChange={on => { setShowHidden(on); saveShowHidden(on) }}
+              aria-label="Show hidden runnables"
+            />
+            <Text type="secondary" style={{ fontSize: 12 }}>Show hidden</Text>
+          </span>
         </Tooltip>
       </div>
       {/* Live "Running now" strip — in-flight runs from the runs index (see

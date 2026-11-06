@@ -156,6 +156,13 @@ internal helper off the agent surface even though its package is installed);
 emits `x-discoverable: false` for it in the agent schemas (omitted otherwise).
 Metadata only — it adds no runtime behaviour to the runnable.
 
+**runspec-console** (0.376.0+) keeps a `discoverable = false` runnable off
+every console surface: no Forms card, not in the agent's tools, its own MCP
+server or a room catalog, and its runs are left out of the **History** tab
+(switch on *Show hidden* to see them). Use it for a job cron runs every minute
+on many hosts, so it doesn't fill History. Its runs are still logged and
+audited as usual, and `runspec logs` / `runspec history` still show them.
+
 Marking a runnable for a **self-service** audience (e.g. a help-desk visitor
 catalog) is *not* a `runspec.toml` concern — the catalog's consumer (e.g.
 runspec-console) designates the self-service subset in its own git-managed config.

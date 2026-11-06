@@ -483,7 +483,7 @@ class TestGetHistorySlim(unittest.TestCase):
         ]
         with patch.object(b, "get_history", return_value=rows) as m:
             out = b.get_history_slim("local", since_days=7)
-        m.assert_called_once_with("local", since_days=7)
+        m.assert_called_once_with("local", since_days=7, exclude=frozenset())
         self.assertEqual(len(out), 1)  # the agent turn is dropped
         self.assertEqual(out[0]["logLines"], [])  # heavy lines stripped, shape kept
         self.assertNotIn("extra", out[0])  # analytics-only field stripped

@@ -677,10 +677,17 @@ class AgentToolsMixin:
         - ``"forms"`` — drop only ``hidden_from_all`` (the Forms feed and the
           room/self-service catalog publish).
 
+        A runnable whose runspec.toml says ``discoverable = false`` is dropped
+        from both surfaces.
+
         Hiding is curation, not a safety block — a hidden runnable is still
         installed and directly runnable (the denylist is the run-time gate)."""
         with self._lock:
-            runnables = list(self._runnables_cache)
+            # ``discoverable = false`` (runspec.toml) hides an internal helper from
+            # every console surface, whatever [tool_visibility] says.
+            runnables = [
+                r for r in self._runnables_cache if utils_mod.runnable_discoverable(r)
+            ]
         try:
             vis = config_mod.read_tool_visibility()
         except Exception:
