@@ -42,6 +42,8 @@ import json
 import os
 import shlex
 import subprocess
+import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -70,6 +72,11 @@ _LOCK_SUBDIR = ".cache/runspec-scheduler"
 #: so a fully-removed account is reconciled (its lines stripped) on the next sync.
 #: Machine-local — never synced.
 _STATE_NAME = "runspec_scheduler_cron_state.json"
+
+#: Folder in the venv holding a copy of each crontab as it was before we rewrote
+#: it (owner-only files, newest :data:`_BACKUPS_KEPT` per account).
+_BACKUP_DIRNAME = "runspec_scheduler_backups"
+_BACKUPS_KEPT = 10
 
 
 @dataclass
@@ -195,21 +202,36 @@ def render_block(sched_id: str, cron_expr: str, command: str) -> list[str]:
     return [f"{MARKER_PREFIX}{sched_id}", f"{cron_expr}  {command}"]
 
 
+def is_our_job(line: str, sched_id: str) -> bool:
+    """Whether ``line`` is the job line we write for schedule ``sched_id``.
+
+    Every line we have written (the ``runspec exec`` form and the pre-0.3
+    ``flock -n`` form) carries the schedule's lock path, and the current form its
+    ``--label sched:<id>``; a comment, a blank line or another marker never is."""
+    text = line.strip()
+    if not text or text.startswith("#"):
+        return False
+    return f"/{_LOCK_SUBDIR}/{sched_id}.lock" in line or f"--label {LABEL_PREFIX}{sched_id} " in line
+
+
 def plan_crontab(existing_lines: list[str], blocks: list[list[str]]) -> list[str]:
     """Reconcile a user's crontab: drop every block we previously wrote, keep the
     operator's own lines verbatim, then append the current ``blocks``.
 
     Our block is a ``# runspec:sched:<id>`` marker line plus the single line that
-    follows it (the job), so both are dropped together. Idempotent: planning twice
-    over its own output yields the same result."""
+    follows it (the job), so both are dropped together — but the line under a
+    marker goes only when it is our job (:func:`is_our_job`); a marker left
+    behind on its own never takes the operator's next line with it. Idempotent:
+    planning twice over its own output yields the same result."""
     kept: list[str] = []
-    skip_next = False
+    skip_id: str | None = None
     for line in existing_lines:
-        if skip_next:
-            skip_next = False
-            continue
+        if skip_id is not None:
+            sid, skip_id = skip_id, None
+            if is_our_job(line, sid):
+                continue  # the job line under our marker
         if line.startswith(MARKER_PREFIX):
-            skip_next = True  # drop the marker and its job line
+            skip_id = line[len(MARKER_PREFIX) :].strip()  # drop the marker, check the next line
             continue
         kept.append(line)
     while kept and kept[-1].strip() == "":
@@ -259,6 +281,44 @@ def _write_crontab(lines: list[str], run_as: str, become_method: str, become_fla
         raise RuntimeError(f"{exc.filename} is not installed on this host") from exc
     if proc.returncode != 0:
         raise RuntimeError((proc.stderr or "").strip() or f"crontab - failed (exit {proc.returncode})")
+
+
+def _backup_dir() -> Path:
+    return Path(sys.prefix) / _BACKUP_DIRNAME
+
+
+def backup_crontab(lines: list[str], run_as: str) -> Path | None:
+    """Save ``lines`` (an account's crontab before we rewrite it) to an owner-only
+    file in the venv, keeping the newest :data:`_BACKUPS_KEPT` for that account.
+    Best-effort: returns ``None`` when nothing was saved (an empty crontab, or the
+    folder can't be written) — a missing backup never blocks the write."""
+    if not lines:
+        return None
+    folder = _backup_dir()
+    who = (run_as or "self").replace("/", "_")
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    try:
+        folder.mkdir(mode=0o700, exist_ok=True)
+        path = folder / f"crontab-{who}-{stamp}-{os.getpid()}.txt"
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+        old = sorted(folder.glob(f"crontab-{who}-*.txt"))
+        for stale in old[:-_BACKUPS_KEPT]:
+            stale.unlink(missing_ok=True)
+        return path
+    except OSError:
+        return None
+
+
+def replace_crontab(existing: list[str], lines: list[str], run_as: str, become_method: str, become_flags: str | None) -> bool:
+    """Install ``lines`` over ``existing`` (what was just read) — skipped when they
+    are the same, and with ``existing`` backed up first. Returns whether it wrote."""
+    if lines == existing:
+        return False
+    backup_crontab(existing, run_as)
+    _write_crontab(lines, run_as, become_method, become_flags)
+    return True
 
 
 # ── managed-users state (declarative cross-account cleanup) ─────────────────────
@@ -389,7 +449,7 @@ def sync(config_path: Path, *, dry_run: bool = False) -> SyncResult:
             existing = _read_crontab(user, become_method, become_flags or None)
             new_lines = plan_crontab(existing, blocks)
             if not dry_run:
-                _write_crontab(new_lines, user, become_method, become_flags or None)
+                replace_crontab(existing, new_lines, user, become_method, become_flags or None)
             result.users.append(user or "(self)")
         except RuntimeError as exc:
             # Roll back the optimistic "installed" entries for this failed account.
@@ -432,7 +492,7 @@ def remove_all(config_path: Path, *, dry_run: bool = False) -> SyncResult:
                 removed = [ln[len(MARKER_PREFIX) :].strip() for ln in existing if ln.startswith(MARKER_PREFIX)]
                 result.installed.extend({"id": sid, "user": label, "removed": "true"} for sid in removed)
                 if not dry_run:
-                    _write_crontab(new_lines, user, method, None)
+                    replace_crontab(existing, new_lines, user, method, None)
             result.users.append(label)
         except RuntimeError as exc:
             result.errors.append({"user": label, "error": str(exc)})

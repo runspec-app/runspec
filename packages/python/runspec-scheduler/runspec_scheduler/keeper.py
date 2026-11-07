@@ -237,14 +237,21 @@ def _tagged(lines: list[str]) -> list[str]:
 
 
 def strip_keeper_lines(existing: list[str], tag: str | None = None) -> list[str]:
-    """``existing`` without this venv's keeper lines (each tag + the line after it)."""
+    """``existing`` without this venv's keeper lines (each tag + the line after it).
+
+    The line after a tag goes only when it is a keeper job for this venv (a cron
+    line naming the venv folder), so a tag left on its own never takes the
+    operator's next line with it."""
     tag = tag or marker()
+    root = tag[len(KEEPER_MARKER) :] if tag.startswith(KEEPER_MARKER) else str(venv_root())
     out: list[str] = []
     skip = False
     for line in existing:
         if skip:
             skip = False
-            continue
+            text = line.strip()
+            if text and not text.startswith("#") and root in line:
+                continue
         if line.strip() == tag:
             skip = True
             continue
@@ -264,12 +271,15 @@ def _read_own_crontab() -> list[str]:
     return _read_crontab("", "sudo", None)
 
 
-def _write_own_crontab(lines: list[str]) -> None:
-    from .cronsync import _write_crontab
+def _write_own_crontab(lines: list[str], existing: list[str]) -> None:
+    """Replace the owner's crontab (``existing``, just read) with ``lines`` —
+    nothing when unchanged, and the old crontab backed up first."""
+    from .cronsync import backup_crontab, replace_crontab
 
     if lines:
-        _write_crontab(lines, "", "sudo", None)
-    else:  # an empty `crontab -` leaves an empty file; same effect, but -r is tidier
+        replace_crontab(existing, lines, "", "sudo", None)
+    elif existing:  # an empty `crontab -` leaves an empty file; same effect, but -r is tidier
+        backup_crontab(existing, "")
         subprocess.run(["crontab", "-r"], capture_output=True)
 
 
@@ -576,7 +586,7 @@ def apply(plan: Plan) -> dict[str, Any]:
                     a.path.rmdir()
             elif a.kind == "crontab":
                 existing = _read_own_crontab()
-                _write_own_crontab(strip_keeper_lines(existing) + _tagged(a.lines or []))
+                _write_own_crontab(strip_keeper_lines(existing) + _tagged(a.lines or []), existing)
             elif a.kind == "run":
                 assert a.argv is not None
                 env = _systemctl_env() if a.systemd_env else None
