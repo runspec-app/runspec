@@ -2248,6 +2248,14 @@ export interface ProvisionPayload {
   repo?: string
   /** Also set up the runspec-scheduler daemon with this keeper ('' = no). */
   scheduler?: '' | ProvisionSchedulerKeeper
+  /** Set the venv's log retention policy (runspec logs retention); absent = none. */
+  retention?: ProvisionRetention
+}
+
+/** Durations like "7d" / "2w"; a missing field isn't set. */
+export interface ProvisionRetention {
+  compact_after?: string
+  delete_after?: string
 }
 
 export type ProvisionSchedulerKeeper = 'auto' | 'systemd-user' | 'supervisor' | 'cron'

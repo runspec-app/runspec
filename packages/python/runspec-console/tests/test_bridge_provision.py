@@ -836,3 +836,95 @@ def test_deprovision_keeps_a_venv_whose_daemon_wont_stop(app, tmp_path):
     finally:
         if daemon.poll() is None:
             daemon.kill()
+
+
+# ── the log retention policy (runspec 0.80.0) ─────────────────────────────────
+
+
+def test_plan_validates_the_retention_policy(app):
+    _hosts()
+    b = _StubBridge()
+    base = {"hosts": ["web-01"], "dest": "/opt/venvs/ops", "python": "3.12"}
+    assert b._prov_plan(base)["retention"] == {}
+    plan = b._prov_plan(
+        {**base, "retention": {"compact_after": "7D", "delete_after": " 90d "}}
+    )
+    assert plan["retention"] == {"compact_after": "7d", "delete_after": "90d"}
+    assert b._prov_plan({**base, "retention": {"delete_after": "30d"}})[
+        "retention"
+    ] == {"delete_after": "30d"}
+    with pytest.raises(ValueError, match="shorter than"):
+        b._prov_plan(
+            {**base, "retention": {"compact_after": "90d", "delete_after": "7d"}}
+        )
+    with pytest.raises(ValueError, match="Not a duration"):
+        b._prov_plan({**base, "retention": {"delete_after": "forever"}})
+
+
+@pytest.mark.skipif(sys.version_info < (3, 10), reason="runspec needs 3.10+")
+def test_provision_sets_the_retention_policy(app, tmp_path):
+    _hosts()
+    b = _StubBridge()
+    dest = tmp_path / "venvs" / "ops"
+    out = b.provision_start(
+        {
+            "hosts": ["web-01"],
+            "dest": str(dest),
+            "python": sys.executable,
+            "retention": {"compact_after": "7d", "delete_after": "90d"},
+        }
+    )
+    rec = _wait(b, out["op"])
+    [res] = rec["results"]
+    assert res["ok"] and not res["warnings"], res
+    joined = "\n".join(b.commands)
+    assert "logs retention --compact-after 7d --delete-after 90d" in joined
+    # After the inbox, before verify.
+    order = [
+        next(i for i, c in enumerate(b.commands) if needle in c)
+        for needle in ("share --inbox", "logs retention", "--version")
+    ]
+    assert order == sorted(order)
+    steps = [
+        d.get("step")
+        for e, d in b.dispatched
+        if e == "runspec:provision_progress" and d.get("phase") == "step"
+    ]
+    assert "retention" in steps
+
+
+@pytest.mark.skipif(sys.version_info < (3, 10), reason="runspec needs 3.10+")
+def test_retention_failure_is_a_warning(app, tmp_path):
+    _hosts()
+    b = _StubBridge()
+    b.fail_on = "logs retention"
+    dest = tmp_path / "venvs" / "ops"
+    out = b.provision_start(
+        {
+            "hosts": ["web-01"],
+            "dest": str(dest),
+            "python": sys.executable,
+            "retention": {"compact_after": "7d", "delete_after": "90d"},
+        }
+    )
+    rec = _wait(b, out["op"])
+    [res] = rec["results"]
+    assert res["ok"], res
+    [w] = [w for w in res["warnings"] if "retention" in w]
+    assert "0.80.0" in w
+    assert "runspec logs retention --compact-after 7d --delete-after 90d" in w
+
+
+@pytest.mark.skipif(sys.version_info < (3, 10), reason="runspec needs 3.10+")
+def test_no_retention_step_without_a_policy(app, tmp_path):
+    _hosts()
+    b = _StubBridge()
+    out = b.provision_start(
+        {
+            "hosts": ["web-01"],
+            "dest": str(tmp_path / "venvs" / "ops"),
+            "python": sys.executable,
+        }
+    )
+    _wait(b, out["op"])
+    assert not any("logs retention" in c for c in b.commands)

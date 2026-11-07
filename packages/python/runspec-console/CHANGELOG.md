@@ -9,6 +9,21 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.381.0] — 2026-11-07
+
+### Added
+
+- **Provision venv cleans up the venv's logs.** A new **Log cleanup** option,
+  on by default, runs `runspec logs retention --compact-after 7d --delete-after
+  90d` as the venv owner after the logs inbox step. The venv owner's own runs
+  then compress run logs older than 7 days and delete those older than 90, at
+  most once a day, with no cron line. Both durations can be changed, or the
+  option unticked. On a shared venv every other account's run lands in `logs/`
+  as its own file, and those files were never cleaned up. The policy needs
+  runspec 0.80.0 or later in the venv; on an older one the step is a warning
+  that names the command to run later. The `venv.provision` audit record
+  carries the policy.
+
 ## [0.380.0] — 2026-11-07
 
 ### Added

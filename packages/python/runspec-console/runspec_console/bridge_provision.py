@@ -48,7 +48,7 @@ _STEP_TIMEOUT_S = 120
 _MAX_LINES = 400
 _MAX_OPS = 8
 
-_STEPS = ("preflight", "create", "pip", "install", "inbox", "verify")
+_STEPS = ("preflight", "create", "pip", "install", "inbox", "retention", "verify")
 
 
 class ProvisionMixin:
@@ -339,6 +339,7 @@ class ProvisionMixin:
                 raise ValueError(f"Not a Python path or version: {v!r}.")
         try:
             scheduler = prov.validate_scheduler(str(payload.get("scheduler") or ""))
+            retention = prov.validate_retention(payload.get("retention"))
         except prov.ProvisionError as exc:
             raise ValueError(str(exc)) from exc
         packages: list[str] = []
@@ -374,6 +375,7 @@ class ProvisionMixin:
             "per_host_python": per_host,
             "packages": prov.install_specs(packages),
             "scheduler": scheduler,
+            "retention": retention,
         }
 
     def _prov_preflight_one(self, plan: dict[str, Any], name: str) -> dict[str, Any]:
@@ -625,6 +627,7 @@ class ProvisionMixin:
                 packages=plan["packages"],
                 folder_by_root=bool(pf.get("handoff")),
                 scheduler=plan.get("scheduler", ""),
+                retention=plan.get("retention") or None,
             )
             if pf.get("handoff"):
                 if cancel.is_set():
@@ -685,8 +688,20 @@ class ProvisionMixin:
                     _STEP_TIMEOUT_S,
                     False,
                 ),
-                ("verify", prov.verify_argv(dest), None, _STEP_TIMEOUT_S, True),
             ]
+            if plan.get("retention"):
+                steps.append(
+                    (
+                        "retention",
+                        prov.retention_argv(dest, plan["retention"]),
+                        None,
+                        _STEP_TIMEOUT_S,
+                        False,
+                    )
+                )
+            steps.append(
+                ("verify", prov.verify_argv(dest), None, _STEP_TIMEOUT_S, True)
+            )
             if plan.get("scheduler"):
                 steps += [
                     (
@@ -708,6 +723,10 @@ class ProvisionMixin:
                 "inbox": "Logs inbox setup failed; the venv works but other accounts' "
                 "runs fall back to their own ~/logs.",
                 "pip": "pip self-upgrade failed; continued with the venv's bundled pip.",
+                "retention": "Couldn't set the log retention policy (it needs runspec "
+                f"{prov.RETENTION_MIN_RUNSPEC} or later in the venv); the venv works. "
+                "On the host, as the owner: "
+                + prov.retention_hint(plan.get("retention") or {}),
                 "scheduler": "Couldn't switch the venv's schedules to the daemon; "
                 "the venv works. On the host: runspec-scheduler use daemon",
                 "keeper": "Couldn't set up the scheduler daemon's keeper; the venv "
@@ -738,7 +757,7 @@ class ProvisionMixin:
                     if required:
                         return _fail(f"{step} failed: {msg}")
                     note = notes.get(step, f"{step} failed")
-                    if step in ("scheduler", "keeper"):
+                    if step in ("scheduler", "keeper", "retention"):
                         note += f" ({msg})"
                     # No daemon to keep when the backend didn't switch.
                     skip_keeper = skip_keeper or step == "scheduler"
@@ -769,6 +788,11 @@ class ProvisionMixin:
                     "packages": plan["packages"],
                     "runspec": version,
                     "folder_by_root": bool(pf.get("handoff")),
+                    **(
+                        {"log_retention": plan["retention"]}
+                        if plan.get("retention")
+                        else {}
+                    ),
                 },
                 emit=_emit,
             ):

@@ -101,6 +101,17 @@ set up the [logs inbox](#set-up-the-logs-inbox-for-runs-by-other-accounts)
 succeeds gets the new path added to its runspec paths; **Retry failed** re-runs
 only the failures. Linux/macOS hosts only for now.
 
+**Log cleanup** (on by default) gives the venv a log retention policy with
+`runspec logs retention --compact-after 7d --delete-after 90d`, run as the venv
+owner after the logs inbox is set up. Change either duration, or untick it to
+skip the step. From then on the owner's own runs compress run logs older than
+the first duration and delete those older than the second, at most once a day,
+in the background, with no cron line. That matters on a shared venv: every
+other account's run lands in `logs/` as its own file, and those files are never
+rotated. The policy needs runspec 0.80.0 or later in the venv; on an older one
+the step is a warning that gives the command to run later. See
+[the CLI reference](cli.md#retention-policy-the-venv-cleans-up-after-itself).
+
 **Shared schedules** (off by default) also sets up the
 [runspec-scheduler](design/venv-scheduler.md) daemon, so the venv's shared
 schedules fire on the host whether or not a console is open. It installs

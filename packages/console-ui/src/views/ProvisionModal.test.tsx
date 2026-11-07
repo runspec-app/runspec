@@ -8,7 +8,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
-import { ProvisionModal, buildPayload, joinDest, membersOf } from './ProvisionModal'
+import { ProvisionModal, buildPayload, joinDest, membersOf, retentionProblem, RETENTION_DEFAULT } from './ProvisionModal'
 import type { ProvisionOptions } from '../bridge'
 
 const { api } = vi.hoisted(() => ({
@@ -69,7 +69,33 @@ describe('provision helpers', () => {
     expect(buildPayload({ ...base, scheduler: '' }).scheduler).toBeUndefined()
     expect(buildPayload(base).scheduler).toBeUndefined()
   })
+
+  it('sends the log cleanup policy only when on', () => {
+    const base = {
+      hosts: ['web-01'], parent: '/opt/venvs', name: 'ops', pyMode: 'path' as const, pyPath: '/usr/bin/python3.12',
+      pyVersion: '', runAs: '', become: 'sudo' as const, packages: [], repo: '',
+    }
+    expect(buildPayload({ ...base, retention: { compact_after: ' 7D ', delete_after: '' } }).retention).toEqual({ compact_after: '7d' })
+    expect(buildPayload({ ...base, retention: RETENTION_DEFAULT }).retention).toEqual({ compact_after: '7d', delete_after: '90d' })
+    expect(buildPayload({ ...base, retention: null }).retention).toBeUndefined()
+    expect(buildPayload(base).retention).toBeUndefined()
+  })
+
+  it('explains a log cleanup setting that cannot be used', () => {
+    expect(retentionProblem(RETENTION_DEFAULT)).toBe('')
+    expect(retentionProblem({ delete_after: '2w' })).toBe('')
+    expect(retentionProblem({})).toMatch(/at least one/)
+    expect(retentionProblem({ compact_after: 'a week' })).toMatch(/isn't a duration/)
+    expect(retentionProblem({ compact_after: '0d' })).toMatch(/isn't a duration/)
+    expect(retentionProblem({ compact_after: '90d', delete_after: '4w' })).toMatch(/shorter than/)
+  })
 })
+
+// The host checklist's boxes (not the log cleanup one).
+function hostBoxes(): HTMLInputElement[] {
+  const cleanup = screen.getByRole('checkbox', { name: 'Clean up old run logs' })
+  return (screen.getAllByRole('checkbox') as HTMLInputElement[]).filter(b => b !== cleanup)
+}
 
 describe('ProvisionModal', () => {
   beforeEach(() => {
@@ -94,7 +120,7 @@ describe('ProvisionModal', () => {
     render(<ProvisionModal open initialHosts={['web-01', 'db-01']} onClose={() => {}} />)
     await waitFor(() => expect(api.provision_interpreters).toHaveBeenCalledWith({ host: 'web-01', extra_paths: [] }))
     // db-01 isn't connected, so it isn't pre-ticked.
-    const boxes = screen.getAllByRole('checkbox') as HTMLInputElement[]
+    const boxes = hostBoxes()
     expect(boxes.filter(b => b.checked)).toHaveLength(1)
     expect(await screen.findByText('/usr/bin/python3.12')).toBeTruthy()
   })
@@ -103,7 +129,7 @@ describe('ProvisionModal', () => {
     const user = userEvent.setup()
     render(<ProvisionModal open initialHosts={[]} onClose={() => {}} />)
     await user.click(await screen.findByText('+ Group: Web'))
-    const boxes = screen.getAllByRole('checkbox') as HTMLInputElement[]
+    const boxes = hostBoxes()
     expect(boxes.filter(b => b.checked)).toHaveLength(2)
 
     await user.click(screen.getByText('Same version on each host'))
@@ -115,7 +141,11 @@ describe('ProvisionModal', () => {
 
     await user.click(screen.getByRole('button', { name: 'Check hosts' }))
     expect(api.provision_preflight).toHaveBeenCalledWith(
-      expect.objectContaining({ hosts: ['web-01', 'web-02'], dest: '/opt/venvs/ops', python: '3.12', run_as: 'svc' }),
+      expect.objectContaining({
+        hosts: ['web-01', 'web-02'], dest: '/opt/venvs/ops', python: '3.12', run_as: 'svc',
+        // Log cleanup is on by default.
+        retention: { compact_after: '7d', delete_after: '90d' },
+      }),
     )
     expect(await screen.findByText('No Python 3.12 found on this host.')).toBeTruthy()
 

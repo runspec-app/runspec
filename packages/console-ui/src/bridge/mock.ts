@@ -787,7 +787,7 @@ function mockProvisionOp(kind: 'provision' | 'deprovision', hosts: string[], pat
   const rec: ProvisionOpRecord = { op, kind, status: 'running', hosts, results: [] }
   MOCK_PROVISION_OPS.set(op, rec)
   const steps = kind === 'provision'
-    ? ['preflight', 'create', 'pip', 'install', 'inbox', 'verify', ...(scheduler ? ['scheduler', 'keeper'] : [])]
+    ? ['preflight', 'create', 'pip', 'install', 'inbox', 'retention', 'verify', ...(scheduler ? ['scheduler', 'keeper'] : [])]
     : ['inspect', 'scheduler', 'remove']
   let delay = 200
   for (const host of hosts) {
