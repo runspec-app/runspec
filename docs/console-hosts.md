@@ -140,6 +140,39 @@ as that account. Without passwordless sudo it stays blocked; create the folder
 and `chown` it to the account yourself, or pick a location the account can
 write.
 
+### Update an existing venv
+
+**Update venv…** (toolbar) or the sync icon beside a saved runspec path applies
+today's provision options to a venv a host already lists, in place. Use it to
+give venvs made before **Log cleanup** or **Shared schedules** existed the same
+setup a new one gets. Pick the venv, then the hosts (group and profile chips
+work as in Provision). The dialog reads each host's venv first and shows what
+it has now: runspec version, owner, logs inbox, log cleanup policy, and how its
+schedules fire. Nothing is changed until you press **Update**.
+
+Tick what to apply; each step runs as the venv's owner and is safe to repeat:
+
+- **Upgrade runspec** (on by default) and any packages you list:
+  `pip install -U`, so only what is out of date changes.
+- **Set up the logs inbox** (on by default): `runspec logs share --inbox`.
+- **Set the log cleanup policy** (on by default, 7d / 90d): sets those two
+  durations with `runspec logs retention`; any `max_total_size` already in the
+  policy stays. It needs runspec 0.80.0 in the venv, so the dialog warns on a
+  host with an older one unless **Upgrade runspec** is ticked.
+- **Shared schedules**: *Leave as they are* (default), *Move to the daemon*
+  with a keeper (installs `runspec-scheduler`, then `use daemon`, which takes
+  the venv's schedule lines off the owner's crontab, then
+  `install-service --write`), or *Back to crontab* (`use cron` writes the lines
+  back, then `install-service --remove --write` stops the daemon; when
+  `use cron` fails the daemon is left running so no schedule is lost).
+
+The venv is never recreated: installed packages, `.runspec_env`, schedules and
+`logs/` stay, and the host's runspec paths don't change. A failed package
+install stops that host (nothing after it runs); any other failed step is a
+warning with the command to finish on the host. The update is recorded in the
+console's audit log (`venv.update.started` / `.succeeded` / `.failed`) and in
+the venv's own ledger as `venv.update`, with the list of steps that ran.
+
 ### Deprovision a venv
 
 **Deprovision…** (toolbar) or the delete icon beside a saved runspec path

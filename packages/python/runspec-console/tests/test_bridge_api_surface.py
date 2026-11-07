@@ -40,6 +40,8 @@ EXPECTED = {
     "provision_cancel",
     "deprovision_start",
     "deprovision_preview",
+    "venv_update_preview",
+    "venv_update_start",
     "env_file_targets",
     "env_file_read",
     "env_file_reveal",

@@ -149,15 +149,7 @@ class ProvisionMixin:
         a host that fails preflight is skipped, never half-built). Returns
         ``{op}``; progress arrives as ``runspec:provision_progress`` events."""
         plan = self._prov_plan(payload)
-        env: dict[str, str] = {}
-        repo_id = str((payload or {}).get("repo") or "").strip()
-        if repo_id:
-            cfg = config_mod.read_marketplace()
-            repos = self._marketplace_repos(cfg, resolve_auth=True)  # type: ignore[attr-defined]
-            repo = next((r for r in repos if r.id == repo_id), None)
-            if repo is None:
-                raise ValueError(f"Unknown package index {repo_id!r}.")
-            env = mp.pip_env(repo)
+        env = self._prov_pip_env(str((payload or {}).get("repo") or ""))
         record = self._prov_new_op("provision", plan["hosts"], dest=plan["dest"])
         threading.Thread(
             target=self._prov_run_provision,
@@ -226,6 +218,36 @@ class ProvisionMixin:
             daemon=True,
         ).start()
         return {"op": record["op"], "hosts": [t["host"] for t in targets]}
+
+    def venv_update_preview(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Read-only state of an existing venv on every ``{host, runspec_path}``
+        target, for the Update dialog: owner, runspec version, logs inbox, log
+        cleanup policy, and how its schedules fire. Nothing is changed."""
+        targets = self._deprov_targets(payload, verb="update")
+        return {"rows": self._prov_fanout(self._venv_inspect, targets)}
+
+    def venv_update_start(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Apply the chosen options to an existing venv on every target, as the
+        venv's owner: upgrade runspec / install packages, set up the logs inbox,
+        set the log cleanup policy, move schedules to the daemon (or back to
+        crontab). The venv is never recreated and its logs are kept. Progress
+        arrives as ``runspec:provision_progress`` events with ``kind`` update."""
+        plan = self._upd_plan(payload)
+        env = (
+            self._prov_pip_env(str((payload or {}).get("repo") or ""))
+            if plan["specs"]
+            else {}
+        )
+        hosts = [t["host"] for t in plan["targets"]]
+        names = sorted({prov.venv_name(t["root"]) for t in plan["targets"]})
+        record = self._prov_new_op("update", hosts, dest=", ".join(names))
+        threading.Thread(
+            target=self._upd_run,
+            args=(record, plan, env),
+            name="venv-update",
+            daemon=True,
+        ).start()
+        return {"op": record["op"], "hosts": hosts}
 
     # ── internals: hosts + transport ──
 
@@ -306,6 +328,19 @@ class ProvisionMixin:
         ) as ex:
             return list(ex.map(fn, items))
 
+    def _prov_pip_env(self, repo_id: str) -> dict[str, str]:
+        """pip's index env for a Marketplace repo id (``{}`` = the host's own
+        pip config). The URL can carry a credential, so it rides the env frame."""
+        repo_id = (repo_id or "").strip()
+        if not repo_id:
+            return {}
+        cfg = config_mod.read_marketplace()
+        repos = self._marketplace_repos(cfg, resolve_auth=True)  # type: ignore[attr-defined]
+        repo = next((r for r in repos if r.id == repo_id), None)
+        if repo is None:
+            raise ValueError(f"Unknown package index {repo_id!r}.")
+        return mp.pip_env(repo)
+
     # ── internals: provision ──
 
     def _prov_plan(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -351,21 +386,9 @@ class ProvisionMixin:
                 packages.append(mp.validate_spec(s))
             except mp.MarketplaceError as exc:
                 raise ValueError(str(exc)) from exc
-        if scheduler:
-            # The daemon comes from runspec-scheduler; the operator's own pin
-            # (if they listed it) still wins over the bare one.
-            packages = [
-                p for p in packages if not re.match(r"runspec[-_]scheduler\b", p, re.I)
-            ] + [
-                next(
-                    (
-                        p
-                        for p in packages
-                        if re.match(r"runspec[-_]scheduler\b", p, re.I)
-                    ),
-                    prov.scheduler_spec(scheduler),
-                )
-            ]
+        # The daemon comes from runspec-scheduler; the operator's own pin (if
+        # they listed it) still wins over the bare one.
+        packages = prov.add_scheduler_spec(packages, scheduler)
         return {
             "dest": dest,
             "run_as": run_as,
@@ -848,7 +871,9 @@ class ProvisionMixin:
 
     # ── internals: deprovision ──
 
-    def _deprov_targets(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+    def _deprov_targets(
+        self, payload: dict[str, Any], verb: str = "deprovision"
+    ) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
         for t in (payload or {}).get("targets") or []:
             if not isinstance(t, dict):
@@ -865,10 +890,22 @@ class ProvisionMixin:
                 raise ValueError(f"{name}: {exc}") from exc
             out.append({"host": name, "runspec_path": rp, "root": root})
         if not out:
-            raise ValueError("Pick at least one venv to deprovision.")
+            raise ValueError(f"Pick at least one venv to {verb}.")
         return out
 
     def _deprov_inspect_one(self, t: dict[str, Any]) -> dict[str, Any]:
+        row = self._venv_inspect(t)
+        if row.get("kind") == "venv" and row["scheduler_pid"] and not row["scheduler"]:
+            row["blockers"].append(
+                f"A scheduler daemon (pid {row['scheduler_pid']}) is running from this "
+                "venv but bin/runspec-scheduler is gone; stop it on the host first."
+            )
+            row["ok"] = False
+        return row
+
+    def _venv_inspect(self, t: dict[str, Any]) -> dict[str, Any]:
+        """Read-only facts about an existing venv on a host (as the SSH login),
+        with blockers when it isn't a runspec venv the console may act on."""
         row: dict[str, Any] = {
             **t,
             "ok": False,
@@ -880,6 +917,12 @@ class ProvisionMixin:
             "runnables": [],
             "references": [],
             "blockers": [],
+            "scheduler": False,
+            "scheduler_pid": 0,
+            "runspec_version": "",
+            "inbox": False,
+            "retention": {},
+            "backend": "",
         }
         with self._lock:
             connected = bool(self._connected_cache.get(t["host"], False))
@@ -916,6 +959,13 @@ class ProvisionMixin:
                 "logs_kb": _to_int(facts.get("logs_kb")),
                 "scheduler": facts.get("scheduler") == "1",
                 "scheduler_pid": _to_int(facts.get("scheduler_pid")),
+                "runspec_version": prov.runspec_version(
+                    facts.get("runspec_version", "")
+                ),
+                "inbox": facts.get("inbox") == "1",
+                "retention": prov.parse_retention_fact(facts.get("retention", "")),
+                "backend": facts.get("backend", "")
+                or ("cron" if facts.get("scheduler") == "1" else ""),
             }
         )
         if kind == "missing":
@@ -928,11 +978,6 @@ class ProvisionMixin:
             )
         elif kind != "venv":
             row["blockers"].append("Not a runspec venv (no pyvenv.cfg + bin/runspec).")
-        elif row["scheduler_pid"] and not row["scheduler"]:
-            row["blockers"].append(
-                f"A scheduler daemon (pid {row['scheduler_pid']}) is running from this "
-                "venv but bin/runspec-scheduler is gone; stop it on the host first."
-            )
         row["ok"] = not row["blockers"]
         return row
 
@@ -1147,6 +1192,271 @@ class ProvisionMixin:
             f"couldn't be removed: {why}. Kept the venv; stop the daemon on the host "
             "(runspec-scheduler install-service --remove --write), then deprovision again."
         )
+
+    # ── internals: update an existing venv ──
+
+    def _upd_plan(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Validate an update request (raises ``ValueError``)."""
+        payload = dict(payload or {})
+        targets = self._deprov_targets(payload, verb="update")
+        try:
+            become = prov.validate_become(str(payload.get("become_method") or "sudo"))
+            scheduler = prov.validate_update_scheduler(
+                str(payload.get("scheduler") or "")
+            )
+            retention = prov.validate_retention(payload.get("retention"))
+        except prov.ProvisionError as exc:
+            raise ValueError(str(exc)) from exc
+        packages: list[str] = []
+        for p in payload.get("packages") or []:
+            spec = str(p or "").strip()
+            if not spec:
+                continue
+            try:
+                packages.append(mp.validate_spec(spec))
+            except mp.MarketplaceError as exc:
+                raise ValueError(str(exc)) from exc
+        specs = prov.update_install_specs(
+            packages,
+            upgrade_runspec=bool(payload.get("upgrade_runspec")),
+            scheduler=scheduler,
+        )
+        inbox = bool(payload.get("inbox", False))
+        if not (specs or inbox or retention or scheduler):
+            raise ValueError("Pick at least one thing to update.")
+        return {
+            "targets": targets,
+            "become_method": become,
+            "specs": specs,
+            "inbox": inbox,
+            "retention": retention,
+            "scheduler": scheduler,
+        }
+
+    def _upd_run(
+        self, record: dict[str, Any], plan: dict[str, Any], env: dict[str, str]
+    ) -> None:
+        op = record["op"]
+        cancel: threading.Event = record["cancel"]
+        become = plan["become_method"]
+
+        def _one(t: dict[str, Any]) -> dict[str, Any]:
+            name, root = t["host"], t["root"]
+            res: dict[str, Any] = {
+                "host": name,
+                "path": root,
+                "ok": False,
+                "step": "",
+                "summary": "",
+                "warnings": [],
+                "lines": [],
+            }
+            lines: list[str] = res["lines"]
+
+            def _emit(text: str) -> None:
+                for ln in (text or "").splitlines():
+                    if len(lines) < _MAX_LINES:
+                        lines.append(ln)
+                    self._prov_progress(
+                        op=op, kind="update", host=name, phase="line", line=ln
+                    )
+
+            def _step(step: str) -> None:
+                res["step"] = step
+                self._prov_progress(
+                    op=op, kind="update", host=name, phase="step", step=step
+                )
+
+            applied: list[str] = []
+
+            def _done(
+                ok: bool, summary: str, h: Any = None, **who: str
+            ) -> dict[str, Any]:
+                res.update({"ok": ok, "summary": summary})
+                if not ok:
+                    logger.warning(
+                        "venv update: %s:%s failed at %s: %s",
+                        name,
+                        root,
+                        res["step"],
+                        summary,
+                    )
+                if h is not None and not self._prov_host_audit(
+                    h,
+                    root,
+                    "venv.update",
+                    "succeeded" if ok else "failed",
+                    run_as=who.get("run_as", ""),
+                    become_method=become,
+                    fallback_logger=False,
+                    detail={
+                        "operator": self._prov_operator(),
+                        "applied": applied,
+                        "packages": plan["specs"],
+                        **(
+                            {"log_retention": plan["retention"]}
+                            if plan["retention"]
+                            else {}
+                        ),
+                        **(
+                            {"scheduler": plan["scheduler"]}
+                            if plan["scheduler"]
+                            else {}
+                        ),
+                        **({} if ok else {"error": summary}),
+                    },
+                    emit=_emit,
+                ):
+                    res["warnings"].append(
+                        "Couldn't record the update in the venv's audit log; "
+                        "it's in the console's audit log."
+                    )
+                self._prov_progress(
+                    op=op,
+                    kind="update",
+                    host=name,
+                    phase="done",
+                    ok=ok,
+                    step=res["step"],
+                    summary=summary,
+                    warnings=res["warnings"],
+                    **({"scheduler": res["scheduler"]} if res.get("scheduler") else {}),
+                )
+                self._prov_audit(
+                    "venv.update.succeeded" if ok else "venv.update.failed",
+                    host=name,
+                    path=root,
+                    applied=applied,
+                    **({} if ok else {"step": res["step"], "error": summary}),
+                )
+                return res
+
+            if cancel.is_set():
+                res.update({"summary": "cancelled", "skipped": True})
+                return res
+            _step("inspect")
+            info = self._venv_inspect(t)
+            if not info.get("ok"):
+                return _done(False, "; ".join(info.get("blockers") or ["refused"]))
+            h = self._prov_host(name)
+            owner = str(info.get("owner") or "")
+            login = str(info.get("user") or "")
+            run_as = "" if not owner or owner == login else owner
+            self._prov_audit(
+                "venv.update.started",
+                host=name,
+                path=root,
+                run_as=run_as,
+                packages=plan["specs"],
+                inbox=plan["inbox"],
+                retention=plan["retention"] or None,
+                scheduler=plan["scheduler"],
+            )
+            has_scheduler = bool(info.get("scheduler"))
+            if plan["scheduler"] == prov.SCHEDULER_OFF and not has_scheduler:
+                res["warnings"].append(
+                    "No runspec-scheduler in this venv, so there was no daemon to stop."
+                )
+            steps = prov.update_steps(
+                root,
+                specs=plan["specs"],
+                inbox=plan["inbox"],
+                retention=plan["retention"],
+                scheduler=plan["scheduler"],
+                has_scheduler=has_scheduler,
+                acl_user=login if run_as else "",
+            )
+            off = plan["scheduler"] == prov.SCHEDULER_OFF
+            notes = {
+                "pip": "pip self-upgrade failed; continued with the venv's pip.",
+                "inbox": "Logs inbox setup failed; other accounts' runs fall back "
+                "to their own ~/logs.",
+                "retention": "Couldn't set the log retention policy (it needs runspec "
+                f"{prov.RETENTION_MIN_RUNSPEC} or later in the venv; tick Upgrade "
+                "runspec). On the host, as the owner: "
+                + prov.retention_hint(plan["retention"] or {}),
+                "scheduler": (
+                    "Couldn't move the schedules back to crontab, so the daemon was "
+                    "left running. On the host: runspec-scheduler use cron"
+                    if off
+                    else "Couldn't switch the venv's schedules to the daemon. On the "
+                    "host: runspec-scheduler use daemon"
+                ),
+                "keeper": (
+                    "Couldn't remove the daemon's keeper; schedules fire from crontab "
+                    "now and the daemon fires nothing. On the host, as the owner: "
+                    "runspec-scheduler install-service --remove --write"
+                    if off
+                    else "Couldn't set up the scheduler daemon's keeper. On the host, "
+                    "as the owner: runspec-scheduler install-service"
+                ),
+            }
+            version = ""
+            skip_keeper = False
+            for st in steps:
+                if cancel.is_set():
+                    return _done(False, f"cancelled before {st.name}", h, run_as=run_as)
+                if st.name == "keeper" and skip_keeper:
+                    continue
+                _step(st.name)
+                try:
+                    code, out = self._prov_run(
+                        h,
+                        st.argv,
+                        run_as=run_as,
+                        become_method=become,
+                        env=env if st.pip else None,
+                        timeout=_PIP_TIMEOUT_S if st.pip else _STEP_TIMEOUT_S,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    code, out = -1, str(exc)
+                _emit(out)
+                if code != 0:
+                    msg = prov.failure_text(
+                        out, code, run_as=run_as, become_method=become
+                    )
+                    if st.required:
+                        return _done(
+                            False, f"{st.name} failed: {msg}", h, run_as=run_as
+                        )
+                    note = notes.get(st.name, f"{st.name} failed")
+                    if st.name in ("scheduler", "keeper", "retention"):
+                        note += f" ({msg})"
+                    skip_keeper = skip_keeper or st.name == "scheduler"
+                    res["warnings"].append(note)
+                    continue
+                if st.name != "verify":
+                    applied.append(st.name)
+                if st.name == "keeper":
+                    kept = prov.parse_keeper(out)
+                    if off:
+                        res["scheduler"] = {
+                            "manager": "crontab",
+                            "reason": "Schedules fire from the owner's crontab; "
+                            "the daemon and its keepers are gone.",
+                        }
+                        res["warnings"].extend(
+                            f"root has to run: {x}"
+                            for x in kept.get("root_steps") or []
+                        )
+                    else:
+                        res["scheduler"] = {
+                            "manager": str(kept.get("manager") or plan["scheduler"]),
+                            "reason": str(kept.get("reason") or ""),
+                        }
+                    res["warnings"].extend(str(w) for w in kept.get("warnings") or [])
+                if st.name == "verify":
+                    out_lines = (out or "").strip().splitlines()
+                    version = out_lines[-1].strip() if out_lines else ""
+            res["runspec_version"] = prov.runspec_version(version)
+            return _done(True, version or "updated", h, run_as=run_as)
+
+        results: list[dict[str, Any]] = record["results"]
+        try:
+            for r in self._prov_fanout(_one, plan["targets"]):
+                results.append(r)
+        finally:
+            self._prov_finish(record, results)
 
     # ── internals: shared ──
 

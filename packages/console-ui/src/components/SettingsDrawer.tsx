@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { theme, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Empty, Table, Slider, Progress } from 'antd'
 import type { SelectProps } from 'antd'
-import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, RightOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined, SearchOutlined, SoundOutlined, CloudServerOutlined, DiffOutlined } from '@ant-design/icons'
+import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, RightOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined, SearchOutlined, SoundOutlined, CloudServerOutlined, DiffOutlined, SyncOutlined } from '@ant-design/icons'
 import { VoiceConfig, VoiceDevice, bridge, type JumpHost, type LocalVenvConfig, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type CredentialGuide, type Mailbox, type MailCategories, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SyncPreview, type SyncUpdateCheck, type SeedStatus, type SeedOverride, type SeedApplyResult, type Runbook, type RunbookStep, type SavedRun, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost, type McpServer, type McpHeaderCredential, type McpStatus, type McpServerStatus, type McpCredentialOption, type ToolVisibility, type NamedSound, type MarketplaceConfig, type MarketplaceConfigInput, type MarketplaceRepo } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
 import { CopyKeyAllModal } from '../views/CopyKeyAllModal'
 import { ProvisionModal } from '../views/ProvisionModal'
 import { DeprovisionModal } from '../views/DeprovisionModal'
+import { UpdateVenvModal } from '../views/UpdateVenvModal'
 import type { DeprovisionTarget } from '../bridge'
 import { PathInput } from '../views/PathInput'
 import { NetworkTab } from './NetworkTab'
@@ -2045,6 +2046,7 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
   // Venv provisioning: `null` = closed; an array = open with those hosts / venv paths pre-picked.
   const [provisionHosts, setProvisionHosts] = useState<string[] | null>(null)
   const [deprovisionTargets, setDeprovisionTargets] = useState<DeprovisionTarget[] | null>(null)
+  const [updateTargets, setUpdateTargets] = useState<DeprovisionTarget[] | null>(null)
   const [groups, setGroups] = useState<HostGroup[]>([])
   const [groupsOpen, setGroupsOpen] = useState(false)
   const [profiles, setProfiles] = useState<HostProfile[]>([])
@@ -2240,6 +2242,7 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
           <Button size="small" icon={<UploadOutlined />} onClick={() => fileInputRef.current?.click()} disabled={isEditing}>Import</Button>
           <Button size="small" icon={<DownloadOutlined />} onClick={() => { downloadToml(toToml(hosts)); message.success('Exported') }} disabled={isEditing || hosts.length === 0}>Export</Button>
           <Button size="small" icon={<CloudServerOutlined />} onClick={() => setProvisionHosts([])} disabled={isEditing || hosts.length === 0}>Provision venv…</Button>
+          <Button size="small" icon={<SyncOutlined />} onClick={() => setUpdateTargets([])} disabled={isEditing || hosts.length === 0}>Update venv…</Button>
           <Button size="small" icon={<DeleteOutlined />} onClick={() => setDeprovisionTargets([])} disabled={isEditing || hosts.length === 0}>Deprovision…</Button>
           <Button size="small" icon={<PlusOutlined />} onClick={startAdd} disabled={isEditing}>Add host</Button>
         </Space>
@@ -2321,13 +2324,22 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
                         </Form.Item>
                         <MinusCircleOutlined onClick={() => remove(name)} style={{ color: 'var(--rs-text-muted)', cursor: 'pointer' }} />
                         {savedPaths.includes(form.getFieldValue(['runspec_paths', name])) && String(form.getFieldValue(['runspec_paths', name])).startsWith('/') && (
-                          <Tooltip title="Deprovision: delete this venv from the host">
-                            <DeleteOutlined
-                              aria-label="Deprovision this venv"
-                              onClick={() => setDeprovisionTargets([{ host: editingKey ?? '', runspec_path: form.getFieldValue(['runspec_paths', name]) }])}
-                              style={{ color: 'var(--rs-text-muted)', cursor: 'pointer' }}
-                            />
-                          </Tooltip>
+                          <>
+                            <Tooltip title="Update this venv: upgrade runspec, logs inbox, log cleanup, shared schedules">
+                              <SyncOutlined
+                                aria-label="Update this venv"
+                                onClick={() => setUpdateTargets([{ host: editingKey ?? '', runspec_path: form.getFieldValue(['runspec_paths', name]) }])}
+                                style={{ color: 'var(--rs-text-muted)', cursor: 'pointer' }}
+                              />
+                            </Tooltip>
+                            <Tooltip title="Deprovision: delete this venv from the host">
+                              <DeleteOutlined
+                                aria-label="Deprovision this venv"
+                                onClick={() => setDeprovisionTargets([{ host: editingKey ?? '', runspec_path: form.getFieldValue(['runspec_paths', name]) }])}
+                                style={{ color: 'var(--rs-text-muted)', cursor: 'pointer' }}
+                              />
+                            </Tooltip>
+                          </>
                         )}
                       </Space>
                     ))}
@@ -2611,6 +2623,13 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
         open={provisionHosts !== null}
         initialHosts={provisionHosts ?? undefined}
         onClose={() => setProvisionHosts(null)}
+        zIndex={VENV_MODAL_Z}
+        onDone={reloadAfterVenvChange}
+      />
+      <UpdateVenvModal
+        open={updateTargets !== null}
+        initialTargets={updateTargets ?? undefined}
+        onClose={() => setUpdateTargets(null)}
         zIndex={VENV_MODAL_Z}
         onDone={reloadAfterVenvChange}
       />

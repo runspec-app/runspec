@@ -111,14 +111,13 @@ class _StubBridge:
             return 1, "", f"boom: {self.fail_on}"
         argv = shlex.split(command)
         if "-m" in argv and "pip" in argv:
+            bindir = argv[0].rsplit("/", 1)[0]
             if "runspec" in argv:  # the install step: stand in bin/runspec
-                py = argv[0]
-                bindir = py.rsplit("/", 1)[0]
                 with open(f"{bindir}/runspec", "w") as fh:
                     fh.write(_FAKE_RUNSPEC)
                 subprocess.run(["chmod", "755", f"{bindir}/runspec"], check=True)
-                if any(a.startswith("runspec-scheduler") for a in argv):
-                    _fake_scheduler(f"{bindir}/runspec-scheduler")
+            if any(a.startswith("runspec-scheduler") for a in argv):
+                _fake_scheduler(f"{bindir}/runspec-scheduler")
             return 0, "Successfully installed", ""
         r = subprocess.run(
             command, shell=True, capture_output=True, text=True, timeout=120
@@ -137,6 +136,8 @@ class _StubBridge:
     provision_cancel = Bridge.provision_cancel
     deprovision_preview = Bridge.deprovision_preview
     deprovision_start = Bridge.deprovision_start
+    venv_update_preview = Bridge.venv_update_preview
+    venv_update_start = Bridge.venv_update_start
     _prov_state = Bridge._prov_state
     _prov_remote_hosts = Bridge._prov_remote_hosts
     _prov_host = Bridge._prov_host
@@ -158,6 +159,10 @@ class _StubBridge:
     _prov_operator = Bridge._prov_operator
     _prov_host_audit = Bridge._prov_host_audit
     _deprov_stop_scheduler = Bridge._deprov_stop_scheduler
+    _prov_pip_env = Bridge._prov_pip_env
+    _venv_inspect = Bridge._venv_inspect
+    _upd_plan = Bridge._upd_plan
+    _upd_run = Bridge._upd_run
 
 
 def _hosts(extra_paths=None):
@@ -928,3 +933,240 @@ def test_no_retention_step_without_a_policy(app, tmp_path):
     )
     _wait(b, out["op"])
     assert not any("logs retention" in c for c in b.commands)
+
+
+# ── Update an existing venv ──────────────────────────────────────────────────
+
+
+def _step_cmds(b) -> str:
+    """The commands an update ran on the host, without the read-only inspect
+    script (which mentions every file it looks at)."""
+    return "\n".join(c for c in b.commands if not c.startswith("sh -c "))
+
+
+def _old_venv(tmp_path, name="ops", version="0.79.0"):
+    """A venv made by an earlier provision: its own runspec, run history in
+    logs/, no inbox, no log cleanup, no scheduler."""
+    venv = tmp_path / "venvs" / name
+    assert (
+        subprocess.run(
+            [sys.executable, "-m", "venv", "--without-pip", str(venv)]
+        ).returncode
+        == 0
+    )
+    (venv / "bin" / "runspec").write_text(
+        f'#!/bin/sh\n[ "$1" = --version ] && echo "runspec {version}" && exit 0\necho "runspec $*"\n'
+    )
+    subprocess.run(["chmod", "755", str(venv / "bin" / "runspec")], check=True)
+    (venv / "logs").mkdir()
+    (venv / "logs" / "run.log").write_text("history\n")
+    (venv / "installed.marker").write_text("keep me\n")
+    return venv
+
+
+def test_update_preview_reports_the_venv_state(app, tmp_path):
+    venv = _old_venv(tmp_path)
+    rp = f"{venv}/bin/runspec"
+    _hosts([rp])
+    b = _StubBridge()
+    with pytest.raises(ValueError, match="not one of"):
+        b.venv_update_preview(
+            {"targets": [{"host": "web-01", "runspec_path": "/etc/bin/runspec"}]}
+        )
+    res = b.venv_update_preview(
+        {
+            "targets": [
+                {"host": "web-01", "runspec_path": rp},
+                {"host": "db-01", "runspec_path": "/opt/venvs/old/bin/runspec"},
+            ]
+        }
+    )
+    rows = {r["host"]: r for r in res["rows"]}
+    web = rows["web-01"]
+    assert web["ok"] and web["kind"] == "venv"
+    assert web["runspec_version"] == "0.79.0"
+    assert web["inbox"] is False and web["retention"] == {}
+    assert web["scheduler"] is False and web["backend"] == ""
+    assert rows["db-01"]["blockers"] == ["Host is not connected."]
+
+    (venv / "logs" / "inbox").mkdir()
+    (venv / "runspec_logs_retention.toml").write_text(
+        '# set by runspec logs retention\ncompact_after = "7d"\ndelete_after = "90d"\n'
+    )
+    _fake_scheduler(venv / "bin" / "runspec-scheduler")
+    (venv / "runspec_scheduler.toml").write_text('[scheduler]\nbackend = "daemon"\n')
+    [web] = b.venv_update_preview(
+        {"targets": [{"host": "web-01", "runspec_path": rp}]}
+    )["rows"]
+    assert web["inbox"] is True
+    assert web["retention"] == {"compact_after": "7d", "delete_after": "90d"}
+    assert web["scheduler"] is True and web["backend"] == "daemon"
+
+
+def test_update_plan_validation(app, tmp_path):
+    venv = _old_venv(tmp_path)
+    rp = f"{venv}/bin/runspec"
+    _hosts([rp])
+    b = _StubBridge()
+    t = {"targets": [{"host": "web-01", "runspec_path": rp}]}
+    with pytest.raises(ValueError, match="at least one thing"):
+        b._upd_plan(t)
+    with pytest.raises(ValueError, match="scheduler keeper"):
+        b._upd_plan({**t, "scheduler": "systemd"})
+    with pytest.raises(ValueError, match="shorter than"):
+        b._upd_plan({**t, "retention": {"compact_after": "9d", "delete_after": "1d"}})
+    with pytest.raises(ValueError, match="package spec"):
+        b._upd_plan({**t, "packages": ["--index-url=http://evil"]})
+    plan = b._upd_plan({**t, "upgrade_runspec": True, "scheduler": "supervisor"})
+    assert plan["specs"] == ["runspec", "runspec-scheduler[supervisor]>=0.6.0"]
+    assert b._upd_plan({**t, "scheduler": "off"})["specs"] == []
+    assert b._upd_plan({**t, "inbox": True})["inbox"] is True
+
+
+@pytest.mark.skipif(sys.version_info < (3, 10), reason="runspec needs 3.10+")
+def test_update_applies_the_new_options_in_place(app, tmp_path):
+    venv = _old_venv(tmp_path)
+    rp = f"{venv}/bin/runspec"
+    _hosts([rp])
+    hosts_before = config_mod.hosts_path().read_text()
+    b = _StubBridge()
+    out = b.venv_update_start(
+        {
+            "targets": [{"host": "web-01", "runspec_path": rp}],
+            "upgrade_runspec": True,
+            "inbox": True,
+            "retention": {"compact_after": "7d", "delete_after": "90d"},
+            "scheduler": "auto",
+        }
+    )
+    rec = _wait(b, out["op"])
+    assert rec["kind"] == "update"
+    [res] = rec["results"]
+    assert res["ok"], res
+    assert res["scheduler"] == {"manager": "cron", "reason": "no systemd"}
+    joined = _step_cmds(b)
+    assert "pip install --disable-pip-version-check --no-input -U runspec " in joined
+    assert "runspec-scheduler[supervisor]>=0.6.0" in joined
+    assert f"{venv}/bin/runspec logs share --inbox" in joined
+    assert (
+        f"{venv}/bin/runspec logs retention --compact-after 7d --delete-after 90d"
+        in joined
+    )
+    assert f"{venv}/bin/runspec-scheduler use daemon" in joined
+    assert "install-service --manager auto --write" in joined
+    assert "audit record venv.update --outcome succeeded" in joined
+    assert " -m venv " not in joined  # never recreated
+    # The venv, its installs and its history are all still there.
+    assert (venv / "installed.marker").read_text() == "keep me\n"
+    assert (venv / "logs" / "run.log").read_text() == "history\n"
+    # The host already lists the venv: the hosts file is untouched.
+    assert config_mod.hosts_path().read_text() == hosts_before
+    events = [a["extra"]["event"] for a in b.audit]
+    assert events == ["venv.update.started", "venv.update.succeeded"]
+    assert b.audit[-1]["extra"]["applied"] == [
+        "pip",
+        "install",
+        "inbox",
+        "retention",
+        "scheduler",
+        "keeper",
+    ]
+    steps = [
+        d["step"]
+        for e, d in b.dispatched
+        if e == "runspec:provision_progress" and d["phase"] == "step"
+    ]
+    assert steps == [
+        "inspect",
+        "pip",
+        "install",
+        "inbox",
+        "retention",
+        "verify",
+        "scheduler",
+        "keeper",
+    ]
+    assert b.refreshed == 1
+
+
+def test_update_only_runs_the_chosen_steps(app, tmp_path):
+    venv = _old_venv(tmp_path)
+    rp = f"{venv}/bin/runspec"
+    _hosts([rp])
+    b = _StubBridge()
+    out = b.venv_update_start(
+        {
+            "targets": [{"host": "web-01", "runspec_path": rp}],
+            "retention": {"compact_after": "14d"},
+        }
+    )
+    [res] = _wait(b, out["op"])["results"]
+    assert res["ok"], res
+    assert res["runspec_version"] == "0.79.0"
+    joined = _step_cmds(b)
+    assert "pip" not in joined
+    assert "logs share" not in joined
+    assert "runspec-scheduler" not in joined
+    assert "logs retention --compact-after 14d" in joined
+
+
+def test_update_install_failure_stops_that_host(app, tmp_path):
+    venv = _old_venv(tmp_path)
+    rp = f"{venv}/bin/runspec"
+    _hosts([rp])
+    b = _StubBridge()
+    b.fail_on = "-U runspec"
+    out = b.venv_update_start(
+        {
+            "targets": [{"host": "web-01", "runspec_path": rp}],
+            "upgrade_runspec": True,
+            "inbox": True,
+        }
+    )
+    [res] = _wait(b, out["op"])["results"]
+    assert not res["ok"]
+    assert res["step"] == "install"
+    assert "install failed" in res["summary"]
+    assert "logs share" not in _step_cmds(b)
+    assert "audit record venv.update --outcome failed" in _step_cmds(b)
+    assert [a["extra"]["event"] for a in b.audit][-1] == "venv.update.failed"
+    assert venv.exists() and (venv / "logs" / "run.log").exists()
+    assert b.refreshed == 0
+
+
+def test_update_moves_schedules_back_to_crontab(app, tmp_path):
+    venv = _old_venv(tmp_path)
+    rp = f"{venv}/bin/runspec"
+    _hosts([rp])
+    b = _StubBridge()
+    # No scheduler in the venv: nothing to stop, and that's said.
+    out = b.venv_update_start(
+        {"targets": [{"host": "web-01", "runspec_path": rp}], "scheduler": "off"}
+    )
+    [res] = _wait(b, out["op"])["results"]
+    assert res["ok"], res
+    assert any("no daemon to stop" in w for w in res["warnings"])
+    assert "runspec-scheduler" not in _step_cmds(b)
+
+    _fake_scheduler(venv / "bin" / "runspec-scheduler")
+    b = _StubBridge()
+    out = b.venv_update_start(
+        {"targets": [{"host": "web-01", "runspec_path": rp}], "scheduler": "off"}
+    )
+    [res] = _wait(b, out["op"])["results"]
+    assert res["ok"], res
+    cmds = [c for c in _step_cmds(b).splitlines() if "runspec-scheduler" in c]
+    assert cmds[0].endswith("runspec-scheduler use cron")
+    assert cmds[1].endswith("install-service --remove --write")
+    assert res["scheduler"]["manager"] == "crontab"
+
+    # `use cron` failing leaves the daemon (and its keeper) alone.
+    (venv / "bin" / "FAIL_USE").write_text("")
+    b = _StubBridge()
+    out = b.venv_update_start(
+        {"targets": [{"host": "web-01", "runspec_path": rp}], "scheduler": "off"}
+    )
+    [res] = _wait(b, out["op"])["results"]
+    assert res["ok"]
+    assert not any("install-service" in c for c in b.commands)
+    assert any("left running" in w for w in res["warnings"])

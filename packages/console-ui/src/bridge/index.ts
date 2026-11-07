@@ -2297,7 +2297,7 @@ export interface ProvisionResult {
 
 export interface ProvisionOpRecord {
   op: string
-  kind: 'provision' | 'deprovision'
+  kind: 'provision' | 'deprovision' | 'update'
   status: 'running' | 'finished' | 'cancelled'
   hosts: string[]
   results: ProvisionResult[]
@@ -2324,6 +2324,35 @@ export interface DeprovisionPreviewRow extends DeprovisionTarget {
   scheduler?: boolean
   /** The daemon's pid when it is running now (0 = not running). */
   scheduler_pid?: number
+}
+
+/** An existing venv's state, read-only, for the Update venv dialog. */
+export interface VenvUpdateRow extends DeprovisionPreviewRow {
+  /** The venv's runspec version ('' when it couldn't be read). */
+  runspec_version: string
+  /** logs/inbox exists (`runspec logs share --inbox` was run). */
+  inbox: boolean
+  /** The venv's log retention policy ({} = none). */
+  retention: { compact_after?: string; delete_after?: string; max_total_size?: string }
+  /** How its schedules fire: 'cron' | 'daemon' ('' = no runspec-scheduler). */
+  backend: string
+}
+
+/** Bring existing venvs up to the chosen options; only what is set runs. */
+export interface VenvUpdatePayload {
+  targets: DeprovisionTarget[]
+  /** pip install -U runspec. */
+  upgrade_runspec?: boolean
+  /** Packages to install or upgrade (pip install -U). */
+  packages?: string[]
+  repo?: string
+  /** Run `runspec logs share --inbox` again. */
+  inbox?: boolean
+  /** Set the log retention policy; absent = leave it as it is. */
+  retention?: ProvisionRetention
+  /** '' = leave schedules alone, a keeper = move them to the daemon, 'off' = back to crontab. */
+  scheduler?: '' | ProvisionSchedulerKeeper | 'off'
+  become_method?: 'sudo' | 'su'
 }
 
 export interface DeprovisionPayload {
@@ -2542,6 +2571,10 @@ export interface BridgeApi {
   provision_cancel: (op: string) => Promise<boolean>
   deprovision_preview: (payload: { targets: DeprovisionTarget[] }) => Promise<{ rows: DeprovisionPreviewRow[]; names: string[] }>
   deprovision_start: (payload: DeprovisionPayload) => Promise<{ op: string; hosts: string[] }>
+  // Update venv…: apply provision options (runspec upgrade, packages, logs
+  // inbox, log cleanup, shared schedules) to venvs hosts already list, in place.
+  venv_update_preview: (payload: { targets: DeprovisionTarget[] }) => Promise<{ rows: VenvUpdateRow[] }>
+  venv_update_start: (payload: VenvUpdatePayload) => Promise<{ op: string; hosts: string[] }>
   // .runspec_env manager — the hosts-panel Env files window.
   env_file_targets: (hosts?: string[]) => Promise<EnvFileTarget[]>
   env_file_read: (payload: EnvFileRef) => Promise<EnvFileView>
