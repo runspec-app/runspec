@@ -922,12 +922,20 @@ class InternalsMixin:
         """Drop duplicate ``(host, name)`` runnables within one host's discovery
         (the same runnable name shipped by two installed packages on that host),
         keeping the first and warning. Cross-host collisions can't happen — the
-        key includes the host — so this is safe to run per host as it completes."""
+        key includes the host — so this is safe to run per host as it completes.
+
+        A runnable declared ``discoverable = false`` is dropped the same way but
+        without the warning: the console never lists it, so which copy is kept
+        doesn't matter. ``runspec-scheduler`` is the common case — it is
+        installed in every venv whose schedules it runs, so a host with several
+        venvs used to print one warning per extra venv on every discovery."""
         seen: set[tuple[str, str]] = set()
         out: list[dict[str, Any]] = []
         for r in runnables:
             key = (r.get("host", ""), r.get("name", ""))
             if key in seen:
+                if not utils_mod.runnable_discoverable(r):
+                    continue
                 sys.stderr.write(
                     f"runspec-console: warning: '{key[1]}' defined in multiple"
                     f" installed packages on host '{key[0] or host_name}', keeping first\n"
