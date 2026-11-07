@@ -1502,27 +1502,49 @@ export interface SharedSchedule {
   run_as?: string
   installable: boolean
   not_installable_reason: string | null
-  installed: boolean | null        // null = the account's crontab couldn't be read
-  line: 'exec' | 'legacy' | null   // legacy = pre-0.3 line (unrecorded output/skips)
+  installed: boolean | null        // null = crontab unreadable (cron) / scheduler down (daemon)
+  line: 'exec' | 'legacy' | 'daemon' | null   // legacy = pre-0.3 line (unrecorded output/skips)
   next_run: string | null
   runs: SharedScheduleRun[]
   last_output: SharedScheduleOutput | null
+  // runspec-scheduler >= 0.5.0 (daemon backend): run one missed fire on start,
+  // and the per-fire timeout in seconds (0 = none, null/absent = the 6h default).
+  catch_up?: boolean
+  timeout?: number | null
+}
+
+// The per-venv scheduler daemon as `runspec-scheduler status` reports it
+// (>= 0.5.0). Absent on older schedulers and on a cron-backed venv that never ran one.
+export interface SchedulerDaemon {
+  state: 'running' | 'stale' | 'stopped'
+  firing?: number
+  pid?: number | null
+  started?: string | null
+  heartbeat?: string | null
+  heartbeat_age_s?: number | null
+  uptime_s?: number | null
+  interval_s?: number | null
+  config_error?: string | null
+  running?: { id: string; pid: number; started: string }[]
 }
 
 export interface SharedSchedulesStatus {
   ok: boolean
   venv: string
   config: string
-  backend: string
+  backend?: 'cron' | 'daemon' | string   // absent on schedulers < 0.5.0 = cron
+  daemon?: SchedulerDaemon | null
   schedules: SharedSchedule[]
-  stale: { id: string; user: string }[]
+  stale: { id: string; user: string; reason?: string }[]
   errors: string[]
 }
 
 export interface SharedSchedulesVenv {
+  host?: string                    // set by shared_schedules_all
   group: string
   available: boolean               // false = no runspec-scheduler in this venv
   ok: boolean
+  owner?: string                   // the venv root's owner ("" = unknown)
   error?: string
   status?: SharedSchedulesStatus
 }
@@ -2918,6 +2940,9 @@ export interface BridgeApi {
   // `runspec history stats|prune|reap|reindex --scope … --json`.
   // Shared (host cron) schedules on a host — one entry per venv (read-only).
   shared_schedules: (host: string) => Promise<SharedSchedulesVenv[]>
+  // Every venv on several hosts in one bounded fan-out (the All schedules list
+  // over the active profile); each item carries its `host`.
+  shared_schedules_all: (hosts: string[]) => Promise<SharedSchedulesVenv[]>
   history_db_stats: (host: string, group: string) => Promise<HistoryDbStats>
   history_db_maintain: (host: string, group: string, action: HistoryDbAction, olderThan?: string, maxRows?: number, runAs?: string) => Promise<HistoryDbResult>
   // Owner of a venv's dir — pre-fills the "Run as" field on the destructive Logs

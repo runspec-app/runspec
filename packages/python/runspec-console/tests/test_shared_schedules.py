@@ -143,6 +143,43 @@ class TestSharedSchedules(unittest.TestCase):
     def test_unknown_host(self) -> None:
         self.assertEqual(_make_bridge(REMOTE).shared_schedules("nope"), [])
 
+    def test_ok_result_carries_the_venv_owner(self) -> None:
+        b = _make_bridge({**REMOTE, "runspec_paths": ["/opt/venvs/ops/bin/runspec"]})
+        b.venv_owner = lambda host, group: {"ok": True, "owner": "root", "self": "u"}
+        with patch.object(b, "_run_logs", return_value=(0, json.dumps(STATUS), "")):
+            [r] = b.shared_schedules("prod-1")
+        self.assertEqual(r["owner"], "root")
+
+
+class TestSharedSchedulesAll(unittest.TestCase):
+    def test_reads_every_venv_of_every_host_and_tags_the_host(self) -> None:
+        b = _make_bridge(REMOTE)
+        b._hosts = [
+            REMOTE,
+            {"name": "prod-2", "ssh": "u@h2", "runspec_paths": ["/srv/a/bin/runspec"]},
+        ]
+        seen = []
+
+        def fake(host, binary, argv, timeout, run_as=""):
+            seen.append((host, binary))
+            if "/web/" in binary:
+                raise RuntimeError("boom")
+            return 0, json.dumps(STATUS), ""
+
+        with patch.object(b, "_run_logs", side_effect=fake):
+            out = b.shared_schedules_all(["prod-1", "prod-2", "prod-1", "nope", ""])
+        self.assertEqual(len(seen), 3)  # duplicates + unknown hosts skipped
+        by = {(r["host"], r["group"]): r for r in out}
+        self.assertEqual(
+            set(by), {("prod-1", "ops"), ("prod-1", "web"), ("prod-2", "a")}
+        )
+        self.assertTrue(by[("prod-2", "a")]["ok"])
+        self.assertEqual(by[("prod-1", "web")]["ok"], False)
+        self.assertIn("boom", by[("prod-1", "web")]["error"])
+
+    def test_no_hosts(self) -> None:
+        self.assertEqual(_make_bridge(REMOTE).shared_schedules_all([]), [])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,374 @@
+/**
+ * allSchedules.ts — the pure half of the Schedules tab's *All schedules* list:
+ * turn this console's own schedules plus every venv's `runspec-scheduler status`
+ * (across the active profile's connected hosts) into one flat row list, give each
+ * row a single state tag, count what the four option cards show, and filter /
+ * sort the list. No React, no bridge — unit-tested in allSchedules.test.ts.
+ *
+ * Older schedulers (< 0.5.0) report no `backend` and no `daemon`: they are cron.
+ */
+import type { RunCard, Schedule, SharedSchedule, SharedSchedulesVenv } from '../bridge'
+import { hostPasses, parseSearch } from '../searchTokens'
+
+/** The four option cards across the top of the Schedules tab. */
+export type ScheduleScope = 'all' | 'console' | 'cron' | 'daemon'
+/** Where a row's schedule fires. `unknown` = a host venv whose status couldn't be read. */
+export type RowSource = 'console' | 'cron' | 'daemon' | 'unknown'
+export type RowKind = 'schedule' | 'stale' | 'unreadable'
+
+export type RowState =
+  | 'ok' | 'disabled' | 'last run failed' | 'running' | 'not installed' | 'not installable'
+  | 'stale line' | 'scheduler stopped' | 'scheduler stale' | "can't read" | 'unknown' | 'legacy line'
+
+export interface RowLastRun {
+  ts: string
+  status: string            // completed / failed / crashed / skipped / running
+  exitCode: number | null
+  durationMs?: number | null
+}
+
+export interface ScheduleRow {
+  key: string
+  kind: RowKind
+  source: RowSource
+  host: string
+  hostGroup: string          // the host's sidebar group (for group: tokens)
+  venv: string               // '' for the console's own schedules
+  id: string
+  name: string               // display name (console schedules may set one)
+  runnable: string           // runnable + subcommand, or the console action
+  argsText: string           // short `--k=v` summary
+  when: string
+  nextRun: string | null
+  lastRun: RowLastRun | null
+  state: RowState
+  stateTip: string
+  problem: boolean
+  enabled: boolean
+  owner: string
+  runAs: string
+  historySearch: string      // what the History tab's search box should hold
+  shared?: SharedSchedule
+  console?: Schedule
+  error?: string
+}
+
+/** A venv-level note shown above the list (status errors, daemon config errors). */
+export interface VenvNote {
+  key: string
+  host: string
+  venv: string
+  source: RowSource
+  message: string
+}
+
+/** A daemon-backed venv's scheduler process, for the strip on the Host daemon card. */
+export interface DaemonVenv {
+  key: string
+  host: string
+  venv: string
+  owner: string
+  daemon: NonNullable<NonNullable<SharedSchedulesVenv['status']>['daemon']> | null
+}
+
+export interface Collected {
+  rows: ScheduleRow[]
+  notes: VenvNote[]
+  daemons: DaemonVenv[]
+  /** `host/venv` of each venv with no runspec-scheduler installed. */
+  without: string[]
+}
+
+export const STATE_COLOR: Record<RowState, string> = {
+  'ok': 'green',
+  'running': 'blue',
+  'disabled': 'default',
+  'last run failed': 'red',
+  'not installed': 'orange',
+  'not installable': 'orange',
+  'stale line': 'orange',
+  'scheduler stopped': 'red',
+  'scheduler stale': 'orange',
+  "can't read": 'red',
+  'unknown': 'default',
+  'legacy line': 'gold',
+}
+
+export function venvBackend(v: SharedSchedulesVenv): 'cron' | 'daemon' {
+  return v.status?.backend === 'daemon' ? 'daemon' : 'cron'
+}
+
+function whenText(w: { cron?: string; every?: string; timezone?: string } | undefined): string {
+  const base = w?.cron ? w.cron : w?.every ? `every ${w.every}` : '—'
+  return w?.timezone ? `${base} (${w.timezone})` : base
+}
+
+function argsSummary(args: Record<string, unknown> | undefined, dashes = true): string {
+  return Object.entries(args ?? {}).map(([k, v]) => `${dashes ? '--' : ''}${k}=${String(v)}`).join(' ')
+}
+
+const FAILED = new Set(['failed', 'crashed'])
+
+/** One state tag for a host schedule, most important first. */
+export function sharedState(s: SharedSchedule, v: SharedSchedulesVenv): { state: RowState; tip: string; problem: boolean } {
+  const backend = venvBackend(v)
+  if (!s.enabled) return { state: 'disabled', tip: 'Disabled in runspec_scheduler.toml — never fires.', problem: false }
+  if (backend === 'daemon') {
+    const d = v.status?.daemon
+    if (!d || d.state === 'stopped') {
+      return { state: 'scheduler stopped', tip: 'This venv is set to the daemon backend but its runspec-scheduler isn’t running, so nothing fires. Start it (or its keeper) on the host.', problem: true }
+    }
+    if (d.state === 'stale') {
+      const age = d.heartbeat_age_s != null ? ` (last heartbeat ${Math.round(d.heartbeat_age_s)}s ago)` : ''
+      return { state: 'scheduler stale', tip: `The scheduler process stopped reporting${age} — it may be hung.`, problem: true }
+    }
+  } else {
+    if (!s.installable) return { state: 'not installable', tip: s.not_installable_reason || 'Cron can’t run this schedule.', problem: true }
+    if (s.installed === false) return { state: 'not installed', tip: 'In the config but not in the crontab — run `runspec-scheduler sync` on the host.', problem: true }
+  }
+  const last = s.runs[0]
+  if (last && FAILED.has(last.status)) {
+    const why = last.exit_code != null ? `exit ${last.exit_code}` : last.status
+    return { state: 'last run failed', tip: `The last fire ended ${why}. Expand the row for its output.`, problem: true }
+  }
+  if (last && last.status === 'running') return { state: 'running', tip: 'Firing now.', problem: false }
+  if (backend === 'cron' && s.installed === null) {
+    return { state: 'unknown', tip: `Couldn't read ${s.run_as || 'the owner'}'s crontab without a password prompt.`, problem: false }
+  }
+  if (s.line === 'legacy') {
+    return { state: 'legacy line', tip: 'Installed by an older runspec-scheduler: fires run unrecorded. Re-run `runspec-scheduler sync` on the host.', problem: false }
+  }
+  return { state: 'ok', tip: backend === 'daemon' ? 'Fired by this venv’s runspec-scheduler daemon.' : 'Installed in the crontab; every fire is recorded.', problem: false }
+}
+
+/** The console action a schedule runs, as one short label. */
+export function consoleActionLabel(s: Schedule): string {
+  switch (s.action) {
+    case 'event': return `event ${s.event ?? ''}`.trim()
+    case 'prompt': { const p = (s.prompt ?? '').replace(/\s+/g, ' ').trim(); return `prompt: ${p.length > 48 ? `${p.slice(0, 48)}…` : p}` }
+    case 'runbook': return `runbook ${s.runbook ?? ''}`.trim()
+    case 'saved_run': return `saved run ${s.saved_run ?? ''}`.trim()
+    case 'saved_transfer': return `saved transfer ${s.saved_transfer ?? ''}`.trim()
+    case 'eval': return `evals ${s.eval_fixture ?? ''}`.trim()
+    default: return [s.runnable ?? '', ...(s.command ?? [])].join(' ').trim()
+  }
+}
+
+/** The newest schedule run card for a console schedule (runnable action only). */
+function lastConsoleRun(id: string, cards: RunCard[]): RowLastRun | null {
+  let best: RunCard | null = null
+  for (const c of cards) {
+    const sid = (c.detail as Record<string, unknown> | undefined)?.schedule_id
+    if (sid !== id) continue
+    if (!best || (c.created_at ?? 0) > (best.created_at ?? 0)) best = c
+  }
+  if (!best) return null
+  const detail = (best.detail ?? {}) as Record<string, unknown>
+  const status = best.column === 'done' ? 'completed' : best.column === 'failed' ? 'failed' : best.column === 'running' ? 'running' : String(best.column)
+  const ec = detail.exit_code
+  return { ts: new Date((best.created_at ?? 0) * 1000).toISOString(), status, exitCode: typeof ec === 'number' ? ec : null }
+}
+
+export function collectRows(
+  consoleSchedules: Schedule[],
+  venvs: SharedSchedulesVenv[],
+  opts: { cards?: RunCard[]; hostGroups?: Record<string, string> } = {},
+): Collected {
+  const groups = opts.hostGroups ?? {}
+  const rows: ScheduleRow[] = []
+  const notes: VenvNote[] = []
+  const daemons: DaemonVenv[] = []
+  const without: string[] = []
+
+  for (const s of consoleSchedules) {
+    const enabled = s.enabled !== false
+    const lastRun = lastConsoleRun(s.id, opts.cards ?? [])
+    const failed = enabled && !!lastRun && FAILED.has(lastRun.status)
+    const state: RowState = !enabled ? 'disabled' : failed ? 'last run failed' : lastRun?.status === 'running' ? 'running' : 'ok'
+    const detail = s.action === 'event' ? s.fields : s.action === 'runnable' ? s.args : s.values
+    rows.push({
+      key: `console::${s.id}`,
+      kind: 'schedule',
+      source: 'console',
+      host: 'local',
+      hostGroup: groups.local ?? '',
+      venv: '',
+      id: s.id,
+      name: s.name ?? '',
+      runnable: consoleActionLabel(s),
+      argsText: argsSummary(detail as Record<string, unknown> | undefined, s.action === 'runnable'),
+      when: whenText(s.when),
+      nextRun: enabled ? (s.nextRun ?? null) : null,
+      lastRun,
+      state,
+      stateTip: !enabled ? 'Disabled — won’t fire.' : failed ? 'The last run from this console failed.' : 'Fires from this console while it is open.',
+      problem: failed,
+      enabled,
+      owner: '',
+      runAs: '',
+      historySearch: s.action === 'runnable' ? (s.runnable ?? '') : '',
+      console: s,
+    })
+  }
+
+  for (const v of venvs) {
+    const host = v.host ?? 'local'
+    const venv = v.group
+    const hostGroup = groups[host] ?? ''
+    const base = `${host}::${venv}`
+    if (!v.available) { without.push(`${host}/${venv}`); continue }
+    if (!v.ok || !v.status) {
+      rows.push({
+        key: `${base}::unreadable`, kind: 'unreadable', source: 'unknown', host, hostGroup, venv,
+        id: '', name: '', runnable: '', argsText: '', when: '—', nextRun: null, lastRun: null,
+        state: "can't read", stateTip: v.error || 'runspec-scheduler status failed', problem: true, enabled: true,
+        owner: v.owner ?? '', runAs: '', historySearch: '', error: v.error || 'runspec-scheduler status failed',
+      })
+      continue
+    }
+    const st = v.status
+    const backend = venvBackend(v)
+    for (const e of st.errors ?? []) notes.push({ key: `${base}::err::${e}`, host, venv, source: backend, message: e })
+    if (backend === 'daemon') {
+      daemons.push({ key: base, host, venv, owner: v.owner ?? '', daemon: st.daemon ?? null })
+      if (st.daemon?.config_error) {
+        notes.push({ key: `${base}::cfg`, host, venv, source: 'daemon', message: `The scheduler can't load its config: ${st.daemon.config_error}` })
+      }
+    }
+    for (const s of st.schedules ?? []) {
+      const { state, tip, problem } = sharedState(s, v)
+      const r = s.runs[0]
+      rows.push({
+        key: `${base}::${s.id}`,
+        kind: 'schedule',
+        source: backend,
+        host, hostGroup, venv,
+        id: s.id,
+        name: '',
+        runnable: [s.runnable, ...(s.command ?? [])].join(' '),
+        argsText: argsSummary(s.args),
+        when: whenText(s.when),
+        nextRun: s.enabled && s.installed !== false ? s.next_run : null,
+        lastRun: r ? { ts: r.start_ts, status: r.status, exitCode: r.exit_code, durationMs: r.duration_ms } : null,
+        state, stateTip: tip, problem,
+        enabled: s.enabled,
+        owner: v.owner ?? '',
+        runAs: s.run_as ?? '',
+        historySearch: `sched:${s.id}`,
+        shared: s,
+      })
+    }
+    for (const x of st.stale ?? []) {
+      const reason = x.reason ? ` (${x.reason})` : ''
+      rows.push({
+        key: `${base}::stale::${x.user}::${x.id}`, kind: 'stale', source: backend, host, hostGroup, venv,
+        id: x.id, name: '', runnable: '', argsText: '', when: '—', nextRun: null, lastRun: null,
+        state: 'stale line',
+        stateTip: `A crontab line for ${x.user} that this venv's config no longer wants${reason} — it can still fire. \`runspec-scheduler sync\` on the host removes it.`,
+        problem: true, enabled: true, owner: v.owner ?? '', runAs: x.user, historySearch: `sched:${x.id}`,
+      })
+    }
+  }
+  return { rows, notes, daemons, without }
+}
+
+/** Does a row belong under a card? A can't-read venv shows on both host cards. */
+export function inScope(source: RowSource, scope: ScheduleScope): boolean {
+  if (scope === 'all') return true
+  if (source === 'unknown') return scope === 'cron' || scope === 'daemon'
+  return source === scope
+}
+
+export interface ScopeCount { schedules: number; problems: number }
+
+/** Schedule and problem counts for each option card. */
+export function scopeCounts(c: Collected): Record<ScheduleScope, ScopeCount> {
+  const out = {} as Record<ScheduleScope, ScopeCount>
+  for (const scope of ['all', 'console', 'cron', 'daemon'] as ScheduleScope[]) {
+    const rows = c.rows.filter(r => inScope(r.source, scope))
+    out[scope] = {
+      schedules: rows.filter(r => r.kind === 'schedule').length,
+      problems: rows.filter(r => r.problem).length + c.notes.filter(n => inScope(n.source, scope)).length,
+    }
+  }
+  return out
+}
+
+export type SortKey = 'next' | 'last' | 'host' | 'runnable'
+
+export interface RowFilters {
+  search: string
+  source: RowSource[]       // empty = any (only offered on the All card)
+  states: RowState[]        // empty = any
+  owners: string[]
+  runAs: string[]
+  onlyProblems: boolean
+  sort: SortKey
+}
+
+export const DEFAULT_FILTERS: RowFilters = {
+  search: '', source: [], states: [], owners: [], runAs: [], onlyProblems: false, sort: 'next',
+}
+
+const tsOf = (iso: string | null | undefined): number | null => {
+  if (!iso) return null
+  const t = Date.parse(iso)
+  return Number.isNaN(t) ? null : t
+}
+
+/** Nulls last, whichever way the values run. */
+function cmpNullable(a: number | null, b: number | null, dir: 1 | -1): number {
+  if (a == null && b == null) return 0
+  if (a == null) return 1
+  if (b == null) return -1
+  return (a - b) * dir
+}
+
+export function filterRows(rows: ScheduleRow[], scope: ScheduleScope, f: RowFilters): ScheduleRow[] {
+  const p = parseSearch(f.search)
+  const text = p.text.toLowerCase()
+  const out = rows.filter(r => {
+    if (!inScope(r.source, scope)) return false
+    if (scope === 'all' && f.source.length && !f.source.includes(r.source)) return false
+    if (f.states.length && !f.states.includes(r.state)) return false
+    if (f.owners.length && !f.owners.includes(r.owner)) return false
+    if (f.runAs.length && !f.runAs.includes(r.runAs)) return false
+    if (f.onlyProblems && !r.problem) return false
+    if (!hostPasses(p, r.host, r.hostGroup)) return false
+    if (text) {
+      const hay = `${r.id} ${r.name} ${r.runnable} ${r.argsText} ${r.venv}`.toLowerCase()
+      if (!text.split(/\s+/).every(w => hay.includes(w))) return false
+    }
+    return true
+  })
+  const byName = (a: ScheduleRow, b: ScheduleRow) =>
+    a.host.localeCompare(b.host) || a.venv.localeCompare(b.venv) || (a.name || a.id).localeCompare(b.name || b.id)
+  out.sort((a, b) => {
+    switch (f.sort) {
+      case 'last': return cmpNullable(tsOf(a.lastRun?.ts), tsOf(b.lastRun?.ts), -1) || byName(a, b)
+      case 'host': return byName(a, b)
+      case 'runnable': return a.runnable.localeCompare(b.runnable) || byName(a, b)
+      default: return cmpNullable(tsOf(a.nextRun), tsOf(b.nextRun), 1) || byName(a, b)
+    }
+  })
+  return out
+}
+
+/** "3h 4m" from seconds — the daemon strip's uptime. */
+export function shortDuration(sec: number | null | undefined): string {
+  if (sec == null || Number.isNaN(sec)) return '—'
+  const s = Math.max(0, Math.round(sec))
+  if (s < 60) return `${s}s`
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m}m`
+  const h = Math.floor(m / 60)
+  if (h < 48) return `${h}h ${m % 60}m`
+  return `${Math.floor(h / 24)}d ${h % 24}h`
+}
+
+/** A schedule's per-fire timeout as the daemon applies it. */
+export function timeoutLabel(t: number | null | undefined): string {
+  if (t === 0) return 'no limit'
+  if (t == null) return '6h (default)'
+  return shortDuration(t)
+}

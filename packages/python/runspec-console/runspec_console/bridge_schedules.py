@@ -879,6 +879,51 @@ class SchedulesMixin:
         ) as ex:
             return list(ex.map(one, venvs))
 
+    def shared_schedules_all(self, hosts: list[str]) -> list[dict[str, Any]]:
+        """:meth:`shared_schedules` across several hosts in one bounded fan-out —
+        the Schedules tab's *All schedules* list over the active profile. The UI
+        passes the connected hosts (plus ``local``); every (host, venv) pair is
+        read in one pool sized by ``[refresh] workers``, so a large profile never
+        nests pools. Each item is a :meth:`shared_schedules` venv dict plus
+        ``host``. An unknown host is skipped; one venv failing never sinks the
+        rest (it comes back ``ok: False`` and the UI shows a *can't read* row)."""
+        pairs: list[tuple[str, str, str, bool]] = []
+        seen: set[str] = set()
+        for host in hosts or []:
+            if not host or host in seen:
+                continue
+            seen.add(host)
+            entry = self._host_entry(host)
+            if entry is None:
+                continue
+            remote = bool(entry.get("ssh"))
+            for rp in utils_mod._paths(entry):
+                if rp:
+                    pairs.append((host, hosts_mod.venv_name(rp), rp, remote))
+        if not pairs:
+            return []
+
+        def one(item: tuple[str, str, str, bool]) -> dict[str, Any]:
+            host, group, rp, remote = item
+            try:
+                got = self._shared_schedules_venv(host, group, rp, remote)
+            except Exception as exc:  # noqa: BLE001 — one venv never sinks the rest
+                logger.exception("shared schedules: %s/%s failed", host, group)
+                got = {
+                    "group": group,
+                    "available": True,
+                    "ok": False,
+                    "error": str(exc),
+                }
+            return {"host": host, **got}
+
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(
+            max_workers=max(1, min(self._fanout_workers(), len(pairs)))
+        ) as ex:
+            return list(ex.map(one, pairs))
+
     def _shared_schedules_venv(
         self, host: str, group: str, rp: str, remote: bool
     ) -> dict[str, Any]:
@@ -892,7 +937,7 @@ class SchedulesMixin:
         # runspec-scheduler runs as its venv's owner (core `@owner` +
         # enforce_run_as), so a service-account venv refuses the login user —
         # escalate to the owner the way a runnable run does.
-        owner = self._scheduler_owner(host, group, remote)
+        owner, venv_owner = self._scheduler_owner(host, group, remote)
         if owner:
             code, stdout, stderr = self._run_scheduler_as(
                 host, binary, ["status"], owner, remote
@@ -912,6 +957,7 @@ class SchedulesMixin:
                     "group": group,
                     "available": True,
                     "ok": True,
+                    "owner": venv_owner,
                     "status": payload,
                 }
         err = stdout.strip() or stderr.strip() or f"exit {code}"
@@ -931,19 +977,27 @@ class SchedulesMixin:
                 f"passwordless sudo to {owner!r} was refused — the same grant "
                 f"running this venv's runnables needs. ({err})"
             )
-        return {"group": group, "available": True, "ok": False, "error": err}
+        return {
+            "group": group,
+            "available": True,
+            "ok": False,
+            "owner": venv_owner,
+            "error": err,
+        }
 
-    def _scheduler_owner(self, host: str, group: str, remote: bool) -> str:
-        """The account ``runspec-scheduler`` must run as in this venv: the venv
-        root's owner, ``""`` when that is the login user, root (``@owner`` never
-        escalates to root) or unknown — then it runs as the login user."""
+    def _scheduler_owner(self, host: str, group: str, remote: bool) -> tuple[str, str]:
+        """``(run_as, owner)`` for ``runspec-scheduler`` in this venv. ``run_as``
+        is the account it must run as: the venv root's owner, ``""`` when that is
+        the login user, root (``@owner`` never escalates to root) or unknown —
+        then it runs as the login user. ``owner`` is the venv root's owner as
+        read (``""`` when unknown), shown in the All schedules list."""
         if not remote and sys.platform == "win32":
-            return ""
+            return "", ""
         info = self.venv_owner(host, group)
-        owner = str(info.get("owner") or "")
-        if not info.get("ok") or owner in ("", "root", info.get("self")):
-            return ""
-        return owner
+        owner = str(info.get("owner") or "") if info.get("ok") else ""
+        if owner in ("", "root", info.get("self")):
+            return "", owner
+        return owner, owner
 
     def _run_scheduler_as(
         self, host: str, binary: str, argv: list[str], owner: str, remote: bool
