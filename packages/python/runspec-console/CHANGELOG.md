@@ -9,6 +9,20 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.388.1] — 2026-11-07
+
+### Fixed
+
+- **Deprovision takes a cron venv's schedules out of the crontab.** It stopped
+  a venv's scheduler daemon and removed its keepers, but a venv on the host
+  cron backend left its `# runspec:sched:` lines in the owner's crontab, so
+  they kept firing into a deleted venv. After the keepers are gone it now runs
+  the venv's own `runspec-scheduler use daemon` (0.5.0+), which strips every
+  line that venv wrote and starts nothing, then deletes the folder. If that
+  fails the venv still goes, and the result says the lines may be left
+  (`_deprov_clear_crontab`, `provision.parse_cron_clear`). The Deprovision
+  dialog says so for a venv with runspec-scheduler.
+
 ## [0.388.0] — 2026-11-07
 
 ### Added

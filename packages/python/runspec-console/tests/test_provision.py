@@ -667,3 +667,18 @@ def test_schedule_counts():
         status(backend="daemon", schedules=rows, stale=[{"id": "a"}])
     )
     assert daemon["in_crontab"] == 0 and daemon["leftover"] == 1
+
+
+def test_parse_cron_clear():
+    assert prov.parse_cron_clear(
+        'noise\n{"ok": true, "backend": "daemon", "crontab": {"ok": true, "errors": []}}'
+    ) == {"ok": True, "error": ""}
+    bad = '{"ok": false, "error": "could not remove", "crontab": {"errors": [{"user": "svc", "error": "sudo: a password is required"}]}}'
+    assert prov.parse_cron_clear(bad) == {
+        "ok": False,
+        "error": "svc: sudo: a password is required",
+    }
+    assert prov.parse_cron_clear("usage: runspec-scheduler ...") == {
+        "ok": False,
+        "error": "",
+    }

@@ -2,6 +2,24 @@
 
 All notable changes to `runspec-scheduler` are documented here.
 
+## [0.7.3] — 2026-11-07
+
+### Fixed
+
+- **Two venvs owned by one account no longer share a schedule's lock.** A
+  fire's `runspec exec --lock` file was `~/.cache/runspec-scheduler/<id>.lock`,
+  so when two venvs with the same owner each had a schedule called (say)
+  `nightly`, whichever fired second was recorded as `skipped` ("still
+  running"). The lock now sits in a per-venv folder:
+  `~/.cache/runspec-scheduler/<venv>-<8 hex>/<id>.lock` (`cronsync.venv_tag`).
+  Daemon and `run-now` fires pick it up straight away; crontab lines keep the
+  old path until the next `runspec-scheduler sync` (the console's *Sync
+  crontab*). Old and new lines are both still recognised as ours.
+- **The per-schedule credential file is named per venv too**
+  (`~/.config/runspec-scheduler/env/<venv>-<8 hex>-<id>.env`), so removing a
+  schedule in one venv can't delete another venv's file of the same id.
+  Existing files keep their stored path.
+
 ## [0.7.2] — 2026-11-07
 
 ### Added

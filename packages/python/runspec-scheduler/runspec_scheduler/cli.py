@@ -18,7 +18,7 @@ from .config import ScheduleEntry, config_path, load_config, load_schedules, loa
 from .daemon import configure_logging, run_daemon, take_lock
 from .discovery import check_invocation, resolve_target
 from .envfile import capture_env, remove_env_file, write_env_file
-from .runner import venv_name
+from .runner import scripts_dir, venv_name
 from .timing import next_fire_time, parse_when
 
 
@@ -239,7 +239,11 @@ def _cmd_add(spec: rs.RunSpec) -> None:
             sys.exit(2)
         env = capture_env([str(v) for v in cred_vars])
         try:
-            env_file = write_env_file(sid, env, target.run_as, target.become_method, target.become_flags)
+            from .cronsync import venv_tag
+
+            # Named for this venv too: the file sits in run_as's home, shared with
+            # any other venv that account owns (which may use the same id).
+            env_file = write_env_file(f"{venv_tag(scripts_dir().parent)}-{sid}", env, target.run_as, target.become_method, target.become_flags)
         except (RuntimeError, ValueError) as exc:
             _emit({"error": f"could not write credential env file: {exc}"})
             sys.exit(1)

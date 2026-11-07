@@ -2504,6 +2504,9 @@ export interface DeprovisionPreviewRow extends DeprovisionTarget {
   scheduler?: boolean
   /** The daemon's pid when it is running now (0 = not running). */
   scheduler_pid?: number
+  /** 'daemon' when its schedules fire from the daemon; anything else means its
+   *  schedule lines (if any) are in the crontab and are removed first. */
+  backend?: string
 }
 
 /** An existing venv's state, read-only, for the Update venv dialog. */

@@ -195,7 +195,7 @@ A crontab line becomes:
 
 ```
 # runspec:sched:nightly-backup
-0 2 * * *  env RUNSPEC_ENV_FILE=… /opt/venvs/ops/bin/runspec exec --label sched:nightly-backup --trigger schedule:cron --lock ~svc/.cache/runspec-scheduler/nightly-backup.lock backup -- --target prod >/dev/null 2>&1
+0 2 * * *  env RUNSPEC_ENV_FILE=… /opt/venvs/ops/bin/runspec exec --label sched:nightly-backup --trigger schedule:cron --lock ~svc/.cache/runspec-scheduler/ops-1a2b3c4d/nightly-backup.lock backup -- --target prod >/dev/null 2>&1
 ```
 
 The trailing redirect only silences cron's mail; the output is captured in the

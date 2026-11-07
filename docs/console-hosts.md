@@ -209,7 +209,11 @@ Type the venv's folder name to enable **Delete**.
 - A venv with runspec-scheduler has its keepers removed and its daemon
   stopped first (`runspec-scheduler install-service --remove --write`), so
   nothing restarts a daemon from a deleted folder. If the daemon is still
-  running after that, the venv is kept and the host's row says why.
+  running after that, the venv is kept and the host's row says why. A venv
+  whose schedules fire from cron then has its schedule lines taken out of the
+  crontab (`runspec-scheduler use daemon`, which removes them and starts
+  nothing), so they don't keep firing into the deleted folder. If that fails,
+  the venv is still removed and its row says the lines may be left.
 - The path is then removed from the host's runspec paths.
 
 Provision and deprovision each write audit events (`venv.provision.*`,

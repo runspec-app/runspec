@@ -74,7 +74,7 @@ Each schedule becomes one line (plus its marker comment), for example:
 
 ```cron
 # runspec:sched:nightly-backup
-0 2 * * *  env RUNSPEC_AGENT=1 RUNSPEC_ENV_FILE=/home/svc/.config/runspec-scheduler/env/nightly-backup.env /opt/venvs/ops/bin/runspec exec --label sched:nightly-backup --trigger schedule:cron --lock /home/svc/.cache/runspec-scheduler/nightly-backup.lock backup -- --target prod >/dev/null 2>&1
+0 2 * * *  env RUNSPEC_AGENT=1 RUNSPEC_ENV_FILE=/home/svc/.config/runspec-scheduler/env/nightly-backup.env /opt/venvs/ops/bin/runspec exec --label sched:nightly-backup --trigger schedule:cron --lock /home/svc/.cache/runspec-scheduler/ops-1a2b3c4d/nightly-backup.lock backup -- --target prod >/dev/null 2>&1
 ```
 
 - **Absolute venv binary** — cron runs with a minimal environment (no PATH, no
