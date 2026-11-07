@@ -1,11 +1,66 @@
 # venv-based scheduler service (`runspec-scheduler`)
 
-> **Status: shelved — standalone-bound.** The `runspec-scheduler` package is
-> published and works standalone. A console integration to *delegate* Schedules to
-> it shipped in runspec-console 0.162.0 and was **removed in 0.163.0** — see
+> **Status: revived as the `daemon` backend in runspec-scheduler 0.5.0.** A venv
+> now picks `[scheduler] backend = "cron"` (default, see
+> [`cron-scheduler.md`](cron-scheduler.md)) or `"daemon"` (this design). The
+> 0.5.0 daemon fires through `runspec exec`, holds an flock per venv, writes a
+> heartbeat `status` reads, and fixes the 15 robustness issues listed in
+> [The 0.5.0 daemon](#the-050-daemon). Console delegation stays removed — see
 > [Decision: console delegation removed](#decision-console-delegation-removed).
-> The package is kept as the basis for a future **standalone, shared** scheduler,
-> not wired into the console today.
+
+## The 0.5.0 daemon
+
+What changed from the 0.1–0.4 daemon, and why (each item has a process test in
+`tests/test_daemon_process.py` that runs the real daemon and real `runspec exec`):
+
+- **Fires go through `runspec exec --label sched:<id> --trigger schedule --lock
+  <lock> [--timeout N]`**, the same command a cron line runs. The daemon starts it
+  in its own session with stdin/stdout/stderr on `/dev/null` and only reaps the
+  exit code; exec records the run (status, exit code, output) and records an
+  overlap with a running fire as `skipped`. Capturing output in the daemon used to
+  block on a background child holding stdout, hold big output in memory and fail
+  on invalid UTF-8.
+- **Timeouts.** `[scheduler] timeout` (default `6h`, `0` = none) or a schedule's
+  own `timeout` goes to `exec --timeout`. Exec kills its direct child and exits
+  124; the daemon then `killpg`s the fire's session. A backstop at timeout + 120 s
+  sends SIGTERM, then SIGKILL 10 s later, if exec itself doesn't return. Limit: a
+  `run_as` fire escalated through `sudo` runs as another account the daemon can't
+  signal, so a child it leaves behind can outlive the timeout.
+- **Missed fires are recorded.** `misfire_grace_time` is 5 min (APScheduler's
+  default is 1 s) with `coalesce = true` and `max_instances = 1`. A fire missed
+  past the grace — including the run times coalescing drops, which APScheduler
+  never reports — becomes a `skipped` runs-index row under `sched:<id>` plus a
+  `scheduler.fire_missed` audit event (`records.py`). A fire that can't start
+  (runnable missing mid `pip install`, bad args, no `runspec` binary, an error in
+  the scheduler) is a `failed` row.
+- **`catch_up = true`** on a schedule: when the daemon starts and the schedule's
+  last fire (heartbeat `last_fire`, else the runs index) is older than its
+  previous due time, one coalesced fire runs at once, if within
+  `catch_up_window` (default 1 d). Without it the gap is skipped.
+- **Reloads diff the config** by a timing-only fingerprint (add, reschedule,
+  remove; untouched jobs keep their next fire), are detected by (mtime ns, size,
+  inode) or SIGHUP, and a config that fails to load keeps the last good jobs and
+  sets `config_error`. A bad config at start exits 1.
+- **One daemon per venv**: `run` takes an flock on `runspec_scheduler.lock` next
+  to the config before `rs.parse`, so a second start exits 0 and leaves no run
+  record.
+- **Heartbeat** `{venv}/logs/scheduler_state.json` (atomic): pid, started,
+  heartbeat, backend, config_error, jobs with next fire, running fires, last fire
+  per schedule. `status` derives running / stale (age > 3 × interval) / stopped
+  and checks `/proc/<pid>/cmdline` against pid reuse.
+- **Process hygiene**: the daemon closes its own run record at start (it used to
+  stay `running` for weeks), configures logging once, records `scheduler.daemon`
+  started/stopped audit events, wraps the loop in try/finally (exit 1 on a crash
+  so the keeper restarts it), treats SIGHUP as reload instead of dying, exits
+  within a second on SIGTERM while fires keep running in their own sessions
+  (`KillMode=process` in the unit), and fills in a standard `PATH` and
+  `LANG=C.UTF-8` for fires while dropping inherited `RUNSPEC_*` variables.
+- **`use cron|daemon`** switches a venv's backend; switching to the daemon first
+  removes this venv's marked crontab lines so the two never both fire.
+
+Keepers beyond `install-service`'s systemd `--user` unit (`--manager
+auto|systemd|systemd-user|supervisor|cron`, `run --detach`) and a Provision venv
+step come in later releases.
 
 ## Problem
 

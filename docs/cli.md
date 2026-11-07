@@ -790,7 +790,8 @@ login user when it escalates to the owner.
 
 Run one installed runnable and record the whole invocation — including the parts
 a runnable can't record about itself. Built for unattended callers (cron, CI,
-schedulers), and it's what `runspec-scheduler` puts on its crontab lines.
+schedulers), and it's what `runspec-scheduler` runs for every fire, from its
+crontab lines or its daemon.
 
 ```bash
 runspec exec backup -- --target prod                 # args after -- go to the runnable

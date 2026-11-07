@@ -1,25 +1,16 @@
-"""runner.py — locate and execute a runnable installed in this venv.
+"""runner.py — where this venv's runnables live.
 
-The daemon fires a schedule by exec'ing the target runnable's own venv script
-directly (a sibling of the ``runspec`` binary in the Scripts dir) — the same
-approach ``runspec serve`` / the console executor use — never by shelling through
-``runspec run``. Credentials, when present, arrive via ``RUNSPEC_ENV_FILE`` (a
-600 file owned by ``run_as``), so only non-secret provenance crosses the
-escalation — on the child's stdin as the SPEC env frame, never on a command line.
+Both backends fire a schedule through core's ``runspec exec`` (see
+:func:`runspec_scheduler.cronsync.exec_invocation`), which resolves and runs
+the runnable itself; these helpers only locate the venv's scripts directory and
+a runnable's entry-point binary (to check it's installed).
 """
 
 from __future__ import annotations
 
-import os
-import subprocess
 import sys
 import sysconfig
 from pathlib import Path
-from typing import Any
-
-from runspec.become import build_exec_argv
-
-from .invocation import plan_invocation
 
 
 def scripts_dir() -> Path:
@@ -34,57 +25,6 @@ def find_binary(runnable: str) -> Path | None:
         if candidate.exists():
             return candidate
     return None
-
-
-def provenance_env(source_toml: str, env_file: str = "") -> dict[str, str]:
-    """The non-secret environment handed to every scheduled run."""
-    env = {
-        "RUNSPEC_AGENT": "1",
-        "RUNSPEC_TRIGGER": "schedule",
-    }
-    if source_toml:
-        # So the child's parse() finds its runspec.toml regardless of cwd.
-        env["RUNSPEC_CONFIG"] = source_toml
-    if env_file:
-        env["RUNSPEC_ENV_FILE"] = env_file
-    return env
-
-
-def run_runnable(
-    binary: Path,
-    command_path: list[str],
-    args: dict[str, Any],
-    *,
-    source_toml: str = "",
-    run_as: str = "",
-    become_method: str = "sudo",
-    become_flags: str | None = None,
-    env_file: str = "",
-    timeout: float | None = None,
-    spec: dict[str, Any] | None = None,
-    runnable: str = "",
-) -> subprocess.CompletedProcess[str]:
-    """Execute one runnable invocation, escalating to ``run_as`` when set. The
-    argv/env come from :func:`~runspec_scheduler.invocation.plan_invocation`
-    against the runnable's ``spec``."""
-    plan = plan_invocation(runnable or binary.stem, spec or {}, command_path, args)
-    cmd = [str(binary), *plan.argv]
-    prov = {**provenance_env(source_toml, env_file), **plan.env}
-    if run_as:
-        # Only the non-secret provenance + the RUNSPEC_ENV_FILE path cross sudo/su
-        # (the credentials themselves live in that file), as the SPEC env frame on
-        # stdin — values never go on a command line.
-        argv, frame = build_exec_argv(
-            cmd,
-            run_as=run_as,
-            become_method=become_method,
-            become_flags=become_flags,
-            env=prov,
-        )
-        feed: dict[str, Any] = {"input": frame.decode("ascii")} if frame else {"stdin": subprocess.DEVNULL}
-        return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, **feed)
-    child_env = {**os.environ, **prov}
-    return subprocess.run(cmd, capture_output=True, text=True, env=child_env, timeout=timeout)
 
 
 def is_generic_venv_name(name: str) -> bool:

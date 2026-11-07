@@ -31,6 +31,70 @@ else:  # pragma: no cover - exercised only on 3.10
 
 DEFAULT_CONFIG_NAME = "runspec_scheduler.toml"
 
+#: The two ways a venv's schedules can fire. A venv uses exactly one.
+BACKENDS = ("cron", "daemon")
+
+#: Daemon defaults (``[scheduler]`` overrides them).
+DEFAULT_TIMEOUT = 6 * 3600  # a fire running longer is killed (0 = no limit)
+DEFAULT_MISFIRE_GRACE = 300  # a fire this late still runs; later = recorded as missed
+DEFAULT_CATCH_UP_WINDOW = 24 * 3600  # how far back a catch_up schedule looks on start
+
+_DURATION_UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+
+
+def parse_duration(value: Any, what: str = "duration") -> int:
+    """Seconds from ``7200`` / ``"7200"`` / ``"90m"`` / ``"6h"`` / ``"1d"`` / ``0``.
+
+    Raises ``ValueError`` with a human message. ``0`` is allowed (it means "no
+    limit" for a timeout)."""
+    if isinstance(value, bool):
+        raise ValueError(f"{what} must be a number of seconds or a duration like 90m / 6h (got {value!r})")
+    if isinstance(value, int):
+        n = value
+    else:
+        text = str(value).strip().lower()
+        if not text:
+            raise ValueError(f"{what} is empty")
+        mult = 1
+        if text[-1] in _DURATION_UNITS:
+            mult = _DURATION_UNITS[text[-1]]
+            text = text[:-1]
+        try:
+            n = int(text) * mult
+        except ValueError:
+            raise ValueError(f"{what} must be a number of seconds or a duration like 90m / 6h (got {value!r})") from None
+    if n < 0:
+        raise ValueError(f"{what} can't be negative (got {value!r})")
+    return n
+
+
+@dataclass(frozen=True)
+class SchedulerSettings:
+    """The ``[scheduler]`` table: which backend fires this venv's schedules, plus
+    the daemon's defaults."""
+
+    backend: str = "cron"
+    timeout: int = DEFAULT_TIMEOUT
+    misfire_grace: int = DEFAULT_MISFIRE_GRACE
+    catch_up_window: int = DEFAULT_CATCH_UP_WINDOW
+
+
+def parse_settings(table: Any) -> SchedulerSettings:
+    """Validate + parse the ``[scheduler]`` table (``{}``/absent = defaults)."""
+    if table is None:
+        table = {}
+    if not isinstance(table, dict):
+        raise ValueError("[scheduler] must be a table")
+    backend = str(table.get("backend") or "cron").strip().lower()
+    if backend not in BACKENDS:
+        raise ValueError(f"[scheduler] backend must be one of {', '.join(BACKENDS)} (got {table.get('backend')!r})")
+    return SchedulerSettings(
+        backend=backend,
+        timeout=parse_duration(table.get("timeout", DEFAULT_TIMEOUT), "[scheduler] timeout"),
+        misfire_grace=max(1, parse_duration(table.get("misfire_grace", DEFAULT_MISFIRE_GRACE), "[scheduler] misfire_grace")),
+        catch_up_window=parse_duration(table.get("catch_up_window", DEFAULT_CATCH_UP_WINDOW), "[scheduler] catch_up_window"),
+    )
+
 
 @dataclass(frozen=True)
 class ScheduleEntry:
@@ -53,6 +117,16 @@ class ScheduleEntry:
     # `filesystem list-directory`, or ("admin", "users") for a nested one). Empty =
     # the runnable itself, which is only valid when it doesn't require a command.
     command: tuple[str, ...] = ()
+    # Seconds before a fire is killed (its whole process group). None = the
+    # [scheduler] default (6h on the daemon, none on cron); 0 = no limit.
+    timeout: int | None = None
+    # Run once on daemon start when fires were missed while it was down (several
+    # missed fires collapse into one run). Default: skip them, as cron does.
+    catch_up: bool = False
+
+    def effective_timeout(self, settings: SchedulerSettings) -> int:
+        """The timeout this schedule fires with on the daemon (0 = none)."""
+        return settings.timeout if self.timeout is None else self.timeout
 
     def to_dict(self) -> dict[str, Any]:
         when: dict[str, Any] = {}
@@ -77,6 +151,10 @@ class ScheduleEntry:
             out["become_method"] = self.become_method
         if self.env_file:
             out["env_file"] = self.env_file
+        if self.timeout is not None:
+            out["timeout"] = self.timeout
+        if self.catch_up:
+            out["catch_up"] = True
         return out
 
 
@@ -99,7 +177,15 @@ def parse_entry(data: dict[str, Any]) -> ScheduleEntry:
         run_as=str(data.get("run_as") or "").strip(),
         become_method=str(data.get("become_method") or "sudo").strip() or "sudo",
         env_file=str(data.get("env_file") or "").strip(),
+        timeout=None if data.get("timeout") is None else parse_duration(data.get("timeout"), f"schedule '{sid}' timeout"),
+        catch_up=_bool(data.get("catch_up", False), f"schedule '{sid}' catch_up"),
     )
+
+
+def _bool(value: Any, what: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    raise ValueError(f"{what} must be true or false (got {value!r})")
 
 
 def parse_command(raw: Any) -> tuple[str, ...]:
@@ -136,8 +222,27 @@ def read_config(path: Path) -> dict[str, Any]:
 
 def load_schedules(path: Path) -> list[ScheduleEntry]:
     """Parse all ``[[schedule]]`` entries. Invalid entries raise ``ValueError``."""
+    return load_config(path)[1]
+
+
+def load_settings(path: Path) -> SchedulerSettings:
+    """Parse the ``[scheduler]`` table. Invalid values raise ``ValueError``."""
+    return parse_settings(read_config(path).get("scheduler"))
+
+
+def load_config(path: Path) -> tuple[SchedulerSettings, list[ScheduleEntry]]:
+    """Settings + schedules from one read of the file (so the two can't come from
+    different versions of it). Duplicate ids are refused: the id is the key of
+    the crontab marker, the run label and the daemon job."""
     data = read_config(path)
-    return [parse_entry(raw) for raw in data.get("schedule", [])]
+    settings = parse_settings(data.get("scheduler"))
+    entries = [parse_entry(raw) for raw in data.get("schedule", [])]
+    seen: set[str] = set()
+    for e in entries:
+        if e.id in seen:
+            raise ValueError(f"schedule id '{e.id}' appears more than once")
+        seen.add(e.id)
+    return settings, entries
 
 
 # ── serialization (hand-written; no stdlib TOML writer) ───────────────────────
@@ -168,7 +273,7 @@ def _render_entry(entry: dict[str, Any]) -> str:
     lines = ["[[schedule]]"]
     # Scalars first (stable, readable order), then the command array, then inline
     # tables last.
-    for key in ("id", "runnable", "enabled", "run_as", "become_method", "env_file"):
+    for key in ("id", "runnable", "enabled", "run_as", "become_method", "env_file", "timeout", "catch_up"):
         if key in entry:
             lines.append(f"{key} = {_toml_scalar(entry[key])}")
     if entry.get("command"):
@@ -179,18 +284,45 @@ def _render_entry(entry: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def write_schedules(path: Path, entries: list[ScheduleEntry]) -> None:
-    """Atomically write the schedule list to ``path`` (temp file + os.replace)."""
+def _render_settings(table: dict[str, Any]) -> str:
+    lines = ["[scheduler]"]
+    for key, value in table.items():
+        if isinstance(value, (str, int, float, bool)):
+            lines.append(f"{key} = {_toml_scalar(value)}")
+    return "\n".join(lines)
+
+
+def write_schedules(path: Path, entries: list[ScheduleEntry], scheduler: dict[str, Any] | None = None) -> None:
+    """Atomically write the schedule list to ``path`` (temp file + os.replace).
+
+    The ``[scheduler]`` table is kept as it is in the file unless ``scheduler``
+    replaces it."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    header = "# runspec-scheduler config — managed by `runspec-scheduler add/remove`\n# and by runspec-console. Edit by hand only when the daemon is stopped.\n\n"
-    body = "\n\n".join(_render_entry(e.to_dict()) for e in entries)
+    if scheduler is None:
+        try:
+            scheduler = dict(read_config(path).get("scheduler") or {})
+        except Exception:  # noqa: BLE001 — a broken file is being overwritten anyway
+            scheduler = {}
+    header = "# runspec-scheduler config — managed by `runspec-scheduler add/remove/use`\n# and by runspec-console. A running daemon reloads it when it changes.\n\n"
+    parts = ([_render_settings(scheduler)] if scheduler else []) + [_render_entry(e.to_dict()) for e in entries]
+    body = "\n\n".join(parts)
     text = header + body + ("\n" if body else "")
-    tmp = path.with_name(f".{path.name}.tmp")
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     with open(tmp, "w", encoding="utf-8") as f:
         f.write(text)
         f.flush()
         os.fsync(f.fileno())
     os.replace(tmp, path)
+
+
+def set_backend(path: Path, backend: str) -> None:
+    """Write ``[scheduler] backend`` (keeping the schedules and other settings)."""
+    if backend not in BACKENDS:
+        raise ValueError(f"backend must be one of {', '.join(BACKENDS)}")
+    data = read_config(path)
+    table = dict(data.get("scheduler") or {})
+    table["backend"] = backend
+    write_schedules(path, [parse_entry(raw) for raw in data.get("schedule", [])], scheduler=table)
 
 
 def upsert_schedule(path: Path, entry: ScheduleEntry) -> list[ScheduleEntry]:

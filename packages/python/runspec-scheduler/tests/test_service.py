@@ -32,6 +32,14 @@ def test_install_no_enable_writes_unit(monkeypatch, tmp_path):
     assert "enable --now" in res["hint"]
 
 
+def test_unit_leaves_running_fires_on_restart(monkeypatch, tmp_path):
+    d = _redirect_unit_dir(monkeypatch, tmp_path)
+    service.install_service(enable=False)
+    text = (d / service.unit_name()).read_text()
+    assert "KillMode=process" in text
+    assert "Restart=on-failure" in text
+
+
 def test_install_enable_success(monkeypatch, tmp_path):
     _redirect_unit_dir(monkeypatch, tmp_path)
     monkeypatch.setattr(service.subprocess, "run", lambda *a, **k: _Proc(0))
