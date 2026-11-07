@@ -41,7 +41,9 @@ logger = logging.getLogger("runspec-console.mcp_server")
 
 # Most-restrictive-wins ordering for autonomy escalation (mirrors the core rule).
 _AUTONOMY_RANK = {"autonomous": 0, "supervised": 1, "confirm": 2, "manual": 3}
-_MAX_TOOL_NAME = 128
+_MAX_TOOL_NAME = (
+    128  # the MCP specification's limit (runspec.toolname.MCP_TOOL_NAME_MAX)
+)
 
 
 def available() -> tuple[bool, str]:
@@ -74,10 +76,27 @@ def escalate_autonomy(levels: list[str]) -> str:
     return best if saw else "confirm"
 
 
+_warned_long_names: set[str] = set()
+
+
 def sanitize_tool_name(name: str) -> str:
-    """An MCP-safe tool name: keep ``[A-Za-z0-9_-]``, replace the rest with ``_``."""
+    """An MCP-safe tool name: keep ``[A-Za-z0-9_-]``, replace the rest with ``_``,
+    and keep it within the MCP limit of 128 characters.
+
+    A longer name is never cut: cutting made two long names that share a start
+    the same name, and made the ``_2``/``_3`` collision suffix in
+    :func:`build_tools` disappear again, so that loop never ended. It is
+    shortened with :func:`runspec.toolname.fit_tool_name` instead (start of the
+    name + a hash of the whole name, stable across restarts) and logged once."""
+    from runspec.toolname import fit_tool_name, too_long_message
+
     out = "".join(c if (c.isalnum() or c in "_-") else "_" for c in str(name))
-    return (out[:_MAX_TOOL_NAME] or "tool").strip("_") or "tool"
+    out = out.strip("_") or "tool"
+    fitted = fit_tool_name(out, _MAX_TOOL_NAME)
+    if fitted != out and out not in _warned_long_names:
+        _warned_long_names.add(out)
+        logger.warning("mcp_server: %s", too_long_message(out, fitted, _MAX_TOOL_NAME))
+    return fitted
 
 
 def _coerce_bound(value: Any) -> int | float | None:

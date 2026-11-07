@@ -37,16 +37,20 @@ def test_display_name_is_namespaced_and_prefixed():
 
 
 def test_display_name_sanitises_illegal_characters():
-    # Anthropic tool names are ^[a-zA-Z0-9_-]{1,64}$ — dots/slashes/colons out.
+    # Anthropic tool names are ^[a-zA-Z0-9_-]{1,128}$ — dots/slashes/colons out.
     name = mcp_client.tool_display_name("acme.io", "list/all:things")
     assert name == "mcp_acme_io_list_all_things"
     assert all(c.isalnum() or c in "_-" for c in name)
 
 
-def test_display_name_capped_at_64_chars():
+def test_display_name_kept_within_128_chars():
     name = mcp_client.tool_display_name("s" * 40, "t" * 40)
-    assert len(name) <= 64
-    assert name.startswith("mcp_")
+    assert name == "mcp_" + "s" * 40 + "_" + "t" * 40  # 85 chars: unchanged
+    long_name = mcp_client.tool_display_name("s" * 80, "t" * 80)
+    assert len(long_name) <= 128
+    assert long_name.startswith("mcp_")
+    # Two long names sharing a start stay distinct (hash, not a cut).
+    assert long_name != mcp_client.tool_display_name("s" * 80, "t" * 79 + "u")
 
 
 def test_sanitise_empty_component_becomes_x():

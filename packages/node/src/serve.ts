@@ -7,6 +7,7 @@ import { loadRaw } from './loader';
 import { inferScript } from './inference';
 import { buildSchema } from './cli';
 import { validateDiscoverable } from './discovery';
+import { fitToolName, tooLongMessage } from './toolname';
 
 const MCP_PROTOCOL_VERSION = '2024-11-05';
 const ERR_PARSE = -32700;
@@ -55,7 +56,7 @@ export function serve(): void {
 
   const tools: Record<string, Record<string, unknown>> = {};
   const argSpecs: Record<string, Record<string, unknown>> = {};
-  const execSpecs: Record<string, { command: string | null }> = {};
+  const execSpecs: Record<string, { command: string | null; runnable?: string }> = {};
 
   const binDir = path.join(path.dirname(configPath), 'node_modules', '.bin');
   const context = serveContext();
@@ -76,9 +77,13 @@ export function serve(): void {
     }
     if (runnable.discoverable === false) continue;
     const inferred = inferScript(runnable, config.autonomyDefault);
-    tools[name] = buildSchema(name, inferred, 'mcp');
-    argSpecs[name] = inferred.args ?? {};
-    execSpecs[name] = { command: findScript(name, binDir) };
+    // Keep the tool name within the MCP limit of 128 characters: a longer name is
+    // shortened with a stable hash (toolname.ts) and named on stderr.
+    const toolName = fitToolName(name);
+    if (toolName !== name) process.stderr.write(`runspec serve: warning: ${tooLongMessage(name, toolName)}\n`);
+    tools[toolName] = { ...buildSchema(name, inferred, 'mcp'), name: toolName };
+    argSpecs[toolName] = inferred.args ?? {};
+    execSpecs[toolName] = { command: findScript(name, binDir), runnable: name };
   }
 
   const serverName = serverNameFromConfig(config as unknown as Record<string, unknown>);
@@ -89,7 +94,7 @@ export function serve(): void {
 function mcpLoop(
   tools: Record<string, Record<string, unknown>>,
   argSpecs: Record<string, Record<string, unknown>>,
-  execSpecs: Record<string, { command: string | null }>,
+  execSpecs: Record<string, { command: string | null; runnable?: string }>,
   serverName: string,
 ): void {
   const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
@@ -115,7 +120,7 @@ function dispatch(
   request: Record<string, unknown>,
   tools: Record<string, Record<string, unknown>>,
   argSpecs: Record<string, Record<string, unknown>>,
-  execSpecs: Record<string, { command: string | null }>,
+  execSpecs: Record<string, { command: string | null; runnable?: string }>,
   serverName: string,
 ): Record<string, unknown> | null {
   const method = (request['method'] as string) ?? '';
@@ -154,7 +159,7 @@ function handleToolsCall(
   params: Record<string, unknown>,
   tools: Record<string, Record<string, unknown>>,
   argSpecs: Record<string, Record<string, unknown>>,
-  execSpecs: Record<string, { command: string | null }>,
+  execSpecs: Record<string, { command: string | null; runnable?: string }>,
 ): Record<string, unknown> {
   const name = (params['name'] as string) ?? '';
   const args = (params['arguments'] as Record<string, unknown>) ?? {};
@@ -177,7 +182,7 @@ function handleToolsCall(
 
   const toolArgSpecs = argSpecs[name] ?? {};
   const argv = argsToArgv(args, toolArgSpecs);
-  const runspecEnv = argsToRunspecEnv(args, toolArgSpecs, name);
+  const runspecEnv = argsToRunspecEnv(args, toolArgSpecs, execSpecs[name]?.runnable ?? name);
   const env = { ...process.env, RUNSPEC_AGENT: '1', ...runspecEnv };
 
   const start = process.hrtime.bigint();

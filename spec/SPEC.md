@@ -580,6 +580,17 @@ contains an unknown context string.
 
 Default when unspecified: `true`.
 
+**Tool names.** `runspec serve` names each tool after its runnable, and a
+runnable with commands becomes one tool per leaf command, joined with `_`
+(`cluster_node_drain`). The MCP specification allows tool names of 1–128
+characters. A name longer than 128 is never cut: it keeps its first characters
+(any trailing `_` or `-` dropped), then `_` and the first six hex characters of
+the SHA-1 of the full name, at most 128 in all. The result is the same on every
+run and differs for two names that share a long start. `runspec serve` writes a
+warning naming the tool to stderr, and `runspec test` reports the same warning
+(it does not fail the run). Gateways that add a host or venv prefix (runspec-mcp,
+the runspec-console MCP server) apply the same rule to the prefixed name.
+
 ### `discoverable`
 
 Declares **whether** this runnable is listed by the discovery surfaces. It is a

@@ -2,6 +2,17 @@
 
 All notable changes to `runspec-mcp` are documented here.
 
+## [0.2.5] — 2026-11-07
+
+### Fixed
+
+- **Prefixed tool names stay within 128 characters.** With several hosts or
+  venvs the gateway names tools `<host>__<venv>__<leaf>`, which could go over
+  the MCP limit of 128 characters with no warning. A longer name now keeps its
+  start and ends with a short hash of the full name (`runspec.toolname`, the
+  same rule as `runspec serve`), stable across restarts, and is logged. Requires
+  `runspec >= 0.79.0`.
+
 ## [0.2.4] — 2026-11-05
 
 ### Fixed

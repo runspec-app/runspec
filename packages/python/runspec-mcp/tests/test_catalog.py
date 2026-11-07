@@ -114,3 +114,32 @@ def test_change_detection(monkeypatch):
     items["box"] = [_ITEMS[1]]  # drop deploy
     assert cat.refresh() is True  # changed
     assert fired["n"] == 2  # two real changes, not the no-op
+
+
+def _tool(name: str, host: str) -> catalog_mod.Tool:
+    return catalog_mod.Tool(
+        name=name,
+        schema={"name": name},
+        host={"name": host, "ssh": f"{host}.example"},
+        runspec_path="/opt/venv/bin/runspec",
+        group="venv",
+        runnable=name,
+        command_path=[],
+        arg_spec={},
+        autonomy="confirm",
+    )
+
+
+def test_namespace_keeps_long_names_within_128():
+    leaf = "r" * 125
+    registry = catalog_mod._namespace([_tool(leaf, "web-01"), _tool(leaf, "web-02")], True, {})
+    assert len(registry) == 2
+    for name, tool in registry.items():
+        assert len(name) <= 128
+        assert tool.schema["name"] == name
+        assert name.startswith("web-0")
+
+
+def test_namespace_short_names_unchanged():
+    registry = catalog_mod._namespace([_tool("cron_list", "web-01"), _tool("cron_list", "web-02")], True, {})
+    assert sorted(registry) == ["web-01__cron_list", "web-02__cron_list"]

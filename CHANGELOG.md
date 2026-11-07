@@ -9,6 +9,33 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.79.0] — 2026-11-07
+
+### Added
+
+- **Tool names over 128 characters are shortened and reported, never cut.**
+  The MCP specification allows tool names of up to 128 characters, and
+  `runspec serve` builds a leaf tool's name from the runnable and command names
+  (`runnable_sub_sub`), so a long runnable name or a deep command tree could go
+  over with no warning. Now a longer name keeps its start and ends with a short
+  hash of the full name (`runspec.toolname.fit_tool_name`), which stays the same
+  across runs (so a client's saved per-tool approvals keep working) and keeps two
+  long names that share a start apart. `runspec serve` names each shortened tool
+  on stderr, and `runspec test` lists it as a warning (`warnings` in `--format
+  json`) without failing the run. SPEC → `serve` → "Tool names".
+
+---
+
+## [node-0.46.0] — 2026-11-07
+
+### Added
+
+- **`runspec serve` keeps tool names within 128 characters**, the same way as
+  the Python pack: a longer runnable name keeps its start and ends with a short
+  hash (`src/toolname.ts`, byte-for-byte the same output as Python), and the
+  rename is written to stderr. The `RUNSPEC_<RUNNABLE>_ARG_*` env keys still use
+  the runnable's real name.
+
 ## [0.78.0] — 2026-11-06
 
 ### Changed
