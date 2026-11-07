@@ -1197,6 +1197,41 @@ class SchedulesMixin:
             ),
         }
 
+    def host_schedule_note(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Say who is handling failing host schedules in one venv (``host``,
+        ``venv``, ``verb`` = claim / resolve / release, ``runs`` = the failed run
+        ids, ``note``). Runs the venv's own ``runspec history <verb>`` as the venv
+        owner, so the note lands in the venv's runs index where every console and
+        ``runspec history jobs`` on the host see it; the person is recorded as the
+        sudo-ing login. A note covers the schedule's failures until it next
+        succeeds. Returns ``{ok, error?, notes?}``."""
+        from . import host_schedules as hs
+
+        payload = payload or {}
+        try:
+            argv = hs.note_argv(payload)
+        except hs.HostScheduleError as exc:
+            return {"ok": False, "error": str(exc)}
+        res = self._host_sched_call(payload, argv, program="runspec")
+        got = res["json"] or {}
+        if not res["ok"] or got.get("ok") is False:
+            err = str(got.get("error") or "") or res["error"]
+            if hs.notes_too_old(err):
+                err = (
+                    f"This venv's runspec is older than {hs.NOTES_MIN}, which keeps "
+                    "who is handling a failure; upgrade it (Update venv…)."
+                )
+            return {"ok": False, "error": err}
+        for rec in got.get("notes") or []:
+            self._host_sched_audit(
+                f"schedule.host.{argv[1]}",
+                payload,
+                str(rec.get("label") or "").removeprefix("sched:"),
+                run_id=rec.get("run_id"),
+                note=rec.get("note"),
+            )
+        return {"ok": True, "notes": got.get("notes") or []}
+
     def host_scheduler_settings(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Change a venv's daemon durations (``host``, ``venv``, and any of
         ``timeout`` / ``misfire_grace`` / ``catch_up_window``) with the venv's
@@ -1301,9 +1336,11 @@ class SchedulesMixin:
         *,
         env: dict[str, str] | None = None,
         timeout: int = 60,
+        program: str = "runspec-scheduler",
     ) -> dict[str, Any]:
-        """``runspec-scheduler <argv>`` in ``payload``'s venv as its owner.
-        ``{ok, error, json, stdout}`` — ok means exit 0."""
+        """``<program> <argv>`` (``runspec-scheduler`` by default, or ``runspec``)
+        in ``payload``'s venv as its owner. ``{ok, error, json, stdout}`` — ok
+        means exit 0."""
         from . import host_schedules as hs
 
         host = str(payload.get("host") or "")
@@ -1340,9 +1377,9 @@ class SchedulesMixin:
                 "stdout": "",
             }
         if remote:
-            binary = str(PurePosixPath(rp).parent / "runspec-scheduler")
+            binary = str(PurePosixPath(rp).parent / program)
         else:
-            binary = str(Path(rp).with_name("runspec-scheduler"))
+            binary = str(Path(rp).with_name(program))
         owner, _ = self._scheduler_owner(host, venv, remote)
         code, stdout, stderr = self._run_scheduler_as(
             host, binary, argv, owner, remote, env=env, timeout=timeout
@@ -1354,7 +1391,7 @@ class SchedulesMixin:
         low = err.lower()
         if owner and "sudo" in low and "password" in low:
             err = (
-                f"runspec-scheduler runs as this venv's owner {owner!r}, and "
+                f"{program} runs as this venv's owner {owner!r}, and "
                 f"passwordless sudo to {owner!r} was refused. ({err})"
             )
         return {"ok": False, "error": err, "json": got, "stdout": stdout}

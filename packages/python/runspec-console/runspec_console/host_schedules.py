@@ -205,6 +205,40 @@ def settings_argv(payload: dict[str, Any]) -> list[str]:
     return argv
 
 
+#: runspec version that keeps run notes (`runspec history claim/resolve/release`).
+NOTES_MIN = "0.83.0"
+
+NOTE_VERBS = ("claim", "resolve", "release")
+_RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{3,79}$")
+
+
+def note_argv(payload: dict[str, Any]) -> list[str]:
+    """``runspec history <verb> <ids> --note … --json`` for a run note. Run ids
+    are checked to the shape runspec writes (they become one argv element, never
+    a shell word); resolve needs a note."""
+    verb = str(payload.get("verb") or "")
+    if verb not in NOTE_VERBS:
+        raise HostScheduleError(f"verb must be one of {', '.join(NOTE_VERBS)}")
+    runs = [str(r).strip() for r in payload.get("runs") or [] if str(r).strip()]
+    if not runs:
+        raise HostScheduleError("pick at least one failing schedule")
+    bad = [r for r in runs if not _RUN_ID.match(r)]
+    if bad:
+        raise HostScheduleError(f"not a run id: {bad[0]!r}")
+    note = " ".join(str(payload.get("note") or "").split())[:500]
+    if verb == "resolve" and not note:
+        raise HostScheduleError("say what was done, so the next person knows")
+    argv = ["history", verb, ",".join(dict.fromkeys(runs)), "--scope", "venv", "--json"]
+    if note:
+        argv[3:3] = ["--note", note]
+    return argv
+
+
+def notes_too_old(error: str) -> bool:
+    """Whether ``error`` is a runspec that predates run notes."""
+    return "unknown history verb" in (error or "").lower()
+
+
 def too_old(error: str) -> bool:
     """Whether ``error`` is a scheduler that predates the daemon verbs."""
     return "unknown command" in (error or "").lower()
