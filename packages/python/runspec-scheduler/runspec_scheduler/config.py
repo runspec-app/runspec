@@ -325,6 +325,29 @@ def set_backend(path: Path, backend: str) -> None:
     write_schedules(path, [parse_entry(raw) for raw in data.get("schedule", [])], scheduler=table)
 
 
+#: The ``[scheduler]`` durations ``settings`` may change (backend has ``use``).
+SETTING_KEYS = ("timeout", "misfire_grace", "catch_up_window")
+
+
+def set_settings(path: Path, changes: dict[str, Any]) -> SchedulerSettings:
+    """Write ``[scheduler]`` durations (keeping the schedules, the backend and
+    any other key). Each value is validated as the daemon will read it before
+    anything is written; ``None`` puts a setting back to its default."""
+    unknown = sorted(set(changes) - set(SETTING_KEYS))
+    if unknown:
+        raise ValueError(f"not a setting: {', '.join(unknown)} (one of: {', '.join(SETTING_KEYS)})")
+    data = read_config(path)
+    table = dict(data.get("scheduler") or {})
+    for key, value in changes.items():
+        if value is None or value == "":
+            table.pop(key, None)
+        else:
+            table[key] = value
+    settings = parse_settings(table)  # raises on a bad value, before the write
+    write_schedules(path, [parse_entry(raw) for raw in data.get("schedule", [])], scheduler=table)
+    return settings
+
+
 def upsert_schedule(path: Path, entry: ScheduleEntry) -> list[ScheduleEntry]:
     """Add ``entry`` or replace the one with the same id, then write. Returns the
     new list."""

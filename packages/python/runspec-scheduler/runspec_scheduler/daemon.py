@@ -148,6 +148,18 @@ def _now() -> datetime.datetime:
     return datetime.datetime.now().astimezone()
 
 
+def installed_version() -> str:
+    """The installed runspec-scheduler version ("" when it can't be read). The
+    daemon records the one it started with; ``status`` compares the two to say
+    a restart is needed after an upgrade."""
+    try:
+        from importlib.metadata import version
+
+        return version("runspec-scheduler")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def _iso(dt: datetime.datetime | None) -> str | None:
     return dt.isoformat() if dt else None
 
@@ -252,6 +264,7 @@ class Daemon:
         self.lock_path = lock_path_for(config_path)
         self.state_path = state_path_for(config_path)
         self.started = _now()
+        self.code_version = installed_version()
 
         self._scheduler: Any = None
         self._settings = SchedulerSettings()
@@ -619,6 +632,7 @@ class Daemon:
             "venv": sys.prefix,
             "config": str(self.config_path),
             "started": _iso(self.started),
+            "scheduler_version": self.code_version,
             "heartbeat": _iso(_now()),
             "interval_s": self.interval,
             "backend": settings.backend,

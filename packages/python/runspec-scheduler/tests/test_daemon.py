@@ -411,6 +411,19 @@ class TestLockAndState:
         self._write_state(cfg, stopped=datetime.datetime.now().astimezone().isoformat())
         assert status.daemon_status(cfg)["state"] == "stopped"
 
+    def test_restart_needed_after_an_upgrade(self, tmp_path, monkeypatch):
+        cfg = tmp_path / "runspec_scheduler.toml"
+        monkeypatch.setattr(status, "_pid_is_scheduler", lambda pid: pid == os.getpid())
+        monkeypatch.setattr(daemon, "installed_version", lambda: "0.7.0")
+        self._write_state(cfg, scheduler_version="0.7.0")
+        got = status.daemon_status(cfg)
+        assert got["version"] == "0.7.0" and got["restart_needed"] is False
+        self._write_state(cfg, scheduler_version="0.6.2")  # started before pip install -U
+        assert status.daemon_status(cfg)["restart_needed"] is True
+        self._write_state(cfg)  # a daemon older than 0.7.0 records no version
+        got = status.daemon_status(cfg)
+        assert got["version"] is None and got["restart_needed"] is False
+
     def test_heartbeat_contents(self, tmp_path):
         cfg = _cfg(tmp_path / "runspec_scheduler.toml", [ScheduleEntry(id="a", when=When(every="1h"), runnable="a")])
         d = daemon.Daemon(cfg)
@@ -422,6 +435,7 @@ class TestLockAndState:
         st = daemon.read_state(cfg)
         assert st["pid"] == os.getpid() and st["backend"] == "daemon" and st["firing"] is True
         assert set(st["jobs"]) == {"a"} and st["config_error"] is None
+        assert st["scheduler_version"] == daemon.installed_version()
         assert (tmp_path / "logs" / "scheduler_state.json").is_file()
 
 

@@ -207,3 +207,56 @@ def test_strip_keeper_lines_keeps_a_line_under_a_lone_tag():
     tag = "# runspec:scheduler-keeper:/opt/venvs/ops"
     existing = [tag, "@reboot /opt/venvs/ops/bin/runspec-scheduler run --detach", tag, "0 3 * * * /usr/bin/mine"]
     assert keeper.strip_keeper_lines(existing, tag) == ["0 3 * * * /usr/bin/mine"]
+
+
+# ── restart ─────────────────────────────────────────────────────────────────────
+
+
+def test_restart_through_systemd_user(venv, monkeypatch):
+    calls = []
+    monkeypatch.setattr(keeper.subprocess, "run", lambda argv, **k: calls.append(argv) or _Proc(0))
+    keeper.apply(keeper.plan_install("systemd-user", facts=facts()))
+    calls.clear()
+    out = keeper.apply(keeper.plan_restart(facts=facts()))
+    assert out["ok"] and out["action"] == "restart" and out["manager"] == "systemd-user"
+    assert calls == [["systemctl", "--user", "restart", "runspec-scheduler-ops.service"]]
+
+
+def test_restart_through_supervisor(venv, monkeypatch):
+    sup = venv.root / "bin" / "supervisord"
+    sup.write_text("")
+    f = facts(supervisord=sup, linger=False)
+    monkeypatch.setattr(keeper.subprocess, "run", lambda argv, **k: _Proc(0))
+    monkeypatch.setattr(keeper, "_supervisord_pid", lambda: None)
+    keeper.apply(keeper.plan_install("supervisor", facts=f))
+    plan = keeper.plan_restart(facts=f)  # supervisord down: starting it starts the daemon
+    assert [a.argv for a in plan.actions] == [[str(sup), "-c", str(keeper.supervisor_conf())]]
+    monkeypatch.setattr(keeper, "_supervisord_pid", lambda: 4242)
+    plan = keeper.plan_restart(facts=f)
+    assert plan.actions[0].argv[-2:] == ["restart", "runspec-scheduler"]
+
+
+def test_restart_with_the_cron_watchdog_stops_then_detaches(venv, monkeypatch):
+    monkeypatch.setattr(keeper.subprocess, "run", lambda argv, **k: _Proc(0))
+    keeper.apply(keeper.plan_install("cron", facts=facts()))
+    monkeypatch.setattr(keeper, "_daemon_pid", lambda config: 999999)
+    plan = keeper.plan_restart(facts=facts())
+    assert [a.kind for a in plan.actions] == ["stop", "run"]
+    assert plan.actions[1].argv[-2:] == ["run", "--detach"]
+    assert plan.warnings == []
+
+
+def test_restart_without_a_keeper_starts_it_and_warns(venv):
+    plan = keeper.plan_restart(facts=facts())
+    assert [a.kind for a in plan.actions] == ["run"]
+    assert "no keeper" in plan.warnings[0]
+
+
+def test_restart_refuses_anyone_but_the_owner_and_a_system_unit(venv):
+    out = keeper.plan_restart(facts=facts(user="ops")).to_dict(written=False)
+    assert out["ok"] is False and "sudo -iu svc" in out["hint"]
+    unit = venv.etc / "runspec-scheduler-ops.service"
+    unit.parent.mkdir()
+    unit.write_text(f"ExecStart={venv.root}/bin/runspec-scheduler run\n")
+    out = keeper.plan_restart(facts=facts()).to_dict(written=False)
+    assert out["ok"] is False and out["root_steps"] == ["sudo systemctl restart runspec-scheduler-ops.service"]

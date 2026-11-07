@@ -538,6 +538,51 @@ def plan_remove(manager: str = "auto", *, config: str | None = None, facts: Fact
     return p
 
 
+def plan_restart(*, config: str | None = None, facts: Facts | None = None) -> Plan:
+    """Restart (or start) this venv's daemon through the keeper it has, so new
+    code — after ``pip install -U runspec-scheduler`` — is loaded. Fires already
+    running carry on in their own sessions and are still recorded; only the
+    daemon process is replaced. Config changes never need this (the daemon
+    reloads them by itself)."""
+    facts = facts or gather()
+    found = installed(facts=facts)
+    managers = [k["manager"] for k in found]
+    pid = _daemon_pid(config)
+    p = Plan(manager=managers[0] if managers else "none", action="restart", reason="the keeper this venv has" if managers else "no keeper is installed")
+    if "systemd" in managers:
+        p.manager = "systemd"
+        p.root_steps = [f"sudo systemctl restart {unit_name()}"]
+        p.error = "the daemon runs from a system unit, which only root can restart"
+        p.hint = f"ask root: sudo systemctl restart {unit_name()}"
+        return p
+    keeper_kind = next((m for m in ("systemd-user", "supervisor", "cron") if m in managers), "none")
+    bad = _owner_check(facts, keeper_kind if keeper_kind != "none" else "cron")
+    if bad:
+        p.error, p.hint = bad
+        return p
+    if keeper_kind == "systemd-user":
+        p.actions.append(Action("run", f"systemctl --user restart {unit_name()}", argv=["systemctl", "--user", "restart", unit_name()], systemd_env=True))
+        return p
+    if keeper_kind == "supervisor":
+        conf = supervisor_conf()
+        if _supervisord_pid():
+            sctl = [str(scripts_dir() / "supervisorctl"), "-c", str(conf), "restart", "runspec-scheduler"]
+            p.actions.append(Action("run", "supervisorctl restart runspec-scheduler", argv=sctl))
+        elif facts.supervisord is not None:
+            p.actions.append(Action("run", "start supervisord (it starts the daemon)", argv=[str(facts.supervisord), "-c", str(conf)]))
+        else:
+            p.error = "supervisord isn't installed in this venv any more"
+            p.hint = f"reinstall it: {scripts_dir() / 'python'} -m pip install 'runspec-scheduler[supervisor]'"
+        return p
+    # The cron watchdog (or no keeper at all): stop the daemon, start it detached.
+    if pid:
+        p.actions.append(Action("stop", f"stop the daemon (pid {pid})", pid=pid))
+    p.actions.append(Action("run", "start the daemon (run --detach)", argv=run_argv(config, detach=True)))
+    if keeper_kind == "none":
+        p.warnings.append("no keeper is installed, so nothing restarts the daemon after a crash or reboot; set one up: runspec-scheduler install-service --write")
+    return p
+
+
 # ── carrying a plan out ─────────────────────────────────────────────────────────
 
 

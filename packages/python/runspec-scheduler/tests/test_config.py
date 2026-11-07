@@ -86,3 +86,22 @@ def test_toml_string_escaping(tmp_path):
     loaded = load_schedules(path)
     assert loaded[0].id == 'has"quote'
     assert loaded[0].args["msg"] == 'a "b" c'
+
+
+def test_set_settings_validates_then_keeps_everything_else(tmp_path):
+    from runspec_scheduler.config import load_settings, set_backend, set_settings
+
+    path = tmp_path / "c.toml"
+    upsert_schedule(path, _entry(id="x"))
+    set_backend(path, "daemon")
+    s = set_settings(path, {"timeout": "2h", "misfire_grace": "90"})
+    assert (s.timeout, s.misfire_grace, s.backend) == (7200, 90, "daemon")
+    assert [e.id for e in load_schedules(path)] == ["x"]
+    before = path.read_text()
+    with pytest.raises(ValueError, match="timeout"):
+        set_settings(path, {"timeout": "soon"})
+    with pytest.raises(ValueError, match="not a setting"):
+        set_settings(path, {"backend": "cron"})
+    assert path.read_text() == before  # nothing written on a bad value
+    s = set_settings(path, {"timeout": None})  # back to the default
+    assert s.timeout == 6 * 3600 and load_settings(path).misfire_grace == 90

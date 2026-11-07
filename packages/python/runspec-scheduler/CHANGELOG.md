@@ -2,6 +2,28 @@
 
 All notable changes to `runspec-scheduler` are documented here.
 
+## [0.7.0] — 2026-11-07
+
+### Added
+
+- **`restart`**: restart (or start) the daemon through the keeper the venv
+  has — `systemctl --user restart`, `supervisorctl restart` (or starting
+  supervisord when it is down), or stop + `run --detach` for the cron watchdog
+  or a venv with no keeper (which it warns about). Run as the venv owner; a
+  system unit is left to root. Waits up to `--wait` seconds (15) for the new
+  daemon's first heartbeat; `--dry-run` prints the plan. Fires already running
+  carry on and are still recorded. Config changes never need it.
+- **`settings`**: show the `[scheduler]` settings, or change `--timeout`,
+  `--misfire-grace` and `--catch-up-window`. Values are validated as the daemon
+  reads them before anything is written; the schedules, backend and other keys
+  are kept, and a running daemon reloads the change by itself.
+- **`status` reports the settings and when a restart is needed.** The payload
+  gains `settings` (backend + the three durations, in seconds) and `log` (the
+  daemon's log file). The daemon records the runspec-scheduler version it
+  started with in its heartbeat; `daemon.version` shows it and
+  `daemon.restart_needed` is true when the installed version differs (an
+  upgrade the running daemon hasn't loaded).
+
 ## [0.6.2] — 2026-11-07
 
 ### Fixed

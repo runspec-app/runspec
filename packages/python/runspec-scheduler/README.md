@@ -60,6 +60,17 @@ runspec-scheduler install-service --remove --write    # remove every keeper, sto
 Run `--remove --write` before deleting a venv, so no keeper restarts a daemon
 from a folder that is gone. `status` lists the keepers under `keeper`.
 
+After upgrading runspec-scheduler, restart the daemon so it runs the new code
+(`status` shows `restart_needed` until you do). `restart` goes through the
+keeper the venv has: `systemctl --user restart`, `supervisorctl restart`, or
+for the cron watchdog (or no keeper) stop + `run --detach`. Fires already
+running carry on and are still recorded. A system unit only root can restart.
+
+```bash
+runspec-scheduler restart --dry-run    # what it would do
+runspec-scheduler restart              # restart, wait for the first heartbeat
+```
+
 ### Running the daemon as a service account
 
 `systemctl --user` needs the account's own user session (`XDG_RUNTIME_DIR` +
@@ -118,6 +129,14 @@ runnable = "report"
 cron = "0 6 * * *"
 timeout = "30m"
 catch_up = true
+```
+
+Change the `[scheduler]` durations with `settings` (the daemon reloads them by
+itself; `use` switches the backend):
+
+```bash
+runspec-scheduler settings                                  # show them
+runspec-scheduler settings --timeout 2h --misfire-grace 10m # change two
 ```
 
 The daemon writes a heartbeat to `{venv}/logs/scheduler_state.json` and a

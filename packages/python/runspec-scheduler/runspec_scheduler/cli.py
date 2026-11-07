@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -401,6 +402,66 @@ def _cmd_install_service(spec: rs.RunSpec) -> None:
         sys.exit(1)
 
 
+def _cmd_settings(spec: rs.RunSpec) -> None:
+    """Show the ``[scheduler]`` settings, or change the durations given. The
+    daemon reloads a changed config by itself; the backend has ``use``."""
+    from .config import SETTING_KEYS, set_settings
+
+    path = _cfg_path(spec)
+    changes = {key: _opt(getattr(spec, key)) for key in SETTING_KEYS}
+    changes = {k: v for k, v in changes.items() if v is not None}
+    try:
+        settings = set_settings(path, changes) if changes else load_settings(path)
+    except ValueError as exc:
+        _emit({"ok": False, "error": str(exc)})
+        sys.exit(2)
+    _emit(
+        {
+            "ok": True,
+            "config": str(path),
+            "changed": sorted(changes),
+            "settings": {
+                "backend": settings.backend,
+                "timeout": settings.timeout,
+                "misfire_grace": settings.misfire_grace,
+                "catch_up_window": settings.catch_up_window,
+            },
+        }
+    )
+
+
+def _cmd_restart(spec: rs.RunSpec) -> None:
+    """Restart (or start) the daemon through this venv's keeper, then wait a
+    little for its first heartbeat so the result says whether it came back."""
+    from . import keeper
+    from .status import daemon_status
+
+    config = _opt(spec.config)
+    plan = keeper.plan_restart(config=config)
+    if spec.dry_run.value:
+        out = plan.to_dict(written=False)
+        if not plan.error and plan.actions:
+            out["hint"] = "nothing was changed — re-run without --dry-run to restart"
+        _emit(out)
+        if plan.error:
+            sys.exit(1)
+        return
+    before = daemon_status(_cfg_path(spec)).get("pid")
+    result = keeper.apply(plan)
+    if result.get("ok"):
+        deadline = time.monotonic() + float(_opt(spec.wait) or 0)
+        daemon = daemon_status(_cfg_path(spec))
+        while time.monotonic() < deadline and not (daemon["state"] == "running" and daemon["pid"] != before):
+            time.sleep(0.5)
+            daemon = daemon_status(_cfg_path(spec))
+        result["daemon"] = {k: daemon.get(k) for k in ("state", "pid", "version", "restart_needed")}
+        if daemon["state"] != "running" or daemon["pid"] == before:
+            result["warnings"] = [*result.get("warnings", []), "the daemon hasn't reported back yet; check runspec-scheduler status in a minute"]
+    _emit(result)
+    if not result.get("ok"):
+        sys.exit(1)
+
+
 def main() -> None:
     _early_lock(sys.argv[1:])
     spec = rs.parse("runspec-scheduler")
@@ -423,6 +484,10 @@ def main() -> None:
         _cmd_use(spec)
     elif command == "install-service":
         _cmd_install_service(spec)
+    elif command == "settings":
+        _cmd_settings(spec)
+    elif command == "restart":
+        _cmd_restart(spec)
     else:  # pragma: no cover - require-command makes this unreachable
-        _emit({"error": "no command — try: sync, status, use, add, remove, list, run-now, run, install-service"})
+        _emit({"error": "no command — try: sync, status, use, settings, add, remove, list, run-now, run, restart, install-service"})
         sys.exit(2)
