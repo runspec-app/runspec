@@ -1750,10 +1750,28 @@ export const mockApi: BridgeApi = {
           ],
         },
       })
+      out.push({
+        host: 'prod-1', group: 'platform-core', available: true, ok: true, owner: 'svc-runner',
+        status: {
+          ok: true, venv: 'platform-core', config: '/opt/venvs/platform-core/runspec_scheduler.toml', backend: 'cron', stale: [], errors: [],
+          schedules: [{
+            id: 'log-rotate-nightly', runnable: 'log-rotate', enabled: true, when: { cron: '30 1 * * *' }, args: {}, run_as: 'svc-runner',
+            installable: true, not_installable_reason: null, installed: true, line: 'exec',
+            next_run: new Date(Date.now() + 7 * 3600_000).toISOString(), runs: [], last_output: null,
+          }],
+        },
+      })
       out.push({ host: hosts.find(h => h !== 'local'), group: 'legacy', available: true, ok: false, owner: 'root', error: "sudo: a password is required" })
     }
     return out
   },
+
+  host_schedule_save: async (p) => {
+    if (!p.id.trim()) return { ok: false, error: 'Schedule id: letters, digits, ., _ or -.', warnings: [] }
+    return { ok: true, id: p.id, warnings: [], ...(p.backend === 'cron' ? { sync: { installed: 1, skipped: [], users: ['svc-ops'] } } : {}) }
+  },
+  host_schedule_remove: async (p) => ({ ok: true, id: p.id, warnings: [] }),
+  host_schedule_sync: async () => ({ ok: true, warnings: [], sync: { installed: 2, skipped: [], users: ['svc-ops'] } }),
 
   history_db_stats: async (_host, group) => ({
     ok: true, group, exists: true,

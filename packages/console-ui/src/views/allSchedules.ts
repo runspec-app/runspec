@@ -71,8 +71,21 @@ export interface DaemonVenv {
   daemon: NonNullable<NonNullable<SharedSchedulesVenv['status']>['daemon']> | null
 }
 
+/** A venv whose runspec-scheduler status was read — a place a host schedule can
+ *  be added (the editor's "Where" choices). */
+export interface SchedulerVenv {
+  key: string
+  host: string
+  hostGroup: string
+  venv: string
+  backend: 'cron' | 'daemon'
+  owner: string
+}
+
 export interface Collected {
   rows: ScheduleRow[]
+  /** Every venv whose scheduler status was read, in host/venv order. */
+  venvs: SchedulerVenv[]
   notes: VenvNote[]
   daemons: DaemonVenv[]
   /** `host/venv` of each venv with no runspec-scheduler installed. */
@@ -179,6 +192,7 @@ export function collectRows(
   const notes: VenvNote[] = []
   const daemons: DaemonVenv[] = []
   const without: string[] = []
+  const editable: SchedulerVenv[] = []
 
   for (const s of consoleSchedules) {
     const enabled = s.enabled !== false
@@ -228,6 +242,7 @@ export function collectRows(
     }
     const st = v.status
     const backend = venvBackend(v)
+    editable.push({ key: base, host, hostGroup, venv, backend, owner: v.owner ?? '' })
     for (const e of st.errors ?? []) notes.push({ key: `${base}::err::${e}`, host, venv, source: backend, message: e })
     if (backend === 'daemon') {
       daemons.push({ key: base, host, venv, owner: v.owner ?? '', daemon: st.daemon ?? null })
@@ -269,7 +284,8 @@ export function collectRows(
       })
     }
   }
-  return { rows, notes, daemons, without }
+  editable.sort((a, b) => a.host.localeCompare(b.host) || a.venv.localeCompare(b.venv))
+  return { rows, venvs: editable, notes, daemons, without }
 }
 
 /** Does a row belong under a card? A can't-read venv shows on both host cards. */

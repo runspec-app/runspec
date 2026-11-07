@@ -1555,6 +1555,38 @@ export interface SharedSchedulesVenv {
   status?: SharedSchedulesStatus
 }
 
+// Editing a venv's runspec-scheduler schedules from the Schedules tab (0.385.0).
+// The console runs the venv's own `runspec-scheduler add|remove|sync` as the
+// venv owner; a cron venv's crontab is synced after each change.
+export interface HostScheduleTarget {
+  host: string
+  venv: string
+  backend: 'cron' | 'daemon'
+}
+
+export interface HostScheduleSave extends HostScheduleTarget {
+  id: string
+  original_id?: string            // set when editing (a new id renames)
+  runnable: string
+  command?: string[]
+  cron?: string
+  every?: string                  // daemon only
+  timezone?: string
+  args?: Record<string, unknown>
+  password_args?: string[]        // names the backend refuses to store
+  enabled?: boolean
+  timeout?: string                // 90m / 6h / seconds; 0 = no limit
+  catch_up?: boolean              // daemon only
+}
+
+export interface HostScheduleResult {
+  ok: boolean
+  id?: string
+  error?: string
+  warnings: string[]
+  sync?: { installed: number; skipped: { id: string; reason: string }[]; users: string[] }
+}
+
 export interface LogPruneResult {
   group: string
   ok: boolean
@@ -3001,6 +3033,10 @@ export interface BridgeApi {
   // Every venv on several hosts in one bounded fan-out (the All schedules list
   // over the active profile); each item carries its `host`.
   shared_schedules_all: (hosts: string[]) => Promise<SharedSchedulesVenv[]>
+  // Add / edit, remove, or crontab-sync one venv's host schedules (0.385.0).
+  host_schedule_save: (payload: HostScheduleSave) => Promise<HostScheduleResult>
+  host_schedule_remove: (payload: HostScheduleTarget & { id: string }) => Promise<HostScheduleResult>
+  host_schedule_sync: (payload: { host: string; venv: string }) => Promise<HostScheduleResult>
   history_db_stats: (host: string, group: string) => Promise<HistoryDbStats>
   history_db_maintain: (host: string, group: string, action: HistoryDbAction, olderThan?: string, maxRows?: number, runAs?: string) => Promise<HistoryDbResult>
   // Owner of a venv's dir — pre-fills the "Run as" field on the destructive Logs

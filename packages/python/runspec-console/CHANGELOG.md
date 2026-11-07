@@ -9,6 +9,28 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.385.0] — 2026-11-07
+
+Edit host schedules from the Schedules tab.
+
+### Added
+
+- **New host schedule, Edit, Pause / Resume, Remove and Sync crontab** on the
+  All, Host cron and Host daemon cards. The dialog picks a venv whose
+  runspec-scheduler was read, a runnable and subcommand from that venv with the
+  Forms argument form (only changed arguments are stored), the schedule id
+  (suggested; a new id renames), cron or (daemon) interval, timezone, enabled,
+  timeout and (daemon) catch-up. Saving runs the venv's own
+  `runspec-scheduler add` / `remove` as the venv owner, then `sync` on a cron
+  venv; a daemon reloads by itself. The console never writes the crontab or the
+  scheduler config itself. Rows out of step with the crontab (*not installed*,
+  *stale line*, *legacy line*) get a **Sync crontab** button.
+- Password arguments aren't offered and are refused if sent: a host schedule
+  carries no credentials (set them in the venv's `.runspec_env`).
+- Audit events `schedule.host.saved` / `removed` / `synced` (and `*_failed`).
+- Bridge `host_schedule_save` / `host_schedule_remove` / `host_schedule_sync`;
+  pure checks in `host_schedules.py`.
+
 ## [0.384.0] — 2026-11-07
 
 ### Added

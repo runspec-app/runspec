@@ -516,3 +516,20 @@ export function DefaultArgsCollapse({ count, children }: { count: number; childr
     />
   )
 }
+
+// Front-line validation of a runnable/runbook arg map — required + numeric range,
+// mirroring the Forms tab's RunModal/RunbookRunModal. Exported for unit tests.
+export function validateArgs(args: ArgDef[], values: Record<string, unknown>): Record<string, string> {
+  const errs: Record<string, string> = {}
+  for (const a of args) {
+    const v = values[a.name]
+    if (a.required && (v === undefined || v === '')) {
+      errs[a.name] = 'Required'
+    } else if (a.range && (a.type === 'int' || a.type === 'float') && v !== undefined && v !== '') {
+      const n = Number(v)
+      const [lo, hi] = a.range
+      if (n < lo || n > hi) errs[a.name] = `Must be between ${lo} and ${hi}`
+    }
+  }
+  return errs
+}
