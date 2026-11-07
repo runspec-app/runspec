@@ -314,8 +314,10 @@ does: a prompt's first few words, `runbook <id>`, `saved run <id>`, or the
 runnable and subcommand. The generated id (`rs-prompt-…`) is never shown.
 
 These schedules fire only while this console is open. For **always-on, shared**
-schedules that run on the host itself, use `runspec-scheduler`'s cron backend on
-that host (see [the cron scheduler design](design/cron-scheduler.md)).
+schedules that run on the host itself, use `runspec-scheduler` on that host: its
+cron backend (the default, see [the cron scheduler design](design/cron-scheduler.md))
+or, from 0.5.0, its daemon backend (`runspec-scheduler use daemon`, which adds
+`every` intervals and catch-up; see [the daemon design](design/venv-scheduler.md)).
 
 ### All schedules: this console and every host — read-only for hosts
 

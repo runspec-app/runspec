@@ -9,6 +9,16 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.379.1] — 2026-11-07
+
+### Fixed
+
+- A host with `runspec-scheduler` in several venvs no longer prints
+  "'runspec-scheduler' defined in multiple installed packages on host …, keeping
+  first" for every extra venv on every discovery. A runnable declared
+  `discoverable = false` is still kept once per host but dropped quietly, since
+  the console never lists it. Visible runnables found in two venvs still warn.
+
 ## [0.379.0] — 2026-11-07
 
 ### Added

@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from runspec_scheduler import cronsync
-from runspec_scheduler.config import ScheduleEntry
+from runspec_scheduler.config import ScheduleEntry, SchedulerSettings
 from runspec_scheduler.discovery import Target
 from runspec_scheduler.timing import When
 
@@ -125,7 +125,7 @@ class TestPlanCrontab:
 
 class TestSync:
     def _wire(self, monkeypatch, entries, *, installed=("backup",)):
-        monkeypatch.setattr(cronsync, "load_schedules", lambda _p: entries)
+        monkeypatch.setattr(cronsync, "load_config", lambda _p: (SchedulerSettings(), entries))
         monkeypatch.setattr(cronsync, "_home_of", lambda user: f"/home/{user}" if user else "/home/self")
 
         def resolve(name):

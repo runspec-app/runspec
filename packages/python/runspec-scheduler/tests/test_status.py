@@ -96,7 +96,8 @@ def test_join(env, monkeypatch):
     assert lo["result"]["exit_code"] == 2
     # interval schedules aren't installable on the cron backend
     assert often["installable"] is False and often["installed"] is False
-    assert out["stale"] == [{"id": "gone", "user": "(self)"}]
+    assert out["stale"] == [{"id": "gone", "user": "(self)", "reason": "not in the config"}]
+    assert out["backend"] == "cron" and out["daemon"]["state"] == "stopped"
 
 
 def test_unreadable_crontab_is_unknown_not_fatal(env, monkeypatch):

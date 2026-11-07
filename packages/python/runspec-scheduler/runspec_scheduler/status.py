@@ -17,6 +17,7 @@ runspec-console's **Shared schedules** view makes over SSH.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 from pathlib import Path
@@ -25,7 +26,7 @@ from typing import Any
 from runspec import logs as rs_logs
 from runspec import runsdb
 
-from .config import ScheduleEntry, load_schedules
+from .config import ScheduleEntry, SchedulerSettings, load_config
 from .cronsync import LABEL_PREFIX, MARKER_PREFIX, _crontab_argv, _installable, read_managed_users, resolve_entry
 from .runner import venv_name
 from .timing import next_fire_time
@@ -165,6 +166,74 @@ def last_output(row: dict[str, Any], limit: int = DEFAULT_OUTPUT_BYTES) -> dict[
     return out
 
 
+# ── the daemon ──────────────────────────────────────────────────────────────────
+
+
+def _pid_is_scheduler(pid: int) -> bool:
+    """Whether ``pid`` is alive and (where /proc says) a runspec-scheduler — so a
+    pid reused by another process after a crash doesn't read as running."""
+    from .daemon import _pid_alive
+
+    if not _pid_alive(pid):
+        return False
+    try:
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        return True  # no /proc (or not ours to read): trust the pid
+    return b"runspec-scheduler" in cmdline or b"runspec_scheduler" in cmdline
+
+
+def daemon_status(config_path: Path) -> dict[str, Any]:
+    """The daemon's state from its heartbeat file: ``running`` (alive and
+    heartbeating), ``stale`` (alive but no heartbeat for three intervals — hung)
+    or ``stopped``. ``firing`` is true only while it runs on the daemon backend."""
+    import datetime
+
+    from .daemon import read_state
+
+    out: dict[str, Any] = {
+        "state": "stopped",
+        "firing": False,
+        "pid": None,
+        "started": None,
+        "heartbeat": None,
+        "heartbeat_age_s": None,
+        "uptime_s": None,
+        "interval_s": None,
+        "config_error": None,
+        "running": [],
+        "jobs": {},
+    }
+    st = read_state(config_path)
+    if not st:
+        return out
+    pid = st.get("pid")
+    interval = int(st.get("interval_s") or 5)
+    out.update(
+        pid=pid,
+        started=st.get("started"),
+        heartbeat=st.get("heartbeat"),
+        interval_s=interval,
+        config_error=st.get("config_error"),
+        stopped_at=st.get("stopped"),
+    )
+    now = datetime.datetime.now().astimezone()
+    with contextlib.suppress(Exception):
+        out["heartbeat_age_s"] = round((now - datetime.datetime.fromisoformat(str(st["heartbeat"]))).total_seconds(), 1)
+    alive = isinstance(pid, int) and not st.get("stopped") and _pid_is_scheduler(pid)
+    if not alive:
+        return out
+    with contextlib.suppress(Exception):
+        out["uptime_s"] = int((now - datetime.datetime.fromisoformat(str(st["started"]))).total_seconds())
+    age = out["heartbeat_age_s"]
+    out["state"] = "stale" if age is None or age > 3 * interval else "running"
+    out["firing"] = out["state"] == "running" and bool(st.get("firing"))
+    out["running"] = st.get("running") or []
+    out["jobs"] = st.get("jobs") or {}
+    out["fires"] = st.get("fires")
+    return out
+
+
 # ── the join ────────────────────────────────────────────────────────────────────
 
 
@@ -188,12 +257,18 @@ def status(config_path: Path, *, runs: int = 5, output_bytes: int = DEFAULT_OUTP
         "stale": [],
         "errors": [],
     }
+    settings = SchedulerSettings()
+    entries: list[ScheduleEntry] = []
     try:
-        entries: list[ScheduleEntry] = load_schedules(config_path)
+        settings, entries = load_config(config_path)
     except Exception as exc:  # noqa: BLE001 — a bad config is reported, not raised
         payload["ok"] = False
         payload["errors"].append(f"could not read {config_path}: {exc}")
-        entries = []
+    payload["backend"] = settings.backend
+    daemon = daemon_status(config_path)
+    jobs = daemon.pop("jobs")
+    payload["daemon"] = daemon
+    on_daemon = settings.backend == "daemon"
 
     # Crontabs of every account a schedule targets + any we've managed before.
     accounts: dict[str, str] = {e.run_as: e.become_method for e in entries}
@@ -203,22 +278,34 @@ def status(config_path: Path, *, runs: int = 5, output_bytes: int = DEFAULT_OUTP
     configured_ids = {e.id for e in entries}
     for user, ids in installed.items():
         for sid in sorted(ids or {}):
-            if sid not in configured_ids:
-                payload["stale"].append({"id": sid, "user": user or "(self)"})
+            if on_daemon:
+                # The daemon fires these; a crontab line too fires them twice.
+                payload["stale"].append({"id": sid, "user": user or "(self)", "reason": "backend is daemon"})
+            elif sid not in configured_ids:
+                payload["stale"].append({"id": sid, "user": user or "(self)", "reason": "not in the config"})
 
     for entry in entries:
         record = entry.to_dict()
-        installable, reason = _installable(entry)
+        installable, reason = _installable(entry, settings.backend)
         if installable:
             target, reason = resolve_entry(entry)
             installable = target is not None
         record["installable"] = installable
         record["not_installable_reason"] = reason or None
-        user_ids = installed.get(entry.run_as)
-        record["installed"] = None if user_ids is None else entry.id in user_ids
-        record["line"] = None if user_ids is None else user_ids.get(entry.id)
+        record["catch_up"] = entry.catch_up
+        record["timeout"] = entry.effective_timeout(settings) if on_daemon else entry.timeout
         nxt = next_fire_time(entry.when) if entry.enabled else None
         record["next_run"] = nxt.isoformat() if nxt else None
+        if on_daemon:
+            # "Installed" = the running daemon has the job; unknown when it isn't running.
+            record["line"] = "daemon"
+            record["installed"] = (entry.id in jobs) if daemon["firing"] else None
+            if daemon["firing"] and jobs.get(entry.id):
+                record["next_run"] = jobs[entry.id]
+        else:
+            user_ids = installed.get(entry.run_as)
+            record["installed"] = None if user_ids is None else entry.id in user_ids
+            record["line"] = None if user_ids is None else user_ids.get(entry.id)
 
         rows = _runs_for(f"{LABEL_PREFIX}{entry.id}", runs, entry.run_as)
         record["runs"] = [_run_summary(r) for r in rows]

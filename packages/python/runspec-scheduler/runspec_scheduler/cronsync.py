@@ -48,7 +48,7 @@ from typing import Any
 
 from runspec.become import build_become_argv
 
-from .config import ScheduleEntry, load_schedules
+from .config import ScheduleEntry, load_config, load_schedules
 from .discovery import Target, check_invocation, resolve_target
 from .invocation import plan_invocation
 from .runner import scripts_dir
@@ -81,6 +81,7 @@ class SyncResult:
     errors: list[dict[str, str]] = field(default_factory=list)
     users: list[str] = field(default_factory=list)
     dry_run: bool = False
+    backend: str = "cron"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -90,6 +91,7 @@ class SyncResult:
             "skipped": self.skipped,
             "errors": self.errors,
             "users": sorted(self.users),
+            "backend": self.backend,
         }
 
 
@@ -107,6 +109,53 @@ def _home_of(user: str) -> str:
         return "/tmp"
 
 
+def lock_path(home: str, sched_id: str) -> str:
+    """The ``runspec exec --lock`` file for one schedule, under ``home``."""
+    return f"{home}/{_LOCK_SUBDIR}/{sched_id}.lock"
+
+
+def exec_invocation(
+    runspec_binary: str,
+    runnable: str,
+    args: dict[str, Any],
+    env_file: str,
+    *,
+    home: str,
+    sched_id: str,
+    command: tuple[str, ...] | list[str] = (),
+    spec: dict[str, Any] | None = None,
+    timeout: int | None = None,
+) -> tuple[dict[str, str], list[str]]:
+    """The environment and argv of one schedule's ``runspec exec`` fire.
+
+    Shared by both backends, so a cron fire and a daemon fire run the same
+    command: ``runspec exec --label sched:<id> --trigger schedule --lock <lock>
+    [--timeout N] <runnable> -- <globals> <command path> <command args>``. The
+    environment carries only ``RUNSPEC_AGENT``, the ``RUNSPEC_ENV_FILE`` path
+    and any ``RUNSPEC_<R>_ARG_<FLAG>=0`` a default-true flag needs — never a
+    secret. ``timeout`` (seconds) adds ``--timeout`` when positive."""
+    plan = plan_invocation(runnable, spec or {}, command, args)
+    env = {"RUNSPEC_AGENT": "1"}
+    if env_file:
+        env["RUNSPEC_ENV_FILE"] = env_file
+    env.update(plan.env)  # e.g. RUNSPEC_<R>_ARG_<FLAG>=0 — a default-true flag switched off (argv can't)
+    argv = [
+        str(runspec_binary),
+        "exec",
+        "--label",
+        f"{LABEL_PREFIX}{sched_id}",
+        "--trigger",
+        "schedule",
+        "--lock",
+        lock_path(home, sched_id),
+    ]
+    if timeout:
+        argv += ["--timeout", str(int(timeout))]
+    # globals, then the subcommand path, then the command's own args
+    argv += [runnable, "--", *plan.argv]
+    return env, argv
+
+
 def render_command(
     runspec_binary: str,
     runnable: str,
@@ -117,6 +166,7 @@ def render_command(
     sched_id: str,
     command: tuple[str, ...] | list[str] = (),
     spec: dict[str, Any] | None = None,
+    timeout: int | None = None,
 ) -> str:
     """The shell command a crontab line runs for one schedule.
 
@@ -131,30 +181,13 @@ def render_command(
     ``run_as``'s crontab, so cron already runs it as that account (and ``exec``
     doesn't escalate to the account it's already running as). The trailing
     redirect only stops cron mailing the tee'd output. Every interpolated value
-    is ``shlex``-quoted."""
-    lock = f"{home}/{_LOCK_SUBDIR}/{sched_id}.lock"
-    plan = plan_invocation(runnable, spec or {}, command, args)
-    env_tokens = ["env", "RUNSPEC_AGENT=1"]
-    if env_file:
-        env_tokens.append(f"RUNSPEC_ENV_FILE={env_file}")
-    # e.g. RUNSPEC_<R>_ARG_<FLAG>=0 — a default-true flag switched off (argv can't)
-    env_tokens += [f"{k}={v}" for k, v in sorted(plan.env.items())]
-    run_tokens = [
-        *env_tokens,
-        str(runspec_binary),
-        "exec",
-        "--label",
-        f"{LABEL_PREFIX}{sched_id}",
-        "--trigger",
-        "schedule",
-        "--lock",
-        lock,
-        runnable,
-        "--",
-        # globals, then the subcommand path, then the command's own args
-        *plan.argv,
-    ]
-    return f"{shlex.join(run_tokens)} >/dev/null 2>&1"
+    is ``shlex``-quoted. A cron line carries ``--timeout`` only when the schedule
+    sets its own ``timeout`` (the 6h default is the daemon's)."""
+    env, argv = exec_invocation(runspec_binary, runnable, args, env_file, home=home, sched_id=sched_id, command=command, spec=spec, timeout=timeout)
+    agent = [f"RUNSPEC_AGENT={env.pop('RUNSPEC_AGENT')}"]
+    env_file_tok = [f"RUNSPEC_ENV_FILE={env.pop('RUNSPEC_ENV_FILE')}"] if "RUNSPEC_ENV_FILE" in env else []
+    env_tokens = ["env", *agent, *env_file_tok, *(f"{k}={v}" for k, v in sorted(env.items()))]
+    return f"{shlex.join([*env_tokens, *argv])} >/dev/null 2>&1"
 
 
 def render_block(sched_id: str, cron_expr: str, command: str) -> list[str]:
@@ -259,12 +292,14 @@ def write_managed_users(config_path: Path, users: list[str]) -> None:
 # ── reconcile ───────────────────────────────────────────────────────────────────
 
 
-def _installable(entry: ScheduleEntry) -> tuple[bool, str]:
-    """Whether ``entry`` can be installed on the cron backend, else (False, reason)."""
+def _installable(entry: ScheduleEntry, backend: str = "cron") -> tuple[bool, str]:
+    """Whether ``entry`` can fire on ``backend``, else (False, reason)."""
     if not entry.enabled:
         return False, "disabled"
+    if backend == "daemon":
+        return True, ""
     if entry.when.every:
-        return False, "interval schedules ('every') are not supported on the cron backend; use a cron expression"
+        return False, "interval schedules ('every') need the daemon backend (runspec-scheduler use daemon); on cron use a cron expression"
     if not entry.when.cron:
         return False, "no cron expression"
     return True, ""
@@ -303,7 +338,14 @@ def sync(config_path: Path, *, dry_run: bool = False) -> SyncResult:
     or whose runnable isn't installed in this venv. Best-effort per account — one
     account's crontab error doesn't abort the others."""
     result = SyncResult(dry_run=dry_run)
-    entries = load_schedules(config_path)
+    settings, entries = load_config(config_path)
+    if settings.backend != "cron":
+        # The daemon fires these schedules, so the crontab should hold none of this
+        # venv's lines (one left behind would fire every schedule twice): on a
+        # daemon venv, sync strips them.
+        cleaned = remove_all(config_path, dry_run=dry_run)
+        cleaned.backend = settings.backend
+        return cleaned
 
     # Resolve + filter, grouping the installable ones by target account.
     groups: dict[tuple[str, str, str], list[tuple[ScheduleEntry, Target]]] = {}
@@ -338,6 +380,7 @@ def sync(config_path: Path, *, dry_run: bool = False) -> SyncResult:
                 sched_id=entry.id,
                 command=entry.command,
                 spec=_target.spec,
+                timeout=entry.timeout or None,
             )
             blocks.append(render_block(entry.id, entry.when.cron, command))
             result.installed.append({"id": entry.id, "runnable": entry.runnable, "user": user or "(self)"})
@@ -355,4 +398,45 @@ def sync(config_path: Path, *, dry_run: bool = False) -> SyncResult:
 
     if not dry_run and not result.errors:
         write_managed_users(config_path, sorted(current_users))
+    return result
+
+
+def remove_all(config_path: Path, *, dry_run: bool = False) -> SyncResult:
+    """Strip every marked ``# runspec:sched:*`` block from every account this venv
+    manages (and every account its schedules name), leaving other lines alone.
+    Used when a venv moves to the daemon backend so no schedule fires twice."""
+    result = SyncResult(dry_run=dry_run)
+    try:
+        entries = load_schedules(config_path)
+    except Exception:  # noqa: BLE001 — a broken config still lets us clean up
+        entries = []
+    accounts: dict[str, str] = {}
+    for e in entries:
+        target = None
+        try:
+            target = resolve_target(e.runnable)
+        except Exception:  # noqa: BLE001
+            target = None
+        user = e.run_as or (target.run_as if target else "")
+        accounts.setdefault(user, e.become_method or (target.become_method if target else "sudo"))
+    for u in read_managed_users(config_path):
+        accounts.setdefault(u, "sudo")
+    accounts.setdefault("", "sudo")
+    remaining: list[str] = []
+    for user, method in sorted(accounts.items()):
+        label = user or "(self)"
+        try:
+            existing = _read_crontab(user, method, None)
+            new_lines = plan_crontab(existing, [])
+            if new_lines != existing:
+                removed = [ln[len(MARKER_PREFIX) :].strip() for ln in existing if ln.startswith(MARKER_PREFIX)]
+                result.installed.extend({"id": sid, "user": label, "removed": "true"} for sid in removed)
+                if not dry_run:
+                    _write_crontab(new_lines, user, method, None)
+            result.users.append(label)
+        except RuntimeError as exc:
+            result.errors.append({"user": label, "error": str(exc)})
+            remaining.append(user)
+    if not dry_run:
+        write_managed_users(config_path, remaining)
     return result

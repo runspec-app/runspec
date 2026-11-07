@@ -2,6 +2,105 @@
 
 All notable changes to `runspec-scheduler` are documented here.
 
+## [0.5.0] — 2026-11-07
+
+The daemon is back, as a second backend beside host cron. Each venv picks one:
+`[scheduler] backend = "cron"` (the default, unchanged) or `"daemon"`.
+
+### Added
+
+- **`[scheduler]` table** in `runspec_scheduler.toml`: `backend` (`cron` /
+  `daemon`), `timeout` (default for every fire, `6h`; `0` = no limit),
+  `misfire_grace` (default `5m`) and `catch_up_window` (default `1d`).
+  Durations take seconds or `90m` / `6h` / `1d`. `write_schedules` keeps the
+  table.
+- **`use cron|daemon`** switches a venv's backend. Switching to the daemon first
+  removes this venv's marked crontab lines (and refuses to switch if it can't);
+  switching back to cron writes them with `sync`. The JSON result says whether
+  the daemon is still running.
+- **Per-schedule `timeout`** (`add --timeout 30m`) and **`catch_up`**
+  (`add --catch-up`). With `catch_up = true`, a daemon that starts after a fire
+  was due (down, rebooting, paused) runs one coalesced fire straight away, if the
+  missed fire is within `catch_up_window`. Without it, missed fires are skipped
+  and recorded.
+- **`status` reports the daemon**: `backend` plus a `daemon` block (`state` =
+  running / stale / stopped, pid, uptime, heartbeat age, `config_error`, running
+  fires, fire count). On the daemon backend each schedule's `next_run` comes from
+  the daemon and `installed` means the daemon holds the job. A crontab line left
+  behind on a daemon venv shows as stale with reason `backend is daemon`.
+- **Heartbeat** at `{venv}/logs/scheduler_state.json`, written atomically every
+  few seconds (`run --reload-interval`).
+- **One daemon per venv**: `run` takes an flock on `runspec_scheduler.lock` next
+  to the config before anything else. A second `run` prints who holds it and
+  exits 0, without leaving a run record.
+
+### Changed
+
+- **Every daemon fire goes through `runspec exec --label sched:<id> --trigger
+  schedule --lock …`**, the same command a cron line runs. Each fire is one
+  recorded run with its observed exit code and captured output, and an overlap
+  with a still-running fire is a recorded `skipped` run. The daemon doesn't
+  capture output any more (it only reaps the exit code).
+- `every` schedules need the daemon backend; `add --every` on a cron venv now
+  says so and points at `use daemon`. `sync` on a daemon venv writes no lines and
+  removes any this venv left behind (its result says `backend: daemon`).
+- A cron line gets `--timeout` only when its schedule sets one; cron fires keep
+  no default limit.
+- The systemd unit template sets `KillMode=process`, so restarting the daemon
+  leaves running fires to finish.
+- Removed `runner.run_runnable` and `runner.provenance_env` (unused since fires
+  go through `runspec exec`).
+
+### Fixed
+
+The 15 issues from the robustness review, each with a test that starts the real
+daemon and the real `runspec exec` (`tests/test_daemon_process.py`):
+
+1. A fire that started more than 1 second late was skipped with only a log line.
+   `misfire_grace_time` is now 5 minutes, and a fire missed past it is recorded
+   as a `skipped` run plus a `scheduler.fire_missed` audit event, including the
+   run times APScheduler's coalescing drops.
+2. A fire due while the previous one was still running was dropped silently. It
+   now reaches `runspec exec --lock`, which records it as `skipped`.
+3. Every config change removed and re-added all jobs, restarting `every`
+   intervals. Reloads now diff the config and leave unchanged jobs alone.
+4. Each fire re-read the config, so a half-written file dropped the fire. Fires
+   use the last config that loaded cleanly.
+5. An error resolving the runnable (mid `pip install`) left no record. Every fire
+   is wrapped; a fire that can't start is a `failed` run (127 runnable missing,
+   2 bad args, 126 can't execute, 70 scheduler error).
+6. A hung runnable held a worker forever. Fires time out after 6 hours by
+   default: `runspec exec` stops the run, and the daemon then kills the run's
+   whole process group, with a backstop that kills the group itself if exec
+   doesn't return. The heartbeat lists running fires.
+7. Captured output kept a fire open while a background child held stdout, and
+   held a chatty runnable's output in memory. Fires run with stdin/stdout/stderr
+   on `/dev/null`; exec captures the output into the run's log.
+8. Invalid UTF-8 output made a finished run look failed. Fixed by 7.
+9. A config that failed to parse at start left a daemon with no jobs. `run` now
+   exits 1; a config that breaks later keeps the last good jobs and shows
+   `config_error`.
+10. The daemon's own run record stayed `running` for weeks, and its log lines
+    appeared twice. It closes its run record at start, configures logging once,
+    and records `scheduler.daemon` started / stopped audit events.
+11. Config changes were detected by mtime alone. The daemon now compares mtime
+    (ns), size and inode, and SIGHUP reloads at once.
+12. SIGHUP killed the daemon. It now reloads.
+13. Stopping waited for every running fire. Each fire runs in its own session and
+    survives a daemon stop; the daemon exits within a second.
+14. An unexpected error in the loop exited without cleaning up. The loop is
+    wrapped in try/finally and exits 1 so the keeper restarts it.
+15. A keeper's thin environment broke runnables that call `/usr/sbin/…` tools.
+    The daemon fills in a standard `PATH` and `LANG=C.UTF-8` when missing and
+    drops inherited `RUNSPEC_*` variables from fires.
+
+### Known limit
+
+- A `run_as` fire escalated through `sudo` runs as another account. When it
+  times out, the daemon can't signal that account's processes, so a child the
+  runnable left behind may outlive the timeout. `runspec exec` still stops the
+  run itself.
+
 ## [0.4.1] — 2026-09-30
 
 ### Changed

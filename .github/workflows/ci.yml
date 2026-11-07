@@ -1276,10 +1276,18 @@ jobs:
           pip install ../runspec
           pip install -e ".[dev]"
 
+      - name: Install cron (the real-crontab tests)
+        run: |
+          command -v crontab || { sudo apt-get update -q && sudo apt-get install -y -q cron; }
+
       - name: Type check
         run: mypy runspec_scheduler
 
       - name: Run tests
+        # The process tests start the real daemon and real `runspec exec`;
+        # the crontab ones edit this runner's own crontab.
+        env:
+          RUNSPEC_SCHEDULER_REAL_CRONTAB: "1"
         run: pytest
 
       - name: Build wheel

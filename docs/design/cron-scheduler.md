@@ -1,14 +1,15 @@
 # Cron-backed shared scheduler (v1)
 
-> **Status: shipping — the cron backend (`runspec-scheduler sync`) landed
-> additively in `runspec-scheduler` 0.2.0** (`cronsync` module); the daemon
-> (`run` / `install-service`) stays for now and is removed once the cron backend
-> is validated in the wild. The chosen v1 execution model for a shared scheduler,
-> superseding the long-running daemon in [`venv-scheduler.md`](venv-scheduler.md).
-> The package's reusable core (config, timing, `RUNSPEC_ENV_FILE` credential
-> mechanism) is kept; the **APScheduler + `systemctl --user` daemon is replaced by
-> a translator that writes the OS user's crontab**, so there is no long-running
-> process of ours to install, supervise, or upgrade.
+> **Status: shipping — the default backend.** The cron backend
+> (`runspec-scheduler sync`) landed in `runspec-scheduler` 0.2.0 (`cronsync`
+> module). Since 0.5.0 a venv can instead pick the long-running daemon
+> (`[scheduler] backend = "daemon"`, `runspec-scheduler use daemon`; see
+> [`venv-scheduler.md`](venv-scheduler.md)), which adds `every`, `catch_up` and
+> recorded missed fires. `cron` stays the default and is unchanged; `sync` on a
+> daemon venv removes this venv's lines instead of writing any, as does `use daemon`. The
+> package's reusable core (config, timing, `RUNSPEC_ENV_FILE` credential
+> mechanism) is shared by both; the cron backend has no long-running process of
+> ours to install, supervise, or upgrade.
 
 ## Problem (recap)
 

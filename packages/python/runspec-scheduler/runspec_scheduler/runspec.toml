@@ -4,21 +4,23 @@
 #
 # A single runnable, `runspec-scheduler`, with verbs (subcommands):
 #
-#   runspec-scheduler sync                    render the config into the OS crontab (recommended backend)
+#   runspec-scheduler use cron|daemon         choose what fires this venv's schedules (one backend per venv)
+#   runspec-scheduler sync                    render the config into the OS crontab (the cron backend)
 #   runspec-scheduler add     --id … …        add/replace a scheduled runnable in the config
 #   runspec-scheduler remove  --id …          remove a schedule from the config
 #   runspec-scheduler list                    print the configured schedules as JSON
 #   runspec-scheduler status                  config + crontab + recent runs/output per schedule (JSON)
 #   runspec-scheduler run-now --id …          fire one schedule immediately
-#   runspec-scheduler run                     run the long-running daemon (legacy; being replaced by `sync`)
-#   runspec-scheduler install-service         write + enable the per-venv systemd --user unit (legacy)
+#   runspec-scheduler run                     run the daemon (the daemon backend) in the foreground
+#   runspec-scheduler install-service         write + enable the per-venv systemd --user unit
 #
-# The **cron backend** (`sync`) is the v1 shared-scheduler execution model
-# (docs/design/cron-scheduler.md): each enabled cron schedule becomes a marked
-# line in its run_as account's crontab, so the OS cron runs it — no daemon of
-# ours. `add`/`remove` edit the config; `sync` applies it to the crontab. The
-# `run` daemon + `install-service` remain for now and will be removed once the
-# cron backend is validated in the wild.
+# Two backends, one per venv ([scheduler] backend in the config, switched with
+# `use`), both running every fire through `runspec exec --label sched:<id>`:
+#   cron   (default) each enabled cron schedule is a marked line in its run_as
+#          account's crontab (docs/design/cron-scheduler.md); `sync` writes them.
+#   daemon `runspec-scheduler run`, one process per venv as the venv owner, kept
+#          alive by systemd, supervisord or a cron watchdog. Adds `every`
+#          intervals, catch-up and a fire timeout (docs/design/venv-scheduler.md).
 #
 # It is "cron, but limited to runnables installed in THIS venv". The daemon runs
 # runnables from its own venv on a cron/interval cadence, independent of any
@@ -46,7 +48,9 @@ examples = [
   {cmd = "runspec-scheduler sync --dry-run", description = "Preview the crontab changes without writing."},
   {cmd = "runspec-scheduler list", description = "Print configured schedules as JSON."},
   {cmd = "runspec-scheduler status", description = "Per schedule: installed?, recent runs, last run's captured output (JSON)."},
-  {cmd = "runspec-scheduler run", description = "Run the legacy daemon in the foreground (systemd ExecStart)."},
+  {cmd = "runspec-scheduler use daemon", description = "Fire this venv's schedules from the daemon instead of cron (removes the crontab lines)."},
+  {cmd = "runspec-scheduler add --id poll --runnable http-check --every 30s --args '{\"url\": \"https://example.com\"}'", description = "An interval schedule (daemon backend only)."},
+  {cmd = "runspec-scheduler run", description = "Run the daemon in the foreground (what a keeper starts)."},
 ]
 
 # ---- Global arguments (inherited by every subcommand) --------------------
@@ -55,10 +59,10 @@ config = {type = "path", required = false, description = "Path to the scheduler 
 
 # ---- run: the long-running daemon ----------------------------------------
 [runspec-scheduler.commands.run]
-description = "Run the scheduler daemon: load config, build cron/interval jobs, exec runnables on fire. Hot-reloads on config change. This is the systemd ExecStart."
+description = "Run the scheduler daemon for this venv in the foreground: one process per venv (a second start exits 0), firing every schedule through `runspec exec` when the backend is daemon. Reloads on config change or SIGHUP; writes a heartbeat to logs/scheduler_state.json. This is what a keeper (systemd, supervisord, cron) starts."
 
 [runspec-scheduler.commands.run.args]
-reload-interval = {type = "int", default = 5, description = "Seconds between config-file mtime checks for hot reload."}
+reload-interval = {type = "int", default = 5, description = "Seconds between heartbeats (logs/scheduler_state.json). The config is checked for changes every second."}
 
 # ---- add: add or replace a schedule --------------------------------------
 [runspec-scheduler.commands.add]
@@ -69,10 +73,12 @@ id       = {type = "str",  required = true,  description = "Stable schedule id (
 runnable = {type = "str",  required = true,  description = "Name of a runnable installed in THIS venv to run on fire."}
 command  = {type = "str",  required = false, description = "Subcommand path for a runnable with verbs, e.g. 'list-directory' or 'admin users' (space-separated). Required when the runnable requires a command; validated against its spec."}
 cron     = {type = "str",  required = false, description = "5-field cron expression, e.g. '0 2 * * *'. Exactly one of --cron / --every."}
-every    = {type = "str",  required = false, description = "Interval like 15m / 1h / 1d (number + s/m/h/d). Exactly one of --cron / --every."}
+every    = {type = "str",  required = false, description = "Interval like 15m / 1h / 1d (number + s/m/h/d). Exactly one of --cron / --every. Daemon backend only."}
 timezone = {type = "str",  required = false, description = "IANA timezone (e.g. Europe/London). Blank = host local time."}
 args     = {type = "str",  required = false, description = "JSON object of arguments passed to the target runnable, e.g. '{\"level\":\"warn\"}'."}
 enabled  = {type = "flag", default = true,  description = "Whether the schedule fires (add it paused with --no-enabled)."}
+timeout  = {type = "str",  required = false, description = "Kill a fire still running after this long (seconds, or 90m / 6h / 1d); 0 = no limit. Unset = the [scheduler] default (6h) on the daemon, no limit on cron."}
+catch-up = {type = "flag", default = false, description = "Daemon: if fires were missed while it was down, run once on start (several missed fires collapse into one). Default: skip them, as cron does."}
 cred-vars = {type = "str", required = false, description = "JSON array of environment-variable NAMES to capture (from this process's env) into the schedule's run_as-protected env file. Values are injected by the caller; only names travel here."}
 
 # ---- remove: delete a schedule -------------------------------------------
@@ -105,11 +111,20 @@ id = {type = "str", required = true, description = "Schedule id to fire now."}
 
 # ---- sync: render the config into the OS crontab (recommended backend) ----
 [runspec-scheduler.commands.sync]
-description = "Reconcile the OS crontab to match the config's enabled cron schedules — each becomes a marked line in its run_as account's crontab (no daemon). Skips interval ('every'), disabled, and not-installed schedules."
+description = "Reconcile the OS crontab to match the config's enabled cron schedules — each becomes a marked line in its run_as account's crontab (no daemon). Skips interval ('every'), disabled, and not-installed schedules. On a daemon-backend venv it writes no lines and removes any this venv left behind."
 output      = "json"
 
 [runspec-scheduler.commands.sync.args]
 dry-run = {type = "flag", default = false, description = "Report what would change without writing any crontab."}
+
+# ---- use: choose the backend ---------------------------------------------
+[runspec-scheduler.commands.use]
+description = "Choose what fires this venv's schedules: cron (marked crontab lines, written now) or daemon (removes the crontab lines; `runspec-scheduler run` fires them). Never both, so nothing fires twice."
+output      = "json"
+autonomy    = "confirm"
+
+[runspec-scheduler.commands.use.args]
+backend = {options = ["cron", "daemon"], position = 1, description = "The backend to use."}
 
 # ---- install-service: systemd --user unit --------------------------------
 [runspec-scheduler.commands.install-service]

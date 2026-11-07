@@ -37,6 +37,9 @@ ExecStart={exec_start} run
 EnvironmentFile=-{env_file}
 Restart=on-failure
 RestartSec=5
+# Restarting the daemon leaves fires that are already running to finish;
+# each one is its own `runspec exec`, recorded and timed out on its own.
+KillMode=process
 
 [Install]
 WantedBy=default.target
