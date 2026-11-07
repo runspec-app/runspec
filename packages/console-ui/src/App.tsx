@@ -754,7 +754,7 @@ export default function App() {
   useEffect(() => {
     const onOpen = (e: Event) => {
       const d = (e as CustomEvent<EnvFileRef | undefined>).detail
-      setEnvFilesInitial(d && d.host && d.runspec_path ? { host: d.host, runspec_path: d.runspec_path } : null)
+      setEnvFilesInitial(d && d.host && d.runspec_path ? { host: d.host, runspec_path: d.runspec_path, ...(d.file ? { file: d.file } : {}) } : null)
       setEnvFilesOpen(true)
     }
     window.addEventListener('runspec:open_env_files', onOpen)

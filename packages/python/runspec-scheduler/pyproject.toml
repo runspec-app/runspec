@@ -11,8 +11,8 @@ keywords = ["runspec", "runnable", "scheduler", "cron"]
 readme = "README.md"
 license = "MIT"
 dependencies = [
-    # 0.48.0 for the `discoverable` boolean + serve leaf globals used by the console.
-    "runspec>=0.67.0",
+    # 0.82.0 for `runspec exec --env-file` (the venv's schedule-only env file).
+    "runspec>=0.82.0",
     # APScheduler drives the cron/interval timing. This package's whole reason to
     # exist is scheduling, so it's a hard dependency (unlike runspec-console, which
     # keeps it optional under the [schedule] extra).

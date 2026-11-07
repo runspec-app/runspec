@@ -51,6 +51,8 @@ class TestRenderCommand:
         # redirected only so cron doesn't mail it (exec captured it in the log).
         assert cmd.startswith("env RUNSPEC_AGENT=1 /venv/bin/runspec exec --label sched:nightly --trigger schedule:cron ")
         assert "--lock /home/svc/.cache/runspec-scheduler/nightly.lock" in cmd
+        # every fire names the venv's schedule-only env file (missing = nothing added)
+        assert "--env-file /venv/runspec_schedules.env" in cmd
         assert "backup -- --target prod" in cmd
         assert cmd.endswith(">/dev/null 2>&1")
         # no bare flock / mkdir any more — exec takes the lock (and creates its dir)

@@ -646,7 +646,11 @@ let invocationCounter = 0
 
 // request_id → resolver, for the simulated autonomy-confirm round-trip.
 // Mock .runspec_env files, keyed `host|runspec_path`.
+// Keyed host|runspec_path for .runspec_env, host|runspec_path|schedules for
+// the schedule-only runspec_schedules.env.
+const _mockEnvKey = (r: { host: string; runspec_path: string; file?: string }) => `${r.host}|${r.runspec_path}${r.file ? `|${r.file}` : ''}`
 const _mockEnvFiles = new Map<string, Record<string, string>>([
+  ['prod-1|/opt/venvs/ops/bin/runspec|schedules', { RUNSPEC_JIRA_ARG_JIRA_PAT: 'svc-token', OPS_TOKEN: 'svc-ops-token' }],
   ['local|/home/me/.venvs/console/bin/runspec', { JIRA_URL: 'https://jira.example.com', RUNSPEC_JIRA_ARG_JIRA_PAT: 'hunter2', REGION: 'eu-west', LOG_FORMAT: 'json' }],
   ['prod-1|/opt/venvs/ops/bin/runspec', { JIRA_URL: 'https://jira.example.com', RUNSPEC_JIRA_ARG_JIRA_PAT: 'hunter2', REGION: 'eu-west', HTTPS_PROXY: 'http://proxy.corp:3128', GRAFANA_URL: 'https://grafana.corp' }],
   ['prod-1|/opt/venvs/tools/bin/runspec', { JIRA_URL: 'https://jira.example.com', REGION: 'eu-west', HTTPS_PROXY: 'http://proxy.corp:3128' }],
@@ -1171,11 +1175,11 @@ export const mockApi: BridgeApi = {
     })
   },
   env_file_read: async (ref) => {
-    const text = _mockEnvFiles.get(`${ref.host}|${ref.runspec_path}`) ?? {}
+    const text = _mockEnvFiles.get(_mockEnvKey(ref)) ?? {}
     const reader = { runnable: 'jira', command: '', arg: 'jira-pat', via: 'auto' as const, password: true, description: 'Jira PAT' }
     const secret = (k: string) => /PAT|TOKEN|PASSWORD|SECRET/.test(k)
     return {
-      ...ref, venv: ref.runspec_path.split('/').slice(-3, -2)[0] ?? '', path: ref.runspec_path.replace(/bin\/runspec$/, '.runspec_env'),
+      ...ref, venv: ref.runspec_path.split('/').slice(-3, -2)[0] ?? '', path: ref.runspec_path.replace(/bin\/runspec$/, ref.file === 'schedules' ? 'runspec_schedules.env' : '.runspec_env'),
       ok: true, exists: Object.keys(text).length > 0, owner: 'svc-ops', user: 'deploy', as_user: ref.host === 'local' ? '' : 'svc-ops',
       mode: '0600', sha: JSON.stringify(text), writable: !ref.runspec_path.includes('/tools/'),
       write_error: ref.runspec_path.includes('/tools/') ? 'deploy can\'t write /opt/venvs/tools/.runspec_env, and passwordless sudo as svc-tools or root was refused.' : '', warnings: [], overrides: [],
@@ -1187,12 +1191,13 @@ export const mockApi: BridgeApi = {
       suggestions: 'RUNSPEC_JIRA_ARG_JIRA_PAT' in text ? [] : [{ key: 'RUNSPEC_JIRA_ARG_JIRA_PAT', secret: true, readers: [reader] }],
     }
   },
-  env_file_reveal: async ({ host, runspec_path, key }) => {
-    const text = _mockEnvFiles.get(`${host}|${runspec_path}`) ?? {}
+  env_file_reveal: async (ref) => {
+    const { key } = ref
+    const text = _mockEnvFiles.get(_mockEnvKey(ref)) ?? {}
     return { key, value: text[key] ?? '', found: key in text }
   },
   env_file_save: async (payload) => {
-    const k = `${payload.host}|${payload.runspec_path}`
+    const k = _mockEnvKey(payload)
     const text = { ...(_mockEnvFiles.get(k) ?? {}) }
     for (const key of payload.unset) delete text[key]
     Object.assign(text, payload.set)
@@ -1789,8 +1794,11 @@ export const mockApi: BridgeApi = {
   host_schedule_run_now: async (p) => ({ ok: true, id: p.id, pid: 5150, user: 'svc-ops' }),
   host_schedule_env_check: async (p) => {
     const R = p.runnable.toUpperCase().replace(/-/g, '_')
+    // The mock Env files fleet has /opt/venvs/ops on every host, so point there.
+    const root = '/opt/venvs/ops'
     return {
-      ok: true, host: p.host, runspec_path: `/opt/venvs/${p.venv}/bin/runspec`, path: `/opt/venvs/${p.venv}/.runspec_env`,
+      ok: true, host: p.host, runspec_path: `${root}/bin/runspec`, path: `${root}/runspec_schedules.env`,
+      shared_path: `${root}/.runspec_env`,
       exists: true, override: '',
       needs: [
         { arg: 'api-token', command: '', password: true, secret: true, description: 'Service token',
@@ -1799,6 +1807,8 @@ export const mockApi: BridgeApi = {
           keys: [`RUNSPEC_${R}_ARG_S3_SECRET`, 'S3_SECRET'], set_by: '', blank: ['S3_SECRET'] },
         { arg: 's3-user', command: '', password: false, secret: false, description: '',
           keys: [`RUNSPEC_${R}_ARG_S3_USER`, 'S3_USER'], set_by: '', blank: [] },
+        { arg: 'jira-pat', command: '', password: true, secret: true, description: '',
+          keys: [`RUNSPEC_${R}_ARG_JIRA_PAT`, 'JIRA_PAT'], set_by: '', shared_by: 'JIRA_PAT', blank: [] },
       ],
     }
   },

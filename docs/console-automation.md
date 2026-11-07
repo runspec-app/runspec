@@ -429,13 +429,23 @@ backed up to `{venv}/runspec_scheduler_backups/` before each rewrite. A **daemon
 venv reloads its config by itself. Rows the crontab is out of step with (*not
 installed*, *stale line*, *legacy line*) get a **Sync crontab** button.
 
-A host schedule never carries credentials. Password arguments aren't offered;
-set them in the venv's `.runspec_env` on the host (**Env files** in the hosts
-panel) so every fire reads them. Once you pick a runnable, the dialog lists the
-credentials it reads from the environment and whether that file sets each one
-(and with which variable), or which variable to add; **Open Env files** opens
-the Env files window on that venv, and **Check again** re-reads the file after
-you change it. Only variable names are shown, never values. Each change is recorded in the console's audit
+A host schedule never carries credentials. Password arguments aren't offered.
+Put what its fires need in the venv's **schedule-only env file**,
+`{venv}/runspec_schedules.env` (runspec-scheduler 0.7.0, runspec 0.82.0): every
+fire (cron, daemon and Run now) loads it on top of `.runspec_env`, and nothing
+else in the venv does. Console, agent and hand-run runs only load
+`.runspec_env`, so a service account's credentials kept in the schedules file
+never stand in for an operator who didn't pick their own. Make the file mode
+600, owned by the account the fires run as; `runspec exec` refuses one that
+others can write or that belongs to another account (the fire is recorded as
+failed, exit 78).
+
+Once you pick a runnable, the dialog lists the credentials it reads from the
+environment and, for each, whether the schedules file sets it (and with which
+variable), whether only `.runspec_env` does (it works, but every run in the
+venv uses it, so move it), or which variable to add. **Open Env files** opens
+the Env files window on that venv's schedules file, and **Check again**
+re-reads it. Only variable names are shown, never values. Each change is recorded in the console's audit
 log (`schedule.host.saved` / `removed` / `synced`, or `*_failed`). Local
 Windows venvs can't be edited: the scheduler fires with cron or its daemon,
 which need Linux.

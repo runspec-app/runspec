@@ -63,16 +63,27 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   root, which core drops to the owner), and core records each change on the
   venv's audit ledger. Bridge `logs_retention` / `logs_retention_set` /
   `logs_retention_run`; UI `views/LogCleanupModal.tsx`.
-- **The host schedule dialog says where its credentials come from.** A host
-  schedule never carries credentials, so once a runnable is picked the dialog
-  lists the credential arguments it reads from the environment (password args,
-  args whose variables read like a secret, and the user half of a user +
-  password pair), and for each one whether the venv's `.runspec_env` on the
-  host sets it, which variable does, or which to add. **Open Env files** opens
-  the Env files window on that venv; **Check again** re-reads it. Variable
-  names only, never a value. Bridge `host_schedule_env_check`
-  (`envfile.credential_needs`); UI `views/HostScheduleEnv.tsx`. Env files can
-  now open on a given venv (the `runspec:open_env_files` event).
+- **Host schedules get their credentials from a schedule-only file.** Each
+  venv can have `runspec_schedules.env` beside `.runspec_env`; runspec-scheduler
+  0.7.0 fires load it on top of `.runspec_env` (`runspec exec --env-file`, core
+  0.82.0) and nothing else in the venv does. A service account's credentials
+  kept there don't reach console, agent or hand-run runs, which would
+  otherwise quietly use them when the operator picks none.
+  - **Env files** has a switch between `.runspec_env` and
+    `runspec_schedules.env`, in both One venv and Across venvs (same masking,
+    compare-and-swap save and audit). The worker only ever opens those two
+    names. Bridge `env_file_*` take `file: "schedules"`; targets carry
+    `schedules_path`.
+  - **The host schedule dialog says where its credentials come from.** Once a
+    runnable is picked it lists the credential arguments it reads from the
+    environment (password args, args whose variables read like a secret, and
+    the user half of a user + password pair) and, for each, whether the
+    schedules file sets it, whether only `.runspec_env` does (flagged: every
+    run in the venv uses it), or which variable to add. **Open Env files**
+    opens the schedules file of that venv; **Check again** re-reads it.
+    Variable names only, never a value. Bridge `host_schedule_env_check`
+    (`envfile.credential_needs`); UI `views/HostScheduleEnv.tsx`; the
+    `runspec:open_env_files` event opens Env files on a given venv and file.
 
 ### Fixed
 

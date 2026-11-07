@@ -274,6 +274,7 @@ examples = [
   {cmd = "runspec exec --label nightly --lock ~/.cache/nightly.lock backup",  description = "Skip (recorded) if the previous run still holds the lock"},
   {cmd = "runspec exec --skip-if-running --timeout 600 report",               description = "Skip if already running per the runs index; kill after 10 min"},
   {cmd = "runspec exec cron -- list",                                         description = "Everything after -- is passed through, incl. subcommands"},
+  {cmd = "runspec exec --env-file /opt/venvs/ops/runspec_schedules.env backup", description = "Add a schedule-only credentials file to this run's environment"},
 ]
 
 [runspec.commands.exec.args]
@@ -284,6 +285,7 @@ lock            = {type = "str",  description = "Lock file (POSIX): if another r
 skip-if-running = {type = "flag", description = "Record a 'skipped' run and exit 0 when the runs index shows one with the same label (else runnable) running", default = false}
 capture-bytes   = {type = "int",  description = "Bytes of each of stdout/stderr to keep (the tail) in the run's log; 0 = no capture", default = 65536}
 timeout         = {type = "int",  description = "Kill the run after this many seconds (exit 124, recorded failed)", required = false}
+env-file        = {type = "str",  description = "Dotenv file added to the run's environment under variables already set and over .runspec_env (missing = nothing added; group/other-writable or foreign-owned = refused, exit 78)", required = false}
 runnable-args   = {type = "rest", description = "Args passed to the runnable (after --)"}
 
 [runspec.commands.logs]

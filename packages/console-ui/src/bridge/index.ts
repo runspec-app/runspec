@@ -1627,7 +1627,8 @@ export interface HostScheduleEnvNeed {
   secret: boolean                  // false = the user half of a user + password pair
   description: string
   keys: string[]                   // variables it reads, the automatic RUNSPEC_<R>_ARG_<A> first
-  set_by: string                   // the first key the file gives a value ("" = none)
+  set_by: string                   // the first key runspec_schedules.env gives a value ("" = none)
+  shared_by?: string               // else the .runspec_env key that sets it (every run in the venv gets it)
   blank: string[]                  // keys present in the file but empty
 }
 
@@ -1636,8 +1637,9 @@ export interface HostScheduleEnvCheck {
   error?: string
   host: string
   runspec_path: string
-  path: string                     // the venv's .runspec_env
+  path: string                     // the venv's runspec_schedules.env (only scheduled fires load it)
   exists: boolean
+  shared_path?: string             // the venv's .runspec_env (every run loads it)
   needs: HostScheduleEnvNeed[]
   override: string                 // the runnable names its own env file instead
 }
@@ -2072,12 +2074,17 @@ export interface DenylistHostStatus {
 
 // ── .runspec_env manager (hosts panel → Env files) ──────────────────────────
 // One venv whose `.runspec_env` can be managed (env_file_targets).
+// Which env file: '' = .runspec_env (every run in the venv loads it),
+// 'schedules' = runspec_schedules.env (only runspec-scheduler's fires load it).
+export type EnvFileKind = '' | 'schedules'
+
 export interface EnvFileTarget {
   host: string
   runspec_path: string
   venv: string
   root: string
   path: string
+  schedules_path?: string
   group: string
   profiles: string[]
   local: boolean
@@ -2114,6 +2121,7 @@ export interface EnvFileView {
   host: string
   runspec_path: string
   venv: string
+  file?: EnvFileKind
   path: string
   root?: string
   local?: boolean
@@ -2139,7 +2147,7 @@ export interface EnvFileView {
   changes?: { added: string[]; changed: string[]; removed: string[] }
 }
 
-export interface EnvFileRef { host: string; runspec_path: string }
+export interface EnvFileRef { host: string; runspec_path: string; file?: EnvFileKind }
 
 // One venv's change in an across-venvs save (env_file_save_many).
 export interface EnvFileVenvChange extends EnvFileRef {

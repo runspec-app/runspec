@@ -91,7 +91,7 @@ describe('HostScheduleModal', () => {
     expect(api.host_schedule_env_check).toHaveBeenCalledWith({ host: 'web-1', venv: 'ops', runnable: 'backup', command: [] })
     expect(screen.getByText('BACKUP_TOKEN')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: /Open Env files/ }))
-    expect((opened.mock.calls[0][0] as CustomEvent).detail).toEqual({ host: 'web-1', runspec_path: '/v/ops/bin/runspec' })
+    expect((opened.mock.calls[0][0] as CustomEvent).detail).toEqual({ host: 'web-1', runspec_path: '/v/ops/bin/runspec', file: 'schedules' })
     window.removeEventListener('runspec:open_env_files', opened)
     expect((screen.getByLabelText('Schedule id') as HTMLInputElement).value).toBe('backup')
 

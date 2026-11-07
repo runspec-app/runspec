@@ -12,6 +12,10 @@ describe('needState', () => {
   it('is covered by the file when a key has a value', () => {
     expect(needState(need({ set_by: 'X_TOKEN' }), arg(), {})).toBe('file')
   })
+  it('flags a credential that only .runspec_env sets', () => {
+    expect(needState(need({ shared_by: 'X_TOKEN' }), arg(), {})).toBe('shared')
+    expect(needState(need({ set_by: 'X_TOKEN', shared_by: '' }), arg(), {})).toBe('file')
+  })
   it('counts a schedule value only for the user half of a pair', () => {
     const user = need({ arg: 'user', password: false, secret: false, keys: ['X_USER'] })
     expect(needState(user, arg({ name: 'user', type: 'str' }), { user: 'svc' })).toBe('schedule')

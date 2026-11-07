@@ -32,7 +32,7 @@ import {
   SaveOutlined, SearchOutlined, UndoOutlined,
 } from '@ant-design/icons'
 import {
-  bridge, type EnvFileReader, type EnvFileRef, type EnvFileTarget, type EnvFileVenvChange, type EnvFileView, type Host,
+  bridge, type EnvFileKind, type EnvFileReader, type EnvFileRef, type EnvFileTarget, type EnvFileVenvChange, type EnvFileView, type Host,
 } from '../bridge'
 import { MONO_FONT } from '../ThemeContext'
 
@@ -112,8 +112,14 @@ export interface EnvFilesModalProps {
   initial?: EnvFileRef | null
 }
 
+/** The two files a venv has, as the switch shows them. */
+export const ENV_FILE_NAMES: Record<EnvFileKind, string> = { '': '.runspec_env', schedules: 'runspec_schedules.env' }
+
 export function EnvFilesModal({ open, onClose, hosts, initial }: EnvFilesModalProps) {
   const [mode, setMode] = useState<'one' | 'many'>('one')
+  const [file, setFile] = useState<EnvFileKind>(initial?.file ?? '')
+  // The venv One venv last showed, so switching file keeps it.
+  const [lastRef, setLastRef] = useState<EnvFileRef | null>(initial ?? null)
   const [targets, setTargets] = useState<EnvFileTarget[]>([])
   const [loadingTargets, setLoadingTargets] = useState(false)
   const hostKey = hosts.map(h => h.name).join('\u0000')
@@ -152,31 +158,46 @@ export function EnvFilesModal({ open, onClose, hosts, initial }: EnvFilesModalPr
       onCancel={onClose}
       footer={null}
       width={mode === 'many' ? 'min(1600px, 96vw)' : 1000}
-      title={<span><CodeOutlined style={{ marginRight: 8 }} />Env files — <Text code>.runspec_env</Text></span>}
+      title={<span><CodeOutlined style={{ marginRight: 8 }} />Env files — <Text code>{ENV_FILE_NAMES[file]}</Text></span>}
       destroyOnHidden
     >
       <Text type="secondary" style={{ fontSize: 13, display: 'block', marginBottom: 10 }}>
-        Each venv's <Text code>.runspec_env</Text> is loaded into the environment before every run in that venv
-        (a variable already set in the environment wins). Listed: the local venvs
+        {file === 'schedules'
+          ? <>Each venv's <Text code>runspec_schedules.env</Text> is loaded only by runspec-scheduler's fires (cron, the daemon and Run now), on top of <Text code>.runspec_env</Text>. Put a schedule's service-account credentials here: console, agent and hand-run runs in the venv never see them. It needs runspec 0.82.0 and runspec-scheduler 0.7.0 in the venv, and should be owned by the account the fires run as.</>
+          : <>Each venv's <Text code>.runspec_env</Text> is loaded into the environment before every run in that venv
+            (a variable already set in the environment wins), including the console's and the agent's. Credentials only scheduled fires should use belong in <Text code>runspec_schedules.env</Text>.</>}
+        {' '}Listed: the local venvs
         {hosts.length > 0 && <> and the venvs of the {hosts.length} connected host{hosts.length === 1 ? '' : 's'} in the active profile</>}.
       </Text>
-      <Segmented
-        value={mode}
-        onChange={v => setMode(v as 'one' | 'many')}
-        options={[{ label: 'One venv', value: 'one' }, { label: 'Across venvs', value: 'many' }]}
-        style={{ marginBottom: 12 }}
-      />
+      <Space wrap style={{ marginBottom: 12 }}>
+        <Segmented
+          value={mode}
+          onChange={v => setMode(v as 'one' | 'many')}
+          options={[{ label: 'One venv', value: 'one' }, { label: 'Across venvs', value: 'many' }]}
+        />
+        <Segmented
+          aria-label="Env file"
+          value={file || 'runspec_env'}
+          onChange={v => setFile(v === 'schedules' ? 'schedules' : '')}
+          options={[
+            { label: <Tooltip title="Every run in the venv loads it">.runspec_env</Tooltip>, value: 'runspec_env' },
+            { label: <Tooltip title="Only scheduled fires load it">runspec_schedules.env</Tooltip>, value: 'schedules' },
+          ]}
+        />
+      </Space>
       {mode === 'one'
-        ? <OneVenv targets={targets} options={options} loadingTargets={loadingTargets} initial={initial ?? null} />
-        : <AcrossVenvs targets={targets} loadingTargets={loadingTargets} />}
+        ? <OneVenv key={file} file={file} targets={targets} options={options} loadingTargets={loadingTargets} initial={lastRef} onSelect={setLastRef} />
+        : <AcrossVenvs key={file} file={file} targets={targets} loadingTargets={loadingTargets} />}
     </Modal>
   )
 }
 
 // ── One venv ────────────────────────────────────────────────────────────────
 
-function OneVenv({ targets, options, loadingTargets, initial }: {
+function OneVenv({ file, targets, options, loadingTargets, initial, onSelect }: {
+  file: EnvFileKind
   initial: EnvFileRef | null
+  onSelect: (ref: EnvFileRef) => void
   targets: EnvFileTarget[]
   options: { label: string; options: { value: string; label: string; disabled?: boolean }[] }[]
   loadingTargets: boolean
@@ -189,7 +210,8 @@ function OneVenv({ targets, options, loadingTargets, initial }: {
   const [newKey, setNewKey] = useState('')
 
   const target = targets.find(t => refOf(t) === selected)
-  const ref: EnvFileRef | null = target ? { host: target.host, runspec_path: target.runspec_path } : null
+  const ref: EnvFileRef | null = target ? { host: target.host, runspec_path: target.runspec_path, ...(file ? { file } : {}) } : null
+  useEffect(() => { if (target) onSelect({ host: target.host, runspec_path: target.runspec_path }) }, [target?.host, target?.runspec_path]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Default to the first supported venv once the list arrives (also when the
   // venv it was opened on isn't in the list).
@@ -216,8 +238,8 @@ function OneVenv({ targets, options, loadingTargets, initial }: {
 
   useEffect(() => {
     if (ref) load(ref)
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- selected identifies ref
-  }, [selected, load])
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- selected identifies ref; !!target re-runs once a preselected venv's row arrives
+  }, [selected, load, !!target])
 
   const changes = draftChanges(rows)
   const changeCount = Object.keys(changes.set).length + changes.unset.length
@@ -517,7 +539,7 @@ export function gridChanges(draft: GridDraft, views: Record<string, EnvFileView>
       else set[key] = edit
     }
     if (Object.keys(set).length || unset.length) {
-      out.push({ host: view.host, runspec_path: view.runspec_path, sha: view.sha ?? '', set, unset })
+      out.push({ host: view.host, runspec_path: view.runspec_path, ...(view.file ? { file: view.file } : {}), sha: view.sha ?? '', set, unset })
     }
   }
   return out
@@ -589,7 +611,7 @@ function inScope(t: EnvFileTarget, scope: Scope): boolean {
   return true
 }
 
-function AcrossVenvs({ targets, loadingTargets }: { targets: EnvFileTarget[]; loadingTargets: boolean }) {
+function AcrossVenvs({ file, targets, loadingTargets }: { file: EnvFileKind; targets: EnvFileTarget[]; loadingTargets: boolean }) {
   const supported = useMemo(() => targets.filter(t => t.supported), [targets])
   const unsupported = targets.length - supported.length
   const [views, setViews] = useState<Record<string, EnvFileView>>({})
@@ -612,7 +634,7 @@ function AcrossVenvs({ targets, loadingTargets }: { targets: EnvFileTarget[]; lo
     if (!list.length) return
     setLoading(true)
     try {
-      const res = await bridge.env_file_read_many({ targets: list.map(t => ({ host: t.host, runspec_path: t.runspec_path })) })
+      const res = await bridge.env_file_read_many({ targets: list.map(t => ({ host: t.host, runspec_path: t.runspec_path, ...(file ? { file } : {}) })) })
       setViews(Object.fromEntries(res.views.map(v => [refOf(v), v])))
       setDraft({})
       setRevealed({})
@@ -622,7 +644,7 @@ function AcrossVenvs({ targets, loadingTargets }: { targets: EnvFileTarget[]; lo
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [file])
 
   const targetKey = supported.map(refOf).join('\u0000')
   // eslint-disable-next-line react-hooks/exhaustive-deps -- targetKey stands in for supported
@@ -731,7 +753,7 @@ function AcrossVenvs({ targets, loadingTargets }: { targets: EnvFileTarget[]; lo
     const v = views[refs[0]]
     if (!v) return
     try {
-      const res = await bridge.env_file_reveal({ host: v.host, runspec_path: v.runspec_path, key })
+      const res = await bridge.env_file_reveal({ host: v.host, runspec_path: v.runspec_path, ...(file ? { file } : {}), key })
       setRevealed(prev => ({ ...prev, ...Object.fromEntries(refs.map(r => [`${r}|${key}`, res.value])) }))
     } catch (err) {
       message.error((err as Error)?.message || 'could not reveal')

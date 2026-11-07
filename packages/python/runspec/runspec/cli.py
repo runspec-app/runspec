@@ -1709,6 +1709,7 @@ def cmd_exec(args: list[str]) -> None:
             skip_if_running=parsed.skip_if_running.value,
             capture_bytes=65536 if capture is None else max(0, capture),
             timeout=parsed.timeout.value,
+            env_file=parsed.env_file.value,
         )
     except ExecError as exc:
         print(f"✗  {exc}", file=sys.stderr)

@@ -23,6 +23,23 @@ from pathlib import Path, PureWindowsPath
 from typing import Any
 
 FILE_NAME = ".runspec_env"
+#: runspec-scheduler's schedule-only env file: only scheduled fires load it
+#: (``runspec exec --env-file``), on top of ``.runspec_env``.
+SCHEDULES_FILE_NAME = "runspec_schedules.env"
+#: The console's names for the files it edits (``""`` = ``.runspec_env``).
+FILES = {"": FILE_NAME, "runspec_env": FILE_NAME, "schedules": SCHEDULES_FILE_NAME}
+
+
+def file_kind(raw: Any) -> str:
+    """``"schedules"`` or ``""`` (``.runspec_env``); anything else is refused."""
+    kind = str(raw or "")
+    if kind == "runspec_env":
+        kind = ""
+    if kind not in FILES:
+        raise EnvFileError(f"unknown env file {kind!r}")
+    return kind
+
+
 ABSENT = "absent"
 
 _KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")

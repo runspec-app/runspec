@@ -9,6 +9,10 @@ arrive as one JSON object on standard input.
 
 Ops (the result is one JSON line after :data:`MARKER` on stdout):
 
+The file is ``.runspec_env`` (every run in the venv loads it) or, with a third
+argument ``schedules``, ``runspec_schedules.env`` (only runspec-scheduler's fires
+load it). No other name is accepted.
+
 * ``read`` — ``{ok, path, user, owner, exists, symlink, readable, writable,
   mode, sha, text}``. ``sha`` is ``"absent"`` when there is no file.
 * ``write`` — stdin ``{"text": …, "expect": <sha>}``. Refuses (``conflict``)
@@ -27,6 +31,9 @@ import tempfile
 
 MARKER = "=====RSENV "
 NAME = ".runspec_env"
+SCHEDULES_NAME = "runspec_schedules.env"
+#: The files the worker may touch, by the console's name for them.
+NAMES = {"": NAME, "runspec_env": NAME, "schedules": SCHEDULES_NAME}
 ABSENT = "absent"
 
 
@@ -66,9 +73,9 @@ def _owner(path):
     return _user_name(st.st_uid)
 
 
-def read(root):
+def read(root, name=NAME):
     root = os.path.abspath(root)
-    path = os.path.join(root, NAME)
+    path = os.path.join(root, name)
     if not os.path.isdir(root):
         return {"ok": False, "error": "%s is not a directory." % root}
     res = {
@@ -112,8 +119,8 @@ def read(root):
     return res
 
 
-def write(root, payload):
-    cur = read(root)
+def write(root, payload, name=NAME):
+    cur = read(root, name)
     if not cur.get("ok"):
         return cur
     path = cur["path"]
@@ -144,7 +151,7 @@ def write(root, payload):
     else:
         st = os.stat(root)
         mode, uid, gid = 0o600, st.st_uid, st.st_gid
-    fd, tmp = tempfile.mkstemp(prefix=NAME + ".", dir=root)
+    fd, tmp = tempfile.mkstemp(prefix=os.path.basename(path) + ".", dir=root)
     try:
         with os.fdopen(fd, "wb") as fh:
             fh.write(data)
@@ -169,12 +176,15 @@ def write(root, payload):
     }
 
 
-def run(op, root, payload=None):
+def run(op, root, payload=None, file=""):
+    name = NAMES.get(file or "")
+    if name is None:
+        return {"ok": False, "error": "unknown env file %r" % file}
     try:
         if op == "read":
-            return read(root)
+            return read(root, name)
         if op == "write":
-            return write(root, payload or {})
+            return write(root, payload or {}, name)
         return {"ok": False, "error": "unknown op %r" % op}
     except Exception as exc:  # one JSON line, whatever happens
         return {"ok": False, "error": "%s: %s" % (type(exc).__name__, exc)}
@@ -183,13 +193,14 @@ def run(op, root, payload=None):
 def main(argv):
     op = argv[1] if len(argv) > 1 else ""
     root = argv[2] if len(argv) > 2 else ""
+    file = argv[3] if len(argv) > 3 else ""
     payload = None
     if op == "write":
         try:
             payload = json.loads(sys.stdin.buffer.read().decode("utf-8") or "{}")
         except ValueError:
             payload = {}
-    sys.stdout.write(MARKER + json.dumps(run(op, root, payload)) + "\n")
+    sys.stdout.write(MARKER + json.dumps(run(op, root, payload, file)) + "\n")
     sys.stdout.flush()
 
 

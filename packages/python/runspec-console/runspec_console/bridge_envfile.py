@@ -121,8 +121,17 @@ class EnvFileMixin:
                     row["root"] = root
                     sep = "\\" if ef.is_windows_path(root) else "/"
                     row["path"] = root.rstrip("/\\") + sep + ef.FILE_NAME
+                    row["schedules_path"] = (
+                        root.rstrip("/\\") + sep + ef.SCHEDULES_FILE_NAME
+                    )
                 except ef.EnvFileError as exc:
-                    row.update(supported=False, reason=str(exc), root="", path="")
+                    row.update(
+                        supported=False,
+                        reason=str(exc),
+                        root="",
+                        path="",
+                        schedules_path="",
+                    )
                 rows.append(row)
         return rows
 
@@ -197,7 +206,7 @@ class EnvFileMixin:
         for raw in (payload or {}).get("changes") or []:
             if not isinstance(raw, dict):
                 continue
-            t = self._env_target(raw)
+            t = self._env_target({"file": (payload or {}).get("file"), **raw})
             k = (t["host"], t["runspec_path"])
             if k in seen:
                 raise ValueError(f"{t['host']} · {t['venv']} is listed twice.")
@@ -242,12 +251,20 @@ class EnvFileMixin:
 
     def host_schedule_env_check(self, payload: dict[str, Any]) -> dict[str, Any]:
         """For the host schedule dialog: which credentials ``runnable`` (run as
-        ``command``) reads from the environment, and whether the venv's
-        ``.runspec_env`` sets them. ``payload``: ``{host, venv, runnable,
-        command}``. Returns ``{ok, host, runspec_path, path, exists, needs,
-        override, error}``; ``needs`` rows are :func:`envfile.credential_needs`
-        (variable names only, never a value). A host schedule carries no
-        credentials, so this is where a fire's secrets have to come from."""
+        ``command``) reads from the environment, and where a fire would get
+        them. ``payload``: ``{host, venv, runnable, command}``.
+
+        A host schedule carries no credentials. Its fires load the venv's
+        schedule-only ``runspec_schedules.env`` (runspec-scheduler 0.7.0) on top
+        of ``.runspec_env``; interactive runs load only ``.runspec_env``. So a
+        credential belongs in the schedules file, and one found only in
+        ``.runspec_env`` is flagged (every run in the venv would use it).
+
+        Returns ``{ok, host, runspec_path, path, exists, shared_path, needs,
+        override, error}``; each ``needs`` row is :func:`envfile.credential_needs`
+        against the schedules file, plus ``shared_by`` (the ``.runspec_env``
+        variable that sets it when the schedules file doesn't). Variable names
+        only, never a value."""
         p = dict(payload or {})
         host = str(p.get("host") or "")
         venv = str(p.get("venv") or "")
@@ -260,6 +277,7 @@ class EnvFileMixin:
             "runspec_path": "",
             "path": "",
             "exists": False,
+            "shared_path": "",
             "needs": [],
             "override": "",
             "error": "",
@@ -278,30 +296,45 @@ class EnvFileMixin:
             out["error"] = f"{host} has no venv {venv}."
             return out
         try:
-            t = self._env_target({"host": host, "runspec_path": rp})
+            t = self._env_target(
+                {"host": host, "runspec_path": rp, "file": "schedules"}
+            )
+            shared = self._env_target({"host": host, "runspec_path": rp})
         except ValueError as exc:
             out["error"] = str(exc)
             return out
-        out.update(runspec_path=rp, path=t["path"])
+        out.update(runspec_path=rp, path=t["path"], shared_path=shared["path"])
         records = self._env_records(t)
         for o in ef.overrides(records):
             if o["runnable"] == runnable:
                 out["override"] = o["file"]
-        try:
-            res, _as = self._env_access(t, need_write=False)
-        except Exception as exc:  # noqa: BLE001 — a hint, never a blocker
-            out["error"] = str(exc)
-            return out
-        values: dict[str, str] = {}
-        if res.get("ok") and res.get("readable") and not res.get("error"):
-            out["exists"] = bool(res.get("exists"))
-            values = ef.parse(res.get("text") or "").values()
-        elif res.get("ok") and not res.get("exists"):
-            out["exists"] = False
-        else:
-            out["error"] = str(res.get("error") or f"Can't read {t['path']}.")
-        out["needs"] = ef.credential_needs(records, runnable, command, values)
-        out["ok"] = not out["error"]
+
+        def values_of(target: dict[str, Any]) -> tuple[dict[str, str], bool, str]:
+            try:
+                res, _as = self._env_access(target, need_write=False)
+            except Exception as exc:  # noqa: BLE001 — a hint, never a blocker
+                return {}, False, str(exc)
+            if res.get("ok") and res.get("readable") and not res.get("error"):
+                return (
+                    ef.parse(res.get("text") or "").values(),
+                    bool(res.get("exists")),
+                    "",
+                )
+            return {}, False, str(res.get("error") or f"Can't read {target['path']}.")
+
+        values, exists, err = values_of(t)
+        shared_values, _exists, _err = values_of(shared)
+        out["exists"] = exists
+        out["error"] = err
+        needs = ef.credential_needs(records, runnable, command, values)
+        for n in needs:
+            n["shared_by"] = (
+                ""
+                if n["set_by"]
+                else next((k for k in n["keys"] if shared_values.get(k)), "")
+            )
+        out["needs"] = needs
+        out["ok"] = not err
         return out
 
     # ── internals ──
@@ -318,6 +351,7 @@ class EnvFileMixin:
             raise ValueError(f"{rp} is not one of {host}'s runspec paths.")
         local = not h.get("ssh")
         try:
+            kind = ef.file_kind(p.get("file"))
             root = ef.local_root(rp) if local else ef.remote_root(rp)
         except ef.EnvFileError as exc:
             raise ValueError(str(exc)) from exc
@@ -327,7 +361,8 @@ class EnvFileMixin:
             "runspec_path": rp,
             "venv": hosts_mod.venv_name(rp),
             "root": root,
-            "path": root.rstrip("/\\") + sep + ef.FILE_NAME,
+            "file": kind,
+            "path": root.rstrip("/\\") + sep + ef.FILES[kind],
             "local": local,
             "entry": h,
         }
@@ -338,6 +373,7 @@ class EnvFileMixin:
             "host": t["host"],
             "runspec_path": t["runspec_path"],
             "venv": t["venv"],
+            "file": t.get("file", ""),
             "path": t["path"],
             "ok": False,
         }
@@ -345,10 +381,11 @@ class EnvFileMixin:
     def _env_target_list(self, payload: dict[str, Any] | None) -> list[dict[str, Any]]:
         targets = []
         seen: set[tuple[str, str]] = set()
+        default_file = (payload or {}).get("file")
         for raw in (payload or {}).get("targets") or []:
             if not isinstance(raw, dict):
                 continue
-            t = self._env_target(raw)
+            t = self._env_target({"file": default_file, **raw})
             k = (t["host"], t["runspec_path"])
             if k not in seen:
                 seen.add(k)
@@ -443,10 +480,13 @@ class EnvFileMixin:
         as_user: str = "",
     ) -> dict[str, Any]:
         """Run one worker op on the venv (``as_user`` escalates a remote call)."""
+        kind = t.get("file", "")
         if t["local"]:
-            return worker.run(op, t["root"], payload)
+            return worker.run(op, t["root"], payload, kind)
         h = t["entry"]
         argv = [ef.remote_python(t["root"]), "-c", _worker_source(), op, t["root"]]
+        if kind:
+            argv.append(kind)
         cmd, _frame = mp.remote_command(argv, run_as=as_user, become_method="sudo")
         stdin = json.dumps(payload).encode("utf-8") if payload is not None else None
         code, out, err = self._ssh_run(  # type: ignore[attr-defined]
