@@ -39,8 +39,10 @@ schedules are reported skipped, along with disabled or not-installed ones.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -137,9 +139,22 @@ def schedules_env_path(runspec_binary: str) -> str:
     return str(Path(runspec_binary).parent.parent / SCHEDULES_ENV)
 
 
-def lock_path(home: str, sched_id: str) -> str:
-    """The ``runspec exec --lock`` file for one schedule, under ``home``."""
-    return f"{home}/{_LOCK_SUBDIR}/{sched_id}.lock"
+def venv_tag(venv: str | Path) -> str:
+    """A short, stable, filename-safe name for one venv: its folder name plus 8
+    hex of the SHA-1 of its absolute path (``ops-1a2b3c4d``). Keeps per-venv files
+    that live in a shared place (the run_as account's home) apart, so two venvs
+    owned by one account can both have a schedule called ``nightly``."""
+    path = os.path.abspath(str(venv))
+    name = re.sub(r"[^A-Za-z0-9._-]", "_", os.path.basename(path.rstrip("/")) or "venv")
+    return f"{name}-{hashlib.sha1(path.encode('utf-8')).hexdigest()[:8]}"
+
+
+def lock_path(home: str, sched_id: str, venv: str | Path) -> str:
+    """The ``runspec exec --lock`` file for one schedule of one venv, under
+    ``home``: ``~/.cache/runspec-scheduler/<venv tag>/<id>.lock``. Before 0.7.3 it
+    had no venv folder, so two venvs with the same schedule id and owner shared
+    one lock and one of them was skipped as "still running"."""
+    return f"{home}/{_LOCK_SUBDIR}/{venv_tag(venv)}/{sched_id}.lock"
 
 
 def exec_invocation(
@@ -177,7 +192,7 @@ def exec_invocation(
         "--trigger",
         trigger,
         "--lock",
-        lock_path(home, sched_id),
+        lock_path(home, sched_id, Path(runspec_binary).parent.parent),
         "--env-file",
         schedules_env_path(runspec_binary),
     ]
@@ -236,7 +251,10 @@ def is_our_job(line: str, sched_id: str) -> bool:
     text = line.strip()
     if not text or text.startswith("#"):
         return False
-    return f"/{_LOCK_SUBDIR}/{sched_id}.lock" in line or f"--label {LABEL_PREFIX}{sched_id} " in line
+    if f"--label {LABEL_PREFIX}{sched_id} " in line or f"/{_LOCK_SUBDIR}/{sched_id}.lock" in line:
+        return True
+    # 0.7.3+: the lock sits in a per-venv folder
+    return re.search(rf"/{re.escape(_LOCK_SUBDIR)}/[^/\s]+/{re.escape(sched_id)}\.lock(\s|$|')", line) is not None
 
 
 def job_in_venv(line: str, bin_dir: str) -> bool:

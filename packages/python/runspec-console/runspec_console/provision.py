@@ -892,6 +892,28 @@ def scheduler_stop_argv(root: str) -> list[str]:
     return [_scheduler_bin(root), "install-service", "--remove", "--write"]
 
 
+def parse_cron_clear(out: str) -> dict[str, Any]:
+    """``{ok, error}`` from ``runspec-scheduler use daemon`` run to strip a
+    venv's crontab lines before deprovisioning: its last JSON object, where
+    ``crontab.errors`` names any account whose crontab couldn't be edited."""
+    data: dict[str, Any] = {}
+    for line in reversed((out or "").splitlines()):
+        line = line.strip()
+        if line.startswith("{"):
+            try:
+                data = json.loads(line)
+            except ValueError:
+                continue
+            break
+    if not data:
+        return {"ok": False, "error": ""}
+    errors = (data.get("crontab") or {}).get("errors") or []
+    if errors:
+        first = errors[0]
+        return {"ok": False, "error": f"{first.get('user')}: {first.get('error')}"}
+    return {"ok": bool(data.get("ok")), "error": str(data.get("error") or "")}
+
+
 def scheduler_cron_argv(root: str) -> list[str]:
     """Switch the venv's schedules back to the owner's crontab (``use cron``
     writes the crontab lines; the daemon stops firing at its next tick)."""

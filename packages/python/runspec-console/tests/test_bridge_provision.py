@@ -162,6 +162,7 @@ class _StubBridge:
     _prov_operator = Bridge._prov_operator
     _prov_host_audit = Bridge._prov_host_audit
     _deprov_stop_scheduler = Bridge._deprov_stop_scheduler
+    _deprov_clear_crontab = Bridge._deprov_clear_crontab
     _prov_pip_env = Bridge._prov_pip_env
     _venv_inspect = Bridge._venv_inspect
     _upd_inspect = Bridge._upd_inspect
@@ -810,6 +811,64 @@ def test_deprovision_stops_the_scheduler_first(app, tmp_path):
     rm_at = next(i for i, c in enumerate(b.commands) if "refused:" in c)
     assert stop_at < rm_at
     assert not calls.exists()  # gone with the venv (keep_logs keeps logs/ only)
+
+
+def test_deprovision_takes_a_cron_venvs_lines_out_of_the_crontab(app, tmp_path):
+    venv = _venv_with_scheduler(tmp_path)
+    rp = f"{venv}/bin/runspec"
+    _hosts([rp])
+    b = _StubBridge()
+    prev = b.deprovision_preview({"targets": [{"host": "web-01", "runspec_path": rp}]})
+    assert prev["rows"][0]["backend"] != "daemon"
+    out = b.deprovision_start(
+        {"targets": [{"host": "web-01", "runspec_path": rp}], "confirm": "ops"}
+    )
+    [res] = _wait(b, out["op"])["results"]
+    assert res["ok"], res
+    at = {
+        k: next(i for i, c in enumerate(b.commands) if k in c)
+        for k in (
+            "install-service --remove --write",
+            "runspec-scheduler use daemon",
+            "refused:",
+        )
+    }
+    # keepers first, then the crontab lines, then the folder
+    assert (
+        at["install-service --remove --write"]
+        < at["runspec-scheduler use daemon"]
+        < at["refused:"]
+    )
+    assert "crontab" not in res["summary"]
+
+
+def test_deprovision_leaves_a_daemon_venvs_crontab_alone(app, tmp_path):
+    venv = _venv_with_scheduler(tmp_path)
+    (venv / "runspec_scheduler.toml").write_text('[scheduler]\nbackend = "daemon"\n')
+    rp = f"{venv}/bin/runspec"
+    _hosts([rp])
+    b = _StubBridge()
+    out = b.deprovision_start(
+        {"targets": [{"host": "web-01", "runspec_path": rp}], "confirm": "ops"}
+    )
+    [res] = _wait(b, out["op"])["results"]
+    assert res["ok"], res
+    assert not any("runspec-scheduler use" in c for c in b.commands)
+
+
+def test_deprovision_says_when_crontab_lines_may_be_left(app, tmp_path):
+    venv = _venv_with_scheduler(tmp_path)
+    (venv / "bin" / "FAIL_USE").touch()
+    rp = f"{venv}/bin/runspec"
+    _hosts([rp])
+    b = _StubBridge()
+    out = b.deprovision_start(
+        {"targets": [{"host": "web-01", "runspec_path": rp}], "confirm": "ops"}
+    )
+    [res] = _wait(b, out["op"])["results"]
+    assert res["ok"], res  # never keeps the venv
+    assert "may still be in the crontab" in res["summary"]
+    assert not venv.joinpath("bin").exists()
 
 
 def test_deprovision_keeps_a_venv_whose_daemon_wont_stop(app, tmp_path):

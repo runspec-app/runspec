@@ -1111,6 +1111,7 @@ class ProvisionMixin:
                 logger.warning(
                     "deprovision: no host-side audit record for %s:%s", name, root
                 )
+            cron_left = ""
             if info.get("scheduler"):
                 # Before the folder goes: no keeper may restart a daemon from it.
                 stopped = self._deprov_stop_scheduler(
@@ -1118,6 +1119,12 @@ class ProvisionMixin:
                 )
                 if stopped:
                     return _done(False, stopped)
+                if info.get("backend") != "daemon":
+                    # A cron venv's schedules are lines in its owner's crontab;
+                    # left behind, they would fire into a deleted venv.
+                    cron_left = self._deprov_clear_crontab(
+                        op, name, root, run_as=run_as, become=become
+                    )
             self._prov_progress(
                 op=op, kind="deprovision", host=name, phase="step", step="remove"
             )
@@ -1144,7 +1151,8 @@ class ProvisionMixin:
                         out, code, run_as=run_as, become_method=become, limit=4
                     ),
                 )
-            return _done(True, prov.tail(out, 1) or "removed")
+            summary = prov.tail(out, 1) or "removed"
+            return _done(True, f"{summary}; {cron_left}" if cron_left else summary)
 
         results: list[dict[str, Any]] = record["results"]
         try:
@@ -1217,6 +1225,42 @@ class ProvisionMixin:
             f"The venv's scheduler daemon is still running ({running}) and its keeper "
             f"couldn't be removed: {why}. Kept the venv; stop the daemon on the host "
             "(runspec-scheduler install-service --remove --write), then deprovision again."
+        )
+
+    def _deprov_clear_crontab(
+        self, op: str, name: str, root: str, *, run_as: str, become: str
+    ) -> str:
+        """Remove the venv's schedule lines from the crontabs it wrote to, by
+        moving it to the daemon backend (``runspec-scheduler use daemon``, 0.5.0+:
+        it strips every line this venv wrote and starts nothing — the keepers are
+        already gone). Returns a note for the summary when lines may be left;
+        that never keeps the venv, it only means cron reports failed fires."""
+        self._prov_progress(
+            op=op, kind="deprovision", host=name, phase="step", step="crontab"
+        )
+        try:
+            code, out = self._prov_run(
+                self._prov_host(name),
+                prov.scheduler_use_argv(root),
+                run_as=run_as,
+                become_method=become,
+                timeout=_STEP_TIMEOUT_S,
+            )
+        except Exception as exc:  # noqa: BLE001
+            code, out = -1, str(exc)
+        for ln in (out or "").splitlines():
+            self._prov_progress(
+                op=op, kind="deprovision", host=name, phase="line", line=ln
+            )
+        result = prov.parse_cron_clear(out)
+        if code == 0 and result["ok"]:
+            return ""
+        why = result["error"] or prov.failure_text(
+            out, code, run_as=run_as, become_method=become, limit=2
+        )
+        return (
+            f"its schedule lines may still be in the crontab ({why}); "
+            "remove the '# runspec:sched:' lines by hand"
         )
 
     # ── internals: update an existing venv ──

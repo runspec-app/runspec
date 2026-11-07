@@ -50,7 +50,8 @@ class TestRenderCommand:
         # runspec exec, labelled + locked, recorded under trigger=schedule; output
         # redirected only so cron doesn't mail it (exec captured it in the log).
         assert cmd.startswith("env RUNSPEC_AGENT=1 /venv/bin/runspec exec --label sched:nightly --trigger schedule:cron ")
-        assert "--lock /home/svc/.cache/runspec-scheduler/nightly.lock" in cmd
+        tag = cronsync.venv_tag("/venv")
+        assert f"--lock /home/svc/.cache/runspec-scheduler/{tag}/nightly.lock" in cmd
         # every fire names the venv's schedule-only env file (missing = nothing added)
         assert "--env-file /venv/runspec_schedules.env" in cmd
         assert "backup -- --target prod" in cmd
@@ -133,6 +134,24 @@ class TestPlanCrontab:
         assert cronsync.is_our_job("0 * * * *  runspec exec --label sched:a --lock x", "a")
         assert not cronsync.is_our_job("0 * * * *  runspec exec --label sched:ab --lock x", "a")
         assert not cronsync.is_our_job("# /.cache/runspec-scheduler/a.lock", "a")
+        # 0.7.3+ lock in a per-venv folder (a line without the label still counts)
+        assert cronsync.is_our_job("* * * * *  flock -n /h/.cache/runspec-scheduler/ops-1a2b3c4d/a.lock r", "a")
+        assert not cronsync.is_our_job("* * * * *  flock -n /h/.cache/runspec-scheduler/ops-1a2b3c4d/ab.lock r", "a")
+
+    def test_lock_is_per_venv(self):
+        # Same owner, same schedule id, two venvs: two locks, so neither fire
+        # is skipped as "still running" because of the other.
+        a = cronsync.render_command("/opt/venvs/a/bin/runspec", "r", {}, "", home="/h", sched_id="nightly")
+        b = cronsync.render_command("/opt/venvs/b/bin/runspec", "r", {}, "", home="/h", sched_id="nightly")
+        lock_a = a.split("--lock ")[1].split()[0]
+        lock_b = b.split("--lock ")[1].split()[0]
+        assert lock_a != lock_b
+        assert lock_a.startswith("/h/.cache/runspec-scheduler/a-") and lock_a.endswith("/nightly.lock")
+
+    def test_venv_tag_is_stable_and_safe(self):
+        assert cronsync.venv_tag("/opt/venvs/ops") == cronsync.venv_tag("/opt/venvs/ops/")
+        assert cronsync.venv_tag("/opt/venvs/ops") != cronsync.venv_tag("/srv/venvs/ops")
+        assert cronsync.venv_tag("/opt/my venv;x").startswith("my_venv_x-")
         assert not cronsync.is_our_job("", "a")
 
     def test_large_crontab_round_trips(self):

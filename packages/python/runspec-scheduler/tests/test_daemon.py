@@ -16,7 +16,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from runspec_scheduler import daemon, discovery, status
+from runspec_scheduler import cronsync, daemon, discovery, status
 from runspec_scheduler.config import ScheduleEntry, SchedulerSettings, write_schedules
 from runspec_scheduler.discovery import Target
 from runspec_scheduler.timing import When, when_to_trigger
@@ -281,7 +281,7 @@ class TestFire:
         assert fire is not None
         fire.proc.wait(10)
         [call] = _calls(tmp_path)
-        lock = f"{tmp_path}/.cache/runspec-scheduler/nightly.lock"
+        lock = f"{tmp_path}/.cache/runspec-scheduler/{cronsync.venv_tag(tmp_path.parent)}/nightly.lock"
         sched_env = str(tmp_path.parent / "runspec_schedules.env")  # {venv}/runspec_schedules.env of {venv}/bin/runspec
         assert call["argv"] == [
             "exec",
