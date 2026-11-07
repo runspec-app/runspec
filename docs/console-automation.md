@@ -469,6 +469,34 @@ History's **Run by** column tells host schedule fires apart from the agent:
 as **host sched**. A cron line picks up the new marker on its next sync, a
 daemon after a restart.
 
+#### Who is handling a failure
+
+Host schedules are shared: several people may see the same failure. To stop two
+of them working on it, or a fixed job reading as broken, failing host cron and
+daemon rows get a checkbox. Tick one or several (across venvs and hosts), then:
+
+- **I'm on it** claims them, with an optional note. The row reads **being
+  handled** with your name and note.
+- **Dealt with…** marks them handled, with a required note saying what was done.
+  The row reads **dealt with**.
+- **Release** lets go of a claim (or a dealt-with mark), and the row reads
+  *last run failed* again.
+
+A mark covers the schedule's failures until it next succeeds, so a job that
+keeps failing for the same reason is claimed once and the next good run clears
+it. *Being handled* and *dealt with* don't count as problems on the cards or
+with **Only problems**, so a quick look shows what still needs someone. A claim
+with no update for 4 hours counts as a problem again.
+
+The mark is kept on the host, in the venv's runs index: the console runs the
+venv's own `runspec history claim|resolve|release` as the venv owner, one call
+per venv, and records your login as who did it. Everyone else's console sees
+it, and so does `runspec history jobs` on the host (see
+[`runspec history`](cli.md#who-is-handling-a-failure)). Needs runspec 0.83.0
+and runspec-scheduler 0.7.2 in the venv. Recorded in the console's audit log as
+`schedule.host.claim` / `resolve` / `release`, and on the venv's own ledger as
+`run.claim` / `run.resolve` / `run.release`.
+
 ---
 
 ## Choosing the model per trigger, schedule or runbook

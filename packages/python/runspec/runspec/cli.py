@@ -1467,12 +1467,19 @@ def cmd_history(args: list[str]) -> None:
     from runspec import runsdb
 
     verb = (parsed.verb.value or "list").lower()
-    if verb not in ("list", "running", "stats", "prune", "reindex", "reap", "sweep"):
-        print(f"✗  Unknown history verb: {verb} (list / running / stats / prune / reindex / reap / sweep)")
+    verbs = ("list", "running", "stats", "prune", "reindex", "reap", "sweep", "claim", "resolve", "release", "notes", "jobs")
+    if verb not in verbs:
+        print(f"✗  Unknown history verb: {verb} ({' / '.join(verbs)})")
         sys.exit(1)
 
     if verb == "sweep":
         _history_sweep(parsed.json.value)
+        return
+    if verb in ("claim", "resolve", "release"):
+        _history_note(verb, parsed)
+        return
+    if verb in ("notes", "jobs"):
+        _history_notes_read(verb, parsed)
         return
 
     # Reads span every logs dir by default (scope_dirs → None ⇒ log_dirs());
@@ -1630,6 +1637,148 @@ def _print_inbox_stats(ib: dict[str, Any] | None) -> None:
     print(f"   inbox: {', '.join(parts)} ({(ib.get('bytes') or 0) / 1024:.1f} KiB)")
     if ib.get("subdirs"):
         print(f"   ‼  {ib['subdirs']} subdirectory(ies) in the inbox — only root can remove a non-empty one")
+
+
+def _note_actor() -> tuple[str, str]:
+    """(who, os_user) for a run note. ``os_user`` is the effective account; ``who``
+    is the person behind it — ``SUDO_USER`` when sudo switched to this account
+    (the console writes as the venv owner on an operator's behalf), else the same."""
+    from runspec import logging_setup
+
+    os_user = logging_setup._effective_user_name() if hasattr(os, "geteuid") else ""
+    if not os_user:
+        import getpass
+
+        with contextlib.suppress(Exception):
+            os_user = getpass.getuser()
+    sudo_user = os.environ.get("SUDO_USER", "")
+    who = sudo_user if sudo_user and sudo_user != os_user and sudo_user != "root" else os_user
+    return who, os_user
+
+
+def _history_note(verb: str, parsed: Any) -> None:
+    """``runspec history claim|resolve|release`` — record who is handling a failing
+    job, on the venv's own runs index (venv owner only: it is the index's writer)."""
+    from runspec import logs as _logs
+    from runspec import runnotes, runsdb
+
+    as_json = parsed.json.value
+    state = runnotes.VERBS[verb]
+    note = parsed.note.value or ""
+    refs = [r.strip() for r in str(parsed.run.value or "").split(",") if r.strip()]
+    labels = [lb.strip() for lb in str(parsed.label.value or "").split(",") if lb.strip()]
+
+    def fail(msg: str, code: int = 1) -> None:
+        if as_json:
+            print(json.dumps({"verb": verb, "ok": False, "error": msg}))
+        else:
+            print(f"✗  {msg}")
+        sys.exit(code)
+
+    if verb == "resolve" and not runnotes.clean_note(note):
+        fail("resolve needs --note: say what was done, so the next person knows")
+    if not refs and not labels:
+        fail(f"{verb} needs the failed run id(s) (comma-separated) or --label sched:<id>")
+    dirs = _logs.scope_dirs(parsed.scope.value, destructive=True) or _logs.log_dirs()[:1]
+    log_dir = dirs[0]
+
+    targets: list[dict[str, Any]] = []
+    for ref in refs:
+        try:
+            row = runsdb.find_run(log_dir, ref)
+        except runsdb.NoteError as exc:
+            fail(str(exc))
+        if row is None:
+            fail(f"no run '{ref}' in {log_dir}")
+        targets.append(row)  # type: ignore[arg-type]
+    for lb in labels:
+        rows = runsdb.list_runs_with_inbox(log_dir, label=lb, limit=200)
+        st = runnotes.job_state(rows)
+        if not st["run_id"]:
+            fail(f"'{lb}' isn't failing (its newest finished run succeeded), so there is nothing to {verb}")
+        targets.append(next(r for r in rows if r.get("run_id") == st["run_id"]))
+
+    who, os_user = _note_actor()
+    done: list[dict[str, Any]] = []
+    for row in targets:
+        try:
+            rec = runsdb.add_note(log_dir, row, state, note, actor=who, os_user=os_user)
+        except runsdb.NoteError as exc:
+            fail(str(exc), 2)
+        done.append(rec)
+        with contextlib.suppress(Exception):
+            from runspec.auditlog import audit as _audit
+
+            _audit(
+                f"run.{verb}",
+                "succeeded",
+                target={"run_id": row.get("run_id"), "runnable": row.get("runnable"), "label": row.get("label")},
+                detail={"note": rec["note"], "by": who},
+                ledger_dir=log_dir,
+            )
+    if as_json:
+        print(json.dumps({"verb": verb, "ok": True, "notes": done}, default=str))
+        return
+    word = {"claim": "Claimed", "resolve": "Marked dealt with", "release": "Released"}[verb]
+    for rec in done:
+        job = rec.get("label") or rec.get("runnable")
+        print(f"✓  {word}: {job} (run {str(rec.get('run_id'))[:8]}) as {who}")
+
+
+def _history_notes_read(verb: str, parsed: Any) -> None:
+    """``runspec history notes`` (every note, newest first) and ``runspec history
+    jobs`` (each job's state: clean / failed / handling / done)."""
+    from runspec import logs as _logs
+    from runspec import runnotes, runsdb
+
+    as_json = parsed.json.value
+    dirs = _logs.scope_dirs(parsed.scope.value, destructive=False) or _logs.log_dirs()
+    if verb == "notes":
+        run_id = None
+        if parsed.run.value:
+            row = None
+            for d in dirs:
+                with contextlib.suppress(runsdb.NoteError):
+                    row = row or runsdb.find_run(d, str(parsed.run.value))
+            run_id = (row or {}).get("run_id") or str(parsed.run.value)
+        notes: list[dict[str, Any]] = []
+        for d in dirs:
+            notes.extend(runsdb.list_notes(d, run_id=run_id, label=parsed.label.value, limit=parsed.limit.value or 50))
+        notes.sort(key=lambda n: str(n.get("ts") or ""), reverse=True)
+        notes = notes[: parsed.limit.value or 50]
+        if as_json:
+            for n in notes:
+                print(json.dumps(n, default=str))
+            return
+        if not notes:
+            print("No notes.")
+        for n in notes:
+            job = n.get("label") or n.get("runnable")
+            text = f" — {n['note']}" if n.get("note") else ""
+            print(f"{str(n.get('ts') or '')[:16].replace('T', ' ')}  {n.get('state'):9}  {job}  run {str(n.get('run_id'))[:8]}  by {n.get('actor')}{text}")
+        return
+
+    rows: list[dict[str, Any]] = []
+    for d in dirs:
+        rows.extend(runsdb.list_runs_with_inbox(d, label=parsed.label.value, runnable=parsed.runnable.value, limit=2000))
+    states = runnotes.jobs(rows)
+    items = sorted(states.items(), key=lambda kv: kv[0])
+    if parsed.failing.value:
+        items = [(k, v) for k, v in items if v["state"] != "clean"]
+    if as_json:
+        for k, v in items:
+            print(json.dumps({"job": k, **v}, default=str))
+        return
+    if not items:
+        print("No jobs." if not parsed.failing.value else "Nothing failing.")
+    for k, v in items:
+        line = f"{v['state']:9}  {k}"
+        if v["state"] != "clean":
+            line += f"  ({v['failures']} failed since {str(v['since'] or '')[:16].replace('T', ' ')})"
+        n = v.get("note")
+        if n:
+            line += f"  — {n.get('actor')}" + (f": {n['note']}" if n.get("note") else "")
+        print(line)
 
 
 def _history_sweep(as_json: bool) -> None:

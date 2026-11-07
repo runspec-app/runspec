@@ -324,7 +324,7 @@ class TestBinding:
             _reset_logging(ls)
         [row] = runsdb.list_runs(venv / "logs", live=False)
         assert row["source"] == "direct" and row["os_user"] == inbox.effective_user()
-        assert runsdb.stats(venv / "logs")["schema_version"] == 7
+        assert runsdb.stats(venv / "logs")["schema_version"] == runsdb._SCHEMA_VERSION
 
 
 # ── multi-user (root only) ───────────────────────────────────────────────────

@@ -123,3 +123,48 @@ describe('Schedules option cards', () => {
     expect(within(card('daemon')).getByText('none yet')).toBeTruthy()
   })
 })
+
+describe('who is handling a failing host schedule', () => {
+  const failing = (state: 'failed' | 'handling') => sched({
+    id: 'flaky', runnable: 'flaky-job',
+    runs: [{ run_id: 'run-flaky-2', status: 'failed', exit_code: 3, start_ts: new Date(Date.now() - 600_000).toISOString() }],
+    attention: {
+      state, failures: 2, since: new Date(Date.now() - 86400_000).toISOString(), run_id: 'run-flaky-2',
+      note: state === 'handling' ? { state, actor: 'ana', note: 'looking at the quota', ts: new Date(Date.now() - 300_000).toISOString() } : null,
+    },
+  })
+
+  it('tick a failing row, say "I\'m on it", one call per venv with its run id', async () => {
+    api.shared_schedules_all = vi.fn(() => Promise.resolve([{ ...VENVS[0], status: { ...VENVS[0].status!, schedules: [sched(), failing('failed')] } }]))
+    api.host_schedule_note = vi.fn(() => Promise.resolve({ ok: true, notes: [{ state: 'handling', ts: 'x' }] }))
+    await renderView()
+    expect(screen.getByText('last run failed')).toBeTruthy()
+    // only the failing row has a checkbox
+    expect(screen.queryByLabelText('Select nightly')).toBeNull()
+    fireEvent.click(screen.getByLabelText('Select flaky'))
+    expect(screen.getByText('1 failing schedule selected')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Release' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: "I'm on it" }))
+    fireEvent.change(await screen.findByLabelText('Note'), { target: { value: 'checking the disk' } })
+    fireEvent.click(within(document.querySelector('.ant-modal') as HTMLElement).getByRole('button', { name: "I'm on it" }))
+    await waitFor(() => expect(api.host_schedule_note).toHaveBeenCalledWith({ host: 'web-1', venv: 'ops', verb: 'claim', runs: ['run-flaky-2'], note: 'checking the disk' }))
+  })
+
+  it('a claimed failure shows who has it and offers Release; dealt with needs a note', async () => {
+    api.shared_schedules_all = vi.fn(() => Promise.resolve([{ ...VENVS[0], status: { ...VENVS[0].status!, schedules: [failing('handling')] } }]))
+    api.host_schedule_note = vi.fn(() => Promise.resolve({ ok: true, notes: [] }))
+    render(<SchedulesView hosts={HOSTS} runnables={[]} selectedHost="local" />)
+    expect(await screen.findByText('being handled', undefined, { timeout: 3000 })).toBeTruthy()
+    expect(screen.getByText('ana: looking at the quota')).toBeTruthy()
+    // being handled isn't a problem
+    expect(within(card('cron')).queryByLabelText(/problem/)).toBeNull()
+    fireEvent.click(screen.getByLabelText('Select flaky'))
+    expect(screen.getByRole('button', { name: 'Release' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Dealt with…' }))
+    const ok = await screen.findByRole('button', { name: 'Dealt with' })
+    expect((ok as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.change(screen.getByLabelText('Note'), { target: { value: 'quota raised' } })
+    fireEvent.click(ok)
+    await waitFor(() => expect(api.host_schedule_note).toHaveBeenCalledWith(expect.objectContaining({ verb: 'resolve', note: 'quota raised' })))
+  })
+})

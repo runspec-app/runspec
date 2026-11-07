@@ -7,7 +7,7 @@
  *
  * Older schedulers (< 0.5.0) report no `backend` and no `daemon`: they are cron.
  */
-import type { RunCard, Schedule, SchedulerSettings, SharedSchedule, SharedSchedulesVenv } from '../bridge'
+import type { RunCard, RunNote, Schedule, ScheduleAttention, SchedulerSettings, SharedSchedule, SharedSchedulesVenv } from '../bridge'
 import { hostPasses, parseSearch } from '../searchTokens'
 
 /** The four option cards across the top of the Schedules tab. */
@@ -19,6 +19,7 @@ export type RowKind = 'schedule' | 'stale' | 'unreadable'
 export type RowState =
   | 'ok' | 'disabled' | 'last run failed' | 'running' | 'not installed' | 'not installable'
   | 'stale line' | 'scheduler stopped' | 'scheduler stale' | "can't read" | 'unknown' | 'legacy line'
+  | 'being handled' | 'dealt with'
 
 export interface RowLastRun {
   ts: string
@@ -51,6 +52,8 @@ export interface ScheduleRow {
   shared?: SharedSchedule
   console?: Schedule
   error?: string
+  /** A failing host schedule (claimable): its job state from the venv's runs index. */
+  attention?: ScheduleAttention
 }
 
 /** A venv-level note shown above the list (status errors, daemon config errors). */
@@ -110,6 +113,36 @@ export const STATE_COLOR: Record<RowState, string> = {
   "can't read": 'red',
   'unknown': 'default',
   'legacy line': 'gold',
+  'being handled': 'purple',
+  'dealt with': 'cyan',
+}
+
+/** A claim with no newer note for this long shows as stale: the failure counts
+ *  as a problem again, so a forgotten claim doesn't hide it. */
+export const CLAIM_STALE_HOURS = 4
+
+const ageText = (iso: string, now: number): string => {
+  const t = Date.parse(iso)
+  if (Number.isNaN(t)) return ''
+  const min = Math.max(0, Math.round((now - t) / 60000))
+  if (min < 60) return `${min}m`
+  const h = Math.round(min / 60)
+  return h < 48 ? `${h}h` : `${Math.round(h / 24)}d`
+}
+
+/** One line for a note: "jason, 2h ago: disk full". */
+export function noteText(n: RunNote | null | undefined, now = Date.now()): string {
+  if (!n) return ''
+  const who = n.actor || n.os_user || 'someone'
+  const age = n.ts ? ageText(n.ts, now) : ''
+  return `${who}${age ? `, ${age} ago` : ''}${n.note ? `: ${n.note}` : ''}`
+}
+
+/** Whether a claim has gone stale (no newer note for CLAIM_STALE_HOURS). */
+export function claimStale(n: RunNote | null | undefined, now = Date.now()): boolean {
+  if (!n || n.state !== 'handling') return false
+  const t = Date.parse(n.ts)
+  return !Number.isNaN(t) && now - t > CLAIM_STALE_HOURS * 3600_000
 }
 
 export function venvBackend(v: SharedSchedulesVenv): 'cron' | 'daemon' {
@@ -128,7 +161,7 @@ function argsSummary(args: Record<string, unknown> | undefined, dashes = true): 
 const FAILED = new Set(['failed', 'crashed'])
 
 /** One state tag for a host schedule, most important first. */
-export function sharedState(s: SharedSchedule, v: SharedSchedulesVenv): { state: RowState; tip: string; problem: boolean } {
+export function sharedState(s: SharedSchedule, v: SharedSchedulesVenv, now = Date.now()): { state: RowState; tip: string; problem: boolean } {
   const backend = venvBackend(v)
   if (!s.enabled) return { state: 'disabled', tip: 'Disabled in runspec_scheduler.toml — never fires.', problem: false }
   if (backend === 'daemon') {
@@ -145,9 +178,24 @@ export function sharedState(s: SharedSchedule, v: SharedSchedulesVenv): { state:
     if (s.installed === false) return { state: 'not installed', tip: 'In the config but not in the crontab — run `runspec-scheduler sync` on the host.', problem: true }
   }
   const last = s.runs[0]
+  const att = s.attention
+  if (att && att.state !== 'clean' && att.state !== 'failed' && att.note) {
+    // Someone has said they are on it, or that it was dealt with; it covers the
+    // schedule's failures until its next success.
+    const fails = `${att.failures} failed run${att.failures === 1 ? '' : 's'} since the last success`
+    if (att.state === 'done') {
+      return { state: 'dealt with', tip: `Dealt with by ${noteText(att.note, now)}. Covers ${fails}; the next success clears it.`, problem: false }
+    }
+    const stale = claimStale(att.note, now)
+    return {
+      state: 'being handled',
+      tip: `${stale ? `Claimed over ${CLAIM_STALE_HOURS}h ago with no update, so it counts as a problem again. ` : ''}Being handled by ${noteText(att.note, now)}. Covers ${fails}.`,
+      problem: stale,
+    }
+  }
   if (last && FAILED.has(last.status)) {
     const why = last.exit_code != null ? `exit ${last.exit_code}` : last.status
-    return { state: 'last run failed', tip: `The last fire ended ${why}. Expand the row for its output.`, problem: true }
+    return { state: 'last run failed', tip: `The last fire ended ${why}. Expand the row for its output, or tick it to say you're on it.`, problem: true }
   }
   if (last && last.status === 'running') return { state: 'running', tip: 'Firing now.', problem: false }
   if (backend === 'cron' && s.installed === null) {
@@ -281,6 +329,7 @@ export function collectRows(
         runAs: s.run_as ?? '',
         historySearch: `sched:${s.id}`,
         shared: s,
+        ...(s.attention && s.attention.state !== 'clean' && s.attention.run_id ? { attention: s.attention } : {}),
       })
     }
     for (const x of st.stale ?? []) {
@@ -453,4 +502,37 @@ export function timeoutLabel(t: number | null | undefined): string {
   if (t === 0) return 'no limit'
   if (t == null) return '6h (default)'
   return shortDuration(t)
+}
+
+/** Whether a row can be claimed / marked dealt with / released: a host schedule
+ *  that is failing (since its last success) on a runspec that keeps notes. */
+export function noteable(r: ScheduleRow): boolean {
+  return r.kind === 'schedule' && !!r.shared && !!r.attention?.run_id
+}
+
+export type NoteVerb = 'claim' | 'resolve' | 'release'
+
+export interface NoteBatch { host: string; venv: string; runs: string[]; ids: string[] }
+
+/** The selected rows as one call per venv: the newest failed run of each
+ *  schedule (a note on it covers the schedule until its next success). */
+export function noteBatches(rows: ScheduleRow[]): NoteBatch[] {
+  const out = new Map<string, NoteBatch>()
+  for (const r of rows) {
+    if (!noteable(r)) continue
+    const key = `${r.host}::${r.venv}`
+    const b = out.get(key) ?? { host: r.host, venv: r.venv, runs: [], ids: [] }
+    b.runs.push(r.attention!.run_id!)
+    b.ids.push(r.id)
+    out.set(key, b)
+  }
+  return [...out.values()]
+}
+
+/** Which verbs fit a selection: release only when something in it is claimed or dealt with. */
+export function noteVerbs(rows: ScheduleRow[]): NoteVerb[] {
+  const sel = rows.filter(noteable)
+  if (!sel.length) return []
+  const anyNoted = sel.some(r => r.attention?.state === 'handling' || r.attention?.state === 'done')
+  return anyNoted ? ['claim', 'resolve', 'release'] : ['claim', 'resolve']
 }

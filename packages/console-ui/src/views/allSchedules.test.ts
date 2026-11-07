@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from 'vitest'
 import {
-  DEFAULT_FILTERS, collectRows, daemonNeedsAttention, daemonSummary, filterRows, inScope, scopeCounts, settingText, settingsChanges, sharedState, timeoutLabel, shortDuration,
+  CLAIM_STALE_HOURS, DEFAULT_FILTERS, collectRows, daemonNeedsAttention, daemonSummary, filterRows, inScope, noteBatches, noteText, noteVerbs, noteable, scopeCounts, settingText, settingsChanges, sharedState, timeoutLabel, shortDuration,
 } from './allSchedules'
 import type { RunCard, Schedule, SharedSchedule, SharedSchedulesVenv } from '../bridge'
 
@@ -205,5 +205,54 @@ describe('daemon summary', () => {
     expect(daemonSummary(ds)).toBe('3 scheduler daemons: 2 running, 1 stopped, 1 needs a restart')
     expect(ds.map(daemonNeedsAttention)).toEqual([false, true, true])
     expect(daemonSummary(ds.slice(0, 1))).toBe('1 scheduler daemon: 1 running')
+  })
+})
+
+describe('who is handling a failure', () => {
+  const NOW = Date.parse('2026-11-07T12:00:00Z')
+  const failedRun = { run_id: 'r2', status: 'failed', exit_code: 1, start_ts: '2026-11-07T02:00:00Z' }
+  const att = (state: 'failed' | 'handling' | 'done', ts = '2026-11-07T11:00:00Z') => ({
+    state, failures: 2, since: '2026-11-06T02:00:00Z', run_id: 'r2',
+    note: state === 'failed' ? null : { state, actor: 'ana', note: 'quota raised', ts },
+  })
+  const v = cronVenv([])
+
+  it('a claim or a dealt-with note replaces "last run failed"', () => {
+    expect(sharedState(sched({ runs: [failedRun], attention: att('failed') }), v, NOW)).toMatchObject({ state: 'last run failed', problem: true })
+    const h = sharedState(sched({ runs: [failedRun], attention: att('handling') }), v, NOW)
+    expect(h).toMatchObject({ state: 'being handled', problem: false })
+    expect(h.tip).toContain('ana, 1h ago: quota raised')
+    expect(sharedState(sched({ runs: [failedRun], attention: att('done') }), v, NOW)).toMatchObject({ state: 'dealt with', problem: false })
+  })
+
+  it('a stale claim counts as a problem again', () => {
+    const old = new Date(NOW - (CLAIM_STALE_HOURS + 1) * 3600_000).toISOString()
+    expect(sharedState(sched({ runs: [failedRun], attention: att('handling', old) }), v, NOW)).toMatchObject({ state: 'being handled', problem: true })
+  })
+
+  it('a stopped scheduler still outranks a claim', () => {
+    const s = sched({ line: 'daemon', runs: [failedRun], attention: att('handling') })
+    expect(sharedState(s, daemonVenv([], 'stopped'), NOW).state).toBe('scheduler stopped')
+  })
+
+  it('only failing host schedules are selectable, batched per venv', () => {
+    const a = sched({ id: 'a', runs: [failedRun], attention: att('failed') })
+    const b = sched({ id: 'b', runs: [{ ...failedRun, run_id: 'r9' }], attention: { ...att('handling'), run_id: 'r9' } })
+    const c = sched({ id: 'c', attention: { state: 'clean', failures: 0, since: null, run_id: null, note: null } })
+    const other = cronVenv([sched({ id: 'd', runs: [failedRun], attention: att('failed') })], { host: 'web-2' })
+    const { rows } = collectRows([consoleSched()], [cronVenv([a, b, c]), other])
+    expect(rows.filter(noteable).map(r => r.id)).toEqual(['a', 'b', 'd'])
+    expect(noteBatches(rows)).toEqual([
+      { host: 'web-1', venv: 'ops', runs: ['r2', 'r9'], ids: ['a', 'b'] },
+      { host: 'web-2', venv: 'ops', runs: ['r2'], ids: ['d'] },
+    ])
+    expect(noteVerbs(rows.filter(r => r.id === 'a'))).toEqual(['claim', 'resolve'])
+    expect(noteVerbs(rows.filter(r => r.id === 'a' || r.id === 'b'))).toEqual(['claim', 'resolve', 'release'])
+    expect(noteVerbs(rows.filter(r => r.id === 'c'))).toEqual([])
+  })
+
+  it('noteText names who, how long ago and what', () => {
+    expect(noteText({ state: 'done', actor: 'ana', note: 'fixed', ts: '2026-11-07T11:30:00Z' }, NOW)).toBe('ana, 30m ago: fixed')
+    expect(noteText({ state: 'handling', os_user: 'svc', ts: '2026-11-05T12:00:00Z' }, NOW)).toBe('svc, 2d ago')
   })
 })

@@ -1,4 +1,4 @@
-import type { BridgeApi, ProvisionOpRecord, ProvisionPayload, DeprovisionPayload, VenvUpdatePayload, ProvisionResult, ChatSessionInfo, MarketplaceRepo, MarketplaceEntry, MarketplaceTarget, MarketplaceInstalledTarget, MarketplaceOpRecord, MarketplaceOpPayload, MarketplaceOpResult, Host, JumpHost, Runnable, HistoryRecord, RunningRun, Schedule, InFlightRecord, TestResult, AnalyticsData, AnalyticsBucket, TriggerCard, KnowledgeFact, KnowledgeNode, KnowledgeEdge, KnowledgeFactInput, EnvFileSaveRow, SavedTransfer, SharedSchedulesVenv } from './index'
+import type { BridgeApi, ProvisionOpRecord, ProvisionPayload, DeprovisionPayload, VenvUpdatePayload, ProvisionResult, ChatSessionInfo, MarketplaceRepo, MarketplaceEntry, MarketplaceTarget, MarketplaceInstalledTarget, MarketplaceOpRecord, MarketplaceOpPayload, MarketplaceOpResult, Host, JumpHost, Runnable, HistoryRecord, RunningRun, Schedule, InFlightRecord, TestResult, AnalyticsData, AnalyticsBucket, TriggerCard, KnowledgeFact, KnowledgeNode, KnowledgeEdge, KnowledgeFactInput, EnvFileSaveRow, SavedTransfer, SharedSchedulesVenv, SharedScheduleRun, RunNote } from './index'
 
 // Facts the knowledge_overview mock built, so knowledge_page / knowledge_search agree with it.
 let _mockKnowledgeFacts: KnowledgeFact[] = []
@@ -648,6 +648,34 @@ let invocationCounter = 0
 // Mock .runspec_env files, keyed `host|runspec_path`.
 // Keyed host|runspec_path for .runspec_env, host|runspec_path|schedules for
 // the schedule-only runspec_schedules.env.
+// Run notes (who is handling a failing host schedule), keyed host|venv|run_id.
+// prod-2's nightly backup starts out claimed so both states show.
+const _mockNotes = new Map<string, RunNote>([
+  ['prod-2|ops-tools|r3', { state: 'handling', note: 'S3 quota raised, watching tonight\'s run', actor: 'ana', os_user: 'svc-ops', ts: new Date(Date.now() - 50 * 60_000).toISOString(), run_id: 'r3' }],
+])
+
+/** Mirror `runspec-scheduler status`'s `attention`: the failure streak since the
+ *  last success and the newest note on it. */
+function _withMockAttention(venvs: SharedSchedulesVenv[]): SharedSchedulesVenv[] {
+  for (const v of venvs) {
+    for (const s of v.status?.schedules ?? []) {
+      const streak: SharedScheduleRun[] = []
+      for (const r of s.runs) {
+        if (r.status === 'running' || r.status === 'skipped') continue
+        if (r.status === 'failed' || r.status === 'crashed') { streak.push(r); continue }
+        break
+      }
+      for (const r of s.runs) r.note = _mockNotes.get(`${v.host}|${v.group}|${r.run_id}`) ?? null
+      if (!streak.length) { s.attention = { state: 'clean', failures: 0, since: null, run_id: null, note: null }; continue }
+      const notes = streak.map(r => r.note).filter((n): n is RunNote => !!n).sort((a, b) => b.ts.localeCompare(a.ts))
+      const latest = notes[0] ?? null
+      const state = latest && latest.state !== 'released' ? latest.state : 'failed'
+      s.attention = { state, failures: streak.length, since: streak[streak.length - 1].start_ts, run_id: streak[0].run_id, note: state === 'failed' ? null : latest }
+    }
+  }
+  return venvs
+}
+
 const _mockEnvKey = (r: { host: string; runspec_path: string; file?: string }) => `${r.host}|${r.runspec_path}${r.file ? `|${r.file}` : ''}`
 const _mockEnvFiles = new Map<string, Record<string, string>>([
   ['prod-1|/opt/venvs/ops/bin/runspec|schedules', { RUNSPEC_JIRA_ARG_JIRA_PAT: 'svc-token', OPS_TOKEN: 'svc-ops-token' }],
@@ -1782,7 +1810,18 @@ export const mockApi: BridgeApi = {
       })
       out.push({ host: hosts.find(h => h !== 'local'), group: 'legacy', available: true, ok: false, owner: 'root', error: "sudo: a password is required" })
     }
-    return out
+    return _withMockAttention(out)
+  },
+
+  host_schedule_note: async (p) => {
+    const state = p.verb === 'claim' ? 'handling' : p.verb === 'resolve' ? 'done' : 'released'
+    if (p.verb === 'resolve' && !(p.note ?? '').trim()) return { ok: false, error: 'say what was done, so the next person knows' }
+    const notes = p.runs.map(run_id => {
+      const n: RunNote = { state, note: (p.note ?? '').trim(), actor: 'me', os_user: 'svc-ops', ts: new Date().toISOString(), run_id }
+      _mockNotes.set(`${p.host}|${p.venv}|${run_id}`, n)
+      return n
+    })
+    return { ok: true, notes }
   },
 
   host_schedule_save: async (p) => {

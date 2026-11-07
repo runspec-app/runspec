@@ -49,7 +49,9 @@ DB_NAME = "runspec_runs.db"
 # by *structure* (``_has_sync``), never by user_version: an older runspec writing
 # the DB resets user_version to its own number, but the triggers (which live in
 # the DB file) keep stamping ``seq`` on its writes regardless.
-_SCHEMA_VERSION = 7
+_SCHEMA_VERSION = 8
+# v8: + the run_notes table (who is handling a failing job, runspec.runnotes).
+# A new table, not a column: older writers leave it alone.
 # v5: + events (JSON {level: count} — the run's log-record counts by level) and
 # exception (JSON {type, message} — the uncaught exception, no traceback), taken
 # from the run_summary at finalize. They let a reader (the console's Analytics)
@@ -135,6 +137,21 @@ CREATE INDEX IF NOT EXISTS runs_status   ON runs (status);
 CREATE INDEX IF NOT EXISTS runs_runnable ON runs (runnable);
 -- Per-runnable ring prune: find a runnable's Nth-newest row from the index alone.
 CREATE INDEX IF NOT EXISTS runs_runnable_start ON runs (runnable, start_ts);
+-- v8: who is handling a failing job (runspec.runnotes). Append-only: the newest
+-- note of a run is its current one. Not a column on runs, so a later upsert of
+-- the run (or a reindex) never clears it.
+CREATE TABLE IF NOT EXISTS run_notes (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id    TEXT NOT NULL,
+  runnable  TEXT,
+  label     TEXT,
+  state     TEXT NOT NULL,
+  note      TEXT,
+  actor     TEXT,
+  os_user   TEXT,
+  ts        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS run_notes_run ON run_notes (run_id, id);
 """
 
 
@@ -800,6 +817,11 @@ def _prune(
         cutoff = _iso_hours_ago(retention_days * 24)
         with contextlib.suppress(sqlite3.Error):
             con.execute("DELETE FROM runs WHERE status != 'running' AND start_ts < ?", (cutoff,))
+        with contextlib.suppress(sqlite3.Error):
+            con.execute("DELETE FROM run_notes WHERE ts < ?", (cutoff,))
+    with contextlib.suppress(sqlite3.Error):
+        # Notes are small and few; keep the newest _NOTES_CAP whatever the bounds.
+        con.execute("DELETE FROM run_notes WHERE id <= (SELECT max(id) FROM run_notes) - ?", (_NOTES_CAP,))
     if max_rows_per_runnable > 0:
         names = runnables
         if names is None:
@@ -920,6 +942,7 @@ def list_runs(
                 (*params, max(1, int(limit))),
             ).fetchall()
             out = [dict(r) for r in rows]
+            _attach_notes(con, out)
             if live:
                 out = _liveness_filter(out)
                 if running_only:
@@ -1198,9 +1221,138 @@ def list_runs_with_inbox(
         if label and r.get("label") != label:
             continue
         extra.append(_normalise_row(r) | {"pending": True, "log_pruned_at": None, "log_pruned_by": None})
+    if extra:
+        with contextlib.suppress(Exception):
+            con = _connect(db_path(log_dir), readonly=True)
+            if con is not None:
+                try:
+                    _attach_notes(con, extra)
+                finally:
+                    con.close()
     rows = indexed + extra
     rows.sort(key=lambda r: r.get("start_ts") or "", reverse=True)
     return rows[: max(1, int(limit))]
+
+
+# ── run notes: who is handling a failing job (runspec.runnotes) ────────────────
+
+_NOTES_CAP = 20000
+
+
+def _note_dict(r: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+    d = dict(r)
+    return {k: d.get(k) for k in ("state", "note", "actor", "os_user", "ts", "run_id")}
+
+
+def _attach_notes(con: sqlite3.Connection, rows: list[dict[str, Any]]) -> None:
+    """Give each row its newest note as ``note`` (or ``None``). Best-effort: an
+    index from before v8 has no ``run_notes`` table, so nothing is attached."""
+    ids = [r.get("run_id") for r in rows if r.get("run_id")]
+    found: dict[str, dict[str, Any]] = {}
+    try:
+        for i in range(0, len(ids), 500):
+            chunk = ids[i : i + 500]
+            marks = ",".join("?" * len(chunk))
+            q = f"SELECT n.* FROM run_notes n JOIN (SELECT run_id, max(id) AS id FROM run_notes WHERE run_id IN ({marks}) GROUP BY run_id) m ON n.id = m.id"
+            for r in con.execute(q, chunk).fetchall():
+                found[r["run_id"]] = _note_dict(r)
+    except sqlite3.Error:
+        return
+    for r in rows:
+        r["note"] = found.get(r.get("run_id"))
+
+
+class NoteError(Exception):
+    """A note that can't be recorded (bad state, no such run, index not writable)."""
+
+
+def find_run(log_dir: Path, ref: str) -> dict[str, Any] | None:
+    """A run by full id or unique id prefix (as `runspec logs --run` prints), from
+    the index or, still waiting there, the logs inbox. ``None`` when not found;
+    :class:`NoteError` when the prefix matches more than one run."""
+    ref = (ref or "").strip()
+    if not ref:
+        return None
+    row = get_run(log_dir, ref)
+    if row:
+        return row
+    matches: list[dict[str, Any]] = []
+    con = _connect(db_path(log_dir), readonly=True)
+    if con is not None:
+        try:
+            pattern = ref.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+            matches = [dict(r) for r in con.execute("SELECT * FROM runs WHERE run_id LIKE ? ESCAPE '\\' LIMIT 3", (pattern,)).fetchall()]
+        except sqlite3.Error:
+            matches = []
+        finally:
+            con.close()
+    if not matches:
+        with contextlib.suppress(Exception):
+            from . import inbox
+
+            matches = [_normalise_row(r) for r in inbox.inbox_rows(Path(log_dir)) if str(r.get("run_id") or "").startswith(ref)][:3]
+    if len(matches) > 1:
+        raise NoteError(f"'{ref}' matches more than one run; give more of the run id")
+    return matches[0] if matches else None
+
+
+def add_note(log_dir: Path, run: dict[str, Any], state: str, note: str = "", *, actor: str = "", os_user: str = "") -> dict[str, Any]:
+    """Record a note on ``run`` (a row from :func:`find_run`). Raises
+    :class:`NoteError` when the index isn't writable. Returns the note."""
+    from . import runnotes
+
+    if state not in runnotes.STATES:
+        raise NoteError(f"state must be one of {', '.join(runnotes.STATES)}")
+    err = write_error(log_dir)
+    if err:
+        raise NoteError(err)
+    con = _connect(db_path(log_dir))
+    if con is None:
+        raise NoteError(f"can't open the runs index in {log_dir}")
+    rec = {
+        "run_id": run.get("run_id"),
+        "runnable": run.get("runnable"),
+        "label": run.get("label"),
+        "state": state,
+        "note": runnotes.clean_note(note),
+        "actor": actor,
+        "os_user": os_user,
+        "ts": _now_iso(),
+    }
+    try:
+        with con:
+            con.execute(
+                "INSERT INTO run_notes (run_id, runnable, label, state, note, actor, os_user, ts) VALUES (?,?,?,?,?,?,?,?)",
+                tuple(rec[k] for k in ("run_id", "runnable", "label", "state", "note", "actor", "os_user", "ts")),
+            )
+    except sqlite3.Error as exc:
+        raise NoteError(f"couldn't write the note: {exc}") from exc
+    finally:
+        con.close()
+    return rec
+
+
+def list_notes(log_dir: Path, *, run_id: str | None = None, label: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+    """Notes newest first (every one, not just each run's latest), optionally for
+    one run or one job label. Best-effort → ``[]``."""
+    con = _connect(db_path(log_dir), readonly=True)
+    if con is None:
+        return []
+    try:
+        clauses, params = [], []
+        if run_id:
+            clauses.append("run_id=?")
+            params.append(run_id)
+        if label:
+            clauses.append("label=?")
+            params.append(label)
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        rows = con.execute(f"SELECT * FROM run_notes{where} ORDER BY id DESC LIMIT ?", (*params, max(1, int(limit)))).fetchall()
+        return [dict(r) | {"dir": str(log_dir)} for r in rows]
+    except sqlite3.Error:
+        return []
+    finally:
+        con.close()
 
 
 def reindex_rows(log_dir: Path, rows: list[dict[str, Any]]) -> int:
@@ -1281,6 +1433,8 @@ def stats(log_dir: Path) -> dict[str, Any]:
                     # By structure: an older runspec may have reset user_version.
                     cols = {r[1] for r in con.execute("PRAGMA table_info(runs)").fetchall()}
                     structural = ((7 if "integrity" in cols else 6) if "os_user" in cols else 5) if "events" in cols else 4
+                    if structural == 7 and con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='run_notes'").fetchone():
+                        structural = 8
                     out["schema_version"] = max(int(out["schema_version"] or 0), structural)
                     sync["tombstones"] = con.execute("SELECT count(*) FROM runs_tombstones").fetchone()[0]
                     out["sync"] = sync

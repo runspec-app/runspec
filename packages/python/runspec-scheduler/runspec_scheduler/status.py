@@ -125,8 +125,23 @@ def _list_runs(d: Path, label: str, limit: int) -> list[dict[str, Any]]:
     return list(runsdb.list_runs(d, label=label, limit=limit))
 
 
+# How far back to read a schedule's runs to find where its failure streak starts.
+ATTENTION_RUNS = 50
+
+
+def _attention(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Where the schedule's job stands — clean / failed / handling / done and the
+    note behind it (runspec >= 0.83, :mod:`runspec.runnotes`). ``None`` on an older
+    core, which keeps no notes."""
+    try:
+        from runspec import runnotes
+    except ImportError:
+        return None
+    return runnotes.job_state(rows)
+
+
 def _run_summary(row: dict[str, Any]) -> dict[str, Any]:
-    keys = ("run_id", "status", "exit_code", "start_ts", "end_ts", "duration_ms", "trigger", "user", "log_file", "log_pruned_at", "os_user", "pending")
+    keys = ("run_id", "status", "exit_code", "start_ts", "end_ts", "duration_ms", "trigger", "user", "log_file", "log_pruned_at", "os_user", "pending", "note")
     return {k: row.get(k) for k in keys}
 
 
@@ -341,8 +356,12 @@ def status(config_path: Path, *, runs: int = 5, output_bytes: int = DEFAULT_OUTP
             record["installed"] = None if user_ids is None else entry.id in user_ids
             record["line"] = None if user_ids is None else user_ids.get(entry.id)
 
-        rows = _runs_for(f"{LABEL_PREFIX}{entry.id}", runs, entry.run_as)
+        # Read further back than shown so a failure streak (and who is handling
+        # it) is seen whole; only the newest `runs` are listed.
+        all_rows = _runs_for(f"{LABEL_PREFIX}{entry.id}", max(runs, ATTENTION_RUNS), entry.run_as)
+        rows = all_rows[:runs]
         record["runs"] = [_run_summary(r) for r in rows]
+        record["attention"] = _attention(all_rows)
         finished = next((r for r in rows if r.get("status") != "running"), None)
         record["last_output"] = last_output(finished, output_bytes) if finished else None
         payload["schedules"].append(record)

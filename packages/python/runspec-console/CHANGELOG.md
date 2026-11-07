@@ -9,6 +9,27 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.388.0] — 2026-11-07
+
+### Added
+
+- **Say who is handling a failing host schedule.** Failing host cron / daemon
+  rows on the Schedules tab get a checkbox; tick one or several (across venvs
+  and hosts) and pick **I'm on it**, **Dealt with…** (a note is required) or
+  **Release**, with an optional note. It runs the venv's own `runspec history
+  claim|resolve|release` as the venv owner (one call per venv), so the note
+  lands in that venv's runs index and every console sees it, as does
+  `runspec history jobs` on the host. A note covers the schedule's failures
+  until it next succeeds.
+  - The row's state reads **being handled** (with who and their note) or
+    **dealt with**, instead of *last run failed*; neither counts as a problem
+    on the cards, so a scan shows what still needs someone. A claim with no
+    update for 4 hours counts as a problem again.
+  - Bridge `host_schedule_note` (`host_schedules.note_argv` checks verbs and
+    run ids; `_host_sched_call(program="runspec")`), audit
+    `schedule.host.claim|resolve|release`. Needs runspec 0.83.0 and
+    runspec-scheduler 0.7.2 in the venv; an older runspec gets an upgrade hint.
+
 ## [0.387.0] — 2026-11-07
 
 ### Added

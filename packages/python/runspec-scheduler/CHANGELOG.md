@@ -2,6 +2,17 @@
 
 All notable changes to `runspec-scheduler` are documented here.
 
+## [0.7.2] — 2026-11-07
+
+### Added
+
+- **`status` says who is handling a failing schedule.** Each schedule gains
+  `attention` — `{state, failures, since, run_id, note}`, where `state` is
+  clean / failed / handling / done for its failures since the last success —
+  and each listed run carries its newest `note`. Reads 50 runs back so a long
+  streak is seen whole. Needs runspec 0.83.0 for the notes (`runspec history
+  claim/resolve/release`); on an older core `attention` is `null`.
+
 ## [0.7.1] — 2026-11-07
 
 ### Added

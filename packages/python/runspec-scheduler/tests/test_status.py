@@ -156,3 +156,21 @@ def test_inbox_rows_count_only_from_the_schedules_account(env, monkeypatch):
     [rec] = st.status(cfg)["schedules"]
     assert [r["run_id"] for r in rec["runs"]] == ["cccccccc-3"]
     assert rec["runs"][0]["os_user"] == "svc" and rec["runs"][0]["pending"] is True
+
+
+def test_attention_follows_the_failure_streak_and_its_note(env, monkeypatch):
+    """A claim on any failed run since the last success covers the schedule; the
+    status names who is handling it, beyond the `runs` shown."""
+    cfg, logs = env
+    _crontab(monkeypatch, [])
+    _run(logs, "ok-1", "sched:nightly", start="2026-09-20T02:00:00+00:00")
+    for i in range(2, 8):
+        _run(logs, f"bad-{i}", "sched:nightly", status="failed", exit_code=1, start=f"2026-09-2{i}T02:00:00+00:00")
+    runsdb.add_note(logs, runsdb.find_run(logs, "bad-2"), "handling", "looking", actor="jason")
+    nightly = st.status(cfg, runs=2)["schedules"][0]
+    assert [r["run_id"] for r in nightly["runs"]] == ["bad-7", "bad-6"]
+    att = nightly["attention"]
+    assert att["state"] == "handling" and att["failures"] == 6 and att["run_id"] == "bad-7"
+    assert att["note"]["actor"] == "jason" and att["note"]["note"] == "looking"
+    often = st.status(cfg)["schedules"][1]
+    assert often["attention"]["state"] == "clean"
