@@ -228,21 +228,18 @@ def owning_dist(config_path: Path) -> metadata.Distribution | None:
             dist = metadata.distribution(parent.name)
             if _owns(dist, target):
                 return dist
-    # Rebranded / differently named distributions: ask the package map.
-    top = None
+    # Rebranded / differently named distributions (runspec rebrand): look through
+    # the distributions installed in the sys.path entry that holds the spec.
+    # (Not packages_distributions(): on Python 3.10 it reads only top_level.txt,
+    # which hatchling-built wheels don't have.)
     with contextlib.suppress(Exception):
         for sp in map(Path, sys.path):
             with contextlib.suppress(OSError, ValueError):
-                rel = target.relative_to(sp.resolve())
-                if len(rel.parts) > 1:
-                    top = rel.parts[0]
-                    break
-    if top:
-        with contextlib.suppress(Exception):
-            for dname in metadata.packages_distributions().get(top, []):
-                dist = metadata.distribution(dname)
-                if _owns(dist, target):
-                    return dist
+                if len(target.relative_to(sp.resolve()).parts) < 2:
+                    continue
+                for dist in metadata.distributions(path=[str(sp)]):
+                    if _owns(dist, target):
+                        return dist
     return None
 
 
