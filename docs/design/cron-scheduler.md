@@ -6,7 +6,7 @@
 > (`[scheduler] backend = "daemon"`, `runspec-scheduler use daemon`; see
 > [`venv-scheduler.md`](venv-scheduler.md)), which adds `every`, `catch_up` and
 > recorded missed fires. `cron` stays the default and is unchanged; `sync` on a
-> daemon venv writes no lines, and `use daemon` removes this venv's lines. The
+> daemon venv removes this venv's lines instead of writing any, as does `use daemon`. The
 > package's reusable core (config, timing, `RUNSPEC_ENV_FILE` credential
 > mechanism) is shared by both; the cron backend has no long-running process of
 > ours to install, supervise, or upgrade.
@@ -225,8 +225,12 @@ anywhere.
 
 **Shipped read-only (console 0.299.0):** Schedules tab → **Shared (host cron)**
 shows each host venv's shared schedules from `runspec-scheduler status` over SSH —
-installed state, recent runs and the last run's captured output. No management
-yet; the rest of this section is still the envisioned next step.
+installed state, recent runs and the last run's captured output. **Console
+0.379.0** replaced the per-host view with the Schedules tab's option cards (All /
+This console / Host cron / Host daemon) and one list over every venv on the
+active profile's connected hosts, with filters (docs/console-automation.md → "All
+schedules"). No management yet; the rest of this section is still the envisioned
+next step.
 
 **Envisioned future — a separate "Shared schedules" section, `run_as` = the venv
 owner.** The natural console home for this is a **distinct section** (not the

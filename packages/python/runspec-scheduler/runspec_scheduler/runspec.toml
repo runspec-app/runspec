@@ -111,7 +111,7 @@ id = {type = "str", required = true, description = "Schedule id to fire now."}
 
 # ---- sync: render the config into the OS crontab (recommended backend) ----
 [runspec-scheduler.commands.sync]
-description = "Reconcile the OS crontab to match the config's enabled cron schedules — each becomes a marked line in its run_as account's crontab (no daemon). Skips interval ('every'), disabled, and not-installed schedules."
+description = "Reconcile the OS crontab to match the config's enabled cron schedules — each becomes a marked line in its run_as account's crontab (no daemon). Skips interval ('every'), disabled, and not-installed schedules. On a daemon-backend venv it writes no lines and removes any this venv left behind."
 output      = "json"
 
 [runspec-scheduler.commands.sync.args]

@@ -1,4 +1,4 @@
-import type { BridgeApi, ProvisionOpRecord, ProvisionPayload, DeprovisionPayload, ProvisionResult, ChatSessionInfo, MarketplaceRepo, MarketplaceEntry, MarketplaceTarget, MarketplaceInstalledTarget, MarketplaceOpRecord, MarketplaceOpPayload, MarketplaceOpResult, Host, JumpHost, Runnable, HistoryRecord, RunningRun, Schedule, InFlightRecord, TestResult, AnalyticsData, AnalyticsBucket, TriggerCard, KnowledgeFact, KnowledgeNode, KnowledgeEdge, KnowledgeFactInput, EnvFileSaveRow, SavedTransfer } from './index'
+import type { BridgeApi, ProvisionOpRecord, ProvisionPayload, DeprovisionPayload, ProvisionResult, ChatSessionInfo, MarketplaceRepo, MarketplaceEntry, MarketplaceTarget, MarketplaceInstalledTarget, MarketplaceOpRecord, MarketplaceOpPayload, MarketplaceOpResult, Host, JumpHost, Runnable, HistoryRecord, RunningRun, Schedule, InFlightRecord, TestResult, AnalyticsData, AnalyticsBucket, TriggerCard, KnowledgeFact, KnowledgeNode, KnowledgeEdge, KnowledgeFactInput, EnvFileSaveRow, SavedTransfer, SharedSchedulesVenv } from './index'
 
 // Facts the knowledge_overview mock built, so knowledge_page / knowledge_search agree with it.
 let _mockKnowledgeFacts: KnowledgeFact[] = []
@@ -1691,6 +1691,42 @@ export const mockApi: BridgeApi = {
       },
       { group: 'web-tools', available: false, ok: true },
     ]
+  },
+
+  shared_schedules_all: async (hosts) => {
+    const out: SharedSchedulesVenv[] = []
+    for (const h of hosts) {
+      if (h === 'local') continue
+      const venvs = await mockApi.shared_schedules(h)
+      out.push(...venvs.map(v => ({ ...v, host: h, owner: v.available ? 'svc-ops' : undefined })))
+    }
+    const ago = (m: number) => new Date(Date.now() - m * 60_000).toISOString()
+    if (hosts.some(h => h !== 'local')) {
+      out.push({
+        host: hosts.find(h => h !== 'local'), group: 'jobs', available: true, ok: true, owner: 'svc-jobs',
+        status: {
+          ok: true, venv: 'jobs', config: '/opt/venvs/jobs/runspec_scheduler.toml', backend: 'daemon',
+          daemon: { state: 'running', firing: 0, pid: 4121, started: ago(60 * 26), heartbeat: ago(0.1), heartbeat_age_s: 6, uptime_s: 26 * 3600, interval_s: 30, config_error: null, running: [] },
+          stale: [{ id: 'queue-poll', user: 'svc-jobs', reason: 'backend is daemon' }], errors: [],
+          schedules: [
+            {
+              id: 'queue-poll', runnable: 'check-queue', enabled: true, when: { every: '5m' }, run_as: 'svc-jobs',
+              installable: true, not_installable_reason: null, installed: true, line: 'daemon', catch_up: false, timeout: 600,
+              next_run: new Date(Date.now() + 120_000).toISOString(),
+              runs: [{ run_id: 'q1', status: 'completed', exit_code: 0, start_ts: ago(3), duration_ms: 2100, trigger: 'schedule' }],
+              last_output: null,
+            },
+            {
+              id: 'weekly-rotate', runnable: 'rotate-keys', enabled: false, when: { cron: '0 4 * * 1' }, run_as: 'svc-jobs',
+              installable: true, not_installable_reason: null, installed: true, line: 'daemon', catch_up: true, timeout: null,
+              next_run: null, runs: [], last_output: null,
+            },
+          ],
+        },
+      })
+      out.push({ host: hosts.find(h => h !== 'local'), group: 'legacy', available: true, ok: false, owner: 'root', error: "sudo: a password is required" })
+    }
+    return out
   },
 
   history_db_stats: async (_host, group) => ({

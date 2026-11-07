@@ -319,32 +319,65 @@ cron backend (the default, see [the cron scheduler design](design/cron-scheduler
 or, from 0.5.0, its daemon backend (`runspec-scheduler use daemon`, which adds
 `every` intervals and catch-up; see [the daemon design](design/venv-scheduler.md)).
 
-### Shared (host cron) schedules — read-only
+### All schedules: this console and every host — read-only for hosts
 
-The toggle at the top of the Schedules tab switches between **This console** and
-**Shared (host cron)**. The shared view shows, for the host selected in the
-sidebar, each venv that has `runspec-scheduler` (≥ 0.3.0) installed:
+Four option cards across the top of the Schedules tab pick what you see. Each
+card shows how many schedules it covers and, in amber, how many have a problem.
+The choice is remembered.
 
-- every configured schedule — runnable and args, cron/interval, `run_as`;
-- whether its **crontab line** is installed. *legacy line* means an older
-  scheduler wrote it, and its fires aren't recorded — run
-  `runspec-scheduler sync` on the host to upgrade. *not installed* means it's in
-  the config but not in the crontab. *unknown* means the owner's crontab couldn't
-  be read without a password;
-- the **last run** and **next run**; expand a row for the recent runs (including
-  recorded **skipped** fires, when the previous run was still going) and the last
-  run's captured **stdout/stderr** and errors;
-- crontab lines left over from schedules no longer in the config.
+| Card | What it shows |
+|---|---|
+| **All** | Every schedule that fires: this console's own plus every host schedule |
+| **This console** | The console's own schedules (the table above, where you add and edit them) |
+| **Host cron** | Schedules each venv's crontab fires (`runspec-scheduler sync`) |
+| **Host daemon** | Schedules a venv's `runspec-scheduler run` process fires (runspec-scheduler 0.5.0 and later); *none yet* until a venv uses it |
 
-It reads `runspec-scheduler status` over SSH and changes nothing. In a venv
-owned by a service account the scheduler only runs as that owner, so the
-console runs `status` as the owner the same way it runs the venv's runnables
+The host cards read every venv on **local and every connected host in the
+active profile** in one go, one `runspec-scheduler status` (≥ 0.3.0) per venv,
+in parallel within `[refresh] workers`. The list is read when you open the tab,
+when the profile's connected hosts change, and when you press **Refresh**; reopening
+the tab shows the last read at once and refreshes underneath.
+
+One row per schedule: its state, id (or name), runnable and args, cron or
+interval, next fire, last run (with a button that opens it in **History**, which
+searches the run's `sched:<id>` label), host / venv, and the venv owner → the
+account it runs as. On **All** each row also says where it fires. The state tag:
+
+- *ok*, *running*, *disabled*;
+- *last run failed* — expand the row for its recent runs (including recorded
+  **skipped** fires) and the last run's captured **stdout/stderr** and errors;
+- *not installed* — in the config but not in the crontab (`runspec-scheduler
+  sync` on the host); *not installable* — cron can't run it (an `every` interval);
+- *stale line* — a crontab line for a schedule the config no longer has, or left
+  behind when the venv moved to the daemon. It can still fire;
+- *scheduler stopped* / *scheduler stale* — the venv uses the daemon but its
+  process isn't running, or stopped sending heartbeats;
+- *can't read* — the venv's `status` failed; expand it for the reason;
+- *legacy line* — an older scheduler wrote the crontab line and its fires aren't
+  recorded (`runspec-scheduler sync` to upgrade); *unknown* — the owner's crontab
+  couldn't be read without a password.
+
+The **Host daemon** card also shows each daemon venv's process: running /
+stale / stopped, pid, uptime and last heartbeat. Expanding a daemon schedule
+shows whether a missed fire runs on start (`catch_up`) and its timeout.
+
+Filters: the search box matches id, runnable and args, and takes the same
+`host:` and `group:` tokens as Forms and Marketplace (`host:web group:prod`).
+Quick filters narrow by source (on **All**), state, owner and run-as account;
+**Only problems** keeps failed, not installed, stale, stopped and unreadable
+rows. Sort by next fire (the default), last run, host or runnable. Filters are
+remembered.
+
+Host schedules are read-only here: the console runs `status` and changes nothing.
+In a venv owned by a service account the scheduler only runs as that owner, so
+the console runs `status` as the owner the same way it runs the venv's runnables
 (`sudo -n -u <owner> {venv}/bin/python …`); if that sudo is refused, the venv
-shows an error naming the owner. A venv without `runspec-scheduler` is listed
-at the bottom; install it there from the **Marketplace** to schedule that
-venv's runnables. Schedules are managed on the host (`runspec-scheduler add` / `remove` /
-`sync`). Every fire runs through `runspec exec`, so it also appears in
-**History**, where a skipped fire shows as *skipped* rather than as a success.
+shows as *can't read* naming the owner. Venvs without `runspec-scheduler` are
+listed under the table; install it there from the **Marketplace** to schedule
+that venv's runnables. Schedules are managed on the host (`runspec-scheduler
+add` / `remove` / `sync`). Every fire runs through `runspec exec`, so it also
+appears in **History**, where a skipped fire shows as *skipped* rather than as a
+success.
 
 ---
 

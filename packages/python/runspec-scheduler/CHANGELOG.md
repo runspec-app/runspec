@@ -42,7 +42,8 @@ The daemon is back, as a second backend beside host cron. Each venv picks one:
   with a still-running fire is a recorded `skipped` run. The daemon doesn't
   capture output any more (it only reaps the exit code).
 - `every` schedules need the daemon backend; `add --every` on a cron venv now
-  says so and points at `use daemon`. `sync` on a daemon venv writes no lines.
+  says so and points at `use daemon`. `sync` on a daemon venv writes no lines and
+  removes any this venv left behind (its result says `backend: daemon`).
 - A cron line gets `--timeout` only when its schedule sets one; cron fires keep
   no default limit.
 - The systemd unit template sets `KillMode=process`, so restarting the daemon

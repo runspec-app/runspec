@@ -81,6 +81,7 @@ class SyncResult:
     errors: list[dict[str, str]] = field(default_factory=list)
     users: list[str] = field(default_factory=list)
     dry_run: bool = False
+    backend: str = "cron"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -90,6 +91,7 @@ class SyncResult:
             "skipped": self.skipped,
             "errors": self.errors,
             "users": sorted(self.users),
+            "backend": self.backend,
         }
 
 
@@ -338,10 +340,12 @@ def sync(config_path: Path, *, dry_run: bool = False) -> SyncResult:
     result = SyncResult(dry_run=dry_run)
     settings, entries = load_config(config_path)
     if settings.backend != "cron":
-        # The daemon fires these schedules; writing cron lines too would fire every
-        # one of them twice.
-        result.errors.append({"user": "", "error": f"this venv's backend is '{settings.backend}', so sync writes no crontab lines (switch with: runspec-scheduler use cron)"})
-        return result
+        # The daemon fires these schedules, so the crontab should hold none of this
+        # venv's lines (one left behind would fire every schedule twice): on a
+        # daemon venv, sync strips them.
+        cleaned = remove_all(config_path, dry_run=dry_run)
+        cleaned.backend = settings.backend
+        return cleaned
 
     # Resolve + filter, grouping the installable ones by target account.
     groups: dict[tuple[str, str, str], list[tuple[ScheduleEntry, Target]]] = {}

@@ -9,6 +9,33 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.379.0] — 2026-11-07
+
+### Added
+
+- **All schedules in one list, chosen by option cards.** The Schedules tab's
+  small *This console / Shared (host cron)* switch, which read like a line of
+  text, is now four clickable cards across the top: **All**, **This console**,
+  **Host cron** and **Host daemon**. Each shows a one-line description, how many
+  schedules it covers and, in amber, how many have a problem; the selected one
+  takes the accent border and fill, and the choice is remembered (an old
+  *Shared* choice opens Host cron).
+- **All**, **Host cron** and **Host daemon** open one list covering this
+  console's schedules plus every venv on local and every connected host in the
+  active profile (it used to be one host at a time). One row per schedule with a
+  single state tag (ok, last run failed, not installed, stale line, scheduler
+  stopped / stale, can't read, disabled, …), next fire, last run with a button
+  that opens it in History (`sched:<id>`), host / venv and owner → run-as. Rows
+  expand to recent runs and captured output; daemon schedules also show
+  catch-up and timeout, and the Host daemon card shows each venv's scheduler
+  process (state, pid, uptime, heartbeat). Filters: `host:` / `group:` tokens
+  and free text, source, state, owner, run-as, **Only problems**, and sort by
+  next fire / last run / host / runnable, all remembered.
+- New bridge method `shared_schedules_all(hosts)`: every (host, venv) pair read
+  in one pool bounded by `[refresh] workers`; each venv result now also carries
+  the venv `owner`. Reads the runspec-scheduler 0.5.0 `backend` / `daemon` /
+  `catch_up` / `timeout` keys and treats an older scheduler as cron.
+
 ## [0.378.0] — 2026-11-07
 
 ### Fixed

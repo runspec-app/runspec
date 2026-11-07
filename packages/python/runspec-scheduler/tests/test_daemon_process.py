@@ -346,8 +346,8 @@ def test_use_switches_backends_without_ever_running_both(venv, crontab):
     assert "# runspec:sched:n" not in crontab() and "/bin/true" in crontab()
     assert out["daemon"]["state"] == "stopped" and "hint" in out
 
-    rc, out = _cli(venv, "sync")  # refused: the daemon owns this venv now
-    assert rc == 1 and "backend is 'daemon'" in out["errors"][0]["error"]
+    rc, out = _cli(venv, "sync")  # the daemon owns this venv now: no lines written
+    assert rc == 0 and out["backend"] == "daemon" and out["installed"] == [], out
     assert "# runspec:sched:n" not in crontab()
 
     start(venv)
@@ -367,6 +367,14 @@ def test_status_flags_a_crontab_line_left_while_on_the_daemon(venv, crontab):
     pe.write_config(venv, DAEMON + '[[schedule]]\nid = "n"\nrunnable = "demo"\nwhen = { cron = "0 2 * * *" }\n')  # hand-edited, no `use`
     _, out = _cli(venv, "status")
     assert out["stale"] == [{"id": "n", "user": "(self)", "reason": "backend is daemon"}]
+
+    # sync on a daemon venv strips the leftover line, as the console's tip says
+    rc, out = _cli(venv, "sync")
+    assert rc == 0 and out["backend"] == "daemon", out
+    assert out["installed"] == [{"id": "n", "user": "(self)", "removed": "true"}]
+    assert "# runspec:sched:n" not in crontab()
+    _, out = _cli(venv, "status")
+    assert out["stale"] == []
 
 
 def test_add_refuses_every_on_cron(venv):

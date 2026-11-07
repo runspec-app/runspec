@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Table, Tag, Button, Modal, Form, Select, Input, InputNumber, Space, Segmented, Switch, Tooltip, Popconfirm, Collapse, Typography, message } from 'antd'
 import { DeleteOutlined, PlusOutlined, MinusCircleOutlined, EditOutlined, PlayCircleOutlined, CalendarOutlined, ReloadOutlined } from '@ant-design/icons'
-import { bridge, type ArgDef, type Credential, type Host, type Runnable, type Schedule, type ScheduleWhen, type Runbook, type SavedRun, type SavedTransfer, type RunCard, type TriggerEvent, type EvalFixtureMeta } from '../bridge'
+import { bridge, type SharedSchedulesVenv, type ArgDef, type Credential, type Host, type Runnable, type Schedule, type ScheduleWhen, type Runbook, type SavedRun, type SavedTransfer, type RunCard, type TriggerEvent, type EvalFixtureMeta } from '../bridge'
 import { useIsDark, useAccent, textMuted, textSecondary, MONO_FONT } from '../ThemeContext'
 import { useFeatures, visibleScheduleActions } from '../features'
 import { RunInbox } from '../components/RunInbox'
@@ -10,7 +10,9 @@ import { SoundSelect } from '../components/SoundSelect'
 import { ModelSelect } from '../components/ModelSelect'
 import { initialFormValues } from './formsShared'
 import { RunbookField } from './RunbookRunModal'
-import { SharedSchedulesView } from './SharedSchedulesView'
+import { AllSchedulesView } from './AllSchedulesView'
+import { ScheduleScopeCards } from './ScheduleScopeCards'
+import { collectRows, scopeCounts, type ScheduleScope } from './allSchedules'
 import {
   ArgFieldRow, commandPathOptions, CredentialsSection, effectiveArgsForPath,
   RunnableArgsBlock, runnableSelectOptions, TargetFormItems, runnablesForTarget,
@@ -19,17 +21,37 @@ import {
 
 const { Text } = Typography
 
-type ScheduleScope = 'console' | 'shared'
 const SCOPE_KEY = 'runspec.schedules.scope'
 
+/** The remembered option card. `shared` is the pre-cards name of Host cron. */
 export function readScheduleScope(): ScheduleScope {
-  try { return localStorage.getItem(SCOPE_KEY) === 'shared' ? 'shared' : 'console' } catch { return 'console' }
+  try {
+    const v = localStorage.getItem(SCOPE_KEY)
+    if (v === 'shared') return 'cron'
+    return v === 'console' || v === 'cron' || v === 'daemon' || v === 'all' ? v : 'all'
+  } catch { return 'all' }
 }
+
+/** The hosts whose venvs the All list reads: local plus the connected hosts in
+ *  the active profile (the `hosts` list is already the profile's working set). */
+export function scheduleTargets(hosts: Host[]): string[] {
+  const names = hosts.filter(h => h.connected || h.name === 'local').map(h => h.name)
+  return ['local', ...names.filter(n => n !== 'local')].filter((n, i, a) => a.indexOf(n) === i)
+}
+
+// Host schedule reads survive leaving the tab: reopening it shows the last read at
+// once and refreshes underneath (one `runspec-scheduler status` per venv is an SSH
+// round trip per venv, so it is worth not blanking the list for it).
+let hostReadCache: { key: string; venvs: SharedSchedulesVenv[]; at: number } | null = null
+export function _resetHostReadCache() { hostReadCache = null }
 
 interface SchedulesViewProps {
   hosts: Host[]
   runnables: Runnable[]
   selectedHost: string
+  activeProfile?: string
+  /** Open the History tab with this search (a schedule's `sched:<id>` label). */
+  onOpenHistory?: (search: string) => void
 }
 
 const CRON_PRESETS = [
@@ -889,7 +911,7 @@ function relativeWhen(iso: string): string {
   return `in ${days}d ${hours % 24}h`
 }
 
-export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewProps) {
+export function SchedulesView({ hosts, runnables, selectedHost, activeProfile, onOpenHistory }: SchedulesViewProps) {
   const [schedules, setSchedules] = useState<Schedule[]>([])
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<Schedule | null>(null)
@@ -900,13 +922,53 @@ export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewP
   const [streams, setStreams] = useState<Record<string, string>>({})
   const [selected, setSelected] = useState<string | null>(null)
   const [events, setEvents] = useState<TriggerEvent[]>([])
-  // Which schedules: this console's own (fired while it's open) or a host's
-  // shared cron schedules (read-only). Remembered per viewer.
+  // Which option card: All, this console's own schedules, or the profile's host
+  // schedules by backend (cron / daemon, read-only). Remembered per viewer.
   const [scope, setScopeState] = useState<ScheduleScope>(readScheduleScope)
   const setScope = (v: ScheduleScope) => {
     setScopeState(v)
     try { localStorage.setItem(SCOPE_KEY, v) } catch { /* storage unavailable — fine */ }
   }
+
+  // Every venv's runspec-scheduler status across the profile's connected hosts.
+  // Read on open, when the profile's connected set changes, and on Refresh.
+  const targets = useMemo(() => scheduleTargets(hosts), [hosts])
+  const targetKey = targets.join(',')
+  const [hostVenvs, setHostVenvs] = useState<SharedSchedulesVenv[]>(() => hostReadCache?.key === targetKey ? hostReadCache.venvs : [])
+  const [hostsLoaded, setHostsLoaded] = useState(() => hostReadCache?.key === targetKey)
+  const [hostsUpdatedAt, setHostsUpdatedAt] = useState<number | null>(() => hostReadCache?.key === targetKey ? hostReadCache.at : null)
+  const [hostsLoading, setHostsLoading] = useState(false)
+  const readSeq = useRef(0)
+  const readHosts = useCallback(() => {
+    const seq = ++readSeq.current
+    const list = targetKey ? targetKey.split(',') : []
+    setHostsLoading(true)
+    Promise.resolve(bridge.shared_schedules_all(list))
+      .then(venvs => {
+        if (seq !== readSeq.current) return  // a newer read (profile switch) won
+        const at = Date.now()
+        hostReadCache = { key: targetKey, venvs: venvs ?? [], at }
+        setHostVenvs(venvs ?? [])
+        setHostsUpdatedAt(at)
+      })
+      .catch(e => { if (seq === readSeq.current) message.error(`Couldn't read host schedules: ${String(e)}`) })
+      .finally(() => {
+        if (seq !== readSeq.current) return
+        setHostsLoading(false)
+        setHostsLoaded(true)
+      })
+  }, [targetKey])
+  // Hosts connect one by one after a profile switch; wait for the set to settle
+  // before fanning out, rather than re-reading on every probe.
+  useEffect(() => {
+    if (hostReadCache?.key !== targetKey) {
+      setHostVenvs([])
+      setHostsLoaded(false)
+      setHostsUpdatedAt(null)
+    }
+    const t = setTimeout(readHosts, hostReadCache?.key === targetKey ? 0 : 1200)
+    return () => clearTimeout(t)
+  }, [readHosts, targetKey])
   const isDark = useIsDark()
   const accent = useAccent()
 
@@ -1145,24 +1207,41 @@ export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewP
     />
   )
 
+  const hostGroups = useMemo(
+    () => Object.fromEntries(hosts.map(h => [h.name, h.group ?? ''])) as Record<string, string>,
+    [hosts],
+  )
+  const collected = useMemo(
+    () => collectRows(schedules, hostVenvs, { cards: Object.values(cards), hostGroups }),
+    [schedules, hostVenvs, cards, hostGroups],
+  )
+  const counts = useMemo(() => scopeCounts(collected), [collected])
+
   const scopeToggle = (
-    <Segmented
-      size="small"
-      style={{ marginBottom: 16 }}
+    <ScheduleScopeCards
       value={scope}
-      onChange={v => setScope(v as ScheduleScope)}
-      options={[
-        { label: 'This console', value: 'console' },
-        { label: 'Shared (host cron)', value: 'shared' },
-      ]}
+      onChange={setScope}
+      counts={counts}
+      hostsPending={!hostsLoaded}
+      noDaemons={collected.daemons.length === 0}
     />
   )
 
-  if (scope === 'shared') {
+  if (scope !== 'console') {
     return (
       <div>
         {scopeToggle}
-        <SharedSchedulesView host={selectedHost || 'local'} />
+        <AllSchedulesView
+          scope={scope}
+          collected={collected}
+          loading={hostsLoading}
+          loaded={hostsLoaded}
+          updatedAt={hostsUpdatedAt}
+          hostCount={targets.length}
+          activeProfile={activeProfile}
+          onRefresh={readHosts}
+          onOpenHistory={onOpenHistory}
+        />
       </div>
     )
   }
