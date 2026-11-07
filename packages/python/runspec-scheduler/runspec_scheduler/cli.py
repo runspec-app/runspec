@@ -86,13 +86,88 @@ def _argv_config(argv: list[str]) -> str | None:
     return None
 
 
+#: Set by ``run --detach`` for its child: the fd of the venv lock the parent
+#: took, so the lock passes to the child with no moment where nobody holds it.
+LOCK_FD_ENV = "RUNSPEC_SCHEDULER_LOCK_FD"
+
+
+def _argv_words(argv: list[str]) -> list[str]:
+    """The non-option words of ``argv`` (skipping ``--config``'s value)."""
+    words: list[str] = []
+    skip = False
+    for tok in argv:
+        if skip:
+            skip = False
+        elif tok == "--config":
+            skip = True
+        elif not tok.startswith("-"):
+            words.append(tok)
+    return words
+
+
+def _adopt_lock_fd() -> Any:
+    """The lock a ``run --detach`` parent handed down, or ``None``."""
+    import os
+
+    raw = os.environ.pop(LOCK_FD_ENV, "")
+    if not raw.isdigit():
+        return None
+    fd = int(raw)
+    try:
+        os.set_inheritable(fd, False)  # fires must not hold the lock open
+        fh = os.fdopen(fd, "a+", encoding="utf-8")
+        fh.seek(0)
+        fh.truncate()
+        fh.write(f"{os.getpid()}\n")
+        fh.flush()
+    except OSError:
+        return None
+    return fh
+
+
+def _detach(argv: list[str], fh: Any) -> None:
+    """Start ``run`` (without ``--detach``) in a new session, holding ``fh``'s
+    lock, and exit 0. Its output goes to ``logs/scheduler.stdout.log``."""
+    import os
+    import subprocess
+
+    from .keeper import venv_root
+
+    exe = Path(sys.argv[0]) if sys.argv and Path(sys.argv[0]).name.startswith("runspec-scheduler") else None
+    cmd = [str(exe)] if exe else [sys.executable, "-c", "from runspec_scheduler.cli import main; main()"]
+    child_args = [t for t in argv if t != "--detach"]
+    log = venv_root() / "logs" / "scheduler.stdout.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    env = dict(os.environ)
+    env[LOCK_FD_ENV] = str(fh.fileno())
+    with open(log, "ab") as out:
+        proc = subprocess.Popen(
+            [*cmd, *child_args],
+            stdin=subprocess.DEVNULL,
+            stdout=out,
+            stderr=subprocess.STDOUT,
+            env=env,
+            pass_fds=(fh.fileno(),),
+            start_new_session=True,
+            close_fds=True,
+        )
+    fh.close()  # the child's copy keeps the lock
+    print(f"runspec-scheduler: started for this venv (pid {proc.pid})")
+    sys.exit(0)
+
+
 def _early_lock(argv: list[str]) -> None:
     """For ``run``: take the venv lock before ``rs.parse()``. A second start (a
     watchdog every few minutes) then exits 0 at once, without a run record or a
-    log line of its own."""
+    log line of its own. ``run --detach`` starts the daemon in the background
+    holding the lock; its child adopts that lock instead of taking a new one."""
     global _HELD_LOCK
-    words = [t for t in argv if not t.startswith("-")]
+    words = _argv_words(argv)
     if not words or words[0] != "run" or "--help" in argv or "-h" in argv:
+        return
+    adopted = _adopt_lock_fd()
+    if adopted is not None:
+        _HELD_LOCK = adopted
         return
     try:
         fh, holder = take_lock(config_path(_argv_config(argv)).with_name("runspec_scheduler.lock"))
@@ -102,6 +177,8 @@ def _early_lock(argv: list[str]) -> None:
         who = f" (pid {holder})" if holder else ""
         print(f"runspec-scheduler: already running for this venv{who}")
         sys.exit(0)
+    if "--detach" in argv:
+        _detach(argv, fh)
     _HELD_LOCK = fh
 
 
@@ -298,7 +375,7 @@ def _cmd_use(spec: rs.RunSpec) -> None:
         daemon = daemon_status(path)
         payload["daemon"] = daemon
         if daemon["state"] != "running":
-            payload["hint"] = "the daemon isn't running — start it under a keeper (runspec-scheduler install-service) or in the foreground: runspec-scheduler run"
+            payload["hint"] = "the daemon isn't running — set up a keeper (runspec-scheduler install-service --write) or run it in the foreground: runspec-scheduler run"
     else:
         set_backend(path, "cron")
         result = sync(path).to_dict()
@@ -313,12 +390,13 @@ def _cmd_use(spec: rs.RunSpec) -> None:
 
 
 def _cmd_install_service(spec: rs.RunSpec) -> None:
-    from .service import install_service
+    from . import keeper
 
-    result = install_service(enable=bool(spec.enable.value))
+    manager = str(_opt(spec.manager) or "auto")
+    config = _opt(spec.config)
+    plan = keeper.plan_remove(manager, config=config) if spec.remove.value else keeper.plan_install(manager, config=config, system=bool(spec.system.value))
+    result = keeper.apply(plan) if spec.write.value else plan.to_dict(written=False)
     _emit(result)
-    # Non-zero exit when the enable step failed (the unit is still written; the
-    # emitted `hint` explains the fix), so scripts can detect it.
     if not result.get("ok"):
         sys.exit(1)
 

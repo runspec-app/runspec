@@ -12,14 +12,15 @@
 #   runspec-scheduler status                  config + crontab + recent runs/output per schedule (JSON)
 #   runspec-scheduler run-now --id …          fire one schedule immediately
 #   runspec-scheduler run                     run the daemon (the daemon backend) in the foreground
-#   runspec-scheduler install-service         write + enable the per-venv systemd --user unit
+#   runspec-scheduler install-service         plan (or --write) what keeps the daemon running
 #
 # Two backends, one per venv ([scheduler] backend in the config, switched with
 # `use`), both running every fire through `runspec exec --label sched:<id>`:
 #   cron   (default) each enabled cron schedule is a marked line in its run_as
 #          account's crontab (docs/design/cron-scheduler.md); `sync` writes them.
 #   daemon `runspec-scheduler run`, one process per venv as the venv owner, kept
-#          alive by systemd, supervisord or a cron watchdog. Adds `every`
+#          alive by a keeper (install-service: systemd, supervisord or a cron
+#          watchdog). Adds `every`
 #          intervals, catch-up and a fire timeout (docs/design/venv-scheduler.md).
 #
 # It is "cron, but limited to runnables installed in THIS venv". The daemon runs
@@ -51,6 +52,9 @@ examples = [
   {cmd = "runspec-scheduler use daemon", description = "Fire this venv's schedules from the daemon instead of cron (removes the crontab lines)."},
   {cmd = "runspec-scheduler add --id poll --runnable http-check --every 30s --args '{\"url\": \"https://example.com\"}'", description = "An interval schedule (daemon backend only)."},
   {cmd = "runspec-scheduler run", description = "Run the daemon in the foreground (what a keeper starts)."},
+  {cmd = "runspec-scheduler install-service", description = "Show which keeper suits this host and what installing it would change."},
+  {cmd = "runspec-scheduler install-service --write", description = "Install that keeper and start the daemon."},
+  {cmd = "runspec-scheduler install-service --remove --write", description = "Remove this venv's keepers and stop the daemon (before deleting the venv)."},
 ]
 
 # ---- Global arguments (inherited by every subcommand) --------------------
@@ -63,6 +67,7 @@ description = "Run the scheduler daemon for this venv in the foreground: one pro
 
 [runspec-scheduler.commands.run.args]
 reload-interval = {type = "int", default = 5, description = "Seconds between heartbeats (logs/scheduler_state.json). The config is checked for changes every second."}
+detach          = {type = "flag", default = false, description = "Start the daemon in the background and return (output to logs/scheduler.stdout.log). Exits 0 straight away when it is already running, so a crontab watchdog can run it every few minutes."}
 
 # ---- add: add or replace a schedule --------------------------------------
 [runspec-scheduler.commands.add]
@@ -126,10 +131,14 @@ autonomy    = "confirm"
 [runspec-scheduler.commands.use.args]
 backend = {options = ["cron", "daemon"], position = 1, description = "The backend to use."}
 
-# ---- install-service: systemd --user unit --------------------------------
+# ---- install-service: the keeper ----------------------------------------
 [runspec-scheduler.commands.install-service]
-description = "Write the per-venv systemd --user unit (runspec-scheduler-<venv>.service) and enable it"
+description = "Set up what keeps this venv's daemon running: a systemd --user unit, supervisord in the venv, a crontab watchdog, or a system unit for root to install. Prints the plan (files, crontab lines, commands, steps for root); --write carries it out. --remove undoes every keeper this venv has and stops the daemon."
+output      = "json"
 autonomy    = "confirm"
 
 [runspec-scheduler.commands.install-service.args]
-enable = {type = "flag", default = true, description = "Run `systemctl --user enable --now` after writing the unit."}
+manager = {options = ["auto", "systemd", "systemd-user", "supervisor", "cron"], default = "auto", description = "Which keeper. auto: systemd-user when lingering is on and the --user manager works, else supervisor when supervisord is in the venv, else cron. systemd is a system unit root installs (only printed)."}
+write   = {type = "flag", default = false, description = "Carry the plan out. Without it nothing changes."}
+remove  = {type = "flag", default = false, description = "Plan removing this venv's keepers (all of them with auto) and stopping the daemon."}
+system  = {type = "flag", default = false, description = "With --manager supervisor: print a program block for the host's system supervisord (run as the venv owner) instead of one in the venv."}

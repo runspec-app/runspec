@@ -10,6 +10,7 @@ soak on a real host covers the long-running side.
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import shutil
 import signal
@@ -41,6 +42,7 @@ def venv(base):
     for name in ("runspec_scheduler.toml", "runspec_scheduler.lock"):
         (base / name).unlink(missing_ok=True)
     shutil.rmtree(base / "logs", ignore_errors=True)
+    shutil.rmtree(base / "supervisor", ignore_errors=True)
     for p in base.glob("daemon-*.out"):
         p.unlink()
     yield base
@@ -386,3 +388,82 @@ def test_add_refuses_every_on_cron(venv):
     _, listed = _cli(venv, "list")
     [p] = listed["schedules"]
     assert p["timeout"] == 5400 and p["catch_up"] is True and listed["backend"] == "daemon"
+
+
+# ── keepers: run --detach, the cron watchdog, supervisord in the venv ───────────
+
+
+def _plain(venv: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run([str(venv / "bin" / "runspec-scheduler"), *args], capture_output=True, text=True, cwd=venv, timeout=60)
+
+
+def _daemon_pid(venv: Path) -> int | None:
+    st = pe.state(venv) or {}
+    pid = st.get("pid")
+    return pid if isinstance(pid, int) and pe.pid_alive(pid) else None
+
+
+def test_run_detach_starts_once_and_hands_the_lock_over(venv):
+    pe.write_config(venv, DAEMON + sched("d"))
+    p = _plain(venv, "run", "--detach", "--reload-interval", "1")
+    assert p.returncode == 0 and "started" in p.stdout, (p.stdout, p.stderr)
+    pid = pe.wait_for(lambda: _daemon_pid(venv), 20, what="the detached daemon")
+    assert (venv / "runspec_scheduler.lock").read_text().split()[0] == str(pid)
+    again = _plain(venv, "run", "--detach")
+    assert again.returncode == 0 and f"already running for this venv (pid {pid})" in again.stdout
+    pe.wait_for(lambda: len(pe.finished(venv, "d")) >= 1, 20, what="a fire from the detached daemon")
+    assert os.getsid(pid) == pid  # its own session: a cron job's exit can't take it down
+    os.kill(pid, signal.SIGTERM)
+    pe.wait_for(lambda: not pe.pid_alive(pid), 20, what="the daemon to stop")
+    p = _plain(venv, "run", "--detach", "--reload-interval", "1")  # the lock went with it
+    assert "started" in p.stdout
+    pe.wait_for(lambda: _daemon_pid(venv) not in (None, pid), 20, what="a fresh daemon")
+
+
+@real_crontab
+def test_cron_keeper_installs_starts_and_removes(venv, crontab):
+    pe.write_config(venv, DAEMON)
+    rc, out = _cli(venv, "install-service", "--manager", "cron")
+    assert rc == 0 and out["written"] is False and "scheduler-keeper" not in crontab(), out
+
+    rc, out = _cli(venv, "install-service", "--manager", "cron", "--write")
+    assert rc == 0 and out["written"] is True, out
+    tab = crontab()
+    assert tab.count(f"# runspec:scheduler-keeper:{venv}") == 2 and "/bin/true" in tab
+    pid = pe.wait_for(lambda: _daemon_pid(venv), 20, what="the daemon the keeper started")
+    _, st = _cli(venv, "status")
+    assert [k["manager"] for k in st["keeper"]] == ["cron"]
+
+    # what the watchdog line runs every 5 minutes: a no-op while it's up
+    watchdog = next(line for line in tab.splitlines() if line.startswith("*/5"))
+    subprocess.run(watchdog.split(" ", 5)[5], shell=True, check=True, timeout=30)
+    assert _daemon_pid(venv) == pid
+
+    rc, out = _cli(venv, "install-service", "--remove", "--write")
+    assert rc == 0 and out["ok"], out
+    assert "scheduler-keeper" not in crontab() and "/bin/true" in crontab()
+    assert not pe.pid_alive(pid)
+    _, st = _cli(venv, "status")
+    assert st["keeper"] == [] and st["daemon"]["state"] == "stopped"
+
+
+@real_crontab
+@pytest.mark.skipif(importlib.util.find_spec("supervisor") is None, reason="needs supervisor (the dev extra)")
+def test_supervisor_keeper_restarts_a_killed_daemon(venv, crontab):
+    pe.write_config(venv, DAEMON)
+    rc, out = _cli(venv, "install-service", "--manager", "supervisor", "--write")
+    assert rc == 0 and out["ok"], out
+    assert crontab().count(f"# runspec:scheduler-keeper:{venv}") == 2
+    pid = pe.wait_for(lambda: _daemon_pid(venv), 30, what="the daemon under supervisord")
+    os.kill(pid, signal.SIGKILL)
+    pe.wait_for(lambda: _daemon_pid(venv) not in (None, pid), 30, what="supervisord to restart the daemon")
+    new = _daemon_pid(venv)
+    _, st = _cli(venv, "status")
+    [k] = st["keeper"]
+    assert k["manager"] == "supervisor" and k["supervisord_pid"]
+
+    rc, out = _cli(venv, "install-service", "--remove", "--write")
+    assert rc == 0 and out["ok"], out
+    pe.wait_for(lambda: not pe.pid_alive(new), 30, what="the daemon to stop")
+    assert not pe.pid_alive(k["supervisord_pid"])
+    assert "scheduler-keeper" not in crontab() and not (venv / "supervisor").exists()

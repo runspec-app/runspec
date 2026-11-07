@@ -1,21 +1,8 @@
-"""Tests for install-service (unit write + systemctl session handling)."""
+"""Tests for the systemd units and systemctl session handling."""
 
 from __future__ import annotations
 
 from runspec_scheduler import service
-
-
-class _Proc:
-    def __init__(self, returncode=0, stdout="", stderr=""):
-        self.returncode = returncode
-        self.stdout = stdout
-        self.stderr = stderr
-
-
-def _redirect_unit_dir(monkeypatch, tmp_path):
-    d = tmp_path / "systemd" / "user"
-    monkeypatch.setattr(service, "unit_dir", lambda: d)
-    return d
 
 
 def test_is_bus_error():
@@ -24,50 +11,22 @@ def test_is_bus_error():
     assert not service._is_bus_error("some other failure")
 
 
-def test_install_no_enable_writes_unit(monkeypatch, tmp_path):
-    d = _redirect_unit_dir(monkeypatch, tmp_path)
-    res = service.install_service(enable=False)
-    assert res["ok"] is True and res["enabled"] is False
-    assert (d / service.unit_name()).is_file()
-    assert "enable --now" in res["hint"]
+def test_user_unit_leaves_running_fires_on_restart():
+    text = service.render_unit(["/v/bin/runspec-scheduler", "run"])
+    assert "KillMode=process" in text and "Restart=on-failure" in text
+    assert "ExecStart=/v/bin/runspec-scheduler run" in text
+    assert "WantedBy=default.target" in text and "User=" not in text
 
 
-def test_unit_leaves_running_fires_on_restart(monkeypatch, tmp_path):
-    d = _redirect_unit_dir(monkeypatch, tmp_path)
-    service.install_service(enable=False)
-    text = (d / service.unit_name()).read_text()
-    assert "KillMode=process" in text
-    assert "Restart=on-failure" in text
+def test_system_unit_runs_as_the_owner():
+    text = service.render_system_unit("svc-ops", ["/opt/venvs/ops/bin/runspec-scheduler", "run"])
+    assert "User=svc-ops" in text and "KillMode=process" in text
+    assert "WantedBy=multi-user.target" in text
 
 
-def test_install_enable_success(monkeypatch, tmp_path):
-    _redirect_unit_dir(monkeypatch, tmp_path)
-    monkeypatch.setattr(service.subprocess, "run", lambda *a, **k: _Proc(0))
-    res = service.install_service(enable=True)
-    assert res["ok"] is True and res["enabled"] is True
-
-
-def test_install_bus_error_gives_login_shell_hint(monkeypatch, tmp_path):
-    d = _redirect_unit_dir(monkeypatch, tmp_path)
-    monkeypatch.setattr(
-        service.subprocess,
-        "run",
-        lambda *a, **k: _Proc(1, stderr="Failed to connect to bus: No medium found"),
-    )
-    res = service.install_service(enable=True)
-    assert res["ok"] is False and res["enabled"] is False
-    # The unit was still written; the hint points at a login shell + lingering.
-    assert (d / service.unit_name()).is_file()
-    hint = res["hint"]
-    assert "-iu" in hint and "enable-linger" in hint
-
-
-def test_install_other_error_gives_manual_hint(monkeypatch, tmp_path):
-    _redirect_unit_dir(monkeypatch, tmp_path)
-    monkeypatch.setattr(service.subprocess, "run", lambda *a, **k: _Proc(1, stderr="unit is masked"))
-    res = service.install_service(enable=True)
-    assert res["ok"] is False
-    assert "enable --now" in res["hint"] and "-iu" not in res["hint"]
+def test_unit_quotes_a_path_with_spaces():
+    text = service.render_unit(["/v w/bin/runspec-scheduler", "run", "--config", "/v w/c.toml"])
+    assert "ExecStart='/v w/bin/runspec-scheduler' run --config '/v w/c.toml'" in text
 
 
 def test_systemctl_env_keeps_existing_runtime_dir(monkeypatch):

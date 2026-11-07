@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-scheduler"
-version = "0.5.0"
+version = "0.6.0"
 requires-python = ">=3.10"
 description = "Cron-style scheduler service for runspec runnables installed in one venv"
 keywords = ["runspec", "runnable", "scheduler", "cron"]
@@ -31,10 +31,15 @@ Issues        = "https://github.com/runspec-app/runspec/issues"
 runspec-scheduler = "runspec_scheduler.cli:main"
 
 [project.optional-dependencies]
+# supervisord inside the venv, for `install-service --manager supervisor`
+# (a keeper with no root and no systemd --user).
+supervisor = ["supervisor>=4.2"]
 dev = [
     "ruff==0.15.20",
     "mypy",
     "pytest>=8.0",
+    # the real-supervisord keeper test
+    "supervisor>=4.2",
 ]
 
 [tool.pytest.ini_options]

@@ -2,6 +2,47 @@
 
 All notable changes to `runspec-scheduler` are documented here.
 
+## [0.6.0] — 2026-11-07
+
+Keepers: what starts the daemon at boot and restarts it when it dies.
+
+### Added
+
+- **`install-service --manager auto|systemd-user|supervisor|cron|systemd`.**
+  `auto` takes `systemd-user` when lingering is on, systemd is newer than 219
+  and the `--user` bus answers; else `supervisor` when supervisord is installed
+  in the venv; else a crontab watchdog. The result says why.
+  - `supervisor`: supervisord inside the venv (config under `{venv}/supervisor/`),
+    started by `@reboot` and every-5-minutes crontab lines. New
+    `[supervisor]` extra. `--system` prints a program block for the host's own
+    supervisord (`user=<owner>`) instead.
+  - `cron`: `run --detach` at boot and every 5 minutes.
+  - `systemd`: a system unit with `User=<owner>`, staged next to the venv and
+    printed with the steps root runs once; `/etc` is never written.
+- **`install-service --remove`** removes every keeper this venv has (or just
+  `--manager`'s) and stops the daemon, so deleting a venv can't leave a keeper
+  restarting a daemon from a missing folder.
+- **`run --detach`** starts the daemon in its own session and returns; output
+  goes to `logs/scheduler.stdout.log`. The parent takes the venv lock and hands
+  it to the child, so a watchdog running it every few minutes never starts two.
+- **`status` reports the keeper**: a `keeper` list of what keeps this venv's
+  daemon running (`manager`, where, its crontab lines, supervisord's pid).
+
+### Changed
+
+- **`install-service` changes nothing without `--write`.** It prints the plan
+  (files, crontab lines, commands, `root_steps`) as JSON. The old `--enable` /
+  `--no-enable` flag is gone: `--manager systemd-user --write` is the old
+  default. It refuses to set up a keeper for anyone but the venv owner (except
+  the root-installed `systemd` unit), and warns when the venv belongs to root.
+- Keeper crontab lines are tagged `# runspec:scheduler-keeper:<venv path>`,
+  apart from the cron backend's `# runspec:sched:` lines.
+
+### Fixed
+
+- `runspec-scheduler --config X run` now takes the venv lock early like
+  `run --config X` (the early check took `X` for the command).
+
 ## [0.5.0] — 2026-11-07
 
 The daemon is back, as a second backend beside host cron. Each venv picks one:

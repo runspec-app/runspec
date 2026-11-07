@@ -10,6 +10,7 @@ heartbeat and runs index are all its own.
 from __future__ import annotations
 
 import contextlib
+import importlib.util
 import json
 import os
 import signal
@@ -113,7 +114,10 @@ def make_venv(root: Path) -> Path:
     (dist / "entry_points.txt").write_text("[console_scripts]\ndemo = demo_rs.cli:main\n")
     (dist / "RECORD").write_text("demo_rs/__init__.py,,\ndemo_rs/runspec.toml,,\ndemo_rs/cli.py,,\ndemo_rs-0.1.0.dist-info/METADATA,,\ndemo_rs-0.1.0.dist-info/RECORD,,\n")
 
-    for name, target in (("runspec", "runspec.cli"), ("runspec-scheduler", "runspec_scheduler.cli"), ("demo", "demo_rs.cli")):
+    scripts = [("runspec", "runspec.cli"), ("runspec-scheduler", "runspec_scheduler.cli"), ("demo", "demo_rs.cli")]
+    if importlib.util.find_spec("supervisor") is not None:  # the dev extra installs it
+        scripts += [("supervisord", "supervisor.supervisord"), ("supervisorctl", "supervisor.supervisorctl")]
+    for name, target in scripts:
         script = venv / "bin" / name
         script.write_text(f"#!{py}\nimport sys\nfrom {target} import main\nsys.exit(main())\n")
         script.chmod(0o755)
