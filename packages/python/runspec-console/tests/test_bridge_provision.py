@@ -11,6 +11,7 @@ a deprovision with its typed confirmation + kept logs.
 
 from __future__ import annotations
 
+import json
 import shlex
 import subprocess
 import sys
@@ -29,7 +30,8 @@ pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell scr
 _FAKE_RUNSPEC = '#!/bin/sh\necho "runspec $*"\n'
 
 # A stand-in runspec-scheduler: `use` and `install-service` answer like 0.6.0;
-# FAIL_USE / FAIL_KEEPER (files next to it) make those steps fail.
+# FAIL_USE / FAIL_KEEPER (files next to it) make those steps fail; `status`
+# prints a STATUS file next to it.
 _FAKE_SCHEDULER = r"""#!/bin/sh
 d=$(dirname "$0")
 case "$1" in
@@ -39,6 +41,7 @@ case "$1" in
        [ -e "$d/FAIL_KEEPER" ] && { echo "keeper broke" >&2; exit 1; }
        echo "$*" >> "$d/keeper.calls"
        echo '{"ok": true, "manager": "cron", "reason": "no systemd", "warnings": ["the daemon runs as root"]}' ;;
+  status) [ -e "$d/STATUS" ] && cat "$d/STATUS" || echo "no status here" >&2 ;;
   daemon) while :; do sleep 1; done ;;
 esac
 """
@@ -161,6 +164,7 @@ class _StubBridge:
     _deprov_stop_scheduler = Bridge._deprov_stop_scheduler
     _prov_pip_env = Bridge._prov_pip_env
     _venv_inspect = Bridge._venv_inspect
+    _upd_inspect = Bridge._upd_inspect
     _upd_plan = Bridge._upd_plan
     _upd_run = Bridge._upd_run
 
@@ -1001,6 +1005,49 @@ def test_update_preview_reports_the_venv_state(app, tmp_path):
     assert web["inbox"] is True
     assert web["retention"] == {"compact_after": "7d", "delete_after": "90d"}
     assert web["scheduler"] is True and web["backend"] == "daemon"
+    assert web["schedules"] is None and web["schedules_error"] == "no status here"
+
+    # What a move would take: read from `runspec-scheduler status`.
+    (venv / "bin" / "STATUS").write_text(
+        json.dumps(
+            {
+                "backend": "cron",
+                "stale": [{"id": "old", "reason": "not in the config"}],
+                "schedules": [
+                    {
+                        "id": "a",
+                        "enabled": True,
+                        "when": {"cron": "0 2 * * *"},
+                        "installed": True,
+                    },
+                    {
+                        "id": "b",
+                        "enabled": True,
+                        "when": {"cron": "0 3 * * *"},
+                        "installed": True,
+                    },
+                    {
+                        "id": "c",
+                        "enabled": False,
+                        "when": {"cron": "0 4 * * *"},
+                        "installed": False,
+                    },
+                ],
+            }
+        )
+        + "\n"
+    )
+    [web] = b.venv_update_preview(
+        {"targets": [{"host": "web-01", "runspec_path": rp}]}
+    )["rows"]
+    assert web["schedules"] == {
+        "total": 3,
+        "disabled": 1,
+        "cron": 2,
+        "every": 0,
+        "in_crontab": 2,
+        "leftover": 1,
+    }
 
 
 def test_update_plan_validation(app, tmp_path):

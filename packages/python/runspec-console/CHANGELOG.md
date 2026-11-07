@@ -9,6 +9,28 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.386.0] — 2026-11-07
+
+### Added
+
+- **Update venv… shows what a schedules move takes.** For a venv that has
+  `runspec-scheduler`, the preview runs its `status` as the venv owner (read
+  only) and, once a *Shared schedules* choice is picked, says per venv how many
+  crontab entries move to the daemon (or how many schedules go back to the
+  crontab), with disabled schedules and leftover crontab lines noted, plus a
+  total across the hosts under the picker. Going back to crontab warns when
+  interval (`every`) schedules would stop firing, and a venv whose schedules
+  couldn't be counted says why. `provision.schedule_counts`, bridge
+  `_upd_inspect`.
+
+### Fixed
+
+- **A Windows console no longer lists its own venvs as missing
+  runspec-scheduler** on the Schedules tab ("No runspec-scheduler in 1 venv:
+  local/local …"). runspec-scheduler needs crontab, systemd or supervisord, so
+  a Windows console's local venvs are left out of the host schedules list;
+  their schedules are the console's own, on the *This console* card.
+
 ## [0.385.0] — 2026-11-07
 
 Edit host schedules from the Schedules tab.

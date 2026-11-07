@@ -7,6 +7,7 @@ same scripts the bridge sends over SSH), including the deprovision guards.
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 
@@ -578,3 +579,52 @@ def test_update_scheduler_and_version_helpers():
         "compact_after": "7d",
         "delete_after": "90d",
     }
+
+
+def test_schedule_counts():
+    def status(**kw):
+        return "warning: something\n" + json.dumps({"schedules": [], **kw}) + "\n"
+
+    assert prov.scheduler_status_argv("/opt/v/") == [
+        "/opt/v/bin/runspec-scheduler",
+        "status",
+    ]
+    assert prov.schedule_counts("") is None
+    assert prov.schedule_counts('{"ok": false}') is None
+    rows = [
+        {
+            "id": "a",
+            "enabled": True,
+            "when": {"cron": "0 2 * * *"},
+            "installed": True,
+            "line": "exec",
+        },
+        {"id": "b", "enabled": True, "when": {"every": "15m"}, "installed": False},
+        {
+            "id": "c",
+            "enabled": False,
+            "when": {"cron": "* * * * *"},
+            "installed": False,
+        },
+    ]
+    assert prov.schedule_counts(
+        status(backend="cron", schedules=rows, stale=[{"id": "x"}])
+    ) == {
+        "total": 3,
+        "disabled": 1,
+        "cron": 1,
+        "every": 1,
+        "in_crontab": 1,
+        "leftover": 1,
+    }
+    # A crontab that couldn't be read: the count is unknown, not 0.
+    unread = [{**rows[0], "installed": None}]
+    assert (
+        prov.schedule_counts(status(backend="cron", schedules=unread))["in_crontab"]
+        is None
+    )
+    # On the daemon nothing is in the crontab by design; leftover lines still count.
+    daemon = prov.schedule_counts(
+        status(backend="daemon", schedules=rows, stale=[{"id": "a"}])
+    )
+    assert daemon["in_crontab"] == 0 and daemon["leftover"] == 1

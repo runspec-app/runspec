@@ -165,6 +165,13 @@ Tick what to apply; each step runs as the venv's owner and is safe to repeat:
   `install-service --write`), or *Back to crontab* (`use cron` writes the lines
   back, then `install-service --remove --write` stops the daemon; when
   `use cron` fails the daemon is left running so no schedule is lost).
+  When the venv already has `runspec-scheduler`, the preview runs its
+  `status` as the owner and shows what the choice moves: for example
+  *4 crontab entries move to the daemon (5 schedules in all; 1 disabled)*,
+  with a total across the hosts under the picker. Going back to crontab warns
+  about interval (`every`) schedules, which only the daemon can run. Each venv
+  only moves its own crontab lines; another venv owned by the same account
+  keeps its schedules (runspec-scheduler 0.6.2).
 
 The venv is never recreated: installed packages, `.runspec_env`, schedules and
 `logs/` stay, and the host's runspec paths don't change. A failed package

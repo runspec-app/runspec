@@ -867,6 +867,56 @@ def scheduler_cron_argv(root: str) -> list[str]:
     return [_scheduler_bin(root), "use", "cron"]
 
 
+def scheduler_status_argv(root: str) -> list[str]:
+    """Read the venv's schedules and their crontab lines (changes nothing)."""
+    return [_scheduler_bin(root), "status"]
+
+
+def schedule_counts(text: str) -> dict[str, Any] | None:
+    """What a backend switch would move, from ``runspec-scheduler status``
+    output (its last JSON line with ``schedules``), or ``None`` when there is
+    none. ``cron``/``every`` count enabled schedules by timing (cron cannot run
+    ``every``); ``in_crontab`` is how many have a line in the crontab now (cron
+    backend; ``None`` when a crontab couldn't be read); ``leftover`` counts
+    crontab lines the venv no longer wants (stale ones, or any line at all on a
+    daemon venv)."""
+    payload: dict[str, Any] | None = None
+    for line in reversed((text or "").splitlines()):
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            data = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(data, dict) and isinstance(data.get("schedules"), list):
+            payload = data
+            break
+    if payload is None:
+        return None
+    rows = [r for r in payload["schedules"] if isinstance(r, dict)]
+    enabled = [r for r in rows if r.get("enabled", True)]
+
+    def timed(r: dict[str, Any], key: str) -> bool:
+        return bool((r.get("when") or {}).get(key))
+
+    on_cron = str(payload.get("backend") or "cron") == "cron"
+    in_crontab: int | None = 0
+    if on_cron:
+        if any(r.get("installed") is None for r in enabled):
+            in_crontab = None
+        else:
+            in_crontab = sum(1 for r in rows if r.get("installed"))
+    return {
+        "total": len(rows),
+        "disabled": len(rows) - len(enabled),
+        "cron": sum(1 for r in enabled if timed(r, "cron")),
+        "every": sum(1 for r in enabled if timed(r, "every") and not timed(r, "cron")),
+        "in_crontab": in_crontab,
+        "leftover": len(payload.get("stale") or []),
+    }
+
+
 def add_scheduler_spec(packages: list[str], manager: str) -> list[str]:
     """``packages`` plus the package that brings the daemon for ``manager``. A
     ``runspec-scheduler`` the operator listed (a pin) wins over the bare one."""

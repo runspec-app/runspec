@@ -897,6 +897,11 @@ class SchedulesMixin:
             if entry is None:
                 continue
             remote = bool(entry.get("ssh"))
+            if not remote and sys.platform == "win32":
+                # runspec-scheduler needs crontab / systemd / supervisord; a
+                # Windows console's own venvs can't run it (their schedules are
+                # the console's own, on the This console card).
+                continue
             for rp in utils_mod._paths(entry):
                 if rp:
                     pairs.append((host, hosts_mod.venv_name(rp), rp, remote))

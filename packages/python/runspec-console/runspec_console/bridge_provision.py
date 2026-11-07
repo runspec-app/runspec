@@ -224,7 +224,7 @@ class ProvisionMixin:
         target, for the Update dialog: owner, runspec version, logs inbox, log
         cleanup policy, and how its schedules fire. Nothing is changed."""
         targets = self._deprov_targets(payload, verb="update")
-        return {"rows": self._prov_fanout(self._venv_inspect, targets)}
+        return {"rows": self._prov_fanout(self._upd_inspect, targets)}
 
     def venv_update_start(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Apply the chosen options to an existing venv on every target, as the
@@ -979,6 +979,32 @@ class ProvisionMixin:
         elif kind != "venv":
             row["blockers"].append("Not a runspec venv (no pyvenv.cfg + bin/runspec).")
         row["ok"] = not row["blockers"]
+        return row
+
+    def _upd_inspect(self, t: dict[str, Any]) -> dict[str, Any]:
+        """:meth:`_venv_inspect` plus, when the venv has runspec-scheduler, how
+        many schedules a backend switch would move (``schedules``; ``None``
+        when ``status`` couldn't be read — ``schedules_error`` says why). Runs
+        ``status`` as the venv owner, which changes nothing."""
+        row = self._venv_inspect(t)
+        row["schedules"] = None
+        if not (row.get("ok") and row.get("scheduler")):
+            return row
+        owner = str(row.get("owner") or "")
+        run_as = "" if owner in ("", "root", row.get("user")) else owner
+        try:
+            code, out = self._prov_run(
+                self._prov_host(t["host"]),
+                prov.scheduler_status_argv(t["root"]),
+                run_as=run_as,
+                timeout=_PROBE_TIMEOUT_S,
+            )
+        except Exception as exc:  # noqa: BLE001 — the counts are a hint only
+            code, out = -1, str(exc)
+        row["schedules"] = prov.schedule_counts(out)
+        if row["schedules"] is None:
+            lines = [ln for ln in (out or "").splitlines() if ln.strip()]
+            row["schedules_error"] = lines[-1] if lines else f"exit {code}"
         return row
 
     def _deprov_references(self, runnables: list[str]) -> list[str]:

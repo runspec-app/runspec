@@ -2368,6 +2368,25 @@ export interface VenvUpdateRow extends DeprovisionPreviewRow {
   retention: { compact_after?: string; delete_after?: string; max_total_size?: string }
   /** How its schedules fire: 'cron' | 'daemon' ('' = no runspec-scheduler). */
   backend: string
+  /** What a backend switch would move, from `runspec-scheduler status` run as
+   *  the owner. null/absent = no runspec-scheduler, or status couldn't be read
+   *  (`schedules_error` says why). */
+  schedules?: VenvScheduleCounts | null
+  schedules_error?: string
+}
+
+/** A venv's schedules, counted for the Update dialog. */
+export interface VenvScheduleCounts {
+  total: number
+  disabled: number
+  /** Enabled, cron-timed (cron or the daemon can fire them). */
+  cron: number
+  /** Enabled, interval-timed (`every`): only the daemon can fire them. */
+  every: number
+  /** Lines in the owner's crontab now; null = the crontab couldn't be read. */
+  in_crontab: number | null
+  /** Crontab lines the venv no longer wants (stale, or any line on a daemon venv). */
+  leftover: number
 }
 
 /** Bring existing venvs up to the chosen options; only what is set runs. */
