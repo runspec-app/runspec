@@ -27,7 +27,7 @@ from runspec import logs as rs_logs
 from runspec import runsdb
 
 from .config import ScheduleEntry, SchedulerSettings, load_config
-from .cronsync import LABEL_PREFIX, MARKER_PREFIX, _crontab_argv, _installable, read_managed_users, resolve_entry
+from .cronsync import LABEL_PREFIX, MARKER_PREFIX, _crontab_argv, _installable, job_in_venv, read_managed_users, resolve_entry, this_bin_dir
 from .runner import venv_name
 from .timing import next_fire_time
 
@@ -47,18 +47,22 @@ def _effective_user() -> str:
 # ── crontab inventory ───────────────────────────────────────────────────────────
 
 
-def parse_installed(lines: list[str]) -> dict[str, str]:
+def parse_installed(lines: list[str], bin_dir: str | None = None) -> dict[str, str]:
     """``{schedule id: "exec" | "legacy"}`` for every block we wrote in a crontab.
 
     ``exec`` is the current line (``runspec exec --label …``); ``legacy`` a line
     from a pre-0.3 sync that runs the binary directly (unrecorded skips, no
-    captured output) — re-run ``sync`` to upgrade it."""
+    captured output) — re-run ``sync`` to upgrade it. With ``bin_dir``, only
+    blocks whose job runs from that venv count: another venv owned by the same
+    account shares the crontab, and its schedules aren't this venv's."""
     out: dict[str, str] = {}
     for i, line in enumerate(lines):
         if not line.startswith(MARKER_PREFIX):
             continue
         sid = line[len(MARKER_PREFIX) :].strip()
         job = lines[i + 1] if i + 1 < len(lines) else ""
+        if bin_dir is not None and not job_in_venv(job, bin_dir):
+            continue
         out[sid] = "exec" if " exec --label " in job else "legacy"
     return out
 
@@ -285,7 +289,11 @@ def status(config_path: Path, *, runs: int = 5, output_bytes: int = DEFAULT_OUTP
     accounts: dict[str, str] = {e.run_as: e.become_method for e in entries}
     for u in read_managed_users(config_path):
         accounts.setdefault(u, "sudo")
-    installed: dict[str, dict[str, str] | None] = {user: (None if (lines := _read_crontab_noninteractive(user, method)) is None else parse_installed(lines)) for user, method in accounts.items()}
+    bin_dir = this_bin_dir()
+    installed: dict[str, dict[str, str] | None] = {}
+    for user, method in accounts.items():
+        lines = _read_crontab_noninteractive(user, method)
+        installed[user] = None if lines is None else parse_installed(lines, bin_dir)
     configured_ids = {e.id for e in entries}
     for user, ids in installed.items():
         for sid in sorted(ids or {}):

@@ -2,6 +2,19 @@
 
 All notable changes to `runspec-scheduler` are documented here.
 
+## [0.6.2] — 2026-11-07
+
+### Fixed
+
+- **A venv no longer removes other venvs' schedules from a shared crontab.**
+  When several venvs belong to one account, they all write to that account's
+  crontab. `sync`, `use daemon` and `status` used to treat every
+  `# runspec:sched:` block as their own, so syncing one venv, or moving it to
+  the daemon, deleted the other venvs' cron schedules, and `status` listed them
+  as stale. A block now counts as this venv's only when its job line runs from
+  this venv's `bin/` folder; other venvs' blocks are left exactly as they are.
+  `use daemon` also reports only the schedules it actually removed.
+
 ## [0.6.1] — 2026-11-07
 
 Safer crontab writes.

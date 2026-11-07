@@ -26,8 +26,9 @@ Shape of one installed schedule (in ``run_as``'s crontab, so cron runs it *as*
   touch the crontab.
 
 Reconcile is **declarative** and marker-scoped: :func:`plan_crontab` strips every
-``# runspec:sched:*`` block we previously wrote and appends the current set,
-leaving the operator's own crontab lines untouched. A tiny machine-local state
+``# runspec:sched:*`` block *this venv* wrote (its job line runs this venv's
+``bin/``; another venv's blocks in the same account are left alone) and appends
+the current set, leaving the operator's own crontab lines untouched. A tiny machine-local state
 file records which accounts we manage, so an account that loses all its schedules
 is cleaned up on the next :func:`sync` rather than leaking stale lines.
 
@@ -44,6 +45,7 @@ import shlex
 import subprocess
 import sys
 import time
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -214,32 +216,61 @@ def is_our_job(line: str, sched_id: str) -> bool:
     return f"/{_LOCK_SUBDIR}/{sched_id}.lock" in line or f"--label {LABEL_PREFIX}{sched_id} " in line
 
 
-def plan_crontab(existing_lines: list[str], blocks: list[list[str]]) -> list[str]:
+def job_in_venv(line: str, bin_dir: str) -> bool:
+    """Whether a job line runs from the venv whose scripts folder is ``bin_dir``.
+
+    Every line we write starts this venv's own ``bin/runspec`` (the pre-0.3 form
+    its ``bin/<runnable>``), so the folder in the line says which venv wrote it."""
+    return f"{bin_dir.rstrip('/')}/" in line
+
+
+def this_bin_dir() -> str:
+    """This venv's scripts folder, as written into its crontab lines."""
+    return str(scripts_dir())
+
+
+def plan_crontab(existing_lines: list[str], blocks: list[list[str]], *, bin_dir: str | None = None) -> list[str]:
     """Reconcile a user's crontab: drop every block we previously wrote, keep the
     operator's own lines verbatim, then append the current ``blocks``.
 
     Our block is a ``# runspec:sched:<id>`` marker line plus the single line that
     follows it (the job), so both are dropped together — but the line under a
     marker goes only when it is our job (:func:`is_our_job`); a marker left
-    behind on its own never takes the operator's next line with it. Idempotent:
-    planning twice over its own output yields the same result."""
+    behind on its own never takes the operator's next line with it.
+
+    With ``bin_dir`` (every real caller passes this venv's), a block whose job
+    runs from another venv's ``bin/`` is kept as it is: several venvs owned by
+    one account share its crontab, and a sync or ``use daemon`` in one of them
+    must not remove the others' schedules. Idempotent: planning twice over its
+    own output yields the same result."""
     kept: list[str] = []
-    skip_id: str | None = None
-    for line in existing_lines:
-        if skip_id is not None:
-            sid, skip_id = skip_id, None
-            if is_our_job(line, sid):
-                continue  # the job line under our marker
-        if line.startswith(MARKER_PREFIX):
-            skip_id = line[len(MARKER_PREFIX) :].strip()  # drop the marker, check the next line
+    i = 0
+    n = len(existing_lines)
+    while i < n:
+        line = existing_lines[i]
+        if not line.startswith(MARKER_PREFIX):
+            kept.append(line)
+            i += 1
             continue
-        kept.append(line)
+        sid = line[len(MARKER_PREFIX) :].strip()
+        job = existing_lines[i + 1] if i + 1 < n else None
+        if job is not None and is_our_job(job, sid):
+            if bin_dir is not None and not job_in_venv(job, bin_dir):
+                kept.extend([line, job])  # another venv's schedule — leave it
+            i += 2
+            continue
+        i += 1  # a marker on its own: drop it, keep whatever follows
     while kept and kept[-1].strip() == "":
         kept.pop()  # trim trailing blanks so appended blocks sit cleanly
     out = list(kept)
     for block in blocks:
         out.extend(block)
     return out
+
+
+def marked_ids(lines: list[str]) -> list[str]:
+    """The schedule ids of every ``# runspec:sched:`` marker in ``lines``."""
+    return [ln[len(MARKER_PREFIX) :].strip() for ln in lines if ln.startswith(MARKER_PREFIX)]
 
 
 # ── crontab I/O (per run_as account, escalated at write time) ───────────────────
@@ -447,7 +478,7 @@ def sync(config_path: Path, *, dry_run: bool = False) -> SyncResult:
         become_method, become_flags = escalation.get(user, ("sudo", ""))
         try:
             existing = _read_crontab(user, become_method, become_flags or None)
-            new_lines = plan_crontab(existing, blocks)
+            new_lines = plan_crontab(existing, blocks, bin_dir=this_bin_dir())
             if not dry_run:
                 replace_crontab(existing, new_lines, user, become_method, become_flags or None)
             result.users.append(user or "(self)")
@@ -487,9 +518,9 @@ def remove_all(config_path: Path, *, dry_run: bool = False) -> SyncResult:
         label = user or "(self)"
         try:
             existing = _read_crontab(user, method, None)
-            new_lines = plan_crontab(existing, [])
+            new_lines = plan_crontab(existing, [], bin_dir=this_bin_dir())
             if new_lines != existing:
-                removed = [ln[len(MARKER_PREFIX) :].strip() for ln in existing if ln.startswith(MARKER_PREFIX)]
+                removed = list((Counter(marked_ids(existing)) - Counter(marked_ids(new_lines))).elements())
                 result.installed.extend({"id": sid, "user": label, "removed": "true"} for sid in removed)
                 if not dry_run:
                     replace_crontab(existing, new_lines, user, method, None)

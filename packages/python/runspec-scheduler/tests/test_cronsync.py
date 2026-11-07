@@ -140,6 +140,24 @@ class TestPlanCrontab:
         assert once[:5000] == own and cronsync.plan_crontab(once, [block]) == once
         assert cronsync.plan_crontab(once, []) == own
 
+    def test_keeps_another_venvs_blocks(self):
+        # Two venvs owned by one account share its crontab: this venv's sync
+        # (or `use daemon`) removes only its own blocks.
+        other = ["# runspec:sched:backup", "0 2 * * * env RUNSPEC_AGENT=1 /opt/venvs/b/bin/runspec exec --label sched:backup --lock /home/s/.cache/runspec-scheduler/backup.lock r >/dev/null 2>&1"]
+        legacy_other = ["# runspec:sched:old", "* * * * *  flock -n /home/s/.cache/runspec-scheduler/old.lock /opt/venvs/b/bin/r >/dev/null 2>&1"]
+        ours = cronsync.render_block("a", "* * * * *", "/v/bin/runspec exec --label sched:a --lock /home/s/.cache/runspec-scheduler/a.lock r")
+        existing = ["mine", *other, *ours, *legacy_other]
+        assert cronsync.plan_crontab(existing, [], bin_dir="/v/bin") == ["mine", *other, *legacy_other]
+        assert cronsync.plan_crontab(existing, [], bin_dir="/opt/venvs/b/bin") == ["mine", *ours]
+        once = cronsync.plan_crontab(existing, [ours], bin_dir="/v/bin")
+        assert once == ["mine", *other, *legacy_other, *ours]
+        assert cronsync.plan_crontab(once, [ours], bin_dir="/v/bin") == once
+
+    def test_job_in_venv_needs_the_whole_folder(self):
+        assert cronsync.job_in_venv("x /opt/venvs/ops/bin/runspec exec", "/opt/venvs/ops/bin")
+        assert not cronsync.job_in_venv("x /opt/venvs/ops2/bin/runspec exec", "/opt/venvs/ops/bin")
+        assert cronsync.job_in_venv("x '/opt/my venv/bin/runspec' exec", "/opt/my venv/bin/")
+
     def test_marker_at_eof_without_job(self):
         # A trailing marker with no following job line is dropped cleanly.
         out = cronsync.plan_crontab(["keep", "# runspec:sched:x"], [])
@@ -213,6 +231,22 @@ class TestSync:
         assert all(not line.startswith("# runspec:sched:") for line in writes["olduser"])
         # state now reflects only the currently-managed accounts.
         assert cronsync.read_managed_users(tmp_path / "cfg.toml") == [""]
+
+    def test_sync_and_remove_all_leave_another_venvs_schedules(self, tmp_path, monkeypatch):
+        writes = self._wire(monkeypatch, [_entry(id="a", runnable="backup", when=When(cron="0 2 * * *"))])
+        other = [
+            "# runspec:sched:nightly",
+            "0 1 * * * env RUNSPEC_AGENT=1 /opt/venvs/b/bin/runspec exec --label sched:nightly --lock /home/self/.cache/runspec-scheduler/nightly.lock r >/dev/null 2>&1",
+        ]
+        tab = {"": ["# mine", *other]}
+        monkeypatch.setattr(cronsync, "_read_crontab", lambda u, m, f: list(tab.get(u, [])))
+        cronsync.sync(tmp_path / "cfg.toml")
+        assert writes[""][:3] == ["# mine", *other]  # the other venv's block is untouched
+        assert writes[""][3] == "# runspec:sched:a"
+        tab[""] = writes.pop("")
+        res = cronsync.remove_all(tmp_path / "cfg.toml")  # this venv moves to the daemon
+        assert writes[""] == ["# mine", *other]
+        assert [r["id"] for r in res.installed] == ["a"]  # reports only what it removed
 
     def test_crontab_error_is_reported_not_fatal(self, tmp_path, monkeypatch):
         entries = [
