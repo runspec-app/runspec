@@ -275,26 +275,62 @@ def _build_icon() -> Path | None:
 # How long _apply_dwm_title_bar waits for the native window to appear.
 _TITLE_BAR_WAIT_S = 15.0
 
+# DwmSetWindowAttribute attribute ids (dwmapi.h).
+_DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+_DWMWA_BORDER_COLOR = 34
+_DWMWA_CAPTION_COLOR = 35
+_DWMWA_TEXT_COLOR = 36
 
-def _apply_dwm_title_bar(title: str) -> None:
-    """Style the native Windows title bar: dark mode + caption colour.
 
-    The caption colour is the white-label `[console.theme] title_bar_color`
-    when set — an **independent** hex, deliberately separate from `accent_color`
-    so a brand can pair e.g. a blue accent UI with a red title bar — else
-    runspec teal. The caption text colour follows the caption's luminance
-    (`config.title_bar_colors`). The 1px window border DWM draws around the
-    frame is tinted to the same caption colour: left at its default it stays
-    near-white on a light Windows theme and shows as pale edge lines beside
-    the coloured caption (re-drawn in a different shade on focus/resize, so it
-    appears to come and go).
+def _style_title_bar(hwnd: int, caption: int, text: int) -> bool:
+    """Tint one window's native caption. Returns False when Windows refused.
 
-    Called from the webview `started` callback (polling until the native window
-    exists — pywebview starts that thread before building the form) and again
-    on the window `shown` event as a backstop.
-    Requires Windows 11 build 22000+ for DWMWA_CAPTION_COLOR (attr 35).
+    Order matters. The caption colour goes first: it needs Windows 11 build
+    22000+, and on anything older (Windows 10, early 11) it fails. We then stop
+    without touching dark mode or the border, so the bar stays the system one.
+    Setting dark mode anyway (as the console used to) turned it dark grey, with
+    the light 1px frame still showing as pale lines at the left and right edges.
+
+    The 1px border gets the caption colour so the bar reads as one band edge to
+    edge. Dark mode follows the caption text colour (white text = dark caption),
+    which makes the min/max/close glyphs match: white on a red bar, dark on a
+    white one.
     """
     import ctypes
+
+    dwm = ctypes.windll.dwmapi
+
+    def _set(attr: int, value: int) -> int:
+        v = ctypes.c_int(value)
+        return int(
+            dwm.DwmSetWindowAttribute(hwnd, attr, ctypes.byref(v), ctypes.sizeof(v))
+        )
+
+    if _set(_DWMWA_CAPTION_COLOR, caption) != 0:
+        return False
+    _set(_DWMWA_TEXT_COLOR, text)
+    _set(_DWMWA_BORDER_COLOR, caption)
+    _set(_DWMWA_USE_IMMERSIVE_DARK_MODE, 1 if text == 0x00FFFFFF else 0)
+    return True
+
+
+def _apply_dwm_title_bar(title: str) -> None:
+    """Tint the native Windows title bar with `[console.theme] title_bar_color`.
+
+    Unset (the default) leaves the title bar alone: pywebview already follows
+    the Windows light/dark app setting, so the bar is the system one with no
+    restyle after load. Set, it is an **independent** hex, deliberately separate
+    from `accent_color` so a brand can pair e.g. a blue accent UI with a red
+    title bar; the caption text colour follows its luminance
+    (`config.title_bar_colors`). See `_style_title_bar` for the DWM calls.
+
+    The main path is `_apply_title_bar_before_show` (pywebview's ``before_show``
+    event, so the colour is there on first paint). This one is the backstop for
+    pywebview versions without that event: called from the webview ``started``
+    callback (polling until the native window exists — pywebview starts that
+    thread before building the form) and on the window ``shown`` event.
+    Requires Windows 11 build 22000+; a no-op elsewhere.
+    """
     import time
 
     try:
@@ -304,8 +340,9 @@ def _apply_dwm_title_bar(title: str) -> None:
 
     from .config import title_bar_colors
 
-    # COLORREF is 0x00BBGGRR. Runspec teal #0B7A6E → 0x006E7A0B, white text.
-    caption, text = title_bar_colors() or (0x006E7A0B, 0x00FFFFFF)
+    colors = title_bar_colors()
+    if colors is None:
+        return
 
     # pywebview starts the ``started`` thread *before* it builds the native
     # form, so the window may not exist yet. Poll for it rather than a single
@@ -324,26 +361,33 @@ def _apply_dwm_title_bar(title: str) -> None:
         return
 
     try:
-        dwm = ctypes.windll.dwmapi
-
-        # DWMWA_USE_IMMERSIVE_DARK_MODE = 20
-        dark = ctypes.c_int(1)
-        dwm.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(dark), ctypes.sizeof(dark))
-
-        # DWMWA_CAPTION_COLOR = 35
-        cap = ctypes.c_int(caption)
-        dwm.DwmSetWindowAttribute(hwnd, 35, ctypes.byref(cap), ctypes.sizeof(cap))
-
-        # DWMWA_TEXT_COLOR = 36
-        txt = ctypes.c_int(text)
-        dwm.DwmSetWindowAttribute(hwnd, 36, ctypes.byref(txt), ctypes.sizeof(txt))
-
-        # DWMWA_BORDER_COLOR = 34 — the thin frame around the window. Match the
-        # caption so the title bar reads as one solid band edge to edge.
-        border = ctypes.c_int(caption)
-        dwm.DwmSetWindowAttribute(hwnd, 34, ctypes.byref(border), ctypes.sizeof(border))
+        _style_title_bar(hwnd, *colors)
     except Exception:
         pass
+
+
+def _apply_title_bar_before_show(window: Any) -> None:
+    """pywebview ``before_show`` handler: tint the caption before first paint.
+
+    pywebview fires ``before_show`` on the GUI thread right after it builds the
+    form and before ``Show()``, so the bar never appears white first (the
+    ``started``/``shown`` path restyles a window that is already on screen).
+    Reading ``window.native.Handle`` is safe here because we are on the GUI
+    thread. Anything unexpected is swallowed: the backstop still runs.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        from .config import title_bar_colors
+
+        colors = title_bar_colors()
+        if colors is None:
+            return
+        hwnd = int(window.native.Handle.ToInt32())
+        if hwnd:
+            _style_title_bar(hwnd, *colors)
+    except Exception:  # noqa: BLE001 — best-effort; the started/shown backstop runs anyway
+        logger.debug("title bar: before_show styling failed", exc_info=True)
 
 
 def _suppress_noisy_loggers() -> None:
@@ -736,13 +780,17 @@ def main() -> None:
     )
     bridge.set_window(window)
     prof("window created")
-    # Re-apply the caption styling once the window is actually shown — a
-    # backstop to the `started` hook (which can run before the native window
-    # exists). Idempotent, so styling twice is harmless.
+    # Tint the caption before the window first paints (pywebview's
+    # `before_show`, pywebview 5.3+), and again once it is
+    # shown — a backstop to the `started` hook, which can run before the native
+    # window exists. Idempotent, so styling twice is harmless.
     try:
+        before_show = getattr(window.events, "before_show", None)
+        if before_show is not None:
+            before_show += _apply_title_bar_before_show
         window.events.shown += lambda *_: _apply_dwm_title_bar(window_title)
     except Exception:  # noqa: BLE001 — best-effort across pywebview versions
-        logger.debug("could not hook window 'shown' for title bar", exc_info=True)
+        logger.debug("could not hook window events for title bar", exc_info=True)
 
     icon = _build_icon()
 

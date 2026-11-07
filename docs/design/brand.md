@@ -57,6 +57,9 @@ an approval is waiting, faded bar = running, outlined triangle = paused.
   **runspec** tui, **runspec** marketplace.
 - Runnable packs (`runspec-linux`, `runspec-jira`, …) are names only, in
   mono, with no mark.
+- The unbranded console leaves the Windows title bar as the system draws it
+  (white on a light Windows theme, dark on a dark one). Only a white-label
+  `title_bar_color` tints it.
 - **White-label:** a customer's brand replaces the mark, the name and the
   accent everywhere (icon, title bar, sidebar). At most a small grey "built on
   runspec" in an About box or footer.
@@ -69,7 +72,7 @@ an approval is waiting, faded bar = running, outlined triangle = paused.
 | Chalk | `#e8ebef` | Text on dark |
 | Teal | `#3cc7b6` | Brand accent on dark |
 | Deep teal | `#0e8f80` | Icon tile, accent on light |
-| Teal (button) | `#0b7a6e` | Filled buttons, title bar, links on light (white text 5.2:1) |
+| Teal (button) | `#0b7a6e` | Filled buttons, links on light (white text 5.2:1) |
 | Amber | `#f2b33d` | "Waiting for you": approvals, pending (a fill; dark text on it) |
 
 Green and amber are kept for approve and wait, so "safe" shows in the UI and

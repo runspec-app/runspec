@@ -151,7 +151,7 @@ docs_url = "https://docs.mycorp.example/console"
 brand_name      = "MyCorp Console"
 accent_color    = "#b3172a"
 icon            = "pkg:mycorp_console:app.ico"   # your bundled icon
-title_bar_color = "#7a0f1d"                      # Windows 11 caption tint
+title_bar_color = "#7a0f1d"                      # Windows 11 caption tint (unset = system title bar)
 watermark_text  = "MyCorp internal"
 watermark_style = "banner"                       # tiled | banner | center
 
@@ -301,7 +301,7 @@ install, pixel-identical.
 | `brand_name` | text | Sidebar title (unset ⇒ "runspec"). The window title is separate — the prettified package name (§1) |
 | `accent_color` | `#rgb` / `#rrggbb` | UI primary colour **and** the generated app icon |
 | `icon` | file path or `pkg:<module>:<relpath>` | Explicit `.ico`/`.png` app icon (bundle it as package data with the `pkg:` form) |
-| `title_bar_color` | hex | Native Windows 11 caption tint — independent of `accent_color`, so a blue-accent UI can carry a red title bar; no-op elsewhere |
+| `title_bar_color` | hex | Native Windows 11 caption tint — independent of `accent_color`, so a blue-accent UI can carry a red title bar. Unset leaves the system title bar; Windows 10 and other platforms keep the system title bar too |
 | `watermark_text` | text | Faint watermark behind content |
 | `watermark_logo` | `http(s)`/`data:` image URL | Image watermark |
 | `watermark_style` | `tiled` / `banner` / `center` | Repeated marks, one large upper-third mark, or one centred mark |

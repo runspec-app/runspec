@@ -9,6 +9,28 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.383.0] — 2026-11-07
+
+### Changed
+
+- **The title bar is the Windows one unless you brand it.** An unbranded
+  console no longer restyles the native title bar after load: it stays the
+  system bar (white on a light Windows theme, dark on a dark one). Before, it
+  opened white and turned teal a few seconds later, or dark grey with pale
+  lines at the left and right edges on Windows 10, which can't set a caption
+  colour. `[console.theme] title_bar_color` still tints it, exactly as before.
+
+### Fixed
+
+- **A white-label title bar colour is there from the first frame.** The tint
+  is applied on pywebview's `before_show` event (pywebview 5.3+), before the
+  window is shown, so the bar no longer opens white and changes colour. The
+  old `started`/`shown` hooks stay as a backstop for older pywebview.
+- **Title bar on Windows 10.** When Windows refuses the caption colour, the
+  console now leaves the bar alone instead of switching it to dark mode with a
+  light border. Dark mode now follows the caption text colour, so a light
+  `title_bar_color` (e.g. white) gets dark minimise/maximise/close buttons.
+
 ## [0.382.0] — 2026-11-07
 
 ### Added
