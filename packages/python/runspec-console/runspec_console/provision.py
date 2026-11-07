@@ -45,6 +45,12 @@ the ``create-venv`` / ``install-into-venv`` runnables were removed in
 runspec-linux-core 0.14.0 / runspec-linux 0.20.0 (the command line just uses
 pip).
 
+An **update** (*Update venv…*) applies steps 4–7 plus the scheduler steps to a
+venv the console already knows, in place, as its owner: ``pip install -U``,
+logs inbox, retention, verify, ``use daemon`` + keeper (or ``use cron`` + keeper
+removal), each safe to repeat — :func:`update_steps`. Nothing is recreated and
+``logs/`` is never touched.
+
 A deprovision deletes a venv the console already knows (one of a host's
 ``runspec_paths``), behind guards that are enforced here *and* re-checked on
 the host in the same command as the delete: an absolute, non-system path,
@@ -855,6 +861,140 @@ def scheduler_stop_argv(root: str) -> list[str]:
     return [_scheduler_bin(root), "install-service", "--remove", "--write"]
 
 
+def scheduler_cron_argv(root: str) -> list[str]:
+    """Switch the venv's schedules back to the owner's crontab (``use cron``
+    writes the crontab lines; the daemon stops firing at its next tick)."""
+    return [_scheduler_bin(root), "use", "cron"]
+
+
+def add_scheduler_spec(packages: list[str], manager: str) -> list[str]:
+    """``packages`` plus the package that brings the daemon for ``manager``. A
+    ``runspec-scheduler`` the operator listed (a pin) wins over the bare one."""
+    if not manager:
+        return list(packages)
+    pat = re.compile(r"runspec[-_]scheduler\b", re.I)
+    mine = next((p for p in packages if pat.match(p)), "")
+    return [p for p in packages if not pat.match(p)] + [mine or scheduler_spec(manager)]
+
+
+# --------------------------------------------------------------------------- #
+# Update an existing venv
+# --------------------------------------------------------------------------- #
+
+#: ``scheduler`` value of an update that moves the venv's schedules back to the
+#: owner's crontab and removes the daemon's keepers.
+SCHEDULER_OFF = "off"
+
+
+def validate_update_scheduler(value: str) -> str:
+    """``""`` (leave schedules alone), ``"off"`` (back to crontab), or a keeper."""
+    v = (value or "").strip()
+    return v if v == SCHEDULER_OFF else validate_scheduler(v)
+
+
+def runspec_version(text: str) -> str:
+    """``runspec 0.81.0`` → ``0.81.0`` (``""`` when there is no version)."""
+    m = re.search(r"(\d+\.\d+(?:\.\d+)?)", text or "")
+    return m.group(1) if m else ""
+
+
+def version_at_least(version: str, minimum: str) -> bool:
+    """True when ``version`` (``0.80.1``) is ``minimum`` or newer; an unreadable
+    version is never "new enough"."""
+    v, m = parse_version(runspec_version(version)), parse_version(minimum)
+    return bool(v and m) and v >= m  # type: ignore[operator]
+
+
+def parse_retention_fact(text: str) -> dict[str, str]:
+    """The inspect step's ``retention`` fact (``compact_after=7d delete_after=90d``)
+    as a dict."""
+    out: dict[str, str] = {}
+    for part in (text or "").split():
+        k, _, v = part.partition("=")
+        if k in ("compact_after", "delete_after", "max_total_size") and v:
+            out[k] = v
+    return out
+
+
+@dataclass(frozen=True)
+class UpdateStep:
+    """One step of an update: ``pip`` steps get the package-index env and the
+    long timeout; a ``required`` step's failure stops that host."""
+
+    name: str
+    argv: list[str]
+    pip: bool = False
+    required: bool = False
+
+
+def update_install_specs(
+    packages: list[str], *, upgrade_runspec: bool, scheduler: str
+) -> list[str]:
+    """What an update installs (``pip install -U``): ``runspec`` when it is
+    upgraded, the operator's packages, and runspec-scheduler for a daemon."""
+    specs = (["runspec"] if upgrade_runspec else []) + [
+        p for p in packages if p and p.lower() != "runspec"
+    ]
+    if scheduler and scheduler != SCHEDULER_OFF:
+        specs = add_scheduler_spec(specs, scheduler)
+    return list(dict.fromkeys(specs))
+
+
+def update_steps(
+    root: str,
+    *,
+    specs: list[str],
+    inbox: bool,
+    retention: dict[str, str],
+    scheduler: str,
+    has_scheduler: bool,
+    acl_user: str = "",
+) -> list[UpdateStep]:
+    """The steps that bring an existing venv at ``root`` up to the chosen
+    options, in order. Each one is safe to run again: pip ``-U`` only changes
+    what is out of date, ``logs share --inbox`` and ``logs retention`` rewrite
+    the same settings, ``use`` and ``install-service`` converge. Nothing is
+    recreated and the venv's logs are never touched."""
+    paths = venv_paths(root)
+    steps: list[UpdateStep] = []
+    if specs:
+        steps += [
+            UpdateStep("pip", pip_upgrade_argv(root), pip=True),
+            UpdateStep(
+                "install",
+                [
+                    paths["python"],
+                    "-m",
+                    "pip",
+                    "install",
+                    "--disable-pip-version-check",
+                    "--no-input",
+                    "-U",
+                    *specs,
+                ],
+                pip=True,
+                required=True,
+            ),
+        ]
+    if inbox:
+        steps.append(UpdateStep("inbox", inbox_argv(root, acl_user=acl_user)))
+    if retention:
+        steps.append(UpdateStep("retention", retention_argv(root, retention)))
+    steps.append(UpdateStep("verify", verify_argv(root), required=True))
+    if scheduler == SCHEDULER_OFF:
+        if has_scheduler:
+            steps += [
+                UpdateStep("scheduler", scheduler_cron_argv(root)),
+                UpdateStep("keeper", scheduler_stop_argv(root)),
+            ]
+    elif scheduler:
+        steps += [
+            UpdateStep("scheduler", scheduler_use_argv(root)),
+            UpdateStep("keeper", scheduler_keeper_argv(root, scheduler)),
+        ]
+    return steps
+
+
 # --------------------------------------------------------------------------- #
 # Host-side audit events (runspec 0.71.0+ ledger, OS-log fallback)
 # --------------------------------------------------------------------------- #
@@ -949,6 +1089,15 @@ if [ -x "$r/bin/runspec-scheduler" ]; then out scheduler 1; else out scheduler 0
 # the daemon's pid from its lock, when that process is still a runspec-scheduler
 p=$(head -c 32 "$r/runspec_scheduler.lock" 2>/dev/null | tr -dc 0-9)
 if [ -n "$p" ] && grep -qF "$r/bin/runspec-scheduler" "/proc/$p/cmdline" 2>/dev/null; then out scheduler_pid "$p"; fi
+# what an update can change: runspec version, logs inbox, log cleanup, schedules backend
+if [ -x "$r/bin/runspec" ]; then out runspec_version "$("$r/bin/runspec" --version 2>/dev/null | tail -n 1)"; fi
+if [ -d "$r/logs/inbox" ]; then out inbox 1; else out inbox 0; fi
+if [ -f "$r/runspec_logs_retention.toml" ]; then
+  out retention "$(grep -E '^[[:space:]]*(compact_after|delete_after|max_total_size)[[:space:]]*=' "$r/runspec_logs_retention.toml" 2>/dev/null | tr -d ' "' | tr '\n' ' ')"
+fi
+if [ -f "$r/runspec_scheduler.toml" ]; then
+  out backend "$(sed -n 's/^[[:space:]]*backend[[:space:]]*=[[:space:]]*"\{0,1\}\([a-z]*\).*/\1/p' "$r/runspec_scheduler.toml" 2>/dev/null | head -n 1)"
+fi
 out size_kb "$(du -sk "$r" 2>/dev/null | cut -f1)"
 if [ -d "$r/logs" ]; then out logs_kb "$(du -sk "$r/logs" 2>/dev/null | cut -f1)"; else out logs_kb 0; fi
 """
@@ -1079,8 +1228,9 @@ def remove_runspec_path(entry: dict[str, Any], root: str) -> bool:
 def audit_record(event: str, ts: str, **fields: Any) -> dict[str, Any]:
     """One audit line for the console's audit log (the same shape as the
     disclaimer acknowledgement). ``event`` is one of ``venv.provision.started``
-    / ``.succeeded`` / ``.failed``, ``venv.deprovision.confirmed`` /
-    ``.succeeded`` / ``.failed``, ``venv.logs.retained`` — kept stable so an
+    / ``.succeeded`` / ``.failed``, ``venv.update.*`` (same three),
+    ``venv.deprovision.confirmed`` / ``.succeeded`` / ``.failed``,
+    ``venv.logs.retained`` — kept stable so an
     append-only audit sink can pick them up later."""
     detail = {k: v for k, v in fields.items() if v not in (None, "")}
     host = detail.get("host", "")

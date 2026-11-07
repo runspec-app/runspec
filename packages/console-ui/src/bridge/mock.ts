@@ -1,4 +1,4 @@
-import type { BridgeApi, ProvisionOpRecord, ProvisionPayload, DeprovisionPayload, ProvisionResult, ChatSessionInfo, MarketplaceRepo, MarketplaceEntry, MarketplaceTarget, MarketplaceInstalledTarget, MarketplaceOpRecord, MarketplaceOpPayload, MarketplaceOpResult, Host, JumpHost, Runnable, HistoryRecord, RunningRun, Schedule, InFlightRecord, TestResult, AnalyticsData, AnalyticsBucket, TriggerCard, KnowledgeFact, KnowledgeNode, KnowledgeEdge, KnowledgeFactInput, EnvFileSaveRow, SavedTransfer, SharedSchedulesVenv } from './index'
+import type { BridgeApi, ProvisionOpRecord, ProvisionPayload, DeprovisionPayload, VenvUpdatePayload, ProvisionResult, ChatSessionInfo, MarketplaceRepo, MarketplaceEntry, MarketplaceTarget, MarketplaceInstalledTarget, MarketplaceOpRecord, MarketplaceOpPayload, MarketplaceOpResult, Host, JumpHost, Runnable, HistoryRecord, RunningRun, Schedule, InFlightRecord, TestResult, AnalyticsData, AnalyticsBucket, TriggerCard, KnowledgeFact, KnowledgeNode, KnowledgeEdge, KnowledgeFactInput, EnvFileSaveRow, SavedTransfer, SharedSchedulesVenv } from './index'
 
 // Facts the knowledge_overview mock built, so knowledge_page / knowledge_search agree with it.
 let _mockKnowledgeFacts: KnowledgeFact[] = []
@@ -782,12 +782,13 @@ function mockMarketplaceOp(action: 'install' | 'uninstall', payload: Marketplace
 
 const MOCK_PROVISION_OPS = new Map<string, ProvisionOpRecord>()
 
-function mockProvisionOp(kind: 'provision' | 'deprovision', hosts: string[], path: string, scheduler = '') {
+function mockProvisionOp(kind: 'provision' | 'deprovision' | 'update', hosts: string[], path: string, scheduler = '', updateSteps: string[] = []) {
   const op = Math.random().toString(16).slice(2, 14)
   const rec: ProvisionOpRecord = { op, kind, status: 'running', hosts, results: [] }
   MOCK_PROVISION_OPS.set(op, rec)
   const steps = kind === 'provision'
     ? ['preflight', 'create', 'pip', 'install', 'inbox', 'retention', 'verify', ...(scheduler ? ['scheduler', 'keeper'] : [])]
+    : kind === 'update' ? ['inspect', ...updateSteps]
     : ['inspect', 'scheduler', 'remove']
   let delay = 200
   for (const host of hosts) {
@@ -801,8 +802,9 @@ function mockProvisionOp(kind: 'provision' | 'deprovision', hosts: string[], pat
     }
     const ok = host !== 'logs-1'
     setTimeout(() => {
-      const res: ProvisionResult = { host, ok, summary: ok ? (kind === 'provision' ? 'runspec 0.70.0' : `removed ${path}`) : 'install failed: No matching distribution found', step: ok ? undefined : 'install' }
-      if (ok && scheduler) res.scheduler = { manager: scheduler === 'auto' ? 'supervisor' : scheduler, reason: 'lingering is off for svc-ops; supervisord is installed in this venv' }
+      const res: ProvisionResult = { host, ok, summary: ok ? (kind === 'deprovision' ? `removed ${path}` : 'runspec 0.81.0') : 'install failed: No matching distribution found', step: ok ? undefined : 'install' }
+      if (ok && scheduler === 'off') res.scheduler = { manager: 'crontab', reason: "Schedules fire from the owner's crontab; the daemon and its keepers are gone." }
+      else if (ok && scheduler) res.scheduler = { manager: scheduler === 'auto' ? 'supervisor' : scheduler, reason: 'lingering is off for svc-ops; supervisord is installed in this venv' }
       rec.results.push(res)
       window.dispatchEvent(new CustomEvent('runspec:provision_progress', { detail: { op, kind, host, phase: 'done', ok, summary: res.summary, scheduler: res.scheduler } }))
     }, delay)
@@ -1136,6 +1138,26 @@ export const mockApi: BridgeApi = {
     })),
   }),
   deprovision_start: async (payload: DeprovisionPayload) => mockProvisionOp('deprovision', payload.targets.map(t => t.host), payload.targets[0]?.runspec_path ?? ''),
+  venv_update_preview: async ({ targets }) => ({
+    rows: targets.map((t, i) => ({
+      ...t, root: t.runspec_path.replace(/\/bin\/runspec$/, ''), ok: true, kind: 'venv', owner: 'svc-ops', user: 'jason',
+      size_kb: 184320, logs_kb: 2048, runnables: ['disk-usage', 'list-services'], references: [], blockers: [],
+      scheduler: i === 0, scheduler_pid: 0, runspec_version: i === 0 ? '0.81.0' : '0.76.2', inbox: i === 0,
+      retention: i === 0 ? { compact_after: '7d', delete_after: '90d' } : {}, backend: i === 0 ? 'cron' : '',
+    })),
+  }),
+  venv_update_start: async (payload: VenvUpdatePayload) => {
+    const sched = payload.scheduler ?? ''
+    const install = payload.upgrade_runspec || (payload.packages ?? []).length > 0 || (sched && sched !== 'off')
+    const steps = [
+      ...(install ? ['pip', 'install'] : []),
+      ...(payload.inbox ? ['inbox'] : []),
+      ...(payload.retention ? ['retention'] : []),
+      'verify',
+      ...(sched ? ['scheduler', 'keeper'] : []),
+    ]
+    return mockProvisionOp('update', payload.targets.map(t => t.host), payload.targets[0]?.runspec_path ?? '', sched, steps)
+  },
   env_file_targets: async (hosts) => {
     const names = ['local', ...(hosts ?? MOCK_HOSTS.filter(h => h.name !== 'local').map(h => h.name)), ..._MOCK_ENV_FLEET]
     return names.flatMap(host => {

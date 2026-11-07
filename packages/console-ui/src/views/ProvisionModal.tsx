@@ -18,7 +18,7 @@ const { Text } = Typography
 
 type PyMode = 'path' | 'version'
 
-interface HostProgress {
+export interface HostProgress {
   step: string
   lines: string[]
   done: boolean
@@ -112,8 +112,9 @@ export const SCHEDULER_OPTIONS: { value: '' | ProvisionSchedulerKeeper; label: s
   { value: 'cron', label: 'Daemon with a crontab watchdog' },
 ]
 
-const STEP_LABEL: Record<string, string> = {
+export const STEP_LABEL: Record<string, string> = {
   preflight: 'checking',
+  inspect: 'checking',
   folder: 'creating folder as root',
   create: 'creating venv',
   pip: 'upgrading pip',
@@ -123,6 +124,101 @@ const STEP_LABEL: Record<string, string> = {
   verify: 'verifying',
   scheduler: 'switching schedules to the daemon',
   keeper: 'starting the scheduler daemon',
+}
+
+/** One ``runspec:provision_progress`` event's detail. */
+export interface ProgressEvent {
+  op: string
+  host: string
+  phase: string
+  step?: string
+  line?: string
+  ok?: boolean
+  summary?: string
+  warnings?: string[]
+  scheduler?: { manager: string; reason: string }
+}
+
+/** Fold a progress event into the per-host progress map. */
+export function applyProgress(prev: Record<string, HostProgress>, d: ProgressEvent): Record<string, HostProgress> {
+  const cur: HostProgress = prev[d.host] ?? { step: '', lines: [], done: false }
+  const next = { ...cur }
+  if (d.phase === 'step' && d.step) next.step = d.step
+  if (d.phase === 'line' && d.line !== undefined) next.lines = [...cur.lines, d.line].slice(-400)
+  if (d.phase === 'done') { next.done = true; next.ok = d.ok; next.summary = d.summary; next.warnings = d.warnings; next.scheduler = d.scheduler }
+  return { ...prev, [d.host]: next }
+}
+
+/** Per-host live progress of a running provision / update: step, then the
+ *  result, with the host's output in a collapsible panel. */
+export function ProgressPanel({ progress, stepLabel = STEP_LABEL }: { progress: Record<string, HostProgress>; stepLabel?: Record<string, string> }) {
+  return (
+    <Collapse
+      size="small"
+      style={{ marginTop: 14 }}
+      items={Object.keys(progress).length === 0
+        ? [{ key: 'wait', label: <Text type="secondary"><LoadingOutlined /> Starting…</Text>, children: null }]
+        : Object.entries(progress).map(([host, p]) => ({
+          key: host,
+          label: (
+            <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              {!p.done ? <LoadingOutlined /> : p.ok ? <CheckCircleFilled style={{ color: '#52c41a' }} /> : <CloseCircleFilled style={{ color: '#ff4d4f' }} />}
+              <span style={{ fontFamily: MONO_FONT }}>{host}</span>
+              <Text type="secondary" style={{ fontSize: 12 }}>{p.done ? p.summary : stepLabel[p.step] ?? p.step}</Text>
+              {p.scheduler && <Tooltip title={p.scheduler.reason}><Tag style={{ margin: 0, fontSize: 11 }}>scheduler: {p.scheduler.manager}</Tag></Tooltip>}
+              {(p.warnings ?? []).length > 0 && <Tooltip title={(p.warnings ?? []).join('\n')}><WarningFilled style={{ color: '#faad14' }} /></Tooltip>}
+            </span>
+          ),
+          children: (
+            <pre style={{ margin: 0, maxHeight: 220, overflow: 'auto', fontFamily: MONO_FONT, fontSize: 11, whiteSpace: 'pre-wrap' }}>
+              {p.lines.join('\n') || '…'}
+            </pre>
+          ),
+        }))}
+    />
+  )
+}
+
+/** The Log cleanup controls: a checkbox plus compress / delete durations. */
+export function LogCleanupField({
+  checked,
+  onChecked,
+  checkboxLabel = 'Clean up old run logs',
+  compactAfter,
+  onCompactAfter,
+  deleteAfter,
+  onDeleteAfter,
+  error,
+  hint,
+}: {
+  checked: boolean
+  onChecked: (v: boolean) => void
+  checkboxLabel?: string
+  compactAfter: string
+  onCompactAfter: (v: string) => void
+  deleteAfter: string
+  onDeleteAfter: (v: string) => void
+  error: string
+  hint: string
+}) {
+  return (
+    <>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <Checkbox checked={checked} onChange={e => onChecked(e.target.checked)}>{checkboxLabel}</Checkbox>
+        {checked && (
+          <>
+            <Text style={{ fontSize: 12 }}>compress after</Text>
+            <Input size="small" value={compactAfter} onChange={e => onCompactAfter(e.target.value)} placeholder="7d" style={{ width: 70 }} aria-label="Compress after" />
+            <Text style={{ fontSize: 12 }}>delete after</Text>
+            <Input size="small" value={deleteAfter} onChange={e => onDeleteAfter(e.target.value)} placeholder="90d" style={{ width: 70 }} aria-label="Delete after" />
+          </>
+        )}
+      </div>
+      <Text type={error ? 'danger' : 'secondary'} style={{ fontSize: 11, display: 'block', marginTop: 2 }}>
+        {error || hint}
+      </Text>
+    </>
+  )
 }
 
 // Provision a runspec venv on one or many hosts. Modelled on Copy key to all
@@ -221,16 +317,9 @@ export function ProvisionModal({
   // Live progress for the running op.
   useEffect(() => {
     const onProgress = (e: Event) => {
-      const d = (e as CustomEvent).detail as { op: string; host: string; phase: string; step?: string; line?: string; ok?: boolean; summary?: string; warnings?: string[]; scheduler?: { manager: string; reason: string } }
+      const d = (e as CustomEvent).detail as ProgressEvent
       if (!d || d.op !== opRef.current) return
-      setProgress(prev => {
-        const cur: HostProgress = prev[d.host] ?? { step: '', lines: [], done: false }
-        const next = { ...cur }
-        if (d.phase === 'step' && d.step) next.step = d.step
-        if (d.phase === 'line' && d.line !== undefined) next.lines = [...cur.lines, d.line].slice(-400)
-        if (d.phase === 'done') { next.done = true; next.ok = d.ok; next.summary = d.summary; next.warnings = d.warnings; next.scheduler = d.scheduler }
-        return { ...prev, [d.host]: next }
-      })
+      setProgress(prev => applyProgress(prev, d))
     }
     const onDoneEvt = (e: Event) => {
       const d = (e as CustomEvent).detail as { op: string; kind: string; results: ProvisionResult[] }
@@ -460,23 +549,18 @@ export function ProvisionModal({
 
         <div>
           {label('Log cleanup')}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <Checkbox checked={cleanup} onChange={e => setCleanup(e.target.checked)}>Clean up old run logs</Checkbox>
-            {cleanup && (
-              <>
-                <Text style={{ fontSize: 12 }}>compress after</Text>
-                <Input size="small" value={compactAfter} onChange={e => setCompactAfter(e.target.value)} placeholder="7d" style={{ width: 70 }} aria-label="Compress after" />
-                <Text style={{ fontSize: 12 }}>delete after</Text>
-                <Input size="small" value={deleteAfter} onChange={e => setDeleteAfter(e.target.value)} placeholder="90d" style={{ width: 70 }} aria-label="Delete after" />
-              </>
-            )}
-          </div>
-          <Text type={retentionError ? 'danger' : 'secondary'} style={{ fontSize: 11, display: 'block', marginTop: 2 }}>
-            {retentionError
-              || (cleanup
-                ? 'The venv owner\'s runs apply it once a day: old run logs are compressed, then deleted (runspec logs retention, runspec 0.80.0+). The audit log is never touched.'
-                : 'Run logs from other accounts pile up in logs/ until someone prunes them.')}
-          </Text>
+          <LogCleanupField
+            checked={cleanup}
+            onChecked={setCleanup}
+            compactAfter={compactAfter}
+            onCompactAfter={setCompactAfter}
+            deleteAfter={deleteAfter}
+            onDeleteAfter={setDeleteAfter}
+            error={retentionError}
+            hint={cleanup
+              ? 'The venv owner\'s runs apply it once a day: old run logs are compressed, then deleted (runspec logs retention, runspec 0.80.0+). The audit log is never touched.'
+              : 'Run logs from other accounts pile up in logs/ until someone prunes them.'}
+          />
         </div>
       </div>
 
@@ -498,31 +582,7 @@ export function ProvisionModal({
         </div>
       )}
 
-      {op && (
-        <Collapse
-          size="small"
-          style={{ marginTop: 14 }}
-          items={Object.keys(progress).length === 0
-            ? [{ key: 'wait', label: <Text type="secondary"><LoadingOutlined /> Starting…</Text>, children: null }]
-            : Object.entries(progress).map(([host, p]) => ({
-              key: host,
-              label: (
-                <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  {!p.done ? <LoadingOutlined /> : p.ok ? <CheckCircleFilled style={{ color: '#52c41a' }} /> : <CloseCircleFilled style={{ color: '#ff4d4f' }} />}
-                  <span style={{ fontFamily: MONO_FONT }}>{host}</span>
-                  <Text type="secondary" style={{ fontSize: 12 }}>{p.done ? p.summary : STEP_LABEL[p.step] ?? p.step}</Text>
-                  {p.scheduler && <Tooltip title={p.scheduler.reason}><Tag style={{ margin: 0, fontSize: 11 }}>scheduler: {p.scheduler.manager}</Tag></Tooltip>}
-                  {(p.warnings ?? []).length > 0 && <Tooltip title={(p.warnings ?? []).join('\n')}><WarningFilled style={{ color: '#faad14' }} /></Tooltip>}
-                </span>
-              ),
-              children: (
-                <pre style={{ margin: 0, maxHeight: 220, overflow: 'auto', fontFamily: MONO_FONT, fontSize: 11, whiteSpace: 'pre-wrap' }}>
-                  {p.lines.join('\n') || '…'}
-                </pre>
-              ),
-            }))}
-        />
-      )}
+      {op && <ProgressPanel progress={progress} />}
     </Modal>
   )
 }

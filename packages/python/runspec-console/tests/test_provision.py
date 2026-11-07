@@ -502,3 +502,79 @@ def test_failure_text_drops_echoed_script_lines():
     assert prov.failure_text(text, 2) == "boom: no such thing"
     assert prov.failure_text(prov.PREFLIGHT_SCRIPT, 2) == "exit 2"
     assert prov.failure_text("", 3) == "exit 3"
+
+
+# ── Update an existing venv ──────────────────────────────────────────────────
+
+
+def test_update_install_specs():
+    assert prov.update_install_specs([], upgrade_runspec=False, scheduler="") == []
+    assert prov.update_install_specs(
+        ["runspec-linux", "runspec"], upgrade_runspec=True, scheduler=""
+    ) == ["runspec", "runspec-linux"]
+    assert prov.update_install_specs([], upgrade_runspec=False, scheduler="cron") == [
+        "runspec-scheduler>=0.6.0"
+    ]
+    # A pinned scheduler wins; "off" installs nothing.
+    assert prov.update_install_specs(
+        ["runspec-scheduler==0.6.1"], upgrade_runspec=False, scheduler="auto"
+    ) == ["runspec-scheduler==0.6.1"]
+    assert prov.update_install_specs([], upgrade_runspec=False, scheduler="off") == []
+
+
+def test_update_steps_order_and_flags():
+    root = "/opt/venvs/ops"
+    steps = prov.update_steps(
+        root,
+        specs=["runspec"],
+        inbox=True,
+        retention={"delete_after": "30d"},
+        scheduler="auto",
+        has_scheduler=False,
+        acl_user="deploy",
+    )
+    assert [s.name for s in steps] == [
+        "pip",
+        "install",
+        "inbox",
+        "retention",
+        "verify",
+        "scheduler",
+        "keeper",
+    ]
+    by = {s.name: s for s in steps}
+    assert by["install"].pip and by["install"].required
+    assert by["install"].argv[:3] == [f"{root}/bin/python", "-m", "pip"]
+    assert "-U" in by["install"].argv
+    assert by["inbox"].argv[-2:] == ["--acl-user", "deploy"]
+    assert by["retention"].argv[-2:] == ["--delete-after", "30d"]
+    assert by["verify"].required and not by["inbox"].required
+    # Only verify when nothing else is asked for; "off" needs a scheduler.
+    bare = prov.update_steps(
+        root, specs=[], inbox=False, retention={}, scheduler="off", has_scheduler=False
+    )
+    assert [s.name for s in bare] == ["verify"]
+    off = prov.update_steps(
+        root, specs=[], inbox=False, retention={}, scheduler="off", has_scheduler=True
+    )
+    assert [s.argv[1:] for s in off[1:]] == [
+        ["use", "cron"],
+        ["install-service", "--remove", "--write"],
+    ]
+
+
+def test_update_scheduler_and_version_helpers():
+    assert prov.validate_update_scheduler("off") == "off"
+    assert prov.validate_update_scheduler("") == ""
+    with pytest.raises(prov.ProvisionError):
+        prov.validate_update_scheduler("systemd")
+    assert prov.runspec_version("runspec 0.81.0") == "0.81.0"
+    assert prov.runspec_version("runspec (version unknown)") == ""
+    assert prov.version_at_least("0.80.0", "0.80.0")
+    assert prov.version_at_least("runspec 0.81.2", "0.80.0")
+    assert not prov.version_at_least("0.79.9", "0.80.0")
+    assert not prov.version_at_least("", "0.80.0")
+    assert prov.parse_retention_fact("compact_after=7d delete_after=90d junk ") == {
+        "compact_after": "7d",
+        "delete_after": "90d",
+    }

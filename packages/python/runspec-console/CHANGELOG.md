@@ -9,6 +9,25 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.384.0] — 2026-11-07
+
+### Added
+
+- **Update venv… brings existing venvs up to today's provision options.**
+  Settings → Jump Hosts gains an **Update venv…** button (and a sync icon
+  beside each saved runspec path) that applies provision steps to a venv a
+  host already lists, without recreating it: upgrade runspec and install or
+  upgrade packages (`pip install -U`), set up the logs inbox, set the log
+  cleanup policy, and move the venv's schedules to the runspec-scheduler
+  daemon with a keeper, or back to crontab. Pick one venv and any number of
+  hosts (group / profile chips). A read-only check shows each host's runspec
+  version, owner, inbox, log cleanup and schedules before anything runs, and
+  warns when log cleanup would need a newer runspec. Steps run as the venv's
+  owner, each safe to repeat; installs, settings and `logs/` stay. Audit
+  events `venv.update.*` in the console, `venv.update` in the venv's ledger.
+  New JS API `venv_update_preview` / `venv_update_start`; progress rides the
+  provision events with `kind` `update`.
+
 ## [0.383.0] — 2026-11-07
 
 ### Changed
