@@ -60,8 +60,10 @@ def test_summarize_stats_totals_across_hosts() -> None:
 
 
 def _stub_runner(monkeypatch, captured, *, status="successful", rc=0, stats=None):
-    def fake_run_ansible(playbook_name, extravars, *, check, verbosity, tags, skip_tags, envvars):
+    def fake_run_ansible(playbook_name, extravars, *, check, verbosity, tags, skip_tags, envvars, sent=None):
         captured.update(
+            sent=sent,
+            envvars=envvars,
             playbook_name=playbook_name,
             extravars=extravars,
             check=check,
@@ -118,3 +120,134 @@ def test_main_reports_bad_extra_var(monkeypatch, capsys) -> None:
     assert exc.value.code == 2
     out = json.loads(capsys.readouterr().out)
     assert "key=value" in out["error"]
+
+
+# ── a repo sent by the console ────────────────────────────────────────────────
+
+import base64  # noqa: E402
+import gzip  # noqa: E402
+import io  # noqa: E402
+
+from runspec_playbook import source  # noqa: E402
+
+# Shared test vector — the console's playbook_repo tests assert the same hash, so
+# the two sides can't drift apart on the content-hash format.
+VECTOR_FILES = {"site.yml": "LSBob3N0czogYWxsCg==", "roles/web/tasks/main.yml": "LSBwaW5nOgo="}
+VECTOR_SHA = "48adc37d996b7944c747d03fd5c97d26b03a7baa14ea736027ea75249341cd6f"
+
+
+def _payload(files_b64=None, **extra) -> tuple[bytes, str]:
+    files_b64 = VECTOR_FILES if files_b64 is None else files_b64
+    doc = {"v": 1, "repo": "homelab", "commit": "abc123def4567890", "dirty": False, "files": files_b64, **extra}
+    payload = base64.b64encode(gzip.compress(json.dumps(doc).encode()))
+    return payload, f"stdin:{len(payload)}:{source.content_hash(files_b64)}"
+
+
+def test_content_hash_matches_shared_vector() -> None:
+    assert source.content_hash(VECTOR_FILES) == VECTOR_SHA
+
+
+def test_receive_decodes_files_and_inventory() -> None:
+    payload, header = _payload(host="web-01", groups=["web", "bad group", "home"])
+    sent = source.receive(header, io.BytesIO(payload + b"trailing"))
+    assert sent.repo == "homelab"
+    assert sent.files["site.yml"] == b"- hosts: all\n"
+    assert sent.files["roles/web/tasks/main.yml"] == b"- ping:\n"
+    assert sent.host == "web-01"
+    assert sent.groups == ("web", "home")  # unsafe name dropped
+
+
+def test_receive_rejects_tampered_content() -> None:
+    payload, header = _payload()
+    bad = header.rsplit(":", 1)[0] + ":" + "0" * 64
+    with pytest.raises(source.SourceError, match="sha256"):
+        source.receive(bad, io.BytesIO(payload))
+
+
+def test_receive_rejects_short_stdin() -> None:
+    payload, header = _payload()
+    with pytest.raises(source.SourceError, match="cut short"):
+        source.receive(header, io.BytesIO(payload[:10]))
+
+
+@pytest.mark.parametrize("rel", ["../evil.yml", "/etc/passwd", "a/../../b", "C:/x", "./a"])
+def test_unsafe_paths_rejected(rel) -> None:
+    files = {rel: "eA=="}
+    payload, header = _payload(files)
+    with pytest.raises(source.SourceError):
+        source.receive(header, io.BytesIO(payload))
+
+
+def test_write_files(tmp_path) -> None:
+    payload, header = _payload()
+    sent = source.receive(header, io.BytesIO(payload))
+    source.write_files(sent, tmp_path)
+    assert (tmp_path / "roles/web/tasks/main.yml").read_bytes() == b"- ping:\n"
+
+
+def test_local_inventory_uses_console_name_and_groups() -> None:
+    payload, header = _payload(host="web-01", groups=["web"])
+    sent = source.receive(header, io.BytesIO(payload))
+    inv = run_playbook.local_inventory(sent)
+    assert inv["all"]["hosts"] == {"web-01": {"ansible_connection": "local"}}
+    assert inv["all"]["children"] == {"web": {"hosts": {"web-01": {}}}}
+    assert run_playbook.local_inventory(None) == {"all": {"hosts": {"localhost": {"ansible_connection": "local"}}}}
+
+
+class _Stdin:
+    def __init__(self, data: bytes) -> None:
+        self.buffer = io.BytesIO(data)
+
+    def isatty(self) -> bool:
+        return False
+
+
+def test_main_runs_a_sent_repo(monkeypatch, capsys) -> None:
+    captured: dict = {}
+    _stub_runner(monkeypatch, captured)
+    payload, header = _payload()
+    monkeypatch.setenv(source.ENV_VAR, header)
+    monkeypatch.setattr("sys.stdin", _Stdin(payload))
+    monkeypatch.setattr("sys.argv", ["run-playbook", "--repo", "homelab", "--playbook", "site.yml", "--check"])
+
+    with pytest.raises(SystemExit) as exc:
+        run_playbook.main_run_playbook()
+    assert exc.value.code == 0
+
+    out = json.loads(capsys.readouterr().out)
+    assert out["repo"] == "homelab"
+    assert out["commit"] == "abc123def456"
+    assert out["dirty"] is False
+    assert "package" not in out
+    assert captured["sent"].files["site.yml"] == b"- hosts: all\n"
+    assert captured["extravars"] == {}
+    # the header never reaches Ansible's environment
+    assert source.ENV_VAR not in captured["envvars"]
+
+
+def test_main_repo_without_sent_payload_is_refused(monkeypatch, capsys) -> None:
+    monkeypatch.delenv(source.ENV_VAR, raising=False)
+    monkeypatch.setattr("sys.argv", ["run-playbook", "--repo", "homelab", "--playbook", "site.yml"])
+    with pytest.raises(SystemExit) as exc:
+        run_playbook.main_run_playbook()
+    assert exc.value.code == 2
+    assert "Repos tab" in json.loads(capsys.readouterr().out)["error"]
+
+
+def test_main_repo_name_mismatch_is_refused(monkeypatch, capsys) -> None:
+    payload, header = _payload()
+    monkeypatch.setenv(source.ENV_VAR, header)
+    monkeypatch.setattr("sys.stdin", _Stdin(payload))
+    monkeypatch.setattr("sys.argv", ["run-playbook", "--repo", "other", "--playbook", "site.yml"])
+    with pytest.raises(SystemExit) as exc:
+        run_playbook.main_run_playbook()
+    assert exc.value.code == 2
+    assert "other" in json.loads(capsys.readouterr().out)["error"]
+
+
+def test_main_bundled_deploy_needs_package(monkeypatch, capsys) -> None:
+    monkeypatch.setattr("sys.argv", ["run-playbook"])
+    with pytest.raises(SystemExit) as exc:
+        run_playbook.main_run_playbook()
+    assert exc.value.code == 2
+    assert "package" in json.loads(capsys.readouterr().out)["error"]

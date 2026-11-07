@@ -21,6 +21,7 @@ from . import bridge_utils as utils_mod
 from . import config as config_mod
 from . import executor as executor_mod
 from . import hosts as hosts_mod
+from . import playbook_repo as playbook_repo_mod
 from . import notify
 from . import observability
 from . import sounds
@@ -1935,6 +1936,19 @@ class AutonomyMixin:
         # The saved runbook that drove this turn (set by run_runbook) → tags each
         # runnable's run_summary as extra.runbook for History/Analytics attribution.
         run_runbook = str(origin.get("runbook", ""))
+        # run-playbook --repo <name>: send that Repos-tab repo with the run. A
+        # headless (trigger/schedule) turn sends the committed tree only.
+        try:
+            packed = playbook_repo_mod.send_for(
+                cached_r, command_path, exec_args, entry, host, run_trigger
+            )
+        except playbook_repo_mod.PlaybookRepoError as exc:
+            return f"[exit 2]\n✗ {exc}"
+        stdin_payload = None
+        if packed is not None:
+            on_line(packed.describe(), "stderr")
+            cred_env.update(packed.env)
+            stdin_payload = packed.payload
         # A refused escalation ends with a plain-English note the agent can
         # relay, not just sudo's "a terminal is required … askpass helper".
         on_line, on_done = utils_mod.watch_escalation(
@@ -1977,6 +1991,7 @@ class AutonomyMixin:
                 runbook=run_runbook,
                 session_factory=session_factory,
                 jump=jump,
+                stdin_payload=stdin_payload,
             )
         else:
             executor_mod.run_local(
@@ -1996,6 +2011,7 @@ class AutonomyMixin:
                 cred_env=cred_env,
                 trigger=run_trigger,
                 runbook=run_runbook,
+                stdin_payload=stdin_payload,
             )
 
         output = "\n".join(output_lines)

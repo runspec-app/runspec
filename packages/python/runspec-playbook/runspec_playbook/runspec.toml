@@ -7,7 +7,7 @@ autonomy-default = "confirm"
 # and the data the runspec-console history/analytics tabs read.
 store = "per-run"
 
-# ── Deploy a package via a bundled Ansible playbook ──────────────────────────────
+# ── Run an Ansible playbook locally on this host ─────────────────────────────────
 #
 # This runnable runs ENTIRELY ON THE LOCAL HOST. The runspec-console reaches the
 # host over its own SSH connection (the host listed in runspec_hosts.toml) and
@@ -15,15 +15,20 @@ store = "per-run"
 # (inventory pins ansible_connection=local), so Ansible uses NO SSH of its own.
 # This is the `ansible-pull` pattern driven by the console instead of cron.
 #
+# The playbook comes from a git repo in the runspec-console's Repos tab (the
+# console packs the checkout and sends it with the run on stdin, checked by a
+# content hash) or is bundled in this package.
+#
 # Secrets (e.g. Nexus credentials) are passed as ENVIRONMENT VARIABLES injected
 # by the console from the OS keychain — never packaged, never on the command
 # line, never in the audit log. See README.md → "Secrets".
 
 [run-playbook]
-description = "Deploy a Python package by running a bundled Ansible playbook locally on this host. Installs <package>[extras]==<version> from the configured index and runs the playbook's steps. Uses no Ansible SSH — the console already reached this host; the playbook acts on localhost (connection: local)."
+description = "Run an Ansible playbook locally on this host (connection: local — Ansible opens no SSH of its own; the console already reached this host). Runs a playbook from a git repo in the console's Repos tab (the console sends the repo with the run: --repo + --playbook <path>) or one bundled in this package, e.g. 'deploy', which installs <package>[extras]==<version>."
 autonomy    = "confirm"
 output      = "json"
 examples    = [
+    { cmd = "run-playbook --repo homelab --playbook site.yml --check", description = "Dry run site.yml from the console's 'homelab' repo (Ansible check mode)" },
     "run-playbook myapp 1.4.2",
     "run-playbook 'myapp[postgres]' 1.4.2 --check",
     { cmd = "run-playbook myapp 1.4.2 --extra-var venv_path=/opt/myapp/venv -v", description = "Override the target venv and show task output" },
@@ -32,18 +37,30 @@ examples    = [
 [run-playbook.args.package]
 type        = "str"
 position    = 1
-description = "Package to deploy. Supports extras, e.g. 'myapp' or 'myapp[postgres,redis]'."
+required    = false
+description = "Package to deploy (the bundled 'deploy' playbook needs it). Supports extras, e.g. 'myapp' or 'myapp[postgres,redis]'. Passed to the playbook as deploy_package."
 
 [run-playbook.args.version]
 type        = "str"
 position    = 2
-description = "Exact version to install (e.g. '1.4.2'). Pinned — composed into '<package>==<version>'."
+required    = false
+description = "Exact version to install (e.g. '1.4.2'). Pinned — composed into '<package>==<version>' (deploy_package_spec)."
+
+[run-playbook.args.repo]
+type        = "str"
+required    = false
+pattern     = "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+description = "A git repo registered in the runspec-console's Repos tab. The console sends that repo's checkout with the run and --playbook names a file in it. To write or change a playbook, edit it in that repo with the console's repo tools (repo_write), then dry run it with --check before running it for real. Leave empty to run a playbook bundled in this package."
+# Tells the runspec-console this arg names a repo from its Repos tab: it offers
+# the registered repos as choices and sends the named repo with the run (env var
+# RUNSPEC_PLAYBOOK_SOURCE + payload on stdin). Pass-through metadata — runspec
+# itself never reads it.
+meta        = { console = "playbook-repo" }
 
 [run-playbook.args.playbook]
-type        = "choice"
-options     = ["deploy"]
+type        = "str"
 default     = "deploy"
-description = "Which bundled playbook to run (one of the playbooks shipped inside this package)."
+description = "The playbook to run: a path inside --repo (e.g. 'site.yml' or 'web/patch.yml'), or, without --repo, the name of a playbook bundled in this package ('deploy')."
 
 [run-playbook.args.check]
 type        = "flag"

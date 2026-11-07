@@ -1,4 +1,4 @@
-"""run-playbook — deploy a package by running a bundled Ansible playbook locally.
+"""run-playbook — run an Ansible playbook locally on this host.
 
 The runspec-console reaches the target host over its own SSH connection (the
 host from ``runspec_hosts.toml``) and runs this runnable there. The playbook is
@@ -7,6 +7,11 @@ Ansible itself opens no SSH connection. Per-host concerns the console already
 owns — connection, credentials (injected as env vars), denylist, audit — keep
 applying; Ansible supplies the playbook richness (idempotent modules, handlers,
 templates, ``become:``, ``--check``).
+
+The playbook is either a file in a git repo the console sends with the run
+(``--repo`` names a repo in the console's Repos tab; the checkout arrives on
+stdin, see :mod:`runspec_playbook.source`) or one bundled in this package
+(``deploy``).
 
 The pure helpers (``compose_package_spec``/``parse_extra_vars``/
 ``summarize_stats``) are factored out so they unit-test without Ansible, and the
@@ -23,6 +28,8 @@ from pathlib import Path
 from typing import Any
 
 import runspec as rs
+
+from runspec_playbook import source as source_mod
 
 
 def compose_package_spec(package: str, version: str) -> str:
@@ -67,6 +74,22 @@ def summarize_stats(stats: dict[str, Any]) -> dict[str, int]:
     }
 
 
+def local_inventory(sent: source_mod.SentRepo | None) -> dict[str, Any]:
+    """The one-host inventory: this host, on the local connection.
+
+    When the console sent a repo it also names this host and its console groups
+    and profiles, so the inventory uses that name (``host_vars/<name>.yml``
+    applies) and puts the host in those groups (``hosts: web`` and
+    ``group_vars/web.yml`` apply). Without them it is plain ``localhost``.
+    """
+    name = (sent.host if sent is not None else "") or "localhost"
+    inv: dict[str, Any] = {"all": {"hosts": {name: {"ansible_connection": "local"}}}}
+    groups = [g for g in (sent.groups if sent is not None else []) if g and g != "all"]
+    if groups:
+        inv["all"]["children"] = {g: {"hosts": {name: {}}} for g in groups}
+    return inv
+
+
 def run_ansible(
     playbook_name: str,
     extravars: dict[str, Any],
@@ -76,31 +99,41 @@ def run_ansible(
     tags: str | None,
     skip_tags: str | None,
     envvars: dict[str, str],
+    sent: source_mod.SentRepo | None = None,
 ) -> dict[str, Any]:
-    """Run a bundled playbook against localhost via ansible-runner.
+    """Run a playbook against localhost via ansible-runner.
 
-    The bundled ``playbooks/`` tree is copied into a throwaway private data dir
-    so artefacts never litter the host. ``envvars`` is forwarded verbatim so the
-    console-injected secrets reach the playbook (read there with
-    ``lookup('env', 'NAME')``); this function never logs them.
+    ``sent`` (a repo the console sent with the run) is written into a
+    throwaway private data dir; otherwise the bundled ``playbooks/`` tree is
+    copied there. Either way artefacts never litter the host. ``envvars`` is
+    forwarded verbatim so the console-injected secrets reach the playbook (read
+    there with ``lookup('env', 'NAME')``); this function never logs them.
     """
     import shutil
     from importlib.resources import as_file, files
 
     import ansible_runner
 
-    source = files("runspec_playbook") / "playbooks"
-    with as_file(source) as playbooks_dir, tempfile.TemporaryDirectory(prefix="runspec-playbook-") as data_dir:
+    bundled = files("runspec_playbook") / "playbooks"
+    with as_file(bundled) as playbooks_dir, tempfile.TemporaryDirectory(prefix="runspec-playbook-") as data_dir:
         project = Path(data_dir) / "project"
-        shutil.copytree(playbooks_dir, project)
-        if not (project / f"{playbook_name}.yml").is_file():
-            raise FileNotFoundError(f"bundled playbook not found: {playbook_name}.yml")
+        if sent is not None:
+            project.mkdir()
+            source_mod.write_files(sent, project)
+            entry = source_mod.safe_relpath(playbook_name)
+            if not (project / entry).is_file():
+                raise FileNotFoundError(f"playbook {playbook_name!r} is not in repo {sent.repo!r}")
+        else:
+            shutil.copytree(playbooks_dir, project)
+            entry = f"{playbook_name}.yml"
+            if not (project / entry).is_file():
+                raise FileNotFoundError(f"playbook not found: {playbook_name!r} is not bundled in this package (to run one from a git repo, pass --repo with a repo from the console's Repos tab)")
 
         kwargs: dict[str, Any] = {
             "private_data_dir": data_dir,
-            "playbook": f"{playbook_name}.yml",
+            "playbook": entry,
             # One inline host pinned to the local connection — no SSH, no remote inventory.
-            "inventory": {"all": {"hosts": {"localhost": {"ansible_connection": "local"}}}},
+            "inventory": local_inventory(sent),
             "extravars": extravars,
             "envvars": envvars,
             "verbosity": verbosity,
@@ -117,25 +150,56 @@ def run_ansible(
         return {"status": runner.status, "rc": runner.rc, "stats": runner.stats or {}}
 
 
+def sent_repo(repo: str, environ: dict[str, str], stdin: Any) -> source_mod.SentRepo | None:
+    """The repo the console sent for this run, or None when ``repo`` is empty.
+
+    Pops ``RUNSPEC_PLAYBOOK_SOURCE`` from ``environ`` so it is never forwarded
+    to Ansible. ``--repo`` without a sent repo (run by hand, or by a console
+    that doesn't know the repo) is an error, as is a sent repo with another name.
+    """
+    header = environ.pop(source_mod.ENV_VAR, "")
+    if not repo:
+        return None
+    if not header:
+        raise source_mod.SourceError(f"--repo {repo!r} needs the runspec-console to send the repo with the run (run it from the console, where the repo is registered in the Repos tab)")
+    sent = source_mod.receive(header, stdin)
+    if sent.repo != repo:
+        raise source_mod.SourceError(f"the console sent repo {sent.repo!r} but --repo is {repo!r}")
+    return sent
+
+
 def main_run_playbook() -> None:
     spec = rs.parse("run-playbook")
-    package = str(spec.package.value)
-    version = str(spec.version.value)
+    package = str(spec.package.value or "")
+    version = str(spec.version.value or "")
     playbook_name = str(spec.playbook.value)
+    repo = str(spec.repo.value or "")
     check = bool(spec.check.value)
     verbosity = int(spec.verbosity.value)
     tags = spec.tags.value
     skip_tags = spec.skip_tags.value
     extra_items = spec.extra_var.value or []
 
+    envvars = dict(os.environ)
     try:
-        package_spec = compose_package_spec(package, version)
-        extravars: dict[str, Any] = {
-            "deploy_package": package,
-            "deploy_version": version,
-            "deploy_package_spec": package_spec,
-            **parse_extra_vars(extra_items),
-        }
+        sent = sent_repo(repo, envvars, sys.stdin.buffer)
+    except source_mod.SourceError as exc:
+        print(json.dumps({"error": str(exc)}))
+        sys.exit(2)
+
+    try:
+        extravars: dict[str, Any] = {}
+        package_spec = ""
+        if package:
+            package_spec = compose_package_spec(package, version)
+            extravars.update(
+                deploy_package=package,
+                deploy_version=version,
+                deploy_package_spec=package_spec,
+            )
+        elif sent is None and playbook_name == "deploy":
+            raise ValueError("the bundled 'deploy' playbook needs a package (and version) to install")
+        extravars.update(parse_extra_vars(extra_items))
     except ValueError as exc:
         print(json.dumps({"error": str(exc)}))
         sys.exit(2)
@@ -150,29 +214,32 @@ def main_run_playbook() -> None:
             skip_tags=skip_tags,
             # The console already curated this environment (it added the selected
             # credentials' env vars); forward it so the playbook can read them.
-            envvars=dict(os.environ),
+            envvars=envvars,
+            sent=sent,
         )
     except ModuleNotFoundError as exc:
         print(json.dumps({"error": f"ansible-runner is not installed ({exc}). Install ansible-core and ansible-runner on this host."}))
         sys.exit(1)
-    except FileNotFoundError as exc:
+    except (FileNotFoundError, source_mod.SourceError) as exc:
         print(json.dumps({"error": str(exc)}))
-        sys.exit(1)
+        sys.exit(2)
 
     summary = summarize_stats(result.get("stats") or {})
     status = result.get("status")
     rc = int(result.get("rc") or 0)
-    print(
-        json.dumps(
-            {
-                "package": package_spec,
-                "playbook": playbook_name,
-                "check": check,
-                "status": status,
-                "rc": rc,
-                "changed": summary["changed"] > 0,
-                "stats": summary,
-            }
-        )
+    out: dict[str, Any] = {"playbook": playbook_name}
+    if sent is not None:
+        out.update(repo=sent.repo, commit=sent.commit[:12], dirty=sent.dirty)
+    else:
+        out["source"] = "bundled"
+    if package_spec:
+        out["package"] = package_spec
+    out.update(
+        check=check,
+        status=status,
+        rc=rc,
+        changed=summary["changed"] > 0,
+        stats=summary,
     )
+    print(json.dumps(out))
     sys.exit(0 if status == "successful" else (rc or 1))

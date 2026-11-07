@@ -19,6 +19,7 @@ from . import bridge_utils as utils_mod
 from . import config as config_mod
 from . import executor as executor_mod
 from . import hosts as hosts_mod
+from . import playbook_repo as playbook_repo_mod
 from . import observability
 from .config import (
     write_docs_dir,
@@ -337,6 +338,23 @@ class InvokeMixin:
                 on_done(-1, 0)
                 return
 
+            # run-playbook --repo <name>: send that Repos-tab repo with the run
+            # (payload on stdin after the env frame — see playbook_repo).
+            try:
+                packed = playbook_repo_mod.send_for(
+                    cached, cp, exec_args, entry, host, trigger
+                )
+            except playbook_repo_mod.PlaybookRepoError as exc:
+                on_line(f"✗  {exc}", "stderr")
+                on_done(2, 0)
+                return
+            run_env = dict(cred_env)
+            stdin_payload = None
+            if packed is not None:
+                on_line(packed.describe(), "stderr")
+                run_env.update(packed.env)
+                stdin_payload = packed.payload
+
             # A refused escalation ends with a plain-English note, not just
             # sudo's "a terminal is required … askpass helper".
             on_line, on_done = utils_mod.watch_escalation(
@@ -373,9 +391,10 @@ class InvokeMixin:
                     session_factory=session_factory,
                     positionals=self._positionals_for(cached, cp),
                     secrets=secrets,
-                    cred_env=cred_env,
+                    cred_env=run_env,
                     trigger=trigger,
                     jump=jump,
+                    stdin_payload=stdin_payload,
                 )
             else:
                 executor_mod.run_local(
@@ -391,8 +410,9 @@ class InvokeMixin:
                     become_flags=become_flags,
                     positionals=self._positionals_for(cached, cp),
                     secrets=secrets,
-                    cred_env=cred_env,
+                    cred_env=run_env,
                     trigger=trigger,
+                    stdin_payload=stdin_payload,
                 )
 
         t = threading.Thread(target=run, daemon=True)

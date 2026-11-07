@@ -1,7 +1,9 @@
 # runspec-playbook
 
-Run **bundled Ansible playbooks locally** on a host the runspec-console is
-already connected to — no second SSH stack, one host list.
+Run **Ansible playbooks locally** on a host the runspec-console is already
+connected to — no second SSH stack, one host list. The playbook comes from a git
+repo in the console's **Repos** tab (sent with each run) or is bundled in this
+package.
 
 ```
 runspec-console ──SSH──▶ host ──▶ run-playbook ──▶ ansible-runner (connection: local) ──▶ your playbook
@@ -21,6 +23,40 @@ richness (idempotent modules, handlers, templates, `become:`, `--check`).
 > `run_once`, reading another host's `hostvars`, `serial:` rolling deploys —
 > needs a real Ansible control node and is out of scope here.
 
+## Playbooks from a git repo (console 0.389.0+)
+
+Keep your playbooks in a git repo (a private GitHub repo is fine — no internal
+GitLab or package index needed), register it in the console's **Settings →
+Repos** and Sync it. Then:
+
+```bash
+run-playbook --repo homelab --playbook site.yml --check   # dry run
+run-playbook --repo homelab --playbook web/patch.yml
+```
+
+The console packs the repo's checkout (no `.git`, `.gitignore`d files left out)
+and sends it with the run on stdin, after the env frame that already carries
+credentials. Nothing is copied to the host beforehand and nothing is left
+behind; `run_as` / sudo need nothing extra. The repo is checked against a
+content hash, and the JSON result reports the `repo`, `commit` and whether the
+checkout had uncommitted edits (`dirty`).
+
+- **Inventory.** The one host is named as the console names it, and sits in its
+  console group and profiles — so `hosts: web`, `group_vars/web.yml` and
+  `host_vars/web-01.yml` in your repo work as they would with a real inventory.
+- **What gets sent.** Runs you start (Forms, chat, a saved run, an MCP client)
+  send the checkout as it is, uncommitted edits included — so the agent can
+  write a playbook with the console's repo tools and `--check` it. Schedules and
+  triggers send the **committed** tree only.
+- **Limits.** Up to 5,000 files / 32 MB per repo. Keep big binaries out of the
+  playbook repo; copy them with a saved transfer.
+- **Fan out.** Target a host group or profile (a saved run, a schedule, the
+  agent) and every host runs the same playbook locally.
+
+`--repo` carries `meta = { console = "playbook-repo" }`, which is how the
+console knows to send the repo and to offer the Repos-tab names as choices. Run
+by hand on the host (no console), `--repo` is refused; bundled playbooks still work.
+
 **Deployment is the worked example, not the limit.** The mechanism runs *any*
 per-host playbook — patching, config enforcement, an audit/report pass, a
 restart — and the shipped `run-playbook` runnable is just the deploy-shaped one
@@ -32,9 +68,10 @@ way; see "Making it your own" below.
 
 | Arg | | Description |
 |---|---|---|
-| `package` | positional 1 | Package to deploy; supports extras, e.g. `myapp` or `myapp[postgres,redis]`. |
-| `version` | positional 2 | Exact version; composed into `<package>==<version>`. |
-| `--playbook` | choice | Which bundled playbook to run (default `deploy`). |
+| `package` | positional 1, optional | Package to deploy (the bundled `deploy` playbook needs it); supports extras, e.g. `myapp` or `myapp[postgres,redis]`. |
+| `version` | positional 2, optional | Exact version; composed into `<package>==<version>`. |
+| `--repo` | str | A repo from the console's Repos tab; the console sends it with the run. |
+| `--playbook` | str | A path inside `--repo` (e.g. `site.yml`), or without `--repo` a bundled playbook (default `deploy`). |
 | `--check` / `-C` | flag | Dry run — Ansible check mode (report, don't apply). |
 | `--extra-var k=v` | repeatable | Extra Ansible variables, merged after the `deploy_*` vars. |
 | `--tags` / `--skip-tags` | str | Comma-separated Ansible tag filters. |
@@ -46,9 +83,10 @@ run-playbook 'myapp[postgres]' 1.4.2 --check
 run-playbook myapp 1.4.2 --extra-var venv_path=/opt/myapp/venv -v
 ```
 
-The runnable always passes these variables to the playbook: `deploy_package`,
-`deploy_version`, `deploy_package_spec`. It returns JSON
-(`status`, `rc`, `changed`, `stats`) — and follows the Ansible `changed`
+Given a package, the runnable passes these variables to the playbook:
+`deploy_package`, `deploy_version`, `deploy_package_spec`. It returns JSON
+(`status`, `rc`, `changed`, `stats`, plus `repo`/`commit`/`dirty` for a repo
+playbook) — and follows the Ansible `changed`
 convention so it reads cleanly in the console history/analytics.
 
 ## Secrets

@@ -20,6 +20,7 @@ from . import bridge_utils as utils_mod
 from . import config as config_mod
 from . import executor as executor_mod
 from . import hosts as hosts_mod
+from . import playbook_repo as playbook_repo_mod
 from .config import (
     filters_path,
 )
@@ -1193,6 +1194,8 @@ class InternalsMixin:
                 r for r in self._runnables_cache if r.get("host", "") in keep_names
             ]
 
+        # Repos-tab names, offered as choices on run-playbook's --repo.
+        repo_names = playbook_repo_mod.registered_names()
         done = total - len(to_discover)
         # Progress dispatches are coalesced: each one is a synchronous
         # evaluate_js on the single UI-dispatch thread AND makes the frontend
@@ -1235,6 +1238,7 @@ class InternalsMixin:
                     if host_runnables is None:
                         continue  # skipped: superseded — the next cycle re-runs it
                     cleaned = self._dedup_host_runnables(host_runnables, host_name)
+                    playbook_repo_mod.decorate_records(cleaned, repo_names)
                     accumulated.extend(cleaned)
                     host_changed = _runnables_fingerprint(
                         cleaned
