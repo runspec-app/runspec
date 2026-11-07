@@ -1675,8 +1675,9 @@ since this host first ran it". Both are tamper-evident only, like `RECORD`.
 
 **Result.** `integrity` / `integrity_files` are written on `run_summary` when
 `[config.logging]` is on (the Node pack has no `run_start` or runs index). The
-stderr warning is written on every `modified` run. There is no audit event:
-the Node pack has no `audit()` yet.
+stderr warning is written on every `modified` run, and the `runnable.modified`
+audit event is recorded as above (target `{"package": …, "version": …}`), once
+per distinct set of changes, remembered in `{project}/logs/.integrity-state.json`.
 
 **`runspec verify`** (Node):
 
@@ -1871,8 +1872,9 @@ venv overlay or in a private package.
 Every run is recorded by the [run audit](#logging). **Audit events** record the
 important moments *inside* a run (a refund issued, a host rebooted) or outside
 one (a deny rule added). A language pack exposes one call — Python
-`runspec.audit(event, outcome, *, target, detail, strict)` — and the core CLI
-exposes the same as `runspec audit record`.
+`runspec.audit(event, outcome, *, target, detail, strict)`, Node
+`audit(event, outcome, { target, detail, strict })` — and the core CLI exposes
+the same as `runspec audit record`.
 
 ### Record
 
@@ -1904,7 +1906,8 @@ sink took the event (Python `AuditError`).
    record plus `prev` (the previous line's `hash`, or `sha256:` + 64 zeros for
    the first line) and `hash` = `sha256:` + hex SHA-256 of the record *including*
    `prev` but excluding `hash`, serialised as JSON with sorted keys and
-   `(",", ":")` separators. Editing, deleting, inserting or reordering a line
+   `(",", ":")` separators (see *Canonical form* below). Editing, deleting,
+inserting or reordering a line
    breaks the chain; `runspec audit verify` reports the first bad line. Only the
    venv owner (or root) appends. Another account in a shared venv writes its
    events into its own per-run [inbox](#logging) file; the owner's sweep appends
@@ -1926,11 +1929,57 @@ sink took the event (Python `AuditError`).
 
 There is no switch to turn the ledger off.
 
+### Canonical form
+
+The hash input is the record (without `hash`) as UTF-8 JSON, written the way
+Python's `json.dumps(record, sort_keys=True, separators=(",", ":"),
+ensure_ascii=False)` writes it, so a ledger written by one language pack
+verifies in another:
+
+- Object keys sorted by Unicode code point, no whitespace.
+- Strings: `"` and `\` escaped with a backslash; `\b \f \n \r \t` as
+  those escapes; any other character below U+0020 as `\u00xx` (lowercase hex);
+  everything else, non-ASCII included, written as is.
+- Integers as plain digits. Non-integer numbers as Python's `repr(float)`: the
+  shortest digits that round-trip, written as `0.0001`, `1.5`, `1e-05`, `1e+16`
+  (exponent form when the decimal exponent is below −4 or 16 and above, with a
+  sign and at least two exponent digits), and a whole-valued float keeps `.0`.
+  `NaN`, `Infinity` and `-Infinity` as those words. A verifier keeps whether a
+  number was written as an integer or a float, so `1` and `1.0` hash
+  differently, as in Python.
+
+A pack that can't tell integers from floats (JavaScript) writes every whole
+number as an integer and every other number in the float form above.
+
+### Node pack
+
+`audit()` from `runspec-node` writes the same record to the same three sinks,
+with these differences:
+
+- **Ledger** — `{project}/logs/audit.jsonl`, where `{project}` is the folder
+  holding the nearest `package.json` above the runnable's `runspec.toml`
+  (recorded as `venv`). The Node pack has no inbox: an account that is neither
+  root nor the owner of `{project}/logs` (or of `{project}`, before `logs/`
+  exists) writes `{home}/logs/audit.jsonl` instead. Appends are serialised with a
+  lock file, `audit.jsonl.lock`, created exclusively next to the ledger and
+  holding the writer's pid; a lock older than 30 seconds or whose pid is gone is
+  taken over. A writer that can't get the lock in 5 seconds skips the ledger.
+- **OS log** — POSIX: the `logger` command (`logger -t runspec[<pid>] -p
+  <facility>.notice`), when `/dev/log` (or `/var/run/syslog`, `/var/run/log`)
+  exists; Windows: `eventcreate`, as above.
+- **Run log** — only when the runnable has `[config.logging]` (logging is
+  opt-in in the Node pack).
+- The context (`runnable`, `command`, `run_id`, `agent`, `trigger`) is set by
+  `parse()` whether or not logging is on; `run_id` is empty without logging.
+
+`RUNSPEC_AUDIT=off` turns `audit()` off in the Node pack too (tests and CI only).
+
 ### Control-plane events
 
 The core CLI records its own state-changing verbs: `denylist.change`
 (`runspec deny` add/all/remove/enable/clear/mode), `logs.share`, `logs.prune`
-and `logs.compact`.
+and `logs.compact`. The Node CLI records `logs.prune` and `logs.compact` (it has
+no `deny` or `logs share`).
 
 ### Integrity
 

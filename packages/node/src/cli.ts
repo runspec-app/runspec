@@ -10,6 +10,7 @@ import { parse } from './parser';
 import * as rundeckgen from './rundeckgen';
 import * as ansiblegen from './ansiblegen';
 import * as integrity from './integrity';
+import * as auditlog from './auditlog';
 import type { ScriptSpec, ArgSpec, ParsedArgs } from './models';
 
 const _CLI_CONFIG = path.join(__dirname, 'runspec.toml');
@@ -45,6 +46,7 @@ export function main(): void {
     serve: cmdServe,
     verify: cmdVerify,
     manifest: cmdManifest,
+    audit: cmdAudit,
   };
 
   if (!(command in commands)) {
@@ -289,23 +291,45 @@ function cmdLogs(args: string[]): void {
     } else if (verb === 'status') {
       logs.status(runnable, { asJson: has('--json') });
     } else if (verb === 'prune') {
-      logs.prune(runnable, {
+      const pruneDirs = logs.logDirs();
+      const pruned = logs.prune(runnable, {
+        dirs: pruneDirs,
         olderThan: val('--older-than') ? logs.parseDuration(val('--older-than')!) : null,
         maxFiles: val('--max-files') ? parseInt(val('--max-files')!, 10) : null,
         maxTotalSize: val('--max-total-size') ? logs.parseSize(val('--max-total-size')!) : null,
         dryRun: has('--dry-run'),
         asJson: has('--json'),
       });
+      if (!has('--dry-run') && pruned.count) {
+        auditControl('logs.prune', { dirs: pruneDirs }, {
+          files: pruned.count,
+          freed_bytes: pruned.freed,
+          runnable: runnable ?? '',
+          older_than: val('--older-than'),
+          max_files: val('--max-files') ? parseInt(val('--max-files')!, 10) : undefined,
+          max_total_size: val('--max-total-size'),
+        });
+      }
     } else if (verb === 'compact') {
       if (!val('--older-than')) {
         console.log('✗  compact requires --older-than (e.g. --older-than 7d)');
         process.exit(1);
       }
-      logs.compact(runnable, logs.parseDuration(val('--older-than')!), {
+      const compactDirs = logs.logDirs();
+      const compacted = logs.compact(runnable, logs.parseDuration(val('--older-than')!), {
+        dirs: compactDirs,
         gzip: has('--gzip'),
         dryRun: has('--dry-run'),
         asJson: has('--json'),
       });
+      if (!has('--dry-run') && compacted) {
+        auditControl('logs.compact', { dirs: compactDirs }, {
+          files: compacted,
+          runnable: runnable ?? '',
+          older_than: val('--older-than'),
+          gzip: has('--gzip') || undefined,
+        });
+      }
     }
   } catch (err) {
     console.log(`✗  ${(err as Error).message}`);
@@ -1169,6 +1193,7 @@ Commands:
   serve       Start the MCP stdio server for local runnables
   verify      Check installed code still matches what was installed
   manifest    Write runspec-files.json (per-file hashes) before npm pack
+  audit       Record, list or verify audit events (hash-chained ledger)
 
 Run 'runspec <command> --help' for focused help on each command.
 
@@ -1316,6 +1341,22 @@ Options:
   --snapshot  (Re)take the snapshot of packages with no runspec-files.json
 
 Exits 1 when anything is modified.`,
+
+    audit: `runspec audit — Record, list or verify append-only audit events
+
+Usage:
+  runspec audit record <event> [--outcome o] [--target k=v ...] [--detail k=v ...] [--strict]
+  runspec audit list [--limit n] [--json]
+  runspec audit verify [--json]
+
+Options:
+  --file, -f  Ledger file to list/verify, or directory to record into
+              (default: this project's logs/audit.jsonl)
+
+Examples:
+  runspec audit record payment.refund --outcome succeeded --target order=A-1043
+  runspec audit list
+  runspec audit verify`,
 
     manifest: `runspec manifest — Write runspec-files.json before npm pack
 
@@ -1469,4 +1510,88 @@ function cmdManifest(args: string[]): void {
   fs.writeFileSync(path.join(dir, integrity.MANIFEST_NAME), JSON.stringify(manifest, null, 1) + '\n', 'utf8');
   // stderr: this runs inside `npm pack`, whose --json output goes to stdout.
   process.stderr.write(`✓  Wrote ${integrity.MANIFEST_NAME}: ${Object.keys(manifest.files).length} files (${manifest.name ?? ''} ${manifest.packageVersion ?? ''}).\n`.replace(' ( )', ''));
+}
+
+// ── audit ─────────────────────────────────────────────────────────────────────
+
+/** Record a control-plane change (the CLI has no run of its own). Best-effort. */
+function auditControl(event: string, target: Record<string, unknown>, detail: Record<string, unknown>): void {
+  try {
+    const clean: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(detail)) if (v !== undefined && v !== null && v !== '') clean[k] = v;
+    auditlog.audit(event, 'succeeded', { target, detail: clean });
+  } catch {
+    /* auditing never breaks the command */
+  }
+}
+
+function kvPairs(values: unknown, flag: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const item of (values as string[] | undefined) ?? []) {
+    const i = String(item).indexOf('=');
+    if (i <= 0 || !String(item).slice(0, i).trim()) {
+      console.log(`✗  ${flag} takes key=value, got '${item}'`);
+      process.exit(1);
+    }
+    out[String(item).slice(0, i).trim()] = String(item).slice(i + 1);
+  }
+  return out;
+}
+
+function cmdAudit(args: string[]): void {
+  const parsed = parse({ scriptName: 'runspec', argv: ['audit', ...args], configPath: _CLI_CONFIG });
+  const action = String(parsed['action'] ?? 'list');
+  const fileArg = parsed['file'] as string | undefined;
+  const asJson = Boolean(parsed['json']);
+
+  if (action === 'record') {
+    const event = parsed['event'] as string | undefined;
+    if (!event) {
+      console.log('✗  audit record needs an event name, e.g. runspec audit record deploy.start');
+      process.exit(1);
+    }
+    let rec: auditlog.AuditRecord | null;
+    try {
+      rec = auditlog.audit(event, String(parsed['outcome'] ?? ''), {
+        target: kvPairs(parsed['target'], '--target'),
+        detail: kvPairs(parsed['detail'], '--detail'),
+        strict: Boolean(parsed['strict']),
+        ledgerDir: fileArg,
+      });
+    } catch (e) {
+      if (e instanceof auditlog.AuditError) process.stderr.write(`✗  ${e.message}\n`);
+      else console.log(`✗  ${(e as Error).message}`);
+      process.exit(1);
+    }
+    if (asJson) console.log(JSON.stringify(rec));
+    else if (rec === null) console.log('runspec audit: RUNSPEC_AUDIT=off — nothing recorded');
+    else console.log(`✓  Recorded ${rec.event}${rec.outcome ? ' ' + rec.outcome : ''} (${rec.hash ?? 'OS log / run log only'})`);
+    return;
+  }
+
+  const file = fileArg ? path.resolve(fileArg) : auditlog.ledgerPath();
+  if (action === 'verify') {
+    const result = auditlog.verifyLedger(file);
+    if (asJson) console.log(JSON.stringify(result));
+    else if (result.ok) console.log(`✓  ${file}: ${result.records} record(s), hash chain intact`);
+    else console.log(result.first_bad ? `✗  ${file}: line ${result.first_bad} — ${result.reason}` : `✗  ${file}: ${result.reason}`);
+    if (!result.ok) process.exit(1);
+    return;
+  }
+
+  const limit = Math.max(1, Number(parsed['limit'] ?? 50) || 50);
+  const records = auditlog.readLedger(file).slice(-limit);
+  if (asJson) {
+    for (const r of records) console.log(JSON.stringify(r));
+    return;
+  }
+  if (!records.length) {
+    console.log(`No audit events in ${file}`);
+    return;
+  }
+  for (const r of records) {
+    const tgt = Object.entries((r.target as Record<string, unknown>) ?? {}).map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`).join(' ');
+    const head = `${String(r.ts ?? '').slice(0, 19)}  ${r.event ?? ''} ${r.outcome ?? ''}`.trimEnd();
+    console.log(`${head}  by ${r.actor ?? '?'} via ${r.runnable || '-'}${tgt ? '  ' + tgt : ''}`);
+  }
 }

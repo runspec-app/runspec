@@ -9,7 +9,8 @@ import { coerce } from './types';
 import { validateArgs, validateGroups, raiseIfErrors } from './validator';
 import { effectiveRunAs, environmentRoot, resolveAccount, resolveRunAs, verifyRunAsIdentity } from './become';
 import { RunSpecError, RunAsMismatch, formatMissingCommand, formatRunAsMismatch } from './errors';
-import { configureLogging, installExceptionHook } from './logging_setup';
+import { configureLogging, currentRunId, installExceptionHook } from './logging_setup';
+import { setRunContext } from './auditlog';
 import { checkProject, reportFiles, reportRun, reportToken } from './integrity';
 import type { ParsedArgs, ScriptSpec, ArgSpec, GroupSpec } from './models';
 
@@ -190,6 +191,19 @@ export function parse(opts: ParseOptions = {}): ParsedArgs {
     });
   } catch (e) {
     throw new RunSpecError((e as Error).message);
+  }
+  // Tie audit() calls from here on to this run (SPEC.md → "Audit Events" →
+  // "Node pack"). Not for introspection (loadSpec) or the core CLI.
+  if (_checkIntegrity && !coreCli) {
+    setRunContext({
+      runnable: name,
+      commandPath,
+      runId: currentRunId(),
+      agent,
+      trigger: process.env['RUNSPEC_TRIGGER'] ?? '',
+      auditCfg: config.audit,
+      root: environmentRoot(configPath),
+    });
   }
   reportRun(name, integrityReport);
 

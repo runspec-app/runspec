@@ -21,6 +21,7 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
+import { audit } from './auditlog';
 
 export const INTEGRITY_ENV = 'RUNSPEC_INTEGRITY';
 export const MANIFEST_NAME = 'runspec-files.json';
@@ -49,10 +50,14 @@ export interface PackageCheck {
   missing: string[];
   /** A snapshot was taken by this check (first run for this name@version). */
   snapshotTaken?: boolean;
+  /** Current hash of each changed file (`missing` when deleted) — the fingerprint of this change. */
+  digests?: Record<string, string>;
 }
 
 export interface Report {
   packages: PackageCheck[];
+  /** The project root checked (its `logs/` holds the dedupe state). */
+  root?: string;
 }
 
 export interface Manifest {
@@ -184,11 +189,17 @@ function compare(dir: string, expected: Record<string, string>, result: PackageC
     try {
       actual = hashFile(path.join(dir, ...rel.split('/')));
     } catch (e) {
-      if ((e as NodeJS.ErrnoException).code === 'ENOENT') result.missing.push(rel);
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
+        result.missing.push(rel);
+        (result.digests ??= {})[rel] = 'missing';
+      }
       continue; // unreadable — can't judge
     }
     result.checked += 1;
-    if (actual !== String(want).toLowerCase()) result.modified.push(rel);
+    if (actual !== String(want).toLowerCase()) {
+      result.modified.push(rel);
+      (result.digests ??= {})[rel] = actual;
+    }
   }
   if (result.modified.length || result.missing.length) result.status = 'modified';
   else if (result.checked === 0) result.status = 'unverifiable';
@@ -478,7 +489,7 @@ export function checkRoot(root: string, opts: CheckOptions = {}): Report {
       }
     }
   }
-  return { packages };
+  return { packages, root };
 }
 
 // ── Acting on a result ───────────────────────────────────────────────────────
@@ -492,11 +503,77 @@ export function warningText(name: string, report: Report): string {
   return `⚠  ${name}: ${files.length} installed ${noun} from the package (${pkgs}): ${shown}. This run is recorded as modified. Reinstall the package to restore it; "runspec verify" lists the changes.\n`;
 }
 
-/** Warn on stderr for a `modified` report. Never throws. */
-export function reportRun(name: string, report: Report | null): void {
-  if (!report || !modifiedPackages(report).length) return;
+export const STATE_NAME = '.integrity-state.json';
+
+function fingerprint(p: PackageCheck): string {
+  const lines = Object.entries(p.digests ?? {}).map(([f, h]) => `${f}=${h}`).sort();
+  return crypto.createHash('sha256').update([p.name, p.version, ...lines].join('\n'), 'utf8').digest('hex');
+}
+
+function readState(file: string): Record<string, string> {
+  const data = readJson(file);
+  const out: Record<string, string> = {};
+  if (isObject(data)) for (const [k, v] of Object.entries(data)) out[k] = String(v);
+  return out;
+}
+
+function writeState(file: string, state: Record<string, string>): void {
+  const tmp = `${file}.${process.pid}.tmp`;
   try {
-    process.stderr.write(warningText(name, report));
+    fs.writeFileSync(tmp, JSON.stringify(state), 'utf8');
+    fs.renameSync(tmp, file);
+  } catch {
+    try {
+      fs.unlinkSync(tmp);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+/**
+ * Warn on stderr for a `modified` report and record the `runnable.modified`
+ * audit event — once per distinct set of changes, remembered in
+ * `{project}/logs/.integrity-state.json`. Never throws.
+ */
+export function reportRun(name: string, report: Report | null, opts: { statePath?: string } = {}): void {
+  if (!report) return;
+  const mods = modifiedPackages(report);
+  if (mods.length) {
+    try {
+      process.stderr.write(warningText(name, report));
+    } catch {
+      /* never disrupt a run */
+    }
+  }
+  try {
+    const file = opts.statePath ?? (report.root ? path.join(report.root, 'logs', STATE_NAME) : null);
+    if (!file) return;
+    const state = mods.length || fs.existsSync(file) ? readState(file) : {};
+    let changed = false;
+    // A package that is clean again forgets its last change, so the same edit
+    // made again later is recorded again.
+    for (const p of report.packages) {
+      if (p.status !== 'modified' && p.name in state) {
+        delete state[p.name];
+        changed = true;
+      }
+    }
+    for (const p of mods) {
+      const fp = fingerprint(p);
+      if (state[p.name] === fp) continue;
+      try {
+        audit('runnable.modified', 'detected', {
+          target: { package: p.name, version: p.version },
+          detail: { files: changedFiles(p).slice(0, MAX_FILES), count: changedFiles(p).length, source: p.source, baseline: p.baseline },
+        });
+      } catch {
+        /* never disrupt a run */
+      }
+      state[p.name] = fp;
+      changed = true;
+    }
+    if (changed) writeState(file, state);
   } catch {
     /* never disrupt a run */
   }

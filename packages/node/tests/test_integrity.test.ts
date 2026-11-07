@@ -279,3 +279,28 @@ test('a clean run summary has no integrity fields', () => {
   expect(summary.extra).not.toHaveProperty('integrity');
   _resetForTest();
 });
+
+test('runnable.modified is audited once per distinct change', () => {
+  const { readLedger, setRunContext } = require('../src/auditlog');
+  process.env.RUNSPEC_AUDIT = 'on';
+  const root = makeProject();
+  setRunContext({ runnable: 'greet', commandPath: [], runId: '', agent: false, trigger: '', auditCfg: { syslog: false, facility: 'auth' }, root });
+  const spy = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+  try {
+    checkProject(cfg(root));
+    fs.appendFileSync(path.join(root, 'greet.js'), '// edit 1\n');
+    reportRun('greet', checkProject(cfg(root)));
+    reportRun('greet', checkProject(cfg(root))); // same change: no new event
+    fs.appendFileSync(path.join(root, 'greet.js'), '// edit 2\n');
+    reportRun('greet', checkProject(cfg(root))); // a further edit: a new event
+  } finally {
+    spy.mockRestore();
+    setRunContext(null);
+    process.env.RUNSPEC_AUDIT = 'off';
+  }
+  const events = readLedger(path.join(root, 'logs', 'audit.jsonl'));
+  expect(events.map((e: any) => [e.event, e.outcome, e.target.package, e.detail.files])).toEqual([
+    ['runnable.modified', 'detected', 'my-tools', ['greet.js']],
+    ['runnable.modified', 'detected', 'my-tools', ['greet.js']],
+  ]);
+});

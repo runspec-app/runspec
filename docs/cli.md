@@ -530,7 +530,8 @@ the `.runspec_env` section of the format reference.
 
 Record, list or verify [audit events](audit.md) — the venv's append-only,
 hash-chained ledger (`{venv}/logs/audit.jsonl`), also copied to syslog / the
-Windows event log.
+Windows event log. The Node pack has the same command (`npx runspec audit`,
+runspec-node 0.48.0+), over `{project}/logs/audit.jsonl`.
 
 ```bash
 runspec audit record payment.refund --outcome succeeded -t order=A-1043 -d amount=12.50
