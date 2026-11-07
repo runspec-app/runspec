@@ -229,7 +229,10 @@ def _namespace(tools: list[Tool], multi_host: bool, venvs_per_host: dict[str, in
 
     Host prefix when more than one host; group (venv) prefix when a host exposes
     more than one venv; then a numeric suffix as a last resort so no two tools
-    ever share a name."""
+    ever share a name. A name over the MCP limit of 128 characters is shortened
+    with a stable hash (``runspec.toolname.fit_tool_name``) and logged."""
+    from runspec.toolname import fit_tool_name, too_long_message
+
     registry: dict[str, Tool] = {}
     for t in tools:
         parts: list[str] = []
@@ -239,10 +242,12 @@ def _namespace(tools: list[Tool], multi_host: bool, venvs_per_host: dict[str, in
             parts.append(_sanitize(t.group))
         parts.append(t.name)
         base = "__".join(p for p in parts if p)
-        name = base
+        name = fit_tool_name(base)
+        if name != base:
+            logger.warning("runspec-mcp: %s", too_long_message(base, name))
         n = 2
         while name in registry:
-            name = f"{base}_{n}"
+            name = fit_tool_name(f"{base}_{n}")
             n += 1
         t.name = name
         t.schema = {**t.schema, "name": name}

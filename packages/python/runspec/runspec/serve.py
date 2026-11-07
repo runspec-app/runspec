@@ -151,6 +151,7 @@ def serve() -> None:
         config_path = item["source"]  # path to the runspec.toml that defined this runnable
 
         for flat_name, schema, arg_spec, exec_spec in _expand_tools(rname, inferred, base_cmd, run_as, become_method, become_flags, config_path):
+            flat_name, schema = _fit_name(flat_name, schema)
             tools[flat_name] = schema
             arg_specs[flat_name] = arg_spec
             exec_specs[flat_name] = exec_spec
@@ -167,6 +168,22 @@ def serve() -> None:
     # venvs fall back to the venv directory name to avoid arbitrary choice.
     server_config = next(iter(configs_by_source.values())) if len(configs_by_source) == 1 else {}
     _mcp_loop(tools, arg_specs, exec_specs, _server_name(server_config))
+
+
+def _fit_name(flat_name: str, schema: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """Keep a tool name within the MCP limit of 128 characters.
+
+    A longer name is shortened with :func:`runspec.toolname.fit_tool_name` (start
+    of the name + a hash, stable across runs) and named on stderr, which MCP hosts
+    capture to their log. The schema's own ``name`` follows."""
+    from runspec.toolname import fit_tool_name, too_long_message
+
+    fitted = fit_tool_name(flat_name)
+    if fitted == flat_name:
+        return flat_name, schema
+    sys.stderr.write(f"runspec serve: warning: {too_long_message(flat_name, fitted)}\n")
+    sys.stderr.flush()
+    return fitted, {**schema, "name": fitted}
 
 
 def _drop_invalid_schemas(

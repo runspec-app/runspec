@@ -596,12 +596,30 @@ def _test_one(item: dict[str, Any]) -> dict[str, Any]:
         except OSError as exc:
             entry_point = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
-    return {
+    result: dict[str, Any] = {
         "runnable": name,
         "source": source,
         "ok": bool(spec_smoke["ok"] and entry_point["ok"]),
         "checks": {"spec_smoke": spec_smoke, "entry_point": entry_point},
     }
+    warnings = _tool_name_warnings(name, source)
+    if warnings:
+        result["warnings"] = warnings
+    return result
+
+
+def _tool_name_warnings(name: str, source: str) -> list[str]:
+    """Warnings for MCP tool names this runnable would get from ``runspec serve``
+    that are over the MCP limit of 128 characters. A warning, not a failure:
+    serve still publishes the tool under a shortened name."""
+    from runspec.loader import load_raw
+    from runspec.toolname import MCP_TOOL_NAME_MAX, fit_tool_name, leaf_tool_names, too_long_message
+
+    try:
+        spec = (load_raw(Path(source)).get("runnables") or {}).get(name) or {}
+    except Exception:  # noqa: BLE001 - spec errors are already reported by the smoke check
+        return []
+    return [too_long_message(tool, fit_tool_name(tool)) for tool in leaf_tool_names(name, spec) if len(tool) > MCP_TOOL_NAME_MAX]
 
 
 def _summarise_stderr(stderr: str) -> str:
@@ -641,6 +659,8 @@ def _print_test_text(results: list[dict[str, Any]]) -> None:
             stderr = ep.get("stderr")
             if stderr:
                 print(f"         stderr: {_summarise_stderr(stderr)}")
+        for warning in r.get("warnings") or []:
+            print(f"         warning: {warning}")
     print()
     print(f"Summary: {passed} passed, {failed} failed ({total} total)")
 

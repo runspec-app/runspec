@@ -766,3 +766,41 @@ def test_stop_sets_stopping_flag():
     assert srv._stopping is False
     srv.stop()  # no uvicorn/thread — just flips the flag + marks not-running
     assert srv._stopping is True
+
+
+# ── tool name length (MCP limit 128) ─────────────────────────────────────────
+
+
+def test_sanitize_tool_name_keeps_short_names():
+    assert m.sanitize_tool_name("gitlab_get-issue") == "gitlab_get-issue"
+
+
+def test_sanitize_tool_name_shortens_with_hash_not_cut():
+    long_a = "r" * 130 + "_a"
+    long_b = "r" * 130 + "_b"
+    a, b = m.sanitize_tool_name(long_a), m.sanitize_tool_name(long_b)
+    assert len(a) <= 128 and len(b) <= 128
+    assert a != b  # a plain cut at 128 made these the same name
+    assert a == m.sanitize_tool_name(long_a)  # stable across rebuilds
+
+
+def test_long_names_sharing_a_start_do_not_hang_build_tools():
+    # Before: both cut to the same 128 chars, then the `_2` suffix was cut off
+    # again, so the free-name loop in build_tools never ended.
+    base = "x" * 130
+    for style in ("leaf", "runnable"):
+        tools, registry = m.build_tools(
+            [_runnable(base + "1"), _runnable(base + "2")], style=style
+        )
+        assert len(tools) == 2
+        assert all(len(t.name) <= 128 for t in tools)
+
+
+def test_long_leaf_on_two_hosts_gets_distinct_names():
+    name = "y" * 127
+    tools, _ = m.build_tools(
+        [_runnable(name, host="web-01"), _runnable(name, host="web-02")]
+    )
+    names = [t.name for t in tools]
+    assert len(set(names)) == 2
+    assert all(len(n) <= 128 for n in names)

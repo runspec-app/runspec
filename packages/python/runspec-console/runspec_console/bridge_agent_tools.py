@@ -363,8 +363,13 @@ class AgentToolsMixin:
 
     @staticmethod
     def _sanitize_tool_name(raw: str) -> str:
-        """Anthropic tool names allow only ``[a-zA-Z0-9_-]`` and cap at 64 chars."""
-        return re.sub(r"[^a-zA-Z0-9_-]", "_", raw)[:64]
+        """Anthropic tool names allow only ``[a-zA-Z0-9_-]``, 1–128 characters (the
+        same 128 as the MCP specification). A longer name is shortened with a
+        stable hash (:func:`runspec.toolname.fit_tool_name`), never cut, so two
+        long names can't become one tool."""
+        from runspec.toolname import fit_tool_name
+
+        return fit_tool_name(re.sub(r"[^a-zA-Z0-9_-]", "_", raw))
 
     def _dedup_tool_name(self, r: dict[str, Any]) -> str:
         """Tool name for dedup mode: the sanitised runnable **name**.

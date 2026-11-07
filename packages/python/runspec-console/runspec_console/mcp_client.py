@@ -50,10 +50,11 @@ from .bridge_const import _MCP_PREFIX
 
 logger = logging.getLogger(__name__)
 
-# Anthropic tool-name grammar: ^[a-zA-Z0-9_-]{1,64}$. Display names are clamped
-# to it (sanitised + length-capped); the registry maps them back to (server,
-# tool) so the on-wire MCP tool name is never constrained by this.
-_MAX_NAME = 64
+# Anthropic tool-name grammar: ^[a-zA-Z0-9_-]{1,128}$ (the same 128 as the MCP
+# specification). Display names are clamped to it (sanitised + shortened with a
+# stable hash when over); the registry maps them back to (server, tool) so the
+# on-wire MCP tool name is never constrained by this.
+_MAX_NAME = 128
 
 # Default per-call / per-connect ceilings (seconds); overridable via [mcp].
 DEFAULT_CALL_TIMEOUT = 60.0
@@ -103,14 +104,16 @@ def _sanitize_component(text: str) -> str:
 
 def tool_display_name(server: str, tool: str) -> str:
     """Namespaced, grammar-valid display name for an external tool:
-    ``mcp_<server>_<tool>``, sanitised and capped at 64 chars.
+    ``mcp_<server>_<tool>``, sanitised and kept within 128 chars.
 
-    Collisions after sanitisation/truncation are resolved by the manager (it
-    owns the registry); this is the deterministic base name."""
+    A longer name keeps its start and ends with a short hash of the whole name
+    (:func:`runspec.toolname.fit_tool_name`), so two long names that share a
+    start stay distinct. Collisions after sanitisation are resolved by the
+    manager (it owns the registry); this is the deterministic base name."""
+    from runspec.toolname import fit_tool_name
+
     base = f"{_MCP_PREFIX}{_sanitize_component(server)}_{_sanitize_component(tool)}"
-    if len(base) > _MAX_NAME:
-        base = base[:_MAX_NAME].rstrip("_") or base[:_MAX_NAME]
-    return base
+    return fit_tool_name(base, _MAX_NAME)
 
 
 def to_anthropic_schema(

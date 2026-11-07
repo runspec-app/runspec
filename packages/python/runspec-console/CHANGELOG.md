@@ -9,6 +9,25 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.378.0] — 2026-11-07
+
+### Fixed
+
+- **Long tool names are shortened with a hash instead of cut, and the MCP
+  server can no longer hang on them.** The console's MCP server cut tool names
+  at 128 characters. Two names that shared their first 128 characters became one
+  name, and the `_2` suffix added to tell them apart was cut off again, so the
+  loop looking for a free name never ended. Names over 128 now keep their start
+  and end with a short hash of the full name (`runspec.toolname.fit_tool_name`,
+  the same rule as `runspec serve`), stable across restarts, and each one is
+  logged once.
+- **The chat agent and external MCP tools use the 128-character limit.** The
+  agent's own tool names and the `mcp_<server>_<tool>` names of external MCP
+  servers were cut at 64 characters; the Messages API allows 128
+  (`^[a-zA-Z0-9_-]{1,128}$`), the same as the MCP specification. Both now keep
+  names up to 128 and shorten longer ones with the same hash instead of cutting.
+- Requires `runspec >= 0.79.0`.
+
 ## [0.377.0] — 2026-11-06
 
 ### Changed
