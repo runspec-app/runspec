@@ -20,6 +20,7 @@ from . import bridge_utils as utils_mod
 from . import config as config_mod
 from . import executor as executor_mod
 from . import hosts as hosts_mod
+from . import playbook_repo as playbook_repo_mod
 from .config import (
     filters_path,
 )
@@ -465,6 +466,35 @@ class InternalsMixin:
             if self._declared_use(c, *interface):
                 out.append(c)
         return out
+
+    def _playbook_repo_send(
+        self,
+        cached: dict[str, Any] | None,
+        command_path: list[str],
+        args: dict[str, Any],
+        host: str,
+        trigger: str,
+    ) -> playbook_repo_mod.Packed | None:
+        """The Repos-tab repo to send with this run, or None.
+
+        Only for a runnable whose arg carries ``meta.console = "playbook-repo"``
+        (run-playbook's ``--repo``) and a run that sets it. The inventory gets
+        the console's name for the host and its group + profiles. A run with an
+        unattended ``trigger`` (schedule, event) sends the committed tree only.
+        Raises :class:`playbook_repo.PlaybookRepoError` with a plain reason."""
+        arg = playbook_repo_mod.repo_arg(cached, command_path)
+        name = playbook_repo_mod.repo_value(args, arg)
+        if not name:
+            return None
+        entry = self._host_entry(host) or {}
+        groups = [str(entry.get("group") or "").strip()]
+        groups += hosts_mod.host_profiles(entry)
+        return playbook_repo_mod.pack_repo(
+            name,
+            unattended=trigger not in playbook_repo_mod.INTERACTIVE_TRIGGERS,
+            host=host,
+            groups=[g for g in groups if g],
+        )
 
     @staticmethod
     def _declared_arg_names(
@@ -1193,6 +1223,8 @@ class InternalsMixin:
                 r for r in self._runnables_cache if r.get("host", "") in keep_names
             ]
 
+        # Repos-tab names, offered as choices on run-playbook's --repo.
+        repo_names = playbook_repo_mod.registered_names()
         done = total - len(to_discover)
         # Progress dispatches are coalesced: each one is a synchronous
         # evaluate_js on the single UI-dispatch thread AND makes the frontend
@@ -1235,6 +1267,7 @@ class InternalsMixin:
                     if host_runnables is None:
                         continue  # skipped: superseded — the next cycle re-runs it
                     cleaned = self._dedup_host_runnables(host_runnables, host_name)
+                    playbook_repo_mod.decorate_records(cleaned, repo_names)
                     accumulated.extend(cleaned)
                     host_changed = _runnables_fingerprint(
                         cleaned

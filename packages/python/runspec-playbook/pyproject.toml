@@ -4,9 +4,9 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-playbook"
-version = "0.1.0"
+version = "0.2.0"
 requires-python = ">=3.10"
-description = "Run bundled Ansible playbooks locally on a host the runspec-console is already connected to — no Ansible SSH, one host list (runspec_hosts.toml)"
+description = "Run Ansible playbooks locally on a host the runspec-console is already connected to — from a git repo in the console's Repos tab or bundled — no Ansible SSH, one host list"
 readme = "README.md"
 keywords = ["runspec", "runnable", "ansible", "deploy"]
 dependencies = [

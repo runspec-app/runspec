@@ -1,5 +1,29 @@
 # runspec-playbook Changelog
 
+## [0.2.0] — 2026-11-07
+
+### Added
+
+- **Run a playbook from a git repo the console sends.** `--repo <name>` names a
+  repo in the runspec-console's Repos tab (console 0.389.0+) and `--playbook`
+  becomes a path inside it (`site.yml`, `web/patch.yml`). The console sends the
+  checkout with the run: `RUNSPEC_PLAYBOOK_SOURCE = stdin:<length>:<sha256>`
+  in the env frame, then the payload on stdin (`source.py`). The repo is checked
+  against its content hash, written to the run's temporary folder and removed
+  afterwards; the header never reaches Ansible's environment. The result adds
+  `repo`, `commit` and `dirty`.
+- The one-host inventory uses the console's name for the host and puts it in
+  its console group and profiles, so `hosts: <group>`, `group_vars/` and
+  `host_vars/` work.
+
+### Changed
+
+- `package` and `version` are optional (only the bundled `deploy` playbook
+  needs them, and it says so). `--playbook` is a plain string, no longer a
+  choice of bundled names.
+- `--repo` without a sent repo, a sent repo with another name, or a playbook
+  path that isn't in the repo exits 2 with a plain reason.
+
 ## [0.1.0] — 2026-06-30
 
 Initial release.

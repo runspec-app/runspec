@@ -637,6 +637,17 @@ class FleetMixin:
                 mapping[name] = path
         repos_mod.save_repo_paths(repo_paths_path(), mapping)
         repos_mod.save_repos(repos_path(), repos)
+        # run-playbook's --repo offers the registered repos as choices: refresh
+        # them on the cached records now rather than at the next discovery.
+        from . import playbook_repo
+
+        names = playbook_repo.registered_names()
+        with self._lock:
+            touched = playbook_repo.decorate_records(
+                getattr(self, "_runnables_cache", []), names
+            )
+        if touched:
+            self._dispatch("runspec:runnables_updated", {})
 
     def delete_repo(self, name: str) -> dict[str, Any]:
         """Remove a repo from the registry **and** delete its AppData checkout from

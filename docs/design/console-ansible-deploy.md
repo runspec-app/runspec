@@ -203,9 +203,63 @@ corporate-wrapper pattern. To adopt it, a team:
    bootstraps its own deployment tooling — and `run-playbook` then surfaces in
    the console alongside the rest of the fleet's runnables.
 
+## Playbooks from a Repos-tab repo (console 0.389.0, runspec-playbook 0.2.0)
+
+Bundling playbooks in a wheel assumes CI and a package index: change a playbook
+→ build → publish → install on every host. Someone with SSH hosts and no
+internal GitLab/Nexus (a home lab) has neither. So `run-playbook` can also run a
+playbook from a git repo registered in the console's **Repos** tab:
+
+```
+run-playbook --repo homelab --playbook site.yml --check
+```
+
+**Why not a real control node on the console machine?** Generating an inventory
+from `runspec_hosts.toml` and running `ansible-playbook` locally would bring
+cross-host features (`serial`, `delegate_to`), but Ansible has no Windows
+control node (WSL only), it is a second SSH stack with its own known_hosts and
+no shared connection state, and the hosts would record nothing. Sending the
+repo keeps the shape above and works from any console.
+
+**Why not push the repo with a saved transfer first?** Two steps where every
+saved run / schedule / runbook would have to push then run (a half-failed push
+leaves stale copies), files owned by the SSH login that a `run_as` account may
+not read, copies left on hosts, and nothing tying the run to what was pushed.
+
+**How it travels.** `--repo` carries `meta = { console = "playbook-repo" }`.
+When a run sets it the console packs the checkout (`playbook_repo.py`): files
+without `.git`, noise dirs or `.gitignore`d paths, as `base64(gzip(json))` with
+`repo`, `commit`, `dirty`, `host`, `groups` and a path → base64 file map. The
+env frame carries `RUNSPEC_PLAYBOOK_SOURCE = stdin:<length>:<sha256>`, and the
+payload follows the frame on stdin. Both env preludes read the frame one byte
+at a time and stop at its end, so the payload is unread when `run-playbook`
+starts; it reads exactly `<length>` bytes, checks the hash (canonical JSON of
+the file map — a shared test vector in both packages), writes the files to the
+run's temporary folder and pops the header from Ansible's environment. (The
+payload can't ride the frame itself: the frame encodes each byte as five
+characters and the Python prelude appends byte by byte — 400 KB took 14 s.)
+
+**What gets sent.** A run someone started (trigger `""`, `saved_run`, `mcp`,
+`paste`, `manual`) sends the working tree, uncommitted edits included, so the
+agent can write a playbook with `repo_write` (confirm-gated, the card shows the
+content) and `--check` it. Any other trigger (a schedule, an event) sends the
+committed tree only: an unattended run never runs an edit nobody committed. The
+run output starts with a `▸ Sending repo …` line and the JSON result carries the
+commit and `dirty`.
+
+**Inventory.** The one host is named as the console names it and sits in its
+console group and profiles, so `hosts: web`, `group_vars/` and `host_vars/`
+behave as with a real inventory.
+
+**Still out of scope:** cross-host plays (above), committing / pushing the
+agent's edits from the console (the repo tools stay local-only; commit from
+your dev folder — a custom checkout location), collections from
+`requirements.yml` (install them on the host, or vendor them in the repo).
+
 ## Status
 
 Shipped as an example package: `packages/python/runspec-playbook` (one runnable,
-`run-playbook`; `ansible-runner` + `ansible-core` runtime deps; tests stub
+`run-playbook`, which also runs playbooks from a console Repos-tab repo since
+0.2.0; `ansible-runner` + `ansible-core` runtime deps; tests stub
 Ansible so they run without it). Not wired into the console's own dependency set
 — it is meant to be copied into a private package, per the pattern above.

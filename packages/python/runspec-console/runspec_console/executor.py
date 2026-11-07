@@ -529,8 +529,14 @@ def run_local(
     cred_env: dict[str, str] | None = None,
     trigger: str = "",
     runbook: str = "",
+    stdin_payload: bytes | None = None,
 ) -> None:
     """Execute a local runnable binary, streaming output via callbacks.
+
+    ``stdin_payload`` (ASCII) goes to the child's stdin — after the env frame
+    when ``run_as`` wraps the command in the env prelude, which stops reading at
+    the frame's end and leaves the payload for the runnable (run-playbook reads
+    a Playbook repo this way; see :mod:`runspec_console.playbook_repo`).
 
     ``cred_env`` are plain environment variables derived from named credentials
     (e.g. ``JIRA_USERNAME``/``JIRA_PASSWORD``) — final var names, unlike the
@@ -599,8 +605,15 @@ def run_local(
         cancel_event=cancel_event,
         agent=agent,
         extra_env=extra_env,
-        stdin_data=frame,
+        stdin_data=_with_payload(frame, stdin_payload),
     )
+
+
+def _with_payload(frame: bytes | None, payload: bytes | None) -> bytes | None:
+    """The bytes for the child's stdin: the env frame, then the payload."""
+    if not payload:
+        return frame
+    return (frame or b"") + payload
 
 
 def _parse_ssh_target(target: str) -> tuple[str, str, int]:
@@ -810,8 +823,14 @@ def run_remote(
     trigger: str = "",
     runbook: str = "",
     jump: str = "",
+    stdin_payload: bytes | None = None,
 ) -> None:
     """Execute a remote runnable via SSH, streaming output via callbacks.
+
+    ``stdin_payload`` (ASCII) follows the env frame on the remote command's
+    stdin; the env prelude stops at the frame's end, so the runnable reads the
+    payload itself (run-playbook's Playbook repo — see
+    :mod:`runspec_console.playbook_repo`).
 
     ``session_factory``, when supplied, returns ``(channel, release)`` from a
     pooled transport — the connection is reused, only the channel is opened here,
@@ -874,7 +893,8 @@ def run_remote(
             timeout=timeout,
             cancel_event=cancel_event,
             agent=False,
-            stdin_data=frame,  # ssh forwards it to the remote command's stdin
+            # ssh forwards it to the remote command's stdin
+            stdin_data=_with_payload(frame, stdin_payload),
         )
         return
 
@@ -899,15 +919,24 @@ def run_remote(
     try:
         channel.set_combine_stderr(False)
         channel.exec_command(remote_cmd)
-        if frame:
-            # EOF after the frame: the runnable reads no more. If the command has
-            # already exited (e.g. sudo refused) the write fails — its stderr and
-            # exit status below still tell the story, so don't abort the run here.
-            try:
-                channel.sendall(frame)
-                channel.shutdown_write()
-            except Exception:
-                pass
+        stdin_bytes = _with_payload(frame, stdin_payload)
+        if stdin_bytes:
+            # EOF after the frame (and any payload): the runnable reads no more.
+            # If the command has already exited (e.g. sudo refused) the write
+            # fails — its stderr and exit status below still tell the story, so
+            # don't abort the run here. A payload is sent on a thread so a large
+            # one can't stall output reading on a full window.
+            def _feed() -> None:
+                try:
+                    channel.sendall(stdin_bytes)
+                    channel.shutdown_write()
+                except Exception:
+                    pass
+
+            if stdin_payload:
+                threading.Thread(target=_feed, daemon=True).start()
+            else:
+                _feed()
 
         cancelled = threading.Event()
         done = threading.Event()
@@ -1409,12 +1438,19 @@ def _stream(
         on_done(-1, 0)
         return
     if stdin_data and proc.stdin is not None:
-        # The SPEC env frame (plain ASCII), then EOF.
-        try:
-            proc.stdin.write(stdin_data.decode("ascii"))
-            proc.stdin.close()
-        except OSError:
-            pass  # the process already exited; its exit code tells the story
+        # The SPEC env frame (plain ASCII) — plus any payload that follows it,
+        # e.g. a playbook repo for run-playbook — then EOF. Written on a thread
+        # so a large payload can't deadlock against the child's output pipes.
+        def _feed(pipe: Any, text: str) -> None:
+            try:
+                pipe.write(text)
+                pipe.close()
+            except (OSError, ValueError):
+                pass  # the process already exited; its exit code tells the story
+
+        threading.Thread(
+            target=_feed, args=(proc.stdin, stdin_data.decode("ascii")), daemon=True
+        ).start()
 
     def _read(stream: Any, name: str) -> None:
         for line in stream:

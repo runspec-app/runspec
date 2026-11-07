@@ -9,6 +9,38 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.389.0] — 2026-11-07
+
+### Added
+
+- **Run Ansible playbooks from a Repos-tab repo.** `run-playbook` (runspec-playbook
+  0.2.0+) takes `--repo <name> --playbook <path>`; the console packs that repo's
+  checkout and sends it with the run, so a playbook kept in any git repo (a
+  private GitHub repo works, no internal GitLab or package index needed) runs on
+  a host, a group, a profile, from a saved run, a runbook or a schedule — with
+  Ansible on `connection: local`, so it opens no SSH of its own and Windows
+  consoles work.
+  - The repo travels on the child's stdin after the env frame (header
+    `RUNSPEC_PLAYBOOK_SOURCE = stdin:<length>:<sha256>` in the frame), on both
+    run paths (Forms / MCP server / schedules / rule triggers, and the agent):
+    nothing is copied to the host first or left behind, and sudo / `run_as`
+    need nothing extra. `executor.run_remote` / `run_local` gained
+    `stdin_payload`; a payload is fed on a thread so it can't block output.
+  - **What gets sent:** a run someone started (Forms, chat, a saved run, an MCP
+    client) sends the checkout as it is — uncommitted edits in, `.gitignore`d
+    files out — so the agent can write a playbook with the repo tools and
+    `--check` it. A schedule or trigger sends the **committed** tree only. The
+    run output starts with which repo and commit were sent.
+  - The inventory names the host as the console does and puts it in its group
+    and profiles, so `hosts: <group>`, `group_vars/` and `host_vars/` work.
+  - Caps: 5,000 files, 32 MB raw, 16 MB packed. An unknown or un-synced repo
+    fails the run with a plain reason.
+  - `--repo` (any arg with `meta.console = "playbook-repo"`) offers the
+    registered repos as choices in Forms and the agent's schema, refreshed when
+    the Repos list is saved.
+  - `playbook_repo.py`; `InternalsMixin._playbook_repo_send`. See
+    `docs/design/console-ansible-deploy.md` → "Playbooks from a Repos-tab repo".
+
 ## [0.388.1] — 2026-11-07
 
 ### Fixed
