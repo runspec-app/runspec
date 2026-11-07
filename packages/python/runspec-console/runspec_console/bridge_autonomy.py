@@ -1939,8 +1939,8 @@ class AutonomyMixin:
         # run-playbook --repo <name>: send that Repos-tab repo with the run. A
         # headless (trigger/schedule) turn sends the committed tree only.
         try:
-            packed = self._playbook_repo_send(
-                cached_r, command_path, exec_args, host, run_trigger
+            packed = playbook_repo_mod.send_for(
+                cached_r, command_path, exec_args, entry, host, run_trigger
             )
         except playbook_repo_mod.PlaybookRepoError as exc:
             return f"[exit 2]\n✗ {exc}"

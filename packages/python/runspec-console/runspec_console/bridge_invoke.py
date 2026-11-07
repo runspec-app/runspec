@@ -341,7 +341,9 @@ class InvokeMixin:
             # run-playbook --repo <name>: send that Repos-tab repo with the run
             # (payload on stdin after the env frame — see playbook_repo).
             try:
-                packed = self._playbook_repo_send(cached, cp, exec_args, host, trigger)
+                packed = playbook_repo_mod.send_for(
+                    cached, cp, exec_args, entry, host, trigger
+                )
             except playbook_repo_mod.PlaybookRepoError as exc:
                 on_line(f"✗  {exc}", "stderr")
                 on_done(2, 0)

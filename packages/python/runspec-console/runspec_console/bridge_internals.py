@@ -467,35 +467,6 @@ class InternalsMixin:
                 out.append(c)
         return out
 
-    def _playbook_repo_send(
-        self,
-        cached: dict[str, Any] | None,
-        command_path: list[str],
-        args: dict[str, Any],
-        host: str,
-        trigger: str,
-    ) -> playbook_repo_mod.Packed | None:
-        """The Repos-tab repo to send with this run, or None.
-
-        Only for a runnable whose arg carries ``meta.console = "playbook-repo"``
-        (run-playbook's ``--repo``) and a run that sets it. The inventory gets
-        the console's name for the host and its group + profiles. A run with an
-        unattended ``trigger`` (schedule, event) sends the committed tree only.
-        Raises :class:`playbook_repo.PlaybookRepoError` with a plain reason."""
-        arg = playbook_repo_mod.repo_arg(cached, command_path)
-        name = playbook_repo_mod.repo_value(args, arg)
-        if not name:
-            return None
-        entry = self._host_entry(host) or {}
-        groups = [str(entry.get("group") or "").strip()]
-        groups += hosts_mod.host_profiles(entry)
-        return playbook_repo_mod.pack_repo(
-            name,
-            unattended=trigger not in playbook_repo_mod.INTERACTIVE_TRIGGERS,
-            host=host,
-            groups=[g for g in groups if g],
-        )
-
     @staticmethod
     def _declared_arg_names(
         cached: dict[str, Any] | None, command_path: list[str]

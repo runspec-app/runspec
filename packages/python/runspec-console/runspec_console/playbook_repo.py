@@ -319,3 +319,33 @@ def pack_repo(
         groups=groups,
         committed_only=unattended,
     )
+
+
+def send_for(
+    record: dict[str, Any] | None,
+    command_path: list[str],
+    args: dict[str, Any],
+    host_entry: dict[str, Any] | None,
+    host: str,
+    trigger: str,
+) -> Packed | None:
+    """The repo to send with this run, or None.
+
+    Only for a runnable whose arg carries ``meta.console = "playbook-repo"``
+    (run-playbook's ``--repo``) and a run that sets it. The inventory gets the
+    console's name for the host and its group + profiles. A run whose
+    ``trigger`` isn't in :data:`INTERACTIVE_TRIGGERS` (a schedule, an event)
+    sends the committed tree only. Raises :class:`PlaybookRepoError`."""
+    name = repo_value(args, repo_arg(record, command_path))
+    if not name:
+        return None
+    from .hosts import host_profiles
+
+    entry = host_entry or {}
+    groups = [str(entry.get("group") or "").strip(), *host_profiles(entry)]
+    return pack_repo(
+        name,
+        unattended=trigger not in INTERACTIVE_TRIGGERS,
+        host=host,
+        groups=[g for g in groups if g],
+    )

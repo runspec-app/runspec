@@ -642,7 +642,9 @@ class FleetMixin:
         from . import playbook_repo
 
         names = playbook_repo.registered_names()
-        with self._lock:
+        import contextlib
+
+        with getattr(self, "_lock", None) or contextlib.nullcontext():
             touched = playbook_repo.decorate_records(
                 getattr(self, "_runnables_cache", []), names
             )

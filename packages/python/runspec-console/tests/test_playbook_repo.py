@@ -8,12 +8,10 @@ import json
 import shlex
 import sys
 import time
-from types import SimpleNamespace
 
 import pytest
 
 from runspec_console import executor, playbook_repo, repos
-from runspec_console.bridge_internals import InternalsMixin
 
 # Shared test vector — runspec-playbook's tests assert the same hash, so the two
 # sides can't drift apart on the content-hash format.
@@ -221,31 +219,22 @@ def test_unknown_or_unsynced_repo_is_refused(checkout, monkeypatch):
         playbook_repo.pack_repo("homelab", unattended=False)
 
 
-def test_bridge_send_uses_host_group_profiles_and_trigger(checkout):
-    stub = SimpleNamespace(
-        _host_entry=lambda h: {"name": h, "group": "web", "profiles": ["home"]}
-    )
+def test_send_for_uses_host_group_profiles_and_trigger(checkout):
+    entry = {"name": "web-01", "group": "web", "profiles": ["home"]}
     rec = _record()
-    assert (
-        InternalsMixin._playbook_repo_send(stub, rec, [], {"repo": ""}, "web-01", "")
-        is None
-    )
-    packed = InternalsMixin._playbook_repo_send(
-        stub, rec, [], {"repo": "homelab"}, "web-01", ""
-    )
+    send = playbook_repo.send_for
+    assert send(rec, [], {"repo": ""}, entry, "web-01", "") is None
+    assert send({"args": []}, [], {"repo": "homelab"}, entry, "web-01", "") is None
+    packed = send(rec, [], {"repo": "homelab"}, entry, "web-01", "")
     doc, _ = _decode(packed)
     assert doc["host"] == "web-01" and doc["groups"] == ["web", "home"]
     assert packed.committed_only is False
     for trig in ("schedule", "email"):
-        p = InternalsMixin._playbook_repo_send(
-            stub, rec, [], {"repo": "homelab"}, "web-01", trig
-        )
-        assert p.committed_only is True
+        assert send(rec, [], {"repo": "homelab"}, entry, "web-01", trig).committed_only
     for trig in ("saved_run", "mcp"):
-        p = InternalsMixin._playbook_repo_send(
-            stub, rec, [], {"repo": "homelab"}, "web-01", trig
-        )
-        assert p.committed_only is False
+        assert not send(
+            rec, [], {"repo": "homelab"}, entry, "web-01", trig
+        ).committed_only
 
 
 # ── executor: the payload follows the env frame on stdin ──────────────────────
