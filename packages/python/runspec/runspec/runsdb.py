@@ -612,6 +612,12 @@ def finish_run(
             from . import inbox
 
             inbox.maybe_sweep(log_dir, cfg)
+        # …and applies the venv's log retention policy, if it has one (at most
+        # once a day, in a detached process — never delays this exit).
+        with contextlib.suppress(Exception):
+            from . import retention
+
+            retention.maybe_apply(log_dir)
 
 
 def _events_json(events: Any) -> str | None:

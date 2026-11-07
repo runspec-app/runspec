@@ -9,6 +9,7 @@ import {
   type ProvisionPreflightRow,
   type ProvisionResult,
   type ProvisionSchedulerKeeper,
+  type ProvisionRetention,
 } from '../bridge'
 import { MONO_FONT, RADIUS, useIsDark, textMuted, textSecondary } from '../ThemeContext'
 import { PathInput } from './PathInput'
@@ -59,6 +60,7 @@ export function buildPayload(f: {
   packages: string[]
   repo: string
   scheduler?: '' | ProvisionSchedulerKeeper
+  retention?: ProvisionRetention | null
 }): ProvisionPayload {
   return {
     hosts: f.hosts,
@@ -69,7 +71,36 @@ export function buildPayload(f: {
     packages: f.packages.map(p => p.trim()).filter(Boolean),
     repo: f.repo || undefined,
     scheduler: f.scheduler || undefined,
+    retention: f.retention ? retentionPayload(f.retention) : undefined,
   }
+}
+
+/** What the log cleanup defaults to: compress after a week, delete after ~3 months. */
+export const RETENTION_DEFAULT: ProvisionRetention = { compact_after: '7d', delete_after: '90d' }
+const DURATION_RE = /^[1-9]\d*[smhdw]$/
+const DURATION_S: Record<string, number> = { s: 1, m: 60, h: 3600, d: 86400, w: 604800 }
+
+function durationS(v: string): number {
+  return Number(v.slice(0, -1)) * DURATION_S[v.slice(-1)]
+}
+
+/** The trimmed, lower-cased policy; a blank field is left out. */
+function retentionPayload(r: ProvisionRetention): ProvisionRetention {
+  const out: ProvisionRetention = {}
+  const c = (r.compact_after ?? '').trim().toLowerCase()
+  const d = (r.delete_after ?? '').trim().toLowerCase()
+  if (c) out.compact_after = c
+  if (d) out.delete_after = d
+  return out
+}
+
+/** Why a log cleanup setting can't be used, or '' when it's fine. */
+export function retentionProblem(r: ProvisionRetention): string {
+  const { compact_after: c, delete_after: d } = retentionPayload(r)
+  if (!c && !d) return 'Set at least one of compress after / delete after.'
+  for (const v of [c, d]) if (v && !DURATION_RE.test(v)) return `"${v}" isn't a duration: use a number and s/m/h/d/w, like 7d or 2w.`
+  if (c && d && durationS(c) >= durationS(d)) return 'Compress after must be shorter than delete after.'
+  return ''
 }
 
 /** The keepers the dialog offers for the scheduler daemon. */
@@ -88,6 +119,7 @@ const STEP_LABEL: Record<string, string> = {
   pip: 'upgrading pip',
   install: 'installing packages',
   inbox: 'setting up logs inbox',
+  retention: 'setting log cleanup',
   verify: 'verifying',
   scheduler: 'switching schedules to the daemon',
   keeper: 'starting the scheduler daemon',
@@ -128,6 +160,14 @@ export function ProvisionModal({
   const [packages, setPackages] = useState<string[]>([])
   const [repo, setRepo] = useState('')
   const [scheduler, setScheduler] = useState<'' | ProvisionSchedulerKeeper>('')
+  const [cleanup, setCleanup] = useState(true)
+  const [compactAfter, setCompactAfter] = useState(RETENTION_DEFAULT.compact_after ?? '')
+  const [deleteAfter, setDeleteAfter] = useState(RETENTION_DEFAULT.delete_after ?? '')
+  const retention = useMemo(
+    () => (cleanup ? { compact_after: compactAfter, delete_after: deleteAfter } : null),
+    [cleanup, compactAfter, deleteAfter],
+  )
+  const retentionError = retention ? retentionProblem(retention) : ''
   const [checking, setChecking] = useState(false)
   const [rows, setRows] = useState<ProvisionPreflightRow[] | null>(null)
   const [op, setOp] = useState<string | null>(null)
@@ -210,13 +250,13 @@ export function ProvisionModal({
   }, [onDone])
 
   const payload = useMemo(
-    () => buildPayload({ hosts: selected, parent, name, pyMode, pyPath, pyVersion, runAs, become, packages, repo, scheduler }),
-    [selected, parent, name, pyMode, pyPath, pyVersion, runAs, become, packages, repo, scheduler],
+    () => buildPayload({ hosts: selected, parent, name, pyMode, pyPath, pyVersion, runAs, become, packages, repo, scheduler, retention }),
+    [selected, parent, name, pyMode, pyPath, pyVersion, runAs, become, packages, repo, scheduler, retention],
   )
   // Any change to the request invalidates an earlier preflight.
   useEffect(() => { if (!op) setRows(null) }, [payload, op])
 
-  const formReady = payload.hosts.length > 0 && !!payload.dest && !!payload.python
+  const formReady = payload.hosts.length > 0 && !!payload.dest && !!payload.python && !retentionError
   const readyHosts = (rows ?? []).filter(r => r.ok).map(r => r.host)
 
   const check = async () => {
@@ -415,6 +455,27 @@ export function ProvisionModal({
             {scheduler
               ? `Installs runspec-scheduler, fires this venv's schedules from its daemon (run as the owner) and sets up what restarts it.${scheduler === 'auto' ? ' Per host: systemd --user when lingering is on, else supervisord in the venv.' : ''}`
               : 'Schedules in this venv can still run from the owner\'s crontab (runspec-scheduler sync).'}
+          </Text>
+        </div>
+
+        <div>
+          {label('Log cleanup')}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <Checkbox checked={cleanup} onChange={e => setCleanup(e.target.checked)}>Clean up old run logs</Checkbox>
+            {cleanup && (
+              <>
+                <Text style={{ fontSize: 12 }}>compress after</Text>
+                <Input size="small" value={compactAfter} onChange={e => setCompactAfter(e.target.value)} placeholder="7d" style={{ width: 70 }} aria-label="Compress after" />
+                <Text style={{ fontSize: 12 }}>delete after</Text>
+                <Input size="small" value={deleteAfter} onChange={e => setDeleteAfter(e.target.value)} placeholder="90d" style={{ width: 70 }} aria-label="Delete after" />
+              </>
+            )}
+          </div>
+          <Text type={retentionError ? 'danger' : 'secondary'} style={{ fontSize: 11, display: 'block', marginTop: 2 }}>
+            {retentionError
+              || (cleanup
+                ? 'The venv owner\'s runs apply it once a day: old run logs are compressed, then deleted (runspec logs retention, runspec 0.80.0+). The audit log is never touched.'
+                : 'Run logs from other accounts pile up in logs/ until someone prunes them.')}
           </Text>
         </div>
       </div>

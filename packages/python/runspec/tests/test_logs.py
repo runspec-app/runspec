@@ -416,7 +416,9 @@ class TestPruneProvenanceIntegration:
         self._index_row(d, "r1", "backup", p.name)
         logs.compact("backup", dirs=[d], older_than=timedelta(days=7), out=io.StringIO())
         assert not p.exists()  # folded into the archive
-        archive = d / f"backup.archive.{datetime.now(timezone.utc).strftime('%Y%m%d')}.log"
+        # Dated by the day the run finished (its file's mtime), not today.
+        day = datetime.fromtimestamp(time.time() - 30 * 86400, tz=timezone.utc).strftime("%Y%m%d")
+        archive = d / f"backup.archive.{day}.log"
         assert archive.exists()
         r = runsdb.list_runs(d, live=False)[0]
         assert r["log_file"] == archive.name  # repointed to the archive…

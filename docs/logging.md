@@ -289,8 +289,16 @@ runspec logs compact --older-than 7d --gzip   # roll old runs into an archive
 runspec logs prune   --older-than 90d          # delete old files
 ```
 
-Schedule `compact`/`prune` from cron or a systemd timer so retention is
-automatic. See the shared-venv deployment guide for copy-paste schedules.
+To make retention automatic, give the venv a policy (runspec >= 0.80.0):
+
+```bash
+runspec logs retention --compact-after 7d --delete-after 90d
+```
+
+The venv owner's runs then apply it at most once a day in the background, with
+no cron line to maintain. The console's **Provision venv** sets one by default.
+See [the CLI reference](cli.md#retention-policy-the-venv-cleans-up-after-itself).
+You can still schedule `compact`/`prune` from cron or a systemd timer instead.
 
 ### Sharing the logs dir across accounts (`runspec logs share`)
 

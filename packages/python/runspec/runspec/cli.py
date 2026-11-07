@@ -1199,7 +1199,7 @@ def cmd_logs(args: list[str]) -> None:
 
     # `runspec logs status|prune|compact|share [runnable]` vs `runspec logs <runnable>`.
     target: str | None = parsed.target.value
-    if target in ("status", "prune", "compact", "share"):
+    if target in ("status", "prune", "compact", "share", "retention"):
         verb = target
         runnable: str | None = parsed.runnable.value
     else:
@@ -1274,11 +1274,81 @@ def cmd_logs(args: list[str]) -> None:
                 owner_only=parsed.owner_only.value,
                 as_json=parsed.json.value,
             )
+        elif verb == "retention":
+            _logs_retention(parsed)
     except (ValueError, OSError) as exc:
         # OSError covers share's chmod/chgrp on a dir the caller can't change (run
         # it as the owner) — a clean ✗ line, not a traceback.
         print(f"✗  {exc}")
         sys.exit(1)
+
+
+def _logs_retention(parsed: Any) -> None:
+    """`runspec logs retention`: show the venv's log retention policy, set it
+    (`--compact-after` / `--delete-after` / `--max-total-size`, `off` clears
+    one), remove it (`--off`) or apply it now (`--now`, with `--dry-run`)."""
+    from runspec import retention
+
+    changes = {
+        "compact_after": parsed.compact_after.value,
+        "delete_after": parsed.delete_after.value,
+        "max_total_size": parsed.max_total_size.value,
+    }
+    setting = any(v is not None for v in changes.values())
+    if parsed.off.value and setting:
+        raise ValueError("--off can't be combined with --compact-after / --delete-after / --max-total-size")
+    if setting or parsed.off.value or (parsed.now.value and not parsed.dry_run.value):
+        _drop_to_venv_owner()
+    as_json = parsed.json.value
+    if parsed.off.value:
+        removed = retention.clear_policy()
+        if removed:
+            _logs_audit_policy("off", None)
+        if as_json:
+            print(json.dumps({"verb": "retention", "removed": removed, "file": str(retention.policy_path())}))
+        else:
+            print("Log retention policy removed." if removed else "No log retention policy to remove.")
+        return
+    if setting:
+        try:
+            current = retention.read_policy()
+        except ValueError:
+            current = None  # an unreadable file is replaced by the new one
+        policy = retention.update_policy(current, **changes)
+        if policy.empty():
+            removed = retention.clear_policy()
+            if removed:
+                _logs_audit_policy("off", None)
+        else:
+            retention.write_policy(policy)
+            _logs_audit_policy("set", policy.as_dict())
+    if parsed.now.value:
+        res = retention.run_pass(force=True, dry_run=parsed.dry_run.value)
+        if as_json:
+            print(json.dumps({"verb": "retention", "pass": res}, sort_keys=True))
+        elif res.get("skipped"):
+            reason = {"no-policy": "there is no retention policy", "no-logs": "this venv has no logs/ yet", "busy": "another pass is running", "invalid": res.get("error", "the policy is invalid")}
+            print(f"✗  Nothing applied: {reason.get(res['skipped'], res['skipped'])}.")
+            if res["skipped"] in ("invalid", "no-policy", "busy"):
+                sys.exit(1)
+        else:
+            verb = "Would compress" if res.get("dry_run") else "Compressed"
+            line = f"{verb} {res['compacted']} run file(s), {'would delete' if res.get('dry_run') else 'deleted'} {res['deleted']} ({res['freed_bytes']} bytes)."
+            print(line)
+            if res.get("error"):
+                print(f"✗  {res['error']}")
+                sys.exit(1)
+        return
+    retention.show(as_json=as_json)
+
+
+def _logs_audit_policy(action: str, policy: dict[str, str] | None) -> None:
+    """Record a retention-policy change on the audit ledger. Best-effort."""
+    with contextlib.suppress(Exception):
+        from runspec import retention
+        from runspec.auditlog import audit
+
+        audit("logs.retention", "succeeded", target={"file": str(retention.policy_path())}, detail={"action": action, **(policy or {})})
 
 
 _HISTORY_MARK = {"completed": "✓", "failed": "✗", "crashed": "‼", "running": "▶", "skipped": "↷"}

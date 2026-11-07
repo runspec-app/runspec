@@ -686,7 +686,7 @@ newest}], total_bytes, total_files}`. Like every `runspec logs` verb it runs
 locally or over SSH, so the console drives one uniform interface against every
 venv it manages.
 
-### Prune / compact — retention you schedule
+### Prune / compact — retention by hand
 
 There is no automatic rotation in per-run mode, so an operator schedules
 cleanup. Both verbs default to **all** runnables in the venv when none is
@@ -718,11 +718,39 @@ Add `--json` to either verb (with or without `--dry-run`) to get a structured
 result object instead of text — what the console parses to render a preview and
 then the applied outcome.
 
-A typical nightly cron line:
+An archive is one file per runnable per day the runs finished
+(`{runnable}.archive.{YYYYMMDD}.log[.gz]`), and its modification time is the
+newest run in it (runspec >= 0.80.0), so `prune --older-than` removes a day's
+runs together once they are old enough.
+
+### Retention policy — the venv cleans up after itself
+
+Rather than a cron line, give the venv a policy (runspec >= 0.80.0):
+
+```bash
+runspec logs retention --compact-after 7d --delete-after 90d   # set it
+runspec logs retention                                         # show it + the last pass
+runspec logs retention --now --dry-run                         # preview a pass now
+runspec logs retention --now                                   # apply it now
+runspec logs retention --compact-after off                     # clear one setting
+runspec logs retention --off                                   # remove the policy
+```
+
+The policy lives in `{venv}/runspec_logs_retention.toml`. The venv owner's own
+runs apply it at most once a day, in a detached background process, so a run's
+exit is never held up: it deletes per-run files and archives older than
+`--delete-after`, compresses the rest older than `--compact-after` into gzip
+archives, then enforces `--max-total-size` if set. It only ever touches
+`{venv}/logs/` and only the files `compact`/`prune` manage. Run it as the owner
+(root drops to the owner). A venv that only other accounts run applies it at
+the owner's next run, the same as the inbox sweep. The runspec console's
+**Provision venv** sets a policy by default. See SPEC → "Log retention policy".
+
+If you'd rather schedule it yourself, a nightly cron line does the same:
 
 ```cron
-30 2 * * *  /opt/venv/bin/runspec logs compact --older-than 7d --gzip && \
-            /opt/venv/bin/runspec logs prune   --older-than 90d
+30 2 * * *  /opt/venv/bin/runspec logs prune   --older-than 90d && \
+            /opt/venv/bin/runspec logs compact --older-than 7d --gzip
 ```
 
 Archives stay JSON-lines (gzipped), so `runspec logs <runnable>` and the

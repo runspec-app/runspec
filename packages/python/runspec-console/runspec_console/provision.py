@@ -30,6 +30,8 @@ A provision is, per host:
    alone);
 4. **install** — ``pip install -U pip`` then ``pip install runspec <packages>``;
 5. **logs inbox** — ``<venv>/bin/runspec logs share --inbox`` as the owner;
+   then **retention** — ``runspec logs retention --compact-after … --delete-after …``
+   (optional, on by default) so the venv cleans up its own logs;
 6. **verify** — ``<venv>/bin/runspec --version``;
 7. **audit** — ``<venv>/bin/runspec audit record venv.provision`` as the owner,
    so the new venv's own ledger (and the host's syslog) starts with how it was
@@ -730,6 +732,68 @@ def inbox_argv(dest: str, acl_user: str = "") -> list[str]:
 
 def verify_argv(dest: str) -> list[str]:
     return [venv_paths(dest)["runspec"], "--version"]
+
+
+# --------------------------------------------------------------------------- #
+# Log retention policy (runspec 0.80.0+)
+# --------------------------------------------------------------------------- #
+
+#: What the Provision dialog offers by default: compress runs after a week,
+#: delete them after ~three months.
+RETENTION_DEFAULT = {"compact_after": "7d", "delete_after": "90d"}
+RETENTION_MIN_RUNSPEC = "0.80.0"
+_DURATION_RE = re.compile(r"^(\d+)([smhdw])$")
+_DURATION_S = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
+
+
+def _duration_s(value: str) -> int:
+    m = _DURATION_RE.match(value)
+    if not m or int(m.group(1)) <= 0:
+        raise ProvisionError(
+            f"Not a duration: {value!r} (use a number and s/m/h/d/w, like 7d or 2w)."
+        )
+    return int(m.group(1)) * _DURATION_S[m.group(2)]
+
+
+def validate_retention(value: Any) -> dict[str, str]:
+    """``{}`` (no policy) or ``{compact_after?, delete_after?}`` — the same
+    grammar ``runspec logs retention`` checks, so a bad value fails here, before
+    anything is built."""
+    if not value:
+        return {}
+    if not isinstance(value, dict):
+        raise ProvisionError(
+            "retention must be an object with compact_after / delete_after."
+        )
+    out = {
+        k: str(value.get(k) or "").strip().lower()
+        for k in ("compact_after", "delete_after")
+        if str(value.get(k) or "").strip()
+    }
+    secs = {k: _duration_s(v) for k, v in out.items()}
+    if len(secs) == 2 and secs["compact_after"] >= secs["delete_after"]:
+        raise ProvisionError(
+            f"Compress after ({out['compact_after']}) must be shorter than "
+            f"delete after ({out['delete_after']})."
+        )
+    return out
+
+
+def retention_argv(dest: str, policy: dict[str, str]) -> list[str]:
+    """Set the venv's log retention policy, as the owner."""
+    argv = [venv_paths(dest)["runspec"], "logs", "retention"]
+    if policy.get("compact_after"):
+        argv += ["--compact-after", policy["compact_after"]]
+    if policy.get("delete_after"):
+        argv += ["--delete-after", policy["delete_after"]]
+    return argv
+
+
+def retention_hint(policy: dict[str, str]) -> str:
+    """The command line to run by hand when the step failed."""
+    return "runspec logs retention " + " ".join(
+        f"--{k.replace('_', '-')} {v}" for k, v in policy.items()
+    )
 
 
 # --------------------------------------------------------------------------- #
