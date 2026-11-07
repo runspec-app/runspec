@@ -194,7 +194,8 @@ scattering logs across package directories.
   invocation owns its own file, so the layout is safe for multiple users and
   for the same user running in parallel (no shared file means no rotation race
   and no cross-user ownership conflict). `rotate` and `keep` are inert;
-  retention is an explicit operator action (`runspec logs compact` / `prune`).
+  retention is an operator action (`runspec logs compact` / `prune`) or a
+  [retention policy](#log-retention-policy-python-pack) the venv applies itself.
 
 `"per-run"` is opt-in; the default stays `"single"` so existing deployments are
 unaffected. **`"single"` is only honoured by the account that owns the logs
@@ -250,6 +251,50 @@ Two records support this. Neither is counted in the run summary's `events`:
 
 The Node pack does not implement the inbox yet: its log directory is the
 project root and it keeps no runs index.
+
+#### Log retention policy (Python pack)
+
+Per-run files and the archives `runspec logs compact` makes are never rotated,
+so a shared logs directory grows until something removes them. An
+installation can carry a **retention policy** that it applies to itself:
+
+```
+{installation_root}/runspec_logs_retention.toml
+```
+
+```toml
+[logs]
+compact_after  = "7d"    # roll per-run files older than this into a gzip archive
+delete_after   = "90d"   # delete per-run files and archives older than this
+max_total_size = "5GB"   # optional: delete the oldest files over this total
+```
+
+- Every key is optional; at least one must be set. Durations use the
+  `runspec logs` grammar (`30m`, `24h`, `7d`, `2w`), sizes `500KB`/`10MB`/`5GB`.
+  When both are set, `compact_after` must be shorter than `delete_after`.
+- The policy covers only `{installation_root}/logs/` — never `~/logs`, the
+  inbox, `audit.jsonl`, the runs index or a `"single"` `{runnable}.log`
+  (which rotates itself). It acts on exactly the files `compact` and `prune`
+  manage, and records the same `logs.compact` / `logs.prune` audit events.
+- An archive's modification time is the newest run folded into it, so
+  `delete_after` counts from the newest run in the archive.
+- **Who applies it:** at the end of a run by the owner of the installation
+  root (the account that writes `logs/`), at most once every 24 hours, in a
+  detached background process so the run's exit is never delayed. A policy
+  file owned by any account other than the owner or root, or writable by group
+  or others, is ignored. Runs by other accounts never apply it, so a venv that
+  only other accounts run waits for the owner's next run (as the inbox sweep
+  does).
+- The outcome of the last pass is written to
+  `{installation_root}/logs/.retention-last.json` (`ts`, `compacted`,
+  `deleted`, `freed_bytes`, `error`); its modification time is the 24-hour
+  clock. `logs/.retention.lock` keeps two passes from overlapping.
+- `runspec logs retention` shows the policy and the last pass; with
+  `--compact-after` / `--delete-after` / `--max-total-size` it sets them (a
+  value of `off` clears one), `--off` removes the policy, and `--now` applies
+  it immediately (`--dry-run` previews). Root drops to the owner first.
+
+The Node pack has no retention policy.
 
 #### Run labels
 

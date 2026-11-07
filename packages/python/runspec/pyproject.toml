@@ -1,6 +1,6 @@
 [project]
 name = "runspec"
-version = "0.79.0"
+version = "0.80.0"
 description = "A language-agnostic, TOML-based interface specification for anything runnable"
 readme = "README.md"
 license = "MIT"

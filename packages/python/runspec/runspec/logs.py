@@ -719,18 +719,21 @@ def plan_compact(
 
     Only per-run files (never existing archives, never single-mode files) older
     than ``older_than`` are eligible. The archive lands in the same directory as
-    the files, dated with today's UTC date.
+    the files, one per runnable per **day the runs finished** (the file's UTC
+    mtime date) — so a day's runs age out together and a big first compaction
+    doesn't hold months of runs in one archive until its newest is old enough.
     """
     now = now if now is not None else time.time()
     cut = now - older_than.total_seconds()
-    today = datetime.now(timezone.utc).strftime("%Y%m%d")
     plan: dict[Path, list[Path]] = {}
     for f in _discover(dirs, runnable):
         if not _is_managed(f) or _is_archive(f):
             continue
-        if f.stat().st_mtime >= cut:
+        mtime = f.stat().st_mtime
+        if mtime >= cut:
             continue
-        archive = f.parent / f"{_runnable_of(f)}.archive.{today}.log"
+        day = datetime.fromtimestamp(mtime, tz=timezone.utc).strftime("%Y%m%d")
+        archive = f.parent / f"{_runnable_of(f)}.archive.{day}.log"
         plan.setdefault(archive, []).append(f)
     return plan
 
@@ -774,6 +777,10 @@ def compact(
         lines: list[str] = []
         readable: list[Path] = []
         archive_ok = True
+        # The archive's mtime becomes the newest run folded into it (not the
+        # compaction time), so `prune --older-than` / a retention policy's
+        # delete_after counts from the newest run it holds.
+        newest = 0.0
         for existing in (archive, archive.with_suffix(archive.suffix + ".gz")):
             if existing.exists():
                 got = _read_lines_checked(existing)
@@ -781,6 +788,8 @@ def compact(
                     archive_ok = False
                     break
                 lines.extend(got)
+                with contextlib.suppress(OSError):
+                    newest = max(newest, existing.stat().st_mtime)
         if not archive_ok:
             if not as_json:
                 out.write(f"skipped {target}: the existing archive couldn't be read\n")
@@ -793,6 +802,8 @@ def compact(
                 continue
             lines.extend(got)
             readable.append(s)
+            with contextlib.suppress(OSError):
+                newest = max(newest, s.stat().st_mtime)
         if not readable:
             continue
         sources = readable
@@ -807,6 +818,9 @@ def compact(
                 archive.unlink(missing_ok=True)
         else:
             target.write_text(body, encoding="utf-8")
+        if newest:
+            with contextlib.suppress(OSError):
+                os.utime(target, (newest, newest))
 
         for s in sources:
             s.unlink(missing_ok=True)

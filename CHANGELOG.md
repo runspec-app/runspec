@@ -9,6 +9,39 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.80.0] — 2026-11-07
+
+### Added
+
+- **A venv can clean up its own logs.** Per-run files (every run by another
+  account lands in `logs/` as one) and compacted archives are never rotated,
+  so a shared venv's `logs/` grew until someone ran `runspec logs prune` or
+  added a cron line. Now `runspec logs retention --compact-after 7d
+  --delete-after 90d` saves a policy in `{venv}/runspec_logs_retention.toml`,
+  and the venv owner's own runs apply it at most once a day, in a detached
+  background process so no run's exit is held up. A pass deletes per-run files
+  and archives older than `delete_after`, compresses the rest older than
+  `compact_after` into gzip archives, then enforces an optional
+  `max_total_size`. It acts only on `{venv}/logs/` and only on the files
+  `compact`/`prune` manage, never `audit.jsonl`, the runs index, the inbox or
+  a single-mode `{runnable}.log`, and records the usual `logs.prune` /
+  `logs.compact` audit events (`logs.retention` for a policy change). A policy
+  file not owned by the venv owner or root, or writable by group or others, is
+  ignored. `runspec logs retention` shows the policy and the last pass
+  (`logs/.retention-last.json`); `--now` applies it immediately (`--dry-run`
+  previews), `off` clears one setting and `--off` removes the policy. Root
+  drops to the venv owner first. The runspec console's Provision venv sets a
+  policy by default. SPEC → "Log retention policy".
+
+### Changed
+
+- **`runspec logs compact` makes one archive per day of runs.** An archive was
+  named for the day compaction ran and its modification time was that day, so
+  a first compaction of months of runs made one archive that `prune
+  --older-than` kept until long after its oldest runs were due. An archive is
+  now named for the day its runs finished (`{runnable}.archive.{YYYYMMDD}`)
+  and its modification time is its newest run.
+
 ## [0.79.0] — 2026-11-07
 
 ### Added

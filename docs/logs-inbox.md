@@ -384,7 +384,8 @@ rewrite every row.
 ## See also
 
 - [Logging](logging.md) — `[config.logging]`, log locations, retention
-  (`runspec logs prune`/`compact` also cover swept files).
+  (`runspec logs prune`/`compact` and a `runspec logs retention` policy also
+  cover swept files).
 - [Hosts & fleet](console-hosts.md) — bootstrapping a host for the console.
 - [CLI reference](cli.md) — `runspec logs share`, `runspec history`.
 - [Design: venv logs inbox](design/venv-logs-inbox.md) — alternatives
