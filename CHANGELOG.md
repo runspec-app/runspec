@@ -9,6 +9,25 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.83.0] — 2026-11-07
+
+### Added
+
+- **Who is handling a failing job.** `runspec history claim` ("I'm on it"),
+  `resolve --note …` (dealt with) and `release` record a note on a failed run,
+  by full id or unique prefix, several at once (comma-separated), or the newest
+  failed run of a job with `--label sched:<id>`. A note covers the job's
+  failures since its last success, so the next success ends it.
+  `runspec history jobs [--failing]` shows each job as clean / failed /
+  handling / done and who has it; `runspec history notes` lists the notes.
+  Pure logic in `runspec.runnotes` (`job_state`, `failure_streak`, `jobs`).
+- **Runs index v8:** a `run_notes` table (append-only; a run's newest note is
+  its current one). `list_runs` rows carry `note`; `runsdb.add_note` /
+  `find_run` / `list_notes`. Notes are pruned with `retention_days` and capped
+  at 20000. Written by the venv owner only, like the rest of the index; the
+  person is `SUDO_USER` when sudo switched to the owner. Each note is also a
+  `run.claim` / `run.resolve` / `run.release` audit event.
+
 ## [node-0.48.0] — 2026-11-07
 
 ### Added

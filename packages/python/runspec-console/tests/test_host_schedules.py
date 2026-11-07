@@ -503,3 +503,94 @@ def test_run_now_on_an_old_scheduler_says_upgrade():
             {"host": "prod-1", "venv": "ops", "id": "nightly"}
         )
     assert "older than 0.7.0" in out["error"]
+
+
+# ── who is handling a failure (runspec history claim/resolve/release) ─────────
+
+
+def test_note_argv():
+    argv = hs.note_argv({"verb": "claim", "runs": ["run-a1", "run-b2", "run-a1"]})
+    assert argv == ["history", "claim", "run-a1,run-b2", "--scope", "venv", "--json"]
+    argv = hs.note_argv(
+        {"verb": "resolve", "runs": ["run-a1"], "note": " disk\n full "}
+    )
+    assert argv == [
+        "history",
+        "resolve",
+        "run-a1",
+        "--note",
+        "disk full",
+        "--scope",
+        "venv",
+        "--json",
+    ]
+
+
+@pytest.mark.parametrize(
+    "payload,msg",
+    [
+        ({"verb": "delete", "runs": ["run-a1"]}, "verb must be"),
+        ({"verb": "claim", "runs": []}, "at least one"),
+        ({"verb": "claim", "runs": ["a; rm -rf /"]}, "not a run id"),
+        ({"verb": "claim", "runs": ["--note=x"]}, "not a run id"),
+        ({"verb": "resolve", "runs": ["run-a1"], "note": "  "}, "say what was done"),
+    ],
+)
+def test_note_argv_refuses(payload, msg):
+    with pytest.raises(hs.HostScheduleError, match=msg):
+        hs.note_argv(payload)
+
+
+def test_note_runs_the_venvs_runspec_as_owner_and_audits():
+    b = _bridge()
+    reply = {
+        "verb": "claim",
+        "ok": True,
+        "notes": [
+            {
+                "run_id": "run-a1",
+                "label": "sched:nightly",
+                "state": "handling",
+                "note": "",
+                "actor": "jason",
+            }
+        ],
+    }
+    calls, run = _fake({"history": (0, json.dumps(reply), "")})
+    with patch.object(b, "_run_scheduler_as", side_effect=run):
+        out = b.host_schedule_note(
+            {"host": "prod-1", "venv": "ops", "verb": "claim", "runs": ["run-a1"]}
+        )
+    assert out == {"ok": True, "notes": reply["notes"]}
+    assert calls[0]["binary"] == "/opt/venvs/ops/bin/runspec"
+    assert calls[0]["argv"][:3] == ["history", "claim", "run-a1"]
+    assert calls[0]["owner"] == "svc"
+    assert _events(b) == ["schedule.host.claim"]
+
+
+def test_note_on_an_old_runspec_says_upgrade():
+    b = _bridge()
+    _calls, run = _fake(
+        {"history": (1, "✗  Unknown history verb: claim (list / running)", "")}
+    )
+    with patch.object(b, "_run_scheduler_as", side_effect=run):
+        out = b.host_schedule_note(
+            {"host": "prod-1", "venv": "ops", "verb": "claim", "runs": ["run-a1"]}
+        )
+    assert not out["ok"] and hs.NOTES_MIN in out["error"]
+    _calls, run = _fake(
+        {
+            "history": (
+                2,
+                json.dumps(
+                    {"verb": "claim", "ok": False, "error": "permission denied"}
+                ),
+                "",
+            )
+        }
+    )
+    with patch.object(b, "_run_scheduler_as", side_effect=run):
+        out = b.host_schedule_note(
+            {"host": "prod-1", "venv": "ops", "verb": "claim", "runs": ["run-a1"]}
+        )
+    assert out == {"ok": False, "error": "permission denied"}

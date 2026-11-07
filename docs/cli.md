@@ -928,6 +928,33 @@ reclaims space incrementally. The verbs are for on-demand repair — shrinking a
 retention after the fact, clearing orphans on a quiet venv, or rebuilding an
 index that was deleted or damaged.
 
+### Who is handling a failure
+
+When a shared job fails, say so on the venv itself, so the next person who looks
+doesn't start on the same thing and a job someone dealt with doesn't keep reading
+as broken:
+
+```bash
+runspec history jobs --failing                         # failing jobs, and who (if anyone) has them
+runspec history claim --label sched:nightly            # "I'm on it" (the newest failed run of that job)
+runspec history resolve 3f9a1c2e --note "disk full, cleared /var/tmp"   # dealt with; a note is required
+runspec history release 3f9a1c2e,7b20d4aa              # let go of two claims (comma-separated runs)
+runspec history notes --label sched:nightly            # every note on that job, newest first
+```
+
+A job is a schedule label (`sched:<id>`) or, for runs without a label, the
+runnable. A note covers the job's **failures since its last success**: one claim
+covers a job that keeps failing for the same reason, and the next successful run
+ends it. `jobs` shows each job as `clean`, `failed` (nobody has it), `handling`
+or `done` (dealt with — counts as clean until it next succeeds). `list --json`
+rows carry each run's newest `note`.
+
+Notes are kept in the runs index (`run_notes`, schema v8), so only the venv
+owner can write them; the console runs these verbs as the owner for you. The
+person is recorded as `SUDO_USER` when sudo switched to the owner, else the
+account itself. Each note is also an audit event (`run.claim` / `run.resolve` /
+`run.release`) on the venv's ledger.
+
 **Scope.** Reads (`list`/`running`/`stats`) cover every logs dir by default;
 `prune`/`reap`/`reindex` act on this venv's own `{sys.prefix}/logs` only unless
 you pass `--scope home|all` — so maintaining one venv never touches another's

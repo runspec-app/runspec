@@ -21,8 +21,8 @@ import { bridge, type HostScheduleResult, type HostScheduleSave, type Runnable, 
 import { HostScheduleModal, timeoutText, type HostScheduleEditing } from './HostScheduleModal'
 import { MONO_FONT, RADIUS, useIsDark, textColor, textMuted, textSecondary, withAlpha } from '../ThemeContext'
 import {
-  DAEMON_SETTINGS, DEFAULT_FILTERS, FOLDED_ATTENTION_MAX, STATE_COLOR, daemonNeedsAttention, daemonSummary, filterRows, settingText, settingsChanges, shortDuration,
-  type Collected, type DaemonVenv, type RowFilters, type RowSource, type RowState, type ScheduleRow, type ScheduleScope, type SchedulerVenv, type SortKey,
+  DAEMON_SETTINGS, DEFAULT_FILTERS, FOLDED_ATTENTION_MAX, STATE_COLOR, claimStale, daemonNeedsAttention, daemonSummary, filterRows, noteBatches, noteText, noteVerbs, noteable, settingText, settingsChanges, shortDuration,
+  type Collected, type NoteVerb, type DaemonVenv, type RowFilters, type RowSource, type RowState, type ScheduleRow, type ScheduleScope, type SchedulerVenv, type SortKey,
 } from './allSchedules'
 import { RUN_COLOR, ScheduleDetail, relTime } from './sharedSchedules'
 
@@ -75,7 +75,68 @@ const SOURCE_COLOR: Record<RowSource, string> = {
 const ALL_STATES: RowState[] = [
   'ok', 'running', 'last run failed', 'not installed', 'not installable', 'stale line',
   'scheduler stopped', 'scheduler stale', "can't read", 'disabled', 'unknown', 'legacy line',
+  'being handled', 'dealt with',
 ]
+
+const NOTE_WORDS: Record<NoteVerb, { button: string; title: string; done: string; placeholder: string }> = {
+  claim: { button: "I'm on it", title: "Say you're handling", done: 'Claimed', placeholder: 'Optional: what you are looking at' },
+  resolve: { button: 'Dealt with…', title: 'Mark dealt with', done: 'Marked dealt with', placeholder: 'What was done, so the next person knows (required)' },
+  release: { button: 'Release', title: 'Let go of', done: 'Released', placeholder: 'Optional: why' },
+}
+
+/** Claim / mark dealt with / release the selected failing host schedules: one
+ *  `runspec history <verb>` per venv, as its owner. Pure UI around the bridge. */
+function NoteModal({ verb, rows, onClose, onDone }: {
+  verb: NoteVerb | null
+  rows: ScheduleRow[]
+  onClose: () => void
+  onDone: () => void
+}) {
+  const [note, setNote] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  useEffect(() => { setNote(''); setError(''); setBusy(false) }, [verb])
+  if (!verb) return null
+  const w = NOTE_WORDS[verb]
+  const batches = noteBatches(rows)
+  const count = batches.reduce((n, b) => n + b.runs.length, 0)
+  const needNote = verb === 'resolve' && !note.trim()
+  const submit = async () => {
+    setBusy(true); setError('')
+    const failed: string[] = []
+    let ok = 0
+    for (const b of batches) {
+      try {
+        const res = await bridge.host_schedule_note({ host: b.host, venv: b.venv, verb, runs: b.runs, note: note.trim() })
+        if (res.ok) ok += b.runs.length
+        else failed.push(`${b.host} / ${b.venv}: ${res.error || 'failed'}`)
+      } catch (e) { failed.push(`${b.host} / ${b.venv}: ${String(e)}`) }
+    }
+    setBusy(false)
+    if (ok) message.success(`${w.done} ${ok} schedule${ok === 1 ? '' : 's'}.`)
+    if (failed.length) { setError(failed.join('\n')); if (ok) onDone(); return }
+    onDone()
+  }
+  return (
+    <Modal open title={`${w.title} ${count} failing schedule${count === 1 ? '' : 's'}`} onCancel={onClose} destroyOnHidden
+      okText={w.button.replace('…', '')} okButtonProps={{ disabled: needNote || !count, loading: busy }} onOk={submit}>
+      <div style={{ fontSize: 13, marginBottom: 8 }}>
+        {rows.filter(noteable).map(r => (
+          <div key={r.key} style={{ fontFamily: MONO_FONT }}>{r.host} / {r.venv} · {r.id}
+            {r.attention && <Text type="secondary" style={{ fontFamily: 'inherit' }}> · {r.attention.failures} failed</Text>}
+          </div>
+        ))}
+      </div>
+      <Input.TextArea autoSize={{ minRows: 2, maxRows: 5 }} maxLength={500} value={note} placeholder={w.placeholder}
+        aria-label="Note" onChange={e => setNote(e.target.value)} />
+      <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 6 }}>
+        Everyone who reads these venvs sees it, here and in <Text code style={{ fontSize: 12 }}>runspec history jobs</Text> on the host.
+        It covers each schedule's failures until it next succeeds, and is recorded with your login.
+      </Text>
+      {error && <Alert type="error" showIcon style={{ marginTop: 10, whiteSpace: 'pre-wrap' }} message={error} />}
+    </Modal>
+  )
+}
 
 const KEEPER_LABEL: Record<string, string> = {
   'systemd-user': 'systemd --user', systemd: 'systemd (system)', supervisor: 'supervisord', cron: 'cron watchdog',
@@ -319,6 +380,15 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
       onRefresh()
     } catch (e) { message.error(`Restart failed: ${String(e)}`) } finally { setBusy('') }
   }
+  // ── who is handling a failure: tick failing host schedules, then claim / resolve / release ──
+  const [selected, setSelected] = useState<string[]>([])
+  const [noteVerb, setNoteVerb] = useState<NoteVerb | null>(null)
+  const selectedRows = useMemo(() => rows.filter(r => selected.includes(r.key) && noteable(r)), [rows, selected])
+  useEffect(() => {
+    // Drop selections that left the list (filtered out, or no longer failing).
+    setSelected(prev => prev.filter(k => rows.some(r => r.key === k && noteable(r))))
+  }, [rows])
+  const verbs = noteVerbs(selectedRows)
   const syncVenv = (v: SchedulerVenv) => run(v.key, `Synced ${v.host} / ${v.venv}`, () => bridge.host_schedule_sync({ host: v.host, venv: v.venv }))
 
   const columns: ColumnType<ScheduleRow>[] = [
@@ -331,6 +401,13 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
           <Tooltip title={r.stateTip}>
             <Tag color={STATE_COLOR[r.state]} style={{ margin: 0 }}>{r.state}</Tag>
           </Tooltip>
+          {r.attention?.note && (r.state === 'being handled' || r.state === 'dealt with') && (
+            <Tooltip title={noteText(r.attention.note)}>
+              <span style={{ fontSize: 12, color: claimStale(r.attention.note) ? token.colorWarning : secondary, maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {r.attention.note.actor || r.attention.note.os_user}{r.attention.note.note ? `: ${r.attention.note.note}` : ''}
+              </span>
+            </Tooltip>
+          )}
           {scope === 'all' && <Tag bordered={false} color={SOURCE_COLOR[r.source]} style={{ margin: 0, fontSize: 11 }}>{SOURCE_LABEL[r.source]}</Tag>}
         </div>
       ),
@@ -586,6 +663,23 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
           message={<span><span style={{ fontFamily: MONO_FONT }}>{n.host} / {n.venv}</span>: {n.message}</span>} />
       ))}
 
+      {editable && rows.some(noteable) && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 8, padding: '6px 10px',
+          borderRadius: RADIUS.md, background: token.colorFillTertiary, fontSize: 13,
+        }}>
+          {selectedRows.length
+            ? <span style={{ color: textColor(isDark), fontWeight: 500 }}>{selectedRows.length} failing schedule{selectedRows.length === 1 ? '' : 's'} selected</span>
+            : <span style={{ color: secondary }}>Tick failing schedules to say you're on them, or that they were dealt with, so nobody else picks them up.</span>}
+          {verbs.map(v => (
+            <Button key={v} size="small" type={v === 'claim' ? 'primary' : 'default'} onClick={() => setNoteVerb(v)}>
+              {NOTE_WORDS[v].button}
+            </Button>
+          ))}
+          {selectedRows.length > 0 && <Button size="small" type="text" onClick={() => setSelected([])}>Clear</Button>}
+        </div>
+      )}
+
       {rows.length === 0 && !loaded && scope !== 'console' ? (
         <div style={{ display: 'flex', justifyContent: 'center', padding: 48 }}><Spin /></div>
       ) : (
@@ -600,6 +694,12 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
           onRow={r => (r.problem ? { style: { background: withAlpha(token.colorWarning, isDark ? 0.07 : 0.08) } } : {})}
           locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={emptyText} /> }}
           expandable={{ expandedRowRender: expanded, rowExpandable: r => r.kind !== 'schedule' || !!r.shared || !!r.argsText }}
+          rowSelection={editable && rows.some(noteable) ? {
+            selectedRowKeys: selected,
+            onChange: keys => setSelected(keys.map(String)),
+            getCheckboxProps: r => ({ disabled: !noteable(r), 'aria-label': `Select ${r.id}` }),
+            renderCell: (_checked, r, _i, node) => (noteable(r) ? node : null),
+          } : undefined}
         />
       )}
 
@@ -629,6 +729,10 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
             afterChange(editing ? `Saved ${res.id ?? ''}`.trim() : `Added ${res.id ?? ''}`.trim(), res)
           }}
         />
+      )}
+      {editable && (
+        <NoteModal verb={noteVerb} rows={selectedRows} onClose={() => setNoteVerb(null)}
+          onDone={() => { setNoteVerb(null); setSelected([]); onRefresh() }} />
       )}
       {editable && (
         <DaemonSettingsModal d={daemonSettings} onClose={() => setDaemonSettings(null)}

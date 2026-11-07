@@ -1488,6 +1488,27 @@ export interface SharedScheduleRun {
   user?: string
   log_file?: string | null
   log_pruned_at?: string | null
+  note?: RunNote | null            // runspec >= 0.83.0: the run's newest note
+}
+
+/** Who is handling a failing job (runspec >= 0.83.0, `runspec history claim`). */
+export interface RunNote {
+  state: 'handling' | 'done' | 'released'
+  note?: string
+  actor?: string                   // the person (the sudo-ing login), else the account
+  os_user?: string
+  ts: string
+  run_id?: string
+}
+
+/** Where a host schedule's job stands: its failures since the last success and
+ *  the newest note on them. A note covers the schedule until it next succeeds. */
+export interface ScheduleAttention {
+  state: 'clean' | 'failed' | 'handling' | 'done'
+  failures: number
+  since: string | null
+  run_id: string | null            // the newest failed run (the one a claim goes on)
+  note: RunNote | null
 }
 
 export interface SharedScheduleOutput {
@@ -1517,6 +1538,8 @@ export interface SharedSchedule {
   // and the per-fire timeout in seconds (0 = none, null/absent = the 6h default).
   catch_up?: boolean
   timeout?: number | null
+  // runspec-scheduler >= 0.7.2 on runspec >= 0.83.0: who is handling its failures.
+  attention?: ScheduleAttention | null
 }
 
 // The per-venv scheduler daemon as `runspec-scheduler status` reports it
@@ -3188,6 +3211,8 @@ export interface BridgeApi {
   host_schedule_sync: (payload: { host: string; venv: string }) => Promise<HostScheduleResult>
   // Fire one host schedule now, in the background (runspec-scheduler >= 0.7.0).
   host_schedule_run_now: (payload: { host: string; venv: string; id: string }) => Promise<HostScheduleRunNowResult>
+  // Claim / mark dealt with / release failing host schedules in one venv (runspec >= 0.83.0).
+  host_schedule_note: (payload: { host: string; venv: string; verb: 'claim' | 'resolve' | 'release'; runs: string[]; note?: string }) => Promise<{ ok: boolean; error?: string; notes?: RunNote[] }>
   // Which credentials a runnable reads from the env, and whether .runspec_env has them.
   host_schedule_env_check: (payload: { host: string; venv: string; runnable: string; command?: string[] }) => Promise<HostScheduleEnvCheck>
   // The venv's scheduler daemon itself: durations, and restart / start (0.386.0).

@@ -351,10 +351,17 @@ examples = [
   {cmd = "runspec history list --label sched:nightly",         description = "Runs recorded by `runspec exec --label sched:nightly`"},
   {cmd = "runspec history stats --json",                       description = "Index health: rows by status, size, age span, stale rows, the logs inbox"},
   {cmd = "runspec history sweep",                              description = "Index finished runs from the logs inbox and move them into logs/ (venv owner)"},
+  {cmd = "runspec history claim --label sched:nightly",          description = "Say you're handling the nightly schedule's failures (venv owner)"},
+  {cmd = "runspec history resolve 3f9a1c2e --note \"disk full, cleared /var/tmp\"", description = "Say a failing job was dealt with; covers its failures until it next succeeds"},
+  {cmd = "runspec history release 3f9a1c2e,7b20d4aa",            description = "Let go of claims on two runs"},
+  {cmd = "runspec history jobs --failing",                        description = "Every job that is failing and who, if anyone, is handling it"},
 ]
 
 [runspec.commands.history.args]
-verb       = {type = "str", description = "list (default) / running / stats / prune / reindex / reap / sweep", position = 1, required = false}
+verb       = {type = "str", description = "list (default) / running / stats / prune / reindex / reap / sweep / claim / resolve / release / notes / jobs", position = 1, required = false}
+run        = {type = "str", description = "claim / resolve / release: the failed run(s), full id or unique prefix, comma-separated; notes: one run", position = 2, required = false}
+note       = {type = "str", description = "claim / resolve / release: what you're doing or did (resolve needs one)", required = false}
+failing    = {type = "flag", description = "jobs: only jobs that are failing (claimed or not)", default = false}
 runnable   = {type = "str", description = "Filter to one runnable (list)", required = false}
 status     = {options = ["running", "completed", "failed", "crashed", "skipped"], description = "Filter by status (list)", required = false}
 label      = {type = "str", description = "Filter to runs with this `runspec exec --label` (list)", required = false}
