@@ -837,6 +837,12 @@ export interface HistoryRecord {
   account?: string
   pending?: boolean
   logFile?: string
+  // Installed-code integrity (runspec >= 0.81): 'modified' = the runnable's
+  // installed files differ from what was installed (integrityFiles lists them
+  // when the run's log was read); 'local' = installed from a folder, a file or
+  // git rather than a package index. '' / absent = nothing to report.
+  integrity?: string
+  integrityFiles?: string[]
 }
 
 // One in-flight run from the per-venv runs index — the History tab's live

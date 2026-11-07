@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, act, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
-import { HistoryView, accountNote, agoLabel, hiddenSummary, parseHistorySearch, syncNote } from './HistoryView'
+import { HistoryView, accountNote, agoLabel, hiddenSummary, integrityBadge, parseHistorySearch, syncNote } from './HistoryView'
 import type { HistoryRecord, RunningRun } from '../bridge'
 
 const { historyTargets, getHistorySlim, getRunDetail, logsView, getRunningRuns, historySyncStatus, historyHidden } = vi.hoisted(() => ({
@@ -79,6 +79,13 @@ describe('HistoryView', () => {
     expect(await screen.findByText('backup')).toBeTruthy()
     expect(getHistorySlim).toHaveBeenCalledWith('local', 7, false)
     expect(getHistorySlim).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows a modified badge on a run that used changed installed code', async () => {
+    getHistorySlim.mockResolvedValue([rec({ integrity: 'modified' })])
+    render(<HistoryView {...PROPS} />)
+    await screen.findByText('backup')
+    expect(screen.getByText('modified')).toBeTruthy()
   })
 
   it('refetches with hidden runnables when "Show hidden" is switched on', async () => {
@@ -395,6 +402,24 @@ describe('syncNote', () => {
   it('formats ages', () => {
     expect(agoLabel('2026-09-28T11:59:30Z', now)).toBe('30s ago')
     expect(agoLabel('2026-09-25T12:00:00Z', now)).toBe('3d ago')
+  })
+})
+
+describe('integrityBadge', () => {
+  it('flags modified and local-build runs, and nothing else', () => {
+    const mod = integrityBadge({ integrity: 'modified', integrityFiles: ['runspec-linux: runspec_linux/files.py'], host: 'web-01' })
+    expect(mod?.text).toBe('modified')
+    expect(mod?.color).toBe('error')
+    expect(mod?.tip).toContain('runspec_linux/files.py')
+    expect(mod?.tip).toContain('runspec verify" on web-01')
+    expect(integrityBadge({ integrity: 'local', host: 'local' })?.text).toBe('local build')
+    expect(integrityBadge({ integrity: '', host: 'local' })).toBeNull()
+    expect(integrityBadge({ host: 'local' })).toBeNull()
+  })
+
+  it('caps the file list in the tip', () => {
+    const files = Array.from({ length: 8 }, (_, i) => `d: f${i}.py`)
+    expect(integrityBadge({ integrity: 'modified', integrityFiles: files, host: 'h' })?.tip).toContain('and 3 more')
   })
 })
 

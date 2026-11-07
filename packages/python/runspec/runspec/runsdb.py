@@ -49,7 +49,7 @@ DB_NAME = "runspec_runs.db"
 # by *structure* (``_has_sync``), never by user_version: an older runspec writing
 # the DB resets user_version to its own number, but the triggers (which live in
 # the DB file) keep stamping ``seq`` on its writes regardless.
-_SCHEMA_VERSION = 6
+_SCHEMA_VERSION = 7
 # v5: + events (JSON {level: count} — the run's log-record counts by level) and
 # exception (JSON {type, message} — the uncaught exception, no traceback), taken
 # from the run_summary at finalize. They let a reader (the console's Analytics)
@@ -61,6 +61,9 @@ _SCHEMA_VERSION = 6
 # one), source ("direct" / "inbox") and exec_uid (the `runspec exec` wrapper's
 # uid, for binding a wrapper and its child across the inbox). Kept on conflict
 # like label, so a writer that doesn't know them never clears them.
+# v7 (SPEC → Installed-Code Integrity): + integrity — "modified" / "local" / NULL,
+# from parse()'s check of the runnable's installed files. Kept on conflict, so
+# `runspec exec` finalizing its child's row never clears it.
 _EXCEPTION_MESSAGE_MAX = 500
 _BUSY_TIMEOUT_MS = 2000
 
@@ -123,7 +126,9 @@ CREATE TABLE IF NOT EXISTS runs (
   -- came straight from a run or was swept from the inbox, and the exec wrapper.
   os_user       TEXT,
   source        TEXT,
-  exec_uid      INTEGER
+  exec_uid      INTEGER,
+  -- v7: installed-code integrity — "modified" / "local"; NULL = nothing to report.
+  integrity     TEXT
 );
 CREATE INDEX IF NOT EXISTS runs_start_ts ON runs (start_ts);
 CREATE INDEX IF NOT EXISTS runs_status   ON runs (status);
@@ -333,13 +338,14 @@ def _connect(path: Path, *, readonly: bool = False) -> sqlite3.Connection | None
 def _migrate(con: sqlite3.Connection) -> None:
     """Apply additive column adds an existing DB predates — the forward/backward-
     compatible half of a schema bump. v1 → v2 (§8.1): ``log_pruned_at`` /
-    ``log_pruned_by``; v2 → v3: ``label``; v4 → v5: ``events`` / ``exception``; v5 → v6: ``os_user`` / ``source`` / ``exec_uid``. ``ALTER TABLE ADD COLUMN`` is metadata-only (no table
+    ``log_pruned_by``; v2 → v3: ``label``; v4 → v5: ``events`` / ``exception``; v5 → v6: ``os_user`` / ``source`` / ``exec_uid``;
+    v6 → v7: ``integrity``. ``ALTER TABLE ADD COLUMN`` is metadata-only (no table
     rewrite); a fresh DB already has them via ``_DDL`` so this is a no-op there.
     Best-effort — a migration failure never blocks the write (the DB is a derived
     index; worst case it is rebuilt via :func:`reindex`)."""
     with contextlib.suppress(sqlite3.Error):
         have = {r[1] for r in con.execute("PRAGMA table_info(runs)").fetchall()}
-        for col in ("log_pruned_at", "log_pruned_by", "label", "events", "exception", "os_user", "source"):
+        for col in ("log_pruned_at", "log_pruned_by", "label", "events", "exception", "os_user", "source", "integrity"):
             if col not in have:
                 con.execute(f"ALTER TABLE runs ADD COLUMN {col} TEXT")
         if "exec_uid" not in have:
@@ -646,6 +652,7 @@ def _normalise_row(row: dict[str, Any]) -> dict[str, Any]:
     out["label"] = row.get("label") or None
     out["os_user"] = row.get("os_user") or None
     out["source"] = row.get("source") or None
+    out["integrity"] = row.get("integrity") or None
     out["exec_uid"] = _int_or_none(row.get("exec_uid"))
     out["events"] = _events_json(row.get("events"))
     out["exception"] = _exception_json(row.get("exception"))
@@ -678,7 +685,7 @@ def _upsert(con: sqlite3.Connection, row: dict[str, Any]) -> None:
     begin that races a finish must not clear the finish's events. ``label`` goes
     further: the first non-empty value stays, so a child's own label (``cli`` when
     nothing set ``RUNSPEC_LABEL``) never replaces the wrapper's ``--label``."""
-    kept = ("label", "events", "exception", "os_user", "source", "exec_uid")
+    kept = ("label", "events", "exception", "os_user", "source", "exec_uid", "integrity")
     cols = ", ".join((*_COLUMNS, *kept))
     placeholders = ", ".join("?" for _ in range(len(_COLUMNS) + len(kept)))
     kept_vals = tuple(row.get(c) if row.get(c) not in ("", None) else None for c in kept)
@@ -1273,7 +1280,7 @@ def stats(log_dir: Path) -> dict[str, Any]:
                 if sync is not None:
                     # By structure: an older runspec may have reset user_version.
                     cols = {r[1] for r in con.execute("PRAGMA table_info(runs)").fetchall()}
-                    structural = (6 if "os_user" in cols else 5) if "events" in cols else 4
+                    structural = ((7 if "integrity" in cols else 6) if "os_user" in cols else 5) if "events" in cols else 4
                     out["schema_version"] = max(int(out["schema_version"] or 0), structural)
                     sync["tombstones"] = con.execute("SELECT count(*) FROM runs_tombstones").fetchone()[0]
                     out["sync"] = sync
@@ -1369,6 +1376,7 @@ def reindex(log_dir: Path, records: list[dict[str, Any]]) -> int:
                             "skill": rec.get("skill", ""),
                             "autonomy": rec.get("autonomy", ""),
                             "label": rec.get("label"),
+                            "integrity": rec.get("integrity"),
                             "args": rec.get("invocation_args") or {},
                             "events": rec.get("events"),
                             "exception": exc,

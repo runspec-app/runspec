@@ -9,6 +9,18 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.382.0] — 2026-11-07
+
+### Added
+
+- **History marks runs that used changed installed code.** A run whose
+  runnable's installed files no longer match what pip installed (runspec
+  0.81.0's integrity check) gets a red `modified` badge next to its name, with
+  the changed files and a `runspec verify` pointer in the tooltip; a runnable
+  installed from a folder, a wheel file or git gets a grey `local build` badge.
+  Read from the runs index's new `integrity` column, the run record and the
+  logs inbox; the History search box matches `modified` / `local` too.
+
 ## [0.381.0] — 2026-11-07
 
 ### Added

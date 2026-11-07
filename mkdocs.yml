@@ -107,6 +107,7 @@ nav:
     - Rundeck jobs: rundeck.md
     - Ansible modules: ansible.md
     - Denylist: denylist.md
+    - Installed-code integrity: integrity.md
   - Distribution:
     - White-label walkthrough: white-label.md
     - White-label runnable packages: white-label-runnables.md

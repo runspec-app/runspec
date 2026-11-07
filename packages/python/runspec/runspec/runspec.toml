@@ -25,6 +25,7 @@ examples = [
   {cmd = "runspec logs deploy",            description = "View merged per-invocation logs for a runnable"},
   {cmd = "runspec history",                description = "Recent runs from the venv's runs index (+ what's running)"},
   {cmd = "runspec deny add --runnable deploy", description = "Disable a runnable in this venv (kill switch)"},
+  {cmd = "runspec verify",                  description = "Check installed runnable packages for local edits"},
 ]
 
 [runspec.commands.init]
@@ -207,6 +208,22 @@ strict  = {type = "flag", description = "Exit 1 if no sink (ledger, OS log) took
 file    = {type = "path", description = "Ledger file to list/verify, or directory to record into (default: this venv's logs/audit.jsonl)", short = "-f", required = false}
 limit   = {type = "int",  description = "Newest events to show for 'list'", short = "-n", default = 50}
 json    = {type = "flag", description = "Emit JSON (list: one record per line; verify: the result object)", default = false}
+
+[runspec.commands.verify]
+description = "Check installed runnable packages against the hashes they were installed with (RECORD)"
+autonomy    = "autonomous"
+
+examples = [
+  {cmd = "runspec verify",                description = "Check every installed runnable package and what it requires directly"},
+  {cmd = "runspec verify runspec-linux",  description = "Check one distribution (or the package of one runnable)"},
+  {cmd = "runspec verify --all",          description = "Check every distribution in this environment"},
+  {cmd = "runspec verify --json",         description = "Structured result (exit 1 when anything is modified)"},
+]
+
+[runspec.commands.verify.args]
+name = {type = "str",  description = "Distribution or runnable name (repeatable; default: every installed runnable package)", position = 1, multiple = true, required = false}
+all  = {type = "flag", description = "Check every distribution in this environment", default = false}
+json = {type = "flag", description = "Emit the result as JSON", default = false}
 
 [runspec.commands.mock]
 description = "Record, list, play back or check mock responses — RUNSPEC_MOCK=1 makes a runnable answer from them without running its code"

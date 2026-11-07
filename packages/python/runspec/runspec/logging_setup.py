@@ -162,6 +162,8 @@ def configure_logging(
     run_id: str | None = None,
     run_as: str = "",
     audit_cfg: dict[str, Any] | None = None,
+    integrity: str | None = None,
+    integrity_files: list[str] | None = None,
 ) -> None:
     """
     Configure root logger from normalised [config.logging].
@@ -385,6 +387,10 @@ def configure_logging(
             "db_dir": log_dir,
             "inbox": inbox_run is not None,
             "run_as": run_as,
+            # Installed-code integrity (runspec/integrity.py): "modified" /
+            # "local" / None, and the changed files for "modified".
+            "integrity": integrity or None,
+            "integrity_files": list(integrity_files or []),
         }
         atexit.register(_emit_run_summary)
         if inbox_run is not None:
@@ -525,10 +531,23 @@ def _write_run_start(state: dict[str, Any], *, indexed: bool) -> None:
                 "invocation_args": {k: v["value"] for k, v in state.get("invocation_args", {}).items()},
                 "start_ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 "venv": sys.prefix,
+                **_integrity_fields(state),
             }
             if "exec_uid" in _exec_handoff:
                 extra["exec_uid"] = _exec_handoff["exec_uid"]
         logging.getLogger(_RUN_SUMMARY_LOGGER).info("run started", extra=extra)
+
+
+def _integrity_fields(state: dict[str, Any]) -> dict[str, Any]:
+    """``integrity`` (+ ``integrity_files`` for ``modified``) for a run record —
+    nothing when the run has nothing to report."""
+    token = state.get("integrity")
+    if not token:
+        return {}
+    out: dict[str, Any] = {"integrity": token}
+    if token == "modified" and state.get("integrity_files"):
+        out["integrity_files"] = list(state["integrity_files"])
+    return out
 
 
 def _effective_user_name() -> str:
@@ -1020,6 +1039,7 @@ def _begin_history_row(state: dict[str, Any], log_dir: Path, log_file: str) -> N
                 "os_user": _effective_user_name(),
                 "source": "direct",
                 "exec_uid": _exec_handoff.get("exec_uid"),
+                "integrity": state.get("integrity"),
             },
         )
 
@@ -1067,6 +1087,7 @@ def _emit_run_summary() -> None:
                     "invocation_args": {k: v["value"] for k, v in invocation_args.items()},
                     "arg_sources": {k: v["source"] for k, v in invocation_args.items()},
                     **({"mock": True} if state.get("mock") else {}),
+                    **_integrity_fields(state),
                 },
             )
 

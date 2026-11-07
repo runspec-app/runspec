@@ -110,6 +110,33 @@ class TestDbRowToRecord(unittest.TestCase):
         self.assertEqual(r["logPrunedAt"], "2026-09-20T00:00:00+00:00")
         self.assertEqual(r["logPrunedBy"], "alice")
 
+    def test_maps_integrity(self) -> None:
+        # runs index v7 (runspec 0.81.0): installed-code integrity for the badge.
+        r = bridge_utils.db_row_to_record(
+            _db_row(integrity="modified"), "core", "local"
+        )
+        self.assertEqual(r["integrity"], "modified")
+        self.assertEqual(
+            bridge_utils.db_row_to_record(_db_row(), "core", "local")["integrity"], ""
+        )
+
+    def test_log_parse_carries_integrity_files(self) -> None:
+        summary = {
+            "ts": "2026-09-25T10:00:00+00:00",
+            "logger": "runspec.runsummary",
+            "extra": {
+                "event": "run_summary",
+                "run_id": "run-x",
+                "runnable": "which",
+                "exit_code": 0,
+                "integrity": "modified",
+                "integrity_files": ["runspec-linux: runspec_linux/files.py"],
+            },
+        }
+        r = bridge_utils._parse_log_by_run_id("which", [summary], "local")[0]
+        self.assertEqual(r["integrity"], "modified")
+        self.assertEqual(r["integrityFiles"], ["runspec-linux: runspec_linux/files.py"])
+
     def test_log_prune_absent_maps_empty(self) -> None:
         # A present log (or a pre-0.58 remote DB lacking the columns) → the raw row
         # has no log_pruned_* keys, so the mapper reads "" (not pruned).

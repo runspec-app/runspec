@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from runspec import denylist, errors
+from runspec import denylist, errors, integrity
 from runspec import mock as mock_mod
 from runspec.become import effective_run_as, resolve_account, resolve_run_as, verify_run_as_identity
 from runspec.env import apply_env_file
@@ -35,6 +35,7 @@ def parse(
     _prompt_secrets: bool = True,
     _check_run_as: bool = True,
     _check_denylist: bool = True,
+    _check_integrity: bool = True,
     _implicit_logging: bool = True,
     _mock: bool = True,
 ) -> RunSpec:
@@ -62,6 +63,7 @@ def parse(
             prompt_secrets=_prompt_secrets,
             check_run_as=_check_run_as,
             check_denylist=_check_denylist,
+            check_integrity=_check_integrity,
             implicit_logging=_implicit_logging,
             allow_mock=_mock,
         )
@@ -92,6 +94,7 @@ def _parse_impl(
     prompt_secrets: bool = True,
     check_run_as: bool = True,
     check_denylist: bool = True,
+    check_integrity: bool = True,
     implicit_logging: bool = True,
     allow_mock: bool = True,
 ) -> RunSpec:
@@ -326,6 +329,16 @@ def _parse_impl(
         runspec_env_data=runspec_env_data,
     )
 
+    # 15.5. Installed-code integrity — hash the RECORD files of the distribution
+    # that owns this runspec.toml and of its direct requirements. A changed file
+    # marks the run `modified` (stderr warning + audit event after logging is up,
+    # step 16.5); a folder/file/VCS install is `local`; an editable install or a
+    # spec outside any distribution is not checked. Never refuses, never raises.
+    # Skipped for introspection (load_spec) and the core CLI (checked as a
+    # dependency of every runnable instead). See runspec/integrity.py.
+    integrity_report = integrity.check_runnable(config_path) if check_integrity and not _is_core_cli(config_path) else None
+    integrity_token = integrity_report.token if integrity_report is not None else None
+
     # 16. Configure logging (no-op when log_cfg is None — see step 2.1)
     debug = False
     if takeover:
@@ -355,9 +368,15 @@ def _parse_impl(
             audit_cfg=config.get("audit"),
             run_id=exec_run_id,
             run_as=_run_as_name(effective_run_as(raw["runnables"][name].get("run_as"), config.get("run_as"))),
+            integrity=integrity_token,
+            integrity_files=integrity_report.files() if integrity_token == "modified" and integrity_report else None,
         )
     except ValueError as e:
         raise errors.RunSpecError(str(e)) from e
+
+    # 16.5. Report a modified install now that the run is configured, so the
+    # audit event carries this run's id.
+    integrity.report_run(name, integrity_report)
 
     # 17. Mock handoffs. `runspec mock record` runs this runnable for real with
     # RUNSPEC_MOCK_RECORD=<file>: save the call's key (command-line args only)
@@ -388,7 +407,17 @@ def load_spec(script_name: str | None = None, config_path: Path | None = None) -
     emitting schemas and listing runnables must never depend on who is running
     them or on whether the runnable is disabled for execution.
     """
-    return parse(script_name=script_name, argv=[], config_path=config_path, _enforce_required_command=False, _prompt_secrets=False, _check_run_as=False, _check_denylist=False, _mock=False)
+    return parse(
+        script_name=script_name,
+        argv=[],
+        config_path=config_path,
+        _enforce_required_command=False,
+        _prompt_secrets=False,
+        _check_run_as=False,
+        _check_denylist=False,
+        _check_integrity=False,
+        _mock=False,
+    )
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────

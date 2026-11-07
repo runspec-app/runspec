@@ -140,6 +140,9 @@ You don't need to call `audit()` for these:
 
 - **Every run**: the run record (`run_start` / `run_summary`).
 - **`runspec deny`** changes: `denylist.change`.
+- **Installed code that was changed** after it was installed:
+  `runnable.modified`, once per distinct change (see
+  [Installed-code integrity](integrity.md)).
 - **Log retention and sharing**: `logs.prune`, `logs.compact` and `logs.share`.
   Deleting or rolling up run logs is itself recorded, and the ledger is never
   one of the files pruned.

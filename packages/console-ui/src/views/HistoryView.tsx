@@ -614,6 +614,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       r.operator.toLowerCase().includes(q) ||
       r.runAs.toLowerCase().includes(q) ||
       (r.label ?? '').toLowerCase().includes(q) ||
+      (r.integrity ?? '').toLowerCase().includes(q) ||
       (r.commandPath ?? []).join(' ').toLowerCase().includes(q))
     )
   }, [records, search])
@@ -670,6 +671,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
                 {cmd && <span style={{ color: 'var(--rs-text-muted)' }}> {cmd}</span>}
               </span>
             </Tooltip>
+            <IntegrityTag record={r} />
           </span>
         )
       },
@@ -951,6 +953,38 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
 
 /** The kernel-attested account worth showing next to the (self-reported)
  *  operator — only when it adds something (differs from operator and run-as). */
+/** What a run's installed-code integrity badge says (runspec >= 0.81), or null
+ *  when there is nothing to report. */
+export function integrityBadge(r: Pick<HistoryRecord, 'integrity' | 'integrityFiles' | 'host'>): { text: string; color: string; tip: string } | null {
+  if (r.integrity === 'modified') {
+    const files = r.integrityFiles ?? []
+    const list = files.length ? ` Changed: ${files.slice(0, 5).join(', ')}${files.length > 5 ? ` and ${files.length - 5} more` : ''}.` : ''
+    return {
+      text: 'modified',
+      color: 'error',
+      tip: `This run used installed code that was changed after it was installed.${list} Run "runspec verify" on ${r.host || 'the host'} for details; reinstalling the package restores it.`,
+    }
+  }
+  if (r.integrity === 'local') {
+    return {
+      text: 'local build',
+      color: 'default',
+      tip: 'Installed from a folder, a file or git rather than a package index, so this code may never have been committed or published.',
+    }
+  }
+  return null
+}
+
+function IntegrityTag({ record }: { record: HistoryRecord }) {
+  const badge = integrityBadge(record)
+  if (!badge) return null
+  return (
+    <Tooltip title={badge.tip}>
+      <Tag color={badge.color} style={{ marginInlineEnd: 0, flex: '0 0 auto' }}>{badge.text}</Tag>
+    </Tooltip>
+  )
+}
+
 export function accountNote(r: Pick<HistoryRecord, 'account' | 'operator' | 'runAs'>): string {
   const a = (r.account || '').trim()
   if (!a || a === r.operator || a === r.runAs) return ''
