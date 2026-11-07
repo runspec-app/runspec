@@ -77,6 +77,102 @@ type        = "flag"
 description = "Only list what would be removed; remove nothing (not supported on yum). list-autoremovable does the same without needing approval"
 default     = false
 
+# ── Package repositories ──────────────────────────────────────────────────────
+
+# One call carries the apt and the rpm details; each host uses the pair for its
+# own package manager, so one call (or one group fan-out from runspec-console)
+# covers a mixed Debian/RHEL/SUSE fleet.
+[package-repo]
+serve           = ["local"]
+description     = "Manage package repositories (apt, dnf/yum, zypper) and their signing keys: list, add, remove"
+output          = "json"
+run_as          = "root"
+require-command = true
+examples = [
+  {cmd = "package-repo list", description = "List the repositories configured on this host"},
+  {cmd = "package-repo add grafana --apt-url https://apt.grafana.com --apt-key https://apt.grafana.com/gpg-full.key --rpm-url https://rpm.grafana.com --rpm-key https://rpm.grafana.com/gpg.key", description = "Add Grafana's repository (for Alloy) on an apt, dnf, yum or zypper host"},
+  {cmd = "package-repo add grafana <same args> --key-fingerprint <fingerprint>,<fingerprint>", description = "Only trust the key file if every key in it is one you listed (a first add prints them)"},
+  {cmd = "package-repo remove grafana", description = "Remove the repository and its key file"},
+]
+
+[package-repo.commands.list]
+description = "List the package repositories configured on this host (file, URLs, enabled, signing key, and whether package-repo added it)"
+autonomy    = "autonomous"
+[package-repo.commands.list.args]
+filter = {type = "str", required = false, description = "Only repositories whose name, id or URL contains this text"}
+
+[package-repo.commands.add]
+description = "Add or update a package repository: download its signing key, write the repo file (key trusted for this repo only), then refresh just that repo — undone if the refresh fails. Same values again changes nothing"
+autonomy    = "confirm"
+[package-repo.commands.add.args]
+name            = {type = "str", position = 1, pattern = "[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", description = "Repository name, used for the file names (e.g. grafana → /etc/apt/sources.list.d/grafana.list or /etc/yum.repos.d/grafana.repo)"}
+apt-url         = {type = "str", required = false, description = "apt hosts: the repository URL (e.g. https://apt.grafana.com)"}
+apt-key         = {type = "str", required = false, description = "apt hosts: the signing key — an https:// URL or a file path on the host (e.g. https://apt.grafana.com/gpg-full.key)"}
+apt-suite       = {type = "str", default = "stable", description = "apt hosts: the suite / distribution (e.g. stable, bookworm, noble). A flat repo ends in '/'"}
+apt-components  = {type = "str", default = "main", description = "apt hosts: space-separated components (e.g. main, or 'main contrib')"}
+rpm-url         = {type = "str", required = false, description = "dnf, yum and zypper hosts: the repository baseurl (e.g. https://rpm.grafana.com; $releasever and $basearch are allowed)"}
+rpm-key         = {type = "str", required = false, description = "dnf, yum and zypper hosts: the signing key — an https:// URL or a file path on the host (e.g. https://rpm.grafana.com/gpg.key)"}
+key-fingerprint = {type = "str", multiple = true, delimiter = ",", required = false, description = "Refuse the key file unless every key in it is listed here (full fingerprints; repeat the flag or separate with commas). The output of a first add shows them"}
+unsigned-metadata = {type = "flag", default = false, description = "dnf/yum/zypper: the repository's metadata isn't signed (repo_gpgcheck=0). Packages are still checked (gpgcheck=1)"}
+replace         = {type = "flag", default = false, description = "Overwrite a same-named repository file that package-repo didn't add (e.g. one set up by hand)"}
+no-refresh      = {type = "flag", default = false, description = "Write the files but don't refresh the repository (nothing is checked or undone)"}
+proxy           = {type = "str", required = false, description = "Proxy for downloading the key (http://host:port), or 'direct' for none. Default: the proxy environment variables. The package manager uses its own proxy settings"}
+ca-bundle       = {type = "str", required = false, description = "PEM file of CA certificates for downloading the key from a server with a private CA"}
+
+[package-repo.commands.remove]
+description = "Remove a package repository by name (as shown by list) and the key file it uses, if no other repository uses it. Keys already in the rpm database stay. Removing one that isn't there is not an error"
+autonomy    = "confirm"
+[package-repo.commands.remove.args]
+name = {type = "str", position = 1, description = "Repository name (the file name without .list/.sources/.repo, as shown by list)"}
+
+# ── Services ──────────────────────────────────────────────────────────────────
+
+# runspec-linux's restart-service never runs as root; this is the root version,
+# for system services (e.g. starting and enabling alloy after installing it).
+[system-service]
+serve           = ["local"]
+description     = "Start, stop, restart, reload, enable or disable a systemd system service (needs root)"
+output          = "json"
+run_as          = "root"
+autonomy        = "confirm"
+require-command = true
+examples = [
+  {cmd = "system-service enable alloy --now", description = "Start alloy now and at every boot"},
+  {cmd = "system-service restart alloy", description = "Restart alloy (e.g. after changing its config)"},
+]
+
+[system-service.commands.start]
+description = "Start a service"
+[system-service.commands.start.args]
+service = {type = "str", position = 1, description = "Service name (e.g. alloy or alloy.service)"}
+
+[system-service.commands.stop]
+description = "Stop a service"
+[system-service.commands.stop.args]
+service = {type = "str", position = 1, description = "Service name (e.g. alloy or alloy.service)"}
+
+[system-service.commands.restart]
+description = "Restart a service"
+[system-service.commands.restart.args]
+service = {type = "str", position = 1, description = "Service name (e.g. alloy or alloy.service)"}
+
+[system-service.commands.reload]
+description = "Ask a service to reload its configuration (not every service supports it)"
+[system-service.commands.reload.args]
+service = {type = "str", position = 1, description = "Service name (e.g. alloy or alloy.service)"}
+
+[system-service.commands.enable]
+description = "Start a service at boot; --now also starts it now"
+[system-service.commands.enable.args]
+service = {type = "str", position = 1, description = "Service name (e.g. alloy or alloy.service)"}
+now     = {type = "flag", default = false, description = "Also start it now"}
+
+[system-service.commands.disable]
+description = "Stop starting a service at boot; --now also stops it now"
+[system-service.commands.disable.args]
+service = {type = "str", position = 1, description = "Service name (e.g. alloy or alloy.service)"}
+now     = {type = "flag", default = false, description = "Also stop it now"}
+
 # ── Kernel ────────────────────────────────────────────────────────────────────
 
 [set-sysctl]

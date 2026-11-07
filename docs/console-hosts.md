@@ -340,8 +340,8 @@ venv never escalates to root. Forms shows the account next to the runnable
 ("as svc-ops"). A package that must run as the operator sets
 `[config] run_as = ""`.
 
-Tools that need root (`runspec-linux-root`: package upgrades, `reboot-host`,
-`set-sysctl`) declare `run_as = "root"` and belong in a **root-owned** venv, so
+Tools that need root (`runspec-linux-root`: package upgrades, package
+repositories, system services, `reboot-host`, `set-sysctl`) declare `run_as = "root"` and belong in a **root-owned** venv, so
 only root can change code that root runs. The console runs them with
 `sudo -n -u root`, which needs a passwordless rule for the admin; runspec-linux
 itself never runs anything as root.

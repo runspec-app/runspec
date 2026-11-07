@@ -1,10 +1,11 @@
-"""systemd service helpers: check status, list units, restart."""
+"""systemd service helpers: check status, list units, restart, and root service control."""
 
+import re
 import shutil
 import subprocess
 
 from runspec_linux_core.become import build_become, check_become_error
-from runspec_linux_core.errors import ToolNotFoundError
+from runspec_linux_core.errors import CommandError, ToolNotFoundError
 
 
 def _systemctl_available() -> bool:
@@ -97,3 +98,64 @@ def restart_service(service: str, *, run_as: str | None = None, become_method: s
     if run_as:
         out["run_as"] = run_as
     return out
+
+
+# Actions control_service accepts. ``enable``/``disable`` take ``now`` to also
+# start/stop the unit (``systemctl enable --now``).
+SERVICE_ACTIONS = ("start", "stop", "restart", "reload", "enable", "disable")
+
+# A unit name: what systemd allows, and never a leading '-' (an option).
+_UNIT = re.compile(r"^[A-Za-z0-9:_.\\@-]+$")
+
+
+def _validate_unit(service: str) -> str:
+    if not service or service.startswith("-") or not _UNIT.match(service):
+        raise ValueError(f"invalid service name: {service!r}")
+    return service
+
+
+def control_service(service: str, action: str, *, now: bool = False) -> dict:
+    """Start, stop, restart, reload, enable or disable a systemd service. Needs root.
+
+    Runs ``systemctl <action> [--now] <service>`` as the current process (the
+    caller is already root — no escalation here, unlike ``restart_service``),
+    then reports the unit's state. ``now`` only applies to enable/disable.
+
+    Returns ``{service, action, now, active_state, sub_state, enabled}`` where
+    ``enabled`` is ``systemctl is-enabled`` (``enabled``, ``disabled``,
+    ``static``, ...). Raises ValueError on a bad name or action,
+    ToolNotFoundError without systemctl, and CommandError when systemctl fails
+    (with the last journal lines for the unit when there are any).
+    """
+    _validate_unit(service)
+    if action not in SERVICE_ACTIONS:
+        raise ValueError(f"unknown action {action!r}; use one of {', '.join(SERVICE_ACTIONS)}")
+    if not _systemctl_available():
+        raise ToolNotFoundError("systemctl not available — not a systemd system")
+
+    cmd = ["systemctl", action]
+    if now and action in ("enable", "disable"):
+        cmd.append("--now")
+    cmd += ["--", service]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        message = result.stderr.strip() or f"systemctl {action} {service} failed"
+        journal = subprocess.run(
+            ["journalctl", "-u", service, "-n", "15", "--no-pager", "-q"],
+            capture_output=True,
+            text=True,
+        )
+        if journal.returncode == 0 and journal.stdout.strip():
+            message += "\nLast log lines:\n" + journal.stdout.strip()
+        raise CommandError(message)
+
+    status = check_service(service)
+    enabled = subprocess.run(["systemctl", "is-enabled", "--", service], capture_output=True, text=True)
+    return {
+        "service": service,
+        "action": action,
+        "now": bool(now and action in ("enable", "disable")),
+        "active_state": status["active_state"],
+        "sub_state": status["sub_state"],
+        "enabled": enabled.stdout.strip() or "unknown",
+    }

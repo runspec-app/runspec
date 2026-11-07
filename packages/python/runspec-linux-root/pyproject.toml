@@ -4,14 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-linux-root"
-version = "0.1.1"
+version = "0.2.0"
 requires-python = ">=3.10"
-description = "Linux admin runnables that need root (packages, reboot, sysctl) for runspec"
+description = "Linux admin runnables that need root (packages, package repositories, services, reboot, sysctl) for runspec"
 readme = "README.md"
 keywords = ["runspec", "runnable", "linux", "sysadmin", "root", "packages"]
 dependencies = [
     "runspec>=0.68.0",
-    "runspec-linux-core>=0.13.0",
+    "runspec-linux-core>=0.15.0",
 ]
 
 [project.urls]
@@ -26,6 +26,8 @@ upgrade-packages    = "runspec_linux_root.packages:main_upgrade_packages"
 install-package     = "runspec_linux_root.packages:main_install_package"
 remove-package      = "runspec_linux_root.packages:main_remove_package"
 autoremove-packages = "runspec_linux_root.packages:main_autoremove_packages"
+package-repo        = "runspec_linux_root.repos:main"
+system-service      = "runspec_linux_root.services:main"
 set-sysctl          = "runspec_linux_root.perf:main_set_sysctl"
 reboot-host         = "runspec_linux_root.power:main_reboot_host"
 enable-passwordless-sudo = "runspec_linux_root.sudoers:main_enable_passwordless_sudo"

@@ -1,5 +1,26 @@
 # runspec-linux-core Changelog
 
+## [0.15.0] — 2026-11-07
+
+### Added
+
+- **`repos` module: `list_repos`, `add_repo`, `remove_repo`** — package
+  repositories with their signing keys on apt, dnf, yum and zypper (backs
+  runspec-linux-root's `package-repo`). `add_repo` takes the apt and the rpm
+  details in one call and uses the pair for the host's package manager; writes
+  the key and repo file atomically (with a marker line), refreshes only that
+  repository, and puts the old files back (and removes newly imported rpm
+  keys) when the refresh fails. dnf/yum's cached per-repo keyring is cleared
+  when the key changes, so the refresh really checks the new key. Tried on
+  Ubuntu 24.04, Rocky Linux 9 and openSUSE Leap 15.6.
+- **`pgpkey` module** — reads OpenPGP public key files without gpg (often
+  missing on minimal Debian hosts): fingerprints (v4/v5/v6), creation dates,
+  armor and de-armor, one key per block for rpm.
+- **`control_service(service, action, now=False)`** — `systemctl
+  start|stop|restart|reload|enable|disable` for a caller that already runs as
+  root (backs runspec-linux-root's `system-service`); a failure carries the
+  unit's last journal lines.
+
 ## [0.14.1] — 2026-10-28
 
 ### Fixed
