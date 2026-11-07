@@ -23,6 +23,23 @@ from pathlib import Path, PureWindowsPath
 from typing import Any
 
 FILE_NAME = ".runspec_env"
+#: runspec-scheduler's schedule-only env file: only scheduled fires load it
+#: (``runspec exec --env-file``), on top of ``.runspec_env``.
+SCHEDULES_FILE_NAME = "runspec_schedules.env"
+#: The console's names for the files it edits (``""`` = ``.runspec_env``).
+FILES = {"": FILE_NAME, "runspec_env": FILE_NAME, "schedules": SCHEDULES_FILE_NAME}
+
+
+def file_kind(raw: Any) -> str:
+    """``"schedules"`` or ``""`` (``.runspec_env``); anything else is refused."""
+    kind = str(raw or "")
+    if kind == "runspec_env":
+        kind = ""
+    if kind not in FILES:
+        raise EnvFileError(f"unknown env file {kind!r}")
+    return kind
+
+
 ABSENT = "absent"
 
 _KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -275,6 +292,82 @@ def readers(records: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
                 row = {**base, "via": via}
                 if row not in rows:
                     rows.append(row)
+    return out
+
+
+_USER_RE = re.compile(r"(^|_)(USER|USERNAME|LOGIN)$", re.IGNORECASE)
+_SECRET_ARG_RE = re.compile(
+    r"(password|passwd|passphrase|secret|token|(^|[-_])pat($|[-_])|api[-_]?key)",
+    re.IGNORECASE,
+)
+
+
+def credential_needs(
+    records: list[dict[str, Any]],
+    runnable: str,
+    command: list[str] | None,
+    values: dict[str, str],
+) -> list[dict[str, Any]]:
+    """The credential-looking args ``runnable`` (run as ``command``) reads from
+    the environment, and whether ``values`` (a parsed ``.runspec_env``) sets
+    them. One row per arg: ``{arg, command, password, description, keys,
+    set_by, blank}`` — ``keys`` are the variables it reads (automatic first),
+    ``set_by`` the first one ``values`` gives a non-empty value ("" = none),
+    ``blank`` the ones present but empty. Values are never returned.
+
+    An arg counts when it is ``password``-typed or one of its variables reads
+    like a secret, plus user/login args beside such an arg (the other half of a
+    username + password pair). Args of the command path's levels count (the
+    runnable's own, then each subcommand's)."""
+    scopes = {""}
+    path = ""
+    for part in command or []:
+        path = f"{path} {part}".strip()
+        scopes.add(path)
+    rows: dict[tuple[str, str], dict[str, Any]] = {}
+    for var, rs in readers([r for r in records if r.get("name") == runnable]).items():
+        for r in rs:
+            if r["command"] not in scopes:
+                continue
+            row = rows.setdefault(
+                (r["command"], r["arg"]),
+                {
+                    "arg": r["arg"],
+                    "command": r["command"],
+                    "password": r["password"],
+                    "description": r["description"],
+                    "keys": [],
+                },
+            )
+            if var not in row["keys"]:
+                if r["via"] == "auto":
+                    row["keys"].insert(0, var)
+                else:
+                    row["keys"].append(var)
+
+    def secret(row: dict[str, Any]) -> bool:
+        # The automatic name only repeats the arg's, and a bare ``key`` /
+        # ``session`` arg is rarely a secret, so it takes a stricter test.
+        aliases = [k for k in row["keys"] if not k.startswith("RUNSPEC_")]
+        return (
+            row["password"]
+            or any(is_secret_name(k) for k in aliases)
+            or bool(_SECRET_ARG_RE.search(row["arg"]))
+        )
+
+    has_secret = any(secret(r) for r in rows.values())
+    out = []
+    for row in rows.values():
+        is_user = any(
+            _USER_RE.search(k) for k in row["keys"] if not k.startswith("RUNSPEC_")
+        )
+        if not (secret(row) or (has_secret and is_user)):
+            continue
+        row["secret"] = secret(row)
+        row["set_by"] = next((k for k in row["keys"] if values.get(k)), "")
+        row["blank"] = [k for k in row["keys"] if k in values and not values[k]]
+        out.append(row)
+    out.sort(key=lambda r: (len(r["command"].split()), not r["secret"], r["arg"]))
     return out
 
 

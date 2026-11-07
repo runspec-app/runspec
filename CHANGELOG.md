@@ -70,6 +70,22 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   `package.json` `files` would leave the list out. runspec-node now ships its
   own list.
 
+## [0.82.0] — 2026-11-07
+
+### Added
+
+- **`runspec exec --env-file PATH`**: add a dotenv file's variables to the run's
+  environment, under variables already set (the caller's own win) and over the
+  venv's `.runspec_env`, which the runnable still loads for everything else.
+  It is how `runspec-scheduler` 0.7.0 gives scheduled fires credentials that
+  interactive runs in the same venv don't get (`{venv}/runspec_schedules.env`).
+  A missing file adds nothing. One that exists but isn't a regular file, is
+  writable by group or others, or belongs to another account (not this one or
+  root) is refused: the run is recorded as failed (exit 78, reason
+  `env_file`) and the runnable isn't started. Values ride the child's
+  environment, or the env frame on stdin when the runnable escalates; never
+  argv. `runexec.load_env_file` / `exec_runnable(env_file=)`.
+
 ## [0.81.0] — 2026-11-07
 
 ### Added

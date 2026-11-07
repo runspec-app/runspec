@@ -95,6 +95,15 @@ describe('EnvFilesModal', () => {
     })
   })
 
+  it('opens on a venv\'s schedule-only file and switches between the two files, keeping the venv', async () => {
+    render(<EnvFilesModal open onClose={() => {}} hosts={HOSTS} initial={{ host: 'web-01', runspec_path: '/opt/venvs/ops/bin/runspec', file: 'schedules' }} />)
+    await waitFor(() => expect(api.env_file_read).toHaveBeenCalledWith({ host: 'web-01', runspec_path: '/opt/venvs/ops/bin/runspec', file: 'schedules' }))
+    expect(screen.getByText(/is loaded only by runspec-scheduler's fires/)).toBeTruthy()
+    const user = userEvent.setup()
+    await act(async () => { await user.click(screen.getByText('.runspec_env', { selector: '.ant-segmented-item-label *, .ant-segmented-item-label' })) })
+    await waitFor(() => expect(api.env_file_read).toHaveBeenLastCalledWith({ host: 'web-01', runspec_path: '/opt/venvs/ops/bin/runspec' }))
+  })
+
   it('reloads after a conflict', async () => {
     api.env_file_save.mockResolvedValue({ ...VIEW, ok: false, conflict: true, error: 'changed since you opened it' })
     render(<EnvFilesModal open onClose={() => {}} hosts={HOSTS} />)

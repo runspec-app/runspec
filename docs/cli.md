@@ -856,6 +856,7 @@ runspec exec cron -- list                            # subcommands pass through 
 runspec exec --label nightly --trigger schedule backup
 runspec exec --lock ~/.cache/nightly.lock backup     # recorded 'skipped' if the lock is held
 runspec exec --skip-if-running --timeout 600 report  # skip if already running; kill after 10 min
+runspec exec --env-file /opt/venvs/ops/runspec_schedules.env backup  # add a schedule-only env file
 ```
 
 What it adds over running the binary directly:
@@ -873,6 +874,15 @@ What it adds over running the binary directly:
 - **Recorded skips.** With `--lock PATH` (POSIX, race-free) or
   `--skip-if-running` (runs-index check), a run that can't start because the
   previous one is still going is recorded with status `skipped` and exits 0.
+- **A schedule-only env file.** `--env-file PATH` adds a dotenv file's
+  variables to the run's environment: under anything already set (the caller's
+  own environment wins) and over the venv's `.runspec_env`, which the runnable
+  still loads for the rest. `runspec-scheduler` passes
+  `{venv}/runspec_schedules.env` on every fire, so credentials a schedule needs
+  reach its fires and not the interactive runs in the venv. A missing file
+  adds nothing. A file that isn't a regular file, is writable by group or
+  others, or is owned by another account (not this one or root) is refused:
+  the run is recorded as failed with exit 78 and the runnable isn't started.
 - **Labels.** `--label` tags the run; find them with
   `runspec history list --label <label>`. Without `--label` the run takes the
   caller's `RUNSPEC_LABEL`, else `cli`, and the runnable gets the same label in

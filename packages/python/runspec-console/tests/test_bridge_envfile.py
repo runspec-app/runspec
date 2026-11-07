@@ -352,3 +352,67 @@ def test_escalation_refused_explains(fleet):
     view = stub.env_file_read({"host": "web-01", "runspec_path": a})
     assert not view["ok"]
     assert "passwordless sudo" in view["error"] and "svc" in view["error"]
+
+
+def test_host_schedule_env_check(fleet):
+    stub, tmp, (_l, a, _b) = fleet
+    q = {"host": "web-01", "venv": "ops", "runnable": "jira"}
+    # No file yet: the credential is reported as not set.
+    r = stub.host_schedule_env_check(q)
+    assert r["ok"] and not r["exists"] and r["runspec_path"] == a
+    assert r["path"].endswith("runspec_schedules.env")
+    (need,) = r["needs"]
+    assert (
+        need["arg"] == "jira-pat" and need["set_by"] == "" and need["shared_by"] == ""
+    )
+    assert need["keys"] == ["RUNSPEC_JIRA_ARG_JIRA_PAT"]
+    # Only in .runspec_env: flagged as shared with every run in the venv.
+    (tmp / "web" / "ops" / ".runspec_env").write_text(
+        "RUNSPEC_JIRA_ARG_JIRA_PAT=hunter2\n"
+    )
+    r = stub.host_schedule_env_check(q)
+    assert r["needs"][0]["set_by"] == ""
+    assert r["needs"][0]["shared_by"] == "RUNSPEC_JIRA_ARG_JIRA_PAT"
+    # In the schedule-only file: covered.
+    (tmp / "web" / "ops" / "runspec_schedules.env").write_text(
+        "RUNSPEC_JIRA_ARG_JIRA_PAT=svc\n"
+    )
+    r = stub.host_schedule_env_check(q)
+    assert r["exists"] and r["needs"][0]["set_by"] == "RUNSPEC_JIRA_ARG_JIRA_PAT"
+    assert r["needs"][0]["shared_by"] == ""
+    assert "hunter2" not in json.dumps(r) and "svc" not in json.dumps(r["needs"])
+    bad = stub.host_schedule_env_check({**q, "venv": "nope"})
+    assert not bad["ok"] and "no venv nope" in bad["error"]
+
+
+def test_schedules_file_read_and_save(fleet):
+    stub, tmp, (_l, a, _b) = fleet
+    ref = {"host": "web-01", "runspec_path": a, "file": "schedules"}
+    view = stub.env_file_read(ref)
+    assert view["ok"] and not view["exists"] and view["file"] == "schedules"
+    assert view["path"] == str(tmp / "web" / "ops" / "runspec_schedules.env")
+    saved = stub.env_file_save(
+        {**ref, "sha": view["sha"], "set": {"RUNSPEC_JIRA_ARG_JIRA_PAT": "svc-secret"}}
+    )
+    assert saved["saved"]
+    f = tmp / "web" / "ops" / "runspec_schedules.env"
+    assert f.read_text() == "RUNSPEC_JIRA_ARG_JIRA_PAT=svc-secret\n"
+    assert oct(f.stat().st_mode & 0o777) == "0o600"
+    assert not (
+        tmp / "web" / "ops" / ".runspec_env"
+    ).exists()  # the shared file is untouched
+    # The grid reads / saves the same file when asked to.
+    many = stub.env_file_read_many(
+        {"file": "schedules", "targets": [{"host": "web-01", "runspec_path": a}]}
+    )
+    assert many["views"][0]["file"] == "schedules" and many["views"][0]["exists"]
+    with pytest.raises(ValueError):
+        stub.env_file_read({**ref, "file": "../../etc/passwd"})
+
+
+def test_targets_name_the_schedules_file(fleet):
+    stub, tmp, _ = fleet
+    rows = stub.env_file_targets(["web-01"])
+    assert rows[1]["schedules_path"] == str(
+        tmp / "web" / "ops" / "runspec_schedules.env"
+    )

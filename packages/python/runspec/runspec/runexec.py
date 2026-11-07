@@ -35,12 +35,51 @@ DEFAULT_CAPTURE_BYTES = 64 * 1024
 EXIT_TIMEOUT = 124
 EXIT_NOT_EXECUTABLE = 126
 EXIT_NOT_FOUND = 127
+EXIT_CONFIG = 78  # EX_CONFIG: an --env-file that exists but can't be trusted or read
 _LOGGER = "runspec.exec"
 
 
 class ExecError(Exception):
     """A usage problem the CLI reports without recording a run (e.g. ``--lock`` on
     Windows)."""
+
+
+def load_env_file(path: str) -> dict[str, str] | None:
+    """The variables of an ``--env-file`` dotenv file (same syntax as
+    ``.runspec_env``). ``None`` when the file doesn't exist — a scheduler always
+    names its file, and an absent one just means nothing to add. Raises
+    :class:`EnvFileRefused` when the file exists but isn't safe to take secrets
+    from: not a regular file, writable by group or others, or (POSIX) owned by
+    someone other than this account or root — any of those lets another
+    account put values into this run."""
+    from runspec.env import _parse_dotenv
+
+    fp = Path(os.path.expanduser(path))
+    try:
+        st = fp.stat()
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise EnvFileRefused(f"can't read env file {fp}: {exc.strerror or exc}") from exc
+    import stat as _stat
+
+    if not _stat.S_ISREG(st.st_mode):
+        raise EnvFileRefused(f"env file {fp} is not a regular file")
+    if os.name == "posix":
+        if st.st_mode & 0o022:
+            raise EnvFileRefused(f"env file {fp} is writable by other accounts (mode {_stat.S_IMODE(st.st_mode):04o}); chmod 600 it")
+        if st.st_uid not in (os.geteuid(), 0):
+            raise EnvFileRefused(f"env file {fp} is owned by uid {st.st_uid}, not this account ({_effective_user() or os.geteuid()}) or root")
+    try:
+        with fp.open(encoding="utf-8"):
+            pass
+    except OSError as exc:
+        raise EnvFileRefused(f"can't read env file {fp}: {exc.strerror or exc}") from exc
+    return _parse_dotenv(fp)
+
+
+class EnvFileRefused(Exception):
+    """An ``--env-file`` that exists but can't be read or trusted."""
 
 
 # ── output capture ──────────────────────────────────────────────────────────────
@@ -180,6 +219,7 @@ def exec_runnable(
     capture_bytes: int = DEFAULT_CAPTURE_BYTES,
     timeout: float | None = None,
     env: dict[str, str] | None = None,
+    env_file: str | None = None,
     stdout: Any = None,
     stderr: Any = None,
     stdin: Any = None,
@@ -189,6 +229,13 @@ def exec_runnable(
     exit code to exit with (the child's; 124 on timeout; 127 when the runnable
     isn't installed; 0 when skipped). ``env`` is extra environment for the child
     (carried through ``become`` when the runnable escalates).
+
+    ``env_file`` names a dotenv file whose variables are added to the child's
+    environment under the caller's own (a variable already set wins) and over
+    the venv's ``.runspec_env`` (which the child still loads for the rest). A
+    scheduler uses it for credentials only its fires should get. A missing file
+    adds nothing; one that exists but isn't safe (:func:`load_env_file`) is a
+    recorded failure, exit 78, and the runnable isn't started.
 
     For an in-process caller such as a terminal UI: ``stdin`` is the child's
     standard input when there is no env frame to feed it (``None`` inherits the
@@ -314,11 +361,24 @@ def exec_runnable(
             what = f"label {label}" if label else f"'{name}'"
             return _finish_without_child("skipped", 0, f"skipped '{name}' — a run with {what} is already running", "already_running")
 
+    file_env: dict[str, str] = {}
+    if env_file:
+        try:
+            file_env = load_env_file(env_file) or {}
+        except EnvFileRefused as exc:
+            if lock_fh:
+                lock_fh.close()
+            return _finish_without_child("failed", EXIT_CONFIG, f"'{name}' not started — {exc}", "env_file")
+
     try:
         if write_row:
             runsdb.begin_run(log_dir, {**base_row, "status": "running"})
 
-        child_env = {**(env or {}), "RUNSPEC_RUN_ID": run_id}
+        # The env file sits under the caller's environment: a variable already
+        # set (the operator's own, or `env`) wins over it.
+        child_env = {k: v for k, v in file_env.items() if k not in os.environ}
+        child_env.update(env or {})
+        child_env["RUNSPEC_RUN_ID"] = run_id
         if hasattr(os, "geteuid"):
             # Binds a child that runs as the owner (a direct row) to this wrapper's
             # inbox file, and vice versa (the binding table, runsdb.inbox_binding).

@@ -346,3 +346,43 @@ class TestInProcessCaller:
         assert rc == 0 and "ran" in out
         [row] = _rows(logs_dir)
         assert row["status"] == "completed"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX modes")
+class TestEnvFile:
+    BODY = "import os\nprint(os.environ.get('SVC_TOKEN', '-'), os.environ.get('SHARED', '-'))\n"
+
+    def test_adds_values_under_the_callers_environment(self, logs_dir, tmp_path, monkeypatch):
+        _install(monkeypatch, tmp_path, self.BODY)
+        f = tmp_path / "sched.env"
+        f.write_text("SVC_TOKEN=s3cret\nSHARED=from-file\n")
+        f.chmod(0o600)
+        monkeypatch.setenv("SHARED", "from-caller")
+        rc, out, _ = _run(env_file=str(f))
+        assert rc == 0 and out.strip() == "s3cret from-caller"
+
+    def test_missing_file_adds_nothing(self, logs_dir, tmp_path, monkeypatch):
+        _install(monkeypatch, tmp_path, self.BODY)
+        monkeypatch.delenv("SVC_TOKEN", raising=False)
+        monkeypatch.delenv("SHARED", raising=False)
+        rc, out, _ = _run(env_file=str(tmp_path / "absent.env"))
+        assert rc == 0 and out.strip() == "- -"
+
+    def test_writable_by_others_is_refused_and_recorded(self, logs_dir, tmp_path, monkeypatch):
+        _install(monkeypatch, tmp_path, self.BODY)
+        f = tmp_path / "sched.env"
+        f.write_text("SVC_TOKEN=s3cret\n")
+        f.chmod(0o666)
+        rc, out, err = _run(env_file=str(f), label="sched:x")
+        assert rc == runexec.EXIT_CONFIG and out == ""
+        assert "writable by other accounts" in err
+        [row] = _rows(logs_dir)
+        assert row["status"] == "failed" and row["exit_code"] == 78
+        [result] = [r for r in _records(logs_dir, row) if r["extra"].get("event") == "exec_result"]
+        assert result["extra"]["reason"] == "env_file"
+        assert "s3cret" not in json.dumps(_records(logs_dir, row))
+
+    def test_not_a_file_is_refused(self, logs_dir, tmp_path, monkeypatch):
+        _install(monkeypatch, tmp_path, self.BODY)
+        rc, _, err = _run(env_file=str(tmp_path))
+        assert rc == 78 and "not a regular file" in err
