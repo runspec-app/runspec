@@ -82,6 +82,7 @@ def main() -> None:
         "deny": cmd_deny,
         "audit": cmd_audit,
         "mock": cmd_mock,
+        "verify": cmd_verify,
     }
 
     if command not in commands:
@@ -818,6 +819,83 @@ def _kv_pairs(values: list[str] | None, flag: str) -> dict[str, str]:
             sys.exit(1)
         out[key.strip()] = val
     return out
+
+
+def cmd_verify(args: list[str]) -> None:
+    """Check installed distributions against their RECORD hashes (runspec/integrity.py).
+
+    Read-only: prints each distribution's source and status and the changed or
+    missing files, records nothing, exits 1 when anything is modified."""
+    from runspec.parser import parse as _parse
+
+    parsed = _parse(script_name="runspec", argv=["verify"] + args, config_path=_CLI_CONFIG)
+
+    import importlib.metadata as meta
+
+    from runspec import integrity
+
+    dists: dict[str, Any] = {}
+    unknown: list[str] = []
+
+    def _add(d: Any) -> None:
+        key = integrity._norm(str(d.name or ""))
+        if key and key not in dists:
+            dists[key] = d
+
+    if parsed.all.value:
+        for d in meta.distributions():
+            _add(d)
+    elif parsed.name.value:
+        runnables: dict[str, str] | None = None
+        for name in parsed.name.value:
+            try:
+                d = meta.distribution(name)
+            except meta.PackageNotFoundError:
+                if runnables is None:
+                    runnables = {item["runnable"]: item["source"] for item in _discover_installed()}
+                owner = integrity.owning_dist(Path(runnables[name])) if name in runnables else None
+                if owner is None:
+                    unknown.append(name)
+                    continue
+                d = owner
+            _add(d)
+            for dep in integrity.direct_requirements(d):
+                _add(dep)
+    else:
+        for d in meta.distributions():
+            if _requires_runspec(d):
+                _add(d)
+                for dep in integrity.direct_requirements(d):
+                    _add(dep)
+
+    results = [integrity.check_dist(d) for d in sorted(dists.values(), key=lambda d: integrity._norm(str(d.name or "")))]
+    modified = [r for r in results if r.status == "modified"]
+
+    if parsed.json.value:
+        print(json.dumps({"ok": not modified and not unknown, "modified": len(modified), "unknown": unknown, "dists": [r.to_dict() for r in results]}, indent=2))
+    else:
+        if not results and not unknown:
+            print("No installed runnable packages found.")
+        if results:
+            w = max(len(r.name) for r in results)
+            vw = max(len(r.version) for r in results)
+            for r in results:
+                note = f"{r.checked} files" if r.status in ("ok", "modified") else ""
+                if r.status == "modified":
+                    note = f"{len(r.changed)} of {r.checked + len(r.missing)} files changed"
+                print(f"  {r.name:<{w}}  {r.version:<{vw}}  {r.source:<8}  {r.status:<12}  {note}".rstrip())
+                for p in r.modified:
+                    print(f"      changed  {p}")
+                for p in r.missing:
+                    print(f"      missing  {p}")
+        for name in unknown:
+            print(f"✗  {name}: no installed distribution or runnable by that name")
+        print()
+        if modified:
+            print(f"✗  {len(modified)} distribution(s) modified since install. Reinstall to restore: pip install --force-reinstall --no-deps <name>==<version>")
+        elif results:
+            print("✓  No installed files differ from their RECORD hashes.")
+    sys.exit(1 if modified or unknown else 0)
 
 
 def cmd_mock(args: list[str]) -> None:

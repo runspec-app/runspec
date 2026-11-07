@@ -608,6 +608,28 @@ the file format and matching rules.
 
 ---
 
+## `runspec verify`
+
+Check installed packages against the hashes pip recorded when it installed them
+(`RECORD`). Every run already does this for its own package and what it depends
+on directly, and records a changed file as `modified`; `verify` is the on-demand
+version.
+
+```bash
+runspec verify                  # every runnable package in this venv + its direct dependencies
+runspec verify runspec-linux    # one package, or the package that ships a runnable
+runspec verify --all            # every package in the venv
+runspec verify --json           # structured result
+```
+
+Prints each package's version, where it came from (`index`, `folder`,
+`archive`, `vcs`, `editable`) and its status (`ok`, `modified`, `skipped` for an
+editable install, `unverifiable` when pip recorded no hashes), with any changed
+or missing files. Exits `1` when anything is modified. Records nothing. See
+[Installed-code integrity](integrity.md).
+
+---
+
 ## `runspec rebrand`
 
 Republish a runnable package wheel under **your own distribution name** — for a

@@ -723,7 +723,7 @@ def _rs_row(rid, recs):
     row["runnable"] = start.get("runnable") or src.get("runnable") or ""
     cmd = start.get("command_path") or src.get("command_path") or []
     row["command"] = " ".join(cmd) if isinstance(cmd, list) else str(cmd or "")
-    for k in ("user", "user_target", "agent", "trigger", "skill", "autonomy"):
+    for k in ("user", "user_target", "agent", "trigger", "skill", "autonomy", "integrity"):
         v = start.get(k)
         row[k] = v if not _rs_empty(v) else src.get(k)
     for k in ("pid", "host", "proc_start", "run_as", "label", "exec_uid", "venv"):
@@ -1519,6 +1519,10 @@ def db_row_to_record(row: dict[str, Any], group: str, host: str) -> dict[str, An
         "account": row.get("os_user") or "",
         "pending": bool(row.get("pending")),
         "logFile": str(row.get("log_file") or ""),
+        # Installed-code integrity (runspec >= 0.81, runs index v7): "modified" when
+        # the runnable's installed files differ from their RECORD hashes, "local"
+        # when it was installed from a folder/file/git rather than an index.
+        "integrity": str(row.get("integrity") or ""),
         # The index only holds real runnable runs (core's configure_logging/atexit
         # hooks; chat turns write run_summary via the console, not the core DB path).
         "kind": "runnable",
@@ -1765,6 +1769,10 @@ def _parse_log_by_run_id(
             "runbook": extra.get("runbook", "") or "",
             # The `runspec exec --label` tag ("tui", "sched:<id>", …) — History "Label" column.
             "label": g["label"],
+            # Installed-code integrity (runspec >= 0.81): "modified" / "local" / "",
+            # plus up to 20 "<dist>: <path>" changed files for "modified".
+            "integrity": str(extra.get("integrity") or ""),
+            "integrityFiles": [str(f) for f in extra.get("integrity_files") or []],
             # "runnable" | "agent" | "tool" — lets History keep runnable runs and
             # agent turns visible while filtering the noisier per-tool-call rows.
             "kind": _record_kind(extra),

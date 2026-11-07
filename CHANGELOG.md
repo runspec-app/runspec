@@ -9,6 +9,32 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.81.0] — 2026-11-07
+
+### Added
+
+- **Every run checks that its installed code wasn't changed.** `parse()` hashes
+  the files pip recorded in `RECORD` for the package that ships the runnable's
+  `runspec.toml` and for each package it depends on directly (usually its
+  `-core` package and runspec), and compares them with the hashes taken at
+  install time. That covers the Python code, `runspec.toml` and the console
+  scripts, adding about 10 ms to a run. A file edited or deleted after install makes
+  the run **modified**: the run still goes ahead, with a warning on stderr, an
+  `integrity: "modified"` + `integrity_files` on `run_start`/`run_summary`, a new
+  runs-index `integrity` column (schema v7) and a `runnable.modified` audit event
+  (ledger + syslog), written once per distinct change. Editable installs
+  (`pip install -e`) and specs outside an installed package are never checked; a
+  package installed from a folder, a wheel file or git is recorded as
+  `integrity: "local"`. `RUNSPEC_INTEGRITY=off` turns it off; there is no
+  `runspec.toml` switch. It is tamper-evident, not tamper-proof: it catches
+  quick fixes made on a box and never committed. See SPEC → "Installed-Code
+  Integrity" and `docs/integrity.md`.
+- **`runspec verify`** checks installed packages on demand (every runnable
+  package and its direct dependencies, one name, or `--all`), prints what
+  changed, and exits 1 when anything is modified. `--json` for scripts.
+
+---
+
 ## [0.80.0] — 2026-11-07
 
 ### Added

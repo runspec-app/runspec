@@ -243,7 +243,8 @@ Two records support this. Neither is counted in the run summary's `events`:
 - **`run_start`** — the first record of an inbox file (on the
   `runspec.runsummary` logger): `run_id`, `runnable`, `command_path`, `pid`,
   `host`, `proc_start`, `user`, `user_target`, `invocation_args`, `start_ts`,
-  `label`, `trigger`, `venv`. Omitted when `[config.history] db = false`; a
+  `label`, `trigger`, `venv`, and `integrity` / `integrity_files` (see
+  [Installed-Code Integrity](#installed-code-integrity-python-pack)). Omitted when `[config.history] db = false`; a
   `{"event": "run_start", "history_db": false}` marker is written instead.
 - **`run_end`** — a slim end record (`run_id`, `exit_code`, `duration_ms`)
   that packs before 0.71.0 wrote instead of `run_summary` when `summary =
@@ -417,6 +418,11 @@ The audit record is fixed-schema:
    "arg_sources": {"quality": "cli", "dry_run": "spec_default"}
  }}
 ```
+
+A run whose installed code was changed or came from outside a package index
+also carries `"integrity": "modified"` (with `"integrity_files"`) or
+`"integrity": "local"` — see
+[Installed-Code Integrity](#installed-code-integrity-python-pack).
 
 The stderr line reads like a database client's closing message:
 
@@ -1515,6 +1521,100 @@ so a tool can check a rule will match before writing it.
 
 `runspec deny` is a core subcommand (not a runnable), so it is never subject to
 the denylist it edits.
+
+---
+
+## Installed-Code Integrity (Python pack)
+
+Before a runnable's code is trusted with a run, `parse()` checks that the
+installed package still matches what was installed: every file listed in the
+package's `RECORD` with a hash is hashed again and compared. A file that was
+edited or deleted after installation marks the run as **modified**. The check
+is a warning and a record, never a refusal.
+
+It is tamper-*evident*, not tamper-proof. An account that can edit an installed
+file can also edit `RECORD`, edit runspec itself, or edit the runnable so it
+never calls `parse()` — and module code runs at import, before `parse()` is
+reached. The check catches edits made on a host and never committed back (a
+quick fix in `site-packages`), not someone set on hiding a change. Code that
+must not be changed by the account that runs it belongs to a different account
+(a root-owned venv, or a `run_as` that does not own the venv).
+
+### What is checked
+
+- The **distribution that owns the runnable's `runspec.toml`** (the installed
+  file is located among the distribution's files), plus each distribution it
+  requires directly (`Requires-Dist`, skipping requirements that only apply to
+  an extra, and requirements that are not installed). For a typical wrapper this
+  is the runnable package, its `-core` package and runspec itself.
+- Every file in those distributions' `RECORD` that carries a hash: the `.py`
+  sources, `runspec.toml` and any other data files, and the console scripts.
+  Files pip records without a hash (byte-code under `__pycache__`, `RECORD`
+  itself, `INSTALLER`, `direct_url.json`) are not checked, and files *added* to
+  a package directory are not looked for.
+- A `runspec.toml` that is not inside an installed distribution (a project
+  checkout, a script next to its spec) is not checked.
+
+### Where the package came from
+
+PEP 610's `direct_url.json` in the distribution's `.dist-info` says how it was
+installed:
+
+| `direct_url.json` | Source | Checked | Recorded as |
+|---|---|---|---|
+| absent | `index` (PyPI, a private index) | yes | — |
+| `dir_info.editable = true` | `editable` (`pip install -e`) | no | — |
+| `dir_info` | `folder` (`pip install ./pkg`) | yes | `local` |
+| `archive_info` | `archive` (a wheel or sdist file or URL) | yes | `local` |
+| `vcs_info` | `vcs` (`pip install git+…`) | yes | `local` |
+
+An editable install is never checked, so a developer's working tree is never
+reported. A distribution with no hashed `RECORD` entries (an old egg install)
+is reported as `unverifiable` and not flagged.
+
+### Result
+
+The run's **integrity** is one word, empty when there is nothing to report:
+
+| `integrity` | Meaning |
+|---|---|
+| `modified` | At least one checked file differs from its `RECORD` hash or is missing |
+| `local` | Nothing differs, but a checked distribution was installed from a folder, a file or a VCS rather than a package index (code that may never have been committed or published) |
+| (empty) | Everything checked matches and came from an index, or nothing was checked |
+
+It is recorded as the `integrity` field of `run_start` and `run_summary` and
+the runs index's `integrity` column. A `modified` run also carries
+`integrity_files`: up to 20 `"<distribution>: <path>"` entries.
+
+On `modified`, `parse()` also:
+
+1. writes one warning to stderr naming the changed files, on every run; and
+2. records the audit event `runnable.modified` (outcome `detected`, target
+   `{"distribution": …, "version": …}`, detail `{"files": …, "source": …}`) for
+   each modified distribution — once per distinct set of changes, so a
+   runnable that runs every minute does not repeat it. The last set seen is kept
+   in `{installation_root}/logs/.integrity-state.json`; an account that cannot
+   write it records the event on every run.
+
+`RUNSPEC_INTEGRITY=off` turns the check off (test suites, or a host where a
+known local change is accepted). There is no `runspec.toml` switch: a package
+cannot turn off its own check. The core `runspec` CLI is not checked on its own
+runs; it is checked as a dependency of every runnable.
+
+### `runspec verify`
+
+```
+runspec verify                 # every installed runnable package + its direct requirements
+runspec verify runspec-linux   # one distribution (or a runnable name)
+runspec verify --all           # every distribution in the environment
+runspec verify --json          # structured result
+```
+
+Prints each distribution's version, source and status (`ok`, `modified`,
+`skipped` for editable, `unverifiable`), and the changed or missing files.
+Exits `1` when anything is modified, else `0`. It records nothing.
+
+The Node pack does not check installed code.
 
 ---
 
