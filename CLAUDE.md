@@ -552,6 +552,22 @@ under the config's directory (Node has no git-root helper). `meta.rundeck` /
 `meta.ansible` read from raw TOML (runnable-level `meta` is dropped by
 `normaliseScript`, same as Python).
 
+**Node parity — installed-code integrity (node-0.47.0):** `parse()` checks the
+project folder (nearest `package.json` above `runspec.toml`, outside
+`node_modules`) + its direct `dependencies`/`optionalDependencies` in
+`node_modules`. npm keeps no per-file hashes, so the reference is a packed
+`runspec-files.json` (written by the new `runspec manifest` from
+`npm pack --dry-run --json --ignore-scripts`, run last in `prepack`; runspec-node
+ships its own via `"prepack": "npm run build && node bin/runspec.js manifest"`),
+else a first-run snapshot in `{project}/logs/.integrity-baseline.json` keyed by
+name (+ `(project)`) and version. Git work tree ⇒ nothing checked; symlinked dep
+⇒ `skipped`; `.package-lock.json` `resolved` `file:`/git ⇒ `local`. Same stderr
+warning + `integrity`/`integrity_files` on `run_summary` (only with
+`[config.logging]`); no audit event until `audit()` is ported. `runspec verify
+[name…] [--all] [--json] [--snapshot]`. Core CLI exempt. Jest sets
+`RUNSPEC_INTEGRITY=off` (`tests/setup_env.js`); `tests/test_integrity.test.ts`
+switches it on. `src/integrity.ts`; SPEC → "Installed-Code Integrity" → "Node pack".
+
 Build order: `emit --rundeck` first (current platform), `emit --ansible`
 second (migration target), `push --rundeck` last (CI/CD automation).
 

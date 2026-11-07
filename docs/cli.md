@@ -628,6 +628,12 @@ editable install, `unverifiable` when pip recorded no hashes), with any changed
 or missing files. Exits `1` when anything is modified. Records nothing. See
 [Installed-code integrity](integrity.md).
 
+The Node CLI's `runspec verify` checks the project folder and its direct
+dependencies instead, and takes `--snapshot` to retake the first-run snapshot
+of packages that ship no hash list. `runspec manifest` (Node only) writes that
+list, `runspec-files.json`, for a package's `prepack` script. See
+[Node runnables](integrity.md#node-runnables).
+
 ---
 
 ## `runspec rebrand`

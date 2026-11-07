@@ -79,6 +79,9 @@ interface SummaryState {
   writeRecord: boolean;
   /** Echo the human-readable line to stderr (gated by `summary_console`). */
   writeConsole: boolean;
+  /** Installed-code integrity: `modified` / `local` / null. */
+  integrity: string | null;
+  integrityFiles: string[];
 }
 
 let _summaryState: SummaryState | null = null;
@@ -540,6 +543,8 @@ export function emitRunSummary(): void {
         events: { ...state.counter.counts },
         user: state.user,
         user_target: state.userTarget ?? null,
+        ...(state.integrity ? { integrity: state.integrity } : {}),
+        ...(state.integrity === 'modified' && state.integrityFiles.length ? { integrity_files: state.integrityFiles } : {}),
       });
     } catch {
       // never disrupt shutdown
@@ -767,6 +772,9 @@ export interface ConfigureLoggingOptions {
   autonomy?: string;
   agent?: boolean;
   commandPath?: string[];
+  /** Installed-code integrity token for the run summary (`modified` / `local`). */
+  integrity?: string | null;
+  integrityFiles?: string[];
 }
 
 /**
@@ -855,6 +863,8 @@ export function configureLogging(opts: ConfigureLoggingOptions): void {
       userTarget,
       writeRecord,
       writeConsole,
+      integrity: opts.integrity ?? null,
+      integrityFiles: opts.integrityFiles ?? [],
     };
   }
 

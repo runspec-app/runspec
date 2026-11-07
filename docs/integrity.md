@@ -6,7 +6,8 @@ it back to the repo), the run still goes ahead, but it is **recorded as
 modified**: a warning on stderr, a `modified` badge on the run in the console's
 History, and an audit event that also goes to the OS log.
 
-Nothing to set up. It is on for every runnable from runspec 0.81.0.
+Nothing to set up. It is on for every runnable from runspec 0.81.0, and for
+Node runnables from runspec-node 0.47.0 ([below](#node-runnables)).
 
 ## What gets checked
 
@@ -126,4 +127,68 @@ who owns the code, not a checksum:
 local change is accepted for now. There is no `runspec.toml` setting: a package
 can't switch off its own check.
 
-The Node pack doesn't check installed code yet.
+## Node runnables
+
+The Node pack (`runspec-node` 0.47.0) runs the same check, with one difference:
+npm doesn't record a hash for each installed file, so runspec has to get the
+known-good hashes from somewhere else.
+
+**What's checked:** the project folder (the one with `runspec.toml` and
+`package.json`, as [deployed](node-deploy.md)) and each of its direct
+`dependencies` in `node_modules`, `runspec-node` included.
+
+**Where the hashes come from**, in order:
+
+1. **`runspec-files.json` in the package.** A publisher writes it with
+   `runspec manifest`, which hashes every file `npm pack` would publish. Add it
+   as the last step of `prepack`, after the build:
+
+    ```json
+    "scripts": {
+      "build": "tsc",
+      "prepack": "npm run build && runspec manifest"
+    }
+    ```
+
+    If `package.json` has a `files` list, add `runspec-files.json` to it.
+    `runspec-node` ships its own list from 0.47.0.
+
+2. **A snapshot from the first run.** A package without a list is hashed the
+   first time a runnable runs after it's installed, and the hashes are kept in
+   `logs/.integrity-baseline.json`. Later runs compare against that. An edit
+   made *before* that first run becomes part of the snapshot and is never
+   reported, so publish with a list where you can. After reinstalling a package
+   without a list, `runspec verify --snapshot` takes the snapshot again.
+
+For the project folder the snapshot leaves out `logs/`, `bin/` (the shims
+`runspec bin` writes), `package-lock.json`, dot-files such as `.runspec_env`,
+and `node_modules`.
+
+**Development is left alone.** Nothing is checked when the project folder is in
+a git checkout (it has a `.git` folder, or a folder above it does). A dependency
+installed as a symlink (`npm link`, `npm install ../my-lib`) is skipped. One
+installed from a `.tgz` file or from git is recorded as `local build`, the same
+as in Python.
+
+**When a file has changed**, the run goes ahead with the same stderr warning,
+and the run record carries `integrity: "modified"` and the changed files when
+`[config.logging]` is on, so the console's History shows the badge. There's no
+audit event yet: the Node pack doesn't have `audit()`.
+
+```bash
+npx runspec verify              # the project + its direct dependencies
+npx runspec verify runspec-node # one package (a runnable name means the project)
+npx runspec verify --all        # every package in node_modules
+npx runspec verify --snapshot   # take the snapshot again for packages without a list
+```
+
+```
+  mytools       1.0.0    index    list      modified      1 of 3 files changed
+      changed  greet.js
+  runspec-node  0.47.0   index    list      ok            146 files
+
+✗  1 package(s) modified since install. Reinstall to restore them (npm install, or unpack the package again).
+```
+
+The third column says where the hashes came from: `list`, `snapshot`, or
+`none` (no list, and no run has taken a snapshot yet).
