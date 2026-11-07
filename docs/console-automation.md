@@ -358,8 +358,35 @@ account it runs as. On **All** each row also says where it fires. The state tag:
   couldn't be read without a password.
 
 The **Host daemon** card also shows each daemon venv's process: running /
-stale / stopped, pid, uptime and last heartbeat. Expanding a daemon schedule
-shows whether a missed fire runs on start (`catch_up`) and its timeout.
+stale / stopped, pid, uptime, last heartbeat, the runspec-scheduler version it
+runs, and what keeps it running (systemd --user, supervisord or the cron
+watchdog; *no keeper* means nothing restarts it after a crash or reboot). A
+*restart needed* tag means pip installed a different runspec-scheduler since
+the daemon started, so it still runs the old code. Expanding a daemon schedule
+shows whether a missed fire runs on start (`catch_up`) and its timeout. With
+more than three daemons, the strips fold into one summary line ("8 scheduler
+daemons: 7 running, 1 stopped, 2 need a restart"); while folded, up to three
+that need a look still show. Click the line to open or fold the list; the
+choice is remembered.
+
+Each strip has two buttons (when editing is available):
+
+- **Restart**, or **Start** for a stopped or stale daemon, runs the venv's own
+  `runspec-scheduler restart` as the venv owner. It goes through the venv's
+  keeper (`systemctl --user restart`, `supervisorctl restart`, or stop and
+  start for the cron watchdog) and waits for the new daemon to report back.
+  Fires already running carry on.
+- **Settings** shows and changes the daemon's defaults: **Fire timeout**
+  (how long one fire may run; `0` = no limit; a schedule can set its own),
+  **Misfire grace** (how late a fire may still start before it is recorded as
+  skipped) and **Catch-up window** (how far back a catch-up schedule looks on
+  start). Values are seconds or `90m` / `6h` / `1d`, saved with
+  `runspec-scheduler settings` as the owner; the daemon picks them up by
+  itself. The dialog also names the daemon's log file.
+
+Both need runspec-scheduler 0.7.0 in the venv; on an older one the console
+says to upgrade it with **Update venv…**. Each change is in the console's
+audit log (`scheduler.host.restarted` / `scheduler.host.settings`).
 
 Filters: the search box matches id, runnable and args, and takes the same
 `host:` and `group:` tokens as Forms and Marketplace (`host:web group:prod`).
@@ -408,6 +435,25 @@ panel) so every fire reads them. Each change is recorded in the console's audit
 log (`schedule.host.saved` / `removed` / `synced`, or `*_failed`). Local
 Windows venvs can't be edited: the scheduler fires with cron or its daemon,
 which need Linux.
+
+#### Run now
+
+Each **Host cron** and **Host daemon** row has a **Run now** button. After a
+confirm it runs that venv's `runspec-scheduler run-now --detach` as the venv
+owner. The fire runs as a scheduled fire would (the schedule's run-as account
+on a cron venv, the venv owner on a daemon venv), in its own session, so it
+keeps going after the console's call returns. Its run shows in History a few
+seconds later. If the schedule is already running, the second fire is recorded
+as *skipped*. Needs runspec-scheduler 0.7.0 in the venv. Recorded in the
+console's audit log as `schedule.host.run_now` (or `_failed`).
+
+#### Who ran it
+
+History's **Run by** column tells host schedule fires apart from the agent:
+**cron** (a crontab line fired), **daemon** (the scheduler daemon fired) and
+**run now** (the Run now button). Fires from runspec-scheduler before 0.7.0 show
+as **host sched**. A cron line picks up the new marker on its next sync, a
+daemon after a restart.
 
 ---
 

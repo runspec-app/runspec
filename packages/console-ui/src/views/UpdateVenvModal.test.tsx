@@ -13,11 +13,13 @@ import {
   UPDATE_SCHEDULER_OPTIONS,
   buildUpdatePayload,
   hasWork,
+  moveText,
+  moveTotal,
   updateNotes,
   versionAtLeast,
   type UpdateForm,
 } from './UpdateVenvModal'
-import type { ProvisionOptions, VenvUpdateRow } from '../bridge'
+import type { ProvisionOptions, VenvScheduleCounts, VenvUpdateRow } from '../bridge'
 
 const { api } = vi.hoisted(() => ({
   api: {
@@ -86,7 +88,29 @@ describe('update helpers', () => {
     expect(updateNotes(row(), { ...FORM, upgradeRunspec: false })[0]).toMatch(/0.79.0 here is too old for log cleanup/)
     expect(updateNotes(row({ runspec_version: '0.80.1' }), { ...FORM, upgradeRunspec: false })).toEqual([])
     expect(updateNotes(row(), { ...FORM, scheduler: 'off' })).toEqual(['No runspec-scheduler in this venv, so there is no daemon to stop.'])
-    expect(updateNotes(row({ scheduler: true, backend: 'cron' }), { ...FORM, scheduler: 'auto' })[0]).toMatch(/move off the owner's crontab/)
+    expect(updateNotes(row({ scheduler: true, backend: 'cron' }), { ...FORM, scheduler: 'auto' })).toContain("Its schedules move off the owner's crontab and the daemon fires them instead.")
+  })
+
+  it('counts what a schedules move takes', () => {
+    const counts = (over: Partial<VenvScheduleCounts> = {}): VenvScheduleCounts =>
+      ({ total: 5, disabled: 1, cron: 3, every: 1, in_crontab: 4, leftover: 0, ...over })
+    const cron = row({ scheduler: true, backend: 'cron', schedules: counts() })
+    const daemon = row({ host: 'web-02', scheduler: true, backend: 'daemon', schedules: counts({ in_crontab: 0, leftover: 2 }) })
+    expect(moveText(cron, '')).toBe('')
+    expect(moveText(cron, 'auto')).toBe('4 crontab entries move to the daemon (5 schedules in all; 1 disabled).')
+    expect(moveText(row({ scheduler: true, backend: 'cron', schedules: counts({ in_crontab: 1, total: 1, disabled: 0 }) }), 'auto'))
+      .toBe('1 crontab entry moves to the daemon (1 schedule in all).')
+    expect(moveText(row({ scheduler: true, backend: 'cron', schedules: counts({ in_crontab: null }) }), 'cron')).toMatch(/how many is unknown/)
+    expect(moveText(cron, 'off')).toBe('')
+    expect(moveText(daemon, 'off')).toBe("3 schedules written to the owner's crontab (5 schedules in all; 1 disabled, 2 leftover crontab lines removed).")
+    expect(moveText(daemon, 'auto')).toBe('Already on the daemon; 2 leftover crontab lines removed.')
+    expect(moveTotal([cron, daemon, row({ host: 'x' })], 'auto')).toBe('Moves 4 crontab entries to the daemon on 1 host.')
+    expect(moveTotal([cron, daemon], 'off')).toBe('Writes 3 schedules to crontabs on 1 host.')
+    expect(moveTotal([cron], '')).toBe('')
+    // Back to crontab drops interval schedules; a venv that couldn't be counted says so.
+    expect(updateNotes(daemon, { ...FORM, scheduler: 'off' })[0]).toMatch(/^1 interval schedule can't run from cron/)
+    expect(updateNotes(row({ scheduler: true, backend: 'cron', schedules: null, schedules_error: 'sudo: a password is required' }), { ...FORM, scheduler: 'auto' }))
+      .toEqual(["Couldn't count this venv's schedules: sudo: a password is required.", "Its schedules move off the owner's crontab and the daemon fires them instead."])
   })
 
   it('offers leave / daemon keepers / back to crontab', () => {

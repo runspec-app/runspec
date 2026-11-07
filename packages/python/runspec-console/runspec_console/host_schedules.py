@@ -169,3 +169,42 @@ def failure(code: int, stdout: str, stderr: str) -> str:
     text = (stderr or "").strip() or (stdout or "").strip()
     lines = [ln for ln in text.splitlines() if ln.strip()]
     return lines[-1] if lines else f"exit {code}"
+
+
+# ── the daemon: settings + restart (runspec-scheduler 0.7.0) ────────────────────
+
+#: Older schedulers answer these verbs with "unknown command".
+DAEMON_VERBS_MIN = "0.7.0"
+
+_DURATION = re.compile(r"^\d+[smhd]?$")
+
+#: payload key → ``runspec-scheduler settings`` flag.
+SETTING_FLAGS = {
+    "timeout": "--timeout",
+    "misfire_grace": "--misfire-grace",
+    "catch_up_window": "--catch-up-window",
+}
+
+
+def settings_argv(payload: dict[str, Any]) -> list[str]:
+    """``settings`` argv for the durations ``payload`` sets (seconds or
+    90m / 6h / 1d; the scheduler validates again). Nothing set is an error."""
+    argv = ["settings"]
+    for key, flag in SETTING_FLAGS.items():
+        raw = payload.get(key)
+        if raw is None or str(raw).strip() == "":
+            continue
+        text = str(raw).strip().lower()
+        if not _DURATION.match(text):
+            raise HostScheduleError(
+                f"{key.replace('_', ' ')} must be seconds or a duration like 90m / 6h / 1d (got {raw!r})"
+            )
+        argv += [flag, text]
+    if len(argv) == 1:
+        raise HostScheduleError("Nothing to change.")
+    return argv
+
+
+def too_old(error: str) -> bool:
+    """Whether ``error`` is a scheduler that predates the daemon verbs."""
+    return "unknown command" in (error or "").lower()

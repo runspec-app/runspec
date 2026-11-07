@@ -161,10 +161,106 @@ describe('AllSchedulesView host actions', () => {
     expect(screen.getByRole('button', { name: /New host schedule/ })).toBeTruthy()
   })
 
+  it('runs a schedule now through the bridge', async () => {
+    api.host_schedule_run_now = vi.fn(() => Promise.resolve({ ok: true, id: 'nightly', pid: 9, user: 'svc' }))
+    render(<AllSchedulesView scope="cron" collected={collected} loading={false} loaded updatedAt={null} hostCount={1}
+      onRefresh={() => {}} runnables={RUNNABLES} />)
+    const row = screen.getByText('nightly').closest('tr') as HTMLElement
+    fireEvent.click(within(row).getByLabelText('Run now'))
+    const pop = await waitFor(() => document.querySelector('.ant-popconfirm') as HTMLElement)
+    expect(within(pop).getByText(/as svc/)).toBeTruthy()
+    fireEvent.click(within(pop).getByRole('button', { name: 'Run now' }))
+    await waitFor(() => expect(api.host_schedule_run_now).toHaveBeenCalledWith({ host: 'web-1', venv: 'ops', id: 'nightly' }))
+  })
+
   it('stays read-only without runnables', () => {
     render(<AllSchedulesView scope="cron" collected={collected} loading={false} loaded updatedAt={null} hostCount={1} onRefresh={() => {}} />)
     expect(screen.queryByLabelText('Pause')).toBeNull()
     expect(screen.queryByRole('button', { name: /New host schedule/ })).toBeNull()
     expect(screen.getByText(/Read-only/)).toBeTruthy()
+  })
+})
+
+describe('AllSchedulesView host daemon', () => {
+  const daemonVenvs = (state: 'running' | 'stopped'): SharedSchedulesVenv[] => [{
+    host: 'job-1', group: 'jobs', available: true, ok: true, owner: 'svc-jobs',
+    status: {
+      ok: true, venv: 'jobs', config: 'c', backend: 'daemon', errors: [], stale: [], schedules: [],
+      daemon: state === 'running' ? { state, pid: 41, version: '0.6.2', restart_needed: true } : { state },
+      settings: { backend: 'daemon', timeout: 21600, misfire_grace: 300, catch_up_window: 86400 },
+      keeper: [{ manager: 'systemd-user', where: 'unit' }],
+      log: '/opt/venvs/jobs/logs/scheduler.log',
+    },
+  }]
+
+  it('restarts a running daemon through the bridge, then re-reads', async () => {
+    const onRefresh = vi.fn()
+    api.host_scheduler_restart = vi.fn(() => Promise.resolve({ ok: true, manager: 'systemd-user', daemon: { state: 'running', pid: 77 }, warnings: [] }))
+    render(<AllSchedulesView scope="daemon" collected={collectRows([], daemonVenvs('running'))} loading={false} loaded updatedAt={null} hostCount={1}
+      onRefresh={onRefresh} runnables={RUNNABLES} />)
+    expect(screen.getByText('restart needed')).toBeTruthy()
+    expect(screen.getByText(/kept by systemd --user/)).toBeTruthy()
+    expect(screen.getByText(/v0\.6\.2/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /Restart/ }))
+    fireEvent.click(within(await waitFor(() => document.querySelector('.ant-popconfirm') as HTMLElement)).getByRole('button', { name: 'Restart' }))
+    await waitFor(() => expect(api.host_scheduler_restart).toHaveBeenCalledWith({ host: 'job-1', venv: 'jobs' }))
+    await waitFor(() => expect(onRefresh).toHaveBeenCalledTimes(1))
+  })
+
+  it('offers Start for a stopped daemon', () => {
+    render(<AllSchedulesView scope="daemon" collected={collectRows([], daemonVenvs('stopped'))} loading={false} loaded updatedAt={null} hostCount={1}
+      onRefresh={() => {}} runnables={RUNNABLES} />)
+    expect(screen.getByRole('button', { name: /Start/ })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Restart/ })).toBeNull()
+  })
+
+  it('shows the settings and saves only what changed', async () => {
+    const onRefresh = vi.fn()
+    api.host_scheduler_settings = vi.fn(() => Promise.resolve({ ok: true, settings: {} }))
+    render(<AllSchedulesView scope="daemon" collected={collectRows([], daemonVenvs('running'))} loading={false} loaded updatedAt={null} hostCount={1}
+      onRefresh={onRefresh} runnables={RUNNABLES} />)
+    fireEvent.click(screen.getByRole('button', { name: /Settings/ }))
+    const timeout = await screen.findByLabelText('Fire timeout') as HTMLInputElement
+    expect(timeout.value).toBe('6h')
+    expect((screen.getByLabelText('Misfire grace') as HTMLInputElement).value).toBe('5m')
+    expect(screen.getByText('/opt/venvs/jobs/logs/scheduler.log')).toBeTruthy()
+    const save = screen.getByRole('button', { name: 'Save' })
+    expect(save.hasAttribute('disabled')).toBe(true)
+    fireEvent.change(timeout, { target: { value: '2h' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(api.host_scheduler_settings).toHaveBeenCalledWith({ host: 'job-1', venv: 'jobs', timeout: '2h' }))
+    await waitFor(() => expect(onRefresh).toHaveBeenCalledTimes(1))
+  })
+
+  it('has no daemon buttons when read-only', () => {
+    render(<AllSchedulesView scope="daemon" collected={collectRows([], daemonVenvs('running'))} loading={false} loaded updatedAt={null} hostCount={1}
+      onRefresh={() => {}} />)
+    expect(screen.queryByRole('button', { name: /Restart/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Settings/ })).toBeNull()
+  })
+})
+
+describe('AllSchedulesView daemon list folding', () => {
+  const many: SharedSchedulesVenv[] = ['a', 'b', 'c', 'd', 'e'].map((h, i) => ({
+    host: `job-${h}`, group: 'jobs', available: true, ok: true, owner: 'svc',
+    status: {
+      ok: true, venv: 'jobs', config: 'c', backend: 'daemon', errors: [], stale: [], schedules: [],
+      daemon: i === 4 ? { state: 'stopped' } : { state: 'running', pid: 10 + i },
+    },
+  }))
+
+  beforeEach(() => { try { localStorage.removeItem('runspec.schedules.daemonsOpen') } catch { /* none */ } })
+
+  it('folds many daemons to a summary plus the ones that need a look, and remembers opening', () => {
+    const { unmount } = render(<AllSchedulesView scope="daemon" collected={collectRows([], many)} loading={false} loaded updatedAt={null} hostCount={5} onRefresh={() => {}} />)
+    const summary = screen.getByRole('button', { name: /5 scheduler daemons: 4 running, 1 stopped/ })
+    expect(summary.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.getByText('job-e / jobs')).toBeTruthy()
+    expect(screen.queryByText('job-a / jobs')).toBeNull()
+    fireEvent.click(summary)
+    expect(screen.getByText('job-a / jobs')).toBeTruthy()
+    unmount()
+    render(<AllSchedulesView scope="daemon" collected={collectRows([], many)} loading={false} loaded updatedAt={null} hostCount={5} onRefresh={() => {}} />)
+    expect(screen.getByText('job-a / jobs')).toBeTruthy()
   })
 })

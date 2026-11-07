@@ -180,6 +180,31 @@ class TestSharedSchedulesAll(unittest.TestCase):
     def test_no_hosts(self) -> None:
         self.assertEqual(_make_bridge(REMOTE).shared_schedules_all([]), [])
 
+    def test_a_windows_consoles_own_venvs_are_left_out(self) -> None:
+        # runspec-scheduler can't run on Windows, so `local` there has no host
+        # schedules to read (and no "install runspec-scheduler" note to show).
+        b = _make_bridge(REMOTE)
+        b._hosts = [
+            REMOTE,
+            {
+                "name": "local",
+                "runspec_paths": ["C:/venvs/console/Scripts/runspec.exe"],
+            },
+        ]
+        seen = []
+
+        def fake(host, binary, argv, timeout, run_as=""):
+            seen.append(host)
+            return 0, json.dumps(STATUS), ""
+
+        with (
+            patch.object(b, "_run_logs", side_effect=fake),
+            patch("runspec_console.bridge_schedules.sys.platform", "win32"),
+        ):
+            out = b.shared_schedules_all(["local", "prod-1"])
+        self.assertEqual({r["host"] for r in out}, {"prod-1"})
+        self.assertNotIn("local", seen)
+
 
 if __name__ == "__main__":
     unittest.main()

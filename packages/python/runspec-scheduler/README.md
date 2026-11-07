@@ -60,6 +60,17 @@ runspec-scheduler install-service --remove --write    # remove every keeper, sto
 Run `--remove --write` before deleting a venv, so no keeper restarts a daemon
 from a folder that is gone. `status` lists the keepers under `keeper`.
 
+After upgrading runspec-scheduler, restart the daemon so it runs the new code
+(`status` shows `restart_needed` until you do). `restart` goes through the
+keeper the venv has: `systemctl --user restart`, `supervisorctl restart`, or
+for the cron watchdog (or no keeper) stop + `run --detach`. Fires already
+running carry on and are still recorded. A system unit only root can restart.
+
+```bash
+runspec-scheduler restart --dry-run    # what it would do
+runspec-scheduler restart              # restart, wait for the first heartbeat
+```
+
 ### Running the daemon as a service account
 
 `systemctl --user` needs the account's own user session (`XDG_RUNTIME_DIR` +
@@ -86,6 +97,7 @@ runspec-scheduler add --id report --runnable report --cron '0 6 * * *' --timeout
 runspec-scheduler list
 runspec-scheduler status
 runspec-scheduler run-now --id poll
+runspec-scheduler run-now --id nightly --detach   # start it in the background and return
 runspec-scheduler remove --id poll
 runspec-scheduler use daemon        # or: use cron
 ```
@@ -99,6 +111,11 @@ runspec-scheduler use daemon        # or: use cron
   fire is recorded as `skipped`.
 - The daemon picks up config changes within a few seconds, or at once on
   `SIGHUP`. On the cron backend run `sync` after editing.
+- `run-now --detach` starts the fire as a scheduled fire would run it (the
+  schedule's `run_as` on cron, the venv owner on the daemon) in its own session,
+  so it carries on after you log out; its run is recorded like any other fire.
+- Every fire's run carries a trigger saying what started it:
+  `schedule:cron`, `schedule:daemon` or `schedule:run-now`.
 
 ## Config
 
@@ -118,6 +135,14 @@ runnable = "report"
 cron = "0 6 * * *"
 timeout = "30m"
 catch_up = true
+```
+
+Change the `[scheduler]` durations with `settings` (the daemon reloads them by
+itself; `use` switches the backend):
+
+```bash
+runspec-scheduler settings                                  # show them
+runspec-scheduler settings --timeout 2h --misfire-grace 10m # change two
 ```
 
 The daemon writes a heartbeat to `{venv}/logs/scheduler_state.json` and a

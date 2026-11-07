@@ -193,7 +193,7 @@ def daemon_status(config_path: Path) -> dict[str, Any]:
     or ``stopped``. ``firing`` is true only while it runs on the daemon backend."""
     import datetime
 
-    from .daemon import read_state
+    from .daemon import installed_version, read_state
 
     out: dict[str, Any] = {
         "state": "stopped",
@@ -205,6 +205,8 @@ def daemon_status(config_path: Path) -> dict[str, Any]:
         "uptime_s": None,
         "interval_s": None,
         "config_error": None,
+        "version": None,
+        "restart_needed": False,
         "running": [],
         "jobs": {},
     }
@@ -220,6 +222,7 @@ def daemon_status(config_path: Path) -> dict[str, Any]:
         interval_s=interval,
         config_error=st.get("config_error"),
         stopped_at=st.get("stopped"),
+        version=st.get("scheduler_version") or None,
     )
     now = datetime.datetime.now().astimezone()
     with contextlib.suppress(Exception):
@@ -231,6 +234,9 @@ def daemon_status(config_path: Path) -> dict[str, Any]:
         out["uptime_s"] = int((now - datetime.datetime.fromisoformat(str(st["started"]))).total_seconds())
     age = out["heartbeat_age_s"]
     out["state"] = "stale" if age is None or age > 3 * interval else "running"
+    # Started before an upgrade: still running the old code until restarted.
+    installed = installed_version()
+    out["restart_needed"] = bool(out["version"] and installed and out["version"] != installed)
     out["firing"] = out["state"] == "running" and bool(st.get("firing"))
     out["running"] = st.get("running") or []
     out["jobs"] = st.get("jobs") or {}
@@ -279,6 +285,15 @@ def status(config_path: Path, *, runs: int = 5, output_bytes: int = DEFAULT_OUTP
         payload["ok"] = False
         payload["errors"].append(f"could not read {config_path}: {exc}")
     payload["backend"] = settings.backend
+    payload["settings"] = {
+        "backend": settings.backend,
+        "timeout": settings.timeout,
+        "misfire_grace": settings.misfire_grace,
+        "catch_up_window": settings.catch_up_window,
+    }
+    from .daemon import _default_log_path
+
+    payload["log"] = str(_default_log_path())
     daemon = daemon_status(config_path)
     jobs = daemon.pop("jobs")
     payload["daemon"] = daemon

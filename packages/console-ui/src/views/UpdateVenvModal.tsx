@@ -95,10 +95,58 @@ export function updateNotes(row: VenvUpdateRow, f: UpdateForm): string[] {
     out.push(`runspec ${row.runspec_version || '(unknown version)'} here is too old for log cleanup (needs ${RETENTION_MIN_RUNSPEC}); tick Upgrade runspec.`)
   }
   if (f.scheduler === 'off' && !row.scheduler) out.push('No runspec-scheduler in this venv, so there is no daemon to stop.')
-  if (f.scheduler && f.scheduler !== 'off' && row.backend === 'cron') {
+  const c = row.schedules
+  if (f.scheduler && row.scheduler && !c) {
+    out.push(`Couldn't count this venv's schedules${row.schedules_error ? `: ${row.schedules_error}` : ''}.`)
+  }
+  if (f.scheduler && f.scheduler !== 'off' && row.backend === 'cron' && !c) {
     out.push("Its schedules move off the owner's crontab and the daemon fires them instead.")
   }
+  const upgrades = f.upgradeRunspec || f.packages.some(x => x.trim())
+  if (upgrades && row.scheduler && row.scheduler_pid && f.scheduler !== 'off') {
+    out.push('The scheduler daemon is restarted at the end, so it runs the upgraded code.')
+  }
+  if (f.scheduler === 'off' && row.backend === 'daemon' && c && c.every > 0) {
+    out.push(`${plural(c.every, 'interval schedule')} can't run from cron and will stop firing (only the daemon runs "every" schedules).`)
+  }
   return out
+}
+
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
+
+/** One line on what the Shared schedules choice moves for this venv, or ''. */
+export function moveText(row: VenvUpdateRow, choice: SchedulerChoice): string {
+  const c = row.schedules
+  if (!choice || !c) return ''
+  const extra = [
+    c.disabled ? `${c.disabled} disabled` : '',
+    c.leftover ? plural(c.leftover, 'leftover crontab line') + ' removed' : '',
+  ].filter(Boolean)
+  const tail = extra.length ? `; ${extra.join(', ')}` : ''
+  if (choice === 'off') {
+    if (row.backend !== 'daemon') return ''
+    return `${plural(c.cron, 'schedule')} written to the owner's crontab (${plural(c.total, 'schedule')} in all${tail}).`
+  }
+  if (row.backend === 'daemon') {
+    return c.leftover ? `Already on the daemon; ${plural(c.leftover, 'leftover crontab line')} removed.` : 'Already on the daemon; only its keeper is set up.'
+  }
+  if (c.in_crontab === null) return `Its crontab entries move to the daemon; how many is unknown (the crontab couldn't be read; ${plural(c.total, 'schedule')} in all${tail}).`
+  return `${plural(c.in_crontab, 'crontab entry', 'crontab entries')} ${c.in_crontab === 1 ? 'moves' : 'move'} to the daemon (${plural(c.total, 'schedule')} in all${tail}).`
+}
+
+/** Across the ready venvs: how many crontab entries the choice moves, or ''. */
+export function moveTotal(rows: VenvUpdateRow[], choice: SchedulerChoice): string {
+  if (!choice) return ''
+  let n = 0, venvs = 0, unknown = 0
+  for (const r of rows) {
+    const c = r.schedules
+    if (!c) continue
+    const k = choice === 'off' ? (r.backend === 'daemon' ? c.cron : 0) : (r.backend === 'daemon' ? 0 : c.in_crontab)
+    if (k === null) { unknown++; continue }
+    if (k > 0) { n += k; venvs++ }
+  }
+  const what = choice === 'off' ? `Writes ${plural(n, 'schedule')} to crontabs` : `Moves ${plural(n, 'crontab entry', 'crontab entries')} to the daemon`
+  return `${what} on ${plural(venvs, 'host')}${unknown ? ` (${plural(unknown, 'host')} couldn't be counted)` : ''}.`
 }
 
 function retentionText(r: VenvUpdateRow['retention']): string {
@@ -323,6 +371,7 @@ export function UpdateVenvModal({
                         runspec {r.runspec_version || '?'} · owner {r.owner || '?'} · inbox {r.inbox ? 'set up' : 'missing'} · log cleanup {retentionText(r.retention)} · schedules {schedulesText(r)}
                       </Text>
                     )}
+                    {r.ok && moveText(r, scheduler) && <div><Text style={{ fontSize: 12 }}>{moveText(r, scheduler)}</Text></div>}
                     {r.blockers.map(b => <div key={b}><Text type="danger" style={{ fontSize: 12 }}>{b}</Text></div>)}
                     {notes.map(n => <div key={n}><Text type="warning" style={{ fontSize: 12 }}><WarningFilled /> {n}</Text></div>)}
                   </span>
@@ -384,6 +433,7 @@ export function UpdateVenvModal({
                   : off
                     ? "Writes the schedules back to the owner's crontab, then removes the daemon's keepers and stops it."
                     : `Installs runspec-scheduler, moves this venv's schedules from the owner's crontab to its daemon and sets up what restarts it.${scheduler === 'auto' ? ' Per host: systemd --user when lingering is on, else supervisord in the venv.' : ''}`)}
+                {scheduler && preview && moveTotal(ready, scheduler) && <div><Text style={{ fontSize: 12 }}>{moveTotal(ready, scheduler)}</Text></div>}
               </div>
               <div>
                 {label('Become via')}

@@ -5,12 +5,14 @@
 # A single runnable, `runspec-scheduler`, with verbs (subcommands):
 #
 #   runspec-scheduler use cron|daemon         choose what fires this venv's schedules (one backend per venv)
+#   runspec-scheduler settings [--timeout …]  show / change the daemon's [scheduler] durations
+#   runspec-scheduler restart                 restart the daemon through its keeper (after an upgrade)
 #   runspec-scheduler sync                    render the config into the OS crontab (the cron backend)
 #   runspec-scheduler add     --id … …        add/replace a scheduled runnable in the config
 #   runspec-scheduler remove  --id …          remove a schedule from the config
 #   runspec-scheduler list                    print the configured schedules as JSON
 #   runspec-scheduler status                  config + crontab + recent runs/output per schedule (JSON)
-#   runspec-scheduler run-now --id …          fire one schedule immediately
+#   runspec-scheduler run-now --id … [--detach] fire one schedule immediately
 #   runspec-scheduler run                     run the daemon (the daemon backend) in the foreground
 #   runspec-scheduler install-service         plan (or --write) what keeps the daemon running
 #
@@ -54,6 +56,9 @@ examples = [
   {cmd = "runspec-scheduler run", description = "Run the daemon in the foreground (what a keeper starts)."},
   {cmd = "runspec-scheduler install-service", description = "Show which keeper suits this host and what installing it would change."},
   {cmd = "runspec-scheduler install-service --write", description = "Install that keeper and start the daemon."},
+  {cmd = "runspec-scheduler restart", description = "Restart the daemon through its keeper (after upgrading runspec-scheduler)."},
+  {cmd = "runspec-scheduler run-now --id nightly-backup --detach", description = "Fire a schedule now in the background, as a scheduled fire would run (recorded under sched:nightly-backup)."},
+  {cmd = "runspec-scheduler settings --timeout 2h", description = "Kill a daemon fire still running after 2 hours (the daemon reloads by itself)."},
   {cmd = "runspec-scheduler install-service --remove --write", description = "Remove this venv's keepers and stop the daemon (before deleting the venv)."},
 ]
 
@@ -113,6 +118,7 @@ output      = "json"
 
 [runspec-scheduler.commands.run-now.args]
 id = {type = "str", required = true, description = "Schedule id to fire now."}
+detach = {type = "flag", default = false, description = "Start the fire in the background and return at once (as the account a scheduled fire runs as: the schedule's run_as on cron, the venv owner on the daemon). Its run is in the runs index under sched:<id>."}
 
 # ---- sync: render the config into the OS crontab (recommended backend) ----
 [runspec-scheduler.commands.sync]
@@ -130,6 +136,27 @@ autonomy    = "confirm"
 
 [runspec-scheduler.commands.use.args]
 backend = {options = ["cron", "daemon"], position = 1, description = "The backend to use."}
+
+# ---- settings: the [scheduler] durations --------------------------------
+[runspec-scheduler.commands.settings]
+description = "Show this venv's [scheduler] settings (backend, timeout, misfire_grace, catch_up_window), or change the durations given. A running daemon reloads the change by itself; switch the backend with `use`."
+output      = "json"
+autonomy    = "confirm"
+
+[runspec-scheduler.commands.settings.args]
+timeout         = {type = "str", required = false, description = "Kill a daemon fire still running after this long: seconds or 90m / 6h / 1d; 0 = no limit (default 6h)."}
+misfire-grace   = {type = "str", required = false, description = "A daemon fire up to this late still runs; later ones are recorded as missed (default 5m)."}
+catch-up-window = {type = "str", required = false, description = "How far back a catch_up schedule looks when the daemon starts (default 24h)."}
+
+# ---- restart: reload the daemon's code -----------------------------------
+[runspec-scheduler.commands.restart]
+description = "Restart (or start) this venv's daemon through the keeper it has (systemctl --user restart, supervisorctl restart, or stop + run --detach for the cron watchdog), e.g. after upgrading runspec-scheduler. Fires already running carry on and are still recorded. Config changes never need this."
+output      = "json"
+autonomy    = "confirm"
+
+[runspec-scheduler.commands.restart.args]
+dry-run = {type = "flag", default = false, description = "Print what would be done; change nothing."}
+wait    = {type = "int", default = 15, description = "Seconds to wait for the restarted daemon's first heartbeat."}
 
 # ---- install-service: the keeper ----------------------------------------
 [runspec-scheduler.commands.install-service]

@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Table, Tag, Typography, Button, Tooltip, message, Input, Drawer, Spin, Empty, Alert, Segmented, Switch } from 'antd'
-import { RedoOutlined, CopyOutlined, RobotOutlined, UserOutlined, SearchOutlined, EditOutlined, ClockCircleOutlined, ProfileOutlined } from '@ant-design/icons'
+import { RedoOutlined, CopyOutlined, RobotOutlined, UserOutlined, SearchOutlined, EditOutlined, ClockCircleOutlined, ProfileOutlined, PlayCircleOutlined } from '@ant-design/icons'
+import { RUN_BY_FILTERS, isScheduled, runBy } from '../runBy'
 import type { ColumnType } from 'antd/es/table'
 import type { FilterValue } from 'antd/es/table/interface'
 import { bridge, type HistoryRecord, type HistoryLogLine, type HistorySyncState, type LogViewResult, type RunningRun } from '../bridge'
@@ -357,8 +358,8 @@ function RunningNowStrip({ rows, accent }: { rows: RunningRun[]; accent: string 
                 whiteSpace: 'nowrap',
               }}
             >
-              {r.trigger === 'schedule' && <ClockCircleOutlined style={{ color: 'var(--rs-text-muted)', fontSize: 12 }} />}
-              {r.initiatedBy === 'llm'
+              {isScheduled(r.trigger) && <ClockCircleOutlined style={{ color: 'var(--rs-text-muted)', fontSize: 12 }} />}
+              {runBy(r).kind === 'agent'
                 ? <RobotOutlined style={{ color: accent, fontSize: 12 }} />
                 : <UserOutlined style={{ color: 'var(--rs-text-muted)', fontSize: 12 }} />}
               <span>
@@ -660,7 +661,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
         const full = `${r.group ? r.group + '/' : ''}${r.runnable}${cmd ? ' ' + cmd : ''}`
         return (
           <span style={{ fontFamily: MONO_FONT, fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-            {r.trigger === 'schedule' && (
+            {isScheduled(r.trigger) && (
               <Tooltip title="Ran on a schedule">
                 <ClockCircleOutlined style={{ color: 'var(--rs-text-muted)', fontSize: 13, flex: '0 0 auto' }} />
               </Tooltip>
@@ -688,22 +689,23 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       // "can't see if run by agent or user").
       title: 'Run by',
       key: 'runBy',
-      width: 100,
-      render: (_: unknown, r: HistoryRecord) => r.initiatedBy === 'llm' ? (
-        <Tooltip title="Triggered by the assistant">
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: accent }}>
-            <RobotOutlined style={{ fontSize: 13 }} />agent
-          </span>
-        </Tooltip>
-      ) : (
-        <Tooltip title="Run by an operator">
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: 'var(--rs-text-muted)' }}>
-            <UserOutlined style={{ fontSize: 13 }} />user
-          </span>
-        </Tooltip>
-      ),
-      filters: [{ text: 'Agent', value: 'llm' }, { text: 'User', value: 'user' }],
-      onFilter: (value, record) => (record.initiatedBy ?? 'user') === value,
+      width: 110,
+      render: (_: unknown, r: HistoryRecord) => {
+        const by = runBy(r)
+        const icon = by.kind === 'agent' ? <RobotOutlined style={{ fontSize: 13 }} />
+          : by.kind === 'user' ? <UserOutlined style={{ fontSize: 13 }} />
+          : by.kind === 'run-now' ? <PlayCircleOutlined style={{ fontSize: 13 }} />
+          : <ClockCircleOutlined style={{ fontSize: 13 }} />
+        return (
+          <Tooltip title={by.tip}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: by.kind === 'agent' ? accent : 'var(--rs-text-muted)', whiteSpace: 'nowrap' }}>
+              {icon}{by.label}
+            </span>
+          </Tooltip>
+        )
+      },
+      filters: RUN_BY_FILTERS,
+      onFilter: (value, record) => runBy(record).kind === value,
       filteredValue: colFilters['runBy'] ?? null,
     },
     {

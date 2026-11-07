@@ -9,6 +9,76 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.386.0] — 2026-11-07
+
+### Added
+
+- **Update venv… shows what a schedules move takes.** For a venv that has
+  `runspec-scheduler`, the preview runs its `status` as the venv owner (read
+  only) and, once a *Shared schedules* choice is picked, says per venv how many
+  crontab entries move to the daemon (or how many schedules go back to the
+  crontab), with disabled schedules and leftover crontab lines noted, plus a
+  total across the hosts under the picker. Going back to crontab warns when
+  interval (`every`) schedules would stop firing, and a venv whose schedules
+  couldn't be counted says why. `provision.schedule_counts`, bridge
+  `_upd_inspect`.
+- **Restart and settings for a venv's scheduler daemon** on the Schedules tab's
+  *Host daemon* card. Each daemon strip now shows its keeper (systemd --user,
+  supervisord, cron watchdog), the version it runs, and a *restart needed* tag
+  when pip installed a different runspec-scheduler than the one the daemon
+  started with. **Restart** (or **Start**, when it is stopped or stale) goes
+  through the venv's own `runspec-scheduler restart` as the venv owner, so it
+  uses whichever keeper the venv has. **Settings** shows and changes the
+  daemon's fire timeout, misfire grace and catch-up window
+  (`runspec-scheduler settings`; the daemon picks them up by itself) and names
+  its log file. Both need runspec-scheduler 0.7.0 in the venv; an older one is
+  told to upgrade. Audit events `scheduler.host.restarted` /
+  `scheduler.host.settings` (+ `_failed`). Bridge `host_scheduler_restart` /
+  `host_scheduler_settings`; UI `AllSchedulesView` `DaemonStrip` /
+  `DaemonSettingsModal`.
+- **Many daemons fold into one line.** With more than three daemon-backed
+  venvs on the active profile, the strips fold into a summary ("8 scheduler
+  daemons: 7 running, 1 stopped, 2 need a restart"); while folded, up to three
+  daemons that need a look (stopped, stale, or restart needed) still show.
+  Opening or folding it is remembered.
+- **Update venv… restarts a running daemon after upgrading packages**, so it
+  runs the code pip just installed (not when the update moves the schedules
+  back to crontab, which stops it). A failed restart is a warning with the
+  command to run on the host. `provision.update_steps(daemon_running=)`,
+  step `restart`.
+- **Run now on host schedules.** Each *Host cron* and *Host daemon* row has a
+  Run now button (with a confirm). It runs the venv's own
+  `runspec-scheduler run-now --detach` as the venv owner, so the fire runs as a
+  scheduled fire would (the schedule's run-as account on cron, the venv owner
+  on the daemon) and keeps going after the console's SSH call ends; the run
+  shows in History a few seconds later. Needs runspec-scheduler 0.7.0. Audit
+  event `schedule.host.run_now` (+ `_failed`). Bridge `host_schedule_run_now`.
+- **Log cleanup… on the Logs tab.** For a venv's logs, a *Log cleanup…* button
+  opens the venv's log retention policy (runspec 0.80.0): what it is, when it
+  last ran and what it did, and the policy file. Change the compress-after,
+  delete-after and size cap, or clear them all to remove the policy; *Preview
+  now* says what a pass would compress and delete, and *Apply now* runs it.
+  Reading and previewing run as the login account; saving and applying run the
+  venv's `runspec logs retention` as the venv owner (sudo as the owner, else
+  root, which core drops to the owner), and core records each change on the
+  venv's audit ledger. Bridge `logs_retention` / `logs_retention_set` /
+  `logs_retention_run`; UI `views/LogCleanupModal.tsx`.
+
+### Fixed
+
+- **History no longer says the agent ran a host schedule.** Scheduled fires
+  run with `RUNSPEC_AGENT=1`, so the *Run by* column showed them as the agent.
+  It now reads the run's trigger: **cron**, **daemon** or **run now** for
+  runspec-scheduler fires (0.7.0 tells them apart), and **host sched** for
+  older fires that only carry the `sched:` label. The column filter has the
+  same choices. `src/runBy.ts`.
+
+- **A Windows console no longer lists its own venvs as missing
+  runspec-scheduler** on the Schedules tab ("No runspec-scheduler in 1 venv:
+  local/local …"). runspec-scheduler needs crontab, systemd or supervisord, so
+  a Windows console's local venvs are left out of the host schedules list;
+  their schedules are the console's own, on the *This console* card.
+
 ## [0.385.0] — 2026-11-07
 
 Edit host schedules from the Schedules tab.

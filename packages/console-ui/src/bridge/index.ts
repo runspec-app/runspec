@@ -1532,6 +1532,24 @@ export interface SchedulerDaemon {
   interval_s?: number | null
   config_error?: string | null
   running?: { id: string; pid: number; started: string }[]
+  // runspec-scheduler >= 0.7.0: the version the running daemon reports, and
+  // whether it differs from the installed one (pip upgraded it; restart it).
+  version?: string | null
+  restart_needed?: boolean
+}
+
+// The `[scheduler]` table (runspec-scheduler >= 0.7.0); durations in seconds.
+export interface SchedulerSettings {
+  backend: 'cron' | 'daemon' | string
+  timeout: number                  // per-fire limit, 0 = none
+  misfire_grace: number            // how late a fire may still run
+  catch_up_window: number          // how far back catch_up looks on start
+}
+
+// What keeps a venv's daemon running (`runspec-scheduler status` → keeper).
+export interface SchedulerKeeper {
+  manager: 'systemd-user' | 'systemd' | 'supervisor' | 'cron' | string
+  where: string
 }
 
 export interface SharedSchedulesStatus {
@@ -1540,6 +1558,9 @@ export interface SharedSchedulesStatus {
   config: string
   backend?: 'cron' | 'daemon' | string   // absent on schedulers < 0.5.0 = cron
   daemon?: SchedulerDaemon | null
+  settings?: SchedulerSettings     // >= 0.7.0
+  log?: string                     // the daemon's log file (>= 0.7.0)
+  keeper?: SchedulerKeeper[]       // >= 0.6.0
   schedules: SharedSchedule[]
   stale: { id: string; user: string; reason?: string }[]
   errors: string[]
@@ -1585,6 +1606,78 @@ export interface HostScheduleResult {
   error?: string
   warnings: string[]
   sync?: { installed: number; skipped: { id: string; reason: string }[]; users: string[] }
+}
+
+export interface HostScheduleRunNowResult {
+  ok: boolean
+  error?: string
+  id?: string
+  pid?: number
+  user?: string                    // the account it runs as
+  finished?: boolean               // ended within a moment of starting
+  exit_code?: number
+}
+
+// A venv's scheduler daemon from the Host daemon card (0.386.0): change its
+// durations, or restart / start it through its keeper. Needs runspec-scheduler
+// 0.7.0+ in the venv; run as the venv owner.
+export interface HostSchedulerSettings {
+  host: string
+  venv: string
+  timeout?: string                 // seconds or 90m / 6h / 1d; 0 = none
+  misfire_grace?: string
+  catch_up_window?: string
+}
+
+export interface HostSchedulerSettingsResult {
+  ok: boolean
+  error?: string
+  settings?: Partial<SchedulerSettings>
+}
+
+export interface HostSchedulerRestartResult {
+  ok: boolean
+  error?: string
+  hint?: string
+  manager?: string
+  daemon?: { state?: string; pid?: number | null; version?: string | null; restart_needed?: boolean }
+  warnings: string[]
+}
+
+// A venv's log retention policy (runspec >= 0.80.0; Logs → Log cleanup…).
+export interface LogRetentionPolicy {
+  compact_after?: string           // e.g. 7d — compress runs older than this
+  delete_after?: string            // e.g. 90d — delete runs older than this
+  max_total_size?: string          // e.g. 5GB — then delete the oldest over this
+}
+
+export interface LogRetentionPass {
+  ts?: string
+  compacted?: number
+  deleted?: number
+  freed_bytes?: number
+  error?: string
+}
+
+export interface LogRetentionResult {
+  ok: boolean
+  group: string
+  error?: string
+  too_old?: boolean                // the venv's runspec predates the policy
+  file?: string
+  policy?: LogRetentionPolicy | null
+  policy_error?: string            // the file exists but is invalid
+  last?: LogRetentionPass | null   // the owner's last daily pass
+  removed?: boolean
+  as_user?: string
+}
+
+export interface LogRetentionRunResult extends LogRetentionPass {
+  ok: boolean
+  group: string
+  dry_run?: boolean
+  skipped?: string
+  as_user?: string
 }
 
 export interface LogPruneResult {
@@ -2368,6 +2461,25 @@ export interface VenvUpdateRow extends DeprovisionPreviewRow {
   retention: { compact_after?: string; delete_after?: string; max_total_size?: string }
   /** How its schedules fire: 'cron' | 'daemon' ('' = no runspec-scheduler). */
   backend: string
+  /** What a backend switch would move, from `runspec-scheduler status` run as
+   *  the owner. null/absent = no runspec-scheduler, or status couldn't be read
+   *  (`schedules_error` says why). */
+  schedules?: VenvScheduleCounts | null
+  schedules_error?: string
+}
+
+/** A venv's schedules, counted for the Update dialog. */
+export interface VenvScheduleCounts {
+  total: number
+  disabled: number
+  /** Enabled, cron-timed (cron or the daemon can fire them). */
+  cron: number
+  /** Enabled, interval-timed (`every`): only the daemon can fire them. */
+  every: number
+  /** Lines in the owner's crontab now; null = the crontab couldn't be read. */
+  in_crontab: number | null
+  /** Crontab lines the venv no longer wants (stale, or any line on a daemon venv). */
+  leftover: number
 }
 
 /** Bring existing venvs up to the chosen options; only what is set runs. */
@@ -3023,6 +3135,11 @@ export interface BridgeApi {
   // ── logs management ──────────────────────────────────────────────────────
   logs_status: (host: string, runnable?: string) => Promise<LogStatusVenv[]>
   logs_view: (host: string, group: string, runnable: string, since?: string, user?: string, run?: string) => Promise<LogViewResult>
+  // The venv's log retention policy: read it, set / clear it as the venv owner,
+  // and preview (dryRun) or apply it now.
+  logs_retention: (host: string, group: string) => Promise<LogRetentionResult>
+  logs_retention_set: (host: string, group: string, payload: LogRetentionPolicy & { off?: boolean }) => Promise<LogRetentionResult>
+  logs_retention_run: (host: string, group: string, dryRun?: boolean) => Promise<LogRetentionRunResult>
   logs_prune: (host: string, group: string, runnable?: string, olderThan?: string, maxFiles?: number, maxTotalSize?: string, dryRun?: boolean, runAs?: string) => Promise<LogPruneResult>
   logs_compact: (host: string, group: string, runnable?: string, olderThan?: string, gzip?: boolean, dryRun?: boolean, runAs?: string) => Promise<LogCompactResult>
   share_venv_logs: (host: string, venv: string, group?: string, runAs?: string) => Promise<ShareLogsResult>
@@ -3037,6 +3154,11 @@ export interface BridgeApi {
   host_schedule_save: (payload: HostScheduleSave) => Promise<HostScheduleResult>
   host_schedule_remove: (payload: HostScheduleTarget & { id: string }) => Promise<HostScheduleResult>
   host_schedule_sync: (payload: { host: string; venv: string }) => Promise<HostScheduleResult>
+  // Fire one host schedule now, in the background (runspec-scheduler >= 0.7.0).
+  host_schedule_run_now: (payload: { host: string; venv: string; id: string }) => Promise<HostScheduleRunNowResult>
+  // The venv's scheduler daemon itself: durations, and restart / start (0.386.0).
+  host_scheduler_settings: (payload: HostSchedulerSettings) => Promise<HostSchedulerSettingsResult>
+  host_scheduler_restart: (payload: { host: string; venv: string }) => Promise<HostSchedulerRestartResult>
   history_db_stats: (host: string, group: string) => Promise<HistoryDbStats>
   history_db_maintain: (host: string, group: string, action: HistoryDbAction, olderThan?: string, maxRows?: number, runAs?: string) => Promise<HistoryDbResult>
   // Owner of a venv's dir — pre-fills the "Run as" field on the destructive Logs

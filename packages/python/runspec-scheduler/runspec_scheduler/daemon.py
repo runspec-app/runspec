@@ -9,8 +9,8 @@ keeps it alive (systemd, supervisord, a cron watchdog) only starts
 What it guarantees, and how:
 
 * **Every fire is recorded.** A fire runs the same ``runspec exec --label
-  sched:<id> --trigger schedule --lock <lock> [--timeout N] <runnable> -- …``
-  command a cron line runs, so its exit code and output land in the runs index.
+  sched:<id> --trigger schedule:daemon --lock <lock> [--timeout N] <runnable> -- …``
+  command a cron line runs (with its own trigger), so its exit code and output land in the runs index.
   A fire the daemon missed (it woke past the misfire grace) or couldn't start is
   recorded as a ``skipped`` / ``failed`` run by :mod:`records`.
 * **Fires are independent processes.** Each starts in its own session with no
@@ -57,7 +57,7 @@ from pathlib import Path
 from typing import IO, Any
 
 from .config import ScheduleEntry, SchedulerSettings, load_config
-from .cronsync import LABEL_PREFIX, _home_of, exec_invocation, resolve_entry
+from .cronsync import LABEL_PREFIX, TRIGGER_DAEMON, _home_of, exec_invocation, resolve_entry
 from .records import audit, record_run
 from .runner import is_generic_venv_name, scripts_dir, venv_name
 from .timing import when_to_trigger
@@ -146,6 +146,18 @@ def ensure_environment(env: dict[str, str] | None = None) -> dict[str, str]:
 
 def _now() -> datetime.datetime:
     return datetime.datetime.now().astimezone()
+
+
+def installed_version() -> str:
+    """The installed runspec-scheduler version ("" when it can't be read). The
+    daemon records the one it started with; ``status`` compares the two to say
+    a restart is needed after an upgrade."""
+    try:
+        from importlib.metadata import version
+
+        return version("runspec-scheduler")
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 def _iso(dt: datetime.datetime | None) -> str | None:
@@ -252,6 +264,7 @@ class Daemon:
         self.lock_path = lock_path_for(config_path)
         self.state_path = state_path_for(config_path)
         self.started = _now()
+        self.code_version = installed_version()
 
         self._scheduler: Any = None
         self._settings = SchedulerSettings()
@@ -534,6 +547,7 @@ class Daemon:
             command=entry.command,
             spec=target.spec,
             timeout=timeout or None,
+            trigger=TRIGGER_DAEMON,
         )
         child_env = {k: v for k, v in os.environ.items() if k not in _DROP_ENV}
         child_env.update(env)
@@ -619,6 +633,7 @@ class Daemon:
             "venv": sys.prefix,
             "config": str(self.config_path),
             "started": _iso(self.started),
+            "scheduler_version": self.code_version,
             "heartbeat": _iso(_now()),
             "interval_s": self.interval,
             "backend": settings.backend,

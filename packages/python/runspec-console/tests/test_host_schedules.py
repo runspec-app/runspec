@@ -342,3 +342,164 @@ def test_login_owned_venv_runs_without_escalation():
     with patch.object(b, "_run_scheduler_as", side_effect=run):
         b.host_schedule_sync({"host": "prod-1", "venv": "ops"})
     assert calls[0]["owner"] == ""
+
+
+# ── the daemon: settings + restart ──────────────────────────────────────────
+
+
+def test_settings_argv():
+    assert hs.settings_argv({"timeout": "6H", "catch_up_window": " 1d "}) == [
+        "settings",
+        "--timeout",
+        "6h",
+        "--catch-up-window",
+        "1d",
+    ]
+    assert hs.settings_argv({"misfire_grace": 300}) == [
+        "settings",
+        "--misfire-grace",
+        "300",
+    ]
+    with pytest.raises(hs.HostScheduleError, match="Nothing to change"):
+        hs.settings_argv({"timeout": ""})
+    with pytest.raises(hs.HostScheduleError, match="timeout must be"):
+        hs.settings_argv({"timeout": "6 hours; rm -rf /"})
+
+
+def test_too_old():
+    assert hs.too_old("✗  Unknown command for 'runspec-scheduler': 'restart'")
+    assert not hs.too_old("sudo: a password is required")
+
+
+def test_settings_runs_as_owner_and_audits():
+    b = _bridge()
+    settings = {
+        "backend": "daemon",
+        "timeout": 7200,
+        "misfire_grace": 300,
+        "catch_up_window": 86400,
+    }
+    calls, run = _fake(
+        {"settings": (0, json.dumps({"ok": True, "settings": settings}), "")}
+    )
+    with patch.object(b, "_run_scheduler_as", side_effect=run):
+        out = b.host_scheduler_settings(
+            {"host": "prod-1", "venv": "ops", "timeout": "2h"}
+        )
+    assert out == {"ok": True, "settings": settings}
+    assert calls[0]["argv"] == ["settings", "--timeout", "2h"]
+    assert calls[0]["owner"] == "svc"
+    assert _events(b) == ["scheduler.host.settings"]
+    assert b.audit[0]["extra"]["timeout"] == "2h"
+
+
+def test_settings_refuses_bad_values_without_running():
+    b = _bridge()
+    calls, run = _fake({})
+    with patch.object(b, "_run_scheduler_as", side_effect=run):
+        out = b.host_scheduler_settings(
+            {"host": "prod-1", "venv": "ops", "timeout": "soon"}
+        )
+    assert not out["ok"] and calls == []
+
+
+def test_restart_reports_the_new_daemon():
+    b = _bridge()
+    reply = {
+        "ok": True,
+        "manager": "systemd-user",
+        "warnings": ["w"],
+        "daemon": {"state": "running", "pid": 77},
+    }
+    calls, run = _fake({"restart": (0, json.dumps(reply), "")})
+    with patch.object(b, "_run_scheduler_as", side_effect=run):
+        out = b.host_scheduler_restart({"host": "prod-1", "venv": "ops"})
+    assert out == {
+        "ok": True,
+        "daemon": {"state": "running", "pid": 77},
+        "manager": "systemd-user",
+        "warnings": ["w"],
+    }
+    assert (
+        calls[0]["argv"] == ["restart", "--wait", "15"] and calls[0]["owner"] == "svc"
+    )
+    assert _events(b) == ["scheduler.host.restarted"]
+
+
+def test_restart_on_an_old_scheduler_says_upgrade():
+    b = _bridge()
+    with patch.object(
+        b,
+        "_run_scheduler_as",
+        return_value=(2, "", "✗  Unknown command for 'runspec-scheduler': 'restart'"),
+    ):
+        out = b.host_scheduler_restart({"host": "prod-1", "venv": "ops"})
+    assert not out["ok"] and "older than 0.7.0" in out["error"]
+    assert _events(b) == ["scheduler.host.restart_failed"]
+
+
+def test_run_now_detaches_as_owner_and_audits():
+    b = _bridge()
+    reply = {
+        "ok": True,
+        "id": "nightly",
+        "runnable": "backup",
+        "user": "svc",
+        "pid": 99,
+    }
+    calls, run = _fake({"run-now": (0, json.dumps(reply), "")})
+    with patch.object(b, "_run_scheduler_as", side_effect=run):
+        out = b.host_schedule_run_now(
+            {"host": "prod-1", "venv": "ops", "id": "nightly"}
+        )
+    assert out == {"ok": True, "id": "nightly", "pid": 99, "user": "svc"}
+    assert calls[0]["argv"] == ["run-now", "--id", "nightly", "--detach"]
+    assert calls[0]["owner"] == "svc"
+    assert _events(b) == ["schedule.host.run_now"]
+
+
+def test_run_now_reports_a_quick_finish_and_refusals():
+    b = _bridge()
+    done = {
+        "ok": True,
+        "id": "nightly",
+        "user": "svc",
+        "pid": 5,
+        "finished": True,
+        "exit_code": 2,
+    }
+    _calls, run = _fake({"run-now": (0, json.dumps(done), "")})
+    with patch.object(b, "_run_scheduler_as", side_effect=run):
+        out = b.host_schedule_run_now(
+            {"host": "prod-1", "venv": "ops", "id": "nightly"}
+        )
+    assert out["finished"] and out["exit_code"] == 2
+    refused = {
+        "ok": False,
+        "id": "nightly",
+        "error": "can't run as svc: sudo: a password is required",
+    }
+    _calls, run = _fake({"run-now": (1, json.dumps(refused), "")})
+    with patch.object(b, "_run_scheduler_as", side_effect=run):
+        out = b.host_schedule_run_now(
+            {"host": "prod-1", "venv": "ops", "id": "nightly"}
+        )
+    assert out == {
+        "ok": False,
+        "error": "can't run as svc: sudo: a password is required",
+    }
+    assert _events(b)[-1] == "schedule.host.run_now_failed"
+    assert not b.host_schedule_run_now({"host": "prod-1", "venv": "ops", "id": "a b"})[
+        "ok"
+    ]
+
+
+def test_run_now_on_an_old_scheduler_says_upgrade():
+    b = _bridge()
+    with patch.object(
+        b, "_run_scheduler_as", return_value=(2, "", "✗  Unknown argument '--detach'")
+    ):
+        out = b.host_schedule_run_now(
+            {"host": "prod-1", "venv": "ops", "id": "nightly"}
+        )
+    assert "older than 0.7.0" in out["error"]

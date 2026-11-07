@@ -2,6 +2,45 @@
 
 All notable changes to `runspec-scheduler` are documented here.
 
+## [0.7.0] — 2026-11-07
+
+### Added
+
+- **`restart`**: restart (or start) the daemon through the keeper the venv
+  has — `systemctl --user restart`, `supervisorctl restart` (or starting
+  supervisord when it is down), or stop + `run --detach` for the cron watchdog
+  or a venv with no keeper (which it warns about). Run as the venv owner; a
+  system unit is left to root. Waits up to `--wait` seconds (15) for the new
+  daemon's first heartbeat; `--dry-run` prints the plan. Fires already running
+  carry on and are still recorded. Config changes never need it.
+- **`settings`**: show the `[scheduler]` settings, or change `--timeout`,
+  `--misfire-grace` and `--catch-up-window`. Values are validated as the daemon
+  reads them before anything is written; the schedules, backend and other keys
+  are kept, and a running daemon reloads the change by itself.
+- **`status` reports the settings and when a restart is needed.** The payload
+  gains `settings` (backend + the three durations, in seconds) and `log` (the
+  daemon's log file). The daemon records the runspec-scheduler version it
+  started with in its heartbeat; `daemon.version` shows it and
+  `daemon.restart_needed` is true when the installed version differs (an
+  upgrade the running daemon hasn't loaded).
+- **`run-now --detach`**: start one schedule's fire in the background and
+  return its pid. It runs as a scheduled fire would (the schedule's `run_as`
+  on the cron backend, escalated with `sudo -n` / `su` after a check that the
+  escalation works; the venv owner on the daemon backend), in its own session
+  with no stdio, so an SSH caller (the console's *Run now*) can hang up without
+  stopping it. A fire that ends within 1.5 s reports its exit code. The run is
+  recorded like any other fire, and `--lock` still makes a second one a
+  recorded skip.
+
+### Changed
+
+- **Fires say which backend started them.** The `runspec exec --trigger` a fire
+  passes is now `schedule:cron`, `schedule:daemon` or `schedule:run-now`
+  (was `schedule` for all), so the runs index and the console's History can
+  tell them apart. Cron lines pick up the new value on their next `sync`, the
+  daemon after a restart; skipped and failed daemon rows use
+  `schedule:daemon`.
+
 ## [0.6.2] — 2026-11-07
 
 ### Fixed

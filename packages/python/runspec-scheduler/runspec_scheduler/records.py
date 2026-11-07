@@ -93,7 +93,7 @@ def record_run(
                 "exit_code": exit_code,
                 "user": _user(),
                 "agent": True,
-                "trigger": "schedule",
+                "trigger": "schedule:daemon",  # = cronsync.TRIGGER_DAEMON (records stays import-light)
                 "pid": os.getpid(),
                 "host": socket.gethostname(),
                 "label": label,
@@ -113,7 +113,7 @@ def record_run(
                 "exit_code": exit_code,
                 "duration_ms": 0,
                 "label": label,
-                "trigger": "schedule",
+                "trigger": "schedule:daemon",  # = cronsync.TRIGGER_DAEMON (records stays import-light)
                 "reason": reason,
                 "run_id": run_id,
             },

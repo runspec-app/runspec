@@ -14,7 +14,7 @@ Shape of one installed schedule (in ``run_as``'s crontab, so cron runs it *as*
 
     # runspec:sched:<id>
     <cron>  env RUNSPEC_AGENT=1 [RUNSPEC_ENV_FILE=…] <venv>/bin/runspec exec \
-              --label sched:<id> --trigger schedule --lock <lock> <runnable> -- <argv…> >/dev/null 2>&1
+              --label sched:<id> --trigger schedule:cron --lock <lock> <runnable> -- <argv…> >/dev/null 2>&1
 
 * **``runspec exec``** (core ≥ 0.62) records every fire in the runs index under
   the label ``sched:<id>`` — observed exit code, captured stdout/stderr, and
@@ -118,6 +118,14 @@ def _home_of(user: str) -> str:
         return "/tmp"
 
 
+#: ``runspec exec --trigger`` values: which backend fired a schedule (or a
+#: ``run-now``). All start with ``schedule`` so a reader that only asks "was it
+#: scheduled?" can match the prefix; runs fired before 0.7.0 say ``schedule``.
+TRIGGER_CRON = "schedule:cron"
+TRIGGER_DAEMON = "schedule:daemon"
+TRIGGER_RUN_NOW = "schedule:run-now"
+
+
 def lock_path(home: str, sched_id: str) -> str:
     """The ``runspec exec --lock`` file for one schedule, under ``home``."""
     return f"{home}/{_LOCK_SUBDIR}/{sched_id}.lock"
@@ -134,11 +142,12 @@ def exec_invocation(
     command: tuple[str, ...] | list[str] = (),
     spec: dict[str, Any] | None = None,
     timeout: int | None = None,
+    trigger: str = TRIGGER_CRON,
 ) -> tuple[dict[str, str], list[str]]:
     """The environment and argv of one schedule's ``runspec exec`` fire.
 
     Shared by both backends, so a cron fire and a daemon fire run the same
-    command: ``runspec exec --label sched:<id> --trigger schedule --lock <lock>
+    command: ``runspec exec --label sched:<id> --trigger <trigger> --lock <lock>
     [--timeout N] <runnable> -- <globals> <command path> <command args>``. The
     environment carries only ``RUNSPEC_AGENT``, the ``RUNSPEC_ENV_FILE`` path
     and any ``RUNSPEC_<R>_ARG_<FLAG>=0`` a default-true flag needs — never a
@@ -154,7 +163,7 @@ def exec_invocation(
         "--label",
         f"{LABEL_PREFIX}{sched_id}",
         "--trigger",
-        "schedule",
+        trigger,
         "--lock",
         lock_path(home, sched_id),
     ]

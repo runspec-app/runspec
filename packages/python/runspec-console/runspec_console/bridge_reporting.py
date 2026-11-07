@@ -1987,6 +1987,171 @@ class ReportingMixin:
             }
         return {"ok": True, "records": records}
 
+    # ── log retention policy (runspec >= 0.80.0) ──
+
+    _RETENTION_TOO_OLD = (
+        "this venv's runspec has no log retention policy (needs runspec "
+        "0.80.0 or later); upgrade it with Update venv… → Upgrade runspec."
+    )
+
+    @staticmethod
+    def _retention_payload(out: str) -> dict[str, Any] | None:
+        for line in reversed((out or "").splitlines()):
+            line = line.strip()
+            if not line.startswith("{"):
+                continue
+            try:
+                data = json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                continue
+            if isinstance(data, dict) and (
+                "file" in data or data.get("verb") == "retention"
+            ):
+                return data
+        return None
+
+    def _retention_failure(
+        self, group: str, code: int, out: str, err: str
+    ) -> dict[str, Any]:
+        """``{ok: False, error}`` from a failed ``runspec logs retention`` call;
+        an older runspec (no ``retention`` verb or flags) gets the upgrade hint."""
+        msg = (out or "").strip() or (err or "").strip() or f"exit {code}"
+        last = msg.splitlines()[-1].strip() if msg else msg
+        low = msg.lower()
+        if any(
+            k in low
+            for k in ("retention", "compact-after", "unknown argument", "unrecognized")
+        ):
+            return {
+                "ok": False,
+                "group": group,
+                "error": f"{self._RETENTION_TOO_OLD} ({last})",
+                "too_old": True,
+            }
+        return {"ok": False, "group": group, "error": last}
+
+    def logs_retention(self, host: str, group: str) -> dict[str, Any]:
+        """A venv's log retention policy and its last pass (``runspec logs
+        retention --json``, read-only, as the login user): ``{ok, group, file,
+        policy: {compact_after?, delete_after?, max_total_size?} | None, last,
+        error?}``."""
+        rp, _scope = self._scope_for(host, group)
+        if not rp or group == "~/logs":
+            return {
+                "ok": False,
+                "group": group,
+                "error": f"no venv '{group}' on {host}",
+            }
+        code, out, err = self._run_logs(
+            host, rp, ["logs", "retention", "--json"], timeout=60
+        )
+        data = self._retention_payload(out)
+        if data is None:
+            return self._retention_failure(group, code, out, err)
+        res: dict[str, Any] = {
+            "ok": True,
+            "group": group,
+            "file": data.get("file") or "",
+            "policy": data.get("policy") or None,
+            "last": data.get("last") or None,
+        }
+        if data.get("error"):
+            res["policy_error"] = str(data["error"])
+        return res
+
+    def logs_retention_set(
+        self, host: str, group: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Make a venv's log retention policy exactly ``payload``
+        (``compact_after`` / ``delete_after`` / ``max_total_size``; blank clears
+        a field; ``off`` or all blank removes the policy) with the venv's own
+        ``runspec logs retention``, run as the venv owner (owner → root ladder;
+        core drops root to the owner). The change is recorded on the venv's audit
+        ledger by core. Returns :meth:`logs_retention`'s shape plus ``as_user``."""
+        from . import provision as prov
+
+        rp, _scope = self._scope_for(host, group)
+        if not rp or group == "~/logs":
+            return {
+                "ok": False,
+                "group": group,
+                "error": f"no venv '{group}' on {host}",
+            }
+        try:
+            argv = prov.retention_edit_argv(payload or {})
+        except prov.ProvisionError as exc:
+            return {"ok": False, "group": group, "error": str(exc)}
+        code, out, err, as_user = self._run_as_venv_owner(host, rp, argv, timeout=60)
+        data = self._retention_payload(out)
+        if data is None or code != 0:
+            return self._retention_failure(group, code, out, err)
+        if "removed" in data:
+            return {
+                "ok": True,
+                "group": group,
+                "file": data.get("file") or "",
+                "policy": None,
+                "removed": bool(data.get("removed")),
+                "as_user": as_user,
+            }
+        return {
+            "ok": True,
+            "group": group,
+            "file": data.get("file") or "",
+            "policy": data.get("policy") or None,
+            "last": data.get("last") or None,
+            "as_user": as_user,
+        }
+
+    def logs_retention_run(
+        self, host: str, group: str, dry_run: bool = True
+    ) -> dict[str, Any]:
+        """Apply a venv's saved retention policy now (``--now``), or preview it
+        (``dry_run``, the default; read-only, as the login user). Applying runs
+        as the venv owner. Returns ``{ok, group, dry_run, compacted, deleted,
+        freed_bytes, skipped?, error?}``."""
+        rp, _scope = self._scope_for(host, group)
+        if not rp or group == "~/logs":
+            return {
+                "ok": False,
+                "group": group,
+                "error": f"no venv '{group}' on {host}",
+            }
+        argv = ["logs", "retention", "--now", "--json"]
+        as_user = ""
+        if dry_run:
+            argv.insert(3, "--dry-run")
+            code, out, err = self._run_logs(host, rp, argv, timeout=300)
+        else:
+            code, out, err, as_user = self._run_as_venv_owner(
+                host, rp, argv, timeout=600
+            )
+        data = self._retention_payload(out)
+        if data is None or not isinstance(data.get("pass"), dict):
+            return self._retention_failure(group, code, out, err)
+        res = dict(data["pass"])
+        reasons = {
+            "no-policy": "This venv has no retention policy yet.",
+            "no-logs": "This venv has no logs/ folder yet.",
+            "busy": "Another cleanup pass is running; try again shortly.",
+            "invalid": str(res.get("error") or "The policy file is invalid."),
+        }
+        out_res: dict[str, Any] = {
+            "ok": True,
+            "group": group,
+            "dry_run": dry_run,
+            "as_user": as_user,
+            **res,
+        }
+        if res.get("skipped"):
+            out_res["ok"] = res["skipped"] == "no-logs"
+            out_res["error"] = reasons.get(str(res["skipped"]), str(res["skipped"]))
+        elif res.get("error"):
+            out_res["ok"] = False
+        if out_res["ok"] and not dry_run:
+            self._invalidate_remote_history(host)
+        return out_res
+
     def logs_prune(
         self,
         host: str,

@@ -82,7 +82,7 @@ def test_fires_are_recorded_by_exec_under_the_schedule_label(venv):
     pe.write_config(venv, DAEMON + sched("a"))
     d = start(venv)
     rows = pe.wait_for(lambda: [r for r in pe.finished(venv, "a") if r["status"] == "completed"][:2] if len(pe.finished(venv, "a")) >= 2 else None, 20, what="two fires")
-    assert all(r["exit_code"] == 0 and r["trigger"] == "schedule" for r in rows)
+    assert all(r["exit_code"] == 0 and r["trigger"] == "schedule:daemon" for r in rows)
     st = pe.state(venv)
     assert st["firing"] is True and "a" in st["jobs"]
     # status (as the CLI reports it) sees the daemon

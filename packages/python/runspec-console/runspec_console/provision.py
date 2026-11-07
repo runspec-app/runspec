@@ -802,6 +802,37 @@ def retention_hint(policy: dict[str, str]) -> str:
     )
 
 
+_SIZE_RE = re.compile(r"^\d+(\.\d+)?\s*(b|kb|mb|gb)?$", re.IGNORECASE)
+
+
+def retention_edit_argv(payload: dict[str, Any]) -> list[str]:
+    """``runspec logs retention`` argv (after the binary) that makes a venv's
+    policy exactly ``payload``: ``compact_after`` / ``delete_after`` (durations)
+    and ``max_total_size`` (``500MB``, ``5GB``); a blank field is cleared.
+    ``off`` (or every field blank) removes the policy. Checked here with the
+    grammar core uses, so a bad value never reaches the host."""
+    payload = payload or {}
+    vals = {
+        k: str(payload.get(k) or "").strip()
+        for k in ("compact_after", "delete_after", "max_total_size")
+    }
+    if payload.get("off") or not any(vals.values()):
+        return ["logs", "retention", "--off", "--json"]
+    durations = validate_retention(
+        {k: vals[k] for k in ("compact_after", "delete_after")}
+    )
+    size = vals["max_total_size"].upper().replace(" ", "")
+    if size and not _SIZE_RE.match(size):
+        raise ProvisionError(
+            f"Not a size: {vals['max_total_size']!r} (use e.g. 500MB or 5GB)."
+        )
+    argv = ["logs", "retention"]
+    for key in ("compact_after", "delete_after"):
+        argv += [f"--{key.replace('_', '-')}", durations.get(key) or "off"]
+    argv += ["--max-total-size", size or "off", "--json"]
+    return argv
+
+
 # --------------------------------------------------------------------------- #
 # Scheduler daemon (runspec-scheduler 0.6.0+)
 # --------------------------------------------------------------------------- #
@@ -865,6 +896,62 @@ def scheduler_cron_argv(root: str) -> list[str]:
     """Switch the venv's schedules back to the owner's crontab (``use cron``
     writes the crontab lines; the daemon stops firing at its next tick)."""
     return [_scheduler_bin(root), "use", "cron"]
+
+
+def scheduler_restart_argv(root: str) -> list[str]:
+    """Restart the venv's daemon through its keeper and wait for it to report
+    back, so it runs the code pip just installed (runspec-scheduler 0.7.0+)."""
+    return [_scheduler_bin(root), "restart", "--wait", "15"]
+
+
+def scheduler_status_argv(root: str) -> list[str]:
+    """Read the venv's schedules and their crontab lines (changes nothing)."""
+    return [_scheduler_bin(root), "status"]
+
+
+def schedule_counts(text: str) -> dict[str, Any] | None:
+    """What a backend switch would move, from ``runspec-scheduler status``
+    output (its last JSON line with ``schedules``), or ``None`` when there is
+    none. ``cron``/``every`` count enabled schedules by timing (cron cannot run
+    ``every``); ``in_crontab`` is how many have a line in the crontab now (cron
+    backend; ``None`` when a crontab couldn't be read); ``leftover`` counts
+    crontab lines the venv no longer wants (stale ones, or any line at all on a
+    daemon venv)."""
+    payload: dict[str, Any] | None = None
+    for line in reversed((text or "").splitlines()):
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            data = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(data, dict) and isinstance(data.get("schedules"), list):
+            payload = data
+            break
+    if payload is None:
+        return None
+    rows = [r for r in payload["schedules"] if isinstance(r, dict)]
+    enabled = [r for r in rows if r.get("enabled", True)]
+
+    def timed(r: dict[str, Any], key: str) -> bool:
+        return bool((r.get("when") or {}).get(key))
+
+    on_cron = str(payload.get("backend") or "cron") == "cron"
+    in_crontab: int | None = 0
+    if on_cron:
+        if any(r.get("installed") is None for r in enabled):
+            in_crontab = None
+        else:
+            in_crontab = sum(1 for r in rows if r.get("installed"))
+    return {
+        "total": len(rows),
+        "disabled": len(rows) - len(enabled),
+        "cron": sum(1 for r in enabled if timed(r, "cron")),
+        "every": sum(1 for r in enabled if timed(r, "every") and not timed(r, "cron")),
+        "in_crontab": in_crontab,
+        "leftover": len(payload.get("stale") or []),
+    }
 
 
 def add_scheduler_spec(packages: list[str], manager: str) -> list[str]:
@@ -949,12 +1036,18 @@ def update_steps(
     scheduler: str,
     has_scheduler: bool,
     acl_user: str = "",
+    daemon_running: bool = False,
 ) -> list[UpdateStep]:
     """The steps that bring an existing venv at ``root`` up to the chosen
     options, in order. Each one is safe to run again: pip ``-U`` only changes
     what is out of date, ``logs share --inbox`` and ``logs retention`` rewrite
     the same settings, ``use`` and ``install-service`` converge. Nothing is
-    recreated and the venv's logs are never touched."""
+    recreated and the venv's logs are never touched.
+
+    ``daemon_running``: a scheduler daemon was running from this venv when it
+    was inspected. A running daemon keeps the code it started with, so when
+    packages are upgraded it is restarted at the end (unless the update moves
+    the schedules back to crontab, which stops it anyway)."""
     paths = venv_paths(root)
     steps: list[UpdateStep] = []
     if specs:
@@ -992,6 +1085,8 @@ def update_steps(
             UpdateStep("scheduler", scheduler_use_argv(root)),
             UpdateStep("keeper", scheduler_keeper_argv(root, scheduler)),
         ]
+    if specs and daemon_running and has_scheduler and scheduler != SCHEDULER_OFF:
+        steps.append(UpdateStep("restart", scheduler_restart_argv(root)))
     return steps
 
 

@@ -10,18 +10,18 @@
  *
  * Rows, states, counts and filtering live in allSchedules.ts (pure, tested).
  */
-import { useMemo, useState } from 'react'
-import { Table, Tag, Typography, Button, Tooltip, Alert, Empty, Input, Select, Switch, Space, Spin, Popconfirm, message, theme } from 'antd'
+import { useEffect, useMemo, useState } from 'react'
+import { Table, Tag, Typography, Button, Tooltip, Alert, Empty, Input, Modal, Select, Switch, Space, Spin, Popconfirm, message, theme } from 'antd'
 import {
   ReloadOutlined, HistoryOutlined, InfoCircleOutlined, PlusOutlined, EditOutlined, DeleteOutlined,
-  PauseCircleOutlined, PlayCircleOutlined, SyncOutlined,
+  PauseCircleOutlined, PlayCircleOutlined, SyncOutlined, SettingOutlined, RightOutlined, DownOutlined, ThunderboltOutlined,
 } from '@ant-design/icons'
 import type { ColumnType } from 'antd/es/table'
 import { bridge, type HostScheduleResult, type HostScheduleSave, type Runnable, type SharedSchedule } from '../bridge'
 import { HostScheduleModal, timeoutText, type HostScheduleEditing } from './HostScheduleModal'
 import { MONO_FONT, RADIUS, useIsDark, textColor, textMuted, textSecondary, withAlpha } from '../ThemeContext'
 import {
-  DEFAULT_FILTERS, STATE_COLOR, filterRows, shortDuration,
+  DAEMON_SETTINGS, DEFAULT_FILTERS, FOLDED_ATTENTION_MAX, STATE_COLOR, daemonNeedsAttention, daemonSummary, filterRows, settingText, settingsChanges, shortDuration,
   type Collected, type DaemonVenv, type RowFilters, type RowSource, type RowState, type ScheduleRow, type ScheduleScope, type SchedulerVenv, type SortKey,
 } from './allSchedules'
 import { RUN_COLOR, ScheduleDetail, relTime } from './sharedSchedules'
@@ -47,6 +47,20 @@ export function readFilters(): RowFilters {
   } catch { return DEFAULT_FILTERS }
 }
 
+const DAEMONS_OPEN_KEY = 'runspec.schedules.daemonsOpen'
+
+/** The remembered open/folded choice for the daemon list, or null if never set. */
+function readDaemonsOpen(): boolean | null {
+  try {
+    const raw = localStorage.getItem(DAEMONS_OPEN_KEY)
+    return raw === null ? null : raw === '1'
+  } catch { return null }
+}
+
+function writeDaemonsOpen(open: boolean) {
+  try { localStorage.setItem(DAEMONS_OPEN_KEY, open ? '1' : '0') } catch { /* storage unavailable — fine */ }
+}
+
 function writeFilters(f: RowFilters) {
   try { localStorage.setItem(FILTERS_KEY, JSON.stringify(f)) } catch { /* storage unavailable — fine */ }
 }
@@ -63,7 +77,17 @@ const ALL_STATES: RowState[] = [
   'scheduler stopped', 'scheduler stale', "can't read", 'disabled', 'unknown', 'legacy line',
 ]
 
-function DaemonStrip({ d }: { d: DaemonVenv }) {
+const KEEPER_LABEL: Record<string, string> = {
+  'systemd-user': 'systemd --user', systemd: 'systemd (system)', supervisor: 'supervisord', cron: 'cron watchdog',
+}
+
+function DaemonStrip({ d, editable, busy, onRestart, onSettings }: {
+  d: DaemonVenv
+  editable: boolean
+  busy: boolean
+  onRestart: (d: DaemonVenv) => void
+  onSettings: (d: DaemonVenv) => void
+}) {
   const isDark = useIsDark()
   const st = d.daemon?.state ?? 'stopped'
   const color = st === 'running' ? 'green' : st === 'stale' ? 'orange' : 'red'
@@ -75,16 +99,102 @@ function DaemonStrip({ d }: { d: DaemonVenv }) {
     if (dm.heartbeat_age_s != null) bits.push(`heartbeat ${shortDuration(dm.heartbeat_age_s)} ago`)
     if (dm.firing) bits.push(`${dm.firing} firing now`)
   }
+  if (dm?.version) bits.push(`v${dm.version}`)
+  const keeper = d.keepers.length ? d.keepers.map(k => KEEPER_LABEL[k] ?? k).join(', ') : ''
+  const running = st === 'running'
+  const verb = running ? 'Restart' : 'Start'
+  const confirm = running
+    ? `Restart the scheduler on ${d.host} / ${d.venv}? Fires already running carry on; the new daemon picks up from the next tick.`
+    : `Start the scheduler on ${d.host} / ${d.venv}${keeper ? ` through ${keeper}` : ''}?`
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '6px 10px',
       border: '1px solid var(--rs-border)', borderRadius: RADIUS.sm, background: 'var(--rs-surface-raised)',
     }}>
       <Tag color={color} style={{ margin: 0 }}>scheduler {st}</Tag>
+      {dm?.restart_needed && running && (
+        <Tooltip title="The daemon still runs the runspec-scheduler it started with; the venv has a different one installed now. Restart it to run the new code.">
+          <Tag color="gold" style={{ margin: 0 }}>restart needed</Tag>
+        </Tooltip>
+      )}
       <span style={{ fontFamily: MONO_FONT, fontSize: 13, color: textColor(isDark) }}>{d.host} / {d.venv}</span>
       {d.owner && <span style={{ color: textMuted(isDark), fontSize: 12 }}>as {d.owner}</span>}
       {bits.length > 0 && <span style={{ color: textSecondary(isDark), fontSize: 12 }}>{bits.join(' · ')}</span>}
+      <Tooltip title={keeper ? 'What starts the daemon again after a crash or a reboot' : 'Nothing restarts this daemon after a crash or a reboot. Update venv… sets up a keeper.'}>
+        <span style={{ color: keeper ? textMuted(isDark) : undefined, fontSize: 12 }}>
+          {keeper ? `kept by ${keeper}` : <Text type="warning" style={{ fontSize: 12 }}>no keeper</Text>}
+        </span>
+      </Tooltip>
+      {editable && (
+        <Space size={6} style={{ marginLeft: 'auto' }}>
+          <Button size="small" icon={<SettingOutlined />} onClick={() => onSettings(d)}>Settings</Button>
+          <Popconfirm title={confirm} okText={verb} onConfirm={() => onRestart(d)} overlayStyle={{ maxWidth: 360 }}>
+            <Button size="small" icon={running ? <ReloadOutlined /> : <PlayCircleOutlined />} loading={busy}
+              type={!running || dm?.restart_needed ? 'primary' : 'default'}>{verb}</Button>
+          </Popconfirm>
+        </Space>
+      )}
     </div>
+  )
+}
+
+/** View and change a venv daemon's `[scheduler]` durations. The backend is
+ *  shown read-only (Update venv… moves a venv between cron and the daemon). */
+export function DaemonSettingsModal({ d, onClose, onSaved, zIndex }: {
+  d: DaemonVenv | null
+  onClose: () => void
+  onSaved: () => void
+  zIndex?: number
+}) {
+  const [form, setForm] = useState<Partial<Record<'timeout' | 'misfire_grace' | 'catch_up_window', string>>>({})
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const cur = d?.settings ?? null
+  useEffect(() => {
+    setError('')
+    setForm(cur ? Object.fromEntries(DAEMON_SETTINGS.map(({ key }) => [key, settingText(cur[key])])) : {})
+  }, [d?.key, cur])
+  const changes = settingsChanges(cur, form)
+  const save = async () => {
+    if (!d || !changes) return
+    setSaving(true); setError('')
+    try {
+      const res = await bridge.host_scheduler_settings({ host: d.host, venv: d.venv, ...changes })
+      if (!res.ok) { setError(res.error || 'Saving the settings failed.'); return }
+      message.success(`Saved the scheduler settings on ${d.host} / ${d.venv}; the daemon picks them up by itself.`)
+      onSaved()
+    } catch (e) { setError(String(e)) } finally { setSaving(false) }
+  }
+  return (
+    <Modal open={!!d} onCancel={onClose} zIndex={zIndex} width={560} destroyOnHidden
+      title={d ? <span>Scheduler settings · <span style={{ fontFamily: MONO_FONT }}>{d.host} / {d.venv}</span></span> : null}
+      okText="Save" onOk={save} okButtonProps={{ disabled: !changes, loading: saving }}>
+      {d && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {!cur && (
+            <Alert type="info" showIcon message="This venv's runspec-scheduler is older than 0.7.0, so its settings can't be read. Saving sets the values you type; upgrade it (Update venv…) to see them here." />
+          )}
+          <div style={{ fontSize: 13 }}>
+            <Text type="secondary">Fires from: </Text><Text strong>daemon</Text>
+            <Text type="secondary"> (Update venv… moves a venv between crontab and the daemon)</Text>
+          </div>
+          {DAEMON_SETTINGS.map(({ key, label, help }) => (
+            <div key={key}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ width: 130, fontWeight: 500 }}>{label}</span>
+                <Input size="small" style={{ width: 140, fontFamily: MONO_FONT }} value={form[key] ?? ''}
+                  placeholder={cur ? settingText(cur[key]) : 'e.g. 6h'}
+                  onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))} aria-label={label} />
+              </div>
+              <Text type="secondary" style={{ fontSize: 12, marginLeft: 138, display: 'block' }}>{help}</Text>
+            </div>
+          ))}
+          <Text type="secondary" style={{ fontSize: 12 }}>Seconds, or a duration like 90m, 6h or 1d. Saved with the venv's own runspec-scheduler, as {d.owner || 'the venv owner'}.</Text>
+          {d.log && <Text type="secondary" style={{ fontSize: 12 }}>Daemon log: <span style={{ fontFamily: MONO_FONT }}>{d.log}</span></Text>}
+          {error && <Alert type="error" showIcon message={error} />}
+        </div>
+      )}
+    </Modal>
   )
 }
 
@@ -171,6 +281,43 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
   const run = async (key: string, what: string, call: () => Promise<HostScheduleResult>) => {
     setBusy(key)
     try { afterChange(what, await call()) } catch (e) { message.error(`${what} failed: ${String(e)}`) } finally { setBusy('') }
+  }
+  const runNow = async (r: ScheduleRow, v: SchedulerVenv, s: SharedSchedule) => {
+    setBusy(`run::${r.key}`)
+    try {
+      const res = await bridge.host_schedule_run_now({ host: v.host, venv: v.venv, id: s.id })
+      if (!res.ok) { message.error(res.error || `Couldn't start ${s.id}`, 10); return }
+      const who = res.user ? ` as ${res.user}` : ''
+      if (res.finished) {
+        const fn = res.exit_code === 0 ? message.success : message.warning
+        fn(`${s.id} ran${who} and finished at once (exit ${res.exit_code}); see History for its output.`, 8)
+      } else {
+        message.success(`Started ${s.id}${who} on ${v.host} / ${v.venv}; it shows in History when it finishes.`)
+      }
+      // Re-read in a moment so the row shows the run.
+      window.setTimeout(onRefresh, 3000)
+    } catch (e) { message.error(`Run now failed: ${String(e)}`) } finally { setBusy('') }
+  }
+  const [daemonsOpen, setDaemonsOpen] = useState<boolean | null>(readDaemonsOpen)
+  const daemonsShown = daemonsOpen ?? daemons.length <= FOLDED_ATTENTION_MAX
+  const toggleDaemons = () => { writeDaemonsOpen(!daemonsShown); setDaemonsOpen(!daemonsShown) }
+  const visibleDaemons = daemonsShown ? daemons : daemons.filter(daemonNeedsAttention).slice(0, FOLDED_ATTENTION_MAX)
+  const foldedHidden = daemons.length - visibleDaemons.length
+  const [daemonSettings, setDaemonSettings] = useState<DaemonVenv | null>(null)
+  const restartDaemon = async (d: DaemonVenv) => {
+    const verb = d.daemon?.state === 'running' ? 'Restarted' : 'Started'
+    setBusy(`daemon::${d.key}`)
+    try {
+      const res = await bridge.host_scheduler_restart({ host: d.host, venv: d.venv })
+      if (!res.ok) {
+        message.error([res.error || `${verb.replace(/ed$/, '')} failed`, res.hint].filter(Boolean).join(' '), 10)
+      } else {
+        const pid = res.daemon?.pid ? ` (pid ${res.daemon.pid})` : ''
+        message.success(`${verb} the scheduler on ${d.host} / ${d.venv}${pid}.`)
+        for (const w of res.warnings ?? []) message.warning(w, 8)
+      }
+      onRefresh()
+    } catch (e) { message.error(`Restart failed: ${String(e)}`) } finally { setBusy('') }
   }
   const syncVenv = (v: SchedulerVenv) => run(v.key, `Synced ${v.host} / ${v.venv}`, () => bridge.host_schedule_sync({ host: v.host, venv: v.venv }))
 
@@ -271,7 +418,7 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
     columns.push({
       title: '',
       key: 'actions',
-      width: 120,
+      width: 150,
       render: (_: unknown, r) => {
         const v = venvOf(r)
         if (!v) return null
@@ -294,6 +441,18 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
     const s = r.shared as SharedSchedule
     return (
       <Space size={0}>
+        <Popconfirm
+          title={`Run ${s.id} now on ${r.host} / ${r.venv}?`}
+          description={<span style={{ display: 'block', maxWidth: 300 }}>
+            It starts in the background{r.runAs ? ` as ${r.runAs}` : ''}, the way a scheduled fire runs, and shows in History
+            {s.enabled ? '' : ' (even though the schedule is paused)'}. If it is already running, the new run is recorded as skipped.
+          </span>}
+          okText="Run now"
+          onConfirm={() => runNow(r, v, s)}>
+          <Tooltip title="Run now">
+            <Button type="text" size="small" icon={<ThunderboltOutlined />} aria-label="Run now" loading={busy === `run::${r.key}`} />
+          </Tooltip>
+        </Popconfirm>
         <Tooltip title="Edit">
           <Button type="text" size="small" icon={<EditOutlined />} aria-label="Edit"
             onClick={() => { setEditing({ venv: v, schedule: s }); setEditorOpen(true) }} />
@@ -406,7 +565,19 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
 
       {daemons.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
-          {daemons.map(d => <DaemonStrip key={d.key} d={d} />)}
+          <button type="button" onClick={toggleDaemons} aria-expanded={daemonsShown}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 8, padding: '2px 0', border: 'none', background: 'none',
+              cursor: 'pointer', color: secondary, fontSize: 13, textAlign: 'left',
+            }}>
+            {daemonsShown ? <DownOutlined style={{ fontSize: 10 }} /> : <RightOutlined style={{ fontSize: 10 }} />}
+            <span>{daemonSummary(daemons)}</span>
+            {!daemonsShown && foldedHidden > 0 && <span style={{ color: muted }}>· show all</span>}
+          </button>
+          {visibleDaemons.map(d => (
+            <DaemonStrip key={d.key} d={d} editable={editable} busy={busy === `daemon::${d.key}`}
+              onRestart={restartDaemon} onSettings={setDaemonSettings} />
+          ))}
         </div>
       )}
 
@@ -458,6 +629,10 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
             afterChange(editing ? `Saved ${res.id ?? ''}`.trim() : `Added ${res.id ?? ''}`.trim(), res)
           }}
         />
+      )}
+      {editable && (
+        <DaemonSettingsModal d={daemonSettings} onClose={() => setDaemonSettings(null)}
+          onSaved={() => { setDaemonSettings(null); onRefresh() }} />
       )}
     </div>
   )
