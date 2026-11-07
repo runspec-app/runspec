@@ -1391,6 +1391,7 @@ class ProvisionMixin:
                 scheduler=plan["scheduler"],
                 has_scheduler=has_scheduler,
                 acl_user=login if run_as else "",
+                daemon_running=bool(info.get("scheduler_pid")),
             )
             off = plan["scheduler"] == prov.SCHEDULER_OFF
             notes = {
@@ -1416,6 +1417,9 @@ class ProvisionMixin:
                     else "Couldn't set up the scheduler daemon's keeper. On the host, "
                     "as the owner: runspec-scheduler install-service"
                 ),
+                "restart": "Couldn't restart the scheduler daemon, so it still runs "
+                "the code it started with (restart needs runspec-scheduler 0.7.0 or "
+                "later). On the host, as the owner: runspec-scheduler restart",
             }
             version = ""
             skip_keeper = False
@@ -1446,7 +1450,7 @@ class ProvisionMixin:
                             False, f"{st.name} failed: {msg}", h, run_as=run_as
                         )
                     note = notes.get(st.name, f"{st.name} failed")
-                    if st.name in ("scheduler", "keeper", "retention"):
+                    if st.name in ("scheduler", "keeper", "retention", "restart"):
                         note += f" ({msg})"
                     skip_keeper = skip_keeper or st.name == "scheduler"
                     res["warnings"].append(note)
@@ -1471,6 +1475,10 @@ class ProvisionMixin:
                             "reason": str(kept.get("reason") or ""),
                         }
                     res["warnings"].extend(str(w) for w in kept.get("warnings") or [])
+                if st.name == "restart":
+                    res["warnings"].extend(
+                        str(w) for w in prov.parse_keeper(out).get("warnings") or []
+                    )
                 if st.name == "verify":
                     out_lines = (out or "").strip().splitlines()
                     version = out_lines[-1].strip() if out_lines else ""

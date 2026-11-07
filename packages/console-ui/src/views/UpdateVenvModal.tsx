@@ -102,6 +102,10 @@ export function updateNotes(row: VenvUpdateRow, f: UpdateForm): string[] {
   if (f.scheduler && f.scheduler !== 'off' && row.backend === 'cron' && !c) {
     out.push("Its schedules move off the owner's crontab and the daemon fires them instead.")
   }
+  const upgrades = f.upgradeRunspec || f.packages.some(x => x.trim())
+  if (upgrades && row.scheduler && row.scheduler_pid && f.scheduler !== 'off') {
+    out.push('The scheduler daemon is restarted at the end, so it runs the upgraded code.')
+  }
   if (f.scheduler === 'off' && row.backend === 'daemon' && c && c.every > 0) {
     out.push(`${plural(c.every, 'interval schedule')} can't run from cron and will stop firing (only the daemon runs "every" schedules).`)
   }

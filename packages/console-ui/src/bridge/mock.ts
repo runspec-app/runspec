@@ -1732,7 +1732,10 @@ export const mockApi: BridgeApi = {
         host: hosts.find(h => h !== 'local'), group: 'jobs', available: true, ok: true, owner: 'svc-jobs',
         status: {
           ok: true, venv: 'jobs', config: '/opt/venvs/jobs/runspec_scheduler.toml', backend: 'daemon',
-          daemon: { state: 'running', firing: 0, pid: 4121, started: ago(60 * 26), heartbeat: ago(0.1), heartbeat_age_s: 6, uptime_s: 26 * 3600, interval_s: 30, config_error: null, running: [] },
+          daemon: { state: 'running', firing: 0, pid: 4121, started: ago(60 * 26), heartbeat: ago(0.1), heartbeat_age_s: 6, uptime_s: 26 * 3600, interval_s: 30, config_error: null, running: [], version: '0.6.2', restart_needed: true },
+          settings: { backend: 'daemon', timeout: 21600, misfire_grace: 300, catch_up_window: 86400 },
+          log: '/opt/venvs/jobs/logs/scheduler.log',
+          keeper: [{ manager: 'systemd-user', where: '/home/svc-jobs/.config/systemd/user/runspec-scheduler-jobs.service' }],
           stale: [{ id: 'queue-poll', user: 'svc-jobs', reason: 'backend is daemon' }], errors: [],
           schedules: [
             {
@@ -1772,6 +1775,11 @@ export const mockApi: BridgeApi = {
   },
   host_schedule_remove: async (p) => ({ ok: true, id: p.id, warnings: [] }),
   host_schedule_sync: async () => ({ ok: true, warnings: [], sync: { installed: 2, skipped: [], users: ['svc-ops'] } }),
+  host_scheduler_settings: async (p) => ({
+    ok: true,
+    settings: { backend: 'daemon', timeout: 21600, misfire_grace: 300, catch_up_window: 86400, ...(p.timeout === '0' ? { timeout: 0 } : {}) },
+  }),
+  host_scheduler_restart: async () => ({ ok: true, manager: 'systemd-user', daemon: { state: 'running', pid: 4242, version: '0.7.0', restart_needed: false }, warnings: [] }),
 
   history_db_stats: async (_host, group) => ({
     ok: true, group, exists: true,

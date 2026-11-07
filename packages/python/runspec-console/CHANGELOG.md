@@ -22,6 +22,30 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   interval (`every`) schedules would stop firing, and a venv whose schedules
   couldn't be counted says why. `provision.schedule_counts`, bridge
   `_upd_inspect`.
+- **Restart and settings for a venv's scheduler daemon** on the Schedules tab's
+  *Host daemon* card. Each daemon strip now shows its keeper (systemd --user,
+  supervisord, cron watchdog), the version it runs, and a *restart needed* tag
+  when pip installed a different runspec-scheduler than the one the daemon
+  started with. **Restart** (or **Start**, when it is stopped or stale) goes
+  through the venv's own `runspec-scheduler restart` as the venv owner, so it
+  uses whichever keeper the venv has. **Settings** shows and changes the
+  daemon's fire timeout, misfire grace and catch-up window
+  (`runspec-scheduler settings`; the daemon picks them up by itself) and names
+  its log file. Both need runspec-scheduler 0.7.0 in the venv; an older one is
+  told to upgrade. Audit events `scheduler.host.restarted` /
+  `scheduler.host.settings` (+ `_failed`). Bridge `host_scheduler_restart` /
+  `host_scheduler_settings`; UI `AllSchedulesView` `DaemonStrip` /
+  `DaemonSettingsModal`.
+- **Many daemons fold into one line.** With more than three daemon-backed
+  venvs on the active profile, the strips fold into a summary ("8 scheduler
+  daemons: 7 running, 1 stopped, 2 need a restart"); while folded, up to three
+  daemons that need a look (stopped, stale, or restart needed) still show.
+  Opening or folding it is remembered.
+- **Update venv… restarts a running daemon after upgrading packages**, so it
+  runs the code pip just installed (not when the update moves the schedules
+  back to crontab, which stops it). A failed restart is a warning with the
+  command to run on the host. `provision.update_steps(daemon_running=)`,
+  step `restart`.
 
 ### Fixed
 

@@ -7,7 +7,7 @@
  *
  * Older schedulers (< 0.5.0) report no `backend` and no `daemon`: they are cron.
  */
-import type { RunCard, Schedule, SharedSchedule, SharedSchedulesVenv } from '../bridge'
+import type { RunCard, Schedule, SchedulerSettings, SharedSchedule, SharedSchedulesVenv } from '../bridge'
 import { hostPasses, parseSearch } from '../searchTokens'
 
 /** The four option cards across the top of the Schedules tab. */
@@ -69,6 +69,11 @@ export interface DaemonVenv {
   venv: string
   owner: string
   daemon: NonNullable<NonNullable<SharedSchedulesVenv['status']>['daemon']> | null
+  /** The `[scheduler]` durations (runspec-scheduler >= 0.7.0; null before). */
+  settings: SchedulerSettings | null
+  /** What keeps the daemon running (systemd-user, supervisor, cron, systemd). */
+  keepers: string[]
+  log: string
 }
 
 /** A venv whose runspec-scheduler status was read — a place a host schedule can
@@ -245,7 +250,12 @@ export function collectRows(
     editable.push({ key: base, host, hostGroup, venv, backend, owner: v.owner ?? '' })
     for (const e of st.errors ?? []) notes.push({ key: `${base}::err::${e}`, host, venv, source: backend, message: e })
     if (backend === 'daemon') {
-      daemons.push({ key: base, host, venv, owner: v.owner ?? '', daemon: st.daemon ?? null })
+      daemons.push({
+        key: base, host, venv, owner: v.owner ?? '', daemon: st.daemon ?? null,
+        settings: st.settings ?? null,
+        keepers: [...new Set((st.keeper ?? []).map(k => k.manager).filter(Boolean))],
+        log: st.log ?? '',
+      })
       if (st.daemon?.config_error) {
         notes.push({ key: `${base}::cfg`, host, venv, source: 'daemon', message: `The scheduler can't load its config: ${st.daemon.config_error}` })
       }
@@ -380,6 +390,62 @@ export function shortDuration(sec: number | null | undefined): string {
   const h = Math.floor(m / 60)
   if (h < 48) return `${h}h ${m % 60}m`
   return `${Math.floor(h / 24)}d ${h % 24}h`
+}
+
+/** Whether a venv's daemon wants a look: not running, or running old code. */
+export function daemonNeedsAttention(d: DaemonVenv): boolean {
+  const st = d.daemon?.state ?? 'stopped'
+  return st !== 'running' || !!d.daemon?.restart_needed
+}
+
+/** The one-line summary over every daemon strip (shown when they're folded). */
+export function daemonSummary(daemons: DaemonVenv[]): string {
+  const n = (st: string) => daemons.filter(d => (d.daemon?.state ?? 'stopped') === st).length
+  const restart = daemons.filter(d => d.daemon?.state === 'running' && d.daemon?.restart_needed).length
+  const parts = [
+    n('running') ? `${n('running')} running` : '',
+    n('stale') ? `${n('stale')} stale` : '',
+    n('stopped') ? `${n('stopped')} stopped` : '',
+    restart ? `${restart} need${restart === 1 ? 's' : ''} a restart` : '',
+  ].filter(Boolean)
+  return `${daemons.length} scheduler daemon${daemons.length === 1 ? '' : 's'}: ${parts.join(', ')}`
+}
+
+/** How many attention-needing strips stay visible while the list is folded. */
+export const FOLDED_ATTENTION_MAX = 3
+
+/** A `[scheduler]` duration in seconds as the shortest exact text the
+ *  scheduler accepts back (21600 → `6h`, 5400 → `90m`, 0 → `0`). */
+export function settingText(sec: number | null | undefined): string {
+  if (sec == null || Number.isNaN(sec)) return ''
+  const s = Math.max(0, Math.round(sec))
+  if (s === 0) return '0'
+  if (s % 86400 === 0) return `${s / 86400}d`
+  if (s % 3600 === 0) return `${s / 3600}h`
+  if (s % 60 === 0) return `${s / 60}m`
+  return `${s}s`
+}
+
+/** The daemon's three durations, keyed as `host_scheduler_settings` takes them. */
+export const DAEMON_SETTINGS: { key: 'timeout' | 'misfire_grace' | 'catch_up_window'; label: string; help: string }[] = [
+  { key: 'timeout', label: 'Fire timeout', help: 'How long one fire may run before it is stopped; 0 = no limit. A schedule can set its own.' },
+  { key: 'misfire_grace', label: 'Misfire grace', help: 'How late a fire may still start (after a pause or a busy host); later than this it is recorded as skipped.' },
+  { key: 'catch_up_window', label: 'Catch-up window', help: 'How far back a catch-up schedule looks for a missed fire when the daemon starts.' },
+]
+
+/** The changed durations only (blank / unchanged left out), or null if none. */
+export function settingsChanges(
+  current: SchedulerSettings | null,
+  form: Partial<Record<'timeout' | 'misfire_grace' | 'catch_up_window', string>>,
+): Partial<Record<'timeout' | 'misfire_grace' | 'catch_up_window', string>> | null {
+  const out: Partial<Record<'timeout' | 'misfire_grace' | 'catch_up_window', string>> = {}
+  for (const { key } of DAEMON_SETTINGS) {
+    const v = (form[key] ?? '').trim().toLowerCase()
+    if (!v) continue
+    if (current && v === settingText(current[key])) continue
+    out[key] = v
+  }
+  return Object.keys(out).length ? out : null
 }
 
 /** A schedule's per-fire timeout as the daemon applies it. */

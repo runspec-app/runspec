@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from 'vitest'
 import {
-  DEFAULT_FILTERS, collectRows, filterRows, inScope, scopeCounts, sharedState, timeoutLabel, shortDuration,
+  DEFAULT_FILTERS, collectRows, daemonNeedsAttention, daemonSummary, filterRows, inScope, scopeCounts, settingText, settingsChanges, sharedState, timeoutLabel, shortDuration,
 } from './allSchedules'
 import type { RunCard, Schedule, SharedSchedule, SharedSchedulesVenv } from '../bridge'
 
@@ -158,5 +158,52 @@ describe('labels', () => {
     expect(shortDuration(45)).toBe('45s')
     expect(shortDuration(7260)).toBe('2h 1m')
     expect(shortDuration(3 * 86400 + 3600)).toBe('3d 1h')
+  })
+})
+
+describe('daemon settings', () => {
+  it('writes seconds as the shortest exact duration', () => {
+    expect(settingText(21600)).toBe('6h')
+    expect(settingText(5400)).toBe('90m')
+    expect(settingText(86400)).toBe('1d')
+    expect(settingText(45)).toBe('45s')
+    expect(settingText(0)).toBe('0')
+    expect(settingText(null)).toBe('')
+  })
+
+  it('sends only what changed', () => {
+    const cur = { backend: 'daemon', timeout: 21600, misfire_grace: 300, catch_up_window: 86400 }
+    expect(settingsChanges(cur, { timeout: '6h', misfire_grace: '5m', catch_up_window: '1d' })).toBeNull()
+    expect(settingsChanges(cur, { timeout: ' 2H ', misfire_grace: '5m', catch_up_window: '' })).toEqual({ timeout: '2h' })
+    // an older scheduler reports no settings: whatever is typed is sent
+    expect(settingsChanges(null, { misfire_grace: '10m' })).toEqual({ misfire_grace: '10m' })
+  })
+
+  it('carries settings, keepers and the log path onto the daemon strip', () => {
+    const v = daemonVenv([], 'running', { version: '0.6.2', restart_needed: true })
+    v.status = {
+      ...v.status!,
+      settings: { backend: 'daemon', timeout: 0, misfire_grace: 300, catch_up_window: 86400 },
+      log: '/v/logs/scheduler.log',
+      keeper: [{ manager: 'supervisor', where: 'a' }, { manager: 'cron', where: 'crontab' }, { manager: 'cron', where: 'crontab' }],
+    }
+    const [d] = collectRows([], [v]).daemons
+    expect(d).toMatchObject({ keepers: ['supervisor', 'cron'], log: '/v/logs/scheduler.log', settings: { timeout: 0 } })
+    expect(d.daemon?.restart_needed).toBe(true)
+    // an older scheduler: no settings, no keepers
+    expect(collectRows([], [daemonVenv([], 'stopped')]).daemons[0]).toMatchObject({ settings: null, keepers: [], log: '' })
+  })
+})
+
+describe('daemon summary', () => {
+  it('counts states and restarts, and flags what needs a look', () => {
+    const ds = collectRows([], [
+      daemonVenv([], 'running'),
+      { ...daemonVenv([], 'running', { restart_needed: true }), host: 'job-2' },
+      { ...daemonVenv([], 'stopped'), host: 'job-3' },
+    ]).daemons
+    expect(daemonSummary(ds)).toBe('3 scheduler daemons: 2 running, 1 stopped, 1 needs a restart')
+    expect(ds.map(daemonNeedsAttention)).toEqual([false, true, true])
+    expect(daemonSummary(ds.slice(0, 1))).toBe('1 scheduler daemon: 1 running')
   })
 })

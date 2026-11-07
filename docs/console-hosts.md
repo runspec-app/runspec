@@ -173,6 +173,11 @@ Tick what to apply; each step runs as the venv's owner and is safe to repeat:
   only moves its own crontab lines; another venv owned by the same account
   keeps its schedules (runspec-scheduler 0.6.2).
 
+When packages are upgraded and the venv's scheduler daemon is running, the
+update restarts it at the end (`runspec-scheduler restart`), so it runs the
+code pip just installed. That needs runspec-scheduler 0.7.0; a failed restart
+is a warning. Moving the schedules back to crontab stops the daemon instead.
+
 The venv is never recreated: installed packages, `.runspec_env`, schedules and
 `logs/` stay, and the host's runspec paths don't change. A failed package
 install stops that host (nothing after it runs); any other failed step is a

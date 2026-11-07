@@ -1149,6 +1149,77 @@ class SchedulesMixin:
         self._host_sched_audit("schedule.host.synced", payload, "", ok=out["ok"])
         return out
 
+    def host_scheduler_settings(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Change a venv's daemon durations (``host``, ``venv``, and any of
+        ``timeout`` / ``misfire_grace`` / ``catch_up_window``) with the venv's
+        own ``runspec-scheduler settings``, run as the owner. A running daemon
+        reloads them by itself. Returns ``{ok, error?, settings?}``."""
+        from . import host_schedules as hs
+
+        payload = payload or {}
+        try:
+            argv = hs.settings_argv(payload)
+        except hs.HostScheduleError as exc:
+            return {"ok": False, "error": str(exc)}
+        res = self._host_sched_call(payload, argv)
+        changed = {
+            k: str(payload.get(k))
+            for k in hs.SETTING_FLAGS
+            if payload.get(k) not in (None, "")
+        }
+        if not res["ok"]:
+            err = self._host_daemon_error(res["error"])
+            self._host_sched_audit(
+                "scheduler.host.settings_failed", payload, "", error=err, **changed
+            )
+            return {"ok": False, "error": err}
+        self._host_sched_audit("scheduler.host.settings", payload, "", **changed)
+        return {"ok": True, "settings": (res["json"] or {}).get("settings") or {}}
+
+    def host_scheduler_restart(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Restart (or start) a venv's scheduler daemon (``host``, ``venv``)
+        through the keeper it has, as the owner — ``runspec-scheduler
+        restart``. Fires already running carry on. Returns ``{ok, error?,
+        daemon?, warnings, hint?}``."""
+        payload = payload or {}
+        res = self._host_sched_call(payload, ["restart", "--wait", "15"], timeout=90)
+        got = res["json"] or {}
+        if not res["ok"]:
+            err = self._host_daemon_error(res["error"])
+            self._host_sched_audit(
+                "scheduler.host.restart_failed", payload, "", error=err
+            )
+            return {
+                "ok": False,
+                "error": err,
+                "hint": got.get("hint") or "",
+                "warnings": [],
+            }
+        daemon = got.get("daemon") or {}
+        self._host_sched_audit(
+            "scheduler.host.restarted",
+            payload,
+            "",
+            manager=str(got.get("manager") or ""),
+            pid=daemon.get("pid"),
+        )
+        return {
+            "ok": True,
+            "daemon": daemon,
+            "manager": got.get("manager") or "",
+            "warnings": list(got.get("warnings") or []),
+        }
+
+    def _host_daemon_error(self, err: str) -> str:
+        from . import host_schedules as hs
+
+        if hs.too_old(err):
+            return (
+                f"This venv's runspec-scheduler is older than {hs.DAEMON_VERBS_MIN}; "
+                "upgrade it (Update venv…) to change the daemon from here."
+            )
+        return err
+
     def _host_sched_sync_after(
         self, payload: dict[str, Any], backend: str, out: dict[str, Any]
     ) -> None:

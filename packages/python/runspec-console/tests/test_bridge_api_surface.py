@@ -197,6 +197,8 @@ EXPECTED = {
     "host_schedule_save",
     "host_schedule_remove",
     "host_schedule_sync",
+    "host_scheduler_settings",
+    "host_scheduler_restart",
     "venv_owner",
     "manage_denylist",
     "marketplace_cancel",

@@ -564,6 +564,45 @@ def test_update_steps_order_and_flags():
     ]
 
 
+def test_update_restarts_a_running_daemon_after_upgrades():
+    root = "/opt/venvs/ops"
+
+    def names(**kw):
+        base = {
+            "specs": ["runspec"],
+            "inbox": False,
+            "retention": {},
+            "scheduler": "",
+            "has_scheduler": True,
+            "daemon_running": True,
+        }
+        return [s.name for s in prov.update_steps(root, **{**base, **kw})]
+
+    steps = prov.update_steps(
+        root,
+        specs=["runspec"],
+        inbox=False,
+        retention={},
+        scheduler="",
+        has_scheduler=True,
+        daemon_running=True,
+    )
+    assert [s.name for s in steps] == ["pip", "install", "verify", "restart"]
+    assert steps[-1].argv == [
+        f"{root}/bin/runspec-scheduler",
+        "restart",
+        "--wait",
+        "15",
+    ]
+    assert not steps[-1].required
+    # after the keeper when moving to the daemon too
+    assert names(scheduler="auto")[-3:] == ["scheduler", "keeper", "restart"]
+    # nothing upgraded, no daemon running, or the daemon is being stopped: no restart
+    assert "restart" not in names(specs=[])
+    assert "restart" not in names(daemon_running=False)
+    assert "restart" not in names(scheduler="off")
+
+
 def test_update_scheduler_and_version_helpers():
     assert prov.validate_update_scheduler("off") == "off"
     assert prov.validate_update_scheduler("") == ""

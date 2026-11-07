@@ -867,6 +867,12 @@ def scheduler_cron_argv(root: str) -> list[str]:
     return [_scheduler_bin(root), "use", "cron"]
 
 
+def scheduler_restart_argv(root: str) -> list[str]:
+    """Restart the venv's daemon through its keeper and wait for it to report
+    back, so it runs the code pip just installed (runspec-scheduler 0.7.0+)."""
+    return [_scheduler_bin(root), "restart", "--wait", "15"]
+
+
 def scheduler_status_argv(root: str) -> list[str]:
     """Read the venv's schedules and their crontab lines (changes nothing)."""
     return [_scheduler_bin(root), "status"]
@@ -999,12 +1005,18 @@ def update_steps(
     scheduler: str,
     has_scheduler: bool,
     acl_user: str = "",
+    daemon_running: bool = False,
 ) -> list[UpdateStep]:
     """The steps that bring an existing venv at ``root`` up to the chosen
     options, in order. Each one is safe to run again: pip ``-U`` only changes
     what is out of date, ``logs share --inbox`` and ``logs retention`` rewrite
     the same settings, ``use`` and ``install-service`` converge. Nothing is
-    recreated and the venv's logs are never touched."""
+    recreated and the venv's logs are never touched.
+
+    ``daemon_running``: a scheduler daemon was running from this venv when it
+    was inspected. A running daemon keeps the code it started with, so when
+    packages are upgraded it is restarted at the end (unless the update moves
+    the schedules back to crontab, which stops it anyway)."""
     paths = venv_paths(root)
     steps: list[UpdateStep] = []
     if specs:
@@ -1042,6 +1054,8 @@ def update_steps(
             UpdateStep("scheduler", scheduler_use_argv(root)),
             UpdateStep("keeper", scheduler_keeper_argv(root, scheduler)),
         ]
+    if specs and daemon_running and has_scheduler and scheduler != SCHEDULER_OFF:
+        steps.append(UpdateStep("restart", scheduler_restart_argv(root)))
     return steps
 
 

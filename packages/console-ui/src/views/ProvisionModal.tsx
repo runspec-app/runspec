@@ -124,6 +124,7 @@ export const STEP_LABEL: Record<string, string> = {
   verify: 'verifying',
   scheduler: 'switching schedules to the daemon',
   keeper: 'starting the scheduler daemon',
+  restart: 'restarting the scheduler daemon',
 }
 
 /** One ``runspec:provision_progress`` event's detail. */
