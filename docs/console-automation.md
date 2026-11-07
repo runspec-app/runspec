@@ -319,7 +319,7 @@ cron backend (the default, see [the cron scheduler design](design/cron-scheduler
 or, from 0.5.0, its daemon backend (`runspec-scheduler use daemon`, which adds
 `every` intervals and catch-up; see [the daemon design](design/venv-scheduler.md)).
 
-### All schedules: this console and every host — read-only for hosts
+### All schedules: this console and every host
 
 Four option cards across the top of the Schedules tab pick what you see. Each
 card shows how many schedules it covers and, in amber, how many have a problem.
@@ -368,16 +368,46 @@ Quick filters narrow by source (on **All**), state, owner and run-as account;
 rows. Sort by next fire (the default), last run, host or runnable. Filters are
 remembered.
 
-Host schedules are read-only here: the console runs `status` and changes nothing.
-In a venv owned by a service account the scheduler only runs as that owner, so
-the console runs `status` as the owner the same way it runs the venv's runnables
-(`sudo -n -u <owner> {venv}/bin/python …`); if that sudo is refused, the venv
-shows as *can't read* naming the owner. Venvs without `runspec-scheduler` are
-listed under the table; install it there from the **Marketplace** to schedule
-that venv's runnables. Schedules are managed on the host (`runspec-scheduler
-add` / `remove` / `sync`). Every fire runs through `runspec exec`, so it also
-appears in **History**, where a skipped fire shows as *skipped* rather than as a
-success.
+The console reads host schedules with `status`. In a venv owned by a service
+account the scheduler only runs as that owner, so the console runs it as the
+owner the same way it runs the venv's runnables (`sudo -n -u <owner>
+{venv}/bin/python …`); if that sudo is refused, the venv shows as *can't read*
+naming the owner. Venvs without `runspec-scheduler` are listed under the table;
+install it there from the **Marketplace** to schedule that venv's runnables.
+Every fire runs through `runspec exec`, so it also appears in **History**, where
+a skipped fire shows as *skipped* rather than as a success.
+
+#### Adding and editing host schedules
+
+On **All**, **Host cron** and **Host daemon**, **New host schedule** adds a
+schedule to a venv's runspec-scheduler, and each host row has **Edit**,
+**Pause** / **Resume** and **Remove**. The dialog asks for:
+
+- **Where**: a venv whose scheduler was read, with its backend (cron or daemon)
+  and owner. Fixed when editing.
+- **Runnable** and **Subcommand** from that venv, and its arguments as the same
+  form Forms uses. Only arguments you change from their default are stored.
+- **Schedule id**: the crontab marker and the History label `sched:<id>`.
+  Suggested from the runnable; changing it when editing renames the schedule.
+- **When**: a cron expression (presets or custom) and an optional timezone. On a
+  daemon venv you can also pick an **Interval** (`15m`, `1h`) and **Run once if
+  fires were missed**.
+- **Enabled** and **Timeout** (`90m`, `6h`, seconds; `0` = no limit).
+
+Saving runs that venv's own `runspec-scheduler add` (or `remove`) as the venv
+owner, the same way the console reads `status`. On a **cron** venv it then runs
+`runspec-scheduler sync`, so the crontab matches the config; only lines marked
+`# runspec:sched:` change, and from runspec-scheduler 0.6.1 the crontab is
+backed up to `{venv}/runspec_scheduler_backups/` before each rewrite. A **daemon**
+venv reloads its config by itself. Rows the crontab is out of step with (*not
+installed*, *stale line*, *legacy line*) get a **Sync crontab** button.
+
+A host schedule never carries credentials. Password arguments aren't offered;
+set them in the venv's `.runspec_env` on the host (**Env files** in the hosts
+panel) so every fire reads them. Each change is recorded in the console's audit
+log (`schedule.host.saved` / `removed` / `synced`, or `*_failed`). Local
+Windows venvs can't be edited: the scheduler fires with cron or its daemon,
+which need Linux.
 
 ---
 

@@ -1000,7 +1000,14 @@ class SchedulesMixin:
         return owner, owner
 
     def _run_scheduler_as(
-        self, host: str, binary: str, argv: list[str], owner: str, remote: bool
+        self,
+        host: str,
+        binary: str,
+        argv: list[str],
+        owner: str,
+        remote: bool,
+        env: dict[str, str] | None = None,
+        timeout: int = 45,
     ) -> tuple[int, str, str]:
         """``<binary> <argv>`` as ``owner``, built like a runnable run
         (``executor.remote_exec_command``): ``sudo -n -u <owner> {venv}/bin/python
@@ -1010,7 +1017,11 @@ class SchedulesMixin:
         from runspec.become import build_exec_argv
 
         parts, frame = build_exec_argv(
-            [binary, *argv], owner, "sudo", "-n", env={"RUNSPEC_LABEL": "console"}
+            [binary, *argv],
+            owner,
+            "sudo",
+            "-n",
+            env={"RUNSPEC_LABEL": "console", **(env or {})},
         )
         if remote:
             entry = self._host_entry(host)
@@ -1025,7 +1036,7 @@ class SchedulesMixin:
                 entry["ssh"],
                 command,
                 identity_file=entry.get("identityFile"),
-                timeout=45,
+                timeout=timeout,
                 stdin=frame,
             )
         if not Path(binary).exists():
@@ -1033,7 +1044,9 @@ class SchedulesMixin:
         import subprocess
 
         try:
-            proc = subprocess.run(parts, input=frame, capture_output=True, timeout=45)
+            proc = subprocess.run(
+                parts, input=frame, capture_output=True, timeout=timeout
+            )
         except (OSError, subprocess.TimeoutExpired) as exc:
             return -1, "", str(exc)
         return (
@@ -1041,6 +1054,211 @@ class SchedulesMixin:
             proc.stdout.decode("utf-8", "replace"),
             proc.stderr.decode("utf-8", "replace"),
         )
+
+    # ── editing a venv's host schedules (console 0.385.0) ───────────────────────
+    #
+    # The console runs the venv's own runspec-scheduler as the venv owner —
+    # ``add`` / ``remove``, then ``sync`` on a cron venv so the crontab follows
+    # (a daemon reloads its config by itself). It never writes the crontab or
+    # the scheduler config directly, and a host schedule carries no credentials.
+
+    def host_schedule_save(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Add or replace one schedule in a venv's runspec-scheduler config.
+
+        ``payload``: ``host``, ``venv``, ``backend`` (``cron`` | ``daemon``, from
+        the status the editor was opened from), ``original_id`` when editing, and
+        the schedule fields :func:`host_schedules.save_argv` takes. Renaming (a
+        new ``id``) adds the new schedule first, then removes the old one.
+        Returns ``{ok, id, error?, warnings, sync?}``."""
+        from . import host_schedules as hs
+
+        payload = payload or {}
+        backend = "daemon" if payload.get("backend") == "daemon" else "cron"
+        try:
+            sid, argv, env = hs.save_argv(payload, backend=backend)
+        except hs.HostScheduleError as exc:
+            return {"ok": False, "error": str(exc), "warnings": []}
+        original = str(payload.get("original_id") or "").strip()
+        res = self._host_sched_call(payload, argv, env=env)
+        if not res["ok"]:
+            self._host_sched_audit(
+                "schedule.host.save_failed", payload, sid, error=res["error"]
+            )
+            return {"ok": False, "id": sid, "error": res["error"], "warnings": []}
+        warnings: list[str] = []
+        if original and original != sid:
+            gone = self._host_sched_call(payload, ["remove", "--id", original])
+            if not gone["ok"]:
+                warnings.append(
+                    f"Saved as {sid}, but the old schedule {original} couldn't be removed: "
+                    f"{gone['error']}. Remove it from the list, or on the host: "
+                    f"runspec-scheduler remove --id {original}"
+                )
+        out: dict[str, Any] = {"ok": True, "id": sid, "warnings": warnings}
+        self._host_sched_sync_after(payload, backend, out)
+        self._host_sched_audit(
+            "schedule.host.saved",
+            payload,
+            sid,
+            runnable=str(payload.get("runnable") or ""),
+            replaced=original if original and original != sid else "",
+        )
+        return out
+
+    def host_schedule_remove(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Remove one schedule (``host``, ``venv``, ``backend``, ``id``) — its
+        config entry and credential file — then sync a cron venv's crontab."""
+        from . import host_schedules as hs
+
+        payload = payload or {}
+        try:
+            sid = hs.validate_id(payload.get("id"))
+        except hs.HostScheduleError as exc:
+            return {"ok": False, "error": str(exc), "warnings": []}
+        res = self._host_sched_call(payload, ["remove", "--id", sid])
+        if not res["ok"]:
+            self._host_sched_audit(
+                "schedule.host.remove_failed", payload, sid, error=res["error"]
+            )
+            return {"ok": False, "id": sid, "error": res["error"], "warnings": []}
+        out: dict[str, Any] = {"ok": True, "id": sid, "warnings": []}
+        if res["json"] and res["json"].get("ok") is False:
+            out["warnings"].append(
+                f"{sid} wasn't in this venv's config (already removed?)."
+            )
+        backend = "daemon" if payload.get("backend") == "daemon" else "cron"
+        self._host_sched_sync_after(payload, backend, out)
+        self._host_sched_audit("schedule.host.removed", payload, sid)
+        return out
+
+    def host_schedule_sync(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """``runspec-scheduler sync`` for one venv (``host``, ``venv``): the
+        crontab is made to match the config. Only this venv's marked lines
+        change. Returns ``{ok, error?, sync}``."""
+        payload = payload or {}
+        out: dict[str, Any] = {"ok": True, "warnings": []}
+        self._host_sched_sync_after(payload, "cron", out)
+        if out.get("sync_error"):
+            out["ok"] = False
+            out["error"] = out.pop("sync_error")
+        self._host_sched_audit("schedule.host.synced", payload, "", ok=out["ok"])
+        return out
+
+    def _host_sched_sync_after(
+        self, payload: dict[str, Any], backend: str, out: dict[str, Any]
+    ) -> None:
+        """Run ``sync`` on a cron venv after a change and fold its result into
+        ``out`` (``sync`` = installed/removed counts; a failure is a warning,
+        since the config change itself already succeeded)."""
+        from . import host_schedules as hs
+
+        if backend != "cron":
+            return
+        res = self._host_sched_call(payload, ["sync"], timeout=120)
+        got = res["json"] or {}
+        if res["ok"] and got.get("ok", True):
+            out["sync"] = {
+                "installed": len(got.get("installed") or []),
+                "skipped": got.get("skipped") or [],
+                "users": got.get("users") or [],
+            }
+            return
+        err = res["error"] or hs.failure(1, res.get("stdout", ""), "")
+        out["sync_error"] = err
+        out["warnings"].append(
+            f"Saved, but the crontab wasn't updated: {err}. "
+            "Use Sync crontab once that's fixed."
+        )
+
+    def _host_sched_call(
+        self,
+        payload: dict[str, Any],
+        argv: list[str],
+        *,
+        env: dict[str, str] | None = None,
+        timeout: int = 60,
+    ) -> dict[str, Any]:
+        """``runspec-scheduler <argv>`` in ``payload``'s venv as its owner.
+        ``{ok, error, json, stdout}`` — ok means exit 0."""
+        from . import host_schedules as hs
+
+        host = str(payload.get("host") or "")
+        venv = str(payload.get("venv") or "")
+        entry = self._host_entry(host)
+        if entry is None:
+            return {
+                "ok": False,
+                "error": f"unknown host {host}",
+                "json": None,
+                "stdout": "",
+            }
+        rp = next(
+            (
+                p
+                for p in utils_mod._paths(entry)
+                if p and hosts_mod.venv_name(p) == venv
+            ),
+            "",
+        )
+        if not rp:
+            return {
+                "ok": False,
+                "error": f"{host} has no venv {venv}",
+                "json": None,
+                "stdout": "",
+            }
+        remote = bool(entry.get("ssh"))
+        if not remote and sys.platform == "win32":
+            return {
+                "ok": False,
+                "error": "runspec-scheduler fires with cron or its daemon, which need Linux.",
+                "json": None,
+                "stdout": "",
+            }
+        if remote:
+            binary = str(PurePosixPath(rp).parent / "runspec-scheduler")
+        else:
+            binary = str(Path(rp).with_name("runspec-scheduler"))
+        owner, _ = self._scheduler_owner(host, venv, remote)
+        code, stdout, stderr = self._run_scheduler_as(
+            host, binary, argv, owner, remote, env=env, timeout=timeout
+        )
+        got = hs.last_json(stdout)
+        if code == 0 and not (got and got.get("error")):
+            return {"ok": True, "error": "", "json": got, "stdout": stdout}
+        err = hs.failure(code, stdout, stderr)
+        low = err.lower()
+        if owner and "sudo" in low and "password" in low:
+            err = (
+                f"runspec-scheduler runs as this venv's owner {owner!r}, and "
+                f"passwordless sudo to {owner!r} was refused. ({err})"
+            )
+        return {"ok": False, "error": err, "json": got, "stdout": stdout}
+
+    def _host_sched_audit(
+        self, event: str, payload: dict[str, Any], sid: str, **fields: Any
+    ) -> None:
+        append = getattr(self, "_append_tool_audit", None)
+        if not callable(append):
+            return
+        from . import provision as prov
+
+        user_fn = getattr(self, "_current_user", None)
+        user = user_fn() if callable(user_fn) else ""
+        try:
+            append(
+                prov.audit_record(
+                    event,
+                    utils_mod._iso_now(),
+                    user=user,
+                    host=str(payload.get("host") or ""),
+                    venv=str(payload.get("venv") or ""),
+                    id=sid,
+                    **fields,
+                )
+            )
+        except Exception:  # noqa: BLE001 — audit is best-effort
+            logger.exception("host schedule audit failed")
 
     def get_today(self, host: str, group: str) -> dict[str, Any] | None:
         entry = self._host_entry(host)

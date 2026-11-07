@@ -8,7 +8,7 @@ import { RunInbox } from '../components/RunInbox'
 import { EventLog } from '../components/EventLog'
 import { SoundSelect } from '../components/SoundSelect'
 import { ModelSelect } from '../components/ModelSelect'
-import { initialFormValues } from './formsShared'
+import { initialFormValues, validateArgs } from './formsShared'
 import { RunbookField } from './RunbookRunModal'
 import { AllSchedulesView } from './AllSchedulesView'
 import { ScheduleScopeCards } from './ScheduleScopeCards'
@@ -67,22 +67,9 @@ const CRON_PRESETS = [
 type Action = 'runnable' | 'event' | 'prompt' | 'runbook' | 'saved_run' | 'saved_transfer' | 'eval'
 type WhenKind = 'cron' | 'every'
 
-// Front-line validation of a runnable/runbook arg map — required + numeric range,
-// mirroring the Forms tab's RunModal/RunbookRunModal. Exported for unit tests.
-export function validateArgs(args: ArgDef[], values: Record<string, unknown>): Record<string, string> {
-  const errs: Record<string, string> = {}
-  for (const a of args) {
-    const v = values[a.name]
-    if (a.required && (v === undefined || v === '')) {
-      errs[a.name] = 'Required'
-    } else if (a.range && (a.type === 'int' || a.type === 'float') && v !== undefined && v !== '') {
-      const n = Number(v)
-      const [lo, hi] = a.range
-      if (n < lo || n > hi) errs[a.name] = `Must be between ${lo} and ${hi}`
-    }
-  }
-  return errs
-}
+// Front-line validation of an arg map lives in formsShared (shared with the
+// host-schedule editor); re-exported here for its existing tests.
+export { validateArgs }
 
 interface ScheduleModalProps {
   open: boolean
@@ -1241,6 +1228,7 @@ export function SchedulesView({ hosts, runnables, selectedHost, activeProfile, o
           activeProfile={activeProfile}
           onRefresh={readHosts}
           onOpenHistory={onOpenHistory}
+          runnables={runnables}
         />
       </div>
     )

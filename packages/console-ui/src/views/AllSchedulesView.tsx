@@ -1,20 +1,28 @@
 /**
  * AllSchedulesView — one list of every schedule that fires: this console's own,
  * plus each venv's runspec-scheduler schedules (cron or daemon backend) on every
- * connected host in the active profile and the local venvs. Read-only. The option
- * card above it (All / This console / Host cron / Host daemon) presets which
- * source it shows; the filters below narrow it further and are remembered.
+ * connected host in the active profile and the local venvs. The option card
+ * above it (All / This console / Host cron / Host daemon) presets which source it
+ * shows; the filters below narrow it further and are remembered. Host schedules
+ * can be added, edited, paused, removed and their crontab synced (0.385.0): each
+ * runs the venv's own runspec-scheduler as the venv owner. This console's own
+ * schedules are edited on the This console card.
  *
  * Rows, states, counts and filtering live in allSchedules.ts (pure, tested).
  */
 import { useMemo, useState } from 'react'
-import { Table, Tag, Typography, Button, Tooltip, Alert, Empty, Input, Select, Switch, Space, Spin, theme } from 'antd'
-import { ReloadOutlined, HistoryOutlined, InfoCircleOutlined } from '@ant-design/icons'
+import { Table, Tag, Typography, Button, Tooltip, Alert, Empty, Input, Select, Switch, Space, Spin, Popconfirm, message, theme } from 'antd'
+import {
+  ReloadOutlined, HistoryOutlined, InfoCircleOutlined, PlusOutlined, EditOutlined, DeleteOutlined,
+  PauseCircleOutlined, PlayCircleOutlined, SyncOutlined,
+} from '@ant-design/icons'
 import type { ColumnType } from 'antd/es/table'
+import { bridge, type HostScheduleResult, type HostScheduleSave, type Runnable, type SharedSchedule } from '../bridge'
+import { HostScheduleModal, timeoutText, type HostScheduleEditing } from './HostScheduleModal'
 import { MONO_FONT, RADIUS, useIsDark, textColor, textMuted, textSecondary, withAlpha } from '../ThemeContext'
 import {
   DEFAULT_FILTERS, STATE_COLOR, filterRows, shortDuration,
-  type Collected, type DaemonVenv, type RowFilters, type RowSource, type RowState, type ScheduleRow, type ScheduleScope, type SortKey,
+  type Collected, type DaemonVenv, type RowFilters, type RowSource, type RowState, type ScheduleRow, type ScheduleScope, type SchedulerVenv, type SortKey,
 } from './allSchedules'
 import { RUN_COLOR, ScheduleDetail, relTime } from './sharedSchedules'
 
@@ -90,9 +98,39 @@ interface AllSchedulesViewProps {
   activeProfile?: string
   onRefresh: () => void
   onOpenHistory?: (search: string) => void
+  /** Runnables known to the console, for the host-schedule editor. Without it
+   *  the list stays read-only. */
+  runnables?: Runnable[]
 }
 
-export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt, hostCount, activeProfile, onRefresh, onOpenHistory }: AllSchedulesViewProps) {
+/** A save payload that keeps a host schedule as it is, bar `enabled`. */
+export function keepPayload(v: SchedulerVenv, s: SharedSchedule, enabled: boolean): HostScheduleSave {
+  const timeout = timeoutText(s.timeout, v.backend)
+  return {
+    host: v.host, venv: v.venv, backend: v.backend,
+    id: s.id, original_id: s.id, runnable: s.runnable, args: s.args ?? {}, enabled,
+    ...(s.command?.length ? { command: s.command } : {}),
+    ...(s.when.every ? { every: s.when.every } : { cron: s.when.cron ?? '' }),
+    ...(s.when.timezone ? { timezone: s.when.timezone } : {}),
+    ...(timeout ? { timeout } : {}),
+    ...(v.backend === 'daemon' && s.catch_up ? { catch_up: true } : {}),
+  }
+}
+
+/** Whether a host row is fixed by syncing its venv's crontab. */
+export function needsSync(r: ScheduleRow): boolean {
+  return r.source === 'cron' && (r.state === 'not installed' || r.state === 'stale line' || r.state === 'legacy line')
+}
+
+/** One toast for a host-schedule change: what happened, plus any warnings. */
+function report(what: string, res: HostScheduleResult) {
+  if (!res.ok) { message.error(res.error || `${what} failed`); return }
+  const synced = res.sync ? ` Crontab synced (${res.sync.installed} line${res.sync.installed === 1 ? '' : 's'}).` : ''
+  message.success(`${what}.${synced}`)
+  for (const w of res.warnings ?? []) message.warning(w, 8)
+}
+
+export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt, hostCount, activeProfile, onRefresh, onOpenHistory, runnables }: AllSchedulesViewProps) {
   const isDark = useIsDark()
   const { token } = theme.useToken()
   const [filters, setFiltersState] = useState<RowFilters>(readFilters)
@@ -113,6 +151,28 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
 
   const muted = textMuted(isDark)
   const secondary = textSecondary(isDark)
+
+  // ── host schedule editing ──
+  const editable = !!runnables && scope !== 'console'
+  const [editorOpen, setEditorOpen] = useState(false)
+  const [editing, setEditing] = useState<HostScheduleEditing | null>(null)
+  const [busy, setBusy] = useState<string>('')   // row key / venv key with an action in flight
+  const venvOf = (r: ScheduleRow) => collected.venvs.find(v => v.host === r.host && v.venv === r.venv) ?? null
+  const scopeVenvs = collected.venvs.filter(v => scope === 'all' || v.backend === scope)
+  const idsByVenv = useMemo(() => {
+    const out: Record<string, string[]> = {}
+    for (const r of collected.rows) if (r.shared) (out[`${r.host}::${r.venv}`] ??= []).push(r.id)
+    return out
+  }, [collected.rows])
+  const afterChange = (what: string, res: HostScheduleResult) => {
+    report(what, res)
+    if (res.ok) onRefresh()
+  }
+  const run = async (key: string, what: string, call: () => Promise<HostScheduleResult>) => {
+    setBusy(key)
+    try { afterChange(what, await call()) } catch (e) { message.error(`${what} failed: ${String(e)}`) } finally { setBusy('') }
+  }
+  const syncVenv = (v: SchedulerVenv) => run(v.key, `Synced ${v.host} / ${v.venv}`, () => bridge.host_schedule_sync({ host: v.host, venv: v.venv }))
 
   const columns: ColumnType<ScheduleRow>[] = [
     {
@@ -207,6 +267,58 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
     },
   ]
 
+  if (editable) {
+    columns.push({
+      title: '',
+      key: 'actions',
+      width: 120,
+      render: (_: unknown, r) => {
+        const v = venvOf(r)
+        if (!v) return null
+        if (r.kind === 'stale' || (r.shared && needsSync(r))) {
+          const syncBtn = (
+            <Tooltip title={`Sync ${r.host} / ${r.venv}'s crontab with its config (only # runspec:sched: lines change)`}>
+              <Button type="text" size="small" icon={<SyncOutlined />} aria-label="Sync crontab"
+                loading={busy === v.key} onClick={() => syncVenv(v)} />
+            </Tooltip>
+          )
+          if (r.kind === 'stale') return syncBtn
+          return <Space size={0}>{syncBtn}{rowActions(r, v)}</Space>
+        }
+        return r.shared ? rowActions(r, v) : null
+      },
+    })
+  }
+
+  function rowActions(r: ScheduleRow, v: SchedulerVenv) {
+    const s = r.shared as SharedSchedule
+    return (
+      <Space size={0}>
+        <Tooltip title="Edit">
+          <Button type="text" size="small" icon={<EditOutlined />} aria-label="Edit"
+            onClick={() => { setEditing({ venv: v, schedule: s }); setEditorOpen(true) }} />
+        </Tooltip>
+        <Tooltip title={s.enabled ? 'Pause (stays in the config, never fires)' : 'Resume'}>
+          <Button type="text" size="small" aria-label={s.enabled ? 'Pause' : 'Resume'}
+            icon={s.enabled ? <PauseCircleOutlined /> : <PlayCircleOutlined />}
+            loading={busy === r.key}
+            onClick={() => run(r.key, s.enabled ? `Paused ${s.id}` : `Resumed ${s.id}`,
+              () => bridge.host_schedule_save(keepPayload(v, s, !s.enabled)))} />
+        </Tooltip>
+        <Popconfirm
+          title={`Remove ${s.id} from ${r.host} / ${r.venv}?`}
+          description={v.backend === 'cron' ? 'Its crontab line is removed too.' : 'The daemon stops firing it.'}
+          okText="Remove" okButtonProps={{ danger: true }}
+          onConfirm={() => run(r.key, `Removed ${s.id}`,
+            () => bridge.host_schedule_remove({ host: v.host, venv: v.venv, backend: v.backend, id: s.id }))}>
+          <Tooltip title="Remove">
+            <Button type="text" size="small" danger icon={<DeleteOutlined />} aria-label="Remove" />
+          </Tooltip>
+        </Popconfirm>
+      </Space>
+    )
+  }
+
   const expanded = (r: ScheduleRow) => {
     if (r.shared) return <ScheduleDetail s={r.shared} daemon={r.source === 'daemon'} />
     if (r.kind === 'unreadable') return <Alert type="error" showIcon message="Couldn't read this venv's schedules" description={r.error} />
@@ -280,6 +392,14 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
               {hostCount} host{hostCount === 1 ? '' : 's'}{updatedAt ? ` · read ${Date.now() - updatedAt < 10_000 ? 'just now' : relTime(new Date(Math.min(updatedAt, Date.now())).toISOString())}` : ''}
             </span>
             <Button size="small" icon={<ReloadOutlined />} onClick={onRefresh} loading={loading}>Refresh</Button>
+            {editable && (
+              <Tooltip title={scopeVenvs.length ? 'Add a schedule to a venv’s runspec-scheduler' : 'No venv with runspec-scheduler on the connected hosts'}>
+                <Button size="small" type="primary" icon={<PlusOutlined />} disabled={!scopeVenvs.length}
+                  onClick={() => { setEditing(null); setEditorOpen(true) }}>
+                  New host schedule
+                </Button>
+              </Tooltip>
+            )}
           </Space>
         )}
       </div>
@@ -320,8 +440,24 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
       {scope !== 'console' && (
         <div style={{ marginTop: 6, fontSize: 12, color: muted }}>
           <InfoCircleOutlined style={{ marginRight: 4 }} />
-          Read-only: host schedules are managed on the host with <Text code style={{ fontSize: 12 }}>runspec-scheduler</Text>.
+          {editable
+            ? <>Host schedule changes run the venv’s own <Text code style={{ fontSize: 12 }}>runspec-scheduler</Text> as its owner. On a cron venv the crontab is synced after each change, and only lines marked <Text code style={{ fontSize: 12 }}># runspec:sched:</Text> change.</>
+            : <>Read-only: host schedules are managed on the host with <Text code style={{ fontSize: 12 }}>runspec-scheduler</Text>.</>}
         </div>
+      )}
+      {editable && (
+        <HostScheduleModal
+          open={editorOpen}
+          venvs={editing ? collected.venvs : scopeVenvs}
+          runnables={runnables ?? []}
+          idsByVenv={idsByVenv}
+          editing={editing}
+          onClose={() => setEditorOpen(false)}
+          onSaved={res => {
+            setEditorOpen(false)
+            afterChange(editing ? `Saved ${res.id ?? ''}`.trim() : `Added ${res.id ?? ''}`.trim(), res)
+          }}
+        />
       )}
     </div>
   )
