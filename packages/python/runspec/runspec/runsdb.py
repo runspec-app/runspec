@@ -1259,7 +1259,7 @@ def _attach_notes(con: sqlite3.Connection, rows: list[dict[str, Any]]) -> None:
     except sqlite3.Error:
         return
     for r in rows:
-        r["note"] = found.get(r.get("run_id"))
+        r["note"] = found.get(str(r.get("run_id") or ""))
 
 
 class NoteError(Exception):

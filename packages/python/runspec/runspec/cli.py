@@ -1775,9 +1775,9 @@ def _history_notes_read(verb: str, parsed: Any) -> None:
         line = f"{v['state']:9}  {k}"
         if v["state"] != "clean":
             line += f"  ({v['failures']} failed since {str(v['since'] or '')[:16].replace('T', ' ')})"
-        n = v.get("note")
-        if n:
-            line += f"  — {n.get('actor')}" + (f": {n['note']}" if n.get("note") else "")
+        note = v.get("note")
+        if note:
+            line += f"  — {note.get('actor')}" + (f": {note['note']}" if note.get("note") else "")
         print(line)
 
 
