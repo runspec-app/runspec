@@ -260,3 +260,8 @@ body {
 }
 .rs-cmdk [cmdk-item][data-selected='true'] { background: var(--rs-hover); }
 .rs-cmdk [cmdk-empty] { padding: 18px; text-align: center; color: var(--rs-text-muted); font-size: 13px; }
+
+/* Schedules tab option cards (ScheduleScopeCards): hover + keyboard focus. */
+.rs-scope-card { transition: background var(--rs-motion), border-color var(--rs-motion); }
+.rs-scope-card[aria-checked='false']:hover { background: var(--rs-hover) !important; border-color: var(--rs-accent) !important; }
+.rs-scope-card:focus-visible { outline: 2px solid var(--rs-accent); outline-offset: 2px; }

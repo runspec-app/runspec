@@ -191,6 +191,7 @@ EXPECTED = {
     "logs_view",
     "share_venv_logs",
     "shared_schedules",
+    "shared_schedules_all",
     "venv_owner",
     "manage_denylist",
     "marketplace_cancel",
