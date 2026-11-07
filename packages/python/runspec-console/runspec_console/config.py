@@ -2375,7 +2375,7 @@ def _hex_to_rgb(value: str) -> tuple[int, int, int]:
 def title_bar_colors() -> tuple[int, int] | None:
     """The native Windows title-bar (caption, text) COLORREFs from
     `[console.theme] title_bar_color`, or ``None`` when unset/invalid (so the
-    caller keeps the default runspec-teal caption).
+    caller leaves the title bar as the system draws it).
 
     `title_bar_color` is an **independent** hex, deliberately separate from
     `accent_color`, so a brand can pair e.g. a blue accent UI with a red title
