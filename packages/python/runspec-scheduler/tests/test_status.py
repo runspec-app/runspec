@@ -56,6 +56,9 @@ def test_parse_installed_exec_vs_legacy():
         "5 * * * * /usr/bin/true",
     ]
     assert st.parse_installed(lines) == {"new": "exec", "old": "legacy"}
+    # Another venv owned by the same account: its blocks aren't this venv's.
+    assert st.parse_installed(lines, "/v/bin") == {"new": "exec", "old": "legacy"}
+    assert st.parse_installed(lines, "/opt/venvs/b/bin") == {}
 
 
 def test_join(env, monkeypatch):

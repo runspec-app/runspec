@@ -117,6 +117,15 @@ rewritten, and the crontab as it was is saved to
 `{venv}/runspec_scheduler_backups/` (owner-only, newest 10 per account) before
 each rewrite.
 
+Since 0.6.2 a venv only touches its own blocks. Several venvs owned by one
+account share that account's crontab, and the marker doesn't name a venv, so a
+block counts as this venv's only when its job line runs from this venv's
+`bin/` folder (`cronsync.job_in_venv`). `sync`, `use daemon` (`remove_all`) and
+`status` all apply it; before 0.6.2 a sync or a switch to the daemon in one venv
+removed every other venv's schedules from the shared crontab. A venv that is
+moved or renamed leaves its old lines behind (they name the old folder); remove
+them by hand.
+
 ### Observability comes free from the runs index
 
 Cron fires and forgets — normally the downside versus a daemon (no run cards, no
