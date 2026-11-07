@@ -66,7 +66,7 @@ crontab watchdog running `run --detach` every 5 minutes. The `systemd` system
 unit is only printed for root. `--remove` undoes every keeper and stops the
 daemon; `status` lists the keepers. Logic in `runspec_scheduler/keeper.py`;
 real-crontab and real-supervisord process tests in `tests/test_daemon_process.py`.
-The console's Provision venv step comes next.
+Console 0.380.0 adds it to Provision venv (*Shared schedules*: install, `use daemon`, `install-service --write` as the owner; the per-host pick installs the `[supervisor]` extra so a host without lingering gets supervisord) and has Deprovision run `install-service --remove --write` first, keeping the venv when the daemon won't stop.
 
 ## Problem
 

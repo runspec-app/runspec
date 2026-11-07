@@ -59,6 +59,16 @@ describe('provision helpers', () => {
       become_method: 'sudo', packages: ['runspec-linux'], repo: undefined,
     })
   })
+
+  it('asks for the scheduler daemon only when picked', () => {
+    const base = {
+      hosts: ['web-01'], parent: '/opt/venvs', name: 'ops', pyMode: 'path' as const, pyPath: '/usr/bin/python3.12',
+      pyVersion: '', runAs: '', become: 'sudo' as const, packages: [], repo: '',
+    }
+    expect(buildPayload({ ...base, scheduler: 'auto' }).scheduler).toBe('auto')
+    expect(buildPayload({ ...base, scheduler: '' }).scheduler).toBeUndefined()
+    expect(buildPayload(base).scheduler).toBeUndefined()
+  })
 })
 
 describe('ProvisionModal', () => {

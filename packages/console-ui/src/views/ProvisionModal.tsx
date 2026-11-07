@@ -8,6 +8,7 @@ import {
   type ProvisionPayload,
   type ProvisionPreflightRow,
   type ProvisionResult,
+  type ProvisionSchedulerKeeper,
 } from '../bridge'
 import { MONO_FONT, RADIUS, useIsDark, textMuted, textSecondary } from '../ThemeContext'
 import { PathInput } from './PathInput'
@@ -23,6 +24,7 @@ interface HostProgress {
   ok?: boolean
   summary?: string
   warnings?: string[]
+  scheduler?: { manager: string; reason: string }
 }
 
 /** Join a parent directory and a venv folder name into an absolute POSIX path. */
@@ -56,6 +58,7 @@ export function buildPayload(f: {
   become: 'sudo' | 'su'
   packages: string[]
   repo: string
+  scheduler?: '' | ProvisionSchedulerKeeper
 }): ProvisionPayload {
   return {
     hosts: f.hosts,
@@ -65,8 +68,18 @@ export function buildPayload(f: {
     become_method: f.become,
     packages: f.packages.map(p => p.trim()).filter(Boolean),
     repo: f.repo || undefined,
+    scheduler: f.scheduler || undefined,
   }
 }
+
+/** The keepers the dialog offers for the scheduler daemon. */
+export const SCHEDULER_OPTIONS: { value: '' | ProvisionSchedulerKeeper; label: string }[] = [
+  { value: '', label: 'No scheduler daemon' },
+  { value: 'auto', label: 'Daemon, keeper picked per host' },
+  { value: 'systemd-user', label: 'Daemon under systemd --user' },
+  { value: 'supervisor', label: 'Daemon under supervisord in the venv' },
+  { value: 'cron', label: 'Daemon with a crontab watchdog' },
+]
 
 const STEP_LABEL: Record<string, string> = {
   preflight: 'checking',
@@ -76,6 +89,8 @@ const STEP_LABEL: Record<string, string> = {
   install: 'installing packages',
   inbox: 'setting up logs inbox',
   verify: 'verifying',
+  scheduler: 'switching schedules to the daemon',
+  keeper: 'starting the scheduler daemon',
 }
 
 // Provision a runspec venv on one or many hosts. Modelled on Copy key to all
@@ -112,6 +127,7 @@ export function ProvisionModal({
   const [become, setBecome] = useState<'sudo' | 'su'>('sudo')
   const [packages, setPackages] = useState<string[]>([])
   const [repo, setRepo] = useState('')
+  const [scheduler, setScheduler] = useState<'' | ProvisionSchedulerKeeper>('')
   const [checking, setChecking] = useState(false)
   const [rows, setRows] = useState<ProvisionPreflightRow[] | null>(null)
   const [op, setOp] = useState<string | null>(null)
@@ -165,14 +181,14 @@ export function ProvisionModal({
   // Live progress for the running op.
   useEffect(() => {
     const onProgress = (e: Event) => {
-      const d = (e as CustomEvent).detail as { op: string; host: string; phase: string; step?: string; line?: string; ok?: boolean; summary?: string; warnings?: string[] }
+      const d = (e as CustomEvent).detail as { op: string; host: string; phase: string; step?: string; line?: string; ok?: boolean; summary?: string; warnings?: string[]; scheduler?: { manager: string; reason: string } }
       if (!d || d.op !== opRef.current) return
       setProgress(prev => {
         const cur: HostProgress = prev[d.host] ?? { step: '', lines: [], done: false }
         const next = { ...cur }
         if (d.phase === 'step' && d.step) next.step = d.step
         if (d.phase === 'line' && d.line !== undefined) next.lines = [...cur.lines, d.line].slice(-400)
-        if (d.phase === 'done') { next.done = true; next.ok = d.ok; next.summary = d.summary; next.warnings = d.warnings }
+        if (d.phase === 'done') { next.done = true; next.ok = d.ok; next.summary = d.summary; next.warnings = d.warnings; next.scheduler = d.scheduler }
         return { ...prev, [d.host]: next }
       })
     }
@@ -194,8 +210,8 @@ export function ProvisionModal({
   }, [onDone])
 
   const payload = useMemo(
-    () => buildPayload({ hosts: selected, parent, name, pyMode, pyPath, pyVersion, runAs, become, packages, repo }),
-    [selected, parent, name, pyMode, pyPath, pyVersion, runAs, become, packages, repo],
+    () => buildPayload({ hosts: selected, parent, name, pyMode, pyPath, pyVersion, runAs, become, packages, repo, scheduler }),
+    [selected, parent, name, pyMode, pyPath, pyVersion, runAs, become, packages, repo, scheduler],
   )
   // Any change to the request invalidates an earlier preflight.
   useEffect(() => { if (!op) setRows(null) }, [payload, op])
@@ -391,6 +407,16 @@ export function ProvisionModal({
             />
           </div>
         </div>
+
+        <div>
+          {label('Shared schedules')}
+          <Select value={scheduler} onChange={setScheduler} options={SCHEDULER_OPTIONS} style={{ width: '100%' }} aria-label="Shared schedules" />
+          <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 2 }}>
+            {scheduler
+              ? `Installs runspec-scheduler, fires this venv's schedules from its daemon (run as the owner) and sets up what restarts it.${scheduler === 'auto' ? ' Per host: systemd --user when lingering is on, else supervisord in the venv.' : ''}`
+              : 'Schedules in this venv can still run from the owner\'s crontab (runspec-scheduler sync).'}
+          </Text>
+        </div>
       </div>
 
       {rows && !op && (
@@ -424,6 +450,7 @@ export function ProvisionModal({
                   {!p.done ? <LoadingOutlined /> : p.ok ? <CheckCircleFilled style={{ color: '#52c41a' }} /> : <CloseCircleFilled style={{ color: '#ff4d4f' }} />}
                   <span style={{ fontFamily: MONO_FONT }}>{host}</span>
                   <Text type="secondary" style={{ fontSize: 12 }}>{p.done ? p.summary : STEP_LABEL[p.step] ?? p.step}</Text>
+                  {p.scheduler && <Tooltip title={p.scheduler.reason}><Tag style={{ margin: 0, fontSize: 11 }}>scheduler: {p.scheduler.manager}</Tag></Tooltip>}
                   {(p.warnings ?? []).length > 0 && <Tooltip title={(p.warnings ?? []).join('\n')}><WarningFilled style={{ color: '#faad14' }} /></Tooltip>}
                 </span>
               ),

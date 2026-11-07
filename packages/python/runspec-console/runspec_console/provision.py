@@ -733,6 +733,65 @@ def verify_argv(dest: str) -> list[str]:
 
 
 # --------------------------------------------------------------------------- #
+# Scheduler daemon (runspec-scheduler 0.6.0+)
+# --------------------------------------------------------------------------- #
+
+#: Keepers the Provision dialog offers. ``systemd`` (a system unit root
+#: installs) isn't one: it is only ever printed, so it can't finish unattended.
+SCHEDULER_MANAGERS = ("auto", "systemd-user", "supervisor", "cron")
+SCHEDULER_MIN = "0.6.0"
+
+
+def validate_scheduler(manager: str) -> str:
+    """``""`` (no scheduler) or one of :data:`SCHEDULER_MANAGERS`."""
+    m = (manager or "").strip()
+    if m and m not in SCHEDULER_MANAGERS:
+        raise ProvisionError(
+            f"Not a scheduler keeper: {m!r} (one of: {', '.join(SCHEDULER_MANAGERS)})."
+        )
+    return m
+
+
+def scheduler_spec(manager: str) -> str:
+    """The package that brings the daemon. ``auto`` brings supervisord too, so a
+    host without lingering gets supervisord rather than the cron watchdog."""
+    extra = "[supervisor]" if manager in ("supervisor", "auto") else ""
+    return f"runspec-scheduler{extra}>={SCHEDULER_MIN}"
+
+
+def _scheduler_bin(root: str) -> str:
+    return f"{root.rstrip('/')}/bin/runspec-scheduler"
+
+
+def scheduler_use_argv(dest: str) -> list[str]:
+    """Point the venv's schedules at the daemon (no crontab lines)."""
+    return [_scheduler_bin(dest), "use", "daemon"]
+
+
+def scheduler_keeper_argv(dest: str, manager: str) -> list[str]:
+    """Set up the keeper and start the daemon, as the venv owner."""
+    return [_scheduler_bin(dest), "install-service", "--manager", manager, "--write"]
+
+
+def parse_keeper(text: str) -> dict[str, Any]:
+    """The JSON ``install-service`` printed (its last ``{…}`` line), or ``{}``."""
+    for line in reversed((text or "").splitlines()):
+        line = line.strip()
+        if line.startswith("{"):
+            try:
+                data = json.loads(line)
+            except ValueError:
+                continue
+            return data if isinstance(data, dict) else {}
+    return {}
+
+
+def scheduler_stop_argv(root: str) -> list[str]:
+    """Remove every keeper the venv has and stop its daemon."""
+    return [_scheduler_bin(root), "install-service", "--remove", "--write"]
+
+
+# --------------------------------------------------------------------------- #
 # Host-side audit events (runspec 0.71.0+ ledger, OS-log fallback)
 # --------------------------------------------------------------------------- #
 
@@ -822,6 +881,10 @@ out user "$(id -un 2>/dev/null)"
 if [ -x "$r/bin/python" ]; then out python "$r/bin/python"
 else out python "$(command -v python3 2>/dev/null)"
 fi
+if [ -x "$r/bin/runspec-scheduler" ]; then out scheduler 1; else out scheduler 0; fi
+# the daemon's pid from its lock, when that process is still a runspec-scheduler
+p=$(head -c 32 "$r/runspec_scheduler.lock" 2>/dev/null | tr -dc 0-9)
+if [ -n "$p" ] && grep -qF "$r/bin/runspec-scheduler" "/proc/$p/cmdline" 2>/dev/null; then out scheduler_pid "$p"; fi
 out size_kb "$(du -sk "$r" 2>/dev/null | cut -f1)"
 if [ -d "$r/logs" ]; then out logs_kb "$(du -sk "$r/logs" 2>/dev/null | cut -f1)"; else out logs_kb 0; fi
 """

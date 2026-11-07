@@ -9,6 +9,25 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.380.0] — 2026-11-07
+
+### Added
+
+- **Provision venv: Shared schedules.** A new option sets up the
+  runspec-scheduler daemon in the new venv: it installs `runspec-scheduler`
+  (with the `[supervisor]` extra for the per-host pick and for supervisord),
+  runs `use daemon`, then `install-service --manager <keeper> --write` as the
+  venv owner. Keepers: picked per host (systemd `--user` when lingering is on,
+  else supervisord in the venv), systemd `--user`, supervisord, or a crontab
+  watchdog. Each host's row shows the keeper it got; a failure is a warning
+  with the command to finish on the host. Needs runspec-scheduler 0.6.0.
+- **Deprovision stops the scheduler first.** A venv with runspec-scheduler has
+  its keepers removed and its daemon stopped
+  (`install-service --remove --write`) before the folder is deleted. If the
+  daemon is still running afterwards, the venv is kept and the row says why;
+  an older scheduler without `--remove` and no daemon running doesn't block.
+  The preview shows whether the daemon is running.
+
 ## [0.379.1] — 2026-11-07
 
 ### Fixed

@@ -782,11 +782,13 @@ function mockMarketplaceOp(action: 'install' | 'uninstall', payload: Marketplace
 
 const MOCK_PROVISION_OPS = new Map<string, ProvisionOpRecord>()
 
-function mockProvisionOp(kind: 'provision' | 'deprovision', hosts: string[], path: string) {
+function mockProvisionOp(kind: 'provision' | 'deprovision', hosts: string[], path: string, scheduler = '') {
   const op = Math.random().toString(16).slice(2, 14)
   const rec: ProvisionOpRecord = { op, kind, status: 'running', hosts, results: [] }
   MOCK_PROVISION_OPS.set(op, rec)
-  const steps = kind === 'provision' ? ['preflight', 'create', 'pip', 'install', 'inbox', 'verify'] : ['inspect', 'remove']
+  const steps = kind === 'provision'
+    ? ['preflight', 'create', 'pip', 'install', 'inbox', 'verify', ...(scheduler ? ['scheduler', 'keeper'] : [])]
+    : ['inspect', 'scheduler', 'remove']
   let delay = 200
   for (const host of hosts) {
     for (const step of steps) {
@@ -800,8 +802,9 @@ function mockProvisionOp(kind: 'provision' | 'deprovision', hosts: string[], pat
     const ok = host !== 'logs-1'
     setTimeout(() => {
       const res: ProvisionResult = { host, ok, summary: ok ? (kind === 'provision' ? 'runspec 0.70.0' : `removed ${path}`) : 'install failed: No matching distribution found', step: ok ? undefined : 'install' }
+      if (ok && scheduler) res.scheduler = { manager: scheduler === 'auto' ? 'supervisor' : scheduler, reason: 'lingering is off for svc-ops; supervisord is installed in this venv' }
       rec.results.push(res)
-      window.dispatchEvent(new CustomEvent('runspec:provision_progress', { detail: { op, kind, host, phase: 'done', ok, summary: res.summary } }))
+      window.dispatchEvent(new CustomEvent('runspec:provision_progress', { detail: { op, kind, host, phase: 'done', ok, summary: res.summary, scheduler: res.scheduler } }))
     }, delay)
     delay += 100
   }
@@ -1121,7 +1124,7 @@ export const mockApi: BridgeApi = {
             ? { handoff: true, handoff_via: 'sudo', warnings: [`${payload.run_as} can't write /opt/venvs, so the console will create the venv folder as root and hand it to ${payload.run_as}.`] }
             : { warnings: [] }) }),
   }),
-  provision_start: async (payload: ProvisionPayload) => mockProvisionOp('provision', payload.hosts, payload.dest),
+  provision_start: async (payload: ProvisionPayload) => mockProvisionOp('provision', payload.hosts, payload.dest, payload.scheduler ?? ''),
   provision_op: async (op) => MOCK_PROVISION_OPS.get(op) ?? null,
   provision_cancel: async (op) => { console.log('[mock] provision_cancel', op); return true },
   deprovision_preview: async ({ targets }) => ({
@@ -1129,6 +1132,7 @@ export const mockApi: BridgeApi = {
     rows: targets.map(t => ({
       ...t, root: t.runspec_path.replace(/\/bin\/runspec$/, ''), ok: true, kind: 'venv', owner: 'svc-ops', user: 'jason',
       size_kb: 184320, logs_kb: 2048, runnables: ['disk-usage', 'list-services'], references: ['schedules'], blockers: [],
+      scheduler: true, scheduler_pid: 4242,
     })),
   }),
   deprovision_start: async (payload: DeprovisionPayload) => mockProvisionOp('deprovision', payload.targets.map(t => t.host), payload.targets[0]?.runspec_path ?? ''),

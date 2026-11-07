@@ -84,6 +84,18 @@ describe('DeprovisionModal', () => {
     })
   })
 
+  it('says the scheduler daemon is stopped first', async () => {
+    api.deprovision_preview.mockResolvedValue({
+      names: ['ops'],
+      rows: [{
+        host: 'web-01', runspec_path: RP, root: '/opt/venvs/ops', ok: true, kind: 'venv', owner: 'svc', user: 'deploy',
+        size_kb: 2048, logs_kb: 512, runnables: [], references: [], blockers: [], scheduler: true, scheduler_pid: 4242,
+      }],
+    })
+    render(<DeprovisionModal open initialTargets={[{ host: 'web-01', runspec_path: RP }]} onClose={() => {}} />)
+    expect(await screen.findByText(/daemon running \(pid 4242\); its keepers are removed and the daemon stopped first/)).toBeTruthy()
+  })
+
   it('sends keep_logs false when unticked', async () => {
     const user = userEvent.setup()
     render(<DeprovisionModal open initialTargets={[{ host: 'web-01', runspec_path: RP }]} onClose={() => {}} />)
