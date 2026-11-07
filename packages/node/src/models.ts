@@ -13,6 +13,14 @@ export interface LoggingConfig {
   store?: string;
 }
 
+/** `[config.audit]` — where `audit()` events go besides the ledger and run log. */
+export interface AuditConfig {
+  /** Also write events to the OS log (default true). */
+  syslog: boolean;
+  /** Syslog facility (POSIX; default "auth"). */
+  facility: string;
+}
+
 export interface RawConfig {
   autonomyDefault: string;
   /** Default enforce_run_as for runnables that don't declare one. */
@@ -22,6 +30,7 @@ export interface RawConfig {
   lang?: string;
   version: string;
   logging?: LoggingConfig;
+  audit: AuditConfig;
 }
 
 export interface ArgSpec {

@@ -10,7 +10,9 @@ ledger and to the operating system's log.
 
 !!! info "Availability"
     `runspec.audit()` and `runspec audit` are available in **runspec 0.71.0+**
-    (Python). The Node pack follows.
+    (Python) and **runspec-node 0.48.0+** (`audit()` from `runspec-node`,
+    `npx runspec audit`). See [Node runnables](#node-runnables) for the
+    differences.
 
 ---
 
@@ -30,6 +32,19 @@ ledger and to the operating system's log.
             target={"order": args.order.value},
             detail={"amount": str(args.amount.value), "refund_id": refund.id},
         )
+    ```
+
+=== "Node"
+
+    ```typescript
+    import { parse, audit } from 'runspec-node';
+
+    const args = parse();
+    const refund = await issueRefund(args.order, args.amount);
+    audit('payment.refund', 'succeeded', {
+      target: { order: args.order },
+      detail: { amount: String(args.amount), refund_id: refund.id },
+    });
     ```
 
 === "Shell"
@@ -131,6 +146,10 @@ runspec audit verify --file /path/to/audit.jsonl
 (a line was removed, inserted or reordered), or it isn't JSON.
 
 From Python: `runspec.auditlog.verify(path)` and `runspec.auditlog.read_ledger(path)`.
+From Node: `verifyLedger(path)` and `readLedger(path)` from `runspec-node`.
+
+A ledger written by one pack verifies in the other: both hash the same
+canonical JSON (SPEC → "Audit Events" → "Canonical form").
 
 ---
 
@@ -160,10 +179,32 @@ ledger append-only at the kernel level on Linux with `chattr +a {venv}/logs/audi
 
 ---
 
+## Node runnables
+
+The Node pack (`runspec-node` 0.48.0) writes the same records and the same hash
+chain, with these differences:
+
+- **Where the ledger is.** `{project}/logs/audit.jsonl`, the project being the
+  folder with the `package.json` above `runspec.toml` (as for the run logs).
+  Only the owner of `logs/` (or root) appends to it. Another account's events
+  go to `~/logs/audit.jsonl` instead, since the Node pack has no logs inbox.
+- **Writers take turns** through a lock file next to the ledger
+  (`audit.jsonl.lock`). One left by a process that died is taken over.
+- **The OS-log copy** goes through the `logger` command (syslog/journald) on
+  Linux and macOS, and `eventcreate` on Windows. `[config.audit]` works the same.
+- **The run's own log** gets the event only when the runnable has
+  `[config.logging]`; the Node pack's logging is still opt-in.
+- **Recorded for you:** `runnable.modified` (installed code changed),
+  `logs.prune` and `logs.compact`. There's no `runspec deny` or `logs share` in
+  the Node pack yet.
+
+---
+
 ## In tests
 
 Set `RUNSPEC_AUDIT=off` in a test suite or CI job that runs your runnables
 in-process. Runnables without a `[config.logging]` section then configure no
 logging, and `audit()` records nothing. It's meant for tests only. Production
 runs must never set it. `runspec.testing.ParseHarness` already skips the default
-logging setup.
+logging setup. In Node, `RUNSPEC_AUDIT=off` makes `audit()` return `null` and
+record nothing.

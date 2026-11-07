@@ -5,4 +5,6 @@ export { RunSpecError, MissingRequiredArg, InvalidChoice, OutOfRange, UnknownArg
 export { findConfig } from './finder';
 export { loadRaw } from './loader';
 export { getLogger } from './logging_setup';
+export { audit, AuditError, verifyLedger, readLedger, ledgerPath } from './auditlog';
+export type { AuditOptions, AuditRecord, VerifyResult } from './auditlog';
 export type { ParsedArgs, ScriptSpec, ArgSpec, GroupSpec, RawSpec, RawConfig, LoggingConfig } from './models';

@@ -563,10 +563,24 @@ else a first-run snapshot in `{project}/logs/.integrity-baseline.json` keyed by
 name (+ `(project)`) and version. Git work tree ⇒ nothing checked; symlinked dep
 ⇒ `skipped`; `.package-lock.json` `resolved` `file:`/git ⇒ `local`. Same stderr
 warning + `integrity`/`integrity_files` on `run_summary` (only with
-`[config.logging]`); no audit event until `audit()` is ported. `runspec verify
+`[config.logging]`); `runnable.modified` audit event once per distinct change since node-0.48.0 (`{project}/logs/.integrity-state.json`). `runspec verify
 [name…] [--all] [--json] [--snapshot]`. Core CLI exempt. Jest sets
 `RUNSPEC_INTEGRITY=off` (`tests/setup_env.js`); `tests/test_integrity.test.ts`
 switches it on. `src/integrity.ts`; SPEC → "Installed-Code Integrity" → "Node pack".
+
+**Node parity — `audit()` (node-0.48.0):** `audit(event, outcome, { target,
+detail, strict })` from `runspec-node` + `npx runspec audit record|list|verify`
+write the Python ledger format to `{project}/logs/audit.jsonl` (owner of
+`logs/` or root; others `~/logs/audit.jsonl` — no inbox in Node), with a
+`audit.jsonl.lock` lock file, an OS-log copy via `logger`/`eventcreate`
+(`[config.audit]`), and the run log only with `[config.logging]`. The hash is
+over Python's canonical JSON, reproduced by `src/pyjson.ts` (float `repr`,
+code-point key sort, Python escapes; `pyParse` keeps int/float apart via
+`PyNum`), so ledgers verify across packs — fixtures
+`tests/integration/fixtures/audit/{python,node}.jsonl` checked by both suites.
+Records `runnable.modified`, `logs.prune`, `logs.compact`. Jest sets
+`RUNSPEC_AUDIT=off`; `tests/test_auditlog.test.ts` turns it on. `src/auditlog.ts`;
+SPEC → "Audit Events" → "Node pack".
 
 Build order: `emit --rundeck` first (current platform), `emit --ansible`
 second (migration target), `push --rundeck` last (CI/CD automation).

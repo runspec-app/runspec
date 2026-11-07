@@ -1,3 +1,6 @@
 // The installed-code integrity check would snapshot every fixture project a
 // test runs parse() in. Tests that exercise it switch it back on themselves.
 process.env.RUNSPEC_INTEGRITY = 'off';
+// Same for audit events (Python's tests/conftest.py does this too): tests that
+// exercise audit() switch it back on.
+process.env.RUNSPEC_AUDIT = 'off';

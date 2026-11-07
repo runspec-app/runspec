@@ -147,3 +147,41 @@ class TestComplexFixture:
         assert spec["runnables"]["pipeline"]["discoverable"] is True
         assert spec["runnables"]["db"]["discoverable"] is False
         assert spec["runnables"]["pipeline"]["commands"]["run"]["discoverable"] is None
+
+
+# ── audit ledgers ─────────────────────────────────────────────────────────────
+#
+# fixtures/audit/python.jsonl was written by the Python pack, node.jsonl by the
+# Node pack (numbers, escapes and key order chosen to hit every place the two
+# languages' JSON differs). Each pack must verify both, and extend either.
+
+
+class TestAuditLedgers:
+    @pytest.mark.parametrize("name", ["python.jsonl", "node.jsonl"])
+    def test_ledger_verifies(self, name):
+        from runspec.auditlog import verify
+
+        result = verify(FIXTURES / "audit" / name)
+        assert result["ok"], result
+        assert result["records"] == 4
+
+    @pytest.mark.parametrize("name", ["python.jsonl", "node.jsonl"])
+    def test_edited_line_is_caught(self, name, tmp_path):
+        from runspec.auditlog import verify
+
+        lines = (FIXTURES / "audit" / name).read_text(encoding="utf-8").splitlines(keepends=True)
+        lines[2] = lines[2].replace('"checked"', '"changed"', 1)
+        bad = tmp_path / "audit.jsonl"
+        bad.write_text("".join(lines), encoding="utf-8")
+        result = verify(bad)
+        assert not result["ok"] and result["first_bad"] == 3
+
+    def test_python_extends_a_node_ledger(self, tmp_path, monkeypatch):
+        from runspec.auditlog import audit, verify
+
+        monkeypatch.delenv("RUNSPEC_AUDIT", raising=False)
+        (tmp_path / "audit.jsonl").write_bytes((FIXTURES / "audit" / "node.jsonl").read_bytes())
+        audit("fixture.append", "succeeded", detail={"n": 1.0}, ledger_dir=tmp_path, syslog=False)
+        result = verify(tmp_path / "audit.jsonl")
+        assert result["ok"], result
+        assert result["records"] == 5

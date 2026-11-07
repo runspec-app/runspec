@@ -348,6 +348,9 @@ Everything `runspec-node` exposes from the package root:
 | `listTypes` | function | List all registered type names |
 | `tsTypeOf` | function | The TS type of an arg's parsed value (e.g. `"string[]"`) |
 | `getLogger` | function | Get a named logger (no-op without `[config.logging]`) |
+| `audit` | function | Record an [audit event](audit.md) (`audit(event, outcome, { target, detail, strict })`) |
+| `verifyLedger`, `readLedger`, `ledgerPath` | functions | Check, read or locate the audit ledger |
+| `AuditError` | class | Thrown by `audit(..., { strict: true })` when nothing recorded the event |
 | `findConfig` | function | Locate the nearest `runspec.toml` |
 | `loadRaw` | function | Read and parse a `runspec.toml` to its raw dict form |
 | `RunSpecError` | class | Base error class |
@@ -413,6 +416,8 @@ npx runspec local --format mcp     # emit MCP tool schemas
 npx runspec serve                  # start the MCP stdio server
 npx runspec verify                 # check installed code hasn't been edited
 npx runspec manifest               # write runspec-files.json (run it in prepack)
+npx runspec audit list             # audit events in this project's ledger
+npx runspec audit verify           # check the ledger's hash chain
 ```
 
 Every `parse()` also checks the installed code against what was installed; see

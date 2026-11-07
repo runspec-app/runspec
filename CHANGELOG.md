@@ -9,6 +9,38 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [node-0.48.0] — 2026-11-07
+
+### Added
+
+- **`audit(event, outcome, { target, detail, strict })`**, the Node port of the
+  Python pack's audit events (0.71.0). It appends to the same hash-chained
+  ledger format, at `{project}/logs/audit.jsonl` (the project's `logs/` owner
+  or root; anyone else writes `~/logs/audit.jsonl`, since there's no logs inbox
+  in Node), copies the record to syslog/journald via `logger` or the Windows
+  event log via `eventcreate` (`[config.audit]` as in Python), and to the run's
+  own log when the runnable has `[config.logging]`. Inside `parse()` the record
+  names the runnable, subcommand, `run_id`, agent and trigger. Secret-looking
+  keys and values are redacted; a bad event or outcome name throws
+  `TypeError`; `strict` throws `AuditError` when nothing took the event.
+  Writers take turns through a lock file. `RUNSPEC_AUDIT=off` records nothing
+  (tests only). `src/auditlog.ts`.
+- **Ledgers verify across packs.** The hash is taken over Python's canonical
+  JSON, which Node now writes exactly (`src/pyjson.ts`: Python float `repr`,
+  code-point key order, Python's escapes, ints and floats kept apart when a
+  line is read back). Shared fixtures in `tests/integration/fixtures/audit/`
+  (one ledger written by each pack) are verified by both test suites, and each
+  pack extends the other's ledger. SPEC → "Audit Events" → "Canonical form".
+- **`runspec audit record | list | verify`** in the Node CLI, with the Python
+  command's options; `verifyLedger`, `readLedger` and `ledgerPath` exported.
+- **`runnable.modified`** is now recorded when the installed-code check finds a
+  changed file, once per distinct change (`logs/.integrity-state.json`), as in
+  Python.
+- **`runspec logs prune` and `runspec logs compact`** record `logs.prune` /
+  `logs.compact` when they remove or roll up files.
+
+---
+
 ## [node-0.47.0] — 2026-11-07
 
 ### Added

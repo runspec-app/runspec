@@ -172,8 +172,9 @@ as in Python.
 
 **When a file has changed**, the run goes ahead with the same stderr warning,
 and the run record carries `integrity: "modified"` and the changed files when
-`[config.logging]` is on, so the console's History shows the badge. There's no
-audit event yet: the Node pack doesn't have `audit()`.
+`[config.logging]` is on, so the console's History shows the badge. From
+runspec-node 0.48.0 it also records a `runnable.modified` [audit event](audit.md)
+once per distinct change, remembered in `logs/.integrity-state.json`.
 
 ```bash
 npx runspec verify              # the project + its direct dependencies

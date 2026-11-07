@@ -36,6 +36,8 @@ let _captureInstalled = false;
 // records them while the console handlers drop them by name — console display is
 // handled explicitly in _handleUncaught (debug-gated).
 const EXCEPTION_LOGGER = 'runspec.exception';
+// Audit events (`audit()`) — file-only, like the run summary.
+export const AUDIT_LOGGER = 'runspec.audit';
 
 // Directory of the installed runspec-node package — used to filter internal
 // library frames out of the *displayed* compact trace (full trace still hits the file).
@@ -110,7 +112,7 @@ const SENSITIVE: Array<[RegExp, string]> = [
   [/(password|passwd|token)=([^&\s"]+)/gi, '$1=[REDACTED]'],
 ];
 
-function redact(msg: string): string {
+export function redact(msg: string): string {
   try {
     for (const [pattern, replacement] of SENSITIVE) {
       msg = msg.replace(pattern, replacement);
@@ -241,7 +243,7 @@ class StdoutHandler implements Handler {
 
   emit(record: LogRecord): void {
     if (record.levelNum >= 30) return; // WARNING+ belongs on stderr
-    if (record.loggerName === RUN_SUMMARY_LOGGER || record.loggerName === EXCEPTION_LOGGER) return;
+    if (record.loggerName === RUN_SUMMARY_LOGGER || record.loggerName === EXCEPTION_LOGGER || record.loggerName === AUDIT_LOGGER) return;
     if (record.fromPrint) return; // the real stdout write already emitted this
     try {
       // Write through the *raw* stream so this output isn't re-captured by the
@@ -265,7 +267,7 @@ class StderrHandler implements Handler {
 
   emit(record: LogRecord): void {
     if (record.levelNum < 30) return;
-    if (record.loggerName === RUN_SUMMARY_LOGGER || record.loggerName === EXCEPTION_LOGGER) return;
+    if (record.loggerName === RUN_SUMMARY_LOGGER || record.loggerName === EXCEPTION_LOGGER || record.loggerName === AUDIT_LOGGER) return;
     try {
       process.stderr.write(formatConsole(record, this.showTracebacks) + '\n');
     } catch {
@@ -878,6 +880,16 @@ export function configureLogging(opts: ConfigureLoggingOptions): void {
   installExitHooks();
 
   _configured = true;
+}
+
+/** True once `configureLogging` has set up handlers for this process. */
+export function isConfigured(): boolean {
+  return _configured;
+}
+
+/** The current run's id (empty when logging isn't configured). */
+export function currentRunId(): string {
+  return _runId ?? '';
 }
 
 // ── test helper ───────────────────────────────────────────────────────────────

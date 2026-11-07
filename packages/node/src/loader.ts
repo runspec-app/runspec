@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { parse as parseTOML } from 'smol-toml';
 import { fsReader, resolve, type Reader } from './compose';
-import type { RawConfig, RawSpec, ScriptSpec, ArgSpec, GroupSpec, LoggingConfig } from './models';
+import type { RawConfig, RawSpec, ScriptSpec, ArgSpec, GroupSpec, LoggingConfig, AuditConfig } from './models';
 
 /** Read runspec.toml and return the normalised spec; `include` and
  *  `shared-args` / `use` are resolved first (see compose.ts). */
@@ -46,6 +46,15 @@ function normaliseConfig(raw: Record<string, unknown>): RawConfig {
     lang: raw['lang'] as string | undefined,
     version: String(raw['version'] ?? '1'),
     logging: normaliseLogging(raw['logging'] as Record<string, unknown> | undefined),
+    audit: normaliseAudit(raw['audit'] as Record<string, unknown> | undefined),
+  };
+}
+
+/** `[config.audit]` — tunes only the OS-log sink; the ledger has no off switch. */
+function normaliseAudit(raw: Record<string, unknown> | undefined): AuditConfig {
+  return {
+    syslog: raw?.['syslog'] === undefined ? true : Boolean(raw['syslog']),
+    facility: String(raw?.['facility'] ?? 'auth'),
   };
 }
 
