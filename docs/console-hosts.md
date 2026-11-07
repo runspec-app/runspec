@@ -111,6 +111,13 @@ other account's run lands in `logs/` as its own file, and those files are never
 rotated. The policy needs runspec 0.80.0 or later in the venv; on an older one
 the step is a warning that gives the command to run later. See
 [the CLI reference](cli.md#retention-policy-the-venv-cleans-up-after-itself).
+To see or change the policy later, open the venv's logs on the **Logs** tab and
+click **Log cleanup…**: it shows the policy, when the last pass ran and what it
+did, lets you change the durations and add a size cap (**Keep at most**), or
+clear every field to remove the policy. **Preview now** says what a pass would
+compress and delete today; **Apply now** runs it instead of waiting for the
+next daily pass. Saving and applying run the venv's `runspec logs retention` as
+the venv owner, and each change is recorded on the venv's audit ledger.
 
 **Shared schedules** (off by default) also sets up the
 [runspec-scheduler](design/venv-scheduler.md) daemon, so the venv's shared

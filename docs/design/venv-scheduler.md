@@ -13,7 +13,7 @@
 What changed from the 0.1–0.4 daemon, and why (each item has a process test in
 `tests/test_daemon_process.py` that runs the real daemon and real `runspec exec`):
 
-- **Fires go through `runspec exec --label sched:<id> --trigger schedule --lock
+- **Fires go through `runspec exec --label sched:<id> --trigger schedule:daemon --lock
   <lock> [--timeout N]`**, the same command a cron line runs. The daemon starts it
   in its own session with stdin/stdout/stderr on `/dev/null` and only reaps the
   exit code; exec records the run (status, exit code, output) and records an

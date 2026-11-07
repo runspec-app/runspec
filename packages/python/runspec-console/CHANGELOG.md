@@ -46,8 +46,32 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   back to crontab, which stops it). A failed restart is a warning with the
   command to run on the host. `provision.update_steps(daemon_running=)`,
   step `restart`.
+- **Run now on host schedules.** Each *Host cron* and *Host daemon* row has a
+  Run now button (with a confirm). It runs the venv's own
+  `runspec-scheduler run-now --detach` as the venv owner, so the fire runs as a
+  scheduled fire would (the schedule's run-as account on cron, the venv owner
+  on the daemon) and keeps going after the console's SSH call ends; the run
+  shows in History a few seconds later. Needs runspec-scheduler 0.7.0. Audit
+  event `schedule.host.run_now` (+ `_failed`). Bridge `host_schedule_run_now`.
+- **Log cleanup… on the Logs tab.** For a venv's logs, a *Log cleanup…* button
+  opens the venv's log retention policy (runspec 0.80.0): what it is, when it
+  last ran and what it did, and the policy file. Change the compress-after,
+  delete-after and size cap, or clear them all to remove the policy; *Preview
+  now* says what a pass would compress and delete, and *Apply now* runs it.
+  Reading and previewing run as the login account; saving and applying run the
+  venv's `runspec logs retention` as the venv owner (sudo as the owner, else
+  root, which core drops to the owner), and core records each change on the
+  venv's audit ledger. Bridge `logs_retention` / `logs_retention_set` /
+  `logs_retention_run`; UI `views/LogCleanupModal.tsx`.
 
 ### Fixed
+
+- **History no longer says the agent ran a host schedule.** Scheduled fires
+  run with `RUNSPEC_AGENT=1`, so the *Run by* column showed them as the agent.
+  It now reads the run's trigger: **cron**, **daemon** or **run now** for
+  runspec-scheduler fires (0.7.0 tells them apart), and **host sched** for
+  older fires that only carry the `sched:` label. The column filter has the
+  same choices. `src/runBy.ts`.
 
 - **A Windows console no longer lists its own venvs as missing
   runspec-scheduler** on the Schedules tab ("No runspec-scheduler in 1 venv:

@@ -9,8 +9,8 @@ keeps it alive (systemd, supervisord, a cron watchdog) only starts
 What it guarantees, and how:
 
 * **Every fire is recorded.** A fire runs the same ``runspec exec --label
-  sched:<id> --trigger schedule --lock <lock> [--timeout N] <runnable> -- …``
-  command a cron line runs, so its exit code and output land in the runs index.
+  sched:<id> --trigger schedule:daemon --lock <lock> [--timeout N] <runnable> -- …``
+  command a cron line runs (with its own trigger), so its exit code and output land in the runs index.
   A fire the daemon missed (it woke past the misfire grace) or couldn't start is
   recorded as a ``skipped`` / ``failed`` run by :mod:`records`.
 * **Fires are independent processes.** Each starts in its own session with no
@@ -57,7 +57,7 @@ from pathlib import Path
 from typing import IO, Any
 
 from .config import ScheduleEntry, SchedulerSettings, load_config
-from .cronsync import LABEL_PREFIX, _home_of, exec_invocation, resolve_entry
+from .cronsync import LABEL_PREFIX, TRIGGER_DAEMON, _home_of, exec_invocation, resolve_entry
 from .records import audit, record_run
 from .runner import is_generic_venv_name, scripts_dir, venv_name
 from .timing import when_to_trigger
@@ -547,6 +547,7 @@ class Daemon:
             command=entry.command,
             spec=target.spec,
             timeout=timeout or None,
+            trigger=TRIGGER_DAEMON,
         )
         child_env = {k: v for k, v in os.environ.items() if k not in _DROP_ENV}
         child_env.update(env)

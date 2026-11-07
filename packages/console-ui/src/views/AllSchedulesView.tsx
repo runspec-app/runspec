@@ -14,7 +14,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Table, Tag, Typography, Button, Tooltip, Alert, Empty, Input, Modal, Select, Switch, Space, Spin, Popconfirm, message, theme } from 'antd'
 import {
   ReloadOutlined, HistoryOutlined, InfoCircleOutlined, PlusOutlined, EditOutlined, DeleteOutlined,
-  PauseCircleOutlined, PlayCircleOutlined, SyncOutlined, SettingOutlined, RightOutlined, DownOutlined,
+  PauseCircleOutlined, PlayCircleOutlined, SyncOutlined, SettingOutlined, RightOutlined, DownOutlined, ThunderboltOutlined,
 } from '@ant-design/icons'
 import type { ColumnType } from 'antd/es/table'
 import { bridge, type HostScheduleResult, type HostScheduleSave, type Runnable, type SharedSchedule } from '../bridge'
@@ -282,6 +282,22 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
     setBusy(key)
     try { afterChange(what, await call()) } catch (e) { message.error(`${what} failed: ${String(e)}`) } finally { setBusy('') }
   }
+  const runNow = async (r: ScheduleRow, v: SchedulerVenv, s: SharedSchedule) => {
+    setBusy(`run::${r.key}`)
+    try {
+      const res = await bridge.host_schedule_run_now({ host: v.host, venv: v.venv, id: s.id })
+      if (!res.ok) { message.error(res.error || `Couldn't start ${s.id}`, 10); return }
+      const who = res.user ? ` as ${res.user}` : ''
+      if (res.finished) {
+        const fn = res.exit_code === 0 ? message.success : message.warning
+        fn(`${s.id} ran${who} and finished at once (exit ${res.exit_code}); see History for its output.`, 8)
+      } else {
+        message.success(`Started ${s.id}${who} on ${v.host} / ${v.venv}; it shows in History when it finishes.`)
+      }
+      // Re-read in a moment so the row shows the run.
+      window.setTimeout(onRefresh, 3000)
+    } catch (e) { message.error(`Run now failed: ${String(e)}`) } finally { setBusy('') }
+  }
   const [daemonsOpen, setDaemonsOpen] = useState<boolean | null>(readDaemonsOpen)
   const daemonsShown = daemonsOpen ?? daemons.length <= FOLDED_ATTENTION_MAX
   const toggleDaemons = () => { writeDaemonsOpen(!daemonsShown); setDaemonsOpen(!daemonsShown) }
@@ -402,7 +418,7 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
     columns.push({
       title: '',
       key: 'actions',
-      width: 120,
+      width: 150,
       render: (_: unknown, r) => {
         const v = venvOf(r)
         if (!v) return null
@@ -425,6 +441,18 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
     const s = r.shared as SharedSchedule
     return (
       <Space size={0}>
+        <Popconfirm
+          title={`Run ${s.id} now on ${r.host} / ${r.venv}?`}
+          description={<span style={{ display: 'block', maxWidth: 300 }}>
+            It starts in the background{r.runAs ? ` as ${r.runAs}` : ''}, the way a scheduled fire runs, and shows in History
+            {s.enabled ? '' : ' (even though the schedule is paused)'}. If it is already running, the new run is recorded as skipped.
+          </span>}
+          okText="Run now"
+          onConfirm={() => runNow(r, v, s)}>
+          <Tooltip title="Run now">
+            <Button type="text" size="small" icon={<ThunderboltOutlined />} aria-label="Run now" loading={busy === `run::${r.key}`} />
+          </Tooltip>
+        </Popconfirm>
         <Tooltip title="Edit">
           <Button type="text" size="small" icon={<EditOutlined />} aria-label="Edit"
             onClick={() => { setEditing({ venv: v, schedule: s }); setEditorOpen(true) }} />

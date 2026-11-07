@@ -436,3 +436,70 @@ def test_restart_on_an_old_scheduler_says_upgrade():
         out = b.host_scheduler_restart({"host": "prod-1", "venv": "ops"})
     assert not out["ok"] and "older than 0.7.0" in out["error"]
     assert _events(b) == ["scheduler.host.restart_failed"]
+
+
+def test_run_now_detaches_as_owner_and_audits():
+    b = _bridge()
+    reply = {
+        "ok": True,
+        "id": "nightly",
+        "runnable": "backup",
+        "user": "svc",
+        "pid": 99,
+    }
+    calls, run = _fake({"run-now": (0, json.dumps(reply), "")})
+    with patch.object(b, "_run_scheduler_as", side_effect=run):
+        out = b.host_schedule_run_now(
+            {"host": "prod-1", "venv": "ops", "id": "nightly"}
+        )
+    assert out == {"ok": True, "id": "nightly", "pid": 99, "user": "svc"}
+    assert calls[0]["argv"] == ["run-now", "--id", "nightly", "--detach"]
+    assert calls[0]["owner"] == "svc"
+    assert _events(b) == ["schedule.host.run_now"]
+
+
+def test_run_now_reports_a_quick_finish_and_refusals():
+    b = _bridge()
+    done = {
+        "ok": True,
+        "id": "nightly",
+        "user": "svc",
+        "pid": 5,
+        "finished": True,
+        "exit_code": 2,
+    }
+    _calls, run = _fake({"run-now": (0, json.dumps(done), "")})
+    with patch.object(b, "_run_scheduler_as", side_effect=run):
+        out = b.host_schedule_run_now(
+            {"host": "prod-1", "venv": "ops", "id": "nightly"}
+        )
+    assert out["finished"] and out["exit_code"] == 2
+    refused = {
+        "ok": False,
+        "id": "nightly",
+        "error": "can't run as svc: sudo: a password is required",
+    }
+    _calls, run = _fake({"run-now": (1, json.dumps(refused), "")})
+    with patch.object(b, "_run_scheduler_as", side_effect=run):
+        out = b.host_schedule_run_now(
+            {"host": "prod-1", "venv": "ops", "id": "nightly"}
+        )
+    assert out == {
+        "ok": False,
+        "error": "can't run as svc: sudo: a password is required",
+    }
+    assert _events(b)[-1] == "schedule.host.run_now_failed"
+    assert not b.host_schedule_run_now({"host": "prod-1", "venv": "ops", "id": "a b"})[
+        "ok"
+    ]
+
+
+def test_run_now_on_an_old_scheduler_says_upgrade():
+    b = _bridge()
+    with patch.object(
+        b, "_run_scheduler_as", return_value=(2, "", "✗  Unknown argument '--detach'")
+    ):
+        out = b.host_schedule_run_now(
+            {"host": "prod-1", "venv": "ops", "id": "nightly"}
+        )
+    assert "older than 0.7.0" in out["error"]

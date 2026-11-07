@@ -23,6 +23,23 @@ All notable changes to `runspec-scheduler` are documented here.
   started with in its heartbeat; `daemon.version` shows it and
   `daemon.restart_needed` is true when the installed version differs (an
   upgrade the running daemon hasn't loaded).
+- **`run-now --detach`**: start one schedule's fire in the background and
+  return its pid. It runs as a scheduled fire would (the schedule's `run_as`
+  on the cron backend, escalated with `sudo -n` / `su` after a check that the
+  escalation works; the venv owner on the daemon backend), in its own session
+  with no stdio, so an SSH caller (the console's *Run now*) can hang up without
+  stopping it. A fire that ends within 1.5 s reports its exit code. The run is
+  recorded like any other fire, and `--lock` still makes a second one a
+  recorded skip.
+
+### Changed
+
+- **Fires say which backend started them.** The `runspec exec --trigger` a fire
+  passes is now `schedule:cron`, `schedule:daemon` or `schedule:run-now`
+  (was `schedule` for all), so the runs index and the console's History can
+  tell them apart. Cron lines pick up the new value on their next `sync`, the
+  daemon after a restart; skipped and failed daemon rows use
+  `schedule:daemon`.
 
 ## [0.6.2] — 2026-11-07
 

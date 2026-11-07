@@ -161,6 +161,18 @@ describe('AllSchedulesView host actions', () => {
     expect(screen.getByRole('button', { name: /New host schedule/ })).toBeTruthy()
   })
 
+  it('runs a schedule now through the bridge', async () => {
+    api.host_schedule_run_now = vi.fn(() => Promise.resolve({ ok: true, id: 'nightly', pid: 9, user: 'svc' }))
+    render(<AllSchedulesView scope="cron" collected={collected} loading={false} loaded updatedAt={null} hostCount={1}
+      onRefresh={() => {}} runnables={RUNNABLES} />)
+    const row = screen.getByText('nightly').closest('tr') as HTMLElement
+    fireEvent.click(within(row).getByLabelText('Run now'))
+    const pop = await waitFor(() => document.querySelector('.ant-popconfirm') as HTMLElement)
+    expect(within(pop).getByText(/as svc/)).toBeTruthy()
+    fireEvent.click(within(pop).getByRole('button', { name: 'Run now' }))
+    await waitFor(() => expect(api.host_schedule_run_now).toHaveBeenCalledWith({ host: 'web-1', venv: 'ops', id: 'nightly' }))
+  })
+
   it('stays read-only without runnables', () => {
     render(<AllSchedulesView scope="cron" collected={collected} loading={false} loaded updatedAt={null} hostCount={1} onRefresh={() => {}} />)
     expect(screen.queryByLabelText('Pause')).toBeNull()

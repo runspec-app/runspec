@@ -1,5 +1,6 @@
 import { Tag, Typography, Tooltip, Alert } from 'antd'
 import type { SharedSchedule, SharedScheduleOutput, SharedScheduleRun } from '../bridge'
+import { isScheduled } from '../runBy'
 import { MONO_FONT, RADIUS, useIsDark, textMuted, textSecondary } from '../ThemeContext'
 import { timeoutLabel } from './allSchedules'
 
@@ -66,7 +67,7 @@ export function ScheduleDetail({ s, daemon = false }: { s: SharedSchedule; daemo
               <RunTag run={r} />
               <Tooltip title={r.start_ts}><span style={{ color: textSecondary(isDark) }}>{relTime(r.start_ts)}</span></Tooltip>
               <span style={{ color: textMuted(isDark) }}>{r.duration_ms != null ? `${(r.duration_ms / 1000).toFixed(1)}s` : '—'}</span>
-              <span style={{ color: textMuted(isDark), fontFamily: MONO_FONT, fontSize: 12 }}>{r.trigger === 'schedule' ? '' : r.trigger}</span>
+              <span style={{ color: textMuted(isDark), fontFamily: MONO_FONT, fontSize: 12 }}>{r.trigger === 'schedule:run-now' ? 'run now' : isScheduled(r.trigger) ? '' : r.trigger}</span>
             </div>
           ))}
         </div>

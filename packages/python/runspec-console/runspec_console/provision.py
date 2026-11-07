@@ -802,6 +802,37 @@ def retention_hint(policy: dict[str, str]) -> str:
     )
 
 
+_SIZE_RE = re.compile(r"^\d+(\.\d+)?\s*(b|kb|mb|gb)?$", re.IGNORECASE)
+
+
+def retention_edit_argv(payload: dict[str, Any]) -> list[str]:
+    """``runspec logs retention`` argv (after the binary) that makes a venv's
+    policy exactly ``payload``: ``compact_after`` / ``delete_after`` (durations)
+    and ``max_total_size`` (``500MB``, ``5GB``); a blank field is cleared.
+    ``off`` (or every field blank) removes the policy. Checked here with the
+    grammar core uses, so a bad value never reaches the host."""
+    payload = payload or {}
+    vals = {
+        k: str(payload.get(k) or "").strip()
+        for k in ("compact_after", "delete_after", "max_total_size")
+    }
+    if payload.get("off") or not any(vals.values()):
+        return ["logs", "retention", "--off", "--json"]
+    durations = validate_retention(
+        {k: vals[k] for k in ("compact_after", "delete_after")}
+    )
+    size = vals["max_total_size"].upper().replace(" ", "")
+    if size and not _SIZE_RE.match(size):
+        raise ProvisionError(
+            f"Not a size: {vals['max_total_size']!r} (use e.g. 500MB or 5GB)."
+        )
+    argv = ["logs", "retention"]
+    for key in ("compact_after", "delete_after"):
+        argv += [f"--{key.replace('_', '-')}", durations.get(key) or "off"]
+    argv += ["--max-total-size", size or "off", "--json"]
+    return argv
+
+
 # --------------------------------------------------------------------------- #
 # Scheduler daemon (runspec-scheduler 0.6.0+)
 # --------------------------------------------------------------------------- #

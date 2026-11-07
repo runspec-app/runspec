@@ -296,6 +296,12 @@ def _cmd_run_now(spec: rs.RunSpec) -> None:
     if entry is None:
         _emit({"error": f"no schedule with id '{sid}'"})
         sys.exit(2)
+    if spec.detach.value:
+        from .runnow import start
+
+        res = start(entry, settings)
+        _emit(res)
+        sys.exit(0 if res.get("ok") else 1)
     timeout = entry.effective_timeout(settings) if settings.backend == "daemon" else (entry.timeout or 0)
     target = resolve_target(entry.runnable)
     if target is None:
@@ -307,7 +313,7 @@ def _cmd_run_now(spec: rs.RunSpec) -> None:
 
     from runspec.runexec import exec_runnable
 
-    from .cronsync import LABEL_PREFIX
+    from .cronsync import LABEL_PREFIX, TRIGGER_RUN_NOW
     from .invocation import plan_invocation
 
     out, err = io.TextIOWrapper(io.BytesIO(), encoding="utf-8"), io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
@@ -319,7 +325,7 @@ def _cmd_run_now(spec: rs.RunSpec) -> None:
         entry.runnable,
         plan.argv,
         label=f"{LABEL_PREFIX}{sid}",
-        trigger="schedule",
+        trigger=TRIGGER_RUN_NOW,
         env=env,
         stdout=out,
         stderr=err,

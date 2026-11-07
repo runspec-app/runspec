@@ -97,6 +97,7 @@ runspec-scheduler add --id report --runnable report --cron '0 6 * * *' --timeout
 runspec-scheduler list
 runspec-scheduler status
 runspec-scheduler run-now --id poll
+runspec-scheduler run-now --id nightly --detach   # start it in the background and return
 runspec-scheduler remove --id poll
 runspec-scheduler use daemon        # or: use cron
 ```
@@ -110,6 +111,11 @@ runspec-scheduler use daemon        # or: use cron
   fire is recorded as `skipped`.
 - The daemon picks up config changes within a few seconds, or at once on
   `SIGHUP`. On the cron backend run `sync` after editing.
+- `run-now --detach` starts the fire as a scheduled fire would run it (the
+  schedule's `run_as` on cron, the venv owner on the daemon) in its own session,
+  so it carries on after you log out; its run is recorded like any other fire.
+- Every fire's run carries a trigger saying what started it:
+  `schedule:cron`, `schedule:daemon` or `schedule:run-now`.
 
 ## Config
 

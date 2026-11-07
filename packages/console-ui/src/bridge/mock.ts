@@ -1658,6 +1658,17 @@ export const mockApi: BridgeApi = {
     })),
   }),
 
+  logs_retention: async (_host, group) => ({
+    ok: true, group, file: `/opt/venvs/${group}/runspec_logs_retention.toml`,
+    policy: group === 'ops-tools' ? { compact_after: '7d', delete_after: '90d' } : null,
+    last: group === 'ops-tools' ? { ts: new Date(Date.now() - 5 * 3600_000).toISOString(), compacted: 42, deleted: 3, freed_bytes: 18_400_000 } : null,
+  }),
+  logs_retention_set: async (_host, group, p) => ({
+    ok: true, group, file: `/opt/venvs/${group}/runspec_logs_retention.toml`,
+    policy: p.off ? null : Object.fromEntries(Object.entries(p).filter(([k, v]) => k !== 'off' && v)) as Record<string, string>,
+    as_user: 'svc-ops',
+  }),
+  logs_retention_run: async (_host, group, dryRun = true) => ({ ok: true, group, dry_run: dryRun, compacted: 12, deleted: 4, freed_bytes: 7_340_032 }),
   logs_prune: async (_host, group, _runnable, _olderThan, _maxFiles, _maxTotalSize, dryRun = true, _runAs) => ({
     group, ok: true, dry_run: dryRun, count: 12, freed_bytes: 1_572_864,
     deleted: Array.from({ length: 12 }, (_v, i) => ({ path: `/opt/venvs/${group}/logs/backup.2026010${i}T100000Z.${i}abcd.log`, bytes: 131_072 })),
@@ -1775,6 +1786,7 @@ export const mockApi: BridgeApi = {
   },
   host_schedule_remove: async (p) => ({ ok: true, id: p.id, warnings: [] }),
   host_schedule_sync: async () => ({ ok: true, warnings: [], sync: { installed: 2, skipped: [], users: ['svc-ops'] } }),
+  host_schedule_run_now: async (p) => ({ ok: true, id: p.id, pid: 5150, user: 'svc-ops' }),
   host_scheduler_settings: async (p) => ({
     ok: true,
     settings: { backend: 'daemon', timeout: 21600, misfire_grace: 300, catch_up_window: 86400, ...(p.timeout === '0' ? { timeout: 0 } : {}) },

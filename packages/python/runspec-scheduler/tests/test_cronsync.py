@@ -49,7 +49,7 @@ class TestRenderCommand:
         cmd = cronsync.render_command("/venv/bin/runspec", "backup", {"target": "prod"}, "", home="/home/svc", sched_id="nightly")
         # runspec exec, labelled + locked, recorded under trigger=schedule; output
         # redirected only so cron doesn't mail it (exec captured it in the log).
-        assert cmd.startswith("env RUNSPEC_AGENT=1 /venv/bin/runspec exec --label sched:nightly --trigger schedule ")
+        assert cmd.startswith("env RUNSPEC_AGENT=1 /venv/bin/runspec exec --label sched:nightly --trigger schedule:cron ")
         assert "--lock /home/svc/.cache/runspec-scheduler/nightly.lock" in cmd
         assert "backup -- --target prod" in cmd
         assert cmd.endswith(">/dev/null 2>&1")
@@ -123,7 +123,7 @@ class TestPlanCrontab:
         assert cronsync.plan_crontab(existing, []) == ["0 1 * * * /important/backup", "", "keep"]
 
     def test_strips_current_and_legacy_job_lines(self):
-        current = cronsync.render_block("a", "* * * * *", "env X=1 /v/bin/runspec exec --label sched:a --trigger schedule --lock /home/s/.cache/runspec-scheduler/a.lock r >/dev/null 2>&1")
+        current = cronsync.render_block("a", "* * * * *", "env X=1 /v/bin/runspec exec --label sched:a --trigger schedule:cron --lock /home/s/.cache/runspec-scheduler/a.lock r >/dev/null 2>&1")
         legacy = ["# runspec:sched:b", "* * * * *  flock -n /home/s/.cache/runspec-scheduler/b.lock /v/bin/r >/dev/null 2>&1"]
         assert cronsync.plan_crontab(["mine", *current, *legacy], []) == ["mine"]
 

@@ -436,6 +436,25 @@ log (`schedule.host.saved` / `removed` / `synced`, or `*_failed`). Local
 Windows venvs can't be edited: the scheduler fires with cron or its daemon,
 which need Linux.
 
+#### Run now
+
+Each **Host cron** and **Host daemon** row has a **Run now** button. After a
+confirm it runs that venv's `runspec-scheduler run-now --detach` as the venv
+owner. The fire runs as a scheduled fire would (the schedule's run-as account
+on a cron venv, the venv owner on a daemon venv), in its own session, so it
+keeps going after the console's call returns. Its run shows in History a few
+seconds later. If the schedule is already running, the second fire is recorded
+as *skipped*. Needs runspec-scheduler 0.7.0 in the venv. Recorded in the
+console's audit log as `schedule.host.run_now` (or `_failed`).
+
+#### Who ran it
+
+History's **Run by** column tells host schedule fires apart from the agent:
+**cron** (a crontab line fired), **daemon** (the scheduler daemon fired) and
+**run now** (the Run now button). Fires from runspec-scheduler before 0.7.0 show
+as **host sched**. A cron line picks up the new marker on its next sync, a
+daemon after a restart.
+
 ---
 
 ## Choosing the model per trigger, schedule or runbook

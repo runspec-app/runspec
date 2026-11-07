@@ -1149,6 +1149,54 @@ class SchedulesMixin:
         self._host_sched_audit("schedule.host.synced", payload, "", ok=out["ok"])
         return out
 
+    def host_schedule_run_now(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Fire one host schedule now (``host``, ``venv``, ``id``) with the venv's
+        own ``runspec-scheduler run-now --detach``, run as the venv owner. The fire
+        starts in the background as a scheduled fire would run (the schedule's
+        ``run_as`` on cron, the owner on the daemon) and is recorded in History
+        under ``sched:<id>``. Returns ``{ok, error?, pid?, user?, finished?,
+        exit_code?}``."""
+        from . import host_schedules as hs
+
+        payload = payload or {}
+        try:
+            sid = hs.validate_id(payload.get("id"))
+        except hs.HostScheduleError as exc:
+            return {"ok": False, "error": str(exc)}
+        res = self._host_sched_call(
+            payload, ["run-now", "--id", sid, "--detach"], timeout=60
+        )
+        got = res["json"] or {}
+        if not res["ok"] or got.get("ok") is False:
+            err = str(got.get("error") or "") or self._host_daemon_error(res["error"])
+            if hs.too_old(res["error"]) or "--detach" in (res["error"] or ""):
+                err = (
+                    f"This venv's runspec-scheduler is older than {hs.DAEMON_VERBS_MIN}; "
+                    "upgrade it (Update venv…) to run schedules from here."
+                )
+            self._host_sched_audit(
+                "schedule.host.run_now_failed", payload, sid, error=err
+            )
+            return {"ok": False, "error": err}
+        self._host_sched_audit(
+            "schedule.host.run_now",
+            payload,
+            sid,
+            pid=got.get("pid"),
+            run_as=got.get("user"),
+        )
+        return {
+            "ok": True,
+            "id": sid,
+            "pid": got.get("pid"),
+            "user": got.get("user") or "",
+            **(
+                {"finished": True, "exit_code": got.get("exit_code")}
+                if got.get("finished")
+                else {}
+            ),
+        }
+
     def host_scheduler_settings(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Change a venv's daemon durations (``host``, ``venv``, and any of
         ``timeout`` / ``misfire_grace`` / ``catch_up_window``) with the venv's

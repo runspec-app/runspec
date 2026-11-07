@@ -12,7 +12,7 @@
 #   runspec-scheduler remove  --id …          remove a schedule from the config
 #   runspec-scheduler list                    print the configured schedules as JSON
 #   runspec-scheduler status                  config + crontab + recent runs/output per schedule (JSON)
-#   runspec-scheduler run-now --id …          fire one schedule immediately
+#   runspec-scheduler run-now --id … [--detach] fire one schedule immediately
 #   runspec-scheduler run                     run the daemon (the daemon backend) in the foreground
 #   runspec-scheduler install-service         plan (or --write) what keeps the daemon running
 #
@@ -57,6 +57,7 @@ examples = [
   {cmd = "runspec-scheduler install-service", description = "Show which keeper suits this host and what installing it would change."},
   {cmd = "runspec-scheduler install-service --write", description = "Install that keeper and start the daemon."},
   {cmd = "runspec-scheduler restart", description = "Restart the daemon through its keeper (after upgrading runspec-scheduler)."},
+  {cmd = "runspec-scheduler run-now --id nightly-backup --detach", description = "Fire a schedule now in the background, as a scheduled fire would run (recorded under sched:nightly-backup)."},
   {cmd = "runspec-scheduler settings --timeout 2h", description = "Kill a daemon fire still running after 2 hours (the daemon reloads by itself)."},
   {cmd = "runspec-scheduler install-service --remove --write", description = "Remove this venv's keepers and stop the daemon (before deleting the venv)."},
 ]
@@ -117,6 +118,7 @@ output      = "json"
 
 [runspec-scheduler.commands.run-now.args]
 id = {type = "str", required = true, description = "Schedule id to fire now."}
+detach = {type = "flag", default = false, description = "Start the fire in the background and return at once (as the account a scheduled fire runs as: the schedule's run_as on cron, the venv owner on the daemon). Its run is in the runs index under sched:<id>."}
 
 # ---- sync: render the config into the OS crontab (recommended backend) ----
 [runspec-scheduler.commands.sync]
