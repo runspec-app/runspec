@@ -188,9 +188,9 @@ def test_pack_clean_checkout(checkout):
 
 def test_interactive_run_sends_edits_but_not_ignored_files(checkout):
     dest, _ = checkout
-    (dest / "site.yml").write_text("- hosts: web\n")
-    (dest / "new.yml").write_text("- hosts: all\n")
-    (dest / "secret.txt").write_text("vault password")
+    (dest / "site.yml").write_bytes(b"- hosts: web\n")
+    (dest / "new.yml").write_bytes(b"- hosts: all\n")
+    (dest / "secret.txt").write_bytes(b"vault password")
     packed = playbook_repo.pack_repo("homelab", unattended=False, host="web-01")
     doc, files = _decode(packed)
     assert files["site.yml"] == b"- hosts: web\n"
@@ -201,8 +201,8 @@ def test_interactive_run_sends_edits_but_not_ignored_files(checkout):
 
 def test_unattended_run_sends_the_committed_tree_only(checkout):
     dest, _ = checkout
-    (dest / "site.yml").write_text("- hosts: web\n")
-    (dest / "new.yml").write_text("x")
+    (dest / "site.yml").write_bytes(b"- hosts: web\n")
+    (dest / "new.yml").write_bytes(b"x")
     packed = playbook_repo.pack_repo("homelab", unattended=True)
     doc, files = _decode(packed)
     assert files["site.yml"] == b"- hosts: all\n"
