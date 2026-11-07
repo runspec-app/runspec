@@ -9,6 +9,7 @@ import { inferScript } from './inference';
 import { parse } from './parser';
 import * as rundeckgen from './rundeckgen';
 import * as ansiblegen from './ansiblegen';
+import * as integrity from './integrity';
 import type { ScriptSpec, ArgSpec, ParsedArgs } from './models';
 
 const _CLI_CONFIG = path.join(__dirname, 'runspec.toml');
@@ -42,6 +43,8 @@ export function main(): void {
     logs: cmdLogs,
     jump: cmdJump,
     serve: cmdServe,
+    verify: cmdVerify,
+    manifest: cmdManifest,
   };
 
   if (!(command in commands)) {
@@ -1164,6 +1167,8 @@ Commands:
   logs        View, status, prune, or compact per-invocation audit logs
   jump        Execute a runnable on a remote host via SSH
   serve       Start the MCP stdio server for local runnables
+  verify      Check installed code still matches what was installed
+  manifest    Write runspec-files.json (per-file hashes) before npm pack
 
 Run 'runspec <command> --help' for focused help on each command.
 
@@ -1294,6 +1299,34 @@ Examples:
 
   To test manually:
     echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0"}}}' | runspec serve`,
+
+    verify: `runspec verify — Check installed code still matches what was installed
+
+  Checks this project and its direct dependencies against each package's
+  runspec-files.json (written by 'runspec manifest' when it was packed), or
+  else against the snapshot taken on its first run.
+
+Usage:
+  runspec verify [name ...] [--all] [--json] [--snapshot]
+
+Options:
+  name        A package name, or a runnable name (= this project)
+  --all       Every package in node_modules
+  --json      Structured result
+  --snapshot  (Re)take the snapshot of packages with no runspec-files.json
+
+Exits 1 when anything is modified.`,
+
+    manifest: `runspec manifest — Write runspec-files.json before npm pack
+
+  Hashes every file 'npm pack' would publish and writes the list next to
+  package.json, so installs of this package are checked against it. Run it
+  last in prepack, after the build:
+
+    "prepack": "npm run build && runspec manifest"
+
+Options:
+  --dir       Package folder (default: the current directory)`,
   };
 
   if (command in help) {
@@ -1302,4 +1335,138 @@ Examples:
     console.log(`No help available for '${command}'.`);
     printHelp();
   }
+}
+
+// ── verify / manifest ─────────────────────────────────────────────────────────
+
+function cmdVerify(args: string[]): void {
+  const json = args.includes('--json');
+  const all = args.includes('--all');
+  const snapshot = args.includes('--snapshot');
+  const names = args.filter((a) => !a.startsWith('-'));
+
+  let root: string | null = null;
+  let runnables: string[] = [];
+  try {
+    const { configPath } = findConfig(process.cwd());
+    root = integrity.projectRoot(configPath);
+    try {
+      runnables = Object.keys(loadRaw(configPath).runnables);
+    } catch {
+      /* an unreadable spec still lets the packages be checked */
+    }
+  } catch {
+    /* no runspec.toml — fall back to the cwd's package.json */
+  }
+  if (!root && fs.existsSync(path.join(process.cwd(), 'package.json'))) root = process.cwd();
+  if (!root) {
+    console.log('✗  No package.json found here or above runspec.toml.');
+    process.exit(2);
+  }
+
+  let projectName = path.basename(root);
+  try {
+    const pj = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+    if (typeof pj.name === 'string' && pj.name) projectName = pj.name;
+  } catch {
+    /* keep the folder name */
+  }
+  const wanted = names.map((n) => (runnables.includes(n) ? projectName : n));
+  const checkout = integrity.inGitWorkTree(root);
+  const report = integrity.checkRoot(root, {
+    names: wanted.length ? wanted : undefined,
+    all,
+    takeSnapshots: snapshot,
+    retake: snapshot,
+    checkout,
+  });
+
+  if (wanted.length) {
+    const found = new Set(report.packages.map((p) => p.name));
+    const unknown = wanted.filter((n) => !found.has(n));
+    if (unknown.length) {
+      console.log(`✗  Not installed here: ${unknown.join(', ')}`);
+      process.exit(2);
+    }
+  }
+
+  const modified = integrity.modifiedPackages(report);
+  if (json) {
+    console.log(JSON.stringify({ root, packages: report.packages, modified: modified.length }, null, 2));
+  } else {
+    printVerify(report, checkout);
+  }
+  if (modified.length) process.exit(1);
+}
+
+function printVerify(report: integrity.Report, checkout: boolean): void {
+  const w = Math.max(8, ...report.packages.map((p) => p.name.length));
+  const vw = Math.max(7, ...report.packages.map((p) => p.version.length));
+  for (const p of report.packages) {
+    let detail = '';
+    if (p.status === 'modified') {
+      detail = `${integrity.changedFiles(p).length} of ${p.checked + p.missing.length} files changed`;
+    } else if (p.status === 'ok') {
+      detail = `${p.checked} files${p.snapshotTaken ? ' (snapshot taken)' : ''}`;
+    } else if (p.status === 'skipped') {
+      detail = p.source === 'linked' ? 'symlinked (npm link / local folder)' : 'git checkout';
+    } else if (p.baseline === 'none') {
+      detail = "no runspec-files.json and no snapshot yet (run it once, or 'runspec verify --snapshot')";
+    }
+    console.log(`  ${p.name.padEnd(w)}  ${p.version.padEnd(vw)}  ${p.source.padEnd(7)}  ${p.baseline.padEnd(8)}  ${p.status.padEnd(12)}  ${detail}`.trimEnd());
+    for (const f of p.modified) console.log(`      changed  ${f}`);
+    for (const f of p.missing) console.log(`      missing  ${f}`);
+  }
+  const modified = integrity.modifiedPackages(report);
+  console.log('');
+  if (modified.length) {
+    console.log(`✗  ${modified.length} package(s) modified since install. Reinstall to restore them (npm install, or unpack the package again).`);
+  } else if (checkout) {
+    console.log('✓  Nothing modified. (This project is a git checkout, so its own files are not checked.)');
+  } else {
+    console.log('✓  Nothing modified.');
+  }
+}
+
+function npmPackFiles(dir: string): string[] {
+  const npmArgs = ['pack', '--dry-run', '--json', '--ignore-scripts'];
+  const execpath = process.env.npm_execpath;
+  const r = execpath && /\.(c?js)$/.test(execpath)
+    ? spawnSync(process.execPath, [execpath, ...npmArgs], { cwd: dir, encoding: 'utf8' })
+    : spawnSync('npm', npmArgs, { cwd: dir, encoding: 'utf8', shell: process.platform === 'win32' });
+  if (r.error || r.status !== 0) {
+    const why = r.error ? r.error.message : (r.stderr || '').trim().split('\n').pop();
+    throw new Error(`npm pack --dry-run failed: ${why}`);
+  }
+  const out = JSON.parse(r.stdout);
+  const entry = Array.isArray(out) ? out[0] : out;
+  if (!entry || !Array.isArray(entry.files)) throw new Error('npm pack --dry-run returned no file list');
+  return entry.files.map((f: { path: string }) => String(f.path));
+}
+
+function cmdManifest(args: string[]): void {
+  const dir = path.resolve(getFlag(args, '--dir') ?? process.cwd());
+  let pj: Record<string, unknown>;
+  try {
+    pj = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
+  } catch {
+    console.log(`✗  No package.json in ${dir}`);
+    process.exit(2);
+  }
+  if (!integrity.manifestIsPublished(pj)) {
+    console.log(`✗  package.json "files" leaves out ${integrity.MANIFEST_NAME}, so it would not be published.`);
+    console.log(`   Add "${integrity.MANIFEST_NAME}" to "files".`);
+    process.exit(1);
+  }
+  let files: string[];
+  try {
+    files = npmPackFiles(dir);
+  } catch (e) {
+    console.log(`✗  ${(e as Error).message}`);
+    process.exit(1);
+  }
+  const manifest = integrity.buildManifest(dir, files);
+  fs.writeFileSync(path.join(dir, integrity.MANIFEST_NAME), JSON.stringify(manifest, null, 1) + '\n', 'utf8');
+  // stderr: this runs inside `npm pack`, whose --json output goes to stdout.
+  process.stderr.write(`✓  Wrote ${integrity.MANIFEST_NAME}: ${Object.keys(manifest.files).length} files (${manifest.name ?? ''} ${manifest.packageVersion ?? ''}).\n`.replace(' ( )', ''));
 }

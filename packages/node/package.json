@@ -1,6 +1,6 @@
 {
   "name": "runspec-node",
-  "version": "0.46.0",
+  "version": "0.47.0",
   "description": "Node/TypeScript language pack for runspec",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -19,6 +19,7 @@
   },
   "scripts": {
     "build": "tsc && cp src/runspec.toml dist/runspec.toml",
+    "prepack": "npm run build && node bin/runspec.js manifest",
     "test": "jest",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"

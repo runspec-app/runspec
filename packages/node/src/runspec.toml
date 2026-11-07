@@ -122,3 +122,31 @@ tool      = {type = "str",    description = "Tool to run on the remote host",   
 bin       = {type = "str",    description = "Path to runspec binary on the remote",            required = false}
 format    = {type = "choice", description = "Output format when listing", options = ["text", "json"], short = "-f", default = "text"}
 tool-args = {type = "rest",   description = "Args passed to the remote tool"}
+
+[runspec.commands.verify]
+description = "Check installed code still matches what was installed"
+autonomy    = "autonomous"
+
+examples = [
+  {cmd = "runspec verify",              description = "This project and its direct dependencies"},
+  {cmd = "runspec verify runspec-node", description = "One package"},
+  {cmd = "runspec verify --all",        description = "Every package in node_modules"},
+  {cmd = "runspec verify --snapshot",   description = "Retake the snapshot of packages with no runspec-files.json"},
+]
+
+[runspec.commands.verify.args]
+name     = {type = "str",  description = "Package or runnable name (repeatable; a runnable name = this project)", position = 1, multiple = true, required = false}
+all      = {type = "flag", description = "Every package in node_modules", default = false}
+json     = {type = "flag", description = "Structured result", default = false}
+snapshot = {type = "flag", description = "(Re)take the snapshot of packages with no runspec-files.json", default = false}
+
+[runspec.commands.manifest]
+description = "Write runspec-files.json (per-file hashes of what npm pack publishes)"
+autonomy    = "confirm"
+
+examples = [
+  {cmd = "runspec manifest", description = "Run last in prepack: \"prepack\": \"npm run build && runspec manifest\""},
+]
+
+[runspec.commands.manifest.args]
+dir = {type = "str", description = "Package folder (default: the current directory)", required = false}

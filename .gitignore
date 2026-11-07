@@ -25,6 +25,8 @@ coverage.xml
 # Node
 node_modules/
 dist/
+# runspec manifest output (written at npm pack time)
+runspec-files.json
 *.js.map
 .npm
 

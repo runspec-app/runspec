@@ -411,7 +411,12 @@ npx runspec init                   # scaffold runspec.toml + code stub
 npx runspec local                  # list installed runnables and validate
 npx runspec local --format mcp     # emit MCP tool schemas
 npx runspec serve                  # start the MCP stdio server
+npx runspec verify                 # check installed code hasn't been edited
+npx runspec manifest               # write runspec-files.json (run it in prepack)
 ```
+
+Every `parse()` also checks the installed code against what was installed; see
+[Installed-code integrity](integrity.md#node-runnables).
 
 Or install globally for direct access:
 

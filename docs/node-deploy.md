@@ -146,6 +146,12 @@ Schedule those from cron or a systemd timer (see
 - **Relocatable, per-machine.** The shims resolve their own directory, so moving
   the folder is fine — but `node_modules` is platform-specific, so run
   `npm install` (and `runspec bin`) on the host where it will execute.
+- **Edits on the box are recorded.** Every run checks the folder's files and
+  its direct dependencies against what was installed, and a changed file makes
+  the run `modified` (a warning, and a badge in the console's History). A
+  folder that's a git checkout isn't checked. See
+  [Installed-code integrity](integrity.md#node-runnables), including the one
+  `prepack` line that lets your own package ship its hashes.
 - **One folder = one toolset.** Keep separate toolsets in separate folders
   (separate `runspec_paths` entries / groups), the same way you'd use separate
   Python venvs rather than one shared environment.

@@ -10,6 +10,7 @@ import { validateArgs, validateGroups, raiseIfErrors } from './validator';
 import { effectiveRunAs, environmentRoot, resolveAccount, resolveRunAs, verifyRunAsIdentity } from './become';
 import { RunSpecError, RunAsMismatch, formatMissingCommand, formatRunAsMismatch } from './errors';
 import { configureLogging, installExceptionHook } from './logging_setup';
+import { checkProject, reportFiles, reportRun, reportToken } from './integrity';
 import type { ParsedArgs, ScriptSpec, ArgSpec, GroupSpec } from './models';
 
 export interface ParseOptions {
@@ -23,10 +24,12 @@ export interface ParseOptions {
   _promptSecrets?: boolean;
   /** Internal: verify the run_as identity (enforce_run_as). loadSpec sets false. */
   _checkRunAs?: boolean;
+  /** Internal: check the installed code (installed-code integrity). loadSpec sets false. */
+  _checkIntegrity?: boolean;
 }
 
 export function parse(opts: ParseOptions = {}): ParsedArgs {
-  const { scriptName, argv: argvOverride, cwd, configPath: configPathOverride, _enforceRequiredCommand = true, _promptSecrets = true, _checkRunAs = true } = opts;
+  const { scriptName, argv: argvOverride, cwd, configPath: configPathOverride, _enforceRequiredCommand = true, _promptSecrets = true, _checkRunAs = true, _checkIntegrity = true } = opts;
 
   const { configPath } = configPathOverride ? { configPath: configPathOverride } : findConfig(cwd);
   const raw = loadRaw(configPath);
@@ -166,6 +169,13 @@ export function parse(opts: ParseOptions = {}): ParsedArgs {
     ? Boolean(coercedValues['debug'] ?? false)
     : false;
 
+  // Installed-code integrity: has the project or a direct dependency changed
+  // since it was installed? Warn-and-record, never refuse (SPEC.md →
+  // "Installed-Code Integrity" → "Node pack"). Skipped by loadSpec.
+  // The core `runspec` CLI is exempt on its own runs (as in Python).
+  const coreCli = name === 'runspec' && path.resolve(configPath) === path.join(__dirname, 'runspec.toml');
+  const integrityReport = _checkIntegrity && !coreCli ? checkProject(configPath) : null;
+
   try {
     configureLogging({
       logCfg: config.logging,
@@ -175,10 +185,13 @@ export function parse(opts: ParseOptions = {}): ParsedArgs {
       autonomy,
       agent,
       commandPath,
+      integrity: reportToken(integrityReport),
+      integrityFiles: reportFiles(integrityReport),
     });
   } catch (e) {
     throw new RunSpecError((e as Error).message);
   }
+  reportRun(name, integrityReport);
 
   return {
     ...coercedValues,
@@ -198,7 +211,7 @@ export function loadSpec(opts: ParseOptions = {}): ParsedArgs {
   // Secret prompting is disabled — introspection must never block on a prompt.
   // The run_as identity check is likewise skipped: emitting schemas and listing
   // runnables must never depend on who is running them.
-  return parse({ ...opts, argv: [], _enforceRequiredCommand: false, _promptSecrets: false, _checkRunAs: false });
+  return parse({ ...opts, argv: [], _enforceRequiredCommand: false, _promptSecrets: false, _checkRunAs: false, _checkIntegrity: false });
 }
 
 function inferFromArgv(): string {

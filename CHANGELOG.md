@@ -9,6 +9,35 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [node-0.47.0] — 2026-11-07
+
+### Added
+
+- **Every run checks that its installed code wasn't changed**, like the Python
+  pack's 0.81.0 check. `parse()` hashes the project folder (the one holding
+  `runspec.toml` and `package.json`) and each direct dependency in
+  `node_modules`, and compares them with known-good hashes. npm records none
+  per file, so they come from a `runspec-files.json` in the package when it has
+  one, else from a snapshot taken on the first run and kept in
+  `logs/.integrity-baseline.json`. A changed or deleted file makes the run
+  **modified**: it still runs, with a stderr warning and `integrity` /
+  `integrity_files` on the run summary, so the console's History shows the
+  badge. A project in a git checkout is not checked, and a symlinked
+  dependency (`npm link`, `npm install ../dir`) is skipped; a dependency from a
+  `.tgz` file or git is recorded as `local`. `RUNSPEC_INTEGRITY=off` turns it
+  off. No audit event yet (the Node pack has no `audit()`). About 10 ms a run
+  for a project plus runspec-node. `src/integrity.ts`; SPEC → "Installed-Code
+  Integrity" → "Node pack"; `docs/integrity.md` → "Node runnables".
+- **`runspec verify`** checks the project and its direct dependencies on demand
+  (a package or runnable name, `--all` for all of `node_modules`, `--json`,
+  `--snapshot` to retake the snapshot after a reinstall). Exits 1 when anything
+  is modified.
+- **`runspec manifest`** writes `runspec-files.json`: the SHA-256 of every file
+  `npm pack` would publish. Run it last in `prepack`
+  (`"prepack": "npm run build && runspec manifest"`); it refuses when
+  `package.json` `files` would leave the list out. runspec-node now ships its
+  own list.
+
 ## [0.81.0] — 2026-11-07
 
 ### Added

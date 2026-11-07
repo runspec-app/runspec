@@ -244,7 +244,7 @@ Two records support this. Neither is counted in the run summary's `events`:
   `runspec.runsummary` logger): `run_id`, `runnable`, `command_path`, `pid`,
   `host`, `proc_start`, `user`, `user_target`, `invocation_args`, `start_ts`,
   `label`, `trigger`, `venv`, and `integrity` / `integrity_files` (see
-  [Installed-Code Integrity](#installed-code-integrity-python-pack)). Omitted when `[config.history] db = false`; a
+  [Installed-Code Integrity](#installed-code-integrity)). Omitted when `[config.history] db = false`; a
   `{"event": "run_start", "history_db": false}` marker is written instead.
 - **`run_end`** — a slim end record (`run_id`, `exit_code`, `duration_ms`)
   that packs before 0.71.0 wrote instead of `run_summary` when `summary =
@@ -422,7 +422,7 @@ The audit record is fixed-schema:
 A run whose installed code was changed or came from outside a package index
 also carries `"integrity": "modified"` (with `"integrity_files"`) or
 `"integrity": "local"` — see
-[Installed-Code Integrity](#installed-code-integrity-python-pack).
+[Installed-Code Integrity](#installed-code-integrity).
 
 The stderr line reads like a database client's closing message:
 
@@ -1524,7 +1524,7 @@ the denylist it edits.
 
 ---
 
-## Installed-Code Integrity (Python pack)
+## Installed-Code Integrity
 
 Before a runnable's code is trusted with a run, `parse()` checks that the
 installed package still matches what was installed: every file listed in the
@@ -1614,7 +1614,84 @@ Prints each distribution's version, source and status (`ok`, `modified`,
 `skipped` for editable, `unverifiable`), and the changed or missing files.
 Exits `1` when anything is modified, else `0`. It records nothing.
 
-The Node pack does not check installed code.
+### Node pack
+
+npm keeps no per-file hashes (only one hash of the downloaded tarball), so the
+Node pack gets its reference hashes another way. The result, the run record
+fields, the warning and `RUNSPEC_INTEGRITY=off` are the same as above; what
+differs is what is checked and where the known-good hashes come from.
+
+**What is checked.** A Node runnable set is a project folder: `runspec.toml`,
+`package.json`, its scripts, and `node_modules`. `parse()` checks:
+
+- **The project** — the folder holding the nearest `package.json` above the
+  runnable's `runspec.toml`, outside `node_modules`.
+- **Each direct dependency** — every `dependencies` and `optionalDependencies`
+  entry of that `package.json` installed at `node_modules/<name>`.
+
+Nothing is checked when the project folder is inside a git work tree (a `.git`
+directory in it or above it: a developer's checkout) or has no `package.json`.
+
+**Where a package came from.** `node_modules/.package-lock.json` (written by npm
+7+) records each dependency's `resolved` URL:
+
+| Install | Source | Checked | Recorded as |
+|---|---|---|---|
+| a registry URL, or no lock entry | `index` | yes | — |
+| a symlink (`npm link`, `npm install ../dir`, a workspace) | `linked` | no | — |
+| `file:…tgz` | `archive` | yes | `local` |
+| `git+…`, `github:…` and other git specs | `vcs` | yes | `local` |
+
+The project itself is always `index` (it was unpacked or copied into place; how
+is not recorded).
+
+**Known-good hashes.** For each package, in order:
+
+1. **A packed hash list** — `runspec-files.json` in the package folder:
+
+   ```json
+   {"version": 1, "algorithm": "sha256", "name": "runspec-webops", "packageVersion": "0.2.0",
+    "files": {"dist/cert-check.js": "<hex sha-256>", "runspec.toml": "<hex>", "package.json": "<hex>"}}
+   ```
+
+   `runspec manifest` writes it from the file list `npm pack` would publish,
+   so a publisher adds it with one `prepack` script (after the build):
+   `"prepack": "npm run build && runspec manifest"`. Every listed file is
+   checked; a file the list doesn't name is not.
+2. **A first-run snapshot** — for a package without a list, the first run that
+   finds no snapshot for that package's name and version hashes its files and
+   stores them in `{project}/logs/.integrity-baseline.json`; later runs compare
+   against it. The files are every regular file in the package folder except
+   symlinks, dot-files and dot-directories, nested `node_modules`, and, for the
+   project, `logs/`, `bin/` (the shims `runspec bin` writes) and
+   `package-lock.json`. A package of more than 5000 files is `unverifiable`. An
+   edit made before the first run is part of the snapshot and is never
+   reported; `runspec verify --snapshot` takes the snapshot again after a
+   reinstall. An account that cannot write the file checks nothing until one
+   that can has run.
+
+A list is the reference a publisher controls; a snapshot only says "unchanged
+since this host first ran it". Both are tamper-evident only, like `RECORD`.
+
+**Result.** `integrity` / `integrity_files` are written on `run_summary` when
+`[config.logging]` is on (the Node pack has no `run_start` or runs index). The
+stderr warning is written on every `modified` run. There is no audit event:
+the Node pack has no `audit()` yet.
+
+**`runspec verify`** (Node):
+
+```
+runspec verify                 # the project + its direct dependencies
+runspec verify runspec-node    # one package (or a runnable name: the project)
+runspec verify --all           # every package in node_modules
+runspec verify --json          # structured result
+runspec verify --snapshot      # (re)take the snapshot of packages without a list
+```
+
+Prints each package's version, source, baseline (`list` / `snapshot` / `none`)
+and status. Exits `1` when anything is modified, else `0`. Without `--snapshot`
+it records nothing, so a package with no list and no snapshot yet shows
+`unverifiable`.
 
 ---
 
