@@ -70,8 +70,9 @@ from runspec_linux_core.packages import (
 )
 from runspec_linux_core.perf import cpu_info, get_sysctl, pressure, set_sysctl
 from runspec_linux_core.power import reboot_host
+from runspec_linux_core.repos import add_repo, list_repos, remove_repo
 from runspec_linux_core.security import last_logins, who
-from runspec_linux_core.services import check_service, list_services, restart_service
+from runspec_linux_core.services import check_service, control_service, list_services, restart_service
 from runspec_linux_core.sudoers import enable_passwordless_sudo
 from runspec_linux_core.system import block_devices, check_memory, disk_usage, list_processes, system_info
 
@@ -97,6 +98,7 @@ __all__ = [
     "check_service",
     "list_services",
     "restart_service",
+    "control_service",
     # logs
     "tail_log",
     "search_log",
@@ -146,6 +148,10 @@ __all__ = [
     "remove_package",
     "autoremove_packages",
     "list_autoremovable",
+    # package repositories
+    "list_repos",
+    "add_repo",
+    "remove_repo",
     # power
     "reboot_host",
     # sudoers

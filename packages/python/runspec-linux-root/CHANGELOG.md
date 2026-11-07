@@ -2,6 +2,32 @@
 
 All notable changes to `runspec-linux-root` are documented here.
 
+## [0.2.0] — 2026-11-07
+
+### Added
+
+- **`package-repo`** (`list` / `add` / `remove`): add a vendor's package
+  repository and its signing key without a shell, the way install guides like
+  Grafana Alloy's do it. One call takes the apt pair (`--apt-url`,
+  `--apt-key`, `--apt-suite`, `--apt-components`) and the rpm pair
+  (`--rpm-url`, `--rpm-key`, for dnf, yum and zypper); each host uses its own,
+  so one call covers a mixed group of hosts. apt keys go to
+  `/etc/apt/keyrings/<name>.asc` with `signed-by=`; rpm keys to
+  `/etc/pki/rpm-gpg/` plus `rpm --import`, with `gpgcheck=1` and
+  `repo_gpgcheck=1` (`--unsigned-metadata` turns the second off). The output
+  lists every key's fingerprint, `--key-fingerprint` refuses a key file
+  holding a key you didn't list, and an `http://` key needs one. `add`
+  refreshes just that repository and undoes everything if the refresh fails;
+  running it again with the same values changes nothing. `--replace`
+  overwrites a same-named repository set up by hand; `--proxy` and
+  `--ca-bundle` apply to the key download. `list` is autonomous, `add` and
+  `remove` need approval. pacman hosts are refused.
+- **`system-service`** (`start` / `stop` / `restart` / `reload` / `enable` /
+  `disable`, `--now` with enable/disable): systemd service control as root,
+  for system services such as `alloy` (runspec-linux's `restart-service` never
+  runs as root). A failure includes the unit's last journal lines.
+- Needs `runspec-linux-core >= 0.15.0`.
+
 ## [0.1.1] — 2026-10-01
 
 - `enable-passwordless-sudo --scope scoped`: the help text and README now say
