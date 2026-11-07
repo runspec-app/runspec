@@ -108,9 +108,11 @@ export interface EnvFilesModalProps {
   onClose: () => void
   /** The connected remote hosts in scope (local venvs are always included). */
   hosts: Host[]
+  /** A venv to open on (One venv), e.g. from the host schedule dialog. */
+  initial?: EnvFileRef | null
 }
 
-export function EnvFilesModal({ open, onClose, hosts }: EnvFilesModalProps) {
+export function EnvFilesModal({ open, onClose, hosts, initial }: EnvFilesModalProps) {
   const [mode, setMode] = useState<'one' | 'many'>('one')
   const [targets, setTargets] = useState<EnvFileTarget[]>([])
   const [loadingTargets, setLoadingTargets] = useState(false)
@@ -165,7 +167,7 @@ export function EnvFilesModal({ open, onClose, hosts }: EnvFilesModalProps) {
         style={{ marginBottom: 12 }}
       />
       {mode === 'one'
-        ? <OneVenv targets={targets} options={options} loadingTargets={loadingTargets} />
+        ? <OneVenv targets={targets} options={options} loadingTargets={loadingTargets} initial={initial ?? null} />
         : <AcrossVenvs targets={targets} loadingTargets={loadingTargets} />}
     </Modal>
   )
@@ -173,12 +175,13 @@ export function EnvFilesModal({ open, onClose, hosts }: EnvFilesModalProps) {
 
 // ── One venv ────────────────────────────────────────────────────────────────
 
-function OneVenv({ targets, options, loadingTargets }: {
+function OneVenv({ targets, options, loadingTargets, initial }: {
+  initial: EnvFileRef | null
   targets: EnvFileTarget[]
   options: { label: string; options: { value: string; label: string; disabled?: boolean }[] }[]
   loadingTargets: boolean
 }) {
-  const [selected, setSelected] = useState<string>('')
+  const [selected, setSelected] = useState<string>(initial ? refOf(initial) : '')
   const [view, setView] = useState<EnvFileView | null>(null)
   const [rows, setRows] = useState<DraftRow[]>([])
   const [loading, setLoading] = useState(false)
@@ -188,9 +191,10 @@ function OneVenv({ targets, options, loadingTargets }: {
   const target = targets.find(t => refOf(t) === selected)
   const ref: EnvFileRef | null = target ? { host: target.host, runspec_path: target.runspec_path } : null
 
-  // Default to the first supported venv once the list arrives.
+  // Default to the first supported venv once the list arrives (also when the
+  // venv it was opened on isn't in the list).
   useEffect(() => {
-    if (!selected && targets.length) {
+    if (targets.length && (!selected || !targets.some(t => refOf(t) === selected))) {
       const first = targets.find(t => t.supported)
       if (first) setSelected(refOf(first))
     }

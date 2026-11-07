@@ -352,3 +352,27 @@ def test_escalation_refused_explains(fleet):
     view = stub.env_file_read({"host": "web-01", "runspec_path": a})
     assert not view["ok"]
     assert "passwordless sudo" in view["error"] and "svc" in view["error"]
+
+
+def test_host_schedule_env_check(fleet):
+    stub, tmp, (_l, a, _b) = fleet
+    # No file yet: the credential is reported as not set.
+    r = stub.host_schedule_env_check(
+        {"host": "web-01", "venv": "ops", "runnable": "jira"}
+    )
+    assert r["ok"] and not r["exists"] and r["runspec_path"] == a
+    (need,) = r["needs"]
+    assert need["arg"] == "jira-pat" and need["set_by"] == ""
+    assert need["keys"] == ["RUNSPEC_JIRA_ARG_JIRA_PAT"]
+    (tmp / "web" / "ops" / ".runspec_env").write_text(
+        "RUNSPEC_JIRA_ARG_JIRA_PAT=hunter2\n"
+    )
+    r = stub.host_schedule_env_check(
+        {"host": "web-01", "venv": "ops", "runnable": "jira"}
+    )
+    assert r["exists"] and r["needs"][0]["set_by"] == "RUNSPEC_JIRA_ARG_JIRA_PAT"
+    assert "hunter2" not in json.dumps(r)
+    bad = stub.host_schedule_env_check(
+        {"host": "web-01", "venv": "nope", "runnable": "jira"}
+    )
+    assert not bad["ok"] and "no venv nope" in bad["error"]

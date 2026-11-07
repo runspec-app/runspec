@@ -84,7 +84,7 @@ import { CommandInput } from './components/CommandInput'
 import { DisclaimerGate } from './components/DisclaimerGate'
 import { RUNNING_STATUSES } from './components/runShared'
 import { useInFlight } from './bridge/useInFlight'
-import { bridge, type HistoryRecord, type Host, type HostProfile, type Runnable, type Runbook, type SavedRun, type RoomInfo, type BrandTheme, type Disclaimer, type SyncUpdateCheck } from './bridge'
+import { bridge, type HistoryRecord, type EnvFileRef, type Host, type HostProfile, type Runnable, type Runbook, type SavedRun, type RoomInfo, type BrandTheme, type Disclaimer, type SyncUpdateCheck } from './bridge'
 import { ThemeContext, AccentContext, DEFAULT_ACCENT, BRAND_PRIMARY, UI_FONT, MONO_FONT, RADIUS, surfaces, withAlpha, textMuted, textSecondary, textFaint } from './ThemeContext'
 import GateMark from './components/GateMark'
 import {
@@ -216,6 +216,7 @@ export default function App() {
   const [denylistOpen, setDenylistOpen] = useState(false)
   // Env files (.runspec_env manager) — opened beside the Denylist.
   const [envFilesOpen, setEnvFilesOpen] = useState(false)
+  const [envFilesInitial, setEnvFilesInitial] = useState<EnvFileRef | null>(null)
   const refreshHosts = () => {
     setRefreshingHosts(true)
     bridge.refresh_hosts?.().catch(() => setRefreshingHosts(false))
@@ -748,6 +749,17 @@ export default function App() {
     window.addEventListener('runspec:edit_in_form', onEditInForm)
     return () => window.removeEventListener('runspec:edit_in_form', onEditInForm)
   }, [runnables])
+
+  // Another view (the host schedule dialog) asks for Env files on one venv.
+  useEffect(() => {
+    const onOpen = (e: Event) => {
+      const d = (e as CustomEvent<EnvFileRef | undefined>).detail
+      setEnvFilesInitial(d && d.host && d.runspec_path ? { host: d.host, runspec_path: d.runspec_path } : null)
+      setEnvFilesOpen(true)
+    }
+    window.addEventListener('runspec:open_env_files', onOpen)
+    return () => window.removeEventListener('runspec:open_env_files', onOpen)
+  }, [])
 
   const handleSendChat = (message: string) => {
     setInputHistory(h => [...h, message])
@@ -1975,8 +1987,9 @@ export default function App() {
           {envFilesOpen && (
             <EnvFilesModal
               open={envFilesOpen}
-              onClose={() => setEnvFilesOpen(false)}
+              onClose={() => { setEnvFilesOpen(false); setEnvFilesInitial(null) }}
               hosts={hosts.filter(h => h.name !== 'local' && h.connected)}
+              initial={envFilesInitial}
             />
           )}
           {denylistOpen && (

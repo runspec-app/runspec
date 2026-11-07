@@ -431,7 +431,11 @@ installed*, *stale line*, *legacy line*) get a **Sync crontab** button.
 
 A host schedule never carries credentials. Password arguments aren't offered;
 set them in the venv's `.runspec_env` on the host (**Env files** in the hosts
-panel) so every fire reads them. Each change is recorded in the console's audit
+panel) so every fire reads them. Once you pick a runnable, the dialog lists the
+credentials it reads from the environment and whether that file sets each one
+(and with which variable), or which variable to add; **Open Env files** opens
+the Env files window on that venv, and **Check again** re-reads the file after
+you change it. Only variable names are shown, never values. Each change is recorded in the console's audit
 log (`schedule.host.saved` / `removed` / `synced`, or `*_failed`). Local
 Windows venvs can't be edited: the scheduler fires with cron or its daemon,
 which need Linux.

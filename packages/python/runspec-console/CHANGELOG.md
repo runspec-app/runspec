@@ -63,6 +63,16 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   root, which core drops to the owner), and core records each change on the
   venv's audit ledger. Bridge `logs_retention` / `logs_retention_set` /
   `logs_retention_run`; UI `views/LogCleanupModal.tsx`.
+- **The host schedule dialog says where its credentials come from.** A host
+  schedule never carries credentials, so once a runnable is picked the dialog
+  lists the credential arguments it reads from the environment (password args,
+  args whose variables read like a secret, and the user half of a user +
+  password pair), and for each one whether the venv's `.runspec_env` on the
+  host sets it, which variable does, or which to add. **Open Env files** opens
+  the Env files window on that venv; **Check again** re-reads it. Variable
+  names only, never a value. Bridge `host_schedule_env_check`
+  (`envfile.credential_needs`); UI `views/HostScheduleEnv.tsx`. Env files can
+  now open on a given venv (the `runspec:open_env_files` event).
 
 ### Fixed
 

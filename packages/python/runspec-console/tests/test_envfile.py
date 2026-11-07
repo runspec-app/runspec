@@ -218,3 +218,40 @@ def test_worker_runs_as_a_script_with_stdin(tmp_path):
 def test_worker_missing_dir(tmp_path):
     r = worker.run("read", str(tmp_path / "nope"))
     assert not r["ok"] and "not a directory" in r["error"]
+
+
+def test_credential_needs_groups_by_arg_and_scope():
+    rec = {
+        "name": "jira",
+        "args": [
+            {
+                "name": "jira-pat",
+                "type": "password",
+                "env": ["JIRA_PERSONAL_TOKEN", "JIRA_PAT"],
+            },
+            {"name": "jira-user", "env": ["JIRA_USERNAME", "JIRA_USER"]},
+            {"name": "env"},
+        ],
+        "commands": {
+            "get-issue": {"args": [{"name": "key"}]},
+            "admin": {"args": [{"name": "api-token"}]},
+        },
+    }
+    rows = ef.credential_needs(
+        [rec], "jira", ["get-issue"], {"JIRA_PAT": "x", "JIRA_USER": ""}
+    )
+    by = {r["arg"]: r for r in rows}
+    # `key` is no secret, `api-token` belongs to another subcommand, `env` isn't one.
+    assert set(by) == {"jira-pat", "jira-user"}
+    assert by["jira-pat"]["keys"][0] == "RUNSPEC_JIRA_ARG_JIRA_PAT"
+    assert by["jira-pat"]["set_by"] == "JIRA_PAT"
+    assert by["jira-user"]["set_by"] == "" and by["jira-user"]["blank"] == ["JIRA_USER"]
+    assert [r["arg"] for r in rows] == ["jira-pat", "jira-user"]  # secrets first
+    admin = ef.credential_needs([rec], "jira", ["admin"], {})
+    assert {r["arg"] for r in admin} == {"jira-pat", "jira-user", "api-token"}
+
+
+def test_credential_needs_user_only_counts_beside_a_secret():
+    rec = {"name": "ping", "args": [{"name": "user", "env": ["PING_USER"]}]}
+    assert ef.credential_needs([rec], "ping", [], {}) == []
+    assert ef.credential_needs([rec], "other", [], {}) == []

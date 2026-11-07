@@ -1787,6 +1787,21 @@ export const mockApi: BridgeApi = {
   host_schedule_remove: async (p) => ({ ok: true, id: p.id, warnings: [] }),
   host_schedule_sync: async () => ({ ok: true, warnings: [], sync: { installed: 2, skipped: [], users: ['svc-ops'] } }),
   host_schedule_run_now: async (p) => ({ ok: true, id: p.id, pid: 5150, user: 'svc-ops' }),
+  host_schedule_env_check: async (p) => {
+    const R = p.runnable.toUpperCase().replace(/-/g, '_')
+    return {
+      ok: true, host: p.host, runspec_path: `/opt/venvs/${p.venv}/bin/runspec`, path: `/opt/venvs/${p.venv}/.runspec_env`,
+      exists: true, override: '',
+      needs: [
+        { arg: 'api-token', command: '', password: true, secret: true, description: 'Service token',
+          keys: [`RUNSPEC_${R}_ARG_API_TOKEN`, 'OPS_TOKEN', 'OPS_PAT'], set_by: 'OPS_TOKEN', blank: [] },
+        { arg: 's3-secret', command: '', password: true, secret: true, description: '',
+          keys: [`RUNSPEC_${R}_ARG_S3_SECRET`, 'S3_SECRET'], set_by: '', blank: ['S3_SECRET'] },
+        { arg: 's3-user', command: '', password: false, secret: false, description: '',
+          keys: [`RUNSPEC_${R}_ARG_S3_USER`, 'S3_USER'], set_by: '', blank: [] },
+      ],
+    }
+  },
   host_scheduler_settings: async (p) => ({
     ok: true,
     settings: { backend: 'daemon', timeout: 21600, misfire_grace: 300, catch_up_window: 86400, ...(p.timeout === '0' ? { timeout: 0 } : {}) },

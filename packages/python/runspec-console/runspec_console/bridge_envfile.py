@@ -240,6 +240,70 @@ class EnvFileMixin:
             "failed": sum(1 for r in rows if not r.get("ok")),
         }
 
+    def host_schedule_env_check(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """For the host schedule dialog: which credentials ``runnable`` (run as
+        ``command``) reads from the environment, and whether the venv's
+        ``.runspec_env`` sets them. ``payload``: ``{host, venv, runnable,
+        command}``. Returns ``{ok, host, runspec_path, path, exists, needs,
+        override, error}``; ``needs`` rows are :func:`envfile.credential_needs`
+        (variable names only, never a value). A host schedule carries no
+        credentials, so this is where a fire's secrets have to come from."""
+        p = dict(payload or {})
+        host = str(p.get("host") or "")
+        venv = str(p.get("venv") or "")
+        runnable = str(p.get("runnable") or "")
+        raw_cmd = p.get("command") or []
+        command = [str(c) for c in raw_cmd] if isinstance(raw_cmd, list) else []
+        out: dict[str, Any] = {
+            "ok": False,
+            "host": host,
+            "runspec_path": "",
+            "path": "",
+            "exists": False,
+            "needs": [],
+            "override": "",
+            "error": "",
+        }
+        entry_fn = getattr(self, "_host_entry", None)
+        h = entry_fn(host) if callable(entry_fn) else None
+        rp = next(
+            (
+                x
+                for x in utils_mod._paths(h or {})
+                if x and hosts_mod.venv_name(x) == venv
+            ),
+            "",
+        )
+        if not rp:
+            out["error"] = f"{host} has no venv {venv}."
+            return out
+        try:
+            t = self._env_target({"host": host, "runspec_path": rp})
+        except ValueError as exc:
+            out["error"] = str(exc)
+            return out
+        out.update(runspec_path=rp, path=t["path"])
+        records = self._env_records(t)
+        for o in ef.overrides(records):
+            if o["runnable"] == runnable:
+                out["override"] = o["file"]
+        try:
+            res, _as = self._env_access(t, need_write=False)
+        except Exception as exc:  # noqa: BLE001 — a hint, never a blocker
+            out["error"] = str(exc)
+            return out
+        values: dict[str, str] = {}
+        if res.get("ok") and res.get("readable") and not res.get("error"):
+            out["exists"] = bool(res.get("exists"))
+            values = ef.parse(res.get("text") or "").values()
+        elif res.get("ok") and not res.get("exists"):
+            out["exists"] = False
+        else:
+            out["error"] = str(res.get("error") or f"Can't read {t['path']}.")
+        out["needs"] = ef.credential_needs(records, runnable, command, values)
+        out["ok"] = not out["error"]
+        return out
+
     # ── internals ──
 
     def _env_target(self, payload: dict[str, Any] | None) -> dict[str, Any]:
