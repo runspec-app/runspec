@@ -58,9 +58,15 @@ What changed from the 0.1–0.4 daemon, and why (each item has a process test in
 - **`use cron|daemon`** switches a venv's backend; switching to the daemon first
   removes this venv's marked crontab lines so the two never both fire.
 
-Keepers beyond `install-service`'s systemd `--user` unit (`--manager
-auto|systemd|systemd-user|supervisor|cron`, `run --detach`) and a Provision venv
-step come in later releases.
+**0.6.0 — keepers.** `install-service --manager
+auto|systemd-user|supervisor|cron|systemd` plans (and with `--write` sets up)
+what keeps the daemon running; `auto` picks systemd `--user` when lingering is
+on and systemd is newer than 219, else supervisord installed in the venv, else a
+crontab watchdog running `run --detach` every 5 minutes. The `systemd` system
+unit is only printed for root. `--remove` undoes every keeper and stops the
+daemon; `status` lists the keepers. Logic in `runspec_scheduler/keeper.py`;
+real-crontab and real-supervisord process tests in `tests/test_daemon_process.py`.
+Console 0.380.0 adds it to Provision venv (*Shared schedules*: install, `use daemon`, `install-service --write` as the owner; the per-host pick installs the `[supervisor]` extra so a host without lingering gets supervisord) and has Deprovision run `install-service --remove --write` first, keeping the venv when the daemon won't stop.
 
 ## Problem
 
@@ -90,7 +96,7 @@ It is a long-running per-venv daemon managed by `systemctl --user` (like
 | `remove` | delete a schedule (+ its credential env file), then hot-reload |
 | `list` | print schedules as JSON |
 | `run-now` | fire one schedule immediately |
-| `install-service` | write + enable the per-venv systemd `--user` unit |
+| `install-service` | plan, or with `--write` set up, the keeper (systemd `--user`, supervisord in the venv, a cron watchdog, or a system unit printed for root); `--remove` undoes it |
 
 **Config** is venv-scoped at `{sys.prefix}/runspec_scheduler.toml` (matching the
 denylist pattern; `--config` / `$RUNSPEC_SCHEDULER_CONFIG` override). Entries are
@@ -113,7 +119,7 @@ the reserved `runspec` from discovery (a scheduler never schedules itself).
 user session (`XDG_RUNTIME_DIR` + D-Bus), which a bare `sudo -u <acct>` doesn't
 set up — it fails with *"Failed to connect to bus: No medium found."* The fix is
 a **login shell** plus lingering: `sudo loginctl enable-linger <acct>` then
-`sudo -iu <acct> runspec-scheduler install-service`. `install-service` is
+`sudo -iu <acct> runspec-scheduler install-service --manager systemd-user --write`. `install-service` is
 resilient here: it always writes the unit file (a plain write, no bus), recovers
 `XDG_RUNTIME_DIR` from `/run/user/<uid>` when lingering is already on (so plain
 `sudo -u` still works), and on a bus failure returns an actionable `hint` with

@@ -246,6 +246,16 @@ def _log_path(log_dir: Path, name: str) -> Path | None:
     return log_dir / name
 
 
+def _keepers() -> list[dict[str, Any]]:
+    """What keeps the daemon running here (see :func:`runspec_scheduler.keeper.installed`)."""
+    try:
+        from .keeper import installed
+
+        return installed()
+    except Exception:  # noqa: BLE001 — status never fails on this
+        return []
+
+
 def status(config_path: Path, *, runs: int = 5, output_bytes: int = DEFAULT_OUTPUT_BYTES) -> dict[str, Any]:
     """The full status payload (see module docstring)."""
     payload: dict[str, Any] = {
@@ -268,6 +278,7 @@ def status(config_path: Path, *, runs: int = 5, output_bytes: int = DEFAULT_OUTP
     daemon = daemon_status(config_path)
     jobs = daemon.pop("jobs")
     payload["daemon"] = daemon
+    payload["keeper"] = _keepers()
     on_daemon = settings.backend == "daemon"
 
     # Crontabs of every account a schedule targets + any we've managed before.

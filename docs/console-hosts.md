@@ -101,6 +101,18 @@ set up the [logs inbox](#set-up-the-logs-inbox-for-runs-by-other-accounts)
 succeeds gets the new path added to its runspec paths; **Retry failed** re-runs
 only the failures. Linux/macOS hosts only for now.
 
+**Shared schedules** (off by default) also sets up the
+[runspec-scheduler](design/venv-scheduler.md) daemon, so the venv's shared
+schedules fire on the host whether or not a console is open. It installs
+`runspec-scheduler`, runs `runspec-scheduler use daemon`, then
+`runspec-scheduler install-service --write` as the venv owner, which sets up
+what restarts the daemon. **Daemon, keeper picked per host** takes
+systemd `--user` where lingering is on and supervisord inside the venv
+elsewhere (it installs `runspec-scheduler[supervisor]`, no root needed); or
+pick systemd `--user`, supervisord or a crontab watchdog for every host. The
+keeper each host got shows on its row. A failure here is a warning: the venv
+still works, and the message gives the command to finish on the host.
+
 A host that fails after the venv folder was made (a misspelt package name, a
 pip error, a cancel) has its partial venv undone, so a retry at the same path
 isn't refused as "not empty": a folder the provision created is removed, a
@@ -131,6 +143,10 @@ Type the venv's folder name to enable **Delete**.
 - The host re-checks that the folder is a real venv (`pyvenv.cfg` +
   `bin/runspec`, not a symlink, not a system or home folder) in the same
   command as the delete, which runs as the venv's owner.
+- A venv with runspec-scheduler has its keepers removed and its daemon
+  stopped first (`runspec-scheduler install-service --remove --write`), so
+  nothing restarts a daemon from a deleted folder. If the daemon is still
+  running after that, the venv is kept and the host's row says why.
 - The path is then removed from the host's runspec paths.
 
 Provision and deprovision each write audit events (`venv.provision.*`,

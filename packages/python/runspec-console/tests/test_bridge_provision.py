@@ -28,6 +28,27 @@ pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell scr
 
 _FAKE_RUNSPEC = '#!/bin/sh\necho "runspec $*"\n'
 
+# A stand-in runspec-scheduler: `use` and `install-service` answer like 0.6.0;
+# FAIL_USE / FAIL_KEEPER (files next to it) make those steps fail.
+_FAKE_SCHEDULER = r"""#!/bin/sh
+d=$(dirname "$0")
+case "$1" in
+  use) [ -e "$d/FAIL_USE" ] && { echo "use broke" >&2; exit 1; }
+       echo '{"ok": true, "backend": "daemon"}' ;;
+  install-service)
+       [ -e "$d/FAIL_KEEPER" ] && { echo "keeper broke" >&2; exit 1; }
+       echo "$*" >> "$d/keeper.calls"
+       echo '{"ok": true, "manager": "cron", "reason": "no systemd", "warnings": ["the daemon runs as root"]}' ;;
+  daemon) while :; do sleep 1; done ;;
+esac
+"""
+
+
+def _fake_scheduler(path) -> None:
+    with open(path, "w") as fh:
+        fh.write(_FAKE_SCHEDULER)
+    subprocess.run(["chmod", "755", str(path)], check=True)
+
 
 @pytest.fixture
 def app(tmp_path, monkeypatch):
@@ -96,6 +117,8 @@ class _StubBridge:
                 with open(f"{bindir}/runspec", "w") as fh:
                     fh.write(_FAKE_RUNSPEC)
                 subprocess.run(["chmod", "755", f"{bindir}/runspec"], check=True)
+                if any(a.startswith("runspec-scheduler") for a in argv):
+                    _fake_scheduler(f"{bindir}/runspec-scheduler")
             return 0, "Successfully installed", ""
         r = subprocess.run(
             command, shell=True, capture_output=True, text=True, timeout=120
@@ -134,6 +157,7 @@ class _StubBridge:
     _prov_finish = Bridge._prov_finish
     _prov_operator = Bridge._prov_operator
     _prov_host_audit = Bridge._prov_host_audit
+    _deprov_stop_scheduler = Bridge._deprov_stop_scheduler
 
 
 def _hosts(extra_paths=None):
@@ -672,3 +696,143 @@ def test_run_as_the_login_itself_skips_sudo(app, tmp_path):
     )
     assert res["rows"][0]["ok"], res["rows"][0]
     assert not any(c.startswith("sudo ") for c in b.commands)
+
+
+# ── the scheduler daemon (runspec-scheduler 0.6.0) ─────────────────────────────
+
+
+def test_plan_adds_the_scheduler_package(app):
+    _hosts()
+    b = _StubBridge()
+    base = {"hosts": ["web-01"], "dest": "/opt/venvs/ops", "python": "3.12"}
+    with pytest.raises(ValueError, match="scheduler keeper"):
+        b._prov_plan({**base, "scheduler": "systemd"})
+    plan = b._prov_plan({**base, "scheduler": "supervisor"})
+    assert plan["scheduler"] == "supervisor"
+    assert plan["packages"] == ["runspec", "runspec-scheduler[supervisor]>=0.6.0"]
+    pinned = b._prov_plan(
+        {**base, "scheduler": "auto", "packages": ["runspec-scheduler==0.6.1"]}
+    )
+    assert pinned["packages"] == ["runspec", "runspec-scheduler==0.6.1"]
+    assert b._prov_plan(base)["scheduler"] == ""
+
+
+@pytest.mark.skipif(sys.version_info < (3, 10), reason="runspec needs 3.10+")
+def test_provision_sets_up_the_scheduler_daemon(app, tmp_path):
+    _hosts()
+    b = _StubBridge()
+    dest = tmp_path / "venvs" / "ops"
+    out = b.provision_start(
+        {
+            "hosts": ["web-01"],
+            "dest": str(dest),
+            "python": sys.executable,
+            "scheduler": "auto",
+        }
+    )
+    rec = _wait(b, out["op"])
+    [res] = rec["results"]
+    assert res["ok"], res
+    assert res["scheduler"] == {"manager": "cron", "reason": "no systemd"}
+    assert "the daemon runs as root" in res["warnings"]
+    joined = "\n".join(b.commands)
+    assert f"{dest}/bin/runspec-scheduler use daemon" in joined
+    assert (dest / "bin" / "keeper.calls").read_text().strip() == (
+        "install-service --manager auto --write"
+    )
+    started = next(
+        a for a in b.audit if a["extra"]["event"] == "venv.provision.started"
+    )
+    assert started["extra"]["scheduler"] == "auto"
+
+
+@pytest.mark.skipif(sys.version_info < (3, 10), reason="runspec needs 3.10+")
+def test_provision_skips_the_keeper_when_use_fails(app, tmp_path, monkeypatch):
+    _hosts()
+    b = _StubBridge()
+    b.fail_on = "runspec-scheduler use daemon"
+    dest = tmp_path / "venvs" / "ops"
+    out = b.provision_start(
+        {
+            "hosts": ["web-01"],
+            "dest": str(dest),
+            "python": sys.executable,
+            "scheduler": "cron",
+        }
+    )
+    rec = _wait(b, out["op"])
+    [res] = rec["results"]
+    assert res["ok"], res  # the venv works; the scheduler is a warning
+    assert any("use daemon" in w for w in res["warnings"])
+    assert not any("install-service" in c for c in b.commands)
+
+
+def _venv_with_scheduler(tmp_path):
+    venv = tmp_path / "venvs" / "ops"
+    assert (
+        subprocess.run(
+            [sys.executable, "-m", "venv", "--without-pip", str(venv)]
+        ).returncode
+        == 0
+    )
+    (venv / "bin" / "runspec").write_text(_FAKE_RUNSPEC)
+    _fake_scheduler(venv / "bin" / "runspec-scheduler")
+    return venv
+
+
+def test_deprovision_stops_the_scheduler_first(app, tmp_path):
+    venv = _venv_with_scheduler(tmp_path)
+    rp = f"{venv}/bin/runspec"
+    _hosts([rp])
+    b = _StubBridge()
+    prev = b.deprovision_preview({"targets": [{"host": "web-01", "runspec_path": rp}]})
+    assert (
+        prev["rows"][0]["scheduler"] is True and prev["rows"][0]["scheduler_pid"] == 0
+    )
+    calls = venv / "bin" / "keeper.calls"
+    out = b.deprovision_start(
+        {"targets": [{"host": "web-01", "runspec_path": rp}], "confirm": "ops"}
+    )
+    rec = _wait(b, out["op"])
+    assert rec["results"][0]["ok"], rec["results"]
+    stop_at = next(
+        i for i, c in enumerate(b.commands) if "install-service --remove --write" in c
+    )
+    rm_at = next(i for i, c in enumerate(b.commands) if "refused:" in c)
+    assert stop_at < rm_at
+    assert not calls.exists()  # gone with the venv (keep_logs keeps logs/ only)
+
+
+def test_deprovision_keeps_a_venv_whose_daemon_wont_stop(app, tmp_path):
+    venv = _venv_with_scheduler(tmp_path)
+    (venv / "bin" / "FAIL_KEEPER").touch()
+    daemon = subprocess.Popen([str(venv / "bin" / "runspec-scheduler"), "daemon"])
+    try:
+        (venv / "runspec_scheduler.lock").write_text(f"{daemon.pid}\n")
+        rp = f"{venv}/bin/runspec"
+        _hosts([rp])
+        b = _StubBridge()
+        prev = b.deprovision_preview(
+            {"targets": [{"host": "web-01", "runspec_path": rp}]}
+        )
+        assert prev["rows"][0]["scheduler_pid"] == daemon.pid
+        out = b.deprovision_start(
+            {"targets": [{"host": "web-01", "runspec_path": rp}], "confirm": "ops"}
+        )
+        rec = _wait(b, out["op"])
+        [res] = rec["results"]
+        assert not res["ok"] and f"still running (pid {daemon.pid})" in res["summary"]
+        assert (venv / "pyvenv.cfg").exists()
+        assert not any("refused:" in c for c in b.commands)  # remove never ran
+
+        # With the daemon gone, an old scheduler that can't --remove is no reason to keep it.
+        daemon.kill()
+        daemon.wait()
+        out = b.deprovision_start(
+            {"targets": [{"host": "web-01", "runspec_path": rp}], "confirm": "ops"}
+        )
+        rec = _wait(b, out["op"])
+        assert rec["results"][0]["ok"], rec["results"]
+    finally:
+        if daemon.poll() is None:
+            daemon.kill()

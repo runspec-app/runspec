@@ -337,6 +337,10 @@ class ProvisionMixin:
         for v in [python, *per_host.values()]:
             if v and not v.startswith("/") and not prov.parse_version(v):
                 raise ValueError(f"Not a Python path or version: {v!r}.")
+        try:
+            scheduler = prov.validate_scheduler(str(payload.get("scheduler") or ""))
+        except prov.ProvisionError as exc:
+            raise ValueError(str(exc)) from exc
         packages: list[str] = []
         for p in payload.get("packages") or []:
             s = str(p or "").strip()
@@ -346,6 +350,21 @@ class ProvisionMixin:
                 packages.append(mp.validate_spec(s))
             except mp.MarketplaceError as exc:
                 raise ValueError(str(exc)) from exc
+        if scheduler:
+            # The daemon comes from runspec-scheduler; the operator's own pin
+            # (if they listed it) still wins over the bare one.
+            packages = [
+                p for p in packages if not re.match(r"runspec[-_]scheduler\b", p, re.I)
+            ] + [
+                next(
+                    (
+                        p
+                        for p in packages
+                        if re.match(r"runspec[-_]scheduler\b", p, re.I)
+                    ),
+                    prov.scheduler_spec(scheduler),
+                )
+            ]
         return {
             "dest": dest,
             "run_as": run_as,
@@ -354,6 +373,7 @@ class ProvisionMixin:
             "python": python,
             "per_host_python": per_host,
             "packages": prov.install_specs(packages),
+            "scheduler": scheduler,
         }
 
     def _prov_preflight_one(self, plan: dict[str, Any], name: str) -> dict[str, Any]:
@@ -604,6 +624,7 @@ class ProvisionMixin:
                 run_as=plan["run_as"],
                 packages=plan["packages"],
                 folder_by_root=bool(pf.get("handoff")),
+                scheduler=plan.get("scheduler", ""),
             )
             if pf.get("handoff"):
                 if cancel.is_set():
@@ -666,10 +687,39 @@ class ProvisionMixin:
                 ),
                 ("verify", prov.verify_argv(dest), None, _STEP_TIMEOUT_S, True),
             ]
+            if plan.get("scheduler"):
+                steps += [
+                    (
+                        "scheduler",
+                        prov.scheduler_use_argv(dest),
+                        None,
+                        _STEP_TIMEOUT_S,
+                        False,
+                    ),
+                    (
+                        "keeper",
+                        prov.scheduler_keeper_argv(dest, plan["scheduler"]),
+                        None,
+                        _STEP_TIMEOUT_S,
+                        False,
+                    ),
+                ]
+            notes = {
+                "inbox": "Logs inbox setup failed; the venv works but other accounts' "
+                "runs fall back to their own ~/logs.",
+                "pip": "pip self-upgrade failed; continued with the venv's bundled pip.",
+                "scheduler": "Couldn't switch the venv's schedules to the daemon; "
+                "the venv works. On the host: runspec-scheduler use daemon",
+                "keeper": "Couldn't set up the scheduler daemon's keeper; the venv "
+                "works. On the host, as the owner: runspec-scheduler install-service",
+            }
             version = ""
+            skip_keeper = False
             for step, argv, step_env, timeout, required in steps:
                 if cancel.is_set():
                     return _fail(f"cancelled before {step}")
+                if step == "keeper" and skip_keeper:
+                    continue
                 _step(step)
                 try:
                     code, out = self._prov_run(
@@ -687,13 +737,19 @@ class ProvisionMixin:
                     )
                     if required:
                         return _fail(f"{step} failed: {msg}")
-                    note = (
-                        "Logs inbox setup failed; the venv works but other accounts' "
-                        "runs fall back to their own ~/logs."
-                        if step == "inbox"
-                        else "pip self-upgrade failed; continued with the venv's bundled pip."
-                    )
+                    note = notes.get(step, f"{step} failed")
+                    if step in ("scheduler", "keeper"):
+                        note += f" ({msg})"
+                    # No daemon to keep when the backend didn't switch.
+                    skip_keeper = skip_keeper or step == "scheduler"
                     res["warnings"].append(note)
+                elif step == "keeper":
+                    kept = prov.parse_keeper(out)
+                    res["scheduler"] = {
+                        "manager": str(kept.get("manager") or plan["scheduler"]),
+                        "reason": str(kept.get("reason") or ""),
+                    }
+                    res["warnings"].extend(str(w) for w in kept.get("warnings") or [])
                 if step == "verify":
                     out_lines = (out or "").strip().splitlines()
                     version = out_lines[-1].strip() if out_lines else ""
@@ -736,6 +792,7 @@ class ProvisionMixin:
                 step="verify",
                 summary=res["summary"],
                 warnings=res["warnings"],
+                **({"scheduler": res["scheduler"]} if res.get("scheduler") else {}),
             )
             self._prov_audit(
                 "venv.provision.succeeded",
@@ -833,6 +890,8 @@ class ProvisionMixin:
                 "python": facts.get("python", ""),
                 "size_kb": _to_int(facts.get("size_kb")),
                 "logs_kb": _to_int(facts.get("logs_kb")),
+                "scheduler": facts.get("scheduler") == "1",
+                "scheduler_pid": _to_int(facts.get("scheduler_pid")),
             }
         )
         if kind == "missing":
@@ -845,6 +904,11 @@ class ProvisionMixin:
             )
         elif kind != "venv":
             row["blockers"].append("Not a runspec venv (no pyvenv.cfg + bin/runspec).")
+        elif row["scheduler_pid"] and not row["scheduler"]:
+            row["blockers"].append(
+                f"A scheduler daemon (pid {row['scheduler_pid']}) is running from this "
+                "venv but bin/runspec-scheduler is gone; stop it on the host first."
+            )
         row["ok"] = not row["blockers"]
         return row
 
@@ -952,6 +1016,13 @@ class ProvisionMixin:
                 logger.warning(
                     "deprovision: no host-side audit record for %s:%s", name, root
                 )
+            if info.get("scheduler"):
+                # Before the folder goes: no keeper may restart a daemon from it.
+                stopped = self._deprov_stop_scheduler(
+                    op, name, root, run_as=run_as, become=become
+                )
+                if stopped:
+                    return _done(False, stopped)
             self._prov_progress(
                 op=op, kind="deprovision", host=name, phase="step", step="remove"
             )
@@ -999,6 +1070,59 @@ class ProvisionMixin:
                         "deprovision: could not update hosts file", exc_info=True
                     )
             self._prov_finish(record, results)
+
+    def _deprov_stop_scheduler(
+        self, op: str, name: str, root: str, *, run_as: str, become: str
+    ) -> str:
+        """Remove the venv's scheduler keepers and stop its daemon. Returns why
+        the venv must stay ("" when it may go): a daemon still running after
+        the attempt. A runspec-scheduler too old for ``--remove`` with no daemon
+        running is no reason to keep the venv."""
+        self._prov_progress(
+            op=op, kind="deprovision", host=name, phase="step", step="scheduler"
+        )
+        h = self._prov_host(name)
+        try:
+            code, out = self._prov_run(
+                h,
+                prov.scheduler_stop_argv(root),
+                run_as=run_as,
+                become_method=become,
+                timeout=_STEP_TIMEOUT_S,
+            )
+        except Exception as exc:  # noqa: BLE001
+            code, out = -1, str(exc)
+        for ln in (out or "").splitlines():
+            self._prov_progress(
+                op=op, kind="deprovision", host=name, phase="line", line=ln
+            )
+        result = prov.parse_keeper(out)
+        for step in result.get("root_steps") or []:
+            self._prov_progress(
+                op=op,
+                kind="deprovision",
+                host=name,
+                phase="line",
+                line=f"root has to run: {step}",
+            )
+        if code == 0:
+            return ""
+        try:
+            _, again = self._prov_run(
+                h, prov.inspect_argv(root), timeout=_PROBE_TIMEOUT_S
+            )
+            pid = _to_int(prov.parse_inspect(again).get("scheduler_pid"))
+        except Exception:  # noqa: BLE001
+            pid = -1
+        if not pid:
+            return ""
+        why = prov.failure_text(out, code, run_as=run_as, become_method=become, limit=4)
+        running = f"pid {pid}" if pid > 0 else "maybe"
+        return (
+            f"The venv's scheduler daemon is still running ({running}) and its keeper "
+            f"couldn't be removed: {why}. Kept the venv; stop the daemon on the host "
+            "(runspec-scheduler install-service --remove --write), then deprovision again."
+        )
 
     # ── internals: shared ──
 

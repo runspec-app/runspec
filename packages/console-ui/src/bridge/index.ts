@@ -2246,7 +2246,11 @@ export interface ProvisionPayload {
   become_method?: 'sudo' | 'su'
   packages?: string[]
   repo?: string
+  /** Also set up the runspec-scheduler daemon with this keeper ('' = no). */
+  scheduler?: '' | ProvisionSchedulerKeeper
 }
+
+export type ProvisionSchedulerKeeper = 'auto' | 'systemd-user' | 'supervisor' | 'cron'
 
 export interface ProvisionPreflightRow {
   host: string
@@ -2273,6 +2277,8 @@ export interface ProvisionResult {
   path?: string
   skipped?: boolean
   runspec_path?: string
+  /** The keeper runspec-scheduler set up (provision with a scheduler). */
+  scheduler?: { manager: string; reason: string }
 }
 
 export interface ProvisionOpRecord {
@@ -2299,6 +2305,11 @@ export interface DeprovisionPreviewRow extends DeprovisionTarget {
   runnables: string[]
   references: string[]
   blockers: string[]
+  /** The venv has runspec-scheduler: its keepers are removed and its daemon
+   *  stopped before the folder goes. */
+  scheduler?: boolean
+  /** The daemon's pid when it is running now (0 = not running). */
+  scheduler_pid?: number
 }
 
 export interface DeprovisionPayload {
