@@ -110,6 +110,13 @@ this.
 writes) can clobber. For a single controlling writer per user it is a non-issue;
 worth a note and, later, a lock file around our own writes.
 
+Since scheduler 0.6.1 the writer is more careful with the operator's lines: a
+marker's following line is removed only when it is our job (it carries the
+schedule's lock path or `--label sched:<id>`), an unchanged crontab isn't
+rewritten, and the crontab as it was is saved to
+`{venv}/runspec_scheduler_backups/` (owner-only, newest 10 per account) before
+each rewrite.
+
 ### Observability comes free from the runs index
 
 Cron fires and forgets — normally the downside versus a daemon (no run cards, no

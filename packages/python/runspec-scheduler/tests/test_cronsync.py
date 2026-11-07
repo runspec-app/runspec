@@ -98,24 +98,47 @@ class TestPlanCrontab:
             "# my own job",
             "30 4 * * * /usr/local/bin/thing",
             "# runspec:sched:old",
-            "0 1 * * * old-command",
+            "0 1 * * * /v/bin/runspec exec --label sched:old --lock /home/s/.cache/runspec-scheduler/old.lock r",
         ]
         block = cronsync.render_block("new", "0 2 * * *", "new-command")
         out = cronsync.plan_crontab(existing, [block])
         assert "# my own job" in out and "30 4 * * * /usr/local/bin/thing" in out  # foreign kept
-        assert "# runspec:sched:old" not in out and "0 1 * * * old-command" not in out  # ours stripped
+        assert "# runspec:sched:old" not in out and not any("sched:old" in ln for ln in out)  # ours stripped
         assert "# runspec:sched:new" in out and "0 2 * * *  new-command" in out  # current appended
 
     def test_idempotent(self):
-        block = cronsync.render_block("a", "* * * * *", "cmd-a")
+        block = cronsync.render_block("a", "* * * * *", "/v/bin/runspec exec --label sched:a --lock /home/s/.cache/runspec-scheduler/a.lock r")
         once = cronsync.plan_crontab(["# keep", "* * * * * foreign"], [block])
         twice = cronsync.plan_crontab(once, [block])
         assert once == twice
 
     def test_empty_blocks_strips_all_ours(self):
-        existing = ["# runspec:sched:a", "* * * * * cmd-a", "# foreign", "* * * * * foreign-cmd"]
+        existing = ["# runspec:sched:a", "* * * * * /v/bin/runspec exec --label sched:a --lock /home/s/.cache/runspec-scheduler/a.lock r", "# foreign", "* * * * * foreign-cmd"]
         out = cronsync.plan_crontab(existing, [])
         assert out == ["# foreign", "* * * * * foreign-cmd"]
+
+    def test_marker_without_its_job_keeps_the_next_line(self):
+        # A marker left on its own must not take the operator's next line with it.
+        existing = ["# runspec:sched:old", "0 1 * * * /important/backup", "# runspec:sched:x", "", "keep"]
+        assert cronsync.plan_crontab(existing, []) == ["0 1 * * * /important/backup", "", "keep"]
+
+    def test_strips_current_and_legacy_job_lines(self):
+        current = cronsync.render_block("a", "* * * * *", "env X=1 /v/bin/runspec exec --label sched:a --trigger schedule --lock /home/s/.cache/runspec-scheduler/a.lock r >/dev/null 2>&1")
+        legacy = ["# runspec:sched:b", "* * * * *  flock -n /home/s/.cache/runspec-scheduler/b.lock /v/bin/r >/dev/null 2>&1"]
+        assert cronsync.plan_crontab(["mine", *current, *legacy], []) == ["mine"]
+
+    def test_is_our_job(self):
+        assert cronsync.is_our_job("0 * * * *  runspec exec --label sched:a --lock x", "a")
+        assert not cronsync.is_our_job("0 * * * *  runspec exec --label sched:ab --lock x", "a")
+        assert not cronsync.is_our_job("# /.cache/runspec-scheduler/a.lock", "a")
+        assert not cronsync.is_our_job("", "a")
+
+    def test_large_crontab_round_trips(self):
+        own = [f"*/5 * * * * /usr/bin/job{i} 'a b' >/dev/null 2>&1" if i % 3 else f"# note {i}" for i in range(5000)]
+        block = cronsync.render_block("a", "* * * * *", "/v/bin/runspec exec --label sched:a --lock /home/s/.cache/runspec-scheduler/a.lock r")
+        once = cronsync.plan_crontab(own, [block])
+        assert once[:5000] == own and cronsync.plan_crontab(once, [block]) == once
+        assert cronsync.plan_crontab(once, []) == own
 
     def test_marker_at_eof_without_job(self):
         # A trailing marker with no following job line is dropped cleanly.
@@ -183,6 +206,8 @@ class TestSync:
         # still reconciled (our lines stripped), not left to leak.
         cronsync.write_managed_users(tmp_path / "cfg.toml", ["olduser"])
         writes = self._wire(monkeypatch, [_entry(id="a", runnable="backup", when=When(cron="0 2 * * *"))])
+        old_tab = {"olduser": ["# mine", "# runspec:sched:gone", "0 1 * * * /v/bin/runspec exec --label sched:gone --lock /home/s/.cache/runspec-scheduler/gone.lock r"]}
+        monkeypatch.setattr(cronsync, "_read_crontab", lambda u, m, f: list(old_tab.get(u, [])))
         cronsync.sync(tmp_path / "cfg.toml")
         assert "olduser" in writes  # reconciled despite having no current schedules
         assert all(not line.startswith("# runspec:sched:") for line in writes["olduser"])
@@ -221,3 +246,33 @@ def test_missing_crontab_binary_is_an_error_result_not_a_traceback(tmp_path, mon
     res = cronsync.sync(tmp_path / "cfg.toml", dry_run=True)
     assert res.errors and "crontab is not installed" in res.errors[0]["error"]
     assert not res.installed
+
+
+class TestReplaceCrontab:
+    def test_unchanged_is_not_written_or_backed_up(self, monkeypatch, _backups_in_tmp):
+        writes: list[list[str]] = []
+        monkeypatch.setattr(cronsync, "_write_crontab", lambda lines, *a: writes.append(lines))
+        assert cronsync.replace_crontab(["a"], ["a"], "svc", "sudo", None) is False
+        assert writes == [] and list(_backups_in_tmp.iterdir()) == []
+
+    def test_backs_up_before_writing_and_keeps_ten(self, monkeypatch, _backups_in_tmp):
+        writes: list[list[str]] = []
+        monkeypatch.setattr(cronsync, "_write_crontab", lambda lines, *a: writes.append(lines))
+        for i in range(12):
+            (_backups_in_tmp / f"crontab-svc-2000010{i:02d}T000000Z-1.txt").write_text("old\n")
+        assert cronsync.replace_crontab(["mine", "x"], ["mine"], "svc", "sudo", None) is True
+        assert writes == [["mine"]]
+        kept = sorted(p.name for p in _backups_in_tmp.glob("crontab-svc-*.txt"))
+        assert len(kept) == 10
+        newest = _backups_in_tmp / kept[-1]
+        assert newest.read_text() == "mine\nx\n"
+        assert newest.stat().st_mode & 0o777 == 0o600
+
+    def test_backup_failure_does_not_block_the_write(self, monkeypatch, tmp_path):
+        blocker = tmp_path / "file"
+        blocker.write_text("")
+        monkeypatch.setattr(cronsync, "_backup_dir", lambda: blocker / "sub")
+        writes: list[list[str]] = []
+        monkeypatch.setattr(cronsync, "_write_crontab", lambda lines, *a: writes.append(lines))
+        assert cronsync.replace_crontab(["a"], ["b"], "", "sudo", None) is True
+        assert writes == [["b"]]

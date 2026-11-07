@@ -2,6 +2,29 @@
 
 All notable changes to `runspec-scheduler` are documented here.
 
+## [0.6.1] — 2026-11-07
+
+Safer crontab writes.
+
+### Fixed
+
+- **A stray marker no longer deletes your next crontab line.** `sync`, `use`
+  and `install-service` remove a `# runspec:sched:<id>` (or keeper) tag together
+  with the line under it. That line is now removed only when it is really ours:
+  a cron job that carries the schedule's lock path or `--label sched:<id>` (a
+  keeper line: the venv folder). A tag left on its own used to take the
+  operator's next line with it.
+
+### Changed
+
+- **The crontab is backed up before each rewrite.** The account's crontab as it
+  was is saved to `{venv}/runspec_scheduler_backups/crontab-<account>-<time>.txt`
+  (owner-only, newest 10 per account kept). A backup that can't be written
+  doesn't stop the write.
+- **An unchanged crontab isn't rewritten.** When reconciling changes nothing,
+  `crontab -` isn't run, which also narrows the window in which a `crontab -e`
+  saved at the same moment could be overwritten.
+
 ## [0.6.0] — 2026-11-07
 
 Keepers: what starts the daemon at boot and restarts it when it dies.

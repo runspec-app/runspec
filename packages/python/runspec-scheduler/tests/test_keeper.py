@@ -37,7 +37,7 @@ def venv(monkeypatch, tmp_path):
     tab: list[str] = ["# mine", "17 4 * * * /bin/true"]
     monkeypatch.setattr(keeper, "_read_own_crontab", lambda: list(tab))
 
-    def write(lines):
+    def write(lines, existing=None):
         tab[:] = lines
 
     monkeypatch.setattr(keeper, "_write_own_crontab", write)
@@ -191,9 +191,9 @@ def test_remove_system_unit_is_left_to_root(venv):
 
 def test_strip_keeper_lines_takes_tag_and_next_line_only():
     tag = "# runspec:scheduler-keeper:/v"
-    lines = ["a", tag, "@reboot x", "b", tag, "*/5 * * * * x", "c"]
+    lines = ["a", tag, "@reboot /v/bin/runspec-scheduler run --detach", "b", tag, "*/5 * * * * /v/bin/runspec-scheduler run --detach", "c"]
     assert keeper.strip_keeper_lines(lines, tag) == ["a", "b", "c"]
-    assert keeper.keeper_lines(lines, tag) == ["@reboot x", "*/5 * * * * x"]
+    assert keeper.keeper_lines(lines, tag) == ["@reboot /v/bin/runspec-scheduler run --detach", "*/5 * * * * /v/bin/runspec-scheduler run --detach"]
 
 
 def test_early_lock_sees_run_after_a_global_config():
@@ -201,3 +201,9 @@ def test_early_lock_sees_run_after_a_global_config():
 
     assert cli._argv_words(["--config", "/v/c.toml", "run", "--detach"]) == ["run"]
     assert cli._argv_words(["run", "--reload-interval", "1"]) == ["run", "1"]
+
+
+def test_strip_keeper_lines_keeps_a_line_under_a_lone_tag():
+    tag = "# runspec:scheduler-keeper:/opt/venvs/ops"
+    existing = [tag, "@reboot /opt/venvs/ops/bin/runspec-scheduler run --detach", tag, "0 3 * * * /usr/bin/mine"]
+    assert keeper.strip_keeper_lines(existing, tag) == ["0 3 * * * /usr/bin/mine"]
