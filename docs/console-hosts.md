@@ -237,6 +237,14 @@ place for an instance URL, a region, or a token a runnable reads from
 the local venvs and every venv on the hosts that are connected right now (in
 the active profile).
 
+A switch at the top picks the file: `.runspec_env`, or
+`runspec_schedules.env`, the venv's **schedule-only** file. Only
+runspec-scheduler's fires load the schedules file (on top of `.runspec_env`), so
+credentials a host schedule needs go there rather than in `.runspec_env`, where
+every console, agent and hand-run run in the venv would pick them up. Both
+views below work the same on either file. See
+[host schedules](console-automation.md#adding-and-editing-host-schedules).
+
 **One venv** shows one file as a table:
 
 - **Read by** lists the runnables in that venv that read each variable (the

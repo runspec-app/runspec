@@ -2,6 +2,22 @@
 
 All notable changes to `runspec-scheduler` are documented here.
 
+## [0.7.1] — 2026-11-07
+
+### Added
+
+- **A schedule-only env file per venv**: `{venv}/runspec_schedules.env`. Every
+  fire (cron line, daemon and `run-now`) passes it to
+  `runspec exec --env-file`, so what it holds reaches scheduled fires and not
+  the interactive runs in the venv (console Forms, the agent, a person on the
+  host), which only read `.runspec_env`. Put a service account's credentials
+  here, not in `.runspec_env`, so a run without its own credentials fails
+  instead of quietly using them. It stacks over `.runspec_env` (shared
+  settings still apply) and under the fire's own environment. A missing file
+  adds nothing; make it mode 600, owned by the account the fires run as
+  (`exec` refuses one that is writable by others or owned by another
+  account). Needs runspec 0.82.0 (now the minimum).
+
 ## [0.7.0] — 2026-11-07
 
 ### Added

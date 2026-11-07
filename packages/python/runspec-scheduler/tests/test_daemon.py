@@ -282,7 +282,24 @@ class TestFire:
         fire.proc.wait(10)
         [call] = _calls(tmp_path)
         lock = f"{tmp_path}/.cache/runspec-scheduler/nightly.lock"
-        assert call["argv"] == ["exec", "--label", "sched:nightly", "--trigger", "schedule:daemon", "--lock", lock, "--timeout", "21600", "backup", "--", "--level", "warn"]
+        sched_env = str(tmp_path.parent / "runspec_schedules.env")  # {venv}/runspec_schedules.env of {venv}/bin/runspec
+        assert call["argv"] == [
+            "exec",
+            "--label",
+            "sched:nightly",
+            "--trigger",
+            "schedule:daemon",
+            "--lock",
+            lock,
+            "--env-file",
+            sched_env,
+            "--timeout",
+            "21600",
+            "backup",
+            "--",
+            "--level",
+            "warn",
+        ]
         assert call["pgid"] == call["pid"]  # its own session / process group
         assert call["env"]["RUNSPEC_ENV_FILE"] == "/home/svc/n.env" and call["env"]["RUNSPEC_AGENT"] == "1"
         assert "RUNSPEC_RUN_ID" not in call["env"] and "RUNSPEC_CONFIG" not in call["env"]

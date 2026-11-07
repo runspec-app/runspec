@@ -15,6 +15,7 @@ import { useIsDark, textSecondary, MONO_FONT } from '../ThemeContext'
 import { initialFormValues, validateArgs } from './formsShared'
 import { commandPathOptions, effectiveArgsForPath, RunnableArgsBlock, runnableSelectOptions } from './RunnableAction'
 import type { SchedulerVenv } from './allSchedules'
+import { HostScheduleEnv } from './HostScheduleEnv'
 
 const { Text } = Typography
 
@@ -316,10 +317,9 @@ export function HostScheduleModal({ open, venvs, runnables, idsByVenv, editing, 
             labelStyle={labelStyle}
           />
         )}
-        {secretArgs.length > 0 && (
-          <Alert type="info" showIcon style={{ marginBottom: 16 }}
-            message={`${secretArgs.map(a => a.name).join(', ')}: not stored in a host schedule`}
-            description="A host schedule never carries a password. Set it on the host in the venv's .runspec_env (Env files in the hosts panel) so every fire reads it." />
+        {venv && runnable && (
+          <HostScheduleEnv host={venv.host} venv={venv.venv} runnable={runnable.name} command={commandPath}
+            args={allArgs} values={values} />
         )}
         {!formRunnable && runnableName && (
           <Form.Item label="Arguments (JSON)" help="This runnable isn't in the console's list for this venv, so its arguments are edited as JSON.">

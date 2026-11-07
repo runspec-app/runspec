@@ -114,6 +114,10 @@ runspec-scheduler use daemon        # or: use cron
 - `run-now --detach` starts the fire as a scheduled fire would run it (the
   schedule's `run_as` on cron, the venv owner on the daemon) in its own session,
   so it carries on after you log out; its run is recorded like any other fire.
+- Credentials for scheduled fires go in `{venv}/runspec_schedules.env` (mode
+  600, owned by the account the fires run as), not `.runspec_env`: every fire
+  loads it on top of `.runspec_env`, and interactive runs in the venv never
+  see it. The console's Env files window edits both.
 - Every fire's run carries a trigger saying what started it:
   `schedule:cron`, `schedule:daemon` or `schedule:run-now`.
 

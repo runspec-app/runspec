@@ -29,7 +29,7 @@ const VENVS: SchedulerVenv[] = [
 const RUNNABLES: Runnable[] = [
   {
     name: 'backup', group: 'ops', host: 'web-1',
-    args: [arg({ name: 'target', required: true }), arg({ name: 'level', default: 'info' }), arg({ name: 'token', type: 'password' })],
+    args: [arg({ name: 'target', required: true }), arg({ name: 'level', default: 'info' }), arg({ name: 'token', type: 'password', required: true })],
   },
   { name: 'report', group: 'jobs', host: 'web-1', args: [] },
 ]
@@ -75,12 +75,24 @@ describe('HostScheduleModal', () => {
   it('adds a schedule to the chosen venv without storing the password', async () => {
     const user = userEvent.setup()
     const onSaved = vi.fn()
+    api.host_schedule_env_check = vi.fn(() => Promise.resolve({
+      ok: true, host: 'web-1', runspec_path: '/v/ops/bin/runspec', path: '/v/ops/.runspec_env', exists: true, override: '',
+      needs: [{ arg: 'token', command: '', password: true, secret: true, description: '', keys: ['RUNSPEC_BACKUP_ARG_TOKEN', 'BACKUP_TOKEN'], set_by: '', blank: [] }],
+    }))
+    const opened = vi.fn()
+    window.addEventListener('runspec:open_env_files', opened)
     render(<HostScheduleModal open venvs={VENVS} runnables={RUNNABLES} idsByVenv={{}} editing={null} onClose={() => {}} onSaved={onSaved} />)
     // The cron venv is first: its runnable list holds backup, not report.
     fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Runnable' }))
     await waitFor(() => expect(document.querySelectorAll('.ant-select-item-option').length).toBe(1))
     fireEvent.click(document.querySelector('.ant-select-item-option') as HTMLElement)
-    expect(await screen.findByText(/token: not stored in a host schedule/)).toBeTruthy()
+    // The token can't ride the schedule: the panel says the host's env file lacks it.
+    expect(await screen.findByText('1 credential not set on the host')).toBeTruthy()
+    expect(api.host_schedule_env_check).toHaveBeenCalledWith({ host: 'web-1', venv: 'ops', runnable: 'backup', command: [] })
+    expect(screen.getByText('BACKUP_TOKEN')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: /Open Env files/ }))
+    expect((opened.mock.calls[0][0] as CustomEvent).detail).toEqual({ host: 'web-1', runspec_path: '/v/ops/bin/runspec', file: 'schedules' })
+    window.removeEventListener('runspec:open_env_files', opened)
     expect((screen.getByLabelText('Schedule id') as HTMLInputElement).value).toBe('backup')
 
     // Required arg missing → no save.

@@ -125,6 +125,17 @@ TRIGGER_CRON = "schedule:cron"
 TRIGGER_DAEMON = "schedule:daemon"
 TRIGGER_RUN_NOW = "schedule:run-now"
 
+#: The venv's schedule-only env file: credentials and settings that scheduled
+#: fires get and interactive runs in the venv don't. Every fire passes it to
+#: ``runspec exec --env-file`` (a missing file adds nothing), stacked under the
+#: fire's own environment and over the venv's ``.runspec_env``.
+SCHEDULES_ENV = "runspec_schedules.env"
+
+
+def schedules_env_path(runspec_binary: str) -> str:
+    """``{venv}/runspec_schedules.env`` for the venv whose ``bin/runspec`` this is."""
+    return str(Path(runspec_binary).parent.parent / SCHEDULES_ENV)
+
 
 def lock_path(home: str, sched_id: str) -> str:
     """The ``runspec exec --lock`` file for one schedule, under ``home``."""
@@ -148,7 +159,8 @@ def exec_invocation(
 
     Shared by both backends, so a cron fire and a daemon fire run the same
     command: ``runspec exec --label sched:<id> --trigger <trigger> --lock <lock>
-    [--timeout N] <runnable> -- <globals> <command path> <command args>``. The
+    --env-file <venv>/runspec_schedules.env [--timeout N] <runnable> -- <globals>
+    <command path> <command args>``. The
     environment carries only ``RUNSPEC_AGENT``, the ``RUNSPEC_ENV_FILE`` path
     and any ``RUNSPEC_<R>_ARG_<FLAG>=0`` a default-true flag needs — never a
     secret. ``timeout`` (seconds) adds ``--timeout`` when positive."""
@@ -166,6 +178,8 @@ def exec_invocation(
         trigger,
         "--lock",
         lock_path(home, sched_id),
+        "--env-file",
+        schedules_env_path(runspec_binary),
     ]
     if timeout:
         argv += ["--timeout", str(int(timeout))]
