@@ -120,11 +120,13 @@ where `*` matches within one folder and `**` any depth:
 /etc/systemd/system/alloy.service.d/*
 ```
 
-There's no file at first, so nothing can be written. A person adds a path
-(`allow` and `disallow` are `manual`, so an agent can never widen the list):
+There's no file at first, so nothing can be written. A person adds paths
+(`allow` and `disallow` are `manual`, so an agent can never widen the list).
+Give one pattern or several, comma- or space-separated inside the quotes (or
+repeat `--pattern`); they're all checked first, so one bad pattern adds none:
 
 ```bash
-sudo /opt/venvs/admin/bin/config-file allow '/etc/alloy/*'
+sudo /opt/venvs/admin/bin/config-file allow '/etc/alloy/*,/etc/systemd/system/alloy.service.d/*'
 ```
 
 Then the agent (or you) can write there:

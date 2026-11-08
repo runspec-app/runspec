@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -47,6 +48,14 @@ def _fill(text: str, masks: dict[str, str], ids: list[str]) -> str:
     return filled
 
 
+def _patterns(values: list[str] | str | None) -> list[str]:
+    """Each --pattern value may hold several patterns, comma- or space-separated
+    (a pattern can't contain whitespace, and the parser leaves a bare
+    positional value whole)."""
+    items = [values] if isinstance(values, str) else list(values or [])
+    return [p for v in items for p in re.split(r"[,\s]+", v) if p]
+
+
 def _audit(event: str, outcome: str, target: dict[str, Any], detail: dict[str, Any]) -> None:
     # The audit must never break the command's own result.
     with contextlib.suppress(Exception):
@@ -71,13 +80,13 @@ def _run(spec: rs.RunSpec, masks: dict[str, str], ids: list[str]) -> dict[str, A
         return rf.allowed(allowlist)
     if command in ("allow", "disallow"):
         fn = rf.allow if command == "allow" else rf.disallow
-        result = fn(allowlist, spec.pattern.value)
+        result = fn(allowlist, _patterns(spec.pattern.value))
         if result["changed"]:
             _audit(
                 f"root_file.{command}",
                 "succeeded",
                 {"allowlist": str(allowlist)},
-                {"pattern": spec.pattern.value},
+                {"patterns": result["added" if command == "allow" else "removed"]},
             )
         return result
     if command == "read":
