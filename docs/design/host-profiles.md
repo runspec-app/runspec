@@ -128,6 +128,11 @@ Resolvers (`hosts.py`, pure): `profile_members(hosts, profile)`,
 - **Left sidebar:** a profile switcher at the top (a `Select` of All hosts +
   registered profiles). Rows still group by `group` underneath; only the active
   set renders. Switching calls `set_active_profile`.
+  Since console 0.391.0 the hosts outside the active profile are listed below
+  under **Other hosts** (`get_other_hosts`; hollow ring, never probed) with a
+  terminal / copy-key / *Add to profile* / *Switch to profile* menu, and an
+  in-profile host has *Remove from profile* (`set_host_profile`). `get_hosts`
+  is unchanged, so Forms, the agent and the rest keep the working set.
 - **Settings → Jump Hosts:** a per-host **profiles multi-select** (like the group
   dropdown, but multiple) writing the host's `profiles` array, plus a **Manage
   profiles…** dialog cloned from `GroupsManager` (add / rename / delete /

@@ -636,6 +636,15 @@ export interface Host {
   profiles?: string[]             // host-profile (working-set) tags this host belongs to
 }
 
+// A configured remote host outside the active profile (get_other_hosts) — the
+// sidebar's "Other hosts" section. Never probed, so there is no connected state.
+export interface OtherHost {
+  name: string
+  group?: string | null
+  profiles: string[]
+  role?: string | null
+}
+
 // An entry in the canonical host-group registry (runspec_groups.toml). The
 // registry pins the legal group NAMES (shared via Config Sync); membership lives
 // on each host's `group` field.
@@ -2800,6 +2809,10 @@ export interface BridgeApi {
   rename_profile: (oldName: string, newName: string) => Promise<void>
   get_active_profile: () => Promise<string>
   set_active_profile: (name: string) => Promise<{ active: string }>
+  // Hosts outside the active profile ([] under All hosts), and add/remove one
+  // host's tag for a profile (edits runspec_hosts.toml).
+  get_other_hosts: () => Promise<OtherHost[]>
+  set_host_profile: (host: string, profile: string, member: boolean) => Promise<{ host: string; profiles: string[] }>
   // Self-service catalog registry (runspec_self_service.toml) — which discovered
   // runnables are offered to visitors in the helpdesk room (Settings →
   // Self-Service). Replaces the runspec.toml `discoverable = ["self-service"]`

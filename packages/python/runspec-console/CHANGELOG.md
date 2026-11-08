@@ -9,6 +9,25 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.391.0] — 2026-11-08
+
+### Added
+
+- **The sidebar lists every host, not just the loaded profile's.** With a host
+  profile loaded, the hosts outside it appear under **Other hosts** at the
+  bottom of the sidebar, grouped like the rest and marked with a hollow ring:
+  they aren't probed, hold no connection and their runnables aren't loaded, so
+  the profile still means "these hosts' runnables are at hand". Click or
+  right-click one to open an SSH terminal (or several), copy the SSH key, add
+  it to the loaded profile, or switch to a profile it is in; right-click a
+  group header there to open terminals on the whole group. The section is
+  collapsible (remembered) and hidden under *All hosts*. A host in the profile
+  gains **Remove from *profile***. Add and Remove edit the host's `profiles` in
+  `runspec_hosts.toml`; their hover note says a Config Sync pull puts a
+  repo-managed host's profiles back. New bridge methods `get_other_hosts` and
+  `set_host_profile(host, profile, member)`; `get_hosts` is unchanged, so Forms,
+  the agent, Marketplace and the rest keep the profile's working set.
+
 ## [0.390.0] — 2026-11-08
 
 ### Added

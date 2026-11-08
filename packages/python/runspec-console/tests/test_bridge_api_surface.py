@@ -144,6 +144,8 @@ EXPECTED = {
     "get_self_service",
     "get_sounds",
     "get_sync_config",
+    "get_other_hosts",
+    "set_host_profile",
     "get_today",
     "get_tool_visibility",
     "get_trigger_board",
