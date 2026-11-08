@@ -9,6 +9,23 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.392.0] — 2026-11-08
+
+### Added
+
+- **Run a Forms command on several hosts at once.** With the Forms scope on
+  *All in <profile>*, a card found on several hosts now opens its run dialog
+  straight away with a **Run on** host picker (multi-select, connection dot per
+  host, *All N* / *Connected N* shortcuts) instead of a pick-one menu. It starts on
+  the host a click used to run on; pick more and **Run on N hosts** starts the run
+  on each host together, each with its own Console run card (and History row),
+  each in that host's venv. A command that isn't `autonomous` (or an arg with its
+  own autonomy that raises it) asks once first, naming every host; one host runs
+  straight away as before. A host whose copy of the runnable lacks the chosen
+  subcommand (another version) is skipped and named in that question.
+  (`formsSearch.targetsForRun`/`needsFanoutConfirm`, `FormsView` `HostTargets`,
+  `runspec:invoke_runnable` `targets`.)
+
 ## [0.391.1] — 2026-11-08
 
 ### Fixed

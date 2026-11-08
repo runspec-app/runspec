@@ -481,13 +481,24 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
   // Invoked from the App-level command bar
   useEffect(() => {
     const onInvoke = async (e: Event) => {
-      const { runnable, args, commandPath = [], credentialIds } = (e as CustomEvent).detail as { runnable: Runnable; args: Record<string, unknown>; commandPath?: string[]; credentialIds?: string[] }
+      const { runnable, args, commandPath = [], credentialIds, targets } = (e as CustomEvent).detail as { runnable: Runnable; args: Record<string, unknown>; commandPath?: string[]; credentialIds?: string[]; targets?: Runnable[] }
       const cmd = commandPath.length > 0 ? `${runnable.name} ${commandPath.join(' ')}` : runnable.name
-      const label = `/${cmd} on ${runnable.host}`
       const sessionId = await targetSession()
       if (!sessionId) return
-      const id = await bridge.invoke_runnable(runnable.host, runnable.name, args, commandPath, runnable.group, credentialIds && credentialIds.length ? credentialIds : undefined)
-      addBlockRef.current({ id, sessionId, type: 'run', label, startedAt: new Date().toISOString(), lines: [], segments: [], currentText: '', done: false, rerunData: { host: runnable.host, runnable: runnable.name, args, commandPath }, callArgs: maskCallArgs(args, secretArgNames(runnable, commandPath)) })
+      const creds = credentialIds && credentialIds.length ? credentialIds : undefined
+      // Forms can pick several hosts for one submission: start the run on each
+      // (together, not one after another) and give each host its own run card.
+      const list = targets && targets.length ? targets : [runnable]
+      const started = await Promise.allSettled(list.map(r =>
+        bridge.invoke_runnable(r.host, r.name, args, commandPath, r.group, creds)))
+      started.forEach((res, i) => {
+        const r = list[i]
+        if (res.status === 'rejected') {
+          message.error(`/${cmd} on ${r.host} did not start: ${res.reason instanceof Error ? res.reason.message : String(res.reason)}`)
+          return
+        }
+        addBlockRef.current({ id: res.value, sessionId, type: 'run', label: `/${cmd} on ${r.host}`, startedAt: new Date().toISOString(), lines: [], segments: [], currentText: '', done: false, rerunData: { host: r.host, runnable: r.name, args, commandPath }, callArgs: maskCallArgs(args, secretArgNames(r, commandPath)) })
+      })
       window.dispatchEvent(new CustomEvent('runspec:in_flight_updated'))
     }
     window.addEventListener('runspec:invoke_runnable', onInvoke)

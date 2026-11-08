@@ -125,3 +125,45 @@ function safeStorage(): Storage | null {
     return null
   }
 }
+
+// ── running on several hosts ─────────────────────────────────────────────────
+
+/** The runnable has every segment of `path` as a (nested) command. */
+export function hasCommandPath(r: Runnable, path: string[]): boolean {
+  let node: Runnable | undefined = r
+  for (const seg of path) {
+    node = node?.commands?.[seg]
+    if (!node) return false
+  }
+  return true
+}
+
+/**
+ * Which host records a multi-host Forms run goes to: the picked hosts, in the
+ * card's order, split into those whose copy has the chosen command (`run`) and
+ * those whose copy doesn't — another version of the runnable (`missing`).
+ */
+export function targetsForRun(
+  records: Runnable[],
+  picked: string[],
+  commandPath: string[],
+): { run: Runnable[]; missing: string[] } {
+  const want = new Set(picked)
+  const run: Runnable[] = []
+  const missing: string[] = []
+  for (const r of records) {
+    if (!want.has(r.host)) continue
+    if (hasCommandPath(r, commandPath)) run.push(r)
+    else missing.push(r.host)
+  }
+  return { run, missing }
+}
+
+/**
+ * A Forms run on more than one host asks once first, naming every host —
+ * unless the command is `autonomous` (safe to run without asking). One host
+ * runs straight away, as before: clicking Run is the approval.
+ */
+export function needsFanoutConfirm(hostCount: number, autonomy: string | undefined): boolean {
+  return hostCount > 1 && (autonomy || 'confirm') !== 'autonomous'
+}

@@ -49,8 +49,12 @@ the sidebar instead. The choice is remembered.
 While you search one host, a line under the box says how many matches are on
 other hosts, with a link that widens the search. In the all-hosts view a
 runnable found on several hosts is one card with an **N hosts** tag; clicking
-it asks which host to run on, then opens the form for that host. The sidebar
-selection does not change.
+it opens the form with a **Run on** host picker, starting on the best host
+(the selected one, else a connected one). Pick more hosts (or **All N** /
+**Connected N**) and **Run on N hosts** runs the same command on each at once,
+one run card per host. A command that isn't `autonomous` asks once first,
+listing every host; a host whose version lacks the chosen subcommand is
+skipped and named there. The sidebar selection does not change.
 
 The `host:` and `group:` filters from the Marketplace work here too:
 `host:web` keeps hosts whose name contains "web", `group:prod` keeps hosts in
