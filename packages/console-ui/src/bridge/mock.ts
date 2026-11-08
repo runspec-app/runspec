@@ -367,6 +367,11 @@ const MOCK_HOSTS: Host[] = [
   { name: 'local',  connected: true,  runnableCount: 3, groups: ['ops-tools'] },
   { name: 'prod-1', connected: true,  runnableCount: 3, groups: ['platform-core'], role: 'primary',   group: 'Production', profiles: ['app-support', 'devops'] },
   { name: 'prod-2', connected: true,  runnableCount: 1, groups: ['platform-core'], role: 'secondary', group: 'Production', profiles: ['devops'] },
+  // Outside every profile but app-support's neighbours: they show under the
+  // sidebar's Other hosts when a profile is loaded.
+  { name: 'uat-db-01',    connected: false, runnableCount: 0, groups: [], group: 'UAT',    profiles: [] },
+  { name: 'bastion',      connected: false, runnableCount: 0, groups: [], group: 'DevOps', profiles: ['devops'] },
+  { name: 'ci-runner-01', connected: false, runnableCount: 0, groups: [], group: 'DevOps', profiles: ['devops'] },
 ]
 
 // Machine-local active host profile in dev mode ("" = All hosts). get_hosts
@@ -1270,7 +1275,21 @@ export const mockApi: BridgeApi = {
   get_active_profile: async () => MOCK_ACTIVE_PROFILE,
   set_active_profile: async (name) => {
     MOCK_ACTIVE_PROFILE = name
+    window.dispatchEvent(new CustomEvent('runspec:hosts_updated', { detail: {} }))
     return { active: name }
+  },
+  get_other_hosts: async () => MOCK_ACTIVE_PROFILE
+    ? MOCK_HOSTS
+        .filter(h => h.name !== 'local' && !(h.profiles ?? []).includes(MOCK_ACTIVE_PROFILE))
+        .map(h => ({ name: h.name, group: h.group ?? null, profiles: h.profiles ?? [], role: h.role ?? null }))
+    : [],
+  set_host_profile: async (host, profile, member) => {
+    const h = MOCK_HOSTS.find(x => x.name === host)
+    if (!h) throw new Error(`Unknown host '${host}'`)
+    const tags = (h.profiles ?? []).filter(p => p !== profile)
+    h.profiles = member ? [...tags, profile] : tags
+    window.dispatchEvent(new CustomEvent('runspec:hosts_updated', { detail: {} }))
+    return { host, profiles: h.profiles }
   },
 
   get_room_hosts: async () => [

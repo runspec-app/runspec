@@ -35,11 +35,13 @@ import {
   PlayCircleOutlined,
   CloudServerOutlined,
   TeamOutlined,
+  MinusOutlined,
 } from '@ant-design/icons'
 import { ConsoleView } from './views/ConsoleView'
 import { useWaitingCue } from './useWaitingCue'
 import { matchRunnableForEdit, resolveCommandPath, toCommandPath } from './views/formsMatch'
 import { openTerminals as openGroupTerminals } from './views/terminals'
+import { OtherHostsSection, profileEditNote, type SyncSource } from './components/OtherHostsSection'
 import type { PendingForm } from './views/FormsView'
 // Code-split: everything below is off the Console tab's first-paint path, so it
 // lazy-loads on first use instead of bloating the initial bundle the web view
@@ -84,7 +86,7 @@ import { CommandInput } from './components/CommandInput'
 import { DisclaimerGate } from './components/DisclaimerGate'
 import { RUNNING_STATUSES } from './components/runShared'
 import { useInFlight } from './bridge/useInFlight'
-import { bridge, type HistoryRecord, type EnvFileRef, type Host, type HostProfile, type Runnable, type Runbook, type SavedRun, type RoomInfo, type BrandTheme, type Disclaimer, type SyncUpdateCheck } from './bridge'
+import { bridge, type HistoryRecord, type EnvFileRef, type Host, type HostProfile, type OtherHost, type Runnable, type Runbook, type SavedRun, type RoomInfo, type BrandTheme, type Disclaimer, type SyncUpdateCheck } from './bridge'
 import { ThemeContext, AccentContext, DEFAULT_ACCENT, BRAND_PRIMARY, UI_FONT, MONO_FONT, RADIUS, surfaces, withAlpha, textMuted, textSecondary, textFaint } from './ThemeContext'
 import GateMark from './components/GateMark'
 import {
@@ -296,6 +298,10 @@ export default function App() {
   // active one. Switching tears down the old scope's connections and brings up
   // the new — see docs/design/host-profiles.md.
   const [profiles, setProfiles] = useState<HostProfile[]>([])
+  // Hosts outside the active profile (the sidebar's Other hosts section) and
+  // the Config Sync source, for the hover note on Add to / Remove from profile.
+  const [otherHosts, setOtherHosts] = useState<OtherHost[]>([])
+  const [syncSource, setSyncSource] = useState<SyncSource | null>(null)
   const [activeProfile, setActiveProfile] = useState<string>('')
   // Configured chat/helpdesk rooms + their live connection state, for the footer
   // indicator. Updated on every runspec:room_connection flip so a room server
@@ -453,6 +459,17 @@ export default function App() {
     bridge.set_active_profile(name).catch(() => bridge.get_active_profile().then(setActiveProfile))
   }
 
+  // Add a host to (or take it out of) the active profile from the sidebar. The
+  // backend saves runspec_hosts.toml and dispatches runspec:hosts_updated, which
+  // moves the row between the profile list and Other hosts.
+  const handleHostProfile = (host: string, member: boolean) => {
+    if (!activeProfile) return
+    bridge.set_host_profile(host, activeProfile, member)
+      .then(() => message.success(member ? `Added ${host} to ${activeProfile}` : `Removed ${host} from ${activeProfile}`))
+      .catch(e => message.error(String(e?.message ?? e)))
+  }
+  const profileNote = profileEditNote(syncSource)
+
   const loadSshKeyAge = () => {
     bridge.get_config().then(cfg => {
       const ssh = (cfg.ssh ?? {}) as Record<string, string>
@@ -553,7 +570,15 @@ export default function App() {
       setHosts(hs)
       setSelectedHost(hs[0]?.name ?? '')
     }).catch(() => {})  // a cold-launch bridge reject must not blank the app
-    const onHostsUpdated = () => bridge.get_hosts().then(setHosts).catch(() => {})
+    const loadOtherHosts = () => {
+      bridge.get_other_hosts?.().then(setOtherHosts).catch(() => setOtherHosts([]))
+      bridge.get_sync_config?.().then(c => setSyncSource({ url: c.url, files: c.files })).catch(() => {})
+    }
+    loadOtherHosts()
+    const onHostsUpdated = () => {
+      bridge.get_hosts().then(setHosts).catch(() => {})
+      loadOtherHosts()
+    }
     // Host-profile switcher: load the registry + the active selection, and keep
     // them fresh as the registry changes (Settings edits / Config Sync pulls).
     const loadProfiles = () => {
@@ -1273,6 +1298,19 @@ export default function App() {
                               label: 'Open SSH terminals…',
                               onClick: () => setTerminalsFor([h.name]),
                             },
+                            ...(activeProfile ? [
+                              { type: 'divider' as const },
+                              {
+                                key: 'remove_from_profile',
+                                icon: <MinusOutlined />,
+                                label: (
+                                  <Tooltip title={profileNote} placement="right">
+                                    <span>Remove from {activeProfile}</span>
+                                  </Tooltip>
+                                ),
+                                onClick: () => handleHostProfile(h.name, false),
+                              },
+                            ] : []),
                           ],
                     }}
                   >
@@ -1387,6 +1425,20 @@ export default function App() {
                         </div>
                       )
                     })}
+                    <OtherHostsSection
+                      hosts={otherHosts}
+                      activeProfile={activeProfile}
+                      isDark={isDark}
+                      editNote={profileNote}
+                      isGroupCollapsed={key => isGroupCollapsed(groupsState, key)}
+                      onToggleGroup={toggleGroup}
+                      onOpenTerminal={name => { bridge.launch_terminal(name).catch(e => message.error(String(e?.message ?? e))) }}
+                      onOpenTerminals={names => { void openGroupTerminals(names) }}
+                      onChooseTerminals={names => setTerminalsFor(names)}
+                      onCopyKey={name => setCopyKeyHost(name)}
+                      onAddToProfile={name => handleHostProfile(name, true)}
+                      onSwitchProfile={handleSwitchProfile}
+                    />
                   </>
                 )
               })()}

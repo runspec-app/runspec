@@ -65,6 +65,9 @@ class _StubBridge:
     rename_profile = Bridge.rename_profile
     get_active_profile = Bridge.get_active_profile
     set_active_profile = Bridge.set_active_profile
+    set_host_profile = Bridge.set_host_profile
+    get_other_hosts = Bridge.get_other_hosts
+    _drop_hosts_leaving_scope = Bridge._drop_hosts_leaving_scope
 
 
 def _write_hosts(app_dir, hosts):
@@ -187,3 +190,96 @@ def test_rename_profile_repoints_membership_and_active(app):
     names = {p["name"] for p in profiles_mod.load_profiles(config_mod.profiles_path())}
     assert names == {"AppSupport", "devops"}
     assert b.get_active_profile() == "AppSupport"  # pointer followed the rename
+
+
+def test_other_hosts_lists_hosts_outside_the_active_profile(app):
+    _write_hosts(
+        app,
+        [
+            {"name": "h1", "ssh": "u@h1", "group": "prod", "profiles": ["app-support"]},
+            {"name": "h2", "ssh": "u@h2", "group": "devops", "profiles": ["devops"]},
+            {"name": "h3", "ssh": "u@h3"},  # untagged
+        ],
+    )
+    b = _StubBridge()
+
+    # All hosts: nothing is outside the profile.
+    assert b.get_other_hosts() == []
+
+    b.set_active_profile("app-support")
+    other = b.get_other_hosts()
+    assert _names(other) == ["h2", "h3"]
+    assert other[0] == {
+        "name": "h2",
+        "group": "devops",
+        "profiles": ["devops"],
+        "role": None,
+    }
+    assert other[1]["profiles"] == []
+    # Listing them connects to nothing.
+    assert "h2" not in b._connected_cache
+
+
+def test_set_host_profile_adds_host_to_active_profile(app):
+    _write_hosts(
+        app,
+        [
+            {"name": "h1", "ssh": "u@h1", "profiles": ["app-support"]},
+            {"name": "h2", "ssh": "u@h2", "profiles": ["devops"], "role": "secondary"},
+        ],
+    )
+    b = _StubBridge()
+    b.set_active_profile("app-support")
+    b.refreshed = 0
+    b.dispatched.clear()
+
+    res = b.set_host_profile("h2", "app-support", True)
+
+    assert res == {"host": "h2", "profiles": ["devops", "app-support"]}
+    on_disk = {h["name"]: h for h in hosts_mod.load_hosts(config_mod.hosts_path())}
+    assert on_disk["h2"]["profiles"] == ["devops", "app-support"]
+    assert on_disk["h2"]["role"] == "secondary"  # other keys untouched
+    assert _names(b._active_host_entries()) == ["local", "h1", "h2"]
+    assert b.get_other_hosts() == []
+    assert "runspec:hosts_updated" in b.dispatched
+    assert b.refreshed == 1
+
+
+def test_set_host_profile_remove_drops_connection(app):
+    _write_hosts(
+        app,
+        [
+            {"name": "h1", "ssh": "u@h1", "profiles": ["app-support"]},
+            {"name": "h2", "ssh": "u@h2", "profiles": ["app-support"]},
+        ],
+    )
+    b = _StubBridge()
+    b.set_active_profile("app-support")
+    b._connected_cache["h1"] = True
+
+    res = b.set_host_profile("h1", "app-support", False)
+
+    assert res == {"host": "h1", "profiles": []}
+    on_disk = {h["name"]: h for h in hosts_mod.load_hosts(config_mod.hosts_path())}
+    assert "profiles" not in on_disk["h1"]
+    assert b._ssh_pool.dropped == ["u@h1"]
+    assert "h1" not in b._connected_cache
+    assert _names(b.get_other_hosts()) == ["h1"]
+
+
+def test_set_host_profile_no_change_and_errors(app):
+    _write_hosts(app, [{"name": "h1", "ssh": "u@h1", "profiles": ["App-Support"]}])
+    b = _StubBridge()
+
+    # Already a member (case-insensitive): nothing written, no refresh.
+    assert b.set_host_profile("h1", "app-support", True) == {
+        "host": "h1",
+        "profiles": ["App-Support"],
+    }
+    assert b.refreshed == 0
+    with pytest.raises(ValueError):
+        b.set_host_profile("nope", "app-support", True)
+    with pytest.raises(ValueError):
+        b.set_host_profile("local", "app-support", True)
+    with pytest.raises(ValueError):
+        b.set_host_profile("h1", " ", True)

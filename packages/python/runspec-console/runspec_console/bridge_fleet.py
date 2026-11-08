@@ -541,8 +541,61 @@ class FleetMixin:
 
         before = {h["name"] for h in self._active_host_entries() if h.get("ssh")}
         write_active_profile(active_profile_path(), name)
-        after_entries = self._active_host_entries()
-        after = {h["name"] for h in after_entries if h.get("ssh")}
+        self._drop_hosts_leaving_scope(before)
+        self._dispatch("runspec:hosts_updated", {})
+        self._kick_refresh(force=True)
+        return {"active": str(name or "").strip()}
+
+    def set_host_profile(
+        self, host: str, profile: str, member: bool = True
+    ) -> dict[str, Any]:
+        """Add ``host`` to host profile ``profile`` (``member=True``) or take it
+        out (``member=False``) — the sidebar's *Add to <profile>* / *Remove from
+        <profile>* actions.
+
+        Edits only that host's ``profiles`` array in ``runspec_hosts.toml``
+        (every other key is kept as it is on disk). When the host enters or
+        leaves the **active** profile it joins or leaves the working set right
+        away: a host leaving scope has its pooled connection dropped, and a
+        refresh probes a host that joined. The file rides Config Sync, so a pull
+        resets a repo-managed host's tags to what the repo says. Returns
+        ``{host, profiles}``."""
+        from .config import hosts_path
+
+        name = str(host or "").strip()
+        prof = str(profile or "").strip()
+        if not name or name == "local":
+            raise ValueError("Pick a remote host")
+        if not prof:
+            raise ValueError("Pick a profile")
+        entries = hosts_mod.load_hosts(hosts_path())
+        entry = next((e for e in entries if str(e.get("name") or "") == name), None)
+        if entry is None:
+            raise ValueError(f"Unknown host '{name}'")
+        tags = hosts_mod.host_profiles(entry)
+        has = any(t.casefold() == prof.casefold() for t in tags)
+        if member and not has:
+            tags = [*tags, prof]
+        elif not member and has:
+            tags = [t for t in tags if t.casefold() != prof.casefold()]
+        else:
+            return {"host": name, "profiles": tags}
+        before = {h["name"] for h in self._active_host_entries() if h.get("ssh")}
+        if tags:
+            entry["profiles"] = tags
+        else:
+            entry.pop("profiles", None)
+        hosts_mod.save_hosts(hosts_path(), entries)
+        self._reload_hosts()
+        self._drop_hosts_leaving_scope(before)
+        self._dispatch("runspec:hosts_updated", {})
+        self._kick_refresh(force=True)
+        return {"host": name, "profiles": tags}
+
+    def _drop_hosts_leaving_scope(self, before: set[str]) -> None:
+        """Evict the pooled transport and clear the connected dot of every SSH
+        host in ``before`` that is no longer in the working set."""
+        after = {h["name"] for h in self._active_host_entries() if h.get("ssh")}
         leaving = before - after
 
         pool = self._ssh_pool
@@ -563,10 +616,6 @@ class FleetMixin:
             with self._lock:
                 for n in leaving:
                     self._connected_cache.pop(n, None)
-
-        self._dispatch("runspec:hosts_updated", {})
-        self._kick_refresh(force=True)
-        return {"active": str(name or "").strip()}
 
     # ── self-service catalog registry (runspec_self_service.toml) ──────────────
 

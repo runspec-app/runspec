@@ -45,6 +45,34 @@ class HostsMixin:
             )
         return result
 
+    def get_other_hosts(self) -> list[dict[str, Any]]:
+        """The configured remote hosts **outside** the active profile, for the
+        sidebar's *Other hosts* section (``[]`` under *All hosts*).
+
+        Nothing here is probed or kept connected — these rows only offer actions
+        that make their own connection (a PuTTY terminal, copying the SSH key) or
+        change the profile. ``get_hosts`` stays the working set, so Forms, the
+        agent, Marketplace and the rest keep their current scope. Each row:
+        ``{name, group, profiles, role}``."""
+        active = self._active_profile_name()
+        if not active:
+            return []
+        self._reload_hosts()
+        out: list[dict[str, Any]] = []
+        for h in self._hosts:
+            name = str(h.get("name") or "")
+            if not name or name == "local" or hosts_mod.host_in_profile(h, active):
+                continue
+            out.append(
+                {
+                    "name": name,
+                    "group": h.get("group"),
+                    "profiles": hosts_mod.host_profiles(h),
+                    "role": h.get("role"),
+                }
+            )
+        return out
+
     def manage_denylist(self, payload: dict[str, Any]) -> str:
         """Public wrapper for the denylist kill switch (the hosts-panel Denylist
         modal).

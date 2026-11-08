@@ -666,6 +666,25 @@ profile (machine-local; definitions sync). Profiles scope only the
 *interactive* view — schedules and explicitly-targeted runs still reach any
 configured host.
 
+With a profile loaded, the hosts outside it are listed under **Other hosts** at
+the bottom of the sidebar, grouped like the rest. A **hollow ring** marks them:
+the console doesn't probe them or keep a connection open, and their runnables
+aren't loaded into Forms or the chat. Click or right-click one for:
+
+- **Open SSH terminal** / **Open SSH terminals…** / **Copy SSH public key…** —
+  PuTTY and the key copy make their own connection, so these work without
+  switching profile. Right-click a group header there to open terminals on the
+  whole group.
+- **Add to *profile*** — tags the host into the loaded profile (it moves up into
+  the profile list and is probed). A host in the profile has **Remove from
+  *profile*** in its menu.
+- **Switch to profile *x*** — one entry for each profile the host is in.
+
+Add and Remove edit the host's `profiles` in `runspec_hosts.toml`. If Config
+Sync pulls that file and the host comes from your repo, the next pull puts its
+profiles back to what the repo has (the menu's hover note says so), which makes
+it a handy temporary change. Change the repo to keep it.
+
 ---
 
 ## SSH tuning
