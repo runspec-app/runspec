@@ -218,3 +218,73 @@ def mask(text: str, secrets: Mapping[str, str]) -> str:
         if escaped != value and escaped in text:
             text = text.replace(escaped, ph)
     return text
+
+
+#: Shown next to the list of credentials a runnable's text may name.
+PLACEHOLDERS_HINT = (
+    "This runnable's text args take {{secret:<credential>}} placeholders. Put one "
+    "of these placeholders in the text exactly as shown; the host fills in the "
+    "value as it writes, so you never see it. Never ask the operator for a secret "
+    "or for a credential id."
+)
+
+#: Shown when the runnable takes placeholders but no credential may be used.
+NO_PLACEHOLDERS_HINT = (
+    "This runnable's text args take {{secret:<credential>}} placeholders, but no "
+    "saved credential is allowed into files on these hosts yet. Ask the operator "
+    "to tick 'Agent may write this into files' on the credential in Settings → "
+    "Credentials (and scope it to the host if it is scoped). Never ask for the "
+    "secret itself."
+)
+
+
+def accepts_placeholders(record: Any) -> bool:
+    """True when a runnable record (description, args, commands) says its text
+    may hold ``{{secret:…}}`` placeholders — filesystem write-file / edit-file."""
+    return any("{{secret:" in s for s in _strings(record))
+
+
+def placeholder_rows(
+    entries: Iterable[Mapping[str, Any]], hosts: Iterable[str]
+) -> list[dict[str, Any]]:
+    """The credentials the agent may write into files on any of ``hosts``, as
+    ready-to-paste placeholders (never a value). ``hosts`` is listed on a row
+    only when the credential is limited to some of them."""
+    hosts = list(hosts)
+    rows: list[dict[str, Any]] = []
+    for e in file_credentials(entries):
+        cid = str(e.get("id") or "")
+        if not cid:
+            continue
+        ok = [h for h in hosts if _host_allowed(e, h)]
+        if hosts and not ok:
+            continue
+        row: dict[str, Any] = {
+            "placeholder": placeholder(cid),
+            "label": str(e.get("label") or cid),
+        }
+        if e.get("username"):
+            row["username_placeholder"] = placeholder(cid, "username")
+        if hosts and len(ok) < len(hosts):
+            row["hosts"] = ok
+        rows.append(row)
+    return rows
+
+
+def placeholder_note(rows: list[dict[str, Any]]) -> str:
+    """One line for a tool description (dedup mode has no result rows)."""
+    if not rows:
+        return NO_PLACEHOLDERS_HINT
+    names = "; ".join(
+        r["placeholder"]
+        + f" ({r['label']}"
+        + (
+            f", username {r['username_placeholder']}"
+            if r.get("username_placeholder")
+            else ""
+        )
+        + (f", only on {', '.join(r['hosts'])}" if r.get("hosts") else "")
+        + ")"
+        for r in rows
+    )
+    return "Secrets you may write into files: " + names + ". " + PLACEHOLDERS_HINT

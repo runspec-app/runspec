@@ -9,6 +9,26 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.391.1] — 2026-11-08
+
+### Fixed
+
+- **The agent can see which secrets it may write into files.** Chat turns don't
+  carry the console context any more, so the list of credentials allowed into
+  files never reached the agent, and it asked the operator for a credential id.
+  A runnable whose text takes `{{secret:…}}` placeholders (filesystem write-file
+  / edit-file) now lists them in its `search_runnables` row and
+  `describe_runnable` result (`secret_placeholders`: the ready-to-paste
+  placeholder, the label, the username placeholder and, when the credential is
+  scoped to some of the hosts only, those hosts), and in its tool description in
+  dedup / per-host mode. With none allowed, a hint tells the agent to ask the
+  operator to tick "Agent may write this into files", never for the secret.
+- **A bad placeholder is bounced before the confirm card.** An unknown
+  credential, one not allowed into files, or one not scoped to the host now goes
+  back to the agent (with the placeholders it may use) instead of the operator
+  approving a run that can only fail. Search mode only; the other modes still
+  refuse at run time.
+
 ## [0.391.0] — 2026-11-08
 
 ### Added

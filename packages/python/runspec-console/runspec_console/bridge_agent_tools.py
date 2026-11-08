@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 
+from . import bridge_secrets
 from . import bridge_utils as utils_mod
 from . import config as config_mod
 from . import hosts as hosts_mod
@@ -66,6 +67,11 @@ _RECOVERY_PROMPT = (
     "left off — re-running only the step that failed. If the same error happens "
     "again, stop and give a short summary of what you finished and what remains."
 )
+
+
+def _with_secret_note(description: str, note: str) -> str:
+    """Append the secret-placeholder line to a runnable tool's description."""
+    return f"{description}\n\n{note}" if note else description
 
 
 def _parse_dt(value: Any) -> datetime | None:
@@ -795,7 +801,10 @@ class AgentToolsMixin:
                 tools.append(
                     {
                         "name": tool_name,
-                        "description": r.get("description") or f"Run {name} on {host}",
+                        "description": _with_secret_note(
+                            r.get("description") or f"Run {name} on {host}",
+                            bridge_secrets.placeholder_description(self, r, [host]),
+                        ),
                         "input_schema": schema,
                     }
                 )
@@ -843,8 +852,9 @@ class AgentToolsMixin:
                 tools.append(
                     {
                         "name": tool_name,
-                        "description": (
-                            rep.get("description") or f"Run {name} on a fleet host"
+                        "description": _with_secret_note(
+                            rep.get("description") or f"Run {name} on a fleet host",
+                            bridge_secrets.placeholder_description(self, rep, hosts),
                         ),
                         "input_schema": schema,
                     }

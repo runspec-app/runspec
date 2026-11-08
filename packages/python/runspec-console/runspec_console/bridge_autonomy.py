@@ -999,7 +999,10 @@ class AutonomyMixin:
         command_path = _command_path(ti)
         # A misplaced `debug` (inside args) is the debug switch, as at dispatch.
         utils_mod.pop_debug(cached_r, command_path, call_args)
-        return self._preflight_validate(cached_r, command_path, call_args)
+        problem = self._preflight_validate(cached_r, command_path, call_args)
+        if problem:
+            return problem
+        return bridge_secrets.placeholder_problem(self, _host, call_args)
 
     def _preflight_group_run(
         self, tool_input: dict[str, Any], calls: list[tuple[str, dict[str, Any]]]
