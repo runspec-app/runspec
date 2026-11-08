@@ -268,3 +268,47 @@ def test_max_tool_rounds_override_is_honoured():
     assert s._max_tool_rounds() == 2
     assert len(s.tool_runs) == 2
     assert any(STEP_LIMIT in t for t in s.tokens)
+
+
+class _RecordingAdapter(_ScriptedAdapter):
+    """A scripted adapter that also keeps a copy of every message list sent."""
+
+    def __init__(self, script: list[tuple]) -> None:
+        super().__init__(script)
+        self.sent: list[list[dict]] = []
+
+    async def stream_with_tools(self, messages, tools):
+        self.sent.append(list(messages))
+        async for event in super().stream_with_tools(messages, tools):
+            yield event
+
+
+def test_continue_after_the_step_pause_keeps_the_task():
+    """Jason's report: after "(paused after 25 tool steps — say "continue" …)",
+    replying "continue" got "I don't have a prior task in this session". The
+    turn's tool rounds pushed the history past [llm] history_max_messages and
+    the trim, finding no plain user message among the tool results, emptied
+    it. The task must still be in front of the model on "continue"."""
+    s = _chat_stub(max_cont=3, max_tool_rounds=5)
+    s._config["llm"].update({"history_max_messages": 12, "history_trim_to": 6})
+    tc = ToolCall(id="1", name="host__do", input={})
+
+    first = _ScriptedAdapter([("hello", "end_turn")])
+    asyncio.run(s._agentic_chat_turn("c0", "hi there", first))
+    looping = _ScriptedAdapter([("acting", "tool_use", [tc])])
+    asyncio.run(s._agentic_chat_turn("c1", "set up alloy on every host", looping))
+    assert any(STEP_LIMIT in t for t in s.tokens)
+
+    history = _S(s).history
+    assert history, "the trim emptied the history"
+    assert history[0]["content"].endswith("set up alloy on every host")
+    assert history[-1]["role"] == "assistant"
+    assert "paused after 5 tool steps" in history[-1]["content"]
+
+    resume = _RecordingAdapter([("carrying on", "end_turn")])
+    asyncio.run(s._agentic_chat_turn("c2", "continue", resume))
+    sent = resume.sent[0]
+    assert "set up alloy on every host" in sent[0]["content"]
+    assert sent[-1] == {"role": "user", "content": "continue"}
+    roles = [m["role"] for m in sent]
+    assert all(a != b for a, b in zip(roles, roles[1:])), roles
