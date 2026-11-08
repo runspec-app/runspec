@@ -13,6 +13,9 @@ Linux admin tools that need **root**, as [runspec](https://runspec.app/) runnabl
 | `package-repo add` | Add or update a repository and its signing key, then refresh it (undone if that fails) | confirm |
 | `package-repo remove` | Remove a repository and its key file | confirm |
 | `system-service <action>` | `start`, `stop`, `restart`, `reload`, `enable` or `disable` a systemd service (`--now` with enable/disable) | confirm |
+| `config-file allowed` | Show which paths `config-file` may write | autonomous |
+| `config-file write` / `edit` / `read` | Write, edit or read a config file as root, only at allowlisted paths; secrets via `{{secret:…}}` | confirm |
+| `config-file allow` / `disallow` | Add or remove an allowlisted path pattern | manual (a person only) |
 | `set-sysctl` | Set a kernel parameter, optionally persisted under `/etc/sysctl.d` | confirm |
 | `reboot-host` | Reboot, optionally after a delay | confirm |
 | `enable-passwordless-sudo` | One-time bootstrap: a validated `/etc/sudoers.d` drop-in | confirm |
@@ -103,6 +106,59 @@ system-service enable alloy --now
 `package-repo remove <name>` deletes the repository file and its key file
 (unless another repository uses that key), including one set up by hand
 following the vendor's guide. Keys already in the rpm database stay.
+
+## Writing config files as root
+
+`config-file` is the narrow root counterpart of `filesystem write-file` /
+`edit-file`: it writes, edits and reads text files, nothing else (no move,
+delete, list or search), and only at paths in this venv's allowlist,
+`/opt/venvs/admin/runspec_root_files.conf`. That file has one pattern per line,
+where `*` matches within one folder and `**` any depth:
+
+```
+/etc/alloy/*
+/etc/systemd/system/alloy.service.d/*
+```
+
+There's no file at first, so nothing can be written. A person adds a path
+(`allow` and `disallow` are `manual`, so an agent can never widen the list):
+
+```bash
+sudo /opt/venvs/admin/bin/config-file allow '/etc/alloy/*'
+```
+
+Then the agent (or you) can write there:
+
+```bash
+config-file write /etc/alloy/config.alloy --group alloy --mode 0640 --content '…
+    basic_auth {
+      username = "{{secret:grafana-cloud.username}}"
+      password = "{{secret:grafana-cloud}}"
+    }
+…'
+system-service restart alloy
+```
+
+- **Secrets** work the same way as in `filesystem` (runspec-fs 0.6.0): a
+  `{{secret:<credential>}}` placeholder is filled in on the host from the
+  credential runspec-console sends, and shown as the placeholder in the output.
+  A new file holding a secret starts `0600`.
+- **The path is resolved first.** Its folder is resolved through symlinks and
+  `..`, and that real path must match the allowlist. The file itself can't be a
+  symlink. Accounts, sudoers, PAM, the SSH server and root's SSH keys are never
+  written, whatever the allowlist says (`config-file allowed` lists them).
+- **Each write is atomic** and the old file is backed up first to
+  `/opt/venvs/admin/root_file_backups/` (owner-only, the last 5 per file), not
+  next to the file, where a service that loads a whole folder would pick it up.
+  The output is a diff; `--dry-run` shows it without writing.
+- An existing file keeps its owner, group and mode unless `--owner`, `--group`
+  or `--mode` say otherwise. `edit` needs each `--old-text` to appear exactly
+  once.
+- The allowlist file must be owned by root and not writable by group or others,
+  in a venv folder that is root's alone; otherwise every call is refused.
+- Every write and allowlist change is an audit event (`root_file.written`,
+  `root_file.allow`, `root_file.disallow`) naming the path and the credential
+  ids, never a value.
 
 ## Across a group of hosts
 

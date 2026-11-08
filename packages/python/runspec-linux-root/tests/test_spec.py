@@ -24,7 +24,9 @@ def test_no_per_invocation_escalation_args() -> None:
         assert not {"run-as", "sudo", "become-method"} & set(args), name
 
 
-READ_ONLY = {("list-upgrades", None), ("package-repo", "list")}
+READ_ONLY = {("list-upgrades", None), ("package-repo", "list"), ("config-file", "allowed")}
+# Widening where root may write is a person's call, never an agent's.
+MANUAL = {("config-file", "allow"), ("config-file", "disallow")}
 
 
 def test_mutating_tools_need_confirmation() -> None:
@@ -33,11 +35,17 @@ def test_mutating_tools_need_confirmation() -> None:
         commands = body.get("commands") or {None: {}}
         for command, cbody in commands.items():
             autonomy = cbody.get("autonomy", body.get("autonomy", default))
-            expected = "autonomous" if (name, command) in READ_ONLY else "confirm"
+            if (name, command) in READ_ONLY:
+                expected = "autonomous"
+            elif (name, command) in MANUAL:
+                expected = "manual"
+            else:
+                expected = "confirm"
             assert autonomy == expected, (name, command)
 
 
 def test_entry_points_match_runnables() -> None:
+    import runspec_linux_root.configfile as configfile
     import runspec_linux_root.packages as packages
     import runspec_linux_root.perf as perf
     import runspec_linux_root.power as power
@@ -53,6 +61,7 @@ def test_entry_points_match_runnables() -> None:
         "autoremove-packages": packages.main_autoremove_packages,
         "package-repo": repos.main,
         "system-service": services.main,
+        "config-file": configfile.main,
         "set-sysctl": perf.main_set_sysctl,
         "reboot-host": power.main_reboot_host,
         "enable-passwordless-sudo": sudoers.main_enable_passwordless_sudo,

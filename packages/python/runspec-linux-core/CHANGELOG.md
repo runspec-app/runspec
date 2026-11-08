@@ -1,5 +1,19 @@
 # runspec-linux-core Changelog
 
+## [0.16.0] — 2026-11-08
+
+### Added
+
+- **`rootfiles` module** (backs runspec-linux-root's `config-file`):
+  `write_file`, `edit_file` and `read_file` for paths matching a root-owned
+  allowlist file (`read_allowlist`, `allow`, `disallow`, `allowed`;
+  `matches` / `check_pattern` for the `*` / `**` / `?` patterns). Targets are
+  resolved through their folder's real path before matching; symlinks,
+  non-regular files and a fixed set of sensitive files (`DENIED`) are refused.
+  Writes are atomic, back up the old file to a separate folder (last 5 kept),
+  keep owner/group/mode unless given, and return a unified diff. Raises
+  `RootFileError`; stdlib only, still no dependencies.
+
 ## [0.15.0] — 2026-11-07
 
 ### Added
