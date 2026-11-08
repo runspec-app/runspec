@@ -2,6 +2,16 @@
 
 All notable changes to `runspec-linux-root` are documented here.
 
+## [0.3.1] — 2026-11-08
+
+### Changed
+
+- **`config-file allow` / `disallow` take several patterns at once**,
+  comma- or space-separated (`config-file allow '/etc/alloy/*,/etc/default/alloy'`)
+  or as a repeated `--pattern`. All are checked first, so one bad pattern adds
+  none; the output lists what was added or removed, and the audit event names
+  every pattern. Needs runspec-linux-core 0.17.0.
+
 ## [0.3.0] — 2026-11-08
 
 ### Added

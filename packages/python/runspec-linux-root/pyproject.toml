@@ -4,14 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-linux-root"
-version = "0.3.0"
+version = "0.3.1"
 requires-python = ">=3.10"
 description = "Linux admin runnables that need root (packages, package repositories, services, reboot, sysctl, config files) for runspec"
 readme = "README.md"
 keywords = ["runspec", "runnable", "linux", "sysadmin", "root", "packages"]
 dependencies = [
     "runspec>=0.68.0",
-    "runspec-linux-core>=0.16.0",
+    "runspec-linux-core>=0.17.0",
     "runspec-fs-core>=0.6.0",
 ]
 

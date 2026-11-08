@@ -188,6 +188,7 @@ require-command = true
 examples = [
   {cmd = "config-file allowed", description = "Show which paths may be written (and the ones that never are)"},
   {cmd = "config-file allow '/etc/alloy/*'", description = "Let config-file write files directly in /etc/alloy (a person runs this, never an agent)"},
+  {cmd = "config-file allow '/etc/alloy/*,/etc/systemd/system/alloy.service.d/*'", description = "Add several patterns at once, comma-separated (all checked first; one bad pattern adds none)"},
   {cmd = "config-file write /etc/alloy/config.alloy --content '…password = \"{{secret:grafana-cloud}}\"…' --group alloy --mode 0640", description = "Write Alloy's config with a saved credential filled in on the host, readable by the alloy group"},
   {cmd = "config-file edit /etc/alloy/config.alloy --old-text 'scrape_interval = \"60s\"' --new-text 'scrape_interval = \"30s\"'", description = "Change one setting; the output is a diff"},
 ]
@@ -227,16 +228,16 @@ mode     = {type = "str", required = false, pattern = "^0?[0-7]{3,4}$", descript
 dry-run  = {type = "flag", default = false, description = "Show the diff without writing"}
 
 [config-file.commands.allow]
-description = "Add a path pattern to the allowlist: absolute, '*' matches within one folder, '**' any depth (e.g. /etc/alloy/*). Run by a person only"
+description = "Add one or more path patterns to the allowlist: absolute, '*' matches within one folder, '**' any depth (e.g. /etc/alloy/*). All are checked first, so one bad pattern adds none. Run by a person only"
 autonomy    = "manual"
 [config-file.commands.allow.args]
-pattern = {type = "str", position = 1, description = "Path pattern, e.g. /etc/alloy/* or /etc/systemd/system/alloy.service.d/*"}
+pattern = {type = "str", position = 1, multiple = true, description = "Path patterns, comma- or space-separated (or repeat --pattern), e.g. /etc/alloy/*,/etc/systemd/system/alloy.service.d/*"}
 
 [config-file.commands.disallow]
-description = "Remove a path pattern from the allowlist. Run by a person only"
+description = "Remove one or more path patterns from the allowlist. Run by a person only"
 autonomy    = "manual"
 [config-file.commands.disallow.args]
-pattern = {type = "str", position = 1, description = "The pattern exactly as `config-file allowed` lists it"}
+pattern = {type = "str", position = 1, multiple = true, description = "Patterns exactly as `config-file allowed` lists them, comma- or space-separated (or repeat --pattern)"}
 
 # ── Kernel ────────────────────────────────────────────────────────────────────
 

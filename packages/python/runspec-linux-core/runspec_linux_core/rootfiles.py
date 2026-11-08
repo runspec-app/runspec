@@ -44,6 +44,7 @@ import re
 import stat
 import tempfile
 import time
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -193,30 +194,42 @@ def allowed(allowlist: Path, *, owner_uid: int = 0) -> dict[str, Any]:
     }
 
 
-def allow(allowlist: Path, pattern: str, *, owner_uid: int = 0) -> dict[str, Any]:
-    """Add a pattern to the allowlist (creating the file). Same pattern twice
-    changes nothing."""
-    p = check_pattern(pattern)
+def _as_list(patterns: str | Iterable[str]) -> list[str]:
+    items = [patterns] if isinstance(patterns, str) else list(patterns)
+    if not items:
+        raise RootFileError("give at least one pattern. Nothing was changed.")
+    return items
+
+
+def allow(allowlist: Path, patterns: str | Iterable[str], *, owner_uid: int = 0) -> dict[str, Any]:
+    """Add one or more patterns to the allowlist (creating the file). Every
+    pattern is checked first, so one bad pattern adds none. A pattern already
+    there changes nothing."""
+    wanted = [check_pattern(p) for p in _as_list(patterns)]
     current = read_allowlist(allowlist, owner_uid=owner_uid)
     if allowlist.parent.exists():
         _check_trusted(allowlist.parent, owner_uid)
-    if p in current:
-        return {"allowlist": str(allowlist), "paths": current, "changed": False}
-    current.append(p)
-    _write_allowlist(allowlist, current)
-    return {"allowlist": str(allowlist), "paths": current, "changed": True}
+    added = [p for i, p in enumerate(wanted) if p not in current and p not in wanted[:i]]
+    if added:
+        current.extend(added)
+        _write_allowlist(allowlist, current)
+    return {"allowlist": str(allowlist), "paths": current, "added": added, "changed": bool(added)}
 
 
-def disallow(allowlist: Path, pattern: str, *, owner_uid: int = 0) -> dict[str, Any]:
-    """Remove a pattern from the allowlist. Removing one that isn't there is
-    not an error."""
-    p = pattern.strip()
+def disallow(allowlist: Path, patterns: str | Iterable[str], *, owner_uid: int = 0) -> dict[str, Any]:
+    """Remove one or more patterns from the allowlist. Removing one that isn't
+    there is not an error; ``not_found`` lists them."""
+    wanted = [p.strip() for p in _as_list(patterns)]
     current = read_allowlist(allowlist, owner_uid=owner_uid)
-    if p not in current:
-        return {"allowlist": str(allowlist), "paths": current, "changed": False}
-    current.remove(p)
-    _write_allowlist(allowlist, current)
-    return {"allowlist": str(allowlist), "paths": current, "changed": True}
+    removed = [p for p in current if p in wanted]
+    not_found = [p for i, p in enumerate(wanted) if p not in current and p not in wanted[:i]]
+    if removed:
+        current = [p for p in current if p not in removed]
+        _write_allowlist(allowlist, current)
+    result: dict[str, Any] = {"allowlist": str(allowlist), "paths": current, "removed": removed, "changed": bool(removed)}
+    if not_found:
+        result["not_found"] = not_found
+    return result
 
 
 # ── resolving a target ───────────────────────────────────────────────────────
