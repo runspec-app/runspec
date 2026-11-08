@@ -11,6 +11,7 @@ import logging
 import re
 from typing import Any
 
+from . import bridge_secrets
 from . import bridge_utils as utils_mod
 from . import knowledge as kn
 from .bridge_const import _HEADLESS_EXCLUDED_NAMES, _HOT_BUILTIN_NAMES
@@ -964,6 +965,9 @@ class SearchMixin:
             runs_as = self._runs_as_by_host(info["records"])
             if runs_as:
                 entry["runs_as"] = runs_as
+            entry.update(
+                bridge_secrets.placeholder_info(self, rep, list(info["hosts"]))
+            )
             if creds:
                 entry["credentials"] = creds
                 entry["credentials_hint"] = (
@@ -1316,6 +1320,7 @@ class SearchMixin:
         ]
         if creds:
             result["credentials"] = creds
+        result.update(bridge_secrets.placeholder_info(self, rep, hosts))
         runs_as = self._runs_as_by_host(matches)
         if runs_as:
             result["runs_as"] = runs_as

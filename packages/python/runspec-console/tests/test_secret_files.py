@@ -199,3 +199,80 @@ def test_write_to_files_round_trips(tmp_path):
     assert text.count("write_to_files = true") == 1
     loaded = load_credentials(path)
     assert loaded[0]["write_to_files"] is True and "write_to_files" not in loaded[1]
+
+
+# ── telling the agent which placeholders it may use ─────────────────────────
+
+FS_RECORD = {
+    "name": "filesystem",
+    "description": "Read and manipulate the filesystem",
+    "commands": {
+        "write-file": {
+            "description": "Text may hold {{secret:<credential id>}} placeholders.",
+            "args": {},
+        },
+        "read-text-file": {"description": "Read a file", "args": {}},
+    },
+}
+
+
+def test_accepts_placeholders():
+    assert sf.accepts_placeholders(FS_RECORD)
+    assert not sf.accepts_placeholders({"name": "which", "description": "find"})
+
+
+def test_placeholder_rows_list_allowed_credentials_for_the_hosts():
+    rows = sf.placeholder_rows(CREDS, ["web-01", "db-01"])
+    assert rows == [
+        {
+            "placeholder": "{{secret:grafana-cloud}}",
+            "label": "Grafana Cloud",
+            "username_placeholder": "{{secret:grafana-cloud.username}}",
+            "hosts": ["web-01"],
+        }
+    ]
+    assert sf.placeholder_rows(CREDS, ["web-01"])[0].get("hosts") is None
+    assert sf.placeholder_rows(CREDS, ["db-01"]) == []
+
+
+def test_bridge_placeholder_info():
+    from runspec_console import bridge_secrets
+
+    b = _B()
+    info = bridge_secrets.placeholder_info(b, FS_RECORD, ["web-01"])
+    assert info["secret_placeholders"][0]["placeholder"] == "{{secret:grafana-cloud}}"
+    assert "Never ask" in info["secret_placeholders_hint"]
+    # not scoped to db-01: say so, so the agent asks the operator to allow one
+    none = bridge_secrets.placeholder_info(b, FS_RECORD, ["db-01"])
+    assert "secret_placeholders" not in none
+    assert "Agent may write this into files" in none["secret_placeholders_hint"]
+    assert bridge_secrets.placeholder_info(b, {"name": "which"}, ["web-01"]) == {}
+    note = bridge_secrets.placeholder_description(b, FS_RECORD, ["web-01"])
+    assert "{{secret:grafana-cloud}} (Grafana Cloud" in note
+
+
+def test_placeholder_problem_bounces_before_the_card():
+    from runspec_console import bridge_secrets
+
+    b = _B()
+    assert bridge_secrets.placeholder_problem(b, "web-01", {"content": "x"}) is None
+    assert (
+        bridge_secrets.placeholder_problem(
+            b, "web-01", {"content": "{{secret:grafana-cloud}}"}
+        )
+        is None
+    )
+    # label spelling works too
+    assert (
+        bridge_secrets.placeholder_problem(
+            b, "web-01", {"content": "{{secret:Grafana-Cloud}}"}
+        )
+        is None
+    )
+    msg = bridge_secrets.placeholder_problem(
+        b, "web-01", {"content": "{{secret:a6de043ed45b}}"}
+    )
+    assert msg.startswith("[exit 2]") and "{{secret:grafana-cloud}}" in msg
+    assert "isn't scoped" in bridge_secrets.placeholder_problem(
+        b, "db-01", {"content": "{{secret:grafana-cloud}}"}
+    )

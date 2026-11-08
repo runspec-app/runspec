@@ -76,3 +76,51 @@ def _mask_values(bridge: Any) -> dict[str, str]:
     except AttributeError:
         pass
     return values
+
+
+def placeholder_info(bridge: Any, record: Any, hosts: list[str]) -> dict[str, Any]:
+    """For a runnable whose text takes ``{{secret:…}}`` placeholders, the
+    credentials the agent may name on ``hosts`` — added to its search row and
+    describe result so the agent never has to ask for an id. ``{}`` for any
+    other runnable. Never raises."""
+    try:
+        if not secret_files.accepts_placeholders(record):
+            return {}
+        reload = getattr(bridge, "_reload_credentials", None)
+        if callable(reload):
+            reload()
+        entries = getattr(bridge, "_credentials", None) or []
+        rows = secret_files.placeholder_rows(entries, hosts)
+    except Exception:  # noqa: BLE001 — discovery output must not break
+        logger.debug("secret placeholder info unavailable", exc_info=True)
+        return {}
+    if not rows:
+        return {"secret_placeholders_hint": secret_files.NO_PLACEHOLDERS_HINT}
+    return {
+        "secret_placeholders": rows,
+        "secret_placeholders_hint": secret_files.PLACEHOLDERS_HINT,
+    }
+
+
+def placeholder_description(bridge: Any, record: Any, hosts: list[str]) -> str:
+    """The same, as one line to append to a dedup / per-host tool description."""
+    info = placeholder_info(bridge, record, hosts)
+    if not info:
+        return ""
+    return secret_files.placeholder_note(info.get("secret_placeholders") or [])
+
+
+def placeholder_problem(bridge: Any, host: str, args: Any) -> str | None:
+    """Check a call's placeholders before the confirm card, without reading
+    any secret: an unknown credential, one not allowed into files, or one not
+    scoped to ``host`` is bounced to the agent (with the names it may use)
+    instead of the operator approving a call that can only fail. ``None`` = no
+    placeholders, or all of them name a usable credential."""
+    if not secret_files.has_placeholders(args):
+        return None
+    reload = getattr(bridge, "_reload_credentials", None)
+    if callable(reload):
+        reload()
+    entries = getattr(bridge, "_credentials", None) or []
+    res = secret_files.resolve(args, host, entries, lambda _cid: "x" * 64)
+    return f"[exit 2]\n✗ {res.error}" if res.errors else None
