@@ -2,6 +2,29 @@
 
 All notable changes to `runspec-linux-root` are documented here.
 
+## [0.3.0] — 2026-11-08
+
+### Added
+
+- **`config-file`** (`allowed` / `read` / `write` / `edit` / `allow` /
+  `disallow`): write config files as root without the full `filesystem` tool
+  running as root. It only touches paths matching this venv's root-owned
+  allowlist, `runspec_root_files.conf` (one pattern per line, `*` within a
+  folder, `**` any depth; no file = nothing allowed). `allow` / `disallow` are
+  `manual`, so only a person can widen it; `read`, `write` and `edit` need
+  approval, `allowed` is autonomous. The folder is resolved through symlinks
+  and `..` before matching, the file can't be a symlink, and accounts,
+  sudoers, PAM, the SSH server and root's SSH keys are never written. Writes are
+  atomic, back the old file up to `{venv}/root_file_backups/` (last 5 per
+  file), keep an existing file's owner, group and mode unless `--owner`,
+  `--group` or `--mode` are given, and print a diff (`--dry-run` to preview).
+  `edit` needs each old text to appear exactly once. Text may hold
+  `{{secret:<credential>}}` placeholders, filled in on the host from
+  `RUNSPEC_SECRET_*` (runspec-console sends the credential) and masked in the
+  output; a new file holding a secret starts `0600`. Audit events
+  `root_file.written` / `root_file.allow` / `root_file.disallow`. Needs
+  runspec-linux-core 0.16.0 and runspec-fs-core 0.6.0.
+
 ## [0.2.0] — 2026-11-07
 
 ### Added

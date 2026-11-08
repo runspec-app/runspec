@@ -173,6 +173,71 @@ description = "Stop starting a service at boot; --now also stops it now"
 service = {type = "str", position = 1, description = "Service name (e.g. alloy or alloy.service)"}
 now     = {type = "flag", default = false, description = "Also stop it now"}
 
+# ── Config files ──────────────────────────────────────────────────────────────
+
+# The narrow root version of `filesystem write-file`/`edit-file`: only paths in
+# the venv's root-owned allowlist ({venv}/runspec_root_files.conf), never a
+# fixed set of sensitive files, no move/delete/list/search. Adding a path to the
+# allowlist is `manual`: a person runs it, never an agent.
+[config-file]
+serve           = ["local"]
+description     = "Write, edit or read a config file as root, only at paths in this venv's allowlist (e.g. /etc/alloy/*). Text may hold {{secret:<credential>}} placeholders"
+output          = "json"
+run_as          = "root"
+require-command = true
+examples = [
+  {cmd = "config-file allowed", description = "Show which paths may be written (and the ones that never are)"},
+  {cmd = "config-file allow '/etc/alloy/*'", description = "Let config-file write files directly in /etc/alloy (a person runs this, never an agent)"},
+  {cmd = "config-file write /etc/alloy/config.alloy --content '…password = \"{{secret:grafana-cloud}}\"…' --group alloy --mode 0640", description = "Write Alloy's config with a saved credential filled in on the host, readable by the alloy group"},
+  {cmd = "config-file edit /etc/alloy/config.alloy --old-text 'scrape_interval = \"60s\"' --new-text 'scrape_interval = \"30s\"'", description = "Change one setting; the output is a diff"},
+]
+
+[config-file.commands.allowed]
+description = "List the allowlist patterns (from {venv}/runspec_root_files.conf) and the files that are never written"
+autonomy    = "autonomous"
+
+[config-file.commands.read]
+description = "Read an allowlisted file (UTF-8 text, up to 1 MB) with its owner, group and mode. Root can read files you can't, so this is confirm-gated"
+autonomy    = "confirm"
+[config-file.commands.read.args]
+path = {type = "str", position = 1, description = "Absolute path of the file"}
+
+[config-file.commands.write]
+description = "Create or replace an allowlisted file. Atomic; the old file is backed up to {venv}/root_file_backups first; the output is a diff. Text may hold {{secret:<credential id>}} (or {{secret:<id>.username}}) placeholders: the value is filled in on the host and shown as the placeholder in the output. An existing file keeps its owner, group and mode unless given; a new one is root:root 0644, or 0600 when it holds a secret"
+autonomy    = "confirm"
+[config-file.commands.write.args]
+path      = {type = "str", position = 1, description = "Absolute path of the file"}
+content   = {type = "str", description = "The whole file content (may hold {{secret:<credential id>}} placeholders)"}
+owner     = {type = "str", required = false, description = "User to own the file (e.g. root)"}
+group     = {type = "str", required = false, description = "Group to own the file, e.g. alloy for a service that reads it through its group (pair with --mode 0640)"}
+mode      = {type = "str", required = false, pattern = "^0?[0-7]{3,4}$", description = "Octal permissions, e.g. 0640. setuid/setgid/sticky bits are refused"}
+make-dirs = {type = "flag", default = false, description = "Create missing parent folders (root:root 0755); the file's path must still be allowlisted"}
+dry-run   = {type = "flag", default = false, description = "Show the diff without writing"}
+
+[config-file.commands.edit]
+description = "Replace text in an existing allowlisted file: pair each --old-text with a --new-text by position; each old text must appear exactly once. Backed up first; the output is a diff. New text may hold {{secret:<credential id>}} placeholders"
+autonomy    = "confirm"
+[config-file.commands.edit.args]
+path     = {type = "str", position = 1, description = "Absolute path of the file"}
+old-text = {type = "str", multiple = true, description = "Text to find, exactly once in the file (repeat; paired with --new-text)"}
+new-text = {type = "str", multiple = true, description = "Replacement text (repeat; paired with --old-text)"}
+owner    = {type = "str", required = false, description = "User to own the file"}
+group    = {type = "str", required = false, description = "Group to own the file"}
+mode     = {type = "str", required = false, pattern = "^0?[0-7]{3,4}$", description = "Octal permissions, e.g. 0640"}
+dry-run  = {type = "flag", default = false, description = "Show the diff without writing"}
+
+[config-file.commands.allow]
+description = "Add a path pattern to the allowlist: absolute, '*' matches within one folder, '**' any depth (e.g. /etc/alloy/*). Run by a person only"
+autonomy    = "manual"
+[config-file.commands.allow.args]
+pattern = {type = "str", position = 1, description = "Path pattern, e.g. /etc/alloy/* or /etc/systemd/system/alloy.service.d/*"}
+
+[config-file.commands.disallow]
+description = "Remove a path pattern from the allowlist. Run by a person only"
+autonomy    = "manual"
+[config-file.commands.disallow.args]
+pattern = {type = "str", position = 1, description = "The pattern exactly as `config-file allowed` lists it"}
+
 # ── Kernel ────────────────────────────────────────────────────────────────────
 
 [set-sysctl]
