@@ -25,6 +25,7 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   subcommand (another version) is skipped and named in that question.
   (`formsSearch.targetsForRun`/`needsFanoutConfirm`, `FormsView` `HostTargets`,
   `runspec:invoke_runnable` `targets`.)
+
 ## [0.391.2] — 2026-11-08
 
 ### Fixed
