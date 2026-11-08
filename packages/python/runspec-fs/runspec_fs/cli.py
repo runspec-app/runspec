@@ -153,31 +153,33 @@ def main() -> None:
     run_as = spec.run_as.value
     method = spec.become_method.value
     verb = spec.runspec_command
-    kwargs: dict[str, Any] = {}
+    # `request` is the call as given (placeholders, never values) — the audit
+    # record reads only that. `kwargs` is what the verb runs with.
+    request: dict[str, Any] = {}
     masks: dict[str, str] = {}
     credential_ids: list[str] = []
     try:
-        kwargs = _verb_kwargs(spec)
+        request = _verb_kwargs(spec)
         # {{secret:<id>}} placeholders are filled here, before any --run-as
         # hand-off (sudo drops the environment; the worker gets the filled text
         # on stdin). The values are masked back out of everything printed.
-        kwargs, masks, credential_ids = fill_verb_secrets(verb, kwargs)
+        kwargs, masks, credential_ids = fill_verb_secrets(verb, request)
         if run_as and run_as != current_user():
             try:
                 out = _run_as_worker(run_as, method, verb, kwargs, masks)
             except SystemExit:
-                _audit_secret_write(verb, kwargs, credential_ids, "failed")
+                _audit_secret_write(verb, request, credential_ids, "failed")
                 raise
-            _audit_secret_write(verb, kwargs, credential_ids, "succeeded")
+            _audit_secret_write(verb, request, credential_ids, "succeeded")
             out = mask_text(out, masks)
             sys.stdout.write(out if out.endswith("\n") else out + "\n")
             return
         result = run_verb(verb, kwargs)
     except (FsCoreError, OSError, ValueError) as exc:
-        _audit_secret_write(verb, kwargs, credential_ids, "failed")
+        _audit_secret_write(verb, request, credential_ids, "failed")
         _emit(mask_secrets({"error": str(exc), "kind": type(exc).__name__}, masks))
         sys.exit(1)
-    _audit_secret_write(verb, kwargs, credential_ids, "succeeded")
+    _audit_secret_write(verb, request, credential_ids, "succeeded")
     _emit(mask_secrets(result, masks))
 
 
