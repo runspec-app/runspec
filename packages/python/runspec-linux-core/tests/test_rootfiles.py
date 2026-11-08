@@ -241,3 +241,18 @@ def test_backups_are_capped(env, monkeypatch):
     for i in range(1, rf.BACKUPS_KEPT + 3):
         _write(env, f, f"{i}\n")
     assert len(list(env["backups"].iterdir())) == rf.BACKUPS_KEPT
+
+
+def test_allow_and_disallow_several(env):
+    al = env["allowlist"]
+    a, b = "/etc/default/alloy", "/etc/systemd/system/alloy.service.d/*"
+    res = rf.allow(al, [a, f"{env['etc']}/*", b, a], owner_uid=UID)
+    assert res["added"] == [a, b] and res["paths"] == [f"{env['etc']}/*", a, b]
+    with pytest.raises(RootFileError):
+        rf.allow(al, ["/etc/new/*", "/*"], owner_uid=UID)
+    assert "/etc/new/*" not in rf.read_allowlist(al, owner_uid=UID)
+    with pytest.raises(RootFileError, match="at least one"):
+        rf.allow(al, [], owner_uid=UID)
+    res = rf.disallow(al, [a, b, "/nope/*"], owner_uid=UID)
+    assert res["removed"] == [a, b] and res["not_found"] == ["/nope/*"]
+    assert res["paths"] == [f"{env['etc']}/*"]

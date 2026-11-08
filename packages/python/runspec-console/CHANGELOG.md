@@ -25,6 +25,22 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   subcommand (another version) is skipped and named in that question.
   (`formsSearch.targetsForRun`/`needsFanoutConfirm`, `FormsView` `HostTargets`,
   `runspec:invoke_runnable` `targets`.)
+## [0.391.2] — 2026-11-08
+
+### Fixed
+
+- **"continue" after the tool-step pause keeps the task.** When a turn stopped
+  at "(paused after 25 tool steps — say "continue" to keep going)", replying
+  "continue" could reach a model with no memory of the task ("I don't have a
+  prior task in this session"). The turn's tool steps pushed the chat past
+  `[llm] history_max_messages` (60), and the trim that followed looked for a
+  plain user message to start the kept history on. Past the turn's first
+  message every user message is a tool result, so it found none and dropped
+  the whole history. The trim now cuts back to the nearest earlier plain user
+  message (never past the start of the latest turn, so the current request
+  always survives), and keeps everything when there is no safe cut. The pause
+  also closes the turn with a short assistant note, so "continue" follows an
+  assistant turn and reads as "resume the task above".
 
 ## [0.391.1] — 2026-11-08
 

@@ -199,12 +199,11 @@ class ChatSession:
         keep = keep if 0 < keep <= max_messages else max(1, max_messages // 2)
         if not self.opening and hist and _is_user_text(hist[0]):
             self.opening = str(hist[0]["content"])
-        drop = len(hist) - keep
-        del hist[:drop]
-        while hist and not _is_user_text(hist[0]):
-            hist.pop(0)
-            drop += 1
-        del self.turn_ids[:drop]
+        cut = self._trim_cut(len(hist) - keep)
+        if cut is None:
+            return
+        del hist[:cut]
+        del self.turn_ids[:cut]
         if hist and self.opening:
             opening = self.opening
             if len(opening) > OPENING_NOTE_CHARS:
@@ -213,6 +212,39 @@ class ChatSession:
                 **hist[0],
                 "content": f"{_OPENING_HEAD}{opening}{_OPENING_TAIL}{hist[0]['content']}",
             }
+
+    def _trim_cut(self, drop: int) -> int | None:
+        """Where :meth:`trim` cuts: the first plain user message at or after
+        ``drop`` (pairs stay intact and the history opens on a user turn), but
+        never past the start of the latest turn — the operator's current request
+        must survive. When the window after ``drop`` holds no plain user message
+        (one long tool-heavy turn: every user message there is a tool result),
+        the cut moves back to the nearest earlier one instead. ``None`` when
+        nothing can be dropped safely (only the first message is plain user
+        text).
+
+        Before 0.391.2 the cut only searched forward and popped every message
+        that wasn't plain user text, so a turn that ran 25 tool steps (51
+        messages, all tool_use / tool_result past its first) emptied the whole
+        history — "continue" after the tool-step pause then reached a model
+        with no memory of the task."""
+        hist = self.history
+        end = len(hist)
+        tags = self.turn_ids
+        if len(tags) == len(hist) and tags and tags[-1]:
+            end = tags.index(tags[-1])
+        cut = next(
+            (
+                i
+                for i in range(drop, end + 1)
+                if i < len(hist) and _is_user_text(hist[i])
+            ),
+            None,
+        )
+        if cut is None:
+            start = min(drop, end, len(hist) - 1)
+            cut = next((i for i in range(start, 0, -1) if _is_user_text(hist[i])), None)
+        return cut
 
     def drop_turns(self, turn_ids: set[str]) -> int:
         """Physically remove every message of the given turns (and their tags),

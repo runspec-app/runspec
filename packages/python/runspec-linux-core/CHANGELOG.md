@@ -1,5 +1,14 @@
 # runspec-linux-core Changelog
 
+## [0.17.0] — 2026-11-08
+
+### Changed
+
+- **`rootfiles.allow` / `disallow` take one pattern or a list.** Every pattern
+  is checked before anything is written, so one bad pattern adds none. The
+  result now lists `added` (allow) or `removed` plus `not_found` (disallow);
+  an empty list is refused.
+
 ## [0.16.0] — 2026-11-08
 
 ### Added

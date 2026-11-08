@@ -108,6 +108,19 @@ def test_allowed_allow_disallow(venv, monkeypatch, capsys):
     assert out["paths"] == [f"{venv['etc']}/*"]
 
 
+def test_allow_and_disallow_several(venv, monkeypatch, capsys):
+    a, b = "/etc/systemd/system/alloy.service.d/*", "/etc/default/alloy"
+    code, out = _run(monkeypatch, capsys, ["allow", f"{a},{b}"])
+    assert code == 0 and out["added"] == [a, b] and out["paths"][-2:] == [a, b]
+    assert venv["audits"][-1][1]["detail"]["patterns"] == [a, b]
+    code, out = _run(monkeypatch, capsys, ["allow", "--pattern", "/etc/x/*", "--pattern", "relative/*"])
+    assert code == 1 and "absolute" in out["error"]
+    assert "/etc/x/*" not in _run(monkeypatch, capsys, ["allowed"])[1]["paths"]
+    code, out = _run(monkeypatch, capsys, ["disallow", f"{a}, {b} /nope/*"])
+    assert out["removed"] == [a, b] and out["not_found"] == ["/nope/*"]
+    assert out["paths"] == [f"{venv['etc']}/*"]
+
+
 def test_read(venv, monkeypatch, capsys):
     f = venv["etc"] / "config.alloy"
     f.write_text("hello\n")
