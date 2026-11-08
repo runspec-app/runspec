@@ -17,6 +17,7 @@ from collections.abc import Callable
 from typing import Any
 
 
+from . import bridge_secrets
 from . import bridge_utils as utils_mod
 from . import config as config_mod
 from . import executor as executor_mod
@@ -111,6 +112,20 @@ class AutonomyMixin:
     def _effective_tool_autonomy(
         self, tool_name: str, tool_input: dict[str, Any]
     ) -> str:
+        """:meth:`_tool_autonomy_level`, raised to at least ``confirm`` when the
+        call writes a saved secret (``{{secret:…}}`` in its input) — a person
+        approves every such write, whatever the runnable's own level."""
+        from . import secret_files
+
+        # Called through the class so stubs that borrow this method still work.
+        level = AutonomyMixin._tool_autonomy_level(self, tool_name, tool_input)
+        if level in ("autonomous", "supervised") and secret_files.has_placeholders(
+            tool_input
+        ):
+            return "confirm"
+        return level
+
+    def _tool_autonomy_level(self, tool_name: str, tool_input: dict[str, Any]) -> str:
         """Autonomy the agent must honour for this call: the runnable's level,
         escalated by any provided arg's per-arg autonomy (most restrictive wins).
         Unknown runnable → 'confirm' (gated by default — never silently run)."""
@@ -1926,6 +1941,14 @@ class AutonomyMixin:
             explicit_env, _ = self._credential_env(host, runnable, credential_id_list)
             cred_env.update(explicit_env)
         cred_env.update(dbg_env)
+        # {{secret:<credential>}} placeholders: refuse before anything runs if a
+        # named credential isn't allowed into files on this host; otherwise send
+        # the values as RUNSPEC_SECRET_* (stdin env frame) for the host to fill in.
+        secret_file = bridge_secrets.secret_file_env(self, host, call_args)
+        if secret_file is not None:
+            if secret_file.errors:
+                return f"[exit 2]\n✗ {secret_file.error}"
+            cred_env.update(secret_file.env)
         # Run provenance for this turn (set by the trigger handler; absent → a
         # direct chat agent run). `agent` distinguishes an LLM turn (chat / agent
         # trigger) from a fixed rule run; `trigger` is the causing event source.
@@ -2014,7 +2037,7 @@ class AutonomyMixin:
                 stdin_payload=stdin_payload,
             )
 
-        output = "\n".join(output_lines)
+        output = bridge_secrets.mask_known_secrets(self, "\n".join(output_lines))
         output = self._finalize_tool_output(output, deliver, spill_name, chat_id)
         if exit_code_holder[0] != 0:
             return f"[exit {exit_code_holder[0]}]\n{output}"

@@ -77,6 +77,10 @@ _STR_FIELDS = (
     "public_key",
 )
 _LIST_FIELDS = ("scope_hosts", "scope_runnables")
+# Booleans written only when true. ``write_to_files`` lets the agent put this
+# credential into a file it writes with a ``{{secret:<id>}}`` placeholder (see
+# ``secret_files``) — off unless the operator ticks it.
+_BOOL_FIELDS = ("write_to_files",)
 
 VALID_KINDS = ("userpass", "password", "token", "ssh-key")
 
@@ -187,6 +191,9 @@ def save_credentials(path: Path, entries: list[dict[str, Any]]) -> None:
             if vals:
                 inner = ", ".join(_toml_str(x) for x in vals)
                 lines.append(f"{k} = [{inner}]")
+        for k in _BOOL_FIELDS:
+            if c.get(k) is True:
+                lines.append(f"{k} = true")
         lines.append("")
     path.write_text("\n".join(lines), encoding="utf-8")
 

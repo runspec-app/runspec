@@ -43,11 +43,26 @@ from runspec_fs_core.files import (
 )
 from runspec_fs_core.info import allowed_directories, get_file_info
 from runspec_fs_core.search import search_files
+from runspec_fs_core.secrets import (
+    SecretNotAvailableError,
+    fill_secrets,
+    fill_verb_secrets,
+    find_placeholders,
+    mask_secrets,
+    mask_text,
+)
 
 __all__ = [
     # errors
     "FsCoreError",
     "EditNotAppliedError",
+    "SecretNotAvailableError",
+    # secret placeholders ({{secret:<id>}})
+    "fill_secrets",
+    "fill_verb_secrets",
+    "find_placeholders",
+    "mask_secrets",
+    "mask_text",
     # run-as / privilege escalation
     "build_become",
     "validate_user",

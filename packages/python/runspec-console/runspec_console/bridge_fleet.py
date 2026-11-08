@@ -777,6 +777,7 @@ class FleetMixin:
                 "public_key": c.get("public_key", ""),
                 "scope_hosts": list(c.get("scope_hosts", []) or []),
                 "scope_runnables": list(c.get("scope_runnables", []) or []),
+                "write_to_files": c.get("write_to_files") is True,
                 "has_secret": cred.has_secret(cid) if cid else False,
             }
             result.append(entry)
@@ -1000,6 +1001,7 @@ class FleetMixin:
             "public_key": public_key,
             "scope_hosts": _clean_str_list(entry.get("scope_hosts")),
             "scope_runnables": _clean_str_list(entry.get("scope_runnables")),
+            "write_to_files": bool(entry.get("write_to_files")) and kind != "ssh-key",
         }
         others = [c for c in self._credentials if str(c.get("id")) != cid]
         save_credentials(config_mod.credentials_path(), [*others, meta])

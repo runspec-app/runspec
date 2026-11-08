@@ -55,10 +55,10 @@ def run_verb(verb: str, kwargs: dict[str, Any]) -> dict[str, Any]:
     if verb == "list-allowed-directories":
         return allowed_directories()
     if verb == "write-file":
-        return write_file(kwargs["path"], kwargs["content"])
+        return write_file(kwargs["path"], kwargs["content"], mode=kwargs.get("mode"), private=kwargs.get("private", False))
     if verb == "edit-file":
         edits = [tuple(pair) for pair in kwargs["edits"]]
-        return edit_file(kwargs["path"], edits, dry_run=kwargs["dry_run"])
+        return edit_file(kwargs["path"], edits, dry_run=kwargs["dry_run"], mode=kwargs.get("mode"), private=kwargs.get("private", False))
     if verb == "create-directory":
         return create_directory(kwargs["path"])
     if verb == "move-file":

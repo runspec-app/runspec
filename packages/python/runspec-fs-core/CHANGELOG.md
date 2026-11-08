@@ -1,5 +1,24 @@
 # runspec-fs-core Changelog
 
+## [0.6.0] — 2026-11-08
+
+### Added
+
+- **Secret placeholders.** New `secrets` module: text bound for a file may
+  hold `{{secret:<credential>}}` / `{{secret:<credential>.username}}`,
+  filled from `RUNSPEC_SECRET_<NAME>` / `RUNSPEC_SECRET_<NAME>__USERNAME`
+  (`fill_secrets`, `fill_verb_secrets`). Only `RUNSPEC_SECRET_*` variables are
+  read, so a placeholder can't copy another environment variable into a file;
+  a placeholder with no value raises `SecretNotAvailableError` and nothing is
+  written. `mask_secrets` / `mask_text` turn filled values back into their
+  placeholder in anything printed (also JSON-escaped). `edit-file` fills only
+  new text, so an edit can't test whether a file holds a secret.
+- **File modes.** `write_file` / `edit_file` take `mode` (applied before the
+  new text goes in) and `private`: a new private file is created `0600` from the
+  first byte (`os.open` with the mode, no window where it's world-readable); an
+  existing file keeps its owner and mode. Results carry `mode`, plus a
+  `warning` when a file holding a secret is readable by every user.
+
 ## [0.5.0] — 2026-09-26
 
 ### Added

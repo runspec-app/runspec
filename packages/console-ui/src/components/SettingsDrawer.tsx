@@ -3470,6 +3470,7 @@ interface CredFormValues {
   public_key?: string
   scope_hosts?: string[]
   scope_runnables?: string[]
+  write_to_files?: boolean
   secret?: string
 }
 
@@ -3498,6 +3499,7 @@ export function CredentialsTab({ onOpenTab }: { onOpenTab?: (tab: string) => voi
       username_arg: c.username_arg, secret_arg: c.secret_arg,
       private_key: c.private_key, public_key: c.public_key,
       scope_hosts: c.scope_hosts ?? [], scope_runnables: c.scope_runnables ?? [],
+      write_to_files: c.write_to_files ?? false,
       secret: '',  // write-only: blank means "keep the stored value"
     })
     setEditingId(c.id)
@@ -3527,6 +3529,7 @@ export function CredentialsTab({ onOpenTab }: { onOpenTab?: (tab: string) => voi
       public_key: v.public_key?.trim() || undefined,
       scope_hosts: v.scope_hosts ?? [],
       scope_runnables: v.scope_runnables ?? [],
+      write_to_files: v.kind !== 'ssh-key' && !!v.write_to_files,
       ...(v.secret ? { secret: v.secret } : {}),  // only send when set
     }
     const res = await bridge.save_credential(entry)
@@ -3660,6 +3663,17 @@ export function CredentialsTab({ onOpenTab }: { onOpenTab?: (tab: string) => voi
                 <Form.Item name="scope_runnables" label="Runnable scope">
                   <Select mode="tags" placeholder="deploy, db-*  (Enter to add)" tokenSeparators={[',', ' ']} open={false} suffixIcon={null} />
                 </Form.Item>
+                <Divider style={{ margin: '4px 0 12px' }} />
+                <Form.Item
+                  name="write_to_files"
+                  label="Agent may write this into files"
+                  valuePropName="checked"
+                  extra={editingId
+                    ? <>The agent puts <Text code>{`{{secret:${editingId}}}`}</Text> in a file it writes and the host fills in the value, so the agent never sees it. Only on hosts in the host scope above (blank = any). Every such write asks you first.</>
+                    : 'The agent puts a {{secret:<id>}} placeholder in a file it writes and the host fills in the value, so the agent never sees it. Only on hosts in the host scope above (blank = any). Every such write asks you first.'}
+                >
+                  <Switch />
+                </Form.Item>
               </>
             )}
         </Form>
@@ -3679,6 +3693,11 @@ export function CredentialsTab({ onOpenTab }: { onOpenTab?: (tab: string) => voi
             {c.has_secret
               ? <Tag color="green" style={{ margin: 0, fontSize: 11 }}>secret set</Tag>
               : <Tag style={{ margin: 0, fontSize: 11 }}>no secret</Tag>}
+            {c.write_to_files && (
+              <Tooltip title={`The agent may write this into files as {{secret:${c.id}}}`}>
+                <Tag color="orange" style={{ margin: 0, fontSize: 11 }}>into files</Tag>
+              </Tooltip>
+            )}
             <Text type="secondary" title={c.username} style={{ fontSize: 12, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {c.username}
             </Text>

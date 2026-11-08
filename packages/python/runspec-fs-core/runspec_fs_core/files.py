@@ -14,6 +14,7 @@ import base64
 import difflib
 import mimetypes
 import os
+import stat
 from pathlib import Path
 from typing import Any
 
@@ -92,13 +93,55 @@ def read_multiple_files(paths: list[str | os.PathLike[str]]) -> dict[str, Any]:
     return {"files": results, "count": len(results)}
 
 
-def write_file(path: str | os.PathLike[str], content: str) -> dict[str, Any]:
+def _check_mode(mode: int | None) -> None:
+    if mode is not None and not 0 <= mode <= 0o7777:
+        raise ValueError(f"mode must be an octal permission like 0600 or 0640, got {oct(mode)}")
+
+
+def _mode_info(p: Path, private: bool) -> dict[str, Any]:
+    """``{mode}`` (octal string) plus a ``warning`` when a file holding a secret
+    can be read by every user on the host. POSIX permission bits only."""
+    try:
+        bits = stat.S_IMODE(p.stat().st_mode)
+    except OSError:
+        return {}
+    out: dict[str, Any] = {"mode": f"{bits:04o}"}
+    if private and os.name == "posix" and bits & stat.S_IROTH:
+        out["warning"] = f"{p} holds a secret and every user on this host can read it (mode {bits:04o}). Write it again with --mode 0600, or 0640 for a service's group."
+    return out
+
+
+def write_file(
+    path: str | os.PathLike[str],
+    content: str,
+    *,
+    mode: int | None = None,
+    private: bool = False,
+) -> dict[str, Any]:
     """Create or overwrite a file with UTF-8 text. Returns
-    ``{path, bytes_written}``."""
+    ``{path, bytes_written, mode}`` (+ ``warning``).
+
+    An existing file is written in place, so it keeps its owner and permissions
+    unless ``mode`` is given (applied *before* the new text goes in). A new file
+    is created with ``mode``, or owner-only ``0600`` when ``private`` (the text
+    holds a secret), or the usual umask default — set from the first byte, so a
+    secret is never briefly readable by others."""
+    _check_mode(mode)
     p = _as_path(path)
     data = content.encode("utf-8")
-    p.write_bytes(data)
-    return {"path": str(p), "bytes_written": len(data)}
+    try:
+        create_mode = mode if mode is not None else (0o600 if private else 0o666)
+        fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), create_mode)
+    except FileExistsError:
+        if mode is not None:
+            os.chmod(p, mode)
+        p.write_bytes(data)
+    else:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+        if mode is not None:
+            os.chmod(p, mode)  # the umask may have narrowed it
+    return {"path": str(p), "bytes_written": len(data), **_mode_info(p, private)}
 
 
 def edit_file(
@@ -106,6 +149,8 @@ def edit_file(
     edits: list[tuple[str, str]],
     *,
     dry_run: bool = False,
+    mode: int | None = None,
+    private: bool = False,
 ) -> dict[str, Any]:
     """Apply a sequence of ``(old_text, new_text)`` substring replacements to a
     file, in order (first occurrence of each ``old_text``).
@@ -113,8 +158,12 @@ def edit_file(
     Raises :class:`EditNotAppliedError` if any ``old_text`` is not present at the
     time it is applied — nothing is written in that case. With ``dry_run`` the new
     content is computed and diffed but not written. Returns
-    ``{path, edits_applied, dry_run, diff}`` where ``diff`` is a unified diff.
+    ``{path, edits_applied, dry_run, diff, mode}`` where ``diff`` is a unified
+    diff. ``mode`` (if given) is applied before the new text is written;
+    ``private`` (the new text holds a secret) adds a ``warning`` when the file is
+    readable by every user.
     """
+    _check_mode(mode)
     p = _as_path(path)
     original = p.read_text(encoding="utf-8")
 
@@ -134,6 +183,8 @@ def edit_file(
     )
 
     if not dry_run:
+        if mode is not None:
+            os.chmod(p, mode)
         p.write_text(updated, encoding="utf-8")
 
     return {
@@ -141,4 +192,5 @@ def edit_file(
         "edits_applied": len(edits),
         "dry_run": dry_run,
         "diff": diff,
+        **_mode_info(p, private),
     }

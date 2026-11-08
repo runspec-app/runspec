@@ -1,5 +1,26 @@
 # runspec-windows Changelog
 
+## [0.11.0] — 2026-11-08
+
+### Added
+
+- **`filesystem`: `{{secret:<credential>}}` placeholders in `write-file --content` and
+  `edit-file --new-text`.** The value comes from `RUNSPEC_SECRET_<NAME>` in the
+  run's environment (runspec-console 0.390.0 sends the named credential on
+  stdin when it's allowed into files) and is filled in just before the write —
+  before a `--run-as` hand-off, so the worker gets it on stdin, never argv. The
+  result, `edit-file`'s diff and errors show the placeholder, never the value;
+  the call's args and run record only ever hold the placeholder. A write that
+  used a secret records an `fs.secret_written` audit event (path + credential
+  ids).
+- **`filesystem`: `--mode`** on `write-file` / `edit-file` (e.g. `0600`, `0640`). A new file
+  holding a secret starts `0600`; an existing file keeps its owner and mode
+  unless `--mode` is given.
+
+### Changed
+
+- Requires `runspec-fs-core >= 0.6.0`.
+
 ## [0.10.1] — 2026-09-26
 
 ### Changed
