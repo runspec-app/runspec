@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { Host, Runnable } from '../bridge'
-import { collapseByRunnable, loadFormsScope, runnableMatchesText, saveFormsScope, selectForms, FORMS_SCOPE_KEY } from './formsSearch'
+import { collapseByRunnable, hasCommandPath, loadFormsScope, needsFanoutConfirm, runnableMatchesText, saveFormsScope, selectForms, targetsForRun, FORMS_SCOPE_KEY } from './formsSearch'
 
 const host = (name: string, connected = true, group?: string): Host =>
   ({ name, connected, runnableCount: 0, groups: [], group }) as Host
@@ -104,5 +104,33 @@ describe('scope persistence', () => {
     expect(store.get(FORMS_SCOPE_KEY)).toBe('profile')
     expect(loadFormsScope(storage)).toBe('profile')
     expect(loadFormsScope(null)).toBe('host')
+  })
+})
+
+describe('running on several hosts', () => {
+  const withCmd = (host: string, cmds: string[]) =>
+    ({ name: 'svc', host, group: 'ops', commands: Object.fromEntries(cmds.map(c => [c, { name: c }])) }) as unknown as Runnable
+
+  it('hasCommandPath follows nested commands', () => {
+    const r = { name: 'svc', host: 'a', commands: { db: { name: 'db', commands: { backup: { name: 'backup' } } } } } as unknown as Runnable
+    expect(hasCommandPath(r, [])).toBe(true)
+    expect(hasCommandPath(r, ['db', 'backup'])).toBe(true)
+    expect(hasCommandPath(r, ['db', 'restore'])).toBe(false)
+  })
+
+  it('targetsForRun keeps the card order and sets aside hosts without the command', () => {
+    const records = [withCmd('web-01', ['restart']), withCmd('web-02', []), withCmd('web-03', ['restart'])]
+    const { run, missing } = targetsForRun(records, ['web-03', 'web-02', 'web-01'], ['restart'])
+    expect(run.map(r => r.host)).toEqual(['web-01', 'web-03'])
+    expect(missing).toEqual(['web-02'])
+    expect(targetsForRun(records, ['web-02'], []).run.map(r => r.host)).toEqual(['web-02'])
+  })
+
+  it('needsFanoutConfirm asks for more than one host unless autonomous', () => {
+    expect(needsFanoutConfirm(1, 'confirm')).toBe(false)
+    expect(needsFanoutConfirm(2, 'confirm')).toBe(true)
+    expect(needsFanoutConfirm(2, undefined)).toBe(true)
+    expect(needsFanoutConfirm(2, 'manual')).toBe(true)
+    expect(needsFanoutConfirm(3, 'autonomous')).toBe(false)
   })
 })

@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Button, Checkbox, Collapse, Dropdown, Input, Modal, Segmented, Select, Tag, Tooltip, Typography, message } from 'antd'
+import { Button, Checkbox, Collapse, Input, Modal, Segmented, Select, Tag, Tooltip, Typography, message } from 'antd'
 import { SearchOutlined, RightOutlined, ArrowLeftOutlined, AppstoreOutlined, EditOutlined, PlusOutlined, DownOutlined } from '@ant-design/icons'
 import type { ArgDef, Host, Runnable, Runbook, SavedRun } from '../bridge'
 import { bridge } from '../bridge'
 import { useIsDark, useAccent, withAlpha, surfaces, RADIUS, textSecondary, MONO_FONT } from '../ThemeContext'
 import { runnableHidden } from '../toolVisibility'
-import { selectForms, loadFormsScope, saveFormsScope, type FormsEntry, type FormsScope } from './formsSearch'
+import { selectForms, loadFormsScope, saveFormsScope, needsFanoutConfirm, targetsForRun, type FormsEntry, type FormsScope } from './formsSearch'
 import { useFeatures } from '../features'
 import {
   RUNBOOKS_SECTION,
@@ -297,12 +297,33 @@ interface ModalState {
   // History row). Overlaid on the spec defaults; only keys matching a declared
   // arg are applied. Absent for a normal form open.
   prefill?: Record<string, unknown>
+  // The runnable's copy on every host its card covers (best pick first), when
+  // it is on more than one: the dialog then offers a multi-select of hosts and
+  // one submission runs on each picked host. Absent ⇒ runs on rootRunnable.host.
+  hostRecords?: Runnable[]
 }
 
 interface RunModalProps {
   state: ModalState | null
+  /** Sidebar hosts, for the connection dot beside each host in the host picker. */
+  hosts?: Host[]
   onClose: () => void
-  onSubmit: (runnable: Runnable, args: Record<string, unknown>, commandPath: string[], credentialIds?: string[]) => void
+  onSubmit: (runnable: Runnable, args: Record<string, unknown>, commandPath: string[], credentialIds?: string[], targets?: Runnable[]) => void
+}
+
+// Most restrictive first — the escalation rule (most restrictive level wins).
+const AUTONOMY_RANK: Record<string, number> = { manual: 3, confirm: 2, supervised: 1, autonomous: 0 }
+
+/** The level this submission runs at: the command's own, raised by any arg that
+ *  carries its own autonomy override and was given a value. */
+function formAutonomy(node: Runnable, values: Record<string, unknown>): string {
+  let level = node.autonomy || 'confirm'
+  for (const a of node.args ?? []) {
+    const v = values[a.name]
+    if (!a.autonomy || v === undefined || v === '' || v === false || v === null) continue
+    if ((AUTONOMY_RANK[a.autonomy] ?? 2) > (AUTONOMY_RANK[level] ?? 2)) level = a.autonomy
+  }
+  return level
 }
 
 // Per-runnable (across hosts) memory of the operator's credential picks. Stores
@@ -326,12 +347,27 @@ function saveCredPrefs(runnable: string, ids: string[]): void {
   }
 }
 
-function RunModal({ state, onClose, onSubmit }: RunModalProps) {
+function RunModal({ state, hosts = [], onClose, onSubmit }: RunModalProps) {
   const [values, setValues] = useState<Record<string, unknown>>({})
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [credentialIds, setCredentialIds] = useState<string[]>([])
   const [creds, setCreds] = useState<SlimCred[]>([])
   const [debug, setDebug] = useState(false)
+  // Hosts this submission runs on, when the card covers several (hostRecords).
+  const [targetHosts, setTargetHosts] = useState<string[]>([])
+  // A multi-host run waiting for the operator's one "yes, all of these" click.
+  const [fanout, setFanout] = useState<{
+    run: Runnable[]; missing: string[]; level: string
+    args: Record<string, unknown>; creds: string[] | undefined
+  } | null>(null)
+
+  // A new card (not a subcommand step inside the same one) starts on its best
+  // host — the one a single click used to run on.
+  useEffect(() => {
+    if (!state) return
+    setTargetHosts([state.rootRunnable.host])
+    setFanout(null)
+  }, [state?.rootRunnable.name, state?.rootRunnable.host, state?.hostRecords])
 
   // Reset form when the modal or node changes
   useEffect(() => {
@@ -397,7 +433,10 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
 
   if (!state) return null
 
-  const { rootRunnable, commandPath, currentNode } = state
+  const { rootRunnable, commandPath, currentNode, hostRecords } = state
+  const multiHost = (hostRecords?.length ?? 0) > 1
+  // Where the form's host-aware inputs (path pickers) browse: the first picked host.
+  const formHost = multiHost ? (hostRecords!.find(r => targetHosts.includes(r.host))?.host ?? rootRunnable.host) : rootRunnable.host
   const hasSubcommands = Object.keys(currentNode.commands ?? {}).length > 0
   // A node can be run at its own level unless it *requires* a subcommand. So a
   // leaf always can; a runnable that has subcommands but doesn't require one can
@@ -433,11 +472,37 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
         if (n < lo || n > hi) errs[arg.name] = `Must be between ${lo} and ${hi}`
       }
     }
+    if (multiHost && targetHosts.length === 0) { message.warning('Pick at least one host to run on.'); return }
     if (Object.keys(errs).length > 0) { setErrors(errs); return }
+    const cmd = `/${[rootRunnable.name, ...commandPath].join(' ')}`
+    const args = withDebugFlag(values, debug, declaredArgNames)
+    const creds = credentialIds.length ? credentialIds : undefined
+    if (!multiHost) {
+      saveCredPrefs(rootRunnable.name, credentialIds)
+      onSubmit(rootRunnable, args, commandPath, creds)
+      onClose()
+      message.success(`${cmd} submitted`)
+      return
+    }
+    const { run, missing } = targetsForRun(hostRecords!, targetHosts, commandPath)
+    if (run.length === 0) {
+      message.error(`None of the picked hosts has ${cmd} — their copy of ${rootRunnable.name} is a different version.`)
+      return
+    }
+    const level = formAutonomy(currentNode, values)
+    if (!needsFanoutConfirm(run.length, level) && missing.length === 0) { startOn(run, args, creds); return }
+    // Ask once, naming every host (an in-dialog modal — antd's static
+    // Modal.confirm doesn't render under React 19).
+    setFanout({ run, missing, level, args, creds })
+  }
+
+  const startOn = (run: Runnable[], args: Record<string, unknown>, creds: string[] | undefined) => {
+    const cmd = `/${[rootRunnable.name, ...commandPath].join(' ')}`
     saveCredPrefs(rootRunnable.name, credentialIds)
-    onSubmit(rootRunnable, withDebugFlag(values, debug, declaredArgNames), commandPath, credentialIds.length ? credentialIds : undefined)
+    onSubmit(run[0], args, commandPath, creds, run)
+    setFanout(null)
     onClose()
-    message.success(`/${[rootRunnable.name, ...commandPath].join(' ')} submitted`)
+    message.success(run.length === 1 ? `${cmd} submitted on ${run[0].host}` : `${cmd} submitted on ${run.length} hosts`)
   }
 
   const navigateTo = (depth: number) => {
@@ -448,7 +513,42 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
     window.dispatchEvent(new CustomEvent('forms:navigate', { detail: { rootRunnable, commandPath: newPath, currentNode: newNode } }))
   }
 
+  const fanoutCmd = `/${crumbs.join(' ')}`
+  const fanoutAsks = !!fanout && needsFanoutConfirm(fanout.run.length, fanout.level)
   return (
+    <>
+    <Modal
+      open={!!fanout}
+      onCancel={() => setFanout(null)}
+      width={480}
+      title={fanout && (fanout.run.length === 1 ? `Run ${fanoutCmd} on ${fanout.run[0].host}?` : `Run ${fanoutCmd} on ${fanout.run.length} hosts?`)}
+      footer={
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <Button onClick={() => setFanout(null)}>Back</Button>
+          <Button type="primary" onClick={() => fanout && startOn(fanout.run, fanout.args, fanout.creds)}>
+            {fanout && fanout.run.length > 1 ? `Run on ${fanout.run.length} hosts` : 'Run'}
+          </Button>
+        </div>
+      }
+    >
+      {fanout && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {fanoutAsks && (
+            <Text type="secondary" style={{ fontSize: 13 }}>
+              This command is <Text code style={{ fontSize: 12 }}>{fanout.level}</Text>, so it asks once before running on more than one host.
+            </Text>
+          )}
+          <div data-rs-fanout-hosts style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+            {fanout.run.map(r => <Tag key={r.host} style={{ fontFamily: MONO_FONT, margin: 0 }}>{r.host}</Tag>)}
+          </div>
+          {fanout.missing.length > 0 && (
+            <Text type="warning" style={{ fontSize: 12 }}>
+              Skipped — their version has no {fanoutCmd}: {fanout.missing.join(', ')}
+            </Text>
+          )}
+        </div>
+      )}
+    </Modal>
     <Modal
       open={true}
       onCancel={onClose}
@@ -489,8 +589,9 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
         canRunHere ? (
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
             <Button onClick={onClose}>Cancel</Button>
-            <Button type="primary" onClick={handleSubmit}>
-              {hasSubcommands ? `Run /${crumbs.join(' ')}` : 'Run'}
+            <Button type="primary" onClick={handleSubmit} disabled={multiHost && targetHosts.length === 0}>
+              {(hasSubcommands ? `Run /${crumbs.join(' ')}` : 'Run') +
+                (multiHost && targetHosts.length > 1 ? ` on ${targetHosts.length} hosts` : '')}
             </Button>
           </div>
         ) : null
@@ -501,6 +602,14 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
           <Text type="secondary" style={{ fontSize: 13, display: 'block', marginBottom: 14 }}>
             {currentNode.description}
           </Text>
+        )}
+        {multiHost && (
+          <HostTargets
+            records={hostRecords!}
+            hosts={hosts}
+            value={targetHosts}
+            onChange={setTargetHosts}
+          />
         )}
         {hasSubcommands && (
           <div style={{ marginBottom: canRunHere ? 18 : 0 }}>
@@ -533,7 +642,7 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
               </Text>
             </div>
           )}
-          <ArgForm node={currentNode} host={rootRunnable.host} runnable={rootRunnable.name} runAs={rootRunnable.runAs} group={rootRunnable.group} values={values} errors={errors} onChange={handleChange} boundArgs={boundArgs} />
+          <ArgForm node={currentNode} host={formHost} runnable={rootRunnable.name} runAs={rootRunnable.runAs} group={rootRunnable.group} values={values} errors={errors} onChange={handleChange} boundArgs={boundArgs} />
           {offerDebugSwitch(declaredArgNames) && (
             <div style={{ marginTop: 12 }}>
               <Tooltip title="Runs with --debug: DEBUG log lines and full tracebacks in the output. A runnable with logging turned off ignores it.">
@@ -593,6 +702,61 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
         )}
       </div>
     </Modal>
+    </>
+  )
+}
+
+// The run dialog's host picker for a runnable found on several hosts: pick one
+// or more; one submission then runs on each (one Console run card per host).
+function HostTargets({ records, hosts, value, onChange }: {
+  records: Runnable[]
+  hosts: Host[]
+  value: string[]
+  onChange: (hosts: string[]) => void
+}) {
+  const connected = (h: string) => hosts.find(x => x.name === h)?.connected ?? true
+  const all = records.map(r => r.host)
+  const live = all.filter(connected)
+  return (
+    <div data-rs-host-targets style={{ marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 4 }}>
+        <Text style={{ fontSize: 13 }}>Run on</Text>
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          {value.length > 1 ? `${value.length} of ${all.length} hosts — runs on each` : `found on ${all.length} hosts — pick one or more`}
+        </Text>
+        <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+          <Button type="link" size="small" style={{ padding: 0, height: 'auto', fontSize: 12 }} onClick={() => onChange(all)}>
+            All {all.length}
+          </Button>
+          {live.length > 0 && live.length < all.length && (
+            <>
+              <Text type="secondary" style={{ fontSize: 12 }}>·</Text>
+              <Button type="link" size="small" style={{ padding: 0, height: 'auto', fontSize: 12 }} onClick={() => onChange(live)}>
+                Connected {live.length}
+              </Button>
+            </>
+          )}
+        </span>
+      </div>
+      <Select
+        mode="multiple"
+        aria-label="Hosts to run on"
+        value={value}
+        onChange={vs => onChange(all.filter(h => (vs as string[]).includes(h)))}
+        placeholder="Pick hosts…"
+        style={{ width: '100%' }}
+        maxTagCount="responsive"
+        options={records.map(r => ({
+          value: r.host,
+          label: (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ fontSize: 9, color: connected(r.host) ? '#52c41a' : '#595959' }}>●</span>
+              <span style={{ fontFamily: MONO_FONT }}>{r.host}</span>
+            </span>
+          ),
+        }))}
+      />
+    </div>
   )
 }
 
@@ -601,7 +765,7 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
 function RunnableCard({ entry, hosts, onPick }: {
   entry: FormsEntry
   hosts: Host[]
-  onPick: (runnable: Runnable) => void
+  onPick: (entry: FormsEntry) => void
 }) {
   const isDark = useIsDark()
   const accent = useAccent()
@@ -625,7 +789,7 @@ function RunnableCard({ entry, hosts, onPick }: {
 
   const card = (
     <div
-      onClick={multi ? undefined : () => onPick(runnable)}
+      onClick={() => onPick(entry)}
       className="rs-card-lift"
       data-rs-forms-card={entry.key}
       onMouseEnter={() => setHovered(true)}
@@ -685,33 +849,8 @@ function RunnableCard({ entry, hosts, onPick }: {
       </div>
     </div>
   )
-  if (!multi) return card
-  // On several hosts: clicking the card asks which host to run it on.
-  return (
-    <Dropdown
-      trigger={['click']}
-      menu={{
-        items: [
-          { key: '__label', type: 'group', label: 'Run on which host?' },
-          ...entry.records.map(r => ({
-            key: r.host,
-            label: (
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ fontSize: 9, color: isConnected(r.host) ? '#52c41a' : '#595959' }}>●</span>
-                <span style={{ fontFamily: MONO_FONT }}>{r.host}</span>
-              </span>
-            ),
-          })),
-        ],
-        onClick: ({ key }) => {
-          const pick = entry.records.find(r => r.host === key)
-          if (pick) onPick(pick)
-        },
-      }}
-    >
-      {card}
-    </Dropdown>
-  )
+  // On several hosts the run dialog asks which host(s) to run on.
+  return card
 }
 
 // Card edit icon — opens the item's editor without launching the card's run dialog.
@@ -973,7 +1112,11 @@ export function FormsView({
   useEffect(() => {
     const onNavigate = (e: Event) => {
       const { rootRunnable, commandPath, currentNode } = (e as CustomEvent).detail as ModalState
-      setModalState({ rootRunnable, commandPath, currentNode })
+      // A step within the same card keeps its host picker (and the picked hosts).
+      setModalState(prev => ({
+        rootRunnable, commandPath, currentNode,
+        ...(prev?.hostRecords && prev.rootRunnable === rootRunnable ? { hostRecords: prev.hostRecords } : {}),
+      }))
     }
     window.addEventListener('forms:navigate', onNavigate)
     return () => window.removeEventListener('forms:navigate', onNavigate)
@@ -987,7 +1130,13 @@ export function FormsView({
     })
   }
 
-  const handleCardClick = (runnable: Runnable) => {
+  const handleCardClick = (entry: FormsEntry) => {
+    const runnable = entry.records[0]
+    if (entry.records.length > 1) {
+      // On several hosts: the dialog asks which host(s) — even with no args.
+      setModalState({ rootRunnable: runnable, commandPath: [], currentNode: runnable, hostRecords: entry.records })
+      return
+    }
     const hasSubcommands = Object.keys(runnable.commands ?? {}).length > 0
     const hasAnyArgs = (runnable.args ?? []).length > 0
     if (!hasSubcommands && !hasAnyArgs) {
@@ -1147,6 +1296,7 @@ export function FormsView({
 
       <RunModal
         state={modalState}
+        hosts={hosts}
         onClose={() => setModalState(null)}
         onSubmit={onRunRunnable}
       />

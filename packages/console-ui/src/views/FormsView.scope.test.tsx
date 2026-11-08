@@ -49,14 +49,56 @@ describe('Forms → search across the profile', () => {
     expect(window.localStorage.getItem('runspec.forms.scope')).toBe('profile')
   })
 
-  it('a card on several hosts asks which host to run on', async () => {
+  it('a card on several hosts opens the dialog on its best host', async () => {
     const onRun = renderForms()
     fireEvent.click(screen.getByText('All in web'))
     fireEvent.click(screen.getByText('restart-web'))
     expect(onRun).not.toHaveBeenCalled()
-    const menu = await screen.findByRole('menu')
-    fireEvent.click(within(menu).getByText('web-02'))
-    expect(onRun).toHaveBeenCalledWith(expect.objectContaining({ name: 'restart-web', host: 'web-02' }), {}, [])
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText(/found on 2 hosts/)).toBeTruthy()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Run' }))
+    // One host picked: runs there straight away, no extra question.
+    expect(onRun).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'restart-web', host: 'web-01' }), {}, [], undefined,
+      [expect.objectContaining({ host: 'web-01' })],
+    )
+  })
+
+  it('picking several hosts runs on each after one confirm naming them all', async () => {
+    const onRun = renderForms()
+    fireEvent.click(screen.getByText('All in web'))
+    fireEvent.click(screen.getByText('restart-web'))
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'All 2' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Run on 2 hosts' }))
+    // restart-web has no autonomy ⇒ confirm: asks once, listing both hosts.
+    expect(onRun).not.toHaveBeenCalled()
+    const title = await screen.findByText('Run /restart-web on 2 hosts?')
+    const confirm = title.closest('.ant-modal-content') as HTMLElement
+    const listed = confirm.querySelector('[data-rs-fanout-hosts]') as HTMLElement
+    expect(within(listed).getByText('web-01')).toBeTruthy()
+    expect(within(listed).getByText('web-02')).toBeTruthy()
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Run on 2 hosts' }))
+    expect(onRun).toHaveBeenCalledTimes(1)
+    const targets = onRun.mock.calls[0][4] as Runnable[]
+    expect(targets.map(t => t.host)).toEqual(['web-01', 'web-02'])
+  })
+
+  it('an autonomous command runs on several hosts without the extra question', async () => {
+    const onRun = vi.fn()
+    const auto = [rn('uptime', 'web-01'), rn('uptime', 'web-02')].map(r => ({ ...r, autonomy: 'autonomous' })) as Runnable[]
+    render(
+      <FeaturesContext.Provider value={{ ai: true }}>
+        <FormsView runnables={auto} hosts={hosts} selectedHost="local" activeScope={[]} activeProfile="web" onRunRunnable={onRun} />
+      </FeaturesContext.Provider>,
+    )
+    fireEvent.click(screen.getByText('All in web'))
+    fireEvent.click(screen.getByText('uptime'))
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'All 2' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Run on 2 hosts' }))
+    expect(onRun).toHaveBeenCalledTimes(1)
+    expect((onRun.mock.calls[0][4] as Runnable[]).map(t => t.host)).toEqual(['web-01', 'web-02'])
   })
 
   it('a card on one host runs there directly', () => {
