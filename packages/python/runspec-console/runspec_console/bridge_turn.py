@@ -811,6 +811,22 @@ class TurnMixin(_Base):
                     self._dispatch("runspec:token", {"id": chat_id, "token": marker})
                     turn_assistant_parts.append(marker.strip())
                     final_text = f"{final_text.rstrip()}{marker}".strip()
+                    # The history ends on a tool_result; close the turn with an
+                    # assistant note so the operator's "continue" follows an
+                    # assistant turn (strict alternation) and reads as "resume
+                    # the task above", not as a new request out of nowhere.
+                    if history and history[-1].get("role") != "assistant":
+                        history.append(
+                            {
+                                "role": "assistant",
+                                "content": (
+                                    f"(I paused after {tool_rounds} tool steps — "
+                                    "the step limit for one turn. The task above "
+                                    "is not finished; if asked to continue, I "
+                                    "pick up from the last tool result.)"
+                                ),
+                            }
+                        )
 
                 session.sync_tags(chat_id)
                 if spec.interactive:

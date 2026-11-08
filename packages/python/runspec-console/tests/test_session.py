@@ -257,3 +257,64 @@ def test_prune_finished_keeps_newest_cap_and_never_touches_interactive():
     assert len(
         [s for s in sessions.values() if s.state == "done" and not s.interactive]
     ) == (FINISHED_AUTOMATION_CAP)
+
+
+def _tool_round() -> list[dict]:
+    return [
+        {"role": "assistant", "content": [{"type": "tool_use"}]},
+        {"role": "user", "content": [{"type": "tool_result"}]},
+    ]
+
+
+def test_trim_keeps_a_long_tool_turn_and_its_request():
+    # A turn that hits the tool-step pause (25 rounds = 51 messages, every user
+    # message past the first a tool_result) used to trim to an empty history,
+    # so "continue" reached a model with no memory of the task.
+    s = ChatSession(id="s")
+    s.history = [
+        {"role": "user", "content": "set up the agent"},
+        *(_tool_round() * 5),
+        {"role": "assistant", "content": "step one done"},
+    ]
+    s.sync_tags("c0")
+    s.history += [{"role": "user", "content": "now install it everywhere"}]
+    for _ in range(25):
+        s.history += _tool_round()
+    s.history += [{"role": "assistant", "content": "(paused)"}]
+    s.sync_tags("c1")
+    assert len(s.history) == 64
+    s.trim(max_messages=60, keep=30)
+    # Cut back to the current turn's own request, with the chat's opening folded in.
+    assert len(s.history) == 52
+    assert s.history[0]["content"].startswith("[Older turns")
+    assert "set up the agent" in s.history[0]["content"]
+    assert s.history[0]["content"].endswith("now install it everywhere")
+    assert s.turn_ids == ["c1"] * 52
+
+
+def test_trim_never_cuts_inside_the_latest_turn():
+    # A mid-turn plain user message (an auto-continue prompt) inside the kept
+    # window is not a valid cut: it would drop the turn's own request.
+    s = ChatSession(id="s")
+    s.history = _hist(10)
+    s.sync_tags("c0")
+    s.history += [{"role": "user", "content": "the request"}]
+    s.history += _tool_round() * 6
+    s.history += [
+        {"role": "assistant", "content": "half a reply"},
+        {"role": "user", "content": "Your previous message was cut off"},
+        {"role": "assistant", "content": "rest of it"},
+    ]
+    s.sync_tags("c1")
+    s.trim(max_messages=20, keep=4)
+    assert s.history[0]["content"].endswith("the request")
+    assert set(s.turn_ids) == {"c1"}
+
+
+def test_trim_leaves_a_single_long_turn_alone():
+    s = ChatSession(id="s")
+    s.history = [{"role": "user", "content": "go"}] + _tool_round() * 40
+    s.sync_tags("c0")
+    s.trim(max_messages=60, keep=30)
+    assert len(s.history) == 81
+    assert s.history[0] == {"role": "user", "content": "go"}
