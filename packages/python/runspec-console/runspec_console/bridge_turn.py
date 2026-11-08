@@ -28,6 +28,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from . import bridge_secrets
 from . import bridge_utils as utils_mod
 from . import config as config_mod
 from . import observability
@@ -690,6 +691,10 @@ class TurnMixin(_Base):
                                 call_stage("running")  # un-stick an awaiting card
                         finally:
                             CURRENT_CALL_ID.reset(call_token)
+                        # A saved secret never goes back to the model (e.g. a
+                        # config file read back after the agent templated a
+                        # credential into it) — it comes back as its placeholder.
+                        output = bridge_secrets.mask_known_secrets(self, output)
                         self._dispatch(
                             "runspec:tool_end",
                             {

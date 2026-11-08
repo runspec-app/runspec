@@ -198,3 +198,67 @@ nor supply them), and the same name-derived env vars are set. The agent can
 pick a credential by id when several match — it only ever handles ids, never
 secret values. Credentials also survive `sudo` for runnables that declare
 `run_as`.
+
+### Writing a secret into a file
+
+Sometimes the agent has to put a credential *into a file* — an API token in a
+Grafana Alloy config on a remote host, say. It does that with a placeholder,
+so the value never passes through the model:
+
+```text
+filesystem write-file --path /etc/alloy/config.alloy --mode 0640 --content '
+prometheus.remote_write "cloud" {
+  endpoint {
+    url = "https://prometheus-prod-01.grafana.net/api/prom/push"
+    basic_auth {
+      username = "{{secret:grafana-cloud.username}}"
+      password = "{{secret:grafana-cloud}}"
+    }
+  }
+}'
+```
+
+`grafana-cloud` is the credential's id (or its label written the env-var way:
+`Grafana Cloud` → `grafana-cloud`); `.username` gives its username. Before the
+run the console reads that credential from the keychain and sends it to the
+host on stdin (never on the command line) as `RUNSPEC_SECRET_GRAFANA_CLOUD` /
+`RUNSPEC_SECRET_GRAFANA_CLOUD__USERNAME`. The `filesystem` runnable
+(runspec-fs, runspec-linux, runspec-windows) swaps it in just before it writes.
+The confirm card, run record and History only ever show the placeholder.
+
+It only works for credentials you allow:
+
+- Tick **Agent may write this into files** on the credential (Settings →
+  Credentials; `write_to_files = true` in `runspec_credentials.toml`). It is
+  off by default, so a Jira PAT can't end up in a file because one Grafana token
+  can. Rows that allow it carry an **into files** tag.
+- The host must be in the credential's **Host scope** (blank = any host).
+- An agent (or MCP client) call carrying a placeholder always asks you first,
+  whatever the runnable's own autonomy level.
+
+What happens to the value:
+
+- A **new** file holding a secret is created `0600` from its first byte. Pass
+  `--mode` (e.g. `0640` for a service that reads it through its group). An
+  existing file keeps its owner and mode unless you pass `--mode`; the result
+  warns when every user on the host can read it.
+- The runnable never prints the value: the result, `edit-file`'s diff and any
+  error show the placeholder instead.
+- Every saved credential's secret is masked in tool output before the agent
+  (or an MCP client) sees it, so reading the file back returns the placeholder,
+  not the token.
+- The host records an `fs.secret_written` audit event with the path and the
+  credential ids, never the values.
+
+The agent is told which credentials it may write and how, in its system
+prompt. A placeholder naming a credential that isn't allowed, isn't scoped to
+the host, or has no secret saved stops the call before it runs, with the
+reason.
+
+From a shell (no console), set `RUNSPEC_SECRET_<NAME>` yourself and use the
+same placeholder. The console's masking doesn't cover those values.
+
+One limit: masking stops the value coming back to the model, not the file
+being read by something else on the host. A later `read-text-file` of that file
+also puts the value in that host's run log, which belongs to the venv owner —
+the same account that can read the file.

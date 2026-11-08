@@ -339,6 +339,18 @@ class InternalsMixin:
             "unless you need to force a specific one."
         )
 
+    def _secret_file_env(self, host: str, args: Any) -> Any:
+        """See :func:`bridge_secrets.secret_file_env`."""
+        from . import bridge_secrets
+
+        return bridge_secrets.secret_file_env(self, host, args)
+
+    def _mask_known_secrets(self, text: str) -> str:
+        """See :func:`bridge_secrets.mask_known_secrets`."""
+        from . import bridge_secrets
+
+        return bridge_secrets.mask_known_secrets(self, text)
+
     def _credential_env(
         self, host: str, runnable: str, ids: list[str] | None
     ) -> tuple[dict[str, str], list[str]]:
@@ -1921,6 +1933,11 @@ class InternalsMixin:
             saved_runs = [r for r in savedruns_mod.load_saved_runs() if r.get("id")]
         except Exception:
             saved_runs = []
+        from . import secret_files
+
+        file_creds = secret_files.file_credentials(
+            getattr(self, "_credentials", None) or []
+        )
         rota_on = bool(rota.get("enabled"))
         _mcp_status = getattr(self, "mcp_status", None)
         mcp_servers = (
@@ -1936,6 +1953,7 @@ class InternalsMixin:
             and not host_groups
             and not saved_runs
             and not mcp_servers
+            and not file_creds
         ):
             return ""  # nothing to say — keep the cached system prefix
 
@@ -2129,6 +2147,32 @@ class InternalsMixin:
                 "get its schema with describe_tool and run it with use_tool. They "
                 "run on an outside server, so most are confirm-gated unless the "
                 "operator marked the server trusted."
+            )
+
+        if file_creds:
+            lines.append("")
+            names = ", ".join(
+                "{{secret:"
+                + str(c.get("id"))
+                + "}}"
+                + f" ({c.get('label')}"
+                + (
+                    ", username: {{secret:" + str(c.get("id")) + ".username}}"
+                    if c.get("username")
+                    else ""
+                )
+                + ")"
+                for c in file_creds
+            )
+            lines.append(
+                "Secrets you may write into files: " + names + ". Put the "
+                "placeholder in the text you pass to filesystem write-file / "
+                "edit-file (e.g. a token in a config file); the host fills in the "
+                "value as it writes, so you never see it and you must never ask "
+                "for it. Each credential works only on the hosts it is scoped to. "
+                "A new file holding a secret starts 0600; pass --mode 0640 when a "
+                "service reads it through its group. Saved secrets in tool output "
+                "come back to you as their placeholder."
             )
 
         # One-liner about the per-session workspace so the agent reaches for the

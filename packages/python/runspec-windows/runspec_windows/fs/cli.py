@@ -18,13 +18,23 @@ import paths; the logic is the shared ``runspec_fs_core``.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import subprocess
 import sys
 from typing import Any
 
 import runspec as rs
-from runspec_fs_core import BecomeError, FsCoreError, build_become, current_user, escalation_supported
+from runspec_fs_core import (
+    BecomeError,
+    FsCoreError,
+    build_become,
+    current_user,
+    escalation_supported,
+    fill_verb_secrets,
+    mask_secrets,
+    mask_text,
+)
 
 from runspec_windows.fs._dispatch import run_verb
 
@@ -39,6 +49,31 @@ def _pair_edits(old_text: list[str], new_text: list[str]) -> list[list[str]]:
     if len(old_text) != len(new_text):
         raise ValueError(f"--old-text / --new-text count mismatch: {len(old_text)} vs {len(new_text)} (pair them by position)")
     return [[old, new] for old, new in zip(old_text, new_text, strict=False)]
+
+
+def _octal(mode: str | None) -> int | None:
+    """``--mode 0640`` -> ``0o640`` (``None`` when unset)."""
+    if not mode:
+        return None
+    try:
+        return int(mode, 8)
+    except ValueError:
+        raise ValueError(f"--mode must be octal permissions like 0600 or 0640, got {mode!r}") from None
+
+
+def _audit_secret_write(verb: str, kwargs: dict[str, Any], credential_ids: list[str], outcome: str) -> None:
+    """One ``fs.secret_written`` audit event when the text held ``{{secret:…}}``
+    placeholders: the path and credential ids, never the values."""
+    if not credential_ids:
+        return
+    # The audit must never break the write's own result.
+    with contextlib.suppress(Exception):
+        rs.audit(
+            "fs.secret_written",
+            outcome,
+            target={"path": str(kwargs.get("path", ""))},
+            detail={"verb": verb, "credentials": credential_ids, "dry_run": bool(kwargs.get("dry_run"))},
+        )
 
 
 def _verb_kwargs(spec: rs.RunSpec) -> dict[str, Any]:
@@ -68,12 +103,13 @@ def _verb_kwargs(spec: rs.RunSpec) -> dict[str, Any]:
     if command == "list-allowed-directories":
         return {}
     if command == "write-file":
-        return {"path": str(spec.path.value), "content": spec.content.value}
+        return {"path": str(spec.path.value), "content": spec.content.value, "mode": _octal(spec.mode.value)}
     if command == "edit-file":
         return {
             "path": str(spec.path.value),
             "edits": _pair_edits(spec.old_text.value, spec.new_text.value),
             "dry_run": spec.dry_run.value,
+            "mode": _octal(spec.mode.value),
         }
     if command == "create-directory":
         return {"path": str(spec.path.value)}
@@ -84,7 +120,7 @@ def _verb_kwargs(spec: rs.RunSpec) -> dict[str, Any]:
     raise SystemExit("no command — see `filesystem --help`")  # pragma: no cover
 
 
-def _run_as_worker(run_as: str, method: str, verb: str, kwargs: dict[str, Any]) -> str:
+def _run_as_worker(run_as: str, method: str, verb: str, kwargs: dict[str, Any], masks: dict[str, str] | None = None) -> str:
     """Re-invoke the verb as ``run_as`` via the worker under sudo/su and return
     its stdout. Raises :class:`BecomeError` on an escalation failure (a
     passwordless-sudo hint on the classic cases)."""
@@ -106,7 +142,7 @@ def _run_as_worker(run_as: str, method: str, verb: str, kwargs: dict[str, Any]) 
         # it through with the worker's exit code rather than masking it.
         out = (proc.stdout or "").strip()
         if out:
-            print(out)
+            print(mask_text(out, masks or {}))
             sys.exit(proc.returncode)
         raise BecomeError(err or f"run-as {run_as!r} failed (exit {proc.returncode})")
     return proc.stdout
@@ -116,17 +152,33 @@ def main() -> None:
     spec = rs.parse("filesystem")
     run_as = spec.run_as.value
     method = spec.become_method.value
+    verb = spec.runspec_command
+    kwargs: dict[str, Any] = {}
+    masks: dict[str, str] = {}
+    credential_ids: list[str] = []
     try:
         kwargs = _verb_kwargs(spec)
+        # {{secret:<id>}} placeholders are filled here, before any --run-as
+        # hand-off (sudo drops the environment; the worker gets the filled text
+        # on stdin). The values are masked back out of everything printed.
+        kwargs, masks, credential_ids = fill_verb_secrets(verb, kwargs)
         if run_as and run_as != current_user():
-            out = _run_as_worker(run_as, method, spec.runspec_command, kwargs)
+            try:
+                out = _run_as_worker(run_as, method, verb, kwargs, masks)
+            except SystemExit:
+                _audit_secret_write(verb, kwargs, credential_ids, "failed")
+                raise
+            _audit_secret_write(verb, kwargs, credential_ids, "succeeded")
+            out = mask_text(out, masks)
             sys.stdout.write(out if out.endswith("\n") else out + "\n")
             return
-        result = run_verb(spec.runspec_command, kwargs)
+        result = run_verb(verb, kwargs)
     except (FsCoreError, OSError, ValueError) as exc:
-        _emit({"error": str(exc), "kind": type(exc).__name__})
+        _audit_secret_write(verb, kwargs, credential_ids, "failed")
+        _emit(mask_secrets({"error": str(exc), "kind": type(exc).__name__}, masks))
         sys.exit(1)
-    _emit(result)
+    _audit_secret_write(verb, kwargs, credential_ids, "succeeded")
+    _emit(mask_secrets(result, masks))
 
 
 if __name__ == "__main__":

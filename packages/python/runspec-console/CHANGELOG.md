@@ -9,6 +9,33 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.390.0] — 2026-11-08
+
+### Added
+
+- **The agent can write a saved secret into a file without seeing it.** A
+  runnable's args may hold `{{secret:<credential>}}` (or
+  `{{secret:<credential>.username}}`) — e.g. a Grafana Cloud token in an
+  Alloy config written with `filesystem write-file`. Before the run the console
+  resolves each placeholder (`secret_files.resolve`, `bridge_secrets`), reads
+  the credential from the keychain and sends it on stdin in the env frame as
+  `RUNSPEC_SECRET_<NAME>`; the host's `filesystem` runnable (runspec-fs 0.6.0,
+  runspec-linux 0.21.0, runspec-windows 0.11.0) fills it in as it writes. The
+  confirm card, args and History keep the placeholder. Works on the agent,
+  Forms, MCP server and rule/schedule paths.
+- **Opt-in per credential:** a new **Agent may write this into files** switch
+  in Settings → Credentials (`write_to_files = true`), off by default, plus the
+  credential's host scope. A placeholder naming a credential that isn't
+  allowed, isn't scoped to the host, or has no secret stops the run before it
+  starts with the reason. Allowed rows carry an **into files** tag, and the
+  agent's console context lists the placeholders it may use.
+- **An agent or MCP-client call carrying a placeholder is always at least
+  `confirm`**, whatever the runnable's own level.
+- **Saved secrets are masked in tool output.** Every saved credential's secret
+  is replaced with its placeholder in tool results before the model, a run
+  card's transcript or an MCP client sees them (keychain read at most once a
+  minute), so reading a file back can't hand the value over.
+
 ## [0.389.0] — 2026-11-07
 
 ### Added

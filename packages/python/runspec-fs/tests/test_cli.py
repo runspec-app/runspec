@@ -166,3 +166,65 @@ def test_run_as_current_user_skips_escalation(tmp_path: Path) -> None:
         tmp_path,
     )
     assert "hi.txt" in {e["name"] for e in out["entries"]}
+
+
+# ── {{secret:<id>}} placeholders (end to end) ───────────────────────────────
+
+SECRET = "glc_s3cr3t-token-value"
+
+
+def _run_fs_raw(argv: list[str], tmp_path: Path, extra_env: dict[str, str]) -> subprocess.CompletedProcess:
+    env = {**os.environ, "RUNSPEC_CONFIG": str(SPEC), **extra_env}
+    return subprocess.run(
+        [sys.executable, "-c", "from runspec_fs.cli import main; main()", *argv],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=tmp_path,
+    )
+
+
+def test_write_file_fills_secret_and_never_prints_it(tmp_path: Path) -> None:
+    cfg = tmp_path / "config.alloy"
+    content = 'username = "{{secret:grafana-cloud.username}}"\npassword = "{{secret:grafana-cloud}}"\n'
+    proc = _run_fs_raw(
+        ["write-file", "--path", str(cfg), "--content", content],
+        tmp_path,
+        {"RUNSPEC_SECRET_GRAFANA_CLOUD": SECRET, "RUNSPEC_SECRET_GRAFANA_CLOUD__USERNAME": "123456"},
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert cfg.read_text() == f'username = "123456"\npassword = "{SECRET}"\n'
+    assert SECRET not in proc.stdout and SECRET not in proc.stderr
+    if os.name == "posix":
+        assert json.loads(proc.stdout.strip().splitlines()[-1])["mode"] == "0600"
+
+
+def test_edit_file_diff_is_masked(tmp_path: Path) -> None:
+    cfg = tmp_path / "config.alloy"
+    cfg.write_text('password = "CHANGE_ME"\n')
+    proc = _run_fs_raw(
+        ["edit-file", "--path", str(cfg), "--old-text", "CHANGE_ME", "--new-text", "{{secret:grafana-cloud}}"],
+        tmp_path,
+        {"RUNSPEC_SECRET_GRAFANA_CLOUD": SECRET},
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert cfg.read_text() == f'password = "{SECRET}"\n'
+    out = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert "{{secret:grafana-cloud}}" in out["diff"]
+    assert SECRET not in proc.stdout and SECRET not in proc.stderr
+
+
+def test_missing_secret_writes_nothing(tmp_path: Path) -> None:
+    cfg = tmp_path / "config.alloy"
+    proc = _run_fs_raw(["write-file", "--path", str(cfg), "--content", "{{secret:grafana-cloud}}"], tmp_path, {})
+    assert proc.returncode == 1
+    assert "RUNSPEC_SECRET_GRAFANA_CLOUD" in proc.stdout
+    assert not cfg.exists()
+
+
+def test_verb_kwargs_mode() -> None:
+    h = _harness()
+    spec = h.expect_ok(["write-file", "--path", "a", "--content", "x", "--mode", "0640"])
+    assert _verb_kwargs(spec)["mode"] == 0o640
+    h.expect_exit(["write-file", "--path", "a", "--content", "x", "--mode", "rw-r"], code=None, contains="mode")
+    h.close()

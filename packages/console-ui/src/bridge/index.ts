@@ -246,6 +246,9 @@ export interface Credential {
   public_key?: string    // ssh-key: path to the public key file (optional)
   scope_hosts?: string[]
   scope_runnables?: string[]
+  // The agent may write this credential into files it writes, as a
+  // {{secret:<id>}} placeholder the host fills in (never ssh-key).
+  write_to_files?: boolean
   has_secret?: boolean   // ssh-key: a key passphrase is stored
   secret?: string   // write-only; never returned by list_credentials
 }

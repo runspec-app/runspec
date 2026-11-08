@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 
+from . import bridge_secrets
 from . import bridge_utils as utils_mod
 from . import config as config_mod
 from . import executor as executor_mod
@@ -196,6 +197,13 @@ class InvokeMixin:
         # the audit record.
         cred_env, applied_creds = self._credential_env(host, runnable, credential_ids)
         cred_env.update(dbg_env)
+        # {{secret:<credential>}} placeholders → RUNSPEC_SECRET_* for the host to
+        # fill in (see secret_files); a refused one stops the run before it starts.
+        secret_file = bridge_secrets.secret_file_env(self, host, args)
+        if secret_file is not None:
+            if secret_file.errors:
+                raise ValueError(secret_file.error)
+            cred_env.update(secret_file.env)
         # Also honour the selected credentials' *arg-bindings* (username_arg →
         # argv, secret_arg → the env channel), so a runnable that reads its
         # credential from args — not bare env vars — works on the Forms run path

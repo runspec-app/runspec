@@ -112,20 +112,22 @@ autonomy = "autonomous"
 # ── mutations → confirm ────────────────────────────────────────────────────
 
 [filesystem.commands.write-file]
-description = "Create a new file or overwrite an existing one with UTF-8 text"
+description = "Create a new file or overwrite an existing one with UTF-8 text. Text may hold {{secret:<credential id>}} (or {{secret:<id>.username}}) placeholders: the value is filled in on the host just before writing and never appears in the call, its output or the run record. runspec-console sends the named saved credential; from a shell, set RUNSPEC_SECRET_<ID> (id upper-cased, other characters as _). A new file holding a secret is created 0600 unless --mode says otherwise."
 autonomy = "confirm"
 [filesystem.commands.write-file.args]
 path = {type = "path", required = true, description = "File to write"}
-content = {type = "str", required = true, description = "File contents"}
+content = {type = "str", required = true, description = "File contents (may hold {{secret:<credential id>}} placeholders)"}
+mode = {type = "str", required = false, pattern = "^0?[0-7]{3,4}$", description = "Octal permissions to set before writing, e.g. 0600 (owner only) or 0640 (owner + group, for a service that reads the file through its group). An existing file otherwise keeps its owner and mode; a new one holding a secret starts at 0600."}
 
 [filesystem.commands.edit-file]
-description = "Apply ordered old→new substring replacements to a file; returns a unified diff. Pair each --old-text with a --new-text by position."
+description = "Apply ordered old→new substring replacements to a file; returns a unified diff. Pair each --old-text with a --new-text by position. New text may hold {{secret:<credential id>}} placeholders (see write-file); filled values are shown as the placeholder in the diff."
 autonomy = "confirm"
 [filesystem.commands.edit-file.args]
 path = {type = "path", required = true, description = "File to edit"}
 old-text = {type = "str", multiple = true, required = true, description = "Text to find (repeat --old-text; paired by position with --new-text)"}
 new-text = {type = "str", multiple = true, required = true, description = "Replacement text (repeat --new-text; paired by position with --old-text)"}
 dry-run = {type = "flag", default = false, description = "Compute and diff the edits without writing"}
+mode = {type = "str", required = false, pattern = "^0?[0-7]{3,4}$", description = "Octal permissions to set before writing, e.g. 0600 (owner only) or 0640 (owner + group, for a service that reads the file through its group). An existing file otherwise keeps its owner and mode; a new one holding a secret starts at 0600."}
 
 [filesystem.commands.create-directory]
 description = "Create a directory (and any missing parents); idempotent"

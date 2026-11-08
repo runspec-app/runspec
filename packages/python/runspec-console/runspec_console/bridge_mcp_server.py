@@ -27,9 +27,11 @@ import time
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from . import bridge_secrets
 from . import config as config_mod
 from . import bridge_utils as utils_mod
 from . import mcp_server as mcp_server_mod
+from . import secret_files
 from .bridge_const import _MCP_SERVER_BUILTIN_NAMES, logger
 from .session import new_mcp
 
@@ -69,6 +71,10 @@ class McpServerMixin:
         if resolve_error:
             return (resolve_error, True)
         level = (level or "confirm").lower()
+        if level in ("autonomous", "supervised") and secret_files.has_placeholders(
+            args
+        ):
+            level = "confirm"  # a person approves every write of a saved secret
         display = "_".join([tool.runnable] + list(command_path))
         if host and tool.host_options:
             display = f"{display}@{host}"  # multi-host runnable: show the target
@@ -473,7 +479,10 @@ class McpServerMixin:
             return (f"Failed to start '{tool.runnable}': {exc}", True)
 
         done.wait()
-        text = "\n".join(state["lines"]).strip() or "(no output)"
+        text = (
+            bridge_secrets.mask_known_secrets(self, "\n".join(state["lines"]).strip())
+            or "(no output)"
+        )
         exit_code = state["exit"] if state["exit"] is not None else -1
         if card_id:
             self._mcp_server_card(

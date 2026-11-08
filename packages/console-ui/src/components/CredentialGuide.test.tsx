@@ -95,6 +95,26 @@ describe('Credentials helper', () => {
     })
   })
 
+  it('"into files" is off by default, saves when ticked, and tags the row', async () => {
+    listCreds.mockResolvedValue([
+      { id: 'g', label: 'Grafana', kind: 'token', has_secret: true, write_to_files: true },
+      { id: 'odd', label: 'Jira PAT', kind: 'token', has_secret: true },
+    ])
+    render(<CredentialsTab />)
+    const row = await screen.findByTestId('cred-row-g')
+    expect(within(row).getByText('into files')).toBeTruthy()
+    expect(within(screen.getByTestId('cred-row-odd')).queryByText('into files')).toBeNull()
+
+    const card = await screen.findByTestId('cred-need-JIRA')
+    await userEvent.click(within(card).getByRole('button', { name: /Add token/ }))
+    const sw = await screen.findByRole('switch', { name: 'Agent may write this into files' })
+    expect(sw.getAttribute('aria-checked')).toBe('false')
+    await userEvent.click(sw)
+    await userEvent.click(screen.getByRole('button', { name: /Save/ }))
+    await waitFor(() => expect(save).toHaveBeenCalled())
+    expect(save.mock.calls[0][0]).toMatchObject({ label: 'Jira', write_to_files: true })
+  })
+
   it('shows what a credential is used by, a fix for an unused one, and broken feature refs', async () => {
     const onOpenTab = vi.fn()
     render(<CredentialsTab onOpenTab={onOpenTab} />)
