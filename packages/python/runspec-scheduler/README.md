@@ -96,12 +96,17 @@ runspec-scheduler add --id poll   --runnable healthcheck --every 15m --args '{"l
 runspec-scheduler add --id report --runnable report --cron '0 6 * * *' --timeout 30m --catch-up
 runspec-scheduler list
 runspec-scheduler status
+runspec-scheduler watch             # status kept on screen, redrawn every 5 s (Ctrl+C)
 runspec-scheduler run-now --id poll
 runspec-scheduler run-now --id nightly --detach   # start it in the background and return
 runspec-scheduler remove --id poll
 runspec-scheduler use daemon        # or: use cron
 ```
 
+- At a terminal every verb prints text: a sentence on what happened, and the
+  schedules as a table (`status` adds what's failing, who is on it and the last
+  lines of its output). Piped, from a script or from runspec-console it prints
+  JSON; `--json` gives JSON at a terminal too.
 - Exactly one of `--cron` (5 fields, or `@hourly` / `@daily` / `@midnight` /
   `@weekly` / `@monthly` / `@yearly`) or `--every` (`15m` / `1h` / `1d`; daemon
   backend only).
