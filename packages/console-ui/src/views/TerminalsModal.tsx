@@ -6,15 +6,16 @@
  * connection, so a dormant host opens fine), with quick-pick by group and by
  * profile, and an "Arrange" choice (grid / compact grid / side by side / stacked / cascade /
  * don't arrange) that lays the new windows out on the console's monitor
- * (Windows, best-effort; remembered per machine).
+ * (Windows, best-effort; remembered per machine). "Open the Send to terminals
+ * bar" (also remembered) opens the bar that types one command into many of them.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Modal, Alert, Button, Select, Space, Typography, message } from 'antd'
+import { Modal, Alert, Button, Checkbox, Select, Space, Typography, message } from 'antd'
 import { CodeOutlined } from '@ant-design/icons'
 import { bridge, type HostProfile, type JumpHost, type LaunchTerminalsResult } from '../bridge'
 import {
   GRID_MAX, LAYOUT_OPTIONS, addToSelection, hostsInGroup, hostsInProfile, launchWithLayout, readLayoutPref,
-  writeLayoutPref, type TerminalLayout,
+  readSendBarPref, writeLayoutPref, writeSendBarPref, type TerminalLayout,
 } from './terminals'
 import { MONO_FONT, textMuted, useIsDark } from '../ThemeContext'
 
@@ -36,6 +37,7 @@ export function TerminalsModal({ open, onClose, initial, connected }: TerminalsM
   const [profiles, setProfiles] = useState<HostProfile[]>([])
   const [selected, setSelected] = useState<string[]>([])
   const [layout, setLayout] = useState<TerminalLayout>(readLayoutPref)
+  const [sendBar, setSendBar] = useState<boolean>(readSendBarPref)
   const [busy, setBusy] = useState(false)
   const [errors, setErrors] = useState<LaunchTerminalsResult['errors']>([])
 
@@ -75,8 +77,9 @@ export function TerminalsModal({ open, onClose, initial, connected }: TerminalsM
     if (!selected.length) return
     setBusy(true)
     writeLayoutPref(layout)
+    writeSendBarPref(sendBar)
     try {
-      const res = await launchWithLayout(selected, layout)
+      const res = await launchWithLayout(selected, layout, sendBar)
       if (res.errors.length) {
         setErrors(res.errors)
         if (res.opened.length) message.success(`Opened ${res.opened.length} terminal${res.opened.length === 1 ? '' : 's'}`)
@@ -174,6 +177,14 @@ export function TerminalsModal({ open, onClose, initial, connected }: TerminalsM
             With more than {GRID_MAX} windows a grid cell gets too small to read, so they may be cascaded instead.
           </Text>
         )}
+        <div>
+          <Checkbox checked={sendBar} onChange={e => setSendBar(e.target.checked)}>
+            Open the Send to terminals bar
+          </Checkbox>
+          <div style={{ fontSize: 12, color: textMuted(isDark), marginLeft: 24 }}>
+            Type a command once and it's typed into every ticked terminal. Windows only.
+          </div>
+        </div>
         {errors.length > 0 && (
           <Alert
             type="warning"

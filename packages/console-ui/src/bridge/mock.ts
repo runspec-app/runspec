@@ -1,4 +1,4 @@
-import type { BridgeApi, ProvisionOpRecord, ProvisionPayload, DeprovisionPayload, VenvUpdatePayload, ProvisionResult, ChatSessionInfo, MarketplaceRepo, MarketplaceEntry, MarketplaceTarget, MarketplaceInstalledTarget, MarketplaceOpRecord, MarketplaceOpPayload, MarketplaceOpResult, Host, JumpHost, Runnable, HistoryRecord, RunningRun, Schedule, InFlightRecord, TestResult, AnalyticsData, AnalyticsBucket, TriggerCard, KnowledgeFact, KnowledgeNode, KnowledgeEdge, KnowledgeFactInput, EnvFileSaveRow, SavedTransfer, SharedSchedulesVenv, SharedScheduleRun, RunNote } from './index'
+import type { BridgeApi, ProvisionOpRecord, ProvisionPayload, DeprovisionPayload, VenvUpdatePayload, ProvisionResult, ChatSessionInfo, MarketplaceRepo, MarketplaceEntry, MarketplaceTarget, MarketplaceInstalledTarget, MarketplaceOpRecord, MarketplaceOpPayload, MarketplaceOpResult, Host, JumpHost, Runnable, HistoryRecord, RunningRun, Schedule, InFlightRecord, TestResult, AnalyticsData, AnalyticsBucket, TriggerCard, KnowledgeFact, KnowledgeNode, KnowledgeEdge, KnowledgeFactInput, EnvFileSaveRow, SavedTransfer, SharedSchedulesVenv, SharedScheduleRun, RunNote, TerminalWindow } from './index'
 
 // Facts the knowledge_overview mock built, so knowledge_page / knowledge_search agree with it.
 let _mockKnowledgeFacts: KnowledgeFact[] = []
@@ -868,6 +868,14 @@ const _mockSavedTransfers: SavedTransfer[] = [
     source: 'this computer', dest: 'group Production:/srv/app/config', direction: 'push', autonomy: 'confirm',
     params: [], paramsRaw: {},
   },
+]
+
+// PuTTY windows the mock "opened" — listed by the Send to terminals bar
+// (open the dev preview at #send-bar). Two to start with, one still opening.
+const mockTerminalWindows: TerminalWindow[] = [
+  { id: '1', host: 'web-01', ready: true },
+  { id: '2', host: 'web-02', ready: true },
+  { id: '3', host: 'db-01', ready: false },
 ]
 
 export const mockApi: BridgeApi = {
@@ -2355,9 +2363,30 @@ export const mockApi: BridgeApi = {
 
     return id
   },
-  launch_terminals: async (hosts: string[], tile = true, layout = 'grid') => {
-    console.log('mock: launch_terminals', hosts, tile, layout)
-    return { opened: hosts, errors: [], tiling: tile && hosts.length > 1 }
+  launch_terminals: async (hosts: string[], tile = true, layout = 'grid', send_bar = false) => {
+    console.log('mock: launch_terminals', hosts, tile, layout, send_bar)
+    for (const h of hosts) mockTerminalWindows.push({ id: String(mockTerminalWindows.length + 100), host: h, ready: true })
+    return { opened: hosts, errors: [], tiling: tile && hosts.length > 1, send_bar }
+  },
+  terminal_windows: async () => ({
+    supported: true,
+    windows: [...mockTerminalWindows],
+    keys: ['enter', 'tab', 'esc', 'backspace', 'ctrl-c', 'ctrl-d', 'ctrl-z', 'ctrl-l', 'ctrl-r', 'up', 'down', 'left', 'right'],
+  }),
+  send_to_terminals: async (ids: string[], text = '', enter = true, key = '', hidden = false) => {
+    console.log('mock: send_to_terminals', ids, hidden ? '«hidden»' : text, enter, key)
+    const byId = new Map(mockTerminalWindows.map(w => [w.id, w]))
+    const picked = ids.map(id => byId.get(id)).filter((w): w is TerminalWindow => !!w)
+    return { sent: picked.filter(w => w.ready).map(w => w.host), missing: picked.filter(w => !w.ready).map(w => w.host) }
+  },
+  focus_terminal: async (id: string) => { console.log('mock: focus_terminal', id); return true },
+  forget_terminals: async (ids?: string[]) => {
+    const drop = new Set(ids ?? mockTerminalWindows.map(w => w.id))
+    for (let i = mockTerminalWindows.length - 1; i >= 0; i--) if (drop.has(mockTerminalWindows[i].id)) mockTerminalWindows.splice(i, 1)
+  },
+  open_send_bar: async () => {
+    window.open(`${window.location.pathname}${window.location.search}#send-bar`, 'send-bar', 'width=820,height=230')
+    return { opened: true, existing: false }
   },
   launch_terminal: async (host: string): Promise<void> => {
     console.log('mock: launch_terminal', host)

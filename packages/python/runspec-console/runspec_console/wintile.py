@@ -161,6 +161,33 @@ def _work_area() -> Rect | None:
         return None
 
 
+def split_bottom(area: Rect, height: int) -> tuple[Rect | None, Rect]:
+    """``(strip, rest)``: a ``height``-pixel strip along the bottom of ``area``
+    and what is left above it. No strip (``None``, ``area`` unchanged) when
+    ``height`` is 0 or would leave less than ``MIN_TILE_H`` above."""
+    ax, ay, aw, ah = area
+    if height <= 0 or ah - height < MIN_TILE_H:
+        return None, area
+    return (ax, ay + ah - height, aw, height), (ax, ay, aw, ah - height)
+
+
+def _place_titled(title: str, rect: Rect, deadline: float) -> bool:
+    """Move the top-level window titled ``title`` into ``rect``, waiting for it
+    to appear until ``deadline``. Best-effort."""
+    import ctypes
+
+    user32 = ctypes.windll.user32
+    while True:
+        hwnd = user32.FindWindowW(None, title)
+        if hwnd or time.monotonic() >= deadline:
+            break
+        time.sleep(0.2)
+    if not hwnd:
+        return False
+    x, y, w, h = rect
+    return bool(user32.SetWindowPos(hwnd, None, x, y, w, h, 0x0004 | 0x0010))
+
+
 def _find_windows(pids: Sequence[int], window_class: str) -> dict[int, int]:
     """``{pid: hwnd}`` for each pid's visible top-level window of
     ``window_class`` (PuTTY's main window class is ``"PuTTY"``)."""
@@ -195,9 +222,15 @@ def tile_process_windows(
     window_class: str = "PuTTY",
     timeout: float = 15.0,
     poll: float = 0.25,
+    reserve_bottom: int = 0,
+    place_title: str | None = None,
 ) -> int:
     """Wait (up to ``timeout``) for each pid's window, then arrange them on the
     console's monitor in ``pids`` order using ``layout`` (see ``tile_rects``). Returns how many were moved.
+
+    ``reserve_bottom`` (logical pixels, scaled by the monitor's DPI) keeps a
+    strip along the bottom of the screen free; the window titled
+    ``place_title`` (the *Send to terminals* bar) is moved into it.
 
     Windows-only and best-effort — returns 0 elsewhere or on any error. Runs
     for up to ``timeout`` seconds, so call it from a background thread."""
@@ -231,6 +264,9 @@ def tile_process_windows(
                 dpi = int(user32.GetDpiForWindow(ordered[0]))
                 if dpi > 0:
                     scale = dpi / 96
+        strip, area = split_bottom(area, int(reserve_bottom * scale))
+        if strip is not None and place_title:
+            _place_titled(place_title, strip, deadline)
         rects = tile_rects(len(ordered), area, layout=layout, scale=scale)
         SW_RESTORE = 9
         SWP_NOZORDER, SWP_NOACTIVATE = 0x0004, 0x0010

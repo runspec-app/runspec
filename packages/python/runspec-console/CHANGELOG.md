@@ -9,6 +9,29 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.393.0] — 2026-11-09
+
+### Added
+
+- **Send to terminals (Windows).** Type one command and have it typed into many
+  PuTTY windows at once, like PuTTY Command Sender / MTPuTTY. **Open SSH
+  terminals…** has a new **Open the Send to terminals bar** option (remembered):
+  the terminals are tiled above a strip at the bottom of the screen, and a small
+  always-on-top bar opens there. It lists each terminal the console opened with a
+  tick box and a bring-to-front button. **Enter** sends the line to every ticked
+  terminal (Shift+Enter adds a line, ↑/↓ recall earlier lines in memory only).
+  Key buttons press Enter, Ctrl+C, Ctrl+D, Tab, Esc and the arrows, and a lock
+  button switches to a hidden field for a password, which is never shown, kept or
+  audited. Sending to more than 10 terminals asks first, once per set. Each send
+  is a `terminal.send` audit event (hosts + text). The bar is also under **Send
+  to terminals…** in host and group menus and the Ctrl+K palette. Characters go to
+  each window as `WM_CHAR` messages (cursor keys as extended `WM_KEYDOWN`), so
+  each window stays a normal PuTTY session and `sudo -iu` and prompts work as
+  usual. Human-only: none of it is an agent or console MCP server tool. (`termsend.py`,
+  `bridge_termsend.py` `terminal_windows`/`send_to_terminals`/`focus_terminal`/
+  `forget_terminals`/`open_send_bar`, `launch_terminals(send_bar=)`,
+  `wintile.split_bottom`, `views/SendBar.tsx`, `main.tsx` `#send-bar`.)
+
 ## [0.392.1] — 2026-11-09
 
 ### Fixed

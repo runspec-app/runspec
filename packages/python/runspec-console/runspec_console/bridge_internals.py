@@ -6,6 +6,7 @@ instance, so ``self`` carries all shared state.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import random
 import sys
@@ -188,10 +189,17 @@ class InternalsMixin:
         """
         import subprocess as _sp
 
-        _sp.Popen(self._putty_command(host))
+        proc = _sp.Popen(self._putty_command(host))
+        # Listed in the Send to terminals bar (bridge_termsend).
+        with contextlib.suppress(Exception):
+            self._register_terminals([(host, int(proc.pid))])
 
     def launch_terminals(
-        self, hosts: list[str], tile: bool = True, layout: str = "grid"
+        self,
+        hosts: list[str],
+        tile: bool = True,
+        layout: str = "grid",
+        send_bar: bool = False,
     ) -> dict[str, Any]:
         """Open a PuTTY window on each of ``hosts`` at once, optionally tiled.
 
@@ -203,8 +211,12 @@ class InternalsMixin:
         ``columns`` / ``rows`` / ``cascade`` (``wintile.LAYOUTS``; anything
         else ⇒ ``grid``).
 
+        Every window opened is listed in the *Send to terminals* bar
+        (``bridge_termsend``). ``send_bar`` also opens that bar (Windows) and,
+        when tiling, keeps a strip along the bottom of the screen free for it.
+
         Returns ``{"opened": [host…], "errors": [{"host", "error"}…],
-        "tiling": bool}``.
+        "tiling": bool, "send_bar": bool}``.
         """
         import subprocess as _sp
 
@@ -224,18 +236,36 @@ class InternalsMixin:
                 continue
             opened.append(name)
             pids.append(proc.pid)
-        tiling = bool(tile and len(pids) > 1 and sys.platform == "win32")
+        with contextlib.suppress(Exception):
+            self._register_terminals(list(zip(opened, pids)))
+        bar = False
+        if send_bar and opened and sys.platform == "win32":
+            try:
+                self.open_send_bar()
+                bar = True
+            except Exception as exc:  # noqa: BLE001 — the terminals still opened
+                errors.append({"host": "Send to terminals", "error": str(exc)})
+        tiling = bool(
+            tile and (len(pids) > 1 or (bar and pids)) and sys.platform == "win32"
+        )
         if tiling:
             from . import wintile
+            from .bridge_termsend import SEND_BAR_HEIGHT, SEND_BAR_TITLE
 
+            kwargs: dict[str, Any] = {
+                "layout": layout if layout in wintile.LAYOUTS else "grid"
+            }
+            if bar:
+                kwargs["reserve_bottom"] = SEND_BAR_HEIGHT
+                kwargs["place_title"] = SEND_BAR_TITLE
             threading.Thread(
                 target=wintile.tile_process_windows,
                 args=(pids,),
-                kwargs={"layout": layout if layout in wintile.LAYOUTS else "grid"},
+                kwargs=kwargs,
                 name="tile-terminals",
                 daemon=True,
             ).start()
-        return {"opened": opened, "errors": errors, "tiling": tiling}
+        return {"opened": opened, "errors": errors, "tiling": tiling, "send_bar": bar}
 
     def terminal_themes(self) -> list[dict[str, Any]]:
         """The PuTTY colour themes for Settings → SSH → Terminal look (id,

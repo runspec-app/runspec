@@ -47,11 +47,43 @@ export function writeLayoutPref(layout: TerminalLayout): void {
   }
 }
 
-/** The bridge call for a layout: `none` turns tiling off. */
-export function launchWithLayout(hosts: string[], layout: TerminalLayout): Promise<LaunchTerminalsResult> {
-  return layout === 'none'
-    ? bridge.launch_terminals(hosts, false)
-    : bridge.launch_terminals(hosts, true, layout)
+const SEND_BAR_KEY = 'rs.terminals.sendBar'
+
+/** Whether opening terminals also opens the Send to terminals bar (off by default). */
+export function readSendBarPref(): boolean {
+  try {
+    return localStorage.getItem(SEND_BAR_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+export function writeSendBarPref(on: boolean): void {
+  try {
+    localStorage.setItem(SEND_BAR_KEY, on ? '1' : '0')
+  } catch {
+    /* blocked storage — off is the default */
+  }
+}
+
+/** The bridge call for a layout: `none` turns tiling off. `sendBar` also opens
+ *  the Send to terminals bar (and keeps a strip free for it when tiling). */
+export function launchWithLayout(
+  hosts: string[], layout: TerminalLayout, sendBar = false,
+): Promise<LaunchTerminalsResult> {
+  if (layout === 'none') {
+    return sendBar ? bridge.launch_terminals(hosts, false, undefined, true) : bridge.launch_terminals(hosts, false)
+  }
+  return sendBar ? bridge.launch_terminals(hosts, true, layout, true) : bridge.launch_terminals(hosts, true, layout)
+}
+
+/** Open (or bring back) the Send to terminals bar, reporting a failure as a toast. */
+export async function openSendBar(): Promise<void> {
+  try {
+    await bridge.open_send_bar()
+  } catch (err) {
+    message.error((err as Error)?.message || 'could not open the Send to terminals bar')
+  }
 }
 
 /** Host names in a sidebar group (`''` = ungrouped), in config order. */
@@ -75,7 +107,7 @@ export function addToSelection(prev: string[], add: string[]): string[] {
 export async function openTerminals(hosts: string[]): Promise<LaunchTerminalsResult | null> {
   if (!hosts.length) return null
   try {
-    const res = await launchWithLayout(hosts, readLayoutPref())
+    const res = await launchWithLayout(hosts, readLayoutPref(), readSendBarPref())
     if (res.errors.length) {
       message.warning(
         `Opened ${res.opened.length} of ${hosts.length}. ` +

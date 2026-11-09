@@ -36,11 +36,12 @@ import {
   CloudServerOutlined,
   TeamOutlined,
   MinusOutlined,
+  SendOutlined,
 } from '@ant-design/icons'
 import { ConsoleView } from './views/ConsoleView'
 import { useWaitingCue } from './useWaitingCue'
 import { matchRunnableForEdit, resolveCommandPath, toCommandPath } from './views/formsMatch'
-import { openTerminals as openGroupTerminals } from './views/terminals'
+import { openTerminals as openGroupTerminals, openSendBar } from './views/terminals'
 import { OtherHostsSection, profileEditNote, type SyncSource } from './components/OtherHostsSection'
 import type { PendingForm } from './views/FormsView'
 // Code-split: everything below is off the Console tab's first-paint path, so it
@@ -1088,6 +1089,7 @@ export default function App() {
     act('refresh', 'Refresh hosts', () => { if (!refreshingHosts) refreshHosts() }, shortcutHint('refreshHosts'))
     act('settings', 'Open Settings', () => openSettings(), shortcutHint('settings'))
     act('transfer', 'Transfer files (SFTP)', () => setTransferOpen(true))
+    act('sendBar', 'Send to terminals', () => { void openSendBar() })
     act('theme', isDark ? 'Switch to light theme' : 'Switch to dark theme', toggleTheme)
     act('docs', 'Open documentation', () => { bridge.open_docs().catch(console.error) })
     act('help', 'Keyboard shortcuts', () => setShortcutsOpen(true), shortcutHint('help'))
@@ -1300,6 +1302,12 @@ export default function App() {
                               label: 'Open SSH terminals…',
                               onClick: () => setTerminalsFor([h.name]),
                             },
+                            {
+                              key: 'send_bar',
+                              icon: <SendOutlined />,
+                              label: 'Send to terminals…',
+                              onClick: () => { void openSendBar() },
+                            },
                             ...(activeProfile ? [
                               { type: 'divider' as const },
                               {
@@ -1394,6 +1402,12 @@ export default function App() {
                                   icon: <CodeOutlined />,
                                   label: 'Choose hosts…',
                                   onClick: () => setTerminalsFor(remoteMembers.map(m => m.name)),
+                                },
+                                {
+                                  key: 'group_send_bar',
+                                  icon: <SendOutlined />,
+                                  label: 'Send to terminals…',
+                                  onClick: () => { void openSendBar() },
                                 },
                               ],
                             }}
