@@ -2729,7 +2729,7 @@ export function FiltersTab() {
       <input ref={fileInputRef} type="file" accept=".toml" style={{ display: 'none' }} onChange={handleImport} />
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <Text type="secondary" style={{ fontSize: 13 }}>
-          Saved to <code>runspec_filters.toml</code>. Pick one in the Relay or Transfer dialog to filter on the source host.
+          Saved to <code>runspec_filters.toml</code>. Pick one when you drop files in the Files tab to filter on the source host.
         </Text>
         <Space size={6}>
           <Button size="small" icon={<UploadOutlined />} onClick={() => fileInputRef.current?.click()} disabled={isEditing}>Import</Button>

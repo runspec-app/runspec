@@ -178,6 +178,8 @@ EXPECTED = {
     "list_conversations",
     "list_credentials",
     "list_dir",
+    "make_dir",
+    "view_file",
     "list_dir_adhoc",
     "list_dir_unsaved",
     "list_eval_fixtures",

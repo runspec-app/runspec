@@ -854,6 +854,7 @@ function mockProvisionOp(kind: 'provision' | 'deprovision' | 'update', hosts: st
   return Promise.resolve({ op, hosts })
 }
 
+const _mockMadeDirs: { parent: string; name: string }[] = []
 const _mockSavedTransfers: SavedTransfer[] = [
   {
     id: 'app-logs', title: 'App logs for a day', description: 'The app log (and its rotations) for one day',
@@ -910,6 +911,16 @@ export const mockApi: BridgeApi = {
   get_runnables: async (_host) => MOCK_RUNNABLES,
   discovery_state: async () => ({ ready: true, done: 1, total: 1 }),
   list_dir: async (_host, path = '', _group, dirsOnly = false, _runnable, asServiceAccount = false) => {
+    if (_host === 'local') {
+      const cwd = path || '/home/demo/.runspec-console/workspaces/chat-demo'
+      const entries = [
+        { name: 'diagrams', type: 'directory' as const, size: 4096, mtime: Math.floor(Date.now() / 1000) - 3600 },
+        { name: 'notes.md', type: 'file' as const, size: 2150, mtime: Math.floor(Date.now() / 1000) - 900 },
+        { name: 'orders-trace.txt', type: 'file' as const, size: 48_900, mtime: Math.floor(Date.now() / 1000) - 1500 },
+        ..._mockMadeDirs.filter(d => d.parent === cwd).map(d => ({ name: d.name, type: 'directory' as const, size: 4096, mtime: Math.floor(Date.now() / 1000) })),
+      ].filter(e => !dirsOnly || e.type === 'directory')
+      return { cwd, parent: cwd === '/' ? null : cwd.split('/').slice(0, -1).join('/') || '/', entries, truncated: false }
+    }
     const home = asServiceAccount ? '/home/svc_app' : '/var/log/app'
     const cwd = path && path !== '/' ? path.replace(/\/$/, '') : home
     const entries = [
@@ -1648,6 +1659,17 @@ export const mockApi: BridgeApi = {
   },
   cancel_transfer: async (id) => {
     console.log('[mock] cancel_transfer', id)
+  },
+  make_dir: async (host, parent, name) => {
+    console.log('[mock] make_dir', { host, parent, name })
+    if (!name.trim() || /[\\/]/.test(name)) return { error: "a folder name can't contain / or \\" }
+    _mockMadeDirs.push({ parent, name: name.trim() })
+    return { path: `${parent.replace(/\/$/, '')}/${name.trim()}` }
+  },
+  view_file: async (_host, path, lines = 500) => {
+    const rows = Array.from({ length: 1200 }, (_, i) => `2026-11-09 09:${String(Math.floor(i / 20)).padStart(2, '0')}:${String(i % 60).padStart(2, '0')} ${i % 17 === 0 ? 'ERROR' : 'INFO '} orders-api request ${1000 + i} handled`)
+    const shown = rows.slice(-lines)
+    return { size: 412 * 1024 * 1024, text: `# ${path}\n` + shown.join('\n'), lines: shown.length + 1, partial: true, binary: false }
   },
   current_workspace_path: async () => '/home/demo/.runspec-console/workspaces/chat-demo',
 

@@ -5,8 +5,8 @@ description: "The console agent runs runnables through search_runnables, describ
 tags: [runspec, feature]
 status: stable
 generated:
-  by: runspec-console-seed/00f73902359b
-  at: "2026-11-02"
+  by: runspec-console-seed/f40385e8558c
+  at: "2026-11-09"
 ---
 # agent
 
@@ -24,7 +24,7 @@ Tool output can feed the next call: read a value from one runnable's or tool's r
 
 Built-in file tools: list_files browses a directory on the local machine or any host, download_file copies a file from a host, and relay_file copies between hosts, optionally through a file filter.
 
-Saved transfers are file-copy scenarios built in the Transfer dialog (Save as scenario): a source host, group, ad-hoc host or this computer, path patterns with wildcards and date placeholders such as {{day:%Y-%m-%d}}, parameters, and optionally a remote destination (an upload from this computer, or a copy between two hosts). An ad-hoc host name can be a parameter such as {{host}}, and a saved filter value can be one too ({{txn}}). The agent runs one with run_saved_transfer (preview=true lists the matches first); a pull lands in the chat workspace. The agent lists, creates, edits and deletes them with manage_saved_transfers (chat only, changes ask first).
+Saved transfers are file-copy scenarios built in the Files tab (select files in one pane, then Save as saved transfer): a source host, group, ad-hoc host or this computer, path patterns with wildcards and date placeholders such as {{day:%Y-%m-%d}}, parameters, and optionally a remote destination (an upload from this computer, or a copy between two hosts). An ad-hoc host name can be a parameter such as {{host}}, and a saved filter value can be one too ({{txn}}). The agent runs one with run_saved_transfer (preview=true lists the matches first); a pull lands in the chat workspace. The agent lists, creates, edits and deletes them with manage_saved_transfers (chat only, changes ask first).
 
 Each chat has a workspace folder for files the agent makes or receives: workspace_ls, workspace_read, workspace_head, workspace_tail, workspace_grep, workspace_json_get, workspace_write, workspace_materialize and workspace_info. run_python_sandboxed and run_sql_sandboxed run code in a WASM sandbox that can only see the workspace.
 

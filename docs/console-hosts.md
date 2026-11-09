@@ -435,25 +435,58 @@ config, only the console's own venv is discovered — the default behaviour.
 
 ---
 
-## File transfer & filters
+## Files tab: browse and copy files
 
-The console moves files between hosts over its existing SSH connections. The
-**Transfer files** dialog handles every direction from one place: **Source**
-and **Destination** can each be *this computer*, a *configured host*, or an
-**ad-hoc host** — an SSH machine not in your fleet, reached through a
-configured host as a jump (password auth can reference a saved credential by
-id). One local side transfers directly; two remote sides relay through the
-console. You can also **rename the file on the target** instead of keeping
-the source's name.
+The **Files** tab browses this computer and your hosts over the console's
+existing SSH connections, in two panes side by side. Each pane shows *this
+computer*, a *configured host*, or an **ad-hoc host** (an SSH machine not in
+your fleet, reached directly or through a configured host as a jump; password
+auth can use a saved credential). The left pane starts in the chat's
+workspace, the right one on the host selected in the sidebar. The ⇄ button in
+the title bar and **Files: browse hosts and copy files** in the command
+palette (Ctrl+K) open it too.
+
+**Copy by dragging** files from one pane onto the other. The drop opens a
+small dialog with:
+
+- **Filter:** *Copy the whole file*, or one of your saved
+  [filters](#filters) so only its output is copied. The dialog remembers the
+  last choice per source folder. Hold **Shift** while dropping to copy the
+  whole file straight away, with no dialog.
+- **Save as:** a new name for the file on the destination (one file only).
+- **Also copy to:** when you drop a local file on a host, the other connected
+  hosts in its group. Each gets the same folder; a host without it is skipped.
+- **Save as a saved transfer:** opens the [saved transfer](#saved-transfers)
+  editor filled in from this copy.
+
+What a drag does depends on the two panes: this computer to a host is an
+upload, a host to this computer a download, and a host to a host a **relay**
+(the bytes go through this computer, so the hosts never connect to each
+other). A copy to an ad-hoc host works only from this computer. Copies run in
+the **Transfers** strip at the bottom, so you can keep browsing, and a pane
+showing the destination folder refreshes when one finishes. Folders can't be
+copied yet, only files.
+
+Each pane also has **Up**, **Home**, a path bar (type a folder and press
+Enter), a name filter, and **New folder** (this computer and configured
+hosts). Double-click a folder to open it, or a file to **View** its last lines
+(read-only, at most 1 MB; pick 200 to 5,000 lines and show only lines
+containing some text). Click, Ctrl-click and Shift-click select several files;
+**Copy to other pane** and **Save as saved transfer…** in the toolbar work on
+the pane you last clicked in. A host pane browses as the SSH login user, and a
+listing stops at 5,000 entries. Dragging files in from Windows Explorer isn't
+supported yet.
 
 The agent has the same reach: `download_file` (remote → local, including
 ad-hoc sources via `source_via` + `source_target`) and `relay_file`
 (host → host), both with an optional `dest_name` to rename on target.
 
+### Filters
+
 A **filter** is a named, reusable stream transform applied to the file **on
 the source host** during a transfer, so only the matching output crosses the
 network — the way to pull a few relevant lines out of a gigabyte log. Define
-filters with **Manage filters…** in the Transfer files dialog; they're stored in
+filters with **Manage filters…** in the Files tab's drop dialog; they're stored in
 `runspec_filters.toml` (which rides [Config Sync](console-team.md), so a team
 shares one set):
 
@@ -475,7 +508,7 @@ How a filter runs:
   local source needs `sh` on PATH — effectively remote-source on Windows).
 - **One runtime value, not multiple.** The literal token `{{arg}}` marks
   where the operator-supplied value goes; `param_label` labels that input in
-  the Transfer dialog (and tells the agent what `filter_value` means). The
+  the drop dialog (and tells the agent what `filter_value` means). The
   token may appear several times, but every occurrence gets the *same single*
   value — there is no `{{arg2}}`.
 - The value is **shell-quoted on substitution**: it always arrives as one
@@ -498,14 +531,15 @@ Ask the agent:
 
 ### Saved transfers
 
-A **saved transfer** is a copy you build once in the Transfer files dialog and
+A **saved transfer** is a copy you build once in the Files tab and
 run again later, by hand or by the agent. Use it for the files you keep
 fetching while you investigate, such as yesterday's app log from every web
 host. It can also upload files or copy them between two hosts (see
 [Uploads and relays](#uploads-and-relays) below).
 
-**Build one:** pick a source, choose the files, pick a destination and click
-**Save as scenario…**. The picked paths become the
+**Build one:** select files in one pane, open the destination folder in the
+other and click **Save as saved transfer…** (or tick **Save as a saved
+transfer** in the drop dialog). The picked paths become the
 scenario's path patterns, which you can edit:
 
 - **Wildcards** `*`, `?` and `[..]` match on the source host, a folder at a
@@ -536,25 +570,27 @@ rather than cutting the list short. If two matches share a file name, each
 keeps its folder below the common parent so nothing is overwritten.
 
 **Save as** gives the file a name of your own instead of the source's, and
-takes placeholders too: `orders-{{txn}}-{{day:%Y%m%d}}.log`. The Transfer
-dialog's **Rename on this computer** carries over when you save a scenario.
+takes placeholders too: `orders-{{txn}}-{{day:%Y%m%d}}.log`. The drop
+dialog's **Save as** carries over when you save a scenario.
 Several scenarios can then extract from the same remote file, each with its
 own filter, into different files. It names one file, so a run that matches
 more than one (per host) fails before copying anything; set **Newest** to 1
 if the path can match several. It is a file name only: put folders in the
 subfolder.
 
-**Filter:** pick one of your saved [filters](#file-transfer-filters) in the
+**Filter:** pick one of your saved [filters](#filters) in the
 scenario to cut each file down on the source before it is copied. If the
 filter takes a value, type a fixed one, or click **Ask for "…" each run** to
 turn it into a parameter named after the filter's value label. The value then
 reads `{{transaction_id}}`, and whatever you had typed becomes the default.
 
-**Run one:** the **Saved** row at the top of the dialog lists them. **Run…**
-asks for the parameters; **Preview** lists the matching files, sizes and
-dates without copying anything. **Manage…** opens the whole list, with search,
-to run, edit, duplicate or delete any of them, or start a new one with
-**New…**.
+**Run one:** the **Saved transfers** list beside the panes shows them (the
+toolbar button hides it for wider panes). **Run…** asks for the parameters;
+**Preview** lists the matching files, sizes and dates without copying
+anything. The folder button opens the scenario's source and destination
+folders in the panes, so you can look before running it. The list button at
+the top opens the whole list, with search, to run, edit, duplicate or delete
+any of them, and **+** starts a new one.
 
 Scenarios live in `runspec_saved_transfers.toml`, which rides
 [Config Sync](console-team.md) (merged by `id`), so a team can share one set:

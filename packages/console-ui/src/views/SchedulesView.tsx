@@ -729,7 +729,7 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
         {action === 'saved_transfer' && (
           <>
             <Form.Item name="saved_transfer" label="Saved transfer" rules={[{ required: true, message: 'Required' }]}
-              help={savedTransfers.length === 0 ? 'No saved transfers yet — save one from the Transfer dialog.' : undefined}>
+              help={savedTransfers.length === 0 ? 'No saved transfers yet. Save one from the Files tab.' : undefined}>
               <Select placeholder="Select a saved transfer" showSearch
                 filterOption={(input, opt) => (opt?.value as string ?? '').toLowerCase().includes(input.toLowerCase())}>
                 {savedTransfers.map(s => (

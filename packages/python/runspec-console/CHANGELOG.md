@@ -9,6 +9,36 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.394.0] — 2026-11-09
+
+### Added
+
+- **Files tab.** A new tab browses this computer and your hosts in two panes
+  side by side, over the console's SSH connections. Each pane shows this
+  computer, a configured host or an ad-hoc host. Drag files from one pane to
+  the other to copy them: the drop opens a small dialog to copy the whole file
+  or through one of your saved filters (remembered per source folder), give
+  one file a new name, copy a local file to other hosts in the same group too,
+  or save the copy as a saved transfer. Hold Shift while dropping to copy the
+  whole file with no dialog. Host to host is a relay through this computer.
+  Copies run in a Transfers strip at the bottom, so you can keep browsing, and
+  the pane showing the destination refreshes when one finishes. Each pane has
+  Up / Home / a path bar / a name filter / **New folder**, and double-clicking a
+  file **views** its last lines (read-only, at most 1 MB). Saved transfers are
+  listed beside the panes (Run…, Edit, Delete, and a folder button that opens
+  a saved transfer's source and destination folders in the panes). New bridge
+  methods `make_dir` and `view_file` (`bridge_files.py`, helpers in
+  `fs_browse.py`); UI in `console-ui/src/views/files/`.
+
+### Changed
+
+- **The Transfer files dialog is now the Files tab.** The ⇄ title-bar button
+  and the command palette's **Files: browse hosts and copy files** open the
+  tab. Everything the dialog did is in it: download, upload, fan-out (Also
+  copy to), relay, filters, Save as, and saved transfers. Saved transfers, the
+  agent's `run_saved_transfer` / `download_file` / `relay_file`, and scheduled
+  transfers are unchanged.
+
 ## [0.393.1] — 2026-11-09
 
 ### Fixed

@@ -129,6 +129,105 @@ def list_sftp(sftp: Any, path: str, dirs_only: bool = False) -> dict[str, Any]:
     return _finish(cwd, entries, _posix_parent(cwd))
 
 
+# ── Files tab: new folder + view (read the end of a file) ────────────────────
+
+# View shows the end of a text file: at most this many lines, and never more
+# than VIEW_MAX_BYTES of it, so a 2 GB log reads as its last screenfuls.
+VIEW_DEFAULT_LINES = 500
+VIEW_MAX_LINES = 5000
+VIEW_MAX_BYTES = 1_000_000
+
+
+def valid_folder_name(name: str) -> str:
+    """Return ``name`` stripped, or raise ValueError for a name that isn't one
+    folder (empty, ``.``/``..``, or holding a path separator / NUL)."""
+    clean = (name or "").strip()
+    if not clean or clean in (".", ".."):
+        raise ValueError("enter a folder name")
+    if any(ch in clean for ch in ("/", "\\", "\0")):
+        raise ValueError("a folder name can't contain / or \\")
+    return clean
+
+
+def remote_mkdir_command(parent: str, name: str) -> str:
+    """Shell command that creates ``name`` inside ``parent`` and prints its path.
+
+    ``mkdir`` without ``-p`` so an existing folder is an error, not a no-op."""
+    q = shlex.quote
+    return f"cd {q(parent)} && mkdir -- {q(name)} && cd -- {q(name)} && pwd"
+
+
+def make_local_dir(parent: str, name: str) -> str:
+    """Create ``name`` inside the local ``parent``; returns the new path."""
+    base = (
+        os.path.abspath(os.path.expanduser(parent))
+        if parent
+        else os.path.expanduser("~")
+    )
+    path = os.path.join(base, valid_folder_name(name))
+    os.mkdir(path)
+    return path
+
+
+def view_lines(lines: Any) -> int:
+    """Clamp a requested line count to 1..VIEW_MAX_LINES (default on junk)."""
+    try:
+        n = int(lines)
+    except (TypeError, ValueError):
+        return VIEW_DEFAULT_LINES
+    return max(1, min(VIEW_MAX_LINES, n))
+
+
+def remote_view_command(path: str, lines: int) -> str:
+    """Shell command printing the file's size on line one, then its last
+    ``lines`` lines (capped at VIEW_MAX_BYTES). A missing, unreadable or
+    non-regular file exits non-zero."""
+    q = shlex.quote(path)
+    n = view_lines(lines)
+    return (
+        f"test -f {q} && test -r {q} && wc -c < {q} && "
+        f"tail -n {n} -- {q} | tail -c {VIEW_MAX_BYTES}"
+    )
+
+
+def parse_view_output(stdout: str, lines: int) -> dict[str, Any]:
+    """Turn :func:`remote_view_command` output into the view payload."""
+    head, _, body = stdout.partition("\n")
+    return _view_payload(_to_int(head.strip()), body, view_lines(lines))
+
+
+def view_local(path: str, lines: int) -> dict[str, Any]:
+    """The last ``lines`` lines of a local file (at most VIEW_MAX_BYTES read)."""
+    full = os.path.abspath(os.path.expanduser(path))
+    if not os.path.isfile(full):
+        raise FileNotFoundError(f"Not a file: {full}")
+    size = os.path.getsize(full)
+    with open(full, "rb") as fh:
+        if size > VIEW_MAX_BYTES:
+            fh.seek(size - VIEW_MAX_BYTES)
+        data = fh.read(VIEW_MAX_BYTES)
+    return _view_payload(
+        size, data.decode("utf-8", errors="replace"), view_lines(lines)
+    )
+
+
+def _view_payload(size: int, text: str, lines: int) -> dict[str, Any]:
+    if "\0" in text:
+        return {"size": size, "binary": True, "text": "", "lines": 0, "partial": True}
+    rows = text.splitlines()
+    shown = rows[-lines:]
+    # Partial when the file holds more than what's shown: more lines than asked
+    # for, or the byte cap cut into it.
+    partial = len(rows) > lines or len(text.encode("utf-8", errors="replace")) < size
+    return {
+        "size": size,
+        "binary": False,
+        "text": "\n".join(shown),
+        "lines": len(shown),
+        "partial": partial,
+    }
+
+
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 
