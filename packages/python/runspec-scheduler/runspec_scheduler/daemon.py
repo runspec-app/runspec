@@ -56,7 +56,8 @@ from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 from typing import IO, Any
 
-from .config import ScheduleEntry, SchedulerSettings, load_config, schedule_id_problem
+from . import packages
+from .config import ScheduleEntry, SchedulerSettings, effective_config, schedule_id_problem
 from .cronsync import LABEL_PREFIX, TRIGGER_DAEMON, _home_of, exec_invocation, resolve_entry
 from .records import audit, record_run
 from .runner import is_generic_venv_name, scripts_dir, venv_name
@@ -222,6 +223,10 @@ class _Missed:
     reasons: set[str] = field(default_factory=set)
 
 
+#: How often the daemon looks for packages installed, upgraded or removed.
+PACKAGE_CHECK_SECONDS = 60
+
+
 def state_path_for(config_path: Path) -> Path:
     """The heartbeat file for the daemon reading ``config_path``."""
     return config_path.parent / "logs" / STATE_NAME
@@ -271,6 +276,11 @@ class Daemon:
         self._entries: dict[str, ScheduleEntry] = {}
         self._job_keys: dict[str, str] = {}
         self._sig: tuple[int, int, int] | None = None
+        # What the installed packages' schedules looked like at the last load,
+        # and when they were last looked at (pip has no hook to tell us).
+        self._pkg_sig: str | None = None
+        self._pkg_checked = 0.0
+        self._pkg_errors: tuple[dict[str, str], ...] = ()
         self._config_error: str | None = None
         self._last_reload: datetime.datetime | None = None
         self._lock_fh: IO[str] | None = None
@@ -303,15 +313,28 @@ class Daemon:
                 fh.close()
 
     # ── config + jobs ─────────────────────────────────────────────────────
-    def load(self, *, initial: bool = False) -> None:
-        """(Re)load the config and bring the jobs in line with it.
+    def load(self, *, initial: bool = False, scan: packages.Scan | None = None) -> None:
+        """(Re)load the config and the installed packages' schedules, and bring
+        the jobs in line with them.
 
         At start a config that won't parse raises (the caller exits non-zero); on
         a later reload it is logged, reported in the heartbeat, and the last good
         jobs keep firing."""
         sig = _signature(self.config_path)  # before the read: an edit during it reloads again
         try:
-            settings, entries = load_config(self.config_path)
+            scan = scan if scan is not None else packages.scan()
+        except Exception as exc:  # noqa: BLE001 — never stops the config's own schedules
+            logger.error("could not read the installed packages' schedules: %s", exc)
+            scan = packages.Scan()
+        self._pkg_sig = scan.signature
+        self._pkg_checked = time.monotonic()
+        if scan.errors != self._pkg_errors:
+            for err in scan.errors:
+                logger.error("package schedule %s (%s): %s", err.get("id") or "-", err.get("runnable") or "-", err.get("error"))
+            self._pkg_errors = scan.errors
+        try:
+            eff = effective_config(self.config_path, scan)
+            settings, entries = eff.settings, eff.entries
         except Exception as exc:
             self._sig = sig
             if initial:
@@ -342,7 +365,8 @@ class Daemon:
     def _job_key(self, entry: ScheduleEntry, settings: SchedulerSettings) -> str:
         """Only what changes *when* a schedule fires: an edit to its args or
         timeout must not reset an ``every`` timer."""
-        when = entry.to_dict()["when"]
+        fw = entry.fire_when
+        when = {"cron": fw.cron, "every": fw.every, "timezone": fw.timezone}
         return json.dumps({"when": when, "catch_up": entry.catch_up, "grace": settings.misfire_grace, "window": settings.catch_up_window}, sort_keys=True)
 
     def _sync_jobs(self, *, initial: bool = False) -> None:
@@ -369,7 +393,7 @@ class Daemon:
                 continue
             is_new = sid not in self._job_keys
             try:
-                trigger = when_to_trigger(entry.when)
+                trigger = when_to_trigger(entry.fire_when)
             except Exception as exc:  # noqa: BLE001 — one bad schedule never stops the rest
                 logger.error("schedule %r: invalid timing — not scheduled: %s", sid, exc)
                 with contextlib.suppress(Exception):
@@ -718,6 +742,8 @@ class Daemon:
                 elif _signature(self.config_path) != self._sig:
                     logger.info("config changed — reloading")
                     self.load()
+                elif time.monotonic() - self._pkg_checked >= PACKAGE_CHECK_SECONDS:
+                    self._check_packages()
                 self._flush_missed()
                 self.reap()
                 if time.monotonic() - self._last_heartbeat >= self.interval:
@@ -729,6 +755,19 @@ class Daemon:
         finally:
             self._shutdown(code)
         return code
+
+    def _check_packages(self) -> None:
+        """Reload when a package was installed, upgraded or removed and that
+        changed the schedules packages declare (checked once a minute)."""
+        self._pkg_checked = time.monotonic()
+        try:
+            scan = packages.scan()
+        except Exception as exc:  # noqa: BLE001
+            logger.error("could not read the installed packages' schedules: %s", exc)
+            return
+        if scan.signature != self._pkg_sig:
+            logger.info("installed packages' schedules changed — reloading")
+            self.load(scan=scan)
 
     def _install_signal_handlers(self) -> None:
         def _stop(signum: int, _frame: object) -> None:

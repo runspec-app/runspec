@@ -26,10 +26,10 @@ from typing import Any
 from runspec import logs as rs_logs
 from runspec import runsdb
 
-from .config import ScheduleEntry, SchedulerSettings, load_config
+from .config import EffectiveConfig, SchedulerSettings, effective_config
 from .cronsync import LABEL_PREFIX, MARKER_PREFIX, _crontab_argv, _installable, job_in_venv, read_managed_users, resolve_entry, this_bin_dir
 from .runner import venv_name
-from .timing import next_fire_time
+from .timing import host_zone_name, next_fire_time
 
 #: Bytes of each captured stream returned for the last run (the log keeps more).
 DEFAULT_OUTPUT_BYTES = 8 * 1024
@@ -292,19 +292,21 @@ def status(config_path: Path, *, runs: int = 5, output_bytes: int = DEFAULT_OUTP
         "stale": [],
         "errors": [],
     }
-    settings = SchedulerSettings()
-    entries: list[ScheduleEntry] = []
+    eff = EffectiveConfig(settings=SchedulerSettings(), entries=[])
     try:
-        settings, entries = load_config(config_path)
+        eff = effective_config(config_path)
     except Exception as exc:  # noqa: BLE001 — a bad config is reported, not raised
         payload["ok"] = False
         payload["errors"].append(f"could not read {config_path}: {exc}")
+    settings, entries = eff.settings, eff.entries
     payload["backend"] = settings.backend
-    payload["settings"] = {
-        "backend": settings.backend,
-        "timeout": settings.timeout,
-        "misfire_grace": settings.misfire_grace,
-        "catch_up_window": settings.catch_up_window,
+    payload["settings"] = settings.to_dict()
+    payload["host_zone"] = host_zone_name()
+    payload["packages"] = {
+        "policy": settings.package_schedules,
+        "offered": sum(1 for e in entries if e.offered),
+        "errors": eff.package_errors,
+        "orphans": eff.orphans,
     }
     from .daemon import _default_log_path
 
@@ -343,7 +345,7 @@ def status(config_path: Path, *, runs: int = 5, output_bytes: int = DEFAULT_OUTP
         record["not_installable_reason"] = reason or None
         record["catch_up"] = entry.catch_up
         record["timeout"] = entry.effective_timeout(settings) if on_daemon else entry.timeout
-        nxt = next_fire_time(entry.when) if entry.enabled else None
+        nxt = next_fire_time(entry.fire_when) if entry.enabled else None
         record["next_run"] = nxt.isoformat() if nxt else None
         if on_daemon:
             # "Installed" = the running daemon has the job; unknown when it isn't running.

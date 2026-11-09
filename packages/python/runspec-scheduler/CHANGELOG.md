@@ -2,6 +2,52 @@
 
 All notable changes to `runspec-scheduler` are documented here.
 
+## [0.10.0] — 2026-11-09
+
+### Added
+
+- **Schedules from packages.** A runnable can offer schedules in its own
+  runspec.toml, one table each: `[<runnable>.meta.scheduler.<name>]` (id
+  `<runnable>.<name>`) with exactly one of `at` (`"02:30"`, `"midnight"`,
+  `"noon"`) + `on` (`daily`, `weekdays`/`mon-fri`, `weekends`, days like
+  `mon,wed` or `tue-thu`, a day of the month, `last`), `every` or `cron`, and
+  optional `timezone`, `spread`, `args`, `command`, `timeout`, `catch_up`,
+  `description`. Read live from the installed packages (with `include`
+  resolved), never copied into the config; a broken table is reported in
+  `status` and the daemon log without stopping anything else. `packages.py`.
+- **Venv policy** `[scheduler] package_schedules`: `offer` (default; listed in
+  `status` under *Offered by installed packages*, off until turned on), `auto`
+  (on as soon as installed) or `off` (ignored). A `[[schedule]]` with a package
+  schedule's id changes it: `enable`/`disable` write only `enabled` (so a new
+  package release that moves the time is followed), `add` with the id sets this
+  venv's own time (status shows the package's next to it), `remove` puts it
+  back. An entry left changing a package schedule that's gone is reported, not
+  an error.
+- **`enable` / `disable` verbs** (`--id`) for any schedule. `enable` on the
+  cron backend refuses what cron can't fire.
+- **The venv's zone** `[scheduler] timezone`: what a schedule with no zone of
+  its own (or `"local"`) fires on — for a host whose clock runs on UTC in
+  another country. `settings --timezone <zone>` sets it, `--timezone host`
+  clears it, `settings --package-schedules` sets the policy. The config keeps
+  each schedule's zone as written, so changing the venv's zone moves them all.
+  On cron a venv zone other than the host's makes those schedules *needs the
+  daemon* (status and `settings` say so).
+- **`spread`** (with `at`): each host fires at a fixed minute inside the window
+  (a hash of host name and schedule id), never past midnight; on cron it's
+  baked into the crontab line at sync.
+- The daemon looks at the installed packages once a minute and reloads when
+  their schedules change (pip has no post-install hook). On cron run `sync`.
+- `status` and `settings` report `timezone`, `package_schedules` and the host's
+  zone; status rows from packages carry `origin`, `offered`, `description` and
+  `package` (`words`, `when`, `source`, `overridden`).
+- JSON schema: `meta.scheduler` tables are checked (`$defs/package_schedule`).
+
+### Changed
+
+- Config writers (`add`, `remove`, `use`, `settings`, `enable`, `disable`) now
+  keep each `[[schedule]]` table as it is in the file, so a small entry that
+  only turns a package schedule on survives every other write.
+
 ## [0.9.0] — 2026-11-09
 
 ### Added

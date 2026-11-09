@@ -10,6 +10,7 @@ import json
 import sys
 import time
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -27,7 +28,9 @@ from .config import (
     remove_schedule,
     schedule_id_problem,
     set_backend,
+    set_enabled,
     upsert_schedule,
+    zone_for,
 )
 from .daemon import configure_logging, run_daemon, take_lock
 from .discovery import check_invocation, resolve_target
@@ -254,7 +257,7 @@ def _cmd_add(spec: rs.RunSpec) -> None:
         _emit({"error": "interval schedules (--every) need the daemon backend; this venv uses cron — use --cron, or switch with: runspec-scheduler use daemon"})
         sys.exit(2)
     if settings.backend != "daemon":
-        zone_problem = cron_zone_problem(when.timezone)
+        zone_problem = cron_zone_problem(zone_for(when.timezone, settings))
         if zone_problem:
             _emit({"error": f"this venv uses cron: {zone_problem}"})
             sys.exit(2)
@@ -330,13 +333,44 @@ def _cmd_remove(spec: rs.RunSpec) -> None:
     sid = str(spec.id.value)
     existing = next((e for e in _load(path)[1] if e.id == sid), None)
     removed = remove_schedule(path, sid)
-    if existing and existing.env_file:
+    if removed and existing and existing.env_file:
         remove_env_file(existing.env_file, existing.run_as, existing.become_method)
     try:
         backend = load_settings(path).backend
     except ValueError:
         backend = None
-    _emit({"ok": removed, "id": sid, "backend": backend}, render.removed)
+    payload: dict[str, Any] = {"ok": removed, "id": sid, "backend": backend}
+    if existing is not None and existing.origin == "package":
+        # A package's schedule can't be removed, only put back to what the
+        # package says (dropping this venv's changes) or turned off.
+        payload["package"] = existing.runnable
+        payload["reset"] = removed
+    _emit(payload, render.removed)
+    if not removed:
+        sys.exit(1 if existing is None else 2)
+
+
+def _cmd_enable(spec: rs.RunSpec, enabled: bool) -> None:
+    """Turn a schedule on or off: a package schedule (offered or not) or one of
+    the config's own. For a package schedule only ``enabled`` is written, so the
+    package keeps its time."""
+    path = _cfg_path(spec)
+    sid = str(spec.id.value)
+    settings, entries = _load(path)
+    entry = next((e for e in entries if e.id == sid), None)
+    if entry is None:
+        _emit({"ok": False, "error": f"no schedule with id '{sid}' (runspec-scheduler status lists them)"})
+        sys.exit(2)
+    if enabled and settings.backend != "daemon":
+        from .cronsync import _installable
+
+        ok, reason = _installable(replace(entry, enabled=True), settings.backend)
+        if not ok:
+            _emit({"ok": False, "error": f"this venv uses cron: {reason}"})
+            sys.exit(2)
+    package_ids = {e.id for e in entries if e.origin == "package"}
+    set_enabled(path, sid, enabled, package_ids=package_ids)
+    _emit({"ok": True, "id": sid, "enabled": enabled, "origin": entry.origin, "runnable": entry.runnable, "backend": settings.backend}, render.toggled)
 
 
 def _cmd_list(spec: rs.RunSpec) -> None:
@@ -344,7 +378,7 @@ def _cmd_list(spec: rs.RunSpec) -> None:
     out = []
     for entry in _load(path)[1]:
         record = entry.to_dict()
-        nxt = next_fire_time(entry.when) if entry.enabled else None
+        nxt = next_fire_time(entry.fire_when) if entry.enabled else None
         record["next_run"] = nxt.isoformat() if nxt else None
         out.append(record)
     _emit({"schedules": out, "venv": venv_name(), "config": str(path), "backend": load_settings(path).backend}, render.schedules)
@@ -490,20 +524,20 @@ def _cmd_settings(spec: rs.RunSpec) -> None:
     except ValueError as exc:
         _emit({"ok": False, "error": str(exc)})
         sys.exit(2)
-    _emit(
-        {
-            "ok": True,
-            "config": str(path),
-            "changed": sorted(changes),
-            "settings": {
-                "backend": settings.backend,
-                "timeout": settings.timeout,
-                "misfire_grace": settings.misfire_grace,
-                "catch_up_window": settings.catch_up_window,
-            },
-        },
-        render.settings,
-    )
+    from .timing import cron_zone_problem as zone_problem
+    from .timing import host_zone_name
+
+    payload: dict[str, Any] = {"ok": True, "config": str(path), "changed": sorted(changes), "settings": settings.to_dict(), "host_zone": host_zone_name()}
+    warnings: list[str] = []
+    if settings.backend == "cron" and settings.timezone and zone_problem(settings.timezone):
+        warnings.append(
+            f"this venv uses cron, which fires on the host's clock ({payload['host_zone'] or 'unknown'}): schedules without a zone of their own now need the daemon (runspec-scheduler use daemon)"
+        )
+    if settings.backend == "cron" and {"timezone", "package_schedules"} & set(changes):
+        payload["hint"] = "run runspec-scheduler sync to bring the crontab in line"
+    if warnings:
+        payload["warnings"] = warnings
+    _emit(payload, render.settings)
 
 
 def _cmd_restart(spec: rs.RunSpec) -> None:
@@ -580,6 +614,8 @@ def main() -> None:
         _cmd_remove(spec)
     elif command == "list":
         _cmd_list(spec)
+    elif command in ("enable", "disable"):
+        _cmd_enable(spec, command == "enable")
     elif command == "run-now":
         _cmd_run_now(spec)
     elif command == "status":
@@ -597,5 +633,5 @@ def main() -> None:
     elif command == "watch":
         _cmd_watch(spec)
     else:  # pragma: no cover - require-command makes this unreachable
-        _emit({"error": "no command — try: status, watch, sync, use, settings, add, remove, list, run-now, run, restart, install-service"})
+        _emit({"error": "no command — try: status, watch, sync, use, settings, enable, disable, add, remove, list, run-now, run, restart, install-service"})
         sys.exit(2)

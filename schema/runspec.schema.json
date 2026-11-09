@@ -345,9 +345,36 @@
         },
         "meta": {
           "type": "object",
-          "description": "Runnable-level developer-defined metadata. Pass-through — runspec never interprets the contents. Where orchestration emitters read per-runnable settings (e.g. [<runnable>.meta.rundeck] for runspec emit --rundeck: venv, node filter, schedule, notifications)."
+          "description": "Runnable-level developer-defined metadata. Pass-through — runspec never interprets the contents. Where orchestration emitters read per-runnable settings (e.g. [<runnable>.meta.rundeck] for runspec emit --rundeck: venv, node filter, schedule, notifications) and where runspec-scheduler reads the schedules a package offers ([<runnable>.meta.scheduler.<name>]).",
+          "properties": {
+            "scheduler": {
+              "type": "object",
+              "description": "Schedules this runnable offers to runspec-scheduler, one named table each ([<runnable>.meta.scheduler.<name>], schedule id <runnable>.<name>). A venv's [scheduler] package_schedules decides whether they run: offer (default, off until turned on), auto or off.",
+              "propertyNames": { "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$" },
+              "additionalProperties": { "$ref": "#/$defs/package_schedule" }
+            }
+          }
         }
       },
+      "additionalProperties": false
+    },
+    "package_schedule": {
+      "type": "object",
+      "description": "One schedule a runnable offers to runspec-scheduler. Exactly one of at (with on), every or cron.",
+      "properties": {
+        "description": { "type": "string", "description": "What the schedule is for (shown where it is offered)." },
+        "at": { "type": "string", "pattern": "^([Mm][Ii][Dd][Nn][Ii][Gg][Hh][Tt]|[Nn][Oo][Oo][Nn]|[0-9]{1,2}:[0-9]{2})$", "description": "Time of day: \"HH:MM\", \"midnight\" or \"noon\"." },
+        "on": { "type": "string", "description": "With at: daily (default), weekdays / mon-fri, weekends, a day or a list or range of days (sun, mon,wed, tue-thu), a day of the month (1, 1,15), or last (daemon backend only)." },
+        "every": { "type": "string", "pattern": "^[0-9]+[smhd]$", "description": "Interval: a number and s / m / h / d (daemon backend only)." },
+        "cron": { "type": "string", "description": "A 5-field cron expression, or @hourly / @daily / @weekly / @monthly / @yearly." },
+        "timezone": { "type": "string", "default": "local", "description": "\"local\" (default: the venv's [scheduler] timezone, else the host's), \"UTC\", or an IANA name like Europe/London." },
+        "spread": { "type": ["string", "integer"], "description": "With at: each host fires at a fixed offset inside this window, e.g. \"30m\" (at most 12h; never past midnight)." },
+        "args": { "type": "object", "description": "Arguments for the runnable, checked against its spec. Leave site values and secrets to the venv's runspec_schedules.env." },
+        "command": { "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }], "description": "The subcommand path for a runnable with verbs." },
+        "timeout": { "type": ["string", "integer"], "description": "Kill a fire still running after this long (seconds, or 90m / 6h / 1d; 0 = no limit)." },
+        "catch_up": { "type": "boolean", "description": "Daemon backend: run once on start when fires were missed while it was down." }
+      },
+      "oneOf": [{ "required": ["at"] }, { "required": ["every"] }, { "required": ["cron"] }],
       "additionalProperties": false
     },
     "run_as": {

@@ -567,6 +567,26 @@ per-runnable settings — e.g. `[<name>.meta.rundeck]` for `runspec emit
 --rundeck` (venv, node filter, schedule, notifications). Project-wide defaults
 go under `[config.meta.rundeck]`.
 
+`[<name>.meta.scheduler.<schedule>]` is read by runspec-scheduler: one table
+per schedule the runnable offers to any venv it is installed in (schedule id
+`<name>.<schedule>`). Exactly one of `at` (`"02:30"`, `"midnight"`, `"noon"`,
+with `on` = `daily` / `weekdays` / `weekends` / days like `mon,wed` or
+`tue-thu` / a day of the month / `last`), `every` (`"15m"`) or `cron`; plus
+optional `timezone` (`"local"` by default: the venv's `[scheduler] timezone`,
+else the host's; or `"UTC"` / an IANA name), `spread` (each host fires at a
+fixed offset inside the window), `args`, `command`, `timeout`, `catch_up` and
+`description`. The venv decides whether they run (`[scheduler]
+package_schedules` = `offer`, the default, lists them switched off; `auto`;
+`off`). The schema checks the table's shape; runspec itself ignores it.
+
+```toml
+[cleanup-tmp.meta.scheduler.nightly]
+description = "Remove old files from /tmp"
+at = "02:30"
+spread = "30m"
+args = {older-than = "7d"}
+```
+
 ### `examples`
 
 A list of usage examples rendered by `--help`. Canonical form is inline TOML
