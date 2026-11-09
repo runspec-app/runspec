@@ -1,14 +1,16 @@
 """fs_browse.py — directory listing for the Forms path-picker.
 
-Powers the file/directory browser that backs ``path`` form fields. Increment 1 is
-**login-user identity only**: local hosts list via ``os.scandir``; remote hosts
-list with a single ``find -printf`` command over the host's pooled SSH transport
-(reusing the same one-shot exec path as discovery / history / logs).
+Powers the file/directory browser that backs ``path`` form fields and the Files
+tab. Local hosts list via ``os.scandir``; remote hosts list, as the SSH login,
+with a single ``find -printf`` command over the host's pooled SSH transport
+(reusing the same one-shot exec path as discovery / history / logs). Acting as
+another account (a venv owner, a runnable's service account) runs
+:mod:`_files_worker` on that venv's python instead — never a shell as that
+account — and :func:`listing_from_worker` / :func:`delete_from_worker` turn its
+answers into the same payloads.
 
 The listing functions here are pure and side-effect free apart from the local
-filesystem read, so they unit-test without a Bridge or a live SSH connection. A
-later increment adds a service-account view (the same ``find`` wrapped in the
-host's ``run_as``/become) and an SFTP path shared with the file-transfer feature.
+filesystem read, so they unit-test without a Bridge or a live SSH connection.
 
 Entry shape returned to the UI::
 
@@ -35,30 +37,18 @@ MAX_ENTRIES = 5000
 _FIND = "find -L . -maxdepth 1 -mindepth 1 -printf '%y\\t%s\\t%T@\\t%f\\n' 2>/dev/null"
 
 
-def remote_list_command(
-    path: str,
-    run_as: str = "",
-    become_method: str = "sudo",
-    become_flags: str | None = None,
-) -> str:
+def remote_list_command(path: str) -> str:
     """Shell command that prints the resolved absolute dir, then one line per child.
 
     ``cd``-ing first resolves ``~``/relative paths to an absolute ``pwd`` and makes
     a missing/unreadable directory a non-zero exit the caller surfaces as an error.
 
-    With ``run_as`` set, the whole listing runs as that user via the host's become
-    method (``sh -c`` wrapped in ``sudo -u`` / ``su`` / …) — so ``$HOME`` and the
-    visible files are the service account's, matching what the runnable will see.
-    Reuses the core ``build_become_argv`` so escalation is identical to invocation.
+    Runs as the SSH login. Listing as another account (Browse as, the Forms
+    picker's service-account view) goes through :mod:`_files_worker` on that
+    venv's own python instead, so no shell runs as the other account.
     """
     dir_expr = shlex.quote(path) if path else '"$HOME"'
-    inner = f"cd {dir_expr} 2>/dev/null && pwd && {_FIND}"
-    if not run_as:
-        return inner
-    from runspec.become import build_become_argv
-
-    argv = build_become_argv(["sh", "-c", inner], run_as, become_method, become_flags)
-    return " ".join(shlex.quote(tok) for tok in argv)
+    return f"cd {dir_expr} 2>/dev/null && pwd && {_FIND}"
 
 
 def parse_remote_listing(stdout: str, dirs_only: bool = False) -> dict[str, Any]:
@@ -231,18 +221,6 @@ def _view_payload(size: int, text: str, lines: int) -> dict[str, Any]:
 # ── rename / delete (Files tab) ─────────────────────────────────────────────
 
 
-def as_account(inner: str, as_user: str = "") -> str:
-    """Wrap a shell command so it runs as ``as_user`` (``sudo -n -u <user> sh
-    -c …``); unchanged when ``as_user`` is empty. ``-n`` makes a missing
-    NOPASSWD rule fail at once instead of waiting for a password."""
-    if not as_user:
-        return inner
-    from runspec.become import build_become_argv
-
-    argv = build_become_argv(["sh", "-c", inner], as_user, "sudo", "-n")
-    return " ".join(shlex.quote(tok) for tok in argv)
-
-
 def account_error(err: str, as_user: str) -> str:
     """A clearer message when ``sudo -n -u <as_user>`` itself was refused."""
     low = (err or "").lower()
@@ -252,8 +230,9 @@ def account_error(err: str, as_user: str) -> str:
         or "may not run sudo" in low
     ):
         return (
-            f"The SSH login can't run commands as {as_user} without a password. "
-            f"Allow it with a NOPASSWD sudo rule, or browse as the login."
+            f"The SSH login can't run the venv's python as {as_user} without a "
+            f"password. Allow it with a NOPASSWD sudo rule (the venv's bin/ is "
+            f"enough), or browse as the login."
         )
     return (err or "").strip()
 
@@ -354,6 +333,45 @@ def delete_local(paths: list[str]) -> dict[str, Any]:
     return {"deleted": deleted, "failed": failed}
 
 
+# ── answers from _files_worker (acting as another account) ─────────────────
+
+
+def listing_from_worker(res: dict[str, Any], dirs_only: bool = False) -> dict[str, Any]:
+    """The ``list`` answer of :mod:`_files_worker` as the listing payload."""
+    cwd = str(res.get("cwd") or "").rstrip("/") or "/"
+    entries: list[dict[str, Any]] = []
+    for row in res.get("entries") or []:
+        try:
+            name, is_dir, size, mtime = row
+        except (TypeError, ValueError):
+            continue
+        if dirs_only and not is_dir:
+            continue
+        entries.append(_entry(str(name), bool(is_dir), _to_int(size), _to_int(mtime)))
+    return _finish(cwd, entries, _posix_parent(cwd))
+
+
+def view_from_worker(res: dict[str, Any], lines: int) -> dict[str, Any]:
+    """The ``view`` answer of :mod:`_files_worker` as the view payload."""
+    return _view_payload(
+        _to_int(res.get("size")), str(res.get("text") or ""), view_lines(lines)
+    )
+
+
+def delete_from_worker(res: dict[str, Any], paths: list[str]) -> dict[str, Any]:
+    """The ``delete`` answer of :mod:`_files_worker` in the
+    :func:`parse_delete_output` shape. A path it didn't mention failed."""
+    deleted = [str(p) for p in res.get("deleted") or []]
+    failed = [
+        {"path": str(f.get("path")), "error": _delete_reason(str(f.get("error") or ""))}
+        for f in res.get("failed") or []
+        if isinstance(f, dict)
+    ]
+    seen = set(deleted) | {f["path"] for f in failed}
+    failed += [{"path": p, "error": "not deleted"} for p in paths if p not in seen]
+    return {"deleted": deleted, "failed": failed}
+
+
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 
@@ -391,7 +409,7 @@ def _local_parent(base: str) -> str | None:
     return None if parent == base else parent  # filesystem / drive root
 
 
-def _to_int(value: str) -> int:
+def _to_int(value: Any) -> int:
     try:
         return int(value)
     except (TypeError, ValueError):

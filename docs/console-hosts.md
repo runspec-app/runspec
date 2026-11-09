@@ -489,9 +489,12 @@ audit log as `files.renamed` / `files.deleted`. They are not agent tools.
 When the host has venvs owned by another account (a service account set up by
 **Provision venv…**, say), a **Browse as** picker appears next to the machine:
 pick *as svc_app (venv owner)* to list, view, make folders, rename and delete
-as that account, through `sudo -n -u <owner>`. It needs a NOPASSWD sudo rule
-for the login, the same as Env files; without one the pane says so. Only the
-owners of that host's venvs are offered. Copies (dragging) still run as the
+as that account. No shell runs as the owner: the console runs one of that
+owner's venvs' own python (`sudo -n -u <owner> <venv>/bin/python …`), so it
+needs the same NOPASSWD sudo rule as Env files, and a rule that only allows the
+venv's `bin/` (refusing shells) is enough. Without one the pane says so. Only
+the owners of that host's venvs are offered. The Forms path picker's
+service-account view lists the same way, on the runnable's own venv. Copies (dragging) still run as the
 SSH login, and the drop dialog reminds you.
 
 The agent has the same reach: `download_file` (remote → local, including

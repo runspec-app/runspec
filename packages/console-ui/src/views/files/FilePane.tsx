@@ -25,7 +25,7 @@ export interface PaneState {
   error: string
   selected: string[]
   // '' = the SSH login (or you, on this computer); else a venv owner the
-  // pane browses the host as (sudo -n -u).
+  // pane browses the host as (sudo -n -u, on that venv's python).
   asUser: string
 }
 
@@ -293,7 +293,7 @@ export function FilePane({
           </Tooltip>
         )}
         {target?.kind === 'host' && accounts && accounts.accounts.length > 0 && (
-          <Tooltip title="Browse this host as one of its venv owners (passwordless sudo). Copies still run as the SSH login.">
+          <Tooltip title="Browse this host as one of its venv owners (passwordless sudo to the venv's python). Copies still run as the SSH login.">
             <Select
               size="small"
               value={asUser}
