@@ -430,6 +430,7 @@ def test_worker_list_and_bad_requests(tmp_path):
     assert _files_worker.run(None)["ok"] is False
 
 
+@posix
 def test_worker_home_is_the_accounts_own(monkeypatch):
     monkeypatch.setenv("HOME", "/somewhere/else")
     import pwd
