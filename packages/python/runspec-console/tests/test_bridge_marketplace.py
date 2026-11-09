@@ -13,6 +13,7 @@ discovery kick.
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import subprocess
 import sys
@@ -819,7 +820,11 @@ def test_scheduler_sync_snippet(tmp_path):
     sched.write_text('#!/bin/sh\necho "called $*"\nexit 3\n')
     sched.chmod(0o755)
     done = subprocess.run(run, capture_output=True, text=True)
-    assert done.returncode == 3 and done.stdout == "called sync\n"
+    if os.name == "nt":
+        # The scheduler is POSIX-only: a Windows venv is never synced.
+        assert done.returncode == 0 and done.stdout == ""
+    else:
+        assert done.returncode == 3 and done.stdout == "called sync\n"
 
 
 def test_install_local_streams_lines(app, monkeypatch):
