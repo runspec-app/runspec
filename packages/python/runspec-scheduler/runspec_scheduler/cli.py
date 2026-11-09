@@ -14,12 +14,12 @@ from typing import Any
 
 import runspec as rs
 
-from .config import ScheduleEntry, config_path, load_config, load_schedules, load_settings, parse_command, parse_duration, remove_schedule, set_backend, upsert_schedule
+from .config import ScheduleEntry, config_path, load_config, load_schedules, load_settings, parse_command, parse_duration, remove_schedule, schedule_id_problem, set_backend, upsert_schedule
 from .daemon import configure_logging, run_daemon, take_lock
 from .discovery import check_invocation, resolve_target
 from .envfile import capture_env, remove_env_file, write_env_file
 from .runner import scripts_dir, venv_name
-from .timing import next_fire_time, parse_when
+from .timing import cron_zone_problem, next_fire_time, parse_when
 
 
 def _opt(arg: Any) -> Any:
@@ -201,6 +201,15 @@ def _cmd_add(spec: rs.RunSpec) -> None:
         sys.exit(2)
     if when.every and settings.backend != "daemon":
         _emit({"error": "interval schedules (--every) need the daemon backend; this venv uses cron — use --cron, or switch with: runspec-scheduler use daemon"})
+        sys.exit(2)
+    if settings.backend != "daemon":
+        zone_problem = cron_zone_problem(when.timezone)
+        if zone_problem:
+            _emit({"error": f"this venv uses cron: {zone_problem}"})
+            sys.exit(2)
+    id_problem = schedule_id_problem(sid)
+    if id_problem:
+        _emit({"error": id_problem})
         sys.exit(2)
     timeout: int | None = None
     if _opt(spec.timeout) is not None:

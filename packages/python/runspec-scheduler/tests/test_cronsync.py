@@ -222,6 +222,26 @@ class TestSync:
         assert "every" in skipped["iv"] and skipped["off"] == "disabled" and "not installed" in skipped["gone"]
         assert res.installed == []
 
+    def test_other_zone_needs_the_daemon_same_zone_installs(self, tmp_path, monkeypatch):
+        import runspec_scheduler.timing as timing
+
+        monkeypatch.setattr(timing, "host_zone_name", lambda: "Etc/UTC")
+        entries = [
+            _entry(id="london", runnable="backup", when=When(cron="0 2 * * *", timezone="Europe/London")),
+            _entry(id="utc", runnable="backup", when=When(cron="0 2 * * *", timezone="UTC")),
+            _entry(id="host", runnable="backup", when=When(cron="@daily")),
+        ]
+        self._wire(monkeypatch, entries)
+        res = cronsync.sync(tmp_path / "cfg.toml")
+        skipped = {s["id"]: s["reason"] for s in res.skipped}
+        assert set(skipped) == {"london"} and "needs the daemon backend" in skipped["london"]
+        assert sorted(r["id"] for r in res.installed) == ["host", "utc"]
+
+    def test_unsafe_id_is_skipped(self, tmp_path, monkeypatch):
+        self._wire(monkeypatch, [_entry(id="a/b", runnable="backup", when=When(cron="0 2 * * *"))])
+        res = cronsync.sync(tmp_path / "cfg.toml")
+        assert res.installed == [] and "can't hold" in res.skipped[0]["reason"]
+
     def test_groups_by_run_as_account(self, tmp_path, monkeypatch):
         entries = [
             _entry(id="a", runnable="backup", when=When(cron="0 2 * * *"), run_as="svc"),

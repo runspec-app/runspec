@@ -9,6 +9,21 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.394.1] — 2026-11-09
+
+### Fixed
+
+- **Console schedules: `@daily` and the other cron nicknames work.** APScheduler
+  3 only takes 5 fields, so a schedule with `cron = "@daily"` was never added;
+  nicknames are now expanded (`sources.schedule.expand_cron`), and an unknown
+  one (`@reboot`) is refused when the schedule is saved.
+- **Console schedules fire once when the clocks go back.** A fixed-time schedule
+  such as `30 1 * * *` in Europe/London fired twice on the October change (01:30
+  BST and 01:30 GMT); it now fires once, as cron does. Same fix as
+  runspec-scheduler 0.8.0; the timing code stays a copy of the scheduler's.
+- **Host schedule dialog**: the timezone hint says a zone other than the host's
+  needs the host daemon (runspec-scheduler 0.8.0 refuses it on a cron venv).
+
 ## [0.394.0] — 2026-11-09
 
 ### Added

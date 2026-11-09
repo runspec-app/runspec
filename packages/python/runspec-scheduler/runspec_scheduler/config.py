@@ -17,6 +17,7 @@ Stdlib only (``tomllib`` on 3.11+, ``tomli`` on 3.10). There is no stdlib TOML
 from __future__ import annotations
 
 import os
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -94,6 +95,29 @@ def parse_settings(table: Any) -> SchedulerSettings:
         misfire_grace=max(1, parse_duration(table.get("misfire_grace", DEFAULT_MISFIRE_GRACE), "[scheduler] misfire_grace")),
         catch_up_window=parse_duration(table.get("catch_up_window", DEFAULT_CATCH_UP_WINDOW), "[scheduler] catch_up_window"),
     )
+
+
+#: A schedule id ``add`` accepts: it names a lock file, a crontab marker and the
+#: runs-index label ``sched:<id>``. Same rule as runspec-console's host schedules.
+SCHEDULE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+#: An id that can't work at all: a path separator or ``..`` (it names a file),
+#: or a blank/control character (it's on a crontab line).
+_UNSAFE_ID_RE = re.compile(r"[/\\\s\x00-\x1f\x7f]|^\.\.?$")
+
+
+def schedule_id_problem(sid: str, *, strict: bool = True) -> str:
+    """Why ``sid`` can't be a schedule id, or "".
+
+    ``strict`` (what ``add`` checks): letters, digits, ``.``, ``_`` and ``-``,
+    starting with a letter or digit, at most 64 long. Otherwise (a config
+    written by hand or by an older version) only ids that can never work are
+    refused, so an existing schedule doesn't stop for a cosmetic reason."""
+    if strict and not SCHEDULE_ID_RE.match(sid):
+        return f"schedule id {sid!r} must be letters, digits, '.', '_' or '-', start with a letter or digit, and be at most 64 long"
+    if _UNSAFE_ID_RE.search(sid):
+        return f"schedule id {sid!r} can't hold '/', '\\', spaces or control characters, or be '.' or '..' — give it a new id"
+    return ""
 
 
 @dataclass(frozen=True)

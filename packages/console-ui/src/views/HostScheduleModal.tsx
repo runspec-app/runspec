@@ -352,7 +352,7 @@ export function HostScheduleModal({ open, venvs, runnables, idsByVenv, editing, 
                 style={{ width: 200, fontFamily: MONO_FONT }} />
             )}
             <Input aria-label="Timezone" value={timezone} onChange={e => setTimezone(e.target.value)}
-              placeholder="Timezone (blank = the host's local time), e.g. Europe/London" style={{ maxWidth: 420 }} />
+              placeholder="Timezone (blank = the host's local time; another zone needs the host daemon), e.g. Europe/London" style={{ maxWidth: 420 }} />
           </Space>
         </Form.Item>
 

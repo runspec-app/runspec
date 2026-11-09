@@ -2,6 +2,38 @@
 
 All notable changes to `runspec-scheduler` are documented here.
 
+## [0.8.0] — 2026-11-09
+
+### Fixed
+
+- **The cron backend no longer ignores `timezone`.** A crontab line fires on the
+  host's clock, so a schedule saved with `timezone = "Europe/London"` used to
+  fire at London time on the daemon but at host time on cron. Now a schedule
+  whose zone keeps a different clock from the host's (`timing.same_zone`:
+  equal names, UTC aliases, or matching offsets for two years) is skipped by
+  `sync` and shown in `status` with the reason *needs the daemon backend*, and
+  `add` refuses it on a cron venv. **Upgrade note:** the next `sync` removes the
+  crontab line of such a schedule; move it to the daemon (`use daemon`) or clear
+  its timezone.
+- **`@daily`, `@midnight`, `@hourly`, `@weekly`, `@monthly`, `@yearly` work on
+  the daemon.** APScheduler 3 only takes 5 fields, so the daemon logged
+  "invalid timing" and never scheduled them; they are now expanded
+  (`timing.expand_cron`). An unknown nickname (`@reboot` included) is refused
+  when the config loads.
+- **No double fire when the clocks go back.** APScheduler 3 fired `30 1 * * *`
+  in Europe/London at 01:30 BST and again at 01:30 GMT. A schedule at fixed
+  times now fires once, as cron does; one with `*` in its minute or hour still
+  runs through both copies of the hour.
+- **Missed-fire counting in that hour.** The daemon stepped through fire times
+  with wall-clock arithmetic (01:30 GMT + 1 s is 01:30:01 BST, an hour earlier),
+  which could loop in the repeated hour. It now counts in real time
+  (`timing.later`).
+- **Schedule ids are checked.** `add` takes letters, digits, `.`, `_` and `-`
+  (at most 64, starting with a letter or digit), the rule the console already
+  used. An id already in a config that can't work (a `/`, `\`, a space or
+  control character, `.`/`..`) is skipped by `sync` and the daemon with a reason
+  instead of naming a stray file.
+
 ## [0.7.3] — 2026-11-07
 
 ### Fixed

@@ -990,3 +990,44 @@ def test_schedule_label_prefers_name_then_action_never_bare_id():
         == "cron list"
     )
     assert schedule_label({"id": "rs-x", "action": "prompt", "prompt": ""}) == "rs-x"
+
+
+# ── cron nicknames + the repeated hour (0.394.1) ────────────────────────────
+
+
+def test_cron_nickname_builds_a_trigger():
+    pytest.importorskip("apscheduler")
+    from datetime import datetime, timezone
+
+    from runspec_console.sources.schedule import When, next_fire_time
+
+    now = datetime(2026, 7, 8, 12, 0, tzinfo=timezone.utc)
+    nxt = next_fire_time(When(cron="@daily", timezone="UTC"), now=now)
+    assert nxt is not None and (nxt.day, nxt.hour) == (9, 0)
+
+
+def test_unknown_cron_nickname_is_refused_at_parse():
+    from runspec_console.sources.schedule import parse_when
+
+    with pytest.raises(ValueError, match="isn't a time"):
+        parse_when({"cron": "@reboot"})
+
+
+def test_fixed_time_fires_once_when_the_clocks_go_back():
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    from runspec_console.sources.schedule import When, _when_to_trigger, later
+
+    pytest.importorskip("apscheduler")
+    try:
+        london = ZoneInfo("Europe/London")
+    except Exception:  # noqa: BLE001 — no tz database (Windows without tzdata)
+        pytest.skip("no Europe/London in this tz database")
+    trigger = _when_to_trigger(When(cron="30 1 * * *", timezone="Europe/London"))
+    t = trigger.get_next_fire_time(None, datetime(2026, 10, 24, 12, tzinfo=london))
+    days = []
+    for _ in range(3):
+        days.append(t.astimezone(london).date().isoformat())
+        t = trigger.get_next_fire_time(t, later(t, timedelta(microseconds=1)))
+    assert days == ["2026-10-25", "2026-10-26", "2026-10-27"]

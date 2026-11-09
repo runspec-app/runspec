@@ -61,7 +61,7 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 from ..events import EmitFn, Event, register_source
@@ -231,6 +231,90 @@ def _parse_every(every: str) -> dict[str, int]:
     return {_INTERVAL_UNITS[text[-1]]: n}
 
 
+#: cron's ``@`` nicknames, as 5-field expressions. APScheduler's ``from_crontab``
+#: takes only 5 fields, so a nickname is expanded before it gets there.
+#: ``@reboot`` isn't a time, so it has none. (Mirrored in runspec-scheduler's
+#: ``timing.py``.)
+CRON_NICKNAMES = {
+    "@yearly": "0 0 1 1 *",
+    "@annually": "0 0 1 1 *",
+    "@monthly": "0 0 1 * *",
+    "@weekly": "0 0 * * 0",
+    "@daily": "0 0 * * *",
+    "@midnight": "0 0 * * *",
+    "@hourly": "0 * * * *",
+}
+
+
+def expand_cron(expr: str) -> str:
+    """A cron expression with an ``@nickname`` expanded to its 5 fields.
+
+    Anything else is returned unchanged. Raises ``ValueError`` for an unknown
+    nickname (``@reboot`` included: it isn't a time of day)."""
+    text = str(expr).strip()
+    if not text.startswith("@"):
+        return text
+    fields = CRON_NICKNAMES.get(text.lower())
+    if fields is None:
+        known = ", ".join(sorted(CRON_NICKNAMES))
+        raise ValueError(
+            f"schedule 'cron' nickname {text!r} isn't a time "
+            f"(use one of {known}, or 5 fields)"
+        )
+    return fields
+
+
+def _fixed_time(fields: str) -> bool:
+    """Whether a 5-field expression names fixed times of day (no ``*`` in its
+    minute or hour). cron runs such a job once when the clocks go back; a job
+    with ``*`` there runs by elapsed time, so it runs in both copies of the hour."""
+    parts = fields.split()
+    return len(parts) == 5 and "*" not in parts[0] and "*" not in parts[1]
+
+
+def later(moment: datetime, delta: timedelta) -> datetime:
+    """``moment + delta`` counted in real time. Adding to a zoned datetime adds
+    to its wall clock and drops ``fold``, so in the hour the clocks go back,
+    01:30 GMT + 1s comes out as 01:30:01 BST, an hour *earlier*."""
+    return moment.astimezone(timezone.utc) + delta
+
+
+def _wall(moment: datetime, tz: Any) -> datetime:
+    """``moment`` as a naive wall-clock time in ``tz`` (the clock on the wall)."""
+    return moment.astimezone(tz).replace(tzinfo=None)
+
+
+_ONCE_CRON_CLASS: Any = None
+
+
+def _once_cron_class() -> Any:
+    """A ``CronTrigger`` that fires a fixed-time schedule once when the clocks go
+    back, as cron does. APScheduler 3 fires ``30 1 * * *`` in Europe/London at
+    01:30 BST and again at 01:30 GMT on the October change; this skips a fire
+    whose wall-clock time isn't later than the previous fire's. (Built on first
+    use so APScheduler is imported lazily.)"""
+    global _ONCE_CRON_CLASS
+    if _ONCE_CRON_CLASS is None:
+        from apscheduler.triggers.cron import CronTrigger
+
+        class OnceCronTrigger(CronTrigger):  # type: ignore[misc]
+            def get_next_fire_time(self, previous_fire_time: Any, now: Any) -> Any:
+                nxt = super().get_next_fire_time(previous_fire_time, now)
+                if previous_fire_time is None:
+                    return nxt
+                prev_wall = _wall(previous_fire_time, self.timezone)
+                for _ in range(8):  # a repeated hour holds at most a few fires
+                    if nxt is None or _wall(nxt, self.timezone) > prev_wall:
+                        return nxt
+                    nxt = super().get_next_fire_time(
+                        nxt, later(nxt, timedelta(seconds=1))
+                    )
+                return nxt
+
+        _ONCE_CRON_CLASS = OnceCronTrigger
+    return _ONCE_CRON_CLASS
+
+
 def parse_when(table: dict[str, Any]) -> When:
     """Validate and parse a schedule's ``when`` table.
 
@@ -248,6 +332,8 @@ def parse_when(table: dict[str, Any]) -> When:
         )
     if every:
         _parse_every(every)  # validate now; raise with a human message
+    if cron:
+        expand_cron(cron)  # an unknown @nickname fails now, not at fire time
     return When(cron=cron, every=every, timezone=timezone)
 
 
@@ -486,7 +572,9 @@ def _when_to_trigger(when: When) -> Any:
     if when.cron:
         from apscheduler.triggers.cron import CronTrigger
 
-        return CronTrigger.from_crontab(when.cron, timezone=tz)
+        fields = expand_cron(when.cron)
+        cls = _once_cron_class() if _fixed_time(fields) else CronTrigger
+        return cls.from_crontab(fields, timezone=tz)
     from apscheduler.triggers.interval import IntervalTrigger
 
     return IntervalTrigger(timezone=tz, **_parse_every(when.every))

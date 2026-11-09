@@ -54,10 +54,11 @@ from typing import Any
 
 from runspec.become import build_become_argv
 
-from .config import ScheduleEntry, load_config, load_schedules
+from .config import ScheduleEntry, load_config, load_schedules, schedule_id_problem
 from .discovery import Target, check_invocation, resolve_target
 from .invocation import plan_invocation
 from .runner import scripts_dir
+from .timing import cron_zone_problem
 
 #: Comment that tags every crontab line this tool owns (so reconcile touches only
 #: ours). One safe whitespace-free token per id, mirroring the SSH-key / denylist
@@ -426,6 +427,9 @@ def write_managed_users(config_path: Path, users: list[str]) -> None:
 
 def _installable(entry: ScheduleEntry, backend: str = "cron") -> tuple[bool, str]:
     """Whether ``entry`` can fire on ``backend``, else (False, reason)."""
+    bad_id = schedule_id_problem(entry.id, strict=False)
+    if bad_id:
+        return False, bad_id
     if not entry.enabled:
         return False, "disabled"
     if backend == "daemon":
@@ -434,6 +438,9 @@ def _installable(entry: ScheduleEntry, backend: str = "cron") -> tuple[bool, str
         return False, "interval schedules ('every') need the daemon backend (runspec-scheduler use daemon); on cron use a cron expression"
     if not entry.when.cron:
         return False, "no cron expression"
+    problem = cron_zone_problem(entry.when.timezone)
+    if problem:
+        return False, problem
     return True, ""
 
 

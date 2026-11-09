@@ -105,3 +105,16 @@ def test_set_settings_validates_then_keeps_everything_else(tmp_path):
     assert path.read_text() == before  # nothing written on a bad value
     s = set_settings(path, {"timeout": None})  # back to the default
     assert s.timeout == 6 * 3600 and load_settings(path).misfire_grace == 90
+
+
+def test_schedule_id_problem():
+    from runspec_scheduler.config import schedule_id_problem
+
+    for good in ("nightly-backup", "a", "cleanup-tmp.nightly", "rs_1"):
+        assert schedule_id_problem(good) == ""
+    for bad in ("", "-x", ".hidden", "has space", "a/b", "x" * 65, "über"):
+        assert schedule_id_problem(bad), bad
+    # a hand-written id that works stays usable; one that can't work doesn't
+    assert schedule_id_problem("Old Id+1".replace(" ", "_"), strict=False) == ""
+    for unsafe in ("a/b", "a\\\\b", "two words", "..", "tab\\there"):
+        assert schedule_id_problem(unsafe, strict=False), unsafe
