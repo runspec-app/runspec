@@ -8,6 +8,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, createEvent, waitFor, within, act } from '@testing-library/react'
 
 import { FilesView } from './FilesView'
+import { accountNote } from './DropDialog'
 import type { Host } from '../../bridge'
 
 const m = vi.hoisted(() => ({
@@ -177,7 +178,29 @@ describe('FilesView', () => {
     const dialog = await screen.findByRole('dialog')
     fireEvent.click(within(dialog).getByRole('button', { name: 'Relay' }))
     await waitFor(() => expect(m.startRelay).toHaveBeenCalledWith(
-      { kind: 'host', host: 'app-01' }, ['/var/log/app/app.log'], 'app-02', '/var/log/app', undefined, undefined, undefined,
+      { kind: 'host', host: 'app-01' }, ['/var/log/app/app.log'], 'app-02', '/var/log/app', undefined, undefined, undefined, undefined, undefined,
+    ))
+  })
+
+  it('relays out of a pane browsing as an owner as that owner', async () => {
+    render(<FilesView hosts={HOSTS} selectedHost="app-01" active />)
+    await screen.findByText('notes.md')
+    fireEvent.mouseDown(within(screen.getByTestId('pane-left')).getByRole('combobox'))
+    fireEvent.click(await screen.findByTitle('app-02'))
+    await waitFor(() => expect(within(screen.getByTestId('pane-left')).getByText('gc.log')).toBeTruthy())
+    await within(screen.getByTestId('pane-right')).findByText('as ops')
+    fireEvent.mouseDown(within(screen.getByTestId('pane-right')).getAllByRole('combobox')[1])
+    fireEvent.click(await screen.findByTitle('as svc (venv owner)'))
+    await waitFor(() => expect(m.listDir.mock.calls.some(c => c[0] === 'app-01' && c[6] === 'svc')).toBe(true))
+    const row = within(screen.getByTestId('pane-right')).getByText('app.log')
+    const transfer = dt()
+    fireEvent.dragStart(row.closest('[role=option]')!, { dataTransfer: transfer })
+    fireEvent.drop(screen.getByTestId('pane-left'), { dataTransfer: transfer })
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('Reads it as svc; writes it as the SSH login.')).toBeTruthy()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Relay' }))
+    await waitFor(() => expect(m.startRelay).toHaveBeenCalledWith(
+      { kind: 'host', host: 'app-01' }, ['/var/log/app/app.log'], 'app-02', '/var/log/app', undefined, undefined, undefined, 'svc', undefined,
     ))
   })
 
@@ -252,5 +275,17 @@ describe('FilesView', () => {
     await waitFor(() => expect(m.startTransfer).toHaveBeenCalledWith(
       'app-01', ['/var/log/app/gc.log'], 'local', '/ws', undefined, undefined, undefined, 'svc',
     ))
+  })
+})
+
+describe('accountNote', () => {
+  it('says which account each end runs as', () => {
+    expect(accountNote('upload', '', 'svc')).toBe('Copies as svc: the file lands owned by svc.')
+    expect(accountNote('fanout', undefined, 'svc')).toBe('Copies as svc: the file lands owned by svc.')
+    expect(accountNote('download', 'svc')).toBe('Reads the file as svc.')
+    expect(accountNote('relay', 'svc', 'app')).toBe('Reads it as svc and writes it as app: the file lands owned by app.')
+    expect(accountNote('relay', '', 'app')).toBe('Writes it as app: the file lands owned by app.')
+    expect(accountNote('relay')).toBe('')
+    expect(accountNote('upload', 'svc')).toBe('')
   })
 })

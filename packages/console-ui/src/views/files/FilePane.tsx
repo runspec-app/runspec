@@ -293,7 +293,7 @@ export function FilePane({
           </Tooltip>
         )}
         {target?.kind === 'host' && accounts && accounts.accounts.length > 0 && (
-          <Tooltip title="Browse this host as one of its venv owners (passwordless sudo to the venv's python). Copies to and from this computer run as that owner too; relays and copies to several hosts run as the SSH login.">
+          <Tooltip title="Browse this host as one of its venv owners (passwordless sudo to the venv's python). Copies to, from and between hosts run as that owner too; copying to several hosts skips any where it owns no venv.">
             <Select
               size="small"
               value={asUser}

@@ -23,16 +23,16 @@ export interface DropChoice {
 // The dialog a drop opens: where from / where to, copy whole or through one of
 // the saved filters (remembered per source folder), a new name for one file,
 // and for an upload to a host, the other hosts in its group to copy to as well.
-export function DropDialog({ src, dst, paths, srcDir, destDir, hosts, browsingAs, onCancel, onCopy }: {
+export function DropDialog({ src, dst, paths, srcDir, destDir, hosts, srcAs, dstAs, onCancel, onCopy }: {
   src: PaneTarget
   dst: PaneTarget
   paths: string[]
   srcDir: string
   destDir: string
   hosts: Host[]
-  // A pane browses as a venv owner: a copy between this computer and that
-  // host runs as the owner; a relay or a copy to several hosts as the login.
-  browsingAs?: string
+  // A pane browses as a venv owner: its end of the copy runs as that owner.
+  srcAs?: string
+  dstAs?: string
   onCancel: () => void
   onCopy: (choice: DropChoice) => void
 }) {
@@ -70,6 +70,19 @@ export function DropDialog({ src, dst, paths, srcDir, destDir, hosts, browsingAs
     }, 300)
     return () => { live = false; clearTimeout(t) }
   }, [alsoTo.join(','), destDir])  // eslint-disable-line react-hooks/exhaustive-deps
+  // Copying as an owner to several hosts: which extra hosts have no venv of
+  // that owner (and don't log in as it) — the copy skips those.
+  const [noOwner, setNoOwner] = useState<string[]>([])
+  useEffect(() => {
+    setNoOwner([])
+    if (!dstAs || !alsoTo.length) return
+    let live = true
+    Promise.all(alsoTo.map(h => bridge.files_accounts(h)
+      .then(a => (a.login === dstAs || a.accounts.includes(dstAs) ? '' : h))
+      .catch(() => '')))
+      .then(r => { if (live) setNoOwner(r.filter(Boolean)) })
+    return () => { live = false }
+  }, [alsoTo.join(','), dstAs])  // eslint-disable-line react-hooks/exhaustive-deps
   const missing = checks ? alsoTo.filter(h => checks[h]?.exists === false) : []
   const keptAlso = alsoTo.filter(h => !missing.includes(h))
 
@@ -182,16 +195,12 @@ export function DropDialog({ src, dst, paths, srcDir, destDir, hosts, browsingAs
               </div>
             )}
 
-            {browsingAs && (plan.kind === 'upload' || plan.kind === 'download') && (
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                {plan.kind === 'upload'
-                  ? `Copies as ${browsingAs}: the file lands owned by ${browsingAs}.`
-                  : `Reads the file as ${browsingAs}.`}
-              </Text>
+            {accountNote(plan.kind, srcAs, dstAs) && (
+              <Text type="secondary" style={{ fontSize: 12 }}>{accountNote(plan.kind, srcAs, dstAs)}</Text>
             )}
-            {browsingAs && (plan.kind === 'relay' || plan.kind === 'fanout') && (
+            {plan.kind === 'fanout' && dstAs && noOwner.length > 0 && (
               <Text type="warning" style={{ fontSize: 12 }}>
-                {plan.kind === 'relay' ? 'A relay' : 'Copying to several hosts'} runs as the SSH login, not {browsingAs}, so a folder or file only {browsingAs} can use won’t work.
+                {dstAs} owns no venv on {noOwner.join(', ')}, so {noOwner.length === 1 ? 'that host is' : 'those hosts are'} skipped.
               </Text>
             )}
 
@@ -207,4 +216,16 @@ export function DropDialog({ src, dst, paths, srcDir, destDir, hosts, browsingAs
       </Modal>
     </Modal>
   )
+}
+
+// Which account each end of the copy runs as, when a pane browses as a venv
+// owner. Empty when both ends are the SSH login.
+export function accountNote(kind: string | undefined, srcAs?: string, dstAs?: string): string {
+  if (kind === 'upload' || kind === 'fanout') return dstAs ? `Copies as ${dstAs}: the file lands owned by ${dstAs}.` : ''
+  if (kind === 'download') return srcAs ? `Reads the file as ${srcAs}.` : ''
+  if (kind !== 'relay') return ''
+  if (srcAs && dstAs) return `Reads it as ${srcAs} and writes it as ${dstAs}: the file lands owned by ${dstAs}.`
+  if (srcAs) return `Reads it as ${srcAs}; writes it as the SSH login.`
+  if (dstAs) return `Writes it as ${dstAs}: the file lands owned by ${dstAs}.`
+  return ''
 }

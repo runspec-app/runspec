@@ -505,10 +505,14 @@ shell opens the staged file, so the owner never needs to read the login's
 home) and the staged copy is deleted. The file is written beside its target as
 a hidden part file and renamed over it, so a half-copied file never appears
 under the real name, and a file it replaces keeps its permissions. A download
-is read by the owner; a filter runs on what it reads, as the login. The drop
-dialog says which account copies. A relay between two hosts and a copy to
-several hosts still run as the SSH login, and the dialog warns you when a pane
-is browsing as an owner.
+is read by the owner; a filter runs on what it reads, as the login. A relay
+between two hosts does the same on each end: a source pane browsing as an
+owner reads as that owner, and a destination pane browsing as an owner stages
+the file in the destination login's home and writes it into place as that
+owner. A copy to several hosts copies as the destination pane's owner on every
+host where that account owns a venv (or is the SSH login); any other host is
+skipped, and the dialog names those hosts before you copy. The drop dialog says
+which account copies.
 
 The agent has the same reach: `download_file` (remote → local, including
 ad-hoc sources via `source_via` + `source_target`) and `relay_file`

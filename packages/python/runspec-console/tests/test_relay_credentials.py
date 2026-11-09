@@ -81,6 +81,7 @@ def test_unknown_id_unchanged(kr):
 
 class _RelayBridge:
     start_relay = Bridge.start_relay
+    _owner_venv = Bridge._owner_venv
     _resolve_adhoc_credential = Bridge._resolve_adhoc_credential
     _credential_entry = Bridge._credential_entry
     _emit_transfer_end = Bridge._emit_transfer_end

@@ -192,15 +192,10 @@ class TransferMixin:
         if as_user:
             if remote_desc.get("kind") != "host":
                 return {"error": "copying as another account needs a configured host"}
-            host_name = str(remote_desc["host"])
-            bad = self._files_as(host_name, as_user)  # type: ignore[attr-defined]
-            if bad:
-                return {"error": bad}
-            owner_py = self._venv_python(  # type: ignore[attr-defined]
-                host_name, entry, owner=as_user
-            )
-            if not owner_py:
-                return {"error": f"no venv owned by {as_user} on {host_name}"}
+            owner, bad = self._owner_venv(str(remote_desc["host"]), as_user)
+            if bad or owner is None:
+                return {"error": bad or "no owner"}
+            owner_py = owner[1]
 
         rendered = None
         if filter_name:
@@ -337,6 +332,104 @@ class TransferMixin:
 
     # ── copying as a venv owner (Files tab "Browse as") ──
 
+    def _stage_path(self, sftp: Any, tid: str, idx: int) -> str:
+        """A staging path in the login's private ``~/.runspec-staging``
+        (``0700``, created when missing) for one file of transfer ``tid``."""
+        home = sftp.normalize(".")
+        stage_dir = posixpath.join(home, ".runspec-staging")
+        try:
+            sftp.mkdir(stage_dir, 0o700)
+        except OSError:
+            pass  # already there
+        try:
+            sftp.chmod(stage_dir, 0o700)
+        except OSError:
+            pass
+        return posixpath.join(stage_dir, f"{tid}-{idx}")
+
+    def _place_as_owner(
+        self,
+        session_factory: Callable[[], tuple[Any, Callable[[], None]]],
+        staged: str,
+        item: Any,
+        python: str,
+        as_user: str,
+    ) -> None:
+        """Have the files worker, running as ``as_user``, write the staged file
+        into ``item.dst``. The login's shell opens the staged file as the
+        worker's stdin, so the owner never reads the login's home."""
+        from .bridge_files import _parse_worker_output
+        from .fs_browse import account_error
+
+        cmd = self._owner_command(  # type: ignore[attr-defined]
+            python, as_user, {"op": "place", "path": item.dst}
+        )
+        code, out, err = self._exec_collect(
+            session_factory, f"{cmd} < {shlex.quote(staged)}"
+        )
+        res = _parse_worker_output(out)
+        if res is None:
+            raise RuntimeError(
+                account_error(err, as_user)
+                or err.strip()
+                or f"couldn't write {item.name} as {as_user} (exit {code})"
+            )
+        if not res.get("ok"):
+            raise RuntimeError(str(res.get("error") or "write failed"))
+
+    def _owner_read_command(
+        self, python: str, as_user: str, src: str, rendered: str | None
+    ) -> str:
+        """The command that streams ``src`` read as ``as_user`` (the worker's
+        ``cat``), piped through ``rendered`` (run as the login) when set."""
+        cmd = self._owner_command(  # type: ignore[attr-defined]
+            python, as_user, {"op": "cat", "path": src}
+        )
+        if rendered is not None:
+            pl = rendered.strip()
+            if not pl:
+                raise ValueError("empty filter pipeline")
+            cmd = f"{cmd} | sh -c {shlex.quote(pl)}"
+        return cmd
+
+    def _stream_as_owner(
+        self,
+        session_factory: Callable[[], tuple[Any, Callable[[], None]]],
+        cmd: str,
+        as_user: str,
+        dst_open: Callable[[], Any],
+        dst_remove: Callable[[], None],
+        item: Any,
+        tid: str,
+        idx: int,
+        count: int,
+        cancel_event: threading.Event,
+    ) -> None:
+        """Run an :meth:`_owner_read_command` and write what it streams to
+        ``dst_open()``. A failed read fails the copy even behind a filter."""
+        from . import _files_worker as worker
+        from .fs_browse import account_error
+
+        try:
+            self._run_filter_stream(
+                session_factory,
+                cmd,
+                dst_open=dst_open,
+                dst_remove=dst_remove,
+                in_size=0,
+                item=item,
+                tid=tid,
+                idx=idx,
+                count=count,
+                cancel_event=cancel_event,
+                fail_on=(worker.ERROR_PREFIX, "sudo:"),
+            )
+        except RuntimeError as e:
+            msg = str(e)
+            if msg.startswith(worker.ERROR_PREFIX):
+                msg = msg[len(worker.ERROR_PREFIX) :]
+            raise RuntimeError(account_error(msg, as_user) or msg) from None
+
     def _push_as_owner(
         self,
         sftp: Any,
@@ -349,28 +442,16 @@ class TransferMixin:
         idx: int,
         count: int,
         cancel_event: threading.Event,
+        host: str | None = None,
     ) -> None:
         """Upload one file as ``as_user``: copy (or filter) it as the login into
         a private staging folder (``~/.runspec-staging``, ``0700``), then run the
         files worker as the owner with the staged file as its stdin, so the
         owner writes it into place without ever reading the login's home. The
-        staged copy is always removed."""
+        staged copy is always removed. ``host`` tags a fan-out's progress."""
         from dataclasses import replace
 
-        from .bridge_files import _parse_worker_output
-        from .fs_browse import account_error
-
-        home = sftp.normalize(".")
-        stage_dir = posixpath.join(home, ".runspec-staging")
-        try:
-            sftp.mkdir(stage_dir, 0o700)
-        except OSError:
-            pass  # already there
-        try:
-            sftp.chmod(stage_dir, 0o700)
-        except OSError:
-            pass
-        staged = posixpath.join(stage_dir, f"{tid}-{idx}")
+        staged = self._stage_path(sftp, tid, idx)
         staged_item = replace(item, dst=staged)
         try:
             if rendered is not None:
@@ -378,24 +459,12 @@ class TransferMixin:
                     sftp, staged_item, rendered, tid, idx, count, cancel_event
                 )
             else:
-                self._transfer_one(sftp, "push", staged_item, tid, idx, count)
+                self._transfer_one(
+                    sftp, "push", staged_item, tid, idx, count, host=host
+                )
             if cancel_event.is_set():
                 raise RuntimeError("cancelled")
-            cmd = self._owner_command(  # type: ignore[attr-defined]
-                python, as_user, {"op": "place", "path": item.dst}
-            )
-            code, out, err = self._exec_collect(
-                session_factory, f"{cmd} < {shlex.quote(staged)}"
-            )
-            res = _parse_worker_output(out)
-            if res is None:
-                raise RuntimeError(
-                    account_error(err, as_user)
-                    or err.strip()
-                    or f"couldn't write {item.name} as {as_user} (exit {code})"
-                )
-            if not res.get("ok"):
-                raise RuntimeError(str(res.get("error") or "write failed"))
+            self._place_as_owner(session_factory, staged, item, python, as_user)
         finally:
             try:
                 sftp.remove(staged)
@@ -416,36 +485,108 @@ class TransferMixin:
     ) -> None:
         """Download one file as ``as_user``: the files worker, run as the owner,
         streams the file's bytes; a filter runs on them as the login."""
-        from . import _files_worker as worker
-        from .fs_browse import account_error
-
-        cmd = self._owner_command(  # type: ignore[attr-defined]
-            python, as_user, {"op": "cat", "path": item.src}
+        cmd = self._owner_read_command(python, as_user, item.src, rendered)
+        self._stream_as_owner(
+            session_factory,
+            cmd,
+            as_user,
+            dst_open=lambda: open(item.dst, "wb"),
+            dst_remove=lambda: os.remove(item.dst),
+            item=item,
+            tid=tid,
+            idx=idx,
+            count=count,
+            cancel_event=cancel_event,
         )
-        if rendered is not None:
-            pl = rendered.strip()
-            if not pl:
-                raise ValueError("empty filter pipeline")
-            cmd = f"{cmd} | sh -c {shlex.quote(pl)}"
+
+    def _relay_one_as(
+        self,
+        src_sftp: Any,
+        src_factory: Callable[[], tuple[Any, Callable[[], None]]],
+        dest_sftp: Any,
+        dest_factory: Callable[[], tuple[Any, Callable[[], None]]] | None,
+        item: Any,
+        rendered: str | None,
+        src_as: tuple[str, str] | None,
+        dest_as: tuple[str, str] | None,
+        tid: str,
+        idx: int,
+        count: int,
+        cancel_event: threading.Event,
+    ) -> None:
+        """Relay one file with either end (or both) as a venv owner.
+        ``src_as`` / ``dest_as`` are ``(account, venv python)``. The source
+        owner reads it (the worker's ``cat``, a filter after it as the login);
+        for a destination owner it lands in the destination login's staging
+        folder and that owner writes it into place."""
+        from dataclasses import replace
+
+        target = item
+        staged = ""
+        if dest_as is not None:
+            staged = self._stage_path(dest_sftp, tid, idx)
+            target = replace(item, dst=staged)
         try:
-            self._run_filter_stream(
-                session_factory,
-                cmd,
-                dst_open=lambda: open(item.dst, "wb"),
-                dst_remove=lambda: os.remove(item.dst),
-                in_size=0,
-                item=item,
-                tid=tid,
-                idx=idx,
-                count=count,
-                cancel_event=cancel_event,
-                fail_on=(worker.ERROR_PREFIX, "sudo:"),
-            )
-        except RuntimeError as e:
-            msg = str(e)
-            if msg.startswith(worker.ERROR_PREFIX):
-                msg = msg[len(worker.ERROR_PREFIX) :]
-            raise RuntimeError(account_error(msg, as_user) or msg) from None
+            if src_as is not None:
+                cmd = self._owner_read_command(src_as[1], src_as[0], item.src, rendered)
+                self._stream_as_owner(
+                    src_factory,
+                    cmd,
+                    src_as[0],
+                    dst_open=lambda: dest_sftp.open(target.dst, "wb"),
+                    dst_remove=lambda: dest_sftp.remove(target.dst),
+                    item=item,
+                    tid=tid,
+                    idx=idx,
+                    count=count,
+                    cancel_event=cancel_event,
+                )
+            elif rendered is not None:
+                self._relay_one_filtered(
+                    src_factory,
+                    dest_sftp,
+                    target,
+                    rendered,
+                    src_sftp,
+                    tid,
+                    idx,
+                    count,
+                    cancel_event,
+                )
+            else:
+                self._relay_one(
+                    src_sftp, dest_sftp, target, tid, idx, count, cancel_event
+                )
+            if dest_as is not None:
+                if cancel_event.is_set():
+                    raise RuntimeError("cancelled")
+                assert dest_factory is not None
+                self._place_as_owner(dest_factory, staged, item, dest_as[1], dest_as[0])
+        finally:
+            if staged:
+                try:
+                    dest_sftp.remove(staged)
+                except Exception:
+                    pass
+
+    def _owner_venv(
+        self, host: str, as_user: str
+    ) -> tuple[tuple[str, str] | None, str | None]:
+        """``((as_user, venv python), None)`` when ``as_user`` may be used on
+        configured ``host``, ``(None, None)`` when ``as_user`` is empty, else
+        ``(None, error)``."""
+        if not as_user:
+            return None, None
+        entry = self._host_entry(host)
+        if entry is None or not entry.get("ssh"):
+            return None, f"{host} is not a reachable remote host"
+        bad = self._files_as(host, as_user)  # type: ignore[attr-defined]
+        if bad:
+            return None, bad
+        py = self._venv_python(host, entry, owner=as_user)  # type: ignore[attr-defined]
+        if not py:
+            return None, f"no venv owned by {as_user} on {host}"
+        return (as_user, py), None
 
     def _exec_collect(
         self,
@@ -625,6 +766,7 @@ class TransferMixin:
         filter_name: str = "",
         filter_arg: str | None = None,
         dest_name: str | None = None,
+        as_user: str = "",
     ) -> dict[str, Any]:
         """Upload the same local source file(s) to ``dest_dir`` on **many** remote hosts.
 
@@ -636,6 +778,12 @@ class TransferMixin:
         streams ``runspec:transfer_progress`` events carrying a ``host`` field, then
         a single ``runspec:transfer_end`` whose ``hosts`` lists each host's result —
         or ``{"error": ...}`` on a bad request.
+
+        ``as_user`` (the Files tab's "Browse as" on the first host) copies as
+        that venv owner (see :meth:`_push_as_owner`). It must own a venv on the
+        first host; on another host where it owns none, that host is skipped
+        (``skipped: true`` with the reason), unless it is that host's SSH login,
+        which copies as usual.
         """
 
         from .fs_transfer import _clean_dest_name, plan_transfer, render_pipeline
@@ -674,6 +822,22 @@ class TransferMixin:
                 return {"error": f"{h} is not a reachable remote host"}
             entries[h] = entry
 
+        # Per host: copy as the owner (account, venv python), as the login
+        # (None), or skip (a reason).
+        owners: dict[str, tuple[str, str] | None] = {h: None for h in targets}
+        skips: dict[str, str] = {}
+        if as_user:
+            first, bad = self._owner_venv(targets[0], as_user)
+            if bad:
+                return {"error": bad}
+            owners[targets[0]] = first
+            for h in targets[1:]:
+                owner, _bad = self._owner_venv(h, as_user)
+                if owner is not None:
+                    owners[h] = owner
+                elif self.files_accounts(h).get("login") != as_user:  # type: ignore[attr-defined]
+                    skips[h] = f"skipped: {as_user} owns no venv on {h}"
+
         tid = uuid.uuid4().hex[:12]
         cancel_event = threading.Event()
         with self._lock:
@@ -683,7 +847,7 @@ class TransferMixin:
                 "group": "",
                 "host": ", ".join(targets),
                 "operator": self._current_user(),
-                "runAs": "",
+                "runAs": as_user,
                 "startedAt": _iso_now(),
                 "args": {"hosts": len(targets), "files": len(paths)},
                 _CANCEL_KEY: cancel_event,
@@ -695,13 +859,22 @@ class TransferMixin:
         send_paths = list(paths)
 
         def per_host(h: str) -> dict[str, Any]:
+            if h in skips:
+                return {"host": h, "ok": False, "skipped": True, "error": skips[h]}
             entry = entries[h]
+            owner = owners.get(h)
             ok, error = True, None
             release: Callable[[], None] | None = None
             try:
-                sftp, release = self._open_sftp(
-                    entry["ssh"], entry.get("identityFile"), cfg
-                )
+                factory: Any = None
+                if owner is not None:
+                    sftp, factory, release = self._open_source_conn(
+                        {"kind": "host", "host": h}, None, cfg
+                    )
+                else:
+                    sftp, release = self._open_sftp(
+                        entry["ssh"], entry.get("identityFile"), cfg
+                    )
                 plan = plan_transfer("local", send_paths, h, dest_dir, dest_name)
                 count = len(plan.items)
                 for idx, item in enumerate(plan.items):
@@ -709,7 +882,24 @@ class TransferMixin:
                         ok, error = False, "cancelled"
                         break
                     try:
-                        self._transfer_one(sftp, "push", item, tid, idx, count, host=h)
+                        if owner is not None:
+                            self._push_as_owner(
+                                sftp,
+                                factory,
+                                item,
+                                None,
+                                owner[1],
+                                owner[0],
+                                tid,
+                                idx,
+                                count,
+                                cancel_event,
+                                host=h,
+                            )
+                        else:
+                            self._transfer_one(
+                                sftp, "push", item, tid, idx, count, host=h
+                            )
                     except Exception as e:
                         ok, error = False, str(e)
                         self._dispatch(
@@ -777,7 +967,16 @@ class TransferMixin:
                     _shutil.rmtree(tmpdir, ignore_errors=True)
                 with self._lock:
                     self._in_flight.pop(tid, None)
-            overall = bool(results) and all(r["ok"] for r in results)
+            skipped = [r["host"] for r in results if r.get("skipped")]
+            overall = any(r["ok"] for r in results) and all(
+                r["ok"] or r.get("skipped") for r in results
+            )
+            if not overall:
+                summary: str | None = "one or more hosts failed"
+            elif skipped:
+                summary = f"skipped {', '.join(skipped)}: {as_user} owns no venv there"
+            else:
+                summary = None
             logger.info("fan-out %s: %d hosts ok=%s", tid, len(targets), overall)
             self._emit_transfer_end(
                 tid,
@@ -786,7 +985,7 @@ class TransferMixin:
                     "ok": overall,
                     "files": len(paths),
                     "total": len(paths),
-                    "error": None if overall else "one or more hosts failed",
+                    "error": summary,
                     "hosts": results,
                 },
             )
@@ -1502,6 +1701,8 @@ class TransferMixin:
         filter_name: str = "",
         filter_arg: str | None = None,
         dest_name: str | None = None,
+        source_as: str = "",
+        dest_as: str = "",
     ) -> dict[str, Any]:
         """Relay file(s) from one host to another, streaming through the console.
 
@@ -1512,8 +1713,11 @@ class TransferMixin:
         source-side filter (``filter_arg`` is the runtime value for its ``{{arg}}``
         placeholder); when set, the file is filtered on the source host and only
         the output is relayed. ``dest_name`` optionally renames the (single) file
-        on the destination — a bare filename, not a path. Returns ``{"id": ...}``
-        and streams the usual transfer events, or ``{"error": ...}``.
+        on the destination — a bare filename, not a path. ``source_as`` /
+        ``dest_as`` (the Files tab's "Browse as" on either pane) read / write
+        that end as one of its venv owners (see :meth:`_relay_one_as`). Returns
+        ``{"id": ...}`` and streams the usual transfer events, or ``{"error":
+        ...}``.
         """
         from .fs_transfer import relay_items, render_pipeline
 
@@ -1529,6 +1733,14 @@ class TransferMixin:
         kind = source.get("kind")
         if kind not in ("host", "adhoc") or not source.get("host"):
             return {"error": "no source host specified"}
+        if source_as and kind != "host":
+            return {"error": "copying as another account needs a configured host"}
+        src_owner, bad = self._owner_venv(str(source.get("host")), source_as)
+        if bad:
+            return {"error": bad}
+        dest_owner, bad = self._owner_venv(dest_host, dest_as)
+        if bad:
+            return {"error": bad}
         # An ad-hoc source may omit the jump — the console then connects to the
         # target directly (a jump is only needed when it can't reach it directly).
 
@@ -1563,7 +1775,7 @@ class TransferMixin:
                 "group": "",
                 "host": f"{source.get('host')} → {dest_host}",
                 "operator": self._current_user(),
-                "runAs": "",
+                "runAs": dest_as or source_as,
                 "startedAt": _iso_now(),
                 "args": {
                     "source": source.get("host"),
@@ -1587,15 +1799,36 @@ class TransferMixin:
                 src_sftp, session_factory, src_release = self._open_source_conn(
                     source, password, cfg
                 )
-                dest_sftp, dest_release = self._open_sftp(
-                    dest_entry["ssh"], dest_entry.get("identityFile"), cfg
-                )
+                dest_factory: Any = None
+                if dest_owner is not None:
+                    dest_sftp, dest_factory, dest_release = self._open_source_conn(
+                        {"kind": "host", "host": dest_host}, None, cfg
+                    )
+                else:
+                    dest_sftp, dest_release = self._open_sftp(
+                        dest_entry["ssh"], dest_entry.get("identityFile"), cfg
+                    )
                 for idx, item in enumerate(items):
                     if cancel_event.is_set():
                         ok, error = False, "cancelled"
                         break
                     try:
-                        if rendered is not None:
+                        if src_owner is not None or dest_owner is not None:
+                            self._relay_one_as(
+                                src_sftp,
+                                session_factory,
+                                dest_sftp,
+                                dest_factory,
+                                item,
+                                rendered,
+                                src_owner,
+                                dest_owner,
+                                tid,
+                                idx,
+                                count,
+                                cancel_event,
+                            )
+                        elif rendered is not None:
                             self._relay_one_filtered(
                                 session_factory,
                                 dest_sftp,

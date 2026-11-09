@@ -9,6 +9,29 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.397.0] — 2026-11-09
+
+### Added
+
+- **Relays and copies to several hosts as a venv owner (Files tab).** These
+  now follow the panes' "Browse as" account too, instead of always running as
+  the SSH login.
+  - A relay reads the source as the source pane's owner (the files worker's
+    `cat`; a filter runs after it as the login) and, when the destination
+    pane browses as an owner, stages the file in the destination login's
+    `~/.runspec-staging` and has that owner write it into place (`place`).
+    Either end, or both. `start_relay` takes `source_as` / `dest_as`, each
+    checked against that host's venv owners; an ad-hoc source can't take one.
+  - A copy to several hosts takes `as_user` (the destination pane's owner).
+    It must own a venv on the first host. On each other host the copy runs as
+    that owner when it owns a venv there, as usual when it is that host's SSH
+    login, and otherwise the host is skipped: its result is
+    `{ok: false, skipped: true, error: "skipped: …"}`. The copy still counts
+    as done when the other hosts worked, and its message names the skipped
+    hosts.
+  - The drop dialog says which account each end runs as and, before a copy
+    to several hosts, which ones will be skipped.
+
 ## [0.396.0] — 2026-11-09
 
 ### Added
