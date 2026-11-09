@@ -9,6 +9,20 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.395.1] — 2026-11-09
+
+### Fixed
+
+- **Browse as works on hosts whose sudo rule refuses shells.** A Files pane
+  browsing a host as a venv owner, and the Forms path picker's service-account
+  view, ran `sudo -n -u <owner> sh -c …`, which a sudoers rule that only allows
+  the venv's `bin/` refuses. They now run a small stdlib worker
+  (`_files_worker.py`) on one of that owner's venvs' own python
+  (`sudo -n -u <owner> <venv>/bin/python -I -S -c …`, the request on stdin),
+  the way Env files and runnable runs already do. Listing, View, New folder,
+  Rename and Delete all go this way; as the SSH login nothing changes. The
+  sudo-refused message now says the venv's `bin/` is enough.
+
 ## [0.395.0] — 2026-11-09
 
 ### Added

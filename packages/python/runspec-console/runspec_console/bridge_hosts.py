@@ -206,22 +206,27 @@ class HostsMixin:
         listing is wrapped in that runnable's ``run_as``/become — so the picker
         shows what the job itself would see. ``group`` disambiguates a runnable
         that exists in more than one venv on the host. ``as_user`` (the Files
-        tab's "Browse as") lists as one of the host's venv owners via
-        ``sudo -n -u``; it must be one of :meth:`files_accounts`.
+        tab's "Browse as") lists as one of the host's venv owners; it must be
+        one of :meth:`files_accounts`. Either way the listing runs on the venv's
+        own python as that account (``_files_worker``), never a shell.
         """
         entry = self._host_entry(host)
         if entry is None:
             return {"error": f"unknown host {host}"}
         try:
             if entry.get("ssh"):
-                from .fs_browse import parse_remote_listing, remote_list_command
+                from .fs_browse import (
+                    listing_from_worker,
+                    parse_remote_listing,
+                    remote_list_command,
+                )
 
-                run_as, become_method, become_flags = "", "sudo", None
+                run_as, become_method, python = "", "sudo", ""
                 if as_user:
                     bad = self._files_as(host, as_user)  # type: ignore[attr-defined]
                     if bad:
                         return {"error": bad}
-                    run_as, become_flags = as_user, "-n"
+                    run_as = as_user
                 elif as_service_account:
                     if not runnable:
                         return {
@@ -238,33 +243,43 @@ class HostsMixin:
                             ),
                             None,
                         )
-                    run_as, become_method, become_flags = self._become_params(
-                        cached, host
-                    )
+                    run_as, become_method, _flags = self._become_params(cached, host)
                     if not run_as:
                         return {
                             "error": f"no service account (run_as) configured for {runnable} on {host}"
                         }
+                    python = self._venv_python(  # type: ignore[attr-defined]
+                        host, entry, group=str((cached or {}).get("group") or "")
+                    )
 
-                cmd = remote_list_command(
-                    path,
-                    run_as=run_as,
-                    become_method=become_method,
-                    become_flags=become_flags,
-                )
+                if run_as:
+                    # No shell as the other account: the venv's own python
+                    # lists (see _files_worker).
+                    res = self._files_worker(  # type: ignore[attr-defined]
+                        host,
+                        entry,
+                        {"op": "list", "path": path, "dirs_only": dirs_only},
+                        run_as=run_as,
+                        python=python,
+                        become_method=become_method or "sudo",
+                    )
+                    if not res.get("ok"):
+                        return {
+                            "error": res.get("error")
+                            or f"could not list {path or '~'} as {run_as}"
+                        }
+                    return listing_from_worker(res, dirs_only=dirs_only)
+
                 code, out, err = self._ssh_run(
                     entry["ssh"],
-                    cmd,
+                    remote_list_command(path),
                     identity_file=entry.get("identityFile"),
                     timeout=15,
                 )
                 if code != 0:
-                    from .fs_browse import account_error
-
-                    who = f" as {run_as}" if run_as else ""
                     return {
-                        "error": account_error(err, as_user)
-                        or f"could not list {path or '~'}{who} (exit {code})"
+                        "error": (err or "").strip()
+                        or f"could not list {path or '~'} (exit {code})"
                     }
                 return parse_remote_listing(out, dirs_only=dirs_only)
 

@@ -1,5 +1,3 @@
-import pytest
-
 from runspec_console.fs_browse import (
     _local_parent,
     _posix_parent,
@@ -183,18 +181,6 @@ def test_list_sftp_dirs_only():
     ]
     res = list_sftp(_FakeSftp(entries), "", dirs_only=True)
     assert [e["name"] for e in res["entries"]] == ["sub"]
-
-
-def test_remote_list_command_service_account_wraps_in_become():
-    # Needs core runspec for build_become_argv; CI's console-test env omits it.
-    pytest.importorskip("runspec")
-    cmd = remote_list_command("/var/log/app", run_as="svc_app", become_method="sudo")
-    assert cmd.startswith("sudo ")
-    assert "-u svc_app" in cmd
-    assert "sh -c" in cmd
-    # The listing itself is preserved inside the quoted `sh -c` argument.
-    assert "find -L ." in cmd
-    assert "pwd" in cmd
 
 
 def test_remote_list_command_no_run_as_is_plain():
