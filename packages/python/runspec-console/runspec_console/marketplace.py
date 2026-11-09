@@ -1484,6 +1484,26 @@ def validate_spec(spec: str) -> str:
     return s
 
 
+# pip run as a venv owner honours that account's umask. A hardened host (CIS /
+# RHEL umask 027 or 077, which ``sudo -n -u`` keeps) then creates new package
+# folders as ``drwxr-x---``: every other account — the console's own SSH login
+# among them — sees an empty ``runspec`` namespace package and fails with
+# "No module named runspec.cli". So pip runs with group/other read and search
+# left on (the umask's write bits stay as they were). Otherwise the same as
+# ``python -m pip``: ``alter_sys`` gives pip the argv[0] it has under ``-m``.
+PIP_UMASK_PY = (
+    "import os,runpy;"
+    "os.umask(os.umask(0o22)&0o22);"
+    "runpy.run_module('pip',run_name='__main__',alter_sys=True)"
+)
+
+
+def pip_argv(python: str, *args: str) -> list[str]:
+    """``<python> -m pip <args>``, with a umask that keeps what pip installs
+    readable by every account (see :data:`PIP_UMASK_PY`)."""
+    return [python, "-c", PIP_UMASK_PY, *args]
+
+
 def pip_install_argv(
     python: str,
     specs: list[str],
@@ -1497,7 +1517,7 @@ def pip_install_argv(
     cleaned = [validate_spec(s) for s in specs]
     if not cleaned:
         raise MarketplaceError("nothing to install")
-    argv = [python, "-m", "pip", "install", "--disable-pip-version-check", "--no-input"]
+    argv = pip_argv(python, "install", "--disable-pip-version-check", "--no-input")
     if upgrade:
         argv.append("-U")
     if reinstall:
@@ -1513,15 +1533,7 @@ def pip_uninstall_argv(python: str, names: list[str]) -> list[str]:
     cleaned = [validate_spec(n) for n in names]
     if not cleaned:
         raise MarketplaceError("nothing to uninstall")
-    return [
-        python,
-        "-m",
-        "pip",
-        "uninstall",
-        "-y",
-        "--disable-pip-version-check",
-        *cleaned,
-    ]
+    return pip_argv(python, "uninstall", "-y", "--disable-pip-version-check", *cleaned)
 
 
 def pip_env(repo: Repo | None, auth: tuple[str, str] | None = None) -> dict[str, str]:

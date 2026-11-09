@@ -192,6 +192,16 @@ update restarts it at the end (`runspec-scheduler restart`), so it runs the
 code pip just installed. That needs runspec-scheduler 0.7.0; a failed restart
 is a warning. Moving the schedules back to crontab stops the daemon instead.
 
+Every update also makes the venv's code (`bin/`, `lib/`) readable by every
+account, and when the owner isn't your SSH login it then runs
+`bin/runspec --version` as your login too. An owner with a strict umask (027 or
+077, common on hardened RHEL hosts) used to leave newly installed packages
+readable only by the owner: the venv worked as the owner but the console, which
+reads it as your login, showed no runnables and failed with *No module named
+runspec.cli*. pip now runs with umask 022 (Provision, Update venv and the
+Marketplace), and running **Update venv** on a venv in that state repairs it.
+By hand, as the owner: `chmod -R go+rX <venv>/bin <venv>/lib`.
+
 The venv is never recreated: installed packages, `.runspec_env`, schedules and
 `logs/` stay, and the host's runspec paths don't change. A failed package
 install stops that host (nothing after it runs); any other failed step is a

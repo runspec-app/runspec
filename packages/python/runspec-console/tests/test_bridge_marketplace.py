@@ -698,7 +698,7 @@ def test_install_remote_runs_pip_as_owner_with_index_env_and_events(app, monkeyp
 
     py = "/opt/venvs/ops/bin/python"
     assert toks[:7] == ["sudo", "-n", "-u", "svc", py, "-c", PY_ENV_PRELUDE]
-    assert toks[7:11] == [py, "-m", "pip", "install"]
+    assert toks[7:11] == [py, "-c", mp.PIP_UMASK_PY, "install"]
     assert "-U" in toks and toks[-1] == "runspec-acme"
     assert "bob:pw" not in cmd
     assert parse_env_frame(b.ssh_stdin[-1]) == {
@@ -741,9 +741,14 @@ def test_uninstall_remote_without_run_as_and_failure_reported(app):
         r["ok"] is False and r["exit_code"] == 1 and "Cannot uninstall" in r["summary"]
     )
     ssh, cmd = b.ssh_calls[-1]
-    assert (
-        cmd
-        == "/opt/venvs/ops/bin/python -m pip uninstall -y --disable-pip-version-check runspec-acme"
+    assert cmd == shlex.join(
+        mp.pip_argv(
+            "/opt/venvs/ops/bin/python",
+            "uninstall",
+            "-y",
+            "--disable-pip-version-check",
+            "runspec-acme",
+        )
     )
     assert b.refreshed == 0  # nothing changed
 

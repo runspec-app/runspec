@@ -772,7 +772,7 @@ def test_pip_argv_builders_refuse_non_package_specs():
         upgrade=True,
         reinstall=True,
     )
-    assert argv[:4] == ["/v/bin/python", "-m", "pip", "install"]
+    assert argv[:4] == ["/v/bin/python", "-c", mp.PIP_UMASK_PY, "install"]
     assert (
         "-U" in argv
         and "--force-reinstall" in argv

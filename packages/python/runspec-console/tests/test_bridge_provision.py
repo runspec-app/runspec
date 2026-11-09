@@ -120,7 +120,7 @@ class _StubBridge:
         if self.fail_on and self.fail_on in command:
             return 1, "", f"boom: {self.fail_on}"
         argv = shlex.split(command)
-        if "-m" in argv and "pip" in argv:
+        if mp.PIP_UMASK_PY in argv:  # <venv python> -c <pip with umask> …
             bindir = argv[0].rsplit("/", 1)[0]
             if "runspec" in argv:  # the install step: stand in bin/runspec
                 with open(f"{bindir}/runspec", "w") as fh:
@@ -300,7 +300,7 @@ def test_provision_end_to_end_two_hosts(app, tmp_path):
     joined = "\n".join(b.commands)
     assert "logs share --inbox" in joined
     assert (
-        "pip install --disable-pip-version-check --no-input runspec runspec-linux"
+        " install --disable-pip-version-check --no-input runspec runspec-linux"
         in joined
     )
     # The new venv's own ledger records how it was made, as its owner.
@@ -644,6 +644,16 @@ def test_provision_as_another_account_grants_the_login_an_acl(app, tmp_path):
     assert rec["status"] == "finished", rec
     inbox = [c for c in b.commands if "logs share --inbox" in c]
     assert inbox and "--acl-user deploy" in inbox[-1]
+    # The permissions repair runs as the owner; the access check runs as the
+    # SSH login (no sudo), since that's the account the console reads it as.
+    assert any(
+        c.startswith("sudo -n -u svc ") and "os.walk(top)" in c for c in b.commands
+    )
+    version = [c for c in b.commands if c.endswith("/bin/runspec --version")]
+    assert version[0].startswith("sudo -n -u svc ")  # verify, as the owner
+    assert not version[1].startswith("sudo")  # access, as the login
+    res = rec["results"][0]
+    assert res["ok"] and not res["warnings"], res
 
 
 def test_provision_as_the_login_adds_no_acl(app, tmp_path):
@@ -1160,7 +1170,7 @@ def test_update_applies_the_new_options_in_place(app, tmp_path):
     assert res["ok"], res
     assert res["scheduler"] == {"manager": "cron", "reason": "no systemd"}
     joined = _step_cmds(b)
-    assert "pip install --disable-pip-version-check --no-input -U runspec " in joined
+    assert " install --disable-pip-version-check --no-input -U runspec " in joined
     assert "runspec-scheduler[supervisor]>=0.6.0" in joined
     assert f"{venv}/bin/runspec logs share --inbox" in joined
     assert (
@@ -1181,6 +1191,7 @@ def test_update_applies_the_new_options_in_place(app, tmp_path):
     assert b.audit[-1]["extra"]["applied"] == [
         "pip",
         "install",
+        "permissions",
         "inbox",
         "retention",
         "scheduler",
@@ -1195,6 +1206,7 @@ def test_update_applies_the_new_options_in_place(app, tmp_path):
         "inspect",
         "pip",
         "install",
+        "permissions",
         "inbox",
         "retention",
         "verify",
