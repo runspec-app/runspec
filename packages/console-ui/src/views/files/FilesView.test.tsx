@@ -20,6 +20,7 @@ const m = vi.hoisted(() => ({
   viewFile: vi.fn(),
   renamePath: vi.fn(),
   deletePaths: vi.fn(),
+  filesAccounts: vi.fn(),
 }))
 
 vi.mock('../../bridge', () => ({
@@ -34,7 +35,7 @@ vi.mock('../../bridge', () => ({
         case 'view_file': return m.viewFile
         case 'rename_path': return m.renamePath
         case 'delete_paths': return m.deletePaths
-        case 'files_accounts': return (h: string) => Promise.resolve(h === 'local' ? { login: '', accounts: [] } : { login: 'ops', accounts: ['svc'] })
+        case 'files_accounts': return m.filesAccounts
         case 'current_workspace_path': return () => Promise.resolve('/ws')
         case 'get_filters': return () => Promise.resolve([
           { name: 'errors', pipeline: "grep -E 'ERROR|WARN'" },
@@ -109,6 +110,7 @@ describe('FilesView', () => {
     m.makeDir.mockReset().mockResolvedValue({ path: '/var/log/app/new' })
     m.renamePath.mockReset().mockResolvedValue({ path: '/var/log/app/app.old' })
     m.deletePaths.mockReset().mockImplementation((_h: string, paths: string[]) => Promise.resolve({ deleted: paths, failed: [] }))
+    m.filesAccounts.mockReset().mockImplementation((h: string) => Promise.resolve(h === 'local' ? { login: '', accounts: [] } : { login: 'ops', accounts: ['svc'] }))
     m.viewFile.mockReset().mockResolvedValue({ size: 10, text: 'line one\nline two', lines: 2, partial: false, binary: false })
   })
 
@@ -259,6 +261,18 @@ describe('FilesView', () => {
     await waitFor(() => expect(m.listDir.mock.calls.some(c => c[0] === 'app-01' && c[1] === '/var/log/app' && c[6] === 'svc')).toBe(true))
     fireEvent.doubleClick(await within(screen.getByTestId('pane-right')).findByText('app.log'))
     await waitFor(() => expect(m.viewFile).toHaveBeenCalledWith('app-01', '/var/log/app/app.log', 500, 'svc'))
+  })
+
+  it('shows Browse as once discovery finds the venv owners', async () => {
+    // The tab opened before discovery: no owners known yet.
+    m.filesAccounts.mockResolvedValue({ login: 'ops', accounts: [] })
+    render(<FilesView hosts={HOSTS} selectedHost="app-01" active />)
+    await screen.findByText('app.log')
+    await waitFor(() => expect(m.filesAccounts).toHaveBeenCalledWith('app-01'))
+    expect(within(screen.getByTestId('pane-right')).queryByText('as ops')).toBeNull()
+    m.filesAccounts.mockResolvedValue({ login: 'ops', accounts: ['svc'] })
+    act(() => { window.dispatchEvent(new CustomEvent('runspec:runnables_updated', { detail: {} })) })
+    expect(await within(screen.getByTestId('pane-right')).findByText('as ops')).toBeTruthy()
   })
 
   it('copies out of a pane browsing as an owner as that owner', async () => {
