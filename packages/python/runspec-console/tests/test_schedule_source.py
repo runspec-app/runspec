@@ -996,6 +996,7 @@ def test_schedule_label_prefers_name_then_action_never_bare_id():
 
 
 def test_cron_nickname_builds_a_trigger():
+    pytest.importorskip("apscheduler")
     from datetime import datetime, timezone
 
     from runspec_console.sources.schedule import When, next_fire_time
@@ -1018,7 +1019,11 @@ def test_fixed_time_fires_once_when_the_clocks_go_back():
 
     from runspec_console.sources.schedule import When, _when_to_trigger, later
 
-    london = ZoneInfo("Europe/London")
+    pytest.importorskip("apscheduler")
+    try:
+        london = ZoneInfo("Europe/London")
+    except Exception:  # noqa: BLE001 — no tz database (Windows without tzdata)
+        pytest.skip("no Europe/London in this tz database")
     trigger = _when_to_trigger(When(cron="30 1 * * *", timezone="Europe/London"))
     t = trigger.get_next_fire_time(None, datetime(2026, 10, 24, 12, tzinfo=london))
     days = []
