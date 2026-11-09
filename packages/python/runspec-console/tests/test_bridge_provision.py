@@ -30,15 +30,22 @@ pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell scr
 _FAKE_RUNSPEC = '#!/bin/sh\necho "runspec $*"\n'
 
 # A stand-in runspec-scheduler: `use` and `install-service` answer like 0.6.0;
-# FAIL_USE / FAIL_KEEPER (files next to it) make those steps fail; `status`
-# prints a STATUS file next to it.
+# FAIL_USE / FAIL_KEEPER (files next to it) make those steps fail — a
+# FAIL_KEEPER listing keepers (one per line) fails only those, with the JSON
+# the real one prints; `status` prints a STATUS file next to it.
 _FAKE_SCHEDULER = r"""#!/bin/sh
 d=$(dirname "$0")
 case "$1" in
   use) [ -e "$d/FAIL_USE" ] && { echo "use broke" >&2; exit 1; }
+       echo "$*" >> "$d/use.calls"
        echo '{"ok": true, "backend": "daemon"}' ;;
   install-service)
-       [ -e "$d/FAIL_KEEPER" ] && { echo "keeper broke" >&2; exit 1; }
+       if [ -s "$d/FAIL_KEEPER" ]; then
+         if grep -qx -- "$3" "$d/FAIL_KEEPER"; then
+           echo "{\"ok\": false, \"action\": \"install\", \"manager\": \"$3\", \"reason\": \"lingering is off; supervisord isn't installed in this venv\", \"error\": \"$3 broke\", \"hint\": \"try another\"}"
+           exit 1
+         fi
+       elif [ -e "$d/FAIL_KEEPER" ]; then echo "keeper broke" >&2; exit 1; fi
        echo "$*" >> "$d/keeper.calls"
        echo '{"ok": true, "manager": "cron", "reason": "no systemd", "warnings": ["the daemon runs as root"]}' ;;
   status) [ -e "$d/STATUS" ] && cat "$d/STATUS" || echo "no status here" >&2 ;;
@@ -168,6 +175,7 @@ class _StubBridge:
     _upd_inspect = Bridge._upd_inspect
     _upd_plan = Bridge._upd_plan
     _upd_run = Bridge._upd_run
+    _keeper_rescue = Bridge._keeper_rescue
 
 
 def _hosts(extra_paths=None):
@@ -723,7 +731,8 @@ def test_plan_adds_the_scheduler_package(app):
     pinned = b._prov_plan(
         {**base, "scheduler": "auto", "packages": ["runspec-scheduler==0.6.1"]}
     )
-    assert pinned["packages"] == ["runspec", "runspec-scheduler==0.6.1"]
+    # The pin wins but keeps supervisord, which auto may pick.
+    assert pinned["packages"] == ["runspec", "runspec-scheduler[supervisor]==0.6.1"]
     assert b._prov_plan(base)["scheduler"] == ""
 
 
@@ -1193,6 +1202,86 @@ def test_update_applies_the_new_options_in_place(app, tmp_path):
         "keeper",
     ]
     assert b.refreshed == 1
+
+
+def _update_with_keeper(tmp_path, scheduler, fail):
+    venv = _old_venv(tmp_path)
+    (venv / "bin" / "FAIL_KEEPER").write_text("".join(f"{m}\n" for m in fail))
+    rp = f"{venv}/bin/runspec"
+    _hosts([rp])
+    b = _StubBridge()
+    out = b.venv_update_start(
+        {
+            "targets": [{"host": "web-01", "runspec_path": rp}],
+            "upgrade_runspec": True,
+            "scheduler": scheduler,
+        }
+    )
+    [res] = _wait(b, out["op"])["results"]
+    return venv, b, res
+
+
+@pytest.mark.skipif(sys.version_info < (3, 10), reason="runspec needs 3.10+")
+def test_update_falls_back_to_the_cron_keeper(app, tmp_path):
+    venv, b, res = _update_with_keeper(tmp_path, "supervisor", ["supervisor"])
+    assert res["ok"], res
+    assert res["scheduler"]["manager"] == "cron"
+    [note] = [w for w in res["warnings"] if "keeper" in w]
+    # The real reason, not the JSON blob (and not auto's pick reason) ...
+    assert "supervisor keeper: supervisor broke (try another)" in note
+    assert "{" not in note and "lingering" not in note
+    assert "crontab watchdog" in note
+    # ... and the whole command to retry the chosen keeper.
+    assert note.endswith(
+        f"To retry, on the host: {venv}/bin/runspec-scheduler install-service "
+        "--manager supervisor --write"
+    )
+    assert (venv / "bin" / "keeper.calls").read_text().strip() == (
+        "install-service --manager cron --write"
+    )
+    assert "use cron" not in (venv / "bin" / "use.calls").read_text()
+    assert "keeper" in b.audit[-1]["extra"]["applied"]
+
+
+@pytest.mark.skipif(sys.version_info < (3, 10), reason="runspec needs 3.10+")
+def test_update_moves_schedules_back_to_crontab_when_no_keeper_works(app, tmp_path):
+    venv, b, res = _update_with_keeper(tmp_path, "auto", ["auto", "cron"])
+    assert res["ok"], res
+    assert res["scheduler"]["manager"] == "crontab"
+    [note] = [w for w in res["warnings"] if "keeper" in w]
+    assert "moved back to the owner's crontab" in note
+    assert "--manager auto --write" in note
+    # use daemon, then use cron: the schedules keep firing from crontab.
+    assert (venv / "bin" / "use.calls").read_text().split("\n")[:2] == [
+        "use daemon",
+        "use cron",
+    ]
+    assert "keeper" not in b.audit[-1]["extra"]["applied"]
+
+
+@pytest.mark.skipif(sys.version_info < (3, 10), reason="runspec needs 3.10+")
+def test_provision_falls_back_when_the_keeper_fails(app, tmp_path):
+    _hosts()
+    b = _StubBridge()
+    b.fail_on = "install-service --manager supervisor"
+    dest = tmp_path / "venvs" / "ops"
+    out = b.provision_start(
+        {
+            "hosts": ["web-01"],
+            "dest": str(dest),
+            "python": sys.executable,
+            "scheduler": "supervisor",
+        }
+    )
+    [res] = _wait(b, out["op"])["results"]
+    assert res["ok"], res
+    assert res["scheduler"]["manager"] == "cron"
+    [note] = [w for w in res["warnings"] if "keeper" in w]
+    assert "boom: install-service --manager supervisor" in note
+    assert "crontab watchdog" in note
+    assert note.endswith(
+        f"{dest}/bin/runspec-scheduler install-service --manager supervisor --write"
+    )
 
 
 def test_update_only_runs_the_chosen_steps(app, tmp_path):

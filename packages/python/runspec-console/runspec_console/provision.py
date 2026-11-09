@@ -66,6 +66,7 @@ from __future__ import annotations
 import json
 import posixpath
 import re
+import shlex
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -976,14 +977,64 @@ def schedule_counts(text: str) -> dict[str, Any] | None:
     }
 
 
+_SCHEDULER_SPEC_RE = re.compile(
+    r"^(\s*runspec[-_]scheduler)(?![\w.-])\s*(?:\[([^\]]*)\])?(.*)$", re.I | re.S
+)
+
+
+def _with_supervisor_extra(spec: str) -> str:
+    """``runspec-scheduler==0.7.3`` → ``runspec-scheduler[supervisor]==0.7.3``
+    (other extras kept, nothing added twice)."""
+    m = _SCHEDULER_SPEC_RE.match(spec)
+    if not m:
+        return spec
+    extras = [e.strip() for e in (m.group(2) or "").split(",") if e.strip()]
+    if "supervisor" not in {e.lower() for e in extras}:
+        extras.append("supervisor")
+    return f"{m.group(1).strip()}[{','.join(extras)}]{m.group(3).strip()}"
+
+
 def add_scheduler_spec(packages: list[str], manager: str) -> list[str]:
     """``packages`` plus the package that brings the daemon for ``manager``. A
-    ``runspec-scheduler`` the operator listed (a pin) wins over the bare one."""
+    ``runspec-scheduler`` the operator listed (a pin) wins over the bare one,
+    but still gets the ``[supervisor]`` extra when the keeper may need it —
+    without it pip leaves supervisord out and the keeper step fails."""
     if not manager:
         return list(packages)
-    pat = re.compile(r"runspec[-_]scheduler\b", re.I)
-    mine = next((p for p in packages if pat.match(p)), "")
-    return [p for p in packages if not pat.match(p)] + [mine or scheduler_spec(manager)]
+    mine = next((p for p in packages if _SCHEDULER_SPEC_RE.match(p)), "")
+    if mine and manager in ("supervisor", "auto"):
+        mine = _with_supervisor_extra(mine)
+    rest = [p for p in packages if not _SCHEDULER_SPEC_RE.match(p)]
+    return rest + [mine or scheduler_spec(manager)]
+
+
+def host_command(argv: list[str], run_as: str = "", become_method: str = "sudo") -> str:
+    """``argv`` as one line an operator can paste on the host, run as
+    ``run_as`` (``sudo -iu`` / ``su -``) when that isn't the SSH login."""
+    cmd = " ".join(shlex.quote(a) for a in argv)
+    if not run_as:
+        return cmd
+    if (become_method or "sudo").strip().lower() == "su":
+        return f"su - {shlex.quote(run_as)} -c {shlex.quote(cmd)}"
+    return f"sudo -iu {shlex.quote(run_as)} {cmd}"
+
+
+def scheduler_failure(
+    text: str, code: int, *, run_as: str = "", become_method: str = "sudo"
+) -> str:
+    """Why a ``runspec-scheduler`` command failed, in words: the ``error`` and
+    ``hint`` of the JSON it printed (``manager`` named for a keeper), else
+    :func:`failure_text`. The JSON's ``reason`` is left out: for ``auto`` it
+    explains the pick (e.g. "supervisord isn't installed"), not the failure."""
+    data = parse_keeper(text)
+    err = str(data.get("error") or "").strip()
+    if not err:
+        return failure_text(text, code, run_as=run_as, become_method=become_method)
+    manager = str(data.get("manager") or "").strip()
+    if manager and manager != "none" and data.get("action") == "install":
+        err = f"{manager} keeper: {err}"
+    hint = str(data.get("hint") or "").strip()
+    return f"{err} ({hint})" if hint else err
 
 
 # --------------------------------------------------------------------------- #

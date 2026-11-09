@@ -129,7 +129,12 @@ systemd `--user` where lingering is on and supervisord inside the venv
 elsewhere (it installs `runspec-scheduler[supervisor]`, no root needed); or
 pick systemd `--user`, supervisord or a crontab watchdog for every host. The
 keeper each host got shows on its row. A failure here is a warning: the venv
-still works, and the message gives the command to finish on the host.
+still works, and the message gives the scheduler's error and the full command
+to retry on the host. When the chosen keeper can't be set up, the console falls
+back to the crontab watchdog; if that fails too it moves the schedules back to
+the owner's crontab, so they keep firing either way. Listing `runspec-scheduler`
+in Packages (to pin or upgrade it) still gets the `[supervisor]` extra for the
+supervisord and auto keepers.
 
 A host that fails after the venv folder was made (a misspelt package name, a
 pip error, a cancel) has its partial venv undone, so a retry at the same path
@@ -171,7 +176,9 @@ Tick what to apply; each step runs as the venv's owner and is safe to repeat:
   the venv's schedule lines off the owner's crontab, then
   `install-service --write`), or *Back to crontab* (`use cron` writes the lines
   back, then `install-service --remove --write` stops the daemon; when
-  `use cron` fails the daemon is left running so no schedule is lost).
+  `use cron` fails the daemon is left running so no schedule is lost). A keeper
+  that can't be set up falls back as in Provision (crontab watchdog, else back
+  to crontab).
   When the venv already has `runspec-scheduler`, the preview runs its
   `status` as the owner and shows what the choice moves: for example
   *4 crontab entries move to the daemon (5 schedules in all; 1 disabled)*,

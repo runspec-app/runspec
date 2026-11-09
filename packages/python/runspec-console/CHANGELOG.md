@@ -9,6 +9,32 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.392.1] — 2026-11-09
+
+### Fixed
+
+- **Update venv / Provision no longer drop supervisord when `runspec-scheduler`
+  is in the Packages box.** A listed `runspec-scheduler` (to upgrade or pin it)
+  replaced the `runspec-scheduler[supervisor]` the console adds for the
+  *supervisord* and *auto* keepers, so pip left supervisord out and the keeper
+  step failed with "supervisord isn't installed in this venv". The listed spec
+  now keeps its version and other extras and gains `[supervisor]`
+  (`provision.add_scheduler_spec`).
+- **A failed keeper no longer leaves the venv's schedules not firing.** The
+  schedules move to the daemon before its keeper is set up, so a keeper failure
+  meant no daemon and no fires. Now the console sets up the crontab watchdog
+  instead (`install-service --manager cron`); if that fails too it moves the
+  schedules back to the owner's crontab (`use cron`) and skips the daemon
+  restart (`_keeper_rescue`).
+- **Scheduler step warnings say what went wrong and the whole command to
+  retry.** The warning used to end in a shortened command
+  (`runspec-scheduler install-service`) followed by the scheduler's raw JSON,
+  where auto's pick reason ("supervisord isn't installed") read like the error.
+  It now gives the JSON's `error` and `hint` and ends with the full command,
+  e.g. `sudo -iu svc-ops /opt/venvs/ops/bin/runspec-scheduler install-service
+  --manager supervisor --write` (`provision.scheduler_failure`/`host_command`).
+  The step's full output goes to `runspec-console.log`.
+
 ## [0.392.0] — 2026-11-08
 
 ### Added
