@@ -164,6 +164,12 @@ export interface DirEntry {
 
 // Files tab View: the end of a text file. `partial` = the file holds more than
 // what's shown; `binary` = it isn't text, so nothing is shown.
+export interface DeleteResult {
+  deleted?: string[]
+  failed?: { path: string; error: string }[]
+  error?: string
+}
+
 export interface FileView {
   size?: number
   text?: string
@@ -2941,7 +2947,9 @@ export interface BridgeApi {
   invoke_runnable: (host: string, runnable: string, args: Record<string, unknown>, commandPath?: string[], group?: string, credentialIds?: string[]) => Promise<string>
   // List a directory on a host for the Forms path-picker. With asServiceAccount +
   // a runnable, the remote listing runs as that runnable's run_as (sudo/become).
-  list_dir: (host: string, path?: string, group?: string, dirsOnly?: boolean, runnable?: string, asServiceAccount?: boolean) => Promise<DirListing>
+  // `asUser` (Files tab "Browse as"): list as one of the host's venv owners
+  // (sudo -n -u); must be one of files_accounts(host).accounts.
+  list_dir: (host: string, path?: string, group?: string, dirsOnly?: boolean, runnable?: string, asServiceAccount?: boolean, asUser?: string) => Promise<DirListing>
   cancel_invocation: (invId: string) => Promise<void>
   // Copy files between the local machine and a remote host over SFTP (exactly one
   // side is 'local'). The remote side is a configured host name or an AdHocEndpoint
@@ -2975,9 +2983,17 @@ export interface BridgeApi {
   cancel_transfer: (id: string) => Promise<void>
   // Files tab: create folder `name` inside `parent` on a host ('local' = this
   // computer). An existing folder is an error.
-  make_dir: (host: string, parent: string, name: string) => Promise<{ path?: string; error?: string }>
+  make_dir: (host: string, parent: string, name: string, asUser?: string) => Promise<{ path?: string; error?: string }>
   // Files tab: the last `lines` lines of a file (read-only, at most 1 MB read).
-  view_file: (host: string, path: string, lines?: number) => Promise<FileView>
+  view_file: (host: string, path: string, lines?: number, asUser?: string) => Promise<FileView>
+  // Files tab: rename `old` to `new` inside `parent` (never overwrites).
+  rename_path: (host: string, parent: string, old: string, newName: string, asUser?: string) => Promise<{ path?: string; error?: string }>
+  // Files tab: delete files, symlinks and empty folders (a folder with
+  // anything in it is reported in `failed`, not deleted).
+  delete_paths: (host: string, paths: string[], asUser?: string) => Promise<DeleteResult>
+  // Files tab: the SSH login a pane browses a host as, and the venv owners it
+  // may switch to. Empty for this computer.
+  files_accounts: (host: string) => Promise<{ login: string; accounts: string[] }>
   // Absolute path of the current chat session's agent workspace, or '' if none.
   // The Transfer dialog defaults a local destination to it so downloads land
   // where the agent works. Creates the directory if missing.

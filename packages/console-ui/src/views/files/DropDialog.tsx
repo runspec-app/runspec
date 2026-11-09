@@ -23,13 +23,15 @@ export interface DropChoice {
 // The dialog a drop opens: where from / where to, copy whole or through one of
 // the saved filters (remembered per source folder), a new name for one file,
 // and for an upload to a host, the other hosts in its group to copy to as well.
-export function DropDialog({ src, dst, paths, srcDir, destDir, hosts, onCancel, onCopy }: {
+export function DropDialog({ src, dst, paths, srcDir, destDir, hosts, browsingAs, onCancel, onCopy }: {
   src: PaneTarget
   dst: PaneTarget
   paths: string[]
   srcDir: string
   destDir: string
   hosts: Host[]
+  // A pane browses as a venv owner; copies still run as the SSH login.
+  browsingAs?: string
   onCancel: () => void
   onCopy: (choice: DropChoice) => void
 }) {
@@ -177,6 +179,10 @@ export function DropDialog({ src, dst, paths, srcDir, destDir, hosts, onCancel, 
                   <Text type="warning" style={{ fontSize: 12 }}>The folder isn’t on {missing.join(', ')}, so {missing.length === 1 ? 'that host is' : 'those hosts are'} skipped.</Text>
                 )}
               </div>
+            )}
+
+            {browsingAs && (
+              <Text type="warning" style={{ fontSize: 12 }}>Copies run as the SSH login, not {browsingAs}, so a file only {browsingAs} can read won’t copy.</Text>
             )}
 
             {plan.kind === 'relay' && (

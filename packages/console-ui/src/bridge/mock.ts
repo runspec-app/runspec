@@ -910,7 +910,8 @@ export const mockApi: BridgeApi = {
 
   get_runnables: async (_host) => MOCK_RUNNABLES,
   discovery_state: async () => ({ ready: true, done: 1, total: 1 }),
-  list_dir: async (_host, path = '', _group, dirsOnly = false, _runnable, asServiceAccount = false) => {
+  list_dir: async (_host, path = '', _group, dirsOnly = false, _runnable, asServiceAccount = false, asUser = '') => {
+    if (asUser) asServiceAccount = true
     if (_host === 'local') {
       const cwd = path || '/home/demo/.runspec-console/workspaces/chat-demo'
       const entries = [
@@ -1666,6 +1667,16 @@ export const mockApi: BridgeApi = {
     _mockMadeDirs.push({ parent, name: name.trim() })
     return { path: `${parent.replace(/\/$/, '')}/${name.trim()}` }
   },
+  rename_path: async (host, parent, old, newName, asUser) => {
+    console.log('[mock] rename_path', { host, parent, old, newName, asUser })
+    if (/[\\/]/.test(newName)) return { error: "a folder name can't contain / or \\" }
+    return { path: `${parent.replace(/\/$/, '')}/${newName}` }
+  },
+  delete_paths: async (host, paths, asUser) => {
+    console.log('[mock] delete_paths', { host, paths, asUser })
+    return { deleted: paths.filter(p => !p.endsWith('/archive')), failed: paths.filter(p => p.endsWith('/archive')).map(p => ({ path: p, error: "folder isn't empty" })) }
+  },
+  files_accounts: async (host) => (host === 'local' ? { login: '', accounts: [] } : { login: 'ops', accounts: ['svc_app'] }),
   view_file: async (_host, path, lines = 500) => {
     const rows = Array.from({ length: 1200 }, (_, i) => `2026-11-09 09:${String(Math.floor(i / 20)).padStart(2, '0')}:${String(i % 60).padStart(2, '0')} ${i % 17 === 0 ? 'ERROR' : 'INFO '} orders-api request ${1000 + i} handled`)
     const shown = rows.slice(-lines)
