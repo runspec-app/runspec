@@ -3,7 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { TerminalsModal } from './TerminalsModal'
-import { addToSelection, hostsInGroup, hostsInProfile, readLayoutPref, writeLayoutPref } from './terminals'
+import { addToSelection, hostsInGroup, hostsInProfile, readLayoutPref, readSendBarPref, writeLayoutPref } from './terminals'
 import type { JumpHost } from '../bridge'
 
 const { launchTerminals, getJumpHosts, getProfiles } = vi.hoisted(() => ({
@@ -91,6 +91,15 @@ describe('TerminalsModal', () => {
     await user.click(screen.getByRole('button', { name: /Open 2 terminals/ }))
     expect(launchTerminals).toHaveBeenCalledWith(['web-1', 'web-2'], false)
     expect(readLayoutPref()).toBe('none')
+  })
+
+  it('opens the Send to terminals bar when ticked, and remembers it', async () => {
+    const user = userEvent.setup()
+    render(<TerminalsModal open initial={['web-1', 'web-2']} connected={[]} onClose={() => {}} />)
+    await user.click(screen.getByRole('checkbox', { name: /Open the Send to terminals bar/ }))
+    await user.click(screen.getByRole('button', { name: /Open 2 terminals/ }))
+    expect(launchTerminals).toHaveBeenCalledWith(['web-1', 'web-2'], true, 'grid', true)
+    expect(readSendBarPref()).toBe(true)
   })
 
   it('keeps the dialog open and lists hosts that failed', async () => {

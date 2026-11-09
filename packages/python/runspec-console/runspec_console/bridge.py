@@ -53,6 +53,7 @@ from .bridge_diagram import DiagramMixin
 from .bridge_marketplace import MarketplaceMixin
 from .bridge_provision import ProvisionMixin
 from .bridge_putty import PuttySyncMixin
+from .bridge_termsend import TermSendMixin
 from .bridge_envfile import EnvFileMixin
 from .bridge_network import NetworkMixin
 from .bridge_turn import TurnMixin
@@ -89,6 +90,7 @@ class Bridge(
     MarketplaceMixin,
     ProvisionMixin,
     PuttySyncMixin,
+    TermSendMixin,
     EnvFileMixin,
     NetworkMixin,
     TurnMixin,

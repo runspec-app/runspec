@@ -772,6 +772,8 @@ def main() -> None:
 
     window_title = resolve_branding().title
     bridge.set_window_title(window_title)
+    # The Send to terminals bar opens a second window on the same page.
+    bridge._frontend_url = url
     window = webview.create_window(
         window_title,
         url,

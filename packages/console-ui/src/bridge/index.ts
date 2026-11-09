@@ -691,6 +691,30 @@ export interface LaunchTerminalsResult {
   opened: string[]
   errors: { host: string; error: string }[]
   tiling: boolean
+  /** The Send to terminals bar was opened with them. */
+  send_bar?: boolean
+}
+
+/** A PuTTY window the console opened, as listed in the Send to terminals bar. */
+export interface TerminalWindow {
+  id: string
+  host: string
+  /** False until the window has appeared (PuTTY still starting). */
+  ready: boolean
+}
+
+export interface TerminalWindows {
+  /** Typing into windows works on Windows only. */
+  supported: boolean
+  windows: TerminalWindow[]
+  /** Named keys `send_to_terminals` accepts. */
+  keys: string[]
+}
+
+export interface SendToTerminalsResult {
+  sent: string[]
+  /** Hosts whose window closed or hasn't appeared yet. */
+  missing: string[]
 }
 
 export interface HostGroup {
@@ -3264,7 +3288,19 @@ export interface BridgeApi {
   // reported in `errors` while the rest still launch.
   launch_terminals: (
     hosts: string[], tile?: boolean, layout?: 'grid' | 'compact' | 'columns' | 'rows' | 'cascade',
+    send_bar?: boolean,
   ) => Promise<LaunchTerminalsResult>
+  // Send to terminals (Windows): type one command into many of the PuTTY windows
+  // the console opened. Human-only — never an agent or MCP tool. `hidden` marks a
+  // password (typed the same, never logged or audited); `key` presses a named key
+  // (ctrl-c, tab, up…) instead of typing text.
+  terminal_windows: () => Promise<TerminalWindows>
+  send_to_terminals: (
+    ids: string[], text?: string, enter?: boolean, key?: string, hidden?: boolean,
+  ) => Promise<SendToTerminalsResult>
+  focus_terminal: (id: string) => Promise<boolean>
+  forget_terminals: (ids?: string[]) => Promise<void>
+  open_send_bar: () => Promise<{ opened: boolean; existing: boolean }>
   launch_local_terminal: () => Promise<void>
   // PuTTY colour themes for Settings → SSH → Terminal look (the preview).
   terminal_themes: () => Promise<TerminalTheme[]>

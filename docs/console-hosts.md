@@ -694,6 +694,42 @@ it a handy temporary change. Change the repo to keep it.
 
 ---
 
+## Send to terminals
+
+To run the same commands on many hosts by hand, open PuTTY terminals on them
+and type into all of them at once from the **Send to terminals** bar (Windows).
+It types into the PuTTY windows the way PuTTY Command Sender does, so each
+window stays an ordinary session: `sudo -iu svc`, password prompts and anything
+interactive work as usual, and you read each window's output yourself.
+
+1. Right-click a host or a group header and pick **Open SSH terminals…**. Tick
+   **Open the Send to terminals bar** (remembered). The terminals are tiled above
+   a strip along the bottom of the screen, and the bar opens there, on top.
+2. Type a command in the bar and press **Enter**. It's typed into every ticked
+   terminal, followed by Enter. **Shift+Enter** adds a line; a pasted block runs
+   line by line. **↑**/**↓** recall earlier lines (kept only while the bar is
+   open, never saved).
+3. Untick a host to leave it out. The target button next to a host brings its
+   window to the front. The key buttons press **Enter**, **Ctrl+C**, **Ctrl+D**,
+   **Tab**, **Esc** and the arrow keys in every ticked terminal.
+4. For a password, click the lock button: the field is hidden, and what you type
+   is sent once and never shown, kept or recorded.
+
+Sending to more than 10 terminals asks first, once for each set of ticked
+terminals. The bar lists every terminal the console opened (from any host menu)
+until you close it. **Send to terminals…** in a host or group menu, or in the
+Ctrl+K palette, opens the bar again.
+
+Each send is recorded as a `terminal.send` event in the console's audit log
+(`runspec audit list`) with the hosts and the text typed. A hidden send records
+only that hidden text was sent, and a key button records the key.
+
+Only a person can use the bar. It isn't a tool the chat agent or the console's
+MCP server can call. It types only into PuTTY windows the console opened, not
+into windows you started yourself.
+
+---
+
 ## SSH tuning
 
 The defaults suit most fleets. All knobs live in `config.toml` under `[ssh]`
