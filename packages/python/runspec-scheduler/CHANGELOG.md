@@ -20,8 +20,9 @@ All notable changes to `runspec-scheduler` are documented here.
   (on as soon as installed) or `off` (ignored). A `[[schedule]]` with a package
   schedule's id changes it: `enable`/`disable` write only `enabled` (so a new
   package release that moves the time is followed), `add` with the id sets this
-  venv's own time (status shows the package's next to it), `remove` puts it
-  back. An entry left changing a package schedule that's gone is reported, not
+  venv's own time (status shows the package's next to it) and writes only what
+  differs from the package, so an offered schedule stays offered and its args
+  still follow the package, `remove` puts it back. An entry left changing a package schedule that's gone is reported, not
   an error.
 - **`enable` / `disable` verbs** (`--id`) for any schedule. `enable` on the
   cron backend refuses what cron can't fire.

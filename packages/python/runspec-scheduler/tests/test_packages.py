@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import sys
 import textwrap
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,7 @@ from runspec_scheduler.config import (
     set_backend,
     set_enabled,
     set_settings,
+    upsert_schedule,
     write_schedules,
 )
 from runspec_scheduler.timing import When, next_fire_time
@@ -266,6 +268,24 @@ def test_a_changed_time_stays_and_shows_the_packages(tmp_path):
     assert e.when.cron == "15 4 * * *"
     assert e.package["overridden"] == ["when"]
     assert render.rec_when(e.to_dict()) == "15 4 * * * (package says 03:00 daily)"
+
+
+def test_add_on_a_package_id_writes_only_the_changes(tmp_path):
+    cfg = tmp_path / "c.toml"
+    pkg = _scan(("cleanup-tmp", "nightly", {"at": "03:00", "args": {"days": 7}})).by_id()["cleanup-tmp.nightly"]
+    # Same runnable/args as the package, a new time, still switched off.
+    edited = ScheduleEntry(id="cleanup-tmp.nightly", when=When(cron="15 4 * * *"), runnable="cleanup-tmp", args={"days": 7}, enabled=False)
+    upsert_schedule(cfg, edited, package=pkg.base, policy="offer")
+    assert raw_schedules(cfg) == [{"id": "cleanup-tmp.nightly", "when": {"cron": "15 4 * * *"}}]
+    e = _entries(cfg, _scan(("cleanup-tmp", "nightly", {"at": "03:00", "args": {"days": 7}})))["cleanup-tmp.nightly"]
+    assert e.offered and e.package["overridden"] == ["when"]
+    # The package's own time in "local" counts as the same as no zone.
+    same = replace(edited, when=When(cron="0 3 * * *"), enabled=True)
+    upsert_schedule(cfg, same, package=pkg.base, policy="offer")
+    assert raw_schedules(cfg) == [{"id": "cleanup-tmp.nightly", "enabled": True}]
+    # Once decided, enabled stays written; other args are a change.
+    upsert_schedule(cfg, replace(same, enabled=False, args={"days": 30}), package=pkg.base, policy="offer")
+    assert raw_schedules(cfg) == [{"id": "cleanup-tmp.nightly", "args": {"days": 30}, "enabled": False}]
 
 
 def test_remove_puts_it_back(tmp_path):

@@ -549,13 +549,56 @@ def set_settings(path: Path, changes: dict[str, Any]) -> SchedulerSettings:
     return settings
 
 
-def upsert_schedule(path: Path, entry: ScheduleEntry) -> list[dict[str, Any]]:
+def upsert_schedule(path: Path, entry: ScheduleEntry, *, package: dict[str, Any] | None = None, policy: str = "offer") -> list[dict[str, Any]]:
     """Add ``entry`` or replace the one with the same id, then write. Returns the
-    new list of ``[[schedule]]`` tables."""
-    raws = [r for r in raw_schedules(path) if str(r.get("id") or "").strip() != entry.id]
-    raws.append(_file_dict(entry))
+    new list of ``[[schedule]]`` tables. With ``package`` (the package
+    schedule's base for this id) only the differences are written
+    (:func:`package_changes`)."""
+    current = raw_schedules(path)
+    existing = next((r for r in current if str(r.get("id") or "").strip() == entry.id), None)
+    raws = [r for r in current if r is not existing]
+    table = _file_dict(entry)
+    if package is not None:
+        table = package_changes(table, package, existing, policy)
+    raws.append(table)
     write_schedules(path, raws)
     return raws
+
+
+def _same_as_package(key: str, value: Any, base: dict[str, Any]) -> bool:
+    """Whether a ``[[schedule]]`` value says what the package already says
+    (a blank or ``local`` zone are the same; empty args/command/catch-up = unset)."""
+    theirs = base.get(key)
+    if key == "when" and isinstance(value, dict) and isinstance(theirs, dict):
+
+        def norm(w: dict[str, Any]) -> tuple[str, str, str]:
+            zone = str(w.get("timezone") or "").strip()
+            return str(w.get("cron") or ""), str(w.get("every") or ""), "" if zone.lower() == "local" else zone
+
+        return norm(value) == norm(theirs)
+    if key in ("args", "command", "catch_up", "description") and not value and not theirs:
+        return True
+    if key == "become_method" and "run_as" not in base:
+        return True
+    return bool(value == theirs)
+
+
+def package_changes(full: dict[str, Any], base: dict[str, Any], existing: dict[str, Any] | None, policy: str) -> dict[str, Any]:
+    """The ``[[schedule]]`` to write when ``add`` saves a package schedule: only
+    what differs from the package (``base``), so the rest follows later
+    releases. ``enabled`` is kept only when this venv had already decided it or
+    it differs from the policy's default — editing an offered schedule's time
+    doesn't turn it on."""
+    out: dict[str, Any] = {"id": full["id"]}
+    for key, value in full.items():
+        if key in ("id", "enabled"):
+            continue
+        if not _same_as_package(key, value, base):
+            out[key] = value
+    enabled = full.get("enabled", True)
+    if (existing and "enabled" in existing) or bool(enabled) != (policy == "auto"):
+        out["enabled"] = bool(enabled)
+    return out
 
 
 def remove_schedule(path: Path, schedule_id: str) -> bool:

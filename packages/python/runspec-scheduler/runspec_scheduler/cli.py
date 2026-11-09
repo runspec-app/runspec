@@ -324,7 +324,13 @@ def _cmd_add(spec: rs.RunSpec) -> None:
         timeout=timeout,
         catch_up=bool(spec.catch_up.value),
     )
-    upsert_schedule(path, entry)
+    package = None
+    if settings.package_schedules != "off":
+        from . import packages
+
+        offered = packages.scan().by_id().get(sid)
+        package = offered.base if offered is not None else None
+    upsert_schedule(path, entry, package=package, policy=settings.package_schedules)
     _emit({"ok": True, "id": sid, "runnable": runnable, "command": list(command), "run_as": target.run_as, "env_file": bool(env_file), "backend": settings.backend}, render.added)
 
 
