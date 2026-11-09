@@ -45,6 +45,9 @@ _PROBE_TIMEOUT_S = 60
 _CREATE_TIMEOUT_S = 300
 _PIP_TIMEOUT_S = 900
 _STEP_TIMEOUT_S = 120
+#: Steps that run ``runspec-scheduler``: a failure is explained from the JSON it
+#: printed and the warning carries the full command to retry on the host.
+_SCHEDULER_STEPS = ("scheduler", "keeper", "restart")
 _MAX_LINES = 400
 _MAX_OPS = 8
 
@@ -750,10 +753,10 @@ class ProvisionMixin:
                 f"{prov.RETENTION_MIN_RUNSPEC} or later in the venv); the venv works. "
                 "On the host, as the owner: "
                 + prov.retention_hint(plan.get("retention") or {}),
-                "scheduler": "Couldn't switch the venv's schedules to the daemon; "
-                "the venv works. On the host: runspec-scheduler use daemon",
-                "keeper": "Couldn't set up the scheduler daemon's keeper; the venv "
-                "works. On the host, as the owner: runspec-scheduler install-service",
+                "scheduler": "Couldn't switch the venv's schedules to the daemon "
+                "(the venv works)",
+                "keeper": "Couldn't set up the scheduler daemon's keeper (the venv "
+                "works)",
             }
             version = ""
             skip_keeper = False
@@ -771,7 +774,8 @@ class ProvisionMixin:
                     code, out = -1, str(exc)
                 _emit(out)
                 if code != 0:
-                    msg = prov.failure_text(
+                    sched = step in _SCHEDULER_STEPS
+                    msg = (prov.scheduler_failure if sched else prov.failure_text)(
                         out,
                         code,
                         run_as=plan["run_as"],
@@ -780,11 +784,44 @@ class ProvisionMixin:
                     if required:
                         return _fail(f"{step} failed: {msg}")
                     note = notes.get(step, f"{step} failed")
-                    if step in ("scheduler", "keeper", "retention"):
+                    retry = ""
+                    if sched:
+                        note += f": {msg}."
+                        retry = " To retry, on the host: " + prov.host_command(
+                            argv,
+                            ""
+                            if plan["run_as"] == self._prov_login(h)
+                            else plan["run_as"],
+                            plan["become_method"],
+                        )
+                        logger.warning(
+                            "venv provision: %s:%s %s step failed (exit %s): %s",
+                            name,
+                            dest,
+                            step,
+                            code,
+                            (out or "").strip(),
+                        )
+                    elif step == "retention":
                         note += f" ({msg})"
+                    if step == "keeper":
+                        rescue = self._keeper_rescue(
+                            h,
+                            dest,
+                            plan["scheduler"],
+                            run_as=plan["run_as"],
+                            become=plan["become_method"],
+                            emit=_emit,
+                        )
+                        note += " " + rescue["text"]
+                        if rescue["scheduler"]:
+                            res["scheduler"] = rescue["scheduler"]
+                        res["warnings"].append(note + retry)
+                        res["warnings"].extend(rescue["warnings"])
+                        continue
                     # No daemon to keep when the backend didn't switch.
                     skip_keeper = skip_keeper or step == "scheduler"
-                    res["warnings"].append(note)
+                    res["warnings"].append(note + retry)
                 elif step == "keeper":
                     kept = prov.parse_keeper(out)
                     res["scheduler"] = {
@@ -1448,29 +1485,29 @@ class ProvisionMixin:
                 + prov.retention_hint(plan["retention"] or {}),
                 "scheduler": (
                     "Couldn't move the schedules back to crontab, so the daemon was "
-                    "left running. On the host: runspec-scheduler use cron"
+                    "left running"
                     if off
-                    else "Couldn't switch the venv's schedules to the daemon. On the "
-                    "host: runspec-scheduler use daemon"
+                    else "Couldn't switch the venv's schedules to the daemon"
                 ),
                 "keeper": (
                     "Couldn't remove the daemon's keeper; schedules fire from crontab "
-                    "now and the daemon fires nothing. On the host, as the owner: "
-                    "runspec-scheduler install-service --remove --write"
+                    "now and the daemon fires nothing"
                     if off
-                    else "Couldn't set up the scheduler daemon's keeper. On the host, "
-                    "as the owner: runspec-scheduler install-service"
+                    else "Couldn't set up the scheduler daemon's keeper"
                 ),
                 "restart": "Couldn't restart the scheduler daemon, so it still runs "
                 "the code it started with (restart needs runspec-scheduler 0.7.0 or "
-                "later). On the host, as the owner: runspec-scheduler restart",
+                "later)",
             }
             version = ""
             skip_keeper = False
+            no_daemon = False  # the schedules went back to crontab: nothing to restart
             for st in steps:
                 if cancel.is_set():
                     return _done(False, f"cancelled before {st.name}", h, run_as=run_as)
                 if st.name == "keeper" and skip_keeper:
+                    continue
+                if st.name == "restart" and no_daemon:
                     continue
                 _step(st.name)
                 try:
@@ -1486,7 +1523,8 @@ class ProvisionMixin:
                     code, out = -1, str(exc)
                 _emit(out)
                 if code != 0:
-                    msg = prov.failure_text(
+                    sched = st.name in _SCHEDULER_STEPS
+                    msg = (prov.scheduler_failure if sched else prov.failure_text)(
                         out, code, run_as=run_as, become_method=become
                     )
                     if st.required:
@@ -1494,10 +1532,43 @@ class ProvisionMixin:
                             False, f"{st.name} failed: {msg}", h, run_as=run_as
                         )
                     note = notes.get(st.name, f"{st.name} failed")
-                    if st.name in ("scheduler", "keeper", "retention", "restart"):
+                    retry = ""
+                    if sched:
+                        note += f": {msg}."
+                        retry = " To retry, on the host: " + prov.host_command(
+                            st.argv, run_as, become
+                        )
+                        logger.warning(
+                            "venv update: %s:%s %s step failed (exit %s): %s",
+                            name,
+                            root,
+                            st.name,
+                            code,
+                            (out or "").strip(),
+                        )
+                    elif st.name == "retention":
                         note += f" ({msg})"
+                    if st.name == "keeper" and not off:
+                        rescue = self._keeper_rescue(
+                            h,
+                            root,
+                            plan["scheduler"],
+                            run_as=run_as,
+                            become=become,
+                            emit=_emit,
+                        )
+                        note += " " + rescue["text"]
+                        if rescue["scheduler"]:
+                            res["scheduler"] = rescue["scheduler"]
+                        if rescue["kept"]:
+                            applied.append("keeper")
+                        else:
+                            no_daemon = True
+                        res["warnings"].append(note + retry)
+                        res["warnings"].extend(rescue["warnings"])
+                        continue
                     skip_keeper = skip_keeper or st.name == "scheduler"
-                    res["warnings"].append(note)
+                    res["warnings"].append(note + retry)
                     continue
                 if st.name != "verify":
                     applied.append(st.name)
@@ -1535,6 +1606,85 @@ class ProvisionMixin:
                 results.append(r)
         finally:
             self._prov_finish(record, results)
+
+    def _keeper_rescue(
+        self,
+        h: dict[str, Any],
+        root: str,
+        chosen: str,
+        *,
+        run_as: str,
+        become: str,
+        emit: Any,
+    ) -> dict[str, Any]:
+        """The keeper step failed after the schedules were switched to the
+        daemon, so nothing would fire. Try the crontab watchdog (unless that is
+        the keeper that failed); if no keeper can be set up, move the schedules
+        back to the owner's crontab so they keep firing. Returns ``text`` (what
+        happened, for the warning), ``scheduler`` (the result's scheduler
+        block, or ``None``), ``warnings`` and ``kept`` (a keeper is set up)."""
+
+        def _run(argv: list[str]) -> tuple[int, str]:
+            try:
+                code, out = self._prov_run(
+                    h,
+                    argv,
+                    run_as=run_as,
+                    become_method=become,
+                    timeout=_STEP_TIMEOUT_S,
+                )
+            except Exception as exc:  # noqa: BLE001
+                code, out = -1, str(exc)
+            emit(out)
+            return code, out
+
+        if chosen != "cron":
+            code, out = _run(prov.scheduler_keeper_argv(root, "cron"))
+            if code == 0:
+                kept = prov.parse_keeper(out)
+                return {
+                    "text": "Set up the crontab watchdog instead; it restarts the "
+                    "daemon within 5 minutes if it stops.",
+                    "scheduler": {
+                        "manager": "cron",
+                        "reason": f"The {chosen} keeper couldn't be set up, so a "
+                        "crontab watchdog keeps the daemon running.",
+                    },
+                    "warnings": [str(w) for w in kept.get("warnings") or []],
+                    "kept": True,
+                }
+            logger.warning(
+                "venv scheduler: %s cron keeper fallback failed (exit %s): %s",
+                root,
+                code,
+                (out or "").strip(),
+            )
+        code, out = _run(prov.scheduler_cron_argv(root))
+        if code == 0:
+            return {
+                "text": "No keeper could be set up, so the schedules were moved "
+                "back to the owner's crontab and fire from there.",
+                "scheduler": {
+                    "manager": "crontab",
+                    "reason": "No keeper could be set up, so the schedules fire "
+                    "from the owner's crontab.",
+                },
+                "warnings": [],
+                "kept": False,
+            }
+        logger.warning(
+            "venv scheduler: %s moving schedules back to crontab failed (exit %s): %s",
+            root,
+            code,
+            (out or "").strip(),
+        )
+        return {
+            "text": "Moving the schedules back to crontab failed too, so none fire "
+            "until a keeper is set up.",
+            "scheduler": None,
+            "warnings": [],
+            "kept": False,
+        }
 
     # ── internals: shared ──
 

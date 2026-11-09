@@ -516,11 +516,62 @@ def test_update_install_specs():
     assert prov.update_install_specs([], upgrade_runspec=False, scheduler="cron") == [
         "runspec-scheduler>=0.6.0"
     ]
-    # A pinned scheduler wins; "off" installs nothing.
+    # A pinned scheduler wins but keeps supervisord for auto/supervisor (without
+    # it the keeper step can't use supervisord); "off" installs nothing.
     assert prov.update_install_specs(
         ["runspec-scheduler==0.6.1"], upgrade_runspec=False, scheduler="auto"
+    ) == ["runspec-scheduler[supervisor]==0.6.1"]
+    assert prov.update_install_specs(
+        ["runspec-scheduler"], upgrade_runspec=False, scheduler="supervisor"
+    ) == ["runspec-scheduler[supervisor]"]
+    assert prov.update_install_specs(
+        ["runspec-scheduler==0.6.1"], upgrade_runspec=False, scheduler="cron"
     ) == ["runspec-scheduler==0.6.1"]
     assert prov.update_install_specs([], upgrade_runspec=False, scheduler="off") == []
+
+
+def test_add_scheduler_spec_merges_the_supervisor_extra():
+    add = prov.add_scheduler_spec
+    assert add(["runspec_scheduler[dev]>=0.7"], "auto") == [
+        "runspec_scheduler[dev,supervisor]>=0.7"
+    ]
+    assert add(["runspec-scheduler[Supervisor] == 0.7.3"], "auto") == [
+        "runspec-scheduler[Supervisor]== 0.7.3"
+    ]
+    # Another package whose name starts the same isn't the scheduler.
+    assert add(["runspec-scheduler-extras"], "cron") == [
+        "runspec-scheduler-extras",
+        "runspec-scheduler>=0.6.0",
+    ]
+
+
+def test_scheduler_failure_reads_the_json():
+    out = json.dumps(
+        {
+            "ok": False,
+            "action": "install",
+            "manager": "cron",
+            "reason": "lingering is off, and supervisord isn't installed in this venv",
+            "error": "crontab isn't installed on this host",
+            "hint": "use --manager systemd-user or supervisor",
+        }
+    )
+    assert prov.scheduler_failure("some log line\n" + out, 1) == (
+        "cron keeper: crontab isn't installed on this host "
+        "(use --manager systemd-user or supervisor)"
+    )
+    # Not JSON (an older scheduler, sudo refusing): the plain failure text.
+    assert prov.scheduler_failure("keeper broke", 1) == "keeper broke"
+    assert prov.scheduler_failure("", 2) == "exit 2"
+
+
+def test_host_command():
+    argv = ["/opt/venvs/ops/bin/runspec-scheduler", "install-service", "--write"]
+    assert prov.host_command(argv) == " ".join(argv)
+    assert prov.host_command(argv, "svc-ops") == "sudo -iu svc-ops " + " ".join(argv)
+    assert prov.host_command(argv, "svc", "su") == (
+        "su - svc -c '" + " ".join(argv) + "'"
+    )
 
 
 def test_update_steps_order_and_flags():
