@@ -388,6 +388,43 @@ Both need runspec-scheduler 0.7.0 in the venv; on an older one the console
 says to upgrade it with **Update venv…**. Each change is in the console's
 audit log (`scheduler.host.restarted` / `scheduler.host.settings`).
 
+**Venv settings** in the toolbar opens the same dialog for any venv, cron or
+daemon (a menu when there are several). With runspec-scheduler 0.10.0 in the
+venv it also sets:
+
+- **Time zone**: the clock schedules with no zone of their own keep. Blank is
+  the host's zone. A cron venv fires on the host's clock, so on a cron venv
+  schedules in another zone show *needs daemon* until the venv moves to the
+  daemon (**Update venv…**) or the schedule's zone is changed.
+- **Package schedules**: what to do with schedules a package suggests in its
+  `runspec.toml` (`[<runnable>.meta.scheduler.<name>]`). **Offer** (the
+  default) lists them, off, until someone turns each on; **Turn on** runs them
+  as soon as the package is installed; **Ignore** hides them.
+
+On a cron venv the crontab is synced after a zone or policy change; the daemon
+picks changes up by itself. Recorded as `scheduler.host.settings` with the
+fields that changed.
+
+#### Schedules a package suggests
+
+A package can suggest schedules for its runnables: a
+`[<runnable>.meta.scheduler.<name>]` table in its `runspec.toml` (`at = "02:30"`
+with `on = "weekdays"`, `every = "15m"` or `cron`, plus `timezone`, `spread`,
+`args`), read by runspec-scheduler 0.10.0 as schedule `<runnable>.<name>`. A
+Marketplace install or uninstall, and **Update venv…**, run the venv's
+`runspec-scheduler sync` after pip, so the crontab follows the packages. On a
+venv with the
+**Offer** policy they show as *offered* rows with the package's own timing in
+words ("02:30 daily, spread 30m") and its description. **Turn on** starts one
+firing; it writes only `enabled` into the venv's config, so the schedule keeps
+following the package when a new version changes it. A *package* tag marks
+these rows; *package · changed* means this venv changed something (hover for
+what). **Edit** saves only what differs from the package. A package schedule
+has no **Remove**: **Pause** turns it off, and **Put back** drops this venv's
+changes so it follows the package again. Problems reading a package's
+schedules show above the list. Turning on and off is recorded as
+`schedule.host.enabled` / `schedule.host.disabled`.
+
 Filters: the search box matches id, runnable and args, and takes the same
 `host:` and `group:` tokens as Forms and Marketplace (`host:web group:prod`).
 Quick filters narrow by source (on **All**), state, owner and run-as account;
@@ -408,7 +445,8 @@ a skipped fire shows as *skipped* rather than as a success.
 
 On **All**, **Host cron** and **Host daemon**, **New host schedule** adds a
 schedule to a venv's runspec-scheduler, and each host row has **Edit**,
-**Pause** / **Resume** and **Remove**. The dialog asks for:
+**Pause** / **Resume** and **Remove** (on runspec-scheduler 0.10.0, Pause and
+Resume change only `enabled`). The dialog asks for:
 
 - **Where**: a venv whose scheduler was read, with its backend (cron or daemon)
   and owner. Fixed when editing.

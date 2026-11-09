@@ -11,7 +11,7 @@
  * Rows, states, counts and filtering live in allSchedules.ts (pure, tested).
  */
 import { useEffect, useMemo, useState } from 'react'
-import { Table, Tag, Typography, Button, Tooltip, Alert, Empty, Input, Modal, Select, Switch, Space, Spin, Popconfirm, message, theme } from 'antd'
+import { Table, Tag, Typography, Button, Tooltip, Alert, Dropdown, Empty, Input, Modal, Select, Switch, Space, Spin, Popconfirm, message, theme } from 'antd'
 import {
   ReloadOutlined, HistoryOutlined, InfoCircleOutlined, PlusOutlined, EditOutlined, DeleteOutlined,
   PauseCircleOutlined, PlayCircleOutlined, SyncOutlined, SettingOutlined, RightOutlined, DownOutlined, ThunderboltOutlined,
@@ -21,8 +21,8 @@ import { bridge, type HostScheduleResult, type HostScheduleSave, type Runnable, 
 import { HostScheduleModal, timeoutText, type HostScheduleEditing } from './HostScheduleModal'
 import { MONO_FONT, RADIUS, useIsDark, textColor, textMuted, textSecondary, withAlpha } from '../ThemeContext'
 import {
-  DAEMON_SETTINGS, DEFAULT_FILTERS, FOLDED_ATTENTION_MAX, STATE_COLOR, claimStale, daemonNeedsAttention, daemonSummary, filterRows, noteBatches, noteText, noteVerbs, noteable, settingText, settingsChanges, shortDuration,
-  type Collected, type NoteVerb, type DaemonVenv, type RowFilters, type RowSource, type RowState, type ScheduleRow, type ScheduleScope, type SchedulerVenv, type SortKey,
+  DAEMON_SETTINGS, DEFAULT_FILTERS, FOLDED_ATTENTION_MAX, PACKAGE_POLICY, STATE_COLOR, claimStale, daemonNeedsAttention, daemonSummary, filterRows, noteBatches, noteText, noteVerbs, noteable, packageOverridden, settingText, settingsForm, shortDuration, supportsPackages, venvSettingsChanges,
+  type Collected, type VenvSettingsForm, type NoteVerb, type DaemonVenv, type RowFilters, type RowSource, type RowState, type ScheduleRow, type ScheduleScope, type SchedulerVenv, type SortKey,
 } from './allSchedules'
 import { RUN_COLOR, ScheduleDetail, relTime } from './sharedSchedules'
 
@@ -199,59 +199,100 @@ function DaemonStrip({ d, editable, busy, onRestart, onSettings }: {
   )
 }
 
-/** View and change a venv daemon's `[scheduler]` durations. The backend is
- *  shown read-only (Update venv… moves a venv between cron and the daemon). */
-export function DaemonSettingsModal({ d, onClose, onSaved, zIndex }: {
-  d: DaemonVenv | null
+/** View and change one venv's `[scheduler]` settings: the zone and what to do
+ *  with schedules its packages offer (runspec-scheduler 0.10.0+), plus the
+ *  daemon's durations on a daemon venv. The backend is shown read-only (Update
+ *  venv… moves a venv between cron and the daemon). */
+export function SchedulerSettingsModal({ v, log, onClose, onSaved, zIndex }: {
+  v: SchedulerVenv | null
+  log?: string
   onClose: () => void
   onSaved: () => void
   zIndex?: number
 }) {
-  const [form, setForm] = useState<Partial<Record<'timeout' | 'misfire_grace' | 'catch_up_window', string>>>({})
+  const [form, setForm] = useState<VenvSettingsForm>({})
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-  const cur = d?.settings ?? null
   useEffect(() => {
     setError('')
-    setForm(cur ? Object.fromEntries(DAEMON_SETTINGS.map(({ key }) => [key, settingText(cur[key])])) : {})
-  }, [d?.key, cur])
-  const changes = settingsChanges(cur, form)
+    setForm(v ? settingsForm(v) : {})
+  }, [v])
+  const changes = v ? venvSettingsChanges(v, form) : null
+  const daemon = v?.backend === 'daemon'
+  const pkgs = v ? supportsPackages(v) : false
   const save = async () => {
-    if (!d || !changes) return
+    if (!v || !changes) return
     setSaving(true); setError('')
     try {
-      const res = await bridge.host_scheduler_settings({ host: d.host, venv: d.venv, ...changes })
+      const res = await bridge.host_scheduler_settings({ host: v.host, venv: v.venv, backend: v.backend, ...changes })
       if (!res.ok) { setError(res.error || 'Saving the settings failed.'); return }
-      message.success(`Saved the scheduler settings on ${d.host} / ${d.venv}; the daemon picks them up by itself.`)
+      const after = daemon ? 'the daemon picks them up by itself' : 'the crontab was brought up to date'
+      message.success(`Saved the scheduler settings on ${v.host} / ${v.venv}; ${after}.`)
+      for (const w of res.warnings ?? []) message.warning(w, 8)
       onSaved()
     } catch (e) { setError(String(e)) } finally { setSaving(false) }
   }
+  const zone = (form.timezone ?? '').trim()
   return (
-    <Modal open={!!d} onCancel={onClose} zIndex={zIndex} width={560} destroyOnHidden
-      title={d ? <span>Scheduler settings · <span style={{ fontFamily: MONO_FONT }}>{d.host} / {d.venv}</span></span> : null}
+    <Modal open={!!v} onCancel={onClose} zIndex={zIndex} width={580} destroyOnHidden
+      title={v ? <span>Scheduler settings · <span style={{ fontFamily: MONO_FONT }}>{v.host} / {v.venv}</span></span> : null}
       okText="Save" onOk={save} okButtonProps={{ disabled: !changes, loading: saving }}>
-      {d && (
+      {v && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {!cur && (
+          {daemon && !v.settings && (
             <Alert type="info" showIcon message="This venv's runspec-scheduler is older than 0.7.0, so its settings can't be read. Saving sets the values you type; upgrade it (Update venv…) to see them here." />
           )}
+          {!pkgs && (
+            <Alert type="info" showIcon message="The time zone and package schedules need runspec-scheduler 0.10.0 or later in this venv. Update venv… upgrades it." />
+          )}
           <div style={{ fontSize: 13 }}>
-            <Text type="secondary">Fires from: </Text><Text strong>daemon</Text>
+            <Text type="secondary">Fires from: </Text><Text strong>{daemon ? 'daemon' : 'crontab'}</Text>
             <Text type="secondary"> (Update venv… moves a venv between crontab and the daemon)</Text>
           </div>
-          {DAEMON_SETTINGS.map(({ key, label, help }) => (
+          {pkgs && (
+            <>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ width: 130, fontWeight: 500 }}>Time zone</span>
+                  <Input size="small" style={{ width: 220, fontFamily: MONO_FONT }} allowClear value={form.timezone ?? ''}
+                    placeholder={v.hostZone ? `${v.hostZone} (the host's)` : "the host's"}
+                    onChange={e => setForm(f => ({ ...f, timezone: e.target.value }))} aria-label="Time zone" />
+                </div>
+                <Text type="secondary" style={{ fontSize: 12, marginLeft: 138, display: 'block' }}>
+                  The clock schedules with no zone of their own keep, e.g. Europe/London. Blank = the host’s.
+                  {!daemon && zone && v.hostZone && zone !== v.hostZone
+                    ? ' Cron fires on the host’s clock, so on this cron venv those schedules will need the daemon.'
+                    : ''}
+                </Text>
+              </div>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ width: 130, fontWeight: 500 }}>Package schedules</span>
+                  <Select size="small" style={{ width: 220 }} value={form.package_schedules}
+                    onChange={val => setForm(f => ({ ...f, package_schedules: val }))} aria-label="Package schedules"
+                    options={PACKAGE_POLICY.map(p => ({ value: p.value, label: p.label }))} />
+                </div>
+                <Text type="secondary" style={{ fontSize: 12, marginLeft: 138, display: 'block' }}>
+                  Schedules a package suggests in its runspec.toml. {PACKAGE_POLICY.find(p => p.value === form.package_schedules)?.help ?? ''}
+                  {v.packages?.offered ? ` ${v.packages.offered} waiting to be turned on now.` : ''}
+                </Text>
+              </div>
+            </>
+          )}
+          {daemon && DAEMON_SETTINGS.map(({ key, label, help }) => (
             <div key={key}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ width: 130, fontWeight: 500 }}>{label}</span>
                 <Input size="small" style={{ width: 140, fontFamily: MONO_FONT }} value={form[key] ?? ''}
-                  placeholder={cur ? settingText(cur[key]) : 'e.g. 6h'}
+                  placeholder={v.settings ? settingText(v.settings[key]) : 'e.g. 6h'}
                   onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))} aria-label={label} />
               </div>
               <Text type="secondary" style={{ fontSize: 12, marginLeft: 138, display: 'block' }}>{help}</Text>
             </div>
           ))}
-          <Text type="secondary" style={{ fontSize: 12 }}>Seconds, or a duration like 90m, 6h or 1d. Saved with the venv's own runspec-scheduler, as {d.owner || 'the venv owner'}.</Text>
-          {d.log && <Text type="secondary" style={{ fontSize: 12 }}>Daemon log: <span style={{ fontFamily: MONO_FONT }}>{d.log}</span></Text>}
+          {daemon && <Text type="secondary" style={{ fontSize: 12 }}>Durations: seconds, or 90m, 6h or 1d.</Text>}
+          <Text type="secondary" style={{ fontSize: 12 }}>Saved with the venv's own runspec-scheduler, as {v.owner || 'the venv owner'}.</Text>
+          {log && <Text type="secondary" style={{ fontSize: 12 }}>Daemon log: <span style={{ fontFamily: MONO_FONT }}>{log}</span></Text>}
           {error && <Alert type="error" showIcon message={error} />}
         </div>
       )}
@@ -276,7 +317,7 @@ interface AllSchedulesViewProps {
 
 /** A save payload that keeps a host schedule as it is, bar `enabled`. */
 export function keepPayload(v: SchedulerVenv, s: SharedSchedule, enabled: boolean): HostScheduleSave {
-  const timeout = timeoutText(s.timeout, v.backend)
+  const timeout = timeoutText(s.timeout, v.backend, v.settings?.timeout ?? null)
   return {
     host: v.host, venv: v.venv, backend: v.backend,
     id: s.id, original_id: s.id, runnable: s.runnable, args: s.args ?? {}, enabled,
@@ -364,7 +405,8 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
   const toggleDaemons = () => { writeDaemonsOpen(!daemonsShown); setDaemonsOpen(!daemonsShown) }
   const visibleDaemons = daemonsShown ? daemons : daemons.filter(daemonNeedsAttention).slice(0, FOLDED_ATTENTION_MAX)
   const foldedHidden = daemons.length - visibleDaemons.length
-  const [daemonSettings, setDaemonSettings] = useState<DaemonVenv | null>(null)
+  const [settingsVenv, setSettingsVenv] = useState<SchedulerVenv | null>(null)
+  const openDaemonSettings = (d: DaemonVenv) => setSettingsVenv(collected.venvs.find(v => v.key === d.key) ?? null)
   const restartDaemon = async (d: DaemonVenv) => {
     const verb = d.daemon?.state === 'running' ? 'Restarted' : 'Started'
     setBusy(`daemon::${d.key}`)
@@ -421,6 +463,12 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
           <span>
             {r.name && <div style={{ fontWeight: 600 }}>{r.name}</div>}
             <span style={{ fontFamily: MONO_FONT, fontSize: 13, color: r.name ? muted : undefined }}>{r.id}</span>
+            {r.fromPackage && (
+              <Tooltip title={`Suggested by the package${r.shared?.package?.source ? ` (${r.shared.package.source})` : ''}${r.shared && packageOverridden(r.shared) ? `; this venv changes: ${(r.shared.package?.overridden ?? []).join(', ')}` : ''}`}>
+                <Tag bordered={false} style={{ marginLeft: 6, fontSize: 11 }}>package{r.shared && packageOverridden(r.shared) ? ' · changed' : ''}</Tag>
+              </Tooltip>
+            )}
+            {r.description && <div style={{ fontSize: 12, color: muted, maxWidth: 260 }}>{r.description}</div>}
           </span>
         ),
     },
@@ -516,41 +564,83 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
 
   function rowActions(r: ScheduleRow, v: SchedulerVenv) {
     const s = r.shared as SharedSchedule
+    const pkg = s.origin === 'package'
+    // 0.10.0+ turns a schedule on / off without rewriting it (a package one keeps
+    // following its package); older ones rewrite the whole entry.
+    const toggle = (enabled: boolean) => (supportsPackages(v)
+      ? bridge.host_schedule_enable({ host: v.host, venv: v.venv, backend: v.backend, id: s.id, enabled })
+      : bridge.host_schedule_save(keepPayload(v, s, enabled)))
+    const runNowBtn = (
+      <Popconfirm
+        title={`Run ${s.id} now on ${r.host} / ${r.venv}?`}
+        description={<span style={{ display: 'block', maxWidth: 300 }}>
+          It starts in the background{r.runAs ? ` as ${r.runAs}` : ''}, the way a scheduled fire runs, and shows in History
+          {s.enabled ? '' : ' (even though the schedule is off)'}. If it is already running, the new run is recorded as skipped.
+        </span>}
+        okText="Run now"
+        onConfirm={() => runNow(r, v, s)}>
+        <Tooltip title="Run now">
+          <Button type="text" size="small" icon={<ThunderboltOutlined />} aria-label="Run now" loading={busy === `run::${r.key}`} />
+        </Tooltip>
+      </Popconfirm>
+    )
+    const editBtn = (
+      <Tooltip title={pkg ? 'Change it for this venv (only what you change is saved)' : 'Edit'}>
+        <Button type="text" size="small" icon={<EditOutlined />} aria-label="Edit"
+          onClick={() => { setEditing({ venv: v, schedule: s }); setEditorOpen(true) }} />
+      </Tooltip>
+    )
+    if (s.offered) {
+      const blocked = v.backend === 'cron' && !s.installable
+      return (
+        <Space size={0}>
+          <Tooltip title={blocked ? (s.not_installable_reason ?? '') : `Turn on: it starts firing ${r.when}`}>
+            <Button size="small" type="primary" ghost icon={<PlayCircleOutlined />} aria-label="Turn on"
+              loading={busy === r.key} disabled={blocked}
+              onClick={() => run(r.key, `Turned on ${s.id}`, () => toggle(true))}>Turn on</Button>
+          </Tooltip>
+          {runNowBtn}
+          {editBtn}
+        </Space>
+      )
+    }
     return (
       <Space size={0}>
-        <Popconfirm
-          title={`Run ${s.id} now on ${r.host} / ${r.venv}?`}
-          description={<span style={{ display: 'block', maxWidth: 300 }}>
-            It starts in the background{r.runAs ? ` as ${r.runAs}` : ''}, the way a scheduled fire runs, and shows in History
-            {s.enabled ? '' : ' (even though the schedule is paused)'}. If it is already running, the new run is recorded as skipped.
-          </span>}
-          okText="Run now"
-          onConfirm={() => runNow(r, v, s)}>
-          <Tooltip title="Run now">
-            <Button type="text" size="small" icon={<ThunderboltOutlined />} aria-label="Run now" loading={busy === `run::${r.key}`} />
-          </Tooltip>
-        </Popconfirm>
-        <Tooltip title="Edit">
-          <Button type="text" size="small" icon={<EditOutlined />} aria-label="Edit"
-            onClick={() => { setEditing({ venv: v, schedule: s }); setEditorOpen(true) }} />
-        </Tooltip>
-        <Tooltip title={s.enabled ? 'Pause (stays in the config, never fires)' : 'Resume'}>
+        {runNowBtn}
+        {editBtn}
+        <Tooltip title={s.enabled ? (pkg ? 'Turn off (it stays offered by its package)' : 'Pause (stays in the config, never fires)') : 'Resume'}>
           <Button type="text" size="small" aria-label={s.enabled ? 'Pause' : 'Resume'}
             icon={s.enabled ? <PauseCircleOutlined /> : <PlayCircleOutlined />}
             loading={busy === r.key}
-            onClick={() => run(r.key, s.enabled ? `Paused ${s.id}` : `Resumed ${s.id}`,
-              () => bridge.host_schedule_save(keepPayload(v, s, !s.enabled)))} />
+            onClick={() => run(r.key, s.enabled ? `Paused ${s.id}` : `Resumed ${s.id}`, () => toggle(!s.enabled))} />
         </Tooltip>
-        <Popconfirm
-          title={`Remove ${s.id} from ${r.host} / ${r.venv}?`}
-          description={v.backend === 'cron' ? 'Its crontab line is removed too.' : 'The daemon stops firing it.'}
-          okText="Remove" okButtonProps={{ danger: true }}
-          onConfirm={() => run(r.key, `Removed ${s.id}`,
-            () => bridge.host_schedule_remove({ host: v.host, venv: v.venv, backend: v.backend, id: s.id }))}>
-          <Tooltip title="Remove">
-            <Button type="text" size="small" danger icon={<DeleteOutlined />} aria-label="Remove" />
-          </Tooltip>
-        </Popconfirm>
+        {pkg ? (
+          packageOverridden(s) && (
+            <Popconfirm
+              title={`Put ${s.id} back to its package's settings?`}
+              description={<span style={{ display: 'block', maxWidth: 300 }}>
+                This venv's changes ({(s.package?.overridden ?? []).join(', ')}) and whether it is on are dropped; it then follows {v.packages?.policy === 'auto' ? 'the package and stays on' : 'the venv’s package policy'}.
+              </span>}
+              okText="Put back"
+              onConfirm={() => run(r.key, `Put back ${s.id}`,
+                () => bridge.host_schedule_remove({ host: v.host, venv: v.venv, backend: v.backend, id: s.id }))}>
+              <Tooltip title="Put back to the package's settings">
+                <Button type="text" size="small" icon={<ReloadOutlined />} aria-label="Put back" />
+              </Tooltip>
+            </Popconfirm>
+          )
+        ) : (
+          <Popconfirm
+            title={`Remove ${s.id} from ${r.host} / ${r.venv}?`}
+            description={v.backend === 'cron' ? 'Its crontab line is removed too.' : 'The daemon stops firing it.'}
+            okText="Remove" okButtonProps={{ danger: true }}
+            onConfirm={() => run(r.key, `Removed ${s.id}`,
+              () => bridge.host_schedule_remove({ host: v.host, venv: v.venv, backend: v.backend, id: s.id }))}>
+            <Tooltip title="Remove">
+              <Button type="text" size="small" danger icon={<DeleteOutlined />} aria-label="Remove" />
+            </Tooltip>
+          </Popconfirm>
+        )}
       </Space>
     )
   }
@@ -628,6 +718,18 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
               {hostCount} host{hostCount === 1 ? '' : 's'}{updatedAt ? ` · read ${Date.now() - updatedAt < 10_000 ? 'just now' : relTime(new Date(Math.min(updatedAt, Date.now())).toISOString())}` : ''}
             </span>
             <Button size="small" icon={<ReloadOutlined />} onClick={onRefresh} loading={loading}>Refresh</Button>
+            {editable && scopeVenvs.length > 0 && (
+              scopeVenvs.length === 1
+                ? <Button size="small" icon={<SettingOutlined />} onClick={() => setSettingsVenv(scopeVenvs[0])}>Venv settings</Button>
+                : (
+                  <Dropdown trigger={['click']} menu={{
+                    items: scopeVenvs.map(v => ({ key: v.key, label: <span><span style={{ fontFamily: MONO_FONT }}>{v.host} / {v.venv}</span> <Text type="secondary" style={{ fontSize: 12 }}>{v.backend}</Text></span> })),
+                    onClick: ({ key }) => setSettingsVenv(scopeVenvs.find(v => v.key === key) ?? null),
+                  }}>
+                    <Button size="small" icon={<SettingOutlined />}>Venv settings <DownOutlined style={{ fontSize: 10 }} /></Button>
+                  </Dropdown>
+                )
+            )}
             {editable && (
               <Tooltip title={scopeVenvs.length ? 'Add a schedule to a venv’s runspec-scheduler' : 'No venv with runspec-scheduler on the connected hosts'}>
                 <Button size="small" type="primary" icon={<PlusOutlined />} disabled={!scopeVenvs.length}
@@ -653,7 +755,7 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
           </button>
           {visibleDaemons.map(d => (
             <DaemonStrip key={d.key} d={d} editable={editable} busy={busy === `daemon::${d.key}`}
-              onRestart={restartDaemon} onSettings={setDaemonSettings} />
+              onRestart={restartDaemon} onSettings={openDaemonSettings} />
           ))}
         </div>
       )}
@@ -735,8 +837,10 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
           onDone={() => { setNoteVerb(null); setSelected([]); onRefresh() }} />
       )}
       {editable && (
-        <DaemonSettingsModal d={daemonSettings} onClose={() => setDaemonSettings(null)}
-          onSaved={() => { setDaemonSettings(null); onRefresh() }} />
+        <SchedulerSettingsModal v={settingsVenv}
+          log={collected.daemons.find(d => d.key === settingsVenv?.key)?.log}
+          onClose={() => setSettingsVenv(null)}
+          onSaved={() => { setSettingsVenv(null); onRefresh() }} />
       )}
     </div>
   )

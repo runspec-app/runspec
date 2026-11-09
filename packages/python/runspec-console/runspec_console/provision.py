@@ -70,6 +70,7 @@ import shlex
 from dataclasses import dataclass, field
 from typing import Any
 
+from . import host_schedules as _hs
 from .marketplace import pip_argv
 
 # runspec's own floor (packages/python/runspec/pyproject.toml requires-python).
@@ -990,6 +991,40 @@ def scheduler_restart_argv(root: str) -> list[str]:
     return [_scheduler_bin(root), "restart", "--wait", "15"]
 
 
+def validate_scheduler_settings(raw: dict[str, Any] | None) -> dict[str, str]:
+    """The scheduler settings Provision / Update venv write: ``timezone`` (an
+    IANA name; blank = leave it, which on a new venv means the host's zone) and
+    ``package_schedules`` (offer / auto / off; blank = leave it). ``{}`` when
+    nothing is set. Checked the same way the host Settings dialog checks them."""
+    raw = raw or {}
+    out: dict[str, str] = {}
+    zone = str(raw.get("timezone") or "").strip()
+    policy = str(raw.get("package_schedules") or "").strip().lower()
+    if zone:
+        out["timezone"] = zone
+    if policy:
+        out["package_schedules"] = policy
+    if out:
+        try:
+            _hs.settings_argv(out)
+        except _hs.HostScheduleError as exc:
+            raise ProvisionError(str(exc)) from None
+    return out
+
+
+def scheduler_settings_argv(root: str, settings: dict[str, str]) -> list[str]:
+    """Write the venv's scheduler zone / package policy (runspec-scheduler
+    0.10.0+), as the venv owner."""
+    return [_scheduler_bin(root), *_hs.settings_argv(settings)]
+
+
+def scheduler_sync_argv(root: str) -> list[str]:
+    """Bring the crontab in line with the config after pip or a settings change:
+    new package schedules, a new zone. On a daemon venv it only strips leftover
+    lines (the daemon picks up changes itself)."""
+    return [_scheduler_bin(root), "sync"]
+
+
 def scheduler_status_argv(root: str) -> list[str]:
     """Read the venv's schedules and their crontab lines (changes nothing)."""
     return [_scheduler_bin(root), "status"]
@@ -1175,6 +1210,7 @@ def update_steps(
     acl_user: str = "",
     daemon_running: bool = False,
     check_login: bool = False,
+    scheduler_settings: dict[str, str] | None = None,
 ) -> list[UpdateStep]:
     """The steps that bring an existing venv at ``root`` up to the chosen
     options, in order. Each one is safe to run again: pip ``-U`` only changes
@@ -1189,7 +1225,13 @@ def update_steps(
 
     ``check_login``: the venv's owner isn't the SSH login. ``access`` then runs
     ``runspec --version`` as the login too (``as_login``): the console reads the
-    venv as that account, so a venv only its owner can read shows no runnables."""
+    venv as that account, so a venv only its owner can read shows no runnables.
+
+    ``scheduler_settings``: the zone / package policy to write (see
+    :func:`validate_scheduler_settings`), before any backend move so the crontab
+    or daemon starts with them. When the backend stays put, a ``sync`` follows
+    pip or a settings change, so new package schedules and a new zone reach the
+    crontab."""
     paths = venv_paths(root)
     steps: list[UpdateStep] = []
     if specs:
@@ -1219,6 +1261,11 @@ def update_steps(
     steps.append(UpdateStep("verify", verify_argv(root), required=True))
     if check_login:
         steps.append(UpdateStep("access", verify_argv(root), as_login=True))
+    gets_scheduler = has_scheduler or bool(scheduler and scheduler != SCHEDULER_OFF)
+    if scheduler_settings and gets_scheduler:
+        steps.append(
+            UpdateStep("settings", scheduler_settings_argv(root, scheduler_settings))
+        )
     if scheduler == SCHEDULER_OFF:
         if has_scheduler:
             steps += [
@@ -1230,6 +1277,8 @@ def update_steps(
             UpdateStep("scheduler", scheduler_use_argv(root)),
             UpdateStep("keeper", scheduler_keeper_argv(root, scheduler)),
         ]
+    if has_scheduler and not scheduler and (specs or scheduler_settings):
+        steps.append(UpdateStep("sync", scheduler_sync_argv(root)))
     if specs and daemon_running and has_scheduler and scheduler != SCHEDULER_OFF:
         steps.append(UpdateStep("restart", scheduler_restart_argv(root)))
     return steps

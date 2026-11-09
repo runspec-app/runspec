@@ -366,6 +366,120 @@ def test_settings_argv():
         hs.settings_argv({"timeout": "6 hours; rm -rf /"})
 
 
+def test_settings_argv_zone_and_package_policy():
+    assert hs.settings_argv(
+        {"timezone": "Australia/Sydney", "package_schedules": "AUTO"}
+    ) == [
+        "settings",
+        "--timezone",
+        "Australia/Sydney",
+        "--package-schedules",
+        "auto",
+    ]
+    # An empty zone (key present) goes back to the host's; a missing key leaves it.
+    assert hs.settings_argv({"timezone": ""}) == ["settings", "--timezone", "host"]
+    assert hs.settings_argv({"timezone": None, "timeout": "1h"}) == [
+        "settings",
+        "--timeout",
+        "1h",
+    ]
+    for bad in ("local", "Europe/London; rm -rf /", "x" * 80):
+        with pytest.raises(hs.HostScheduleError, match="Time zone"):
+            hs.settings_argv({"timezone": bad})
+    with pytest.raises(hs.HostScheduleError, match="Package schedules"):
+        hs.settings_argv({"package_schedules": "always"})
+
+
+def test_enable_argv():
+    assert hs.enable_argv({"id": "cleanup.nightly", "enabled": True}) == [
+        "enable",
+        "--id",
+        "cleanup.nightly",
+    ]
+    assert hs.enable_argv({"id": "x", "enabled": False}) == ["disable", "--id", "x"]
+    with pytest.raises(hs.HostScheduleError):
+        hs.enable_argv({"id": "bad id", "enabled": True})
+
+
+def test_zone_change_on_cron_syncs_the_crontab():
+    b = _bridge()
+    reply = {
+        "ok": True,
+        "settings": {"backend": "cron", "timezone": "UTC"},
+        "warnings": ["needs the daemon"],
+    }
+    calls, run = _fake(
+        {
+            "settings": (0, json.dumps(reply), ""),
+            "sync": (0, json.dumps({"ok": True, "installed": ["a"]}), ""),
+        }
+    )
+    with patch.object(b, "_run_scheduler_as", side_effect=run):
+        out = b.host_scheduler_settings(
+            {"host": "prod-1", "venv": "ops", "backend": "cron", "timezone": "UTC"}
+        )
+    assert (
+        out["ok"]
+        and out["warnings"] == ["needs the daemon"]
+        and out["sync"]["installed"] == 1
+    )
+    assert [c["argv"][0] for c in calls] == ["settings", "sync"]
+    assert b.audit[0]["extra"]["timezone"] == "UTC"
+
+
+def test_enable_writes_only_enabled_then_syncs():
+    b = _bridge()
+    calls, run = _fake(
+        {
+            "enable": (
+                0,
+                json.dumps({"ok": True, "id": "c.n", "origin": "package"}),
+                "",
+            ),
+            "sync": (0, json.dumps({"ok": True}), ""),
+        }
+    )
+    with patch.object(b, "_run_scheduler_as", side_effect=run):
+        out = b.host_schedule_enable(
+            {
+                "host": "prod-1",
+                "venv": "ops",
+                "backend": "cron",
+                "id": "c.n",
+                "enabled": True,
+            }
+        )
+    assert out["ok"] and [c["argv"] for c in calls] == [
+        ["enable", "--id", "c.n"],
+        ["sync"],
+    ]
+    assert _events(b) == ["schedule.host.enabled"]
+    calls, run = _fake({"disable": (0, json.dumps({"ok": True}), "")})
+    with patch.object(b, "_run_scheduler_as", side_effect=run):
+        out = b.host_schedule_enable(
+            {
+                "host": "prod-1",
+                "venv": "ops",
+                "backend": "daemon",
+                "id": "c.n",
+                "enabled": False,
+            }
+        )
+    assert out["ok"] and [c["argv"] for c in calls] == [["disable", "--id", "c.n"]]
+
+
+def test_enable_on_an_old_scheduler_says_upgrade():
+    b = _bridge()
+    calls, run = _fake(
+        {"enable": (2, "", "✗  Unknown command for 'runspec-scheduler': 'enable'")}
+    )
+    with patch.object(b, "_run_scheduler_as", side_effect=run):
+        out = b.host_schedule_enable(
+            {"host": "prod-1", "venv": "ops", "id": "x", "enabled": True}
+        )
+    assert not out["ok"] and "0.10.0" in out["error"]
+
+
 def test_too_old():
     assert hs.too_old("✗  Unknown command for 'runspec-scheduler': 'restart'")
     assert not hs.too_old("sudo: a password is required")
@@ -386,7 +500,7 @@ def test_settings_runs_as_owner_and_audits():
         out = b.host_scheduler_settings(
             {"host": "prod-1", "venv": "ops", "timeout": "2h"}
         )
-    assert out == {"ok": True, "settings": settings}
+    assert out == {"ok": True, "settings": settings, "warnings": []}
     assert calls[0]["argv"] == ["settings", "--timeout", "2h"]
     assert calls[0]["owner"] == "svc"
     assert _events(b) == ["scheduler.host.settings"]

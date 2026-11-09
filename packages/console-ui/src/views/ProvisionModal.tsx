@@ -9,7 +9,9 @@ import {
   type ProvisionPreflightRow,
   type ProvisionResult,
   type ProvisionSchedulerKeeper,
+  type ProvisionSchedulerSettings,
   type ProvisionRetention,
+  type PackageSchedulePolicy,
 } from '../bridge'
 import { MONO_FONT, RADIUS, useIsDark, textMuted, textSecondary } from '../ThemeContext'
 import { PathInput } from './PathInput'
@@ -61,7 +63,9 @@ export function buildPayload(f: {
   repo: string
   scheduler?: '' | ProvisionSchedulerKeeper
   retention?: ProvisionRetention | null
+  schedulerSettings?: ProvisionSchedulerSettings
 }): ProvisionPayload {
+  const settings = f.scheduler ? schedulerSettingsPayload(f.schedulerSettings) : undefined
   return {
     hosts: f.hosts,
     dest: joinDest(f.parent, f.name),
@@ -72,7 +76,63 @@ export function buildPayload(f: {
     repo: f.repo || undefined,
     scheduler: f.scheduler || undefined,
     retention: f.retention ? retentionPayload(f.retention) : undefined,
+    ...(settings ? { scheduler_settings: settings } : {}),
   }
+}
+
+/** The scheduler zone / package policy to send, blanks dropped; undefined when
+ *  nothing is set (the venv keeps the host's zone and "offer"). */
+export function schedulerSettingsPayload(s: ProvisionSchedulerSettings | undefined): ProvisionSchedulerSettings | undefined {
+  const out: ProvisionSchedulerSettings = {}
+  const zone = (s?.timezone ?? '').trim()
+  if (zone) out.timezone = zone
+  if (s?.package_schedules) out.package_schedules = s.package_schedules
+  return Object.keys(out).length ? out : undefined
+}
+
+/** What a venv does with schedules its packages suggest (runspec-scheduler 0.10.0+). */
+export const PACKAGE_POLICY_OPTIONS: { value: PackageSchedulePolicy; label: string; help: string }[] = [
+  { value: 'offer', label: 'Offer them (off until turned on)', help: 'They show on the Schedules tab, off, until someone turns each one on.' },
+  { value: 'auto', label: 'Turn them on', help: 'They run as soon as the package is installed.' },
+  { value: 'off', label: 'Ignore them', help: 'They don’t show and never run.' },
+]
+
+/** The schedule time zone + package schedules fields, shared by Provision venv
+ *  and Update venv. `leave` adds a "leave as it is" policy choice (Update). */
+export function SchedulerSettingsFields({ value, onChange, leave = false, hint }: {
+  value: ProvisionSchedulerSettings
+  onChange: (v: ProvisionSchedulerSettings) => void
+  leave?: boolean
+  hint?: string
+}) {
+  const isDark = useIsDark()
+  const policy = value.package_schedules ?? ''
+  const help = PACKAGE_POLICY_OPTIONS.find(o => o.value === policy)?.help
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+      <div>
+        <div><Text style={{ fontSize: 12, color: textSecondary(isDark) }}>Schedule time zone</Text></div>
+        <Input value={value.timezone ?? ''} allowClear aria-label="Schedule time zone" style={{ fontFamily: MONO_FONT }}
+          placeholder={leave ? 'leave as it is' : "the host's"}
+          onChange={e => onChange({ ...value, timezone: e.target.value })} />
+        <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 2 }}>
+          An IANA zone like Europe/London for schedules with none of their own.{hint ? ` ${hint}` : ''}
+        </Text>
+      </div>
+      <div>
+        <div><Text style={{ fontSize: 12, color: textSecondary(isDark) }}>Package schedules</Text></div>
+        <Select value={policy} aria-label="Package schedules" style={{ width: '100%' }}
+          onChange={(v: PackageSchedulePolicy | '') => onChange({ ...value, package_schedules: v })}
+          options={[
+            ...(leave ? [{ value: '', label: 'Leave as it is' }] : []),
+            ...PACKAGE_POLICY_OPTIONS.map(o => ({ value: o.value, label: o.label })),
+          ]} />
+        <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 2 }}>
+          Schedules a package suggests in its runspec.toml. {help ?? ''}
+        </Text>
+      </div>
+    </div>
+  )
 }
 
 /** What the log cleanup defaults to: compress after a week, delete after ~3 months. */
@@ -126,6 +186,8 @@ export const STEP_LABEL: Record<string, string> = {
   access: 'checking the console can run it',
   scheduler: 'switching schedules to the daemon',
   keeper: 'starting the scheduler daemon',
+  settings: 'setting the schedule zone and package schedules',
+  sync: 'bringing the crontab up to date',
   restart: 'restarting the scheduler daemon',
 }
 
@@ -259,6 +321,7 @@ export function ProvisionModal({
   const [packages, setPackages] = useState<string[]>([])
   const [repo, setRepo] = useState('')
   const [scheduler, setScheduler] = useState<'' | ProvisionSchedulerKeeper>('')
+  const [schedSettings, setSchedSettings] = useState<ProvisionSchedulerSettings>({ package_schedules: 'offer' })
   const [cleanup, setCleanup] = useState(true)
   const [compactAfter, setCompactAfter] = useState(RETENTION_DEFAULT.compact_after ?? '')
   const [deleteAfter, setDeleteAfter] = useState(RETENTION_DEFAULT.delete_after ?? '')
@@ -342,8 +405,8 @@ export function ProvisionModal({
   }, [onDone])
 
   const payload = useMemo(
-    () => buildPayload({ hosts: selected, parent, name, pyMode, pyPath, pyVersion, runAs, become, packages, repo, scheduler, retention }),
-    [selected, parent, name, pyMode, pyPath, pyVersion, runAs, become, packages, repo, scheduler, retention],
+    () => buildPayload({ hosts: selected, parent, name, pyMode, pyPath, pyVersion, runAs, become, packages, repo, scheduler, retention, schedulerSettings: schedSettings }),
+    [selected, parent, name, pyMode, pyPath, pyVersion, runAs, become, packages, repo, scheduler, retention, schedSettings],
   )
   // Any change to the request invalidates an earlier preflight.
   useEffect(() => { if (!op) setRows(null) }, [payload, op])
@@ -548,6 +611,11 @@ export function ProvisionModal({
               ? `Installs runspec-scheduler, fires this venv's schedules from its daemon (run as the owner) and sets up what restarts it.${scheduler === 'auto' ? ' Per host: systemd --user when lingering is on, else supervisord in the venv.' : ''}`
               : 'Schedules in this venv can still run from the owner\'s crontab (runspec-scheduler sync).'}
           </Text>
+          {scheduler && (
+            <div style={{ marginTop: 8 }}>
+              <SchedulerSettingsFields value={schedSettings} onChange={setSchedSettings} />
+            </div>
+          )}
         </div>
 
         <div>

@@ -81,6 +81,13 @@ describe('update helpers', () => {
     expect(none.retention).toBeUndefined()
     expect(hasWork(none)).toBe(false)
     expect(hasWork({ ...none, scheduler: 'off' })).toBe(true)
+    // the scheduler's zone / package policy alone is an update
+    const zoned = buildUpdatePayload(t, { ...FORM, upgradeRunspec: false, inbox: false, retention: null, schedulerSettings: { timezone: 'Europe/Paris', package_schedules: '' } })
+    expect(zoned.scheduler_settings).toEqual({ timezone: 'Europe/Paris' })
+    expect(hasWork(zoned)).toBe(true)
+    expect(updateNotes(row(), { ...FORM, schedulerSettings: { package_schedules: 'off' } }))
+      .toContain('No runspec-scheduler in this venv, so the schedule time zone and package schedules aren’t set.')
+    expect(updateNotes(row({ scheduler: true }), { ...FORM, schedulerSettings: { package_schedules: 'off' } })).toEqual([])
   })
 
   it('notes what the options mean for each venv', () => {

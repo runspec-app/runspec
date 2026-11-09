@@ -1862,10 +1862,26 @@ export const mockApi: BridgeApi = {
         host: 'prod-1', group: 'platform-core', available: true, ok: true, owner: 'svc-runner',
         status: {
           ok: true, venv: 'platform-core', config: '/opt/venvs/platform-core/runspec_scheduler.toml', backend: 'cron', stale: [], errors: [],
+          settings: { backend: 'cron', timeout: 21600, misfire_grace: 300, catch_up_window: 86400, timezone: '', package_schedules: 'offer' },
+          host_zone: 'Europe/London',
+          packages: { policy: 'offer', offered: 2, errors: [], orphans: [] },
           schedules: [{
             id: 'log-rotate-nightly', runnable: 'log-rotate', enabled: true, when: { cron: '30 1 * * *' }, args: {}, run_as: 'svc-runner',
             installable: true, not_installable_reason: null, installed: true, line: 'exec',
             next_run: new Date(Date.now() + 7 * 3600_000).toISOString(), runs: [], last_output: null,
+          }, {
+            id: 'cleanup-tmp.nightly', runnable: 'cleanup-tmp', enabled: false, offered: true, origin: 'package',
+            description: 'Old files out of /tmp', when: { cron: '51 2 * * *', timezone: 'local' },
+            package: { words: '02:30 daily, spread 30m (this host 02:51)', overridden: [] },
+            installable: true, not_installable_reason: null, installed: false, line: null,
+            next_run: null, runs: [], last_output: null,
+          }, {
+            id: 'certs.weekly', runnable: 'cert-check', enabled: false, offered: true, origin: 'package',
+            description: 'Expiring certificates, Monday morning New York time',
+            when: { cron: '0 8 * * mon', timezone: 'America/New_York' },
+            package: { words: '08:00 Monday (America/New_York)', overridden: [] },
+            installable: false, not_installable_reason: "needs the daemon: cron here keeps Europe/London time, this schedule keeps America/New_York",
+            installed: false, line: null, next_run: null, runs: [], last_output: null,
           }],
         },
       })
@@ -1890,6 +1906,7 @@ export const mockApi: BridgeApi = {
     return { ok: true, id: p.id, warnings: [], ...(p.backend === 'cron' ? { sync: { installed: 1, skipped: [], users: ['svc-ops'] } } : {}) }
   },
   host_schedule_remove: async (p) => ({ ok: true, id: p.id, warnings: [] }),
+  host_schedule_enable: async (p) => ({ ok: true, id: p.id, warnings: [], ...(p.backend === 'cron' ? { sync: { installed: 2, skipped: [], users: ['svc-runner'] } } : {}) }),
   host_schedule_sync: async () => ({ ok: true, warnings: [], sync: { installed: 2, skipped: [], users: ['svc-ops'] } }),
   host_schedule_run_now: async (p) => ({ ok: true, id: p.id, pid: 5150, user: 'svc-ops' }),
   host_schedule_env_check: async (p) => {
@@ -1914,7 +1931,12 @@ export const mockApi: BridgeApi = {
   },
   host_scheduler_settings: async (p) => ({
     ok: true,
-    settings: { backend: 'daemon', timeout: 21600, misfire_grace: 300, catch_up_window: 86400, ...(p.timeout === '0' ? { timeout: 0 } : {}) },
+    warnings: [],
+    settings: {
+      backend: p.backend ?? 'daemon', timeout: 21600, misfire_grace: 300, catch_up_window: 86400, ...(p.timeout === '0' ? { timeout: 0 } : {}),
+      ...(p.timezone !== undefined ? { timezone: p.timezone } : {}),
+      ...(p.package_schedules ? { package_schedules: p.package_schedules } : {}),
+    },
   }),
   host_scheduler_restart: async () => ({ ok: true, manager: 'systemd-user', daemon: { state: 'running', pid: 4242, version: '0.7.0', restart_needed: false }, warnings: [] }),
 

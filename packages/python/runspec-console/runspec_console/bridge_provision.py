@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, Any
 
 from . import bridge_utils as utils_mod
 from . import config as config_mod
+from . import host_schedules as hs
 from . import hosts as hosts_mod
 from . import marketplace as mp
 from . import provision as prov
@@ -47,7 +48,16 @@ _PIP_TIMEOUT_S = 900
 _STEP_TIMEOUT_S = 120
 #: Steps that run ``runspec-scheduler``: a failure is explained from the JSON it
 #: printed and the warning carries the full command to retry on the host.
-_SCHEDULER_STEPS = ("scheduler", "keeper", "restart")
+_SCHEDULER_STEPS = ("settings", "scheduler", "keeper", "sync", "restart")
+_SETTINGS_NOTE = (
+    "Couldn't set the schedule time zone / package schedules (they need "
+    f"runspec-scheduler {hs.PACKAGES_MIN} or later in the venv); set them later "
+    "from the venv's Settings on the Schedules tab"
+)
+_SYNC_NOTE = (
+    "Couldn't bring the crontab up to date; Sync crontab on the Schedules tab "
+    "does it later"
+)
 _MAX_LINES = 400
 _MAX_OPS = 8
 
@@ -388,6 +398,9 @@ class ProvisionMixin:
         try:
             scheduler = prov.validate_scheduler(str(payload.get("scheduler") or ""))
             retention = prov.validate_retention(payload.get("retention"))
+            sched_settings = prov.validate_scheduler_settings(
+                payload.get("scheduler_settings")
+            )
         except prov.ProvisionError as exc:
             raise ValueError(str(exc)) from exc
         packages: list[str] = []
@@ -412,6 +425,7 @@ class ProvisionMixin:
             "packages": prov.install_specs(packages),
             "scheduler": scheduler,
             "retention": retention,
+            "scheduler_settings": sched_settings if scheduler else {},
         }
 
     def _prov_preflight_one(self, plan: dict[str, Any], name: str) -> dict[str, Any]:
@@ -664,6 +678,7 @@ class ProvisionMixin:
                 folder_by_root=bool(pf.get("handoff")),
                 scheduler=plan.get("scheduler", ""),
                 retention=plan.get("retention") or None,
+                scheduler_settings=plan.get("scheduler_settings") or None,
             )
             if pf.get("handoff"):
                 if cancel.is_set():
@@ -751,6 +766,16 @@ class ProvisionMixin:
                 steps.append(
                     ("access", prov.verify_argv(dest), None, _STEP_TIMEOUT_S, False)
                 )
+            if plan.get("scheduler") and plan.get("scheduler_settings"):
+                steps.append(
+                    (
+                        "settings",
+                        prov.scheduler_settings_argv(dest, plan["scheduler_settings"]),
+                        None,
+                        _STEP_TIMEOUT_S,
+                        False,
+                    )
+                )
             if plan.get("scheduler"):
                 steps += [
                     (
@@ -782,6 +807,7 @@ class ProvisionMixin:
                 "(the venv works)",
                 "keeper": "Couldn't set up the scheduler daemon's keeper (the venv "
                 "works)",
+                "settings": _SETTINGS_NOTE,
             }
             version = ""
             skip_keeper = False
@@ -1341,6 +1367,9 @@ class ProvisionMixin:
                 str(payload.get("scheduler") or "")
             )
             retention = prov.validate_retention(payload.get("retention"))
+            sched_settings = prov.validate_scheduler_settings(
+                payload.get("scheduler_settings")
+            )
         except prov.ProvisionError as exc:
             raise ValueError(str(exc)) from exc
         packages: list[str] = []
@@ -1358,7 +1387,7 @@ class ProvisionMixin:
             scheduler=scheduler,
         )
         inbox = bool(payload.get("inbox", False))
-        if not (specs or inbox or retention or scheduler):
+        if not (specs or inbox or retention or scheduler or sched_settings):
             raise ValueError("Pick at least one thing to update.")
         return {
             "targets": targets,
@@ -1367,6 +1396,7 @@ class ProvisionMixin:
             "inbox": inbox,
             "retention": retention,
             "scheduler": scheduler,
+            "scheduler_settings": sched_settings,
         }
 
     def _upd_run(
@@ -1487,11 +1517,21 @@ class ProvisionMixin:
                 inbox=plan["inbox"],
                 retention=plan["retention"] or None,
                 scheduler=plan["scheduler"],
+                scheduler_settings=plan.get("scheduler_settings") or None,
             )
             has_scheduler = bool(info.get("scheduler"))
             if plan["scheduler"] == prov.SCHEDULER_OFF and not has_scheduler:
                 res["warnings"].append(
                     "No runspec-scheduler in this venv, so there was no daemon to stop."
+                )
+            gets_scheduler = has_scheduler or plan["scheduler"] not in (
+                "",
+                prov.SCHEDULER_OFF,
+            )
+            if plan.get("scheduler_settings") and not gets_scheduler:
+                res["warnings"].append(
+                    "No runspec-scheduler in this venv, so the schedule time zone "
+                    "and package schedules weren't set."
                 )
             steps = prov.update_steps(
                 root,
@@ -1503,6 +1543,7 @@ class ProvisionMixin:
                 acl_user=login if run_as else "",
                 daemon_running=bool(info.get("scheduler_pid")),
                 check_login=bool(run_as),
+                scheduler_settings=plan.get("scheduler_settings") or None,
             )
             off = plan["scheduler"] == prov.SCHEDULER_OFF
             notes = {
@@ -1530,6 +1571,8 @@ class ProvisionMixin:
                 "restart": "Couldn't restart the scheduler daemon, so it still runs "
                 "the code it started with (restart needs runspec-scheduler 0.7.0 or "
                 "later)",
+                "settings": _SETTINGS_NOTE,
+                "sync": _SYNC_NOTE,
             }
             version = ""
             skip_keeper = False

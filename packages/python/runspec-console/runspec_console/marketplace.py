@@ -1536,6 +1536,25 @@ def pip_uninstall_argv(python: str, names: list[str]) -> list[str]:
     return pip_argv(python, "uninstall", "-y", "--disable-pip-version-check", *cleaned)
 
 
+#: Run with the venv's python after pip: ``runspec-scheduler sync`` when the
+#: venv has the scheduler (POSIX only: it writes crontab lines), else nothing.
+#: A package just installed may offer schedules, one just removed may leave
+#: crontab lines behind; sync settles both. Prints nothing without a scheduler.
+SCHEDULER_SYNC_PY = (
+    "import os, subprocess, sys\n"
+    "b = os.path.join(os.path.dirname(sys.argv[1]), 'runspec-scheduler')\n"
+    "if os.name == 'nt' or not os.path.isfile(b):\n"
+    "    sys.exit(0)\n"
+    "sys.exit(subprocess.call([b, 'sync']))\n"
+)
+
+
+def scheduler_sync_argv(python: str) -> list[str]:
+    """``python -c <SCHEDULER_SYNC_PY> python``: the venv's python finds the
+    scheduler next to itself (so this needs no shell on the host)."""
+    return [python, "-c", SCHEDULER_SYNC_PY, python]
+
+
 def pip_env(repo: Repo | None, auth: tuple[str, str] | None = None) -> dict[str, str]:
     """Env vars that point ``pip install`` at the repo — ``PIP_INDEX_URL`` /
     ``PIP_EXTRA_INDEX_URL`` per :meth:`Repo.effective_pip_arg` (nothing for

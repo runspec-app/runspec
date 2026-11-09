@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from 'vitest'
 import {
-  CLAIM_STALE_HOURS, DEFAULT_FILTERS, collectRows, daemonNeedsAttention, daemonSummary, filterRows, inScope, noteBatches, noteText, noteVerbs, noteable, scopeCounts, settingText, settingsChanges, sharedState, timeoutLabel, shortDuration,
+  CLAIM_STALE_HOURS, DEFAULT_FILTERS, collectRows, daemonNeedsAttention, daemonSummary, filterRows, inScope, noteBatches, noteText, noteVerbs, noteable, scopeCounts, settingText, settingsChanges, settingsForm, sharedState, sharedWhenText, venvSettingsChanges, timeoutLabel, shortDuration,
 } from './allSchedules'
 import type { RunCard, Schedule, SharedSchedule, SharedSchedulesVenv } from '../bridge'
 
@@ -254,5 +254,67 @@ describe('who is handling a failure', () => {
   it('noteText names who, how long ago and what', () => {
     expect(noteText({ state: 'done', actor: 'ana', note: 'fixed', ts: '2026-11-07T11:30:00Z' }, NOW)).toBe('ana, 30m ago: fixed')
     expect(noteText({ state: 'handling', os_user: 'svc', ts: '2026-11-05T12:00:00Z' }, NOW)).toBe('svc, 2d ago')
+  })
+})
+
+describe('package schedules (runspec-scheduler 0.10.0)', () => {
+  const venv = (backend: 'cron' | 'daemon'): SharedSchedulesVenv => ({
+    group: 'ops', available: true, ok: true,
+    status: { ok: true, venv: 'ops', config: 'c', backend, schedules: [], stale: [], errors: [] },
+  })
+  const pkg = (over: Partial<SharedSchedule> = {}): SharedSchedule => ({
+    id: 'x.nightly', runnable: 'x', enabled: false, offered: true, origin: 'package',
+    when: { cron: '51 2 * * *', timezone: 'local' }, package: { words: '02:30 daily', overridden: [] },
+    installable: true, not_installable_reason: null, installed: false, line: null, next_run: null, runs: [], last_output: null,
+    ...over,
+  })
+  const NEEDS = 'timezone America/New_York: this host is on Europe/London, and a crontab line fires on the host’s clock — this schedule needs the daemon backend (runspec-scheduler use daemon), or leave its timezone blank'
+
+  it('shows an offered schedule as offered, not a problem', () => {
+    const st = sharedState(pkg(), venv('cron'))
+    expect(st.state).toBe('offered')
+    expect(st.problem).toBe(false)
+    expect(st.tip).toContain('02:30 daily')
+    expect(sharedState(pkg({ installable: false, not_installable_reason: NEEDS }), venv('cron')).tip).toContain('need the daemon')
+  })
+
+  it('says "needs daemon" for a turned-on schedule cron keeps the wrong clock for', () => {
+    const st = sharedState(pkg({ offered: false, enabled: true, installable: false, not_installable_reason: NEEDS }), venv('cron'))
+    expect(st).toMatchObject({ state: 'needs daemon', problem: true })
+    expect(sharedState(pkg({ offered: false, enabled: true, installable: false, not_installable_reason: 'no such runnable' }), venv('cron')).state).toBe('not installable')
+  })
+
+  it('times a package schedule in its words unless this venv changed the time', () => {
+    expect(sharedWhenText(pkg())).toBe('02:30 daily')
+    expect(sharedWhenText(pkg({ when: { cron: '0 9 * * *' }, package: { words: '02:30 daily', overridden: ['when'] } }))).toBe('0 9 * * *')
+    expect(sharedWhenText({ ...pkg(), origin: undefined, package: undefined })).toBe('51 2 * * *')  // "local" isn't shown
+  })
+
+  it('collects the venv settings and package errors', () => {
+    const v = venv('cron')
+    v.status!.settings = { backend: 'cron', timeout: 21600, misfire_grace: 300, catch_up_window: 86400, timezone: 'Europe/Paris', package_schedules: 'auto' }
+    v.status!.host_zone = 'Europe/London'
+    v.status!.packages = { policy: 'auto', offered: 0, errors: ['runspec-acme: bad [x.meta.scheduler.y]: no time'], orphans: [] }
+    v.status!.schedules = [pkg({ offered: false, enabled: true, description: 'Tidy' })]
+    const c = collectRows([], [v])
+    expect(c.venvs[0]).toMatchObject({ hostZone: 'Europe/London', packages: { policy: 'auto' } })
+    expect(c.notes.map(n => n.message)).toEqual(['runspec-acme: bad [x.meta.scheduler.y]: no time'])
+    expect(c.rows[0]).toMatchObject({ fromPackage: true, description: 'Tidy', when: '02:30 daily' })
+  })
+
+  it('saves only the changed zone / policy / durations', () => {
+    const settings = { backend: 'daemon', timeout: 21600, misfire_grace: 300, catch_up_window: 86400, timezone: '', package_schedules: 'offer' as const }
+    const v = { backend: 'daemon' as const, settings, packages: { policy: 'offer' as const, offered: 0, errors: [], orphans: [] } }
+    const form = settingsForm(v)
+    expect(form).toEqual({ timeout: '6h', misfire_grace: '5m', catch_up_window: '1d', timezone: '', package_schedules: 'offer' })
+    expect(venvSettingsChanges(v, form)).toBeNull()
+    expect(venvSettingsChanges(v, { ...form, timezone: ' Asia/Tokyo ', package_schedules: 'off' })).toEqual({ timezone: 'Asia/Tokyo', package_schedules: 'off' })
+    // clearing a zone goes back to the host's: '' is sent
+    const tokyo = { ...v, settings: { ...settings, timezone: 'Asia/Tokyo' } }
+    expect(venvSettingsChanges(tokyo, { ...settingsForm(tokyo), timezone: '' })).toEqual({ timezone: '' })
+    // an older scheduler: durations only (daemon), nothing on cron
+    const old = { backend: 'cron' as const, settings: null, packages: null }
+    expect(settingsForm(old)).toEqual({})
+    expect(venvSettingsChanges(old, { timezone: 'Asia/Tokyo' })).toBeNull()
   })
 })

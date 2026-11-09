@@ -212,6 +212,7 @@ EXPECTED = {
     "host_schedule_save",
     "host_schedule_remove",
     "host_schedule_sync",
+    "host_schedule_enable",
     "host_schedule_run_now",
     "host_schedule_env_check",
     "host_schedule_note",

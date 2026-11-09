@@ -186,9 +186,18 @@ SETTING_FLAGS = {
 }
 
 
+#: ``package_schedules`` values (runspec-scheduler 0.10.0).
+PACKAGE_POLICIES = ("offer", "auto", "off")
+
+#: runspec-scheduler that has the venv zone, package schedules and enable/disable.
+PACKAGES_MIN = "0.10.0"
+
+
 def settings_argv(payload: dict[str, Any]) -> list[str]:
-    """``settings`` argv for the durations ``payload`` sets (seconds or
-    90m / 6h / 1d; the scheduler validates again). Nothing set is an error."""
+    """``settings`` argv for what ``payload`` sets: the durations (seconds or
+    90m / 6h / 1d; the scheduler validates again), ``timezone`` (an IANA name;
+    ``""`` goes back to the host's zone — only sent when the key is there) and
+    ``package_schedules`` (offer / auto / off). Nothing set is an error."""
     argv = ["settings"]
     for key, flag in SETTING_FLAGS.items():
         raw = payload.get(key)
@@ -200,9 +209,30 @@ def settings_argv(payload: dict[str, Any]) -> list[str]:
                 f"{key.replace('_', ' ')} must be seconds or a duration like 90m / 6h / 1d (got {raw!r})"
             )
         argv += [flag, text]
+    if "timezone" in payload and payload["timezone"] is not None:
+        zone = str(payload["timezone"]).strip()
+        if zone and (zone.lower() in ("local", "host") or not _TZ_RE.match(zone)):
+            raise HostScheduleError(
+                f"Time zone {zone!r} isn't an IANA name like Europe/London (leave it blank for the host's)."
+            )
+        argv += ["--timezone", zone or "host"]
+    policy = str(payload.get("package_schedules") or "").strip().lower()
+    if policy:
+        if policy not in PACKAGE_POLICIES:
+            raise HostScheduleError(
+                f"Package schedules must be one of {', '.join(PACKAGE_POLICIES)} (got {policy!r})."
+            )
+        argv += ["--package-schedules", policy]
     if len(argv) == 1:
         raise HostScheduleError("Nothing to change.")
     return argv
+
+
+def enable_argv(payload: dict[str, Any]) -> list[str]:
+    """``enable`` / ``disable --id <id>``: turn one schedule on or off. Writes
+    only ``enabled``, so a package schedule keeps following its package."""
+    sid = validate_id(payload.get("id"))
+    return ["enable" if payload.get("enabled") else "disable", "--id", sid]
 
 
 #: runspec version that keeps run notes (`runspec history claim/resolve/release`).

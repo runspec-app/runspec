@@ -1149,6 +1149,46 @@ class SchedulesMixin:
         self._host_sched_audit("schedule.host.synced", payload, "", ok=out["ok"])
         return out
 
+    def host_schedule_enable(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Turn one host schedule on or off (``host``, ``venv``, ``backend``,
+        ``id``, ``enabled``) with the venv's ``runspec-scheduler enable`` /
+        ``disable`` (0.10.0+), then sync a cron venv's crontab. Unlike saving
+        the whole schedule, it writes only ``enabled``, so a schedule a package
+        offers keeps following the package's time. Returns ``{ok, id, error?,
+        warnings, sync?}``."""
+        from . import host_schedules as hs
+
+        payload = payload or {}
+        try:
+            argv = hs.enable_argv(payload)
+        except hs.HostScheduleError as exc:
+            return {"ok": False, "error": str(exc), "warnings": []}
+        sid = argv[2]
+        res = self._host_sched_call(payload, argv)
+        if not res["ok"]:
+            err = res["error"]
+            if hs.too_old(err):
+                err = (
+                    f"This venv's runspec-scheduler is older than {hs.PACKAGES_MIN}, which "
+                    "turns schedules on and off by themselves; upgrade it (Update venv…)."
+                )
+            self._host_sched_audit(
+                "schedule.host.toggle_failed", payload, sid, error=err
+            )
+            return {"ok": False, "id": sid, "error": err, "warnings": []}
+        out: dict[str, Any] = {"ok": True, "id": sid, "warnings": []}
+        backend = "daemon" if payload.get("backend") == "daemon" else "cron"
+        self._host_sched_sync_after(payload, backend, out)
+        self._host_sched_audit(
+            "schedule.host.enabled"
+            if argv[0] == "enable"
+            else "schedule.host.disabled",
+            payload,
+            sid,
+            origin=str((res["json"] or {}).get("origin") or ""),
+        )
+        return out
+
     def host_schedule_run_now(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Fire one host schedule now (``host``, ``venv``, ``id``) with the venv's
         own ``runspec-scheduler run-now --detach``, run as the venv owner. The fire
@@ -1233,10 +1273,13 @@ class SchedulesMixin:
         return {"ok": True, "notes": got.get("notes") or []}
 
     def host_scheduler_settings(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """Change a venv's daemon durations (``host``, ``venv``, and any of
-        ``timeout`` / ``misfire_grace`` / ``catch_up_window``) with the venv's
-        own ``runspec-scheduler settings``, run as the owner. A running daemon
-        reloads them by itself. Returns ``{ok, error?, settings?}``."""
+        """Change a venv's scheduler settings (``host``, ``venv``, ``backend``,
+        and any of ``timeout`` / ``misfire_grace`` / ``catch_up_window`` /
+        ``timezone`` / ``package_schedules``) with the venv's own
+        ``runspec-scheduler settings``, run as the owner. A running daemon
+        reloads them by itself; a cron venv's crontab is synced after a zone or
+        package-policy change (both change what cron installs). Returns ``{ok,
+        error?, settings?, warnings, sync?}``."""
         from . import host_schedules as hs
 
         payload = payload or {}
@@ -1245,19 +1288,35 @@ class SchedulesMixin:
         except hs.HostScheduleError as exc:
             return {"ok": False, "error": str(exc)}
         res = self._host_sched_call(payload, argv)
+        keys = [*hs.SETTING_FLAGS, "package_schedules"]
         changed = {
-            k: str(payload.get(k))
-            for k in hs.SETTING_FLAGS
-            if payload.get(k) not in (None, "")
+            k: str(payload.get(k)) for k in keys if payload.get(k) not in (None, "")
         }
+        if "timezone" in payload and payload["timezone"] is not None:
+            changed["timezone"] = str(payload["timezone"]).strip() or "host"
         if not res["ok"]:
             err = self._host_daemon_error(res["error"])
+            if "--timezone" in argv or "--package-schedules" in argv:
+                if "unknown" in err.lower() and ("timezone" in err or "package" in err):
+                    err = (
+                        f"This venv's runspec-scheduler is older than {hs.PACKAGES_MIN}, "
+                        "which has the venv time zone and package schedules; upgrade it (Update venv…)."
+                    )
             self._host_sched_audit(
                 "scheduler.host.settings_failed", payload, "", error=err, **changed
             )
-            return {"ok": False, "error": err}
+            return {"ok": False, "error": err, "warnings": []}
+        got = res["json"] or {}
+        out: dict[str, Any] = {
+            "ok": True,
+            "settings": got.get("settings") or {},
+            "warnings": [str(w) for w in got.get("warnings") or []],
+        }
+        if "timezone" in changed or "package_schedules" in changed:
+            backend = "daemon" if payload.get("backend") == "daemon" else "cron"
+            self._host_sched_sync_after(payload, backend, out)
         self._host_sched_audit("scheduler.host.settings", payload, "", **changed)
-        return {"ok": True, "settings": (res["json"] or {}).get("settings") or {}}
+        return out
 
     def host_scheduler_restart(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Restart (or start) a venv's scheduler daemon (``host``, ``venv``)

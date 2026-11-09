@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import shlex
+import subprocess
 import sys
 import threading
 import time
@@ -58,6 +59,8 @@ class _StubBridge:
         self.ssh_stdin: list[bytes | None] = []
         self.refreshed = 0
         self.ssh_reply: tuple[int, str, str] = (0, "", "")
+        # the post-pip `runspec-scheduler sync` check: silent = no scheduler
+        self.sync_reply: tuple[int, str, str] = (0, "", "")
 
     def get_config(self) -> dict:
         return {"ssh": {}}
@@ -74,6 +77,8 @@ class _StubBridge:
     def _ssh_run(self, ssh, command, *, identity_file=None, timeout=15, stdin=None):
         self.ssh_calls.append((ssh, command))
         self.ssh_stdin.append(stdin)
+        if "runspec-scheduler" in command:
+            return self.sync_reply
         return self.ssh_reply
 
     def mcp_credential_options(self):
@@ -686,8 +691,9 @@ def test_install_remote_runs_pip_as_owner_with_index_env_and_events(app, monkeyp
     assert rec["status"] == "finished"
     (r,) = rec["results"]
     assert r["ok"] and r["exit_code"] == 0 and "Successfully installed" in r["summary"]
+    assert "scheduler_sync" not in r  # no scheduler in the venv
 
-    ssh, cmd = b.ssh_calls[-1]
+    ssh, cmd = b.ssh_calls[0]
     assert ssh == "ops@web-01"
     toks = shlex.split(cmd)
     # The credentialed index URL rides stdin (the SPEC env frame), never argv:
@@ -701,9 +707,13 @@ def test_install_remote_runs_pip_as_owner_with_index_env_and_events(app, monkeyp
     assert toks[7:11] == [py, "-c", mp.PIP_UMASK_PY, "install"]
     assert "-U" in toks and toks[-1] == "runspec-acme"
     assert "bob:pw" not in cmd
-    assert parse_env_frame(b.ssh_stdin[-1]) == {
+    assert parse_env_frame(b.ssh_stdin[0]) == {
         "PIP_INDEX_URL": "https://bob:pw@nexus.corp/simple/"
     }
+    # then the scheduler check, as the same owner, without the index env
+    _, sync_cmd = b.ssh_calls[1]
+    assert "runspec-scheduler" in sync_cmd and "PIP_INDEX_URL" not in sync_cmd
+    assert shlex.split(sync_cmd)[:4] == ["sudo", "-n", "-u", "svc"]
 
     events = [ev for ev, _ in b.dispatched]
     assert (
@@ -751,6 +761,65 @@ def test_uninstall_remote_without_run_as_and_failure_reported(app):
         )
     )
     assert b.refreshed == 0  # nothing changed
+    assert len(b.ssh_calls) == 1  # no scheduler sync after a failed pip
+
+
+def _pip_call(b: _StubBridge) -> str:
+    """The last pip command (the scheduler sync check follows it)."""
+    return [c for _, c in b.ssh_calls if "runspec-scheduler" not in c][-1]
+
+
+def _one_venv_host() -> None:
+    _write_hosts(
+        [
+            {
+                "name": "web-01",
+                "ssh": "ops@web-01",
+                "runspec_paths": ["/opt/venvs/ops/bin/runspec"],
+            }
+        ]
+    )
+
+
+def test_install_syncs_the_venvs_schedules(app):
+    _one_venv_host()
+    b = _StubBridge()
+    b.ssh_reply = (0, "Successfully installed runspec-acme-1.2.0", "")
+    b.sync_reply = (0, '{"ok": true, "installed": ["acme.nightly"]}', "")
+    out = b.marketplace_install(
+        {"package": "runspec-acme", "targets": [{"id": "web-01::/opt/venvs/ops"}]}
+    )
+    (r,) = _wait_op(b, out["op"])["results"]
+    assert r["ok"] and r["scheduler_sync"] is True
+    assert r["lines"][-1] == '{"ok": true, "installed": ["acme.nightly"]}'
+    assert shlex.split(b.ssh_calls[1][1]) == mp.scheduler_sync_argv(
+        "/opt/venvs/ops/bin/python"
+    )
+
+    # A failing sync doesn't undo the install; the summary says what to do.
+    b.sync_reply = (1, "", "crontab: permission denied")
+    out = b.marketplace_uninstall(
+        {"package": "runspec-acme", "targets": [{"id": "web-01::/opt/venvs/ops"}]}
+    )
+    (r,) = _wait_op(b, out["op"])["results"]
+    assert r["ok"] and r["scheduler_sync"] is False
+    assert "Sync crontab" in r["summary"]
+
+
+def test_scheduler_sync_snippet(tmp_path):
+    # Silent with no scheduler next to the python; runs `sync` when there is one.
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    py = str(bindir / "python")
+    argv = mp.scheduler_sync_argv(py)
+    run = [sys.executable, *argv[1:]]
+    done = subprocess.run(run, capture_output=True, text=True)
+    assert done.returncode == 0 and done.stdout == ""
+    sched = bindir / "runspec-scheduler"
+    sched.write_text('#!/bin/sh\necho "called $*"\nexit 3\n')
+    sched.chmod(0o755)
+    done = subprocess.run(run, capture_output=True, text=True)
+    assert done.returncode == 3 and done.stdout == "called sync\n"
 
 
 def test_install_local_streams_lines(app, monkeypatch):
@@ -769,6 +838,10 @@ def test_install_local_streams_lines(app, monkeypatch):
         ]
 
     monkeypatch.setattr(mp, "pip_install_argv", fake_argv)
+    # never touch this machine's crontab from a test
+    monkeypatch.setattr(
+        mp, "scheduler_sync_argv", lambda py: [sys.executable, "-c", ""]
+    )
     try:
         out = b.marketplace_install(
             {"package": "fake", "targets": [{"id": local[0]["id"]}]}
@@ -806,7 +879,7 @@ def test_upgrade_runspec_adds_runspec_and_upgrades(app):
         }
     )
     rec = _wait_op(b, out["op"])
-    toks = shlex.split(b.ssh_calls[-1][1])
+    toks = shlex.split(_pip_call(b))
     assert toks[-2:] == ["runspec-acme==1.2.0", "runspec"] and "-U" in toks
     assert rec["options"]["upgrade_runspec"] is True
     # Installing runspec itself doesn't list it twice; uninstall ignores the flag.
@@ -818,7 +891,7 @@ def test_upgrade_runspec_adds_runspec_and_upgrades(app):
         }
     )
     _wait_op(b, out["op"])
-    assert shlex.split(b.ssh_calls[-1][1]).count("runspec") == 1
+    assert shlex.split(_pip_call(b)).count("runspec") == 1
     out = b.marketplace_uninstall(
         {
             "package": "runspec-acme",
@@ -827,7 +900,7 @@ def test_upgrade_runspec_adds_runspec_and_upgrades(app):
         }
     )
     _wait_op(b, out["op"])
-    toks = shlex.split(b.ssh_calls[-1][1])
+    toks = shlex.split(_pip_call(b))
     assert toks[-1] == "runspec-acme" and "runspec" not in toks
 
 
