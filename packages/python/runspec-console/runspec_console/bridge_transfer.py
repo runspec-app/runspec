@@ -7,6 +7,8 @@ instance, so ``self`` carries all shared state.
 from __future__ import annotations
 
 import os
+import posixpath
+import shlex
 import shutil
 import stat
 import threading
@@ -129,6 +131,7 @@ class TransferMixin:
         filter_name: str = "",
         filter_arg: str | None = None,
         dest_name: str | None = None,
+        as_user: str = "",
     ) -> dict[str, Any]:
         """Copy files between the local machine and a remote host over SFTP.
 
@@ -143,7 +146,11 @@ class TransferMixin:
         runs on the remote source; for an **upload** (push) it runs locally over
         the local source (needs a POSIX ``sh`` on PATH). ``dest_name`` optionally
         renames the (single) file on the destination — a bare filename, not a
-        path. Returns ``{"id": ...}`` and then streams
+        path. ``as_user`` (the Files tab's "Browse as") does the remote end as
+        one of that configured host's venv owners: an upload is staged as the
+        login and then written into place by the owner, a download is read by
+        the owner (see :meth:`_push_as_owner` / :meth:`_pull_as_owner`).
+        Returns ``{"id": ...}`` and then streams
         ``runspec:transfer_progress`` / ``runspec:transfer_end`` events, or
         ``{"error": ...}`` on a bad request.
         """
@@ -181,6 +188,20 @@ class TransferMixin:
                     "error": f"{remote_desc['host']} is not a reachable remote host"
                 }
 
+        owner_py = ""
+        if as_user:
+            if remote_desc.get("kind") != "host":
+                return {"error": "copying as another account needs a configured host"}
+            host_name = str(remote_desc["host"])
+            bad = self._files_as(host_name, as_user)  # type: ignore[attr-defined]
+            if bad:
+                return {"error": bad}
+            owner_py = self._venv_python(  # type: ignore[attr-defined]
+                host_name, entry, owner=as_user
+            )
+            if not owner_py:
+                return {"error": f"no venv owned by {as_user} on {host_name}"}
+
         rendered = None
         if filter_name:
             filt = self._filter_entry(filter_name)
@@ -202,7 +223,7 @@ class TransferMixin:
                 "group": "",
                 "host": plan.remote_host,
                 "operator": self._current_user(),
-                "runAs": "",
+                "runAs": as_user,
                 "startedAt": _iso_now(),
                 "args": {
                     "direction": plan.direction,
@@ -230,7 +251,32 @@ class TransferMixin:
                         ok, error = False, "cancelled"
                         break
                     try:
-                        if rendered is not None and plan.direction == "pull":
+                        if as_user and plan.direction == "push":
+                            self._push_as_owner(
+                                sftp,
+                                session_factory,
+                                item,
+                                rendered,
+                                owner_py,
+                                as_user,
+                                tid,
+                                idx,
+                                count,
+                                cancel_event,
+                            )
+                        elif as_user:
+                            self._pull_as_owner(
+                                session_factory,
+                                item,
+                                rendered,
+                                owner_py,
+                                as_user,
+                                tid,
+                                idx,
+                                count,
+                                cancel_event,
+                            )
+                        elif rendered is not None and plan.direction == "pull":
                             self._transfer_one_filtered(
                                 session_factory,
                                 sftp,
@@ -288,6 +334,160 @@ class TransferMixin:
 
         threading.Thread(target=run, daemon=True).start()
         return {"id": tid}
+
+    # ── copying as a venv owner (Files tab "Browse as") ──
+
+    def _push_as_owner(
+        self,
+        sftp: Any,
+        session_factory: Callable[[], tuple[Any, Callable[[], None]]],
+        item: Any,
+        rendered: str | None,
+        python: str,
+        as_user: str,
+        tid: str,
+        idx: int,
+        count: int,
+        cancel_event: threading.Event,
+    ) -> None:
+        """Upload one file as ``as_user``: copy (or filter) it as the login into
+        a private staging folder (``~/.runspec-staging``, ``0700``), then run the
+        files worker as the owner with the staged file as its stdin, so the
+        owner writes it into place without ever reading the login's home. The
+        staged copy is always removed."""
+        from dataclasses import replace
+
+        from .bridge_files import _parse_worker_output
+        from .fs_browse import account_error
+
+        home = sftp.normalize(".")
+        stage_dir = posixpath.join(home, ".runspec-staging")
+        try:
+            sftp.mkdir(stage_dir, 0o700)
+        except OSError:
+            pass  # already there
+        try:
+            sftp.chmod(stage_dir, 0o700)
+        except OSError:
+            pass
+        staged = posixpath.join(stage_dir, f"{tid}-{idx}")
+        staged_item = replace(item, dst=staged)
+        try:
+            if rendered is not None:
+                self._transfer_one_filtered_local(
+                    sftp, staged_item, rendered, tid, idx, count, cancel_event
+                )
+            else:
+                self._transfer_one(sftp, "push", staged_item, tid, idx, count)
+            if cancel_event.is_set():
+                raise RuntimeError("cancelled")
+            cmd = self._owner_command(  # type: ignore[attr-defined]
+                python, as_user, {"op": "place", "path": item.dst}
+            )
+            code, out, err = self._exec_collect(
+                session_factory, f"{cmd} < {shlex.quote(staged)}"
+            )
+            res = _parse_worker_output(out)
+            if res is None:
+                raise RuntimeError(
+                    account_error(err, as_user)
+                    or err.strip()
+                    or f"couldn't write {item.name} as {as_user} (exit {code})"
+                )
+            if not res.get("ok"):
+                raise RuntimeError(str(res.get("error") or "write failed"))
+        finally:
+            try:
+                sftp.remove(staged)
+            except Exception:
+                pass
+
+    def _pull_as_owner(
+        self,
+        session_factory: Callable[[], tuple[Any, Callable[[], None]]],
+        item: Any,
+        rendered: str | None,
+        python: str,
+        as_user: str,
+        tid: str,
+        idx: int,
+        count: int,
+        cancel_event: threading.Event,
+    ) -> None:
+        """Download one file as ``as_user``: the files worker, run as the owner,
+        streams the file's bytes; a filter runs on them as the login."""
+        from . import _files_worker as worker
+        from .fs_browse import account_error
+
+        cmd = self._owner_command(  # type: ignore[attr-defined]
+            python, as_user, {"op": "cat", "path": item.src}
+        )
+        if rendered is not None:
+            pl = rendered.strip()
+            if not pl:
+                raise ValueError("empty filter pipeline")
+            cmd = f"{cmd} | sh -c {shlex.quote(pl)}"
+        try:
+            self._run_filter_stream(
+                session_factory,
+                cmd,
+                dst_open=lambda: open(item.dst, "wb"),
+                dst_remove=lambda: os.remove(item.dst),
+                in_size=0,
+                item=item,
+                tid=tid,
+                idx=idx,
+                count=count,
+                cancel_event=cancel_event,
+                fail_on=(worker.ERROR_PREFIX, "sudo:"),
+            )
+        except RuntimeError as e:
+            msg = str(e)
+            if msg.startswith(worker.ERROR_PREFIX):
+                msg = msg[len(worker.ERROR_PREFIX) :]
+            raise RuntimeError(account_error(msg, as_user) or msg) from None
+
+    def _exec_collect(
+        self,
+        session_factory: Callable[[], tuple[Any, Callable[[], None]]],
+        cmd: str,
+    ) -> tuple[int, str, str]:
+        """Run ``cmd`` over an exec channel to the end: ``(code, stdout,
+        stderr)``. Not cancellable, so a half-done write can't be cut short."""
+        channel, release = session_factory()
+        try:
+            channel.set_combine_stderr(False)
+            channel.exec_command(cmd)
+            out, err = b"", b""
+            while True:
+                got = False
+                if channel.recv_ready():
+                    out += channel.recv(32768)
+                    got = True
+                if channel.recv_stderr_ready():
+                    err += channel.recv_stderr(32768)
+                    got = True
+                if (
+                    not got
+                    and channel.exit_status_ready()
+                    and not channel.recv_ready()
+                    and not channel.recv_stderr_ready()
+                ):
+                    break
+                if not got:
+                    time.sleep(0.02)
+            code = channel.recv_exit_status()
+            return (
+                code,
+                out.decode("utf-8", errors="replace"),
+                err.decode("utf-8", errors="replace"),
+            )
+        finally:
+            try:
+                channel.close()
+            except Exception:
+                pass
+            release()
 
     def _transfer_one(
         self,
@@ -976,6 +1176,7 @@ class TransferMixin:
         idx: int,
         count: int,
         cancel_event: threading.Event,
+        fail_on: tuple[str, ...] = (),
     ) -> None:
         """Run ``cmd`` on the source over an exec channel, streaming its stdout
         into the destination ``dst_open()`` writes to. Shared by the relay and
@@ -985,7 +1186,10 @@ class TransferMixin:
         with ``indeterminate: True`` (``total`` carries the input size, for
         context only). A pipeline that exits non-zero raises — except exit code 1
         with no stderr, which is grep's "no lines matched" and yields a legitimate
-        empty result. On any failure or cancel the partial destination is removed.
+        empty result. ``fail_on`` names stderr line prefixes that fail the copy
+        whatever the exit code (a pipeline's status is its last command's, so a
+        failed read before a filter would otherwise pass as an empty result). On
+        any failure or cancel the partial destination is removed.
         """
         channel, chan_release = session_factory()
         STDERR_CAP = 65536
@@ -1055,6 +1259,13 @@ class TransferMixin:
             # grep returns 1 for "no lines matched" — a legitimately empty result,
             # not a failure. Distinguish it from a real error by the absence of any
             # diagnostic on stderr.
+            bad = [
+                ln
+                for ln in stderr_text.splitlines()
+                if fail_on and ln.startswith(fail_on)
+            ]
+            if bad:
+                raise RuntimeError("\n".join(bad))
             if code != 0 and not (code == 1 and not stderr_text):
                 raise RuntimeError(stderr_text or f"filter exited {code}")
             tick()  # final count

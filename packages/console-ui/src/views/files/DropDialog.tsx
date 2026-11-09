@@ -30,7 +30,8 @@ export function DropDialog({ src, dst, paths, srcDir, destDir, hosts, browsingAs
   srcDir: string
   destDir: string
   hosts: Host[]
-  // A pane browses as a venv owner; copies still run as the SSH login.
+  // A pane browses as a venv owner: a copy between this computer and that
+  // host runs as the owner; a relay or a copy to several hosts as the login.
   browsingAs?: string
   onCancel: () => void
   onCopy: (choice: DropChoice) => void
@@ -181,8 +182,17 @@ export function DropDialog({ src, dst, paths, srcDir, destDir, hosts, browsingAs
               </div>
             )}
 
-            {browsingAs && (
-              <Text type="warning" style={{ fontSize: 12 }}>Copies run as the SSH login, not {browsingAs}, so a file only {browsingAs} can read won’t copy.</Text>
+            {browsingAs && (plan.kind === 'upload' || plan.kind === 'download') && (
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                {plan.kind === 'upload'
+                  ? `Copies as ${browsingAs}: the file lands owned by ${browsingAs}.`
+                  : `Reads the file as ${browsingAs}.`}
+              </Text>
+            )}
+            {browsingAs && (plan.kind === 'relay' || plan.kind === 'fanout') && (
+              <Text type="warning" style={{ fontSize: 12 }}>
+                {plan.kind === 'relay' ? 'A relay' : 'Copying to several hosts'} runs as the SSH login, not {browsingAs}, so a folder or file only {browsingAs} can use won’t work.
+              </Text>
             )}
 
             {plan.kind === 'relay' && (

@@ -134,6 +134,14 @@ class FilesMixin:
                 continue
         return ""
 
+    def _owner_command(self, python: str, as_user: str, req: dict[str, Any]) -> str:
+        """The shell line that runs the worker's copy op ``req`` (``cat`` /
+        ``place``) as ``as_user`` on ``python``: the request is the first
+        argument, so stdin and stdout stay free for the file."""
+        argv = [python, "-I", "-S", "-c", _worker_source(), json.dumps(req)]
+        cmd, _frame = mp.remote_command(argv, run_as=as_user, become_method="sudo")
+        return cmd
+
     def _files_worker(
         self,
         host: str,

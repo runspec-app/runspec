@@ -129,7 +129,7 @@ describe('FilesView', () => {
     fireEvent.change(within(dialog).getByLabelText('Save as name'), { target: { value: 'app-errors.log' } })
     fireEvent.click(within(dialog).getByRole('button', { name: 'Copy' }))
     await waitFor(() => expect(m.startTransfer).toHaveBeenCalledWith(
-      'app-01', ['/var/log/app/app.log'], 'local', '/ws', 'errors', undefined, 'app-errors.log',
+      'app-01', ['/var/log/app/app.log'], 'local', '/ws', 'errors', undefined, 'app-errors.log', undefined,
     ))
     // The filter is remembered for this folder.
     expect(localStorage.getItem('runspec.files.lastFilter')).toContain('host:app-01|/var/log/app')
@@ -156,7 +156,7 @@ describe('FilesView', () => {
     render(<FilesView hosts={HOSTS} selectedHost="app-01" active />)
     await dragFile('gc.log', 'left', true)
     await waitFor(() => expect(m.startTransfer).toHaveBeenCalledWith(
-      'app-01', ['/var/log/app/gc.log'], 'local', '/ws', undefined, undefined, undefined,
+      'app-01', ['/var/log/app/gc.log'], 'local', '/ws', undefined, undefined, undefined, undefined,
     ))
     expect(screen.queryByRole('dialog')).toBeNull()
   })
@@ -236,5 +236,21 @@ describe('FilesView', () => {
     await waitFor(() => expect(m.listDir.mock.calls.some(c => c[0] === 'app-01' && c[1] === '/var/log/app' && c[6] === 'svc')).toBe(true))
     fireEvent.doubleClick(await within(screen.getByTestId('pane-right')).findByText('app.log'))
     await waitFor(() => expect(m.viewFile).toHaveBeenCalledWith('app-01', '/var/log/app/app.log', 500, 'svc'))
+  })
+
+  it('copies out of a pane browsing as an owner as that owner', async () => {
+    render(<FilesView hosts={HOSTS} selectedHost="app-01" active />)
+    await screen.findByText('app.log')
+    await within(screen.getByTestId('pane-right')).findByText('as ops')
+    fireEvent.mouseDown(within(screen.getByTestId('pane-right')).getAllByRole('combobox')[1])
+    fireEvent.click(await screen.findByTitle('as svc (venv owner)'))
+    await waitFor(() => expect(m.listDir.mock.calls.some(c => c[0] === 'app-01' && c[6] === 'svc')).toBe(true))
+    await dragFile('gc.log', 'left')
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('Reads the file as svc.')).toBeTruthy()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Copy' }))
+    await waitFor(() => expect(m.startTransfer).toHaveBeenCalledWith(
+      'app-01', ['/var/log/app/gc.log'], 'local', '/ws', undefined, undefined, undefined, 'svc',
+    ))
   })
 })

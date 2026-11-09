@@ -2957,7 +2957,9 @@ export interface BridgeApi {
   // runspec:transfer_progress / transfer_end. filterName/filterArg select a saved
   // source-side filter (download: filtered at the source; upload: filtered locally).
   // destName optionally renames the (single) file on the destination (bare filename).
-  start_transfer: (sourceHost: TransferEndpoint, sourcePaths: string[], destHost: TransferEndpoint, destDir: string, filterName?: string, filterArg?: string, destName?: string) => Promise<{ id?: string; error?: string }>
+  // asUser (Files tab "Browse as") does the host end as one of its venv owners:
+  // an upload is staged as the login, then written into place by the owner.
+  start_transfer: (sourceHost: TransferEndpoint, sourcePaths: string[], destHost: TransferEndpoint, destDir: string, filterName?: string, filterArg?: string, destName?: string, asUser?: string) => Promise<{ id?: string; error?: string }>
   // Fan-out: upload the same local source file(s) to dest_dir on many remote hosts.
   // filterName/filterArg apply a saved filter locally (once) before fanning out.
   // destName optionally renames the (single) file on every target (bare filename).
