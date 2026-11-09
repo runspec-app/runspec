@@ -9,6 +9,15 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.398.1] — 2026-11-09
+
+### Fixed
+
+- **Files tab: "Browse as" missing on the first host.** When the tab opened
+  on a host before discovery had finished, the pane found no venv owners and
+  hid the picker until you switched hosts. The pane now reads the owners
+  again whenever discovery finishes.
+
 ## [0.398.0] — 2026-11-09
 
 ### Added
