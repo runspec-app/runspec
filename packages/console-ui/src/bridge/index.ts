@@ -207,6 +207,9 @@ export interface TransferHostResult {
   host: string
   ok: boolean
   error?: string | null
+  // Copying as a venv owner: this host was left out because that account owns
+  // no venv on it (error says so).
+  skipped?: boolean
 }
 
 // A relay source: a configured host, or an ad-hoc host reached via a jump. The
@@ -2963,14 +2966,17 @@ export interface BridgeApi {
   // Fan-out: upload the same local source file(s) to dest_dir on many remote hosts.
   // filterName/filterArg apply a saved filter locally (once) before fanning out.
   // destName optionally renames the (single) file on every target (bare filename).
-  start_fanout: (sourcePaths: string[], destHosts: string[], destDir: string, filterName?: string, filterArg?: string, destName?: string) => Promise<{ id?: string; error?: string }>
+  // asUser copies as that venv owner (must own one on the first host; a host
+  // where it owns none, and isn't the login, is skipped with a reason).
+  start_fanout: (sourcePaths: string[], destHosts: string[], destDir: string, filterName?: string, filterArg?: string, destName?: string, asUser?: string) => Promise<{ id?: string; error?: string }>
   // Relay: stream file(s) from one host to another through the console. Source is a
   // configured host, or an ad-hoc host reached via a configured jump (key first,
   // then an optional password — used once, never stored/logged).
   // filterName/filterArg select a saved source-side filter run on the source host,
   // so only matching output is relayed (handy for pulling a few lines from a huge log).
   // destName optionally renames the (single) file on the destination (bare filename).
-  start_relay: (source: RelaySource, sourcePaths: string[], destHost: string, destDir: string, filterName?: string, filterArg?: string, destName?: string) => Promise<{ id?: string; error?: string }>
+  // sourceAs / destAs read / write that end as one of its venv owners.
+  start_relay: (source: RelaySource, sourcePaths: string[], destHost: string, destDir: string, filterName?: string, filterArg?: string, destName?: string, sourceAs?: string, destAs?: string) => Promise<{ id?: string; error?: string }>
   // Browse a directory on an ad-hoc relay source (reached via a jump). Password
   // is used only for this listing connection, never stored.
   list_dir_adhoc: (jump: string, host: string, path?: string, user?: string, password?: string, port?: number, dirsOnly?: boolean, credentialId?: string) => Promise<DirListing>

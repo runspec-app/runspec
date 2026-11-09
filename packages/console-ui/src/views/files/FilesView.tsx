@@ -49,7 +49,8 @@ export function FilesView({ hosts, selectedHost, active }: {
 
   // A finished copy refreshes whichever pane shows the folder it landed in.
   const { items, add, clearFinished } = useTransfers(useCallback((it: TransferItem) => {
-    if (it.ok) message.success(`Copied ${it.title}`)
+    if (it.ok && it.error) message.warning(`Copied ${it.title}; ${it.error}`)
+    else if (it.ok) message.success(`Copied ${it.title}`)
     else message.error(it.error || `Copy of ${it.title} failed`)
     for (const p of [left, right]) {
       if (p.target && targetKey(p.target) === it.destKey && p.listing?.cwd === it.destDir) p.refresh(it.ok ? it.names : p.selected)
@@ -104,9 +105,9 @@ export function FilesView({ hosts, selectedHost, active }: {
     const rename = pd.paths.length === 1 ? (choice.destName || undefined) : undefined
     let res: { id?: string; error?: string }
     if (plan.kind === 'fanout' && dst.kind === 'host') {
-      res = await bridge.start_fanout(pd.paths, [dst.host, ...choice.alsoTo], destDir, filter, arg, rename)
+      res = await bridge.start_fanout(pd.paths, [dst.host, ...choice.alsoTo], destDir, filter, arg, rename, dstPane.asUser || undefined)
     } else if (plan.kind === 'relay' && dst.kind === 'host') {
-      res = await bridge.start_relay(relaySource(src)!, pd.paths, dst.host, destDir, filter, arg, rename)
+      res = await bridge.start_relay(relaySource(src)!, pd.paths, dst.host, destDir, filter, arg, rename, srcPane.asUser || undefined, dstPane.asUser || undefined)
     } else {
       // Only one side is a host here, so a "Browse as" account is that host's.
       const asUser = srcPane.asUser || dstPane.asUser || undefined
@@ -279,7 +280,8 @@ export function FilesView({ hosts, selectedHost, active }: {
           srcDir={panes[drop.from].listing?.cwd ?? ''}
           destDir={panes[drop.to].listing?.cwd ?? ''}
           hosts={hosts}
-          browsingAs={panes[drop.from].asUser || panes[drop.to].asUser}
+          srcAs={panes[drop.from].asUser}
+          dstAs={panes[drop.to].asUser}
           onCancel={() => setDrop(null)}
           onCopy={choice => { const pd = drop; setDrop(null); startCopy(pd, choice) }}
         />

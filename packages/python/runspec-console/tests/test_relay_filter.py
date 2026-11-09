@@ -333,6 +333,7 @@ def test_relay_one_filtered_builds_command_and_delegates(monkeypatch):
 class _ValidationBridge:
     start_relay = Bridge.start_relay
     start_transfer = Bridge.start_transfer
+    _owner_venv = Bridge._owner_venv
     _normalise_transfer_side = Bridge._normalise_transfer_side
     _emit_transfer_end = Bridge._emit_transfer_end
 
