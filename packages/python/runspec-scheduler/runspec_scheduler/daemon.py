@@ -56,11 +56,11 @@ from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 from typing import IO, Any
 
-from .config import ScheduleEntry, SchedulerSettings, load_config
+from .config import ScheduleEntry, SchedulerSettings, load_config, schedule_id_problem
 from .cronsync import LABEL_PREFIX, TRIGGER_DAEMON, _home_of, exec_invocation, resolve_entry
 from .records import audit, record_run
 from .runner import is_generic_venv_name, scripts_dir, venv_name
-from .timing import when_to_trigger
+from .timing import later, when_to_trigger
 
 logger = logging.getLogger("runspec_scheduler.daemon")
 
@@ -359,6 +359,11 @@ class Daemon:
                 self._forget(sid)
                 removed += 1
         for sid, entry in wanted.items():
+            bad_id = schedule_id_problem(sid, strict=False)
+            if bad_id:
+                if sid not in self._job_keys:
+                    logger.error("schedule %r: not scheduled: %s", sid, bad_id)
+                continue
             key = self._job_key(entry, settings)
             if self._job_keys.get(sid) == key:
                 continue
@@ -407,12 +412,12 @@ class Daemon:
         now = _now()
         floor = now - datetime.timedelta(seconds=settings.catch_up_window)
         latest = None
-        t = trigger.get_next_fire_time(None, last + datetime.timedelta(seconds=1))
+        t = trigger.get_next_fire_time(None, later(last, datetime.timedelta(seconds=1)))
         for _ in range(100_000):  # every 1s for a day fits; never loop forever
             if t is None or t > now:
                 break
             latest = t
-            t = trigger.get_next_fire_time(t, t + datetime.timedelta(seconds=1))
+            t = trigger.get_next_fire_time(t, later(t, datetime.timedelta(seconds=1)))
         return latest is not None and latest >= floor
 
     def _last_known_fire(self, sched_id: str) -> datetime.datetime | None:
@@ -460,12 +465,12 @@ class Daemon:
         dropped: list[datetime.datetime] = []
         if prev is not None and trigger is not None and latest > prev:
             with contextlib.suppress(Exception):
-                t = trigger.get_next_fire_time(prev, prev + datetime.timedelta(microseconds=1))
+                t = trigger.get_next_fire_time(prev, later(prev, datetime.timedelta(microseconds=1)))
                 for _ in range(100_000):
                     if t is None or t >= latest:
                         break
                     dropped.append(t)
-                    t = trigger.get_next_fire_time(t, t + datetime.timedelta(microseconds=1))
+                    t = trigger.get_next_fire_time(t, later(t, datetime.timedelta(microseconds=1)))
         if event.code == EVENT_JOB_MISSED:
             dropped.append(latest)
             reason = "missed"

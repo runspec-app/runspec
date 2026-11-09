@@ -102,8 +102,19 @@ runspec-scheduler remove --id poll
 runspec-scheduler use daemon        # or: use cron
 ```
 
-- Exactly one of `--cron` (5-field cron) or `--every` (`15m` / `1h` / `1d`;
-  daemon backend only).
+- Exactly one of `--cron` (5 fields, or `@hourly` / `@daily` / `@midnight` /
+  `@weekly` / `@monthly` / `@yearly`) or `--every` (`15m` / `1h` / `1d`; daemon
+  backend only).
+- `--timezone` (an IANA name like `Europe/London`) fires the schedule on that
+  zone's clock; blank means the host's. A crontab line can only fire on the
+  host's clock, so on the **cron** backend a schedule in another zone is refused
+  by `add` and skipped by `sync` (`status` says why): use the daemon for it.
+- When the clocks go back, a schedule at fixed times (no `*` in its minute or
+  hour, e.g. `30 1 * * *`) fires once, as cron does; one with `*` there (e.g.
+  `*/30 * * * *`) keeps firing through both copies of the hour. A time in the
+  hour the clocks skip fires straight after the jump.
+- `--id` is letters, digits, `.`, `_` and `-` (at most 64), starting with a
+  letter or digit.
 - `--args` is a JSON object passed to the target runnable.
 - `--timeout` stops a fire that runs longer (daemon default `6h`; `0` = no limit).
 - `--catch-up` runs one fire straight away when the daemon starts after that

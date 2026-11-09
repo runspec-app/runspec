@@ -418,7 +418,8 @@ schedule to a venv's runspec-scheduler, and each host row has **Edit**,
   Suggested from the runnable; changing it when editing renames the schedule.
 - **When**: a cron expression (presets or custom) and an optional timezone. On a
   daemon venv you can also pick an **Interval** (`15m`, `1h`) and **Run once if
-  fires were missed**.
+  fires were missed**. A cron venv fires on the host's clock, so a timezone other
+  than the host's is refused there; use a daemon venv for it.
 - **Enabled** and **Timeout** (`90m`, `6h`, seconds; `0` = no limit).
 
 Saving runs that venv's own `runspec-scheduler add` (or `remove`) as the venv
