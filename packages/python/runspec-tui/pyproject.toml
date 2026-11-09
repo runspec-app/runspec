@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-tui"
-version = "0.1.0"
+version = "0.2.0"
 requires-python = ">=3.10"
 description = "The runspec-console Forms view in a terminal: fill in and run the runspec runnables installed in this venv"
 readme = "README.md"

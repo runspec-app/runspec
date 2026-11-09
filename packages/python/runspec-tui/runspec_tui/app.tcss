@@ -89,3 +89,27 @@ BrowseScreen { align: center middle; }
 #browse-tree { height: 1fr; margin: 1 0; }
 #browse-buttons { height: auto; }
 #browse-buttons Button { margin-right: 2; }
+
+/* Schedules screen (F3) */
+#sched-body { height: 1fr; }
+#sched-strip { height: auto; padding: 1 2; background: $panel; }
+#sched-table { height: 1fr; }
+#sched-detail-pane {
+    height: 40%;
+    padding: 1 2;
+    border-top: tall $primary;
+}
+
+ConfirmScreen, NoteScreen, TimingScreen, SettingsScreen { align: center middle; }
+.dialog {
+    width: 72;
+    height: auto;
+    max-height: 90%;
+    padding: 1 2;
+    background: $panel;
+    border: thick $primary;
+}
+.dialog Label { margin-top: 1; color: $text-muted; }
+.dialog Input, .dialog Select { width: 1fr; }
+.dialog-buttons { height: auto; margin-top: 1; }
+.dialog-buttons Button { margin-right: 2; }

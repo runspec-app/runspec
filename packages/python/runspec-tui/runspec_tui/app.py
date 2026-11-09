@@ -10,7 +10,7 @@ from typing import Any
 
 from rich.json import JSON
 from rich.text import Text
-from textual import on
+from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -19,9 +19,11 @@ from textual.widgets import Button, Collapsible, Footer, Header, Input, Label, O
 from textual.widgets.option_list import Option
 
 from . import catalog, form
+from . import schedules as sch
 from .catalog import Node, Runnable
 from .fields import ArgField, autonomy_tag
 from .runner import LABEL, Run
+from .schedules_screen import CallFn, SchedulesScreen, TimingScreen
 
 _JSON_RERENDER_LIMIT = 1_000_000
 """Output larger than this (bytes) stays as streamed instead of pretty-printed."""
@@ -49,6 +51,7 @@ class RunspecTUI(App[None]):
         Binding("f2", "browse", "Browse", priority=True),
         Binding("ctrl+o", "toggle_output", "Output", priority=True),
         Binding("ctrl+y", "copy_output", "Copy output", priority=True),
+        Binding("f3", "schedules", "Schedules", priority=True),
     ]
 
     def __init__(
@@ -58,8 +61,16 @@ class RunspecTUI(App[None]):
         include_hidden: bool = False,
         venv: str | None = None,
         user: str | None = None,
+        scheduler: sch.Caller | None = None,
+        scheduler_call: CallFn | None = None,
+        open_schedules: bool = False,
     ) -> None:
         super().__init__()
+        self.scheduler = scheduler
+        self.scheduler_call: CallFn = scheduler_call or sch.call
+        self.scheduling = False
+        self.last_schedules: dict[str, Any] = {}
+        self.open_schedules = open_schedules and scheduler is not None
         self.runnables = catalog.discover(include_hidden) if runnables is None else runnables
         self.venv = venv if venv is not None else sys.prefix
         self.sub_title = f"{self.venv}  ·  {user if user is not None else _effective_user()}"
@@ -95,6 +106,8 @@ class RunspecTUI(App[None]):
         await self._show_welcome()
         self.watch(self.screen, "focused", self._focus_changed)
         self.query_one("#search").focus() if self.runnables else None
+        if self.open_schedules:
+            self.action_schedules()
 
     # ── sidebar ─────────────────────────────────────────────────────────────
 
@@ -141,6 +154,7 @@ class RunspecTUI(App[None]):
                 (f"{len(self.runnables)} runnables in {self.venv}\n\n", ""),
                 ("Pick one on the left, or press / to search.\n\n", "dim"),
                 ("Ctrl+R run · F2 browse for a path · Esc back · Ctrl+O output · Ctrl+Q quit", "dim"),
+                (" · F3 schedules" if self.scheduler else "", "dim"),
             )
         else:
             body = Text.assemble(
@@ -239,7 +253,8 @@ class RunspecTUI(App[None]):
             widgets += group(own)
 
         widgets.append(Static("", id="group-errors"))
-        bar: list[Widget] = [Button("Run  ^R", variant="primary", id="run"), Button("Stop  ^T", variant="error", id="stop")]
+        run_label = "Schedule…  ^R" if self.scheduling else "Run  ^R"
+        bar: list[Widget] = [Button(run_label, variant="primary", id="run"), Button("Stop  ^T", variant="error", id="stop")]
         if form.offer_debug(node.args):
             bar += [Switch(id="debug"), Label("Debug logging", id="debug-label")]
         widgets.append(Horizontal(*bar, id="runbar"))
@@ -264,12 +279,16 @@ class RunspecTUI(App[None]):
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         """Show Run/Stop in the footer only when they'd do something."""
+        if self.screen_stack and any(isinstance(s, SchedulesScreen) for s in self.screen_stack) and action not in ("quit", "command_palette"):
+            return False  # the Schedules screen (or a dialog over it) has its own keys
         if action == "stop":
             return self.run_handle is not None
         if action == "run":
             return self.run_handle is None and self.current is not None and self.current.root.at(self.path).can_run
         if action == "copy_output":
             return bool(self._stdout)
+        if action == "schedules":
+            return self.scheduler is not None
         return True
 
     def _sync_runbar(self) -> None:
@@ -326,6 +345,9 @@ class RunspecTUI(App[None]):
                 first.scroll_visible()
             count = len(errors) + len(group_errors)
             self.notify(f"Fix {count} problem{'s' if count > 1 else ''} before running.", severity="error")
+            return
+        if self.scheduling:
+            self._schedule(self.current, node.args, values)
             return
         debug_switch = self.query("#debug")
         debug = bool(debug_switch and debug_switch.first(Switch).value)
@@ -391,6 +413,72 @@ class RunspecTUI(App[None]):
         if self.run_handle is not None:
             self.run_handle.cancel()
             self.notify("Stopping…")
+
+    # ── schedules ───────────────────────────────────────────────────────────
+
+    def action_schedules(self) -> None:
+        if self.scheduler is None:
+            return
+        if self.scheduling:
+            self.scheduling = False
+            self._refresh_runbar_label()
+        self.push_screen(SchedulesScreen(self.scheduler, self.scheduler_call))
+
+    def start_schedule_mode(self) -> None:
+        """From the Schedules screen's Add: pick a runnable and fill in its
+        form here; Ctrl+R then asks when, instead of running it."""
+        self.scheduling = True
+        self.pop_screen()
+        self._refresh_runbar_label()
+        self.notify("Pick a runnable, fill in its form, then press Ctrl+R to choose when it runs. F3 goes back without adding.", timeout=10)
+        if self.current is None:
+            self.query_one("#search").focus()
+
+    def _refresh_runbar_label(self) -> None:
+        for button in self.query("#run").results(Button):
+            button.label = "Schedule…  ^R" if self.scheduling else "Run  ^R"
+
+    def _schedule(self, runnable: Runnable, args: list[dict[str, Any]], values: dict[str, Any]) -> None:
+        try:
+            chosen, problems = sch.schedule_args(args, values)
+        except ValueError as exc:
+            self.notify(str(exc), severity="error")
+            return
+        if problems:
+            self.notify("\n".join(problems), severity="error", timeout=10)
+            return
+        taken = frozenset(str(r.get("id")) for r in self.last_schedules.get("schedules") or [])
+        backend = str(self.last_schedules.get("backend") or "cron")
+        sid = sch.suggest_id(runnable.name, self.path, set(taken))
+        rec = {"runnable": runnable.name, "command": list(self.path), "args": chosen}
+
+        def save(result: dict[str, Any] | None) -> None:
+            if not result:
+                return
+            argv, env = sch.add_argv({**rec, "id": result["id"]}, result["timing"], backend=backend)
+            self._add_schedule(argv, env, str(result["id"]))
+
+        title = f"When should {' '.join([runnable.name, *self.path])} run?"
+        self.push_screen(TimingScreen(title, sid=sid, taken=taken, daemon=backend == "daemon"), save)
+
+    @work(thread=True, exclusive=True, group="schedule-add")
+    def _add_schedule(self, argv: list[str], env: dict[str, str], sid: str) -> None:
+        assert self.scheduler is not None
+        result = self.scheduler_call(self.scheduler.command("add", *argv, env=env))
+        if result.ok and result.payload.get("backend", "cron") == "cron":
+            synced = self.scheduler_call(self.scheduler.command("sync"))
+            if not synced.ok:
+                result = sch.Result(1, {"error": f"saved, but the crontab wasn't updated: {synced.message}"})
+        self.call_from_thread(self._added, result, sid)
+
+    def _added(self, result: sch.Result, sid: str) -> None:
+        if not result.ok:
+            self.notify(f"Couldn't add {sid}: {result.message}", severity="error", timeout=10)
+            return
+        self.scheduling = False
+        self._refresh_runbar_label()
+        self.notify(f"Added {sid}.")
+        self.action_schedules()
 
     # ── other actions ───────────────────────────────────────────────────────
 
