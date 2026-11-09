@@ -114,9 +114,26 @@ def schedule_when(when: dict[str, Any] | None) -> str:
     text = str(when.get("cron") or "")
     if when.get("every"):
         text = f"every {when['every']}"
-    if when.get("timezone"):
-        text += f" ({when['timezone']})"
+    zone = str(when.get("timezone") or "")
+    if zone and zone.lower() != "local":
+        text += f" ({zone})"
     return text or "-"
+
+
+def rec_when(rec: dict[str, Any]) -> str:
+    """A schedule's timing for a person: a package schedule in its package's
+    words; one whose time this venv changed shows the package's too."""
+    pkg = rec.get("package") or {}
+    if pkg and "when" not in (pkg.get("overridden") or []):
+        return str(pkg.get("words") or schedule_when(rec.get("when")))
+    text = schedule_when(rec.get("when"))
+    if pkg:
+        text += f" (package says {pkg.get('words')})"
+    return text
+
+
+def _paused_word(rec: dict[str, Any]) -> str:
+    return "offered" if rec.get("offered") else "paused"
 
 
 def _target(rec: dict[str, Any]) -> str:
@@ -191,7 +208,7 @@ def _last_run(rec: dict[str, Any], now: _dt.datetime | None) -> str:
 
 def _schedule_state(rec: dict[str, Any], backend: str) -> str:
     if not rec.get("enabled", True):
-        return "paused"
+        return _paused_word(rec)
     notes: list[str] = []
     if rec.get("installable") is False:
         notes.append(f"won't run: {rec.get('not_installable_reason') or 'not installable'}")
@@ -290,10 +307,18 @@ def status(payload: dict[str, Any], now: _dt.datetime | None = None) -> str:
                 if backend == "daemon" and settings
                 else "",
             ),
+            ("Zone", zone_line(settings, payload.get("host_zone"))),
+            ("Packages", _packages_line(payload)),
             ("Config", str(payload.get("config") or "")),
         ]
     )
     warnings: list[str] = []
+    pkgs = payload.get("packages") or {}
+    for err in pkgs.get("errors") or []:
+        where = err.get("id") or err.get("runnable") or "a package"
+        warnings.append(f"Package schedule {where} can't be used: {err.get('error')}")
+    for orphan in pkgs.get("orphans") or []:
+        warnings.append(f"{orphan.get('id')} changes a package schedule that isn't here ({orphan.get('reason')}); drop it with: runspec-scheduler remove --id {orphan.get('id')}")
     if daemon.get("restart_needed"):
         warnings.append("The daemon is running an older version than is installed: runspec-scheduler restart")
     if daemon.get("config_error"):
@@ -310,7 +335,7 @@ def status(payload: dict[str, Any], now: _dt.datetime | None = None) -> str:
             [
                 str(rec.get("id")),
                 _target(rec),
-                schedule_when(rec.get("when")),
+                rec_when(rec),
                 when_next(rec.get("next_run"), now) if rec.get("enabled", True) else "-",
                 _last_run(rec, now),
                 _schedule_state(rec, backend),
@@ -325,7 +350,47 @@ def status(payload: dict[str, Any], now: _dt.datetime | None = None) -> str:
     stale_block = ["Crontab lines this venv no longer wants (run sync to remove them):", *(f"  {s}" for s in stale)] if stale else []
     attention = _attention_block(recs, now)
     attention_block = ["Needs attention:", *attention] if attention else []
-    return _join(head, warnings, body, attention_block, stale_block)
+    return _join(head, warnings, body, _offered_block(recs), attention_block, stale_block)
+
+
+def zone_line(settings: dict[str, Any], host_zone: Any) -> str:
+    """Which clock a schedule with no zone of its own fires on."""
+    venv = str(settings.get("timezone") or "")
+    if venv:
+        return f"{venv} (this venv's; the host is on {host_zone})" if host_zone and host_zone != venv else f"{venv} (this venv's)"
+    return f"{host_zone} (the host's)" if host_zone else ""
+
+
+_POLICY_WORDS = {
+    "offer": "offered, off until turned on",
+    "auto": "on as soon as they're installed",
+    "off": "ignored",
+}
+
+
+def _packages_line(payload: dict[str, Any]) -> str:
+    pkgs = payload.get("packages") or {}
+    policy = str(pkgs.get("policy") or (payload.get("settings") or {}).get("package_schedules") or "")
+    has = any((rec.get("origin") == "package") for rec in payload.get("schedules") or [])
+    if not policy or (policy == "offer" and not has):
+        return ""
+    text = f"{policy}: {_POLICY_WORDS.get(policy, policy)}"
+    waiting = pkgs.get("offered") or 0
+    if waiting:
+        text += f" ({waiting} waiting)"
+    return text
+
+
+def _offered_block(recs: list[dict[str, Any]]) -> list[str]:
+    offered = [r for r in recs if r.get("offered")]
+    if not offered:
+        return []
+    lines = ["Offered by installed packages (off until you turn them on):"]
+    width = max(len(str(r.get("id"))) for r in offered)
+    for rec in offered:
+        lines.append(f"  {str(rec.get('id')):<{width}}  {rec_when(rec)}" + (f" — {rec['description']}" if rec.get("description") else ""))
+    lines.append("  turn one on: runspec-scheduler enable --id <id>   hide it: runspec-scheduler disable --id <id>")
+    return lines
 
 
 # ── the other verbs ───────────────────────────────────────────────────────────
@@ -341,8 +406,8 @@ def schedules(payload: dict[str, Any], now: _dt.datetime | None = None) -> str:
         [
             str(rec.get("id")),
             _target(rec),
-            schedule_when(rec.get("when")),
-            when_next(rec.get("next_run"), now) if rec.get("enabled", True) else "paused",
+            rec_when(rec),
+            when_next(rec.get("next_run"), now) if rec.get("enabled", True) else _paused_word(rec),
             str(rec.get("run_as") or ""),
             ", ".join(f"{k}={v}" for k, v in (rec.get("args") or {}).items()),
         ]
@@ -365,9 +430,11 @@ def added(payload: dict[str, Any]) -> str:
 
 def removed(payload: dict[str, Any]) -> str:
     sid = payload.get("id")
+    if payload.get("package") and not payload.get("ok"):
+        return f"{sid} comes from the {payload['package']} package and this venv hasn't changed it, so there's nothing to remove. Turn it off with: runspec-scheduler disable --id {sid}"
     if not payload.get("ok"):
         return f"There's no schedule {sid} in this venv."
-    lines = [f"Removed schedule {sid}."]
+    lines = [f"Put {sid} back to what the {payload['package']} package says." if payload.get("package") else f"Removed schedule {sid}."]
     if payload.get("backend") == "cron":
         lines.append("Take its line out of the crontab with: runspec-scheduler sync")
     return "\n".join(lines)
@@ -444,17 +511,34 @@ def used(payload: dict[str, Any]) -> str:
 def settings(payload: dict[str, Any]) -> str:
     values = payload.get("settings") or {}
     changed = payload.get("changed") or []
+    policy = str(values.get("package_schedules") or "offer")
     lines = fields(
         [
             ("Backend", str(values.get("backend") or "")),
             ("Timeout", duration(values.get("timeout"))),
             ("Misfire grace", duration(values.get("misfire_grace"))),
             ("Catch-up window", duration(values.get("catch_up_window"))),
+            ("Zone", zone_line(values, payload.get("host_zone")) or "the host's"),
+            ("Package schedules", f"{policy}: {_POLICY_WORDS.get(policy, policy)}"),
             ("Config", str(payload.get("config") or "")),
         ]
     )
     if changed:
         lines += ["", f"Changed {', '.join(c.replace('_', ' ') for c in changed)}. A running daemon picks it up by itself."]
+    lines += [f"Warning: {w}" for w in payload.get("warnings") or []]
+    if payload.get("hint"):
+        lines.append(str(payload["hint"])[:1].upper() + str(payload["hint"])[1:] + ".")
+    return "\n".join(lines)
+
+
+def toggled(payload: dict[str, Any]) -> str:
+    """``enable`` / ``disable``."""
+    sid = payload.get("id")
+    lines = [f"Turned {sid} {'on' if payload.get('enabled') else 'off'}."]
+    if payload.get("backend") == "daemon":
+        lines.append("The daemon picks it up within a few seconds.")
+    else:
+        lines.append("Bring the crontab in line with: runspec-scheduler sync")
     return "\n".join(lines)
 
 

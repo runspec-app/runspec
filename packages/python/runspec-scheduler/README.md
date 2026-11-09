@@ -100,6 +100,8 @@ runspec-scheduler watch             # status kept on screen, redrawn every 5 s (
 runspec-scheduler run-now --id poll
 runspec-scheduler run-now --id nightly --detach   # start it in the background and return
 runspec-scheduler remove --id poll
+runspec-scheduler enable --id cleanup-tmp.nightly   # turn on a schedule a package offers
+runspec-scheduler disable --id nightly              # pause one (or hide an offered one)
 runspec-scheduler use daemon        # or: use cron
 ```
 
@@ -111,9 +113,10 @@ runspec-scheduler use daemon        # or: use cron
   `@weekly` / `@monthly` / `@yearly`) or `--every` (`15m` / `1h` / `1d`; daemon
   backend only).
 - `--timezone` (an IANA name like `Europe/London`) fires the schedule on that
-  zone's clock; blank means the host's. A crontab line can only fire on the
-  host's clock, so on the **cron** backend a schedule in another zone is refused
-  by `add` and skipped by `sync` (`status` says why): use the daemon for it.
+  zone's clock; blank means the venv's zone (`settings --timezone`), else the
+  host's. A crontab line can only fire on the host's clock, so on the **cron**
+  backend a schedule in another zone is refused by `add` and skipped by `sync`
+  (`status` says why): use the daemon for it.
 - When the clocks go back, a schedule at fixed times (no `*` in its minute or
   hour, e.g. `30 1 * * *`) fires once, as cron does; one with `*` there (e.g.
   `*/30 * * * *`) keeps firing through both copies of the hour. A time in the
@@ -137,6 +140,56 @@ runspec-scheduler use daemon        # or: use cron
 - Every fire's run carries a trigger saying what started it:
   `schedule:cron`, `schedule:daemon` or `schedule:run-now`.
 
+## Schedules from packages
+
+A runnable can offer schedules in its own `runspec.toml`, so a venv it's
+installed in can run it without anyone writing the schedule:
+
+```toml
+[cleanup-tmp.meta.scheduler.nightly]       # schedule id: cleanup-tmp.nightly
+description = "Remove files older than 7 days from /tmp"
+at       = "02:30"           # or "midnight", "noon"
+on       = "daily"           # or "weekdays", "mon-fri", "weekends", "sun", "mon,wed", "tue-thu", "1", "last"
+timezone = "local"           # "local" (default), "UTC", or e.g. "Europe/London"
+spread   = "30m"             # each host picks a fixed minute in 02:30-03:00
+args     = {older-than = "7d"}
+
+[http-check.meta.scheduler.poll]
+every = "5m"                 # intervals need the daemon backend
+args  = {url = "https://example.com/health"}
+```
+
+- Exactly one of `at` (with `on`), `every` or `cron` (5 fields or `@daily`
+  etc.). Also `command` (for a runnable with verbs), `timeout`, `catch_up` and
+  `description`. `args` are checked against the runnable's spec like `add`'s;
+  leave site values and secrets to `runspec_schedules.env`.
+- `timezone = "local"` means the venv's zone (`settings --timezone
+  Australia/Sydney`), else the host's. Use `"UTC"` for a job that must run at
+  the same moment on every host, or a zone name for one tied to a business's
+  clock. On the cron backend anything off the host's clock needs the daemon.
+- `spread` gives each host a fixed offset (a hash of host name and schedule
+  id), so 70 hosts don't all start at 02:30:00. It never moves a fire past
+  midnight.
+- `last` (the month's last day) needs the daemon backend; cron has no such day.
+
+What the venv does with them is its policy:
+
+```bash
+runspec-scheduler settings --package-schedules offer   # default: listed, off until enabled
+runspec-scheduler settings --package-schedules auto    # on as soon as the package is installed
+runspec-scheduler settings --package-schedules off     # ignored
+```
+
+`status` lists offered ones under *Offered by installed packages*;
+`enable --id <id>` turns one on and `disable --id <id>` hides it. Either writes
+only `enabled` for that id, so when the package moves its time in a new
+release the venv follows. Change a package schedule's time with `add --id
+<id> …` (that venv's time then stays, and `status` shows what the package
+says next to it); `remove --id <id>` puts it back to the package's.
+Uninstalling the package drops its schedules. The daemon looks for installed,
+upgraded or removed packages once a minute; on cron run `sync` after `pip
+install`.
+
 ## Config
 
 Schedules live in `{venv}/runspec_scheduler.toml` (override with `--config` or
@@ -148,6 +201,8 @@ backend = "daemon"        # or "cron" (default)
 timeout = "6h"            # default per fire; 0 = no limit
 misfire_grace = "5m"      # a fire later than this is recorded as missed
 catch_up_window = "1d"    # how far back catch_up looks
+timezone = "Australia/Sydney"   # schedules with no zone of their own; default the host's
+package_schedules = "offer"     # or "auto" / "off"
 
 [[schedule]]
 id = "report"
@@ -157,12 +212,13 @@ timeout = "30m"
 catch_up = true
 ```
 
-Change the `[scheduler]` durations with `settings` (the daemon reloads them by
+Change the `[scheduler]` settings with `settings` (the daemon reloads them by
 itself; `use` switches the backend):
 
 ```bash
 runspec-scheduler settings                                  # show them
 runspec-scheduler settings --timeout 2h --misfire-grace 10m # change two
+runspec-scheduler settings --timezone Australia/Sydney      # the venv's zone (--timezone host = the host's)
 ```
 
 The daemon writes a heartbeat to `{venv}/logs/scheduler_state.json` and a

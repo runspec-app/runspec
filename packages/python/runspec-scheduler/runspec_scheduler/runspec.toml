@@ -10,6 +10,7 @@
 #   runspec-scheduler sync                    render the config into the OS crontab (the cron backend)
 #   runspec-scheduler add     --id … …        add/replace a scheduled runnable in the config
 #   runspec-scheduler remove  --id …          remove a schedule from the config
+#   runspec-scheduler enable / disable --id … turn a schedule on or off (incl. ones packages offer)
 #   runspec-scheduler list                    print the configured schedules
 #   runspec-scheduler status                  config + crontab + recent runs/output per schedule
 #   runspec-scheduler watch                   status kept on screen, redrawn every few seconds
@@ -31,6 +32,11 @@
 # desktop console. It is itself a runspec runnable (so runspec-console can detect
 # and drive it over SSH), but `discoverable = false` keeps it out of the Forms
 # tab / `runspec serve` MCP surface — it's an internal control-plane helper.
+#
+# Package schedules: a runnable can declare schedules in its own runspec.toml
+# ([<runnable>.meta.scheduler.<name>], id <runnable>.<name>). The venv's
+# [scheduler] package_schedules says what happens to them: offer (default:
+# listed, off until enabled), auto (on when installed) or off (ignored).
 #
 # Output: text when a person runs a verb in a terminal, JSON otherwise (pipes,
 # scripts, runspec-console over SSH). --json gives JSON at a terminal too.
@@ -66,6 +72,10 @@ examples = [
   {cmd = "runspec-scheduler run-now --id nightly-backup --detach", description = "Fire a schedule now in the background, as a scheduled fire would run (recorded under sched:nightly-backup)."},
   {cmd = "runspec-scheduler settings --timeout 2h", description = "Kill a daemon fire still running after 2 hours (the daemon reloads by itself)."},
   {cmd = "runspec-scheduler install-service --remove --write", description = "Remove this venv's keepers and stop the daemon (before deleting the venv)."},
+  {cmd = "runspec-scheduler enable --id cleanup-tmp.nightly", description = "Turn on a schedule an installed package offers (status lists them)."},
+  {cmd = "runspec-scheduler disable --id nightly-backup", description = "Pause a schedule (or hide one a package offers)."},
+  {cmd = "runspec-scheduler settings --timezone Australia/Sydney", description = "Fire schedules with no zone of their own on Sydney time, whatever the host's clock says."},
+  {cmd = "runspec-scheduler settings --package-schedules auto", description = "Turn on the schedules packages declare as soon as they're installed."},
 ]
 
 # ---- Global arguments (inherited by every subcommand) --------------------
@@ -100,10 +110,23 @@ cred-vars = {type = "str", required = false, description = "JSON array of enviro
 
 # ---- remove: delete a schedule -------------------------------------------
 [runspec-scheduler.commands.remove]
-description = "Remove a schedule by id (and its credential env file), then hot-reload"
+description = "Remove a schedule by id (and its credential env file), then hot-reload. For a schedule a package declares, this drops the venv's changes to it (turn it off with disable)."
 
 [runspec-scheduler.commands.remove.args]
 id = {type = "str", required = true, description = "Schedule id to remove."}
+
+# ---- enable / disable: turn a schedule on or off ------------------------
+[runspec-scheduler.commands.enable]
+description = "Turn a schedule on: one of the config's own, or one an installed package offers (for a package schedule only `enabled` is written, so the package keeps its time). On cron, run sync afterwards."
+
+[runspec-scheduler.commands.enable.args]
+id = {type = "str", required = true, description = "Schedule id (a package schedule's is <runnable>.<name>)."}
+
+[runspec-scheduler.commands.disable]
+description = "Turn a schedule off (pause it), or hide one a package offers. On cron, run sync afterwards."
+
+[runspec-scheduler.commands.disable.args]
+id = {type = "str", required = true, description = "Schedule id (a package schedule's is <runnable>.<name>)."}
 
 # ---- list: print schedules as JSON ---------------------------------------
 [runspec-scheduler.commands.list]
@@ -155,7 +178,7 @@ backend = {options = ["cron", "daemon"], position = 1, description = "The backen
 
 # ---- settings: the [scheduler] durations --------------------------------
 [runspec-scheduler.commands.settings]
-description = "Show this venv's [scheduler] settings (backend, timeout, misfire_grace, catch_up_window), or change the durations given. A running daemon reloads the change by itself; switch the backend with `use`."
+description = "Show this venv's [scheduler] settings (backend, timeout, misfire_grace, catch_up_window, timezone, package_schedules), or change the ones given. A running daemon reloads the change by itself; switch the backend with `use`."
 output      = "json"
 autonomy    = "confirm"
 
@@ -163,6 +186,8 @@ autonomy    = "confirm"
 timeout         = {type = "str", required = false, description = "Kill a daemon fire still running after this long: seconds or 90m / 6h / 1d; 0 = no limit (default 6h)."}
 misfire-grace   = {type = "str", required = false, description = "A daemon fire up to this late still runs; later ones are recorded as missed (default 5m)."}
 catch-up-window = {type = "str", required = false, description = "How far back a catch_up schedule looks when the daemon starts (default 24h)."}
+timezone        = {type = "str", required = false, description = "The zone schedules with no zone of their own fire on (\"local\" in a package schedule), e.g. Australia/Sydney for a host whose clock runs on UTC. 'host' goes back to the host's zone. On cron a zone other than the host's needs the daemon."}
+package-schedules = {options = ["offer", "auto", "off"], required = false, description = "What the schedules installed packages declare do here: offer (listed, off until enabled; default), auto (on as soon as installed) or off (ignored)."}
 
 # ---- restart: reload the daemon's code -----------------------------------
 [runspec-scheduler.commands.restart]

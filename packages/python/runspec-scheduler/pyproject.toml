@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-scheduler"
-version = "0.9.0"
+version = "0.10.0"
 requires-python = ">=3.10"
 description = "Cron-style scheduler service for runspec runnables installed in one venv"
 keywords = ["runspec", "runnable", "scheduler", "cron"]
@@ -44,7 +44,10 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["process: runs the daemon as a real background process (deselect with -m 'not process')"]
+markers = [
+    "process: runs the daemon as a real background process (deselect with -m 'not process')",
+    "packages: use the real scan of installed packages' schedules",
+]
 
 [tool.mypy]
 python_version = "3.10"

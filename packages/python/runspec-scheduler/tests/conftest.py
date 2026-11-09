@@ -21,3 +21,14 @@ def _venv_bin(monkeypatch):
     """This venv's scripts folder is ``/v/bin`` in tests, so the crontab lines the
     tests write (``/v/bin/runspec exec …``) count as this venv's."""
     monkeypatch.setattr(cronsync, "scripts_dir", lambda: Path("/v/bin"))
+
+
+@pytest.fixture(autouse=True)
+def _no_package_schedules(request, monkeypatch):
+    """The test venv's installed runnables declare no schedules unless a test
+    says otherwise (``@pytest.mark.packages`` keeps the real scan)."""
+    if request.node.get_closest_marker("packages"):
+        return
+    from runspec_scheduler import packages
+
+    monkeypatch.setattr(packages, "scan", lambda hostname=None: packages.Scan())

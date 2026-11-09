@@ -434,11 +434,20 @@ def _installable(entry: ScheduleEntry, backend: str = "cron") -> tuple[bool, str
         return False, "disabled"
     if backend == "daemon":
         return True, ""
-    if entry.when.every:
+    when = entry.fire_when
+    if when.every:
         return False, "interval schedules ('every') need the daemon backend (runspec-scheduler use daemon); on cron use a cron expression"
-    if not entry.when.cron:
+    if not when.cron:
         return False, "no cron expression"
-    problem = cron_zone_problem(entry.when.timezone)
+    if "last" in when.cron.lower().split()[2:3]:
+        return False, "'last' day of the month needs the daemon backend (runspec-scheduler use daemon); cron has no last day"
+    problem = cron_zone_problem(when.timezone)
+    if problem and when.timezone and entry.when.timezone.lower() in ("", "local"):
+        # The venv's zone, not the schedule's own.
+        problem = (
+            f"this venv's zone ({when.timezone}) isn't the host's, and a crontab line fires on the host's clock — "
+            "it needs the daemon backend (runspec-scheduler use daemon), or set the venv back to the host's zone (runspec-scheduler settings --timezone host)"
+        )
     if problem:
         return False, problem
     return True, ""
