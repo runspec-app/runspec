@@ -20,7 +20,7 @@ const label = (t: string) => <Text style={{ fontSize: 13 }}>{t}</Text>
 const hint = (t: React.ReactNode) => <Text type="secondary" style={{ fontSize: 12 }}>{t}</Text>
 
 // Build or edit a saved transfer. `initial` is either an existing entry (edit)
-// or the Transfer dialog's current pick turned into a draft (save as).
+// or a copy picked in the Files tab turned into a draft (save as).
 export function SaveTransferModal({ initial, replaceId, hosts, workspacePath, onClose }: {
   initial: SavedTransfer
   replaceId?: string
@@ -499,7 +499,7 @@ function PreviewList({ preview }: { preview: SavedTransferPreview }) {
 }
 
 // Every saved transfer in one list, to run, edit, copy, delete or start a new
-// one from scratch. The Transfer dialog's Saved row is the quick picker; this is
+// one from scratch. The Files tab's Saved transfers list is the quick picker; this is
 // the place to look after the set as it grows.
 export function SavedTransfersListModal({ saved, onClose, onRun, onEdit, onNew }: {
   saved: SavedTransfer[]
@@ -592,7 +592,7 @@ export function SavedTransfersListModal({ saved, onClose, onRun, onEdit, onNew }
         dataSource={rows}
         pagination={rows.length > 12 ? { pageSize: 12, size: 'small' } : false}
         scroll={{ x: 760 }}
-        locale={{ emptyText: saved.length ? 'No saved transfer matches' : 'No saved transfers yet. Pick files in the Transfer dialog and click Save as scenario…, or click New….' }}
+        locale={{ emptyText: saved.length ? 'No saved transfer matches' : 'No saved transfers yet. Select files in the Files tab and click Save as saved transfer…, or click New….' }}
       />
       <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 8 }}>
         Stored in runspec_saved_transfers.toml, which Config Sync can share with your team. The assistant can list and change them too (it asks first).

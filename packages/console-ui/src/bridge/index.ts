@@ -162,6 +162,17 @@ export interface DirEntry {
   mtime: number   // epoch seconds
 }
 
+// Files tab View: the end of a text file. `partial` = the file holds more than
+// what's shown; `binary` = it isn't text, so nothing is shown.
+export interface FileView {
+  size?: number
+  text?: string
+  lines?: number
+  partial?: boolean
+  binary?: boolean
+  error?: string
+}
+
 export interface DirListing {
   cwd: string
   parent: string | null   // null at a filesystem / drive root
@@ -2962,6 +2973,11 @@ export interface BridgeApi {
   // Pre-flight: does `path` exist as a directory on each host? (fan-out dest check)
   check_dir_exists: (hosts: string[], path: string) => Promise<Record<string, { exists: boolean; error?: string | null }>>
   cancel_transfer: (id: string) => Promise<void>
+  // Files tab: create folder `name` inside `parent` on a host ('local' = this
+  // computer). An existing folder is an error.
+  make_dir: (host: string, parent: string, name: string) => Promise<{ path?: string; error?: string }>
+  // Files tab: the last `lines` lines of a file (read-only, at most 1 MB read).
+  view_file: (host: string, path: string, lines?: number) => Promise<FileView>
   // Absolute path of the current chat session's agent workspace, or '' if none.
   // The Transfer dialog defaults a local destination to it so downloads land
   // where the agent works. Creates the directory if missing.

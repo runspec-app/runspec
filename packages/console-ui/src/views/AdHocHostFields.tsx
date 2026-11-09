@@ -4,8 +4,8 @@ import { MONO_FONT } from '../ThemeContext'
 
 // One transfer/relay endpoint that isn't a configured fleet host: an SSH host
 // reached through a configured jump, authenticated by key/agent (or a saved
-// credential / a one-shot password). Shared by the Transfer dialog's source and
-// destination pickers so the two stay in lockstep.
+// credential / a one-shot password). Used by the Files tab's ad-hoc panes and
+// the saved-transfer editor.
 export interface AdHocState {
   jump: string
   target: string

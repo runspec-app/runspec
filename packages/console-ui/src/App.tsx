@@ -14,6 +14,7 @@ import {
   MoonOutlined,
   SettingOutlined,
   SwapOutlined,
+  FolderOpenOutlined,
   CodeOutlined,
   BellOutlined,
   ClockCircleOutlined,
@@ -64,11 +65,11 @@ const EvalsView = React.lazy(() => import('./views/EvalsView').then(m => ({ defa
 const SchedulesView = React.lazy(() => import('./views/SchedulesView').then(m => ({ default: m.SchedulesView })))
 const RotaView = React.lazy(() => import('./views/RotaView').then(m => ({ default: m.RotaView })))
 const DevView = React.lazy(() => import('./views/DevView').then(m => ({ default: m.DevView })))
+const FilesView = React.lazy(() => import('./views/files/FilesView').then(m => ({ default: m.FilesView })))
 // Analytics is no longer a top-level tab — it's a per-host drawer off the Logs
 // tab (LogsView lazy-loads it there, keeping the heavy @ant-design/plots chunk
 // out of the initial bundle just the same).
 // Modals + the (large) Settings drawer — mounted only once their open state trips.
-const TransferModal = React.lazy(() => import('./views/TransferModal').then(m => ({ default: m.TransferModal })))
 const CopyKeyModal = React.lazy(() => import('./views/CopyKeyModal').then(m => ({ default: m.CopyKeyModal })))
 const TerminalsModal = React.lazy(() => import('./views/TerminalsModal').then(m => ({ default: m.TerminalsModal })))
 const DenylistModal = React.lazy(() => import('./views/DenylistModal').then(m => ({ default: m.DenylistModal })))
@@ -98,7 +99,7 @@ import { FeaturesContext, AI_ONLY_VIEWS, visibleNavTabs, type Features } from '.
 import { useShortcuts, shortcutHint, answerPendingConfirm, revealPendingConfirm, hasPendingConfirm } from './shortcuts'
 import type { PaletteAction } from './components/CommandPalette'
 
-type ViewKey = 'console' | 'specs' | 'history' | 'logs' | 'forms' | 'marketplace' | 'schedules' | 'triggers' | 'rota' | 'improve' | 'evals' | 'knowledge' | 'dev'
+type ViewKey = 'console' | 'specs' | 'history' | 'logs' | 'files' | 'forms' | 'marketplace' | 'schedules' | 'triggers' | 'rota' | 'improve' | 'evals' | 'knowledge' | 'dev'
 
 // Context-window fill of the active chat's latest turn (runspec:context_estimate).
 // total_tokens is exact (from the model's usage); bucket tokens are estimates that
@@ -274,7 +275,6 @@ export default function App() {
   // `view` state change that reveals a tab already triggers one).
   const viewsVisited = useRef<Set<string>>(new Set(['console']))
   viewsVisited.current.add(view)
-  const [transferOpen, setTransferOpen] = useState(false)
   const [copyKeyHost, setCopyKeyHost] = useState<string | null>(null)
   // Hosts pre-selected in the multi-terminal dialog; null = closed.
   const [terminalsFor, setTerminalsFor] = useState<string[] | null>(null)
@@ -1005,6 +1005,7 @@ export default function App() {
     },
     { key: 'history'   as ViewKey, label: 'History',   icon: <HistoryOutlined /> },
     { key: 'logs'      as ViewKey, label: 'Logs',      icon: <FileTextOutlined /> },
+    { key: 'files'     as ViewKey, label: 'Files',     icon: <FolderOpenOutlined /> },
     { key: 'knowledge' as ViewKey, label: 'Knowledge', icon: <DeploymentUnitOutlined /> },
     { key: 'improve'   as ViewKey, label: 'Improve',   icon: <BulbOutlined /> },
     { key: 'evals'     as ViewKey, label: 'Evals',     icon: <ExperimentOutlined /> },
@@ -1088,7 +1089,7 @@ export default function App() {
     act('focus', 'Focus the command bar', () => focusComposer(false), shortcutHint('focusComposer'))
     act('refresh', 'Refresh hosts', () => { if (!refreshingHosts) refreshHosts() }, shortcutHint('refreshHosts'))
     act('settings', 'Open Settings', () => openSettings(), shortcutHint('settings'))
-    act('transfer', 'Transfer files (SFTP)', () => setTransferOpen(true))
+    act('transfer', 'Files: browse hosts and copy files', () => setView('files'))
     act('sendBar', 'Send to terminals', () => { void openSendBar() })
     act('theme', isDark ? 'Switch to light theme' : 'Switch to dark theme', toggleTheme)
     act('docs', 'Open documentation', () => { bridge.open_docs().catch(console.error) })
@@ -1840,8 +1841,8 @@ export default function App() {
                 <Tooltip title={isDark ? 'Light theme' : 'Dark theme'}>
                   <Button type="text" size="small" icon={isDark ? <SunOutlined /> : <MoonOutlined />} onClick={toggleTheme} style={{ color: iconCol }} />
                 </Tooltip>
-                <Tooltip title="Transfer files (SFTP) — download, upload, fan-out, or relay between hosts">
-                  <Button type="text" size="small" icon={<SwapOutlined />} onClick={() => setTransferOpen(true)} style={{ color: iconCol }} />
+                <Tooltip title="Files: browse hosts and copy files (download, upload, fan-out, relay)">
+                  <Button type="text" size="small" icon={<SwapOutlined />} onClick={() => setView('files')} style={{ color: iconCol }} aria-label="Open the Files tab" />
                 </Tooltip>
                 <Tooltip title={
                   mcpInvalidTools.length > 0
@@ -1910,7 +1911,17 @@ export default function App() {
                     </Suspense>
                   </div>
                 )}
-                {view !== 'console' && view !== 'triggers' && view !== 'history' && view !== 'logs' && view !== 'specs' && (
+                {/* Files stays mounted (display toggle) so its panes and the
+                    copies running in its Transfers strip survive tab switches.
+                    Lazy-loaded, so it mounts on first visit. */}
+                {viewsVisited.current.has('files') && (
+                  <div className="rs-view" style={{ display: view === 'files' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+                    <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin size="large" /></div>}>
+                      <FilesView hosts={hosts} selectedHost={selectedHost} active={view === 'files'} />
+                    </Suspense>
+                  </div>
+                )}
+                {view !== 'console' && view !== 'triggers' && view !== 'history' && view !== 'logs' && view !== 'specs' && view !== 'files' && (
                   <div className="rs-view" style={{ flex: 1, overflow: 'auto' }}>
                     <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin size="large" /></div>}>
                       {view === 'forms'     && <FormsView runnables={runnables} hosts={hosts} selectedHost={selectedHost} activeScope={activeScope} activeProfile={activeProfile} onRunRunnable={handleRunRunnable} pendingForm={pendingForm} onPendingFormClear={() => setPendingForm(null)} runbooks={runbooks} onOpenRunbook={handleOpenRunbook} savedRuns={savedRuns} onOpenSavedRun={handleOpenSavedRun} onEditRunbook={id => setRunbookEditReq({ id, nonce: Date.now() })} onEditSavedRun={id => setSavedRunEditReq({ id, nonce: Date.now() })} />}
@@ -2006,14 +2017,6 @@ export default function App() {
           {shortcutsOpen && <ShortcutsHelp open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />}
           {paletteOpen && <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} actions={paletteActions} />}
 
-          {transferOpen && (
-            <TransferModal
-              open={transferOpen}
-              onClose={() => setTransferOpen(false)}
-              hosts={hosts}
-              defaultRemoteHost={selectedHost}
-            />
-          )}
 
           {pendingRunbook !== null && (
             <RunbookRunModal

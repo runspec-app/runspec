@@ -55,6 +55,7 @@ from .bridge_provision import ProvisionMixin
 from .bridge_putty import PuttySyncMixin
 from .bridge_termsend import TermSendMixin
 from .bridge_envfile import EnvFileMixin
+from .bridge_files import FilesMixin
 from .bridge_network import NetworkMixin
 from .bridge_turn import TurnMixin
 from .dictation import DictationSession
@@ -92,6 +93,7 @@ class Bridge(
     PuttySyncMixin,
     TermSendMixin,
     EnvFileMixin,
+    FilesMixin,
     NetworkMixin,
     TurnMixin,
 ):
