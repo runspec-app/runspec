@@ -9,6 +9,27 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.396.0] — 2026-11-09
+
+### Added
+
+- **Copy as a venv owner in the Files tab.** Dragging a file between this
+  computer and a host pane that is browsing as one of the host's venv owners
+  now copies as that owner, so a file can go into (or come out of) a folder
+  only the service account can use.
+  - An upload is copied as the SSH login into `~/.runspec-staging` (`0700`).
+    The files worker then runs as the owner on the venv's python with the
+    staged file as its stdin (`… < staged`), so the owner never reads the
+    login's home and no shell runs as the owner. The worker writes a hidden
+    part file and renames it over the target, keeping an existing file's
+    permissions. The staged copy is always removed.
+  - A download is read by the worker as the owner. A filter runs on that
+    output as the login, and a failed read still fails the copy even when a
+    filter follows it.
+  - `start_transfer` takes `as_user`, which is checked against the host's
+    venv owners. A relay or a copy to several hosts still runs as the SSH
+    login, and the drop dialog says which account copies.
+
 ## [0.395.1] — 2026-11-09
 
 ### Fixed

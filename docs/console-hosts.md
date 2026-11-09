@@ -494,8 +494,21 @@ owner's venvs' own python (`sudo -n -u <owner> <venv>/bin/python …`), so it
 needs the same NOPASSWD sudo rule as Env files, and a rule that only allows the
 venv's `bin/` (refusing shells) is enough. Without one the pane says so. Only
 the owners of that host's venvs are offered. The Forms path picker's
-service-account view lists the same way, on the runnable's own venv. Copies (dragging) still run as the
-SSH login, and the drop dialog reminds you.
+service-account view lists the same way, on the runnable's own venv.
+
+Copying between this computer and a pane browsing as an owner runs as that
+owner too, so you can put a config file into a folder only the service account
+can write, or pull a log only it can read. An upload is first copied as the SSH
+login into a private staging folder in the login's home (`~/.runspec-staging`,
+`0700`), then the owner's python writes it into place from there (the login's
+shell opens the staged file, so the owner never needs to read the login's
+home) and the staged copy is deleted. The file is written beside its target as
+a hidden part file and renamed over it, so a half-copied file never appears
+under the real name, and a file it replaces keeps its permissions. A download
+is read by the owner; a filter runs on what it reads, as the login. The drop
+dialog says which account copies. A relay between two hosts and a copy to
+several hosts still run as the SSH login, and the dialog warns you when a pane
+is browsing as an owner.
 
 The agent has the same reach: `download_file` (remote → local, including
 ad-hoc sources via `source_via` + `source_target`) and `relay_file`

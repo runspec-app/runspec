@@ -108,7 +108,9 @@ export function FilesView({ hosts, selectedHost, active }: {
     } else if (plan.kind === 'relay' && dst.kind === 'host') {
       res = await bridge.start_relay(relaySource(src)!, pd.paths, dst.host, destDir, filter, arg, rename)
     } else {
-      res = await bridge.start_transfer(endpointOf(src), pd.paths, endpointOf(dst), destDir, filter, arg, rename)
+      // Only one side is a host here, so a "Browse as" account is that host's.
+      const asUser = srcPane.asUser || dstPane.asUser || undefined
+      res = await bridge.start_transfer(endpointOf(src), pd.paths, endpointOf(dst), destDir, filter, arg, rename, asUser)
     }
     if (res.error || !res.id) { message.error(res.error || 'Could not start the copy'); return }
     rememberFilter(src, srcPane.listing?.cwd ?? '', choice.filter)

@@ -1564,8 +1564,8 @@ export const mockApi: BridgeApi = {
     console.log('[mock] cancel_invocation', invId)
   },
 
-  start_transfer: async (sourceHost, sourcePaths, destHost, destDir) => {
-    console.log('[mock] start_transfer', { sourceHost, sourcePaths, destHost, destDir })
+  start_transfer: async (sourceHost, sourcePaths, destHost, destDir, _filterName, _filterArg, _destName, asUser) => {
+    console.log('[mock] start_transfer', { sourceHost, sourcePaths, destHost, destDir, asUser })
     if (!sourcePaths.length) return { error: 'no source files selected' }
     const id = `xfer-${++invocationCounter}`
     const file = sourcePaths[0].split(/[\\/]/).pop() || 'file'

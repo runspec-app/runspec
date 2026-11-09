@@ -11,9 +11,10 @@ and the request as one JSON object on standard input. No shell runs as the
 owner, so a sudoers rule that only allows the venv's ``bin/`` (and refuses
 shells) still covers it — the same route Env files and runnable runs use.
 
-Request: ``{"op": ..., ...}``. The result is one JSON line after
-:data:`MARKER` on stdout, ``{"ok": true, ...}`` or ``{"ok": false, "error":
-...}``.
+Request: ``{"op": ..., ...}`` on stdin, or — for the two copy ops, whose
+stdin / stdout carry the file itself — as the first argument. The result is
+one JSON line after :data:`MARKER` on stdout, ``{"ok": true, ...}`` or
+``{"ok": false, "error": ...}``.
 
 * ``list`` ``{path, dirs_only}`` — ``{cwd, entries: [[name, is_dir, size,
   mtime], ...]}``. An empty path is the account's home; symlinked folders
@@ -24,6 +25,16 @@ Request: ``{"op": ..., ...}``. The result is one JSON line after
 * ``rename`` ``{parent, old, new}`` — ``{path}``. Never overwrites.
 * ``delete`` ``{paths}`` — ``{deleted, failed: [{path, error}]}``: files and
   symlinks are removed, folders only when empty.
+
+Copying as the owner (the request is the first argument):
+
+* ``cat`` ``{path}`` — the file's bytes on stdout, nothing else. A failure is
+  one ``runspec-files: …`` line on stderr and exit 1.
+* ``place`` ``{path}`` — stdin becomes the file ``path``: written beside it as
+  a hidden part file, then renamed over it, so a half-copied file never
+  appears under the real name. An existing file keeps its mode. Used with the
+  login's staged upload as stdin (``… < staged``), so the owner never needs to
+  read the login's home.
 """
 
 import json
@@ -31,6 +42,9 @@ import os
 import sys
 
 MARKER = "=====RSFILES "
+#: Prefix of the one stderr line a failed ``cat`` prints.
+ERROR_PREFIX = "runspec-files: "
+_CHUNK = 1 << 16
 
 
 def _home():
@@ -147,6 +161,59 @@ def op_delete(req):
     return {"ok": True, "deleted": deleted, "failed": failed}
 
 
+def op_place(req, src=None):
+    path = _abs(req.get("path"))
+    src = src if src is not None else sys.stdin.buffer
+    folder, name = os.path.split(path)
+    if not name:
+        return {"ok": False, "error": "no file name"}
+    if os.path.isdir(path):
+        return {"ok": False, "error": path + " is a folder"}
+    part = os.path.join(folder, "." + name + ".runspec-part")
+    mode = None
+    try:
+        st = os.stat(path)
+        mode = st.st_mode & 0o7777
+    except OSError:
+        pass
+    try:
+        with open(part, "wb") as out:
+            while True:
+                chunk = src.read(_CHUNK)
+                if not chunk:
+                    break
+                out.write(chunk)
+        if mode is not None:
+            os.chmod(part, mode)
+        os.replace(part, path)
+    except OSError as exc:
+        try:
+            os.remove(part)
+        except OSError:
+            pass
+        return {"ok": False, "error": "Can't write " + path + ": " + _why(exc)}
+    return {"ok": True, "path": path, "size": os.path.getsize(path)}
+
+
+def op_cat(req, out=None):
+    """Copy the file to ``out`` (stdout). Returns an error string or None."""
+    path = _abs(req.get("path"))
+    out = out if out is not None else sys.stdout.buffer
+    if os.path.isdir(path):
+        return path + " is a folder"
+    try:
+        with open(path, "rb") as fh:
+            while True:
+                chunk = fh.read(_CHUNK)
+                if not chunk:
+                    break
+                out.write(chunk)
+        out.flush()
+    except OSError as exc:
+        return "Can't read " + path + ": " + _why(exc)
+    return None
+
+
 OPS = {
     "list": op_list,
     "mkdir": op_mkdir,
@@ -166,12 +233,36 @@ def run(req):
         return {"ok": False, "error": str(exc) or exc.__class__.__name__}
 
 
-def main():
+def _argv_request():
     try:
-        req = json.loads(sys.stdin.buffer.read().decode("utf-8") or "{}")
-    except ValueError:
-        req = None
-    sys.stdout.write(MARKER + json.dumps(run(req)) + "\n")
+        req = json.loads(sys.argv[1])
+    except (IndexError, ValueError):
+        return None
+    return req if isinstance(req, dict) else None
+
+
+def main():
+    if len(sys.argv) > 1:
+        req = _argv_request()
+        op = req.get("op") if req else None
+        if op == "cat":
+            err = op_cat(req)
+            if err:
+                sys.stderr.write(ERROR_PREFIX + err + "\n")
+                sys.exit(1)
+            return
+        res = (
+            op_place(req)
+            if op == "place"
+            else {"ok": False, "error": "unknown request"}
+        )
+    else:
+        try:
+            req = json.loads(sys.stdin.buffer.read().decode("utf-8") or "{}")
+        except ValueError:
+            req = None
+        res = run(req)
+    sys.stdout.write(MARKER + json.dumps(res) + "\n")
     sys.stdout.flush()
 
 
