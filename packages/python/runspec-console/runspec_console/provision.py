@@ -70,6 +70,8 @@ import shlex
 from dataclasses import dataclass, field
 from typing import Any
 
+from .marketplace import pip_argv
+
 # runspec's own floor (packages/python/runspec/pyproject.toml requires-python).
 MIN_RUNSPEC_PYTHON = (3, 10)
 
@@ -696,16 +698,77 @@ def create_argv(python: str, dest: str) -> list[str]:
 
 
 def pip_upgrade_argv(dest: str) -> list[str]:
-    return [
+    return pip_argv(
         venv_paths(dest)["python"],
-        "-m",
-        "pip",
         "install",
         "--disable-pip-version-check",
         "--no-input",
         "-U",
         "pip",
-    ]
+    )
+
+
+# ``<venv python> -I -S -c PERMS_SCRIPT <venv>`` as the owner, after pip: gives
+# group/other read (and search / execute where the owner has it) on the venv's
+# code — ``bin/``, ``lib/``, ``include/``, ``pyvenv.cfg`` — the state
+# CREATE_SCRIPT leaves a new venv in. Only ever adds bits. Repairs a venv whose
+# packages an owner with a strict umask (027 / 077) installed before pip ran
+# under :data:`marketplace.PIP_UMASK_PY`: such a venv works for the owner but
+# every other account, the console's SSH login among them, gets "No module named
+# runspec.cli". Symlinks are skipped (``bin/python`` points at the system
+# interpreter); ``logs/``, the env files and the scheduler's files at the venv
+# root are not touched.
+PERMS_SCRIPT = r"""
+import os, stat, sys
+os.chdir("/")
+root = sys.argv[1]
+fixed = [0, 0]
+def fix(p):
+    try:
+        st = os.lstat(p)
+    except OSError:
+        return
+    if stat.S_ISLNK(st.st_mode):
+        return
+    mode = stat.S_IMODE(st.st_mode)
+    want = mode | 0o044
+    if stat.S_ISDIR(st.st_mode) or mode & 0o100:
+        want |= 0o011
+    if want == mode:
+        return
+    try:
+        os.chmod(p, want)
+        fixed[0] += 1
+    except OSError as exc:
+        fixed[1] += 1
+        if fixed[1] <= 5:
+            print("couldn't change %s: %s" % (p, exc))
+fix(root)
+for name in ("pyvenv.cfg", "bin", "include", "lib", "lib64"):
+    top = os.path.join(root, name)
+    if os.path.islink(top) or not os.path.exists(top):
+        continue
+    fix(top)
+    for d, dirs, files in os.walk(top):
+        for n in dirs + files:
+            fix(os.path.join(d, n))
+if fixed[1]:
+    print("made %d paths readable by every account; %d left as they were"
+          % (fixed[0], fixed[1]))
+    sys.exit(1)
+print("made %d paths readable by every account" % fixed[0] if fixed[0]
+      else "venv code already readable by every account")
+"""
+
+
+def permissions_argv(dest: str) -> list[str]:
+    return _py_argv(venv_paths(dest)["python"], PERMS_SCRIPT, dest)
+
+
+def permissions_hint(dest: str) -> str:
+    """What to run on the host, as the owner, when the repair step fails."""
+    q = shlex.quote(dest.rstrip("/") or "/")
+    return f"chmod -R go+rX {q}/bin {q}/lib"
 
 
 def install_specs(packages: list[str] | None) -> list[str]:
@@ -1085,6 +1148,7 @@ class UpdateStep:
     argv: list[str]
     pip: bool = False
     required: bool = False
+    as_login: bool = False
 
 
 def update_install_specs(
@@ -1110,6 +1174,7 @@ def update_steps(
     has_scheduler: bool,
     acl_user: str = "",
     daemon_running: bool = False,
+    check_login: bool = False,
 ) -> list[UpdateStep]:
     """The steps that bring an existing venv at ``root`` up to the chosen
     options, in order. Each one is safe to run again: pip ``-U`` only changes
@@ -1120,7 +1185,11 @@ def update_steps(
     ``daemon_running``: a scheduler daemon was running from this venv when it
     was inspected. A running daemon keeps the code it started with, so when
     packages are upgraded it is restarted at the end (unless the update moves
-    the schedules back to crontab, which stops it anyway)."""
+    the schedules back to crontab, which stops it anyway).
+
+    ``check_login``: the venv's owner isn't the SSH login. ``access`` then runs
+    ``runspec --version`` as the login too (``as_login``): the console reads the
+    venv as that account, so a venv only its owner can read shows no runnables."""
     paths = venv_paths(root)
     steps: list[UpdateStep] = []
     if specs:
@@ -1128,25 +1197,28 @@ def update_steps(
             UpdateStep("pip", pip_upgrade_argv(root), pip=True),
             UpdateStep(
                 "install",
-                [
+                pip_argv(
                     paths["python"],
-                    "-m",
-                    "pip",
                     "install",
                     "--disable-pip-version-check",
                     "--no-input",
                     "-U",
                     *specs,
-                ],
+                ),
                 pip=True,
                 required=True,
             ),
         ]
+    # Always, even with nothing to install: it repairs a venv an earlier pip
+    # run left unreadable to other accounts.
+    steps.append(UpdateStep("permissions", permissions_argv(root)))
     if inbox:
         steps.append(UpdateStep("inbox", inbox_argv(root, acl_user=acl_user)))
     if retention:
         steps.append(UpdateStep("retention", retention_argv(root, retention)))
     steps.append(UpdateStep("verify", verify_argv(root), required=True))
+    if check_login:
+        steps.append(UpdateStep("access", verify_argv(root), as_login=True))
     if scheduler == SCHEDULER_OFF:
         if has_scheduler:
             steps += [

@@ -51,7 +51,17 @@ _SCHEDULER_STEPS = ("scheduler", "keeper", "restart")
 _MAX_LINES = 400
 _MAX_OPS = 8
 
-_STEPS = ("preflight", "create", "pip", "install", "inbox", "retention", "verify")
+_STEPS = (
+    "preflight",
+    "create",
+    "pip",
+    "install",
+    "permissions",
+    "inbox",
+    "retention",
+    "verify",
+    "access",
+)
 
 
 class ProvisionMixin:
@@ -708,6 +718,13 @@ class ProvisionMixin:
                     True,
                 ),
                 (
+                    "permissions",
+                    prov.permissions_argv(dest),
+                    None,
+                    _STEP_TIMEOUT_S,
+                    False,
+                ),
+                (
                     "inbox",
                     prov.inbox_argv(dest, acl_user=login),
                     None,
@@ -728,6 +745,12 @@ class ProvisionMixin:
             steps.append(
                 ("verify", prov.verify_argv(dest), None, _STEP_TIMEOUT_S, True)
             )
+            if login:
+                # The owner isn't the SSH login: check the login can run the
+                # venv too, since that's the account the console reads it as.
+                steps.append(
+                    ("access", prov.verify_argv(dest), None, _STEP_TIMEOUT_S, False)
+                )
             if plan.get("scheduler"):
                 steps += [
                     (
@@ -749,6 +772,8 @@ class ProvisionMixin:
                 "inbox": "Logs inbox setup failed; the venv works but other accounts' "
                 "runs fall back to their own ~/logs.",
                 "pip": "pip self-upgrade failed; continued with the venv's bundled pip.",
+                "permissions": _permissions_note(dest),
+                "access": _access_note(login, plan["run_as"], dest),
                 "retention": "Couldn't set the log retention policy (it needs runspec "
                 f"{prov.RETENTION_MIN_RUNSPEC} or later in the venv); the venv works. "
                 "On the host, as the owner: "
@@ -768,7 +793,11 @@ class ProvisionMixin:
                 _step(step)
                 try:
                     code, out = self._prov_run(
-                        h, argv, env=step_env, timeout=timeout, **kw
+                        h,
+                        argv,
+                        env=step_env,
+                        timeout=timeout,
+                        **({"run_as": ""} if step == "access" else kw),
                     )
                 except Exception as exc:  # noqa: BLE001
                     code, out = -1, str(exc)
@@ -1473,10 +1502,13 @@ class ProvisionMixin:
                 has_scheduler=has_scheduler,
                 acl_user=login if run_as else "",
                 daemon_running=bool(info.get("scheduler_pid")),
+                check_login=bool(run_as),
             )
             off = plan["scheduler"] == prov.SCHEDULER_OFF
             notes = {
                 "pip": "pip self-upgrade failed; continued with the venv's pip.",
+                "permissions": _permissions_note(root),
+                "access": _access_note(login, owner, root),
                 "inbox": "Logs inbox setup failed; other accounts' runs fall back "
                 "to their own ~/logs.",
                 "retention": "Couldn't set the log retention policy (it needs runspec "
@@ -1514,7 +1546,7 @@ class ProvisionMixin:
                     code, out = self._prov_run(
                         h,
                         st.argv,
-                        run_as=run_as,
+                        run_as="" if st.as_login else run_as,
                         become_method=become,
                         env=env if st.pip else None,
                         timeout=_PIP_TIMEOUT_S if st.pip else _STEP_TIMEOUT_S,
@@ -1570,7 +1602,7 @@ class ProvisionMixin:
                     skip_keeper = skip_keeper or st.name == "scheduler"
                     res["warnings"].append(note + retry)
                     continue
-                if st.name != "verify":
+                if st.name not in ("verify", "access"):
                     applied.append(st.name)
                 if st.name == "keeper":
                     kept = prov.parse_keeper(out)
@@ -1795,6 +1827,25 @@ class ProvisionMixin:
                 kick(force=True)
             except Exception:
                 pass
+
+
+def _permissions_note(root: str) -> str:
+    return (
+        "Couldn't make every file of the venv's code readable by other accounts, "
+        "so they may not be able to run it. On the host, as the owner: "
+        + prov.permissions_hint(root)
+    )
+
+
+def _access_note(login: str, owner: str, root: str) -> str:
+    """The venv runs for its owner but not for the console's SSH login — the
+    account the console lists and runs the venv's runnables as."""
+    who = login or "the console's SSH login"
+    return (
+        f"The venv works for {owner or 'its owner'} but {who} can't run it, so the "
+        "console won't list its runnables. Usually a strict umask on the owner left "
+        "files unreadable; on the host, as the owner: " + prov.permissions_hint(root)
+    )
 
 
 def _to_int(v: Any) -> int:

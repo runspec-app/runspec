@@ -824,7 +824,7 @@ function mockProvisionOp(kind: 'provision' | 'deprovision' | 'update', hosts: st
   const rec: ProvisionOpRecord = { op, kind, status: 'running', hosts, results: [] }
   MOCK_PROVISION_OPS.set(op, rec)
   const steps = kind === 'provision'
-    ? ['preflight', 'create', 'pip', 'install', 'inbox', 'retention', 'verify', ...(scheduler ? ['scheduler', 'keeper'] : [])]
+    ? ['preflight', 'create', 'pip', 'install', 'permissions', 'inbox', 'retention', 'verify', ...(scheduler ? ['scheduler', 'keeper'] : [])]
     : kind === 'update' ? ['inspect', ...updateSteps]
     : ['inspect', 'scheduler', 'remove']
   let delay = 200
@@ -1196,6 +1196,7 @@ export const mockApi: BridgeApi = {
     const install = payload.upgrade_runspec || (payload.packages ?? []).length > 0 || (sched && sched !== 'off')
     const steps = [
       ...(install ? ['pip', 'install'] : []),
+      'permissions',
       ...(payload.inbox ? ['inbox'] : []),
       ...(payload.retention ? ['retention'] : []),
       'verify',

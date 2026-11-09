@@ -13,6 +13,7 @@ import sys
 
 import pytest
 
+from runspec_console import marketplace as mp
 from runspec_console import provision as prov
 
 posix_only = pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell scripts")
@@ -588,6 +589,7 @@ def test_update_steps_order_and_flags():
     assert [s.name for s in steps] == [
         "pip",
         "install",
+        "permissions",
         "inbox",
         "retention",
         "verify",
@@ -596,20 +598,21 @@ def test_update_steps_order_and_flags():
     ]
     by = {s.name: s for s in steps}
     assert by["install"].pip and by["install"].required
-    assert by["install"].argv[:3] == [f"{root}/bin/python", "-m", "pip"]
+    assert by["install"].argv[:3] == [f"{root}/bin/python", "-c", mp.PIP_UMASK_PY]
     assert "-U" in by["install"].argv
     assert by["inbox"].argv[-2:] == ["--acl-user", "deploy"]
     assert by["retention"].argv[-2:] == ["--delete-after", "30d"]
     assert by["verify"].required and not by["inbox"].required
-    # Only verify when nothing else is asked for; "off" needs a scheduler.
+    # Only the permissions repair + verify when nothing else is asked for; "off"
+    # needs a scheduler.
     bare = prov.update_steps(
         root, specs=[], inbox=False, retention={}, scheduler="off", has_scheduler=False
     )
-    assert [s.name for s in bare] == ["verify"]
+    assert [s.name for s in bare] == ["permissions", "verify"]
     off = prov.update_steps(
         root, specs=[], inbox=False, retention={}, scheduler="off", has_scheduler=True
     )
-    assert [s.argv[1:] for s in off[1:]] == [
+    assert [s.argv[1:] for s in off[2:]] == [
         ["use", "cron"],
         ["install-service", "--remove", "--write"],
     ]
@@ -638,7 +641,13 @@ def test_update_restarts_a_running_daemon_after_upgrades():
         has_scheduler=True,
         daemon_running=True,
     )
-    assert [s.name for s in steps] == ["pip", "install", "verify", "restart"]
+    assert [s.name for s in steps] == [
+        "pip",
+        "install",
+        "permissions",
+        "verify",
+        "restart",
+    ]
     assert steps[-1].argv == [
         f"{root}/bin/runspec-scheduler",
         "restart",
@@ -652,6 +661,116 @@ def test_update_restarts_a_running_daemon_after_upgrades():
     assert "restart" not in names(specs=[])
     assert "restart" not in names(daemon_running=False)
     assert "restart" not in names(scheduler="off")
+
+
+def test_update_repairs_permissions_and_checks_the_login():
+    root = "/opt/venvs/ops"
+    base = {"inbox": False, "retention": {}, "scheduler": "", "has_scheduler": False}
+    # Nothing to install: the repair still runs (it fixes an earlier pip run).
+    steps = prov.update_steps(root, specs=[], **base)
+    assert [s.name for s in steps] == ["permissions", "verify"]
+    assert steps[0].argv[-1] == root and prov.PERMS_SCRIPT in steps[0].argv
+    assert not steps[0].required and not steps[0].as_login
+    # Owner isn't the SSH login: runspec --version as the login too.
+    steps = prov.update_steps(root, specs=[], check_login=True, **base)
+    assert [s.name for s in steps] == ["permissions", "verify", "access"]
+    access = steps[-1]
+    assert access.as_login and not access.required
+    assert access.argv == [f"{root}/bin/runspec", "--version"]
+    assert prov.permissions_hint("/opt/my venv/") == (
+        "chmod -R go+rX '/opt/my venv'/bin '/opt/my venv'/lib"
+    )
+
+
+def test_pip_runs_with_a_umask_that_keeps_code_readable():
+    for argv in (
+        prov.pip_upgrade_argv("/v"),
+        prov.update_steps(
+            "/v",
+            specs=["runspec"],
+            inbox=False,
+            retention={},
+            scheduler="",
+            has_scheduler=False,
+        )[1].argv,
+    ):
+        assert argv[:3] == ["/v/bin/python", "-c", mp.PIP_UMASK_PY]
+        assert argv[3] == "install"
+
+
+@posix_only
+def test_pip_umask_wrapper_runs_pip_with_group_other_read(tmp_path):
+    """The wrapper is ``python -m pip`` with umask 027 → 022: run it for real
+    (``pip --version`` under a strict umask) and check the umask pip saw."""
+    probe = mp.PIP_UMASK_PY.replace(
+        "runpy.run_module('pip',run_name='__main__',alter_sys=True)",
+        "print(oct(os.umask(0)))",
+    )
+    for umask, want in (("027", "0o22"), ("077", "0o22"), ("002", "0o2")):
+        r = _sh(
+            ["sh", "-c", f'umask {umask}; exec "$@"', "sh", sys.executable, "-c", probe]
+        )
+        assert r.stdout.strip() == want, (umask, r.stdout, r.stderr)
+    r = _sh(
+        [
+            "sh",
+            "-c",
+            'umask 027; exec "$@"',
+            "sh",
+            *mp.pip_argv(sys.executable, "--version"),
+        ]
+    )
+    assert r.returncode == 0 and r.stdout.startswith("pip "), r.stderr
+
+
+@posix_only
+def test_permissions_script_repairs_an_owner_only_install(tmp_path):
+    import os
+    import stat
+
+    v = tmp_path / "venv"
+    sp = v / "lib" / "python3.12" / "site-packages" / "runspec"
+    sp.mkdir(parents=True)
+    (sp / "cli.py").write_text("x = 1\n")
+    (v / "bin").mkdir()
+    (v / "bin" / "runspec-scheduler").write_text("#!/bin/sh\n")
+    (v / "pyvenv.cfg").write_text("home = /usr/bin\n")
+    (v / "bin" / "python").symlink_to(sys.executable)
+    (v / "lib64").symlink_to("lib")
+    (v / "logs").mkdir()
+    (v / ".runspec_env").write_text("SECRET=1\n")
+    (v / "logs" / "run.log").write_text("")
+    # What pip as an owner with umask 027 leaves behind.
+    for p, mode in (
+        (sp.parent, 0o750),
+        (sp, 0o750),
+        (sp / "cli.py", 0o640),
+        (v / "bin" / "runspec-scheduler", 0o750),
+        (v / ".runspec_env", 0o600),
+        (v / "logs", 0o700),
+        (v / "logs" / "run.log", 0o600),
+    ):
+        os.chmod(p, mode)
+    py_before = stat.S_IMODE(os.stat(sys.executable).st_mode)
+
+    argv = prov._py_argv(sys.executable, prov.PERMS_SCRIPT, str(v))
+    r = _sh(argv)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "made 4 paths readable" in r.stdout
+
+    def mode(p):
+        return stat.S_IMODE(os.lstat(p).st_mode)
+
+    assert mode(sp.parent) == 0o755 and mode(sp) == 0o755
+    assert mode(sp / "cli.py") == 0o644
+    assert mode(v / "bin" / "runspec-scheduler") == 0o755
+    # Secrets, logs and the system interpreter are left alone.
+    assert mode(v / ".runspec_env") == 0o600
+    assert mode(v / "logs") == 0o700 and mode(v / "logs" / "run.log") == 0o600
+    assert stat.S_IMODE(os.stat(sys.executable).st_mode) == py_before
+    # Idempotent.
+    r = _sh(argv)
+    assert r.returncode == 0 and "already readable" in r.stdout
 
 
 def test_update_scheduler_and_version_helpers():

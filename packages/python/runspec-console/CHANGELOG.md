@@ -9,6 +9,25 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.393.1] — 2026-11-09
+
+### Fixed
+
+- **A venv updated as its owner could stop working for everyone else** ("No
+  module named runspec.cli", no runnables in the hosts panel or Forms, Test
+  connection and the Logs tab failing). pip run as the venv owner honoured the
+  owner's umask; on a hardened host (umask 027 / 077, kept by `sudo -n -u`) it
+  created new package folders as `drwxr-x---`, so the console's SSH login saw
+  an empty `runspec` namespace package. pip now runs with group/other read kept
+  (umask `& 022`) for Provision, Update venv and Marketplace installs and
+  uninstalls (`marketplace.pip_argv` / `PIP_UMASK_PY`). Provision and Update
+  venv gain a **permissions** step (as the owner: adds go+r, and go+x where the
+  owner has x, under `bin/`, `lib/`, `include/` and `pyvenv.cfg`; never
+  `logs/`, env files or symlinks), so running Update venv repairs a venv already
+  in this state, and an **access** step: when the owner isn't the SSH login,
+  `bin/runspec --version` runs as the login too and warns if it fails
+  (`provision.PERMS_SCRIPT`, `permissions_argv`, `UpdateStep.as_login`).
+
 ## [0.393.0] — 2026-11-09
 
 ### Added
