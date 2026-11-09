@@ -68,6 +68,12 @@ describe('provision helpers', () => {
     expect(buildPayload({ ...base, scheduler: 'auto' }).scheduler).toBe('auto')
     expect(buildPayload({ ...base, scheduler: '' }).scheduler).toBeUndefined()
     expect(buildPayload(base).scheduler).toBeUndefined()
+    // zone / package policy go with a daemon only, blanks dropped
+    const settings = { timezone: ' Asia/Tokyo ', package_schedules: 'auto' as const }
+    expect(buildPayload({ ...base, scheduler: 'auto', schedulerSettings: settings }).scheduler_settings)
+      .toEqual({ timezone: 'Asia/Tokyo', package_schedules: 'auto' })
+    expect(buildPayload({ ...base, scheduler: 'auto', schedulerSettings: { timezone: '', package_schedules: '' } }).scheduler_settings).toBeUndefined()
+    expect(buildPayload({ ...base, schedulerSettings: settings }).scheduler_settings).toBeUndefined()
   })
 
   it('sends the log cleanup policy only when on', () => {

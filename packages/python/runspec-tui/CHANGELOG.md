@@ -1,5 +1,30 @@
 # runspec-tui Changelog
 
+## [0.2.0] — 2026-11-09
+
+### Added
+
+- **Schedules screen (F3, or `runspec-tui --schedules`)** for the venv's
+  `runspec-scheduler`, shown when it is installed: every schedule with its
+  state (ok / failing / being handled / dealt with / paused / offered / won't
+  run), runnable, when, next fire and last run, a strip with the backend,
+  daemon, keeper, venv zone and package-schedules policy, and a detail pane
+  with the description, package words, recent runs and last output. Re-reads
+  `status` every 10 s on a worker thread.
+- Acting on schedules: I'm on it / Dealt with / Release (`runspec history
+  claim|resolve|release --label sched:<id>`), Run now (`run-now --detach`),
+  turn on/off (`enable`/`disable`, so a package schedule keeps following its
+  package), change the time, remove (a package schedule goes back to its
+  package's version), sync crontab, restart the daemon, settings (venv zone,
+  package policy, daemon time limits) and switching backend. Writes run as the
+  venv owner (`sudo -n -u <owner>`, values on stdin via the env frame) and are
+  followed by a crontab sync on the cron backend.
+- **Add a schedule from a form:** Add (a) switches the forms to schedule mode;
+  Ctrl+R validates the form, keeps only changed values, refuses `password`
+  fields, then asks for the id and when it runs.
+- Needs `runspec-scheduler` 0.10.0 for package schedules, the venv zone and
+  `enable`/`disable`.
+
 ## [0.1.0] — 2026-10-19
 
 ### Added

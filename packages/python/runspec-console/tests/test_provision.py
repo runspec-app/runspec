@@ -646,6 +646,7 @@ def test_update_restarts_a_running_daemon_after_upgrades():
         "install",
         "permissions",
         "verify",
+        "sync",
         "restart",
     ]
     assert steps[-1].argv == [
@@ -852,3 +853,64 @@ def test_parse_cron_clear():
         "ok": False,
         "error": "",
     }
+
+
+def test_update_sets_scheduler_settings_and_syncs():
+    root = "/opt/venvs/ops"
+    settings = {"timezone": "Europe/Paris", "package_schedules": "auto"}
+
+    def steps(**kw):
+        base = {
+            "specs": [],
+            "inbox": False,
+            "retention": {},
+            "scheduler": "",
+            "has_scheduler": True,
+        }
+        return prov.update_steps(root, **{**base, **kw})
+
+    got = steps(scheduler_settings=settings)
+    assert [s.name for s in got] == ["permissions", "verify", "settings", "sync"]
+    assert got[2].argv == [
+        f"{root}/bin/runspec-scheduler",
+        "settings",
+        "--timezone",
+        "Europe/Paris",
+        "--package-schedules",
+        "auto",
+    ]
+    assert got[3].argv == [f"{root}/bin/runspec-scheduler", "sync"]
+    assert not got[2].required and not got[3].required
+    # pip alone syncs too (new packages may offer schedules)
+    assert [s.name for s in steps(specs=["runspec-fs"])][-1] == "sync"
+    # settings go before a backend move; `use` writes the crontab, no sync
+    names = [s.name for s in steps(scheduler="auto", scheduler_settings=settings)]
+    assert names[-3:] == ["settings", "scheduler", "keeper"]
+    names = [s.name for s in steps(scheduler="off", scheduler_settings=settings)]
+    assert names[-3:] == ["settings", "scheduler", "keeper"]
+    # no scheduler in the venv and none coming: nothing to set or sync
+    assert [
+        s.name
+        for s in steps(has_scheduler=False, specs=["x"], scheduler_settings=settings)
+    ] == ["pip", "install", "permissions", "verify"]
+    # a new daemon gets the settings even though the venv had no scheduler
+    assert "settings" in [
+        s.name
+        for s in steps(
+            has_scheduler=False, scheduler="auto", scheduler_settings=settings
+        )
+    ]
+
+
+def test_validate_scheduler_settings():
+    assert prov.validate_scheduler_settings(None) == {}
+    assert (
+        prov.validate_scheduler_settings({"timezone": " ", "package_schedules": ""})
+        == {}
+    )
+    assert prov.validate_scheduler_settings({"package_schedules": "Offer"}) == {
+        "package_schedules": "offer"
+    }
+    for bad in ({"timezone": "host"}, {"package_schedules": "sometimes"}):
+        with pytest.raises(prov.ProvisionError):
+            prov.validate_scheduler_settings(bad)

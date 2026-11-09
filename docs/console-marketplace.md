@@ -104,6 +104,12 @@ pip's output streams live per target; a finished install kicks a discovery
 refresh so the new runnables appear in Forms and in the agent's toolset
 without a restart.
 
+When the venv has `runspec-scheduler`, a finished install or removal also runs
+its `runspec-scheduler sync` as the same account, so schedules the package
+suggests (and lines for a package that is gone) reach the crontab. Its output
+follows pip's; if it fails the install still counts, and the target's summary
+says to use **Sync crontab** on the Schedules tab.
+
 ### Several at once, and the Activity list
 
 An install, update or removal runs in the background. Starting one opens its

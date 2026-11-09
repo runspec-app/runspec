@@ -63,9 +63,9 @@ export function suggestId(runnable: string, command: string[], taken: string[]):
 
 /** The timeout field's starting text. A daemon reports its 6h default when the
  *  schedule sets none, so that shows blank rather than freezing it in. */
-export function timeoutText(t: number | null | undefined, backend: 'cron' | 'daemon'): string {
+export function timeoutText(t: number | null | undefined, backend: 'cron' | 'daemon', daemonDefault: number | null = null): string {
   if (t == null) return ''
-  if (backend === 'daemon' && t === DAEMON_DEFAULT_TIMEOUT_S) return ''
+  if (backend === 'daemon' && t === (daemonDefault ?? DAEMON_DEFAULT_TIMEOUT_S)) return ''
   if (t === 0) return '0'
   if (t % 86400 === 0) return `${t / 86400}d`
   if (t % 3600 === 0) return `${t / 3600}h`
@@ -143,7 +143,7 @@ export function HostScheduleModal({ open, venvs, runnables, idsByVenv, editing, 
       setEvery(s.when.every ?? '')
       setTimezone(s.when.timezone ?? '')
       setEnabled(s.enabled)
-      setTimeout_(timeoutText(s.timeout, editing.venv.backend))
+      setTimeout_(timeoutText(s.timeout, editing.venv.backend, editing.venv.settings?.timeout ?? null))
       setCatchUp(!!s.catch_up)
       return
     }

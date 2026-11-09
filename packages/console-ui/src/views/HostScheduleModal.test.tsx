@@ -22,8 +22,8 @@ vi.mock('../bridge', () => ({
 const arg = (over: Partial<ArgDef>): ArgDef => ({ name: 'x', type: 'str', required: false, ...over })
 
 const VENVS: SchedulerVenv[] = [
-  { key: 'web-1::ops', host: 'web-1', hostGroup: 'prod', venv: 'ops', backend: 'cron', owner: 'svc' },
-  { key: 'web-1::jobs', host: 'web-1', hostGroup: 'prod', venv: 'jobs', backend: 'daemon', owner: 'svc-jobs' },
+  { key: 'web-1::ops', host: 'web-1', hostGroup: 'prod', venv: 'ops', backend: 'cron', owner: 'svc', settings: null, hostZone: '', packages: null },
+  { key: 'web-1::jobs', host: 'web-1', hostGroup: 'prod', venv: 'jobs', backend: 'daemon', owner: 'svc-jobs', settings: null, hostZone: '', packages: null },
 ]
 
 const RUNNABLES: Runnable[] = [
@@ -240,7 +240,7 @@ describe('AllSchedulesView host daemon', () => {
     expect(save.hasAttribute('disabled')).toBe(true)
     fireEvent.change(timeout, { target: { value: '2h' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
-    await waitFor(() => expect(api.host_scheduler_settings).toHaveBeenCalledWith({ host: 'job-1', venv: 'jobs', timeout: '2h' }))
+    await waitFor(() => expect(api.host_scheduler_settings).toHaveBeenCalledWith({ host: 'job-1', venv: 'jobs', backend: 'daemon', timeout: '2h' }))
     await waitFor(() => expect(onRefresh).toHaveBeenCalledTimes(1))
   })
 
@@ -248,7 +248,68 @@ describe('AllSchedulesView host daemon', () => {
     render(<AllSchedulesView scope="daemon" collected={collectRows([], daemonVenvs('running'))} loading={false} loaded updatedAt={null} hostCount={1}
       onRefresh={() => {}} />)
     expect(screen.queryByRole('button', { name: /Restart/ })).toBeNull()
-    expect(screen.queryByRole('button', { name: /Settings/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /[Ss]ettings/ })).toBeNull()
+  })
+})
+
+describe('AllSchedulesView package schedules', () => {
+  const pkgVenvs = (): SharedSchedulesVenv[] => [{
+    host: 'web-1', group: 'ops', available: true, ok: true, owner: 'svc',
+    status: {
+      ok: true, venv: 'ops', config: 'c', backend: 'cron', errors: [], stale: [],
+      settings: { backend: 'cron', timeout: 21600, misfire_grace: 300, catch_up_window: 86400, timezone: '', package_schedules: 'offer' },
+      host_zone: 'Europe/London',
+      packages: { policy: 'offer', offered: 1, errors: [], orphans: [] },
+      schedules: [
+        {
+          id: 'cleanup.nightly', runnable: 'cleanup', enabled: false, offered: true, origin: 'package',
+          description: 'Old files out of /tmp', when: { cron: '51 2 * * *', timezone: 'local' },
+          package: { words: '02:30 daily, spread 30m', overridden: [] },
+          installable: true, not_installable_reason: null, installed: false, line: null, next_run: null, runs: [], last_output: null,
+        },
+        {
+          id: 'certs.weekly', runnable: 'certs', enabled: true, origin: 'package',
+          when: { cron: '0 9 * * mon' }, package: { words: '08:00 Monday', overridden: ['when'] },
+          installable: true, not_installable_reason: null, installed: true, line: 'exec', next_run: null, runs: [], last_output: null,
+        },
+      ],
+    },
+  }]
+  const view = (onRefresh = vi.fn()) => render(<AllSchedulesView scope="cron" collected={collectRows([], pkgVenvs())} loading={false} loaded updatedAt={null} hostCount={1}
+    onRefresh={onRefresh} runnables={RUNNABLES} />)
+
+  it('turns an offered schedule on with enable, not a rewrite', async () => {
+    const onRefresh = vi.fn()
+    api.host_schedule_enable = vi.fn(() => Promise.resolve({ ok: true, warnings: [] }))
+    api.host_schedule_save = vi.fn()
+    view(onRefresh)
+    expect(screen.getByText('offered')).toBeTruthy()
+    expect(screen.getByText('02:30 daily, spread 30m')).toBeTruthy()
+    expect(screen.getByText('Old files out of /tmp')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /Turn on/ }))
+    await waitFor(() => expect(api.host_schedule_enable).toHaveBeenCalledWith({ host: 'web-1', venv: 'ops', backend: 'cron', id: 'cleanup.nightly', enabled: true }))
+    expect(api.host_schedule_save).not.toHaveBeenCalled()
+    await waitFor(() => expect(onRefresh).toHaveBeenCalledTimes(1))
+    // A package schedule this venv changed: no Remove, Put back instead; its own time shows.
+    expect(screen.getByText('0 9 * * mon')).toBeTruthy()
+    expect(screen.queryByLabelText('Remove')).toBeNull()
+    expect(screen.getByLabelText('Put back')).toBeTruthy()
+    fireEvent.click(screen.getByLabelText('Pause'))
+    await waitFor(() => expect(api.host_schedule_enable).toHaveBeenCalledWith(expect.objectContaining({ id: 'certs.weekly', enabled: false })))
+  })
+
+  it('sets a cron venv’s zone and package policy from Venv settings', async () => {
+    api.host_scheduler_settings = vi.fn(() => Promise.resolve({ ok: true, settings: {}, warnings: [] }))
+    view()
+    fireEvent.click(screen.getByRole('button', { name: /Venv settings/ }))
+    const zone = await screen.findByLabelText('Time zone') as HTMLInputElement
+    expect(zone.value).toBe('')
+    expect(zone.placeholder).toContain('Europe/London')
+    expect(screen.queryByLabelText('Fire timeout')).toBeNull()  // durations are daemon-only
+    fireEvent.change(zone, { target: { value: 'America/New_York' } })
+    expect(screen.getByText(/will need the daemon/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(api.host_scheduler_settings).toHaveBeenCalledWith({ host: 'web-1', venv: 'ops', backend: 'cron', timezone: 'America/New_York' }))
   })
 })
 

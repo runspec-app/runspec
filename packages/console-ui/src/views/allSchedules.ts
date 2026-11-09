@@ -7,7 +7,7 @@
  *
  * Older schedulers (< 0.5.0) report no `backend` and no `daemon`: they are cron.
  */
-import type { RunCard, RunNote, Schedule, ScheduleAttention, SchedulerSettings, SharedSchedule, SharedSchedulesVenv } from '../bridge'
+import type { PackageSchedulePolicy, RunCard, RunNote, Schedule, ScheduleAttention, SchedulerSettings, SharedSchedule, SharedSchedulesPackages, SharedSchedulesVenv } from '../bridge'
 import { hostPasses, parseSearch } from '../searchTokens'
 
 /** The four option cards across the top of the Schedules tab. */
@@ -19,7 +19,7 @@ export type RowKind = 'schedule' | 'stale' | 'unreadable'
 export type RowState =
   | 'ok' | 'disabled' | 'last run failed' | 'running' | 'not installed' | 'not installable'
   | 'stale line' | 'scheduler stopped' | 'scheduler stale' | "can't read" | 'unknown' | 'legacy line'
-  | 'being handled' | 'dealt with'
+  | 'being handled' | 'dealt with' | 'offered' | 'needs daemon'
 
 export interface RowLastRun {
   ts: string
@@ -54,6 +54,10 @@ export interface ScheduleRow {
   error?: string
   /** A failing host schedule (claimable): its job state from the venv's runs index. */
   attention?: ScheduleAttention
+  /** A host schedule a package offers in its runspec.toml (runspec-scheduler >= 0.10.0). */
+  fromPackage?: boolean
+  /** What the schedule does, in its package's words. */
+  description?: string
 }
 
 /** A venv-level note shown above the list (status errors, daemon config errors). */
@@ -88,6 +92,12 @@ export interface SchedulerVenv {
   venv: string
   backend: 'cron' | 'daemon'
   owner: string
+  /** The `[scheduler]` table (null on schedulers < 0.7.0). */
+  settings: SchedulerSettings | null
+  /** The host's own zone (runspec-scheduler >= 0.10.0; '' before). */
+  hostZone: string
+  /** Package schedules (runspec-scheduler >= 0.10.0; null before). */
+  packages: SharedSchedulesPackages | null
 }
 
 export interface Collected {
@@ -115,6 +125,8 @@ export const STATE_COLOR: Record<RowState, string> = {
   'legacy line': 'gold',
   'being handled': 'purple',
   'dealt with': 'cyan',
+  'offered': 'geekblue',
+  'needs daemon': 'orange',
 }
 
 /** A claim with no newer note for this long shows as stale: the failure counts
@@ -151,7 +163,26 @@ export function venvBackend(v: SharedSchedulesVenv): 'cron' | 'daemon' {
 
 function whenText(w: { cron?: string; every?: string; timezone?: string } | undefined): string {
   const base = w?.cron ? w.cron : w?.every ? `every ${w.every}` : '—'
-  return w?.timezone ? `${base} (${w.timezone})` : base
+  // "local" = the venv's zone, which is how every other schedule fires too.
+  return w?.timezone && w.timezone.toLowerCase() !== 'local' ? `${base} (${w.timezone})` : base
+}
+
+/** A host schedule's timing for a person: a package schedule in its package's
+ *  words (unless this venv changed its time). */
+export function sharedWhenText(s: SharedSchedule): string {
+  const pkg = s.package
+  if (pkg?.words && !(pkg.overridden ?? []).includes('when')) return pkg.words
+  return whenText(s.when)
+}
+
+/** Whether cron can't take a schedule because it keeps another zone's time. */
+export function needsDaemon(s: SharedSchedule): boolean {
+  return !s.installable && /needs the daemon/i.test(s.not_installable_reason ?? '')
+}
+
+/** A package schedule this venv changed (time, args, …): Put back undoes that. */
+export function packageOverridden(s: SharedSchedule): boolean {
+  return s.origin === 'package' && (s.package?.overridden ?? []).length > 0
 }
 
 function argsSummary(args: Record<string, unknown> | undefined, dashes = true): string {
@@ -163,7 +194,17 @@ const FAILED = new Set(['failed', 'crashed'])
 /** One state tag for a host schedule, most important first. */
 export function sharedState(s: SharedSchedule, v: SharedSchedulesVenv, now = Date.now()): { state: RowState; tip: string; problem: boolean } {
   const backend = venvBackend(v)
-  if (!s.enabled) return { state: 'disabled', tip: 'Disabled in runspec_scheduler.toml — never fires.', problem: false }
+  if (s.offered) {
+    const words = s.package?.words ? ` (${s.package.words})` : ''
+    const zone = backend === 'cron' && needsDaemon(s)
+      ? ' It keeps another zone’s time, so on this cron venv it would need the daemon.'
+      : ''
+    return { state: 'offered', tip: `Offered by its package${words}. Off until someone turns it on.${zone}`, problem: false }
+  }
+  if (!s.enabled) {
+    const tip = s.origin === 'package' ? 'Turned off in this venv — never fires.' : 'Disabled in runspec_scheduler.toml — never fires.'
+    return { state: 'disabled', tip, problem: false }
+  }
   if (backend === 'daemon') {
     const d = v.status?.daemon
     if (!d || d.state === 'stopped') {
@@ -174,6 +215,9 @@ export function sharedState(s: SharedSchedule, v: SharedSchedulesVenv, now = Dat
       return { state: 'scheduler stale', tip: `The scheduler process stopped reporting${age} — it may be hung.`, problem: true }
     }
   } else {
+    if (needsDaemon(s)) {
+      return { state: 'needs daemon', tip: `${s.not_installable_reason} Move the venv to the daemon (Update venv…), or edit the schedule’s zone.`, problem: true }
+    }
     if (!s.installable) return { state: 'not installable', tip: s.not_installable_reason || 'Cron can’t run this schedule.', problem: true }
     if (s.installed === false) return { state: 'not installed', tip: 'In the config but not in the crontab — run `runspec-scheduler sync` on the host.', problem: true }
   }
@@ -295,7 +339,11 @@ export function collectRows(
     }
     const st = v.status
     const backend = venvBackend(v)
-    editable.push({ key: base, host, hostGroup, venv, backend, owner: v.owner ?? '' })
+    editable.push({
+      key: base, host, hostGroup, venv, backend, owner: v.owner ?? '',
+      settings: st.settings ?? null, hostZone: st.host_zone ?? '', packages: st.packages ?? null,
+    })
+    for (const e of st.packages?.errors ?? []) notes.push({ key: `${base}::pkg::${e}`, host, venv, source: backend, message: e })
     for (const e of st.errors ?? []) notes.push({ key: `${base}::err::${e}`, host, venv, source: backend, message: e })
     if (backend === 'daemon') {
       daemons.push({
@@ -320,7 +368,7 @@ export function collectRows(
         name: '',
         runnable: [s.runnable, ...(s.command ?? [])].join(' '),
         argsText: argsSummary(s.args),
-        when: whenText(s.when),
+        when: sharedWhenText(s),
         nextRun: s.enabled && s.installed !== false ? s.next_run : null,
         lastRun: r ? { ts: r.start_ts, status: r.status, exitCode: r.exit_code, durationMs: r.duration_ms } : null,
         state, stateTip: tip, problem,
@@ -330,6 +378,8 @@ export function collectRows(
         historySearch: `sched:${s.id}`,
         shared: s,
         ...(s.attention && s.attention.state !== 'clean' && s.attention.run_id ? { attention: s.attention } : {}),
+        ...(s.origin === 'package' ? { fromPackage: true } : {}),
+        ...(s.description ? { description: s.description } : {}),
       })
     }
     for (const x of st.stale ?? []) {
@@ -493,6 +543,56 @@ export function settingsChanges(
     if (!v) continue
     if (current && v === settingText(current[key])) continue
     out[key] = v
+  }
+  return Object.keys(out).length ? out : null
+}
+
+/** What the venv does with schedules its packages offer. */
+export const PACKAGE_POLICY: { value: PackageSchedulePolicy; label: string; help: string }[] = [
+  { value: 'offer', label: 'Offer', help: 'They show here, off, until someone turns each one on.' },
+  { value: 'auto', label: 'Turn on', help: 'They run as soon as the package is installed (each can still be paused).' },
+  { value: 'off', label: 'Ignore', help: 'They don’t show and never run.' },
+]
+
+/** The Settings dialog's fields for one venv. */
+export interface VenvSettingsForm {
+  timeout?: string
+  misfire_grace?: string
+  catch_up_window?: string
+  timezone?: string                // '' = the host's zone
+  package_schedules?: PackageSchedulePolicy
+}
+
+/** Whether the venv's scheduler takes a zone + package policy (0.10.0+). */
+export function supportsPackages(v: Pick<SchedulerVenv, 'settings' | 'packages'>): boolean {
+  return !!v.packages || v.settings?.package_schedules != null
+}
+
+/** The form a venv's Settings dialog opens with. */
+export function settingsForm(v: Pick<SchedulerVenv, 'backend' | 'settings' | 'packages'>): VenvSettingsForm {
+  const cur = v.settings
+  const out: VenvSettingsForm = {}
+  if (v.backend === 'daemon' && cur) for (const { key } of DAEMON_SETTINGS) out[key] = settingText(cur[key])
+  if (supportsPackages(v)) {
+    out.timezone = cur?.timezone ?? ''
+    out.package_schedules = cur?.package_schedules ?? v.packages?.policy ?? 'offer'
+  }
+  return out
+}
+
+/** What a Settings save sends: the changed fields only (durations on a daemon
+ *  venv; zone + policy on a 0.10.0+ scheduler), or null when nothing changed.
+ *  A cleared zone is sent as '' (back to the host's). */
+export function venvSettingsChanges(
+  v: Pick<SchedulerVenv, 'backend' | 'settings' | 'packages'>,
+  form: VenvSettingsForm,
+): VenvSettingsForm | null {
+  const out: VenvSettingsForm = v.backend === 'daemon' ? { ...(settingsChanges(v.settings, form) ?? {}) } : {}
+  if (supportsPackages(v)) {
+    const before = settingsForm(v)
+    const zone = (form.timezone ?? '').trim()
+    if (zone !== (before.timezone ?? '')) out.timezone = zone
+    if (form.package_schedules && form.package_schedules !== before.package_schedules) out.package_schedules = form.package_schedules
   }
   return Object.keys(out).length ? out : null
 }

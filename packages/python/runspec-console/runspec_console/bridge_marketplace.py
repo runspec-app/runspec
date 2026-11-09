@@ -56,6 +56,7 @@ _PROBE_TIMEOUT_S = 40
 # and clear-cache drop the cache so a real change forces a fresh probe.
 _PROBE_TTL_S = 60.0
 _PIP_TIMEOUT_S = 900
+_SYNC_TIMEOUT_S = 120
 _MAX_OP_LINES = 400  # pip output lines kept per target in the op record
 _MAX_FINISHED_OPS = 25  # finished ops kept for the Marketplace history list
 # The runspec library itself: "Also upgrade runspec" adds it to an install.
@@ -1082,6 +1083,8 @@ class MarketplaceMixin:
             res["exit_code"] = code
             res["ok"] = code == 0
             res["summary"] = mp.summarize_pip_output(out) or f"exit {code}"
+            if res["ok"] and not cancel.is_set():
+                _sync(t, res, _line)
             row.update(
                 state="done", ok=res["ok"], exit_code=code, summary=res["summary"]
             )
@@ -1094,6 +1097,32 @@ class MarketplaceMixin:
                 summary=res["summary"],
             )
             return res
+
+        def _sync(
+            t: dict[str, Any], res: dict[str, Any], line: Callable[[str], None]
+        ) -> None:
+            # The venv's schedules follow its packages: bring the crontab up to
+            # date (best-effort; pip already succeeded).
+            try:
+                code, out = self._run_on_target(
+                    t,
+                    mp.scheduler_sync_argv(str(t["python"])),
+                    run_as=str(t.get("run_as") or ""),
+                    become_method=str(t.get("become_method") or "sudo"),
+                    timeout=_SYNC_TIMEOUT_S,
+                )
+            except Exception as exc:  # noqa: BLE001
+                code, out = -1, str(exc)
+            if code == 0 and not out.strip():
+                return  # no scheduler in this venv
+            for ln in out.splitlines():
+                line(ln)
+            res["scheduler_sync"] = code == 0
+            if code != 0:
+                res["summary"] += (
+                    " · couldn't update the venv's crontab (Sync crontab on the "
+                    "Schedules tab)"
+                )
 
         workers_fn = getattr(self, "_fanout_workers", None)
         try:

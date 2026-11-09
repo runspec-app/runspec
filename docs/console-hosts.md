@@ -134,7 +134,10 @@ to retry on the host. When the chosen keeper can't be set up, the console falls
 back to the crontab watchdog; if that fails too it moves the schedules back to
 the owner's crontab, so they keep firing either way. Listing `runspec-scheduler`
 in Packages (to pin or upgrade it) still gets the `[supervisor]` extra for the
-supervisord and auto keepers.
+supervisord and auto keepers. With the daemon picked, **Schedule time zone**
+(blank = the host's) and **Package schedules** (*Offer* by default, *Turn
+them on*, *Ignore*) are written first with `runspec-scheduler settings`, so
+the daemon starts with them.
 
 A host that fails after the venv folder was made (a misspelt package name, a
 pip error, a cancel) has its partial venv undone, so a retry at the same path
@@ -186,6 +189,12 @@ Tick what to apply; each step runs as the venv's owner and is safe to repeat:
   about interval (`every`) schedules, which only the daemon can run. Each venv
   only moves its own crontab lines; another venv owned by the same account
   keeps its schedules (runspec-scheduler 0.6.2).
+- **Schedule time zone** and **Package schedules** (under Shared schedules;
+  blank / *Leave as it is* by default) set the scheduler's zone and what it
+  does with schedules packages suggest (`runspec-scheduler settings`, needs
+  runspec-scheduler 0.10.0). When the schedules stay where they are, the
+  update then runs `runspec-scheduler sync`, so the crontab picks up new
+  package schedules and a new zone.
 
 When packages are upgraded and the venv's scheduler daemon is running, the
 update restarts it at the end (`runspec-scheduler restart`), so it runs the

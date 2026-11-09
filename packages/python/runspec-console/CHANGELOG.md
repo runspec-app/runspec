@@ -9,6 +9,52 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.398.0] — 2026-11-09
+
+### Added
+
+- **Schedules that packages suggest (runspec-scheduler 0.10.0).** A package
+  can offer schedules for its runnables in its `runspec.toml`
+  (`[<runnable>.meta.scheduler.<name>]`); the Schedules tab now shows them.
+  - Under the venv's default **Offer** policy they are *offered* rows, off,
+    with the package's timing in words and its description, and a **Turn on**
+    button. Turning on (and Pause / Resume on a 0.10.0 venv) runs the new
+    `host_schedule_enable` → `runspec-scheduler enable|disable --id …` as the
+    venv owner, which writes only `enabled`, so the schedule keeps following
+    its package. A cron venv's crontab is synced afterwards. Audited as
+    `schedule.host.enabled` / `schedule.host.disabled`.
+  - Package rows carry a *package* tag (*package · changed* when this venv
+    changed something). They have no Remove; **Put back** drops this venv's
+    changes. Errors reading a package's schedules show above the list.
+  - A schedule in another zone than the host's on a cron venv shows
+    *needs daemon* (cron fires on the host's clock).
+- **Venv settings** on the Schedules tab opens the scheduler settings for any
+  venv, cron or daemon: the venv's **Time zone** (blank = the host's) and
+  **Package schedules** policy (offer / turn on / ignore), plus the daemon's
+  durations on a daemon venv. `host_scheduler_settings` takes `timezone`,
+  `package_schedules` and `backend`, syncs a cron venv's crontab after a zone
+  or policy change, says to upgrade a scheduler older than 0.10.0, and audits
+  the changed fields.
+- **Provision venv** and **Update venv** set the zone and package policy.
+  Provision writes them (with *Shared schedules* on) before `use daemon`, so
+  the daemon starts with them. Update takes them on their own or with other
+  options (`scheduler_settings`), writes them before any backend move, and
+  then runs `runspec-scheduler sync` when the schedules stay where they are
+  and packages were installed or settings changed. New steps `settings` and
+  `sync`, both non-required.
+- **Marketplace installs and removals sync the venv's schedules.** After pip
+  succeeds, a venv with `runspec-scheduler` runs its `sync` as the same
+  account (`marketplace.scheduler_sync_argv`, no shell needed), so schedules a
+  new package suggests reach the crontab and a removed package's lines go. A
+  failed sync doesn't fail the install; the summary says to use Sync crontab.
+
+### Changed
+
+- The host schedule editor treats the venv's own default timeout (not a fixed
+  6h) as "no timeout set" when it opens a daemon schedule.
+- A host schedule's `timezone = "local"` no longer shows as "(local)" in the
+  When column.
+
 ## [0.397.0] — 2026-11-09
 
 ### Added

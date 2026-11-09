@@ -1596,6 +1596,31 @@ export interface SharedSchedule {
   timeout?: number | null
   // runspec-scheduler >= 0.7.2 on runspec >= 0.83.0: who is handling its failures.
   attention?: ScheduleAttention | null
+  // runspec-scheduler >= 0.10.0: a schedule a package offers in its runspec.toml.
+  // `offered` = still off, waiting to be turned on (venv policy "offer").
+  origin?: 'package' | 'config'
+  offered?: boolean
+  description?: string
+  package?: SharedSchedulePackage | null
+  /** The zone the schedule fires in ("" / absent = the venv's, then the host's). */
+  zone?: string
+}
+
+export interface SharedSchedulePackage {
+  words?: string                   // the package's own timing in words ("02:30 daily")
+  when?: { cron?: string; every?: string; timezone?: string }
+  source?: string                  // the runspec.toml it came from
+  overridden?: string[]            // keys the venv's config changes
+}
+
+/** What the venv does with schedules its packages offer (runspec-scheduler >= 0.10.0). */
+export type PackageSchedulePolicy = 'offer' | 'auto' | 'off'
+
+export interface SharedSchedulesPackages {
+  policy: PackageSchedulePolicy
+  offered: number
+  errors: string[]
+  orphans: string[]
 }
 
 // The per-venv scheduler daemon as `runspec-scheduler status` reports it
@@ -1623,6 +1648,9 @@ export interface SchedulerSettings {
   timeout: number                  // per-fire limit, 0 = none
   misfire_grace: number            // how late a fire may still run
   catch_up_window: number          // how far back catch_up looks on start
+  // runspec-scheduler >= 0.10.0: the venv's zone ("" = the host's) and package policy.
+  timezone?: string
+  package_schedules?: PackageSchedulePolicy
 }
 
 // What keeps a venv's daemon running (`runspec-scheduler status` → keeper).
@@ -1640,6 +1668,8 @@ export interface SharedSchedulesStatus {
   settings?: SchedulerSettings     // >= 0.7.0
   log?: string                     // the daemon's log file (>= 0.7.0)
   keeper?: SchedulerKeeper[]       // >= 0.6.0
+  host_zone?: string               // >= 0.10.0: the host's own zone
+  packages?: SharedSchedulesPackages  // >= 0.10.0
   schedules: SharedSchedule[]
   stale: { id: string; user: string; reason?: string }[]
   errors: string[]
@@ -1729,15 +1759,27 @@ export interface HostScheduleEnvCheck {
 export interface HostSchedulerSettings {
   host: string
   venv: string
+  backend?: 'cron' | 'daemon'      // a cron venv is synced after a zone / policy change
   timeout?: string                 // seconds or 90m / 6h / 1d; 0 = none
   misfire_grace?: string
   catch_up_window?: string
+  /** An IANA zone; "" = back to the host's. Sent only when changed (0.10.0+). */
+  timezone?: string
+  package_schedules?: PackageSchedulePolicy
 }
 
 export interface HostSchedulerSettingsResult {
   ok: boolean
   error?: string
   settings?: Partial<SchedulerSettings>
+  warnings?: string[]
+}
+
+// Turn one host schedule on or off — writes only `enabled`, so a package
+// schedule keeps following its package (runspec-scheduler >= 0.10.0).
+export interface HostScheduleEnable extends HostScheduleTarget {
+  id: string
+  enabled: boolean
 }
 
 export interface HostSchedulerRestartResult {
@@ -2492,6 +2534,14 @@ export interface ProvisionPayload {
   scheduler?: '' | ProvisionSchedulerKeeper
   /** Set the venv's log retention policy (runspec logs retention); absent = none. */
   retention?: ProvisionRetention
+  /** The scheduler's zone / package policy (with a scheduler only); blank = default. */
+  scheduler_settings?: ProvisionSchedulerSettings
+}
+
+/** Blank / absent = leave it (on a new venv: the host's zone, "offer"). */
+export interface ProvisionSchedulerSettings {
+  timezone?: string
+  package_schedules?: PackageSchedulePolicy | ''
 }
 
 /** Durations like "7d" / "2w"; a missing field isn't set. */
@@ -2610,6 +2660,8 @@ export interface VenvUpdatePayload {
   retention?: ProvisionRetention
   /** '' = leave schedules alone, a keeper = move them to the daemon, 'off' = back to crontab. */
   scheduler?: '' | ProvisionSchedulerKeeper | 'off'
+  /** Set the scheduler's zone / package policy; absent or blank = leave it. */
+  scheduler_settings?: ProvisionSchedulerSettings
   become_method?: 'sudo' | 'su'
 }
 
@@ -3292,6 +3344,8 @@ export interface BridgeApi {
   host_schedule_save: (payload: HostScheduleSave) => Promise<HostScheduleResult>
   host_schedule_remove: (payload: HostScheduleTarget & { id: string }) => Promise<HostScheduleResult>
   host_schedule_sync: (payload: { host: string; venv: string }) => Promise<HostScheduleResult>
+  // Turn one host schedule on / off (writes only `enabled`; runspec-scheduler >= 0.10.0).
+  host_schedule_enable: (payload: HostScheduleEnable) => Promise<HostScheduleResult>
   // Fire one host schedule now, in the background (runspec-scheduler >= 0.7.0).
   host_schedule_run_now: (payload: { host: string; venv: string; id: string }) => Promise<HostScheduleRunNowResult>
   // Claim / mark dealt with / release failing host schedules in one venv (runspec >= 0.83.0).

@@ -51,7 +51,46 @@ runspec-tui
 | `Ctrl+Q` | Quit |
 
 `runspec-tui --all` also lists runnables marked `discoverable = false`.
+`F3` opens the Schedules screen when `runspec-scheduler` is installed (below).
 `--theme NAME` (or `RUNSPEC_TUI_THEME`) picks a Textual theme.
+
+## Schedules (F3)
+
+When `runspec-scheduler` is installed in the same venv, **F3** (or
+`runspec-tui --schedules`) opens its schedules: every schedule this venv's
+scheduler knows, including the ones its installed packages offer, with when
+each runs next, how its last run went, and whether someone is handling a
+failure. The top strip shows the backend (cron or the daemon), whether the
+daemon is running and what keeps it up, the venv's time zone and its
+package-schedules policy. The screen re-reads every 10 seconds; the bottom
+pane shows the highlighted schedule's description, recent runs and last
+output.
+
+| Key | Does |
+|---|---|
+| `c` | I'm on it: mark a failing schedule as being handled by you (optional note) |
+| `x` | Dealt with: say what was done (a note is required) |
+| `u` | Release a schedule you or someone else claimed |
+| `n` | Run it now, the way the schedule would (asks first) |
+| `o` | Turn it on or off (an offered package schedule is turned on) |
+| `e` | Change when it runs: every day / weekdays at a time, a cron expression, or an interval (daemon only), with an optional zone |
+| `a` | Add a schedule: pick a runnable, fill in its form, Ctrl+R asks when |
+| `d` | Remove it (a package schedule goes back to what its package says) |
+| `y` | Sync crontab (cron backend) |
+| `r` | Restart the daemon (daemon backend; asks first) |
+| `s` | Settings: the venv's time zone, what to do with package schedules (offer / turn on / ignore), and the daemon's time limits |
+| `b` | Switch between cron and the daemon (asks first) |
+| `F5` | Read it again now |
+| `Esc` | Back to the forms |
+
+Changes run the venv's own `runspec-scheduler` (and `runspec history` for the
+notes) **as the venv owner**: directly when you are that account, otherwise
+through `sudo -n -u <owner>`, so you need a passwordless sudo rule to that
+account; without one the screen says so. On the cron backend each change is
+followed by a crontab sync, so it takes effect at once. A schedule's arguments
+are the ones you changed in the form; a `password` field can't be scheduled
+(put it in the venv's `runspec_schedules.env` instead), and a schedule that
+carries credentials can't have its time changed here.
 
 ## How runs work
 

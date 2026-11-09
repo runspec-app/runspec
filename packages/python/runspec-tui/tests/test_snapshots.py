@@ -43,3 +43,20 @@ def test_validation_errors(snap_compare) -> None:
         await pilot.pause()
 
     assert snap_compare(make_app(), terminal_size=SIZE, run_before=run_before)
+
+
+def test_schedules_screen(snap_compare, monkeypatch) -> None:
+    from sched_fixture import CALLER, NOW, FakeScheduler
+
+    from runspec_tui import schedules_screen
+
+    monkeypatch.setattr(schedules_screen, "now", lambda: NOW)
+    app = RunspecTUI(fixture_runnables(), venv="/opt/venvs/ops", user="ops", scheduler=CALLER, scheduler_call=FakeScheduler())
+
+    async def run_before(pilot) -> None:
+        await pilot.press("f3")
+        await pilot.app.workers.wait_for_complete()
+        await pilot.press("down")
+        await pilot.pause()
+
+    assert snap_compare(app, terminal_size=SIZE, run_before=run_before)

@@ -8,6 +8,7 @@ import {
   type ProvisionResult,
   type ProvisionRetention,
   type ProvisionSchedulerKeeper,
+  type ProvisionSchedulerSettings,
   type VenvUpdatePayload,
   type VenvUpdateRow,
 } from '../bridge'
@@ -18,6 +19,8 @@ import {
   RETENTION_DEFAULT,
   SCHEDULER_OPTIONS,
   STEP_LABEL,
+  SchedulerSettingsFields,
+  schedulerSettingsPayload,
   applyProgress,
   membersOf,
   retentionProblem,
@@ -61,6 +64,8 @@ export interface UpdateForm {
   inbox: boolean
   retention: ProvisionRetention | null
   scheduler: SchedulerChoice
+  /** The scheduler's zone / package policy; blank = leave it. */
+  schedulerSettings?: ProvisionSchedulerSettings
   become: 'sudo' | 'su'
 }
 
@@ -71,6 +76,7 @@ export function buildUpdatePayload(targets: DeprovisionTarget[], f: UpdateForm):
   const d = (f.retention?.delete_after ?? '').trim().toLowerCase()
   if (c) retention.compact_after = c
   if (d) retention.delete_after = d
+  const settings = schedulerSettingsPayload(f.schedulerSettings)
   return {
     targets,
     upgrade_runspec: f.upgradeRunspec,
@@ -79,13 +85,14 @@ export function buildUpdatePayload(targets: DeprovisionTarget[], f: UpdateForm):
     inbox: f.inbox,
     retention: f.retention ? retention : undefined,
     scheduler: f.scheduler || undefined,
+    ...(settings ? { scheduler_settings: settings } : {}),
     become_method: f.become,
   }
 }
 
 /** True when the request would change something (verify alone isn't an update). */
 export function hasWork(p: VenvUpdatePayload): boolean {
-  return !!(p.upgrade_runspec || (p.packages ?? []).length || p.inbox || p.retention || p.scheduler)
+  return !!(p.upgrade_runspec || (p.packages ?? []).length || p.inbox || p.retention || p.scheduler || p.scheduler_settings)
 }
 
 /** What the chosen options mean for one venv, before anything runs. */
@@ -95,6 +102,9 @@ export function updateNotes(row: VenvUpdateRow, f: UpdateForm): string[] {
     out.push(`runspec ${row.runspec_version || '(unknown version)'} here is too old for log cleanup (needs ${RETENTION_MIN_RUNSPEC}); tick Upgrade runspec.`)
   }
   if (f.scheduler === 'off' && !row.scheduler) out.push('No runspec-scheduler in this venv, so there is no daemon to stop.')
+  if (schedulerSettingsPayload(f.schedulerSettings) && !row.scheduler && (!f.scheduler || f.scheduler === 'off')) {
+    out.push('No runspec-scheduler in this venv, so the schedule time zone and package schedules aren’t set.')
+  }
   const c = row.schedules
   if (f.scheduler && row.scheduler && !c) {
     out.push(`Couldn't count this venv's schedules${row.schedules_error ? `: ${row.schedules_error}` : ''}.`)
@@ -196,6 +206,7 @@ export function UpdateVenvModal({
   const [compactAfter, setCompactAfter] = useState(RETENTION_DEFAULT.compact_after ?? '')
   const [deleteAfter, setDeleteAfter] = useState(RETENTION_DEFAULT.delete_after ?? '')
   const [scheduler, setScheduler] = useState<SchedulerChoice>('')
+  const [schedSettings, setSchedSettings] = useState<ProvisionSchedulerSettings>({})
   const [become, setBecome] = useState<'sudo' | 'su'>('sudo')
   const [op, setOp] = useState<string | null>(null)
   const [progress, setProgress] = useState<Record<string, HostProgress>>({})
@@ -258,7 +269,7 @@ export function UpdateVenvModal({
 
   const retention = cleanup ? { compact_after: compactAfter, delete_after: deleteAfter } : null
   const retentionError = retention ? retentionProblem(retention) : ''
-  const form: UpdateForm = { upgradeRunspec, packages, repo, inbox, retention, scheduler, become }
+  const form: UpdateForm = { upgradeRunspec, packages, repo, inbox, retention, scheduler, schedulerSettings: schedSettings, become }
   const ready = (preview ?? []).filter(r => r.ok)
   const payload = buildUpdatePayload(ready.map(r => ({ host: r.host, runspec_path: r.runspec_path })), form)
   const canStart = ready.length > 0 && hasWork(payload) && !retentionError && !op
@@ -434,6 +445,12 @@ export function UpdateVenvModal({
                     ? "Writes the schedules back to the owner's crontab, then removes the daemon's keepers and stops it."
                     : `Installs runspec-scheduler, moves this venv's schedules from the owner's crontab to its daemon and sets up what restarts it.${scheduler === 'auto' ? ' Per host: systemd --user when lingering is on, else supervisord in the venv.' : ''}`)}
                 {scheduler && preview && moveTotal(ready, scheduler) && <div><Text style={{ fontSize: 12 }}>{moveTotal(ready, scheduler)}</Text></div>}
+                {!off && (
+                  <div style={{ marginTop: 8 }}>
+                    <SchedulerSettingsFields value={schedSettings} onChange={setSchedSettings} leave
+                      hint="Needs runspec-scheduler 0.10.0 or later (add runspec-scheduler to the packages to upgrade it)." />
+                  </div>
+                )}
               </div>
               <div>
                 {label('Become via')}

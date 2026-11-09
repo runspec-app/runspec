@@ -21,6 +21,7 @@ import time
 import pytest
 
 from runspec_console import config as config_mod
+from runspec_console import host_schedules as hs
 from runspec_console import hosts as hosts_mod
 from runspec_console import marketplace as mp
 from runspec_console.bridge import Bridge
@@ -48,6 +49,10 @@ case "$1" in
        elif [ -e "$d/FAIL_KEEPER" ]; then echo "keeper broke" >&2; exit 1; fi
        echo "$*" >> "$d/keeper.calls"
        echo '{"ok": true, "manager": "cron", "reason": "no systemd", "warnings": ["the daemon runs as root"]}' ;;
+  settings|sync)
+       [ -e "$d/FAIL_$1" ] && { echo "unknown command: $1" >&2; exit 2; }
+       echo "$*" >> "$d/$1.calls"
+       echo '{"ok": true}' ;;
   status) [ -e "$d/STATUS" ] && cat "$d/STATUS" || echo "no status here" >&2 ;;
   daemon) while :; do sleep 1; done ;;
 esac
@@ -744,6 +749,22 @@ def test_plan_adds_the_scheduler_package(app):
     # The pin wins but keeps supervisord, which auto may pick.
     assert pinned["packages"] == ["runspec", "runspec-scheduler[supervisor]==0.6.1"]
     assert b._prov_plan(base)["scheduler"] == ""
+    # Zone / policy go with the daemon; without one there is nothing to set.
+    settings = {"timezone": "Europe/Paris", "package_schedules": "off"}
+    assert (
+        b._prov_plan({**base, "scheduler": "auto", "scheduler_settings": settings})[
+            "scheduler_settings"
+        ]
+        == settings
+    )
+    assert (
+        b._prov_plan({**base, "scheduler_settings": settings})["scheduler_settings"]
+        == {}
+    )
+    with pytest.raises(ValueError, match="IANA"):
+        b._prov_plan(
+            {**base, "scheduler": "auto", "scheduler_settings": {"timezone": "x y"}}
+        )
 
 
 @pytest.mark.skipif(sys.version_info < (3, 10), reason="runspec needs 3.10+")
@@ -757,6 +778,7 @@ def test_provision_sets_up_the_scheduler_daemon(app, tmp_path):
             "dest": str(dest),
             "python": sys.executable,
             "scheduler": "auto",
+            "scheduler_settings": {"timezone": "Asia/Tokyo"},
         }
     )
     rec = _wait(b, out["op"])
@@ -766,6 +788,11 @@ def test_provision_sets_up_the_scheduler_daemon(app, tmp_path):
     assert "the daemon runs as root" in res["warnings"]
     joined = "\n".join(b.commands)
     assert f"{dest}/bin/runspec-scheduler use daemon" in joined
+    # The zone is set before the daemon starts.
+    assert (dest / "bin" / "settings.calls").read_text() == (
+        "settings --timezone Asia/Tokyo\n"
+    )
+    assert joined.index("runspec-scheduler settings") < joined.index("use daemon")
     assert (dest / "bin" / "keeper.calls").read_text().strip() == (
         "install-service --manager auto --write"
     )
@@ -1146,6 +1173,94 @@ def test_update_plan_validation(app, tmp_path):
     assert plan["specs"] == ["runspec", "runspec-scheduler[supervisor]>=0.6.0"]
     assert b._upd_plan({**t, "scheduler": "off"})["specs"] == []
     assert b._upd_plan({**t, "inbox": True})["inbox"] is True
+    # The scheduler's zone / package policy alone is something to update.
+    plan = b._upd_plan(
+        {
+            **t,
+            "scheduler_settings": {
+                "timezone": " Europe/Paris ",
+                "package_schedules": "AUTO",
+            },
+        }
+    )
+    assert plan["scheduler_settings"] == {
+        "timezone": "Europe/Paris",
+        "package_schedules": "auto",
+    }
+    assert (
+        b._upd_plan({**t, "inbox": True, "scheduler_settings": {"timezone": ""}})[
+            "scheduler_settings"
+        ]
+        == {}
+    )
+    with pytest.raises(ValueError, match="IANA"):
+        b._upd_plan({**t, "scheduler_settings": {"timezone": "local"}})
+    with pytest.raises(ValueError, match="offer, auto, off"):
+        b._upd_plan({**t, "scheduler_settings": {"package_schedules": "always"}})
+
+
+@pytest.mark.skipif(sys.version_info < (3, 10), reason="runspec needs 3.10+")
+def test_update_sets_the_zone_and_policy_then_syncs(app, tmp_path):
+    venv = _old_venv(tmp_path)
+    _fake_scheduler(venv / "bin" / "runspec-scheduler")
+    rp = f"{venv}/bin/runspec"
+    _hosts([rp])
+    b = _StubBridge()
+    out = b.venv_update_start(
+        {
+            "targets": [{"host": "web-01", "runspec_path": rp}],
+            "upgrade_runspec": True,
+            "scheduler_settings": {
+                "timezone": "Europe/Paris",
+                "package_schedules": "auto",
+            },
+        }
+    )
+    [res] = _wait(b, out["op"])["results"]
+    assert res["ok"], res
+    assert (venv / "bin" / "settings.calls").read_text() == (
+        "settings --timezone Europe/Paris --package-schedules auto\n"
+    )
+    # pip may have brought new package schedules: the crontab catches up.
+    assert (venv / "bin" / "sync.calls").read_text() == "sync\n"
+    applied = b.audit[-1]["extra"]["applied"]
+    assert applied[-2:] == ["settings", "sync"]
+    assert b.audit[0]["extra"]["scheduler_settings"] == {
+        "timezone": "Europe/Paris",
+        "package_schedules": "auto",
+    }
+
+    # An older scheduler: the venv still updates, with a note on what to do.
+    (venv / "bin" / "settings.calls").unlink()
+    (venv / "bin" / "FAIL_settings").touch()
+    out = b.venv_update_start(
+        {
+            "targets": [{"host": "web-01", "runspec_path": rp}],
+            "scheduler_settings": {"package_schedules": "off"},
+        }
+    )
+    [res] = _wait(b, out["op"])["results"]
+    assert res["ok"], res
+    [note] = [w for w in res["warnings"] if "time zone" in w]
+    assert hs.PACKAGES_MIN in note
+
+
+@pytest.mark.skipif(sys.version_info < (3, 10), reason="runspec needs 3.10+")
+def test_update_settings_without_a_scheduler_warns(app, tmp_path):
+    venv = _old_venv(tmp_path)
+    rp = f"{venv}/bin/runspec"
+    _hosts([rp])
+    b = _StubBridge()
+    out = b.venv_update_start(
+        {
+            "targets": [{"host": "web-01", "runspec_path": rp}],
+            "scheduler_settings": {"timezone": "Europe/Paris"},
+        }
+    )
+    [res] = _wait(b, out["op"])["results"]
+    assert res["ok"], res
+    assert any("No runspec-scheduler" in w for w in res["warnings"])
+    assert "runspec-scheduler" not in _step_cmds(b)
 
 
 @pytest.mark.skipif(sys.version_info < (3, 10), reason="runspec needs 3.10+")
