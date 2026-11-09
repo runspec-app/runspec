@@ -17,6 +17,8 @@ const m = vi.hoisted(() => ({
   startFanout: vi.fn(),
   makeDir: vi.fn(),
   viewFile: vi.fn(),
+  renamePath: vi.fn(),
+  deletePaths: vi.fn(),
 }))
 
 vi.mock('../../bridge', () => ({
@@ -29,6 +31,9 @@ vi.mock('../../bridge', () => ({
         case 'start_fanout': return m.startFanout
         case 'make_dir': return m.makeDir
         case 'view_file': return m.viewFile
+        case 'rename_path': return m.renamePath
+        case 'delete_paths': return m.deletePaths
+        case 'files_accounts': return (h: string) => Promise.resolve(h === 'local' ? { login: '', accounts: [] } : { login: 'ops', accounts: ['svc'] })
         case 'current_workspace_path': return () => Promise.resolve('/ws')
         case 'get_filters': return () => Promise.resolve([
           { name: 'errors', pipeline: "grep -E 'ERROR|WARN'" },
@@ -65,6 +70,8 @@ function listing(host: string, path: string) {
   }
 }
 
+const listed = (host: string, path: string) => m.listDir.mock.calls.some(c => c[0] === host && c[1] === path)
+
 // jsdom has no DataTransfer; this is enough for our handlers.
 function dt() {
   const data: Record<string, string> = {}
@@ -99,13 +106,15 @@ describe('FilesView', () => {
     m.startRelay.mockReset().mockResolvedValue({ id: 't2' })
     m.startFanout.mockReset().mockResolvedValue({ id: 't3' })
     m.makeDir.mockReset().mockResolvedValue({ path: '/var/log/app/new' })
+    m.renamePath.mockReset().mockResolvedValue({ path: '/var/log/app/app.old' })
+    m.deletePaths.mockReset().mockImplementation((_h: string, paths: string[]) => Promise.resolve({ deleted: paths, failed: [] }))
     m.viewFile.mockReset().mockResolvedValue({ size: 10, text: 'line one\nline two', lines: 2, partial: false, binary: false })
   })
 
   it('opens the workspace on the left and the selected host on the right', async () => {
     render(<FilesView hosts={HOSTS} selectedHost="app-01" active />)
-    await waitFor(() => expect(m.listDir).toHaveBeenCalledWith('local', '/ws'))
-    expect(m.listDir).toHaveBeenCalledWith('app-01', '')
+    await waitFor(() => expect(listed('local', '/ws')).toBe(true))
+    expect(listed('app-01', '')).toBe(true)
     expect(await screen.findByText('app.log')).toBeTruthy()
     expect(screen.getByText('notes.md')).toBeTruthy()
     expect(screen.getByText('Daily app logs')).toBeTruthy()
@@ -159,7 +168,7 @@ describe('FilesView', () => {
     const leftSelect = within(screen.getByTestId('pane-left')).getByRole('combobox')
     fireEvent.mouseDown(leftSelect)
     fireEvent.click(await screen.findByTitle('app-02'))
-    await waitFor(() => expect(m.listDir).toHaveBeenCalledWith('app-02', ''))
+    await waitFor(() => expect(listed('app-02', '')).toBe(true))
     await waitFor(() => expect(within(screen.getByTestId('pane-left')).getByText('gc.log')).toBeTruthy())
     const row = within(screen.getByTestId('pane-right')).getByText('app.log')
     const transfer = dt()
@@ -175,7 +184,7 @@ describe('FilesView', () => {
   it('double-clicking a file views its end', async () => {
     render(<FilesView hosts={HOSTS} selectedHost="app-01" active />)
     fireEvent.doubleClick(await screen.findByText('app.log'))
-    await waitFor(() => expect(m.viewFile).toHaveBeenCalledWith('app-01', '/var/log/app/app.log', 500))
+    await waitFor(() => expect(m.viewFile).toHaveBeenCalledWith('app-01', '/var/log/app/app.log', 500, undefined))
     expect(await screen.findByText(/line two/)).toBeTruthy()
   })
 
@@ -185,6 +194,47 @@ describe('FilesView', () => {
     fireEvent.click(within(screen.getByTestId('pane-right')).getByRole('button', { name: 'New folder' }))
     fireEvent.change(await screen.findByLabelText('New folder name'), { target: { value: 'new' } })
     fireEvent.click(screen.getByRole('button', { name: 'Create' }))
-    await waitFor(() => expect(m.makeDir).toHaveBeenCalledWith('app-01', '/var/log/app', 'new'))
+    await waitFor(() => expect(m.makeDir).toHaveBeenCalledWith('app-01', '/var/log/app', 'new', undefined))
+  })
+
+  it('renames a file after Approve', async () => {
+    render(<FilesView hosts={HOSTS} selectedHost="app-01" active />)
+    fireEvent.click(await screen.findByText('app.log'))
+    fireEvent.click(within(screen.getByTestId('pane-right')).getByRole('button', { name: 'Rename' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText(/Runs as ops/)).toBeTruthy()
+    fireEvent.change(within(dialog).getByLabelText('New name'), { target: { value: 'app.old' } })
+    expect(m.renamePath).not.toHaveBeenCalled()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Approve' }))
+    await waitFor(() => expect(m.renamePath).toHaveBeenCalledWith('app-01', '/var/log/app', 'app.log', 'app.old', undefined))
+  })
+
+  it('deletes only after Approve, and Cancel deletes nothing', async () => {
+    render(<FilesView hosts={HOSTS} selectedHost="app-01" active />)
+    const row = (await screen.findByText('gc.log')).closest('[role=option]')!
+    fireEvent.click(row)
+    fireEvent.keyDown(row, { key: 'Delete' })
+    let dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('Delete gc.log on app-01?')).toBeTruthy()
+    fireEvent.click(within(dialog).getByRole('button', { name: /Cancel/ }))
+    await waitFor(() => expect(screen.queryByText('Delete gc.log on app-01?')).toBeNull())
+    expect(m.deletePaths).not.toHaveBeenCalled()
+
+    fireEvent.click(within(screen.getByTestId('pane-right')).getByRole('button', { name: 'Delete' }))
+    dialog = await screen.findByRole('dialog')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Approve' }))
+    await waitFor(() => expect(m.deletePaths).toHaveBeenCalledWith('app-01', ['/var/log/app/gc.log'], undefined))
+  })
+
+  it('browses a host as a venv owner', async () => {
+    render(<FilesView hosts={HOSTS} selectedHost="app-01" active />)
+    await screen.findByText('app.log')
+    await within(screen.getByTestId('pane-right')).findByText('as ops')
+    const asSelect = within(screen.getByTestId('pane-right')).getAllByRole('combobox')[1]
+    fireEvent.mouseDown(asSelect)
+    fireEvent.click(await screen.findByTitle('as svc (venv owner)'))
+    await waitFor(() => expect(m.listDir.mock.calls.some(c => c[0] === 'app-01' && c[1] === '/var/log/app' && c[6] === 'svc')).toBe(true))
+    fireEvent.doubleClick(await within(screen.getByTestId('pane-right')).findByText('app.log'))
+    await waitFor(() => expect(m.viewFile).toHaveBeenCalledWith('app-01', '/var/log/app/app.log', 500, 'svc'))
   })
 })

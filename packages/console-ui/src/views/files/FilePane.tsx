@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button, Input, Modal, Select, Spin, Tooltip, Typography, message } from 'antd'
 import {
   ArrowUpOutlined, HomeOutlined, ReloadOutlined, FolderAddOutlined, FolderFilled,
-  FileOutlined, CodeOutlined, LinkOutlined,
+  FileOutlined, CodeOutlined, LinkOutlined, EditOutlined, DeleteOutlined,
 } from '@ant-design/icons'
 import type { Credential, DirEntry, DirListing, Host } from '../../bridge'
 import { bridge } from '../../bridge'
@@ -24,14 +24,18 @@ export interface PaneState {
   loading: boolean
   error: string
   selected: string[]
+  // '' = the SSH login (or you, on this computer); else a venv owner the
+  // pane browses the host as (sudo -n -u).
+  asUser: string
 }
 
 // One pane's state + loading. `open(target, path)` switches machine and folder
 // together; an ad-hoc target only lists once the operator presses Connect.
 export function usePane() {
-  const [state, setState] = useState<PaneState>({ target: null, listing: null, loading: false, error: '', selected: [] })
+  const [state, setState] = useState<PaneState>({ target: null, listing: null, loading: false, error: '', selected: [], asUser: '' })
   const req = useRef(0)
   const targetRef = useRef<PaneTarget | null>(null)
+  const asRef = useRef('')
 
   const load = useCallback(async (path: string, target?: PaneTarget, select?: string[]) => {
     const t = target ?? targetRef.current
@@ -42,7 +46,7 @@ export function usePane() {
       const res = t.kind === 'adhoc'
         ? await bridge.list_dir_adhoc(t.adhoc.jump, t.adhoc.target.trim(), path, t.adhoc.user.trim() || undefined,
           t.adhoc.password || undefined, undefined, false, t.adhoc.credentialId || undefined)
-        : await bridge.list_dir(targetHost(t), path)
+        : await bridge.list_dir(targetHost(t), path, undefined, false, undefined, false, asRef.current || undefined)
       if (n !== req.current) return
       if (res.error) setState(s => ({ ...s, loading: false, error: res.error as string }))
       else setState(s => ({ ...s, loading: false, listing: res, selected: select ?? [] }))
@@ -53,8 +57,9 @@ export function usePane() {
 
   const open = useCallback((target: PaneTarget, path = '') => {
     targetRef.current = target
+    asRef.current = ''
     req.current++
-    setState({ target, listing: null, loading: false, error: '', selected: [] })
+    setState({ target, listing: null, loading: false, error: '', selected: [], asUser: '' })
     if (target.kind !== 'adhoc' || adHocValid(target.adhoc)) load(path, target)
   }, [load])
 
@@ -63,10 +68,17 @@ export function usePane() {
     setState(s => ({ ...s, target }))
   }, [])
 
+  // Switch the account the pane browses as, staying in the same folder.
+  const setAsUser = useCallback((asUser: string, path: string) => {
+    asRef.current = asUser
+    setState(s => ({ ...s, asUser }))
+    load(path)
+  }, [load])
+
   const setSelected = useCallback((selected: string[]) => setState(s => ({ ...s, selected })), [])
   const refresh = useCallback((select?: string[]) => load(state.listing?.cwd ?? '', undefined, select), [load, state.listing?.cwd])
 
-  return { ...state, load, open, setTarget, setSelected, refresh }
+  return { ...state, load, open, setTarget, setAsUser, setSelected, refresh }
 }
 
 export type Pane = ReturnType<typeof usePane>
@@ -94,9 +106,24 @@ export function FilePane({
   const [over, setOver] = useState(false)
   const [newFolder, setNewFolder] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
+  const [renaming, setRenaming] = useState<{ old: string; name: string } | null>(null)
+  const [deleting, setDeleting] = useState<string[] | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [accounts, setAccounts] = useState<{ login: string; accounts: string[] } | null>(null)
   const anchor = useRef<string | null>(null)
-  const { target, listing, loading, error, selected } = pane
+  const { target, listing, loading, error, selected, asUser } = pane
   const cwd = listing?.cwd ?? ''
+  const hostName = target?.kind === 'host' ? target.host : ''
+
+  // The accounts this host can be browsed as (its venv owners).
+  useEffect(() => {
+    setAccounts(null)
+    if (!hostName) return
+    let live = true
+    bridge.files_accounts(hostName).then(a => { if (live) setAccounts(a) }).catch(() => {})
+    return () => { live = false }
+  }, [hostName])
+  const who = asUser || (target?.kind === 'local' ? 'you' : accounts?.login || 'the SSH login')
 
   useEffect(() => { setPathText(cwd); setFilter(''); anchor.current = null }, [cwd])
 
@@ -188,14 +215,46 @@ export function FilePane({
     if (!target || newFolder === null) return
     setCreating(true)
     try {
-      const res = await bridge.make_dir(targetHost(target), cwd, newFolder)
+      const res = await bridge.make_dir(targetHost(target), cwd, newFolder, asUser || undefined)
       if (res.error) { message.error(res.error); return }
       setNewFolder(null)
       pane.refresh([newFolder.trim()])
     } finally { setCreating(false) }
   }
 
+  const doRename = async () => {
+    if (!target || !renaming) return
+    setBusy(true)
+    try {
+      const res = await bridge.rename_path(targetHost(target), cwd, renaming.old, renaming.name.trim(), asUser || undefined)
+      if (res.error) { message.error(res.error); return }
+      setRenaming(null)
+      pane.refresh([renaming.name.trim()])
+    } catch (e) { message.error(String(e)) } finally { setBusy(false) }
+  }
+
+  const doDelete = async () => {
+    if (!target || !deleting) return
+    setBusy(true)
+    try {
+      const res = await bridge.delete_paths(targetHost(target), deleting.map(n => joinPath(cwd, n)), asUser || undefined)
+      if (res.error) { message.error(res.error); return }
+      setDeleting(null)
+      const failed = res.failed ?? []
+      const done = res.deleted?.length ?? 0
+      if (failed.length) {
+        const first = failed.slice(0, 3).map(f => `${f.path.split(/[\\/]/).pop()}: ${f.error}`).join('; ')
+        message.warning(`Deleted ${done}, ${failed.length} not deleted (${first}${failed.length > 3 ? '; …' : ''})`)
+      } else {
+        message.success(`Deleted ${done === 1 ? deleting[0] : `${done} items`}`)
+      }
+      pane.refresh(failed.map(f => f.path.split(/[\\/]/).pop() ?? ''))
+    } catch (e) { message.error(String(e)) } finally { setBusy(false) }
+  }
+
   const canHostActions = !!target && target.kind !== 'adhoc' && !!listing
+  const startRename = () => { if (canHostActions && selected.length === 1) setRenaming({ old: selected[0], name: selected[0] }) }
+  const startDelete = () => { if (canHostActions && selected.length > 0) setDeleting([...selected]) }
   const files = (listing?.entries ?? []).filter(e => e.type === 'file').length
   const dirs = (listing?.entries ?? []).length - files
   const atWorkspace = target?.kind === 'local' && !!workspacePath && cwd === workspacePath
@@ -233,6 +292,21 @@ export function FilePane({
             <Button size="small" type="text" icon={<CodeOutlined />} aria-label="Open a terminal" onClick={() => bridge.launch_terminal(target.host).catch(e => message.error(String(e)))} />
           </Tooltip>
         )}
+        {target?.kind === 'host' && accounts && accounts.accounts.length > 0 && (
+          <Tooltip title="Browse this host as one of its venv owners (passwordless sudo). Copies still run as the SSH login.">
+            <Select
+              size="small"
+              value={asUser}
+              onChange={v => pane.setAsUser(v, cwd)}
+              aria-label={`${side} pane browse as`}
+              style={{ minWidth: 150 }}
+              options={[
+                { label: `as ${accounts.login || 'SSH login'}`, value: '' },
+                ...accounts.accounts.map(a => ({ label: `as ${a} (venv owner)`, value: a })),
+              ]}
+            />
+          </Tooltip>
+        )}
         <div style={{ flex: 1 }} />
         {atWorkspace && <Text type="secondary" style={{ fontSize: 11 }}>chat workspace</Text>}
       </div>
@@ -263,6 +337,12 @@ export function FilePane({
         />
         <Tooltip title={canHostActions ? 'New folder' : 'New folder works on this computer and configured hosts'}>
           <Button size="small" icon={<FolderAddOutlined />} aria-label="New folder" disabled={!canHostActions} onClick={() => setNewFolder('')} />
+        </Tooltip>
+        <Tooltip title={canHostActions ? 'Rename (F2)' : 'Rename works on this computer and configured hosts'}>
+          <Button size="small" icon={<EditOutlined />} aria-label="Rename" disabled={!canHostActions || selected.length !== 1} onClick={startRename} />
+        </Tooltip>
+        <Tooltip title={canHostActions ? 'Delete (Del)' : 'Delete works on this computer and configured hosts'}>
+          <Button size="small" icon={<DeleteOutlined />} aria-label="Delete" danger disabled={!canHostActions || selected.length === 0} onClick={startDelete} />
         </Tooltip>
       </div>
 
@@ -305,6 +385,8 @@ export function FilePane({
                   onDoubleClick={() => openEntry(e)}
                   onKeyDown={ev => {
                     if (ev.key === 'Enter') openEntry(e)
+                    else if (ev.key === 'F2') { ev.preventDefault(); if (!isSel) pane.setSelected([e.name]); if (canHostActions) setRenaming({ old: e.name, name: e.name }) }
+                    else if (ev.key === 'Delete') { ev.preventDefault(); if (canHostActions) setDeleting(isSel ? [...selected] : [e.name]) }
                     else if (ev.key === ' ') { ev.preventDefault(); pane.setSelected(isSel ? selected.filter(n => n !== e.name) : [...selected, e.name]) }
                   }}
                   title={isFile ? 'Drag to the other pane to copy · double-click to view' : 'Double-click to open'}
@@ -339,6 +421,7 @@ export function FilePane({
           {listing ? `${dirs} folder${dirs === 1 ? '' : 's'}, ${files} file${files === 1 ? '' : 's'}` : ''}
           {selected.length > 0 ? ` · ${selected.length} selected` : ''}
           {listing?.truncated ? ' · only the first 5,000 entries are listed' : ''}
+          {asUser ? ` · browsing as ${asUser}` : ''}
         </span>
         {loading && listing && <Spin size="small" />}
       </div>
@@ -364,6 +447,82 @@ export function FilePane({
           style={{ marginTop: 8, fontFamily: MONO_FONT }}
         />
       </Modal>
+
+      <ApproveCard
+        open={renaming !== null}
+        title={`Rename on ${target ? targetLabel(target) : ''}`}
+        who={who}
+        busy={busy}
+        okDisabled={!renaming?.name.trim() || renaming?.name.trim() === renaming?.old}
+        onApprove={doRename}
+        onCancel={() => setRenaming(null)}
+        note="Nothing is overwritten: if the new name is taken, the rename is refused."
+      >
+        <Text type="secondary" style={{ fontSize: 12, fontFamily: MONO_FONT }}>{renaming ? joinPath(cwd, renaming.old) : ''}</Text>
+        <Input
+          autoFocus
+          value={renaming?.name ?? ''}
+          onChange={e => setRenaming(r => r && { ...r, name: e.target.value })}
+          onPressEnter={() => renaming?.name.trim() && renaming.name.trim() !== renaming.old && doRename()}
+          aria-label="New name"
+          style={{ marginTop: 8, fontFamily: MONO_FONT }}
+        />
+      </ApproveCard>
+
+      <ApproveCard
+        open={deleting !== null}
+        title={`Delete ${deleting?.length === 1 ? deleting[0] : `${deleting?.length ?? 0} items`} on ${target ? targetLabel(target) : ''}?`}
+        who={who}
+        busy={busy}
+        danger
+        onApprove={doDelete}
+        onCancel={() => setDeleting(null)}
+        note="This can't be undone. A folder is deleted only when it is empty."
+      >
+        <Text type="secondary" style={{ fontSize: 12, fontFamily: MONO_FONT }}>{cwd}</Text>
+        <ul style={{ margin: '6px 0 0', paddingLeft: 18, maxHeight: 220, overflowY: 'auto', fontFamily: MONO_FONT, fontSize: 12 }}>
+          {(deleting ?? []).slice(0, 50).map(n => {
+            const isDir = listing?.entries.find(x => x.name === n)?.type === 'directory'
+            return <li key={n}>{n}{isDir ? '/' : ''}</li>
+          })}
+          {(deleting?.length ?? 0) > 50 && <li>and {(deleting?.length ?? 0) - 50} more</li>}
+        </ul>
+      </ApproveCard>
     </section>
+  )
+}
+
+// The approval step for a change to files: what will happen, on which machine,
+// as which account, and Approve / Cancel. Nothing runs until Approve.
+function ApproveCard({ open, title, who, note, danger, busy, okDisabled, onApprove, onCancel, children }: {
+  open: boolean
+  title: string
+  who: string
+  note: string
+  danger?: boolean
+  busy: boolean
+  okDisabled?: boolean
+  onApprove: () => void
+  onCancel: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <Modal
+      open={open}
+      title={title}
+      okText="Approve"
+      okButtonProps={{ danger, disabled: okDisabled }}
+      confirmLoading={busy}
+      onOk={onApprove}
+      onCancel={onCancel}
+      destroyOnClose
+    >
+      <div style={{ borderLeft: '3px solid var(--rs-warning, #d6a23c)', paddingLeft: 10 }}>
+        {children}
+        <div style={{ marginTop: 10, fontSize: 12 }}>
+          <Text type="secondary">Runs as {who}. {note}</Text>
+        </div>
+      </div>
+    </Modal>
   )
 }

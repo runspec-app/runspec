@@ -9,6 +9,28 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.395.0] — 2026-11-09
+
+### Added
+
+- **Rename and delete in the Files tab, behind an Approve card.** Select an
+  entry and press **Rename** (F2) or **Delete** (Del), or the buttons beside
+  New folder. A card shows what will change, on which machine and as which
+  account; nothing runs until **Approve**. A rename never overwrites (a taken
+  name is refused). Delete removes files, symlinks and empty folders only; a
+  folder with anything in it is left alone and reported. Each is recorded in
+  the console audit log (`files.renamed` / `files.deleted`). This computer and
+  configured hosts only; not agent tools. Bridge `rename_path` /
+  `delete_paths`, helpers in `fs_browse.py`.
+- **Browse a host as a venv owner.** A host pane with venvs owned by another
+  account gets a **Browse as** picker (*as svc_app (venv owner)*). Listing,
+  View, New folder, Rename and Delete then run as that account through
+  `sudo -n -u` (a NOPASSWD rule is needed, as for Env files; a refusal says
+  so). Only the owners of that host's venvs are allowed, checked on the
+  backend (`files_accounts`). Copies still run as the SSH login, and the drop
+  dialog says so. `list_dir`, `make_dir` and `view_file` take an optional
+  `as_user`.
+
 ## [0.394.1] — 2026-11-09
 
 ### Fixed

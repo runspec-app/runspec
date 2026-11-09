@@ -195,8 +195,9 @@ class HostsMixin:
         dirs_only: bool = False,
         runnable: str | None = None,
         as_service_account: bool = False,
+        as_user: str = "",
     ) -> dict[str, Any]:
-        """List a directory on ``host`` for the Forms path-picker.
+        """List a directory on ``host`` for the Forms path-picker and the Files tab.
 
         ``path`` empty means the connecting user's home directory. Returns
         ``{cwd, parent, entries, truncated}`` (see ``fs_browse``) or
@@ -204,7 +205,9 @@ class HostsMixin:
         user locally). With ``as_service_account`` and a ``runnable``, the remote
         listing is wrapped in that runnable's ``run_as``/become — so the picker
         shows what the job itself would see. ``group`` disambiguates a runnable
-        that exists in more than one venv on the host.
+        that exists in more than one venv on the host. ``as_user`` (the Files
+        tab's "Browse as") lists as one of the host's venv owners via
+        ``sudo -n -u``; it must be one of :meth:`files_accounts`.
         """
         entry = self._host_entry(host)
         if entry is None:
@@ -214,7 +217,12 @@ class HostsMixin:
                 from .fs_browse import parse_remote_listing, remote_list_command
 
                 run_as, become_method, become_flags = "", "sudo", None
-                if as_service_account:
+                if as_user:
+                    bad = self._files_as(host, as_user)  # type: ignore[attr-defined]
+                    if bad:
+                        return {"error": bad}
+                    run_as, become_flags = as_user, "-n"
+                elif as_service_account:
                     if not runnable:
                         return {
                             "error": "service-account view needs a runnable context"
@@ -251,9 +259,11 @@ class HostsMixin:
                     timeout=15,
                 )
                 if code != 0:
+                    from .fs_browse import account_error
+
                     who = f" as {run_as}" if run_as else ""
                     return {
-                        "error": err.strip()
+                        "error": account_error(err, as_user)
                         or f"could not list {path or '~'}{who} (exit {code})"
                     }
                 return parse_remote_listing(out, dirs_only=dirs_only)

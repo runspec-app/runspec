@@ -277,12 +277,13 @@ export function FilesView({ hosts, selectedHost, active }: {
           srcDir={panes[drop.from].listing?.cwd ?? ''}
           destDir={panes[drop.to].listing?.cwd ?? ''}
           hosts={hosts}
+          browsingAs={panes[drop.from].asUser || panes[drop.to].asUser}
           onCancel={() => setDrop(null)}
           onCopy={choice => { const pd = drop; setDrop(null); startCopy(pd, choice) }}
         />
       )}
       {viewing && panes[viewing.side].target && (
-        <ViewFileModal host={targetHost(panes[viewing.side].target!)} label={targetLabel(panes[viewing.side].target!)} path={viewing.path} onClose={() => setViewing(null)} />
+        <ViewFileModal host={targetHost(panes[viewing.side].target!)} asUser={panes[viewing.side].asUser} label={targetLabel(panes[viewing.side].target!)} path={viewing.path} onClose={() => setViewing(null)} />
       )}
       {managing && (
         <SavedTransfersListModal
@@ -334,7 +335,7 @@ function TransferRow({ it }: { it: TransferItem }) {
 
 const LINE_CHOICES = [200, 500, 2000, 5000]
 
-export function ViewFileModal({ host, label, path, onClose }: { host: string; label: string; path: string; onClose: () => void }) {
+export function ViewFileModal({ host, asUser = '', label, path, onClose }: { host: string; asUser?: string; label: string; path: string; onClose: () => void }) {
   const [lines, setLines] = useState(500)
   const [view, setView] = useState<FileView | null>(null)
   const [loading, setLoading] = useState(false)
@@ -343,10 +344,10 @@ export function ViewFileModal({ host, label, path, onClose }: { host: string; la
 
   const load = useCallback(async (n: number) => {
     setLoading(true)
-    try { setView(await bridge.view_file(host, path, n)) }
+    try { setView(await bridge.view_file(host, path, n, asUser || undefined)) }
     catch (e) { setView({ error: String(e) }) }
     finally { setLoading(false) }
-  }, [host, path])
+  }, [host, path, asUser])
   useEffect(() => { load(lines) }, [load, lines])
   // Logs are read from the bottom: start scrolled to the end.
   useEffect(() => { const el = preRef.current; if (el) el.scrollTop = el.scrollHeight }, [view])

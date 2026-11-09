@@ -228,6 +228,132 @@ def _view_payload(size: int, text: str, lines: int) -> dict[str, Any]:
     }
 
 
+# ── rename / delete (Files tab) ─────────────────────────────────────────────
+
+
+def as_account(inner: str, as_user: str = "") -> str:
+    """Wrap a shell command so it runs as ``as_user`` (``sudo -n -u <user> sh
+    -c …``); unchanged when ``as_user`` is empty. ``-n`` makes a missing
+    NOPASSWD rule fail at once instead of waiting for a password."""
+    if not as_user:
+        return inner
+    from runspec.become import build_become_argv
+
+    argv = build_become_argv(["sh", "-c", inner], as_user, "sudo", "-n")
+    return " ".join(shlex.quote(tok) for tok in argv)
+
+
+def account_error(err: str, as_user: str) -> str:
+    """A clearer message when ``sudo -n -u <as_user>`` itself was refused."""
+    low = (err or "").lower()
+    if as_user and (
+        "password is required" in low
+        or "not allowed to" in low
+        or "may not run sudo" in low
+    ):
+        return (
+            f"The SSH login can't run commands as {as_user} without a password. "
+            f"Allow it with a NOPASSWD sudo rule, or browse as the login."
+        )
+    return (err or "").strip()
+
+
+def remote_rename_command(parent: str, old: str, new: str) -> str:
+    """Rename ``old`` to ``new`` inside ``parent``. Refuses (exit 2/3, message
+    on stderr) when ``old`` is gone or ``new`` already exists, so a rename
+    never overwrites anything."""
+    p, o, n = shlex.quote(parent), shlex.quote(old), shlex.quote(new)
+    return (
+        f"cd {p} || exit 1; "
+        f"if [ ! -e {o} ] && [ ! -L {o} ]; then echo {shlex.quote(old + ' no longer exists')} >&2; exit 2; fi; "
+        f"if [ -e {n} ] || [ -L {n} ]; then echo {shlex.quote(new + ' already exists')} >&2; exit 3; fi; "
+        f"mv -- {o} {n}"
+    )
+
+
+def rename_local(parent: str, old: str, new: str) -> str:
+    """Rename ``old`` to ``new`` inside the local ``parent``; returns the new
+    path. Never overwrites."""
+    base = os.path.abspath(os.path.expanduser(parent))
+    src = os.path.join(base, valid_folder_name(old))
+    dst = os.path.join(base, valid_folder_name(new))
+    if not os.path.lexists(src):
+        raise FileNotFoundError(f"{old} no longer exists")
+    if os.path.lexists(dst):
+        raise FileExistsError(f"{new} already exists")
+    os.rename(src, dst)
+    return dst
+
+
+def remote_delete_command(paths: list[str]) -> str:
+    """Delete each path: a file or symlink with ``rm``, a folder only when it
+    is empty (``rmdir``). Prints ``ok<TAB>path`` or ``err<TAB>path<TAB>why``
+    per path and always exits 0; :func:`parse_delete_output` reads it."""
+    parts = []
+    for path in paths:
+        q = shlex.quote(path)
+        parts.append(
+            f"if [ -d {q} ] && [ ! -L {q} ]; then o=$(rmdir -- {q} 2>&1); "
+            f"else o=$(rm -- {q} 2>&1); fi && printf 'ok\\t%s\\n' {q} "
+            f"|| printf 'err\\t%s\\t%s\\n' {q} \"$(printf %s \"$o\" | tr '\\t\\n' '  ')\""
+        )
+    return "; ".join(parts) + "; exit 0"
+
+
+def parse_delete_output(stdout: str, paths: list[str]) -> dict[str, Any]:
+    """``{deleted: [...], failed: [{path, error}]}`` from
+    :func:`remote_delete_command` output. A path with no line failed."""
+    deleted: list[str] = []
+    failed: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for line in stdout.splitlines():
+        bits = line.split("\t")
+        if bits[0] == "ok" and len(bits) >= 2:
+            deleted.append(bits[1])
+            seen.add(bits[1])
+        elif bits[0] == "err" and len(bits) >= 2:
+            failed.append(
+                {
+                    "path": bits[1],
+                    "error": _delete_reason(bits[2] if len(bits) > 2 else ""),
+                }
+            )
+            seen.add(bits[1])
+    for path in paths:
+        if path not in seen:
+            failed.append({"path": path, "error": "not deleted"})
+    return {"deleted": deleted, "failed": failed}
+
+
+def _delete_reason(raw: str) -> str:
+    low = raw.lower()
+    if "not empty" in low:
+        return "folder isn't empty"
+    if "permission denied" in low or "operation not permitted" in low:
+        return "permission denied"
+    if "no such file" in low:
+        return "no longer exists"
+    return raw.strip() or "could not delete"
+
+
+def delete_local(paths: list[str]) -> dict[str, Any]:
+    """Delete local files, symlinks and empty folders; same result shape as
+    :func:`parse_delete_output`."""
+    deleted: list[str] = []
+    failed: list[dict[str, str]] = []
+    for path in paths:
+        full = os.path.abspath(os.path.expanduser(path))
+        try:
+            if os.path.isdir(full) and not os.path.islink(full):
+                os.rmdir(full)
+            else:
+                os.remove(full)
+            deleted.append(path)
+        except OSError as exc:
+            failed.append({"path": path, "error": _delete_reason(str(exc))})
+    return {"deleted": deleted, "failed": failed}
+
+
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 

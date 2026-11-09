@@ -473,9 +473,26 @@ hosts). Double-click a folder to open it, or a file to **View** its last lines
 (read-only, at most 1 MB; pick 200 to 5,000 lines and show only lines
 containing some text). Click, Ctrl-click and Shift-click select several files;
 **Copy to other pane** and **Save as saved transfer…** in the toolbar work on
-the pane you last clicked in. A host pane browses as the SSH login user, and a
-listing stops at 5,000 entries. Dragging files in from Windows Explorer isn't
-supported yet.
+the pane you last clicked in. A listing stops at 5,000 entries. Dragging files
+in from Windows Explorer isn't supported yet.
+
+**Rename and delete** (this computer and configured hosts) ask first. Select
+an entry and press **Rename** (F2) or **Delete** (Del), or use the buttons
+beside New folder. A card shows exactly what will change, on which machine and
+as which account, and nothing happens until you press **Approve**. A rename
+never overwrites: if the new name is taken it is refused. Delete removes
+files, symlinks (not what they point at) and **empty** folders; a folder with
+anything in it is left alone and reported. Both are recorded in the console
+audit log as `files.renamed` / `files.deleted`. They are not agent tools.
+
+**Browse as a venv owner.** A host pane browses as the SSH login by default.
+When the host has venvs owned by another account (a service account set up by
+**Provision venv…**, say), a **Browse as** picker appears next to the machine:
+pick *as svc_app (venv owner)* to list, view, make folders, rename and delete
+as that account, through `sudo -n -u <owner>`. It needs a NOPASSWD sudo rule
+for the login, the same as Env files; without one the pane says so. Only the
+owners of that host's venvs are offered. Copies (dragging) still run as the
+SSH login, and the drop dialog reminds you.
 
 The agent has the same reach: `download_file` (remote → local, including
 ad-hoc sources via `source_via` + `source_target`) and `relay_file`
