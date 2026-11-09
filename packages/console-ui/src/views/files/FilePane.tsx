@@ -115,13 +115,17 @@ export function FilePane({
   const cwd = listing?.cwd ?? ''
   const hostName = target?.kind === 'host' ? target.host : ''
 
-  // The accounts this host can be browsed as (its venv owners).
+  // The accounts this host can be browsed as (its venv owners). They come
+  // from discovery, which may still be running when the tab first opens on a
+  // host, so read them again whenever discovery finishes.
   useEffect(() => {
     setAccounts(null)
     if (!hostName) return
     let live = true
-    bridge.files_accounts(hostName).then(a => { if (live) setAccounts(a) }).catch(() => {})
-    return () => { live = false }
+    const load = () => { bridge.files_accounts(hostName).then(a => { if (live) setAccounts(a) }).catch(() => {}) }
+    load()
+    window.addEventListener('runspec:runnables_updated', load)
+    return () => { live = false; window.removeEventListener('runspec:runnables_updated', load) }
   }, [hostName])
   const who = asUser || (target?.kind === 'local' ? 'you' : accounts?.login || 'the SSH login')
 
