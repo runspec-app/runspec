@@ -9,12 +9,26 @@ from __future__ import annotations
 import json
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import runspec as rs
 
-from .config import ScheduleEntry, config_path, load_config, load_schedules, load_settings, parse_command, parse_duration, remove_schedule, schedule_id_problem, set_backend, upsert_schedule
+from . import render
+from .config import (
+    ScheduleEntry,
+    SchedulerSettings,
+    config_path,
+    load_config,
+    load_settings,
+    parse_command,
+    parse_duration,
+    remove_schedule,
+    schedule_id_problem,
+    set_backend,
+    upsert_schedule,
+)
 from .daemon import configure_logging, run_daemon, take_lock
 from .discovery import check_invocation, resolve_target
 from .envfile import capture_env, remove_env_file, write_env_file
@@ -32,8 +46,36 @@ def _opt(arg: Any) -> Any:
     return value
 
 
-def _emit(payload: dict[str, Any]) -> None:
-    print(json.dumps(payload))
+#: ``--json``: JSON even at a terminal (set in :func:`main`).
+_FORCE_JSON = False
+
+
+def text_mode() -> bool:
+    """Whether to print text for a person: stdout is a terminal and ``--json``
+    wasn't given. runspec's logging swaps ``sys.stdout`` for a tee whose
+    ``isatty()`` is always False, so this asks the real stdout."""
+    if _FORCE_JSON:
+        return False
+    stream = sys.__stdout__
+    try:
+        return bool(stream and stream.isatty())
+    except ValueError:  # closed
+        return False
+
+
+def _emit(payload: dict[str, Any], text: Callable[[dict[str, Any]], str] | None = None) -> None:
+    """Print a verb's result: JSON for programs, or ``text(payload)`` at a
+    terminal. An error (``error`` set and not ``ok``) goes to stderr as text."""
+    if not text_mode():
+        print(json.dumps(payload))
+        return
+    if payload.get("error") and not payload.get("ok"):
+        if text in (render.plan, render.used):  # these explain what was and wasn't done
+            print(text(payload), file=sys.stderr)
+        else:
+            print(render.error(payload), file=sys.stderr)
+        return
+    print(text(payload) if text is not None else json.dumps(payload, indent=2))
 
 
 def _parse_json_arg(raw: Any, what: str) -> Any:
@@ -48,6 +90,15 @@ def _parse_json_arg(raw: Any, what: str) -> Any:
 
 def _cfg_path(spec: rs.RunSpec) -> Path:
     return config_path(_opt(spec.config))
+
+
+def _load(path: Path) -> tuple[SchedulerSettings, list[ScheduleEntry]]:
+    """The config, or exit 2 with the reason it can't be read."""
+    try:
+        return load_config(path)
+    except (OSError, ValueError) as exc:
+        _emit({"error": f"invalid config {path}: {exc}"})
+        sys.exit(2)
 
 
 #: The venv lock when ``main`` took it before parsing (see :func:`_early_lock`).
@@ -271,40 +322,44 @@ def _cmd_add(spec: rs.RunSpec) -> None:
         catch_up=bool(spec.catch_up.value),
     )
     upsert_schedule(path, entry)
-    _emit({"ok": True, "id": sid, "runnable": runnable, "command": list(command), "run_as": target.run_as, "env_file": bool(env_file)})
+    _emit({"ok": True, "id": sid, "runnable": runnable, "command": list(command), "run_as": target.run_as, "env_file": bool(env_file), "backend": settings.backend}, render.added)
 
 
 def _cmd_remove(spec: rs.RunSpec) -> None:
     path = _cfg_path(spec)
     sid = str(spec.id.value)
-    existing = next((e for e in load_schedules(path) if e.id == sid), None)
+    existing = next((e for e in _load(path)[1] if e.id == sid), None)
     removed = remove_schedule(path, sid)
     if existing and existing.env_file:
         remove_env_file(existing.env_file, existing.run_as, existing.become_method)
-    _emit({"ok": removed, "id": sid})
+    try:
+        backend = load_settings(path).backend
+    except ValueError:
+        backend = None
+    _emit({"ok": removed, "id": sid, "backend": backend}, render.removed)
 
 
 def _cmd_list(spec: rs.RunSpec) -> None:
     path = _cfg_path(spec)
     out = []
-    for entry in load_config(path)[1]:
+    for entry in _load(path)[1]:
         record = entry.to_dict()
         nxt = next_fire_time(entry.when) if entry.enabled else None
         record["next_run"] = nxt.isoformat() if nxt else None
         out.append(record)
-    _emit({"schedules": out, "venv": venv_name(), "config": str(path), "backend": load_settings(path).backend})
+    _emit({"schedules": out, "venv": venv_name(), "config": str(path), "backend": load_settings(path).backend}, render.schedules)
 
 
 def _cmd_status(spec: rs.RunSpec) -> None:
     from .status import status
 
-    _emit(status(_cfg_path(spec), runs=max(1, int(spec.runs.value))))
+    _emit(status(_cfg_path(spec), runs=max(1, int(spec.runs.value))), render.status)
 
 
 def _cmd_run_now(spec: rs.RunSpec) -> None:
     path = _cfg_path(spec)
     sid = str(spec.id.value)
-    settings, entries = load_config(path)
+    settings, entries = _load(path)
     entry = next((e for e in entries if e.id == sid), None)
     if entry is None:
         _emit({"error": f"no schedule with id '{sid}'"})
@@ -313,7 +368,7 @@ def _cmd_run_now(spec: rs.RunSpec) -> None:
         from .runnow import start
 
         res = start(entry, settings)
-        _emit(res)
+        _emit(res, render.started)
         sys.exit(0 if res.get("ok") else 1)
     timeout = entry.effective_timeout(settings) if settings.backend == "daemon" else (entry.timeout or 0)
     target = resolve_target(entry.runnable)
@@ -353,7 +408,8 @@ def _cmd_run_now(spec: rs.RunSpec) -> None:
             "exit_code": rc,
             "stdout": out.buffer.getvalue().decode("utf-8", errors="replace").strip(),  # type: ignore[attr-defined]
             "stderr": err.buffer.getvalue().decode("utf-8", errors="replace").strip(),  # type: ignore[attr-defined]
-        }
+        },
+        render.ran,
     )
     sys.exit(0 if rc == 0 else 1)
 
@@ -363,7 +419,7 @@ def _cmd_sync(spec: rs.RunSpec) -> None:
 
     result = sync(_cfg_path(spec), dry_run=bool(spec.dry_run.value))
     payload = result.to_dict()
-    _emit(payload)
+    _emit(payload, render.synced)
     if not payload["ok"]:
         sys.exit(1)
 
@@ -389,7 +445,7 @@ def _cmd_use(spec: rs.RunSpec) -> None:
         payload["crontab"] = removed
         if not removed["ok"]:
             payload.update(ok=False, backend=previous, error="could not remove this venv's crontab lines, so the backend was not switched (both would fire every schedule)")
-            _emit(payload)
+            _emit(payload, render.used)
             sys.exit(1)
         set_backend(path, "daemon")
         daemon = daemon_status(path)
@@ -404,7 +460,7 @@ def _cmd_use(spec: rs.RunSpec) -> None:
             payload.update(ok=False, error="switched to cron, but some crontab lines could not be written — fix the errors and run: runspec-scheduler sync")
         if daemon_status(path)["state"] == "running":
             payload["hint"] = "the daemon is still running but fires nothing now; stop its keeper if this venv stays on cron"
-    _emit(payload)
+    _emit(payload, render.used)
     if not payload["ok"]:
         sys.exit(1)
 
@@ -416,7 +472,7 @@ def _cmd_install_service(spec: rs.RunSpec) -> None:
     config = _opt(spec.config)
     plan = keeper.plan_remove(manager, config=config) if spec.remove.value else keeper.plan_install(manager, config=config, system=bool(spec.system.value))
     result = keeper.apply(plan) if spec.write.value else plan.to_dict(written=False)
-    _emit(result)
+    _emit(result, render.plan)
     if not result.get("ok"):
         sys.exit(1)
 
@@ -445,7 +501,8 @@ def _cmd_settings(spec: rs.RunSpec) -> None:
                 "misfire_grace": settings.misfire_grace,
                 "catch_up_window": settings.catch_up_window,
             },
-        }
+        },
+        render.settings,
     )
 
 
@@ -461,7 +518,7 @@ def _cmd_restart(spec: rs.RunSpec) -> None:
         out = plan.to_dict(written=False)
         if not plan.error and plan.actions:
             out["hint"] = "nothing was changed — re-run without --dry-run to restart"
-        _emit(out)
+        _emit(out, render.plan)
         if plan.error:
             sys.exit(1)
         return
@@ -476,14 +533,44 @@ def _cmd_restart(spec: rs.RunSpec) -> None:
         result["daemon"] = {k: daemon.get(k) for k in ("state", "pid", "version", "restart_needed")}
         if daemon["state"] != "running" or daemon["pid"] == before:
             result["warnings"] = [*result.get("warnings", []), "the daemon hasn't reported back yet; check runspec-scheduler status in a minute"]
-    _emit(result)
+    _emit(result, render.plan)
     if not result.get("ok"):
         sys.exit(1)
 
 
+def _cmd_watch(spec: rs.RunSpec) -> None:
+    """``status`` kept on screen, redrawn every ``--interval`` seconds until
+    Ctrl+C. Not at a terminal (or with ``--json``) it prints one JSON status
+    per line instead."""
+    from .status import status
+
+    _close_own_run()  # a long watch shouldn't fill the run log with redraws
+    path = _cfg_path(spec)
+    interval = max(1, int(spec.interval.value))
+    runs = max(1, int(spec.runs.value))
+    text = text_mode()
+    try:
+        while True:
+            payload = status(path, runs=runs)
+            if text:
+                stamp = time.strftime("%H:%M:%S")
+                screen = render.status(payload)
+                sys.stdout.write("\033[H\033[2J" + screen + f"\n\nUpdated {stamp}, every {interval}s. Ctrl+C to stop.\n")
+            else:
+                sys.stdout.write(json.dumps(payload) + "\n")
+            sys.stdout.flush()
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        if text:
+            sys.stdout.write("\n")
+        sys.exit(0)
+
+
 def main() -> None:
+    global _FORCE_JSON
     _early_lock(sys.argv[1:])
     spec = rs.parse("runspec-scheduler")
+    _FORCE_JSON = bool(_opt(spec.get("json")))
     command = spec.runspec_command
     if command == "run":
         _cmd_run(spec)
@@ -507,6 +594,8 @@ def main() -> None:
         _cmd_settings(spec)
     elif command == "restart":
         _cmd_restart(spec)
+    elif command == "watch":
+        _cmd_watch(spec)
     else:  # pragma: no cover - require-command makes this unreachable
-        _emit({"error": "no command — try: sync, status, use, settings, add, remove, list, run-now, run, restart, install-service"})
+        _emit({"error": "no command — try: status, watch, sync, use, settings, add, remove, list, run-now, run, restart, install-service"})
         sys.exit(2)

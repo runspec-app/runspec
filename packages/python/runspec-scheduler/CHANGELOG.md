@@ -2,6 +2,33 @@
 
 All notable changes to `runspec-scheduler` are documented here.
 
+## [0.9.0] — 2026-11-09
+
+### Added
+
+- **Text at a terminal.** Every verb prints readable text when stdout is a
+  terminal: `status` shows the venv, backend, daemon (pid, uptime, version,
+  *restart needed*), keeper and settings, then one row per schedule (what it
+  runs, when, next run, last run, state: ok / paused / failing / being handled
+  by … / not in crontab / won't run: …) and, under *Needs attention*, each
+  failing schedule's note and the last lines of its output; `list` is a table;
+  `add`, `remove`, `sync`, `use`, `settings`, `run-now`, `restart` and
+  `install-service` say what happened (a plan lists its steps, the files and,
+  for a file root writes, its content). Errors go to stderr as one line. JSON
+  is unchanged when stdout isn't a terminal (pipes, scripts, runspec-console
+  over SSH), and the new global `--json` gives JSON at a terminal too.
+  `render.py`; terminal detection asks `sys.__stdout__`, because runspec's
+  stdout tee always reports `isatty() == False`.
+- **`watch`** keeps the status on screen, redrawn every `--interval` seconds
+  (default 5) until Ctrl+C; not at a terminal it prints one JSON status per
+  line. It ends its own run record at once so a long watch doesn't fill the
+  run log. `autonomy = "manual"`: it never returns, so only a person runs it.
+
+### Fixed
+
+- `list`, `remove` and `run-now` on a config that doesn't load now say why in
+  one line (exit 2) instead of a traceback.
+
 ## [0.8.0] — 2026-11-09
 
 ### Fixed

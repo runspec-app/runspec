@@ -10,8 +10,9 @@
 #   runspec-scheduler sync                    render the config into the OS crontab (the cron backend)
 #   runspec-scheduler add     --id … …        add/replace a scheduled runnable in the config
 #   runspec-scheduler remove  --id …          remove a schedule from the config
-#   runspec-scheduler list                    print the configured schedules as JSON
-#   runspec-scheduler status                  config + crontab + recent runs/output per schedule (JSON)
+#   runspec-scheduler list                    print the configured schedules
+#   runspec-scheduler status                  config + crontab + recent runs/output per schedule
+#   runspec-scheduler watch                   status kept on screen, redrawn every few seconds
 #   runspec-scheduler run-now --id … [--detach] fire one schedule immediately
 #   runspec-scheduler run                     run the daemon (the daemon backend) in the foreground
 #   runspec-scheduler install-service         plan (or --write) what keeps the daemon running
@@ -30,6 +31,9 @@
 # desktop console. It is itself a runspec runnable (so runspec-console can detect
 # and drive it over SSH), but `discoverable = false` keeps it out of the Forms
 # tab / `runspec serve` MCP surface — it's an internal control-plane helper.
+#
+# Output: text when a person runs a verb in a terminal, JSON otherwise (pipes,
+# scripts, runspec-console over SSH). --json gives JSON at a terminal too.
 
 [config]
 # Scheduling a runnable IS the authorization; the daemon fires non-interactively.
@@ -49,8 +53,10 @@ examples = [
   {cmd = "runspec-scheduler add --id tmp-usage --runnable filesystem --command directory-size --args '{\"path\": \"/tmp\"}' --cron '0 * * * *'", description = "Schedule a runnable's subcommand (verb) hourly."},
   {cmd = "runspec-scheduler sync", description = "Render the config's cron schedules into the OS crontab (the recommended backend)."},
   {cmd = "runspec-scheduler sync --dry-run", description = "Preview the crontab changes without writing."},
-  {cmd = "runspec-scheduler list", description = "Print configured schedules as JSON."},
-  {cmd = "runspec-scheduler status", description = "Per schedule: installed?, recent runs, last run's captured output (JSON)."},
+  {cmd = "runspec-scheduler list", description = "Print the configured schedules."},
+  {cmd = "runspec-scheduler status", description = "Per schedule: installed?, next and last run, whether it is failing and who is on it."},
+  {cmd = "runspec-scheduler watch", description = "Keep the status on screen, redrawn every 5 seconds (Ctrl+C to stop)."},
+  {cmd = "runspec-scheduler status --json", description = "The full status as JSON, also at a terminal (what runspec-console reads)."},
   {cmd = "runspec-scheduler use daemon", description = "Fire this venv's schedules from the daemon instead of cron (removes the crontab lines)."},
   {cmd = "runspec-scheduler add --id poll --runnable http-check --every 30s --args '{\"url\": \"https://example.com\"}'", description = "An interval schedule (daemon backend only)."},
   {cmd = "runspec-scheduler run", description = "Run the daemon in the foreground (what a keeper starts)."},
@@ -65,6 +71,7 @@ examples = [
 # ---- Global arguments (inherited by every subcommand) --------------------
 [runspec-scheduler.args]
 config = {type = "path", required = false, description = "Path to the scheduler config TOML. Overrides $RUNSPEC_SCHEDULER_CONFIG and the default {venv}/runspec_scheduler.toml."}
+json   = {type = "flag", default = false, description = "Print JSON even at a terminal. Without it a verb prints text when stdout is a terminal and JSON otherwise."}
 
 # ---- run: the long-running daemon ----------------------------------------
 [runspec-scheduler.commands.run]
@@ -100,16 +107,25 @@ id = {type = "str", required = true, description = "Schedule id to remove."}
 
 # ---- list: print schedules as JSON ---------------------------------------
 [runspec-scheduler.commands.list]
-description = "Print the configured schedules as JSON (read-only; what runspec-console reads to display + verify remote schedules)"
+description = "Print the configured schedules: a table at a terminal, JSON otherwise (read-only; what runspec-console reads to display + verify remote schedules)"
 output      = "json"
 
 # ---- status: config + crontab + runs index, joined per schedule -----------
 [runspec-scheduler.commands.status]
-description = "Per schedule: config, whether its crontab line is installed (exec vs legacy), its recent runs from the runs index (label sched:<id>), and the last run's captured output — JSON (read-only; what runspec-console's Shared schedules view reads)"
+description = "Per schedule: config, whether its crontab line is installed (exec vs legacy), its recent runs from the runs index (label sched:<id>), and the last run's captured output: text at a terminal, JSON otherwise (read-only; what runspec-console's Schedules tab reads)"
 output      = "json"
 
 [runspec-scheduler.commands.status.args]
 runs = {type = "int", default = 5, description = "Recent runs to include per schedule."}
+
+# ---- watch: status kept on screen ----------------------------------------
+[runspec-scheduler.commands.watch]
+description = "Keep the status on screen, redrawn every --interval seconds, until Ctrl+C. Not at a terminal (or with --json) it prints one JSON status per line instead. Never returns by itself, so only a person runs it."
+autonomy    = "manual"
+
+[runspec-scheduler.commands.watch.args]
+interval = {type = "int", default = 5, description = "Seconds between redraws."}
+runs     = {type = "int", default = 3, description = "Recent runs to read per schedule."}
 
 # ---- run-now: fire one schedule immediately ------------------------------
 [runspec-scheduler.commands.run-now]
