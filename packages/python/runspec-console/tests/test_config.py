@@ -462,8 +462,9 @@ def test_read_mcp_server_defaults(monkeypatch):
         "port": c.DEFAULT_MCP_SERVER_PORT,
         "token": None,
         "default_autonomy": None,
-        "confirm_wait": 50.0,
+        "confirm_wait": 300.0,
         "tool_style": "leaf",
+        "tool_mode": "all",
         "expose_builtins": False,
         "plan_mode_autonomous": False,
     }

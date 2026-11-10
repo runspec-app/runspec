@@ -405,6 +405,7 @@ export interface OwnMcpServerConfig {
   default_autonomy: string | null
   confirm_wait: number
   tool_style: string        // 'leaf' (serve-identical) | 'runnable' (one tool per runnable + command arg)
+  tool_mode?: string        // 'all' (every runnable is a tool) | 'search' (search/describe/run meta tools)
   expose_builtins: boolean  // also publish the console's console-specific built-in agent tools
   plan_mode_autonomous?: boolean  // mark autonomous runnables read-only so Claude Code's plan mode runs them
 }
@@ -422,6 +423,20 @@ export interface OwnMcpServerStatus {
   // draft 2020-12 (so the Anthropic API would 400 the whole list). Surfaced so a
   // drop is visible in the UI, not just in runspec-console.log.
   invalid_tools?: { name: string; reason: string }[]
+  tool_mode?: string
+}
+// The Claude Code plugin the console writes for its MCP server (a one-plugin
+// local marketplace in the app dir) and the commands that install it.
+export interface OwnMcpClaudePlugin {
+  ok: boolean
+  reason?: string
+  path?: string
+  plugin?: string
+  marketplace?: string
+  agent?: string
+  tool_prefix?: string
+  token_required?: boolean
+  commands?: string[]
 }
 
 // Settings → Config Sync. Where to pull the console's config files from (a git
@@ -2969,6 +2984,7 @@ export interface BridgeApi {
   save_mcp_server_config: (payload: Partial<OwnMcpServerConfig>) => Promise<OwnMcpServerStatus>
   mcp_server_status: () => Promise<OwnMcpServerStatus>
   mcp_server_start: () => Promise<OwnMcpServerStatus>
+  mcp_server_claude_plugin: () => Promise<OwnMcpClaudePlugin>
   // Config Sync (Settings → Config Sync): pull config files from a git repo by
   // tag. get/save the settings, list the repo's tags for the ref dropdown, and
   // run a pull (overwrites local config, backing up first; hot-reloads after).
