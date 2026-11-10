@@ -89,6 +89,8 @@ _DROP_ENV = (
     "RUNSPEC_ENV_FILE",
     "RUNSPEC_RUNBOOK",
     "RUNSPEC_SCHEDULER_CONFIG",
+    # a fire is a schedule, not the assistant, even when an agent started the daemon
+    "RUNSPEC_AGENT",
 )
 
 #: The PATH a login shell has; keepers (cron especially) give far less.

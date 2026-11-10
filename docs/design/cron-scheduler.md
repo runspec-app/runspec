@@ -74,7 +74,7 @@ Each schedule becomes one line (plus its marker comment), for example:
 
 ```cron
 # runspec:sched:nightly-backup
-0 2 * * *  env RUNSPEC_AGENT=1 RUNSPEC_ENV_FILE=/home/svc/.config/runspec-scheduler/env/nightly-backup.env /opt/venvs/ops/bin/runspec exec --label sched:nightly-backup --trigger schedule:cron --lock /home/svc/.cache/runspec-scheduler/ops-1a2b3c4d/nightly-backup.lock backup -- --target prod >/dev/null 2>&1
+0 2 * * *  env RUNSPEC_ENV_FILE=/home/svc/.config/runspec-scheduler/env/nightly-backup.env /opt/venvs/ops/bin/runspec exec --label sched:nightly-backup --trigger schedule:cron --lock /home/svc/.cache/runspec-scheduler/ops-1a2b3c4d/nightly-backup.lock backup -- --target prod >/dev/null 2>&1
 ```
 
 - **Absolute venv binary** — cron runs with a minimal environment (no PATH, no
@@ -93,6 +93,11 @@ Each schedule becomes one line (plus its marker comment), for example:
 - **`--lock`** — the overlap guard; a held lock is recorded as a `skipped` run.
 - **`>/dev/null 2>&1`** — only stops cron mailing the output; `exec` has already
   captured it in the run's log.
+- **No `RUNSPEC_AGENT`** (scheduler 0.10.1) — a fire isn't the assistant. Until
+  0.10.1 every line set `RUNSPEC_AGENT=1`, so the run record said `agent: true`
+  and Analytics and the agent's history search counted fires as agent runs.
+  A fire is non-interactive anyway: cron gives it no terminal, so no password
+  prompt.
 
 ### Identity: a marker block, because user cron has no `.d`
 

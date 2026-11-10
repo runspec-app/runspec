@@ -2,6 +2,22 @@
 
 All notable changes to `runspec-scheduler` are documented here.
 
+## [0.10.1] — 2026-11-10
+
+### Fixed
+
+- **Fires are no longer recorded as agent runs.** Crontab lines, daemon fires
+  and `run-now` set `RUNSPEC_AGENT=1`, so every fire's run record said
+  `agent: true` and the console's Analytics and the agent's history search
+  counted them as runs by the assistant. (History's *Run by* already showed
+  cron / daemon from the trigger.) Lines now carry only `RUNSPEC_ENV_FILE`, plus
+  `RUNSPEC_<R>_ARG_<FLAG>=0` for a default-true flag switched off, and start
+  with the binary when there is nothing to set. The daemon and `run-now
+  --detach` also drop a `RUNSPEC_AGENT` they inherit (an agent that started the
+  daemon). A fire stays non-interactive: it has no terminal, so nothing prompts.
+  Run `sync` (the console does it after a Marketplace install) to rewrite
+  existing crontab lines.
+
 ## [0.10.0] — 2026-11-09
 
 ### Added
