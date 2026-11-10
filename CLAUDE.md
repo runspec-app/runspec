@@ -176,6 +176,12 @@ detail=, strict=)` / `runspec audit record|list|verify` → hash-chained
 `runspec/auditlog.py` (not `audit.py` — the package exports the `audit` function).
 See `docs/audit.md`, SPEC → Audit Events.
 
+**Text vs JSON output (0.84.0):** after `parse()` `sys.stdout` is the logging tee,
+whose `isatty()` is always False — never test `sys.stdout.isatty()` in a runnable.
+Use `args.runspec_text_output` (not an agent and the real stdout is a terminal) or
+`runspec.stdout_is_terminal()` (`runspec/terminal.py`, reads `sys.__stdout__`).
+Tests patch `runspec.terminal.stdout_is_terminal`. See the add-runnable skill → Output.
+
 `[config.logging]` (0.10.0+): `logger = logging.getLogger(__name__)` just works.
 Extra fields (0.11.0): `logger.info('msg', extra={'user_id': '42'})` — standard stdlib
 `extra=` API; fields appear nested under `"extra"` in JSON, appended as `{key=value}` on console.

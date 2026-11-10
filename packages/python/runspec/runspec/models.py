@@ -269,6 +269,21 @@ class RunSpec:
         return self.__runspec_agent__
 
     @property
+    def runspec_text_output(self) -> bool:
+        """True when a person at a terminal should get readable text, not JSON.
+
+        False when an agent called the runnable (``runspec_agent``) or when
+        stdout isn't a terminal (a pipe, the console's Forms tab, Rundeck,
+        Ansible, cron, ``runspec serve``). Checks the real stdout, because
+        after ``parse()`` ``sys.stdout`` is a logging tee whose ``isatty()``
+        is always False. If the runnable offers a ``--json`` or ``format``
+        arg, an explicit value should win over this.
+        """
+        from runspec import terminal
+
+        return not self.__runspec_agent__ and terminal.stdout_is_terminal()
+
+    @property
     def runspec_spec(self) -> dict[str, Any]:
         """The raw, fully-inferred spec dict for the runnable."""
         return self.__runspec_spec__

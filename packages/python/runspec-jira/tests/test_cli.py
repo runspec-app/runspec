@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from runspec import terminal
 from runspec.testing import ParseHarness
 from runspec_jira_core import JiraConfig
 from runspec_jira_core import client as core_client
@@ -118,7 +119,7 @@ def _run_main(monkeypatch, capsys, argv, *, tty: bool, agent: bool = False) -> s
     spec = h.expect_ok(argv)
     h.close()
     monkeypatch.setattr(cli.rs, "parse", lambda name: spec)
-    monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: tty, raising=False)
+    monkeypatch.setattr(terminal, "stdout_is_terminal", lambda: tty)
     cli.main()
     return capsys.readouterr().out
 

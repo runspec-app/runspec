@@ -2,6 +2,14 @@
 
 All notable changes to `runspec-jira` are documented here.
 
+## [0.8.1] — 2026-11-10
+
+- **Readable text at a terminal works again.** `get-issue`, `search` and the
+  other verbs with a text view printed JSON to a person at a terminal, because
+  they checked `sys.stdout.isatty()`, which runspec's logging tee always answers
+  False. They now use `args.runspec_text_output`.
+- Needs `runspec >= 0.84.0` (publish it first).
+
 ## [0.8.0] — 2026-10-25
 
 - **`update-issue` works with plain fields** (`--fields '{"labels":["test"]}'`

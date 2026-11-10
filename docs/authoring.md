@@ -278,13 +278,20 @@ whole. Shape the output at the source:
 - **Preview long text, drop empties and noise.** Keep counts even at zero, so
   the agent knows whether asking for more is worth a call.
 
-Pick the format by who's reading:
+Pick the format by who's reading, with `args.runspec_text_output` (runspec
+0.84.0+). It's True only for a person at a terminal:
 
-| Caller | How to tell | Print |
+| Caller | `args.runspec_text_output` | Print |
 |---|---|---|
-| Agent (console, `runspec serve`) | `args.runspec_agent` | compact JSON |
-| Person in a terminal | `sys.stdout.isatty()` | readable text |
-| Anything else (pipe, console Forms tab, Rundeck, Ansible, cron) | neither | JSON |
+| Person in a terminal | True | readable text |
+| Agent (console, `runspec serve`) | False | compact JSON |
+| Anything else (pipe, console Forms tab, Rundeck, Ansible, cron) | False | JSON |
+
+Don't use `sys.stdout.isatty()` after `parse()`: runspec's logging replaces
+`sys.stdout` with a tee whose `isatty()` is always False, so it says "pipe" at a
+terminal too. `args.runspec_text_output` asks the real stdout, and so does
+`runspec.stdout_is_terminal()` (the same check without the agent part).
+If the runnable has a `--json` flag or a `format` arg, an explicit value wins.
 
 The Forms tab parses JSON to draw a table, so only a terminal gets text.
 `runspec-jira` is the worked example: `get-issue` takes `--include` and `--raw`,

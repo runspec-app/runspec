@@ -9,6 +9,26 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.84.0] — 2026-11-10
+
+### Added
+
+- **`args.runspec_text_output`: one check for text vs JSON.** True only when a
+  person at a terminal is reading: not an agent (`RUNSPEC_AGENT`), and the real
+  stdout is a terminal. A pipe, the console's Forms tab, `runspec serve`,
+  Rundeck, Ansible and cron all get False. Use it instead of
+  `sys.stdout.isatty()`, which is always False after `parse()` because the
+  logging tee replaces `sys.stdout`; runnables that checked it printed JSON to
+  people at a terminal.
+- **`runspec.stdout_is_terminal()`**: the same check without the agent part, for
+  code outside a parsed runnable. Reads `sys.__stdout__`, so it works before and
+  after `parse()`; False for a missing or closed stdout. In `runspec.terminal`.
+- `runspec stubs` types the new property.
+- Docs: `docs/python.md` → "Agent-aware output", `docs/authoring.md` and the
+  add-runnable skill now use it, and say why `sys.stdout.isatty()` is wrong.
+
+---
+
 ## [0.83.0] — 2026-11-07
 
 ### Added

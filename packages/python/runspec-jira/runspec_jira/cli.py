@@ -306,9 +306,10 @@ def main() -> None:
         _emit({"error": str(exc), "kind": type(exc).__name__})
         sys.exit(1)
     # A person at a terminal gets readable text; agents, pipes, the console's
-    # Forms tab and schedulers get JSON.
+    # Forms tab and schedulers get JSON. (Not sys.stdout.isatty(): after
+    # parse() that's runspec's logging tee, which always says False.)
     text = None
-    if not spec.runspec_agent and sys.stdout.isatty():
+    if spec.runspec_text_output:
         text = human_text(spec.runspec_command, result, raw=_wants_raw(spec))
     _emit(result, text=text)
 
