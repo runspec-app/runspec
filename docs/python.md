@@ -153,6 +153,7 @@ prefixed to avoid collisions with your arg names):
 | `runspec_command_path` | `list[str]` | Full subcommand path, deepest last |
 | `runspec_autonomy` | `str` | Effective autonomy after escalation |
 | `runspec_agent` | `bool` | `True` when called via `runspec serve` |
+| `runspec_text_output` | `bool` | `True` when a person at a terminal should get text, not JSON |
 | `runspec_spec` | `dict` | Raw, fully-inferred spec for the runnable |
 | `runspec_groups` | `list[Group]` | Group constraints declared on this runnable |
 
@@ -205,17 +206,33 @@ already chosen the action by passing the flag.
 
 ### Agent-aware output
 
-`runspec_agent` is `True` when the runnable is called via `runspec serve`
-(detected from `RUNSPEC_AGENT=1`). Use it to switch output format:
+`runspec_agent` is `True` when an agent called the runnable (`runspec serve`,
+the console's agent; detected from `RUNSPEC_AGENT=1`).
+
+To choose between readable text and JSON, use `runspec_text_output`. It's
+`True` only when a person at a terminal is reading: not an agent, and stdout is
+a terminal. A pipe, the console's Forms tab, Rundeck, Ansible and cron all get
+`False`, and they want JSON.
 
 ```python
 args = runspec.parse()
+result = {"status": "deployed", "env": args.env.value}
 
-if args.runspec_agent:
-    print(json.dumps({"status": "deployed", "env": args.env.value}))
+if args.runspec_text_output:
+    print(f"✓ Deployed to {result['env']}")
 else:
-    print(f"✓ Deployed to {args.env.value}")
+    print(json.dumps(result))
 ```
+
+Don't test `sys.stdout.isatty()` after `parse()`. runspec's logging replaces
+`sys.stdout` with a tee that copies printed lines into the run log, and the
+tee's `isatty()` is always `False` (so libraries that colour output at a
+terminal don't write escape codes into the log). `runspec_text_output` asks the
+real stdout, `sys.__stdout__`. For the bare check, without the agent part, call
+`runspec.stdout_is_terminal()`; it works before and after `parse()`.
+
+In a test, set the answer with
+`monkeypatch.setattr(runspec.terminal, "stdout_is_terminal", lambda: True)`.
 
 ---
 

@@ -756,6 +756,10 @@ class _StdoutTee:
         return int(self._original.fileno())
 
     def isatty(self) -> bool:
+        # Always False, so libraries that colour or page output at a terminal
+        # don't write escape codes that would be copied into the run log. To
+        # pick text vs JSON, runnables use runspec.stdout_is_terminal() or
+        # RunSpec.runspec_text_output, which ask sys.__stdout__.
         return False
 
     def __getattr__(self, name: str) -> Any:

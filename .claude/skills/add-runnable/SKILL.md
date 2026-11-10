@@ -427,29 +427,44 @@ of it is empty fields and links. Shape the output at the source:
   the agent knows whether asking for more is worth a call.
 - **Compact JSON for machines.** No `indent`. Whitespace is tokens.
 
-**Pick the format by who's reading.**
+**Pick the format by who's reading.** Use `args.runspec_text_output` (runspec
+0.84.0+). It's True only when a person at a terminal is reading: not an agent,
+and the real stdout is a terminal.
 
-| Caller | How to tell | Print |
+| Caller | `args.runspec_text_output` | Print |
 |---|---|---|
-| Agent (console, `runspec serve`) | `args.runspec_agent` | compact JSON |
-| Person in a terminal | `sys.stdout.isatty()` | readable text: `Label  value` lines, a table for lists |
-| Anything else (pipe, console Forms tab, Rundeck, Ansible, cron) | neither | JSON, as `output = "json"` declares |
+| Person in a terminal | True | readable text: `Label  value` lines, a table for lists |
+| Agent (console, `runspec serve`, `RUNSPEC_AGENT=1`) | False | compact JSON |
+| Anything else (pipe, console Forms tab, Rundeck, Ansible, cron) | False | JSON, as `output = "json"` declares |
+
+**Never use `sys.stdout.isatty()` after `parse()`.** runspec's logging (on by
+default) replaces `sys.stdout` with a tee that copies printed lines into the run
+log, and the tee's `isatty()` is always False. So `sys.stdout.isatty()` says
+"pipe" at a terminal too, and the runnable prints JSON to a person. Before
+`parse()` it works, which is why this bites late. `args.runspec_text_output`
+asks the real stdout (`sys.__stdout__`). Outside a parsed runnable, use
+`runspec.stdout_is_terminal()`, the same check without the agent part.
 
 "Not an agent" doesn't mean "a person reading". The console's Forms tab parses
 JSON to draw a table, and pipes and schedulers want JSON. So only send readable
-text to a terminal. If you also add a `format` choice arg, an explicit value
-always wins.
+text to a terminal. If you also add a `--json` flag or a `format` choice arg, an
+explicit value always wins.
 
 ```python
 import json
-import sys
 
-def emit(result: dict, *, agent: bool, as_text) -> None:
-    if not agent and sys.stdout.isatty():
+def emit(args, result: dict, as_text) -> None:
+    if args.runspec_text_output:
         print(as_text(result))
     else:
         print(json.dumps(result, default=str))
 ```
+
+With a `--json` flag: `if args.runspec_text_output and not args.json.value:`.
+
+In tests, set the answer with
+`monkeypatch.setattr(runspec.terminal, "stdout_is_terminal", lambda: True)`.
+Patching `sys.stdout.isatty` doesn't change it.
 
 `runspec-jira` is the worked example. `get-issue` returns a compact view with
 counts and a description preview, and takes `--include` and `--raw`. `search`
