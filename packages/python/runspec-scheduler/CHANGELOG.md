@@ -22,7 +22,7 @@ All notable changes to `runspec-scheduler` are documented here.
   under the cron watchdog or supervisord (whose capture file is
   `scheduler.stdout.log`) each line was written twice, and under the watchdog
   that file never rotated. The daemon now echoes to stderr only at a terminal
-  or under systemd (where the journal is the place to read it), so
+  or when its stderr is systemd's journal (where you read it), so
   `scheduler.stdout.log` holds only startup errors and crash tracebacks. The
   daemon also rotates it at midnight like `scheduler.log`
   (`scheduler.stdout.log.YYYY-MM-DD`, newest 7 days kept): under the cron

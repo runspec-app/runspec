@@ -32,10 +32,14 @@ class _Tty:
         return self.tty
 
 
-def test_echo_only_at_a_terminal_or_under_systemd():
+def test_echo_only_at_a_terminal_or_under_systemd(tmp_path):
     assert outputlog.echo_to_stderr({}, _Tty(True)) is True
-    assert outputlog.echo_to_stderr({"JOURNAL_STREAM": "8:123"}, _Tty(False)) is True
     assert outputlog.echo_to_stderr({}, _Tty(False)) is False  # cron watchdog / supervisord
+    with open(tmp_path / "journal", "w") as f:
+        st = os.fstat(f.fileno())
+        assert outputlog.echo_to_stderr({"JOURNAL_STREAM": f"{st.st_dev}:{st.st_ino}"}, f) is True
+        # inherited from a service further up, but this stderr isn't the journal
+        assert outputlog.echo_to_stderr({"JOURNAL_STREAM": f"{st.st_dev}:{st.st_ino + 1}"}, f) is False
 
 
 def test_file_older_than_today_is_filed_under_its_day(tmp_path, monkeypatch):

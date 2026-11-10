@@ -56,11 +56,24 @@ def echo_to_stderr(env: Mapping[str, str] | None = None, stream: object = None) 
     supervisord: their capture file would hold a second copy of
     ``scheduler.log``, without its rotation."""
     env_: Mapping[str, str] = os.environ if env is None else env
-    if env_.get("JOURNAL_STREAM"):
-        return True
     stream = sys.__stderr__ if stream is None else stream
+    if _is_journal(env_.get("JOURNAL_STREAM", ""), stream):
+        return True
     try:
         return bool(stream is not None and stream.isatty())  # type: ignore[attr-defined]
+    except (AttributeError, ValueError, OSError):
+        return False
+
+
+def _is_journal(journal_stream: str, stream: object) -> bool:
+    """systemd sets ``JOURNAL_STREAM=<dev>:<inode>`` for a unit whose output is
+    the journal. Children inherit the variable even when their stderr is
+    somewhere else (a CI runner run as a service, a keeper started from one), so
+    it counts only when it names the stream's own file (systemd's advice)."""
+    dev, _, ino = journal_stream.partition(":")
+    try:
+        st = os.fstat(stream.fileno())  # type: ignore[attr-defined]
+        return (st.st_dev, st.st_ino) == (int(dev), int(ino))
     except (AttributeError, ValueError, OSError):
         return False
 
