@@ -223,7 +223,21 @@ runspec-scheduler settings --timezone Australia/Sydney      # the venv's zone (-
 
 The daemon writes a heartbeat to `{venv}/logs/scheduler_state.json` and a
 rotating log to `{venv}/logs/scheduler.log`; `runspec-scheduler status` reads
-both. Only one daemon runs per venv (an flock on `runspec_scheduler.lock`).
+both.
+
+Log files in `{venv}/logs/`, each rotated at midnight with 7 days kept:
+
+| File | Written by | Holds |
+|---|---|---|
+| `scheduler.log` | the daemon | what the daemon did (starts, reloads, fires, warnings) |
+| `runspec-scheduler.log` | runspec | a record of each `runspec-scheduler` verb run (`status`, `sync`, …) |
+| `scheduler.stdout.log` | the cron watchdog or supervisord | the daemon's stdout/stderr: startup errors and crash tracebacks only |
+| `supervisord.log` | the venv's supervisord | supervisord's own events (supervisor keeper only) |
+
+The daemon prints its log lines to stderr only at a terminal or under systemd
+(read them with `journalctl --user -u runspec-scheduler-<venv>`); under the other
+keepers they are in `scheduler.log` only. It rotates `scheduler.stdout.log` and
+`supervisord.log` itself, since neither keeper rotates by day. Only one daemon runs per venv (an flock on `runspec_scheduler.lock`).
 
 A fire that times out is stopped by `runspec exec`, then the daemon kills what is
 left of its process group. For a `run_as` fire escalated through `sudo`, children

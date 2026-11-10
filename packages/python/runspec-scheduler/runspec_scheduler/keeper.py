@@ -308,6 +308,8 @@ def render_supervisord_conf() -> str:
         "chmod=0700\n\n"
         "[supervisord]\n"
         f"logfile={logs / 'supervisord.log'}\n"
+        # the daemon rotates it at midnight (outputlog.py), not supervisord by size
+        "logfile_maxbytes=0\n"
         f"pidfile={d / 'supervisord.pid'}\n"
         f"childlogdir={logs}\n\n"
         "[rpcinterface:supervisor]\n"
@@ -332,6 +334,13 @@ def render_supervisor_program(argv: list[str], *, user: str | None = None, name:
         "redirect_stderr=true\n"
         f"stdout_logfile={logs / 'scheduler.stdout.log'}\n"
     )
+    if user:
+        # root's supervisord: the daemon can't signal it, so supervisord keeps
+        # rotating by size (the file holds only crash output)
+        text += "stdout_logfile_maxbytes=1MB\nstdout_logfile_backups=7\n"
+    else:
+        # the venv's own supervisord: the daemon rotates it at midnight (outputlog.py)
+        text += "stdout_logfile_maxbytes=0\n"
     if user:
         text += f"user={user}\n"
     return text

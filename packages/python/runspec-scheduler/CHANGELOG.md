@@ -17,6 +17,24 @@ All notable changes to `runspec-scheduler` are documented here.
   daemon). A fire stays non-interactive: it has no terminal, so nothing prompts.
   Run `sync` (the console does it after a Marketplace install) to rewrite
   existing crontab lines.
+- **`scheduler.stdout.log` no longer copies `scheduler.log`, and rotates.** The
+  daemon printed every log line to stderr as well as to `scheduler.log`, so
+  under the cron watchdog or supervisord (whose capture file is
+  `scheduler.stdout.log`) each line was written twice, and under the watchdog
+  that file never rotated. The daemon now echoes to stderr only at a terminal
+  or under systemd (where the journal is the place to read it), so
+  `scheduler.stdout.log` holds only startup errors and crash tracebacks. The
+  daemon also rotates it at midnight like `scheduler.log`
+  (`scheduler.stdout.log.YYYY-MM-DD`, newest 7 days kept): under the cron
+  watchdog it reopens its own stdout/stderr; under the venv's supervisord it
+  renames the files and sends supervisord `SIGUSR2` to reopen them, which also
+  rotates `supervisord.log`. The supervisord configs `install-service` writes
+  turn off supervisord's own size rotation for these (a root supervisord, which
+  the daemon can't signal, keeps size rotation: 1 MB × 7). Re-run
+  `install-service --write` (or the console's Update venv) to pick up the new
+  supervisord config; without it, supervisord's size rotation stays on alongside.
+  `runspec-scheduler.log` (the record of each verb run) already rotated at
+  midnight with 7 kept, through runspec's logging defaults.
 
 ## [0.10.0] — 2026-11-09
 

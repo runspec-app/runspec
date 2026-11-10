@@ -98,6 +98,8 @@ def test_fires_are_recorded_by_exec_under_the_schedule_label(venv):
     assert own and all(r["status"] != "running" for r in own)
     assert d.stop() == 0
     assert "already running" not in d.output()
+    # not at a terminal: the log lines go to scheduler.log only, not a second copy on stdout
+    assert "daemon started" in d.output() and "daemon started" not in d.stdout()
 
 
 def test_a_second_start_exits_at_once(venv):
