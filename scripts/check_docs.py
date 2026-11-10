@@ -116,6 +116,8 @@ TOML_FENCE = re.compile(r"```toml\n(.*?)```", re.S)
 #   putty                      → console `config.toml` ([putty] PuTTY session sync)
 #   http                       → console `config.toml` ([http] outbound proxy)
 #   mail_categories            → console `config.toml` ([mail_categories] Outlook categories)
+#   scheduler                  → runspec-scheduler `runspec_scheduler.toml` ([scheduler] venv settings)
+#   logs                       → core `runspec_logs_retention.toml` ([logs] retention policy)
 # Trade-off: a runspec runnable literally named `ssh`/`refresh`/`hosts`/`triggers`
 # would be skipped — none exist in the docs (guarded by check below), and runnable
 # names are author-chosen, so this is acceptable.
@@ -168,6 +170,8 @@ NON_RUNSPEC_SECTIONS = {
     "gateway",
     "eval",  # console eval fixture ([[eval]] tool-selection cases)
     "suite",  # console runspec_evals.toml ([[suite]] synced fixture store)
+    "scheduler",  # runspec-scheduler runspec_scheduler.toml ([scheduler] venv settings)
+    "logs",  # core runspec_logs_retention.toml ([logs] retention policy)
 }
 
 

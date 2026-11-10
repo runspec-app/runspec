@@ -72,6 +72,8 @@ nav:
     - Sandboxed code execution: console-sandbox.md
     - Hosts & fleet: console-hosts.md
     - Automation — triggers, schedules, rota: console-automation.md
+    - Shared schedules (runspec-scheduler): shared-schedules.md
+    - Log cleanup: log-cleanup.md
     - Runbooks: console-runbooks.md
     - Saved runs: console-saved-runs.md
     - Forms & credentials: console-forms.md

@@ -55,6 +55,36 @@ def test_edit_argv():
     assert prov.retention_edit_argv({"off": True, "delete_after": "9d"})[2] == "--off"
 
 
+def test_edit_argv_takes_off_words():
+    # typing "off" / "never" / "0" in a box is the same as leaving it blank
+    assert prov.retention_edit_argv(
+        {"compact_after": "off", "delete_after": "90d", "max_total_size": "0"}
+    )[2:8] == [
+        "--compact-after", "off", "--delete-after", "90d", "--max-total-size", "off",
+    ]  # fmt: skip
+    assert prov.retention_edit_argv({"compact_after": "Never", "delete_after": "off"}) == [
+        "logs", "retention", "--off", "--json",
+    ]  # fmt: skip
+
+
+def test_validate_retention_switches_compacting_off():
+    """Provision / Update venv: compress after can be turned off, not just
+    shortened, and a blank box clears it from an existing policy."""
+    for off in ("", "off", "OFF", "never", "none", "0"):
+        assert prov.validate_retention(
+            {"compact_after": off, "delete_after": "90d"}
+        ) == {"compact_after": "off", "delete_after": "90d"}
+    pol = prov.validate_retention({"compact_after": "", "delete_after": "30d"})
+    assert prov.retention_argv("/opt/venvs/ops", pol)[1:] == [
+        "logs", "retention", "--compact-after", "off", "--delete-after", "30d",
+    ]  # fmt: skip
+    # a field that isn't sent at all is left alone on the host
+    assert prov.validate_retention({"delete_after": "30d"}) == {"delete_after": "30d"}
+    with pytest.raises(prov.ProvisionError, match="at least one"):
+        prov.validate_retention({"compact_after": "off", "delete_after": ""})
+    assert prov.validate_retention(None) == {}
+
+
 @pytest.mark.parametrize(
     "payload, msg",
     [
@@ -129,7 +159,7 @@ def test_set_off_and_bad_values():
     assert m.call_args.args[2] == ["logs", "retention", "--off", "--json"]
     assert out["ok"] and out["policy"] is None and out["removed"]
     with patch.object(b, "_run_as_venv_owner") as m:
-        out = b.logs_retention_set("prod-1", "ops", {"delete_after": "never"})
+        out = b.logs_retention_set("prod-1", "ops", {"delete_after": "soon"})
     assert not out["ok"] and not m.called
 
 

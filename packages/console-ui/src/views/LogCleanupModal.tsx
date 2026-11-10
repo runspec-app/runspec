@@ -12,7 +12,7 @@ import { Modal, Button, Alert, Descriptions, Input, Popconfirm, Space, Spin, Typ
 import { ReloadOutlined } from '@ant-design/icons'
 import { bridge, type LogRetentionPolicy, type LogRetentionResult } from '../bridge'
 import { MONO_FONT } from '../ThemeContext'
-import { retentionProblem } from './ProvisionModal'
+import { retentionOff, retentionProblem } from './ProvisionModal'
 import { humanBytes } from './RunsIndexModal'
 
 const { Text } = Typography
@@ -26,9 +26,9 @@ const SIZE_RE = /^\d+(\.\d+)?\s*(b|kb|mb|gb)?$/i
 
 /** What's wrong with the form, or '' (all blank = remove the policy). */
 export function cleanupProblem(f: Form): string {
-  const c = f.compact_after.trim()
-  const d = f.delete_after.trim()
-  const m = f.max_total_size.trim()
+  const c = retentionOff(f.compact_after) ? '' : f.compact_after.trim()
+  const d = retentionOff(f.delete_after) ? '' : f.delete_after.trim()
+  const m = retentionOff(f.max_total_size) ? '' : f.max_total_size.trim()
   if (!c && !d && !m) return ''
   if (c || d) {
     const p = retentionProblem({ compact_after: c, delete_after: d })
@@ -49,7 +49,7 @@ export function policyText(p: LogRetentionPolicy | null | undefined): string {
 }
 
 const same = (f: Form, p: LogRetentionPolicy | null | undefined) =>
-  (['compact_after', 'delete_after', 'max_total_size'] as const).every(k => f[k].trim().toLowerCase() === (p?.[k] ?? '').toLowerCase())
+  (['compact_after', 'delete_after', 'max_total_size'] as const).every(k => (retentionOff(f[k]) ? '' : f[k].trim().toLowerCase()) === (p?.[k] ?? '').toLowerCase())
 
 export function LogCleanupModal({ target, onClose }: { target: LogCleanupTarget | null; onClose: () => void }) {
   const [info, setInfo] = useState<LogRetentionResult | null>(null)
@@ -79,7 +79,8 @@ export function LogCleanupModal({ target, onClose }: { target: LogCleanupTarget 
   if (!target) return null
   const { host, group } = target
   const problem = cleanupProblem(form)
-  const blank = !form.compact_after.trim() && !form.delete_after.trim() && !form.max_total_size.trim()
+  const val = (v: string) => (retentionOff(v) ? '' : v.trim())
+  const blank = !val(form.compact_after) && !val(form.delete_after) && !val(form.max_total_size)
   const unchanged = same(form, info?.policy)
   const hasPolicy = !!info?.policy
 
@@ -87,7 +88,7 @@ export function LogCleanupModal({ target, onClose }: { target: LogCleanupTarget 
     setBusy(off ? 'off' : 'save'); setError(''); setPreview('')
     try {
       const payload = off ? { off: true } : {
-        compact_after: form.compact_after.trim(), delete_after: form.delete_after.trim(), max_total_size: form.max_total_size.trim(),
+        compact_after: val(form.compact_after), delete_after: val(form.delete_after), max_total_size: val(form.max_total_size),
       }
       const r = await bridge.logs_retention_set(host, group, payload)
       if (!r.ok) { setError(r.error || 'Saving the policy failed.'); return }
@@ -162,8 +163,8 @@ export function LogCleanupModal({ target, onClose }: { target: LogCleanupTarget 
       {info?.ok && (
         <>
           <div style={{ marginTop: 16 }}>
-            {field('compact_after', 'Compress after', '7d', 'Run files older than this go into a gzip archive (one per day). Blank = never.')}
-            {field('delete_after', 'Delete after', '90d', 'Run files and archives older than this are deleted. Blank = never.')}
+            {field('compact_after', 'Compress after', '7d', 'Run files older than this go into a gzip archive (one per day). Blank or off = never compress.')}
+            {field('delete_after', 'Delete after', '90d', 'Run files and archives older than this are deleted. Blank or off = never delete.')}
             {field('max_total_size', 'Keep at most', '5GB', 'Then the oldest are deleted until logs/ fits. Blank = no size cap.')}
             <Text type="secondary" style={{ fontSize: 12 }}>Durations like 7d, 2w or 72h; sizes like 500MB or 5GB. Clear every field to remove the policy.</Text>
           </div>

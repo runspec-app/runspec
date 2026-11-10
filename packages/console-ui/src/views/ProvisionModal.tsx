@@ -144,22 +144,28 @@ function durationS(v: string): number {
   return Number(v.slice(0, -1)) * DURATION_S[v.slice(-1)]
 }
 
-/** The trimmed, lower-cased policy; a blank field is left out. */
-function retentionPayload(r: ProvisionRetention): ProvisionRetention {
-  const out: ProvisionRetention = {}
-  const c = (r.compact_after ?? '').trim().toLowerCase()
-  const d = (r.delete_after ?? '').trim().toLowerCase()
-  if (c) out.compact_after = c
-  if (d) out.delete_after = d
-  return out
+/** Words that switch one cleanup step off. A blank field means the same. */
+const OFF_WORDS = new Set(['', 'off', 'never', 'none', 'no', '0'])
+
+/** True when a compress-after / delete-after value switches that step off. */
+export function retentionOff(v: string | undefined): boolean {
+  return OFF_WORDS.has((v ?? '').trim().toLowerCase())
+}
+
+/** The policy to send: each field trimmed and lower-cased, and a blank or
+ * "off"/"never"/"0" field sent as "off" so the step is switched off (or
+ * cleared, when the venv already has a policy). */
+export function retentionPayload(r: ProvisionRetention): ProvisionRetention {
+  const norm = (v: string | undefined) => (retentionOff(v) ? 'off' : (v ?? '').trim().toLowerCase())
+  return { compact_after: norm(r.compact_after), delete_after: norm(r.delete_after) }
 }
 
 /** Why a log cleanup setting can't be used, or '' when it's fine. */
 export function retentionProblem(r: ProvisionRetention): string {
-  const { compact_after: c, delete_after: d } = retentionPayload(r)
-  if (!c && !d) return 'Set at least one of compress after / delete after.'
-  for (const v of [c, d]) if (v && !DURATION_RE.test(v)) return `"${v}" isn't a duration: use a number and s/m/h/d/w, like 7d or 2w.`
-  if (c && d && durationS(c) >= durationS(d)) return 'Compress after must be shorter than delete after.'
+  const { compact_after: c = 'off', delete_after: d = 'off' } = retentionPayload(r)
+  if (c === 'off' && d === 'off') return 'Set at least one of compress after / delete after (blank or off turns one off).'
+  for (const v of [c, d]) if (v !== 'off' && !DURATION_RE.test(v)) return `"${v}" isn't a duration: use a number and s/m/h/d/w, like 7d or 2w, or off.`
+  if (c !== 'off' && d !== 'off' && durationS(c) >= durationS(d)) return 'Compress after must be shorter than delete after.'
   return ''
 }
 
@@ -273,9 +279,9 @@ export function LogCleanupField({
         {checked && (
           <>
             <Text style={{ fontSize: 12 }}>compress after</Text>
-            <Input size="small" value={compactAfter} onChange={e => onCompactAfter(e.target.value)} placeholder="7d" style={{ width: 70 }} aria-label="Compress after" />
+            <Input size="small" value={compactAfter} onChange={e => onCompactAfter(e.target.value)} placeholder="off" style={{ width: 70 }} aria-label="Compress after" />
             <Text style={{ fontSize: 12 }}>delete after</Text>
-            <Input size="small" value={deleteAfter} onChange={e => onDeleteAfter(e.target.value)} placeholder="90d" style={{ width: 70 }} aria-label="Delete after" />
+            <Input size="small" value={deleteAfter} onChange={e => onDeleteAfter(e.target.value)} placeholder="off" style={{ width: 70 }} aria-label="Delete after" />
           </>
         )}
       </div>
@@ -629,7 +635,7 @@ export function ProvisionModal({
             onDeleteAfter={setDeleteAfter}
             error={retentionError}
             hint={cleanup
-              ? 'The venv owner\'s runs apply it once a day: old run logs are compressed, then deleted (runspec logs retention, runspec 0.80.0+). The audit log is never touched.'
+              ? 'The venv owner\'s runs apply it once a day: old run logs are compressed, then deleted (runspec logs retention, runspec 0.80.0+). Leave a box blank or type off to skip that step. The audit log is never touched.'
               : 'Run logs from other accounts pile up in logs/ until someone prunes them.'}
           />
         </div>

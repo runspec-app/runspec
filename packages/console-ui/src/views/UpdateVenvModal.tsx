@@ -23,6 +23,7 @@ import {
   schedulerSettingsPayload,
   applyProgress,
   membersOf,
+  retentionPayload,
   retentionProblem,
   type HostProgress,
   type ProgressEvent,
@@ -71,11 +72,6 @@ export interface UpdateForm {
 
 export function buildUpdatePayload(targets: DeprovisionTarget[], f: UpdateForm): VenvUpdatePayload {
   const packages = f.packages.map(p => p.trim()).filter(Boolean)
-  const retention: ProvisionRetention = {}
-  const c = (f.retention?.compact_after ?? '').trim().toLowerCase()
-  const d = (f.retention?.delete_after ?? '').trim().toLowerCase()
-  if (c) retention.compact_after = c
-  if (d) retention.delete_after = d
   const settings = schedulerSettingsPayload(f.schedulerSettings)
   return {
     targets,
@@ -83,7 +79,7 @@ export function buildUpdatePayload(targets: DeprovisionTarget[], f: UpdateForm):
     packages,
     repo: f.repo || undefined,
     inbox: f.inbox,
-    retention: f.retention ? retention : undefined,
+    retention: f.retention ? retentionPayload(f.retention) : undefined,
     scheduler: f.scheduler || undefined,
     ...(settings ? { scheduler_settings: settings } : {}),
     become_method: f.become,
@@ -430,7 +426,7 @@ export function UpdateVenvModal({
                 onDeleteAfter={setDeleteAfter}
                 error={retentionError}
                 hint={cleanup
-                  ? 'Replaces these two settings in the venv\'s policy (runspec logs retention, runspec 0.80.0+). The audit log is never touched.'
+                  ? 'Replaces these two settings in the venv\'s policy (runspec logs retention, runspec 0.80.0+). A blank box or off turns that step off, e.g. blank compress after = never compress. The audit log is never touched.'
                   : 'Leaves each venv\'s log cleanup policy as it is.'}
               />
             </div>
