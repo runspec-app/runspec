@@ -42,10 +42,12 @@ Settings → **MCP Server**:
   level (most-restrictive wins). Unset ⇒ each runnable's own declared autonomy.
 - **Confirm wait** — how long a parked call waits for your approval before
   returning a resumable result (see [Autonomy](#autonomy-the-confirm-gate) below).
+- **Tools** — `Every runnable is a tool` (default) or `Search`, which lists
+  three tools instead (see [Search mode](#search-mode) below).
 - **Tool style** — how runnables with subcommands are presented (see
   [Tool style](#tool-style-leaf-vs-per-runnable) below). `leaf` (default) is
   serve-identical; `runnable` collapses each runnable to one tool with a
-  `command` argument.
+  `command` argument. Not used in search mode.
 
 Or in `config.toml`:
 
@@ -56,7 +58,8 @@ host = "127.0.0.1"
 port = 8765
 # token = "…"              # optional bearer token
 # default_autonomy = "confirm"
-confirm_wait = 50
+confirm_wait = 300
+# tool_mode = "all"        # or "search" — search/describe/run instead of one tool per runnable
 # tool_style = "leaf"      # or "runnable" — one tool per runnable + a command arg
 # expose_builtins = false  # also publish the console's console-specific built-in tools
 ```
@@ -123,6 +126,37 @@ above they run during planning too. It's off by default because autonomous
 doesn't always mean read-only: an autonomous restart or cleanup would also run
 while Claude is still planning. Tools for `confirm` runnables always ask in plan
 mode.
+
+### Or install the Claude Code plugin
+
+While the server runs, the console also writes a Claude Code plugin for it into
+`{app_dir}/claude-plugin` (a one-plugin local marketplace). Settings → MCP Server
+→ **Show install commands** prints the two commands, for example:
+
+```bash
+claude plugin marketplace add "/home/you/.config/runspec-console/claude-plugin"
+claude plugin install runspec-console@runspec-console
+```
+
+The plugin adds the console's server (no `claude mcp add` needed) and a
+**`runspec-operator`** agent whose only tools are the console's: its MCP tools
+plus Claude Code's two MCP resource readers, which it uses to read the console's
+system prompt and live context before it starts. Run a whole session as it:
+
+```bash
+claude --agent runspec-console:runspec-operator
+```
+
+or let Claude Code hand ops tasks to it. The names follow the install's app slug,
+so a white-label build gets its own plugin name.
+
+When the server has a bearer token, Claude Code asks for it once when you enable
+the plugin and keeps it in your system's credential store; the token is never
+written into the plugin files. Claude Code loads a local marketplace in place, and
+the console rewrites the plugin whenever the server starts, so a new port reaches
+Claude Code the next time it starts. The plugin's tools are named
+`mcp__plugin_<plugin>_console__<tool>`, so an allow rule for them is
+`"mcp__plugin_runspec-console_console__*"`.
 
 Any MCP client that speaks streamable-HTTP works the same way. The console must be
 **running** for the endpoint to be up — this is a desktop, not a daemon; open the
@@ -249,20 +283,73 @@ Approve/Deny; an autonomous call's card just shows the run and its output.
 
 The denylist and `enforce_run_as` still apply on the executing host, regardless.
 
-**Parked calls and the client timeout.** An MCP client imposes its own per-tool
-timeout (Claude Code's `MCP_TOOL_TIMEOUT` defaults to **60s**), and progress
-notifications do **not** extend it. So a parked `confirm` waits only up to
-`confirm_wait` (default **50s**, deliberately under that ceiling): if you approve
-in time, the runnable runs and its output returns; if not, the tool returns a
-graceful, **resumable** message —
+**Parked calls and the client timeout.** A parked `confirm` waits up to
+`confirm_wait` (default **300s**, and never longer than the chat's own
+`[console] confirm_timeout`): if you approve in time, the runnable runs and its
+output returns; if not, the tool returns a graceful, **resumable** message —
 
 > ⏳ Awaiting operator approval in the console (request `ab12cd34`). Approve it
 > there, then call this tool again to run it.
 
 — and the parked card clears. Nothing runs late or orphaned; the agent simply
-calls again (raising a fresh confirm) once you've approved. If you raise the
-client's `MCP_TOOL_TIMEOUT`, raise `confirm_wait` to match for a smoother
-single-call approval.
+calls again (raising a fresh confirm) once you've approved. Current Claude Code
+releases wait far longer than 300s for a tool (`MCP_TOOL_TIMEOUT`), so the
+default suits it. An MCP client with a short per-tool timeout (progress
+notifications don't extend it) needs `confirm_wait` set below that timeout. Until
+console 0.399.0 the default was 50s, sized for Claude Code's old 60s timeout.
+
+---
+
+## Search mode
+
+`[mcp_server] tool_mode = "search"` (Settings → MCP Server → **Tools**) publishes
+three tools instead of one per runnable, the way the console's own assistant
+works with `[llm] tool_mode = "search"`:
+
+| tool | does |
+|---|---|
+| `search_runnables` | finds runnables by keyword (ids, hosts, args, subcommands, in-scope credentials, matching runbooks) |
+| `describe_runnable` | one runnable's full interface, or one subcommand's complete args |
+| `run_runnable` | runs it: `id`, `host`, `command`, and the runnable's arguments inside `args` |
+
+Use it for a big fleet (hundreds of leaf tools) or a client without its own tool
+search. `search_runnables` and `describe_runnable` only read the discovery cache,
+so they run without a card and are marked read-only. `run_runnable` goes through
+exactly the same gate, card, credentials and History as a listed tool, autonomy
+chosen per subcommand; arguments are checked first, so a wrong or missing one
+comes back as an error before any card appears. Two differences from the chat
+agent's `run_runnable`: a host **group** isn't accepted (the error lists the
+member hosts to call one at a time), and there is no `credential_id` (in-scope
+credentials apply on their own, as for every MCP call).
+
+---
+
+## Instructions, prompts and context
+
+The console tells a connecting agent how to work with it, and offers the same
+context its own assistant gets:
+
+- **Server instructions.** Sent when a client connects (Claude Code reads them at
+  session start and keeps the first 4,096 characters): the approval contract
+  (call again after "awaiting approval"; a decline isn't something to work
+  around), how to find tools in the current mode, ask-don't-guess, where the
+  runbooks and context are, your host groups, and your `[llm] system_append` site
+  policy. Rebuilt for every connection.
+- **The `assistant` prompt.** The console assistant's system prompt (`[llm]
+  system`, or the default) plus today's date and timezone, working hours,
+  triggers and schedules, host groups and the pinned wiki facts, with an optional
+  `task`. In Claude Code it's a slash command (`/runspec:assistant` when the
+  server is called `runspec`).
+- **One prompt per runbook** (`runbook-<id>`). Its parameters become the
+  prompt's arguments; the rendered steps come back as the message, with any
+  required value left out flagged so the agent asks for it. Runbook edits update
+  the list straight away.
+- **Resources.** `runspec://context` (the live context block above) and
+  `runspec://system-prompt` (the assistant's system prompt), for `@`-mentions in
+  Claude Code or any client that reads resources.
+
+Tools a prompt mentions that this server doesn't publish (for example the wiki
+tools without **Expose built-in tools**) simply aren't available to the agent.
 
 ---
 

@@ -47,6 +47,38 @@ if TYPE_CHECKING:
 _MCP_SERVER_CHAT_ID = "__mcp_server__"
 _DISCOVERY_FILE = "runspec_mcp_server.json"
 
+# Claude Code keeps only the first 4,096 characters of a server's instructions.
+_INSTRUCTIONS_MAX = 4096
+
+# The search-mode meta tools ([mcp_server] tool_mode = "search").
+_SEARCH_TOOL_NAMES = frozenset(
+    {"search_runnables", "describe_runnable", "run_runnable"}
+)
+_RUN_FIELDS = ("id", "host", "command", "args")
+
+_CONTEXT_URI = "runspec://context"
+_SYSTEM_PROMPT_URI = "runspec://system-prompt"
+_ASSISTANT_PROMPT = "assistant"
+_RUNBOOK_PROMPT_PREFIX = "runbook-"
+
+
+def _cap(text: str, limit: int) -> str:
+    """``text`` cut at a line boundary to at most ``limit`` characters."""
+    if len(text) <= limit:
+        return text
+    cut = text[: limit - 2]
+    nl = cut.rfind("\n")
+    if nl > limit // 2:
+        cut = cut[:nl]
+    return cut.rstrip() + "\n…"
+
+
+def _prompt_name(runbook_id: str) -> str:
+    """The MCP prompt name for a runbook (Claude Code shows it as
+    ``/<server>:runbook-<id>``). Only letters, digits, ``-`` and ``_``."""
+    safe = "".join(c if c.isalnum() or c in "-_" else "-" for c in runbook_id)
+    return _RUNBOOK_PROMPT_PREFIX + safe.strip("-")
+
 
 class McpServerMixin:
     # -- injected callbacks for ConsoleMcpServer ----------------------------
@@ -122,13 +154,20 @@ class McpServerMixin:
         search-meta) and the client-redundant ones (workspace/exec/web/files/repo)
         are absent by construction."""
         try:
-            if not config_mod.read_mcp_server().get("expose_builtins"):
-                return []
+            cfg = config_mod.read_mcp_server()
+        except Exception:  # noqa: BLE001
+            cfg = {}
+        out: list[dict[str, Any]] = []
+        if cfg.get("tool_mode") == "search":
+            out += self._mcp_server_search_tools()
+        if not cfg.get("expose_builtins"):
+            return out
+        try:
             tools = self._custom_agent_tools()
         except Exception:  # noqa: BLE001 — never break the tool list
             logger.debug("mcp_server builtins list failed", exc_info=True)
-            return []
-        return [t for t in tools if t.get("name") in _MCP_SERVER_BUILTIN_NAMES]
+            return out
+        return out + [t for t in tools if t.get("name") in _MCP_SERVER_BUILTIN_NAMES]
 
     def _mcp_server_execute_builtin(
         self, name: str, arguments: dict[str, Any]
@@ -141,6 +180,8 @@ class McpServerMixin:
         ``__mcp_server__`` chat id — so a tool that needs a workspace gets a
         dedicated MCP one. Defence-in-depth: refuse anything not in the exposed
         allowlist even if a stale name reaches here."""
+        if name in _SEARCH_TOOL_NAMES:
+            return self._mcp_server_search_call(name, dict(arguments or {}))
         if name not in _MCP_SERVER_BUILTIN_NAMES:
             return (f"'{name}' is not exposed over MCP.", True)
         args = dict(arguments or {})
@@ -386,9 +427,12 @@ class McpServerMixin:
         """The bounded confirm wait: the smaller of ``[mcp_server] confirm_wait``
         and the chat confirm timeout (so it never exceeds either)."""
         try:
-            wait = float(config_mod.read_mcp_server().get("confirm_wait") or 50.0)
+            wait = float(
+                config_mod.read_mcp_server().get("confirm_wait")
+                or config_mod.DEFAULT_MCP_SERVER_CONFIRM_WAIT
+            )
         except Exception:  # noqa: BLE001
-            wait = 50.0
+            wait = config_mod.DEFAULT_MCP_SERVER_CONFIRM_WAIT
         ceiling = self._confirm_timeout_s(headless=False)
         return min(wait, ceiling) if ceiling else wait
 
@@ -498,6 +542,391 @@ class McpServerMixin:
 
     # -- public JS API ------------------------------------------------------
 
+    # -- search mode ([mcp_server] tool_mode = "search") ----------------------
+
+    def _mcp_server_search_tools(self) -> list[dict[str, Any]]:
+        """The three meta tools published instead of one tool per runnable: the
+        chat agent's search/describe schemas (marked read-only) and an MCP
+        ``run_runnable`` without the chat-only fields (credentials are applied by
+        scope on this server; ``deliver``/``debug`` are chat workspace features)."""
+        chat = {t["name"]: t for t in self._search_mode_tools()}
+        search = dict(chat["search_runnables"])
+        search["description"] = (
+            "Find runnables across the operator's fleet by keyword. Returns "
+            "matches under 'results' with their id, hosts, description, typed "
+            "argument list and any subcommands (with their own args). A "
+            "'runs_as' map ({host: account}) means it runs as that OS account "
+            "there. Call this first, then run_runnable with the id and host. Use "
+            "an empty query (optionally with group/host) to browse. Saved "
+            "runbooks come back under 'runbooks'; each is also a prompt on this "
+            "server (runbook-<id>)."
+        )
+        search["read_only"] = True
+        describe = dict(chat["describe_runnable"])
+        describe["read_only"] = True
+        run = {
+            "name": "run_runnable",
+            "description": (
+                "Run a runnable found with search_runnables. Pass its id, the "
+                "host to run on, its arguments by name inside 'args', and "
+                "'command' when the row lists subcommands (their args are per "
+                "command). Arguments are checked before anything runs. "
+                "autonomous runs at once; confirm/supervised waits for the "
+                "operator's Approve in the console; manual is refused. If the "
+                "result says it is awaiting approval, call again with the same "
+                "arguments once the operator has approved."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "The runnable id from a search_runnables result.",
+                    },
+                    "host": {
+                        "type": "string",
+                        "description": "Which host to run on (from the row's hosts).",
+                    },
+                    "command": {
+                        "type": "string",
+                        "description": "Subcommand to run, if the runnable has any "
+                        "(space-separated for nested commands).",
+                    },
+                    "args": {
+                        "type": "object",
+                        "description": "Arguments by name, per the row's args.",
+                        "additionalProperties": True,
+                    },
+                },
+                "required": ["id"],
+            },
+        }
+        return [search, describe, run]
+
+    def _mcp_server_search_call(
+        self, name: str, ti: dict[str, Any]
+    ) -> tuple[str, bool]:
+        """Run one search-mode meta tool → ``(text, is_error)``. search/describe
+        only read the discovery cache, so they run ungated; ``run_runnable``
+        goes through the same gate, card and executor as a listed tool."""
+        if name == "run_runnable":
+            return self._mcp_server_run_by_id(ti)
+        try:
+            if name == "search_runnables":
+                text = self._run_search_tool(ti)
+            else:
+                text = self._run_describe_tool(ti)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("mcp_server %s failed", name, exc_info=True)
+            return (f"'{name}' failed: {exc}", True)
+        return (text, text.startswith("Error:"))
+
+    def _mcp_server_run_by_id(self, ti: dict[str, Any]) -> tuple[str, bool]:
+        """``run_runnable`` over MCP: resolve the id to a whole-runnable tool (the
+        same one ``tool_style = "runnable"`` would list), check the arguments,
+        then hand it to :meth:`_mcp_server_execute`."""
+        extra = [k for k in ti if k not in _RUN_FIELDS]
+        if extra:
+            return (
+                f"Error: unexpected field(s): {', '.join(extra)}. Runnable "
+                "arguments go inside 'args'; only id, host, command and args are "
+                "top-level fields.",
+                True,
+            )
+        rid = str(ti.get("id") or "").strip()
+        if not rid:
+            return ("Error: 'id' is required (use search_runnables to find it).", True)
+        matches = self._runnables_for_id(rid)
+        if not matches:
+            bare = rid.split(":", 1)[1] if rid.startswith("runbook:") else rid
+            if self._runbook_id_hint(rid):
+                return (
+                    f"Error: '{bare}' is a runbook, not a runnable. Use the "
+                    f"{_prompt_name(bare)} prompt on this server to follow it.",
+                    True,
+                )
+            return (
+                f"Error: unknown runnable id '{rid}' (use search_runnables to find it).",
+                True,
+            )
+        hosts: list[str] = []
+        for r in matches:
+            h = str(r.get("host") or "local")
+            if h not in hosts:
+                hosts.append(h)
+        host = str(ti.get("host") or "").strip()
+        if host and host not in hosts:
+            members = [h for h in (self._groups_map().get(host) or []) if h in hosts]
+            if members:
+                return (
+                    f"Error: '{host}' is a host group. This server runs one host "
+                    f"per call: call run_runnable once for each of "
+                    f"{', '.join(members)}.",
+                    True,
+                )
+            return (
+                f"Error: '{matches[0].get('name')}' isn't on host '{host}'. "
+                f"Options: {', '.join(hosts)}.",
+                True,
+            )
+        try:
+            default_autonomy = config_mod.read_mcp_server().get("default_autonomy")
+        except Exception:  # noqa: BLE001
+            default_autonomy = None
+        tools, _ = mcp_server_mod.build_tools(
+            matches, default_autonomy=default_autonomy, style="runnable"
+        )
+        if not tools:
+            return (f"Error: '{rid}' can't be run over MCP.", True)
+        tool = tools[0]
+        call = dict(self._coerce_run_args(ti.get("args")))
+        if host and tool.host_options:
+            call[tool.host_key] = host
+        command = str(ti.get("command") or "").strip()
+        if command:
+            if not tool.command_options:
+                return (f"Error: '{tool.runnable}' has no subcommands.", True)
+            call[tool.command_key] = command
+        resolved_host, path, _level, args, error = tool.resolve_call(call)
+        if error:
+            return (f"Error: {error}", True)
+        cached = next(
+            (r for r in matches if str(r.get("host") or "local") == resolved_host),
+            matches[0],
+        )
+        problem = self._preflight_validate(cached, path, args)
+        if problem:
+            return (problem, True)
+        return self._mcp_server_execute(tool, call)
+
+    # -- instructions, prompts, resources -----------------------------------
+
+    def _mcp_server_brand(self) -> str:
+        try:
+            brand = str(config_mod.theme_config().get("brand_name") or "").strip()
+        except Exception:  # noqa: BLE001
+            brand = ""
+        return brand or "runspec console"
+
+    def _mcp_server_instructions(self) -> str:
+        """What a client reads when it connects (Claude Code: at session start,
+        first 4,096 characters). Explains the approval contract, how to find and
+        run tools in the configured mode, where the runbooks and live context
+        are, and the operator's ``[llm] system_append`` site policy."""
+        cfg = config_mod.read_mcp_server()
+        brand = self._mcp_server_brand()
+        parts = [
+            f"{brand} runs the operator's runspec runnables on their own machine "
+            "and their SSH fleet. Each runnable has an autonomy level: "
+            "autonomous runs at once; confirm and supervised wait for the "
+            "operator to press Approve on a card in the console; manual is "
+            "refused (the operator runs it themselves).",
+            "If a result says it is awaiting operator approval, tell the user it "
+            "is waiting in the console, then call the same tool again with the "
+            "same arguments once they have approved. A decline is the "
+            "operator's decision: don't look for another way to do the same "
+            "thing.",
+        ]
+        if cfg.get("tool_mode") == "search":
+            parts.append(
+                "Runnables are not listed one by one. Call search_runnables to "
+                "find one (it returns ids, hosts and arguments), "
+                "describe_runnable when you need a subcommand's full "
+                "arguments, then run_runnable with the id, host, 'command' and "
+                "'args'. Don't guess ids or argument names."
+            )
+        elif cfg.get("tool_style") == "runnable":
+            parts.append(
+                "Each runnable is one tool. Pick the subcommand with its "
+                "'command' argument and, for a runnable on several hosts, the "
+                "host with its 'host' argument."
+            )
+        else:
+            parts.append(
+                "Each runnable (and each of its subcommands) is one tool. A "
+                "runnable on several hosts has one tool per host, prefixed "
+                "with the host name."
+            )
+        parts.append(
+            "When a required value is missing or unclear and getting it wrong "
+            "would matter (which host, sending mail, scheduling, anything "
+            "destructive), ask the user one short question instead of guessing."
+        )
+        parts.append(
+            "Saved runbooks are the operator's standing procedures; each is a "
+            "prompt on this server (runbook-<id>), so prefer one over "
+            "improvising. The 'assistant' prompt loads the console's own system "
+            "prompt and live context. The runspec://context resource has "
+            "today's date, host groups, schedules and pinned facts."
+        )
+        try:
+            groups = self._groups_map()
+        except Exception:  # noqa: BLE001
+            groups = {}
+        if groups:
+            shown = []
+            for g, members in sorted(groups.items())[:20]:
+                hosts = ", ".join(members[:8]) + (" …" if len(members) > 8 else "")
+                shown.append(f"{g} ({hosts})")
+            parts.append("Host groups: " + "; ".join(shown) + ".")
+        try:
+            append = str(self.get_config().get("llm", {}).get("system_append", ""))
+        except Exception:  # noqa: BLE001
+            append = ""
+        if append.strip():
+            parts.append("Operator policy:\n" + append.strip())
+        return _cap("\n\n".join(parts), _INSTRUCTIONS_MAX)
+
+    def _mcp_server_context(self) -> str:
+        """The live context block a chat turn gets: date + timezone, the
+        automation state and host groups, and the pinned wiki facts."""
+        blocks = [self._now_context()]
+        for build in (self._console_context, self._knowledge_header):
+            try:
+                text = build()
+            except Exception:  # noqa: BLE001 — context is a nicety
+                logger.debug("mcp_server context block failed", exc_info=True)
+                text = ""
+            if text:
+                blocks.append(text)
+        return "\n\n".join(blocks)
+
+    def _mcp_server_runbook_rows(self) -> list[tuple[str, dict[str, Any]]]:
+        """``(prompt name, runbook)`` for every saved runbook (sorted by id)."""
+        from . import memory
+
+        rows: list[tuple[str, dict[str, Any]]] = []
+        seen: set[str] = set()
+        for meta in memory.list_runbooks():
+            rid = str(meta.get("id") or "")
+            name = _prompt_name(rid)
+            if not rid or name == _RUNBOOK_PROMPT_PREFIX or name in seen:
+                continue
+            entry = memory.load_runbook(rid)
+            if entry:
+                seen.add(name)
+                rows.append((name, entry))
+        return rows
+
+    def _mcp_server_prompts(self) -> list[dict[str, Any]]:
+        """prompts_provider: the ``assistant`` prompt + one prompt per runbook."""
+        from . import runbookargs
+
+        prompts: list[dict[str, Any]] = [
+            {
+                "name": _ASSISTANT_PROMPT,
+                "title": f"{self._mcp_server_brand()} assistant",
+                "description": (
+                    "Work as the console's assistant: loads its system prompt, "
+                    "today's date, host groups, schedules and pinned facts."
+                ),
+                "arguments": [
+                    {
+                        "name": "task",
+                        "description": "What you want done (optional).",
+                        "required": False,
+                    }
+                ],
+            }
+        ]
+        for name, entry in self._mcp_server_runbook_rows():
+            raw = entry.get("args") if isinstance(entry.get("args"), dict) else {}
+            arguments = [
+                {
+                    "name": str(d.get("name")),
+                    "description": str(d.get("description") or "") or None,
+                    "required": bool(d.get("required")),
+                }
+                for d in runbookargs.parse_runbook_args(raw)
+                if d.get("name")
+            ]
+            prompts.append(
+                {
+                    "name": name,
+                    "title": str(entry.get("title") or entry.get("id")),
+                    "description": str(
+                        entry.get("symptom") or entry.get("title") or ""
+                    ),
+                    "arguments": arguments,
+                }
+            )
+        return prompts
+
+    def _mcp_server_get_prompt(
+        self, name: str, arguments: dict[str, Any]
+    ) -> tuple[str, str]:
+        """get_prompt: render one prompt → ``(description, text)``."""
+        from . import memory, runbookargs
+
+        values = {k: v for k, v in (arguments or {}).items() if v not in (None, "")}
+        if name == _ASSISTANT_PROMPT:
+            text = (
+                f"{self._base_system()}\n\n"
+                "You are working through the console's MCP server, so its "
+                "runnables and tools are your tools here. If something above "
+                "names a tool this session doesn't have, it isn't available.\n\n"
+                f"{self._mcp_server_context()}"
+            )
+            task = str(values.get("task") or "").strip()
+            if task:
+                text += f"\n\n## Task\n{task}"
+            return ("The console assistant's instructions and live context.", text)
+        for prompt_name, entry in self._mcp_server_runbook_rows():
+            if prompt_name != name:
+                continue
+            raw = entry.get("args") if isinstance(entry.get("args"), dict) else {}
+            errors = runbookargs.validate_runbook_values(raw, values, require=False)
+            if errors:
+                raise ValueError("; ".join(errors))
+            body = memory.render_runbook(entry, values).strip()
+            if not body:
+                raise ValueError("this runbook has an empty body")
+            title = entry.get("title") or entry.get("id")
+            text = (
+                f"Follow the operator's runbook '{title}' using this server's "
+                f"tools. Each run is checked against its autonomy level as "
+                f"usual.\n\n{body}"
+            )
+            missing = [
+                str(d.get("name"))
+                for d in runbookargs.parse_runbook_args(raw)
+                if d.get("required") and str(d.get("name")) not in values
+            ]
+            if missing:
+                text += (
+                    f"\n\nNot filled in: {', '.join(missing)} (shown as {{{{…}}}} "
+                    "above). Ask the user for them before you start."
+                )
+            return (str(entry.get("symptom") or title), text)
+        raise KeyError(name)
+
+    def _mcp_server_resources(self) -> list[dict[str, Any]]:
+        """resources_provider: live context + the console's system prompt."""
+        return [
+            {
+                "uri": _CONTEXT_URI,
+                "name": "context",
+                "description": (
+                    "Today's date and timezone, working hours, triggers, "
+                    "schedules, host groups and pinned facts."
+                ),
+                "mime_type": "text/markdown",
+            },
+            {
+                "uri": _SYSTEM_PROMPT_URI,
+                "name": "system-prompt",
+                "description": "The console assistant's system prompt.",
+                "mime_type": "text/markdown",
+            },
+        ]
+
+    def _mcp_server_read_resource(self, uri: str) -> str:
+        if uri == _CONTEXT_URI:
+            return self._mcp_server_context()
+        if uri == _SYSTEM_PROMPT_URI:
+            return self._base_system()
+        raise KeyError(uri)
+
     def mcp_server_status(self) -> dict[str, Any]:
         """Live status of the console's MCP server (running / url / auth / tool
         count / last error). The token is never included."""
@@ -555,6 +984,12 @@ class McpServerMixin:
             if tool_style not in ("leaf", "runnable"):
                 raise ValueError(f"invalid tool_style: {tool_style}")
             section["tool_style"] = tool_style
+        tool_mode = str(data.get("tool_mode") or "").strip().lower()
+        if tool_mode:
+            if tool_mode not in ("all", "search"):
+                raise ValueError(f"invalid tool_mode: {tool_mode}")
+            if tool_mode != "all":
+                section["tool_mode"] = tool_mode
         if data.get("expose_builtins"):
             section["expose_builtins"] = True
         if data.get("plan_mode_autonomous"):
@@ -571,6 +1006,33 @@ class McpServerMixin:
             logger.warning("mcp_server restart after save failed", exc_info=True)
         self._dispatch("runspec:mcp_server_changed", {})
         return self._mcp_server.status()
+
+    def mcp_server_claude_plugin(self) -> dict[str, Any]:
+        """The Claude Code plugin for this server (Settings → MCP Server): where
+        it was written and the commands that install it. ``{"ok": False,
+        "reason": …}`` while the server isn't running."""
+        st = self._mcp_server.status()
+        if not st.get("running"):
+            return {"ok": False, "reason": "Start the MCP server first."}
+        try:
+            info = self._write_claude_plugin(st)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("writing the Claude Code plugin failed", exc_info=True)
+            return {"ok": False, "reason": f"Couldn't write the plugin: {exc}"}
+        return {"ok": True, **info}
+
+    def _write_claude_plugin(self, status: dict[str, Any]) -> dict[str, Any]:
+        from . import claude_plugin
+        from .version import installed_version
+
+        return claude_plugin.render(
+            config_mod.app_dir() / claude_plugin.DIR_NAME,
+            slug=config_mod.app_slug(),
+            brand=self._mcp_server_brand(),
+            url=str(status.get("url") or ""),
+            token_required=bool(config_mod.read_mcp_server().get("token")),
+            version=installed_version() or "0",
+        )
 
     def _write_mcp_server_discovery(self) -> None:
         """Write ``{app_dir}/runspec_mcp_server.json`` with the live URL (+ token,
@@ -610,3 +1072,10 @@ class McpServerMixin:
                 pass
         except Exception:  # noqa: BLE001 — discovery file is a convenience, never fatal
             logger.debug("writing MCP server discovery file failed", exc_info=True)
+            return
+        # Keep the Claude Code plugin's URL current (it's loaded in place, so a
+        # port change reaches Claude Code on its next start). Never fatal.
+        try:
+            self._write_claude_plugin(st)
+        except Exception:  # noqa: BLE001
+            logger.debug("writing the Claude Code plugin failed", exc_info=True)

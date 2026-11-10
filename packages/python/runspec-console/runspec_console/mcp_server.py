@@ -865,6 +865,21 @@ class ConsoleMcpServer:
       * ``execute_builtin(name: str, arguments: dict) -> tuple[str, bool]``
         *(optional)* — gate + run one built-in tool call (same contract as
         ``execute``); required whenever ``builtins_provider`` yields any tool.
+        A built-in schema may carry ``"read_only": True`` to be published with
+        ``readOnlyHint`` (search/describe in ``tool_mode = "search"``).
+      * ``instructions_provider() -> str`` *(optional)* — the server
+        instructions a client reads when it connects (Claude Code loads them at
+        session start). Rebuilt for every new connection, so host groups and
+        the tool mode stay current. Falls back to one line when absent/failing.
+      * ``prompts_provider() -> list[dict]`` + ``get_prompt(name, args) ->
+        tuple[str, str]`` *(optional)* — MCP prompts (``{"name",
+        "description", "arguments": [{"name", "description", "required"}]}``)
+        and their rendering → ``(description, text)``; raise ``KeyError`` for an
+        unknown name and ``ValueError`` for bad arguments. Claude Code lists
+        them as ``/<server>:<name>`` commands.
+      * ``resources_provider() -> list[dict]`` + ``read_resource(uri) -> str``
+        *(optional)* — MCP resources (``{"uri", "name", "description",
+        "mime_type"}``) and their text; ``KeyError`` for an unknown uri.
     """
 
     def __init__(
@@ -877,8 +892,18 @@ class ConsoleMcpServer:
         builtins_provider: Callable[[], list[dict[str, Any]]] | None = None,
         execute_builtin: Callable[[str, dict[str, Any]], tuple[str, bool]]
         | None = None,
+        instructions_provider: Callable[[], str] | None = None,
+        prompts_provider: Callable[[], list[dict[str, Any]]] | None = None,
+        get_prompt: Callable[[str, dict[str, Any]], tuple[str, str]] | None = None,
+        resources_provider: Callable[[], list[dict[str, Any]]] | None = None,
+        read_resource: Callable[[str], str] | None = None,
     ) -> None:
         self._config_reader = config_reader
+        self._instructions_provider = instructions_provider
+        self._prompts_provider = prompts_provider
+        self._get_prompt = get_prompt
+        self._resources_provider = resources_provider
+        self._read_resource = read_resource
         self._tools_provider = tools_provider
         self._execute = execute
         self._brand_name = brand_name
@@ -890,11 +915,13 @@ class ConsoleMcpServer:
         self._state = _State()
         self._default_autonomy: str | None = None
         self._tool_style: str = "leaf"
+        self._tool_mode: str = "all"
         self._plan_mode_autonomous = False
         # For pushing tools/list_changed when discovery updates: the serving event
         # loop + the most-recently-seen client session (captured during a request).
         self._loop: Any = None
         self._session: Any = None
+        self._server: Any = None
         # Set while we intentionally stop/restart the server, so the log filter can
         # quiet uvicorn's expected force-cancel noise (and only then).
         self._stopping = False
@@ -928,10 +955,15 @@ class ConsoleMcpServer:
                 "tools": len(s.registry),
                 "builtins": len(s.builtin_names),
                 "tool_style": self._tool_style,
+                "tool_mode": self._tool_mode,
                 "invalid_tools": list(s.invalid_tools),
             }
 
     def _build_registry(self, default_autonomy: str | None) -> dict[str, ExecTool]:
+        if self._tool_mode == "search":
+            # Only the search/describe/run meta tools are listed (they come in
+            # through builtins_provider); runnables are reached via run_runnable.
+            return {}
         try:
             runnables = list(self._tools_provider() or [])
         except Exception:  # noqa: BLE001 — a discovery hiccup shouldn't 500 the list
@@ -1001,6 +1033,7 @@ class ConsoleMcpServer:
             self._state.token = cfg.get("token") or None
             self._default_autonomy = cfg.get("default_autonomy") or None
             self._tool_style = cfg.get("tool_style") or "leaf"
+            self._tool_mode = cfg.get("tool_mode") or "all"
             self._plan_mode_autonomous = bool(cfg.get("plan_mode_autonomous"))
         self._stopping = False  # a fresh serve is not a shutdown
         self._thread = threading.Thread(
@@ -1104,6 +1137,43 @@ class ConsoleMcpServer:
             self._loop = None
             self._session = None
 
+    # -- context: instructions, prompts, resources ---------------------------
+
+    def _instructions(self) -> str:
+        """The server instructions for a new connection (see the class docstring).
+        Never raises; a failing provider falls back to one plain line."""
+        brand = self._resolve_brand_name()
+        fallback = (
+            f"{brand} fleet runnables. confirm-level tools park for "
+            "human approval in the console UI."
+        )
+        if self._instructions_provider is None:
+            return fallback
+        try:
+            text = str(self._instructions_provider() or "").strip()
+        except Exception:  # noqa: BLE001 — instructions are a nicety, never fatal
+            logger.debug("mcp_server instructions_provider failed", exc_info=True)
+            return fallback
+        return text or fallback
+
+    def _prompt_list(self) -> list[dict[str, Any]]:
+        if self._prompts_provider is None or self._get_prompt is None:
+            return []
+        try:
+            return list(self._prompts_provider() or [])
+        except Exception:  # noqa: BLE001 — a prompts hiccup shouldn't 500 the list
+            logger.warning("mcp_server prompts_provider failed", exc_info=True)
+            return []
+
+    def _resource_list(self) -> list[dict[str, Any]]:
+        if self._resources_provider is None or self._read_resource is None:
+            return []
+        try:
+            return list(self._resources_provider() or [])
+        except Exception:  # noqa: BLE001
+            logger.warning("mcp_server resources_provider failed", exc_info=True)
+            return []
+
     def _build_server(self) -> Any:
         import mcp.types as types
         from mcp.server.lowlevel import Server
@@ -1131,6 +1201,7 @@ class ConsoleMcpServer:
                 )
                 for b in builtins
             ]
+            builtin_read_only = {b["name"] for b in builtins if b.get("read_only")}
             valid, invalid = drop_invalid_tools(candidates)
             with self._lock:
                 self._state.invalid_tools = invalid
@@ -1143,7 +1214,7 @@ class ConsoleMcpServer:
                 {n for n, t in registry.items() if t.runs_unattended()}
                 if self._plan_mode_autonomous
                 else set()
-            )
+            ) | builtin_read_only
             tools = [
                 types.Tool(
                     name=name,
@@ -1209,17 +1280,117 @@ class ConsoleMcpServer:
                 is_error=bool(is_error),
             )
 
+        async def on_list_prompts(ctx: Any, params: Any) -> Any:
+            import asyncio
+
+            rows = await asyncio.to_thread(self._prompt_list)
+            prompts = []
+            for row in rows:
+                name = str(row.get("name") or "").strip()
+                if not name:
+                    continue
+                prompts.append(
+                    types.Prompt(
+                        name=name,
+                        title=row.get("title") or None,
+                        description=row.get("description") or None,
+                        arguments=[
+                            types.PromptArgument(
+                                name=str(a.get("name")),
+                                description=a.get("description") or None,
+                                required=bool(a.get("required")),
+                            )
+                            for a in row.get("arguments") or []
+                            if a.get("name")
+                        ]
+                        or None,
+                    )
+                )
+            return types.ListPromptsResult(prompts=prompts)
+
+        async def on_get_prompt(ctx: Any, params: Any) -> Any:
+            import asyncio
+
+            from mcp.shared.exceptions import MCPError
+
+            assert self._get_prompt is not None  # only registered when set
+            args = {k: v for k, v in (params.arguments or {}).items()}
+            try:
+                description, text = await asyncio.to_thread(
+                    self._get_prompt, params.name, args
+                )
+            except KeyError as exc:
+                raise MCPError(
+                    code=types.INVALID_PARAMS, message=f"unknown prompt: {exc}"
+                ) from exc
+            except ValueError as exc:
+                raise MCPError(code=types.INVALID_PARAMS, message=str(exc)) from exc
+            return types.GetPromptResult(
+                description=description or None,
+                messages=[
+                    types.PromptMessage(
+                        role="user", content=types.TextContent(type="text", text=text)
+                    )
+                ],
+            )
+
+        async def on_list_resources(ctx: Any, params: Any) -> Any:
+            import asyncio
+
+            rows = await asyncio.to_thread(self._resource_list)
+            return types.ListResourcesResult(
+                resources=[
+                    types.Resource(
+                        uri=str(r["uri"]),
+                        name=str(r.get("name") or r["uri"]),
+                        description=r.get("description") or None,
+                        mime_type=r.get("mime_type") or "text/markdown",
+                    )
+                    for r in rows
+                    if r.get("uri")
+                ]
+            )
+
+        async def on_read_resource(ctx: Any, params: Any) -> Any:
+            import asyncio
+
+            from mcp.shared.exceptions import MCPError
+
+            assert self._read_resource is not None  # only registered when set
+            uri = str(params.uri)
+            try:
+                text = await asyncio.to_thread(self._read_resource, uri)
+            except KeyError as exc:
+                raise MCPError(
+                    code=types.INVALID_PARAMS, message=f"unknown resource: {uri}"
+                ) from exc
+            return types.ReadResourceResult(
+                contents=[
+                    types.TextResourceContents(
+                        uri=uri, mime_type="text/markdown", text=str(text)
+                    )
+                ]
+            )
+
+        has_prompts = (
+            self._prompts_provider is not None and self._get_prompt is not None
+        )
+        has_resources = (
+            self._resources_provider is not None and self._read_resource is not None
+        )
         brand = self._resolve_brand_name()
         server = Server(
             brand,
             version="1",
-            instructions=(
-                f"{brand} fleet runnables. confirm-level tools park for "
-                "human approval in the console UI."
-            ),
+            instructions=self._instructions(),
             on_list_tools=on_list_tools,
             on_call_tool=on_call_tool,
+            on_list_prompts=on_list_prompts if has_prompts else None,
+            on_get_prompt=on_get_prompt if has_prompts else None,
+            on_list_resources=on_list_resources if has_resources else None,
+            on_read_resource=on_read_resource if has_resources else None,
         )
+        self._server = server
         # Advertise tools.listChanged so the client re-lists on our push (below).
         # streamable_http_app builds init options with defaults (tools_changed=
         # False), so override the bound method to flip it on.
@@ -1234,8 +1405,14 @@ class ConsoleMcpServer:
                 # experimental_capabilities / extensions untouched.
                 kwargs.pop("notification_options", None)
                 rest = args[1:] if args else ()
+                # Fresh instructions for every connection (host groups, mode).
+                server.instructions = self._instructions()
                 return _orig_init_opts(
-                    NotificationOptions(tools_changed=True), *rest, **kwargs
+                    NotificationOptions(
+                        tools_changed=True, prompts_changed=has_prompts
+                    ),
+                    *rest,
+                    **kwargs,
                 )
 
             server.create_initialization_options = _init_opts  # type: ignore[method-assign]
@@ -1270,6 +1447,11 @@ class ConsoleMcpServer:
                 await session.send_tool_list_changed()
             except Exception:  # noqa: BLE001 — session may have gone away
                 logger.debug("mcp_server list_changed push failed", exc_info=True)
+            if self._prompts_provider is not None:
+                try:  # runbooks may have changed with the catalogue
+                    await session.send_prompt_list_changed()
+                except Exception:  # noqa: BLE001
+                    logger.debug("mcp_server prompt push failed", exc_info=True)
 
         try:
             import asyncio

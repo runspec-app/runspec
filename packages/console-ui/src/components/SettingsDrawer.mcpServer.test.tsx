@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, act, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
-import { McpServerTab } from './SettingsDrawer'
+import { ClaudePluginPanel, McpServerTab } from './SettingsDrawer'
 
 const { getCfg, saveCfg, statusFn } = vi.hoisted(() => ({
   getCfg: vi.fn(),
@@ -68,9 +68,23 @@ describe('McpServerTab', () => {
       default_autonomy: null,
       confirm_wait: 50,
       tool_style: 'leaf',
+      tool_mode: 'all',
       expose_builtins: false,
       plan_mode_autonomous: false,
     })
+  })
+
+  it('keeps a saved search tool mode on save', async () => {
+    getCfg.mockResolvedValue({
+      enabled: true, host: '127.0.0.1', port: 8765, token: null,
+      default_autonomy: null, confirm_wait: 300, tool_style: 'leaf', tool_mode: 'search', expose_builtins: false,
+    })
+    const user = userEvent.setup()
+    await act(async () => { render(<McpServerTab />) })
+    await waitFor(() => expect(getCfg).toHaveBeenCalled())
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(saveCfg).toHaveBeenCalledTimes(1))
+    expect(saveCfg.mock.calls[0][0]).toMatchObject({ tool_mode: 'search', confirm_wait: 300 })
   })
 
   it('Generate fills the bearer token and it round-trips on save', async () => {
@@ -104,5 +118,32 @@ describe('McpServerTab', () => {
     expect(await screen.findByText(/1 runnable\(s\) not published/)).toBeTruthy()
     expect(screen.getByText('internal-metric')).toBeTruthy()
     expect(screen.getByText(/is not of type 'number'/)).toBeTruthy()
+  })
+})
+
+describe('ClaudePluginPanel', () => {
+  it('asks for the commands, then shows them and the agent', async () => {
+    const onLoad = vi.fn()
+    const user = userEvent.setup()
+    const { rerender } = render(<ClaudePluginPanel plugin={null} onLoad={onLoad} />)
+    await user.click(screen.getByRole('button', { name: 'Show install commands' }))
+    expect(onLoad).toHaveBeenCalled()
+    rerender(
+      <ClaudePluginPanel
+        onLoad={onLoad}
+        plugin={{
+          ok: true, agent: 'runspec-console:runspec-operator', token_required: true,
+          commands: ['claude plugin marketplace add "/x/claude-plugin"', 'claude plugin install runspec-console@runspec-console'],
+        }}
+      />,
+    )
+    expect(screen.getByText('claude plugin install runspec-console@runspec-console')).toBeTruthy()
+    expect(screen.getByText('claude --agent runspec-console:runspec-operator')).toBeTruthy()
+    expect(screen.getByText(/credential store/)).toBeTruthy()
+  })
+
+  it('shows why the plugin is unavailable', () => {
+    render(<ClaudePluginPanel plugin={{ ok: false, reason: 'Start the MCP server first.' }} onLoad={() => {}} />)
+    expect(screen.getByText('Start the MCP server first.')).toBeTruthy()
   })
 })

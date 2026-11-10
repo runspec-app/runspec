@@ -67,6 +67,14 @@ _MCP_SERVER_AUTONOMY_LEVELS = ("autonomous", "confirm", "supervised", "manual")
 # runnable with a `command` arg — far fewer tools for a multi-verb fleet).
 _MCP_SERVER_TOOL_STYLES = ("leaf", "runnable")
 DEFAULT_MCP_SERVER_TOOL_STYLE = "leaf"
+# What the console's MCP server lists: every runnable as its own tool ("all"), or
+# only search_runnables / describe_runnable / run_runnable ("search").
+_MCP_SERVER_TOOL_MODES = ("all", "search")
+DEFAULT_MCP_SERVER_TOOL_MODE = "all"
+# How long a parked confirm-level MCP call waits for the operator (seconds). Capped
+# at runtime by [console] confirm_timeout (default 300), so it never outlasts the
+# card itself.
+DEFAULT_MCP_SERVER_CONFIRM_WAIT = 300.0
 
 
 # An explicit config directory pinned by `runspec-console --config-dir <dir>`
@@ -1178,14 +1186,21 @@ def read_mcp_server() -> dict[str, Any]:
       (``autonomous`` / ``confirm`` / ``supervised`` / ``manual``): the stricter of
       it and the runnable's own declared autonomy wins (most-restrictive, as
       elsewhere). Unset ⇒ use each runnable's own autonomy.
-    - ``confirm_wait`` (seconds, default 50) — how long a parked ``confirm`` call
+    - ``confirm_wait`` (seconds, default 300) — how long a parked ``confirm`` call
       blocks for the operator's approval before returning a graceful, *resumable*
       "awaiting approval" result to the agent (rather than the runnable running
-      late/orphaned). Kept **under** an MCP client's own per-tool-call timeout
-      (Claude Code's ``MCP_TOOL_TIMEOUT`` defaults to 60s), so the agent sees our
-      clean message instead of the client's own timeout error; on the agent's
-      retry a fresh confirm is raised. Raise it if you also raise the client's
-      timeout.
+      late/orphaned); on the agent's retry a fresh confirm is raised. Capped by
+      ``[console] confirm_timeout``. Claude Code waits about 28 hours for an MCP
+      tool by default, so five minutes is safe there; lower it to under your
+      client's own tool timeout if that is shorter (it was 50s, for an older
+      Claude Code 60s default).
+    - ``tool_mode`` (``all`` default / ``search``) — ``all`` lists every runnable
+      as its own tool (shaped by ``tool_style``). ``search`` lists only
+      ``search_runnables`` / ``describe_runnable`` / ``run_runnable`` — the chat
+      agent's search mode — so a large fleet costs three tool schemas, and each
+      search row carries per-command args and wiki notes. Gating is unchanged:
+      ``run_runnable`` resolves the runnable + command and parks exactly like a
+      direct tool call.
     - ``tool_style`` (``leaf`` default / ``runnable``) — how runnables with
       subcommands are presented. ``leaf`` is serve-identical (one MCP tool per
       subcommand leaf, e.g. ``jira_get-issue``…). ``runnable`` emits one tool per
@@ -1213,6 +1228,16 @@ def read_mcp_server() -> dict[str, Any]:
     tool_style = str(cfg.get("tool_style") or "").strip().lower()
     if tool_style not in _MCP_SERVER_TOOL_STYLES:
         tool_style = DEFAULT_MCP_SERVER_TOOL_STYLE
+    tool_mode = str(cfg.get("tool_mode") or "").strip().lower()
+    if tool_mode not in _MCP_SERVER_TOOL_MODES:
+        tool_mode = DEFAULT_MCP_SERVER_TOOL_MODE
+    try:
+        confirm_wait = float(
+            cfg.get("confirm_wait", DEFAULT_MCP_SERVER_CONFIRM_WAIT)
+            or DEFAULT_MCP_SERVER_CONFIRM_WAIT
+        )
+    except (TypeError, ValueError):
+        confirm_wait = DEFAULT_MCP_SERVER_CONFIRM_WAIT
     expose_builtins = bool(cfg.get("expose_builtins", False))
     try:
         port = int(cfg.get("port", DEFAULT_MCP_SERVER_PORT) or DEFAULT_MCP_SERVER_PORT)
@@ -1225,8 +1250,9 @@ def read_mcp_server() -> dict[str, Any]:
         "port": max(1, min(65535, port)),
         "token": str(cfg.get("token") or "").strip() or None,
         "default_autonomy": autonomy or None,
-        "confirm_wait": max(1.0, float(cfg.get("confirm_wait", 50) or 50)),
+        "confirm_wait": max(1.0, confirm_wait),
         "tool_style": tool_style,
+        "tool_mode": tool_mode,
         "expose_builtins": expose_builtins,
         "plan_mode_autonomous": bool(cfg.get("plan_mode_autonomous", False)),
     }

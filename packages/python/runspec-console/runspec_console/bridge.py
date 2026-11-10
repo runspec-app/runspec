@@ -367,6 +367,11 @@ class Bridge(
             brand_name=lambda: str(_config.theme_config().get("brand_name") or ""),
             builtins_provider=self._mcp_server_builtins,
             execute_builtin=self._mcp_server_execute_builtin,
+            instructions_provider=self._mcp_server_instructions,
+            prompts_provider=self._mcp_server_prompts,
+            get_prompt=self._mcp_server_get_prompt,
+            resources_provider=self._mcp_server_resources,
+            read_resource=self._mcp_server_read_resource,
         )
         self._install_ssh_log_forwarder()
         # Apply any baseline config bundled in the deployment package before the
@@ -433,7 +438,8 @@ class Bridge(
         # When fleet discovery updates, tell any connected MCP client to re-list —
         # otherwise a client that connected before discovery finished keeps showing
         # a stale/empty tool set until it manually reconnects. Best-effort.
-        if event == "runspec:runnables_updated":
+        # Runbook edits change the server's prompt list (one prompt per runbook).
+        if event in ("runspec:runnables_updated", "runspec:runbooks_changed"):
             server = getattr(self, "_mcp_server", None)
             if server is not None:
                 server.notify_tools_changed()
