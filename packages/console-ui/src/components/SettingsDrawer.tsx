@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, 
 import { theme, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Empty, Table, Slider, Progress } from 'antd'
 import type { SelectProps } from 'antd'
 import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, RightOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined, SearchOutlined, SoundOutlined, CloudServerOutlined, DiffOutlined, SyncOutlined } from '@ant-design/icons'
-import { VoiceConfig, VoiceDevice, bridge, type JumpHost, type LocalVenvConfig, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type CredentialGuide, type Mailbox, type MailCategories, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SyncPreview, type SyncUpdateCheck, type SeedStatus, type SeedOverride, type SeedApplyResult, type Runbook, type RunbookStep, type SavedRun, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost, type McpServer, type McpHeaderCredential, type McpStatus, type McpServerStatus, type McpCredentialOption, type ToolVisibility, type NamedSound, type MarketplaceConfig, type MarketplaceConfigInput, type MarketplaceRepo } from '../bridge'
+import { VoiceConfig, VoiceDevice, bridge, type JumpHost, type LocalVenvConfig, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type CredentialGuide, type Mailbox, type MailCategories, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SyncPreview, type SyncUpdateCheck, type SeedStatus, type SeedOverride, type SeedApplyResult, type Runbook, type RunbookStep, type SavedRun, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost, type McpServer, type McpHeaderCredential, type McpStatus, type McpServerStatus, type McpCredentialOption, type ToolVisibility, type NamedSound, type MarketplaceConfig, type MarketplaceConfigInput, type MarketplaceRepo, type OwnMcpClaudePlugin } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
 import { CopyKeyAllModal } from '../views/CopyKeyAllModal'
 import { ProvisionModal } from '../views/ProvisionModal'
@@ -6290,6 +6290,46 @@ const OWN_MCP_AUTONOMY = [
   { value: 'manual', label: 'manual — refuse (operator-only)' },
 ]
 
+// Or install the plugin the console writes for its server: the server plus a
+// runspec-operator agent limited to the console's tools.
+export function ClaudePluginPanel({ plugin, onLoad }: { plugin: OwnMcpClaudePlugin | null; onLoad: () => void }) {
+  return (
+    <div style={{ marginTop: 10 }}>
+      <Typography.Paragraph style={{ fontSize: 13, marginBottom: 4 }}><strong>Claude Code plugin</strong></Typography.Paragraph>
+      <Typography.Paragraph type="secondary" style={{ fontSize: 13, marginBottom: 6 }}>
+        Instead of <code>claude mcp add</code>, install the plugin this console writes for its server.
+        It adds the server and a <code>runspec-operator</code> agent that can use only this console's
+        tools. Start a session as that agent with <code>claude --agent</code>.
+      </Typography.Paragraph>
+      {!plugin && <Button size="small" onClick={onLoad}>Show install commands</Button>}
+      {plugin && !plugin.ok && <Typography.Text type="danger" style={{ fontSize: 13 }}>{plugin.reason}</Typography.Text>}
+      {plugin?.ok && (
+        <Space direction="vertical" size={4} style={{ width: '100%' }}>
+          {(plugin.commands || []).map(c => (
+            <Typography.Text key={c} code copyable style={{ fontSize: 12 }}>{c}</Typography.Text>
+          ))}
+          <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+            Then: <Typography.Text code copyable style={{ fontSize: 12 }}>{`claude --agent ${plugin.agent}`}</Typography.Text>
+          </Typography.Text>
+          {plugin.token_required && (
+            <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+              Claude Code asks for the bearer token when you install it and keeps it in your system's credential store.
+            </Typography.Text>
+          )}
+          <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+            The console rewrites it whenever the server starts, so a new port or token reaches Claude Code next time it starts.
+          </Typography.Text>
+        </Space>
+      )}
+    </div>
+  )
+}
+
+const OWN_MCP_TOOL_MODE = [
+  { value: 'all', label: 'Every runnable is a tool' },
+  { value: 'search', label: 'Search — 3 tools: search, describe, run' },
+]
+
 const OWN_MCP_TOOL_STYLE = [
   { value: 'leaf', label: 'Leaf — one tool per subcommand per host (serve-identical)' },
   { value: 'runnable', label: 'Per runnable — one tool per distinct runnable (fewest tools)' },
@@ -6310,8 +6350,10 @@ export function McpServerTab() {
   const [port, setPort] = useState<number>(8765)
   const [token, setToken] = useState('')
   const [autonomy, setAutonomy] = useState('')
-  const [confirmWait, setConfirmWait] = useState<number>(50)
+  const [confirmWait, setConfirmWait] = useState<number>(300)
   const [toolStyle, setToolStyle] = useState('leaf')
+  const [toolMode, setToolMode] = useState('all')
+  const [plugin, setPlugin] = useState<OwnMcpClaudePlugin | null>(null)
   const [exposeBuiltins, setExposeBuiltins] = useState(false)
   const [planModeAutonomous, setPlanModeAutonomous] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -6326,8 +6368,9 @@ export function McpServerTab() {
       setPort(c.port || 8765)
       setToken(c.token || '')
       setAutonomy(c.default_autonomy || '')
-      setConfirmWait(typeof c.confirm_wait === 'number' ? c.confirm_wait : 50)
+      setConfirmWait(typeof c.confirm_wait === 'number' ? c.confirm_wait : 300)
       setToolStyle(c.tool_style || 'leaf')
+      setToolMode(c.tool_mode || 'all')
       setExposeBuiltins(!!c.expose_builtins)
       setPlanModeAutonomous(!!c.plan_mode_autonomous)
     })
@@ -6345,8 +6388,9 @@ export function McpServerTab() {
         port: Math.max(1, Math.min(65535, Math.floor(port || 8765))),
         token: token.trim() || null,
         default_autonomy: autonomy || null,
-        confirm_wait: Math.max(1, Math.floor(confirmWait || 50)),
+        confirm_wait: Math.max(1, Math.floor(confirmWait || 300)),
         tool_style: toolStyle || 'leaf',
+        tool_mode: toolMode || 'all',
         expose_builtins: exposeBuiltins,
         plan_mode_autonomous: planModeAutonomous,
       })
@@ -6386,16 +6430,24 @@ export function McpServerTab() {
             </Space.Compact>,
           )}
           {row('Default autonomy floor', <Select style={{ width: 260 }} value={autonomy} onChange={setAutonomy} options={OWN_MCP_AUTONOMY} disabled={!enabled} />)}
-          {row('Confirm wait (seconds)', <InputNumber min={1} max={3600} value={confirmWait} onChange={v => setConfirmWait(typeof v === 'number' ? v : 50)} disabled={!enabled} />)}
+          {row('Confirm wait (seconds)', <InputNumber min={1} max={3600} value={confirmWait} onChange={v => setConfirmWait(typeof v === 'number' ? v : 300)} disabled={!enabled} />)}
           <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: -2 }}>
             How long a parked call waits for your approval before returning a resumable “awaiting
-            approval” result. Keep it under your MCP client's own tool-call timeout
-            (Claude Code's <code>MCP_TOOL_TIMEOUT</code> defaults to 60s).
+            approval” result (the agent then calls again). It never waits longer than the chat's own
+            confirm timeout. Claude Code waits far longer than this for a tool, so 300s is safe there;
+            lower it for a client with a short tool-call timeout.
           </Typography.Paragraph>
 
         </div>
         <div>
-          {row('Tool style', <Select style={{ width: 360 }} value={toolStyle} onChange={setToolStyle} options={OWN_MCP_TOOL_STYLE} disabled={!enabled} />)}
+          {row('Tools', <Select style={{ width: 360 }} value={toolMode} onChange={setToolMode} options={OWN_MCP_TOOL_MODE} disabled={!enabled} />)}
+          <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: -2 }}>
+            <strong>Search</strong> lists three tools instead of one per runnable, the way this
+            console's own assistant works with <code>tool_mode = "search"</code>: the agent searches,
+            reads one runnable's arguments, then runs it. Use it for a big fleet or a client without
+            its own tool search. Approvals work the same either way.
+          </Typography.Paragraph>
+          {row('Tool style', <Select style={{ width: 360 }} value={toolStyle} onChange={setToolStyle} options={OWN_MCP_TOOL_STYLE} disabled={!enabled || toolMode === 'search'} />)}
           <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: -2 }}>
             <strong>Leaf</strong> mirrors <code>runspec serve</code> — every subcommand is its own tool,
             once per host (<code>jira_get-issue</code>…, plus <code>host__</code> copies), so a multi-host,
@@ -6466,6 +6518,7 @@ export function McpServerTab() {
                 <code>~/.claude/settings.json</code> (use the name you gave in <code>claude mcp add</code>).
                 The console still applies each runnable's autonomy: confirm tools wait for you here.
               </Typography.Paragraph>
+              <ClaudePluginPanel plugin={plugin} onLoad={() => bridge.mcp_server_claude_plugin().then(setPlugin).catch(e => setPlugin({ ok: false, reason: String((e as Error)?.message || e) }))} />
             </Space>
           ) : (
             <Typography.Text type="secondary" style={{ fontSize: 13 }}>

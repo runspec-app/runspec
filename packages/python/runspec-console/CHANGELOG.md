@@ -9,6 +9,42 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.399.0] — 2026-11-10
+
+### Added
+
+- **The MCP server works more like the console's own assistant.** A coding
+  agent connected to Settings → MCP Server now gets:
+  - **Server instructions** at connect time: the approval contract (call again
+    after "awaiting approval", don't work around a decline), how to find tools in
+    the current mode, ask-don't-guess, where runbooks and context are, your host
+    groups and your `[llm] system_append` policy (first 4,096 characters, the
+    limit Claude Code keeps).
+  - An **`assistant` prompt**: the assistant's system prompt plus today's date
+    and timezone, working hours, triggers, schedules, host groups and pinned wiki
+    facts, with an optional task. A slash command in Claude Code.
+  - **One prompt per runbook** (`runbook-<id>`), its parameters as the prompt's
+    arguments. Runbook edits update the list straight away.
+  - **Resources** `runspec://context` and `runspec://system-prompt`.
+- **Search mode on the MCP server.** `[mcp_server] tool_mode = "search"`
+  (Settings → MCP Server → Tools) lists `search_runnables`, `describe_runnable`
+  and `run_runnable` instead of one tool per runnable. Search and describe run
+  without a card and are marked read-only; `run_runnable` checks the arguments,
+  then uses the same gate, card, credentials and History as a listed tool.
+- **A Claude Code plugin for the MCP server.** While the server runs the console
+  writes a one-plugin local marketplace to `{app_dir}/claude-plugin`: the
+  server plus a `runspec-operator` agent whose only tools are the console's.
+  Settings → MCP Server → Show install commands prints the two
+  `claude plugin` commands; run a session as the agent with
+  `claude --agent <plugin>:runspec-operator`. A bearer token is asked for at
+  install and kept in Claude Code's credential store, never in the files.
+
+### Changed
+
+- **`[mcp_server] confirm_wait` defaults to 300 seconds** (was 50). The old value
+  fitted Claude Code's former 60-second tool timeout; current releases wait far
+  longer. It still never exceeds `[console] confirm_timeout`.
+
 ## [0.398.1] — 2026-11-09
 
 ### Fixed

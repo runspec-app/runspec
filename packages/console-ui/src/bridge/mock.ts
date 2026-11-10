@@ -1429,7 +1429,7 @@ export const mockApi: BridgeApi = {
 
   get_mcp_server_config: async () => ({
     enabled: false, host: '127.0.0.1', port: 8765, token: null,
-    default_autonomy: null, confirm_wait: 50, tool_style: 'leaf', expose_builtins: false, plan_mode_autonomous: false,
+    default_autonomy: null, confirm_wait: 300, tool_style: 'leaf', tool_mode: 'all', expose_builtins: false, plan_mode_autonomous: false,
   }),
   save_mcp_server_config: async (payload) => {
     console.log('[mock] save_mcp_server_config', payload)
@@ -1445,6 +1445,15 @@ export const mockApi: BridgeApi = {
   }),
   mcp_server_start: async () => ({
     running: false, error: '', host: '127.0.0.1', port: 8765, url: '', auth: false, tools: 0,
+  }),
+  mcp_server_claude_plugin: async () => ({
+    ok: true, path: '/home/me/.config/runspec-console/claude-plugin', plugin: 'runspec-console',
+    marketplace: 'runspec-console', agent: 'runspec-console:runspec-operator',
+    tool_prefix: 'mcp__plugin_runspec-console_console__', token_required: false,
+    commands: [
+      'claude plugin marketplace add "/home/me/.config/runspec-console/claude-plugin"',
+      'claude plugin install runspec-console@runspec-console',
+    ],
   }),
 
   get_sync_config: async () => ({

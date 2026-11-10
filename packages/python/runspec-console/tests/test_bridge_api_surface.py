@@ -233,6 +233,7 @@ EXPECTED = {
     "mcp_credential_options",
     "mcp_install_venv",
     "mcp_reload",
+    "mcp_server_claude_plugin",
     "mcp_server_start",
     "mcp_server_status",
     "mcp_start",
