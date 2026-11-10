@@ -1738,7 +1738,13 @@ class AutonomyMixin:
         if tool_name in _RUNBOOK_READ_TOOL_NAMES:
             return self._run_load_runbook(dict(tool_input or {}), chat_id)
         if tool_name in _STATUS_TOOL_NAMES:
-            return self._run_status_tool(dict(tool_input or {}))
+            # Over the console's MCP server, name only the tools it publishes.
+            offered = (
+                self._mcp_server_offered()  # type: ignore[attr-defined]
+                if chat_id == "__mcp_server__"
+                else None
+            )
+            return self._run_status_tool(dict(tool_input or {}), offered=offered)
         if tool_name in _HISTORY_TOOL_NAMES:
             return self._run_history_tool(dict(tool_input or {}))
         if tool_name in _FILES_TOOL_NAMES:

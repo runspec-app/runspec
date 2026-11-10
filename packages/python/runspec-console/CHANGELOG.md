@@ -9,6 +9,27 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.399.2] — 2026-11-10
+
+### Fixed
+
+- **The MCP server no longer advertises what its clients can't use.** The
+  `assistant` prompt, `runspec://context`, `runspec://system-prompt` and
+  `console_status` over MCP now name only the tools the server publishes. Without
+  **Expose built-in tools** they no longer point at `save_runbook`, the wiki
+  tools, `create_schedule`, `run_saved_run` / `manage_saved_runs`, the Outlook
+  tools, `console_status` or `manage_denylist`, and they leave out the chat-only
+  parts (session workspace, code sandbox, git repos, external MCP servers). Host
+  groups are no longer described as a `host` value that fans out (the MCP server
+  runs one host per call). Triggers and schedules are listed as what the console
+  runs on its own; prompt and runbook schedules are only suggested with the AI on.
+  With `[console] ai = false`, agent-mode triggers and prompt / runbook / eval
+  schedules are marked *not running*, and the working-hours rota and lock
+  auto-suspend (inert with the AI off) aren't described — this also corrects
+  `console_status` in that mode. The server instructions mention runbook prompts
+  only when there are runbooks. The chat assistant's own context and system
+  prompt are unchanged.
+
 ## [0.399.1] — 2026-11-10
 
 ### Fixed

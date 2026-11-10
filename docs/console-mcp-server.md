@@ -348,8 +348,18 @@ context its own assistant gets:
   `runspec://system-prompt` (the assistant's system prompt), for `@`-mentions in
   Claude Code or any client that reads resources.
 
-Tools a prompt mentions that this server doesn't publish (for example the wiki
-tools without **Expose built-in tools**) simply aren't available to the agent.
+The prompt, the context and the server instructions only name tools this server
+publishes: without **Expose built-in tools** they don't mention `save_runbook`,
+the wiki tools, `create_schedule`, saved runs, Outlook or `console_status`, and
+chat-only parts of the console (the session workspace, the code sandbox, git
+repos, external MCP servers) are left out. A host group is listed with its hosts
+but described as something to cover host by host, because this server runs one
+host per call. Triggers and schedules are listed as what the console does on its
+own, not something the client runs. With `[console] ai = false`, agent-mode
+triggers and prompt, runbook and eval schedules are marked as not running, and
+the working-hours rota and lock auto-suspend aren't described (they don't hold
+anything back with the AI off). A custom `[llm] system` is sent as written, with
+a note that a tool it names may not be available here.
 
 ---
 

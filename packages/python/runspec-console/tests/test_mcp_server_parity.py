@@ -403,22 +403,31 @@ def test_confirm_wait_defaults_to_300(monkeypatch):
 
 
 class ContextBridge(SearchBridge):
+    system = ""
     system_append = ""
+    offered: frozenset = frozenset()
 
     def get_config(self):
-        return {"llm": {"system_append": self.system_append}}
+        return {"llm": {"system": self.system, "system_append": self.system_append}}
 
-    def _base_system(self):
-        return "BASE SYSTEM PROMPT"
+    def _mcp_server_offered(self):
+        return self.offered
 
-    def _now_context(self):
-        return "## Current date & timezone\nMonday"
+    def _now_context(self, *, status_tool=True):
+        return "## Current date & timezone\nMonday" + (
+            " (call console_status)" if status_tool else ""
+        )
 
-    def _console_context(self):
+    def _console_context(self, *, offered=None):
+        self.context_offered = offered
         return "## Console context\nschedules"
 
     def _knowledge_header(self):
-        return "## Pinned facts\n- web1 is old"
+        return (
+            "## Pinned facts (team wiki)\n"
+            "Search the wiki (search_wiki) for anything else the team knows.\n"
+            "- web1 is old"
+        )
 
 
 def test_instructions_explain_approval_and_search_mode(search_mode, monkeypatch):
@@ -502,7 +511,7 @@ def test_assistant_prompt_has_system_prompt_context_and_task():
     _, text = ContextBridge()._mcp_server_get_prompt(
         "assistant", {"task": "check disk"}
     )
-    assert text.startswith("BASE SYSTEM PROMPT")
+    assert text.startswith("You are working through runspec console's MCP server")
     for part in ("Monday", "schedules", "web1 is old"):
         assert part in text
     assert text.endswith("## Task\ncheck disk")
@@ -515,8 +524,9 @@ def test_resources_read_context_and_system_prompt():
         "runspec://system-prompt",
     ]
     assert "Pinned facts" in b._mcp_server_read_resource("runspec://context")
-    assert b._mcp_server_read_resource("runspec://system-prompt") == (
-        "BASE SYSTEM PROMPT"
+    assert (
+        b._mcp_server_read_resource("runspec://system-prompt")
+        == b._mcp_server_system_prompt()
     )
     with pytest.raises(KeyError):
         b._mcp_server_read_resource("runspec://nope")
@@ -652,3 +662,48 @@ def test_bridge_plugin_written_to_app_dir(tmp_path, monkeypatch):
         p.read_text() for p in (tmp_path / "claude-plugin").rglob("*") if p.is_file()
     )
     assert "s3cret" not in written
+
+
+def test_system_prompt_names_only_published_tools():
+    b = ContextBridge()
+    text = b._mcp_server_system_prompt()
+    assert "runbook-<id>" in text
+    for absent in ("save_runbook", "search_wiki", "propose_fact"):
+        assert absent not in text
+    b.offered = frozenset({"save_runbook", "search_wiki", "propose_fact"})
+    b.system_append = "Never reboot on Fridays."
+    text = b._mcp_server_system_prompt()
+    assert "save_runbook" in text and "search_wiki" in text
+    assert text.endswith("Never reboot on Fridays.")
+
+
+def test_system_prompt_keeps_operator_prompt_with_a_note():
+    b = ContextBridge()
+    b.system = "You are Acme's ops helper. Use save_runbook often."
+    text = b._mcp_server_system_prompt()
+    assert text.startswith("You are Acme's ops helper.")
+    assert "isn't available here" in text
+
+
+def test_context_passes_offered_and_drops_unpublished_pointers():
+    b = ContextBridge()
+    text = b._mcp_server_context()
+    assert b.context_offered == frozenset()
+    assert "console_status" not in text and "search_wiki" not in text
+    assert "web1 is old" in text
+    b.offered = frozenset({"console_status", "search_wiki"})
+    text = b._mcp_server_context()
+    assert b.context_offered == b.offered
+    assert "console_status" in text and "search_wiki" in text
+
+
+def test_instructions_mention_runbooks_only_when_some_exist(monkeypatch):
+    monkeypatch.setattr(config_mod, "read_mcp_server", lambda: {})
+    monkeypatch.setattr(config_mod, "theme_config", dict)
+    b = ContextBridge()
+    monkeypatch.setattr(b, "_mcp_server_runbook_rows", lambda: [])
+    assert "runbook-<id>" not in b._mcp_server_instructions()
+    monkeypatch.setattr(
+        b, "_mcp_server_runbook_rows", lambda: [("runbook-x", {"id": "x"})]
+    )
+    assert "runbook-<id>" in b._mcp_server_instructions()
