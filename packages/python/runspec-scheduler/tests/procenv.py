@@ -147,8 +147,16 @@ class Proc:
     def pid(self) -> int:
         return self.p.pid
 
-    def output(self) -> str:
+    def stdout(self) -> str:
+        """What the daemon wrote to stdout/stderr (a keeper's capture file)."""
         return self.log_path.read_bytes().decode("utf-8", "replace")
+
+    def output(self) -> str:
+        """Its stdout plus the venv's ``scheduler.log`` (the daemon only echoes
+        log lines to stderr at a terminal or under systemd)."""
+        log = self.venv / "logs" / "scheduler.log"
+        text = log.read_bytes().decode("utf-8", "replace") if log.exists() else ""
+        return self.stdout() + text
 
     def signal(self, sig: int) -> None:
         os.kill(self.p.pid, sig)

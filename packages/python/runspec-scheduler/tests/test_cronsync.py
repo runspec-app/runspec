@@ -49,7 +49,10 @@ class TestRenderCommand:
         cmd = cronsync.render_command("/venv/bin/runspec", "backup", {"target": "prod"}, "", home="/home/svc", sched_id="nightly")
         # runspec exec, labelled + locked, recorded under trigger=schedule; output
         # redirected only so cron doesn't mail it (exec captured it in the log).
-        assert cmd.startswith("env RUNSPEC_AGENT=1 /venv/bin/runspec exec --label sched:nightly --trigger schedule:cron ")
+        # no `env RUNSPEC_AGENT=1`: a fire isn't the assistant, and with no env file
+        # there is nothing to set, so the line starts with the binary
+        assert cmd.startswith("/venv/bin/runspec exec --label sched:nightly --trigger schedule:cron ")
+        assert "RUNSPEC_AGENT" not in cmd
         tag = cronsync.venv_tag("/venv")
         assert f"--lock /home/svc/.cache/runspec-scheduler/{tag}/nightly.lock" in cmd
         # every fire names the venv's schedule-only env file (missing = nothing added)
@@ -77,6 +80,7 @@ class TestRenderCommand:
         assert "RUNSPEC_BACKUP_ARG_DRY_RUN=0" in cmd
         # the credential file rides RUNSPEC_ENV_FILE (never the secret itself).
         assert "RUNSPEC_ENV_FILE=/home/svc/.config/runspec-scheduler/env/n.env" in cmd
+        assert cmd.startswith("env RUNSPEC_ENV_FILE=/home/svc/.config/runspec-scheduler/env/n.env RUNSPEC_BACKUP_ARG_DRY_RUN=0 /venv/bin/runspec exec ")
 
     def test_no_env_file_when_absent(self):
         cmd = cronsync.render_command("/venv/bin/runspec", "backup", {}, "", home="/home/svc", sched_id="n")

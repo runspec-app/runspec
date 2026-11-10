@@ -103,6 +103,10 @@ denylist pattern; `--config` / `$RUNSPEC_SCHEDULER_CONFIG` override). Entries ar
 **local-only** — no host/group targeting (the daemon only runs its own venv on
 localhost). Writes are atomic (temp + `os.replace`) so the mtime-poll reader never
 sees a half-written file. A rotating audit log lands at `{sys.prefix}/logs/scheduler.log`.
+The daemon echoes it to stderr only at a terminal or under systemd's journal; under
+the cron watchdog or supervisord stderr is `logs/scheduler.stdout.log`, which then
+holds only crash output, and the daemon rotates that file (and the venv
+supervisord's `supervisord.log`) at midnight, 7 kept — `outputlog.py` (0.10.1).
 
 **Timing** (`cron` / `every`) is a deliberate, small **duplicate** of the pure
 helpers in `runspec_console.sources.schedule` (`When`, `_parse_every`,

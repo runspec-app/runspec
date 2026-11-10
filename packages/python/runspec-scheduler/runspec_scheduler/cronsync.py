@@ -13,7 +13,7 @@ Shape of one installed schedule (in ``run_as``'s crontab, so cron runs it *as*
 ``run_as`` — no per-fire ``sudo``; the escalation is at crontab-**write** time):
 
     # runspec:sched:<id>
-    <cron>  env RUNSPEC_AGENT=1 [RUNSPEC_ENV_FILE=…] <venv>/bin/runspec exec \
+    <cron>  [env RUNSPEC_ENV_FILE=…] <venv>/bin/runspec exec \
               --label sched:<id> --trigger schedule:cron --lock <lock> <runnable> -- <argv…> >/dev/null 2>&1
 
 * **``runspec exec``** (core ≥ 0.62) records every fire in the runs index under
@@ -21,9 +21,13 @@ Shape of one installed schedule (in ``run_as``'s crontab, so cron runs it *as*
   failures a runnable can't record itself (docs/design/runspec-exec.md).
 * **``--lock``** is the overlap guard — a still-running prior fire makes the new
   one a *recorded* ``skipped`` run (the old bare ``flock -n`` skip was silent).
-* **``env``** carries only ``RUNSPEC_AGENT`` + the ``RUNSPEC_ENV_FILE`` path (the
-  ``0600`` credential file the runnable reads); the secrets themselves never
-  touch the crontab.
+* **``env``** carries only the ``RUNSPEC_ENV_FILE`` path (the ``0600``
+  credential file the runnable reads), when there is one; the secrets themselves
+  never touch the crontab. No ``RUNSPEC_AGENT``: a fire isn't the assistant
+  (0.10.1; it made History and Analytics count fires as agent runs). The fire
+  is non-interactive anyway: no terminal, so no password prompt.
+* **``>/dev/null 2>&1``** only stops cron mailing the output: ``exec`` has
+  already tee'd stdout/stderr into the run's log and the runs index.
 
 Reconcile is **declarative** and marker-scoped: :func:`plan_crontab` strips every
 ``# runspec:sched:*`` block *this venv* wrote (its job line runs this venv's
@@ -177,11 +181,10 @@ def exec_invocation(
     command: ``runspec exec --label sched:<id> --trigger <trigger> --lock <lock>
     --env-file <venv>/runspec_schedules.env [--timeout N] <runnable> -- <globals>
     <command path> <command args>``. The
-    environment carries only ``RUNSPEC_AGENT``, the ``RUNSPEC_ENV_FILE`` path
-    and any ``RUNSPEC_<R>_ARG_<FLAG>=0`` a default-true flag needs — never a
+    environment carries only the ``RUNSPEC_ENV_FILE`` path and any ``RUNSPEC_<R>_ARG_<FLAG>=0`` a default-true flag needs — never a
     secret. ``timeout`` (seconds) adds ``--timeout`` when positive."""
     plan = plan_invocation(runnable, spec or {}, command, args)
-    env = {"RUNSPEC_AGENT": "1"}
+    env: dict[str, str] = {}
     if env_file:
         env["RUNSPEC_ENV_FILE"] = env_file
     env.update(plan.env)  # e.g. RUNSPEC_<R>_ARG_<FLAG>=0 — a default-true flag switched off (argv can't)
@@ -224,17 +227,17 @@ def render_command(
     including runnables without ``[config.logging]``, failures before logging
     starts, and overlap skips (``--lock``: a still-running previous fire makes
     this one a recorded ``skipped`` run). ``exec`` resolves the runnable's binary
-    and ``runspec.toml`` itself. ``env(1)`` carries only ``RUNSPEC_AGENT`` and the
-    ``RUNSPEC_ENV_FILE`` path — never a secret. No ``sudo``: the line lives in
+    and ``runspec.toml`` itself. ``env(1)`` carries only the ``RUNSPEC_ENV_FILE``
+    path (and a default-true flag switched off) — never a secret. No ``sudo``: the line lives in
     ``run_as``'s crontab, so cron already runs it as that account (and ``exec``
     doesn't escalate to the account it's already running as). The trailing
     redirect only stops cron mailing the tee'd output. Every interpolated value
     is ``shlex``-quoted. A cron line carries ``--timeout`` only when the schedule
     sets its own ``timeout`` (the 6h default is the daemon's)."""
     env, argv = exec_invocation(runspec_binary, runnable, args, env_file, home=home, sched_id=sched_id, command=command, spec=spec, timeout=timeout)
-    agent = [f"RUNSPEC_AGENT={env.pop('RUNSPEC_AGENT')}"]
     env_file_tok = [f"RUNSPEC_ENV_FILE={env.pop('RUNSPEC_ENV_FILE')}"] if "RUNSPEC_ENV_FILE" in env else []
-    env_tokens = ["env", *agent, *env_file_tok, *(f"{k}={v}" for k, v in sorted(env.items()))]
+    assigns = [*env_file_tok, *(f"{k}={v}" for k, v in sorted(env.items()))]
+    env_tokens = ["env", *assigns] if assigns else []
     return f"{shlex.join([*env_tokens, *argv])} >/dev/null 2>&1"
 
 

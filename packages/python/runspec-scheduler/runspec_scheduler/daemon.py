@@ -59,6 +59,7 @@ from typing import IO, Any
 from . import packages
 from .config import ScheduleEntry, SchedulerSettings, effective_config, schedule_id_problem
 from .cronsync import LABEL_PREFIX, TRIGGER_DAEMON, _home_of, exec_invocation, resolve_entry
+from .outputlog import OutputLogs, echo_to_stderr
 from .records import audit, record_run
 from .runner import is_generic_venv_name, scripts_dir, venv_name
 from .timing import later, when_to_trigger
@@ -73,6 +74,8 @@ EXIT_TIMEOUT = 124
 BACKSTOP_SECONDS = 120
 #: Seconds between the backstop's SIGTERM and SIGKILL.
 KILL_GRACE_SECONDS = 10
+#: Seconds between checks for a keeper output file to rotate (outputlog.py).
+OUTPUT_LOG_CHECK_SECONDS = 60
 
 STATE_NAME = "scheduler_state.json"
 LOCK_NAME = "runspec_scheduler.lock"
@@ -89,6 +92,8 @@ _DROP_ENV = (
     "RUNSPEC_ENV_FILE",
     "RUNSPEC_RUNBOOK",
     "RUNSPEC_SCHEDULER_CONFIG",
+    # a fire is a schedule, not the assistant, even when an agent started the daemon
+    "RUNSPEC_AGENT",
 )
 
 #: The PATH a login shell has; keepers (cron especially) give far less.
@@ -100,9 +105,12 @@ def _default_log_path() -> Path:
 
 
 def configure_logging(log_file: str | None = None, debug: bool = False) -> None:
-    """Stderr + a rotating ``scheduler.log``, replacing any root handlers already
-    installed (``rs.parse()`` sets up its own, which would print every line
-    twice)."""
+    """A rotating ``scheduler.log`` (+ stderr at a terminal or under systemd),
+    replacing any root handlers already installed (``rs.parse()`` sets up its
+    own, which would print every line twice).
+
+    Under the cron watchdog or supervisord stderr is a capture file, so echoing
+    there would only copy ``scheduler.log`` (``outputlog.echo_to_stderr``)."""
     level = logging.DEBUG if debug else logging.INFO
     root = logging.getLogger()
     for h in list(root.handlers):
@@ -112,9 +120,10 @@ def configure_logging(log_file: str | None = None, debug: bool = False) -> None:
     root.setLevel(level)
     fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
 
-    stream = logging.StreamHandler(sys.__stderr__)
-    stream.setFormatter(fmt)
-    root.addHandler(stream)
+    if echo_to_stderr():
+        stream = logging.StreamHandler(sys.__stderr__)
+        stream.setFormatter(fmt)
+        root.addHandler(stream)
 
     path = Path(log_file) if log_file else _default_log_path()
     try:
@@ -294,6 +303,8 @@ class Daemon:
         self._stop = threading.Event()
         self._reload = threading.Event()
         self._last_heartbeat = 0.0
+        self._output_logs = OutputLogs(Path(sys.prefix) / "logs", None)
+        self._output_checked = 0.0
         self._state_warned = False
 
     # ── single instance ───────────────────────────────────────────────────
@@ -729,6 +740,8 @@ class Daemon:
         audit("scheduler.daemon", "started", target={"venv": sys.prefix}, detail={"pid": os.getpid(), "backend": self._settings.backend, "schedules": len(self._job_keys)})
         self.write_state()
         self._last_heartbeat = time.monotonic()
+        self._output_logs = OutputLogs.for_venv()
+        self._check_output_logs()
         code = 0
         try:
             while not self._stop.is_set():
@@ -749,12 +762,23 @@ class Daemon:
                 if time.monotonic() - self._last_heartbeat >= self.interval:
                     self.write_state()
                     self._last_heartbeat = time.monotonic()
+                if time.monotonic() - self._output_checked >= OUTPUT_LOG_CHECK_SECONDS:
+                    self._check_output_logs()
         except Exception:  # noqa: BLE001 — log it and exit non-zero so the keeper restarts us
             logger.exception("scheduler loop failed")
             code = 1
         finally:
             self._shutdown(code)
         return code
+
+    def _check_output_logs(self) -> None:
+        """Rotate the keeper's capture files at midnight (never fatal)."""
+        self._output_checked = time.monotonic()
+        try:
+            for dest in self._output_logs.check():
+                logger.info("rotated %s", dest.name)
+        except Exception as exc:  # noqa: BLE001 — a log file must never stop the scheduler
+            logger.warning("could not rotate the output logs: %s", exc)
 
     def _check_packages(self) -> None:
         """Reload when a package was installed, upgraded or removed and that

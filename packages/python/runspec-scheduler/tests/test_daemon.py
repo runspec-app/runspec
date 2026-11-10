@@ -274,6 +274,7 @@ class TestFire:
         monkeypatch.setattr(daemon, "resolve_entry", lambda e: (_target(), ""))
         monkeypatch.setenv("RUNSPEC_RUN_ID", "daemon-own-run")
         monkeypatch.setenv("RUNSPEC_CONFIG", "/scheduler/runspec.toml")
+        monkeypatch.setenv("RUNSPEC_AGENT", "1")  # an agent started the daemon
         d = daemon.Daemon(tmp_path / "c.toml", runspec_bin=str(_fake_runspec(tmp_path)))
         d.home = str(tmp_path)
         entry = ScheduleEntry(id="nightly", when=When(cron="0 2 * * *"), runnable="backup", args={"level": "warn"}, env_file="/home/svc/n.env")
@@ -301,7 +302,9 @@ class TestFire:
             "warn",
         ]
         assert call["pgid"] == call["pid"]  # its own session / process group
-        assert call["env"]["RUNSPEC_ENV_FILE"] == "/home/svc/n.env" and call["env"]["RUNSPEC_AGENT"] == "1"
+        assert call["env"]["RUNSPEC_ENV_FILE"] == "/home/svc/n.env"
+        # a fire is a schedule, not the assistant (History / Analytics read this)
+        assert "RUNSPEC_AGENT" not in call["env"]
         assert "RUNSPEC_RUN_ID" not in call["env"] and "RUNSPEC_CONFIG" not in call["env"]
         d.reap()
         assert d._running == {} and recorded["runs"] == []

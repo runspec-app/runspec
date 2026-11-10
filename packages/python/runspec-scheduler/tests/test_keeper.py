@@ -260,3 +260,11 @@ def test_restart_refuses_anyone_but_the_owner_and_a_system_unit(venv):
     unit.write_text(f"ExecStart={venv.root}/bin/runspec-scheduler run\n")
     out = keeper.plan_restart(facts=facts()).to_dict(written=False)
     assert out["ok"] is False and out["root_steps"] == ["sudo systemctl restart runspec-scheduler-ops.service"]
+
+
+def test_supervisor_logs_are_left_to_the_daemon_to_rotate(venv):
+    assert "logfile_maxbytes=0" in keeper.render_supervisord_conf()
+    own = keeper.render_supervisor_program(["/v/bin/runspec-scheduler", "run"])
+    assert "stdout_logfile_maxbytes=0" in own
+    system = keeper.render_supervisor_program(["/v/bin/runspec-scheduler", "run"], user="svc")
+    assert "stdout_logfile_maxbytes=1MB" in system and "stdout_logfile_backups=7" in system

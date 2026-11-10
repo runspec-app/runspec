@@ -34,6 +34,8 @@ _DROP_ENV = (
     "RUNSPEC_ENV_FILE",
     "RUNSPEC_RUNBOOK",
     "RUNSPEC_SCHEDULER_CONFIG",
+    # a fire is a schedule, not the assistant, even when an agent started the daemon
+    "RUNSPEC_AGENT",
 )
 
 #: How long to watch the fire before returning, to report one that ends at once.

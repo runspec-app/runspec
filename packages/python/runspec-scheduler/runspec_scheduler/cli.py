@@ -426,7 +426,7 @@ def _cmd_run_now(spec: rs.RunSpec) -> None:
 
     out, err = io.TextIOWrapper(io.BytesIO(), encoding="utf-8"), io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
     plan = plan_invocation(entry.runnable, target.spec, entry.command, dict(entry.args))
-    env = {"RUNSPEC_AGENT": "1", **plan.env}
+    env = dict(plan.env)  # no RUNSPEC_AGENT: a fire isn't the assistant
     if entry.env_file:
         env["RUNSPEC_ENV_FILE"] = entry.env_file
     rc = exec_runnable(
