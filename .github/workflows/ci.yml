@@ -3190,8 +3190,8 @@ jobs:
       - name: Wheel smoke test
         run: |
           python -m venv /tmp/smoke
-          # Install the unpublished core dependency first, then the wheel under test.
-          /tmp/smoke/bin/pip install ../runspec-jira-core
+          # Install the unpublished dependencies first, then the wheel under test.
+          /tmp/smoke/bin/pip install ../runspec ../runspec-jira-core
           /tmp/smoke/bin/pip install dist/*.whl
           /tmp/smoke/bin/jira --help
           /tmp/smoke/bin/python -c "
