@@ -9,6 +9,28 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.398.2] — 2026-11-10
+
+### Fixed
+
+- **Log cleanup can stop compressing.** In Provision venv and Update venv, a
+  blank *compress after* box was left out, so Update venv kept the venv's old
+  value and the only way round it was a duration shorter than *delete after*.
+  A blank box, or `off` / `never` / `0`, now switches that step off: Update
+  venv sends `--compact-after off` (and the same for *delete after*), which
+  clears it from the existing policy. Logs → Log cleanup… also accepts `off` in
+  any box. At least one of compress after / delete after must still be on.
+
+### Docs
+
+- New site pages: **Shared schedules (runspec-scheduler)** covers the cron and
+  daemon backends, each keeper (how the supervisord and crontab-watchdog
+  keepers restart the daemon), every schedule and venv setting, the
+  schedule-only env file, the files it writes and troubleshooting. **Log
+  cleanup** covers what a cleanup pass does, who runs it and when, every
+  setting, and the console screens. The Hosts and Automation pages linked to
+  design notes that aren't published; they link to the new pages now.
+
 ## [0.398.1] — 2026-11-09
 
 ### Fixed

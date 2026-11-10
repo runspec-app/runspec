@@ -108,9 +108,11 @@ skip the step. From then on the owner's own runs compress run logs older than
 the first duration and delete those older than the second, at most once a day,
 in the background, with no cron line. That matters on a shared venv: every
 other account's run lands in `logs/` as its own file, and those files are never
-rotated. The policy needs runspec 0.80.0 or later in the venv; on an older one
-the step is a warning that gives the command to run later. See
-[the CLI reference](cli.md#retention-policy-the-venv-cleans-up-after-itself).
+rotated. Leave a box blank (or type `off`) to switch that step off, for
+example to delete old logs without compressing them first. The policy needs
+runspec 0.80.0 or later in the venv; on an older one the step is a warning
+that gives the command to run later. See [Log cleanup](log-cleanup.md) for every
+setting.
 To see or change the policy later, open the venv's logs on the **Logs** tab and
 click **Log cleanup…**: it shows the policy, when the last pass ran and what it
 did, lets you change the durations and add a size cap (**Keep at most**), or
@@ -120,7 +122,7 @@ next daily pass. Saving and applying run the venv's `runspec logs retention` as
 the venv owner, and each change is recorded on the venv's audit ledger.
 
 **Shared schedules** (off by default) also sets up the
-[runspec-scheduler](design/venv-scheduler.md) daemon, so the venv's shared
+[runspec-scheduler](shared-schedules.md) daemon, so the venv's shared
 schedules fire on the host whether or not a console is open. It installs
 `runspec-scheduler`, runs `runspec-scheduler use daemon`, then
 `runspec-scheduler install-service --write` as the venv owner, which sets up
@@ -171,8 +173,9 @@ Tick what to apply; each step runs as the venv's owner and is safe to repeat:
   `pip install -U`, so only what is out of date changes.
 - **Set up the logs inbox** (on by default): `runspec logs share --inbox`.
 - **Set the log cleanup policy** (on by default, 7d / 90d): sets those two
-  durations with `runspec logs retention`; any `max_total_size` already in the
-  policy stays. It needs runspec 0.80.0 in the venv, so the dialog warns on a
+  durations with `runspec logs retention`. A blank box (or `off`) switches that
+  step off, so leave *compress after* blank to stop compressing. Any
+  `max_total_size` already in the policy stays. It needs runspec 0.80.0 in the venv, so the dialog warns on a
   host with an older one unless **Upgrade runspec** is ticked.
 - **Shared schedules**: *Leave as they are* (default), *Move to the daemon*
   with a keeper (installs `runspec-scheduler`, then `use daemon`, which takes

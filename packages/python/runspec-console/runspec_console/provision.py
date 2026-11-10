@@ -826,22 +826,38 @@ def _duration_s(value: str) -> int:
     return int(m.group(1)) * _DURATION_S[m.group(2)]
 
 
-def validate_retention(value: Any) -> dict[str, str]:
+#: Values that switch one cleanup step off (a blank field means the same).
+RETENTION_OFF_WORDS = frozenset({"", "off", "never", "none", "no", "0"})
+
+
+def validate_retention(value: Any, *, require_one: bool = True) -> dict[str, str]:
     """``{}`` (no policy) or ``{compact_after?, delete_after?}`` — the same
     grammar ``runspec logs retention`` checks, so a bad value fails here, before
-    anything is built."""
+    anything is built.
+
+    A field that is present but blank, ``off``, ``never``, ``none``, ``no`` or
+    ``0`` comes back as ``"off"``: ``runspec logs retention --compact-after off``
+    switches that step off (and clears it from an existing policy). A field that
+    is absent is left out, so an existing policy keeps its value. Unless
+    ``require_one`` is false, at least one field must be a real duration."""
     if not value:
         return {}
     if not isinstance(value, dict):
         raise ProvisionError(
             "retention must be an object with compact_after / delete_after."
         )
-    out = {
-        k: str(value.get(k) or "").strip().lower()
-        for k in ("compact_after", "delete_after")
-        if str(value.get(k) or "").strip()
-    }
-    secs = {k: _duration_s(v) for k, v in out.items()}
+    out: dict[str, str] = {}
+    for k in ("compact_after", "delete_after"):
+        if k not in value:
+            continue
+        v = str(value.get(k) or "").strip().lower()
+        out[k] = "off" if v in RETENTION_OFF_WORDS else v
+    secs = {k: _duration_s(v) for k, v in out.items() if v != "off"}
+    if require_one and out and not secs:
+        raise ProvisionError(
+            "Log cleanup needs at least one of compress after / delete after; "
+            "untick it to leave the policy alone."
+        )
     if len(secs) == 2 and secs["compact_after"] >= secs["delete_after"]:
         raise ProvisionError(
             f"Compress after ({out['compact_after']}) must be shorter than "
@@ -881,10 +897,11 @@ def retention_edit_argv(payload: dict[str, Any]) -> list[str]:
         k: str(payload.get(k) or "").strip()
         for k in ("compact_after", "delete_after", "max_total_size")
     }
+    vals = {k: "" if v.lower() in RETENTION_OFF_WORDS else v for k, v in vals.items()}
     if payload.get("off") or not any(vals.values()):
         return ["logs", "retention", "--off", "--json"]
     durations = validate_retention(
-        {k: vals[k] for k in ("compact_after", "delete_after")}
+        {k: vals[k] for k in ("compact_after", "delete_after")}, require_one=False
     )
     size = vals["max_total_size"].upper().replace(" ", "")
     if size and not _SIZE_RE.match(size):

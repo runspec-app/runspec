@@ -315,9 +315,10 @@ runnable and subcommand. The generated id (`rs-prompt-…`) is never shown.
 
 These schedules fire only while this console is open. For **always-on, shared**
 schedules that run on the host itself, use `runspec-scheduler` on that host: its
-cron backend (the default, see [the cron scheduler design](design/cron-scheduler.md))
-or, from 0.5.0, its daemon backend (`runspec-scheduler use daemon`, which adds
-`every` intervals and catch-up; see [the daemon design](design/venv-scheduler.md)).
+cron backend (the default) or its daemon backend (`runspec-scheduler use daemon`,
+which adds `every` intervals, other time zones and catch-up). See
+[Shared schedules](shared-schedules.md) for how it works, its keepers and every
+setting.
 
 ### All schedules: this console and every host
 

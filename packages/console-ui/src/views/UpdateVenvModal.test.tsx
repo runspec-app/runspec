@@ -74,7 +74,7 @@ describe('update helpers', () => {
     const p = buildUpdatePayload(t, { ...FORM, packages: [' runspec-linux ', ''], retention: { compact_after: ' 14D ', delete_after: '' } })
     expect(p).toEqual({
       targets: t, upgrade_runspec: true, packages: ['runspec-linux'], repo: undefined, inbox: true,
-      retention: { compact_after: '14d' }, scheduler: undefined, become_method: 'sudo',
+      retention: { compact_after: '14d', delete_after: 'off' }, scheduler: undefined, become_method: 'sudo',
     })
     expect(hasWork(p)).toBe(true)
     const none = buildUpdatePayload(t, { ...FORM, upgradeRunspec: false, inbox: false, retention: null })

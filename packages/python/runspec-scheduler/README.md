@@ -207,9 +207,10 @@ package_schedules = "offer"     # or "auto" / "off"
 [[schedule]]
 id = "report"
 runnable = "report"
-cron = "0 6 * * *"
 timeout = "30m"
 catch_up = true
+when = { cron = "0 6 * * *" }       # or { every = "15m" }; add timezone = "Europe/London"
+args = { format = "pdf" }
 ```
 
 Change the `[scheduler]` settings with `settings` (the daemon reloads them by
@@ -243,14 +244,14 @@ A fire that times out is stopped by `runspec exec`, then the daemon kills what i
 left of its process group. For a `run_as` fire escalated through `sudo`, children
 running as that other account can outlive the timeout.
 
-## Credentials (`run_as` runnables)
+## Credentials
 
-`runspec-console` can attach service-account credentials to a remote schedule. For a
-runnable that declares `run_as`, the selected credentials are written to a **600 env
-file owned by the `run_as` account** in that account's home; the daemon points
-`RUNSPEC_ENV_FILE` at it and escalates to `run_as` when firing. Credentials are never
-placed on a command line. This requires the daemon/SSH user to have passwordless
-`sudo -u <run_as>` (the same precondition as running that `run_as` runnable at all).
+Put what scheduled fires need in `{venv}/runspec_schedules.env` (mode 600, owned
+by the account the fires run as). Every fire (cron, daemon and `run-now`) loads
+it on top of `.runspec_env`; console, agent and hand-run runs in the venv never
+see it. A file others can write, or that another account owns, is refused and the
+fire is recorded as failed (exit 78). Host schedules themselves never carry
+secrets, and credentials are never put on a command line.
 
-Runnables **without** `run_as` run as the daemon's own user with the daemon's
-environment (systemd `EnvironmentFile`) — no console credential injection.
+Full guide, including the keepers and every setting:
+<https://runspec.app/shared-schedules/>.

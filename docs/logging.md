@@ -297,7 +297,8 @@ runspec logs retention --compact-after 7d --delete-after 90d
 
 The venv owner's runs then apply it at most once a day in the background, with
 no cron line to maintain. The console's **Provision venv** sets one by default.
-See [the CLI reference](cli.md#retention-policy-the-venv-cleans-up-after-itself).
+See [Log cleanup](log-cleanup.md) for every setting and the console screens,
+and [the CLI reference](cli.md#retention-policy-the-venv-cleans-up-after-itself).
 You can still schedule `compact`/`prune` from cron or a systemd timer instead.
 
 ### Sharing the logs dir across accounts (`runspec logs share`)

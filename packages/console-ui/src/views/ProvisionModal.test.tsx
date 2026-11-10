@@ -81,7 +81,8 @@ describe('provision helpers', () => {
       hosts: ['web-01'], parent: '/opt/venvs', name: 'ops', pyMode: 'path' as const, pyPath: '/usr/bin/python3.12',
       pyVersion: '', runAs: '', become: 'sudo' as const, packages: [], repo: '',
     }
-    expect(buildPayload({ ...base, retention: { compact_after: ' 7D ', delete_after: '' } }).retention).toEqual({ compact_after: '7d' })
+    expect(buildPayload({ ...base, retention: { compact_after: ' 7D ', delete_after: '' } }).retention).toEqual({ compact_after: '7d', delete_after: 'off' })
+    expect(buildPayload({ ...base, retention: { compact_after: 'Never', delete_after: '90d' } }).retention).toEqual({ compact_after: 'off', delete_after: '90d' })
     expect(buildPayload({ ...base, retention: RETENTION_DEFAULT }).retention).toEqual({ compact_after: '7d', delete_after: '90d' })
     expect(buildPayload({ ...base, retention: null }).retention).toBeUndefined()
     expect(buildPayload(base).retention).toBeUndefined()
@@ -94,6 +95,9 @@ describe('provision helpers', () => {
     expect(retentionProblem({ compact_after: 'a week' })).toMatch(/isn't a duration/)
     expect(retentionProblem({ compact_after: '0d' })).toMatch(/isn't a duration/)
     expect(retentionProblem({ compact_after: '90d', delete_after: '4w' })).toMatch(/shorter than/)
+    // compressing can be switched off: blank, off, never or 0
+    for (const off of ['', 'off', 'OFF', 'never', '0']) expect(retentionProblem({ compact_after: off, delete_after: '90d' })).toBe('')
+    expect(retentionProblem({ compact_after: 'off', delete_after: 'off' })).toMatch(/at least one/)
   })
 })
 

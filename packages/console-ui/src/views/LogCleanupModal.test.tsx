@@ -28,6 +28,8 @@ describe('helpers', () => {
     expect(f('90d', '7d')).toMatch(/shorter/)
     expect(f('soon')).toMatch(/isn't a duration/)
     expect(f('', '', 'lots')).toMatch(/isn't a size/)
+    expect(f('off', '90d')).toBe('')
+    expect(f('never', 'off', '0')).toBe('')
   })
 
   it('describes a policy', () => {
