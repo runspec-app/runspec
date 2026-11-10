@@ -32,7 +32,14 @@ from . import config as config_mod
 from . import bridge_utils as utils_mod
 from . import mcp_server as mcp_server_mod
 from . import secret_files
-from .bridge_const import _MCP_SERVER_BUILTIN_NAMES, logger
+from .bridge_const import (
+    _MCP_SERVER_BUILTIN_NAMES,
+    SYSTEM_PROMPT_CLARIFY,
+    SYSTEM_PROMPT_RUNBOOKS,
+    SYSTEM_PROMPT_SAVE_RUNBOOK,
+    SYSTEM_PROMPT_WIKI,
+    logger,
+)
 from .session import new_mcp
 
 if TYPE_CHECKING:
@@ -752,12 +759,20 @@ class McpServerMixin:
             "would matter (which host, sending mail, scheduling, anything "
             "destructive), ask the user one short question instead of guessing."
         )
+        try:
+            has_runbooks = bool(self._mcp_server_runbook_rows())
+        except Exception:  # noqa: BLE001
+            has_runbooks = False
+        if has_runbooks:
+            parts.append(
+                "Saved runbooks are the operator's standing procedures; each is "
+                "a prompt on this server (runbook-<id>), so prefer one over "
+                "improvising."
+            )
         parts.append(
-            "Saved runbooks are the operator's standing procedures; each is a "
-            "prompt on this server (runbook-<id>), so prefer one over "
-            "improvising. The 'assistant' prompt loads the console's own system "
-            "prompt and live context. The runspec://context resource has "
-            "today's date, host groups, schedules and pinned facts."
+            "The 'assistant' prompt loads the console's own system prompt and "
+            "live context. The runspec://context resource has today's date, "
+            "host groups, schedules and pinned facts."
         )
         try:
             groups = self._groups_map()
@@ -777,16 +792,76 @@ class McpServerMixin:
             parts.append("Operator policy:\n" + append.strip())
         return _cap("\n\n".join(parts), _INSTRUCTIONS_MAX)
 
+    def _mcp_server_offered(self) -> frozenset[str]:
+        """The built-in tool names this server publishes right now (search
+        meta tools and, with ``expose_builtins``, the allowed built-ins). The
+        context and system prompt name only these, so a client is never told
+        about a tool it can't call."""
+        try:
+            return frozenset(
+                str(t.get("name")) for t in self._mcp_server_builtins() if t.get("name")
+            )
+        except Exception:  # noqa: BLE001
+            return frozenset()
+
+    def _mcp_server_system_prompt(self) -> str:
+        """The console assistant's system prompt as this server's clients should
+        read it. An operator's own ``[llm] system`` is sent as written (plus a
+        line that a tool it names may not be here); the default is rebuilt so it
+        names only the tools this server publishes. ``[llm] system_append`` is
+        added either way."""
+        llm_cfg = self.get_config().get("llm", {})
+        configured = str(llm_cfg.get("system", "")).strip()
+        append = str(llm_cfg.get("system_append", "")).strip()
+        offered = self._mcp_server_offered()
+        if configured:
+            parts = [
+                configured,
+                "You are working through the console's MCP server. If something "
+                "above names a tool this session doesn't have, it isn't "
+                "available here.",
+            ]
+        else:
+            runbooks = (
+                f"{SYSTEM_PROMPT_RUNBOOKS} Each one is a prompt on this server "
+                "(runbook-<id>)."
+            )
+            if "save_runbook" in offered:
+                runbooks += " " + SYSTEM_PROMPT_SAVE_RUNBOOK
+            parts = [
+                f"You are working through {self._mcp_server_brand()}'s MCP "
+                "server: its tools run runspec runnables on the operator's "
+                "machine and SSH hosts. Use them when they help, and confirm "
+                "before anything destructive.",
+                SYSTEM_PROMPT_CLARIFY,
+                runbooks,
+            ]
+            if {"search_wiki", "propose_fact"} <= offered:
+                parts.append(SYSTEM_PROMPT_WIKI)
+        if append:
+            parts.append(append)
+        return "\n\n".join(parts)
+
     def _mcp_server_context(self) -> str:
-        """The live context block a chat turn gets: date + timezone, the
-        automation state and host groups, and the pinned wiki facts."""
-        blocks = [self._now_context()]
-        for build in (self._console_context, self._knowledge_header):
+        """The live context block a chat turn gets — date + timezone, the
+        automation state and host groups, and the pinned wiki facts — naming
+        only the tools this server publishes."""
+        offered = self._mcp_server_offered()
+        blocks = [self._now_context(status_tool="console_status" in offered)]
+        builders = (
+            lambda: self._console_context(offered=offered),
+            self._knowledge_header,
+        )
+        for build in builders:
             try:
                 text = build()
             except Exception:  # noqa: BLE001 — context is a nicety
                 logger.debug("mcp_server context block failed", exc_info=True)
                 text = ""
+            if text and "search_wiki" not in offered:
+                text = "\n".join(
+                    ln for ln in text.splitlines() if "search_wiki" not in ln
+                )
             if text:
                 blocks.append(text)
         return "\n\n".join(blocks)
@@ -860,13 +935,7 @@ class McpServerMixin:
 
         values = {k: v for k, v in (arguments or {}).items() if v not in (None, "")}
         if name == _ASSISTANT_PROMPT:
-            text = (
-                f"{self._base_system()}\n\n"
-                "You are working through the console's MCP server, so its "
-                "runnables and tools are your tools here. If something above "
-                "names a tool this session doesn't have, it isn't available.\n\n"
-                f"{self._mcp_server_context()}"
-            )
+            text = f"{self._mcp_server_system_prompt()}\n\n{self._mcp_server_context()}"
             task = str(values.get("task") or "").strip()
             if task:
                 text += f"\n\n## Task\n{task}"
@@ -924,7 +993,7 @@ class McpServerMixin:
         if uri == _CONTEXT_URI:
             return self._mcp_server_context()
         if uri == _SYSTEM_PROMPT_URI:
-            return self._base_system()
+            return self._mcp_server_system_prompt()
         raise KeyError(uri)
 
     def mcp_server_status(self) -> dict[str, Any]:

@@ -361,3 +361,112 @@ def test_mcp_servers_line_points_at_use_tool_when_deferred(monkeypatch):
     assert "External MCP servers connected: atlassian (40 tools)" in out
     assert "use_tool" in out and "describe_tool" in out
     assert "appear in your toolset" not in out
+
+
+# ── the console MCP server's view (offered = the tools it publishes) ──────────
+
+
+def _mcp_stub(monkeypatch, tmp_path, *, ai=True):
+    _seed_ctx_saved_runs(
+        tmp_path, monkeypatch, [{"id": "flush", "runnable": "flush-dns", "host": "h"}]
+    )
+    ns = _stub(
+        monkeypatch,
+        rota={"enabled": True, "source": "console", **_ALWAYS_ON},
+        triggers=[
+            {"name": "vip", "source": "outlook", "event": "new_mail", "mode": "agent"},
+            {"name": "disk", "source": "webhook", "event": "alert", "mode": "rule"},
+        ],
+        schedules=[
+            {
+                "id": "morning",
+                "action": "prompt",
+                "prompt": "Check disk.",
+                "when": {"cron": "0 8 * * *"},
+            },
+            {
+                "id": "nightly",
+                "action": "runnable",
+                "host": "db01",
+                "runnable": "backup",
+                "when": {"cron": "0 2 * * *"},
+            },
+        ],
+        hosts=[
+            {"name": "web01", "group": "Production"},
+            {"name": "web02", "group": "Production"},
+        ],
+    )
+    ns._ai_enabled = ai
+    return ns
+
+
+def test_mcp_view_names_no_tool_the_server_lacks(monkeypatch, tmp_path):
+    ns = _mcp_stub(monkeypatch, tmp_path)
+    out = ns._console_context(offered=frozenset())
+    # State is still there …
+    assert "vip: outlook:new_mail · agent" in out
+    assert "nightly: run /backup on db01" in out
+    assert "Production: 0/2 connected" in out
+    assert "**INSIDE** working hours" in out
+    # … but no tool it can't call and no group fan-out.
+    for absent in (
+        "create_schedule",
+        "run_saved_run",
+        "Saved runs",
+        "run_runnable",
+        "fan out",
+        "workspace_",
+        "run_python_sandboxed",
+    ):
+        assert absent not in out, absent
+    assert "one host per call" in out
+    assert "Triggers fire inside the console" in out
+    assert "Schedules fire inside the console" in out
+
+
+def test_mcp_view_with_builtins_names_only_those(monkeypatch, tmp_path):
+    ns = _mcp_stub(monkeypatch, tmp_path)
+    out = ns._console_context(offered=frozenset({"create_schedule", "run_saved_run"}))
+    assert "create_schedule" in out and "action='prompt'" in out
+    assert "run on the console's own model" in out
+    assert "Saved runs (1)" in out and "run_saved_run" in out
+    assert "manage_saved_runs" not in out
+
+
+def test_mcp_view_with_ai_off(monkeypatch, tmp_path):
+    ns = _mcp_stub(monkeypatch, tmp_path, ai=False)
+    out = ns._console_context(offered=frozenset({"create_schedule"}))
+    assert "vip: outlook:new_mail · agent [not running: needs the console's AI]" in out
+    assert "disk: webhook:alert · rule\n" in out + "\n"  # a rule trigger still runs
+    assert "morning: agent prompt: Check disk. · 0 8 * * * [not running" in out
+    assert "nightly: run /backup on db01 · 0 2 * * *\n" in out + "\n"
+    # The rota and lock gates are inert with AI off, so they aren't described.
+    assert "working hours" not in out and "Lock auto-suspend" not in out
+    # create_schedule is offered, but not its AI actions.
+    assert "action='prompt'" not in out and "not 'prompt' or 'runbook'" in out
+
+
+def test_chat_view_unchanged_by_offered_default(monkeypatch, tmp_path):
+    ns = _mcp_stub(monkeypatch, tmp_path)
+    out = ns._console_context()
+    assert "fan out to EVERY host" in out
+    assert "create_schedule" in out and "manage_saved_runs" in out
+    assert "fire inside the console" not in out
+
+
+def test_status_tool_over_mcp_skips_denylist_pointer(monkeypatch):
+    ns = _stub(
+        monkeypatch,
+        rota={},
+        triggers=[],
+        schedules=[],
+        hosts=[
+            {"name": "prod-1", "ssh": "x@prod-1", "runspec_paths": ["/v/bin/runspec"]}
+        ],
+    )
+    ns._run_status_tool = types.MethodType(Bridge._run_status_tool, ns)
+    assert "manage_denylist" not in ns._run_status_tool({}, offered=frozenset())
+    assert "manage_denylist" in ns._run_status_tool(
+        {}, offered=frozenset({"manage_denylist"})
+    )

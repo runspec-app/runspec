@@ -27,25 +27,45 @@ _CANCEL_KEY = "__cancel_event__"  # key in _in_flight dicts, not surfaced to JS
 # tab via ``Bridge.default_system_prompt()`` so the field is pre-filled with what
 # actually runs; a saved value equal to this is dropped from config.toml so the
 # install keeps tracking future changes to the default (see save_config).
-DEFAULT_SYSTEM_PROMPT = (
+# The default system prompt, in parts so the console's MCP server can send the
+# same guidance with only the tools that server publishes
+# (``bridge_mcp_server._mcp_server_system_prompt``).
+SYSTEM_PROMPT_INTRO = (
     "You are an assistant embedded in runspec-console. You can run "
     "runspec runnables on local and remote hosts via tools. Use tools "
-    "when they help, and confirm before anything destructive.\n\n"
+    "when they help, and confirm before anything destructive."
+)
+SYSTEM_PROMPT_CLARIFY = (
     "When a required argument is missing or ambiguous — and getting it "
     "wrong would matter (scheduling, sending mail, targeting a host, or "
     "anything destructive) — ask the operator one brief clarifying question "
     "instead of guessing. Prefer a quick question over a wrong assumption. "
-    "For low-stakes or clearly-implied values, go ahead; don't over-ask.\n\n"
+    "For low-stakes or clearly-implied values, go ahead; don't over-ask."
+)
+SYSTEM_PROMPT_RUNBOOKS = (
     "Saved runbooks are the operator's standing procedures. Prefer following "
-    "an existing one over improvising. When a correction you were just given "
+    "an existing one over improvising."
+)
+SYSTEM_PROMPT_SAVE_RUNBOOK = (
+    "When a correction you were just given "
     "would apply again next time, offer to capture it with save_runbook — "
     "the operator approves every save, so propose rather than ask permission "
-    "first.\n\n"
+    "first."
+)
+SYSTEM_PROMPT_WIKI = (
     "The knowledge wiki holds what this team has learned about its fleet: "
     "where things live, who owns what, and each host's quirks. Check "
     "search_wiki before asking the operator or guessing such a detail, and "
     "when you learn something durable that isn't there, record it with "
     "propose_fact (it goes to the operator's review inbox)."
+)
+DEFAULT_SYSTEM_PROMPT = "\n\n".join(
+    (
+        SYSTEM_PROMPT_INTRO,
+        SYSTEM_PROMPT_CLARIFY,
+        f"{SYSTEM_PROMPT_RUNBOOKS} {SYSTEM_PROMPT_SAVE_RUNBOOK}",
+        SYSTEM_PROMPT_WIKI,
+    )
 )
 
 # Standing session-workspace guidance, folded into every agent turn's system

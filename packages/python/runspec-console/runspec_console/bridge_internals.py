@@ -1887,7 +1887,7 @@ class InternalsMixin:
 
     # ── event triggers ────────────────────────────────────────────────────────
 
-    def _now_context(self) -> str:
+    def _now_context(self, *, status_tool: bool = True) -> str:
         """A per-turn system-prompt block giving the agent the operator's current
         local date **and timezone**, so it resolves relative dates ("last Friday")
         against the real machine clock and produces clock times in local time
@@ -1906,16 +1906,23 @@ class InternalsMixin:
         raw = now.strftime("%z")  # e.g. -0500 / +0530 / "" if unknown
         offset = f"UTC{raw[:3]}:{raw[3:]}" if len(raw) == 5 else "UTC offset unknown"
         tz = f"{tzname} ({offset})" if tzname else offset
-        return (
+        text = (
             "## Current date & timezone\n"
             f"The operator's machine date is **{now.strftime('%A, %Y-%m-%d')}** and "
             f"their timezone is **{tz}** (local time). Resolve relative dates like "
             '"last Friday" or "next week" against this date. Produce and interpret '
             "clock times in the operator's **local** time — never UTC (e.g. a 2pm "
-            "meeting is 14:00 local). For the exact current time — needed for "
-            'relative times like "in 30 minutes" or "this afternoon" — call the '
-            "``console_status`` tool first."
+            "meeting is 14:00 local)."
         )
+        if status_tool:
+            # ``status_tool=False``: the console's MCP server without
+            # ``console_status`` published.
+            text += (
+                " For the exact current time — needed for "
+                'relative times like "in 30 minutes" or "this afternoon" — call the '
+                "``console_status`` tool first."
+            )
+        return text
 
     def default_system_prompt(self) -> str:
         """The built-in base system prompt (what runs when ``[llm] system`` is
@@ -1940,39 +1947,63 @@ class InternalsMixin:
         append = str(llm_cfg.get("system_append", "")).strip()
         return f"{base}\n\n{append}" if append else base
 
-    def _console_context(self) -> str:
+    def _console_context(self, *, offered: frozenset[str] | None = None) -> str:
         """A per-turn system-prompt block making the chat agent aware of the
         working-hours rota and the configured triggers/schedules, so it can reason
         about them and react when asked to act outside working hours. Folded into
         the per-turn ``system_override`` (like the pinned-memory header), and
         returns ``""`` when nothing is configured so an unconfigured console keeps
-        the fully prompt-cached fast path."""
+        the fully prompt-cached fast path.
+
+        ``offered`` is for the console's MCP server: the built-in tool names that
+        server actually publishes. Given, the block names only those tools, says
+        a host group can't be a ``host`` value (the server runs one host per
+        call), leaves out the chat-only sections (repos, external MCP servers,
+        workspace, sandbox, saved runs and Outlook unless their tools are
+        offered), and marks triggers and schedules that need the console's own
+        AI when ``[console] ai = false``. ``None`` (chat, triggers,
+        ``console_status``) keeps the full block."""
 
         from .config import read_mailbox, read_rota, read_triggers
         from .sources import outlook as ol
+        from .sources.schedule import AI_SCHEDULE_ACTIONS
         from .triggers import _DAYS, within_rota
 
+        mcp = offered is not None
+
+        def has(name: str) -> bool:
+            return offered is None or name in offered
+
+        ai_on = bool(getattr(self, "_ai_enabled", True))
         rota = read_rota()
         triggers = read_triggers()
         schedules = self._read_schedules()
-        mailbox = read_mailbox() if ol.outlook_available() else None
+        outlook_offered = offered is None or any(
+            n.startswith("outlook_") for n in offered
+        )
+        mailbox = read_mailbox() if outlook_offered and ol.outlook_available() else None
         host_groups = self._groups_map()
-        try:
-            from . import savedruns as savedruns_mod
+        saved_runs: list[dict[str, Any]] = []
+        if has("run_saved_run"):
+            try:
+                from . import savedruns as savedruns_mod
 
-            saved_runs = [r for r in savedruns_mod.load_saved_runs() if r.get("id")]
-        except Exception:
-            saved_runs = []
+                saved_runs = [r for r in savedruns_mod.load_saved_runs() if r.get("id")]
+            except Exception:
+                saved_runs = []
         from . import secret_files
 
         file_creds = secret_files.file_credentials(
             getattr(self, "_credentials", None) or []
         )
-        rota_on = bool(rota.get("enabled"))
+        # With the console's AI off the rota and lock gates are inert
+        # (``bridge_triggers._build_clock_ok``/``_build_lock_ok``), so don't
+        # describe them as if they held anything back.
+        rota_on = bool(rota.get("enabled")) and ai_on
         _mcp_status = getattr(self, "mcp_status", None)
         mcp_servers = (
             [s for s in _mcp_status().get("servers", []) if s.get("connected")]
-            if callable(_mcp_status)
+            if callable(_mcp_status) and not mcp
             else []
         )
         if (
@@ -1996,7 +2027,7 @@ class InternalsMixin:
                 "operator's screen is still locked)."
             )
 
-        if rota.get("lock_suspend", True):
+        if ai_on and rota.get("lock_suspend", True):
             lines.append(
                 "Lock auto-suspend: ON — reactive triggers only fire while the "
                 "operator's screen is unlocked (present at the workstation). "
@@ -2004,11 +2035,11 @@ class InternalsMixin:
                 "override)."
             )
 
-        if not rota_on:
+        if ai_on and not rota_on:
             lines.append(
                 "Working-hours rota: OFF — triggers and schedules run at any time."
             )
-        else:
+        elif rota_on:
             now = datetime.now()
             inside = within_rota(rota, now)
             src = (
@@ -2041,12 +2072,18 @@ class InternalsMixin:
             lines.append(f"Configured triggers ({len(triggers)}):")
             for t in triggers[:20]:
                 state = "" if t.get("enabled", True) else " [disabled]"
+                if not ai_on and (
+                    t.get("mode", "agent") == "agent" or t.get("pre_turn")
+                ):
+                    state += " [not running: needs the console's AI]"
                 lines.append(
                     f"- {t.get('name')}: {t.get('source')}:{t.get('event')} · "
                     f"{t.get('mode', 'agent')}{state}"
                 )
             if len(triggers) > 20:
                 lines.append(f"- … and {len(triggers) - 20} more")
+            if mcp:
+                lines.append("Triggers fire inside the console, not in this session.")
 
         if schedules:
             lines.append("")
@@ -2075,16 +2112,33 @@ class InternalsMixin:
                     )
                     target = f"run /{s.get('runnable')} on {where}"
                 state = "" if s.get("enabled", True) else " [disabled]"
+                if not ai_on and action in AI_SCHEDULE_ACTIONS:
+                    state += " [not running: needs the console's AI]"
                 lines.append(f"- {s.get('id')}: {target} · {when_txt}{state}")
             if len(schedules) > 20:
                 lines.append(f"- … and {len(schedules) - 20} more")
-            lines.append(
-                "You can add schedules with the create_schedule tool — including "
-                "action='prompt' (run an agent turn on a fixed instruction, to "
-                "check or do something later), action='runbook' (run a saved "
-                "runbook on a cadence), and action='saved_run' (fire a saved run "
-                "— a deterministic preset — on a cadence)."
-            )
+            if mcp:
+                lines.append("Schedules fire inside the console, not in this session.")
+            if has("create_schedule") and ai_on:
+                lines.append(
+                    "You can add schedules with the create_schedule tool — "
+                    "including action='prompt' (run an agent turn on a fixed "
+                    "instruction, to check or do something later), "
+                    "action='runbook' (run a saved runbook on a cadence), and "
+                    "action='saved_run' (fire a saved run — a deterministic "
+                    "preset — on a cadence)."
+                    + (
+                        " Prompt and runbook schedules run on the console's own model."
+                        if mcp
+                        else ""
+                    )
+                )
+            elif has("create_schedule"):
+                lines.append(
+                    "You can add schedules with the create_schedule tool "
+                    "(action='runnable', 'saved_run' or 'saved_transfer'; the "
+                    "console's AI is off, so not 'prompt' or 'runbook')."
+                )
 
         if saved_runs:
             lines.append("")
@@ -2106,8 +2160,12 @@ class InternalsMixin:
             lines.append(
                 "Fire one with the run_saved_run tool (fill open params via "
                 "'values'); it runs exactly as stored — the gate reflects the "
-                "underlying runnable's autonomy. Manage them with "
-                "manage_saved_runs."
+                "underlying runnable's autonomy."
+                + (
+                    " Manage them with manage_saved_runs."
+                    if has("manage_saved_runs")
+                    else ""
+                )
             )
 
         if host_groups:
@@ -2115,9 +2173,13 @@ class InternalsMixin:
                 connected = dict(self._connected_cache)
             lines.append("")
             lines.append(
-                f"Host groups ({len(host_groups)}) — use a group name as the `host` "
-                "value of run_runnable to fan out to EVERY host in it at once (one "
-                "grouped confirm, most-restrictive autonomy wins):"
+                f"Host groups ({len(host_groups)}) — this server runs one host per "
+                "call, so a group name is not a `host` value here; to cover a "
+                "group, run on each of its hosts:"
+                if mcp
+                else f"Host groups ({len(host_groups)}) — use a group name as the "
+                "`host` value of run_runnable to fan out to EVERY host in it at "
+                "once (one grouped confirm, most-restrictive autonomy wins):"
             )
             for gname, members in list(host_groups.items())[:8]:
                 up = sum(1 for m in members if connected.get(m, False))
@@ -2150,7 +2212,7 @@ class InternalsMixin:
 
         from . import repos as repos_mod
 
-        if repos_mod.available():
+        if has("repo_read") and repos_mod.available():
             registered = repos_mod.read_repos()
             if registered:
                 lines.append("")
@@ -2209,14 +2271,15 @@ class InternalsMixin:
         # workspace_* tools when a spilled envelope shows up. Deliberately
         # id-free (the envelope tells you the file path each time) so the
         # cached system prefix stays stable across turns of one conversation.
-        guidance = self._workspace_guidance()
+        guidance = self._workspace_guidance() if has("workspace_read") else ""
         if guidance:
             lines.append("")
             lines.append(guidance)
         from . import sandbox
 
         if (
-            config_mod.read_workspace().get("code_exec", True)
+            has("run_python_sandboxed")
+            and config_mod.read_workspace().get("code_exec", True)
             and config_mod.read_sandbox().get("enabled", True)
             and sandbox.available()
         ):
@@ -2232,6 +2295,8 @@ class InternalsMixin:
                 "heavy data-wrangling by hand."
             )
 
+        if mcp and len(lines) == 1:
+            return ""
         return "\n".join(lines)
 
     def _workspace_guidance(self) -> str:

@@ -2172,28 +2172,35 @@ class AgentToolsMixin:
             }
         ]
 
-    def _run_status_tool(self, ti: dict[str, Any]) -> str:
+    def _run_status_tool(
+        self, ti: dict[str, Any], *, offered: frozenset[str] | None = None
+    ) -> str:
         """Execute ``console_status`` — return the live rota + triggers + schedules
         snapshot (the autonomy gate has already let it run; it has no side effects).
 
         Leads with the **current local date and time**: the per-turn system prompt
         carries only the date (kept date-only so the prompt cache stays warm), so
         this on-demand tool is where the agent gets the exact wall-clock time —
-        e.g. before scheduling or running something time-sensitive."""
+        e.g. before scheduling or running something time-sensitive.
+
+        ``offered`` is the console MCP server's published tool names, so a call
+        over MCP names only tools that client has (see ``_console_context``)."""
         now = datetime.now().astimezone()
         tz = now.strftime("%Z")
         time_line = (
             "Current local date & time: "
             f"{now.strftime('%A, %Y-%m-%d %H:%M')}{f' {tz}' if tz else ''}."
         )
-        snapshot = self._console_context() or (
+        snapshot = self._console_context(offered=offered) or (
             "Working-hours rota: OFF — automation runs at any time. No triggers or "
             "schedules are configured."
         )
         snapshot = time_line + "\n\n" + snapshot
         # Zero-cost pointer (no fleet sweep): make the kill switch discoverable from
         # the status tool so the agent knows where to look when a run is blocked.
-        if any(utils_mod._paths(h) for h in self._hosts):
+        if (offered is None or "manage_denylist" in offered) and any(
+            utils_mod._paths(h) for h in self._hosts
+        ):
             snapshot += (
                 "\n\nRunnables may also be disabled by the fleet denylist (a kill "
                 "switch). Call manage_denylist with action='list' to see what is "
