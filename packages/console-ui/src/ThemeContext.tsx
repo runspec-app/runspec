@@ -20,6 +20,9 @@ export const textColor = (isDark: boolean) => (isDark ? 'rgba(255,255,255,0.85)'
 export const textSecondary = (isDark: boolean) => (isDark ? '#aaaaaa' : '#555555')  // readable secondary: labels, descriptions
 export const textMuted = (isDark: boolean) => (isDark ? '#8c8c8c' : '#6b6b6b')      // dim: hints, separators, muted icons, counts
 export const textFaint = (isDark: boolean) => (isDark ? '#6e6e6e' : '#8a8a8a')      // faintest: empty-cell dashes, carets, off-state icons
+// Small warning-toned text ("required" markers). Ant's colorWarning (#faad14) is
+// ~1.9:1 on white, so light uses a deeper orange that clears 4.5:1.
+export const textWarning = (isDark: boolean) => (isDark ? '#ffa940' : '#ad4e00')
 
 // The app's signature accent (sidebar title, active nav tab, links, arg names).
 // A white-label accent_color overrides the built-in runspec teal pair — App.tsx

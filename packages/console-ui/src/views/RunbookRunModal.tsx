@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Modal, Input, Select, Typography, Tag, message } from 'antd'
+import { Modal, Input, Select, Typography, message } from 'antd'
 import type { ArgDef, Runbook } from '../bridge'
-import { ArgGrid, ArgInput, DefaultArgsCollapse, TruncatedText, argSpansRow, partitionArgs } from './formsShared'
+import { ArgField, ArgError, ArgFieldHeader, ArgGrid, ArgInput, DefaultArgsCollapse, argSpansRow, partitionArgs } from './formsShared'
 import { MONO_FONT } from '../ThemeContext'
 
 const { Text } = Typography
@@ -87,20 +87,10 @@ export function ParamRow({ arg, hostNames, value, error, onChange }: {
   onChange: (v: unknown) => void
 }) {
   return (
-    <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
-        <Text code style={{ fontSize: 13 }}>{arg.name}</Text>
-        <Tag style={{ fontSize: 11, margin: 0 }}>{arg.ui === 'host' ? 'host' : arg.type}</Tag>
-        {arg.required
-          ? <Tag color="orange" style={{ fontSize: 11, margin: 0 }}>required</Tag>
-          : <Text type="secondary" style={{ fontSize: 11 }}>optional</Text>}
-      </div>
-      {arg.description && (
-        <TruncatedText text={arg.description} style={{ fontSize: 12, marginBottom: 5, color: 'var(--rs-text-secondary)' }} />
-      )}
+    <ArgField header={<ArgFieldHeader arg={arg} prefix="" />} description={arg.description}>
       <RunbookField arg={arg} hostNames={hostNames} value={value} error={error} onChange={onChange} />
-      {error && <Text style={{ fontSize: 12, color: '#ff4d4f' }}>{error}</Text>}
-    </div>
+      <ArgError text={error} />
+    </ArgField>
   )
 }
 

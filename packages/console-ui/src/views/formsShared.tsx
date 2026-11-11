@@ -25,7 +25,7 @@ import {
 import { InfoCircleOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import type { ArgDef, SavedRun } from '../bridge'
-import { useIsDark, MONO_FONT } from '../ThemeContext'
+import { useIsDark, MONO_FONT, textColor, textSecondary, textWarning } from '../ThemeContext'
 import { PathInput } from './PathInput'
 
 // Runnable-id ↔ Runnable resolution helpers live in ./formsMatch so App can call
@@ -491,11 +491,103 @@ export function ArgGrid({ children }: { children: ReactNode }) {
     <div style={{
       display: 'grid',
       gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
-      gap: 14, alignItems: 'start',
+      rowGap: 20, columnGap: 24, alignItems: 'start',
     }}>
       {children}
     </div>
   )
+}
+
+// The short type word shown beside an arg name. A UI hint wins over the raw
+// type when it says more ("folder", "date"); a secret reads as "secret".
+// Pure — exported for tests.
+export function argTypeLabel(arg: ArgDef): string {
+  if (arg.type === 'password') return 'secret'
+  if (arg.type === 'path' && arg.ui === 'directory') return 'folder'
+  if (arg.ui && ['date', 'datetime', 'time', 'month', 'color', 'host'].includes(arg.ui)) return arg.ui
+  return arg.type
+}
+
+// The header of one form field: the arg name the operator scans for, in the
+// primary text colour, with quiet metadata beside it — the type word (muted
+// mono) and a "required" marker. Optional is the unmarked default, so a form
+// of optional args carries no repeated "optional" noise. `extra` holds state
+// worth a pill (a credential binding).
+export function ArgFieldHeader({ arg, prefix = '--', extra }: {
+  arg: ArgDef
+  prefix?: string
+  extra?: ReactNode
+}) {
+  const isDark = useIsDark()
+  const typeWord = argTypeLabel(arg)
+  return (
+    <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0, flexWrap: 'wrap', marginBottom: 2 }}>
+      <span style={{
+        fontFamily: MONO_FONT, fontSize: 13, fontWeight: 500,
+        color: textColor(isDark), overflowWrap: 'anywhere',
+      }}>
+        {prefix}{arg.name}
+      </span>
+      {arg.type === 'password' ? (
+        <Tooltip title="A secret — sent to the runnable through the environment, never on the command line.">
+          <span style={{ fontFamily: MONO_FONT, fontSize: 11, color: textSecondary(isDark), cursor: 'help' }}>{typeWord}</span>
+        </Tooltip>
+      ) : (
+        <span style={{ fontFamily: MONO_FONT, fontSize: 11, color: textSecondary(isDark) }}>{typeWord}</span>
+      )}
+      {arg.required && (
+        <span style={{ fontSize: 11, fontWeight: 500, color: textWarning(isDark) }}>required</span>
+      )}
+      {!arg.required && isVarRef(arg.default) && (
+        <Tooltip title={`Defaults to the value of ${String(arg.default)} on the host`}>
+          <span style={{ fontFamily: MONO_FONT, fontSize: 11, color: textSecondary(isDark), cursor: 'help' }}>
+            = {String(arg.default)}
+          </span>
+        </Tooltip>
+      )}
+      {extra}
+    </div>
+  )
+}
+
+// An arg description, wrapped to at most two lines (ellipsis past that, full
+// text on hover). Readable in place, unlike a one-line clip, while a long
+// description still can't push the field down the grid.
+export function ArgDescription({ text }: { text: string }) {
+  return (
+    <Tooltip title={text} mouseEnterDelay={0.4}>
+      <div style={{
+        fontSize: 12, lineHeight: 1.5, color: 'var(--rs-text-secondary)', overflowWrap: 'anywhere',
+        marginBottom: 6, minWidth: 0,
+        display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+      }}>
+        {text}
+      </div>
+    </Tooltip>
+  )
+}
+
+// One field's stack in an ArgGrid cell: header and description at the top, the
+// control pinned to the bottom. Cells in a grid row share a height, so fields
+// whose descriptions run to different lengths still line their inputs up.
+export function ArgField({ header, description, children }: {
+  header: ReactNode
+  description?: string
+  children: ReactNode
+}) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minWidth: 0 }}>
+      {header}
+      {description && <ArgDescription text={description} />}
+      <div style={{ marginTop: 'auto' }}>{children}</div>
+    </div>
+  )
+}
+
+// A field's validation message, under the control.
+export function ArgError({ text }: { text?: string }) {
+  if (!text) return null
+  return <Typography.Text type="danger" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>{text}</Typography.Text>
 }
 
 

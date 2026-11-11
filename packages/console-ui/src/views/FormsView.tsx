@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Button, Checkbox, Collapse, Input, Modal, Segmented, Select, Tag, Tooltip, Typography, message } from 'antd'
-import { SearchOutlined, RightOutlined, ArrowLeftOutlined, AppstoreOutlined, EditOutlined, PlusOutlined, DownOutlined } from '@ant-design/icons'
+import { SearchOutlined, RightOutlined, ArrowLeftOutlined, AppstoreOutlined, EditOutlined, PlusOutlined, DownOutlined, InfoCircleOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import type { ArgDef, Host, Runnable, Runbook, SavedRun } from '../bridge'
 import { bridge } from '../bridge'
 import { useIsDark, useAccent, withAlpha, surfaces, RADIUS, textSecondary, MONO_FONT } from '../ThemeContext'
@@ -24,6 +24,9 @@ import {
 // without pinning this heavy view into the main chunk — App.tsx React.lazy-loads
 // FormsView, so nothing else may statically import from it.
 import {
+  ArgField,
+  ArgError,
+  ArgFieldHeader,
   ArgGrid,
   ArgInput,
   DefaultArgsCollapse,
@@ -35,7 +38,6 @@ import {
   credEnvNames,
   filterSavedRuns,
   initialFormValues,
-  isVarRef,
   offerDebugSwitch,
   withDebugFlag,
   partitionArgs,
@@ -91,59 +93,41 @@ function resolveNode(root: Runnable, path: string[]): Runnable {
   return node
 }
 
-function SectionLabel({ children }: { children: ReactNode }) {
+// A section heading inside the run dialog ("Inherited", "This command",
+// "Credentials"): sentence case, semibold, with a hairline under it.
+function SectionLabel({ children, hint }: { children: ReactNode; hint?: string }) {
   const isDark = useIsDark()
   return (
     <div style={{
-      fontSize: 11, color: textSecondary(isDark),
-      textTransform: 'uppercase', letterSpacing: '0.08em',
-      paddingBottom: 5, borderBottom: `1px solid var(--rs-border)`,
+      display: 'flex', alignItems: 'center', gap: 6,
+      fontSize: 12, fontWeight: 600, color: textSecondary(isDark),
+      paddingBottom: 6, borderBottom: '1px solid var(--rs-border)',
     }}>
       {children}
+      {hint && (
+        <Tooltip title={hint}>
+          <InfoCircleOutlined style={{ fontSize: 12, color: 'var(--rs-text-muted)', cursor: 'help' }} />
+        </Tooltip>
+      )}
     </div>
   )
 }
 
+// One form field: name + type/required header, a description of up to two
+// lines, the control, then any validation message.
 function ArgRow({ arg, host, runnable, runAs, group, value, error, onChange, binding }: ArgInputProps) {
+  const bindingTag = binding && (
+    <Tooltip title={binding.role === 'secret'
+      ? `This arg's secret is supplied by credential “${binding.label}” via the environment channel — leave blank to use it, or type to override.`
+      : `Pre-filled from credential “${binding.label}” — edit if needed.`}>
+      <Tag color="green" style={{ fontSize: 11, lineHeight: '16px', margin: 0 }}>from {binding.label}</Tag>
+    </Tooltip>
+  )
   return (
-    <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
-        <Text code style={{ fontSize: 13 }}>--{arg.name}</Text>
-        <Tag color="default" style={{ fontSize: 11, margin: 0 }}>
-          {arg.type === 'path' && arg.ui === 'directory' ? 'folder'
-            : (arg.ui === 'date' || arg.ui === 'datetime' || arg.ui === 'time' || arg.ui === 'month' || arg.ui === 'color') ? arg.ui
-              : arg.type}
-        </Tag>
-        {arg.inherited && (
-          <Tooltip title="Inherited from a global arg or a parent command — applies to this run">
-            <Tag color="blue" style={{ fontSize: 11, margin: 0 }}>inherited</Tag>
-          </Tooltip>
-        )}
-        {binding && (
-          <Tooltip title={binding.role === 'secret'
-            ? `This arg's secret is supplied by credential “${binding.label}” via the environment channel — leave blank to use it, or type to override.`
-            : `Pre-filled from credential “${binding.label}” — edit if needed.`}>
-            <Tag color="green" style={{ fontSize: 11, margin: 0 }}>from {binding.label}</Tag>
-          </Tooltip>
-        )}
-        {arg.type === 'password'
-          ? <Tooltip title="A secret — typed here and sent via the environment, never on the command line. Credentials are not copied into args on the form; use the credential section below for env-var credentials."><Tag color={arg.required ? 'orange' : 'default'} style={{ fontSize: 11, margin: 0 }}>{arg.required ? 'required secret' : 'secret'}</Tag></Tooltip>
-          : arg.required
-            ? <Tag color="orange" style={{ fontSize: 11, margin: 0 }}>required</Tag>
-            : isVarRef(arg.default)
-              ? <Text style={{ fontSize: 11, color: '#fa8c16', fontFamily: MONO_FONT }}>{arg.default as string}</Text>
-              : <Text type="secondary" style={{ fontSize: 11 }}>optional</Text>
-        }
-      </div>
-      {/* Description on its own full-width line, truncated with a hover tooltip —
-          so a long description no longer fights the name/tags for the row and
-          the field lays out cleanly in the multi-column grid. */}
-      {arg.description && (
-        <TruncatedText text={arg.description} style={{ fontSize: 12, marginBottom: 5, color: 'var(--rs-text-secondary)' }} />
-      )}
+    <ArgField header={<ArgFieldHeader arg={arg} extra={bindingTag} />} description={arg.description}>
       <ArgInput arg={arg} host={host} runnable={runnable} runAs={runAs} group={group} value={value} error={error} onChange={onChange} binding={binding} />
-      {error && <Text style={{ fontSize: 12, color: '#ff4d4f' }}>{error}</Text>}
-    </div>
+      <ArgError text={error} />
+    </ArgField>
   )
 }
 
@@ -220,9 +204,9 @@ function ArgForm({ node, host, runnable, runAs, group, values, errors, onChange,
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 28 }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-        <SectionLabel>Inherited</SectionLabel>
+        <SectionLabel hint="Global args and parent-command args. They apply to this run.">Inherited</SectionLabel>
         {renderGroup(inherited)}
       </div>
       {own.length > 0 && (
@@ -587,7 +571,15 @@ function RunModal({ state, hosts = [], onClose, onSubmit }: RunModalProps) {
       }
       footer={
         canRunHere ? (
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8 }}>
+            {/* Run options sit with the Run button, not among the args. */}
+            {offerDebugSwitch(declaredArgNames) && (
+              <Tooltip title="Runs with --debug: DEBUG log lines and full tracebacks in the output. A runnable with logging turned off ignores it.">
+                <Checkbox checked={debug} onChange={e => setDebug(e.target.checked)} style={{ marginRight: 'auto' }}>
+                  <Text style={{ fontSize: 13 }}>Debug logging</Text>
+                </Checkbox>
+              </Tooltip>
+            )}
             <Button onClick={onClose}>Cancel</Button>
             <Button type="primary" onClick={handleSubmit} disabled={multiHost && targetHosts.length === 0}>
               {(hasSubcommands ? `Run /${crumbs.join(' ')}` : 'Run') +
@@ -599,7 +591,7 @@ function RunModal({ state, hosts = [], onClose, onSubmit }: RunModalProps) {
     >
       <div>
         {currentNode.description && (
-          <Text type="secondary" style={{ fontSize: 13, display: 'block', marginBottom: 14 }}>
+          <Text type="secondary" style={{ fontSize: 13, lineHeight: 1.55, display: 'block', marginBottom: 20, maxWidth: '75ch' }}>
             {currentNode.description}
           </Text>
         )}
@@ -636,32 +628,22 @@ function RunModal({ state, hosts = [], onClose, onSubmit }: RunModalProps) {
         {canRunHere && (
         <div>
           {hasSubcommands && (
-            <div style={{ borderTop: '1px solid rgba(128,128,128,0.2)', paddingTop: 14, marginBottom: 4 }}>
-              <Text type="secondary" style={{ fontSize: 12, fontStyle: 'italic' }}>
-                Or run <Text code style={{ fontSize: 12 }}>{crumbs.join(' ')}</Text> directly:
-              </Text>
+            <div style={{ marginBottom: 14 }}>
+              <SectionLabel>
+                <span>Or run <span style={{ fontFamily: MONO_FONT, fontWeight: 500 }}>{crumbs.join(' ')}</span> directly</span>
+              </SectionLabel>
             </div>
           )}
           <ArgForm node={currentNode} host={formHost} runnable={rootRunnable.name} runAs={rootRunnable.runAs} group={rootRunnable.group} values={values} errors={errors} onChange={handleChange} boundArgs={boundArgs} />
-          {offerDebugSwitch(declaredArgNames) && (
-            <div style={{ marginTop: 12 }}>
-              <Tooltip title="Runs with --debug: DEBUG log lines and full tracebacks in the output. A runnable with logging turned off ignores it.">
-                <Checkbox checked={debug} onChange={e => setDebug(e.target.checked)}>
-                  <Text style={{ fontSize: 13 }}>Debug logging</Text>
-                </Checkbox>
-              </Tooltip>
-            </div>
-          )}
           {creds.length > 0 && (
-            <div style={{ marginTop: 14, borderTop: '1px solid rgba(128,128,128,0.2)', paddingTop: 12 }}>
-              <Text style={{ fontSize: 13, display: 'block', marginBottom: 2 }}>Credentials</Text>
-              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>
-                A selected credential is applied two ways — whichever the runnable reads:
-                as env vars named after it (a credential <Text code style={{ fontSize: 11 }}>Jira</Text> sets <Text code style={{ fontSize: 11 }}>JIRA_USERNAME</Text>/<Text code style={{ fontSize: 11 }}>JIRA_USER</Text>/<Text code style={{ fontSize: 11 }}>JIRA_PASSWORD</Text>),
-                and — if it declares an argument binding matching a field above — into that argument (the username is pre-filled; the secret rides the environment, never argv).
+            <div style={{ marginTop: 28, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <SectionLabel hint="A selected credential is applied two ways, whichever the runnable reads: as env vars named after it (a credential “Jira” sets JIRA_USERNAME, JIRA_USER and JIRA_PASSWORD), and, if it binds an argument on this form, into that argument. The username is pre-filled; the secret goes through the environment, never the command line.">
+                Credentials
+              </SectionLabel>
+              <Text type="secondary" style={{ fontSize: 12, lineHeight: 1.5 }}>
+                Sets env vars named after each credential, and fills any argument it binds.
               </Text>
               <Select
-                size="small"
                 mode="multiple"
                 value={credentialIds}
                 onChange={vs => setCredentialIds(vs as string[])}
@@ -670,7 +652,7 @@ function RunModal({ state, hosts = [], onClose, onSubmit }: RunModalProps) {
                 options={creds.map(c => ({ label: c.label, value: c.id }))}
               />
               {credentialIds.length > 0 && (
-                <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                   {credentialIds.map(id => {
                     const c = creds.find(x => x.id === id)
                     if (!c) return null
@@ -806,7 +788,7 @@ function RunnableCard({ entry, hosts, onPick }: {
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
           {isInstant && (
             <Tooltip title="No arguments — runs immediately on click">
-              <Tag color="gold" style={{ fontSize: 11, margin: 0 }}>⚡ instant</Tag>
+              <Tag color="gold" icon={<ThunderboltOutlined />} style={{ fontSize: 11, margin: 0 }}>instant</Tag>
             </Tooltip>
           )}
           {isAuto && (
