@@ -263,6 +263,12 @@ copy action. Very large results render behind a brief placeholder and page in
 chunks, so a 10k-row result doesn't freeze the UI. For the cleanest tables,
 runnables should emit a top-level array of flat row objects.
 
+This applies to every run card: Forms runs, MCP-client calls, triggers and
+schedules. JSON Lines (one object per line) shows as a table. When the JSON
+comes after log lines (or other lines surround it, or the run wrote to
+stderr), those lines show in small text above the table; Raw shows the output
+exactly as printed.
+
 ---
 
 ## Under the hood: how tools reach the model
