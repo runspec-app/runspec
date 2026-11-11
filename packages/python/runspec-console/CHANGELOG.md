@@ -9,6 +9,22 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.400.2] — 2026-11-11
+
+### Fixed
+
+- **Forms runs and MCP calls show JSON as a table more often.** A run card
+  turned its output into the table / key-value view (with the Raw toggle) only
+  when stdout was exactly one JSON document, so a runnable that printed a log
+  line before its result, a JSON Lines result, or a card filled from an MCP or
+  trigger result with a warning in it stayed as plain JSON text. `parseOutput`
+  now also reads JSON Lines (one object per line) as a table and finds one JSON
+  document among other lines: at any size when it opens or ends the output,
+  otherwise only when it is at least half of it, so a log with one JSON-looking
+  line stays a log. The other lines, stderr included, show in small text above
+  the table (`ExtraLines`, first 12, the rest under Raw) instead of only
+  behind Raw. Raw is unchanged.
+
 ## [0.400.1] — 2026-11-11
 
 ### Changed

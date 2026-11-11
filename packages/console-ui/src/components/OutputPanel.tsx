@@ -172,48 +172,151 @@ interface ParsedOutput {
   obj?:  Record<string, unknown>      // kind === 'object'
   sections?: TableSection[]           // kind === 'sections'
   meta?: Record<string, unknown>      // kind === 'sections' — scalar caption fields
+  /** Lines outside the JSON (log lines, warnings, stderr), in output order —
+   *  shown above the structured view so they aren't only behind Raw. */
+  extra?: OutputLine[]
   rawText: string                     // always set — used for "Send to LLM"
 }
 
 const isRowArray = (v: unknown): boolean =>
   Array.isArray(v) && (v.length === 0 || (typeof v[0] === 'object' && v[0] !== null && !Array.isArray(v[0])))
 
-/** Try to extract a single JSON value from the stdout lines of a *completed*
- *  run block. Returns null while the block is still running. */
+/** Classify a parsed JSON value into a structured view, or null when it has no
+ *  rich view (a scalar, an array of scalars, an empty array). */
+function classifyJson(parsed: unknown, rawText: string): ParsedOutput | null {
+  if (Array.isArray(parsed) && parsed.length > 0 && typeof parsed[0] === 'object' && parsed[0] !== null) {
+    return { kind: 'table', rows: parsed as Record<string, unknown>[], rawText }
+  }
+  if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+    const entries = Object.entries(parsed as Record<string, unknown>)
+    const tableEntries = entries.filter(([, v]) => isRowArray(v))
+    const scalarEntries = entries.filter(([, v]) => v === null || typeof v !== 'object')
+    // A dict that wraps array(s)-of-objects (+ optional scalar metadata) —
+    // e.g. {System:[…], Application:[…]} or {log, level, events:[…]} — renders
+    // as titled section tables instead of an [object Object] grid.
+    if (tableEntries.length > 0 && tableEntries.length + scalarEntries.length === entries.length) {
+      return {
+        kind: 'sections',
+        sections: tableEntries.map(([title, v]) => ({ title, rows: v as Record<string, unknown>[] })),
+        meta: Object.fromEntries(scalarEntries),
+        rawText,
+      }
+    }
+    return { kind: 'object', obj: parsed as Record<string, unknown>, rawText }
+  }
+  return null
+}
+
+function tryJson(text: string): { ok: true; value: unknown } | { ok: false } {
+  try {
+    return { ok: true, value: JSON.parse(text) }
+  } catch {
+    return { ok: false }
+  }
+}
+
+const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v)
+
+// Bounds on the "JSON inside other lines" search, so a long non-JSON log
+// never costs more than a handful of JSON.parse attempts.
+const JSON_BLOCK_MAX_STARTS = 8
+const JSON_BLOCK_MAX_ENDS = 8
+
+/** Find one JSON document (an object, or an array of objects) among the stdout
+ *  lines when other lines surround it: log lines a runnable printed before its
+ *  result, a banner, a warning that reached stdout. Returns the parsed value and
+ *  the [start, end] line range it spans, or null. A document in the middle of
+ *  other lines must hold at least half the stdout text, so a log with one
+ *  JSON-looking line in it stays a log. */
+function findJsonBlock(out: OutputLine[]): { value: unknown; start: number; end: number } | null {
+  const starts: number[] = []
+  const ends: number[] = []
+  out.forEach((l, i) => {
+    const t = l.line.trim()
+    if (t.startsWith('{') || t.startsWith('[')) starts.push(i)
+    if (t.endsWith('}') || t.endsWith(']')) ends.push(i)
+  })
+  if (starts.length === 0 || ends.length === 0) return null
+  const totalChars = out.reduce((n, l) => n + l.line.trim().length, 0)
+  const nonBlank = out.flatMap((l, i) => (l.line.trim() ? [i] : []))
+  const first = nonBlank[0]
+  const last = nonBlank[nonBlank.length - 1]
+  for (const start of starts.slice(0, JSON_BLOCK_MAX_STARTS)) {
+    let tried = 0
+    for (let k = ends.length - 1; k >= 0 && tried < JSON_BLOCK_MAX_ENDS; k--) {
+      const end = ends[k]
+      if (end < start) break
+      tried++
+      const slice = out.slice(start, end + 1)
+      // A document that ends the output (a runnable's result after its log
+      // lines) or opens it counts at any size; one in the middle of other text
+      // must be most of the output.
+      const atEdge = end === last || start === first
+      const chars = slice.reduce((n, l) => n + l.line.trim().length, 0)
+      if (!atEdge && chars * 2 < totalChars) continue
+      const r = tryJson(slice.map(l => l.line).join('\n'))
+      if (!r.ok) continue
+      const v = r.value
+      const rich = (isPlainObject(v) && Object.keys(v).length > 0)
+        || (Array.isArray(v) && v.length > 0 && v.every(isPlainObject))
+      if (rich) return { value: v, start, end }
+    }
+  }
+  return null
+}
+
+/** Try to extract a single JSON value from the lines of a *completed* run
+ *  block. A run whose stdout is exactly one JSON document is the common case;
+ *  it also finds the document when other lines surround it (log lines before
+ *  the result, a warning), and reads JSON Lines (one object per line) as a
+ *  table. Lines that aren't part of the JSON — stderr included — are returned
+ *  as `extra`, so the structured view still shows them. */
 export function parseOutput(lines: OutputLine[]): ParsedOutput {
-  const stdout = lines
-    .filter(l => l.stream === 'stdout')
-    .map(l => l.line)
-    .join('\n')
-    .trim()
   const rawText = lines.map(l => l.line).join('\n')
+  const out = lines.filter(l => l.stream === 'stdout')
+  const stdout = out.map(l => l.line).join('\n').trim()
 
   if (!stdout) return { kind: 'raw', rawText }
 
-  try {
-    const parsed = JSON.parse(stdout)
-    if (Array.isArray(parsed) && parsed.length > 0 && typeof parsed[0] === 'object' && parsed[0] !== null) {
-      return { kind: 'table', rows: parsed as Record<string, unknown>[], rawText }
+  // Every non-blank line outside the JSON (in output order, stderr included).
+  const extraOutside = (inJson: (l: OutputLine) => boolean): OutputLine[] | undefined => {
+    const extra = lines.filter(l => !inJson(l) && l.line.trim() !== '')
+    return extra.length > 0 ? extra : undefined
+  }
+  const withExtra = (p: ParsedOutput, extra: OutputLine[] | undefined): ParsedOutput =>
+    extra ? { ...p, extra } : p
+
+  // 1. The whole of stdout is one JSON document.
+  const whole = tryJson(stdout)
+  if (whole.ok) {
+    const p = classifyJson(whole.value, rawText)
+    if (p) return withExtra(p, extraOutside(l => l.stream === 'stdout'))
+    return { kind: 'raw', rawText }
+  }
+
+  // 2. JSON Lines: every non-blank stdout line is its own object.
+  const nonBlank = out.filter(l => l.line.trim() !== '')
+  if (nonBlank.length >= 2) {
+    const rows: Record<string, unknown>[] = []
+    for (const l of nonBlank) {
+      const r = tryJson(l.line)
+      if (!r.ok || !isPlainObject(r.value)) break
+      rows.push(r.value)
     }
-    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-      const entries = Object.entries(parsed as Record<string, unknown>)
-      const tableEntries = entries.filter(([, v]) => isRowArray(v))
-      const scalarEntries = entries.filter(([, v]) => v === null || typeof v !== 'object')
-      // A dict that wraps array(s)-of-objects (+ optional scalar metadata) —
-      // e.g. {System:[…], Application:[…]} or {log, level, events:[…]} — renders
-      // as titled section tables instead of an [object Object] grid.
-      if (tableEntries.length > 0 && tableEntries.length + scalarEntries.length === entries.length) {
-        return {
-          kind: 'sections',
-          sections: tableEntries.map(([title, v]) => ({ title, rows: v as Record<string, unknown>[] })),
-          meta: Object.fromEntries(scalarEntries),
-          rawText,
-        }
-      }
-      return { kind: 'object', obj: parsed as Record<string, unknown>, rawText }
+    if (rows.length === nonBlank.length) {
+      return withExtra({ kind: 'table', rows, rawText }, extraOutside(l => l.stream === 'stdout'))
     }
-  } catch {
-    // Not JSON — fall through to raw
+  }
+
+  // 3. One JSON document with other lines around it.
+  const block = findJsonBlock(out)
+  if (block) {
+    const p = classifyJson(block.value, rawText)
+    if (p) {
+      const inBlock = new Set(out.slice(block.start, block.end + 1))
+      return withExtra(p, extraOutside(l => inBlock.has(l)))
+    }
   }
   return { kind: 'raw', rawText }
 }
@@ -1666,12 +1769,44 @@ function ReplyReasoning({ thought }: { thought: { text: string; ms: number } }) 
 // Shared structured-output renderer: parse a result string and render the rich
 // JSON table / object / section views the run cards use. Returns null when the
 // text isn't structured JSON, so callers can fall back to markdown/plain text.
+// The lines a structured view leaves out of its table (log lines before the
+// JSON, warnings, stderr), shown above it in small monospace so they aren't
+// only reachable through Raw. Capped; Raw shows them all.
+export const EXTRA_LINES_SHOWN = 12
+
+export function ExtraLines({ lines }: { lines?: OutputLine[] }) {
+  const c = useCardTheme()
+  if (!lines || lines.length === 0) return null
+  const shown = lines.slice(0, EXTRA_LINES_SHOWN)
+  const more = lines.length - shown.length
+  return (
+    <pre data-rs-extra-lines="" style={{
+      margin: 0, padding: '6px 14px',
+      fontFamily: MONO_FONT, fontSize: 12,
+      color: c.dim, lineHeight: 1.5,
+      whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+      borderBottom: `1px solid ${c.toolBorder}`,
+    }}>
+      {shown.map((l, i) => (
+        <span key={i} style={{ color: l.stream === 'stderr' ? _lineColor(l, c.dim) : c.dim }}>
+          {l.line}{'\n'}
+        </span>
+      ))}
+      {more > 0 && (
+        <span style={{ color: c.faint }}>{`… ${more} more line${more === 1 ? '' : 's'} (Raw shows everything)`}</span>
+      )}
+    </pre>
+  )
+}
+
 export function StructuredOutput({ text }: { text: string }) {
   const parsed = parseOutput(text.split('\n').map(line => ({ id: '', line, stream: 'stdout' as const })))
-  if (parsed.kind === 'table' && parsed.rows) return <JsonTable rows={parsed.rows} />
-  if (parsed.kind === 'sections' && parsed.sections) return <JsonSections meta={parsed.meta} sections={parsed.sections} />
-  if (parsed.kind === 'object' && parsed.obj) return <JsonObject obj={parsed.obj} />
-  return null
+  const view = parsed.kind === 'table' && parsed.rows ? <JsonTable rows={parsed.rows} />
+    : parsed.kind === 'sections' && parsed.sections ? <JsonSections meta={parsed.meta} sections={parsed.sections} />
+    : parsed.kind === 'object' && parsed.obj ? <JsonObject obj={parsed.obj} />
+    : null
+  if (!view) return null
+  return <>{<ExtraLines lines={parsed.extra} />}{view}</>
 }
 
 /** Brief holding view while a large completed result's parse + table build is
@@ -2184,6 +2319,11 @@ const BlockCard = memo(function BlockCard({
             )}
             {block.type === 'run' && !deferredPending && (
               <Fragment>
+                {/* Lines outside the JSON (log lines, warnings, stderr) */}
+                {!viewRaw && parsed && parsed.kind !== 'raw' && (
+                  <ExtraLines lines={parsed.extra} />
+                )}
+
                 {/* Structured table view */}
                 {!viewRaw && parsed?.kind === 'table' && parsed.rows && (
                   <JsonTable rows={parsed.rows} />
