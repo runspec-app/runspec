@@ -202,6 +202,41 @@ names.
 
 ---
 
+## The scheduler {#the-scheduler}
+
+`runspec-scheduler` rebrands like any runnable package:
+
+```bash
+runspec rebrand runspec-scheduler==0.10.2 --name mycorp-scheduler --out dist/
+```
+
+The `runspec-scheduler` command, the `runspec_scheduler` import package and the
+`[supervisor]` extra keep their names, so crontab lines, keepers and the
+console's Schedules tab work unchanged. From runspec-scheduler 0.10.2 the
+scheduler reads its version and names itself in hints (`pip install
+'mycorp-scheduler[supervisor]'`) under the name it was installed as, and
+`runspec-scheduler status` reports it as `package`.
+
+Tell the console which name to install with `[provision] scheduler_package`
+(console 0.400.0+), in the [config seed](white-label.md):
+
+```toml
+[provision]
+scheduler_package = "mycorp-scheduler"
+```
+
+- **Provision venv** installs `mycorp-scheduler` for *Shared schedules*
+  (`mycorp-scheduler[supervisor]` when supervisord may be the keeper). An
+  upstream `runspec-scheduler` typed in Packages is renamed to it.
+- **Update venv** upgrades the copy each venv already has, under the name it
+  was installed as. A venv that still has the upstream package keeps it. To
+  switch one over, uninstall `runspec-scheduler` and install `mycorp-scheduler`
+  in that venv. The schedules, config and logs aren't touched.
+
+The copy still depends on `runspec` (the version upstream requires), which
+comes through your group repository's PyPI proxy. Don't rebrand `runspec`
+itself: it reads its own version by distribution name at import.
+
 ## Things to know
 
 **Install one or the other, never both, in a venv.** The copy and the

@@ -412,9 +412,12 @@ class ProvisionMixin:
                 packages.append(mp.validate_spec(s))
             except mp.MarketplaceError as exc:
                 raise ValueError(str(exc)) from exc
-        # The daemon comes from runspec-scheduler; the operator's own pin (if
-        # they listed it) still wins over the bare one.
-        packages = prov.add_scheduler_spec(packages, scheduler)
+        # The daemon comes from runspec-scheduler (or the company's rebranded
+        # copy, [provision] scheduler_package); the operator's own pin (if they
+        # listed it) still wins over the bare one.
+        packages = prov.add_scheduler_spec(
+            packages, scheduler, config_mod.read_provision()["scheduler_package"]
+        )
         return {
             "dest": dest,
             "run_as": run_as,
@@ -1011,6 +1014,7 @@ class ProvisionMixin:
             "blockers": [],
             "scheduler": False,
             "scheduler_pid": 0,
+            "scheduler_dist": "",
             "runspec_version": "",
             "inbox": False,
             "retention": {},
@@ -1051,6 +1055,8 @@ class ProvisionMixin:
                 "logs_kb": _to_int(facts.get("logs_kb")),
                 "scheduler": facts.get("scheduler") == "1",
                 "scheduler_pid": _to_int(facts.get("scheduler_pid")),
+                # the distribution it was installed as ("" = none / not found)
+                "scheduler_dist": facts.get("scheduler_dist", ""),
                 "runspec_version": prov.runspec_version(
                     facts.get("runspec_version", "")
                 ),
@@ -1381,10 +1387,12 @@ class ProvisionMixin:
                 packages.append(mp.validate_spec(spec))
             except mp.MarketplaceError as exc:
                 raise ValueError(str(exc)) from exc
+        sched_pkg = config_mod.read_provision()["scheduler_package"]
         specs = prov.update_install_specs(
             packages,
             upgrade_runspec=bool(payload.get("upgrade_runspec")),
             scheduler=scheduler,
+            scheduler_package=sched_pkg,
         )
         inbox = bool(payload.get("inbox", False))
         if not (specs or inbox or retention or scheduler or sched_settings):
@@ -1393,6 +1401,7 @@ class ProvisionMixin:
             "targets": targets,
             "become_method": become,
             "specs": specs,
+            "scheduler_package": sched_pkg,
             "inbox": inbox,
             "retention": retention,
             "scheduler": scheduler,
@@ -1434,6 +1443,7 @@ class ProvisionMixin:
                 )
 
             applied: list[str] = []
+            specs = list(plan["specs"])  # per venv once inspected (scheduler name)
 
             def _done(
                 ok: bool, summary: str, h: Any = None, **who: str
@@ -1458,7 +1468,7 @@ class ProvisionMixin:
                     detail={
                         "operator": self._prov_operator(),
                         "applied": applied,
-                        "packages": plan["specs"],
+                        "packages": specs,
                         **(
                             {"log_retention": plan["retention"]}
                             if plan["retention"]
@@ -1508,12 +1518,20 @@ class ProvisionMixin:
             owner = str(info.get("owner") or "")
             login = str(info.get("user") or "")
             run_as = "" if not owner or owner == login else owner
+            # Upgrade the scheduler this venv already has, under the name it
+            # was installed as (upstream or a rebranded copy): installing the
+            # other name would put a second distribution over the same files.
+            specs = prov.retarget_scheduler_spec(
+                plan["specs"],
+                str(info.get("scheduler_dist") or ""),
+                plan.get("scheduler_package") or prov.SCHEDULER_PACKAGE,
+            )
             self._prov_audit(
                 "venv.update.started",
                 host=name,
                 path=root,
                 run_as=run_as,
-                packages=plan["specs"],
+                packages=specs,
                 inbox=plan["inbox"],
                 retention=plan["retention"] or None,
                 scheduler=plan["scheduler"],
@@ -1535,7 +1553,7 @@ class ProvisionMixin:
                 )
             steps = prov.update_steps(
                 root,
-                specs=plan["specs"],
+                specs=specs,
                 inbox=plan["inbox"],
                 retention=plan["retention"],
                 scheduler=plan["scheduler"],

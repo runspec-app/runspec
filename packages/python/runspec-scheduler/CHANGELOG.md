@@ -2,6 +2,20 @@
 
 All notable changes to `runspec-scheduler` are documented here.
 
+## [0.10.2] — 2026-11-11
+
+### Fixed
+
+- **A rebranded copy knows its own name.** After `runspec rebrand
+  runspec-scheduler mycorp-scheduler` the daemon read its version under the
+  upstream name, found nothing, and so never said a restart was needed after an
+  upgrade; the keeper hints told people to `pip install
+  'runspec-scheduler[supervisor]'`, a package the private index may not carry.
+  The scheduler now finds the distribution that provides `runspec_scheduler`
+  (`distname.py`) and uses that name for its version and its hints, and
+  `status` reports it as `package`. The command, the import package and the
+  `[supervisor]` extra are unchanged.
+
 ## [0.10.1] — 2026-11-10
 
 ### Fixed
