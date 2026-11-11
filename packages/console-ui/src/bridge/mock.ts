@@ -776,6 +776,23 @@ const MOCK_MARKET_INSTALLED: MarketplaceInstalledTarget[] = [
   { ...MOCK_MARKET_TARGETS[3], ok: false, error: 'host not connected', owner: '', user: '', python_version: '', dists: {} },
 ]
 
+// `?fleet=N` (dev preview): N more connected hosts with 1–3 venvs each, so the
+// install / uninstall picker can be tried with a big fleet.
+const MOCK_FLEET_SIZE = typeof window !== 'undefined' ? Number(new URLSearchParams(window.location.search).get('fleet') || 0) : 0
+for (let i = 1; i <= MOCK_FLEET_SIZE; i++) {
+  const host = `${['app', 'web', 'batch', 'db', 'etl', 'mq'][i % 6]}-${String(i).padStart(2, '0')}`
+  MOCK_HOSTS.push({ name: host, connected: true, runnableCount: 2, groups: ['ops-tools'], group: ['Production', 'Production', 'UAT', 'Dev'][i % 4] })
+  for (let j = 0; j < 1 + (i % 3); j++) {
+    const venv = ['ops-tools', 'runspec', 'svc-batch'][j]
+    const path = `/opt/venvs/${venv}`
+    const t: MarketplaceTarget = { id: `${host}::${path}`, host, venv, path, python: `${path}/bin/python`, runspec_path: `${path}/bin/runspec`, local: false, connected: true }
+    MOCK_MARKET_TARGETS.push(t)
+    const k = (i * 7 + j) % 5
+    MOCK_MARKET_INSTALLED.push({ ...t, ok: true, error: null, owner: ['svc-ops', '', 'svc-batch'][j], user: 'jason', python_version: ['3.12.4', '3.9.18', '3.11.9'][(i + j) % 3],
+      dists: k < 2 ? { runspec: '0.50.1', 'runspec-linux': '0.13.1' } : k < 4 ? { runspec: '0.51.0', 'runspec-linux': '0.13.2' } : { runspec: '0.51.0' } })
+  }
+}
+
 const MOCK_MARKET_OPS = new Map<string, MarketplaceOpRecord>()
 
 function mockMarketplaceOp(action: 'install' | 'uninstall', payload: MarketplaceOpPayload) {

@@ -9,6 +9,24 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.400.4] — 2026-11-11
+
+### Changed
+
+- **The Marketplace install / update and uninstall picker stays one screen
+  tall on a big fleet.** It listed one row per venv with no height limit, so
+  with many venvs on many hosts the Install / Uninstall button sat far below
+  the window. Now only the list scrolls and the buttons stay in view, with a
+  "N of M venvs ticked on K hosts" line beside them. Venvs are grouped by
+  host: a host with one venv is one row, a host with several is one row with
+  a part-tick box and a count ("2 outdated · 1 current"), expanded to change
+  a venv's tick or Run as (Run as is still filled in from each venv's owner).
+  Small fleets (12 venvs or fewer) open with every host expanded. New quick
+  ticks (Outdated / Not installed / All / None on install; All / Outdated /
+  None on uninstall) set the venvs on screen, group chips and a filter (host,
+  group, venv name or path) narrow the list, and ticks the filter hides are
+  kept and counted in the footer. Dev preview: `?fleet=N` adds N mock hosts.
+
 ## [0.400.3] — 2026-11-11
 
 ### Fixed

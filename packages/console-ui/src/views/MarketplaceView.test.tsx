@@ -8,7 +8,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, act, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
-import { MarketplaceView, cmpVersion, targetStates, filterEntries, defaultRunAs, opLabel, opOutcome, applyProgress, parseSearch, targetFilter, countUpdates } from './MarketplaceView'
+import { MarketplaceView, cmpVersion, targetStates, filterEntries, defaultRunAs, opLabel, opOutcome, applyProgress, parseSearch, targetFilter, countUpdates, groupByHost, filterHostGroups, tickMatches, hostSummary } from './MarketplaceView'
 import type { MarketplaceEntry, MarketplaceInstalled, MarketplaceInstalledTarget, MarketplaceOpRecord } from '../bridge'
 
 const { catalog, installed, install, uninstall, cancel, opRec, opsList } = vi.hoisted(() => ({
@@ -106,6 +106,25 @@ describe('pure helpers', () => {
     expect(names({ search: '', repo: 'nexus', scope: 'all' })).toEqual(['acme-ops'])
     expect(names({ search: 'jira', repo: '', scope: 'all' })).toEqual(['runspec-jira'])
     expect(names({ search: 'internal acme', repo: '', scope: 'all' })).toEqual(['acme-ops'])
+  })
+
+  it('groups picker rows by host and filters them', () => {
+    const rows = [
+      target({ id: 'a::1', host: 'a', venv: 'ops', path: '/opt/ops', dists: { 'runspec-linux': '0.13.1' } }),
+      target({ id: 'b::1', host: 'b', venv: 'ops', path: '/opt/ops' }),
+      target({ id: 'a::2', host: 'a', venv: 'batch', path: '/srv/batch', dists: { 'runspec-linux': '0.13.2' } }),
+    ].map(t => targetStates(ENTRIES[0], { probed_at: 0, targets: [t] })[0])
+    const groups = groupByHost(rows, h => (h === 'a' ? 'prod' : undefined))
+    expect(groups.map(g => [g.host, g.group, g.rows.map(s => s.target.venv)])).toEqual([['a', 'prod', ['ops', 'batch']], ['b', '', ['ops']]])
+    expect(hostSummary(groups[0].rows)).toEqual({ outdated: 1, current: 1, absent: 0, other: 0 })
+    // A host / group match keeps all its venvs; a venv-only match keeps just that venv.
+    expect(filterHostGroups(groups, 'PROD', '').map(g => g.rows.length)).toEqual([2])
+    expect(filterHostGroups(groups, 'batch', '').map(g => [g.host, g.rows.map(s => s.target.venv)])).toEqual([['a', ['batch']]])
+    expect(filterHostGroups(groups, '/opt', '').map(g => g.host)).toEqual(['a', 'b'])
+    expect(filterHostGroups(groups, '', 'prod').map(g => g.host)).toEqual(['a'])
+    expect(rows.map(s => [tickMatches(s, 'outdated'), tickMatches(s, 'absent'), tickMatches(s, 'all'), tickMatches(s, 'none')])).toEqual([
+      [true, false, true, false], [false, true, true, false], [false, false, true, false],
+    ])
   })
 
   it('splits host: / group: tokens out of the search', () => {
@@ -367,6 +386,51 @@ describe('MarketplaceView', () => {
     expect(await screen.findByText(/Installed on 8 venvs · 1 to update/)).toBeTruthy()
     // The chips still render (one per venv) inside the scroll box.
     expect(screen.getByText(/h0\/v 0\.13\.1 ↑/)).toBeTruthy()
+  })
+
+  it('groups a big fleet by host, keeps the buttons on screen, and ticks by host, state and filter', async () => {
+    // 7 hosts x 2 venvs = 14 venvs: past the expand-all threshold, so hosts start collapsed.
+    const fleet = Array.from({ length: 7 }, (_, i) => ['a', 'b'].map(v =>
+      target({ id: `h${i}::/opt/${v}`, host: `h${i}`, venv: v, path: `/opt/${v}`,
+        dists: v === 'a' ? { 'runspec-linux': i % 2 === 0 ? '0.13.1' : '0.13.2' } : {} }),
+    )).flat()
+    installed.mockReset().mockResolvedValue({ probed_at: Date.now() / 1000, targets: fleet })
+    const hosts = Array.from({ length: 7 }, (_, i) => ({ name: `h${i}`, connected: true, runnableCount: 1, groups: ['ops'], group: i < 2 ? 'prod' : 'uat' }))
+    render(<MarketplaceView hosts={hosts} />)
+    await screen.findByText('runspec-linux')
+    await waitFor(() => expect(installed).toHaveBeenCalled())
+    const user = userEvent.setup()
+    await act(async () => { await user.click(await screen.findByRole('button', { name: /Update…/ })) })
+    const dialog = await screen.findByRole('dialog')
+    // One row per host (collapsed), each with a part-tick box: h0, h2, h4, h6 have one outdated venv.
+    const prodChip = () => within(dialog).getAllByText('prod').find(el => el.closest('[class*="checkable"]')) as HTMLElement
+    const hostBoxes = () => [0, 1, 2, 3, 4, 5, 6].map(i => within(dialog).getByRole('checkbox', { name: `all venvs on h${i}` }) as HTMLInputElement)
+    expect(within(dialog).queryByRole('checkbox', { name: 'h0 a' })).toBeNull()
+    expect(within(dialog).getAllByText('1 outdated')).toHaveLength(4)
+    expect(within(dialog).getByText('4 of 14 venvs ticked on 4 hosts')).toBeTruthy()
+    expect(hostBoxes().map(b => b.checked)).toEqual([false, false, false, false, false, false, false])
+    // Ticking a host ticks all its venvs.
+    await act(async () => { await user.click(hostBoxes()[1]) })
+    expect(within(dialog).getByText('6 of 14 venvs ticked on 5 hosts')).toBeTruthy()
+    expect(hostBoxes()[1].checked).toBe(true)
+    // Quick-tick replaces the ticks on screen.
+    await act(async () => { await user.click(within(dialog).getByRole('button', { name: 'Not installed 7' })) })
+    expect(within(dialog).getByText('7 of 14 venvs ticked on 7 hosts')).toBeTruthy()
+    // A group chip narrows the list (and opens the hosts it keeps); ticks it hides stay.
+    await act(async () => { await user.click(prodChip()) })
+    expect(within(dialog).queryByRole('checkbox', { name: 'all venvs on h2' })).toBeNull()
+    expect(within(dialog).getByRole('checkbox', { name: 'h0 a' })).toBeTruthy()
+    await act(async () => { await user.click(within(dialog).getByRole('button', { name: 'None' })) })
+    expect(within(dialog).getByText('5 of 14 venvs ticked on 5 hosts · 5 not shown by the filter')).toBeTruthy()
+    await act(async () => { await user.click(prodChip()) })
+    // The text filter matches a venv name too.
+    await act(async () => { await user.type(within(dialog).getByPlaceholderText('Filter host, group or venv'), 'h3') })
+    expect(within(dialog).getAllByRole('checkbox')).toHaveLength(3)  // h3 + its two venvs
+    await act(async () => { await user.click(within(dialog).getByRole('checkbox', { name: 'h3 a' })) })
+    await act(async () => { await user.click(within(dialog).getByRole('button', { name: /Install runspec-linux on 6 venvs$/ })) })
+    await waitFor(() => expect(install).toHaveBeenCalled())
+    expect(install.mock.calls[0][0].targets.map((t: { id: string }) => t.id).sort()).toEqual(
+      ['h2::/opt/b', 'h3::/opt/a', 'h3::/opt/b', 'h4::/opt/b', 'h5::/opt/b', 'h6::/opt/b'])
   })
 
   it('shows the off notice when the marketplace is disabled', async () => {
