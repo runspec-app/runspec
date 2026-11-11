@@ -26,6 +26,7 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   None on uninstall) set the venvs on screen, group chips and a filter (host,
   group, venv name or path) narrow the list, and ticks the filter hides are
   kept and counted in the footer. Dev preview: `?fleet=N` adds N mock hosts.
+
 ## [0.400.3] — 2026-11-11
 
 ### Fixed
