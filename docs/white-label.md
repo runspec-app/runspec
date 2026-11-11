@@ -168,6 +168,11 @@ preserve = [
 
 [ssh]
 proxy = "http://proxy.mycorp.example:8080"       # your network's realities
+
+# Your rebranded scheduler (runspec rebrand runspec-scheduler --name …):
+# Provision venv installs this for Shared schedules instead of the public one.
+[provision]
+scheduler_package = "mycorp-scheduler"
 ```
 
 The whole `preserve` list lives here, in `[config_sync]` — **it is not a field on
@@ -204,6 +209,19 @@ it). The secret itself is never seeded — only the
 command that fetches it. Because a venv-relative command is correct on every
 machine, no operator ever needs to override it locally, so re-assert-on-upgrade
 (below) never fights you over this key.
+
+**Rebranded runnable packages.** If your Nexus serves your own copies of
+the runnable packages (`runspec rebrand`, see
+[White-label runnables](white-label-runnables.md)), seed the names the console
+should install. For the scheduler that is `[provision] scheduler_package`
+above (console 0.400.0+, runspec-scheduler 0.10.2+): Provision venv installs
+`mycorp-scheduler` (with `[supervisor]` when supervisord may be the keeper) and
+renames an upstream `runspec-scheduler` typed in Packages. Update venv doesn't
+need it: it upgrades whichever copy each venv already has, under its installed
+name. Point the Marketplace at your copies with `[marketplace]` (see
+[White-label consoles](white-label-runnables.md#white-label-consoles)).
+Don't rebrand `runspec` itself or `runspec-console`; both look themselves up
+by name.
 
 **`runspec_hosts.toml`** — the fleet, ready in the sidebar on first launch:
 
