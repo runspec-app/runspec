@@ -220,12 +220,12 @@ export function FilesView({ hosts, selectedHost, active }: {
               {saved.map(t => (
                 <div key={t.id} style={{ border: '1px solid var(--rs-border)', background: 'var(--rs-surface-raised)', borderRadius: 8, padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 3 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: 6, alignItems: 'center' }}>
-                    <Text strong style={{ fontSize: 12.5, minWidth: 0 }} ellipsis={{ tooltip: t.title || t.id }}>{t.title || t.id}</Text>
-                    <Tag style={{ margin: 0, fontSize: 10 }} color={t.direction === 'push' ? 'gold' : t.direction === 'relay' ? 'purple' : 'cyan'}>{t.direction ?? 'pull'}</Tag>
+                    <Text strong style={{ fontSize: 13, minWidth: 0 }} ellipsis={{ tooltip: t.title || t.id }}>{t.title || t.id}</Text>
+                    <Tag style={{ margin: 0, fontSize: 11 }} color={t.direction === 'push' ? 'gold' : t.direction === 'relay' ? 'purple' : 'cyan'}>{t.direction ?? 'pull'}</Tag>
                   </div>
-                  <Text type="secondary" style={{ fontSize: 11.5 }} ellipsis={{ tooltip: `${t.source ?? ''} → ${t.dest ?? ''}` }}>{t.source ?? '—'} → {t.dest ?? '—'}</Text>
-                  {t.filter && <Text type="secondary" style={{ fontSize: 11.5 }}>Filter: {t.filter}</Text>}
-                  {t.error && <Text type="danger" style={{ fontSize: 11.5 }}>{t.error}</Text>}
+                  <Text type="secondary" style={{ fontSize: 12 }} ellipsis={{ tooltip: `${t.source ?? ''} → ${t.dest ?? ''}` }}>{t.source ?? '—'} → {t.dest ?? '—'}</Text>
+                  {t.filter && <Text type="secondary" style={{ fontSize: 12 }}>Filter: {t.filter}</Text>}
+                  {t.error && <Text type="danger" style={{ fontSize: 12 }}>{t.error}</Text>}
                   <div style={{ display: 'flex', gap: 4, marginTop: 4, flexWrap: 'wrap' }}>
                     <Button size="small" type="primary" icon={<PlayCircleOutlined />} disabled={!!t.error} onClick={() => setRunningSaved(t)}>Run…</Button>
                     <Tooltip title="Open its source and destination folders in the panes"><Button size="small" icon={<FolderOpenOutlined />} aria-label={`Open ${t.id} in panes`} onClick={() => openInPanes(t)} /></Tooltip>

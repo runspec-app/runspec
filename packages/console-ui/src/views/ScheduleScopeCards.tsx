@@ -85,7 +85,7 @@ export function ScheduleScopeCards({ value, onChange, counts, hostsPending, noDa
           >
             <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span style={{ fontSize: 18, color: selected ? accent : textSecondary(isDark), lineHeight: 1 }}>{c.icon}</span>
-              <span style={{ fontSize: 15, fontWeight: 600 }}>{c.title}</span>
+              <span style={{ fontSize: 14, fontWeight: 600 }}>{c.title}</span>
               {problems > 0 && !(hostsPending && c.scope !== 'console') && (
                 <span
                   aria-label={`${problems} problem${problems === 1 ? '' : 's'}`}

@@ -1538,7 +1538,7 @@ export function PromptMessage({ text }: { text: string }) {
         <Button
           type="link" size="small" aria-expanded={open}
           onClick={() => setOpen(o => !o)}
-          style={{ padding: 0, height: 'auto', fontSize: 12.5 }}
+          style={{ padding: 0, height: 'auto', fontSize: 13 }}
         >
           {open ? 'Show less' : `Show all (${lineCount} line${lineCount !== 1 ? 's' : ''})`}
         </Button>

@@ -1257,7 +1257,7 @@ export function FormsView({
       )}
 
       {filtered.length === 0 && filteredRunbooks.length === 0 && filteredSavedRuns.length === 0 ? (
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--rs-text-faint)' }}>
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--rs-text-muted)' }}>
           <div style={{ textAlign: 'center' }}>
             <AppstoreOutlined style={{ fontSize: 32, marginBottom: 12, display: 'block' }} />
             <Text type="secondary">Nothing matches the current filter.</Text>

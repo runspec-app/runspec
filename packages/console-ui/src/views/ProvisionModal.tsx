@@ -470,7 +470,7 @@ export function ProvisionModal({
     label: (
       <span style={{ fontFamily: MONO_FONT, fontSize: 12 }}>
         {p.path} <Text type="secondary" style={{ fontSize: 11 }}>{p.version}{p.real !== p.path ? ` → ${p.real}` : ''}</Text>
-        {!p.runspec_ok && <Tag color="warning" style={{ marginLeft: 6, fontSize: 10 }}>too old for runspec</Tag>}
+        {!p.runspec_ok && <Tag color="warning" style={{ marginLeft: 6, fontSize: 11 }}>too old for runspec</Tag>}
       </span>
     ),
   }))

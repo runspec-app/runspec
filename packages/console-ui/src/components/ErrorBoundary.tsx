@@ -110,7 +110,7 @@ export class ErrorBoundary extends React.Component<{ children: React.ReactNode }
         >
           Reload
         </button>
-        <details style={{ fontSize: 12, color: 'var(--rs-text-faint, #777)', maxWidth: 620 }}>
+        <details style={{ fontSize: 12, color: 'var(--rs-text-muted, #8c8c8c)', maxWidth: 620 }}>
           <summary style={{ cursor: 'pointer' }}>Details</summary>
           <pre style={{ textAlign: 'left', whiteSpace: 'pre-wrap', marginTop: 8 }}>
             {String(this.state.error?.stack || this.state.error?.message || this.state.error)}

@@ -43,9 +43,9 @@ html, body, #root {
   --rs-scroll-thumb-hover: #4a4a4a;
   /* Muted-text hierarchy — keep in sync with ThemeContext.tsx (App.tsx
      re-stamps these on theme change; the values here cover first paint). */
-  --rs-text-secondary: #aaa;
-  --rs-text-muted: #888;
-  --rs-text-faint: #555;
+  --rs-text-secondary: #aaaaaa;
+  --rs-text-muted: #8c8c8c;
+  --rs-text-faint: #6e6e6e;
   /* Surface / elevation scale — mirrors ThemeContext.surfaces() (App.tsx
      re-stamps on theme change). Use these for CSS-driven chrome instead of
      hardcoded greys so raw elements and Ant controls share one depth model. */
@@ -69,9 +69,9 @@ html[data-theme='light'] {
   --rs-hover: rgba(0, 0, 0, 0.04);
   --rs-scroll-thumb: #c9c9c9;
   --rs-scroll-thumb-hover: #b0b0b0;
-  --rs-text-secondary: #666;
-  --rs-text-muted: #999;
-  --rs-text-faint: #bbb;
+  --rs-text-secondary: #555555;
+  --rs-text-muted: #6b6b6b;
+  --rs-text-faint: #8a8a8a;
   --rs-surface-sunken: #f0f2f5;
   --rs-surface-base: #f7f8fa;
   --rs-surface-raised: #ffffff;

@@ -470,7 +470,7 @@ function SpecInspector({ runnable, vis, onOpenForm }: {
           extra: <CopyButton text={prettyJson(fullSpec)} title="Copy raw spec" />,
           children: (
             <pre style={{
-              margin: 0, padding: '10px 12px', fontFamily: MONO_FONT, fontSize: 11.5,
+              margin: 0, padding: '10px 12px', fontFamily: MONO_FONT, fontSize: 12,
               whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 460, overflow: 'auto',
               background: 'var(--rs-surface-sunken)', borderRadius: RADIUS.sm,
               color: isDark ? '#ccc' : '#333',
@@ -632,7 +632,7 @@ export function SpecsView({ runnables, selectedHost, activeScope, onScopeToggle,
                       <span style={{ fontFamily: MONO_FONT, fontSize: 14, color: textColor(isDark), flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         <span style={{ color: textMuted(isDark), fontSize: 13 }}>{r.group}/</span>{r.name}
                       </span>
-                      {(r.autonomy === 'autonomous') && <Tag color="green" style={{ fontSize: 9, margin: 0, lineHeight: '16px' }}>auto</Tag>}
+                      {(r.autonomy === 'autonomous') && <Tag color="green" style={{ fontSize: 11, margin: 0, lineHeight: '16px' }}>auto</Tag>}
                       {v !== 'visible' && <Tooltip title={v === 'all' ? 'hidden everywhere' : 'hidden from agent'}><EyeInvisibleOutlined style={{ fontSize: 12, color: textFaint(isDark) }} /></Tooltip>}
                       {internal && <Tooltip title="internal helper (discoverable = false)"><LockOutlined style={{ fontSize: 12, color: textFaint(isDark) }} /></Tooltip>}
                     </div>
@@ -640,7 +640,7 @@ export function SpecsView({ runnables, selectedHost, activeScope, onScopeToggle,
                       <Tag
                         color={activeScope.includes(r.group) ? 'geekblue' : 'blue'}
                         onClick={e => { e.stopPropagation(); onScopeToggle(r.group) }}
-                        style={{ cursor: 'pointer', fontSize: 9, margin: 0, lineHeight: '16px' }}
+                        style={{ cursor: 'pointer', fontSize: 11, margin: 0, lineHeight: '16px' }}
                         title={activeScope.includes(r.group) ? 'Remove group from scope' : 'Add group to scope'}
                       >{r.group}</Tag>
                       <Text type="secondary" style={{ fontSize: 12 }}>

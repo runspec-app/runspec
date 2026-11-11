@@ -9,6 +9,26 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.400.1] — 2026-11-11
+
+### Changed
+
+- **Grey text is readable in both themes.** The muted-text tokens
+  (`ThemeContext` `textSecondary`/`textMuted`/`textFaint`, mirrored as
+  `--rs-text-*` in `index.css`) now meet a contrast floor on every surface
+  level: secondary and muted text reach 4.5:1, faint marks (empty-cell dashes,
+  carets, off-state icons) reach 3:1. Before, faint was 2.5:1 in dark and 1.8:1
+  in light, and light-theme muted text was 2.85:1. Ant's own dim text
+  (`Text type="secondary"`, descriptions, input placeholders, which were 25–45%
+  alpha and down to ~2:1) now uses the muted token too. Empty-state messages
+  that used faint now use muted. `ThemeContext.test.ts` checks the ratios.
+- **One type scale.** New `FONT_SIZE` tokens in `ThemeContext` (11 / 12 / 13 /
+  14 / 16 / 18 / 20, plus 32 for empty-state glyphs). The stray text sizes off
+  that scale (9–10px tags in Specs, Env files, Files and Provision; 11.5 /
+  12.5 / 15px elsewhere) moved to the nearest step, so no text is smaller than
+  11px. A test fails on any new inline text `fontSize` that isn't on the scale;
+  icon glyphs are exempt.
+
 ## [0.400.0] — 2026-11-11
 
 ### Added

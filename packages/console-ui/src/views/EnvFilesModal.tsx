@@ -865,7 +865,7 @@ function AcrossVenvs({ file, targets, loadingTargets }: { file: EnvFileKind; tar
         <Space size={2}>
           {rv !== undefined
             ? <Text type={odd ? 'warning' : undefined} style={{ fontFamily: MONO_FONT, fontSize: 12, ...WRAP }}>{rv}</Text>
-            : <Text type={odd ? 'warning' : 'secondary'} style={{ fontSize: 12 }}>••••••{letter && <Tooltip title={`Hidden value ${letter} — venvs marked with the same letter hold the same secret`}><Tag style={{ marginLeft: 4, fontSize: 10, lineHeight: '14px', padding: '0 3px' }}>{letter}</Tag></Tooltip>}</Text>}
+            : <Text type={odd ? 'warning' : 'secondary'} style={{ fontSize: 12 }}>••••••{letter && <Tooltip title={`Hidden value ${letter} — venvs marked with the same letter hold the same secret`}><Tag style={{ marginLeft: 4, fontSize: 11, lineHeight: '16px', padding: '0 3px' }}>{letter}</Tag></Tooltip>}</Text>}
           {rv === undefined && (
             <Tooltip title="Reveal">
               <Button size="small" type="text" icon={<EyeOutlined />} aria-label={`Reveal ${key} on ${label}`}
@@ -939,8 +939,8 @@ function AcrossVenvs({ file, targets, loadingTargets }: { file: EnvFileKind; tar
             {v && !v.ok && <ExclamationCircleOutlined style={{ color: '#ff4d4f', marginRight: 4 }} />}
             {v?.ok && !v.writable && <LockOutlined style={{ marginRight: 4 }} />}
             {many ? (venvs.length === 1 ? venvs[0] : `${refs.length} venvs`) : t?.host}
-            {many && <Tag color="blue" style={{ marginLeft: 4, fontSize: 10, lineHeight: '14px', padding: '0 3px' }}>{hosts.length} host{hosts.length === 1 ? '' : 's'}</Tag>}
-            {pending > 0 && <Tag color="gold" style={{ marginLeft: 4, fontSize: 10, lineHeight: '14px', padding: '0 3px' }}>{pending}</Tag>}
+            {many && <Tag color="blue" style={{ marginLeft: 4, fontSize: 11, lineHeight: '16px', padding: '0 3px' }}>{hosts.length} host{hosts.length === 1 ? '' : 's'}</Tag>}
+            {pending > 0 && <Tag color="gold" style={{ marginLeft: 4, fontSize: 11, lineHeight: '16px', padding: '0 3px' }}>{pending}</Tag>}
           </div>
           <Text type="secondary" style={{ fontSize: 11, fontWeight: 'normal', ...WRAP }}>
             {many ? `${hosts.slice(0, 2).join(', ')}${hosts.length > 2 ? ` +${hosts.length - 2}` : ''}` : t?.venv}
@@ -973,8 +973,8 @@ function AcrossVenvs({ file, targets, loadingTargets }: { file: EnvFileKind; tar
                 </a>
               </Tooltip>
               <div style={{ marginTop: 2 }}>
-                {distinct > 1 && <Tag color="gold" style={{ fontSize: 10, lineHeight: '15px', padding: '0 4px', cursor: 'pointer' }} onClick={() => setDetailKey(r.key)}>{distinct} values</Tag>}
-                {total > 0 && setIn < total && <Tag style={{ fontSize: 10, lineHeight: '15px', padding: '0 4px' }}>set in {setIn} of {total}</Tag>}
+                {distinct > 1 && <Tag color="gold" style={{ fontSize: 11, lineHeight: '16px', padding: '0 4px', cursor: 'pointer' }} onClick={() => setDetailKey(r.key)}>{distinct} values</Tag>}
+                {total > 0 && setIn < total && <Tag style={{ fontSize: 11, lineHeight: '16px', padding: '0 4px' }}>set in {setIn} of {total}</Tag>}
               </div>
             </div>
             <SetEverywhere keyName={r.key} secret={r.secret} count={shownRefs.filter(writable).length} onSet={v => setEverywhere(r.key, v)} />
