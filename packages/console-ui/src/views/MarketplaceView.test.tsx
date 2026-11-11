@@ -8,7 +8,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, act, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
-import { MarketplaceView, cmpVersion, targetStates, filterEntries, defaultRunAs, opLabel, opOutcome, applyProgress, parseSearch, targetFilter, countUpdates, groupByHost, filterHostGroups, tickMatches, hostSummary } from './MarketplaceView'
+import { MarketplaceView, cmpVersion, targetStates, filterEntries, defaultRunAs, opLabel, opOutcome, applyProgress, parseSearch, targetFilter, countUpdates, groupByHost, filterHostGroups, tickMatches, hostSummary, targetStatus, statusCounts, lastLine } from './MarketplaceView'
 import type { MarketplaceEntry, MarketplaceInstalled, MarketplaceInstalledTarget, MarketplaceOpRecord } from '../bridge'
 
 const { catalog, installed, install, uninstall, cancel, opRec, opsList } = vi.hoisted(() => ({
@@ -329,6 +329,43 @@ describe('MarketplaceView', () => {
     expect(screen.getByText('failed (exit 1)')).toBeTruthy()
   })
 
+  it('keeps a many-venv op compact: one line per venv, status filter, click for the log', async () => {
+    const targets = Array.from({ length: 12 }, (_, i) => {
+      const host = `app-${String(i).padStart(2, '0')}`
+      const t = { target: `${host}::/opt/venvs/ops`, host, venv: 'ops', lines: [] as string[] }
+      if (i < 8) return { ...t, state: 'done' as const, ok: true, exit_code: 0, summary: 'ok', lines: ['Collecting runspec-linux', `Successfully installed runspec-linux-0.13.${i}`] }
+      if (i === 8) return { ...t, state: 'done' as const, ok: false, exit_code: 1, summary: 'ERROR: boom', lines: ['ERROR: boom'] }
+      if (i === 9) return { ...t, state: 'running' as const, lines: ['Downloading runspec_linux.whl'] }
+      return { ...t, state: 'queued' as const }
+    })
+    const big: MarketplaceOpRecord = { ...RUNNING_OP, op: 'opBig', counts: { ok: 8, failed: 1, running: 1, queued: 2, skipped: 0 }, targets }
+    opsList.mockResolvedValue([big])
+    opRec.mockResolvedValue(big)
+    render(<MarketplaceView hosts={HOSTS} />)
+    await screen.findByText('runspec-linux')
+    const user = userEvent.setup()
+    await act(async () => { await user.click(screen.getByRole('button', { name: /Activity/ })) })
+    const list = await screen.findByRole('dialog', { name: 'Marketplace activity' })
+    await act(async () => { await user.click(within(list).getByText('Installing runspec-linux')) })
+    // (antd's test-env modal ids clash after the activity list closes, so find it by text)
+    await screen.findByText('app-03/ops')
+    const live = screen.getAllByRole('dialog').find(d => d.textContent?.includes('Installing runspec-linux'))!
+    // Collapsed: each venv shows its newest line, not the whole log.
+    expect(await within(live).findByText('Successfully installed runspec-linux-0.13.3')).toBeTruthy()
+    expect(within(live).queryByText(/Collecting runspec-linux/)).toBeNull()
+    expect(within(live).getByText('Close')).toBeTruthy()
+    // Status filter narrows to the failed venv.
+    await act(async () => { await user.click(within(live).getByText('Failed 1')) })
+    expect(within(live).getByText('app-08/ops')).toBeTruthy()
+    expect(within(live).queryByText('app-03/ops')).toBeNull()
+    // Back to all, filter by host, click a row for its full log.
+    await act(async () => { await user.click(within(live).getByText('All 12')) })
+    await act(async () => { await user.type(within(live).getByPlaceholderText('Filter host or venv'), 'app-03') })
+    expect(within(live).queryByText('app-04/ops')).toBeNull()
+    await act(async () => { await user.click(within(live).getByText('app-03/ops')) })
+    expect(await within(live).findByText(/Collecting runspec-linux\s+Successfully installed runspec-linux-0\.13\.3/)).toBeTruthy()
+  })
+
   it('uninstall lists only venvs that have the package', async () => {
     render(<MarketplaceView hosts={HOSTS} />)
     await screen.findByText('update available')
@@ -453,5 +490,21 @@ describe('op helpers', () => {
     r = applyProgress(r, { phase: 'done', target: 'web-01::/opt/venvs/ops', ok: true, exit_code: 0, summary: 'ok' })
     expect(r.targets![0]).toMatchObject({ state: 'done', ok: true, lines: ['hi'] })
     expect(applyProgress(r, { phase: 'line', target: 'other', line: 'x' }).targets).toEqual(r.targets)
+  })
+
+  it('classifies targets, counts them, and picks the last output line', () => {
+    const base = RUNNING_OP.targets![0]
+    const ts = [
+      { ...base, state: 'done' as const, ok: true },
+      { ...base, state: 'done' as const, ok: false, exit_code: 1 },
+      { ...base, state: 'running' as const },
+      { ...base, state: 'queued' as const },
+      { ...base, state: 'skipped' as const },
+      { ...base, state: 'queued' as const },
+    ]
+    expect(ts.map(targetStatus)).toEqual(['ok', 'failed', 'running', 'queued', 'skipped', 'queued'])
+    expect(statusCounts(ts)).toEqual({ ok: 1, failed: 1, running: 1, queued: 2, skipped: 1 })
+    expect(lastLine({ ...base, lines: ['Collecting x', 'Installing y', '  '] })).toBe('Installing y')
+    expect(lastLine({ ...base, lines: [], summary: 'skipped: no pip' })).toBe('skipped: no pip')
   })
 })

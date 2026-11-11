@@ -9,6 +9,11 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.401.1] — 2026-11-11
+
+### Changed
+- **Marketplace: the running-operation window stays short on a big fleet.** An install, update or uninstall across many venvs used to list every venv with its whole pip output, so the window grew far past the screen and Close / Cancel operation sat at the bottom. Now each venv is one row (host/venv, status, newest output line) and you click a row to see its full output. A progress bar and live counts sit at the top, with a filter by status (Failed / Running / Queued / OK) and by host or venv, plus Expand shown / Collapse all. Only the list scrolls, so the buttons stay in view. An operation on three venvs or fewer opens with every log showing, as before. The status tag at the top now counts from the live per-venv states, so it no longer reads `0/51 done` while venvs are finishing.
+
 ## [0.401.0] — 2026-11-11
 
 ### Changed
