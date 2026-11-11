@@ -163,7 +163,10 @@ write.
 today's provision options to a venv a host already lists, in place. Use it to
 give venvs made before **Log cleanup** or **Shared schedules** existed the same
 setup a new one gets. Pick the venv, then the hosts (group and profile chips
-work as in Provision). The dialog reads each host's venv first and shows what
+work as in Provision). Under the host list the dialog names every other host
+that has this venv but won't be changed. Only connected hosts can be ticked, and
+hosts outside the active profile aren't connected, so switch profile to update
+those. The options start from their defaults each time the dialog opens. The dialog reads each host's venv first and shows what
 it has now: runspec version, owner, logs inbox, log cleanup policy, and how its
 schedules fire. Nothing is changed until you press **Update**.
 
@@ -172,9 +175,13 @@ Tick what to apply; each step runs as the venv's owner and is safe to repeat:
 - **Upgrade runspec** (on by default) and any packages you list:
   `pip install -U`, so only what is out of date changes.
 - **Set up the logs inbox** (on by default): `runspec logs share --inbox`.
-- **Set the log cleanup policy** (on by default, 7d / 90d): sets those two
-  durations with `runspec logs retention`. A blank box (or `off`) switches that
-  step off, so leave *compress after* blank to stop compressing. Any
+- **Set the log cleanup policy** (off by default, so each venv keeps the
+  policy it has): sets those two durations with `runspec logs retention`. Under
+  the option the dialog shows the policy the ticked hosts have now, and says
+  when they differ. Ticking it fills the boxes from that policy when the hosts
+  all share one, else 7d / 90d, and sets the same policy on every ticked host.
+  A blank box (or `off`) switches that step off, so leave *compress after*
+  blank to stop compressing. Any
   `max_total_size` already in the policy stays. It needs runspec 0.80.0 in the venv, so the dialog warns on a
   host with an older one unless **Upgrade runspec** is ticked.
 - **Shared schedules**: *Leave as they are* (default), *Move to the daemon*
