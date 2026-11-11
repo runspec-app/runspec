@@ -295,20 +295,90 @@ export function defaultRunAs(t: MarketplaceInstalledTarget): string {
   return !t.local && t.ok && t.owner && t.user && t.owner !== t.user ? t.owner : ''
 }
 
+/** One host in the picker and the venvs on it, in the order they were probed. */
+export interface HostGroup { host: string; group: string; rows: TargetState[] }
+
+export function groupByHost(rows: TargetState[], groupOf?: (host: string) => string | undefined): HostGroup[] {
+  const out: HostGroup[] = []
+  const at = new Map<string, HostGroup>()
+  for (const s of rows) {
+    let g = at.get(s.target.host)
+    if (!g) {
+      g = { host: s.target.host, group: groupOf?.(s.target.host) || '', rows: [] }
+      at.set(s.target.host, g)
+      out.push(g)
+    }
+    g.rows.push(s)
+  }
+  return out
+}
+
+/** The picker's filter: every word must appear in the host, its group, the
+ *  venv name or its path. A host that matches keeps all its venvs; otherwise
+ *  only the venvs that match stay. `group` (a group chip) must match exactly. */
+export function filterHostGroups(groups: HostGroup[], text: string, group: string): HostGroup[] {
+  const words = text.trim().toLowerCase().split(/\s+/).filter(Boolean)
+  const has = (hay: string) => words.every(w => hay.toLowerCase().includes(w))
+  const out: HostGroup[] = []
+  for (const g of groups) {
+    if (group && g.group !== group) continue
+    if (!words.length || has(`${g.host} ${g.group}`)) { out.push(g); continue }
+    const rows = g.rows.filter(s => has(`${g.host} ${g.group} ${s.target.venv} ${s.target.path}`))
+    if (rows.length) out.push({ ...g, rows })
+  }
+  return out
+}
+
+/** Which venvs a quick-tick button picks. */
+export type TickPick = 'outdated' | 'absent' | 'all' | 'none'
+
+export function tickMatches(s: TargetState, pick: TickPick): boolean {
+  if (pick === 'all') return true
+  if (pick === 'none') return false
+  if (pick === 'outdated') return s.state === 'outdated'
+  return !s.installed
+}
+
+/** Short summary of a host's venvs for its collapsed row. */
+export function hostSummary(rows: TargetState[]): { outdated: number; current: number; absent: number; other: number } {
+  const c = { outdated: 0, current: 0, absent: 0, other: 0 }
+  for (const s of rows) {
+    if (s.state === 'outdated') c.outdated++
+    else if (s.state === 'current') c.current++
+    else if (!s.installed) c.absent++
+    else c.other++
+  }
+  return c
+}
+
+// Below this many venvs every host starts expanded (the picker looks like a
+// plain list); above it hosts start collapsed to one row each.
+const EXPAND_ALL_UP_TO = 12
+
+type PickerRow =
+  | { key: string; kind: 'host'; g: HostGroup; children: PickerRow[] }
+  | { key: string; kind: 'venv'; s: TargetState; solo: boolean }
+
 /** Pick the venvs + options, start the op, hand its id back. The op then runs
  *  in the background: the picker closes and the activity view follows it, so
- *  the operator can start the next one without waiting. */
-function OpModal({ entry, action, states, focus, onClose, onStarted }: {
+ *  the operator can start the next one without waiting.
+ *
+ *  Venvs are grouped by host: a host with one venv is a single row, a host with
+ *  several is one row with a part-tick box that expands to its venvs. Only the
+ *  list scrolls, so the buttons stay on screen however big the fleet is. */
+function OpModal({ entry, action, states, focus, groupOf, onClose, onStarted }: {
   entry: MarketplaceEntry
   action: 'install' | 'uninstall'
   states: TargetState[]
   // A host:/group: search in force: only its venvs start ticked (the rest are
   // still listed, so widening the pick is one click).
   focus?: ((t: MarketplaceInstalledTarget) => boolean) | null
+  groupOf?: (host: string) => string | undefined
   onClose: () => void
   onStarted: (op: string) => void
 }) {
   const isDark = useIsDark()
+  const accent = useAccent()
   const rowsAll = useMemo(() => states.filter(s => s.target.connected && s.target.ok), [states])
   const eligible = useMemo(
     () => (action === 'uninstall' ? rowsAll.filter(s => s.installed) : rowsAll),
@@ -328,11 +398,39 @@ function OpModal({ entry, action, states, focus, onClose, onStarted }: {
   const [reinstall, setReinstall] = useState(false)
   const [upgradeRunspec, setUpgradeRunspec] = useState(false)
   const [starting, setStarting] = useState(false)
+  const [filter, setFilter] = useState('')
+  const [groupPick, setGroupPick] = useState('')
+
+  const hostGroups = useMemo(() => groupByHost(eligible, groupOf), [eligible, groupOf])
+  const [expanded, setExpanded] = useState<string[]>(
+    () => (eligible.length <= EXPAND_ALL_UP_TO ? hostGroups.filter(g => g.rows.length > 1).map(g => `h:${g.host}`) : []),
+  )
+  const groupNames = useMemo(() => [...new Set(hostGroups.map(g => g.group).filter(Boolean))].sort(), [hostGroups])
+  const shownGroups = useMemo(() => filterHostGroups(hostGroups, filter, groupPick), [hostGroups, filter, groupPick])
+  const shown = useMemo(() => shownGroups.flatMap(g => g.rows), [shownGroups])
+  const narrowed = !!filter.trim() || !!groupPick
 
   const selected = eligible.filter(s => choice[s.target.id]?.checked)
+  const selectedHosts = new Set(selected.map(s => s.target.host)).size
+  const shownIds = new Set(shown.map(s => s.target.id))
+  const hiddenTicked = selected.filter(s => !shownIds.has(s.target.id)).length
   const spec = version ? `${entry.name}==${version}` : entry.name
   const upgrade = action === 'install' && !version && selected.some(s => s.installed)
   const isRunspec = entry.name.toLowerCase() === 'runspec'
+
+  const setChecked = (ids: string[], checked: boolean) => setChoice(c => {
+    const next = { ...c }
+    for (const id of ids) next[id] = { ...next[id], checked }
+    return next
+  })
+  const setField = (id: string, patch: Partial<RowChoice>) => setChoice(c => ({ ...c, [id]: { ...c[id], ...patch } }))
+  // A quick-tick button sets the venvs on screen (ticking the matches and
+  // unticking the rest); venvs a filter hides keep their ticks.
+  const tick = (pick: TickPick) => setChoice(c => {
+    const next = { ...c }
+    for (const s of shown) next[s.target.id] = { ...next[s.target.id], checked: tickMatches(s, pick) }
+    return next
+  })
 
   const start = async () => {
     if (selected.length === 0) { message.warning('Pick at least one venv.'); return }
@@ -359,54 +457,127 @@ function OpModal({ entry, action, states, focus, onClose, onStarted }: {
     ? `${states.some(s => s.installed) ? 'Install / update' : 'Install'} ${entry.name}`
     : `Uninstall ${entry.name}`
 
+  const data: PickerRow[] = shownGroups.map(g => (g.rows.length === 1
+    ? { key: g.rows[0].target.id, kind: 'venv' as const, s: g.rows[0], solo: true }
+    : { key: `h:${g.host}`, kind: 'host' as const, g, children: g.rows.map(s => ({ key: s.target.id, kind: 'venv' as const, s, solo: false })) }))
+  // While a filter is on, every host it keeps is open, so the matching venvs show.
+  const expandedKeys = narrowed ? data.filter(r => r.kind === 'host').map(r => r.key) : expanded
+
+  const mono = { fontFamily: MONO_FONT }
+  const meta = { color: textMuted(isDark), fontSize: 12 }
+  const installedTag = (s: TargetState) => s.installed
+    ? <Tag color={STATE_COLOR[s.state]} style={{ ...mono, fontSize: 11 }}>{s.installed}{s.state === 'outdated' ? ` → ${entry.version}` : ''}</Tag>
+    : <Text type="secondary" style={{ fontSize: 12 }}>—</Text>
+  const hostLabel = (g: { host: string; group: string }) => (
+    <>
+      <span style={mono}>{g.host}</span>
+      {g.group && <span style={{ ...meta, marginLeft: 6 }}>{g.group}</span>}
+    </>
+  )
+
   const columns = [
     {
-      title: '', dataIndex: 'id', width: 36,
-      render: (_: unknown, s: TargetState) => (
-        <Checkbox checked={!!choice[s.target.id]?.checked}
-          onChange={e => setChoice(c => ({ ...c, [s.target.id]: { ...c[s.target.id], checked: e.target.checked } }))} />
-      ),
+      title: '', key: 'tick', width: 40,
+      render: (_: unknown, r: PickerRow) => {
+        if (r.kind === 'venv') {
+          return <Checkbox checked={!!choice[r.s.target.id]?.checked} aria-label={`${r.s.target.host} ${r.s.target.venv}`}
+            onChange={e => setChecked([r.s.target.id], e.target.checked)} />
+        }
+        const ids = r.g.rows.map(s => s.target.id)
+        const n = ids.filter(id => choice[id]?.checked).length
+        return <Checkbox checked={n === ids.length} indeterminate={n > 0 && n < ids.length} aria-label={`all venvs on ${r.g.host}`}
+          onChange={e => setChecked(ids, e.target.checked)} />
+      },
     },
-    { title: 'Host', render: (_: unknown, s: TargetState) => <span style={{ fontFamily: MONO_FONT }}>{s.target.host}</span> },
-    { title: 'Venv', render: (_: unknown, s: TargetState) => <Tooltip title={s.target.path}><span style={{ fontFamily: MONO_FONT }}>{s.target.venv}</span></Tooltip> },
-    { title: 'Python', render: (_: unknown, s: TargetState) => <span style={{ fontFamily: MONO_FONT, fontSize: 12 }}>{s.target.python_version || '?'}</span> },
     {
-      title: 'Installed',
-      render: (_: unknown, s: TargetState) => s.installed
-        ? <Tag color={STATE_COLOR[s.state]} style={{ fontFamily: MONO_FONT, fontSize: 11 }}>{s.installed}{s.state === 'outdated' ? ` → ${entry.version}` : ''}</Tag>
-        : <Text type="secondary" style={{ fontSize: 12 }}>—</Text>,
+      title: 'Host / venv', key: 'where',
+      render: (_: unknown, r: PickerRow) => {
+        if (r.kind === 'host') {
+          return <>{hostLabel(r.g)}<span style={{ ...meta, marginLeft: 6 }}>· {r.g.rows.length} venvs</span></>
+        }
+        const venv = <Tooltip title={r.s.target.path}><span style={mono}>{r.s.target.venv}</span></Tooltip>
+        if (!r.solo) return venv
+        return <>{hostLabel({ host: r.s.target.host, group: groupOf?.(r.s.target.host) || '' })}<span style={{ ...meta, margin: '0 6px' }}>/</span>{venv}</>
+      },
+    },
+    {
+      title: 'Python', key: 'py', width: 90,
+      render: (_: unknown, r: PickerRow) => r.kind === 'venv'
+        ? <span style={{ ...mono, fontSize: 12 }}>{r.s.target.python_version || '?'}</span>
+        : null,
+    },
+    {
+      title: 'Installed', key: 'installed',
+      render: (_: unknown, r: PickerRow) => {
+        if (r.kind === 'venv') return installedTag(r.s)
+        const c = hostSummary(r.g.rows)
+        return (
+          <Space size={4} wrap>
+            {c.outdated > 0 && <Tag color={STATE_COLOR.outdated} style={{ fontSize: 11, margin: 0 }}>{c.outdated} outdated</Tag>}
+            {c.current > 0 && <Tag color={STATE_COLOR.current} style={{ fontSize: 11, margin: 0 }}>{c.current} current</Tag>}
+            {c.other > 0 && <Tag style={{ fontSize: 11, margin: 0 }}>{c.other} other</Tag>}
+            {c.absent > 0 && <span style={meta}>{c.absent} not installed</span>}
+          </Space>
+        )
+      },
     },
     {
       title: <Tooltip title="Escalate with sudo -n -u / su when the venv belongs to a service account (pre-filled from the venv's owner). Leave blank to run as the SSH login user."><span>Run as</span></Tooltip>,
-      render: (_: unknown, s: TargetState) => s.target.local
-        ? <Text type="secondary" style={{ fontSize: 12 }}>this machine</Text>
-        : (
-          <Space.Compact size="small">
-            <Input value={choice[s.target.id]?.run_as ?? ''} placeholder={s.target.user || 'login user'}
-              style={{ fontFamily: MONO_FONT, width: 120 }}
-              onChange={e => setChoice(c => ({ ...c, [s.target.id]: { ...c[s.target.id], run_as: e.target.value } }))} />
-            <Select size="small" value={choice[s.target.id]?.become_method ?? 'sudo'} disabled={!choice[s.target.id]?.run_as}
-              options={[{ value: 'sudo', label: 'sudo' }, { value: 'su', label: 'su' }]} style={{ width: 72 }}
-              onChange={v => setChoice(c => ({ ...c, [s.target.id]: { ...c[s.target.id], become_method: v } }))} />
-          </Space.Compact>
-        ),
+      key: 'runas', width: 210,
+      render: (_: unknown, r: PickerRow) => {
+        if (r.kind === 'host') {
+          const who = [...new Set(r.g.rows.map(s => (s.target.local ? 'this machine' : choice[s.target.id]?.run_as || 'login user')))]
+          return (
+            <Tooltip title={<>{who.join(', ')}<br />Expand the host to change it.</>}>
+              <span style={{ ...meta, ...mono, whiteSpace: 'nowrap' }}>{who[0]}{who.length > 1 ? ` +${who.length - 1}` : ''}</span>
+            </Tooltip>
+          )
+        }
+        const s = r.s
+        return s.target.local
+          ? <Text type="secondary" style={{ fontSize: 12 }}>this machine</Text>
+          : (
+            <Space.Compact size="small">
+              <Input value={choice[s.target.id]?.run_as ?? ''} placeholder={s.target.user || 'login user'}
+                aria-label={`Run as on ${s.target.host} ${s.target.venv}`}
+                style={{ ...mono, width: 120 }}
+                onChange={e => setField(s.target.id, { run_as: e.target.value })} />
+              <Select size="small" value={choice[s.target.id]?.become_method ?? 'sudo'} disabled={!choice[s.target.id]?.run_as}
+                options={[{ value: 'sudo', label: 'sudo' }, { value: 'su', label: 'su' }]} style={{ width: 72 }}
+                onChange={v => setField(s.target.id, { become_method: v })} />
+            </Space.Compact>
+          )
+      },
     },
   ]
+
+  const count = (pick: TickPick) => shown.filter(s => tickMatches(s, pick)).length
+  const picks: { pick: TickPick; label: string }[] = action === 'install'
+    ? [{ pick: 'outdated', label: 'Outdated' }, { pick: 'absent', label: 'Not installed' }, { pick: 'all', label: 'All' }]
+    : [{ pick: 'all', label: 'All' }, { pick: 'outdated', label: 'Outdated' }]
 
   return (
     <Modal
       open
       title={title}
-      width={860}
+      width={900}
+      style={{ top: 40 }}
       onCancel={onClose}
       footer={
-        <Space>
-          <Button onClick={onClose}>Cancel</Button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {eligible.length > 0 && (
+            <span style={{ ...meta, marginRight: 'auto', textAlign: 'left' }}>
+              {selected.length} of {eligible.length} venv{eligible.length === 1 ? '' : 's'} ticked
+              {selected.length > 0 && hostGroups.length > 1 ? ` on ${selectedHosts} host${selectedHosts === 1 ? '' : 's'}` : ''}
+              {hiddenTicked > 0 ? ` · ${hiddenTicked} not shown by the filter` : ''}
+            </span>
+          )}
+          <Button onClick={onClose} style={{ marginLeft: 'auto' }}>Cancel</Button>
           <Button type="primary" danger={action === 'uninstall'} loading={starting} onClick={start} disabled={eligible.length === 0}
             icon={action === 'install' ? <DownloadOutlined /> : <DeleteOutlined />}>
             {action === 'install' ? `Install ${spec}` : `Uninstall ${entry.name}`} on {selected.length} venv{selected.length === 1 ? '' : 's'}
           </Button>
-        </Space>
+        </div>
       }
     >
       {eligible.length === 0 ? (
@@ -437,7 +608,46 @@ function OpModal({ entry, action, states, focus, onClose, onStarted }: {
               {entry.repo && <Text type="secondary" style={{ fontSize: 12 }}>From {entry.repo_name}.</Text>}
             </div>
           )}
-          <Table size="small" rowKey={(s: TargetState) => s.target.id} dataSource={eligible} columns={columns} pagination={false} />
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 8, flexWrap: 'wrap' }}>
+            <span style={meta}>Tick:</span>
+            {picks.map(p => {
+              const n = count(p.pick)
+              return n > 0 || p.pick === 'all'
+                ? <Button key={p.pick} size="small" onClick={() => tick(p.pick)}>{p.label} {n}</Button>
+                : null
+            })}
+            <Button size="small" onClick={() => tick('none')}>None</Button>
+            {groupNames.length > 1 && (
+              <>
+                <span style={{ ...meta, marginLeft: 8 }}>Group:</span>
+                {groupNames.map(gn => (
+                  <Tag.CheckableTag key={gn} checked={groupPick === gn} onChange={on => setGroupPick(on ? gn : '')}
+                    style={groupPick === gn ? undefined : { border: `1px solid ${withAlpha(accent, 0.35)}` }}>
+                    {gn}
+                  </Tag.CheckableTag>
+                ))}
+              </>
+            )}
+            {hostGroups.length > 1 && (
+              <Input size="small" allowClear prefix={<SearchOutlined />} placeholder="Filter host, group or venv"
+                value={filter} onChange={e => setFilter(e.target.value)} style={{ width: 220, marginLeft: 'auto' }} />
+            )}
+          </div>
+          <Table<PickerRow>
+            size="small"
+            rowKey="key"
+            dataSource={data}
+            columns={columns}
+            pagination={false}
+            scroll={{ y: 'max(200px, calc(100vh - 400px))' }}
+            locale={{ emptyText: 'No venv matches the filter.' }}
+            expandable={{
+              expandedRowKeys: expandedKeys,
+              onExpandedRowsChange: keys => { if (!narrowed) setExpanded(keys as string[]) },
+              expandIconColumnIndex: 1,
+              indentSize: 20,
+            }}
+          />
         </>
       )}
     </Modal>
@@ -870,7 +1080,7 @@ export function MarketplaceView({ hosts, onOpenSettings, activeProfile }: { host
 
       <DetailsModal entry={details} onClose={() => setDetails(null)} />
       {opFor && (
-        <OpModal entry={opFor.entry} action={opFor.action} states={allStatesFor(opFor.entry)} focus={venvFilter}
+        <OpModal entry={opFor.entry} action={opFor.action} states={allStatesFor(opFor.entry)} focus={venvFilter} groupOf={groupOf}
           onClose={() => setOpFor(null)} onStarted={onOpStarted} />
       )}
       {activityOpen && (
