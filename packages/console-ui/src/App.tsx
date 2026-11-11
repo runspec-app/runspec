@@ -1171,6 +1171,13 @@ export default function App() {
             // Buttons, links, active tabs, switches: the white-label accent, else
             // runspec teal.
             colorPrimary: brandTheme.accent_color || BRAND_PRIMARY,
+            // Ant's own dim text (Text type="secondary", descriptions,
+            // placeholders) is a 25–45% alpha of the text colour, which lands
+            // under 4.5:1 (placeholders ~2:1). Route it through the muted
+            // token so it meets the same contrast floor as our own text.
+            colorTextTertiary: textMuted(isDark),
+            colorTextDescription: textMuted(isDark),
+            colorTextPlaceholder: textMuted(isDark),
           },
           components: {
             Card: { colorBgContainer: sf.raised, colorBorderSecondary: sf.border, boxShadowTertiary: sf.shadowSm },

@@ -7,7 +7,10 @@ import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-import { surfaces, RADIUS, UI_FONT, MONO_FONT, withAlpha, type Surfaces } from './ThemeContext'
+import {
+  surfaces, RADIUS, UI_FONT, MONO_FONT, FONT_SIZE, withAlpha, type Surfaces,
+  textSecondary, textMuted, textFaint,
+} from './ThemeContext'
 
 const HEX = /^#[0-9a-f]{6}$/i
 const RGBA = /^rgba\(\d+,\d+,\d+,0?\.\d+\)$/
@@ -102,6 +105,84 @@ describe('typography + radius tokens', () => {
       return statSync(p).isDirectory() ? walk(p) : p.endsWith('.tsx') && !p.includes('.test.') ? [p] : []
     })
     const offenders = walk(resolve(__dirname)).filter(p => /fontFamily: ['"]monospace['"]/.test(readFileSync(p, 'utf8')))
+    expect(offenders).toEqual([])
+  })
+})
+
+// WCAG 2 relative luminance + contrast ratio (sRGB, '#rrggbb').
+const relLum = (hex: string) => {
+  const n = parseInt(hex.slice(1), 16)
+  const ch = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map(v => {
+    const c = v / 255
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
+  })
+  return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2]
+}
+const contrast = (a: string, b: string) => {
+  const [hi, lo] = [relLum(a), relLum(b)].sort((x, y) => y - x)
+  return (hi + 0.05) / (lo + 0.05)
+}
+
+describe('muted-text contrast floor', () => {
+  const levels = ['sunken', 'base', 'raised', 'overlay'] as const
+  for (const isDark of [true, false]) {
+    const theme = isDark ? 'dark' : 'light'
+    const sf = surfaces(isDark)
+    it(`${theme}: secondary and muted text reach 4.5:1 on every surface`, () => {
+      for (const lvl of levels) {
+        expect(contrast(textSecondary(isDark), sf[lvl]), `secondary on ${lvl}`).toBeGreaterThanOrEqual(4.5)
+        expect(contrast(textMuted(isDark), sf[lvl]), `muted on ${lvl}`).toBeGreaterThanOrEqual(4.5)
+      }
+    })
+    it(`${theme}: faint marks reach 3:1 on every surface`, () => {
+      for (const lvl of levels) {
+        expect(contrast(textFaint(isDark), sf[lvl]), `faint on ${lvl}`).toBeGreaterThanOrEqual(3)
+      }
+    })
+    it(`${theme}: the hierarchy steps down (secondary > muted > faint)`, () => {
+      const c = (hex: string) => contrast(hex, sf.base)
+      expect(c(textSecondary(isDark))).toBeGreaterThan(c(textMuted(isDark)))
+      expect(c(textMuted(isDark))).toBeGreaterThan(c(textFaint(isDark)))
+    })
+  }
+
+  it('index.css mirrors the text tokens for first paint', () => {
+    const css = readFileSync(resolve(__dirname, 'index.css'), 'utf8')
+    const root = css.slice(css.indexOf(':root {'), css.indexOf("html[data-theme='light']"))
+    const lightBlock = css.slice(css.indexOf("html[data-theme='light'] {"))
+    for (const [fn, v] of [[textSecondary, 'secondary'], [textMuted, 'muted'], [textFaint, 'faint']] as const) {
+      expect(root).toContain(`--rs-text-${v}: ${fn(true)};`)
+      expect(lightBlock).toContain(`--rs-text-${v}: ${fn(false)};`)
+    }
+  })
+})
+
+describe('type scale', () => {
+  const scale = new Set<number>(Object.values(FONT_SIZE))
+
+  it('FONT_SIZE ascends and starts at an 11px floor', () => {
+    const steps = Object.values(FONT_SIZE)
+    expect(steps[0]).toBe(11)
+    for (let i = 1; i < steps.length; i++) expect(steps[i]).toBeGreaterThan(steps[i - 1])
+  })
+
+  it('every inline text fontSize in a view or component is a step on the scale', () => {
+    const { readdirSync, statSync } = require('node:fs') as typeof import('node:fs')
+    const walk = (dir: string): string[] => readdirSync(dir).flatMap(n => {
+      const p = resolve(dir, n)
+      return statSync(p).isDirectory() ? walk(p) : p.endsWith('.tsx') && !p.includes('.test.') ? [p] : []
+    })
+    // Icon glyphs (antd icons, the ● status dot) are drawings and size freely.
+    const isIcon = (line: string) => /(Outlined|Filled|TwoTone)\b|●/.test(line)
+    const offenders: string[] = []
+    for (const p of walk(resolve(__dirname))) {
+      readFileSync(p, 'utf8').split('\n').forEach((line, i) => {
+        if (isIcon(line)) return
+        for (const m of line.matchAll(/fontSize: (\d+(?:\.\d+)?)\b/g)) {
+          if (!scale.has(Number(m[1]))) offenders.push(`${p.slice(__dirname.length + 1)}:${i + 1} fontSize ${m[1]}`)
+        }
+      })
+    }
     expect(offenders).toEqual([])
   })
 })

@@ -841,11 +841,11 @@ export function MarketplaceView({ hosts, onOpenSettings, activeProfile }: { host
       {loadError && <Alert type="error" showIcon message={loadError} style={{ marginBottom: 12 }} />}
 
       {loading && !catalog ? (
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--rs-text-faint)' }}>
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--rs-text-muted)' }}>
           <Text type="secondary">Reading package indexes…</Text>
         </div>
       ) : filtered.length === 0 ? (
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--rs-text-faint)' }}>
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--rs-text-muted)' }}>
           <div style={{ textAlign: 'center' }}>
             <AppstoreAddOutlined style={{ fontSize: 32, marginBottom: 12, display: 'block' }} />
             <Text type="secondary">{entries.length === 0 ? 'No runnable packages found in the configured indexes.' : 'Nothing matches the current filter.'}</Text>

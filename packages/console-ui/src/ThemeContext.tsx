@@ -11,9 +11,15 @@ export const textColor = (isDark: boolean) => (isDark ? 'rgba(255,255,255,0.85)'
 // Muted-text hierarchy (dark / light) — one canonical pair per role, so
 // identical-purpose text renders identically across tabs and the whole
 // hierarchy is tunable here instead of at ~150 inline call sites.
-export const textSecondary = (isDark: boolean) => (isDark ? '#aaa' : '#666')  // readable secondary: labels, descriptions
-export const textMuted = (isDark: boolean) => (isDark ? '#888' : '#999')      // dim: hints, separators, muted icons, counts
-export const textFaint = (isDark: boolean) => (isDark ? '#555' : '#bbb')      // faintest: placeholders, carets, off-state icons
+//
+// Contrast floor (WCAG AA, checked against every surface level in
+// ThemeContext.test.ts): secondary and muted are TEXT, so >= 4.5:1; faint is for
+// marks that carry no information on their own (an empty-cell dash, a caret, an
+// off-state icon), so >= 3:1. Text that says something (an empty-state message,
+// a hint) uses muted, never faint.
+export const textSecondary = (isDark: boolean) => (isDark ? '#aaaaaa' : '#555555')  // readable secondary: labels, descriptions
+export const textMuted = (isDark: boolean) => (isDark ? '#8c8c8c' : '#6b6b6b')      // dim: hints, separators, muted icons, counts
+export const textFaint = (isDark: boolean) => (isDark ? '#6e6e6e' : '#8a8a8a')      // faintest: empty-cell dashes, carets, off-state icons
 
 // The app's signature accent (sidebar title, active nav tab, links, arg names).
 // A white-label accent_color overrides the built-in runspec teal pair — App.tsx
@@ -47,6 +53,15 @@ export const MONO_FONT = "'JetBrains Mono Variable', 'Cascadia Mono', 'SF Mono',
 // One corner radius scale for the whole app — pass these (or the matching Ant
 // tokens, which App.tsx sets from them) instead of ad-hoc 2/3/4/6/8/14 values.
 export const RADIUS = { sm: 6, md: 8, lg: 12 } as const
+
+// One type scale for the whole app — pick a step instead of an ad-hoc size.
+// 11 is the floor for text (badges, counts, tag labels); 12 is secondary and
+// meta text; 13 is the body of dense views (tables, cards, forms); 14 is Ant's
+// base size and emphasised body; 16/18/20 are headings; 32 is the empty-state
+// glyph. Icon glyphs (antd *Outlined icons, the ● status dot) size freely —
+// they're drawings, not text. ThemeContext.test.ts fails on an inline text
+// fontSize that isn't on this scale.
+export const FONT_SIZE = { xs: 11, sm: 12, md: 13, lg: 14, xl: 16, xxl: 18, xxxl: 20, display: 32 } as const
 
 // Surface + elevation scale — the depth model. Four surface levels, lowest to
 // highest, plus the borders and shadows that separate them:

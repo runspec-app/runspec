@@ -420,7 +420,7 @@ export function FilePane({
         )}
       </div>
 
-      <div style={{ borderTop: '1px solid var(--rs-border)', padding: '4px 12px', fontSize: 11.5, color: 'var(--rs-text-muted)', display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+      <div style={{ borderTop: '1px solid var(--rs-border)', padding: '4px 12px', fontSize: 12, color: 'var(--rs-text-muted)', display: 'flex', justifyContent: 'space-between', gap: 8 }}>
         <span>
           {listing ? `${dirs} folder${dirs === 1 ? '' : 's'}, ${files} file${files === 1 ? '' : 's'}` : ''}
           {selected.length > 0 ? ` · ${selected.length} selected` : ''}
