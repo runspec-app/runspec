@@ -793,6 +793,26 @@ def read_local() -> dict[str, Any]:
     return {"venv_globs": globs}
 
 
+_DIST_NAME_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$")
+
+
+def read_provision() -> dict[str, Any]:
+    """The ``[provision]`` settings for Provision / Update venv.
+
+    ``scheduler_package`` (default ``"runspec-scheduler"``) — the distribution
+    that brings the scheduler daemon. A company that republishes it on a
+    private index under its own name (``runspec rebrand runspec-scheduler
+    mycorp-scheduler``) sets this, usually in the config seed, so a new venv
+    gets that copy. Update venv always upgrades the copy a venv already has,
+    whatever this says. Anything that isn't a distribution name is ignored."""
+    raw = read_config().get("provision")
+    cfg = dict(raw) if isinstance(raw, dict) else {}
+    name = str(cfg.get("scheduler_package") or "").strip()
+    if not _DIST_NAME_RE.match(name):
+        name = "runspec-scheduler"
+    return {"scheduler_package": name}
+
+
 def read_tool_visibility() -> dict[str, Any]:
     """The ``[tool_visibility]`` settings for hiding runnable tools from surfaces.
 

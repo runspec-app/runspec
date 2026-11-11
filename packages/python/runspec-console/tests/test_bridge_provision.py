@@ -1331,6 +1331,52 @@ def test_update_applies_the_new_options_in_place(app, tmp_path):
     assert b.refreshed == 1
 
 
+def test_update_upgrades_a_rebranded_scheduler_under_its_own_name(app, tmp_path):
+    """The venv has the scheduler as mycorp-scheduler (runspec rebrand): the
+    update upgrades that, never the upstream name over the same files."""
+    venv = _old_venv(tmp_path)
+    site = venv / "lib" / "python3.12" / "site-packages"
+    info = site / "mycorp_scheduler-0.10.1.dist-info"
+    info.mkdir(parents=True)
+    (info / "RECORD").write_text("runspec_scheduler/__init__.py,sha256=x,10\n")
+    (info / "METADATA").write_text("Metadata-Version: 2.1\nName: mycorp-scheduler\n")
+    rp = f"{venv}/bin/runspec"
+    _hosts([rp])
+    b = _StubBridge()
+    preview = b.venv_update_preview(
+        {"targets": [{"host": "web-01", "runspec_path": rp}]}
+    )
+    assert preview["rows"][0]["scheduler_dist"] == "mycorp-scheduler"
+    out = b.venv_update_start(
+        {
+            "targets": [{"host": "web-01", "runspec_path": rp}],
+            "packages": ["runspec-scheduler==0.10.2"],
+        }
+    )
+    [res] = _wait(b, out["op"])["results"]
+    assert res["ok"], res
+    joined = _step_cmds(b)
+    assert " -U mycorp-scheduler==0.10.2" in joined
+    assert "runspec-scheduler==" not in joined
+    assert b.audit[0]["extra"]["packages"] == ["mycorp-scheduler==0.10.2"]
+
+
+def test_provision_installs_the_configured_scheduler_package(app):
+    cfg = config_mod.read_config()
+    cfg["provision"] = {"scheduler_package": "mycorp-scheduler"}
+    config_mod.write_config(cfg)
+    _hosts()
+    plan = _StubBridge()._prov_plan(
+        {
+            "hosts": ["web-01"],
+            "dest": "/opt/venvs/ops",
+            "python": "3.12",
+            "scheduler": "auto",
+        }
+    )
+    assert plan["packages"][-1] == "mycorp-scheduler[supervisor]>=0.6.0"
+
+
 def _update_with_keeper(tmp_path, scheduler, fail):
     venv = _old_venv(tmp_path)
     (venv / "bin" / "FAIL_KEEPER").write_text("".join(f"{m}\n" for m in fail))

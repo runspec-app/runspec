@@ -161,11 +161,14 @@ def _now() -> datetime.datetime:
 def installed_version() -> str:
     """The installed runspec-scheduler version ("" when it can't be read). The
     daemon records the one it started with; ``status`` compares the two to say
-    a restart is needed after an upgrade."""
+    a restart is needed after an upgrade. Read under the distribution name this
+    copy has (``distname``), so a rebranded copy reports its version too."""
     try:
         from importlib.metadata import version
 
-        return version("runspec-scheduler")
+        from .distname import dist_name
+
+        return version(dist_name())
     except Exception:  # noqa: BLE001
         return ""
 

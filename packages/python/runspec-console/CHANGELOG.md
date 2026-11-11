@@ -9,6 +9,24 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.400.0] — 2026-11-11
+
+### Added
+
+- **Provision and Update venv work with a rebranded runspec-scheduler.** A new
+  `[provision] scheduler_package` setting (default `runspec-scheduler`; ship it
+  in the config seed) names the package Provision venv installs for *Shared
+  schedules*, for a company that republishes the scheduler on a private index
+  with `runspec rebrand`. Before, the console always asked pip for
+  `runspec-scheduler`, which either failed on an index without it or put the
+  upstream package over the rebranded one's files. An upstream
+  `runspec-scheduler` typed in Packages is renamed to the configured package.
+  Update venv now reads which distribution each venv's scheduler was installed
+  as (the inspect step finds the `.dist-info` that owns `runspec_scheduler`)
+  and upgrades that one, whatever the setting says, so a venv never gets the
+  other name on top. The preview row carries it as `scheduler_dist`. Docs:
+  console-reference → `[provision]`, white-label-runnables → "The scheduler".
+
 ## [0.399.2] — 2026-11-10
 
 ### Fixed

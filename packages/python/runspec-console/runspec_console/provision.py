@@ -935,11 +935,18 @@ def validate_scheduler(manager: str) -> str:
     return m
 
 
-def scheduler_spec(manager: str) -> str:
+#: The upstream distribution that brings the daemon. A company that republishes
+#: it under its own name (``runspec rebrand``) sets ``[provision]
+#: scheduler_package`` (config.read_provision); the command and the import
+#: package keep their names, only the distribution changes.
+SCHEDULER_PACKAGE = "runspec-scheduler"
+
+
+def scheduler_spec(manager: str, package: str = SCHEDULER_PACKAGE) -> str:
     """The package that brings the daemon. ``auto`` brings supervisord too, so a
     host without lingering gets supervisord rather than the cron watchdog."""
     extra = "[supervisor]" if manager in ("supervisor", "auto") else ""
-    return f"runspec-scheduler{extra}>={SCHEDULER_MIN}"
+    return f"{package}{extra}>={SCHEDULER_MIN}"
 
 
 def _scheduler_bin(root: str) -> str:
@@ -1092,15 +1099,32 @@ def schedule_counts(text: str) -> dict[str, Any] | None:
     }
 
 
-_SCHEDULER_SPEC_RE = re.compile(
-    r"^(\s*runspec[-_]scheduler)(?![\w.-])\s*(?:\[([^\]]*)\])?(.*)$", re.I | re.S
-)
+def _canonical_name(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name.strip()).lower()
 
 
-def _with_supervisor_extra(spec: str) -> str:
+def _name_pattern(name: str) -> str:
+    """A distribution name as a regex that matches any PEP 503 spelling."""
+    parts = [re.escape(p) for p in re.split(r"[-_.]+", name.strip()) if p]
+    return r"[-_.]+".join(parts)
+
+
+def _scheduler_spec_re(*packages: str) -> re.Pattern[str]:
+    """Matches a requirement for the scheduler, under its upstream name or any
+    of ``packages`` (rebranded copies) — they own the same files, so a list must
+    never hold two."""
+    names = "|".join(
+        dict.fromkeys(_name_pattern(n) for n in (SCHEDULER_PACKAGE, *packages) if n)
+    )
+    return re.compile(
+        rf"^(\s*(?:{names}))(?![\w.-])\s*(?:\[([^\]]*)\])?(.*)$", re.I | re.S
+    )
+
+
+def _with_supervisor_extra(spec: str, package: str = SCHEDULER_PACKAGE) -> str:
     """``runspec-scheduler==0.7.3`` → ``runspec-scheduler[supervisor]==0.7.3``
     (other extras kept, nothing added twice)."""
-    m = _SCHEDULER_SPEC_RE.match(spec)
+    m = _scheduler_spec_re(package).match(spec)
     if not m:
         return spec
     extras = [e.strip() for e in (m.group(2) or "").split(",") if e.strip()]
@@ -1109,18 +1133,42 @@ def _with_supervisor_extra(spec: str) -> str:
     return f"{m.group(1).strip()}[{','.join(extras)}]{m.group(3).strip()}"
 
 
-def add_scheduler_spec(packages: list[str], manager: str) -> list[str]:
+def add_scheduler_spec(
+    packages: list[str], manager: str, package: str = SCHEDULER_PACKAGE
+) -> list[str]:
     """``packages`` plus the package that brings the daemon for ``manager``. A
-    ``runspec-scheduler`` the operator listed (a pin) wins over the bare one,
-    but still gets the ``[supervisor]`` extra when the keeper may need it —
-    without it pip leaves supervisord out and the keeper step fails."""
+    scheduler the operator listed (a pin) wins over the bare one, but still
+    gets the ``[supervisor]`` extra when the keeper may need it — without it pip
+    leaves supervisord out and the keeper step fails. A listed upstream
+    ``runspec-scheduler`` is renamed to ``package`` when that differs."""
     if not manager:
         return list(packages)
-    mine = next((p for p in packages if _SCHEDULER_SPEC_RE.match(p)), "")
+    rx = _scheduler_spec_re(package)
+    mine = next((p for p in packages if rx.match(p)), "")
     if mine and manager in ("supervisor", "auto"):
-        mine = _with_supervisor_extra(mine)
-    rest = [p for p in packages if not _SCHEDULER_SPEC_RE.match(p)]
-    return rest + [mine or scheduler_spec(manager)]
+        mine = _with_supervisor_extra(mine, package)
+    rest = [p for p in packages if not rx.match(p)]
+    if mine:
+        return retarget_scheduler_spec([*rest, mine], package)
+    return [*rest, scheduler_spec(manager, package)]
+
+
+def retarget_scheduler_spec(specs: list[str], package: str, *also: str) -> list[str]:
+    """``specs`` with any scheduler requirement (upstream, ``package`` or one of
+    ``also``) named ``package`` instead — used per venv when the venv already
+    has the scheduler under that name, so pip upgrades the copy that is there
+    rather than installing a second distribution over the same files."""
+    if not package:
+        return list(specs)
+    rx = _scheduler_spec_re(package, *also)
+    out = []
+    for spec in specs:
+        m = rx.match(spec)
+        if m and _canonical_name(m.group(1)) != _canonical_name(package):
+            extras = f"[{m.group(2)}]" if m.group(2) is not None else ""
+            spec = f"{package}{extras}{m.group(3).strip()}"
+        out.append(spec)
+    return list(dict.fromkeys(out))
 
 
 def host_command(argv: list[str], run_as: str = "", become_method: str = "sudo") -> str:
@@ -1204,15 +1252,19 @@ class UpdateStep:
 
 
 def update_install_specs(
-    packages: list[str], *, upgrade_runspec: bool, scheduler: str
+    packages: list[str],
+    *,
+    upgrade_runspec: bool,
+    scheduler: str,
+    scheduler_package: str = SCHEDULER_PACKAGE,
 ) -> list[str]:
     """What an update installs (``pip install -U``): ``runspec`` when it is
-    upgraded, the operator's packages, and runspec-scheduler for a daemon."""
+    upgraded, the operator's packages, and the scheduler for a daemon."""
     specs = (["runspec"] if upgrade_runspec else []) + [
         p for p in packages if p and p.lower() != "runspec"
     ]
     if scheduler and scheduler != SCHEDULER_OFF:
-        specs = add_scheduler_spec(specs, scheduler)
+        specs = add_scheduler_spec(specs, scheduler, scheduler_package)
     return list(dict.fromkeys(specs))
 
 
@@ -1392,6 +1444,9 @@ if [ -x "$r/bin/python" ]; then out python "$r/bin/python"
 else out python "$(command -v python3 2>/dev/null)"
 fi
 if [ -x "$r/bin/runspec-scheduler" ]; then out scheduler 1; else out scheduler 0; fi
+# the distribution the scheduler was installed as (a rebranded copy has its own name)
+f=$(grep -l '^runspec_scheduler/__init__\.py,' "$r"/lib/python*/site-packages/*.dist-info/RECORD 2>/dev/null | head -n 1)
+if [ -n "$f" ]; then out scheduler_dist "$(sed -n 's/^Name:[[:space:]]*//p' "${f%/RECORD}/METADATA" 2>/dev/null | head -n 1)"; fi
 # the daemon's pid from its lock, when that process is still a runspec-scheduler
 p=$(head -c 32 "$r/runspec_scheduler.lock" 2>/dev/null | tr -dc 0-9)
 if [ -n "$p" ] && grep -qF "$r/bin/runspec-scheduler" "/proc/$p/cmdline" 2>/dev/null; then out scheduler_pid "$p"; fi

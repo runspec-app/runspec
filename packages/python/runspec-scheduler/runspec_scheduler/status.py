@@ -28,6 +28,7 @@ from runspec import runsdb
 
 from .config import EffectiveConfig, SchedulerSettings, effective_config
 from .cronsync import LABEL_PREFIX, MARKER_PREFIX, _crontab_argv, _installable, job_in_venv, read_managed_users, resolve_entry, this_bin_dir
+from .distname import dist_name
 from .runner import venv_name
 from .timing import host_zone_name, next_fire_time
 
@@ -286,6 +287,8 @@ def status(config_path: Path, *, runs: int = 5, output_bytes: int = DEFAULT_OUTP
     payload: dict[str, Any] = {
         "ok": True,
         "venv": venv_name(),
+        # the distribution this copy was installed as (a rebrand renames it)
+        "package": dist_name(),
         "config": str(config_path),
         "backend": "cron",
         "schedules": [],

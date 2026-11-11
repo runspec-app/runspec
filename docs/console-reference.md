@@ -408,6 +408,22 @@ indexes are `[[marketplace.repos]]` tables (keys documented on that page).
 | `ca_bundle` | — | Path to a private-CA bundle for internal index hosts |
 | `tls_verify` | `true` | Set `false` to skip TLS verification (TLS-intercepting proxies) |
 
+## `[provision]` {#provision}
+
+Settings for Provision venv and Update venv (Settings → Jump Hosts).
+
+| Key | Default | What it does |
+|---|---|---|
+| `scheduler_package` | `"runspec-scheduler"` | The package a new venv gets for *Shared schedules*. Set it to your own name when you republish the scheduler on a private index with `runspec rebrand` (for example `"mycorp-scheduler"`). Update venv always upgrades the copy a venv already has, under the name it was installed as, whatever this says. |
+
+```toml
+[provision]
+scheduler_package = "mycorp-scheduler"
+```
+
+Ship it in the [config seed](white-label.md) so every console provisions the
+same copy. See [White-label runnables → The scheduler](white-label-runnables.md#the-scheduler).
+
 ## `[voice]` — dictation into the prompt box {#voice}
 
 Settings for the chat composer's **mic button** — on-device speech-to-text via

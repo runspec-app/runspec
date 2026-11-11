@@ -135,6 +135,7 @@ NON_RUNSPEC_SECTIONS = {
     "runbook",
     "saved_run",
     "saved_transfer",  # console runspec_saved_transfers.toml ([[saved_transfer]])
+    "provision",  # console config.toml [provision]
     "rota",
     "mailboxes",
     "mailbox",

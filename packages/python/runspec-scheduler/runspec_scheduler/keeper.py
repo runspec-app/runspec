@@ -54,6 +54,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import config_path as default_config_path
+from .distname import pip_spec
 from .runner import scripts_dir
 from .service import _is_bus_error, _login_shell_hint, _systemctl_env, render_system_unit, render_unit, system_unit_path, unit_dir, unit_name
 
@@ -153,7 +154,7 @@ def choose(facts: Facts) -> tuple[str, str]:
         return "systemd-user", f"lingering is on for {facts.user} and systemd {facts.systemd_version} has a working --user manager"
     if facts.supervisord is not None:
         return "supervisor", f"{why}; supervisord is installed in this venv"
-    return "cron", f"{why}, and supervisord isn't installed in this venv (pip install 'runspec-scheduler[supervisor]' to use it); a crontab watchdog restarts the daemon within 5 minutes"
+    return "cron", f"{why}, and supervisord isn't installed in this venv (pip install {pip_spec('supervisor')} to use it); a crontab watchdog restarts the daemon within 5 minutes"
 
 
 # ── the plan ────────────────────────────────────────────────────────────────────
@@ -440,7 +441,7 @@ def plan_install(manager: str, *, facts: Facts | None = None, config: str | None
             return p
         if facts.supervisord is None:
             p.error = "supervisord isn't installed in this venv"
-            p.hint = f"install it, then re-run: {scripts_dir() / 'python'} -m pip install 'runspec-scheduler[supervisor]'"
+            p.hint = f"install it, then re-run: {scripts_dir() / 'python'} -m pip install {pip_spec('supervisor')}"
             return p
         if not facts.crontab:
             p.error, p.hint = "crontab isn't installed, and it starts supervisord at boot", "use --manager systemd-user or ask root for --manager systemd"
@@ -581,7 +582,7 @@ def plan_restart(*, config: str | None = None, facts: Facts | None = None) -> Pl
             p.actions.append(Action("run", "start supervisord (it starts the daemon)", argv=[str(facts.supervisord), "-c", str(conf)]))
         else:
             p.error = "supervisord isn't installed in this venv any more"
-            p.hint = f"reinstall it: {scripts_dir() / 'python'} -m pip install 'runspec-scheduler[supervisor]'"
+            p.hint = f"reinstall it: {scripts_dir() / 'python'} -m pip install {pip_spec('supervisor')}"
         return p
     # The cron watchdog (or no keeper at all): stop the daemon, start it detached.
     if pid:

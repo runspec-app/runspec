@@ -914,3 +914,81 @@ def test_validate_scheduler_settings():
     for bad in ({"timezone": "host"}, {"package_schedules": "sometimes"}):
         with pytest.raises(prov.ProvisionError):
             prov.validate_scheduler_settings(bad)
+
+
+def test_scheduler_spec_uses_a_rebranded_name():
+    add = prov.add_scheduler_spec
+    assert add(["x"], "auto", "mycorp-scheduler") == [
+        "x",
+        "mycorp-scheduler[supervisor]>=0.6.0",
+    ]
+    # an upstream pin the operator typed is renamed, never installed beside the copy
+    assert add(["runspec-scheduler==0.10.1"], "cron", "mycorp-scheduler") == [
+        "mycorp-scheduler==0.10.1"
+    ]
+    assert add(["MyCorp_Scheduler>=0.9"], "auto", "mycorp-scheduler") == [
+        "MyCorp_Scheduler[supervisor]>=0.9"
+    ]
+    assert prov.update_install_specs(
+        [], upgrade_runspec=True, scheduler="cron", scheduler_package="mycorp-scheduler"
+    ) == ["runspec", "mycorp-scheduler>=0.6.0"]
+
+
+def test_update_upgrades_the_scheduler_the_venv_has():
+    rt = prov.retarget_scheduler_spec
+    specs = ["runspec", "mycorp-scheduler[supervisor]>=0.6.0"]
+    # this venv has the upstream copy, the console is set to the rebranded one
+    assert rt(specs, "runspec-scheduler", "mycorp-scheduler") == [
+        "runspec",
+        "runspec-scheduler[supervisor]>=0.6.0",
+    ]
+    assert rt(["runspec-scheduler>=0.6.0"], "mycorp-scheduler") == [
+        "mycorp-scheduler>=0.6.0"
+    ]
+    assert rt(specs, "", "mycorp-scheduler") == specs  # no scheduler there yet
+    assert rt(["runspec-scheduler-extras"], "mycorp-scheduler") == [
+        "runspec-scheduler-extras"
+    ]
+
+
+def test_inspect_reports_the_scheduler_distribution(tmp_path):
+    import subprocess
+
+    root = tmp_path / "venv"
+    info = (
+        root
+        / "lib"
+        / "python3.12"
+        / "site-packages"
+        / "mycorp_scheduler-0.10.2.dist-info"
+    )
+    info.mkdir(parents=True)
+    (info / "RECORD").write_text("runspec_scheduler/__init__.py,sha256=x,10\n")
+    (info / "METADATA").write_text(
+        "Metadata-Version: 2.1\nName: mycorp-scheduler\nVersion: 0.10.2\n"
+    )
+    out = subprocess.run(
+        ["sh", "-c", prov.INSPECT_SCRIPT, "sh", str(root)],
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert prov.parse_inspect(out)["scheduler_dist"] == "mycorp-scheduler"
+
+
+def test_read_provision_scheduler_package(monkeypatch):
+    from runspec_console import config
+
+    monkeypatch.setattr(config, "read_config", lambda: {})
+    assert config.read_provision() == {"scheduler_package": "runspec-scheduler"}
+    monkeypatch.setattr(
+        config,
+        "read_config",
+        lambda: {"provision": {"scheduler_package": "mycorp-scheduler"}},
+    )
+    assert config.read_provision()["scheduler_package"] == "mycorp-scheduler"
+    monkeypatch.setattr(
+        config,
+        "read_config",
+        lambda: {"provision": {"scheduler_package": "bad name; rm"}},
+    )
+    assert config.read_provision()["scheduler_package"] == "runspec-scheduler"
