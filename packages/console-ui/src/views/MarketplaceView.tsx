@@ -9,9 +9,9 @@
  * streams pip's output per target over `runspec:marketplace_progress`.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Alert, Badge, Button, Checkbox, Input, Modal, Segmented, Select, Space, Switch, Table, Tag, Tooltip, Typography, message } from 'antd'
+import { Alert, Badge, Button, Checkbox, Input, Modal, Progress, Segmented, Select, Space, Switch, Table, Tag, Tooltip, Typography, message } from 'antd'
 import { AppstoreAddOutlined, UnorderedListOutlined, BookOutlined, CodeOutlined, DownloadOutlined, DeleteOutlined, HistoryOutlined, HomeOutlined, InfoCircleOutlined, ReloadOutlined, SearchOutlined, SettingOutlined } from '@ant-design/icons'
-import { bridge, type Host, type MarketplaceCatalog, type MarketplaceEntry, type MarketplaceInstalled, type MarketplaceInstalledTarget, type MarketplaceOpPayload, type MarketplaceOpRecord, type MarketplaceOpTarget } from '../bridge'
+import { bridge, type Host, type MarketplaceCatalog, type MarketplaceEntry, type MarketplaceInstalled, type MarketplaceInstalledTarget, type MarketplaceOpPayload, type MarketplaceOpRecord, type MarketplaceOpTarget, type MarketplaceOpTargetState } from '../bridge'
 import { useIsDark, useAccent, withAlpha, surfaces, RADIUS, textSecondary, textMuted, MONO_FONT } from '../ThemeContext'
 import { Markdown } from '../components/Markdown'
 import { hasTargetTokens, hostPasses, parseSearch, type ParsedSearch } from '../searchTokens'
@@ -693,12 +693,44 @@ const TARGET_STATE_TAG: Record<string, { color: string; text: string }> = {
   skipped: { color: 'default', text: 'skipped' },
 }
 
+/** One venv's place in an op, for the status filter and counts. */
+export type TargetStatus = 'failed' | 'running' | 'queued' | 'ok' | 'skipped'
+
+export function targetStatus(t: MarketplaceOpTargetState): TargetStatus {
+  if (t.state === 'done') return t.ok ? 'ok' : 'failed'
+  return t.state
+}
+
+export function statusCounts(targets: MarketplaceOpTargetState[]): Record<TargetStatus, number> {
+  const c: Record<TargetStatus, number> = { failed: 0, running: 0, queued: 0, ok: 0, skipped: 0 }
+  for (const t of targets) c[targetStatus(t)]++
+  return c
+}
+
+/** The line a collapsed row shows: the newest output line, else the summary. */
+export function lastLine(t: MarketplaceOpTargetState): string {
+  const lines = t.lines ?? []
+  for (let i = lines.length - 1; i >= 0; i--) if (lines[i].trim()) return lines[i].trim()
+  return t.summary ?? ''
+}
+
+// Up to this many venvs every row opens with its pip output showing; past it
+// rows are one line each (status + newest output line) and open on click.
+const OP_EXPAND_ALL_UP_TO = 3
+
 /** One op's per-venv status + pip output, live while it runs. Closing never
- *  stops it — re-open it from the activity list. */
+ *  stops it — re-open it from the activity list.
+ *
+ *  Each venv is one row (status + newest output line); click a row for its
+ *  full output. Only the list scrolls, so Close / Cancel stay in view however
+ *  many venvs the op covers. */
 function OpDetailModal({ opId, onClose }: { opId: string; onClose: () => void }) {
   const isDark = useIsDark()
   const [rec, setRec] = useState<MarketplaceOpRecord | null>(null)
   const [missing, setMissing] = useState(false)
+  const [show, setShow] = useState<'all' | TargetStatus>('all')
+  const [filter, setFilter] = useState('')
+  const [expanded, setExpanded] = useState<string[] | null>(null)  // null = default (set once loaded)
 
   useEffect(() => {
     let alive = true
@@ -732,12 +764,47 @@ function OpDetailModal({ opId, onClose }: { opId: string; onClose: () => void })
   const cancel = async () => { await bridge.marketplace_cancel(opId).catch(() => {}) }
   const opts = rec?.options ?? {}
   const flags = [opts.upgrade && 'upgrade', opts.reinstall && 'force reinstall', opts.upgrade_runspec && 'also upgrade runspec', opts.pre && 'pre-releases'].filter(Boolean) as string[]
+  const targets = rec?.targets ?? []
+  const few = targets.length <= OP_EXPAND_ALL_UP_TO
+  const counts = statusCounts(targets)
+  const words = filter.trim().toLowerCase().split(/\s+/).filter(Boolean)
+  const shown = targets.filter(t =>
+    (show === 'all' || targetStatus(t) === show)
+    && words.every(w => `${t.host} ${t.venv}`.toLowerCase().includes(w)))
+  const openKeys = expanded ?? (few ? targets.map(t => t.target) : [])
+  const done = counts.ok + counts.failed + counts.skipped
+  // The live per-venv states are newer than the record's counts while it runs.
+  const outcome = rec ? opOutcome(targets.length ? { ...rec, counts } : rec) : null
+
+  const statusTag = (t: MarketplaceOpTargetState) => {
+    const tag = t.state === 'done'
+      ? { color: t.ok ? 'green' : 'red', text: t.ok ? 'ok' : `failed (exit ${t.exit_code ?? '?'})` }
+      : TARGET_STATE_TAG[t.state]
+    return <Tag color={tag.color} style={{ fontSize: 11, margin: 0 }}>{tag.text}</Tag>
+  }
+  const columns = [
+    {
+      title: 'Host / venv', key: 'where', width: 260,
+      render: (_: unknown, t: MarketplaceOpTargetState) => <Text style={{ fontFamily: MONO_FONT, fontSize: 12, fontWeight: 600 }}>{t.host}/{t.venv}</Text>,
+    },
+    { title: 'Status', key: 'status', width: 150, render: (_: unknown, t: MarketplaceOpTargetState) => statusTag(t) },
+    {
+      title: 'Output', key: 'last', ellipsis: true,
+      render: (_: unknown, t: MarketplaceOpTargetState) => {
+        if (openKeys.includes(t.target)) return null  // the full output shows below the row
+        const line = t.state === 'queued' ? 'Waiting for another operation on this venv to finish.' : lastLine(t)
+        return <span style={{ fontFamily: t.state === 'queued' ? undefined : MONO_FONT, fontSize: 11, color: textMuted(isDark) }}>{line}</span>
+      },
+    },
+  ]
+  const segment = (key: TargetStatus, label: string) => (counts[key] ? [{ value: key, label: `${label} ${counts[key]}` }] : [])
 
   return (
     <Modal
       open
       title={rec ? opLabel(rec) : 'Marketplace operation'}
-      width={860}
+      width={900}
+      style={{ top: 40 }}
       onCancel={onClose}
       footer={
         <Space>
@@ -752,38 +819,57 @@ function OpDetailModal({ opId, onClose }: { opId: string; onClose: () => void })
         <Text type="secondary">Loading…</Text>
       ) : (
         <>
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10, fontSize: 12, color: textSecondary(isDark) }}>
-            <Tag color={opOutcome(rec).color} style={{ margin: 0 }}>{opOutcome(rec).text}</Tag>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8, fontSize: 12, color: textSecondary(isDark) }}>
+            <Tag color={outcome!.color} style={{ margin: 0 }}>{outcome!.text}</Tag>
             <span>started {ago(rec.started_at)}</span>
             {rec.status === 'running' && <span>Closing this keeps it running; reopen it from Activity.</span>}
             {flags.length > 0 && <span>· {flags.join(', ')}</span>}
           </div>
-          {(rec.targets ?? []).map(t => {
-            const tag = t.state === 'done'
-              ? { color: t.ok ? 'green' : 'red', text: t.ok ? 'ok' : `failed (exit ${t.exit_code ?? '?'})` }
-              : TARGET_STATE_TAG[t.state]
-            const lines = t.lines ?? []
-            return (
-              <div key={t.target} style={{ marginBottom: 10 }}>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <Text style={{ fontFamily: MONO_FONT, fontSize: 12, fontWeight: 600 }}>{t.host}/{t.venv}</Text>
-                  <Tag color={tag.color} style={{ fontSize: 11, margin: 0 }}>{tag.text}</Tag>
-                </div>
-                {(lines.length > 0 || t.summary) && (
-                  <pre style={{
-                    margin: '4px 0 0', maxHeight: 160, overflow: 'auto', fontSize: 11, fontFamily: MONO_FONT,
-                    background: surfaces(isDark).sunken, border: '1px solid var(--rs-border)', borderRadius: RADIUS.sm, padding: '6px 8px',
-                    whiteSpace: 'pre-wrap',
-                  }}>
-                    {lines.length ? lines.join('\n') : t.summary}
-                  </pre>
-                )}
-                {t.state === 'queued' && (
-                  <Text type="secondary" style={{ fontSize: 11 }}>Waiting for another operation on this venv to finish.</Text>
-                )}
-              </div>
-            )
-          })}
+          {targets.length > 1 && (
+            <Progress size="small" showInfo={false} style={{ margin: '0 0 8px' }}
+              percent={Math.round((100 * done) / targets.length)}
+              success={{ percent: Math.round((100 * (counts.ok + counts.skipped)) / targets.length) }}
+              status={counts.failed ? 'exception' : rec.status === 'running' ? 'active' : 'normal'} />
+          )}
+          {!few && (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8, flexWrap: 'wrap' }}>
+              <Segmented size="small" value={show} onChange={v => setShow(v as 'all' | TargetStatus)}
+                options={[
+                  { value: 'all', label: `All ${targets.length}` },
+                  ...segment('failed', 'Failed'), ...segment('running', 'Running'), ...segment('queued', 'Queued'),
+                  ...segment('ok', 'OK'), ...segment('skipped', 'Skipped'),
+                ]} />
+              <Input size="small" allowClear prefix={<SearchOutlined />} placeholder="Filter host or venv"
+                value={filter} onChange={e => setFilter(e.target.value)} style={{ width: 200, marginLeft: 'auto' }} />
+              <Button size="small" onClick={() => setExpanded(shown.map(t => t.target))}>Expand shown</Button>
+              <Button size="small" onClick={() => setExpanded([])}>Collapse all</Button>
+            </div>
+          )}
+          <Table<MarketplaceOpTargetState>
+            size="small"
+            rowKey="target"
+            dataSource={shown}
+            columns={columns}
+            pagination={false}
+            showHeader={!few}
+            scroll={{ y: 'max(200px, calc(100vh - 380px))' }}
+            locale={{ emptyText: 'No venv matches.' }}
+            expandable={{
+              expandedRowKeys: openKeys,
+              onExpandedRowsChange: keys => setExpanded(keys as string[]),
+              expandRowByClick: true,
+              rowExpandable: t => (t.lines ?? []).length > 0 || !!t.summary,
+              expandedRowRender: t => (
+                <pre style={{
+                  margin: 0, maxHeight: 240, overflow: 'auto', fontSize: 11, fontFamily: MONO_FONT,
+                  background: surfaces(isDark).sunken, border: '1px solid var(--rs-border)', borderRadius: RADIUS.sm, padding: '6px 8px',
+                  whiteSpace: 'pre-wrap',
+                }}>
+                  {(t.lines ?? []).length ? (t.lines ?? []).join('\n') : t.summary}
+                </pre>
+              ),
+            }}
+          />
         </>
       )}
     </Modal>
