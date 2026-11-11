@@ -15,6 +15,9 @@ import {
   hasWork,
   moveText,
   moveTotal,
+  retentionNow,
+  retentionNowText,
+  untouchedHostsText,
   updateNotes,
   versionAtLeast,
   type UpdateForm,
@@ -120,6 +123,28 @@ describe('update helpers', () => {
       .toEqual(["Couldn't count this venv's schedules: sudo: a password is required.", "Its schedules move off the owner's crontab and the daemon fires them instead."])
   })
 
+  it('sums up the log cleanup the venvs have now', () => {
+    const a = row({ retention: { compact_after: '7d', delete_after: '90d' } })
+    const b = row({ host: 'web-02', retention: { compact_after: '7d', delete_after: '90d' } })
+    const c = row({ host: 'rhel-01', retention: { delete_after: '30d' } })
+    expect(retentionNow([a, b]).same).toEqual({ compact_after: '7d', delete_after: '90d' })
+    expect(retentionNowText([a, b])).toBe('Now: compress 7d, delete 90d on all 2 hosts.')
+    expect(retentionNowText([a])).toBe('Now: compress 7d, delete 90d on this host.')
+    expect(retentionNow([a, b, c]).same).toBeNull()
+    expect(retentionNowText([a, b, c])).toBe('Now it differs: compress 7d, delete 90d on 2 hosts; delete 30d on 1 host.')
+    // all without a policy: nothing to start the boxes from
+    expect(retentionNow([row(), row({ host: 'x' })]).same).toBeNull()
+    expect(retentionNowText([])).toBe('')
+  })
+
+  it('names the hosts with this venv that will not change', () => {
+    const hosts = ['web-01', 'web-02', 'db-01']
+    expect(untouchedHostsText(hosts, hosts, new Set(hosts))).toBe('')
+    expect(untouchedHostsText(hosts, ['web-01'], new Set(['web-01', 'web-02'])))
+      .toBe("This venv is also on 2 other hosts that won't change: web-02, db-01 (not connected). Hosts outside the active profile aren't connected; switch profile to update them.")
+    expect(untouchedHostsText(hosts, ['web-01', 'db-01'], new Set(hosts))).toBe("This venv is also on 1 other host that won't change: web-02.")
+  })
+
   it('offers leave / daemon keepers / back to crontab', () => {
     expect(UPDATE_SCHEDULER_OPTIONS.map(o => o.value)).toEqual(['', 'auto', 'systemd-user', 'supervisor', 'cron', 'off'])
     expect(UPDATE_SCHEDULER_OPTIONS[1].label).toBe('Move to the daemon, keeper picked per host')
@@ -155,7 +180,7 @@ describe('UpdateVenvModal', () => {
       packages: [],
       repo: undefined,
       inbox: false,
-      retention: { compact_after: '7d', delete_after: '90d' },
+      retention: undefined,
       scheduler: undefined,
       become_method: 'sudo',
     })
@@ -167,9 +192,34 @@ describe('UpdateVenvModal', () => {
     await screen.findByText(/schedules daemon/)
     await user.click(screen.getByRole('checkbox', { name: /Upgrade runspec/ }))
     await user.click(screen.getByRole('checkbox', { name: /Set up the logs inbox/ }))
-    await user.click(screen.getByRole('checkbox', { name: /Set the log cleanup policy/ }))
     expect(await screen.findByText('Tick at least one thing to update.')).toBeTruthy()
     expect((screen.getByRole('button', { name: /Update 1 host/ }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('leaves log cleanup alone unless ticked, then starts from the current policy', async () => {
+    const user = userEvent.setup()
+    render(<UpdateVenvModal open initialTargets={[{ host: 'web-01', runspec_path: RP }]} onClose={() => {}} />)
+    expect(await screen.findByText('Now: compress 3d on this host.')).toBeTruthy()
+    const box = screen.getByRole('checkbox', { name: /Set the log cleanup policy/ }) as HTMLInputElement
+    expect(box.checked).toBe(false)
+    expect(screen.getByText(/web-02, db-01 \(not connected\)/)).toBeTruthy()
+    await user.click(box)
+    expect((screen.getByLabelText('Compress after') as HTMLInputElement).value).toBe('3d')
+    expect((screen.getByLabelText('Delete after') as HTMLInputElement).value).toBe('')
+  })
+
+  it('opens with the defaults again, not the last choices', async () => {
+    const user = userEvent.setup()
+    const t = [{ host: 'web-01', runspec_path: RP }]
+    const { rerender } = render(<UpdateVenvModal open initialTargets={t} onClose={() => {}} />)
+    await screen.findByText(/schedules daemon/)
+    await user.click(screen.getByRole('checkbox', { name: /Set the log cleanup policy/ }))
+    await user.click(screen.getByRole('checkbox', { name: /Upgrade runspec/ }))
+    rerender(<UpdateVenvModal open={false} initialTargets={t} onClose={() => {}} />)
+    rerender(<UpdateVenvModal open initialTargets={t} onClose={() => {}} />)
+    await screen.findByText(/schedules daemon/)
+    expect((screen.getByRole('checkbox', { name: /Set the log cleanup policy/ }) as HTMLInputElement).checked).toBe(false)
+    expect((screen.getByRole('checkbox', { name: /Upgrade runspec/ }) as HTMLInputElement).checked).toBe(true)
   })
 
   it('stacks above the host editor it is opened from', async () => {

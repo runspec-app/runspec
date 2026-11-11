@@ -155,13 +155,55 @@ export function moveTotal(rows: VenvUpdateRow[], choice: SchedulerChoice): strin
   return `${what} on ${plural(venvs, 'host')}${unknown ? ` (${plural(unknown, 'host')} couldn't be counted)` : ''}.`
 }
 
-function retentionText(r: VenvUpdateRow['retention']): string {
+export function retentionText(r: VenvUpdateRow['retention']): string {
   const parts = [
     r.compact_after && `compress ${r.compact_after}`,
     r.delete_after && `delete ${r.delete_after}`,
     r.max_total_size && `cap ${r.max_total_size}`,
   ].filter(Boolean)
   return parts.length ? parts.join(', ') : 'none'
+}
+
+/**
+ * What log cleanup policy the ready venvs have now, grouped: one group when
+ * they all agree. `same` is that shared policy (to start the boxes from), or
+ * null when they differ or none has one.
+ */
+export function retentionNow(rows: VenvUpdateRow[]): { groups: { text: string; hosts: string[] }[]; same: ProvisionRetention | null } {
+  const groups: { text: string; hosts: string[] }[] = []
+  for (const r of rows) {
+    const text = retentionText(r.retention)
+    const g = groups.find(x => x.text === text)
+    if (g) g.hosts.push(r.host)
+    else groups.push({ text, hosts: [r.host] })
+  }
+  const first = rows[0]?.retention
+  const same = groups.length === 1 && first && (first.compact_after || first.delete_after)
+    ? { compact_after: first.compact_after ?? '', delete_after: first.delete_after ?? '' }
+    : null
+  return { groups, same }
+}
+
+/** One line on the venv's current log cleanup across the ready hosts, or ''. */
+export function retentionNowText(rows: VenvUpdateRow[]): string {
+  const { groups } = retentionNow(rows)
+  if (groups.length === 0) return ''
+  if (groups.length === 1) return `Now: ${groups[0].text} on ${rows.length === 1 ? 'this host' : `all ${rows.length} hosts`}.`
+  return `Now it differs: ${groups.map(g => `${g.text} on ${plural(g.hosts.length, 'host')}`).join('; ')}.`
+}
+
+/**
+ * The hosts that list this venv but won't be updated (not ticked, or not
+ * connected, which includes every host outside the active profile), so nobody
+ * thinks they changed the venv everywhere. '' when every host is ticked.
+ */
+export function untouchedHostsText(hosts: string[], selected: string[], connected: Set<string>): string {
+  const left = hosts.filter(h => !selected.includes(h))
+  if (left.length === 0) return ''
+  const shown = left.slice(0, 6).map(h => (connected.has(h) ? h : `${h} (not connected)`))
+  const more = left.length > shown.length ? `, and ${left.length - shown.length} more` : ''
+  const cold = left.some(h => !connected.has(h))
+  return `This venv is also on ${plural(left.length, 'other host')} that won't change: ${shown.join(', ')}${more}.${cold ? ' Hosts outside the active profile aren\'t connected; switch profile to update them.' : ''}`
 }
 
 function schedulesText(row: VenvUpdateRow): string {
@@ -198,7 +240,9 @@ export function UpdateVenvModal({
   const [packages, setPackages] = useState<string[]>([])
   const [repo, setRepo] = useState('')
   const [inbox, setInbox] = useState(true)
-  const [cleanup, setCleanup] = useState(true)
+  // Log cleanup starts off (leave each venv's policy as it is), so venvs that
+  // differ on purpose stay that way unless the operator ticks it.
+  const [cleanup, setCleanup] = useState(false)
   const [compactAfter, setCompactAfter] = useState(RETENTION_DEFAULT.compact_after ?? '')
   const [deleteAfter, setDeleteAfter] = useState(RETENTION_DEFAULT.delete_after ?? '')
   const [scheduler, setScheduler] = useState<SchedulerChoice>('')
@@ -213,6 +257,10 @@ export function UpdateVenvModal({
   useEffect(() => {
     if (open && !wasOpen.current) {
       setPreview(null); setOp(null); opRef.current = null; setProgress({}); setResults(null)
+      // Every open starts from the defaults, never the last update's choices.
+      setUpgradeRunspec(true); setPackages([]); setRepo(''); setInbox(true)
+      setCleanup(false); setCompactAfter(RETENTION_DEFAULT.compact_after ?? ''); setDeleteAfter(RETENTION_DEFAULT.delete_after ?? '')
+      setScheduler(''); setSchedSettings({}); setBecome('sudo')
       const first = initialTargets?.[0]
       setRoot(first ? venvRoot(first.runspec_path) : '')
       setSelected((initialTargets ?? []).map(t => t.host))
@@ -268,6 +316,18 @@ export function UpdateVenvModal({
   const form: UpdateForm = { upgradeRunspec, packages, repo, inbox, retention, scheduler, schedulerSettings: schedSettings, become }
   const ready = (preview ?? []).filter(r => r.ok)
   const payload = buildUpdatePayload(ready.map(r => ({ host: r.host, runspec_path: r.runspec_path })), form)
+  const nowRetention = retentionNow(ready)
+  const nowRetentionText = retentionNowText(ready)
+  const untouched = choice ? untouchedHostsText(choice.hosts.map(h => h.host), selected, connected) : ''
+  // Ticking log cleanup starts the boxes from the policy the venvs share now,
+  // else the provision defaults.
+  const onCleanup = (v: boolean) => {
+    if (v) {
+      const from = nowRetention.same ?? RETENTION_DEFAULT
+      setCompactAfter(from.compact_after ?? ''); setDeleteAfter(from.delete_after ?? '')
+    }
+    setCleanup(v)
+  }
   const canStart = ready.length > 0 && hasWork(payload) && !retentionError && !op
   const running = op !== null && results === null
 
@@ -359,6 +419,7 @@ export function UpdateVenvModal({
             <div style={{ border: '1px solid var(--rs-border)', borderRadius: RADIUS.sm, padding: '8px 10px', maxHeight: 120, overflowY: 'auto' }}>
               <Checkbox.Group value={selected} onChange={v => setSelected(v as string[])} options={hostOptions} style={{ display: 'flex', flexDirection: 'column', gap: 2 }} />
             </div>
+            {untouched && hint(untouched)}
           </div>
         )}
 
@@ -418,7 +479,7 @@ export function UpdateVenvModal({
               {label('Log cleanup')}
               <LogCleanupField
                 checked={cleanup}
-                onChecked={setCleanup}
+                onChecked={onCleanup}
                 checkboxLabel="Set the log cleanup policy"
                 compactAfter={compactAfter}
                 onCompactAfter={setCompactAfter}
@@ -429,6 +490,10 @@ export function UpdateVenvModal({
                   ? 'Replaces these two settings in the venv\'s policy (runspec logs retention, runspec 0.80.0+). A blank box or off turns that step off, e.g. blank compress after = never compress. The audit log is never touched.'
                   : 'Leaves each venv\'s log cleanup policy as it is.'}
               />
+              {nowRetentionText && <div><Text style={{ fontSize: 12 }}>{nowRetentionText}</Text></div>}
+              {cleanup && nowRetention.groups.length > 1 && (
+                <div><Text type="warning" style={{ fontSize: 12 }}><WarningFilled /> Sets the same policy on all {ready.length} hosts.</Text></div>
+              )}
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 110px', gap: 8 }}>

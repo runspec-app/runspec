@@ -26,6 +26,19 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   None on uninstall) set the venvs on screen, group chips and a filter (host,
   group, venv name or path) narrow the list, and ticks the filter hides are
   kept and counted in the footer. Dev preview: `?fleet=N` adds N mock hosts.
+## [0.400.3] — 2026-11-11
+
+### Fixed
+- **Update venv no longer changes log cleanup unless you ask.** *Set the log
+  cleanup policy* now starts unticked, so venvs with a different policy on
+  purpose keep it. Every option also goes back to its default each time the
+  dialog opens; it used to keep the last update's choices, so a policy set on
+  one set of hosts was ready to go onto the next. Under the option the dialog
+  shows the policy the ticked hosts have now (or how they differ), and ticking
+  it starts the boxes from a shared policy, warning when it will make differing
+  hosts the same. Under the host list it names the other hosts with this venv
+  that won't change, including ones outside the active profile, which aren't
+  connected.
 
 ## [0.400.2] — 2026-11-11
 

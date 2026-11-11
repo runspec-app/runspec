@@ -96,11 +96,13 @@ Some common choices:
   box, or leave a box blank (or type `off`) to switch that step off. Untick
   **Log cleanup** to give the venv no policy.
 - **Update venv…** applies the same two settings to venvs that already exist.
-  Its preview shows each venv's current policy. With **Set the log cleanup
-  policy** ticked, the two boxes **replace** those settings: a blank box (or
+  Its preview shows each venv's current policy, and under the option it says
+  whether the ticked hosts share one. **Set the log cleanup policy** is off by
+  default, so venvs that differ on purpose stay that way. Ticked, it starts from
+  the shared policy (else 7d / 90d) and the two boxes **replace** those settings
+  on every ticked host: a blank box (or
   `off`) switches that step off. For example, leave *compress after* blank to
-  stop compressing. Any **keep at most** already set is kept. Untick the option
-  to leave each venv's policy as it is.
+  stop compressing. Any **keep at most** already set is kept.
 - **Logs** tab → a venv's logs → **Log cleanup…** shows the policy, when the
   last pass ran and what it did. You can:
   - change all three settings (blank or `off` switches one off);
