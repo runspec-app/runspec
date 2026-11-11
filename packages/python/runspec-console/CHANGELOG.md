@@ -9,6 +9,31 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.401.0] — 2026-11-11
+
+### Changed
+
+- **Forms run dialog is easier to read.** Each field now leads with its
+  `--name` in plain text instead of a boxed chip, followed by one muted type
+  word (`int`, `folder`, `secret`) and a `required` marker; optional args are
+  no longer labelled "optional" on every row, and an env-var default reads
+  `= $VAR`. Descriptions wrap to two lines (full text on hover) instead of
+  being clipped to one, and side-by-side fields keep their inputs lined up
+  when one description runs longer. Fields have more room between them, section headings
+  ("Inherited", "This command", "Credentials") are sentence case, the Debug
+  logging switch moved into the footer beside Run, and the credentials
+  explanation shrank to one line with the detail in a tooltip. The runbook
+  run dialog uses the same field layout.
+- The "instant" badge on a runnable card uses an icon instead of an emoji.
+
+### Fixed
+
+- **Path fields render in the dark theme.** The path input with its browse
+  button (Forms, Transfer, Provision venv, Settings) was a raw `<input>` that
+  missed Ant Design's styles, so it showed as a white, shorter box. It is now
+  a themed input at the same height as the other fields.
+- The `required` marker clears 4.5:1 contrast in the light theme.
+
 ## [0.400.4] — 2026-11-11
 
 ### Changed

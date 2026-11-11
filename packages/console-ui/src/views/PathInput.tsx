@@ -102,22 +102,24 @@ export function PathInput({ host, value, placeholder, dirsOnly, error, onChange,
     <>
       <div style={{ display: 'flex', gap: 6 }}>
         <AutoComplete
-          // No `size` here: antd ignores it (and warns) when a customize input
-          // child is supplied — the child <input> carries `ant-input-sm` itself.
           value={value ?? ''}
           options={options}
           onSearch={handleSearch}
           onChange={v => onChange?.(v)}
           style={{ width: '100%' }}
         >
-          <input
-            className="ant-input ant-input-sm"
+          {/* An antd <Input>, not a raw <input class="ant-input">: the raw element
+              misses antd's hashed CSS-in-JS styles, so it rendered as a white,
+              undersized box in the dark theme. Default size matches the other
+              form controls. */}
+          <Input
             placeholder={placeholder ?? (dirsOnly ? '/path/to/dir' : '/path/to/file')}
-            style={{ ...inputStyle, width: '100%', borderColor: error ? '#ff4d4f' : undefined }}
+            status={error ? 'error' : undefined}
+            style={inputStyle}
           />
         </AutoComplete>
         <Tooltip title={browseDisabled ? 'Enter a hostname to browse' : `Browse ${host}`}>
-          <Button size="small" icon={<FolderOpenOutlined />} disabled={browseDisabled} onClick={() => setBrowseOpen(true)} />
+          <Button icon={<FolderOpenOutlined />} aria-label={`Browse ${host}`} disabled={browseDisabled} onClick={() => setBrowseOpen(true)} />
         </Tooltip>
       </div>
       {browseOpen && (

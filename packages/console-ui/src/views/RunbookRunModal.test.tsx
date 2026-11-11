@@ -35,9 +35,9 @@ describe('RunbookRunModal layout', () => {
   it('lays params out in the Forms grid with descriptions on their own line', () => {
     render(<RunbookRunModal runbook={runbook()} hostNames={['web-01']} onClose={() => {}} onRun={() => {}} />)
     const desc = screen.getByText(LONG)
-    // Truncated (ellipsis) rather than wrapping beside the name.
-    expect(desc.style.whiteSpace).toBe('nowrap')
-    expect(desc.style.textOverflow).toBe('ellipsis')
+    // On its own line under the name, wrapped to at most two lines.
+    expect(desc.style.webkitLineClamp).toBe('2')
+    expect(desc.style.overflow).toBe('hidden')
     // Required params sit in a CSS grid.
     const grid = screen.getByText('keep').closest('div[style*="grid"]') as HTMLElement
     expect(grid).toBeTruthy()
