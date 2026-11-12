@@ -437,6 +437,10 @@ export interface OwnMcpClaudePlugin {
   tool_prefix?: string
   token_required?: boolean
   commands?: string[]
+  // Claude Desktop: the plugin as a .zip for Customize → Plugins → Upload, and
+  // a claude_desktop_config.json entry (via mcp-remote) for Desktop chat.
+  zip?: string
+  desktop_config?: string
 }
 
 // Settings → Config Sync. Where to pull the console's config files from (a git
@@ -1693,7 +1697,7 @@ export interface SharedSchedulesVenv {
   available: boolean               // false = no runspec-scheduler in this venv
   ok: boolean
   owner?: string                   // the venv root's owner ("" = unknown)
-  root_owned?: boolean             // root's venv: left out of shared schedules (0.405.0)
+  root_owned?: boolean             // root's venv: left out of shared schedules (0.406.0)
   error?: string
   status?: SharedSchedulesStatus
 }

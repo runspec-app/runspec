@@ -50,7 +50,7 @@ export function membersOf(
 }
 
 /** The provision request the form describes (shared by preflight and start). */
-/** Shown wherever a root-owned venv would get shared schedules (0.405.0). */
+/** Shown wherever a root-owned venv would get shared schedules (0.406.0). */
 export const ROOT_SCHEDULES_NOTE =
   "Root-owned venv: shared schedules aren't set up here (every fire would run as root). Schedule its runnables from This console instead."
 

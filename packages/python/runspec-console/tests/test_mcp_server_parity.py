@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 
 import pytest
 
@@ -658,10 +659,61 @@ def test_bridge_plugin_written_to_app_dir(tmp_path, monkeypatch):
     info = b.mcp_server_claude_plugin()
     assert info["ok"] and info["token_required"]
     assert info["path"] == str(tmp_path / "claude-plugin")
-    written = "".join(
-        p.read_text() for p in (tmp_path / "claude-plugin").rglob("*") if p.is_file()
+    written = b"".join(
+        p.read_bytes() for p in (tmp_path / "claude-plugin").rglob("*") if p.is_file()
     )
-    assert "s3cret" not in written
+    assert b"s3cret" not in written
+    assert "s3cret" not in info["desktop_config"]
+    assert info["zip"] == str(tmp_path / "claude-plugin" / "runspec-console.zip")
+
+
+def test_plugin_zip_for_claude_desktop(tmp_path):
+    import zipfile
+
+    from runspec_console import claude_plugin
+
+    def build(dest):
+        return claude_plugin.render(
+            dest,
+            slug="acme-console",
+            brand="Acme",
+            url="http://127.0.0.1:8765/mcp",
+            token_required=True,
+            version="1.2.3",
+        )
+
+    info = build(tmp_path / "a")
+    with zipfile.ZipFile(info["zip"]) as zf:
+        names = sorted(zf.namelist())
+        manifest = json.loads(zf.read(".claude-plugin/plugin.json"))
+    # Plugin at the zip root: what Desktop's Upload plugin takes.
+    assert names == [".claude-plugin/plugin.json", "agents/runspec-operator.md"]
+    assert manifest["name"] == "acme-console"
+    # Same plugin ⇒ same bytes, so re-uploading an unchanged zip is a no-op.
+    again = build(tmp_path / "b")
+    assert Path(info["zip"]).read_bytes() == Path(again["zip"]).read_bytes()
+
+
+def test_desktop_config_relays_through_mcp_remote():
+    from runspec_console.claude_plugin import desktop_config
+
+    plain = desktop_config("runspec-console", "http://127.0.0.1:8765/mcp", False)
+    assert plain == {
+        "mcpServers": {
+            "runspec-console": {
+                "command": "npx",
+                "args": [
+                    "-y",
+                    "mcp-remote",
+                    "http://127.0.0.1:8765/mcp",
+                    "--allow-http",
+                ],
+            }
+        }
+    }
+    entry = desktop_config("acme", "http://127.0.0.1:9/mcp", True)["mcpServers"]["acme"]
+    assert entry["args"][-2:] == ["--header", "Authorization:${AUTH_HEADER}"]
+    assert entry["env"] == {"AUTH_HEADER": "Bearer <your token>"}
 
 
 def test_system_prompt_names_only_published_tools():

@@ -9,7 +9,7 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.405.0] — 2026-11-12
+## [0.406.0] — 2026-11-12
 
 ### Changed
 
@@ -27,6 +27,20 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
     sync or restart) with a warning, and the rest of the update still runs.
   - The guide (`docs/shared-schedules.md`) says how to take
     `runspec-scheduler` back out of a root-owned venv.
+
+## [0.405.0] — 2026-11-12
+
+### Added
+
+- **The console's MCP server in Claude Desktop.** Claude Desktop's Upload
+  plugin takes only a `.zip`, so the Claude Code plugin is now also written as
+  `{app_dir}/claude-plugin/<plugin>.zip` (plugin at the zip root, same bytes
+  for the same plugin). Settings → MCP Server → Show install commands now has
+  a Claude Desktop part: the zip's path for Customize → Plugins → Add →
+  Upload plugin, and a `claude_desktop_config.json` entry for Desktop chat,
+  which reaches the console's HTTP server through `mcp-remote` (the token rides
+  an env var, shown as a placeholder). `claude_plugin.desktop_config`; see
+  docs/console-mcp-server.md → "Claude Desktop".
 
 ## [0.404.0] — 2026-11-12
 
