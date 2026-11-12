@@ -26,6 +26,7 @@ EXPECTED = {
     "get_memory_sync_config",
     "save_memory_sync_config",
     "memory_sync_status",
+    "knowledge_wiki_pages",
     "memory_sync_preview",
     "memory_sync_test",
     "memory_sync_push",

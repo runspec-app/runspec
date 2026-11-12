@@ -9,6 +9,39 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.409.0] — 2026-11-12
+
+### Added
+
+- **Knowledge → Tools: the team's runnable pages.** The Knowledge tab opens on a
+  new Tools view.
+  - It lists every discovered runnable, grouped by venv, and marks which have a
+    page in the team wiki repo (OKF Markdown, `runnables/<name>.md`).
+  - A runnable shows its header from its own `runspec.toml` (description, hosts,
+    verbs, args, autonomy) and the team page's sections.
+  - Tools named in the page's **Works with** section link to their pages, and
+    **Open in repo** opens the file on GitLab or GitHub.
+  - Below the page: team facts not on it yet, and a dashed **This console**
+    panel with the facts that never leave this console.
+  - Pages for tools not installed here, and the team's service, term and topic
+    pages, are listed too. The search box finds tools by name and pages by text.
+  - A tool with no page says so and how to add one.
+- **Pull reads the wiki's pages.** Memory Sync's Pull now also copies every page
+  under `runnables/`, `services/`, `terms/`, `topics/`, `teams/`, `runbooks/`
+  and `hosts/` into a local cache (`{app_dir}/knowledge/pages/`), from the same
+  branch or tag as the facts. Pages are read with the repo lint's own parser.
+  The console only reads them; the team edits pages in the repo.
+- **The agent gets the page first.** A runnable's notes on `search_runnables`
+  and `describe_runnable` now start with its page's **Works with** and **Watch
+  out for** bullets, then facts, within the same caps. `search_wiki` searches
+  pages too, and `wiki_page` returns a runnable's page sections as
+  `team_page`. New bridge method `knowledge_wiki_pages`.
+
+### Changed
+
+- The Knowledge tab's tabs are now **Tools · Inbox · Graph**; the graph is no
+  longer the first view.
+
 ## [0.408.0] — 2026-11-12
 
 ### Changed

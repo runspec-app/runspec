@@ -353,6 +353,7 @@ def bridge_stub(tmp_path, monkeypatch):
         _knowledge_config = Bridge._knowledge_config
         _knowledge_catalog = Bridge._knowledge_catalog
         _knowledge_local_names = Bridge._knowledge_local_names
+        _wiki_page_map = Bridge._wiki_page_map
         _knowledge_scoped = Bridge._knowledge_scoped
         knowledge_save_fact = Bridge.knowledge_save_fact
         knowledge_review = Bridge.knowledge_review
@@ -1028,3 +1029,80 @@ def test_bridge_wiki_notes_by_runnable_name(kn, tmp_path, monkeypatch):
     b._memory_migration_checked = True
     assert b._wiki_notes(["confluence", "ping"]) == {"confluence": ["keep macros"]}
     assert b._wiki_notes([]) == {}
+
+
+def test_team_pages_lead_the_notes_and_the_wiki_tools(kn, tmp_path, monkeypatch):
+    import json
+
+    from runspec_console import bridge_knowledge as bk
+    from runspec_console import config as config_mod
+    from runspec_console import wiki_pages
+
+    monkeypatch.setattr(config_mod, "knowledge_dir", lambda: tmp_path / "kd")
+    st = kn.KnowledgeStore(tmp_path / "kd", seed=False)
+    st.add_approved(
+        _fact(
+            kn, "keep macros", about=["runnable:cron"], kind="note", status="approved"
+        )
+    )
+    page = (
+        "---\ntype: Runnable\n---\n\n# cron\n\n"
+        "## Works with\n\n- run `list` first\n\n"
+        "## Watch out for\n\n- clear removes every line\n"
+    )
+    wiki_pages.write_cache(st.root, {"runnables/cron.md": page.encode()})
+
+    class B(bk.KnowledgeMixin):
+        def _memory_sync(self):
+            return {"url": "git@gitlab.example.com:ops/wiki.git", "branch": "main"}
+
+        def _memory_sync_state(self):
+            return {"last_pull_ref": "v1.4.0"}
+
+    b = B()
+    b._memory_migration_checked = True
+    assert b._wiki_notes(["cron"]) == {
+        "cron": ["run list first", "clear removes every line", "keep macros"]
+    }
+    assert b._wiki_notes(["cron"], per_entity=1) == {"cron": ["run list first"]}
+
+    out = json.loads(
+        b._run_knowledge_tool_inner("wiki_page", {"entity": "runnable:cron"}, "")
+    )
+    assert out["team_page"]["path"] == "runnables/cron.md"
+    assert [s["heading"] for s in out["team_page"]["sections"]] == [
+        "Works with",
+        "Watch out for",
+    ]
+    hits = json.loads(
+        b._run_knowledge_tool_inner("search_wiki", {"query": "clear"}, "")
+    )
+    assert hits["pages"][0]["entity"] == "runnable:cron"
+
+    got = b.knowledge_wiki_pages()
+    assert got["configured"] and got["ref"] == "v1.4.0"
+    assert got["repo_url"] == "https://gitlab.example.com/ops/wiki"
+    assert got["pages"][0]["url"] == (
+        "https://gitlab.example.com/ops/wiki/-/blob/v1.4.0/runnables/cron.md"
+    )
+
+
+def test_repo_web_urls(kn):
+    from runspec_console import wiki_pages as wp
+
+    assert (
+        wp.repo_web_url("https://tok@github.com/acme/wiki.git")
+        == "https://github.com/acme/wiki"
+    )
+    assert (
+        wp.repo_web_url("ssh://git@git.corp:2222/ops/wiki.git")
+        == "https://git.corp/ops/wiki"
+    )
+    assert (
+        wp.repo_web_url("git@github.com:acme/wiki.git")
+        == "https://github.com/acme/wiki"
+    )
+    assert wp.repo_file_url("https://github.com/acme/wiki", "main", "terms/bau.md") == (
+        "https://github.com/acme/wiki/blob/main/terms/bau.md"
+    )
+    assert wp.repo_web_url("/srv/git/wiki.git") == ""

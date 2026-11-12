@@ -1,0 +1,355 @@
+// The Knowledge tab's Tools view: the team tools wiki, read from the team's
+// wiki repo (OKF Markdown pages that Memory Sync's Pull caches locally).
+//
+// Left: every installed runnable, grouped by venv, with whether the team has a
+// page for it, plus the team's other pages (services, terms …). Centre: the
+// selected runnable — a header from its own runspec.toml (description, verbs,
+// args, autonomy, where it's installed), the team page's sections, and the
+// facts about it: team facts not yet on a page, and this console's own facts in
+// a dashed panel that never leaves this machine. Phase 1 only reads pages;
+// editing them happens in the repo.
+
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Alert, Button, Empty, Input, Space, Spin, Tag, Tooltip, Typography } from 'antd'
+import { ExportOutlined, ReloadOutlined, SearchOutlined, TeamOutlined } from '@ant-design/icons'
+
+import { bridge, type KnowledgeFact, type Runnable, type WikiPage, type WikiPages } from '../bridge'
+import { Markdown } from '../components/Markdown'
+import {
+  MONO_FONT, RADIUS, surfaces, textColor, textFaint, textMuted, textSecondary, useAccent, useIsDark, withAlpha,
+} from '../ThemeContext'
+
+const { Text } = Typography
+
+const LAST_TOOL_KEY = 'rs.knowledge.tool'
+
+export interface ToolEntry {
+  name: string
+  description: string
+  hosts: string[]
+  venvs: string[]
+  autonomy: string
+  verbs: string[]
+  args: string[]
+  page: WikiPage | null
+}
+
+/** One entry per runnable name (a tool on several hosts or venvs is one tool),
+ *  joined with its team page. Sorted by name. Pure, for tests. */
+export function buildToolIndex(runnables: Runnable[], pages: WikiPage[]): ToolEntry[] {
+  const byPage = new Map(pages.filter(p => p.entity.startsWith('runnable:')).map(p => [p.entity.slice(9), p]))
+  const byName = new Map<string, ToolEntry>()
+  for (const r of runnables) {
+    const e = byName.get(r.name) ?? {
+      name: r.name, description: r.description ?? '', hosts: [], venvs: [], autonomy: r.autonomy ?? '',
+      verbs: Object.keys(r.commands ?? {}),
+      args: (r.args ?? []).filter(a => a.type !== 'password').map(a => a.name),
+      page: byPage.get(r.name) ?? null,
+    }
+    if (!e.hosts.includes(r.host)) e.hosts.push(r.host)
+    if (r.group && !e.venvs.includes(r.group)) e.venvs.push(r.group)
+    if (!e.description && r.description) e.description = r.description
+    byName.set(r.name, e)
+  }
+  return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name))
+}
+
+/** Runnable names a piece of text mentions, longest first, so a "Works with"
+ *  bullet can link to the tools it names. A name that is a plain word (`deploy`)
+ *  only counts when it is marked up as code, bold or a link, so prose like
+ *  "after a deploy" doesn't link; a name like `tail-log` counts anywhere.
+ *  Pure, for tests. */
+export function mentionedTools(text: string, names: string[]): string[] {
+  const hits: string[] = []
+  const clean = (s: string) => ` ${s.toLowerCase().replace(/[`*[\]()]/g, ' ')} `
+  const marked = [...text.matchAll(/`([^`]+)`|\*\*([^*]+)\*\*|\[([^\]]+)\]\(/g)]
+    .map(m => m[1] ?? m[2] ?? m[3] ?? '').join(' | ')
+  let rest = clean(text)
+  let inMarked = clean(marked)
+  for (const n of [...names].sort((a, b) => b.length - a.length)) {
+    const esc = n.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const re = new RegExp(`[^a-z0-9_-]${esc}[^a-z0-9_-]`)
+    const plainWord = /^[a-z]+$/i.test(n)
+    if (re.test(plainWord ? inMarked : rest)) {
+      hits.push(n)
+      rest = rest.replace(re, ' ')
+      inMarked = inMarked.replace(re, ' ')
+    }
+  }
+  return hits
+}
+
+function pageText(p: WikiPage): string {
+  return [p.title, p.description, ...p.sections.map(s => `${s.heading} ${s.text}`)].join(' ').toLowerCase()
+}
+
+export function KnowledgeTools({ runnables, active, onOpenSettings }: {
+  runnables: Runnable[]
+  active: boolean
+  onOpenSettings?: (tab: string) => void
+}) {
+  const isDark = useIsDark()
+  const accent = useAccent()
+  const sf = surfaces(isDark)
+  const [wiki, setWiki] = useState<WikiPages | null>(null)
+  const [query, setQuery] = useState('')
+  const [filter, setFilter] = useState<'all' | 'nopage'>('all')
+  const [selected, setSelected] = useState<string>(() => {
+    try { return localStorage.getItem(LAST_TOOL_KEY) ?? '' } catch { return '' }
+  })
+  const [facts, setFacts] = useState<KnowledgeFact[] | null>(null)
+
+  const load = useCallback(() => {
+    bridge.knowledge_wiki_pages().then(setWiki).catch(() => setWiki({ pages: [], repo_url: '', ref: '', configured: false }))
+  }, [])
+  useEffect(() => { if (active) load() }, [active, load])
+  useEffect(() => {
+    window.addEventListener('runspec:knowledge_updated', load)
+    return () => window.removeEventListener('runspec:knowledge_updated', load)
+  }, [load])
+
+  const pages = useMemo(() => wiki?.pages ?? [], [wiki])
+  const tools = useMemo(() => buildToolIndex(runnables, pages), [runnables, pages])
+  const otherPages = useMemo(() => pages.filter(p => !p.entity.startsWith('runnable:')), [pages])
+  const names = useMemo(() => tools.map(t => t.name), [tools])
+  // Team pages for runnables this console hasn't discovered (not installed here).
+  const notHere = useMemo(() => {
+    const have = new Set(names)
+    return pages.filter(p => p.entity.startsWith('runnable:') && !have.has(p.entity.slice(9)))
+  }, [pages, names])
+
+  // Default: the last tool viewed, else the first with a page, else the first.
+  useEffect(() => {
+    if (!tools.length || wiki === null) return  // wait for the pages before choosing
+    if (selected && (tools.some(t => t.name === selected) || pages.some(p => p.entity === selected))) return
+    setSelected((tools.find(t => t.page) ?? tools[0]).name)
+  }, [tools, pages, selected, wiki])
+  useEffect(() => {
+    try { if (selected) localStorage.setItem(LAST_TOOL_KEY, selected) } catch { /* private window */ }
+  }, [selected])
+
+  const isPage = selected.includes(':')
+  const tool = isPage ? null : tools.find(t => t.name === selected) ?? null
+  const page = isPage ? pages.find(p => p.entity === selected) ?? null : tool?.page ?? null
+  const entity = isPage ? selected : `runnable:${selected}`
+
+  useEffect(() => {
+    if (!selected) { setFacts(null); return }
+    let live = true
+    setFacts(null)
+    bridge.knowledge_page(entity).then(p => { if (live) setFacts(p.facts) }).catch(() => { if (live) setFacts([]) })
+    return () => { live = false }
+  }, [entity, selected])
+
+  const q = query.trim().toLowerCase()
+  const shownTools = tools.filter(t => (filter === 'all' || !t.page) && (!q || t.name.toLowerCase().includes(q)))
+  const pageHits = q ? pages.filter(p => pageText(p).includes(q) && !(p.entity.startsWith('runnable:') && p.title.toLowerCase().includes(q))).slice(0, 8) : []
+  const byVenv = new Map<string, ToolEntry[]>()
+  for (const t of shownTools) {
+    const v = t.venvs[0] ?? 'other'
+    byVenv.set(v, [...(byVenv.get(v) ?? []), t])
+  }
+  const noPage = tools.filter(t => !t.page).length
+
+  const rowStyle = (on: boolean): React.CSSProperties => ({
+    display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '5px 8px', border: 0,
+    borderRadius: RADIUS.sm, cursor: 'pointer', textAlign: 'left', font: 'inherit',
+    background: on ? withAlpha(accent, 0.15) : 'transparent', color: on ? textColor(isDark) : textSecondary(isDark),
+  })
+
+  return (
+    <div data-testid="knowledge-tools" style={{ display: 'flex', flex: 1, minHeight: 0, border: `1px solid ${sf.border}`, borderRadius: RADIUS.md, overflow: 'hidden' }}>
+      {/* index */}
+      <nav aria-label="Tools" style={{ width: 250, flexShrink: 0, background: sf.sunken, borderRight: `1px solid ${sf.border}`, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        <div style={{ padding: 10, display: 'flex', flexDirection: 'column', gap: 8, borderBottom: `1px solid ${sf.border}` }}>
+          <Input size="small" allowClear prefix={<SearchOutlined style={{ color: textMuted(isDark) }} />}
+            placeholder="Find a tool or page" aria-label="Find a tool or page" value={query} onChange={e => setQuery(e.target.value)} />
+          <Space size={4} wrap>
+            <Tag.CheckableTag checked={filter === 'all'} onChange={() => setFilter('all')}>All tools {tools.length}</Tag.CheckableTag>
+            <Tag.CheckableTag checked={filter === 'nopage'} onChange={() => setFilter('nopage')}>No page yet {noPage}</Tag.CheckableTag>
+          </Space>
+        </div>
+        <div style={{ overflowY: 'auto', padding: 6, flex: 1 }}>
+          {pageHits.length > 0 && (
+            <div style={{ marginBottom: 6 }}>
+              <div style={groupStyle(isDark)}>Pages mentioning “{query.trim()}”</div>
+              {pageHits.map(p => (
+                <button key={p.path} type="button" style={rowStyle(selected === p.entity || selected === p.entity.slice(9))}
+                  onClick={() => setSelected(p.entity.startsWith('runnable:') ? p.entity.slice(9) : p.entity)}>
+                  <span style={{ fontFamily: MONO_FONT, fontSize: 13 }}>{p.title}</span>
+                  <span style={{ marginLeft: 'auto', fontSize: 11, color: textMuted(isDark) }}>{p.entity.split(':')[0]}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {[...byVenv.entries()].map(([venv, list]) => (
+            <div key={venv}>
+              <div style={groupStyle(isDark)}><span>{venv}</span><span style={{ fontFamily: MONO_FONT, fontWeight: 500, letterSpacing: 0 }}>{list.length}</span></div>
+              {list.map(t => (
+                <button key={t.name} type="button" aria-current={selected === t.name ? 'true' : undefined}
+                  data-testid={`tool-${t.name}`} style={rowStyle(selected === t.name)} onClick={() => setSelected(t.name)}>
+                  <span style={{ fontFamily: MONO_FONT, fontSize: 13 }}>{t.name}</span>
+                  <span style={{ marginLeft: 'auto', fontSize: 11 }}>
+                    {t.page
+                      ? <span aria-label="has a team page" title="Has a team page" style={{ display: 'inline-block', width: 7, height: 7, borderRadius: 4, background: '#52c41a' }} />
+                      : <span style={{ color: textFaint(isDark), fontStyle: 'italic' }}>no page</span>}
+                  </span>
+                </button>
+              ))}
+            </div>
+          ))}
+          {!q && filter === 'all' && notHere.length > 0 && (
+            <div>
+              <div style={groupStyle(isDark)}><span>Not installed here</span><span style={{ fontFamily: MONO_FONT, fontWeight: 500, letterSpacing: 0 }}>{notHere.length}</span></div>
+              {notHere.map(p => (
+                <button key={p.path} type="button" data-testid={`page-${p.entity}`} style={rowStyle(selected === p.entity)} onClick={() => setSelected(p.entity)}>
+                  <span style={{ fontFamily: MONO_FONT, fontSize: 13, color: textMuted(isDark) }}>{p.title}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {!q && filter === 'all' && otherPages.length > 0 && (
+            <div>
+              <div style={groupStyle(isDark)}><span>Other pages</span><span style={{ fontFamily: MONO_FONT, fontWeight: 500, letterSpacing: 0 }}>{otherPages.length}</span></div>
+              {otherPages.map(p => (
+                <button key={p.path} type="button" style={rowStyle(selected === p.entity)} onClick={() => setSelected(p.entity)}>
+                  <span style={{ fontSize: 13 }}>{p.title}</span>
+                  <span style={{ marginLeft: 'auto', fontSize: 11, color: textMuted(isDark) }}>{p.entity.split(':')[0]}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {tools.length === 0 && (
+            <Text style={{ display: 'block', padding: 10, fontSize: 12, color: textMuted(isDark) }}>
+              No runnables discovered yet. They appear here once the console has found the tools on your hosts.
+            </Text>
+          )}
+        </div>
+      </nav>
+
+      {/* page */}
+      <article aria-label={tool ? `${tool.name} page` : page?.title ?? 'Page'} style={{ flex: 1, minWidth: 0, overflowY: 'auto', padding: '18px 26px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {wiki === null ? (
+          <div style={{ display: 'flex', justifyContent: 'center', padding: 60 }}><Spin /></div>
+        ) : !tool && !page ? (
+          <Empty description={<span style={{ color: textSecondary(isDark) }}>Pick a tool on the left.</span>} style={{ marginTop: 60 }} />
+        ) : (
+          <>
+            {page && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, fontSize: 12, color: textMuted(isDark) }}>
+                <span style={{ fontFamily: MONO_FONT, color: textSecondary(isDark) }}>{page.path}</span>
+                {page.status && <Tag bordered={false} color={page.status === 'stable' ? 'green' : page.status === 'deprecated' ? 'red' : 'default'} style={{ margin: 0 }}>{page.status}</Tag>}
+                {page.verified_by && <span>verified by {page.verified_by.replace(/^human:/, '')}</span>}
+                {page.stale_after && page.stale_after < new Date().toISOString().slice(0, 10) && (
+                  <Tag bordered={false} color="gold" style={{ margin: 0 }}>check again: stale since {page.stale_after}</Tag>
+                )}
+                {page.url && (
+                  <a href={page.url} target="_blank" rel="noreferrer" style={{ marginLeft: 'auto', color: accent }}>
+                    <ExportOutlined /> Open in repo
+                  </a>
+                )}
+              </div>
+            )}
+            <div>
+              <h2 style={{ margin: 0, fontFamily: tool ? MONO_FONT : undefined, fontSize: 20, fontWeight: 650, color: textColor(isDark) }}>
+                {tool ? tool.name : page?.title}
+              </h2>
+              {(tool?.description || page?.description) && (
+                <p style={{ margin: '4px 0 0', color: textSecondary(isDark), maxWidth: '72ch' }}>{tool?.description || page?.description}</p>
+              )}
+              {tool && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 14px', marginTop: 8, fontSize: 12, color: textMuted(isDark) }}>
+                  <span title="From the runnable's runspec.toml">From runspec.toml</span>
+                  <span>on {tool.hosts.length} host{tool.hosts.length === 1 ? '' : 's'}{tool.hosts.length <= 3 ? `: ${tool.hosts.join(', ')}` : ''}</span>
+                  {tool.autonomy && <span>{tool.autonomy}</span>}
+                  {tool.verbs.length > 0 && <span>verbs: <span style={{ fontFamily: MONO_FONT }}>{tool.verbs.slice(0, 8).join(' ')}{tool.verbs.length > 8 ? ' …' : ''}</span></span>}
+                  {tool.args.length > 0 && <span>args: <span style={{ fontFamily: MONO_FONT }}>{tool.args.slice(0, 8).join(' ')}{tool.args.length > 8 ? ' …' : ''}</span></span>}
+                </div>
+              )}
+            </div>
+
+            {page?.error && <Alert type="warning" showIcon message={`${page.path}: ${page.error}. It is shown as written.`} />}
+
+            {page ? page.sections.map((s, i) => {
+              const linked = /^works with$/i.test(s.heading) ? mentionedTools(s.text, names).filter(n => n !== tool?.name) : []
+              return (
+                <section key={i}>
+                  {s.heading && <h3 style={headingStyle(isDark)}>{s.heading}</h3>}
+                  <div style={{ maxWidth: '76ch' }}><Markdown color={textColor(isDark)} fontSize={14}>{s.text}</Markdown></div>
+                  {linked.length > 0 && (
+                    <Space size={4} wrap style={{ marginTop: 4 }}>
+                      {linked.map(n => (
+                        <Tag key={n} bordered={false} style={{ cursor: 'pointer', fontFamily: MONO_FONT, color: accent, background: withAlpha(accent, 0.12) }}
+                          onClick={() => setSelected(n)}>{n} →</Tag>
+                      ))}
+                    </Space>
+                  )}
+                </section>
+              )
+            }) : (
+              <div data-testid="no-page" style={{ padding: '14px 16px', borderRadius: RADIUS.md, background: sf.raised, border: `1px solid ${sf.border}` }}>
+                <Text style={{ color: textColor(isDark) }}>No team page for <span style={{ fontFamily: MONO_FONT }}>{tool?.name}</span> yet.</Text>
+                <div style={{ marginTop: 4, color: textSecondary(isDark), fontSize: 13 }}>
+                  {wiki.configured
+                    ? <>Add <span style={{ fontFamily: MONO_FONT }}>runnables/{tool?.name}.md</span> to the team wiki with “What it's for”, “Works with” and “Watch out for”, then Pull.</>
+                    : <>Set up a team wiki repo to share pages with your team.</>}
+                </div>
+                {!wiki.configured && (
+                  <Button size="small" icon={<TeamOutlined />} style={{ marginTop: 8 }} onClick={() => onOpenSettings?.('memorySync')}>Share with team</Button>
+                )}
+                {wiki.configured && pages.length === 0 && (
+                  <Button size="small" icon={<ReloadOutlined />} style={{ marginTop: 8 }} onClick={() => bridge.memory_sync_pull().then(load).catch(load)}>Pull the team wiki</Button>
+                )}
+              </div>
+            )}
+
+            <ToolFacts facts={facts} />
+          </>
+        )}
+      </article>
+    </div>
+  )
+}
+
+function ToolFacts({ facts }: { facts: KnowledgeFact[] | null }) {
+  const isDark = useIsDark()
+  if (facts === null) return null
+  const live = facts.filter(f => f.status !== 'retired')
+  const team = live.filter(f => f.scope !== 'local' && f.status === 'approved')
+  const local = live.filter(f => f.scope === 'local')
+  return (
+    <>
+      {team.length > 0 && (
+        <section>
+          <h3 style={headingStyle(isDark)}>Team facts not on the page yet</h3>
+          <ul style={{ margin: 0, paddingLeft: 18, display: 'grid', gap: 4, color: textColor(isDark), maxWidth: '76ch' }}>
+            {team.map(f => <li key={f.id}>{f.text}</li>)}
+          </ul>
+        </section>
+      )}
+      {local.length > 0 && (
+        <details data-testid="this-console-facts" style={{ border: `1px dashed ${surfaces(isDark).borderStrong}`, borderRadius: RADIUS.md, padding: '8px 12px', color: textSecondary(isDark) }}>
+          <summary style={{ cursor: 'pointer' }}>
+            <Tooltip title="Facts tied to this console's own hosts, schedules or history. They help the assistant here and are never shared.">
+              <span>This console · {local.length} fact{local.length === 1 ? '' : 's'}, never shared</span>
+            </Tooltip>
+          </summary>
+          <ul style={{ margin: '6px 0 0', paddingLeft: 18, display: 'grid', gap: 4 }}>
+            {local.map(f => <li key={f.id}>{f.text}</li>)}
+          </ul>
+        </details>
+      )}
+    </>
+  )
+}
+
+function groupStyle(isDark: boolean): React.CSSProperties {
+  return {
+    display: 'flex', justifyContent: 'space-between', padding: '10px 8px 4px', fontSize: 11, fontWeight: 600,
+    letterSpacing: '0.06em', textTransform: 'uppercase', color: textSecondary(isDark),
+  }
+}
+
+function headingStyle(isDark: boolean): React.CSSProperties {
+  return { margin: '0 0 6px', fontSize: 12, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: textMuted(isDark) }
+}

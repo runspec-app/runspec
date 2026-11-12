@@ -38,6 +38,7 @@ from typing import Any
 from . import config as config_mod
 from . import conversations as conv_mod
 from . import knowledge as kn
+from . import wiki_pages
 
 logger = logging.getLogger(__name__)
 
@@ -108,8 +109,77 @@ class KnowledgeMixin:
             )
         except Exception:  # noqa: BLE001 — never sink a search on the wiki
             logger.debug("wiki notes unavailable", exc_info=True)
+            notes = {}
+        # The team's page for the runnable comes first: its "Works with" and
+        # "Watch out for" bullets, then facts, within the same per-runnable cap.
+        pages = self._wiki_page_map()
+        out: dict[str, list[str]] = {}
+        for n in names:
+            ref = f"runnable:{n}"
+            merged: list[str] = []
+            for text in wiki_pages.notes(pages[ref]) if ref in pages else []:
+                cut = text[: kn.NOTE_MAX_CHARS]
+                if cut not in merged:
+                    merged.append(cut)
+            for text in notes.get(ref, []):
+                if text not in merged:
+                    merged.append(text)
+            if merged:
+                out[n] = merged[:per_entity]
+        return out
+
+    def _wiki_page_map(self) -> dict[str, dict[str, Any]]:
+        """``{entity: parsed page}`` for the pages Pull cached, parsed once per
+        change to the cache (keyed on each file's path, size and mtime)."""
+        try:
+            cache = self._knowledge_store().root / wiki_pages.PAGES_DIR
+            key = (
+                tuple(
+                    sorted(
+                        (str(p), p.stat().st_mtime_ns, p.stat().st_size)
+                        for p in cache.rglob("*.md")
+                    )
+                )
+                if cache.is_dir()
+                else ()
+            )
+        except OSError:
             return {}
-        return {kn.entity_name(k): v for k, v in notes.items()}
+        memo = getattr(self, "_wiki_pages_memo", None)
+        if memo is not None and memo[0] == key:
+            return memo[1]
+        try:
+            pages = wiki_pages.read_cache(self._knowledge_store().root)
+        except Exception:  # noqa: BLE001 — a bad cache never sinks a search
+            logger.debug("wiki pages unreadable", exc_info=True)
+            pages = []
+        mapping = {p["entity"]: p for p in pages if p.get("entity")}
+        self._wiki_pages_memo = (key, mapping)
+        return mapping
+
+    def knowledge_wiki_pages(self) -> dict[str, Any]:
+        """The team's wiki pages Pull cached, parsed, for the Knowledge tab:
+        ``{pages, repo_url, ref}`` — each page with ``url`` (its file on the
+        repo's web UI, when that can be worked out)."""
+        pages = list(self._wiki_page_map().values())
+        try:
+            ms = self._memory_sync()  # type: ignore[attr-defined]
+            state = self._memory_sync_state()  # type: ignore[attr-defined]
+            url = str(ms.get("url") or "")
+            ref = str(state.get("last_pull_ref") or ms.get("branch") or "")
+        except Exception:  # noqa: BLE001
+            url, ref = "", ""
+        out = []
+        for page in sorted(pages, key=lambda p: str(p.get("path", ""))):
+            out.append(
+                {**page, "url": wiki_pages.repo_file_url(url, ref, page["path"])}
+            )
+        return {
+            "pages": out,
+            "repo_url": wiki_pages.repo_web_url(url),
+            "ref": ref,
+            "configured": bool(url),
+        }
 
     def _migrate_memory(self, store: kn.KnowledgeStore) -> dict[str, int] | None:
         """One-time move of the older agent memory (``runspec_memory.toml``, the
@@ -437,9 +507,20 @@ class KnowledgeMixin:
                     limit=limit,
                 )
             )
-            if not hits:
+            page_hits = wiki_pages.search(
+                list(self._wiki_page_map().values()),
+                str(ti.get("query") or ""),
+                limit=min(limit, 5),
+            )
+            entity = str(ti.get("entity") or "").strip()
+            if entity:
+                page_hits = [h for h in page_hits if h["entity"] == entity]
+            if not hits and not page_hits:
                 return "No wiki facts match. If you learn the answer, propose_fact it."
-            return json.dumps({"facts": [_brief(f, pins=pins) for f in hits]})
+            out: dict[str, Any] = {"facts": [_brief(f, pins=pins) for f in hits]}
+            if page_hits:
+                out = {"pages": page_hits, **out}
+            return json.dumps(out)
         if name == "wiki_page":
             entity = str(ti.get("entity") or "").strip()
             if not entity:
@@ -447,9 +528,19 @@ class KnowledgeMixin:
             page = self._knowledge_query(
                 lambda idx: idx.page(entity, include_pending=False)
             )
-            if not page["facts"]:
+            team = self._wiki_page_map().get(page["entity"])
+            if not page["facts"] and team is None:
                 return f"No wiki page for {page['entity']} yet."
             page["facts"] = [_brief(f, pins=pins) for f in page["facts"]]
+            if team is not None:
+                page["team_page"] = {
+                    "path": team["path"],
+                    "title": team.get("title", ""),
+                    "sections": [
+                        {"heading": s["heading"], "text": s["text"]}
+                        for s in team.get("sections") or []
+                    ],
+                }
             return json.dumps(page)
         if name == "wiki_graph":
             g = self._knowledge_query(

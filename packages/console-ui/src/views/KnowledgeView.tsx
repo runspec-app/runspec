@@ -20,7 +20,7 @@ import {
 
 import {
   bridge, type KnowledgeEdge, type KnowledgeFact, type KnowledgeFactInput,
-  type KnowledgeNode, type KnowledgeOverview, type KnowledgePage,
+  type KnowledgeNode, type KnowledgeOverview, type KnowledgePage, type Runnable,
 } from '../bridge'
 import {
   MONO_FONT, RADIUS, surfaces, textColor, textMuted, textSecondary, useAccent,
@@ -31,6 +31,7 @@ import {
   zoomAt, type Point, type View,
 } from './knowledgeGraph'
 import { KnowledgeSync, SyncResultBanner } from './KnowledgeSync'
+import { KnowledgeTools } from './KnowledgeTools'
 import type { SyncResult } from '../components/MemorySyncTab'
 
 const RANGE_OPTIONS = [
@@ -69,13 +70,15 @@ interface KnowledgeViewProps {
   aiEnabled: boolean
   // Opens Settings at a tab (Memory Sync's set-up button).
   onOpenSettings?: (tab: string) => void
+  // Discovered runnables, for the Tools view's index and page headers.
+  runnables?: Runnable[]
 }
 
-export function KnowledgeView({ active, aiEnabled, onOpenSettings }: KnowledgeViewProps) {
+export function KnowledgeView({ active, aiEnabled, onOpenSettings, runnables = [] }: KnowledgeViewProps) {
   const isDark = useIsDark()
   const [overview, setOverview] = useState<KnowledgeOverview | null>(null)
   const [loading, setLoading] = useState(false)
-  const [tab, setTab] = useState<'graph' | 'inbox'>('graph')
+  const [tab, setTab] = useState<'tools' | 'graph' | 'inbox'>('tools')
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null)
   const [selected, setSelected] = useState<string>('')
   const [page, setPage] = useState<KnowledgePage | null>(null)
@@ -255,15 +258,18 @@ export function KnowledgeView({ active, aiEnabled, onOpenSettings }: KnowledgeVi
 
       <Tabs
         activeKey={tab}
-        onChange={k => setTab(k as 'graph' | 'inbox')}
+        onChange={k => setTab(k as 'tools' | 'graph' | 'inbox')}
         items={[
-          { key: 'graph', label: 'Graph' },
+          { key: 'tools', label: 'Tools' },
           { key: 'inbox', label: <Badge count={inboxCount} size="small" offset={[8, -2]}>Inbox</Badge> },
+          { key: 'graph', label: 'Graph' },
         ]}
         style={{ marginBottom: -8 }}
       />
 
-      {loading && !overview ? (
+      {tab === 'tools' ? (
+        <KnowledgeTools runnables={runnables} active={active} onOpenSettings={onOpenSettings} />
+      ) : loading && !overview ? (
         <div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin /></div>
       ) : tab === 'inbox' ? (
         <Inbox

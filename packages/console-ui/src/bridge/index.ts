@@ -1068,6 +1068,34 @@ export interface MemorySyncConfig {
   path: string
   engine: string | null  // null = the git-sync extra isn't installed
 }
+// One page of the team wiki repo (runnables/<name>.md, terms/<term>.md …).
+export interface WikiPageSection {
+  heading: string      // '' for text before the first ## heading
+  text: string         // the section's Markdown
+  bullets: string[]
+}
+
+export interface WikiPage {
+  path: string         // e.g. 'runnables/http-check.md'
+  entity: string       // e.g. 'runnable:http-check'
+  type: string         // OKF frontmatter type: 'Runnable', 'Term' …
+  title: string
+  description: string
+  status: string       // 'draft' | 'stable' | 'deprecated' | ''
+  stale_after: string  // ISO date or ''
+  verified_by: string
+  sections: WikiPageSection[]
+  url: string          // the file on the repo's web UI, or ''
+  error?: string       // the page couldn't be read cleanly
+}
+
+export interface WikiPages {
+  pages: WikiPage[]
+  repo_url: string
+  ref: string
+  configured: boolean  // a wiki repo is set up (Settings → Memory Sync)
+}
+
 export interface MemorySyncPreviewFact {
   id: string
   kind: string
@@ -3174,6 +3202,8 @@ export interface BridgeApi {
   get_memory_sync_config: () => Promise<MemorySyncConfig>
   save_memory_sync_config: (payload: Partial<MemorySyncSettings>) => Promise<{ ok: boolean; error?: string } & Partial<MemorySyncConfig>>
   memory_sync_status: () => Promise<MemorySyncStatus>
+  // The team wiki's pages (OKF Markdown) Memory Sync's Pull cached, parsed.
+  knowledge_wiki_pages: () => Promise<WikiPages>
   // What a push would share and what it keeps on this console, fact by fact.
   memory_sync_preview: () => Promise<MemorySyncPreview>
   // One ls-remote: is the repo reachable, do the team / contrib branches exist yet.
