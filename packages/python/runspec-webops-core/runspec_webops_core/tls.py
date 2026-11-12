@@ -201,8 +201,8 @@ def client_ssl_context(insecure: bool = False, ca_bundle: str | None = None) -> 
 def _peer_chain(ssock: ssl.SSLSocket) -> list[CertInfo]:
     """Return the server-presented certificate chain (leaf first).
 
-    Prefers the public ``SSLSocket.get_unverified_chain()`` (Python 3.13+),
-    falls back to the underlying ``_sslobj`` method (3.10–3.12), and finally to
+    Prefers the public ``SSLSocket.get_unverified_chain()`` (Python 3.13+,
+    which returns DER bytes), falls back to the underlying ``_sslobj`` method (3.10–3.12), and finally to
     the leaf-only certificate via ``getpeercert`` when neither is available.
     """
     getter = getattr(ssock, "get_unverified_chain", None)
@@ -218,8 +218,14 @@ def _peer_chain(ssock: ssl.SSLSocket) -> list[CertInfo]:
         if raw:
             out: list[CertInfo] = []
             for cert in raw:
-                der = ssl.PEM_cert_to_DER_cert(cert.public_bytes())
-                out.append(cert_info_from_ssl(cert.get_info(), der))
+                if isinstance(cert, (bytes, bytearray)):
+                    # Python 3.13+ public API: DER-encoded bytes.
+                    der = bytes(cert)
+                    out.append(cert_info_from_ssl(_decode_der(der), der))
+                else:
+                    # 3.10–3.12 ``_sslobj`` method: ``_ssl.Certificate`` objects.
+                    der = ssl.PEM_cert_to_DER_cert(cert.public_bytes())
+                    out.append(cert_info_from_ssl(cert.get_info(), der))
             return out
 
     # Fallback: only the leaf is recoverable on this interpreter.

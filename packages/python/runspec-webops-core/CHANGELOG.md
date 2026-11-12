@@ -1,5 +1,14 @@
 # runspec-webops-core Changelog
 
+## [0.3.2] — 2026-11-12
+
+### Fixed
+
+- `connect_peer` (behind `cert-check`, `cert-chain` and `tls-info`) failed on
+  Python 3.13+ with `'bytes' object has no attribute 'public_bytes'`: the public
+  `SSLSocket.get_unverified_chain()` returns DER bytes, not certificate objects.
+  Both shapes are read now.
+
 ## [0.3.1] — 2026-11-05
 
 ### Fixed

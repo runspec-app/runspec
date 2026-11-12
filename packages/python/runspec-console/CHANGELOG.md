@@ -9,7 +9,7 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.407.0] — 2026-11-12
+## [0.408.0] — 2026-11-12
 
 ### Changed
 
@@ -52,6 +52,19 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   view whose side panel lists them; before, nothing visible happened.
 - The Capture tooltip no longer says it reads "usual args", and the fact editor's
   examples lead with a runnable instead of a host and a local path.
+
+## [0.407.0] — 2026-11-12
+
+### Added
+
+- Each tool the console's MCP server publishes now ends its description with its
+  approval level, e.g. `Approval: confirm (waits for the operator to approve it in
+  the runspec console).`, so a client like Claude Code knows before calling which
+  tools wait for the Approve card. A runnable-style tool whose subcommands differ
+  lists them grouped by level. The `[mcp_server] default_autonomy` floor is
+  included (`mcp_server.approval_note`).
+- The instructions the server sends a connecting client say so (not in
+  `tool_mode = "search"`, which lists no tools).
 
 ## [0.406.0] — 2026-11-12
 

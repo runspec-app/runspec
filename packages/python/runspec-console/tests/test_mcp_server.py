@@ -671,7 +671,7 @@ def test_runnable_style_flat_runnable_has_no_command_block():
     t = m.build_tools([flat], style="runnable")[0][0]
     assert "value" in t.input_schema["properties"]
     assert "Set `command`" not in t.description
-    assert t.description == "Echo a value."
+    assert t.description.split("\n\n")[0] == "Echo a value."
 
 
 def test_runnable_style_shared_arg_lists_both_commands():
@@ -804,3 +804,45 @@ def test_long_leaf_on_two_hosts_gets_distinct_names():
     names = [t.name for t in tools]
     assert len(set(names)) == 2
     assert all(len(n) <= 128 for n in names)
+
+
+def test_description_names_approval_level_leaf() -> None:
+    # A client sees before calling whether a tool waits for the Approve card.
+    read = _runnable(
+        "show", host="local", description="Show it.", autonomy="autonomous"
+    )
+    write = _runnable("put", host="local", description="Write it.", autonomy="confirm")
+    gone = _runnable("wipe", host="local", description="Wipe it.", autonomy="manual")
+    tools = {t.name: t for t in m.build_tools([read, write, gone])[0]}
+    assert tools["show"].description.endswith(
+        "Approval: autonomous (runs at once, no approval needed)."
+    )
+    assert (
+        "Approval: confirm (waits for the operator to approve it"
+        in tools["put"].description
+    )
+    assert tools["wipe"].description.endswith(
+        "Approval: manual (refused here; only the operator can run it, in the console)."
+    )
+
+
+def test_description_approval_floor_applies() -> None:
+    # The [mcp_server] default_autonomy floor is what gates, so it's what's shown.
+    read = _runnable("show", host="local", autonomy="autonomous")
+    t = m.build_tools([read], default_autonomy="confirm")[0][0]
+    assert "Approval: confirm" in t.description
+
+
+def test_description_approval_by_command() -> None:
+    # A runnable-style tool whose verbs differ lists them grouped by level.
+    node = _runnable("files", host="local", description="Files.")
+    node["requireCommand"] = True
+    node["commands"] = {
+        "read": {"name": "read", "autonomy": "autonomous", "args": []},
+        "write": {"name": "write", "autonomy": "confirm", "args": []},
+    }
+    t = m.build_tools([node], style="runnable")[0][0]
+    note = t.description.rsplit("\n\n", 1)[-1]
+    assert note.startswith("Approval by command: autonomous (runs at once")
+    assert ": read; confirm (waits for the operator" in note
+    assert note.endswith(": write.")

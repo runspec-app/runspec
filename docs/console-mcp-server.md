@@ -309,6 +309,13 @@ per-arg autonomy and the optional floor):
 | `manual` | refused (operator-only; run it yourself in the console) |
 | `password` args | omitted from the tool schema entirely |
 
+Each tool's description ends with its level, so the client knows before calling
+which tools wait for you, e.g. `Approval: confirm (waits for the operator to
+approve it in the runspec console).` A runnable-style tool whose subcommands
+differ groups them: `Approval by command: autonomous (…): list, show; confirm
+(…): add, remove.` The floor is included. A call that writes a saved secret
+(`{{secret:…}}`) waits for approval even when the line says `autonomous`.
+
 Every call shows as a card in the Console, in a read-only chat of its own: each
 MCP client session (one Claude Code or Cursor window, say) gets one chat, labelled
 with the client's name, opened and selected on its first call. Later calls from
