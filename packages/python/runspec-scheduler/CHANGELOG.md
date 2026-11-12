@@ -2,6 +2,21 @@
 
 All notable changes to `runspec-scheduler` are documented here.
 
+## [0.10.4] — 2026-11-12
+
+### Fixed
+
+- **Switching keeper takes the old one down.** Installing systemd --user on a
+  venv that had the crontab watchdog (for example after an earlier
+  systemd --user attempt fell back to it) left the watchdog lines in place, and
+  the daemon the watchdog had started kept the venv lock. systemd's daemon then
+  exited at once, and with `Restart=on-failure` systemd left it stopped, while
+  the old daemon carried on with old code. `install-service --write` now
+  removes the other keepers first: their crontab lines, the systemd --user unit
+  (`disable --now`) or the venv's supervisord (`shutdown`). It also stops a
+  daemon the new keeper didn't start. Reinstalling the same keeper leaves the
+  daemon running.
+
 ## [0.10.3] — 2026-11-12
 
 ### Fixed
