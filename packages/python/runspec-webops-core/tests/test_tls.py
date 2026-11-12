@@ -132,3 +132,30 @@ def test_chain_report_marks_root() -> None:
     rep = chain_report(peer, now=NOW)
     assert [link["self_signed"] for link in rep] == [False, True]
     assert rep[0]["days_remaining"] == 30
+
+
+def _a_der_cert() -> bytes:
+    """Any real DER certificate: the first system CA (no network needed)."""
+    certs = ssl.create_default_context().get_ca_certs(binary_form=True)
+    if not certs:
+        pytest.skip("no system CA certificates to use as a sample")
+    return certs[0]
+
+
+def test_peer_chain_reads_der_bytes_from_public_api() -> None:
+    # Python 3.13+ ``SSLSocket.get_unverified_chain()`` returns DER bytes, not
+    # ``_ssl.Certificate`` objects; this used to fail with
+    # "'bytes' object has no attribute 'public_bytes'".
+    from runspec_webops_core.tls import _peer_chain
+
+    der = _a_der_cert()
+
+    class FakeSocket:
+        def get_unverified_chain(self) -> list[bytes]:
+            return [der, der]
+
+    chain = _peer_chain(FakeSocket())  # type: ignore[arg-type]
+    assert len(chain) == 2
+    assert chain[0].subject
+    assert chain[0].valid_to
+    assert chain[0].fingerprint_sha256
