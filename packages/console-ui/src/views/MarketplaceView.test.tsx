@@ -275,6 +275,7 @@ describe('MarketplaceView', () => {
     await waitFor(() => expect(install).toHaveBeenCalled())
     expect(install.mock.calls[0][0]).toEqual({
       package: 'runspec-linux', upgrade: true, reinstall: false, repo: 'pypi', upgrade_runspec: false,
+      expect_version: '0.13.2',
       targets: [{ id: 'web-01::/opt/venvs/ops', run_as: 'svc', become_method: 'sudo' }],
     })
     // The picker hands off to the op's live view (closable while it runs).
@@ -490,6 +491,12 @@ describe('op helpers', () => {
     r = applyProgress(r, { phase: 'done', target: 'web-01::/opt/venvs/ops', ok: true, exit_code: 0, summary: 'ok' })
     expect(r.targets![0]).toMatchObject({ state: 'done', ok: true, lines: ['hi'] })
     expect(applyProgress(r, { phase: 'line', target: 'other', line: 'x' }).targets).toEqual(r.targets)
+  })
+
+  it('marks a venv pip left on the old version as not updated', () => {
+    const r = applyProgress(RUNNING_OP, { phase: 'done', target: 'web-01::/opt/venvs/ops', ok: false, exit_code: 0, summary: 'still 1.1.0', not_updated: true })
+    expect(r.targets![0]).toMatchObject({ state: 'done', ok: false, not_updated: true })
+    expect(targetStatus(r.targets![0])).toBe('failed')
   })
 
   it('classifies targets, counts them, and picks the last output line', () => {

@@ -914,6 +914,15 @@ class MarketplaceMixin:
             and mp.normalize_name(re.split(r"[\[=<>!~;\s]", spec, maxsplit=1)[0])
             != _RUNSPEC_DIST
         )
+        # The version the picker offered as "latest" (from this console's view of
+        # the index). A host whose own index lags behind it gets "Requirement
+        # already satisfied" and exit 0 from `pip install -U`, so after pip the
+        # venv's version is read back and checked against this.
+        expect_version = str(payload.get("expect_version") or "").strip()
+        if expect_version and (
+            action != "install" or not mp._VERSION_RE.match(expect_version)
+        ):
+            expect_version = ""
         opts = {
             "upgrade": bool(payload.get("upgrade")) or upgrade_runspec,
             "reinstall": bool(payload.get("reinstall")),
@@ -934,6 +943,7 @@ class MarketplaceMixin:
                 "reinstall": opts["reinstall"],
                 "pre": opts["pre"],
                 "upgrade_runspec": upgrade_runspec,
+                "expect_version": expect_version,
             },
             "specs": [spec, _RUNSPEC_DIST] if upgrade_runspec else [spec],
             "targets": {
@@ -1083,11 +1093,42 @@ class MarketplaceMixin:
             res["exit_code"] = code
             res["ok"] = code == 0
             res["summary"] = mp.summarize_pip_output(out) or f"exit {code}"
+            if res["ok"] and not cancel.is_set() and _behind(t):
+                # pip's own HTTP cache keeps an index page for up to 10 minutes
+                # (PyPI sends max-age=600), so a release that just landed can be
+                # invisible to it: run once more without the cache.
+                _line("(still on the old version: retrying without pip's cache)")
+                try:
+                    code, out = self._run_on_target(
+                        t,
+                        mp.pip_install_argv(
+                            python, record["specs"], **opts, no_cache=True
+                        ),
+                        env=env,
+                        run_as=str(t.get("run_as") or ""),
+                        become_method=str(t.get("become_method") or "sudo"),
+                        timeout=_PIP_TIMEOUT_S,
+                        on_line=_line,
+                        proc_sink=_sink,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    code, out = -1, str(exc)
+                finally:
+                    procs.pop(t["id"], None)
+                res["exit_code"] = code
+                res["ok"] = code == 0
+                res["summary"] = mp.summarize_pip_output(out) or f"exit {code}"
+                if res["ok"]:
+                    have = _behind(t)
+                    if have:
+                        _not_updated(res, have, _line)
             if res["ok"] and not cancel.is_set():
                 _sync(t, res, _line)
             row.update(
                 state="done", ok=res["ok"], exit_code=code, summary=res["summary"]
             )
+            if res.get("not_updated"):
+                row["not_updated"] = True
             self._marketplace_progress(
                 op=op,
                 phase="done",
@@ -1095,8 +1136,44 @@ class MarketplaceMixin:
                 ok=res["ok"],
                 exit_code=code,
                 summary=res["summary"],
+                not_updated=bool(res.get("not_updated")),
             )
             return res
+
+        expect = str(record["options"].get("expect_version") or "")
+        dist = mp.normalize_name(re.split(r"[\[=<>!~;\s]", spec, maxsplit=1)[0])
+
+        def _behind(t: dict[str, Any]) -> str:
+            """The venv's version of the package when it is older than the one
+            the picker offered as latest, else "". pip exits 0 with "Requirement
+            already satisfied" when the host's index doesn't list the new
+            version yet, so this is read back after pip. A probe that fails
+            says nothing."""
+            if not expect:
+                return ""
+            try:
+                _, out = self._run_on_target(
+                    t, mp.probe_argv(str(t["python"])), timeout=_PROBE_TIMEOUT_S
+                )
+            except Exception:  # noqa: BLE001
+                return ""
+            data = mp.parse_probe_output(out)
+            have = str(((data or {}).get("dists") or {}).get(dist) or "")
+            return have if have and mp.compare_versions(have, expect) < 0 else ""
+
+        def _not_updated(
+            res: dict[str, Any], have: str, line: Callable[[str], None]
+        ) -> None:
+            res["ok"] = False
+            res["not_updated"] = True
+            res["installed_version"] = have
+            res["summary"] = (
+                f"pip finished, but {dist} is still {have} here (wanted {expect}). "
+                f"This host's package index doesn't offer {expect} yet; a proxy "
+                "index such as Nexus can serve an old list for a while. Try "
+                "again later, or pick the version to see what the index has."
+            )
+            line(res["summary"])
 
         def _sync(
             t: dict[str, Any], res: dict[str, Any], line: Callable[[str], None]
