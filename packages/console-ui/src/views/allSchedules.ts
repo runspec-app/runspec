@@ -108,6 +108,8 @@ export interface Collected {
   daemons: DaemonVenv[]
   /** `host/venv` of each venv with no runspec-scheduler installed. */
   without: string[]
+  /** Root-owned venvs, left out of shared schedules (``host/venv``). */
+  rootOwned: string[]
 }
 
 export const STATE_COLOR: Record<RowState, string> = {
@@ -289,6 +291,7 @@ export function collectRows(
   const notes: VenvNote[] = []
   const daemons: DaemonVenv[] = []
   const without: string[] = []
+  const rootOwned: string[] = []
   const editable: SchedulerVenv[] = []
 
   for (const s of consoleSchedules) {
@@ -327,6 +330,7 @@ export function collectRows(
     const venv = v.group
     const hostGroup = groups[host] ?? ''
     const base = `${host}::${venv}`
+    if (v.root_owned) { rootOwned.push(`${host}/${venv}`); continue }
     if (!v.available) { without.push(`${host}/${venv}`); continue }
     if (!v.ok || !v.status) {
       rows.push({
@@ -394,7 +398,7 @@ export function collectRows(
     }
   }
   editable.sort((a, b) => a.host.localeCompare(b.host) || a.venv.localeCompare(b.venv))
-  return { rows, venvs: editable, notes, daemons, without }
+  return { rows, venvs: editable, notes, daemons, without, rootOwned }
 }
 
 /** Does a row belong under a card? A can't-read venv shows on both host cards. */

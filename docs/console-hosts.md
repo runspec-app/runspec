@@ -141,6 +141,10 @@ supervisord and auto keepers. With the daemon picked, **Schedule time zone**
 them on*, *Ignore*) are written first with `runspec-scheduler settings`, so
 the daemon starts with them.
 
+Shared schedules aren't offered when **Run as** is `root`, and a host whose
+SSH login is root gets the venv without them (with a warning). See
+[Not in root-owned venvs](shared-schedules.md#not-in-root-owned-venvs).
+
 A host that fails after the venv folder was made (a misspelt package name, a
 pip error, a cancel) has its partial venv undone, so a retry at the same path
 isn't refused as "not empty": a folder the provision created is removed, a
@@ -192,6 +196,8 @@ Tick what to apply; each step runs as the venv's owner and is safe to repeat:
   `use cron` fails the daemon is left running so no schedule is lost). A keeper
   that can't be set up falls back as in Provision (crontab watchdog, else back
   to crontab).
+  A root-owned venv's schedules are left alone: the option is greyed out when
+  every picked venv is root's, and skipped with a warning otherwise.
   When the venv already has `runspec-scheduler`, the preview runs its
   `status` as the owner and shows what the choice moves: for example
   *4 crontab entries move to the daemon (5 schedules in all; 1 disabled)*,

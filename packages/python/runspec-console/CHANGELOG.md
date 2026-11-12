@@ -9,7 +9,7 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.405.0] — 2026-11-12
+## [0.407.0] — 2026-11-12
 
 ### Changed
 
@@ -53,6 +53,38 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 - The Capture tooltip no longer says it reads "usual args", and the fact editor's
   examples lead with a runnable instead of a host and a local path.
 
+## [0.406.0] — 2026-11-12
+
+### Changed
+
+- **Root-owned venvs get no shared schedules.** Every fire in such a venv
+  would run as root, and the console never becomes root to manage its
+  daemon, so root's runnables (for example `runspec-linux-root`) are scheduled
+  from This console instead.
+  - The Schedules tab no longer runs `runspec-scheduler status` in a venv owned
+    by root. It lists those venvs in a note as left out on purpose.
+  - Provision venv greys out *Shared schedules* when *Run as* is `root`, and a
+    host whose SSH login is root gets the venv without the scheduler, with a
+    warning.
+  - Update venv greys out *Shared schedules* when every picked venv is root's;
+    otherwise a root-owned venv is skipped for the scheduler steps (no install,
+    sync or restart) with a warning, and the rest of the update still runs.
+  - The guide (`docs/shared-schedules.md`) says how to take
+    `runspec-scheduler` back out of a root-owned venv.
+
+## [0.405.0] — 2026-11-12
+
+### Added
+
+- **The console's MCP server in Claude Desktop.** Claude Desktop's Upload
+  plugin takes only a `.zip`, so the Claude Code plugin is now also written as
+  `{app_dir}/claude-plugin/<plugin>.zip` (plugin at the zip root, same bytes
+  for the same plugin). Settings → MCP Server → Show install commands now has
+  a Claude Desktop part: the zip's path for Customize → Plugins → Add →
+  Upload plugin, and a `claude_desktop_config.json` entry for Desktop chat,
+  which reaches the console's HTTP server through `mcp-remote` (the token rides
+  an env var, shown as a placeholder). `claude_plugin.desktop_config`; see
+  docs/console-mcp-server.md → "Claude Desktop".
 
 ## [0.404.0] — 2026-11-12
 
