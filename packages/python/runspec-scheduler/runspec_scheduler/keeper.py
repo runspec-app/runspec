@@ -417,6 +417,17 @@ def plan_install(manager: str, *, facts: Facts | None = None, config: str | None
         if facts.systemd_version is None:
             p.error, p.hint = "there is no systemd on this host", "use --manager supervisor or --manager cron"
             return p
+        # Without a user manager to talk to, enabling the unit fails; say so
+        # before anything is written, so no half-installed unit is left behind
+        # for restart / status to mistake for this venv's keeper.
+        if not facts.user_bus:
+            if not facts.linger:
+                p.error = f"lingering is off for {facts.user}, so it has no systemd --user manager to run the daemon"
+                p.hint = f"ask root to run: sudo loginctl enable-linger {facts.user} (then try again), or use --manager supervisor or --manager cron"
+            else:
+                p.error = f"the systemd --user bus for {facts.user} doesn't answer"
+                p.hint = _login_shell_hint()
+            return p
         path = unit_dir() / unit_name()
         unit = render_unit(argv)
         p.actions += [
@@ -477,11 +488,30 @@ def plan_install(manager: str, *, facts: Facts | None = None, config: str | None
 # ── what's installed now ────────────────────────────────────────────────────────
 
 
-def installed(*, facts: Facts | None = None) -> list[dict[str, Any]]:
-    """The keepers this venv has, each ``{"manager", "where", ...}``."""
-    out: list[dict[str, Any]] = []
+def _enabled_link() -> Path:
+    """Where ``systemctl --user enable`` links the unit (``WantedBy=default.target``)."""
+    return unit_dir() / "default.target.wants" / unit_name()
+
+
+def _own_user_unit() -> Path | None:
+    """This venv's systemd --user unit file, enabled or not."""
     unit = unit_dir() / unit_name()
-    if unit.is_file() and str(_exe()) in unit.read_text(encoding="utf-8", errors="replace"):
+    with contextlib.suppress(OSError):
+        if unit.is_file() and str(_exe()) in unit.read_text(encoding="utf-8", errors="replace"):
+            return unit
+    return None
+
+
+def installed(*, facts: Facts | None = None) -> list[dict[str, Any]]:
+    """The keepers this venv has, each ``{"manager", "where", ...}``.
+
+    A systemd --user unit counts only once it is enabled: a unit file written
+    by an install that then failed (no user bus) keeps nothing running, and
+    treating it as the keeper sent restarts to a ``systemctl --user`` that
+    can't connect."""
+    out: list[dict[str, Any]] = []
+    unit = _own_user_unit()
+    if unit is not None and _enabled_link().is_symlink():
         out.append({"manager": "systemd-user", "where": str(unit)})
     sys_unit = system_unit_path()
     with contextlib.suppress(OSError):
@@ -533,6 +563,10 @@ def plan_remove(manager: str = "auto", *, config: str | None = None, facts: Fact
                 Action("unlink", f"delete {supervisor_conf()}", path=supervisor_conf()),
                 Action("rmdir", f"delete {supervisor_dir()} if nothing else is in it", path=supervisor_dir()),
             ]
+    stray = _own_user_unit()
+    if stray is not None and manager in ("auto", "systemd-user") and not any(k["manager"] == "systemd-user" for k in found):
+        # written but never enabled: nothing to disable, just the file to delete
+        p.actions.append(Action("unlink", f"delete {stray} (never enabled)", path=stray))
     if any(k["manager"] in ("supervisor", "cron") for k in found):
         if manager == "auto":
             keep: list[str] = []
@@ -620,10 +654,15 @@ def apply(plan: Plan) -> dict[str, Any]:
     if plan.error:
         return plan.to_dict(written=False)
     done: list[str] = []
+    before: list[tuple[Path, str | None]] = []  # files written so far + what they held
     for a in plan.actions:
         try:
             if a.kind == "write":
                 assert a.path is not None and a.content is not None
+                old = None
+                with contextlib.suppress(OSError):
+                    old = a.path.read_text(encoding="utf-8")
+                before.append((a.path, old))
                 a.path.parent.mkdir(parents=True, exist_ok=True)
                 tmp = a.path.with_name(f".{a.path.name}.tmp")
                 tmp.write_text(a.content, encoding="utf-8")
@@ -656,8 +695,21 @@ def apply(plan: Plan) -> dict[str, Any]:
             plan.error = f"{a.desc}: {exc}"
             if a.systemd_env and _is_bus_error(str(exc)):
                 plan.hint = _login_shell_hint()
-            out = plan.to_dict(written=bool(done))
+            # An install that fails part-way puts back the files it wrote, so
+            # a keeper that never started isn't left looking installed.
+            undone: list[str] = []
+            if plan.action == "install":
+                for path, old in reversed(before):
+                    with contextlib.suppress(OSError):
+                        if old is None:
+                            path.unlink(missing_ok=True)
+                        else:
+                            path.write_text(old, encoding="utf-8")
+                        undone.append(str(path))
+            out = plan.to_dict(written=bool(done) and not undone)
             out["done"] = done
+            if undone:
+                out["undone"] = undone
             return out
         done.append(a.desc)
     out = plan.to_dict(written=True)

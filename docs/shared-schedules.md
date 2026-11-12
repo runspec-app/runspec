@@ -176,10 +176,13 @@ sudo loginctl enable-linger svc-ops
 loginctl show-user svc-ops -p Linger            # Linger=yes
 ```
 
-`systemctl --user` needs that account's own session. A plain `sudo -u svc-ops`
-doesn't create one, so systemctl fails with *Failed to connect to bus: No medium
-found*. Use a login shell (`sudo -iu svc-ops`). When lingering is on,
-`install-service` finds the session in `/run/user/<uid>` by itself.
+`systemctl --user` needs that account's own user manager. A plain
+`sudo -u svc-ops` (which is how the console runs it) doesn't set one up. When
+lingering is on, the manager runs all the time and `install-service` finds it in
+`/run/user/<uid>` by itself. When lingering is off and the account has no login
+session, there is no manager, so `install-service --manager systemd-user`
+refuses before writing anything and says to turn lingering on (from 0.10.3).
+Before 0.10.3 it wrote the unit, failed to enable it, and left the file behind.
 
 ### supervisord in the venv
 
@@ -522,10 +525,18 @@ group- or world-writable, or owned by another account. Fix it with
 `status` as the venv owner with `sudo -n -u <owner>`. That needs passwordless
 sudo from your SSH login to the owner.
 
-***Failed to connect to bus: No medium found*.** `systemctl --user` was run
-without the account's own session. Use `sudo -iu <owner>` (a login shell) and
-check lingering is on. Or pick the supervisord or crontab-watchdog keeper, which
-don't need systemd.
+***Failed to connect to bus: No medium found*, or *Failed to connect to user
+scope bus … $XDG_RUNTIME_DIR not defined*.** `systemctl --user` found no user
+manager for the account. Turn lingering on (`sudo loginctl enable-linger
+<owner>`) and try again; from the console that is enough. Or pick the supervisord
+or crontab-watchdog keeper, which don't need systemd.
+
+**Restart says systemctl --user can't connect, but the venv uses another
+keeper.** A systemd --user install that failed before runspec-scheduler 0.10.3
+left its unit file behind, and restart took it for the keeper. Upgrade
+runspec-scheduler, which only counts an enabled unit. `install-service --remove
+--write` deletes the stray file, or delete
+`~/.config/systemd/user/runspec-scheduler-<venv>.service` as the owner.
 
 **CentOS 7.** Its systemd (219) can't run user services reliably, so `auto`
 never picks systemd --user there. Use supervisord or the crontab watchdog.

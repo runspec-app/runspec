@@ -124,7 +124,7 @@ def _systemctl_env(run_base: Path = Path("/run/user")) -> dict[str, str]:
 
 def _is_bus_error(text: str) -> bool:
     low = text.lower()
-    return "no medium found" in low or "failed to connect to bus" in low
+    return "no medium found" in low or "failed to connect to bus" in low or "failed to connect to user scope bus" in low or "xdg_runtime_dir" in low
 
 
 def _login_shell_hint() -> str:
