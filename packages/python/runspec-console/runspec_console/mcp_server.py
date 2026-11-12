@@ -625,6 +625,35 @@ def _tool_identity(tool: ExecTool) -> tuple[str, tuple[str, ...], str, str]:
     return (tool.host, tuple(tool.command_path), tool.runnable, tool.group)
 
 
+_APPROVAL_TEXT = {
+    "autonomous": "runs at once, no approval needed",
+    "supervised": "waits for the operator to approve it in the runspec console",
+    "confirm": "waits for the operator to approve it in the runspec console",
+    "manual": "refused here; only the operator can run it, in the console",
+}
+
+
+def approval_note(tool: ExecTool) -> str:
+    """One line saying whether a call waits for the operator's Approve card, so a
+    client knows before calling (MCP has no standard field for it). A
+    ``runnable``-style tool whose subcommands differ groups them by level. A call
+    that writes a saved secret (``{{secret:…}}``) always waits, whatever this says."""
+    by_level: dict[str, list[str]] = {}
+    for cmd, lvl in (tool.command_autonomy or {"": tool.autonomy}).items():
+        by_level.setdefault((lvl or "confirm").lower(), []).append(cmd)
+    if len(by_level) == 1:
+        level = next(iter(by_level))
+        text = _APPROVAL_TEXT.get(level, _APPROVAL_TEXT["confirm"])
+        return f"Approval: {level} ({text})."
+    order = ["autonomous", "supervised", "confirm", "manual"]
+    parts = []
+    for level in sorted(by_level, key=lambda x: order.index(x) if x in order else 2):
+        cmds = ", ".join(c or "(no command)" for c in by_level[level])
+        text = _APPROVAL_TEXT.get(level, _APPROVAL_TEXT["confirm"])
+        parts.append(f"{level} ({text}): {cmds}")
+    return "Approval by command: " + "; ".join(parts) + "."
+
+
 def _host_order(runnable: dict[str, Any]) -> tuple[bool, str]:
     """Sort key putting the console's own machine (``local``/no host) first, then
     hosts by name. ``sorted`` is stable, so each host's own order is kept."""
@@ -670,6 +699,8 @@ def build_tools(
                     cmd: escalate_autonomy([lvl, default_autonomy])
                     for cmd, lvl in tool.command_autonomy.items()
                 }
+        note = approval_note(tool)
+        tool.description = f"{tool.description}\n\n{note}".strip()
         name = tool.name
         existing = registry.get(name)
         if existing is not None and _tool_identity(existing) != _tool_identity(tool):

@@ -9,6 +9,17 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.406.0] — 2026-11-12
+
+### Added
+
+- Each tool the console's MCP server publishes now ends its description with its
+  approval level, e.g. `Approval: confirm (waits for the operator to approve it in
+  the runspec console).`, so a client like Claude Code knows before calling which
+  tools wait for the Approve card. A runnable-style tool whose subcommands differ
+  lists them grouped by level. The `[mcp_server] default_autonomy` floor is
+  included (`mcp_server.approval_note`).
+
 ## [0.405.0] — 2026-11-12
 
 ### Added
