@@ -509,7 +509,12 @@ writing heartbeats for more than three intervals, so it is probably stuck.
 Restart it, and check `scheduler.log` for the last thing it did.
 
 ***restart needed*.** pip installed a different runspec-scheduler since the
-daemon started. Run **Restart**.
+daemon started. Run **Restart**. If the flag stays after a restart, an older
+daemon that the keeper didn't start (for example one the cron watchdog started
+before you switched to systemd --user) holds the venv lock, and each new daemon
+quits at once. From 0.10.5 Restart stops that daemon first. On older versions
+stop it yourself (`kill <pid>` as the venv owner; `status` shows the pid) and
+restart.
 
 **A cron schedule shows *not installed* or *stale line*.** The crontab doesn't
 match the config. Press **Sync crontab** (or run `runspec-scheduler sync`).

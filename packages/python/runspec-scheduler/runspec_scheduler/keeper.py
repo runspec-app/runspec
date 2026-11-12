@@ -563,6 +563,33 @@ def installed(*, facts: Facts | None = None) -> list[dict[str, Any]]:
     return out
 
 
+def _proc_text(pid: int, name: str) -> str | None:
+    try:
+        return Path(f"/proc/{pid}/{name}").read_text()
+    except OSError:
+        return None
+
+
+def _kept_by(pid: int, manager: str) -> bool:
+    """Whether the running daemon ``pid`` was started by ``manager``: in the
+    keeper's systemd unit (its cgroup names the unit) or a child of this
+    venv's supervisord. When it can't be told (no /proc), assume it was, so a
+    restart never stops a daemon it shouldn't."""
+    if manager == "systemd-user":
+        cgroup = _proc_text(pid, "cgroup")
+        return cgroup is None or unit_name() in cgroup
+    if manager == "supervisor":
+        stat = _proc_text(pid, "stat")
+        if stat is None:
+            return True
+        try:
+            ppid = int(stat.rsplit(")", 1)[1].split()[1])
+        except (IndexError, ValueError):
+            return True
+        return ppid == _supervisord_pid()
+    return True
+
+
 def _daemon_pid(config: str | None) -> int | None:
     from .status import _pid_is_scheduler, daemon_status
 
@@ -637,6 +664,13 @@ def plan_restart(*, config: str | None = None, facts: Facts | None = None) -> Pl
     if bad:
         p.error, p.hint = bad
         return p
+    if pid and keeper_kind in ("systemd-user", "supervisor") and not _kept_by(pid, keeper_kind):
+        # A daemon something else started (an old keeper, a manual run) holds
+        # the venv lock, so the one the keeper starts would quit at once and the
+        # old code would keep running. Take it down first.
+        p.actions.append(Action("stop", f"stop the daemon {keeper_kind} didn't start (pid {pid})", pid=pid))
+        if "cron" in managers or ("supervisor" in managers and keeper_kind != "supervisor"):
+            p.warnings.append(f"another keeper is still set up for this venv; run install-service --manager {keeper_kind} --write to remove it")
     if keeper_kind == "systemd-user":
         p.actions.append(Action("run", f"systemctl --user restart {unit_name()}", argv=["systemctl", "--user", "restart", unit_name()], systemd_env=True))
         return p
