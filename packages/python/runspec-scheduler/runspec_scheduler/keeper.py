@@ -389,7 +389,40 @@ def _owner_check(facts: Facts, manager: str) -> tuple[str, str] | None:
 
 
 def plan_install(manager: str, *, facts: Facts | None = None, config: str | None = None, system: bool = False) -> Plan:
+    """Set up ``manager`` as this venv's keeper and start the daemon through it.
+
+    Switching from another keeper takes the old one down first: its crontab
+    lines or systemd --user unit go, and a daemon it started is stopped, so the
+    new keeper's daemon can take the venv lock (a second daemon exits at once,
+    and systemd / supervisord would then think it had finished)."""
     facts = facts or gather()
+    p = _plan_install(manager, facts=facts, config=config, system=system)
+    if p.error or system or p.manager == "systemd" or not p.actions:
+        return p
+    p.actions = _switch_actions(p.manager, facts, config) + p.actions
+    return p
+
+
+def _switch_actions(manager: str, facts: Facts, config: str | None) -> list[Action]:
+    """What takes the other keepers down before ``manager`` starts the daemon."""
+    found = installed(facts=facts)
+    managers = {k["manager"] for k in found}
+    out: list[Action] = []
+    if manager != "systemd-user" and "systemd-user" in managers:
+        # disable --now also stops the daemon systemd runs
+        out += [a for a in plan_remove("systemd-user", config=config, facts=facts).actions if a.kind != "stop"]
+    if manager == "systemd-user" and managers & {"supervisor", "cron"}:
+        if "supervisor" in managers:
+            out += [a for a in plan_remove("supervisor", config=config, facts=facts).actions if a.kind not in ("stop", "crontab")]
+        # cron and supervisor targets rewrite the venv's keeper lines themselves
+        out.append(Action("crontab", "remove this venv's other keeper lines from the crontab", lines=[]))
+    pid = _daemon_pid(config)
+    if pid and manager not in managers:
+        out.append(Action("stop", f"stop the daemon the old keeper started (pid {pid})", pid=pid))
+    return out
+
+
+def _plan_install(manager: str, *, facts: Facts, config: str | None = None, system: bool = False) -> Plan:
     reason = ""
     if manager == "auto":
         manager, reason = choose(facts)

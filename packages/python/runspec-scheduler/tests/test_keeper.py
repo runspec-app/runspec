@@ -330,3 +330,45 @@ def test_supervisor_logs_are_left_to_the_daemon_to_rotate(venv):
     assert "stdout_logfile_maxbytes=0" in own
     system = keeper.render_supervisor_program(["/v/bin/runspec-scheduler", "run"], user="svc")
     assert "stdout_logfile_maxbytes=1MB" in system and "stdout_logfile_backups=7" in system
+
+
+# ── switching keepers ───────────────────────────────────────────────────────────
+
+
+def test_switching_from_the_cron_watchdog_to_systemd_user(venv, monkeypatch):
+    calls = []
+    monkeypatch.setattr(keeper.subprocess, "run", systemctl(calls, venv.units))
+    keeper.apply(keeper.plan_install("cron", facts=facts()))
+    assert any("run --detach" in line for line in venv.tab)
+    # the watchdog's daemon is running, so systemd's would find the lock held
+    monkeypatch.setattr(keeper, "_daemon_pid", lambda config: 999999)
+    stopped = []
+    monkeypatch.setattr(keeper, "_stop", lambda pid, wait=30: stopped.append(pid))
+    plan = keeper.plan_install("systemd-user", facts=facts())
+    assert [a.kind for a in plan.actions] == ["crontab", "stop", "write", "run", "run"]
+    out = keeper.apply(plan)
+    assert out["ok"] and stopped == [999999]
+    assert venv.tab == ["# mine", "17 4 * * * /bin/true"]
+    assert [k["manager"] for k in keeper.installed()] == ["systemd-user"]
+
+
+def test_switching_from_systemd_user_to_cron_disables_the_unit(venv, monkeypatch):
+    calls = []
+    monkeypatch.setattr(keeper.subprocess, "run", systemctl(calls, venv.units))
+    keeper.apply(keeper.plan_install("systemd-user", facts=facts()))
+    monkeypatch.setattr(keeper, "_daemon_pid", lambda config: 999999)
+    monkeypatch.setattr(keeper, "_stop", lambda pid, wait=30: None)
+    calls.clear()
+    out = keeper.apply(keeper.plan_install("cron", facts=facts()))
+    assert out["ok"]
+    assert calls[0] == ["systemctl", "--user", "disable", "--now", "runspec-scheduler-ops.service"]
+    assert not (venv.units / "runspec-scheduler-ops.service").exists()
+    assert [k["manager"] for k in keeper.installed()] == ["cron"]
+
+
+def test_reinstalling_the_same_keeper_leaves_the_daemon_running(venv, monkeypatch):
+    monkeypatch.setattr(keeper.subprocess, "run", lambda argv, **k: _Proc(0))
+    keeper.apply(keeper.plan_install("cron", facts=facts()))
+    monkeypatch.setattr(keeper, "_daemon_pid", lambda config: 999999)
+    plan = keeper.plan_install("cron", facts=facts())
+    assert [a.kind for a in plan.actions] == ["crontab", "run"]

@@ -148,6 +148,13 @@ Nothing changes without `--write`. Without it, `install-service` prints the
 plan: the files it would write, the crontab lines and commands, and any steps
 root has to run.
 
+A venv has one keeper. Installing a different one takes the old one down
+first, from runspec-scheduler 0.10.4: it removes its crontab lines, disables its
+systemd --user unit or shuts down its supervisord, and stops the daemon it
+started. The new keeper then starts the daemon. Before 0.10.4 the old keeper
+stayed, and the daemon it had started kept the venv lock. The new keeper's
+daemon then exited at once, and systemd took that as finished.
+
 ### systemd --user
 
 ```ini
