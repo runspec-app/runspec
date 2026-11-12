@@ -10,13 +10,13 @@
  */
 
 export const NAV_GROUPS: readonly (readonly string[])[] = [
-  ['console', 'forms', 'history', 'logs'],
-  ['schedules', 'triggers', 'rota'],
+  ['console', 'forms', 'history', 'logs', 'files'],
+  ['schedules', 'triggers'],
   ['knowledge', 'marketplace'],
 ]
 
-/** Tabs that live in the More menu. Files also has a toolbar button. */
-export const NAV_OVERFLOW: readonly string[] = ['files', 'specs', 'improve', 'evals', 'dev']
+/** Tabs that live in the More menu. */
+export const NAV_OVERFLOW: readonly string[] = ['rota', 'specs', 'improve', 'evals', 'dev']
 
 export interface NavLayout<T> {
   /** Non-empty groups, in NAV_GROUPS order. */
