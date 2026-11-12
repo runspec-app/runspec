@@ -17,6 +17,23 @@ class _Proc:
         self.stderr = stderr
 
 
+def systemctl(calls, units):
+    """A stand-in subprocess.run: records each argv and, like the real
+    ``systemctl --user enable``, links the unit into default.target.wants."""
+
+    def run(argv, **k):
+        calls.append(argv)
+        if argv[:3] == ["systemctl", "--user", "enable"]:
+            wants = units / "default.target.wants"
+            wants.mkdir(parents=True, exist_ok=True)
+            (wants / argv[-1]).symlink_to(units / argv[-1])
+        if argv[:3] == ["systemctl", "--user", "disable"]:
+            (units / "default.target.wants" / argv[-1]).unlink(missing_ok=True)
+        return _Proc(0)
+
+    return run
+
+
 def facts(**kw):
     base = {"user": "svc", "venv_owner": "svc", "linger": True, "systemd_version": 252, "user_bus": True, "supervisord": None, "crontab": True}
     base.update(kw)
@@ -141,29 +158,74 @@ def test_keeper_lines_of_another_venv_are_left_alone(venv, monkeypatch):
 
 def test_systemd_user_writes_and_enables(venv, monkeypatch):
     calls = []
-    monkeypatch.setattr(keeper.subprocess, "run", lambda argv, **k: calls.append(argv) or _Proc(0))
+    monkeypatch.setattr(keeper.subprocess, "run", systemctl(calls, venv.units))
     out = keeper.apply(keeper.plan_install("systemd-user", facts=facts()))
     assert out["ok"] and out["written"]
     assert (venv.units / "runspec-scheduler-ops.service").is_file()
     assert calls == [["systemctl", "--user", "daemon-reload"], ["systemctl", "--user", "enable", "--now", "runspec-scheduler-ops.service"]]
+    assert [k["manager"] for k in keeper.installed()] == ["systemd-user"]
 
 
-def test_systemd_user_warns_without_linger(venv):
+def test_systemd_user_warns_without_linger_when_a_session_bus_answers(venv):
     out = keeper.plan_install("systemd-user", facts=facts(linger=False)).to_dict(written=False)
-    assert any("enable-linger svc" in w for w in out["warnings"])
+    assert out["ok"] and any("enable-linger svc" in w for w in out["warnings"])
 
 
-def test_systemd_user_bus_error_gives_login_shell_hint(venv, monkeypatch):
-    monkeypatch.setattr(keeper.subprocess, "run", lambda *a, **k: _Proc(1, stderr="Failed to connect to bus: No medium found"))
+def test_systemd_user_without_linger_or_bus_is_refused_before_writing(venv):
+    out = keeper.apply(keeper.plan_install("systemd-user", facts=facts(linger=False, user_bus=False)))
+    assert out["ok"] is False and "lingering is off for svc" in out["error"]
+    assert "sudo loginctl enable-linger svc" in out["hint"] and "--manager cron" in out["hint"]
+    assert out["written"] is False and not (venv.units / "runspec-scheduler-ops.service").exists()
+    out = keeper.plan_install("systemd-user", facts=facts(user_bus=False)).to_dict(written=False)
+    assert out["ok"] is False and "doesn't answer" in out["error"] and "-iu" in out["hint"]
+
+
+@pytest.mark.parametrize(
+    "stderr",
+    [
+        "Failed to connect to bus: No medium found",
+        "Failed to connect to user scope bus via local transport: $DBUS_SESSION_BUS_ADDRESS and $XDG_RUNTIME_DIR not defined",
+    ],
+)
+def test_systemd_user_bus_error_undoes_the_unit_and_gives_login_shell_hint(venv, monkeypatch, stderr):
+    monkeypatch.setattr(keeper.subprocess, "run", lambda *a, **k: _Proc(1, stderr=stderr))
+    unit = venv.units / "runspec-scheduler-ops.service"
     out = keeper.apply(keeper.plan_install("systemd-user", facts=facts()))
     assert out["ok"] is False and "-iu" in out["hint"] and "enable-linger" in out["hint"]
-    assert (venv.units / "runspec-scheduler-ops.service").is_file()  # written before the failing step
-    assert out["done"] == [f"write {venv.units / 'runspec-scheduler-ops.service'}"]
+    assert out["done"] == [f"write {unit}"] and out["undone"] == [str(unit)]
+    assert out["written"] is False and not unit.exists()
+
+
+def test_a_failed_reinstall_puts_the_old_unit_back(venv, monkeypatch):
+    unit = venv.units / "runspec-scheduler-ops.service"
+    unit.parent.mkdir(parents=True)
+    unit.write_text("old unit\n")
+    monkeypatch.setattr(keeper.subprocess, "run", lambda *a, **k: _Proc(1, stderr="boom"))
+    out = keeper.apply(keeper.plan_install("systemd-user", facts=facts()))
+    assert out["ok"] is False and unit.read_text() == "old unit\n"
+
+
+def test_a_unit_that_was_never_enabled_is_not_the_keeper(venv, monkeypatch):
+    # what an install that failed before 0.10.3 left behind, next to the cron
+    # watchdog it fell back to
+    unit = venv.units / "runspec-scheduler-ops.service"
+    unit.parent.mkdir(parents=True)
+    unit.write_text(f"ExecStart={venv.root}/bin/runspec-scheduler run\n")
+    monkeypatch.setattr(keeper.subprocess, "run", lambda argv, **k: _Proc(0))
+    keeper.apply(keeper.plan_install("cron", facts=facts()))
+    assert [k["manager"] for k in keeper.installed()] == ["cron"]
+    monkeypatch.setattr(keeper, "_daemon_pid", lambda config: 999999)
+    plan = keeper.plan_restart(facts=facts())
+    assert plan.manager == "cron" and [a.kind for a in plan.actions] == ["stop", "run"]
+    # remove deletes the stray file without asking systemctl (no bus needed)
+    plan = keeper.plan_remove("auto")
+    assert [(a.kind, a.path) for a in plan.actions if a.kind == "unlink"] == [("unlink", unit)]
+    assert not any(a.argv and a.argv[0] == "systemctl" for a in plan.actions)
 
 
 def test_remove_undoes_systemd_user_and_stops_the_daemon(venv, monkeypatch):
     calls = []
-    monkeypatch.setattr(keeper.subprocess, "run", lambda argv, **k: calls.append(argv) or _Proc(0))
+    monkeypatch.setattr(keeper.subprocess, "run", systemctl(calls, venv.units))
     keeper.apply(keeper.plan_install("systemd-user", facts=facts()))
     monkeypatch.setattr(keeper, "_daemon_pid", lambda config: 999999)
     stopped = []
@@ -214,7 +276,7 @@ def test_strip_keeper_lines_keeps_a_line_under_a_lone_tag():
 
 def test_restart_through_systemd_user(venv, monkeypatch):
     calls = []
-    monkeypatch.setattr(keeper.subprocess, "run", lambda argv, **k: calls.append(argv) or _Proc(0))
+    monkeypatch.setattr(keeper.subprocess, "run", systemctl(calls, venv.units))
     keeper.apply(keeper.plan_install("systemd-user", facts=facts()))
     calls.clear()
     out = keeper.apply(keeper.plan_restart(facts=facts()))

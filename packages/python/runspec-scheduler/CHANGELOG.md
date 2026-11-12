@@ -2,6 +2,27 @@
 
 All notable changes to `runspec-scheduler` are documented here.
 
+## [0.10.3] — 2026-11-12
+
+### Fixed
+
+- **systemd --user without lingering is refused before anything is written.**
+  `install-service --manager systemd-user --write` on an account with lingering
+  off and no login session wrote the unit, then failed at
+  `systemctl --user daemon-reload` (*$XDG_RUNTIME_DIR not defined*) and left
+  the file behind. It now stops first and says to ask root for
+  `sudo loginctl enable-linger <owner>`, or to use supervisord or the crontab
+  watchdog. An install that fails part-way for any other reason puts back the
+  files it wrote (listed as `undone`).
+- **Restart and status no longer take a never-enabled unit for the keeper.**
+  The leftover unit file made `restart` run `systemctl --user restart` even
+  after the console had fallen back to the crontab watchdog, so the daemon was
+  never restarted onto the upgraded code. A systemd --user unit now counts only
+  once `enable` has linked it into `default.target.wants`. `install-service
+  --remove` deletes a stray unit without calling systemctl.
+- The login-shell hint now also appears for systemd's *Failed to connect to
+  user scope bus* wording.
+
 ## [0.10.2] — 2026-11-11
 
 ### Fixed
