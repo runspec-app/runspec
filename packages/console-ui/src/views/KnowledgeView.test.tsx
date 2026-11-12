@@ -116,6 +116,34 @@ describe('KnowledgeView', () => {
     await waitFor(() => expect(review).toHaveBeenCalledWith('k_p', true))
   })
 
+  it('marks this-console facts, pins only approved ones, and confirms a reject', async () => {
+    overview.mockResolvedValue({
+      ...(await overview()),
+      inbox: [{ ...fact('k_p', 'web-01 has 64GB RAM', ['host:web-01'], 'pending'), scope: 'local', scope_reason: 'it is about host:web-01, which each console sets up itself' }],
+    })
+    render(<KnowledgeView active aiEnabled />)
+    await waitFor(() => expect(overview).toHaveBeenCalled())
+    fireEvent.click(screen.getByText('Inbox'))
+    await waitFor(() => expect(screen.getByText('web-01 has 64GB RAM')).toBeTruthy())
+    expect(screen.getByTestId('fact-scope-local').textContent).toBe('This console')
+    expect(screen.queryByLabelText('Pin fact')).toBeNull()  // pending: approve before pinning
+    fireEvent.click(screen.getByText('Reject'))
+    expect(review).not.toHaveBeenCalled()
+    fireEvent.click(await screen.findByRole('button', { name: 'Reject' }))
+    await waitFor(() => expect(review).toHaveBeenCalledWith('k_p', false))
+  })
+
+  it('shows search results even when searching from the inbox', async () => {
+    search.mockResolvedValue([fact('k_s', 'orders config is in /etc/orders', ['app:orders'])])
+    render(<KnowledgeView active aiEnabled />)
+    await waitFor(() => expect(overview).toHaveBeenCalled())
+    fireEvent.click(screen.getByText('Inbox'))
+    const box = screen.getByPlaceholderText(/Search the wiki/)
+    fireEvent.change(box, { target: { value: 'orders' } })
+    fireEvent.keyDown(box, { key: 'Enter', code: 'Enter', keyCode: 13 })
+    await waitFor(() => expect(screen.getByText('orders config is in /etc/orders')).toBeTruthy())
+  })
+
   it('suggests from chats over the remembered range', async () => {
     overview.mockResolvedValue({ ...(await overview()), capture_days: 0 })
     distill.mockResolvedValue({ ok: true, proposed: 3, conversations: 12, calls: 10, remaining: 4 })

@@ -9,6 +9,51 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.405.0] — 2026-11-12
+
+### Changed
+
+- **The Knowledge wiki keeps per-console details off the team.** The wiki is a
+  team tools wiki, and each teammate's console has its own hosts, groups,
+  profiles, triggers, schedules and runbooks. Every fact now has a scope:
+  - **Team**: about runnables, apps, services, terms, teams and topics.
+  - **This console** (a dashed tag, with the reason in its tooltip): about a
+    host, group, profile, trigger, schedule or runbook; from this console's
+    run history or config; or naming one of this console's hosts, groups or
+    profiles, a home directory, or a `name@machine` account.
+
+  Push shares team facts only, and a pull ignores this-console facts from older
+  consoles. Before, only `host:local` facts were held back.
+- **Pushed facts are signed by your lane**, not `user@hostname`. Facts written
+  on this console record the login name only. A blank Commit email now uses
+  `<lane>@runspec-console.invalid` instead of `<lane>@<hostname>`; set
+  `[memory_sync] email` where the git host checks it.
+- **Push shows what it will share.** The confirmation lists each fact it will
+  share and each it keeps on this console, with the reason (new bridge method
+  `memory_sync_preview`).
+- **Suggest from chats asks for tool facts.** The prompt asks the model to name
+  the runnables, apps and services involved, describe hosts by their role, and
+  leave out home directories, accounts and anything true on one console only.
+  Its example is now a runnable pairing instead of a host and a path.
+- **Only approved facts can be pinned.** A pin rides every chat, so it goes
+  through review first; pins carried over from the old agent memory still work.
+- **Reject asks first** in the Knowledge inbox.
+- **The wiki repo template** no longer suggests recording args one person
+  passes (`--run-as svc-batch`). It shows a "Works with" section and says what
+  to leave out.
+
+### Fixed
+
+- **Readable Knowledge tags and tabs.** Entity tags had black text on the dark
+  theme (about 2:1). The type filter chips were unreadable in the light theme.
+  App-wide, active tab text and links used the filled-button teal, which is
+  about 2.2:1 on the gunmetal surfaces; they now use the text accent.
+- **Searching from the Knowledge inbox shows the results.** It switches to the
+  view whose side panel lists them; before, nothing visible happened.
+- The Capture tooltip no longer says it reads "usual args", and the fact editor's
+  examples lead with a runnable instead of a host and a local path.
+
+
 ## [0.404.0] — 2026-11-12
 
 ### Changed

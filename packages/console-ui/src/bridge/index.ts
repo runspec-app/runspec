@@ -1064,6 +1064,23 @@ export interface MemorySyncConfig {
   path: string
   engine: string | null  // null = the git-sync extra isn't installed
 }
+export interface MemorySyncPreviewFact {
+  id: string
+  kind: string
+  about: string[]
+  text: string
+  reason?: string   // on a kept fact: why it stays on this console
+}
+
+export interface MemorySyncPreview {
+  ok: boolean
+  lane: string
+  branch: string
+  path: string
+  share: MemorySyncPreviewFact[]
+  kept: MemorySyncPreviewFact[]
+}
+
 export interface MemorySyncStatus {
   configured: boolean
   engine: string | null
@@ -1125,6 +1142,9 @@ export interface KnowledgeFact {
   first_seen: string
   last_confirmed: string
   confirmations: number
+  // Team (holds on any teammate's console) or local (stays here, never pushed).
+  scope?: 'team' | 'local'
+  scope_reason?: string
 }
 
 export interface KnowledgeNode {
@@ -3149,6 +3169,8 @@ export interface BridgeApi {
   get_memory_sync_config: () => Promise<MemorySyncConfig>
   save_memory_sync_config: (payload: Partial<MemorySyncSettings>) => Promise<{ ok: boolean; error?: string } & Partial<MemorySyncConfig>>
   memory_sync_status: () => Promise<MemorySyncStatus>
+  // What a push would share and what it keeps on this console, fact by fact.
+  memory_sync_preview: () => Promise<MemorySyncPreview>
   // One ls-remote: is the repo reachable, do the team / contrib branches exist yet.
   memory_sync_test: () => Promise<{ ok: boolean; error?: string; branch_exists?: boolean; contrib_exists?: boolean; empty?: boolean }>
   memory_sync_push: () => Promise<MemorySyncPushResult>

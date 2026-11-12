@@ -41,9 +41,10 @@ tags: [linux, scheduling]
 
 What it's for, in a sentence or two.
 
-## How we use it
+## Works with
 
-- We always pass `--run-as svc-batch` on the batch hosts.
+- Run `list` first and remove by `--match`, not `--index`: the index shifts
+  when someone else edits the crontab. See [cron](/runnables/cron.md).
 
 ## Watch out for
 
@@ -61,6 +62,11 @@ Optional fields worth using:
   (`by: human:<you>`) when you've checked it.
 
 Link to other pages from the bundle root: `[cron](/runnables/cron.md)`.
+
+Write what holds on every teammate's console. Describe hosts by their role
+("the batch hosts"), not their names, and leave out home directories,
+accounts, and the args one person happens to pass. The console never pushes
+facts that name its own hosts, groups, profiles, triggers or schedules.
 
 Never put secrets on a page: no passwords, tokens or keys. The lint job fails
 when it sees something that looks like one.

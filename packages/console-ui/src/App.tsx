@@ -1142,8 +1142,15 @@ export default function App() {
             colorTextTertiary: textMuted(isDark),
             colorTextDescription: textMuted(isDark),
             colorTextPlaceholder: textMuted(isDark),
+            // Text in the brand colour (links, link buttons) uses the accent
+            // tuned for text on this theme's surfaces. colorPrimary is a fill
+            // colour (white text on it), and on the dark surfaces it is ~2.2:1.
+            colorLink: titleCol,
+            colorLinkHover: titleCol,
           },
           components: {
+            // Active tab text and its underline: the text accent, not the fill.
+            Tabs: { itemSelectedColor: titleCol, itemActiveColor: titleCol, itemHoverColor: titleCol, inkBarColor: titleCol },
             Card: { colorBgContainer: sf.raised, colorBorderSecondary: sf.border, boxShadowTertiary: sf.shadowSm },
             Modal: { contentBg: sf.overlay, headerBg: sf.overlay, footerBg: sf.overlay },
             Drawer: { colorBgElevated: sf.overlay },

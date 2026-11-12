@@ -20,10 +20,11 @@ function Harness() {
   )
 }
 
-const { status, push, pull } = vi.hoisted(() => ({
+const { status, push, pull, preview } = vi.hoisted(() => ({
   status: vi.fn(),
   push: vi.fn(),
   pull: vi.fn(),
+  preview: vi.fn(),
 }))
 
 vi.mock('../bridge', () => ({
@@ -32,6 +33,7 @@ vi.mock('../bridge', () => ({
       if (p === 'memory_sync_status') return status
       if (p === 'memory_sync_push') return push
       if (p === 'memory_sync_pull') return pull
+      if (p === 'memory_sync_preview') return preview
       return vi.fn(async () => ({ ok: true }))
     },
   }),
@@ -43,7 +45,21 @@ const base = {
   last_push: '', last_push_commit: '', last_pull: '', last_pull_commit: '', last_pull_ref: '',
 }
 
-beforeEach(() => { status.mockReset(); push.mockReset(); pull.mockReset() })
+const shareTwo = {
+  ok: true, lane: 'jo', branch: 'contrib/jo', path: 'facts/jo.toml',
+  share: [
+    { id: 'k_1', kind: 'note', about: ['runnable:tail-log'], text: 'tail-log follows http-check' },
+    { id: 'k_2', kind: 'glossary', about: ['term:BAU'], text: 'BAU means business as usual' },
+  ],
+  kept: [
+    { id: 'k_3', kind: 'host', about: ['host:web-01'], text: 'web-01 is the orders primary', reason: 'it is about host:web-01, which each console sets up itself' },
+  ],
+}
+
+beforeEach(() => {
+  status.mockReset(); push.mockReset(); pull.mockReset(); preview.mockReset()
+  preview.mockResolvedValue(shareTwo)
+})
 
 describe('KnowledgeSync', () => {
   it('offers set-up when Memory Sync is not configured', async () => {
@@ -62,11 +78,15 @@ describe('KnowledgeSync', () => {
     fireEvent.click(await screen.findByText('Pull'))
     await waitFor(() => expect(pull).toHaveBeenCalled())
     fireEvent.click(screen.getByText('Push'))
-    expect(await screen.findByText('Push 2 approved fact(s)?')).toBeTruthy()
+    // The confirmation lists what leaves this console and what stays.
+    expect(await screen.findByText('Push 2 facts to contrib/jo?')).toBeTruthy()
+    expect(screen.getByText('tail-log follows http-check')).toBeTruthy()
+    expect(screen.getByText('Stays on this console (1 fact)')).toBeTruthy()
+    expect(screen.getByText('web-01 is the orders primary')).toBeTruthy()
     expect(push).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('button', { name: 'Push' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Push 2 facts' }))
     await waitFor(() => expect(push).toHaveBeenCalled())
-    expect(await screen.findByText(/Pushed 2 fact\(s\) to contrib\/jo/)).toBeTruthy()
+    expect(await screen.findByText(/Pushed 2 facts to contrib\/jo/)).toBeTruthy()
   })
 
   it('keeps a failed push on screen', async () => {
@@ -74,8 +94,18 @@ describe('KnowledgeSync', () => {
     push.mockResolvedValue({ ok: false, error: "GitLab: Author 'jo@pc' is not a member of team" })
     render(<Harness />)
     fireEvent.click(await screen.findByText('Push'))
-    fireEvent.click(await screen.findByRole('button', { name: 'Push' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Push 2 facts' }))
     expect(await screen.findByText(/Push failed: GitLab: Author/)).toBeTruthy()
+  })
+
+  it('cannot push when nothing is shareable', async () => {
+    status.mockResolvedValue(base)
+    preview.mockResolvedValue({ ...shareTwo, share: [] })
+    render(<Harness />)
+    fireEvent.click(await screen.findByText('Push'))
+    expect(await screen.findByText('No approved team facts to share yet.')).toBeTruthy()
+    const ok = screen.getAllByRole('button').find(b => b.textContent === 'Push' && b.closest('.ant-modal'))
+    expect(ok?.hasAttribute('disabled')).toBe(true)
   })
 
   it('reports a pull that throws', async () => {

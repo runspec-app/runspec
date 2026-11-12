@@ -307,6 +307,69 @@ def is_machine_local(fact: dict[str, Any]) -> bool:
     )
 
 
+# -- scope: team vs this console -------------------------------------------
+#
+# The wiki is a team *tools* wiki: what is true on every teammate's console.
+# Anything tied to one console's own set-up — its hosts, host groups, profiles,
+# triggers, schedules and runbooks, a home directory, an account — is
+# "this console" knowledge: kept and shown here, never pushed to the team.
+
+#: Entity types whose names differ from one console to the next.
+LOCAL_ENTITY_TYPES = frozenset(
+    {"host", "group", "profile", "trigger", "schedule", "runbook"}
+)
+#: Sources that only ever describe this console (its run history, its config).
+LOCAL_SOURCES = frozenset({"capture", "config"})
+_HOME_PATH = re.compile(
+    r"(?:~[/\\]|/home/[^/\s]+|/Users/[^/\s]+|[A-Za-z]:\\Users\\[^\\\s]+)"
+)
+_USER_AT_HOST = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\b")
+
+
+def _mentions(text: str, names: Iterable[str]) -> str:
+    """The first of ``names`` that ``text`` mentions as a whole word run, else
+    ``""``. Short and common names are skipped (see :data:`_COMMON_NAMES`)."""
+    low = f" {' '.join(_WORD.findall(str(text).lower()))} "
+    for name in sorted({str(n) for n in names if n}, key=len, reverse=True):
+        words = " ".join(_WORD.findall(name.lower()))
+        if len(words) < 3 or words in _COMMON_NAMES:
+            continue
+        if f" {words} " in low:
+            return name
+    return ""
+
+
+def fact_scope(
+    fact: dict[str, Any], local_names: Iterable[str] = ()
+) -> tuple[str, str]:
+    """``("team", "")`` for a fact that holds on any teammate's console, else
+    ``("local", reason)``. ``local_names`` are this console's host, group and
+    profile names, so a fact whose text names one stays here."""
+    if is_machine_local(fact):
+        return "local", "it is about this machine"
+    for a in fact.get("about") or []:
+        ref = normalize_entity(a)
+        if entity_type(ref) in LOCAL_ENTITY_TYPES:
+            return "local", f"it is about {ref}, which each console sets up itself"
+    if str(fact.get("source") or "") in LOCAL_SOURCES:
+        return "local", "it comes from this console's own runs or config"
+    text = str(fact.get("text") or "")
+    if _HOME_PATH.search(text):
+        return "local", "it names a home directory"
+    if _USER_AT_HOST.search(text):
+        return "local", "it names an account or a machine"
+    hit = _mentions(text, local_names)
+    if hit:
+        return "local", f"it names {hit}, which each console sets up itself"
+    return "team", ""
+
+
+def with_scope(fact: dict[str, Any], local_names: Iterable[str] = ()) -> dict[str, Any]:
+    """``fact`` plus ``scope`` (``team`` / ``local``) and ``scope_reason``."""
+    scope, reason = fact_scope(fact, local_names)
+    return {**fact, "scope": scope, "scope_reason": reason}
+
+
 #: A pulled team file: one contributor's lane, ``<name>.toml``.
 _TEAM_NAME = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}\.toml$")
 #: Fields a shared fact carries. ``evidence`` (local run / chat ids) means nothing
@@ -337,19 +400,58 @@ def lane_name(user: str) -> str:
     return lane[:64] or "user"
 
 
-def contribution(rows: Iterable[dict[str, Any]]) -> tuple[bytes, int]:
-    """The file Memory Sync pushes: this console's **approved** facts only (never
-    the inbox, observed usage or retired facts), trimmed to ``SHARED_FIELDS``,
-    sorted by id. A fact whose text now looks like a secret is held back, and so
-    is a fact about a machine-local entity such as ``host:local``. Returns
-    ``(toml_bytes, fact_count)``."""
+def share_preview(
+    rows: Iterable[dict[str, Any]], local_names: Iterable[str] = ()
+) -> dict[str, list[dict[str, Any]]]:
+    """What a push would do with this console's facts: ``share`` (approved team
+    facts) and ``kept`` (approved facts held back, each with its ``reason``:
+    secret-looking or this-console only). Pending, observed and retired facts
+    are never part of a push and aren't listed."""
+    names = list(local_names)
+    share: list[dict[str, Any]] = []
+    kept: list[dict[str, Any]] = []
+    for r in rows:
+        if r.get("status") != "approved":
+            continue
+        brief = {k: r.get(k) for k in ("id", "kind", "about", "text")}
+        why = secret_reason(str(r.get("text", "")))
+        if why:
+            kept.append({**brief, "reason": f"it looks like {why}"})
+            continue
+        scope, reason = fact_scope(r, names)
+        if scope != "team":
+            kept.append({**brief, "reason": reason})
+            continue
+        share.append(brief)
+    share.sort(key=lambda r: str(r.get("id", "")))
+    kept.sort(key=lambda r: str(r.get("id", "")))
+    return {"share": share, "kept": kept}
+
+
+def contribution(
+    rows: Iterable[dict[str, Any]],
+    local_names: Iterable[str] = (),
+    lane: str = "",
+) -> tuple[bytes, int]:
+    """The file Memory Sync pushes: this console's **approved team** facts only
+    (never the inbox, observed usage, retired facts or anything tied to this
+    console — see :func:`fact_scope`), trimmed to ``SHARED_FIELDS``, sorted by
+    id. A fact whose text now looks like a secret is held back. Each pushed
+    fact is signed by ``lane`` (the contributor's sync name), never by the OS
+    account and machine. Returns ``(toml_bytes, fact_count)``."""
+    names = list(local_names)
     out: list[dict[str, Any]] = []
     for r in rows:
         if r.get("status") != "approved" or secret_reason(str(r.get("text", ""))):
             continue
-        if is_machine_local(r):
+        if fact_scope(r, names)[0] != "team":
             continue
-        out.append({k: r[k] for k in SHARED_FIELDS if r.get(k) not in (None, "", [])})
+        row = {k: r[k] for k in SHARED_FIELDS if r.get(k) not in (None, "", [])}
+        if lane:
+            row["author"] = lane
+        else:
+            row.pop("author", None)
+        out.append(row)
     out.sort(key=lambda r: str(r.get("id", "")))
     header = (
         "# Shared by runspec-console Memory Sync. One contributor's approved facts;\n"
@@ -435,9 +537,10 @@ class KnowledgeStore:
         out: list[dict[str, Any]] = []
         for p in sorted(team.glob("*.toml")):
             for r in _load(p):
-                # A teammate's ``local`` is their machine, not this one (and a
-                # push from before 0.336.0 could still carry such facts).
-                if is_machine_local(r):
+                # A teammate's ``local`` is their machine, and their hosts,
+                # groups and schedules are theirs too (a push from an older
+                # console could still carry such facts).
+                if fact_scope(r)[0] != "team":
                     continue
                 r.setdefault("status", "approved")
                 out.append(r)
@@ -748,6 +851,11 @@ class KnowledgeStore:
             fact = next((r for r in self.all_facts() if r.get("id") == fid), None)
             if fact is None or fact.get("status") == "retired":
                 return False, f"No fact {fid}."
+            if fact.get("status") != "approved":
+                # A pin rides every chat, so it goes through review first.
+                return False, (
+                    f"{fid} is {fact.get('status')}; approve it before pinning."
+                )
             if fid in pins:
                 return True, f"{fid} is already pinned."
             if len(pins) >= PIN_MAX:
@@ -1714,7 +1822,11 @@ def build_distill_prompt(
         "- No 'tool X is usually run with arg = value' facts: the project, "
         "space, path or filter someone passes is their habit, not a fact about "
         "the tool.\n"
-        "- One or two sentences each, specific (name hosts, paths, runnables).\n"
+        "- One or two sentences each, specific about tools: name the "
+        "runnables, apps and services involved.\n"
+        "- The wiki is shared by a team whose consoles differ: describe a host "
+        'by its role ("the orders web hosts"), not its name, and leave out '
+        "home directories, accounts and anything only true on one console.\n"
         "- Skip anything already in the known list.\n"
         f"- kind is one of: {kinds}.\n"
         f"- about lists the entities as type:name, type one of: {types}.\n"
@@ -1722,8 +1834,10 @@ def build_distill_prompt(
         "that exact type:name (a host group is group:, not term:).\n"
         "- At most 12 facts. Fewer is fine; none is fine.\n\n"
         "Reply with ONLY a JSON array, e.g.\n"
-        '[{"kind": "location", "about": ["host:web-01", "app:orders"], '
-        '"text": "orders logs are in /var/log/orders/app.log on web-01"}]\n\n'
+        '[{"kind": "pairing", "about": ["runnable:tail-log", "runnable:http-check"], '
+        '"text": "After restarting an orders web host, run http-check on its '
+        "/health URL before tail-log; a 502 there means the app has not "
+        'reloaded yet."}]\n\n'
         f"Existing entities: {entity_block}\n\n"
         f"Known facts:\n{known_block}\n\nConversations:\n{transcript}"
     )
