@@ -69,6 +69,7 @@ beforeEach(() => {
 describe('KnowledgeView', () => {
   it('lists pinned facts and pins / unpins from a fact row', async () => {
     render(<KnowledgeView active aiEnabled />)
+    fireEvent.click(screen.getByText('Graph'))  // Tools is the default tab
     await waitFor(() => expect(screen.getByText('deploys freeze on Fridays')).toBeTruthy())
     expect(screen.getByText(/Pinned · 1\/6/)).toBeTruthy()
     fireEvent.click(screen.getByLabelText('Unpin fact'))
@@ -99,6 +100,7 @@ describe('KnowledgeView', () => {
 
   it('draws the graph and opens a page on click', async () => {
     render(<KnowledgeView active aiEnabled />)
+    fireEvent.click(screen.getByText('Graph'))  // Tools is the default tab
     await waitFor(() => expect(screen.getByTestId('node-host:web-01')).toBeTruthy())
     fireEvent.click(screen.getByTestId('node-host:web-01'))
     await waitFor(() => expect(screen.getByText('orders logs live in /var/log/orders')).toBeTruthy())
@@ -166,6 +168,7 @@ describe('KnowledgeView', () => {
       installed_runnables: ['disk-usage'],
     })
     render(<KnowledgeView active aiEnabled />)
+    fireEvent.click(screen.getByText('Graph'))  // Tools is the default tab
     await waitFor(() => expect(screen.getByTestId('node-runnable:gone')).toBeTruthy())
     expect(screen.getByTestId('node-runnable:gone').getAttribute('opacity')).toBe('0.4')
     expect(screen.getByTestId('node-host:web-01').getAttribute('opacity')).toBe('1')

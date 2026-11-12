@@ -2199,6 +2199,26 @@ export const mockApi: BridgeApi = {
     contrib_branch: 'contrib/dev', path: 'facts/dev.toml', shareable: 3, unpushed: true, team_facts: 5,
     last_push: '', last_push_commit: '', last_pull: '2026-10-04T09:00:00Z', last_pull_commit: 'abc123', last_pull_ref: 'v1.0.0',
   }),
+  knowledge_wiki_pages: async () => ({
+    configured: true, repo_url: 'https://gitlab.example.com/ops/wiki', ref: 'v1.4.0',
+    pages: [
+      {
+        path: 'runnables/tail-log.md', entity: 'runnable:tail-log', type: 'Runnable', title: 'tail-log',
+        description: '', status: 'stable', stale_after: '', verified_by: 'human:ana',
+        url: 'https://gitlab.example.com/ops/wiki/-/blob/v1.4.0/runnables/tail-log.md',
+        sections: [
+          { heading: '', text: 'Read the end of an app log on a host. The first stop after http-check reports a 5xx.', bullets: [] },
+          { heading: 'Works with', text: '- **after http-check**: a 502 right after a deploy usually means the app has not reloaded yet; the log says which.\n- **before restart-service**: read the log first, a restart loses the stack trace.', bullets: ['**after http-check**: a 502 right after a deploy usually means the app has not reloaded yet; the log says which.', '**before restart-service**: read the log first, a restart loses the stack trace.'] },
+          { heading: 'Watch out for', text: '- `--lines` counts lines, not bytes; a minified JSON log is one line.', bullets: ['`--lines` counts lines, not bytes; a minified JSON log is one line.'] },
+        ],
+      },
+      {
+        path: 'terms/bau.md', entity: 'term:bau', type: 'Term', title: 'BAU', description: 'Business as usual.',
+        status: '', stale_after: '', verified_by: '', url: 'https://gitlab.example.com/ops/wiki/-/blob/v1.4.0/terms/bau.md',
+        sections: [{ heading: '', text: 'The planned daily checks. A BAU change needs no CAB.', bullets: [] }],
+      },
+    ],
+  }),
   memory_sync_preview: async () => ({
     ok: true, lane: 'dev', branch: 'contrib/dev', path: 'facts/dev.toml',
     share: [

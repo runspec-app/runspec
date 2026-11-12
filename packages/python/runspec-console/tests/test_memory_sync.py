@@ -252,6 +252,18 @@ def test_push_and_pull_round_trip(bridge, bare):
 def test_pull_from_an_empty_repo_is_fine(bridge):
     res = bridge.memory_sync_pull()
     assert res["ok"] and res["files"] == 0
+    assert res["pages"]["pages"] == 0
+
+
+def test_pull_brings_in_the_wiki_pages(bridge, bare):
+    page = b"---\ntype: Runnable\n---\n\n# cron\n\n## Works with\n\n- run list first\n"
+    gitsync.push_file(bare, "main", "runnables/cron.md", page, LOCAL)
+    gitsync.push_file(bare, "main", "runnables/index.md", b"# Runnables\n", LOCAL)
+    gitsync.push_file(bare, "main", "runspec/index.md", b"# generated\n", LOCAL)
+    res = bridge.memory_sync_pull()
+    assert res["ok"] and res["pages"] == {"pages": 1, "added": 1, "removed": 0}
+    store = bridge._knowledge_store()
+    assert (store.root / "pages" / "runnables" / "cron.md").read_bytes() == page
 
 
 def test_memory_sync_test_and_unconfigured(bridge, monkeypatch, tmp_path):

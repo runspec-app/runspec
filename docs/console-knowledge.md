@@ -8,6 +8,39 @@ Where [agent memory](console-agent.md) holds a handful of machine-local notes, t
 wiki is structured: every fact is *about* one or more entities, and the entities
 link together through the facts they share.
 
+## Tools: the team's pages
+
+The **Tools** view (the tab's default) is the team tools wiki. It lists every
+runnable the console has discovered, grouped by venv, and marks the ones with a
+page in the team's wiki repo. Pick one to see:
+
+- its header from the runnable's own `runspec.toml`: description, the hosts it's
+  on, its verbs, args and autonomy. The page doesn't repeat these;
+- the team's page for it, `runnables/<name>.md` in the wiki repo, section by
+  section. Tools named in its **Works with** section link to their own pages,
+  and **Open in repo** opens the file on GitLab or GitHub;
+- team facts about it that aren't on the page yet;
+- a dashed **This console** panel with the facts only true on this console (see
+  below). They're never shared.
+
+Pages for tools this console hasn't discovered are listed under **Not installed
+here**, and the team's other pages (services, terms, topics, teams, runbooks,
+hosts) under **Other pages**. The search box finds tools by name and pages by
+their text.
+
+The pages come from the wiki repo set in Settings → Memory Sync. **Pull** copies
+every page under `runnables/`, `services/`, `terms/`, `topics/`, `teams/`,
+`runbooks/` and `hosts/` into `{app_dir}/knowledge/pages/` (replacing what was
+there), from the same branch or tag it pulls facts from. The console only reads
+them: write and change pages in the repo, where the team reviews them, then Pull.
+A page is read as the repo's CI lints it (OKF frontmatter with a `type`); one that
+doesn't parse cleanly is still shown, with a note.
+
+The agent gets a runnable's page too. When it searches for or describes the
+runnable, the page's **Works with** and **Watch out for** bullets come first in
+its notes, before facts. `search_wiki` also searches pages, and `wiki_page`
+returns a runnable's page sections as `team_page`.
+
 ## What a fact looks like
 
 ```text
@@ -121,9 +154,10 @@ memory may sit on a pending fact until you review it.)
 ## Facts about a runnable
 
 Don't spend a pin on advice for one tool. A fact about `runnable:<name>` is
-shown to the agent whenever it searches for that runnable (up to three facts on
-its `search_runnables` row) or describes it (up to eight in `describe_runnable`),
-approved facts first, then observed ones. The agent gets the advice at the
+shown to the agent whenever it searches for that runnable (up to three notes on
+its `search_runnables` row) or describes it (up to eight in `describe_runnable`):
+the team page's **Works with** and **Watch out for** bullets first, then
+approved facts, then observed ones. The agent gets the advice at the
 moment it picks the tool, and facts about other runnables stay out of its
 context.
 

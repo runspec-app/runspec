@@ -32,6 +32,7 @@ from typing import Any
 
 from . import config as config_mod
 from . import knowledge as kn
+from . import wiki_pages
 
 logger = logging.getLogger(__name__)
 
@@ -381,14 +382,17 @@ class MemorySyncMixin:
         }
 
     def memory_sync_pull(self) -> dict[str, Any]:
-        """Pull the team's facts into ``team/`` from the team branch, the newest
-        release tag, or a pinned tag (``pull_from``).
+        """Pull the team's facts into ``team/`` and the team's wiki pages into
+        ``pages/``, from the team branch, the newest release tag, or a pinned tag
+        (``pull_from``).
 
         Reads every ``facts/*.toml`` except this operator's own lane (those facts
-        are already local). A brand-new empty repo pulls nothing and isn't an
-        error. Files whose names aren't a valid lane are skipped (and listed). Returns
-        ``{ok, ref, commit, files, facts, added, removed, skipped}`` or
-        ``{ok: False, error}``."""
+        are already local), and every page under the wiki's entity folders
+        (``runnables/``, ``services/``, ``terms/`` …; see ``wiki_pages``). A
+        brand-new empty repo pulls nothing and isn't an error. Files whose names
+        aren't a valid lane are skipped (and listed). Returns ``{ok, ref, commit,
+        files, facts, added, removed, skipped, pages}`` (``pages`` is
+        ``{pages, added, removed}``) or ``{ok: False, error}``."""
         from . import gitsync
 
         ms = self._memory_sync()
@@ -400,6 +404,13 @@ class MemorySyncMixin:
             res = gitsync.fetch_dir(ms["url"], ref, auth, FACTS_DIR)
             if ms["pull_from"] != "branch" and not res.commit:
                 return {"ok": False, "error": f"tag {ref} isn't on the repo"}
+            page_files = (
+                gitsync.fetch_dir(
+                    ms["url"], ref, auth, "", suffix=".md", recursive=True
+                ).files
+                if res.commit
+                else {}
+            )
         except gitsync.GitSyncError as exc:
             return {"ok": False, "error": str(exc)}
         except Exception as exc:  # noqa: BLE001
@@ -408,10 +419,16 @@ class MemorySyncMixin:
         own = f"{ms['lane']}.toml"
         files = {n: d for n, d in res.files.items() if n != own and kn.is_team_file(n)}
         skipped = sorted(n for n in res.files if n != own and n not in files)
+        store = self._knowledge_store()  # type: ignore[attr-defined]
         try:
-            counts = self._knowledge_store().write_team(files)  # type: ignore[attr-defined]
+            counts = store.write_team(files)
         except ValueError as exc:
             return {"ok": False, "error": f"nothing was pulled: {exc}"}
+        try:
+            pages = wiki_pages.write_cache(store.root, page_files)
+        except OSError as exc:
+            logger.warning("memory sync: saving wiki pages failed: %s", exc)
+            pages = {"pages": 0, "added": 0, "removed": 0, "error": str(exc)}
         self._memory_sync_stamp(
             last_pull=_now(), last_pull_commit=res.commit, last_pull_ref=ref
         )
@@ -421,6 +438,7 @@ class MemorySyncMixin:
             "ref": ref,
             "commit": res.commit,
             "skipped": skipped,
+            "pages": pages,
             **counts,
         }
 

@@ -1691,7 +1691,7 @@ export default function App() {
                       {view === 'forms'     && <FormsView runnables={runnables} hosts={hosts} selectedHost={selectedHost} activeScope={activeScope} activeProfile={activeProfile} onRunRunnable={handleRunRunnable} pendingForm={pendingForm} onPendingFormClear={() => setPendingForm(null)} runbooks={runbooks} onOpenRunbook={handleOpenRunbook} savedRuns={savedRuns} onOpenSavedRun={handleOpenSavedRun} onEditRunbook={id => setRunbookEditReq({ id, nonce: Date.now() })} onEditSavedRun={id => setSavedRunEditReq({ id, nonce: Date.now() })} />}
                       {view === 'schedules' && <SchedulesView hosts={hosts} runnables={runnables} selectedHost={selectedHost} activeProfile={activeProfile} onOpenHistory={q => { setHistorySearch(q); setView('history') }} />}
                       {view === 'marketplace' && <MarketplaceView hosts={hosts} activeProfile={activeProfile} onOpenSettings={() => setMarketplaceSettingsOpen(true)} />}
-                      {view === 'knowledge' && <KnowledgeView active={view === 'knowledge'} aiEnabled={aiEnabled} onOpenSettings={openSettings} />}
+                      {view === 'knowledge' && <KnowledgeView active={view === 'knowledge'} aiEnabled={aiEnabled} onOpenSettings={openSettings} runnables={runnables} />}
                       {aiEnabled && view === 'improve' && <ImproveView active={view === 'improve'} />}
                       {aiEnabled && view === 'evals'   && <EvalsView active={view === 'evals'} />}
                       {view === 'rota'      && <RotaView />}
