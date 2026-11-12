@@ -134,6 +134,7 @@ export function KnowledgeView({ active, aiEnabled, onOpenSettings }: KnowledgeVi
     setQuery(q)
     searchRef.current.query = q
     if (!q.trim()) { setResults(null); return }
+    setTab('graph')  // results show in the side panel beside the graph
     try { setResults(await bridge.knowledge_search(q)) } catch { setResults([]) }
   }
 
@@ -238,7 +239,7 @@ export function KnowledgeView({ active, aiEnabled, onOpenSettings }: KnowledgeVi
               style={{ width: 130 }}
             />
           </Tooltip>
-          <Tooltip title="Reads run history (usual args, what runs after what) and your config (triggers, schedules, runbooks, file filters). No AI.">
+          <Tooltip title="Reads this console's run history (which tools run one after another) and config (triggers, schedules, runbooks, file filters). What it finds stays on this console. No AI.">
             <Button icon={<ReloadOutlined />} loading={busy === 'capture'} onClick={capture}>Capture</Button>
           </Tooltip>
           {aiEnabled && (
@@ -353,7 +354,11 @@ function TypeFilter({ types, hidden, onToggle }: { types: string[]; hidden: Set<
     <Space size={4} wrap>
       {types.map(t => (
         <Tag.CheckableTag key={t} checked={!hidden.has(t)} onChange={() => onToggle(t)}
-          style={{ border: `1px solid ${surfaces(isDark).border}`, color: textColor(isDark) }}>
+          style={{
+            border: `1px solid ${hidden.has(t) ? surfaces(isDark).border : withAlpha(typeColor(t), 0.6)}`,
+            background: hidden.has(t) ? 'transparent' : withAlpha(typeColor(t), 0.16),
+            color: hidden.has(t) ? textMuted(isDark) : textColor(isDark),
+          }}>
           <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 4, background: typeColor(t), marginRight: 6 }} />
           {t}
         </Tag.CheckableTag>
@@ -601,10 +606,11 @@ function SidePanel({ query, results, page, onEntity, onEdit, onRetire, pinned = 
 
 function EntityTag({ entity, onClick }: { entity: string; onClick?: (e: string) => void }) {
   const [type, name] = splitEntity(entity)
+  const isDark = useIsDark()
   return (
     <Tag
       color={withAlpha(typeColor(type), 0.18)}
-      style={{ color: 'inherit', cursor: onClick ? 'pointer' : 'default', fontFamily: MONO_FONT, borderColor: withAlpha(typeColor(type), 0.6), marginInlineEnd: 0 }}
+      style={{ color: textColor(isDark), cursor: onClick ? 'pointer' : 'default', fontFamily: MONO_FONT, borderColor: withAlpha(typeColor(type), 0.6), marginInlineEnd: 0 }}
       onClick={() => onClick?.(entity)}
     >
       {type}:{name}
@@ -630,6 +636,11 @@ function FactRow({ fact, current, onEntity, onEdit, onRetire, actions, pins }: {
         {fact.status !== 'approved' && (
           <Tag color={fact.status === 'pending' ? 'gold' : fact.status === 'observed' ? 'cyan' : 'default'}>{fact.status}</Tag>
         )}
+        {fact.scope === 'local' && (
+          <Tooltip title={`Stays on this console and is never shared with the team: ${fact.scope_reason || 'it is tied to this console'}.`}>
+            <Tag data-testid="fact-scope-local" style={{ color: textSecondary(isDark), borderStyle: 'dashed', background: 'transparent' }}>This console</Tag>
+          </Tooltip>
+        )}
         {fact.about.filter(a => a !== current).map(a => <EntityTag key={a} entity={a} onClick={onEntity} />)}
       </Space>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
@@ -638,7 +649,7 @@ function FactRow({ fact, current, onEntity, onEdit, onRetire, actions, pins }: {
         </Text>
         <div style={{ flex: 1 }} />
         {actions}
-        {pins && fact.status !== 'retired' && (() => {
+        {pins && (fact.status === 'approved' || pins.ids.has(fact.id)) && (() => {
           const on = pins.ids.has(fact.id)
           const full = !on && pins.ids.size >= pins.max
           return (
@@ -692,7 +703,9 @@ function Inbox({ facts, onApprove, onReject, onEdit, onEntity, pins }: {
           <Space size={4}>
             <Button size="small" icon={<CheckOutlined />} onClick={() => onApprove(f)}>Approve</Button>
             <Button size="small" icon={<EditOutlined />} onClick={() => onEdit(f)}>Edit</Button>
-            <Button size="small" danger icon={<CloseOutlined />} onClick={() => onReject(f)}>Reject</Button>
+            <Popconfirm title="Reject this fact?" description="It leaves the inbox and isn't added to the wiki." okText="Reject" okButtonProps={{ danger: true }} onConfirm={() => onReject(f)}>
+              <Button size="small" danger icon={<CloseOutlined />}>Reject</Button>
+            </Popconfirm>
           </Space>
         } />
       ))}
@@ -744,11 +757,11 @@ function FactEditor({ fact, review, kinds, suggestions, defaultAbout, onClose, o
         <Form.Item label="Kind">
           <Select value={kind} onChange={setKind} options={kinds.map(k => ({ value: k, label: k }))} />
         </Form.Item>
-        <Form.Item label="About" help="Entities as type:name, e.g. host:web-01, runnable:tail-log, file:/var/log/app.log, term:BAU">
+        <Form.Item label="About" help="Entities as type:name, e.g. runnable:tail-log, app:orders, service:lb, term:BAU. A fact about a host, group or profile stays on this console.">
           <Select mode="tags" value={about} onChange={setAbout} tokenSeparators={[',']}
-            options={suggestions.map(s => ({ value: s, label: s }))} placeholder="host:web-01" />
+            options={suggestions.map(s => ({ value: s, label: s }))} placeholder="runnable:tail-log" />
         </Form.Item>
-        <Form.Item label="Fact" validateStatus={error ? 'error' : undefined} help={error || 'One or two specific sentences. No secrets — facts are shared with the team.'}>
+        <Form.Item label="Fact" validateStatus={error ? 'error' : undefined} help={error || 'One or two sentences that hold on any teammate\'s console. No secrets, home directories or host names; those keep a fact on this console.'}>
           <Input.TextArea rows={3} value={text} onChange={e => setText(e.target.value)} />
         </Form.Item>
       </Form>

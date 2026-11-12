@@ -31,7 +31,7 @@ def bare(tmp_path):
     return str(path)
 
 
-def _approved(text, about=("host:web-01",)):
+def _approved(text, about=("app:orders",)):
     f = kn.make_fact(
         kind="location", about=list(about), text=text, status="approved", source="agent"
     )
@@ -75,6 +75,35 @@ def test_machine_local_facts_are_never_shared(tmp_path):
     store = kn.KnowledgeStore(tmp_path)
     store.write_team({"alice.toml": old})
     assert [f["id"] for f in store.team_facts()] == [shared["id"]]
+
+
+def test_this_console_facts_are_never_shared():
+    team = _approved("tail-log after http-check finds a 502 fastest")
+    host = _approved("web-01 is slow on Mondays", about=("host:web-01",))
+    named = _approved("restart orders-web-a before the batch", about=("app:orders",))
+    home = _approved("the key lives in ~/.ssh/ops", about=("app:orders",))
+    account = _approved("ask jason@desk-01 for access", about=("app:orders",))
+    observed = dict(_approved("B often follows A"), source="capture")
+    data, count = kn.contribution(
+        [team, host, named, home, account, observed],
+        ["orders-web-a", "prod"],
+        lane="ops-jason",
+    )
+    rows = tomllib.loads(data.decode())["fact"]
+    assert count == 1 and [r["id"] for r in rows] == [team["id"]]
+    assert rows[0]["author"] == "ops-jason"  # signed by the lane, not user@host
+
+    preview = kn.share_preview([team, host, named], ["orders-web-a"])
+    assert [r["id"] for r in preview["share"]] == [team["id"]]
+    kept = {r["id"]: r["reason"] for r in preview["kept"]}
+    assert "host:web-01" in kept[host["id"]] and "orders-web-a" in kept[named["id"]]
+
+
+def test_fact_scope_keeps_generic_tool_facts_on_the_team():
+    f = _approved("orders logs live in /var/log/orders/app.log")
+    assert kn.fact_scope(f) == ("team", "")
+    assert kn.fact_scope(f, ["prod"])[0] == "team"  # common names don't count
+    assert kn.with_scope(f, [])["scope"] == "team"
 
 
 def test_write_team_replaces_and_validates(tmp_path):
@@ -200,7 +229,11 @@ def test_push_and_pull_round_trip(bridge, bare):
 
     # The repo merges contributions into main: mine plus a teammate's.
     alice, _ = kn.contribution(
-        [_approved("web-02 reboots on Sundays", ["host:web-02"])]
+        [
+            _approved(
+                "http-check needs --insecure on the lab CA", ["runnable:http-check"]
+            )
+        ]
     )
     shared = gitsync.fetch_dir(bare, "contrib/jason", LOCAL, "facts").files
     gitsync.push_file(bare, "main", "facts/jason.toml", shared["jason.toml"], LOCAL)

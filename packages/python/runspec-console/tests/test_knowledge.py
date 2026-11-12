@@ -103,7 +103,13 @@ def test_edit_and_retire(store, kn):
 
 
 def test_team_facts_merge_and_retire_overrides(store, kn):
-    f = _fact(kn, "web-01 is the orders primary", status="approved", kind="host")
+    f = _fact(
+        kn,
+        "orders keeps its config in /etc/orders",
+        about=("app:orders",),
+        status="approved",
+        kind="location",
+    )
     team = store.root / "team"
     team.mkdir(parents=True)
     kn._save(team / "alice.toml", [dict(f, confirmations=4)])
@@ -346,6 +352,8 @@ def bridge_stub(tmp_path, monkeypatch):
         _knowledge_installed = Bridge._knowledge_installed
         _knowledge_config = Bridge._knowledge_config
         _knowledge_catalog = Bridge._knowledge_catalog
+        _knowledge_local_names = Bridge._knowledge_local_names
+        _knowledge_scoped = Bridge._knowledge_scoped
         knowledge_save_fact = Bridge.knowledge_save_fact
         knowledge_review = Bridge.knowledge_review
         knowledge_pin = Bridge.knowledge_pin
@@ -791,13 +799,17 @@ def test_pins_cap_follow_edits_and_drop_on_retire(store, kn):
 def test_pinned_pending_fact_follows_review(store, kn):
     p = _fact(kn, "web-01 runs the orders api")
     store.propose(p)
-    assert store.set_pinned(p["id"], True)[0]  # a pin may sit on a pending fact
+    # A new pin needs an approved fact (a pin rides every chat) ...
+    ok, msg = store.set_pinned(p["id"], True)
+    assert not ok and "approve it" in msg
+    # ... but a pin carried over from the old memory may sit on a pending one.
+    store.update_state(pinned=[p["id"]])
     assert "orders api" in store.header()
     approved = store.review(p["id"], True, {"text": "web-01 runs the orders API v2"})
     assert store.pinned_ids() == [approved["id"]]
     q = _fact(kn, "web-01 is in rack 7")
     store.propose(q)
-    store.set_pinned(q["id"], True)
+    store.update_state(pinned=store.pinned_ids() + [q["id"]])
     store.review(q["id"], False)
     assert q["id"] not in store.pinned_ids()
 

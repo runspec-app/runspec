@@ -7,11 +7,19 @@
 // ls-remote when the tab opens and after each pull).
 
 import { useCallback, useEffect, useState } from 'react'
-import { Alert, Badge, Button, Popconfirm, Space, Tooltip } from 'antd'
+import { Alert, Badge, Button, Modal, Space, Tooltip, Typography } from 'antd'
 import { CloudDownloadOutlined, CloudUploadOutlined, TeamOutlined } from '@ant-design/icons'
 
-import { bridge, type MemorySyncStatus, type MemorySyncUpdate } from '../bridge'
+import { bridge, type MemorySyncPreview, type MemorySyncStatus, type MemorySyncUpdate } from '../bridge'
 import { errorText, type SyncResult } from '../components/MemorySyncTab'
+import { textMuted, textSecondary, useIsDark } from '../ThemeContext'
+
+const { Text } = Typography
+
+/** "1 fact" / "3 facts". */
+export function facts(n: number): string {
+  return `${n} fact${n === 1 ? '' : 's'}`
+}
 
 interface KnowledgeSyncProps {
   onOpenSettings?: () => void
@@ -43,6 +51,9 @@ export function KnowledgeSync({ onOpenSettings, onResult }: KnowledgeSyncProps) 
   const [status, setStatus] = useState<MemorySyncStatus | null>(null)
   const [busy, setBusy] = useState<'' | 'push' | 'pull'>('')
   const [update, setUpdate] = useState<MemorySyncUpdate | null>(null)
+  // The Push confirmation: what leaves this console and what stays, fact by fact.
+  const [preview, setPreview] = useState<MemorySyncPreview | null>(null)
+  const isDark = useIsDark()
   const setResult = (r: SyncResult | null) => onResult?.(r)
 
   const load = useCallback(() => {
@@ -68,13 +79,23 @@ export function KnowledgeSync({ onOpenSettings, onResult }: KnowledgeSyncProps) 
     )
   }
 
+  const openPreview = async () => {
+    setBusy('push')
+    try {
+      setPreview(await bridge.memory_sync_preview())
+    } catch (e) {
+      setResult({ ok: false, text: `Couldn't prepare the push: ${errorText(e)}` })
+    } finally { setBusy('') }
+  }
+
   const push = async () => {
+    setPreview(null)
     setBusy('push'); setResult(null)
     try {
       const r = await bridge.memory_sync_push()
       if (!r.ok) setResult({ ok: false, text: `Push failed: ${r.error || 'unknown error'}` })
-      else if (!r.changed) setResult({ ok: true, text: `Nothing new to push: ${r.branch} already has your ${r.facts ?? 0} fact(s).` })
-      else setResult({ ok: true, text: `Pushed ${r.facts ?? 0} fact(s) to ${r.branch}. The team sees them once that branch is merged.` })
+      else if (!r.changed) setResult({ ok: true, text: `Nothing new to push: ${r.branch} already has your ${facts(r.facts ?? 0)}.` })
+      else setResult({ ok: true, text: `Pushed ${facts(r.facts ?? 0)} to ${r.branch}. The team sees them once that branch is merged.` })
       load()
     } catch (e) {
       setResult({ ok: false, text: `Push failed: ${errorText(e)}` })
@@ -104,18 +125,47 @@ export function KnowledgeSync({ onOpenSettings, onResult }: KnowledgeSyncProps) 
           <Badge dot={!!update?.available && !update.pinned} offset={[6, -2]}>Pull</Badge>
         </Button>
       </Tooltip>
-      <Popconfirm
-        title={`Push ${status.shareable} approved fact(s)?`}
-        description={<div style={{ maxWidth: 320 }}>Only {status.path} on {status.contrib_branch} changes. The team sees these facts once that branch is merged into {status.branch}.</div>}
-        okText="Push"
-        onConfirm={push}
+      <Tooltip title={`${status.unpushed ? 'You have approved team facts that are not pushed yet.' : 'Everything approved is pushed.'} Last push: ${when(status.last_push)}.`}>
+        <Button icon={<CloudUploadOutlined />} loading={busy === 'push'} onClick={openPreview}>
+          <Badge dot={status.unpushed} offset={[6, -2]}>Push</Badge>
+        </Button>
+      </Tooltip>
+      <Modal
+        open={!!preview}
+        title={preview ? `Push ${facts(preview.share.length)} to ${preview.branch}?` : ''}
+        okText={preview && preview.share.length > 0 ? `Push ${facts(preview.share.length)}` : 'Push'}
+        okButtonProps={{ disabled: !preview || preview.share.length === 0 }}
+        onOk={push}
+        onCancel={() => setPreview(null)}
+        width={640}
       >
-        <Tooltip title={`${status.unpushed ? 'You have approved facts that are not pushed yet.' : 'Everything approved is pushed.'} Last push: ${when(status.last_push)}.`}>
-          <Button icon={<CloudUploadOutlined />} loading={busy === 'push'}>
-            <Badge dot={status.unpushed} offset={[6, -2]}>Push</Badge>
-          </Button>
-        </Tooltip>
-      </Popconfirm>
+        {preview && (
+          <div data-testid="push-preview" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <Text style={{ color: textSecondary(isDark) }}>
+              Only {preview.path} on {preview.branch} changes, signed as {preview.lane}. The team sees these facts once that branch is merged into {status.branch}.
+            </Text>
+            {preview.share.length === 0 ? (
+              <Text style={{ color: textMuted(isDark) }}>No approved team facts to share yet.</Text>
+            ) : (
+              <ul style={{ margin: 0, paddingLeft: 18, maxHeight: 240, overflow: 'auto' }}>
+                {preview.share.map(f => <li key={f.id} style={{ marginBottom: 4 }}>{f.text}</li>)}
+              </ul>
+            )}
+            {preview.kept.length > 0 && (
+              <div>
+                <Text strong>Stays on this console ({facts(preview.kept.length)})</Text>
+                <ul style={{ margin: '4px 0 0', paddingLeft: 18, maxHeight: 180, overflow: 'auto' }}>
+                  {preview.kept.map(f => (
+                    <li key={f.id} style={{ marginBottom: 4 }}>
+                      {f.text} <Text style={{ color: textMuted(isDark), fontSize: 12 }}>({f.reason})</Text>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+      </Modal>
     </Space.Compact>
   )
 }

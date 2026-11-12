@@ -27,7 +27,6 @@ from __future__ import annotations
 import getpass
 import hashlib
 import logging
-import socket
 import time
 from typing import Any
 
@@ -45,7 +44,10 @@ def _now() -> str:
 
 
 def _default_email(lane: str) -> str:
-    return f"{lane}@{socket.gethostname()}"
+    """The commit email when ``[memory_sync] email`` is unset: the lane on a
+    reserved domain, so the team repo's history never records this machine's
+    name. Set ``email`` where the git host checks it against a member."""
+    return f"{lane}@runspec-console.invalid"
 
 
 # Words a server uses when it refuses a push over who authored the commit: a
@@ -196,7 +198,11 @@ class MemorySyncMixin:
 
         ms = self._memory_sync()
         store = self._knowledge_store()  # type: ignore[attr-defined]
-        data, count = kn.contribution(store.own_facts())
+        data, count = kn.contribution(
+            store.own_facts(),
+            self._knowledge_local_names(),  # type: ignore[attr-defined]
+            lane=ms["lane"],
+        )
         state = self._memory_sync_state()
         digest = hashlib.sha256(data).hexdigest()
         return {
@@ -313,7 +319,11 @@ class MemorySyncMixin:
         if not ms["url"]:
             return {"ok": False, "error": "Memory Sync isn't set up — add a repo first"}
         store = self._knowledge_store()  # type: ignore[attr-defined]
-        data, count = kn.contribution(store.own_facts())
+        data, count = kn.contribution(
+            store.own_facts(),
+            self._knowledge_local_names(),  # type: ignore[attr-defined]
+            lane=ms["lane"],
+        )
         author = self._memory_sync_author(ms)
         try:
             res = gitsync.push_file(
@@ -350,6 +360,24 @@ class MemorySyncMixin:
             "changed": res.changed,
             "created": res.created,
             "facts": count,
+        }
+
+    def memory_sync_preview(self) -> dict[str, Any]:
+        """What a push would share and what it keeps on this console, fact by
+        fact, for the Push confirmation: ``{ok, lane, branch, path, share,
+        kept}`` — ``kept`` items carry the ``reason`` they stay here."""
+        ms = self._memory_sync()
+        store = self._knowledge_store()  # type: ignore[attr-defined]
+        preview = kn.share_preview(
+            store.own_facts(),
+            self._knowledge_local_names(),  # type: ignore[attr-defined]
+        )
+        return {
+            "ok": True,
+            "lane": ms["lane"],
+            "branch": ms["contrib_branch"],
+            "path": ms["path"],
+            **preview,
         }
 
     def memory_sync_pull(self) -> dict[str, Any]:

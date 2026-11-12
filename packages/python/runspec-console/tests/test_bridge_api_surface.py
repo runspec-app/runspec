@@ -26,6 +26,7 @@ EXPECTED = {
     "get_memory_sync_config",
     "save_memory_sync_config",
     "memory_sync_status",
+    "memory_sync_preview",
     "memory_sync_test",
     "memory_sync_push",
     "memory_sync_pull",

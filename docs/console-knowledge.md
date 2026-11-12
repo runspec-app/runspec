@@ -84,6 +84,27 @@ runnable?" or "what can the Schedules tab do?" is answered from the wiki, by the
 console's own agent or by Claude Code through the MCP server (with
 `expose_builtins` on).
 
+## Team facts and this-console facts
+
+The wiki is a team *tools* wiki: what holds on every teammate's console. Each
+teammate's console has its own hosts, host groups, profiles, triggers,
+schedules and runbooks, so a fact tied to those is true here but not
+necessarily there. The console works out a fact's scope and shows it:
+
+- **Team**: about runnables, apps, services, terms, teams and topics, in words
+  that hold anywhere. These are the facts Push shares.
+- **This console** (a dashed tag on the fact; the tooltip says why): the fact is
+  about a `host:`, `group:`, `profile:`, `trigger:`, `schedule:` or `runbook:`;
+  it came from this console's run history or config (Capture); or its text
+  names one of this console's hosts, groups, profiles, triggers, schedules or
+  runbooks, a home directory (`~/`, `/home/<you>`, `C:\Users\<you>`), or an
+  account like `name@machine`. These stay here: they help the agent on this
+  console and are never pushed.
+
+To share something you know about a host, describe the host by its role ("the
+orders web hosts") and write it about the runnable or app. The chat-suggest
+prompt asks the model to do the same.
+
 ## Pinned facts
 
 Pin up to six facts that matter on almost every turn (the pushpin on a fact, or
@@ -93,7 +114,9 @@ The side panel lists the pins when no entity is selected, and the context gauge
 counts them. Pins belong to this console: they live in `state.toml`, Memory Sync
 never shares them, and you can pin a fact pulled from the team. A pin follows a
 fact through an edit or a review, and goes away when the fact is retired or
-rejected.
+rejected. Only an **approved** fact can be pinned, since a pin rides every
+chat; approve it from the inbox first. (Pins carried over from the old agent
+memory may sit on a pending fact until you review it.)
 
 ## Facts about a runnable
 
@@ -171,7 +194,7 @@ your config, and Config Sync stays pull-only.
 | Team branch | where merges land and pushes start; default `main` |
 | Pull from | **The team branch** (default: every merge reaches the team at once), **The newest release tag** (only what was released; Tag prefix, default `v`, picks the series), or **A pinned tag** (stays on one release until you change it) |
 | Your name in the wiki | your *lane*; blank uses your login name. Kept on this machine across a Config Sync pull |
-| Commit email | the author email on your pushes; use the one on your git account. Blank uses `<lane>@<hostname>`. Kept on this machine |
+| Commit email | the author email on your pushes; use the one on your git account. Blank uses `<lane>@runspec-console.invalid`, so the repo's history never records your machine's name. Kept on this machine |
 | CA bundle, Verify TLS | as for Config Sync, for an internal CA or a TLS-inspecting proxy |
 
 **Test connection** checks the repo is reachable and whether the team branch
@@ -185,17 +208,19 @@ from known accounts. Set **Commit email** to the email on your GitLab account
 and push again. The settings are stored as `[memory_sync]` in
 `config.toml`; the secret stays in the keychain.
 
-**Push** (Knowledge tab) shares your approved facts and nothing else:
+**Push** (Knowledge tab) shares your approved *team* facts and nothing else.
+It first shows what it will share and what stays on this console, fact by fact,
+with the reason each stays:
 
 - It writes one file, `facts/<lane>.toml`, on your own branch `contrib/<lane>`.
   Nothing else in the repo changes and it never force-pushes. Your branch starts
   from the team branch the first time.
-- Only *approved* facts go: never the inbox, observed usage, retired facts, or
-  `evidence` ids (they name local runs). A fact whose text now looks like a
-  secret is held back.
-- Facts about `host:local` stay on your machine, because each teammate's
-  `local` is their own machine. A pull also ignores any that a teammate pushed
-  before this rule existed.
+- Only *approved team* facts go: never the inbox, observed usage, retired
+  facts, this-console facts, or `evidence` ids (they name local runs). A fact
+  whose text now looks like a secret is held back.
+- Each pushed fact is signed by your lane, not by your login and machine name.
+- A pull ignores any this-console fact a teammate pushed from an older
+  console (one about their hosts, groups, schedules or `host:local`).
 - A dot on **Push** means you have approved facts that aren't pushed yet.
 
 Facts reach the team when someone merges `contrib/<lane>` into the team branch

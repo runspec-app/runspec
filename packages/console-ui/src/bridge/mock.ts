@@ -2128,18 +2128,21 @@ export const mockApi: BridgeApi = {
   rename_conversation: async (_id: string, _title: string) => {},
   knowledge_overview: async () => {
     const fact = (id: string, kind: string, about: string[], text: string, status: KnowledgeFact['status'] = 'approved', confirmations = 1): KnowledgeFact => ({
-      id, kind, about, text, status, source: status === 'observed' ? 'capture' : 'agent', author: 'jason@desk-01',
+      id, kind, about, text, status, source: status === 'observed' ? 'capture' : 'agent', author: 'dev',
       evidence: [], first_seen: '2026-09-20', last_confirmed: '2026-10-03', confirmations,
+      // Mirrors knowledge.fact_scope: hosts/groups/profiles and observed usage stay here.
+      ...(status === 'observed' || about.some(a => /^(host|group|profile|trigger|schedule|runbook):/.test(a))
+        ? { scope: 'local' as const, scope_reason: status === 'observed' ? "it comes from this console's own runs or config" : 'it is about a host, which each console sets up itself' }
+        : { scope: 'team' as const, scope_reason: '' }),
     })
     const facts = [
       fact('k_1', 'location', ['host:web-01', 'app:orders', 'file:/var/log/orders/app.log'], 'orders logs are in /var/log/orders/app.log on web-01', 'approved', 4),
       fact('k_2', 'pairing', ['runnable:tail-log', 'runnable:restart-service'], 'restart-service is often run after tail-log (6 times).', 'observed', 6),
-      fact('k_3', 'host', ['runnable:tail-log', 'host:web-01'], 'tail-log is used on web-01 (9 runs).', 'observed', 9),
+      fact('k_3', 'pairing', ['runnable:http-check', 'runnable:tail-log'], 'After a 502 from http-check, run tail-log on the same host before restarting anything.', 'approved', 3),
       fact('k_4', 'glossary', ['term:BAU', 'team:ops'], 'BAU means business as usual: the planned daily checks.', 'approved', 2),
       fact('k_5', 'effect', ['service:lb', 'host:web-01', 'host:web-02'], 'draining web-01 at the LB moves all orders traffic to web-02', 'pending'),
-      fact('k_6', 'host', ['runnable:disk-usage', 'host:web-01'], 'disk-usage is used on web-01 (31 runs).', 'observed', 31),
-      fact('k_7', 'host', ['runnable:install-into-venv', 'host:web-01'], 'install-into-venv is used on web-01 (10 runs).', 'observed', 10),
-      fact('k_8', 'host', ['runnable:disk-usage', 'host:web-02'], 'disk-usage is used on web-02 (12 runs).', 'observed', 12),
+      fact('k_6', 'effect', ['runnable:journal-vacuum', 'runnable:disk-usage'], 'journal-vacuum frees /var/log/journal; re-run disk-usage after it to confirm the space came back.', 'approved', 2),
+      fact('k_7', 'procedure', ['runnable:cron', 'term:BAU'], 'Remove crontab lines with cron remove --match, not --index: the index shifts when someone else edits the crontab.', 'pending'),
       fact('k_9', 'note', ['term:island'], 'An unconnected fact, to show how islands lay out.', 'approved'),
     ]
     const nodes = new Map<string, KnowledgeNode>()
@@ -2177,7 +2180,7 @@ export const mockApi: BridgeApi = {
     const [type, ...rest] = entity.split(':')
     const links = new Map<string, number>()
     for (const f of facts) for (const a of f.about) if (a !== entity) links.set(a, (links.get(a) ?? 0) + f.confirmations)
-    return { entity, type, name: rest.join(':'), facts, links: [...links].map(([e, w]) => ({ entity: e, weight: w })), authors: ['jason@desk-01'], last_confirmed: '2026-10-03' }
+    return { entity, type, name: rest.join(':'), facts, links: [...links].map(([e, w]) => ({ entity: e, weight: w })), authors: ['dev'], last_confirmed: '2026-10-03' }
   },
   knowledge_search: async (query: string) => _mockKnowledgeFacts.filter(f => f.text.toLowerCase().includes(query.toLowerCase())),
   knowledge_review: async (_id: string, _approve: boolean) => ({ ok: true }),
@@ -2195,6 +2198,16 @@ export const mockApi: BridgeApi = {
     configured: true, engine: 'dulwich', url: 'https://git.example.com/ops/wiki.git', branch: 'main', pull_from: 'latest-tag', pull_source: 'the newest v* tag',
     contrib_branch: 'contrib/dev', path: 'facts/dev.toml', shareable: 3, unpushed: true, team_facts: 5,
     last_push: '', last_push_commit: '', last_pull: '2026-10-04T09:00:00Z', last_pull_commit: 'abc123', last_pull_ref: 'v1.0.0',
+  }),
+  memory_sync_preview: async () => ({
+    ok: true, lane: 'dev', branch: 'contrib/dev', path: 'facts/dev.toml',
+    share: [
+      { id: 'k_a1', kind: 'pairing', about: ['runnable:http-check', 'runnable:tail-log'], text: 'After a 502 from http-check, run tail-log on the same host before restarting anything.' },
+      { id: 'k_a2', kind: 'glossary', about: ['term:BAU'], text: 'BAU means business-as-usual change: no CAB needed.' },
+    ],
+    kept: [
+      { id: 'k_b1', kind: 'host', about: ['host:web-01', 'app:orders'], text: 'web-01 is the orders primary.', reason: 'it is about host:web-01, which each console sets up itself' },
+    ],
   }),
   memory_sync_check_update: async () => ({ ok: true, available: true, latest: 'v1.1.0', current: 'v1.0.0', pinned: false }),
   memory_sync_test: async () => ({ ok: true, branch_exists: true, contrib_exists: false, empty: false }),

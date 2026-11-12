@@ -30,7 +30,6 @@ import asyncio
 import getpass
 import json
 import logging
-import socket
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -65,12 +64,18 @@ _ENTITY_HELP = (
 )
 
 
+#: Keys of a page / overview dict that hold facts (the tab shows their scope).
+_FACT_KEYS = frozenset({"facts", "inbox", "pinned"})
+
+
 def _author() -> str:
+    """Who wrote a fact on this console: the OS account name only. (It used to
+    add the machine name; a pushed fact is signed by the sync lane instead —
+    see ``knowledge.contribution``.)"""
     try:
-        user = getpass.getuser()
+        return getpass.getuser() or "user"
     except Exception:  # noqa: BLE001
-        user = "user"
-    return f"{user}@{socket.gethostname()}"
+        return "user"
 
 
 class KnowledgeMixin:
@@ -181,6 +186,40 @@ class KnowledgeMixin:
             return fn(idx)
         finally:
             idx.close()
+
+    def _knowledge_local_names(self) -> list[str]:
+        """This console's own host, group, profile, trigger, schedule and runbook
+        names — a fact whose text names one is "this console" knowledge and is
+        never pushed to the team (``knowledge.fact_scope``)."""
+        try:
+            catalog = self._knowledge_catalog()
+        except Exception:  # noqa: BLE001 — best-effort; the type rules still apply
+            logger.debug("knowledge: local names unavailable", exc_info=True)
+            return []
+        return sorted(
+            {
+                kn.entity_name(ref)
+                for refs in catalog.values()
+                for ref in refs
+                if kn.entity_type(ref) in kn.LOCAL_ENTITY_TYPES
+            }
+        )
+
+    def _knowledge_scoped(self, value: Any, names: list[str] | None = None) -> Any:
+        """``value`` (a fact, a list of facts, or a page / overview dict holding
+        them) with ``scope`` / ``scope_reason`` on every fact, for the tab."""
+        if names is None:
+            names = self._knowledge_local_names()
+        if isinstance(value, list):
+            return [self._knowledge_scoped(v, names) for v in value]
+        if isinstance(value, dict):
+            if "text" in value and "about" in value:
+                return kn.with_scope(value, names)
+            return {
+                k: (self._knowledge_scoped(v, names) if k in _FACT_KEYS else v)
+                for k, v in value.items()
+            }
+        return value
 
     # ── agent tools ──────────────────────────────────────────────────────────
     def _knowledge_tools(self) -> list[dict[str, Any]]:
@@ -502,12 +541,13 @@ class KnowledgeMixin:
         store = self._knowledge_store()
         capturing = self._knowledge_autocapture(store)
         idx = store.index()
+        names = self._knowledge_local_names()
         try:
             return {
                 "stats": idx.stats(),
                 "graph": idx.graph(),
-                "inbox": store.inbox(),
-                "pinned": store.pinned_facts(),
+                "inbox": self._knowledge_scoped(store.inbox(), names),
+                "pinned": self._knowledge_scoped(store.pinned_facts(), names),
                 "pin_max": kn.PIN_MAX,
                 "captured_at": _mtime_iso(store.root / kn.OBSERVED_FILE),
                 "capture_days": _as_days(
@@ -624,12 +664,19 @@ class KnowledgeMixin:
         return kn.entity_catalog(r for r in refs if not r.endswith(":None"))
 
     def knowledge_page(self, entity: str) -> dict[str, Any]:
-        return self._knowledge_query(lambda idx: idx.page(str(entity or "")))
+        return self._knowledge_scoped(
+            self._knowledge_query(lambda idx: idx.page(str(entity or "")))
+        )
 
     def knowledge_search(self, query: str, kind: str = "") -> list[dict[str, Any]]:
-        return self._knowledge_query(
-            lambda idx: idx.search(
-                str(query or ""), kind=str(kind or ""), include_pending=True, limit=50
+        return self._knowledge_scoped(
+            self._knowledge_query(
+                lambda idx: idx.search(
+                    str(query or ""),
+                    kind=str(kind or ""),
+                    include_pending=True,
+                    limit=50,
+                )
             )
         )
 
